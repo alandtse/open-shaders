@@ -15,6 +15,7 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.exp_height_fog."
 
@@ -114,7 +115,7 @@ void ExponentialHeightFog::DrawSettings()
 	}
 #endif
 
-	ImGui::Checkbox(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), (bool*)&settings.enabled);
+	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
 	ImGui::SliderFloat(T(TKEY("start_distance"), "Start Distance"), &settings.startDistance, 0.0f, 100000.0f, "%.1f");
 	ImGui::SliderFloat(T(TKEY("fog_height"), "Fog Height"), &settings.fogHeight, -22000.0f, 22000.0f, "%.1f");
 	ImGui::SliderFloat(T(TKEY("fog_height_falloff"), "Fog Height Falloff"), &settings.fogHeightFalloff, 0.001f, 2.0f, "%.3f");
@@ -130,20 +131,20 @@ void ExponentialHeightFog::DrawSettings()
 							  "Positive values produce forward scattering (glow around sun).\n"
 							  "Zero is isotropic. Negative values produce back scattering."));
 	}
-	ImGui::Checkbox(T(TKEY("disable_vanilla_fog"), "Disable Vanilla Fog"), (bool*)&settings.disableVanillaFog);
+	Util::CheckboxFlag(T(TKEY("disable_vanilla_fog"), "Disable Vanilla Fog"), settings.disableVanillaFog);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("disable_vanilla_fog_tooltip"), "Disables the vanilla fog entirely. Only exponential height fog will be applied."));
 	}
-	ImGui::Checkbox(T(TKEY("apply_vanilla_fade"), "Apply Vanilla Fade"), (bool*)&settings.respectVanillaFogFade);
+	Util::CheckboxFlag(T(TKEY("apply_vanilla_fade"), "Apply Vanilla Fade"), settings.respectVanillaFogFade);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("apply_vanilla_fade_tooltip"), "Applies vanilla fade brightness to exponential height fog."));
 	}
-	ImGui::Checkbox(T(TKEY("use_dynamic_cubemaps"), "Use Dynamic Cubemaps for Inscattering"), (bool*)&settings.useDynamicCubemaps);
+	Util::CheckboxFlag(T(TKEY("use_dynamic_cubemaps"), "Use Dynamic Cubemaps for Inscattering"), settings.useDynamicCubemaps);
 	ImGui::ColorEdit4(T(TKEY("inscattering_cubemap_tint"), "Inscattering Cubemap Tint"), (float*)&settings.inscatteringTint);
 	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f");
 
 	ImGui::SeparatorText(T(TKEY("volumetric_fog"), "Volumetric Fog"));
-	ImGui::Checkbox(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), (bool*)&settings.volumetricFogEnabled);
+	Util::CheckboxFlag(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), settings.volumetricFogEnabled);
 	if (settings.volumetricFogEnabled) {
 		ImGui::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f");
 		ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f");

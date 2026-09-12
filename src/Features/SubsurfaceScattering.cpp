@@ -1,6 +1,7 @@
 #include "SubsurfaceScattering.h"
 
 #include "../I18n/I18n.h"
+#include "../Utils/UI.h"
 #include "Deferred.h"
 #include "GpuPass.h"
 #include "ShaderCache.h"
@@ -26,7 +27,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void SubsurfaceScattering::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("settings"), "Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable_character_lighting"), "Enable Character Lighting"), (bool*)&settings.EnableCharacterLighting);
+		Util::CheckboxFlag(T(TKEY("enable_character_lighting"), "Enable Character Lighting"), settings.EnableCharacterLighting);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_character_lighting_tooltip"), "Vanilla feature."));
 		}

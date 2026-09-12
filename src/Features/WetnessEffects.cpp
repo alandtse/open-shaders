@@ -5,6 +5,7 @@
 #include "Menu.h"
 #include "SceneSelector.h"
 #include "State.h"
+#include "Utils/UI.h"
 
 #include <array>
 #include <cmath>
@@ -524,7 +525,7 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx(T(TKEY("wetness_effects"), "Wetness Effects"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (ImGui::Checkbox(T(TKEY("enable_wetness"), "Enable Wetness"), (bool*)&settings.EnableWetnessEffects)) {
+		if (Util::CheckboxFlag(T(TKEY("enable_wetness"), "Enable Wetness"), settings.EnableWetnessEffects)) {
 			Ripples::UpdateSettings();  // Update cache when settings change
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -547,14 +548,14 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	ImGui::Spacing();
 
 	if (ImGui::TreeNodeEx(T(TKEY("raindrop_effects"), "Raindrop Effects"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable_raindrop_effects"), "Enable Raindrop Effects"), (bool*)&settings.EnableRaindropFx);
+		Util::CheckboxFlag(T(TKEY("enable_raindrop_effects"), "Enable Raindrop Effects"), settings.EnableRaindropFx);
 
 		ImGui::BeginDisabled(!settings.EnableRaindropFx);
 
-		ImGui::Checkbox(T(TKEY("enable_splashes"), "Enable Splashes"), (bool*)&settings.EnableSplashes);
+		Util::CheckboxFlag(T(TKEY("enable_splashes"), "Enable Splashes"), settings.EnableSplashes);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("enable_splashes_tooltip"), "Enables small splashes of wetness on dry surfaces."));
-		ImGui::Checkbox(T(TKEY("enable_ripples"), "Enable Ripples"), (bool*)&settings.EnableRipples);
+		Util::CheckboxFlag(T(TKEY("enable_ripples"), "Enable Ripples"), settings.EnableRipples);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("enable_ripples_tooltip"), "Enables circular ripples on puddles, and to a less extent other wet surfaces"));
 
@@ -563,7 +564,7 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 		                                T(TKEY("enable_vanilla_ripples_controlled"), "Enable Vanilla Ripples - Controlled by Splashes of Storms") :
 		                                T(TKEY("enable_vanilla_ripples"), "Enable Vanilla Ripples");
 
-		if (ImGui::Checkbox(checkboxLabel, (bool*)&settings.EnableVanillaRipples)) {
+		if (Util::CheckboxFlag(checkboxLabel, settings.EnableVanillaRipples)) {
 			Ripples::UpdateSettings();  // Update cache when settings change
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {

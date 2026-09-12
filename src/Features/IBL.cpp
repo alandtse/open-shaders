@@ -84,7 +84,7 @@ void IBL::DrawSettings()
 	}
 #endif
 
-	ImGui::Checkbox(T(TKEY("enable_ibl"), "Enable IBL"), (bool*)&settings.EnableIBL);
+	Util::CheckboxFlag(T(TKEY("enable_ibl"), "Enable IBL"), settings.EnableIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}

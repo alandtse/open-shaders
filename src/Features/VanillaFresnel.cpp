@@ -4,6 +4,7 @@
 #include "Globals.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.vanilla_fresnel."
 
@@ -110,16 +111,16 @@ void VanillaFresnel::SaveSettings(json& o_json)
 
 void VanillaFresnel::DrawSettings()
 {
-	ImGui::Checkbox(T(TKEY("enable"), "Enable Vanilla Fresnel"), reinterpret_cast<bool*>(&settings.Enable));
-	ImGui::Checkbox(T(TKEY("enable_ggx"), "Enable Phong to GGX"), reinterpret_cast<bool*>(&settings.EnableGGX));
-	ImGui::Checkbox(T(TKEY("enable_ggx_on_grass"), "Enable Phong to GGX on Grass"), reinterpret_cast<bool*>(&settings.EnableGGXOnGrass));
+	Util::CheckboxFlag(T(TKEY("enable"), "Enable Vanilla Fresnel"), settings.Enable);
+	Util::CheckboxFlag(T(TKEY("enable_ggx"), "Enable Phong to GGX"), settings.EnableGGX);
+	Util::CheckboxFlag(T(TKEY("enable_ggx_on_grass"), "Enable Phong to GGX on Grass"), settings.EnableGGXOnGrass);
 	if (!settings.EnableGGX) {
 		settings.EnableDynamicCubemapsConversion = false;
 	}
 	ImGui::BeginDisabled(!settings.EnableGGX);
-	ImGui::Checkbox(T(TKEY("enable_dynamic_cubemaps_conversion"), "Enable Auto Cubemaps Conversion"), reinterpret_cast<bool*>(&settings.EnableDynamicCubemapsConversion));
+	Util::CheckboxFlag(T(TKEY("enable_dynamic_cubemaps_conversion"), "Enable Auto Cubemaps Conversion"), settings.EnableDynamicCubemapsConversion);
 	ImGui::EndDisabled();
-	ImGui::Checkbox(T(TKEY("enable_eye_special_handling"), "Enable Eye Special Handling"), reinterpret_cast<bool*>(&settings.EnableEyeSpecialHandling));
+	Util::CheckboxFlag(T(TKEY("enable_eye_special_handling"), "Enable Eye Special Handling"), settings.EnableEyeSpecialHandling);
 
 	ImGui::SliderFloat(T(TKEY("roughness_multiplier"), "Roughness Multiplier"), &settings.RoughnessMultiplier, 0.0f, 10.0f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_roughness_blend"), "Specular Roughness Blend"), &settings.SpecularRoughnessBlend, 0.0f, 1.0f, "%.2f");

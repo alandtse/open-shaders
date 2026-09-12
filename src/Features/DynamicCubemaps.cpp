@@ -33,7 +33,7 @@ std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetS
 void DynamicCubemaps::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("screen_space_reflections"), "Screen Space Reflections"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		recompileFlag |= ImGui::Checkbox(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), reinterpret_cast<bool*>(&settings.EnabledSSR));
+		recompileFlag |= Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
 		}
@@ -44,7 +44,7 @@ void DynamicCubemaps::DrawSettings()
 
 	if (ImGui::TreeNodeEx(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text("%s", T(TKEY("creator_info"), "You must enable creator mode by adding the shader define CREATOR"));
-		ImGui::Checkbox(T(TKEY("enable_creator"), "Enable Creator"), reinterpret_cast<bool*>(&settings.EnabledCreator));
+		Util::CheckboxFlag(T(TKEY("enable_creator"), "Enable Creator"), settings.EnabledCreator);
 		if (settings.EnabledCreator) {
 			ImGui::ColorEdit3(T(TKEY("color"), "Color"), reinterpret_cast<float*>(&settings.CubemapColor));
 			ImGui::SliderFloat(T(TKEY("roughness"), "Roughness"), &settings.CubemapColor.w, 0.0f, 1.0f, "%.2f");

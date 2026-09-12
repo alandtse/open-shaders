@@ -5,6 +5,7 @@
 #include "I18n/I18n.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.grass_collision."
 
@@ -29,7 +30,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void GrassCollision::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("grass_collision"), "Grass Collision"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable"), "Enable Grass Collision"), (bool*)&settings.EnableGrassCollision);
+		Util::CheckboxFlag(T(TKEY("enable"), "Enable Grass Collision"), settings.EnableGrassCollision);
 		ImGui::TreePop();
 	}
 }

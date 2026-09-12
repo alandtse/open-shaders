@@ -1,6 +1,7 @@
 #include "HairSpecular.h"
 
 #include "../I18n/I18n.h"
+#include "../Utils/UI.h"
 #include "Utils/D3D.h"
 #include <DirectXTex.h>
 
@@ -28,7 +29,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void HairSpecular::DrawSettings()
 {
-	ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), (bool*)&settings.Enabled);
+	Util::CheckboxFlag(T(TKEY("enabled"), "Enabled"), settings.Enabled);
 	ImGui::Combo(T(TKEY("hair_mode"), "Hair Mode"), (int*)&settings.HairMode, "Kajiya-Kay\0Marschner\0");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("hair_mode_tooltip"),
@@ -54,7 +55,7 @@ void HairSpecular::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("hair_saturation"), "Hair Saturation"), &settings.HairSaturation, 0.0f, 5.0f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("transmission"), "Transmission"), &settings.Transmission, 0.0f, 1.0f, "%.2f");
 	ImGui::Spacing();
-	ImGui::Checkbox(T(TKEY("enable_tangent_shift"), "Enable Tangent Shift"), (bool*)&settings.EnableTangentShift);
+	Util::CheckboxFlag(T(TKEY("enable_tangent_shift"), "Enable Tangent Shift"), settings.EnableTangentShift);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_tangent_shift_tooltip"),
 							  "Enables the use of a tangent shift texture to vary specular highlights across hair strands.\n"
@@ -65,7 +66,7 @@ void HairSpecular::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("secondary_tangent_shift"), "Secondary Specular Tangent Shift"), &settings.SecondaryTangentShift, -1.0f, 1.0f, "%.2f");
 	}
 	ImGui::Spacing();
-	ImGui::Checkbox(T(TKEY("enable_self_shadow"), "Enable Screen-Space Self Shadow"), (bool*)&settings.EnableSelfShadow);
+	Util::CheckboxFlag(T(TKEY("enable_self_shadow"), "Enable Screen-Space Self Shadow"), settings.EnableSelfShadow);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_self_shadow_tooltip"),
 							  "Enables screen-space self-shadowing for hair.\n"
