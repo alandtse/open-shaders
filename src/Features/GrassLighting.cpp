@@ -2,6 +2,7 @@
 
 #include "GrassOptimizations.h"
 #include "I18n/I18n.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.grass_lighting."
 
@@ -60,7 +61,7 @@ void GrassLighting::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx(T(TKEY("lighting"), "Lighting"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), (bool*)&settings.EnableWrappedLighting);
+		Util::CheckboxFlag(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), settings.EnableWrappedLighting);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_wrapped_lighting_tooltip"),
 								  "Enables a softer-looking wrapped lighting model from CS 1.3. "
@@ -68,7 +69,7 @@ void GrassLighting::DrawSettings()
 		}
 		ImGui::Spacing();
 		ImGui::Spacing();
-		ImGui::Checkbox(T(TKEY("override_complex"), "Override Complex Grass Lighting Settings"), (bool*)&settings.OverrideComplexGrassSettings);
+		Util::CheckboxFlag(T(TKEY("override_complex"), "Override Complex Grass Lighting Settings"), settings.OverrideComplexGrassSettings);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("override_complex_tooltip"),
 								  "Override the settings set by the grass mesh author. "
