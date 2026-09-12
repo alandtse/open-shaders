@@ -1,4 +1,6 @@
 #pragma once
+
+#include "REX/W32/Bridge.h"
 #include <array>
 #include <d3d11.h>
 #include <d3dcompiler.h>
@@ -10,83 +12,11 @@
 
 namespace Util
 {
-	namespace detail
-	{
-		// Maps each real SDK D3D11 type to its REX::W32 counterpart and back. Add a
-		// CS_W32_PAIR line for whatever type a new bridge call site needs.
-		template <class T>
-		struct RealOf
-		{
-			static_assert(!std::is_same_v<T, T>, "no REX::W32 pairing registered for this type -- add a CS_W32_PAIR entry in Utils/D3D.h");
-		};
-		template <class T>
-		struct W32Of
-		{
-			static_assert(!std::is_same_v<T, T>, "no REX::W32 pairing registered for this type -- add a CS_W32_PAIR entry in Utils/D3D.h");
-		};
-
-		// clang-format off
-#define CS_W32_PAIR(Real, W32)                                  \
-	template <> struct RealOf<Real> { using type = Real; };     \
-	template <> struct RealOf<W32> { using type = Real; };      \
-	template <> struct W32Of<Real> { using type = W32; };       \
-	template <> struct W32Of<W32> { using type = W32; };
-		// clang-format on
-
-		CS_W32_PAIR(ID3D11View, REX::W32::ID3D11View)
-		CS_W32_PAIR(ID3D11Resource, REX::W32::ID3D11Resource)
-		CS_W32_PAIR(ID3D11Texture2D, REX::W32::ID3D11Texture2D)
-		CS_W32_PAIR(ID3D11ShaderResourceView, REX::W32::ID3D11ShaderResourceView)
-		CS_W32_PAIR(ID3D11RenderTargetView, REX::W32::ID3D11RenderTargetView)
-		CS_W32_PAIR(ID3D11DepthStencilView, REX::W32::ID3D11DepthStencilView)
-		CS_W32_PAIR(ID3D11UnorderedAccessView, REX::W32::ID3D11UnorderedAccessView)
-		CS_W32_PAIR(D3D11_TEXTURE2D_DESC, REX::W32::D3D11_TEXTURE2D_DESC)
-		CS_W32_PAIR(D3D11_SHADER_RESOURCE_VIEW_DESC, REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC)
-		CS_W32_PAIR(D3D11_RENDER_TARGET_VIEW_DESC, REX::W32::D3D11_RENDER_TARGET_VIEW_DESC)
-		CS_W32_PAIR(D3D11_DEPTH_STENCIL_VIEW_DESC, REX::W32::D3D11_DEPTH_STENCIL_VIEW_DESC)
-		CS_W32_PAIR(D3D11_UNORDERED_ACCESS_VIEW_DESC, REX::W32::D3D11_UNORDERED_ACCESS_VIEW_DESC)
-		CS_W32_PAIR(GUID, REX::W32::GUID)
-		CS_W32_PAIR(const GUID, const REX::W32::GUID)
-
-		// Pointer forms, for out-parameters that receive an interface pointer.
-		CS_W32_PAIR(ID3D11Resource*, REX::W32::ID3D11Resource*)
-		CS_W32_PAIR(ID3D11Texture2D*, REX::W32::ID3D11Texture2D*)
-		CS_W32_PAIR(ID3D11ShaderResourceView*, REX::W32::ID3D11ShaderResourceView*)
-		CS_W32_PAIR(ID3D11RenderTargetView*, REX::W32::ID3D11RenderTargetView*)
-		CS_W32_PAIR(ID3D11UnorderedAccessView*, REX::W32::ID3D11UnorderedAccessView*)
-#undef CS_W32_PAIR
-	}
-
-	/**
-	 * @brief Bridges CommonLibVR's REX::W32 D3D11 reimplementation (ABI-identical to the
-	 *        real Windows SDK COM interfaces, but a distinct C++ type) with the real types
-	 *        used throughout this codebase. The target type is deduced from the argument,
-	 *        which must be one of the paired types, so call sites name no type. Use at the
-	 *        boundary where an RE:: struct field (now REX::W32-typed) meets code expecting
-	 *        the real type: `Util::AsReal(rtData.texture)`, `Util::AsW32(&texDesc)`.
-	 */
-	template <class T>
-	[[nodiscard]] auto* AsReal(T* a_ptr) noexcept
-	{
-		return reinterpret_cast<typename detail::RealOf<T>::type*>(a_ptr);
-	}
-
-	template <class T>
-	[[nodiscard]] auto* AsW32(T* a_ptr) noexcept
-	{
-		return reinterpret_cast<typename detail::W32Of<T>::type*>(a_ptr);
-	}
-
-	/**
-	 * @brief Bridge with the target named explicitly, for the rare source that is
-	 *        type-erased (a `void*` the engine fills in), where there is no type to
-	 *        deduce from. Prefer AsReal/AsW32 everywhere else.
-	 */
-	template <class To, class From>
-	[[nodiscard]] To* CastTo(From* a_ptr) noexcept
-	{
-		return reinterpret_cast<To*>(a_ptr);
-	}
+	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
+	// table; re-exported here to keep this codebase's Util:: call sites.
+	using REX::W32::AsReal;
+	using REX::W32::AsW32;
+	using REX::W32::CastTo;
 
 	/**
 	 * @brief ID3DInclude handler resolving #include paths under Data\Shaders,
