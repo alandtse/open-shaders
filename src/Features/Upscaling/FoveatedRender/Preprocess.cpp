@@ -92,7 +92,7 @@ namespace FoveatedRenderImpl
 		auto upscalingBuffer = upscaling.upscalingDataCB->CB();
 		context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
+		ID3D11ShaderResourceView* views[4] = { Util::AsReal(temporalAAMask.SRV), Util::AsReal(normals.SRV), Util::AsReal(motionVector.SRV), Util::AsReal(depth.depthSRV) };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		ID3D11UnorderedAccessView* uavs[3] = {

@@ -229,7 +229,7 @@ private:
 	bool isCopyHookInstalled = false;
 
 	// UI pass hook: FinishAccumulatingDispatch (vfunc 0x2A on BSShaderAccumulator)
-	// When renderMode==24 (UI pass), swaps KMAIN DS → fakeDS so 3k kMENUBG gets 3k depth.
+	// On kVRWorldSpaceUIPass, swaps KMAIN DS → fakeDS so 3k kMENUBG gets 3k depth.
 	struct UIPassDispatch_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags);

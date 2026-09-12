@@ -1,5 +1,7 @@
 #include "Globals.h"
 
+#include "Utils/D3D.h"
+
 #include "Deferred.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
@@ -259,9 +261,9 @@ namespace globals
 			BSMultiStreamInstanceTriShapeRTTI = { RE::BSMultiStreamInstanceTriShape::Ni_RTTI };
 		}
 
-		d3d::device = reinterpret_cast<ID3D11Device*>(game::renderer->GetRuntimeData().forwarder);
-		d3d::context = reinterpret_cast<ID3D11DeviceContext*>(game::renderer->GetRuntimeData().context);
-		d3d::swapChain = reinterpret_cast<IDXGISwapChain*>(game::renderer->GetRuntimeData().renderWindows->swapChain);
+		d3d::device = Util::AsReal(game::renderer->GetRuntimeData().forwarder);
+		d3d::context = Util::AsReal(game::renderer->GetRuntimeData().context);
+		d3d::swapChain = Util::AsReal(game::renderer->GetRuntimeData().renderWindows->swapChain);
 	}
 
 	void OnDataLoaded()
@@ -392,7 +394,7 @@ namespace globals
 						ID3D11Resource* clearRes = nullptr;
 						ID3D11Resource* mainRes = nullptr;
 						pDepthStencilView->GetResource(&clearRes);
-						mainDepth.views[0]->GetResource(&mainRes);
+						mainDepth.views[0]->GetResource(Util::AsW32(&mainRes));
 						bool isMainDSV = (clearRes == mainRes);
 						if (clearRes)
 							clearRes->Release();
