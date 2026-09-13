@@ -1,5 +1,9 @@
 #pragma once
 
+// CommonLibVR's RE:: headers no longer transitively pull this in (they use their own
+// REX::W32 D3D11 reimplementation); the real Windows SDK types below need it directly.
+#include <d3d11.h>
+
 #include <atomic>
 
 struct CloudShadows;

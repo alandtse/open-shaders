@@ -60,6 +60,11 @@
             "version": "3.27.1"
         },
         {
+            "name": "fmt",
+            "version": "12.2.0",
+            "port-version": 1
+        },
+        {
             "name": "imgui",
             "version": "1.92.6"
         },
