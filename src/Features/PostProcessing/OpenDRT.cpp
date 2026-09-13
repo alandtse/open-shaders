@@ -853,11 +853,6 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 		}
 	}
 
-	// if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.input", "Input"), ImGuiTreeNodeFlags_DefaultOpen)) {
-	// 	ComboInt(T("feature.post_processing.open_drt.input_color_space", "Input Color Space"), s.input_color_space, kInputColorSpaceLabels, IM_ARRAYSIZE(kInputColorSpaceLabels));
-	// 	ComboInt(T("feature.post_processing.open_drt.output_encoding", "Output Encoding"), s.output_encoding, kOutputEncodingLabels, IM_ARRAYSIZE(kOutputEncodingLabels));
-	// }
-
 	if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.display", "Display"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		if (hdrActive)
 			ImGui::BeginDisabled();
