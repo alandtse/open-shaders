@@ -548,7 +548,21 @@ public:
 	template <typename Func>
 	static inline void ForEachLoadedFeature(std::string_view methodName, Func&& callback, bool emitGpuZone = false)
 	{
-		for (auto* feature : GetFeatureList()) {
+		ForEachLoadedFeature(GetFeatureList(), methodName, std::forward<Func>(callback), emitGpuZone);
+	}
+
+	/**
+	 * @brief Invokes a callback on every loaded feature in a caller-supplied list (e.g. a cached,
+	 * pre-filtered subset), with the same Tracy profiling as the full-list overload above.
+	 * @param features The features to visit.
+	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
+	 * @param callback Callable receiving a Feature* for each loaded feature.
+	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
+	 */
+	template <typename Func>
+	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false)
+	{
+		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
 				{

@@ -1144,12 +1144,11 @@ namespace Hooks
 	public:
 		explicit RenderPassHookScope(const RE::BSRenderPass* a_pass)
 		{
-			for (Feature* feature : Feature::GetRenderPassHookFeatures()) {
-				if (feature->loaded) {
+			Feature::ForEachLoadedFeature(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
+				[&](Feature* feature) {
 					if (auto cleanup = feature->OnRenderPassBegin(a_pass))
 						cleanups.push_back(std::move(cleanup));
-				}
-			}
+				});
 		}
 
 		~RenderPassHookScope()
