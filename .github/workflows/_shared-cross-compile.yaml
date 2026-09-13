@@ -67,12 +67,11 @@ jobs:
                   # wine64 named explicitly: with i386 multiarch on, apt can satisfy `wine` from
                   # wine32:i386 alone, leaving no 64-bit loader (x86-64 PEs fail "Bad EXE format").
                   sudo apt-get install -y ninja-build wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
-                  curl -fsSL --retry 3 --retry-all-errors -o /tmp/llvm.sh https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/cf853fefa308484749df8a87004c580a6c0fe830/llvm.sh
-                  echo "03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae  /tmp/llvm.sh" | sha256sum -c -
-                  chmod +x /tmp/llvm.sh
-                  # MSVC 14.51's STL headers hard-require Clang 20+ (static_assert
-                  # STL1000); mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
-                  sudo /tmp/llvm.sh 20
+                  # Ubuntu noble already ships Clang 20 natively; installing from
+                  # apt.llvm.org (the old llvm.sh path) pulls a conflicting libllvm20
+                  # build and apt refuses the transaction. MSVC 14.51's STL headers
+                  # hard-require Clang 20+ (static_assert STL1000).
+                  sudo apt-get install -y clang-20 clang-tools-20 lld-20 llvm-20 libclang-common-20-dev
 
             # Create the prefix here: left implicit, its first-run setup races the
             # shader/header-generation steps that trigger it and fails half-initialized.
