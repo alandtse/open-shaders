@@ -39,12 +39,22 @@ void VR::LoadSettings(json& o_json)
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
 	auto& nearClip = dynamicNearClip.settings;
-	nearClip.DynamicNearClip = o_json.value("DynamicNearClip", nearClip.DynamicNearClip);
-	nearClip.NormalNearClip = o_json.value("NormalNearClip", nearClip.NormalNearClip);
-	nearClip.MinimumNearClip = o_json.value("MinimumNearClip", nearClip.MinimumNearClip);
-	nearClip.NearDistanceScale = o_json.value("NearDistanceScale", nearClip.NearDistanceScale);
-	nearClip.RestoreSpeed = o_json.value("RestoreSpeed", nearClip.RestoreSpeed);
-	nearClip.DynamicNearClipReadout = o_json.value("DynamicNearClipReadout", nearClip.DynamicNearClipReadout);
+	const auto loadBool = [&](std::string_view key, bool& value) {
+		const auto entry = o_json.find(key);
+		if (entry != o_json.end() && entry->is_boolean())
+			value = entry->get<bool>();
+	};
+	const auto loadFloat = [&](std::string_view key, float& value) {
+		const auto entry = o_json.find(key);
+		if (entry != o_json.end() && entry->is_number())
+			value = entry->get<float>();
+	};
+	loadBool("DynamicNearClip", nearClip.DynamicNearClip);
+	loadFloat("NormalNearClip", nearClip.NormalNearClip);
+	loadFloat("MinimumNearClip", nearClip.MinimumNearClip);
+	loadFloat("NearDistanceScale", nearClip.NearDistanceScale);
+	loadFloat("RestoreSpeed", nearClip.RestoreSpeed);
+	loadBool("DynamicNearClipReadout", nearClip.DynamicNearClipReadout);
 	nearClip.ClampNearClipSettings();
 	if (o_json.contains("StereoOptimizations")) {
 		json stereoOptJson = o_json["StereoOptimizations"];
