@@ -1344,8 +1344,12 @@ struct TESForm_SetFormEditorID
 
 // Probes textureSet on a disposable PBR material; returns true if the required
 // diffuse/normal/rmaos slots populated. Caller reuses the probe for SetMaterial.
+//
+// A stack-local material never zeroes textureSetLock; garbage there spins the
+// real engine's OnLoadTextureSet forever.
 static bool ProbePBRTextureSet(RE::BGSTextureSet* textureSet, BSLightingShaderMaterialPBR& probeMaterial)
 {
+	probeMaterial.textureSetLock = 0;
 	probeMaterial.OnLoadTextureSet(0, textureSet);
 	return probeMaterial.diffuseTexture && probeMaterial.normalTexture && probeMaterial.rmaosTexture;
 }
