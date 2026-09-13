@@ -69,6 +69,8 @@ struct Wind : Feature
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 	virtual void OnSceneTransitionReset(bool a_opening) override;
+	virtual bool WantsRenderPassHook() const override { return true; }
+	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* a_pass) override;
 
 	[[nodiscard]] PerFrameData GetCommonBufferData() const;
 	/** Advances all configured transient wind effects for the current frame. */
@@ -88,6 +90,8 @@ struct Wind : Feature
 	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;
 
 private:
+	/** @brief Whether a_pass draws tree geometry eligible for trunk/leaf bend. */
+	static bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass);
 	static void SanitizeSettings(Settings& a_settings);
 	static void SanitizeGrassWindSettings(Settings& a_settings);
 	static uint32_t SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize);

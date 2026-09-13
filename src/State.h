@@ -469,6 +469,12 @@ public:
 	void UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass);
 	void UpdatePermutationBuffer();
 	/**
+	 * @brief Binds permutationCB/sharedDataCB/featureDataCB at the vertex stage, since vertex
+	 * shaders (grass/tree bend) now read permutation fields in addition to pixel shaders.
+	 * @param a_shader Shader to bind for; defaults to the currently bound shader.
+	 */
+	void BindVertexPermutationData(const RE::BSShader* a_shader = nullptr);
+	/**
 	 * @brief Checks whether directional shadows are available for the current scene.
 	 * @returns true if directional shadows are present, false otherwise.
 	 */

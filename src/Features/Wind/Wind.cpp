@@ -11,14 +11,19 @@
 #include "Features/Wind/WindEffects/WeaponThrowVRWind.h"
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Trees/TreeWindPatcher.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/Format.h"
 
+#include "RE/B/BSGeometry.h"
+#include "RE/B/BSLeafAnimNode.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <string_view>
 
 using namespace WindSettingsLimits;
@@ -29,6 +34,61 @@ namespace
 	constexpr uint32_t kNearTransientFieldMask = 1u << 0u;
 	constexpr uint32_t kMidTransientFieldMask = 1u << 1u;
 	constexpr uint32_t kFarTransientFieldMask = 1u << 2u;
+
+	constexpr auto kTreeBendDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend);
+
+	bool IsExplicitTrunkGeometry(const RE::BSGeometry* a_geometry)
+	{
+		if (!a_geometry)
+			return false;
+
+		const char* geometryName = a_geometry->name.c_str();
+		return geometryName && (std::strcmp(geometryName, "trunk") == 0 || std::strncmp(geometryName, "OS_TRUNK", 8) == 0);
+	}
+
+	bool IsExplicitTreeLeavesGeometry(const RE::BSGeometry* a_geometry)
+	{
+		if (!a_geometry || !netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent))
+			return false;
+
+		const char* geometryName = a_geometry->name.c_str();
+		return geometryName && std::strcmp(geometryName, "leaves") == 0;
+	}
+
+	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)
+	{
+		return IsExplicitTrunkGeometry(a_geometry) || IsExplicitTreeLeavesGeometry(a_geometry);
+	}
+
+	bool SupportsTreeBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
+	{
+		if (a_shader.shaderType == RE::BSShader::Type::Lighting) {
+			const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_vertexDescriptor >> 24) & 0x3F);
+			return technique != SIE::ShaderCache::LightingShaderTechniques::LODObjects &&
+			       technique != SIE::ShaderCache::LightingShaderTechniques::LODObjectHD;
+		}
+
+		return a_shader.shaderType == RE::BSShader::Type::Utility &&
+		       (a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::LodObject)) == 0;
+	}
+
+	uint32_t GetRenderPassVertexDescriptor(const RE::BSRenderPass& a_pass)
+	{
+		constexpr uint32_t kLightingTechniqueStart = 0x4800002D;
+		if (a_pass.shader && a_pass.shader->shaderType == RE::BSShader::Type::Lighting && a_pass.passEnum >= kLightingTechniqueStart)
+			return a_pass.passEnum - kLightingTechniqueStart;
+		return a_pass.passEnum;
+	}
+
+	bool IsTreeRenderPass(const RE::BSRenderPass* a_pass)
+	{
+		if (!a_pass || !a_pass->shader || !a_pass->geometry)
+			return false;
+
+		const auto shaderType = a_pass->shader->shaderType.get();
+		return (shaderType == RE::BSShader::Type::Lighting || shaderType == RE::BSShader::Type::Utility) &&
+		       IsTreeGeometry(a_pass->geometry);
+	}
 }
 
 Wind::Wind()
@@ -518,6 +578,72 @@ void Wind::SetupResources()
 {
 	SetupGrassWindResources();
 	SetupTreeWindResources();
+}
+
+bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass)
+{
+	if (!loaded || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
+		!SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
+		return false;
+
+	return true;
+}
+
+std::function<void()> Wind::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
+{
+	auto* state = globals::state;
+	if (!state || !IsTreeBendRenderPass(a_pass))
+		return nullptr;
+
+	auto& permutationData = state->permutationData;
+	const auto previous = permutationData;
+
+	const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
+	permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
+	permutationData.TreeBendModelSensitivity = sensitivities.bend;
+	permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;
+	permutationData.TreeWindUpperBendRange = sensitivities.upperBendRange;
+	permutationData.TreeWindMaximumDisplacementPercent = sensitivities.maximumDisplacementPercent;
+	permutationData.TreeWindTrunkGustInfluence = sensitivities.trunkGustInfluence;
+	permutationData.TreeLeafGustInfluence = sensitivities.leafGustInfluence;
+	permutationData.TreeTransientWindInfluence = sensitivities.transientWindInfluence;
+	permutationData.TreeLeafTransientWindInfluence = sensitivities.leafTransientWindInfluence;
+	permutationData.TreeLeafTransientFlutterMaximum = sensitivities.leafTransientFlutterMaximum;
+	permutationData.TreeTransientMaximumBendMultiplier = sensitivities.transientMaximumBendMultiplier;
+	if (sensitivities.hasBounds) {
+		permutationData.TreeWindBoundsBase = sensitivities.boundMinimumZ;
+		permutationData.TreeWindBoundsHeight = sensitivities.boundHeight;
+		permutationData.TreeWindProbeBase = { sensitivities.probeBase.x, sensitivities.probeBase.y, sensitivities.probeBase.z, 0.0f };
+		permutationData.TreeWindProbeTop = { sensitivities.probeTop.x, sensitivities.probeTop.y, sensitivities.probeTop.z, 0.0f };
+	} else {
+		permutationData.TreeWindBoundsBase = 0.0f;
+		permutationData.TreeWindBoundsHeight = 0.0f;
+		permutationData.TreeWindProbeBase = {};
+		permutationData.TreeWindProbeTop = {};
+	}
+	UpdateTreeWindSpring();
+
+	state->UpdatePermutationBuffer();
+	state->BindVertexPermutationData(a_pass->shader);
+
+	return [state, previous]() {
+		state->permutationData.ExtraShaderDescriptor = previous.ExtraShaderDescriptor;
+		state->permutationData.TreeBendModelSensitivity = previous.TreeBendModelSensitivity;
+		state->permutationData.TreeLeafModelSensitivity = previous.TreeLeafModelSensitivity;
+		state->permutationData.TreeWindUpperBendRange = previous.TreeWindUpperBendRange;
+		state->permutationData.TreeWindMaximumDisplacementPercent = previous.TreeWindMaximumDisplacementPercent;
+		state->permutationData.TreeWindBoundsBase = previous.TreeWindBoundsBase;
+		state->permutationData.TreeWindBoundsHeight = previous.TreeWindBoundsHeight;
+		state->permutationData.TreeWindProbeBase = previous.TreeWindProbeBase;
+		state->permutationData.TreeWindProbeTop = previous.TreeWindProbeTop;
+		state->permutationData.TreeWindTrunkGustInfluence = previous.TreeWindTrunkGustInfluence;
+		state->permutationData.TreeLeafGustInfluence = previous.TreeLeafGustInfluence;
+		state->permutationData.TreeTransientWindInfluence = previous.TreeTransientWindInfluence;
+		state->permutationData.TreeLeafTransientWindInfluence = previous.TreeLeafTransientWindInfluence;
+		state->permutationData.TreeLeafTransientFlutterMaximum = previous.TreeLeafTransientFlutterMaximum;
+		state->permutationData.TreeTransientMaximumBendMultiplier = previous.TreeTransientMaximumBendMultiplier;
+		state->UpdatePermutationBuffer();
+	};
 }
 
 Wind::PerFrameData Wind::GetCommonBufferData() const

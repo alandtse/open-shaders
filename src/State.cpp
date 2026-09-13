@@ -84,6 +84,28 @@ void State::UpdatePermutationBuffer()
 	}
 }
 
+void State::BindVertexPermutationData(const RE::BSShader* a_shader)
+{
+	constexpr UINT kPermutationVertexRegister = 4;
+
+	if (!a_shader)
+		a_shader = currentShader;
+	if (!a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
+		return;
+
+	const auto shaderType = a_shader->shaderType.get();
+	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
+		shaderType != RE::BSShader::Type::Grass)
+		return;
+
+	ID3D11Buffer* buffers[] = {
+		permutationCB->CB(),
+		sharedDataCB->CB(),
+		featureDataCB->CB(),
+	};
+	globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
+}
+
 void State::Draw()
 {
 	ZoneScoped;
