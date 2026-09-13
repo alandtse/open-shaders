@@ -601,6 +601,23 @@ def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[st
     return feature_members
 
 
+def collect_feature_type_aliases(paths: list[Path], features: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    feature_aliases: dict[str, dict[str, str]] = {}
+    for path in paths:
+        text = read_text(path)
+        for feature_class in features:
+            feature_match = re.search(rf"\b(?:struct|class)\s+{re.escape(feature_class)}\b[^\{{;]*\{{", text)
+            if not feature_match:
+                continue
+            feature_end = find_matching_brace(text, feature_match.end() - 1)
+            if feature_end < 0:
+                continue
+
+            feature_body = text[feature_match.end():feature_end]
+            feature_aliases.setdefault(feature_class, {}).update(collect_type_aliases(feature_body))
+    return feature_aliases
+
+
 def collect_save_roots(paths: list[Path]) -> dict[str, str]:
     roots: dict[str, str] = {}
     for path in paths:
@@ -3942,6 +3959,9 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         [p for p in src_paths if p.suffix == ".h"],
         {child_class: {} for child_class in settings_component_classes})
     catalog_class_fields = feature_fields | component_fields
+    catalog_class_aliases = collect_feature_type_aliases(
+        [p for p in src_paths if p.suffix == ".h"],
+        features | {child_class: {} for child_class in settings_component_classes})
     save_roots = collect_save_roots([p for p in src_paths if p.suffix == ".cpp"])
     direct_persisted_fields = collect_direct_persisted_fields(
         [p for p in src_paths if p.suffix == ".cpp"], feature_members)
@@ -4160,8 +4180,10 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             owner for owner in dict.fromkeys((
                 *inherited_metadata_owners, type_owner_name, simple_type))
             if owner not in {context.field_class, "Settings"})
+        declared_type = catalog_class_aliases.get(context.field_class, {}).get(simple_type, simple_type)
+        declared_type = declared_type.split("::")[-1]
         declared_fields = catalog_class_fields.get(context.field_class, {}).get(
-            simple_type, struct_fields.get(simple_type, {}))
+            simple_type, struct_fields.get(declared_type, {}))
         for field in fields:
             field_type = declared_fields.get(field, "")
             if not field_type:

@@ -355,6 +355,35 @@ void FactoryFeature::Setup()
                 {component[0] for component in components["FactoryFeature"]},
                 {"UniqueComponent", "SharedComponent"})
 
+    def test_feature_type_aliases_resolve_to_their_underlying_struct(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            header = root / "AliasFeature.h"
+            header.write_text(r'''
+struct AliasFeature : Feature
+{
+    struct RealType
+    {
+        float value = 0.0f;
+    };
+
+    using AliasedType = RealType;
+
+    struct Settings
+    {
+        AliasedType aliased{};
+    } settings;
+
+    std::string GetShortName() { return "Alias"; }
+    std::string GetName() { return "Alias Feature"; }
+};
+''', encoding="utf-8")
+
+            features = GENERATOR.collect_features([header])
+            aliases = GENERATOR.collect_feature_type_aliases([header], features)
+
+            self.assertEqual(aliases["AliasFeature"]["AliasedType"], "RealType")
+
     def test_standard_colors_are_bounded_and_hdr_colors_are_unbounded(self):
         for field, component_count in (("standardColor3", 3), ("standardColor4", 4)):
             entries = [
