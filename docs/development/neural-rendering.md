@@ -64,9 +64,10 @@ or explicitly recreating resources recreates the NR instances.
     including VR's R24 depth view, and writes non-inverted device depth to
     R32 float. Depth is not linearized.
 -   Motion: the same encoder's undilated path writes RG16 float, preserving
-    correspondence with the center-pixel depth guide. OS motion
-    vectors already use the pixel-space convention consumed by the existing
-    Streamline path, so Feature 18 receives identity motion-vector scales.
+    correspondence with the center-pixel depth guide. OS motion vectors store
+    current-to-previous displacement in normalized UV units, so Feature 18
+    receives the per-eye guide dimensions as its motion-vector scales. Reset
+    frames submit zero motion because their previous history is invalid.
 -   Frame data: camera cuts use the existing `Util::GetEyePosition` renderer
     position, cached view direction, and projection changes. No undocumented
     jitter, frame-time, or camera-matrix aliases are supplied to Feature 18.

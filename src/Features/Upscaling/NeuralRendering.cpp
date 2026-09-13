@@ -281,7 +281,7 @@ struct NeuralRendering::Impl
 				eye.motion.texture->uav.get(), eye.depth.texture->uav.get() };
 			context->CSSetUnorderedAccessViews(0, 4, outputs, nullptr);
 			context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
-			if (diagnostic.options & NR::Diagnostics::ZeroMotion) {
+			if (eye.frame.reset || (diagnostic.options & NR::Diagnostics::ZeroMotion)) {
 				constexpr float zero[4]{};
 				context->ClearUnorderedAccessViewFloat(eye.motion.texture->uav.get(), zero);
 			}

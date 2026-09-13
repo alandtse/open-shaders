@@ -298,8 +298,8 @@ namespace NR
 			parameters->Set(key, guideWidth);
 		for (auto key : { "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight" })
 			parameters->Set(key, guideHeight);
-		parameters->Set("DLSSNR.MVecScaleX", 1.0f);
-		parameters->Set("DLSSNR.MVecScaleY", 1.0f);
+		parameters->Set("DLSSNR.MVecScaleX", static_cast<float>(guideWidth));
+		parameters->Set("DLSSNR.MVecScaleY", static_cast<float>(guideHeight));
 		parameters->Set("DLSSNR.DepthInverted", 0u);
 		parameters->Set("DLSSNR.Enabled", 1u);
 		parameters->Set("DLSSNR.Reset", frame.reset ? 1u : 0u);
