@@ -25,6 +25,7 @@
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
 
+#include <optional>
 #include <unordered_map>
 
 namespace
@@ -1170,7 +1171,10 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		RenderPassHookScope renderPassHookScope(a_pass);
+		// No vector/std::function machinery touched at all until a feature opts in.
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1183,7 +1187,9 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		RenderPassHookScope renderPassHookScope(a_pass);
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1196,7 +1202,9 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		RenderPassHookScope renderPassHookScope(a_pass);
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
