@@ -419,6 +419,11 @@ float4 ComputeLightScattering(uint3 coord, float3 cellOffset)
 		ComputeHistoryVolumeUVAndDepth(frontPositionWS, frontEyeIndex, validFrontHistory, previousFrontDepth);
 		if (validFrontHistory) {
 			historyUV.xy = saturate(FixupHistoryUV(historyUV.xy, previousFrontDepth, validHistory));
+#if defined(VR)
+			float texelCenterX = 0.5f * VolumetricFogInvGridSize.x;
+			float eyeMin = eyeIndex == 0u ? 0.0f : 0.5f;
+			historyUV.x = clamp(historyUV.x, eyeMin + texelCenterX, eyeMin + 0.5f - texelCenterX);
+#endif
 		} else {
 			validHistory = false;
 		}
