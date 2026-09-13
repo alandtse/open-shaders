@@ -174,16 +174,16 @@ target_include_directories(
         ${EXPRTK_INCLUDE_DIRS}
 )
 
-# Vendored third-party API headers under include/ (FidelityFX's api/ vendor
-# copy, TDM's plugin API) aren't held to this project's warning policy; SYSTEM
-# on top of the plain include/ dir above suppresses warnings from them without
-# affecting our own headers (PCH.h, VRAPI/) that live alongside them.
+# Vendored third-party API headers (FidelityFX's api/ vendor copy, TDM's
+# plugin API) aren't held to this project's warning policy. They live under
+# their own root (not include/, which also holds our own PCH.h, VRAPI/, etc.)
+# specifically so SYSTEM here suppresses only their warnings -- SYSTEM applies
+# per include-directory entry, not per subtree, so it can't be scoped within
+# a directory shared with headers we don't want suppressed.
 target_include_directories(
     ${PROJECT_NAME}
     SYSTEM
-    PRIVATE
-        "${CMAKE_SOURCE_DIR}/include/FidelityFX"
-        "${CMAKE_SOURCE_DIR}/include/TDM"
+    PRIVATE "${CMAKE_SOURCE_DIR}/vendor/include"
 )
 
 # ImGuiVRHelper client API — fetched from upstream so the dependency and its

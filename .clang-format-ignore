@@ -1,3 +1,4 @@
 #ignore third party
 ./extern/*
 ./include/*
+./vendor/*
