@@ -38,9 +38,11 @@ jobs:
             # Unpinned, xwin takes the newest manifest/SDK/CRT, and the cached
             # sysroot silently stops matching the cache key built from these.
             XWIN_VERSION: "0.10.0"
-            XWIN_MANIFEST_VERSION: "17"
-            XWIN_SDK_VERSION: "10.0.26100"
-            XWIN_CRT_VERSION: "14.44.17.14"
+            # Must track CommonLibVR's prebuilt toolset (windows-latest, VS2026/
+            # MSVC 14.51) or the final link fails on missing STL symbols.
+            XWIN_MANIFEST_VERSION: "18"
+            XWIN_SDK_VERSION: "10.0.28000"
+            XWIN_CRT_VERSION: "14.51"
         steps:
             - name: Checkout
               uses: actions/checkout@v6
@@ -68,8 +70,9 @@ jobs:
                   curl -fsSL --retry 3 --retry-all-errors -o /tmp/llvm.sh https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/cf853fefa308484749df8a87004c580a6c0fe830/llvm.sh
                   echo "03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae  /tmp/llvm.sh" | sha256sum -c -
                   chmod +x /tmp/llvm.sh
-                  # Clang 19+ required for MSVC STL; mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
-                  sudo /tmp/llvm.sh 19
+                  # MSVC 14.51's STL headers hard-require Clang 20+ (static_assert
+                  # STL1000); mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
+                  sudo /tmp/llvm.sh 20
 
             # Create the prefix here: left implicit, its first-run setup races the
             # shader/header-generation steps that trigger it and fails half-initialized.
@@ -95,6 +98,20 @@ jobs:
                   echo "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88  xwin.tar.gz" | sha256sum -c -
                   tar xzf xwin.tar.gz
                   install -Dm755 xwin-0.10.0-x86_64-unknown-linux-musl/xwin "$RUNNER_TEMP_DIR/bin/xwin"
+
+                  # A bogus --crt-version still populates the manifest cache before failing.
+                  "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
+                      --manifest-version "$XWIN_MANIFEST_VERSION" \
+                      --sdk-version "$XWIN_SDK_VERSION" --crt-version "0.0.0" splat \
+                      --output /tmp/xwin-probe-unused || true
+
+                  # Works around an xwin 0.10.0 + SDK 10.0.28000 manifest bug: an unescaped
+                  # space in one payload URL trips its URI parser. Idempotent.
+                  manifest_file="$RUNNER_TEMP_DIR/xwin-cache/dl/pkg_manifest_"*.vsman
+                  if grep -q 'w kits2' $manifest_file 2>/dev/null; then
+                      sed -i 's/w kits2/w%20kits2/g' $manifest_file
+                  fi
+
                   "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
                       --manifest-version "$XWIN_MANIFEST_VERSION" \
                       --sdk-version "$XWIN_SDK_VERSION" --crt-version "$XWIN_CRT_VERSION" splat \
