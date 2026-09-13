@@ -174,6 +174,18 @@ target_include_directories(
         ${EXPRTK_INCLUDE_DIRS}
 )
 
+# Vendored third-party API headers under include/ (FidelityFX's api/ vendor
+# copy, TDM's plugin API) aren't held to this project's warning policy; SYSTEM
+# on top of the plain include/ dir above suppresses warnings from them without
+# affecting our own headers (PCH.h, VRAPI/) that live alongside them.
+target_include_directories(
+    ${PROJECT_NAME}
+    SYSTEM
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/include/FidelityFX"
+        "${CMAKE_SOURCE_DIR}/include/TDM"
+)
+
 # ImGuiVRHelper client API — fetched from upstream so the dependency and its
 # pinned version are explicit instead of a vendored copy. Configures only the
 # helper's api/ CMake target (SOURCE_SUBDIR) and skips its submodules. The
@@ -250,6 +262,16 @@ if(MSVC)
     # Large translation units (e.g. LightLimitFix/ShadowCasterUI.cpp pulling the
     # full feature + editor headers) exceed the default COFF section limit; /bigobj.
     target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
+endif()
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # A designated initializer that intentionally sets only some fields
+    # (the rest correctly zero-init) is idiomatic C++20, not an omission;
+    # this diagnostic has no equivalent under real MSVC's warning set.
+    target_compile_options(
+        ${PROJECT_NAME}
+        PRIVATE "-Wno-missing-designated-field-initializers"
+    )
 endif()
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
