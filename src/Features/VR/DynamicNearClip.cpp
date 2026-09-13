@@ -15,6 +15,7 @@ namespace
 	constexpr float kMaximumSampleAge = 0.2f;
 	constexpr float kCameraGap = 0.5f;
 	constexpr float kLogInterval = 2.0f;
+	constexpr float kSSGIResetDropRatio = 0.9f;
 
 	struct PrepareWorldCamera
 	{
@@ -243,7 +244,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		targetNear = std::isfinite(distance) ? std::clamp(distance * settings.NearDistanceScale, settings.MinimumNearClip, settings.NormalNearClip) : settings.NormalNearClip;
 		const float previousNear = controller.current;
 		controller.Update(targetNear, elapsed, fresh, settings);
-		if (controller.current < previousNear * 0.9f) {
+		if (controller.current < previousNear * kSSGIResetDropRatio) {
 			resetSSGIHistory = true;
 			ssgiReleaseResetPending = true;
 		} else if (ssgiReleaseResetPending && targetNear > previousNear * (1.0f + VRNearClipController::kHysteresis)) {
