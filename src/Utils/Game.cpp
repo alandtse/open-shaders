@@ -37,8 +37,11 @@ namespace Util
 			return;
 
 		// Bitwise or, not ||: both requests must be drained even when the first one was already pending.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wbitwise-instead-of-logical"
 		const bool hadPendingTransition = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel) |
 		                                  gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel);
+#pragma clang diagnostic pop
 		if (hadPendingTransition)
 			MarkCelestialTransitionComplete();
 	}

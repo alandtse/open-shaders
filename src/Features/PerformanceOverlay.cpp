@@ -761,6 +761,9 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 				case SpecialShaderType::Other:
 					row.tooltip = T(TKEY("tip_other_abtest"), "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.");
 					break;
+				case SpecialShaderType::CSPasses:
+					row.tooltip = T(TKEY("tip_cs_passes"), "Total time spent in compute shader passes.");
+					break;
 				}
 			}
 		}

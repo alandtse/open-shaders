@@ -35,7 +35,7 @@ namespace
 		}
 
 		using AddDllDirectoryFn = DLL_DIRECTORY_COOKIE(WINAPI*)(PCWSTR);
-		auto addDllDirectory = reinterpret_cast<AddDllDirectoryFn>(GetProcAddress(kernel32, "AddDllDirectory"));
+		auto addDllDirectory = reinterpret_cast<AddDllDirectoryFn>(reinterpret_cast<void*>(GetProcAddress(kernel32, "AddDllDirectory")));
 		if (!addDllDirectory) {
 			const auto error = GetLastError();
 			logger::warn("[FidelityFX] AddDllDirectory is unavailable for '{}' (Win32 error {})",

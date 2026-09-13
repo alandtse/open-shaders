@@ -1256,6 +1256,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 					a_pixelDescriptor |= 256;
 			}
 			break;
+		default:
+			break;
 		}
 	}
 }

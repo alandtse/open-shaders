@@ -381,7 +381,7 @@ namespace SIE
 		TrackingIncludeHandler(const std::filesystem::path& base) :
 			baseDir(base) {}
 
-		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) override
+		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) noexcept override
 		{
 			(void)IncludeType;
 			try {
@@ -419,7 +419,7 @@ namespace SIE
 			}
 		}
 
-		HRESULT Close(LPCVOID /*pData*/) override
+		HRESULT Close(LPCVOID /*pData*/) noexcept override
 		{
 			// Buffers are owned by this handler; no action required on Close.
 			return S_OK;
@@ -483,6 +483,8 @@ namespace SIE
 				return PixelShaderProfile;
 			case ShaderClass::Compute:
 				return ComputeShaderProfile;
+			case ShaderClass::Total:
+				break;
 			}
 			return nullptr;
 		}
@@ -666,6 +668,8 @@ namespace SIE
 			const auto technique = static_cast<ShaderCache::ParticleShaderTechniques>(descriptor);
 			size_t lastIndex = 0;
 			switch (technique) {
+			case Particles:
+				break;
 			case ParticlesGryColor:
 				{
 					defines[lastIndex++] = { "GRAYSCALE_TO_COLOR", nullptr };

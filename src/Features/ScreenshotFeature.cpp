@@ -367,10 +367,15 @@ namespace
 		}
 
 		if (globals::game::isVR) {
-			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+			// Real object is VR-sized (kVRTOTAL) here; the multi-runtime build's
+			// compile-time array type stays kTOTAL-sized.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warray-bounds"
+			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
+#pragma clang diagnostic pop
 			src.texture = ResolveSlotTexture(slot, holder);
 			src.srv = Util::AsReal(slot.SRV);
-			src.description = "kTOTAL (VR final composite)";
+			src.description = "kVR_FRAMEBUFFER (VR final composite)";
 			return src;
 		}
 

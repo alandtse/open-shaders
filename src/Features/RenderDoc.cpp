@@ -91,7 +91,7 @@ void RenderDoc::Load()
 	}
 
 	// Get the API function pointer
-	auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress((HMODULE)renderDocModule, "RENDERDOC_GetAPI");
+	auto RENDERDOC_GetAPI = reinterpret_cast<pRENDERDOC_GetAPI>(reinterpret_cast<void*>(GetProcAddress((HMODULE)renderDocModule, "RENDERDOC_GetAPI")));
 	if (!RENDERDOC_GetAPI) {
 		logger::warn("[RenderDoc] Failed to get RENDERDOC_GetAPI function");
 		FreeLibrary((HMODULE)renderDocModule);
