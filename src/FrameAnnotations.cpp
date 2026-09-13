@@ -1091,7 +1091,7 @@ namespace FrameAnnotations
 		auto renderer = globals::game::renderer;
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetRenderTargetCount(); ++renderTargetIndex) {
+			renderTargetIndex < static_cast<size_t>(Util::GetRenderTargetCount()); ++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS::RENDER_TARGET>(renderTargetIndex));
 			if (auto texture = renderer->GetRuntimeData().renderTargets[renderTargetIndex].texture) {
@@ -1112,7 +1112,7 @@ namespace FrameAnnotations
 		}
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetDepthStencilCount();
+			renderTargetIndex < static_cast<size_t>(Util::GetDepthStencilCount());
 			++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS_DEPTHSTENCIL::RENDER_TARGET_DEPTHSTENCIL>(

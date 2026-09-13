@@ -556,7 +556,7 @@ void Deferred::OverrideBlendStates()
 					for (int d = 0; d < 2; d++) {
 						forwardBlendStates[a][b][c][d] = blendStates->a[a][b][c][d];
 
-						if (auto blendState = forwardBlendStates[a][b][c][d]) {
+						if (forwardBlendStates[a][b][c][d]) {
 							D3D11_BLEND_DESC blendDesc;
 							forwardBlendStates[a][b][c][d]->GetDesc(&blendDesc);
 

@@ -207,9 +207,9 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 

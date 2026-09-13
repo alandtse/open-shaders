@@ -138,7 +138,7 @@ void SkySync::DrawSettings()
 			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
 			ImGui::Text(T(TKEY("debug_transitioning"), "Transitioning %.0f%%"), t * 100.0f);
 		} else {
-			ImGui::TextDisabled(T(TKEY("debug_no_transition"), "No transition"));
+			ImGui::TextDisabled("%s", T(TKEY("debug_no_transition"), "No transition"));
 		}
 
 		ImGui::TreePop();

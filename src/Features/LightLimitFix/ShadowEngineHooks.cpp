@@ -353,11 +353,6 @@ namespace ShadowCasterManager
 		return !ssn || ssn->GetRuntimeData().portalGraph == nullptr;
 	}
 
-	static bool GetSunBool1()
-	{
-		static REL::RelocationID uid(513201, 390932);
-		return *reinterpret_cast<bool*>(uid.address());
-	}
 	// Engine's per-frame count of focus shadow actors (player + tracked NPCs);
 	// max is iNumFocusShadow:Display (default 4). The engine renders one
 	// high-resolution shadow per entry into kSHADOWMAPS slots

@@ -3599,7 +3599,7 @@ namespace SceneSettingsUI
 
 		std::array<float, 4> values{};
 		for (size_t component = 0; component < components.size(); ++component)
-			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.get<float>();
+			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.template get<float>();
 
 		if (readOnly)
 			ImGui::BeginDisabled();
@@ -4704,8 +4704,8 @@ namespace SceneSettingsUI
 
 		if (open) {
 			if (hasActiveOverrides) {
-				Util::Text::WrappedError(T("feature.scene_manager.overridden_warning",
-					"Feature values are being overridden. Pause overwrites to see changes."));
+				Util::Text::WrappedError("%s", T("feature.scene_manager.overridden_warning",
+												   "Feature values are being overridden. Pause overwrites to see changes."));
 			}
 			if (onExportAll) {
 				if (ImGui::SmallButton(std::format("{}{}",
@@ -4761,7 +4761,7 @@ namespace SceneSettingsUI
 		ImGui::InputText(T("feature.scene_manager.export.mod_name", "Mod Name"), state.modName, IM_ARRAYSIZE(state.modName));
 		auto modName = Util::FileHelpers::SanitizeFileName(state.modName);
 		if (modName.empty())
-			Util::Text::WrappedDisabled(T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
+			Util::Text::WrappedDisabled("%s", T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
 		ImGui::Spacing();
 
 		ImGui::TextUnformatted(T("feature.scene_manager.export.select_settings", "Select settings to export as overwrite files:"));

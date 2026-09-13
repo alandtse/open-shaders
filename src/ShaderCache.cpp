@@ -175,7 +175,7 @@ namespace SIE
 				includes.push_back(std::move(includePath));
 			}
 			std::lock_guard lock(parseCacheMutex);
-			parseCache[key] = IncludeParseEntry{ selfMTime, includes };
+			parseCache[key] = IncludeParseEntry{ selfMTime, includes, std::nullopt };
 		}
 
 		auto maxTime = selfMTime;
@@ -1087,6 +1087,9 @@ namespace SIE
 			case RE::BSShader::Type::Utility:
 				GetUtilityShaderDefines(descriptor, defines);
 				break;
+			case RE::BSShader::Type::None:
+			case RE::BSShader::Type::Total:
+				break;
 			}
 		}
 
@@ -1714,6 +1717,8 @@ namespace SIE
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
 			case ShaderClass::Compute:
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
+			case ShaderClass::Total:
+				break;
 			}
 			return {};
 		}
@@ -2370,7 +2375,7 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableVShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableVShaders)) {
 			return nullptr;
 		}
 
@@ -2414,7 +2419,7 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enablePShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enablePShaders)) {
 			return nullptr;
 		}
 
@@ -2458,7 +2463,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		auto state = globals::state;
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableCShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableCShaders)) {
 			return nullptr;
 		}
 
@@ -3237,14 +3242,9 @@ namespace SIE
 		return Util::CacheInvalidation::HasFailedFeature(mismatches);
 	}
 
-	// The rollback slot's on-disk presence is the one filesystem check these
+	// The rollback slot's on-disk presence is the one filesystem check this
 	// can't do without ShaderCache's path helpers, so it's evaluated here and
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
-	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
-	{
-		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches);
-	}
-
 	static bool SetPreviousCacheRestoreCandidate(
 		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
 		bool& previousDiskCacheAvailable,
@@ -4339,11 +4339,11 @@ namespace SIE
 
 		// Fallback to original behavior with full shader map
 		std::scoped_lock lockM{ mapMutex };
-		auto targetIndex = a_forward ? 0 : shaderMap.size() - 1;           // default start or last element
-		if (blockedKeyIndex >= 0 && shaderMap.size() > blockedKeyIndex) {  // grab next element
-			targetIndex = (blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
+		size_t targetIndex = a_forward ? 0 : shaderMap.size() - 1;                              // default start or last element
+		if (blockedKeyIndex >= 0 && shaderMap.size() > static_cast<size_t>(blockedKeyIndex)) {  // grab next element
+			targetIndex = static_cast<size_t>(blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
 		}
-		auto index = 0;
+		size_t index = 0;
 		for (auto& [key, value] : shaderMap) {
 			if (index++ == targetIndex) {
 				blockedKey = key;
@@ -4950,7 +4950,7 @@ namespace SIE
 		digestHitTasks = 0;
 		digestMissTasks = 0;
 		compilationPhaseStarted = false;
-		compilationPhaseStart = { 0 };
+		compilationPhaseStart = {};
 		generation.fetch_add(1, std::memory_order_relaxed);
 		slowTasks = 0;
 		verySlowTasks = 0;
@@ -4960,8 +4960,8 @@ namespace SIE
 		QueryPerformanceCounter(&lastReset);
 		lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 		QueryPerformanceCounter(&lastCalculation);
-		completionTime = { 0 };  // Reset completion time
-		totalTime = { 0 };
+		completionTime = 0;  // Reset completion time
+		totalTime = {};
 		{
 			std::lock_guard slowLock(slowTasksMutex);
 			slowTaskRecords.clear();

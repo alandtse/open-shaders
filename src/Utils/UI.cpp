@@ -2065,8 +2065,8 @@ namespace Util
 				// Fallback to default string sort if no custom sort is provided
 				auto cmp = (sortCol < static_cast<int>(customSorts.size()) && customSorts[sortCol]) ? customSorts[sortCol] : StringSortComparator;
 				std::sort(sortedRows.begin(), sortedRows.end(), [sortCol, sortAsc, &cmp](const std::vector<std::string>& a, const std::vector<std::string>& b) {
-					const std::string& aVal = (sortCol < a.size()) ? a[sortCol] : std::string();
-					const std::string& bVal = (sortCol < b.size()) ? b[sortCol] : std::string();
+					const std::string& aVal = (sortCol >= 0 && static_cast<size_t>(sortCol) < a.size()) ? a[sortCol] : std::string();
+					const std::string& bVal = (sortCol >= 0 && static_cast<size_t>(sortCol) < b.size()) ? b[sortCol] : std::string();
 					return cmp(aVal, bVal, sortAsc);
 				});
 			}
@@ -2738,7 +2738,6 @@ namespace Util
 		// Draw the toggle knob
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		ImVec2 buttonMin = ImGui::GetItemRectMin();
-		ImVec2 buttonMax = ImGui::GetItemRectMax();
 
 		// Calculate knob position and size
 		float knobRadius = (toggleSize.y - 4.0f) * 0.5f;

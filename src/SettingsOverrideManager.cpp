@@ -628,7 +628,7 @@ bool SettingsOverrideManager::ValidateJsonDataTypes(const json& jsonData, const 
 {
 	try {
 		// Check nesting depth
-		if (std::count(path.begin(), path.end(), '.') > MAX_JSON_DEPTH) {
+		if (static_cast<size_t>(std::count(path.begin(), path.end(), '.')) > MAX_JSON_DEPTH) {
 			if (!filePath.empty()) {
 				logger::info("JSON nesting too deep at '{}' (max {}) in override file: {}", path, MAX_JSON_DEPTH, filePath);
 			}

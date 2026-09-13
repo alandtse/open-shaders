@@ -325,7 +325,6 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 		ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
 
 		auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
-		auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered().Transpose();
 
 		cameraConfig.cameraRight[0] = viewMatrix._11;
 		cameraConfig.cameraRight[1] = viewMatrix._12;
@@ -490,7 +489,6 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_d
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
 	auto& upscaling = globals::features::upscaling;
-	auto jitter = upscaling.jitter;
 
 	// state->screenSize is polluted to renderRes under PerfMode's hook -- mirror
 	// CreateFSRResources' dlssperfActive check or the upscale target size is wrong.

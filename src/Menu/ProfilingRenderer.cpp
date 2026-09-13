@@ -21,14 +21,13 @@ static constexpr float kGraphHeadroomScale = 1.2f;
 static constexpr float kMainGraphHeight = 180.0f;
 static constexpr float kFeatureGraphHeight = 100.0f;
 static constexpr float kFeatureOverviewGraphHeight = 85.0f;
-static constexpr float kFeatureOverviewNameColumnWidth = 150.0f;
 static constexpr float kMainGraphMinFrameTimeSec = 0.0001f;
 static constexpr float kFeatureGraphMinFrameTimeSec = 0.00001f;
 static constexpr float kTimingTableMetricColumnWidth = 55.0f;
 static constexpr float kTimingTablePercentColumnWidth = 45.0f;
 static constexpr float kStatsRefreshSeconds = 1.0f;
 static constexpr float kFeatureDisclosureChevronSpeed = 10.0f;
-static constexpr float kFeatureTimingHeightTolerance = 1.0f;
+[[maybe_unused]] static constexpr float kFeatureTimingHeightTolerance = 1.0f;  // only read inside IM_ASSERT, compiled out in release
 static std::unordered_map<std::string, bool> g_featureProfilingDisclosuresOpen;
 static std::unordered_map<std::string, float> g_featureProfilingChevronProgress;
 static std::string g_currentFeatureProfilingPage;
@@ -609,7 +608,7 @@ void ProfilingRenderer::UpdateStatistics(bool cpuMode)
 		const auto groupName = result.name.substr(0, separator);
 		const auto [it, inserted] = groupIndex.try_emplace(groupName, cachedGroups.size());
 		if (inserted)
-			cachedGroups.push_back({ groupName });
+			cachedGroups.push_back({ groupName, 0.0f, 0.0f, 0.0f, {} });
 		if (separator != std::string::npos) {
 			cachedGroups[it->second].passes.push_back({ result.name.substr(separator + 2),
 				cpuMode ? result.cpuAvgMs : result.avgMs,
@@ -858,7 +857,6 @@ void ProfilingRenderer::RenderFeatureTimingButton(const std::string& featurePref
 
 	const bool pressed = ImGui::Button("##FeatureProfiling", buttonSize);
 	const ImVec2 buttonMin = ImGui::GetItemRectMin();
-	const ImVec2 buttonMax = ImGui::GetItemRectMax();
 	auto* drawList = ImGui::GetWindowDrawList();
 	if (pressed)
 		disclosureOpen = !disclosureOpen;

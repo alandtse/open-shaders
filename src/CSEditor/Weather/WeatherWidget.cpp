@@ -48,20 +48,9 @@ namespace
 		constexpr const char* kNightMax = "Night Max";
 	}
 
-	namespace WeatherDisplay
-	{
-		constexpr const char* kDirectionalXMax = "Directional +X";
-		constexpr const char* kDirectionalXMin = "Directional -X";
-		constexpr const char* kDirectionalYMax = "Directional +Y";
-		constexpr const char* kDirectionalYMin = "Directional -Y";
-		constexpr const char* kDirectionalZMax = "Directional +Z";
-		constexpr const char* kDirectionalZMin = "Directional -Z";
-	}
-
 	namespace WeatherRecord
 	{
 		constexpr const char* kImageSpace = "ImageSpace";
-		constexpr const char* kVolumetricLighting = "Volumetric Lighting";
 		constexpr const char* kPrecipitation = "Precipitation";
 		constexpr const char* kVisualEffect = "Visual Effect";
 		constexpr int kImageSpaceIdOffset = 0;
@@ -165,7 +154,7 @@ void WeatherWidget::DrawWidget()
 					settings.parent = "None";
 				}
 
-				for (int i = 0; i < widgets.size(); i++) {
+				for (size_t i = 0; i < widgets.size(); i++) {
 					auto& widget = widgets[i];
 
 					// Skip self-selection
@@ -678,7 +667,7 @@ void WeatherWidget::InitializeInheritFlags()
 		ensureFlag(std::format("VolumetricLighting_{}", i));
 	}
 
-	for (int i = 0; i < ColorTypes::kTotal; i++) {
+	for (int i = 0; i < static_cast<int>(ColorTypes::kTotal); i++) {
 		ensureFlag(std::format("Atmosphere_{}", ColorTypeLabel(i)));
 	}
 
@@ -997,7 +986,7 @@ void WeatherWidget::DrawWeatherColorSettings()
 			2,   // Unknown
 		};
 
-		for (int idx = 0; idx < ColorTypes::kTotal; idx++) {
+		for (int idx = 0; idx < static_cast<int>(ColorTypes::kTotal); idx++) {
 			int i = displayOrder[idx];
 			std::string colorTypeLabel = ColorTypeLabel(i);
 
@@ -1431,7 +1420,7 @@ void WeatherWidget::SyncInheritedValuesFromParent()
 	syncFogPair(WeatherInherit::kFogPower, WeatherSetting::kDayPower, WeatherSetting::kNightPower);
 	syncFogPair(WeatherInherit::kFogMax, WeatherSetting::kDayMax, WeatherSetting::kNightMax);
 
-	for (int i = 0; i < ColorTypes::kTotal; i++)
+	for (int i = 0; i < static_cast<int>(ColorTypes::kTotal); i++)
 		if (inherited("Atmosphere_" + ColorTypeLabel(i)))
 			settings.atmosphereColors[i] = parentWidget->settings.atmosphereColors[i];
 
@@ -1544,7 +1533,7 @@ void WeatherWidget::InheritAllFromParent()
 		settings.inheritFlags[key] = true;
 
 	// Atmosphere tab
-	for (int i = 0; i < ColorTypes::kTotal; i++) {
+	for (int i = 0; i < static_cast<int>(ColorTypes::kTotal); i++) {
 		settings.atmosphereColors[i] = parentWidget->settings.atmosphereColors[i];
 		settings.inheritFlags["Atmosphere_" + ColorTypeLabel(i)] = true;
 	}
@@ -1667,7 +1656,7 @@ std::vector<Widget::SearchResult> WeatherWidget::CollectSearchableSettings() con
 	results.push_back({ T(TKEY("dalc_directional_z_max"), "Directional +Z"), WeatherTab::kDalc, WeatherSetting::kDirectionalZMax });
 	results.push_back({ T(TKEY("dalc_directional_z_min"), "Directional -Z"), WeatherTab::kDalc, WeatherSetting::kDirectionalZMin });
 
-	for (int i = 0; i < ColorTypes::kTotal; i++) {
+	for (int i = 0; i < static_cast<int>(ColorTypes::kTotal); i++) {
 		std::string colorType = ColorTypeLabel(i);
 		results.push_back({ colorType, WeatherTab::kAtmosphere, colorType });
 	}

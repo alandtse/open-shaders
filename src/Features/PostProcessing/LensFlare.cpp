@@ -106,7 +106,7 @@ void LensFlare::DrawSettings()
 
 	// Ghost Settings
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.ghost_settings", "Ghost Settings"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.ghost_settings", "Ghost Settings"));
 	ImGui::Separator();
 
 	{
@@ -173,7 +173,7 @@ void LensFlare::DrawSettings()
 
 	// Halo Settings
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.halo_settings", "Halo Settings"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.halo_settings", "Halo Settings"));
 	ImGui::Separator();
 	ImGui::SliderFloat(T("feature.post_processing.lens_flare.halo_strength", "Halo Strength"), &settings.HaloStrength, 0.0f, 1.0f, "%.3f");
 	ImGui::SliderFloat(T("feature.post_processing.lens_flare.halo_radius", "Halo Radius"), &settings.HaloRadius, 0.0f, 1.0f, "%.3f");
@@ -184,7 +184,7 @@ void LensFlare::DrawSettings()
 
 	// Tint
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.color_tint", "Color Tint"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.color_tint", "Color Tint"));
 	ImGui::Separator();
 	ImGui::ColorEdit3(T("feature.post_processing.lens_flare.tint", "Tint"), settings.Tint.data());
 	tooltip("Radial color gradient applied to the flare effect");

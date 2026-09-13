@@ -182,8 +182,6 @@ private:
 		Count
 	};
 
-	const char* QualityNames[static_cast<uint8_t>(Quality::Count)] = { "Low", "Medium", "High", "Custom" };
-
 	TextureSize exteriorSizeInUnits;
 	TextureSize interiorSizeInUnits;
 	TextureSize defaultSizeHigh;

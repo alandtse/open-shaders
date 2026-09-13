@@ -43,6 +43,8 @@ namespace BSShaderHooks
 						}
 					}
 				}
+
+				logger::info("found shaders: {} successfully replaced: {} failed to replace: {}", foundCount, successCount, failedCount);
 			}
 		}
 

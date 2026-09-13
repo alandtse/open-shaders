@@ -55,7 +55,7 @@ void Skin::DrawSettings()
 	ImGui::SliderFloat(T("feature.skin.secondary_roughness", "Secondary Roughness"), &settings.SkinSecondRoughness, 0.0f, 1.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("feature.skin.smoothness_of_epidermal_cell_layer_reflections", "Smoothness of epidermal cell layer reflections"));
-		ImGui::BulletText(T("feature.skin.should_be_30_50_lower_than_primary", "Should be 30-50%% lower than Primary"));
+		ImGui::BulletText("%s", T("feature.skin.should_be_30_50_lower_than_primary", "Should be 30-50%% lower than Primary"));
 	}
 
 	ImGui::SliderFloat(T("feature.skin.specular_texture_multiplier", "Specular Texture Multiplier"), &settings.SkinSpecularTexMultiplier, 0.0f, 10.0f, "%.2f");

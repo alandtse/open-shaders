@@ -430,7 +430,7 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 			for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 				const UINT numGroups = (UINT)std::max(1u, (size + 7u) / 8u);
 
-				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
+				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness, {} };
 				spmapCB->Update(spmapConstants);
 
 				auto uav = a_reflections ? uavReflectionsArray[level - 1] : uavArray[level - 1];

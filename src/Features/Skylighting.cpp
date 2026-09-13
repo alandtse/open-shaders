@@ -436,7 +436,7 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 		return precipitationOcclusionMapRenderPassList;
 
 	if (skylighting.inOcclusion) {
-		if (auto userData = geometry->GetUserData()) {
+		if (geometry->GetUserData()) {
 			RE::BSFadeNode* fadeNode = nullptr;
 
 			RE::NiNode* parent = geometry->parent;

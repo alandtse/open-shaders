@@ -351,14 +351,12 @@ void RenderDoc::DrawSettings()
 						// Create a sorted copy of the capture files for display
 						static std::vector<CaptureFileInfo> sortedCaptureFiles;
 						static std::chrono::steady_clock::time_point sortedCacheLastUpdate = std::chrono::steady_clock::time_point::min();
-						static ImGuiTableSortSpecs* sortSpecs = nullptr;
 
 						// Update sorted copy if cache has been refreshed or sorting specs changed
 						bool needsSortUpdate = (cacheLastUpdate != sortedCacheLastUpdate) || (sortedCaptureFiles.size() != cachedCaptureFiles.size());
 
 						// Handle sorting
 						if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs()) {
-							sortSpecs = specs;
 							if (specs->SpecsDirty || needsSortUpdate) {
 								// Copy the current cache and sort it
 								sortedCaptureFiles = cachedCaptureFiles;

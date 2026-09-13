@@ -766,10 +766,9 @@ void ScreenshotFeature::DrawSettings()
 		"Change##ScreenshotFeature");
 
 	if (HotkeyCollidesWithVanilla()) {
-		Util::Text::WrappedWarning(
-			T(TKEY("hotkey_collision"),
-				"This hotkey collides with vanilla PrintScreen; both saves will fire. "
-				"Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
+		Util::Text::WrappedWarning("%s", T(TKEY("hotkey_collision"),
+											 "This hotkey collides with vanilla PrintScreen; both saves will fire. "
+											 "Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
 	}
 
 	ImGui::SeparatorText(T(TKEY("crop"), "Crop"));

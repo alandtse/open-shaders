@@ -71,10 +71,10 @@ void MotionBlur::SetupResources()
 void MotionBlur::CompileComputeShaders()
 {
 	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &horizontalPassShader, "motionblur_horizontalpass.cs.hlsl" },
-		{ &verticalPassShader, "motionblur_verticalpass.cs.hlsl" },
-		{ &neighborMaxPassShader, "motionblur_neighborpass.cs.hlsl" },
-		{ &blurPassShader, "motionblur_blurpass.cs.hlsl" },
+		{ &horizontalPassShader, "motionblur_horizontalpass.cs.hlsl", {} },
+		{ &verticalPassShader, "motionblur_verticalpass.cs.hlsl", {} },
+		{ &neighborMaxPassShader, "motionblur_neighborpass.cs.hlsl", {} },
+		{ &blurPassShader, "motionblur_blurpass.cs.hlsl", {} },
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\MotionBlur", shaderInfos);
