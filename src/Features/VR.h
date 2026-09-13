@@ -104,6 +104,7 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual json GetDiagnostics() override;
+	virtual std::vector<FeatureConstraints::Constraint> GetActiveConstraints() const override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;

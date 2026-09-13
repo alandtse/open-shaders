@@ -81,6 +81,15 @@ void VR::RestoreDefaultSettings()
 	stereoOpt.RestoreDefaultSettings();
 }
 
+std::vector<FeatureConstraints::Constraint> VR::GetActiveConstraints() const
+{
+	if (!dynamicNearClip.settings.DynamicNearClip)
+		return {};
+	return { { { "Engine", "bFogEnabled:Weather" }, false,
+		T("feature.vr.near_clip.fog_constraint_reason", "Dynamic Near Clip disables vanilla fog so its depth probe is not confused by nearby fog geometry. Enable Exponential Height Fog for atmospheric fog instead."),
+		false } };
+}
+
 void VR::SetupResources()
 {
 	dynamicNearClip.SetupResources();
