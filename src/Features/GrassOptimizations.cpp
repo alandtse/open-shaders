@@ -263,6 +263,9 @@ void GrassOptimizations::ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE
 
 static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& viewProj)
 {
+	// Matches GrassCullingCS.hlsl's divide-by-zero guard convention (e.g. max(length(dvC), 1e-4)).
+	constexpr float kPlaneNormalizeEpsilon = 1e-4f;
+
 	const float rows[4][4] = {
 		{ viewProj._11, viewProj._12, viewProj._13, viewProj._14 },
 		{ viewProj._21, viewProj._22, viewProj._23, viewProj._24 },
@@ -274,7 +277,7 @@ static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& vi
 		float plane[4];
 		for (uint32_t component = 0; component < 4; ++component)
 			plane[component] = rows[rowA][component] * signA + rows[rowB][component] * signB;
-		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), 1e-6f);
+		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), kPlaneNormalizeEpsilon);
 		out[index][0] = plane[0] * invLength;
 		out[index][1] = plane[1] * invLength;
 		out[index][2] = plane[2] * invLength;
