@@ -330,6 +330,21 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
+{
+	// Built once from the full feature list; VR developer mode's feature-list toggle (see
+	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
+	static const std::vector<Feature*> hookFeatures = [] {
+		std::vector<Feature*> v;
+		for (auto* feature : GetFeatureList()) {
+			if (feature->WantsRenderPassHook())
+				v.push_back(feature);
+		}
+		return v;
+	}();
+	return hookFeatures;
+}
+
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
 {
 	for (auto* feature : GetAllFeatures()) {

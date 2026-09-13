@@ -1135,6 +1135,32 @@ namespace Hooks
 #endif
 	}
 
+	// Generic per-render-pass hook: gives every feature that opted in via
+	// Feature::WantsRenderPassHook() a chance to react to a qualifying render pass, without this
+	// file naming any specific feature. See Feature::OnRenderPassBegin().
+	class RenderPassHookScope
+	{
+	public:
+		explicit RenderPassHookScope(const RE::BSRenderPass* a_pass)
+		{
+			for (Feature* feature : Feature::GetRenderPassHookFeatures()) {
+				if (feature->loaded) {
+					if (auto cleanup = feature->OnRenderPassBegin(a_pass))
+						cleanups.push_back(std::move(cleanup));
+				}
+			}
+		}
+
+		~RenderPassHookScope()
+		{
+			for (auto it = cleanups.rbegin(); it != cleanups.rend(); ++it)
+				(*it)();
+		}
+
+	private:
+		std::vector<std::function<void()>> cleanups;
+	};
+
 	void BSBatchRenderer_RenderPassImmediately1::thunk(
 		RE::BSRenderPass* a_pass,
 		uint32_t a_technique,
@@ -1144,6 +1170,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		RenderPassHookScope renderPassHookScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1156,6 +1183,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		RenderPassHookScope renderPassHookScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1168,6 +1196,7 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		RenderPassHookScope renderPassHookScope(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

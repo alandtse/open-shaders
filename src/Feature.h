@@ -300,6 +300,25 @@ public:
 	virtual void EarlyPrepass() {}
 
 	/**
+	 * @brief Opt-in flag checked once, when the render-pass hook's feature list is built: return
+	 * true to have OnRenderPassBegin() visited for qualifying render passes. Default false keeps
+	 * the common case (a feature with no render-pass-scoped state) off that hot path entirely.
+	 */
+	virtual bool WantsRenderPassHook() const { return false; }
+
+	/**
+	 * @brief Called once per qualifying BSRenderPass, before the engine draws it, for every
+	 * loaded feature that opted in via WantsRenderPassHook(). Lets a feature apply render-pass
+	 * -scoped state (e.g. permutation data) without editing the shared render-pass hooks
+	 * directly -- filter to the passes you care about inside this override.
+	 * @param a_pass The render pass about to be drawn.
+	 * @return An optional cleanup invoked after the pass draws, in reverse registration order
+	 *         (e.g. to restore state this call temporarily overrode). Return nullptr if nothing
+	 *         needs to run afterward.
+	 */
+	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* /*a_pass*/) { return nullptr; }
+
+	/**
 	 * @brief Called during disk-cache shader loading to generate additional shader permutations.
 	 *
 	 * Invoked once per BSShader load when the shader cache is in disk-cache mode.
@@ -455,6 +474,13 @@ public:
 	virtual void ClearShaderCacheScoped() { ClearShaderCache(); }
 
 	static const std::vector<Feature*>& GetFeatureList();
+
+	/**
+	 * @brief The loaded features that opted into OnRenderPassBegin() via WantsRenderPassHook(),
+	 * cached once. Callers on a hot render-pass path should hold this reference across a frame
+	 * rather than calling GetFeatureList() and filtering it themselves each time.
+	 */
+	static const std::vector<Feature*>& GetRenderPassHookFeatures();
 
 	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.
