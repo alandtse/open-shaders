@@ -305,7 +305,7 @@ bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		const auto view = Util::GetCameraData(eye);
 		const auto& projection = view.projMatrixUnjittered;
-		projectionZ[eye] = { projection(2, 2), projection(3, 2), projection(2, 3), projection(3, 3) };
+		projectionZ[eye] = float4(projection(2, 2), projection(3, 2), projection(2, 3), projection(3, 3));
 		observedNear[eye] = VRNearClipMath::PerspectiveNear(projection(2, 2), projection(3, 2), projection(2, 3), projection(3, 3));
 		jitteredNear[eye] = VRNearClipMath::PerspectiveNear(view.projMat(2, 2), view.projMat(3, 2), view.projMat(2, 3), view.projMat(3, 3));
 		depthConsistent &= ApproximatelyEqual(observedNear[eye], observedEngineNear) && ApproximatelyEqual(jitteredNear[eye], observedEngineNear);
