@@ -3590,7 +3590,7 @@ namespace SceneSettingsUI
 			if (info.controlType != first.controlType || info.settingPath != first.settingPath ||
 				info.settingKey != first.settingKey || info.componentStart != first.componentStart ||
 				info.componentCount != first.componentCount ||
-				info.componentIndex != first.componentStart + component ||
+				info.componentIndex != static_cast<std::int8_t>(first.componentStart + component) ||
 				info.aggregatePresentation != first.aggregatePresentation ||
 				info.unifiedEditMode != first.unifiedEditMode)
 				return false;
@@ -5165,7 +5165,8 @@ namespace SceneSettingsUI
 			},
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->TogglePauseEntry(SceneType::InteriorOnly, idx); },
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->RevertEntryToDefault(SceneType::InteriorOnly, idx); },
-			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); }
+			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); },
+			{}, nullptr, {}
 		};
 
 		RefreshSourcePanelCache(s_interiorTableCache, entries, 1, true);
@@ -5266,7 +5267,8 @@ namespace SceneSettingsUI
 			[](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddSetting(SceneType::TimeOfDay, feat, path, key,
 					SceneSettingsManager::GetFeatureSettingValue(feat, path, key), static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 
 		auto& overwrite = s_todTableCache.overwrite;
@@ -5784,7 +5786,8 @@ namespace SceneSettingsUI
 			[&selectedTarget](size_t index) { SceneSettingsManager::GetSingleton()->RemoveLocationSetting(selectedTarget.type, selectedTarget.formKey, index); },
 			[&selectedTarget](const std::string& feature, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddLocationSetting(selectedTarget.type, selectedTarget.formKey, selectedTarget.name, selectedTarget.cocCode, feature, path, key, false, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 		if (hasTransitionEntries) {
 			callbacks.auxiliaryColumnLabel = T("feature.scene_manager.location.transition.column", "Transition");

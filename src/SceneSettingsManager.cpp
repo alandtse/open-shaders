@@ -4832,7 +4832,7 @@ static bool ParseOverwriteFileEntries(const std::filesystem::path& filePath,
 			if (const auto* transitionNode = GetObjectAtPath(*entryTransitions, settingPath)) {
 				if (auto transitionIt = transitionNode->find(key); transitionIt != transitionNode->end()) {
 					if (transitionIt->is_number()) {
-						const auto seconds = transitionIt->get<float>();
+						const auto seconds = transitionIt->template get<float>();
 						if (std::isfinite(seconds) && seconds >= 0.0f &&
 							seconds <= SSM::kMaxLocationTransitionSeconds)
 							entry.transitionSeconds = seconds;
