@@ -4,6 +4,7 @@
 #include "GrassLighting.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Wind/Wind.h"
 
@@ -251,6 +252,37 @@ void GrassOptimizations::ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE
 	out.cullingPlanes[5].constant -= edgePadding;
 }
 
+static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& viewProj)
+{
+	// Matches GrassCullingCS.hlsl's divide-by-zero guard convention (e.g. max(length(dvC), 1e-4)).
+	constexpr float kPlaneNormalizeEpsilon = 1e-4f;
+
+	const float rows[4][4] = {
+		{ viewProj._11, viewProj._12, viewProj._13, viewProj._14 },
+		{ viewProj._21, viewProj._22, viewProj._23, viewProj._24 },
+		{ viewProj._31, viewProj._32, viewProj._33, viewProj._34 },
+		{ viewProj._41, viewProj._42, viewProj._43, viewProj._44 }
+	};
+
+	const auto setPlane = [&](uint32_t index, uint32_t rowA, float signA, uint32_t rowB, float signB) {
+		float plane[4];
+		for (uint32_t component = 0; component < 4; ++component)
+			plane[component] = rows[rowA][component] * signA + rows[rowB][component] * signB;
+		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), kPlaneNormalizeEpsilon);
+		out[index][0] = plane[0] * invLength;
+		out[index][1] = plane[1] * invLength;
+		out[index][2] = plane[2] * invLength;
+		out[index][3] = -plane[3] * invLength;
+	};
+
+	setPlane(0, 2, 1.0f, 2, 0.0f);
+	setPlane(1, 3, 1.0f, 2, -1.0f);
+	setPlane(2, 3, 1.0f, 0, 1.0f);
+	setPlane(3, 3, 1.0f, 0, -1.0f);
+	setPlane(4, 3, 1.0f, 1, -1.0f);
+	setPlane(5, 3, 1.0f, 1, 1.0f);
+}
+
 void GrassOptimizations::UpdateGrass()
 {
 	std::scoped_lock blk(bucketStore.bucketMutex);
@@ -334,17 +366,17 @@ void GrassOptimizations::UpdateGrass()
 
 	{
 		CullParamsCB cp{};
-		for (int i = 0; i < 6; ++i) {
-			cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
-			cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
-			cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
-			cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
-
-			const RE::NiFrustumPlanes& f1 = isVR ? frustum1 : frustum;
-			cp.frustumPlanes[6 + i][0] = f1.cullingPlanes[i].normal.x;
-			cp.frustumPlanes[6 + i][1] = f1.cullingPlanes[i].normal.y;
-			cp.frustumPlanes[6 + i][2] = f1.cullingPlanes[i].normal.z;
-			cp.frustumPlanes[6 + i][3] = f1.cullingPlanes[i].constant;
+		if (isVR) {
+			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes, globals::game::frameBufferCached.GetCameraViewProj(0));
+			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes + 6, globals::game::frameBufferCached.GetCameraViewProj(1));
+		} else {
+			for (int i = 0; i < 6; ++i) {
+				cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
+				cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
+				cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
+				cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
+				std::copy_n(cp.frustumPlanes[i], 4, cp.frustumPlanes[6 + i]);
+			}
 		}
 		cp.eyeCount = frustumCount;
 
@@ -814,10 +846,10 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 	UINT num = 16;
 	ctx1->CSSetConstantBuffers1(1, 1, &bucketCB, &first, &num);
 
-	// Skipping the dispatch keeps the instance count at zero for the draw. The Z dimension covers
-	// both eyes on VR in one dispatch.
+	// Skipping the dispatch keeps the instance count at zero for the draw. The VR shader evaluates
+	// both eyes per thread while the flat shader receives the same single Z slice as before.
 	if (b.visibleInstances && b.sliceTableCount && sliceTableSRV)
-		ctx->Dispatch((b.visibleInstances + 63) / 64, 1, globals::game::isVR ? 2 : 1);
+		ctx->Dispatch((b.visibleInstances + 63) / 64, 1, 1);
 }
 
 bool GrassOptimizations::EnsureCullBucketCapacity(uint32_t slots, [[maybe_unused]] ID3D11Device* device)
@@ -864,7 +896,7 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(R
 		ZoneScopedN("GrassOptimizations::OnVisible");
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
-		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->frameCount))
+		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->GetFrameCount()))
 			return;
 
 		// Skips redundant and costly frustum checks since they are now handled by the coarse slice cull and CS.
@@ -897,7 +929,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 {
 	auto& self = globals::features::grassOptimizations;
 
-	const auto frame = globals::game::graphicsState->frameCount;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
 		self.UpdateGrass();
 		self.lastFrame = frame;
@@ -1069,7 +1101,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	}
 
 	const uint64_t descVal = *reinterpret_cast<uint64_t*>(&geometry->GetGeometryRuntimeData().vertexDesc);
-	const uint32_t frame = globals::game::graphicsState->frameCount;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 
 	GrassBucket* b = nullptr;
 	{
@@ -1106,8 +1138,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	auto* rendererData = geometry->GetGeometryRuntimeData().rendererData;
 	if (!rendererData)
 		return;
-	auto* meshVB = reinterpret_cast<ID3D11Buffer*>(rendererData->vertexBuffer);
-	auto* indexB = reinterpret_cast<ID3D11Buffer*>(rendererData->indexBuffer);
+	auto* meshVB = Util::AsReal(rendererData->vertexBuffer);
+	auto* indexB = Util::AsReal(rendererData->indexBuffer);
 	if (!meshVB || !indexB)
 		return;
 
@@ -1123,8 +1155,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		shadowState.vertexDesc = descVal;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
 	}
-	if (shadowState.topology != D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
-		shadowState.topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	if (shadowState.topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
+		shadowState.topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
 	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ RELOCATION_ID(75580, 77386) };

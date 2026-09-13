@@ -24,14 +24,9 @@
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
-#include "Features/Wind/Trees/TreeWindPatcher.h"
 #include "Features/Wind/Wind.h"
 
-#include "RE/B/BSGeometry.h"
-#include "RE/B/BSLeafAnimNode.h"
-
-#include <atomic>
-#include <cstring>
+#include <optional>
 #include <unordered_map>
 
 namespace
@@ -165,196 +160,6 @@ struct BSShader_LoadShaders
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
-namespace
-{
-	constexpr UINT kPermutationVertexRegister = 4;
-	constexpr auto kTreeBendDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::TreeBend);
-
-	bool IsExplicitTrunkGeometry(const RE::BSGeometry* a_geometry)
-	{
-		if (!a_geometry)
-			return false;
-
-		const char* geometryName = a_geometry->name.c_str();
-		return geometryName && (std::strcmp(geometryName, "trunk") == 0 || std::strncmp(geometryName, "OS_TRUNK", 8) == 0);
-	}
-
-	bool IsExplicitTreeLeavesGeometry(const RE::BSGeometry* a_geometry)
-	{
-		if (!a_geometry || !netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent))
-			return false;
-
-		const char* geometryName = a_geometry->name.c_str();
-		return geometryName && std::strcmp(geometryName, "leaves") == 0;
-	}
-
-	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)
-	{
-		return IsExplicitTrunkGeometry(a_geometry) || IsExplicitTreeLeavesGeometry(a_geometry);
-	}
-
-	bool SupportsTreeBend(const RE::BSShader& a_shader, uint32_t a_vertexDescriptor)
-	{
-		if (a_shader.shaderType == RE::BSShader::Type::Lighting) {
-			const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((a_vertexDescriptor >> 24) & 0x3F);
-			return technique != SIE::ShaderCache::LightingShaderTechniques::LODObjects &&
-			       technique != SIE::ShaderCache::LightingShaderTechniques::LODObjectHD;
-		}
-
-		return a_shader.shaderType == RE::BSShader::Type::Utility &&
-		       (a_vertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::LodObject)) == 0;
-	}
-
-	uint32_t GetRenderPassVertexDescriptor(const RE::BSRenderPass& a_pass)
-	{
-		constexpr uint32_t kLightingTechniqueStart = 0x4800002D;
-		if (a_pass.shader && a_pass.shader->shaderType == RE::BSShader::Type::Lighting && a_pass.passEnum >= kLightingTechniqueStart)
-			return a_pass.passEnum - kLightingTechniqueStart;
-		return a_pass.passEnum;
-	}
-
-	bool IsTreeRenderPass(const RE::BSRenderPass* a_pass)
-	{
-		if (!a_pass || !a_pass->shader || !a_pass->geometry)
-			return false;
-
-		const auto shaderType = a_pass->shader->shaderType.get();
-		return (shaderType == RE::BSShader::Type::Lighting || shaderType == RE::BSShader::Type::Utility) &&
-		       IsTreeGeometry(a_pass->geometry);
-	}
-
-	bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass)
-	{
-		if (!globals::features::wind.loaded || !globals::features::wind.settings.enableTrunkBend ||
-			!IsTreeRenderPass(a_pass) || !SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
-			return false;
-
-		return true;
-	}
-
-	void BindVertexPermutationData(const RE::BSShader* a_shader)
-	{
-		auto* state = globals::state;
-		if (!state || !a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
-			return;
-
-		const auto shaderType = a_shader->shaderType.get();
-		if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
-			shaderType != RE::BSShader::Type::Grass)
-			return;
-
-		ID3D11Buffer* buffers[] = {
-			state->permutationCB->CB(),
-			state->sharedDataCB->CB(),
-			state->featureDataCB->CB(),
-		};
-		globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
-	}
-
-	class TreeBendPassScope
-	{
-	public:
-		explicit TreeBendPassScope(RE::BSRenderPass* a_pass) :
-			state(globals::state)
-		{
-			if (!state || !IsTreeBendRenderPass(a_pass)) {
-				state = nullptr;
-				return;
-			}
-
-			previousExtraShaderDescriptor = state->permutationData.ExtraShaderDescriptor;
-			previousTreeBendModelSensitivity = state->permutationData.TreeBendModelSensitivity;
-			previousTreeLeafModelSensitivity = state->permutationData.TreeLeafModelSensitivity;
-			previousTreeWindUpperBendRange = state->permutationData.TreeWindUpperBendRange;
-			previousTreeWindMaximumDisplacementPercent = state->permutationData.TreeWindMaximumDisplacementPercent;
-			previousTreeWindBoundsBase = state->permutationData.TreeWindBoundsBase;
-			previousTreeWindBoundsHeight = state->permutationData.TreeWindBoundsHeight;
-			previousTreeWindProbeBase = state->permutationData.TreeWindProbeBase;
-			previousTreeWindProbeTop = state->permutationData.TreeWindProbeTop;
-			previousTreeWindTrunkGustInfluence = state->permutationData.TreeWindTrunkGustInfluence;
-			previousTreeLeafGustInfluence = state->permutationData.TreeLeafGustInfluence;
-			previousTreeTransientWindInfluence = state->permutationData.TreeTransientWindInfluence;
-			previousTreeLeafTransientWindInfluence = state->permutationData.TreeLeafTransientWindInfluence;
-			previousTreeLeafTransientFlutterMaximum = state->permutationData.TreeLeafTransientFlutterMaximum;
-			previousTreeTransientMaximumBendMultiplier = state->permutationData.TreeTransientMaximumBendMultiplier;
-			const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
-			state->permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
-			state->permutationData.TreeBendModelSensitivity = sensitivities.bend;
-			state->permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;
-			state->permutationData.TreeWindUpperBendRange = sensitivities.upperBendRange;
-			state->permutationData.TreeWindMaximumDisplacementPercent = sensitivities.maximumDisplacementPercent;
-			state->permutationData.TreeWindTrunkGustInfluence = sensitivities.trunkGustInfluence;
-			state->permutationData.TreeLeafGustInfluence = sensitivities.leafGustInfluence;
-			state->permutationData.TreeTransientWindInfluence = sensitivities.transientWindInfluence;
-			state->permutationData.TreeLeafTransientWindInfluence = sensitivities.leafTransientWindInfluence;
-			state->permutationData.TreeLeafTransientFlutterMaximum = sensitivities.leafTransientFlutterMaximum;
-			state->permutationData.TreeTransientMaximumBendMultiplier =
-				sensitivities.transientMaximumBendMultiplier;
-			if (sensitivities.hasBounds) {
-				state->permutationData.TreeWindBoundsBase = sensitivities.boundMinimumZ;
-				state->permutationData.TreeWindBoundsHeight = sensitivities.boundHeight;
-				state->permutationData.TreeWindProbeBase = { sensitivities.probeBase.x, sensitivities.probeBase.y, sensitivities.probeBase.z, 0.0f };
-				state->permutationData.TreeWindProbeTop = { sensitivities.probeTop.x, sensitivities.probeTop.y, sensitivities.probeTop.z, 0.0f };
-			} else {
-				state->permutationData.TreeWindBoundsBase = 0.0f;
-				state->permutationData.TreeWindBoundsHeight = 0.0f;
-				state->permutationData.TreeWindProbeBase = {};
-				state->permutationData.TreeWindProbeTop = {};
-			}
-			globals::features::wind.UpdateTreeWindSpring();
-
-			state->UpdatePermutationBuffer();
-			BindVertexPermutationData(a_pass ? a_pass->shader : nullptr);
-		}
-
-		~TreeBendPassScope()
-		{
-			if (state) {
-				state->permutationData.ExtraShaderDescriptor = previousExtraShaderDescriptor;
-				state->permutationData.TreeBendModelSensitivity = previousTreeBendModelSensitivity;
-				state->permutationData.TreeLeafModelSensitivity = previousTreeLeafModelSensitivity;
-				state->permutationData.TreeWindUpperBendRange = previousTreeWindUpperBendRange;
-				state->permutationData.TreeWindMaximumDisplacementPercent = previousTreeWindMaximumDisplacementPercent;
-				state->permutationData.TreeWindBoundsBase = previousTreeWindBoundsBase;
-				state->permutationData.TreeWindBoundsHeight = previousTreeWindBoundsHeight;
-				state->permutationData.TreeWindProbeBase = previousTreeWindProbeBase;
-				state->permutationData.TreeWindProbeTop = previousTreeWindProbeTop;
-				state->permutationData.TreeWindTrunkGustInfluence = previousTreeWindTrunkGustInfluence;
-				state->permutationData.TreeLeafGustInfluence = previousTreeLeafGustInfluence;
-				state->permutationData.TreeTransientWindInfluence = previousTreeTransientWindInfluence;
-				state->permutationData.TreeLeafTransientWindInfluence = previousTreeLeafTransientWindInfluence;
-				state->permutationData.TreeLeafTransientFlutterMaximum = previousTreeLeafTransientFlutterMaximum;
-				state->permutationData.TreeTransientMaximumBendMultiplier =
-					previousTreeTransientMaximumBendMultiplier;
-				state->UpdatePermutationBuffer();
-			}
-		}
-
-	private:
-		State* state = nullptr;
-		uint32_t previousExtraShaderDescriptor = 0;
-		float previousTreeBendModelSensitivity = 1.0f;
-		float previousTreeLeafModelSensitivity = 1.0f;
-		float previousTreeWindUpperBendRange = 100.0f;
-		float previousTreeWindMaximumDisplacementPercent = 3.0f;
-		float previousTreeWindBoundsBase = 0.0f;
-		float previousTreeWindBoundsHeight = 1.0f;
-		float4 previousTreeWindProbeBase{};
-		float4 previousTreeWindProbeTop{};
-		float previousTreeWindTrunkGustInfluence = 0.5f;
-		float previousTreeLeafGustInfluence = 0.99f;
-		float previousTreeTransientWindInfluence = 0.2f;
-		float previousTreeLeafTransientWindInfluence = 5.0f;
-		float previousTreeLeafTransientFlutterMaximum = 10.0f;
-		float previousTreeTransientMaximumBendMultiplier = 1.01f;
-	};
-
-	void BindVertexPermutationData()
-	{
-		BindVertexPermutationData(globals::state ? globals::state->currentShader : nullptr);
-	}
-}
-
 bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertexDescriptor, uint32_t pixelDescriptor, bool skipPixelShader)
 {
 	auto state = globals::state;
@@ -387,7 +192,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			shaderFound = false;
 		} else {
 			state->settingCustomShader = true;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 			if (skipPixelShader) {
@@ -395,7 +200,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			}
 			*globals::game::currentPixelShader = pixelShader;
 			if (pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 			state->settingCustomShader = false;
 			shaderFound = true;
 		}
@@ -507,7 +312,7 @@ namespace WaterBlendHistory
 			const float clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
 			const auto target = renderTargets[1];
 			globals::d3d::context->ClearRenderTargetView(
-				globals::game::renderer->GetRuntimeData().renderTargets[target].RTV,
+				Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[target].RTV),
 				clearColor);
 
 			func(imageSpaceShader, shape, param);
@@ -548,6 +353,7 @@ namespace WeatherExtensions
 					effects11.OverrideAmbientLighting(overridden);
 					effects11.vanillaAmbientCache = DirectionalAmbientColors;
 					effects11.gradedAmbientCache = overridden;
+					effects11.ambientSpecularTintCacheValid = AmbientSpecularTint != nullptr;
 					if (AmbientSpecularTint)
 						effects11.ambientSpecularTintCache = *AmbientSpecularTint;
 					effects11.ambientSpecularFresnelCache = AmbientSpecularFresnel;
@@ -563,21 +369,22 @@ namespace WeatherExtensions
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// renderMode 24 means something unrelated on SE/AE -- do not reuse this check outside VR.
+	// kVRWorldSpaceUIPass means something unrelated on SE/AE -- do not reuse this check outside VR.
 	struct VRUIPassAmbientFix_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
+			if (shaderAccumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
+				RE::NiColor* const specularTint = effects11.ambientSpecularTintCacheValid ? &effects11.ambientSpecularTintCache : nullptr;
 				effects11.enableEffect = false;
-				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				func(shaderAccumulator, renderFlags);
 				effects11.enableEffect = savedEnableEffect;
-				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				return;
 			}
@@ -719,7 +526,7 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 	func(isCompute);
 	globals::state->Draw();
 	if (!isCompute)
-		BindVertexPermutationData();
+		globals::state->BindVertexPermutationData();
 }
 
 struct ID3D11Device_CreateVertexShader
@@ -1079,7 +886,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 							if (vertexShader) {
-								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+								globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 								*globals::game::currentVertexShader = a_vertexShader;
 								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 								return;
@@ -1092,7 +899,7 @@ namespace Hooks
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 
 			*globals::game::currentVertexShader = a_vertexShader;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(a_vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(a_vertexShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1112,7 +919,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
 							if (pixelShader) {
-								globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+								globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 								*globals::game::currentPixelShader = a_pixelShader;
 								return;
 							}
@@ -1124,7 +931,7 @@ namespace Hooks
 			*globals::game::currentPixelShader = a_pixelShader;
 
 			if (a_pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(a_pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(a_pixelShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1334,6 +1141,31 @@ namespace Hooks
 #endif
 	}
 
+	// Generic per-render-pass hook: gives every feature that opted in via
+	// Feature::WantsRenderPassHook() a chance to react to a qualifying render pass, without this
+	// file naming any specific feature. See Feature::OnRenderPassBegin().
+	class RenderPassHookScope
+	{
+	public:
+		explicit RenderPassHookScope(const RE::BSRenderPass* a_pass)
+		{
+			Feature::ForEachLoadedFeature(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
+				[&](Feature* feature) {
+					if (auto cleanup = feature->OnRenderPassBegin(a_pass))
+						cleanups.push_back(std::move(cleanup));
+				});
+		}
+
+		~RenderPassHookScope()
+		{
+			for (auto it = cleanups.rbegin(); it != cleanups.rend(); ++it)
+				(*it)();
+		}
+
+	private:
+		std::vector<std::function<void()>> cleanups;
+	};
+
 	void BSBatchRenderer_RenderPassImmediately1::thunk(
 		RE::BSRenderPass* a_pass,
 		uint32_t a_technique,
@@ -1343,7 +1175,10 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass);
+		// No vector/std::function machinery touched at all until a feature opts in.
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1356,7 +1191,9 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass);
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1369,7 +1206,9 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
-		TreeBendPassScope treeBendPassScope(a_pass);
+		std::optional<RenderPassHookScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(a_pass);
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

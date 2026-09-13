@@ -81,9 +81,9 @@ void Skylighting::SetupResources()
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 
-		precipitationOcclusion.texture->GetDesc(&texDesc);
-		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
-		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+		precipitationOcclusion.texture->GetDesc(Util::AsW32(&texDesc));
+		precipitationOcclusion.depthSRV->GetDesc(Util::AsW32(&srvDesc));
+		precipitationOcclusion.views[0]->GetDesc(Util::AsW32(&dsvDesc));
 
 		texOcclusion = new Texture2D(texDesc, "Skylighting::Occlusion");
 		texOcclusion->CreateSRV(srvDesc);
@@ -260,7 +260,7 @@ void Skylighting::Prepass()
 			texOcclusion->srv.get(),
 			nullptr,
 			interior ? nullptr : globals::deferred->directionalShadowLights->srv.get(),
-			interior ? nullptr : cascadeDepthStencil.depthSRV
+			interior ? nullptr : Util::AsReal(cascadeDepthStencil.depthSRV)
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -599,9 +599,9 @@ void Skylighting::RenderOcclusion()
 		}
 	});
 
-	precipitationTarget.depthSRV = texOcclusion->srv.get();
-	precipitationTarget.texture = texOcclusion->resource.get();
-	precipitationTarget.views[0] = texOcclusion->dsv.get();
+	precipitationTarget.depthSRV = Util::AsW32(texOcclusion->srv.get());
+	precipitationTarget.texture = Util::AsW32(texOcclusion->resource.get());
+	precipitationTarget.views[0] = Util::AsW32(texOcclusion->dsv.get());
 	inOcclusion = true;
 	forceInteriorOcclusionTwoSided = interior;
 	precipitationCubeSize = occlusionDistance;

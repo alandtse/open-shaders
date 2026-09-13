@@ -103,8 +103,6 @@ private:
 		std::vector<PassEntry> passes;
 	};
 	static inline float cachedTotalAvgMs = 0.0f;
-	static inline float cachedTotalP95Ms = 0.0f;
-	static inline float cachedTotalP99Ms = 0.0f;
 	static inline float cachedMaxAvgMs = 0.0f;
 	static inline float cachedMaxP95Ms = 0.0f;
 	static inline float cachedMaxP99Ms = 0.0f;
@@ -158,6 +156,7 @@ private:
 	static void RenderTimingModeToggle();
 	static void SetupTimingTableColumns(float passColumnWidth, bool includePercentColumn);
 	static void RenderGraph();
+	static void UpdateStatistics(bool cpuMode);
 	static std::string GetFeatureTimerPrefix(const std::string& featurePrefix);
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);
 

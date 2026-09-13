@@ -1124,7 +1124,7 @@ namespace ShadowCasterManager
 		case ConvertReason::Excess:
 			return T(TKEY("conv_reason_excess"), "Reason: excess -- ranked below the shadow-caster budget.");
 		case ConvertReason::CameraOther:
-			return T(TKEY("conv_reason_other"), "Reason: rejected by the engine visibility test.");
+			return T(TKEY("conv_reason_misc"), "Reason: rejected by the engine visibility test.");
 		default:
 			return nullptr;
 		}

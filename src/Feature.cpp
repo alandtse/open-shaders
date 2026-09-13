@@ -332,6 +332,21 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
+{
+	// Built once from the full feature list; VR developer mode's feature-list toggle (see
+	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
+	static const std::vector<Feature*> hookFeatures = [] {
+		std::vector<Feature*> v;
+		for (auto* feature : GetFeatureList()) {
+			if (feature->WantsRenderPassHook())
+				v.push_back(feature);
+		}
+		return v;
+	}();
+	return hookFeatures;
+}
+
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
 {
 	for (auto* feature : GetAllFeatures()) {
@@ -465,8 +480,13 @@ bool Feature::ReapplyOverrideSettings()
 
 	if (appliedCount > 0) {
 		// Load the override settings back into the feature
-		LoadSettings(featureJson);
-		return true;
+		try {
+			LoadSettings(featureJson);
+			return true;
+		} catch (const std::exception& e) {
+			logger::warn("Failed to reapply override settings for {}. Error: {}", featureName, e.what());
+			return false;
+		}
 	}
 
 	return false;

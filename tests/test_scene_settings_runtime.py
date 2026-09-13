@@ -92,6 +92,155 @@ int main() {
             source = source.replace(token, braced(manager, declaration))
         self.compile_and_run(source)
 
+    def test_native_duplicate_control_labels(self):
+        library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
+        if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
+            self.skipTest("Uses the Windows build's ImGui library")
+        hooks = (ROOT / "src/SceneSettingsUIHooks.cpp").read_text(encoding="utf-8")
+        translations = (ROOT / "src/I18n/I18n.cpp").read_text(encoding="utf-8")
+        source = r'''
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <deque>
+#include <mutex>
+#include <shared_mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+struct I18n {
+    mutable std::shared_mutex mutex_;
+    std::unordered_map<std::string, std::string> strings_, fallback_;
+    mutable std::deque<std::string> defaultStorage_;
+    mutable std::unordered_map<std::string, const char*> defaultCache_;
+    const char* Get(std::string_view key, const char* defaultText = nullptr) const;
+} translations;
+TRANSLATE
+const char* T(std::string_view key, const char* fallback) { return translations.Get(key, fallback); }
+namespace SceneSettingsCatalog {
+enum class AggregateSemantic { None };
+struct Choice { std::string_view displayName, displayNameKey; };
+struct SettingMetadata {
+    std::string_view featureShortName = "Fixture", serializedPath, serializedKey, settingKey;
+    std::string_view displayName = "Strength", displayNameKey, controlScope;
+    AggregateSemantic aggregateSemantic = AggregateSemantic::None;
+    std::int8_t aggregateStart = 0;
+    std::uint8_t aggregateCount = 0;
+    const Choice* choices = nullptr;
+    std::size_t choiceCount = 0;
+    bool blocked = false, outlined = false;
+};
+std::vector<SettingMetadata> entries;
+const auto& GetSettings() { return entries; }
+bool IsSceneControllable(const SettingMetadata&) { return true; }
+}
+struct Feature { std::string_view GetShortName() const { return "Fixture"; } } feature;
+Feature* g_currentFeature = &feature;
+bool ShouldBlockSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.blocked; }
+bool ShouldOutlineSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.outlined; }
+namespace Util { float GetUIScale() { return 1.0f; } }
+unsigned int g_controlDetourDepth = 0;
+void ClearControlledItem() {}
+void FinishControlledItem() {}
+bool TrackFeatureSettingMutation(bool changed) { return changed; }
+MATCHING
+const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*) {
+    return FindUniqueBlockedSettingForLabel(label, false);
+}
+DRAWING
+void check(bool condition, const char* message) {
+    if (!condition) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+int main() {
+    ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(800, 600);
+    unsigned char* pixels; int width, height;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    ImGui::GetStyle().FrameBorderSize = 0;
+    ImGui::NewFrame();
+    ImGui::Begin("Fixture");
+    using SceneSettingsCatalog::entries;
+    for (int locale = 0; locale < 3; ++locale) {
+        translations.strings_.clear(); translations.fallback_.clear();
+        translations.defaultCache_.clear(); translations.defaultStorage_.clear();
+        entries.assign(3, {});
+        entries[0].serializedKey = entries[0].displayNameKey = "locked";
+        entries[1].serializedKey = entries[1].displayNameKey = "editable";
+        entries[2].serializedKey = entries[2].displayNameKey = "altered";
+        entries[0].blocked = true;
+        entries[2].outlined = true;
+        for (const auto& setting : entries) {
+            if (locale == 0) translations.fallback_[std::string(setting.displayNameKey)] = "Strength";
+            if (locale == 1) translations.strings_[std::string(setting.displayNameKey)] = "Stärke";
+        }
+        for (bool reverse : {false, true}) {
+            if (reverse) std::reverse(entries.begin(), entries.end());
+            for (const auto& setting : entries) {
+                const auto* label = T(setting.displayNameKey, "Strength");
+                const auto* expected = setting.blocked || setting.outlined ? &setting : nullptr;
+                check(FindUniqueBlockedSettingForLabel(label, false) == expected, "Translation identity resolves duplicate labels independently of ordering and lock state");
+                float value = 1;
+                DrawControl(label, &value, [&] {
+                    check(ImGui::GetStyle().FrameBorderSize == (setting.outlined ? 1 : 0), "Only the altered widget gets an outline");
+                    return ImGui::SliderFloat(label, &value, 0, 2);
+                });
+                check(((GImGui->LastItemData.ItemFlags & ImGuiItemFlags_Disabled) != 0) == setting.blocked, "Only the locked widget is disabled");
+                check(ImGui::GetStyle().FrameBorderSize == 0, "Outline style is restored");
+            }
+        }
+        std::string copiedLabel = T("editable", "Strength");
+        check(!FindUniqueBlockedSettingForLabel(copiedLabel.c_str(), false), "Copied indistinguishable labels do not borrow another setting's lock");
+    }
+    entries.assign(2, {});
+    entries[0].serializedKey = "first"; entries[0].blocked = true;
+    entries[1].serializedKey = "second";
+    entries[0].displayName = "Strength##first";
+    entries[1].displayName = "Strength##second";
+    check(FindUniqueBlockedSettingForLabel("Strength##first", false) == &entries[0], "Exact hidden suffix resolves the locked widget");
+    check(!FindUniqueBlockedSettingForLabel("Strength##second", false), "Exact hidden suffix preserves the editable widget");
+    entries[0].displayName = entries[1].displayName = "Strength";
+    entries[0].controlScope = "First"; entries[1].controlScope = "Second";
+    ImGui::PushID("First");
+    check(FindUniqueBlockedSettingForLabel("Strength", false) == &entries[0], "Matching scope resolves the locked widget");
+    ImGui::PopID(); ImGui::PushID("Second");
+    check(!FindUniqueBlockedSettingForLabel("Strength", false), "Other scope remains editable");
+    ImGui::PopID();
+    entries[0].controlScope = entries[1].controlScope = "";
+    check(!FindUniqueBlockedSettingForLabel("Strength", false), "Indistinguishable controls remain ambiguous");
+    entries[1].serializedKey = entries[0].serializedKey;
+    check(FindUniqueBlockedSettingForLabel("Strength", false) == &entries[0], "An unlocked alias cannot erase the same logical control's lock");
+    const SceneSettingsCatalog::Choice choices[] = {{"On", "first.choice"}, {"On", "second.choice"}};
+    entries[1].serializedKey = "second";
+    entries[0].choices = &choices[0]; entries[1].choices = &choices[1];
+    entries[0].choiceCount = entries[1].choiceCount = 1;
+    check(FindUniqueBlockedSettingForLabel(T("first.choice", "On"), true) == &entries[0], "Choice translation identity resolves the locked radio button");
+    check(!FindUniqueBlockedSettingForLabel(T("second.choice", "On"), true), "Editable radio choice stays independent");
+    check(!FindUniqueBlockedSettingForLabel(nullptr, false), "Null label is ignored");
+    ImGui::End(); ImGui::Render(); ImGui::DestroyContext();
+}
+'''
+        source = source.replace("TRANSLATE", braced(translations, "const char* I18n::Get("))
+        source = source.replace("MATCHING", "\n".join([
+            braced(hooks, "enum class ControlLabelMatch") + ";",
+            braced(hooks, "std::string_view GetVisibleLabel("),
+            braced(hooks, "ControlLabelMatch MatchLocalizedLabel("),
+            braced(hooks, "ControlLabelMatch MatchSettingLabel("),
+            braced(hooks, "bool IsSameLogicalControl("),
+            braced(hooks, "const SceneSettingsCatalog::SettingMetadata* FindUniqueBlockedSettingForLabel("),
+        ]))
+        source = source.replace("DRAWING", "\n".join([
+            braced(hooks, "struct ControlDetourScope") + ";",
+            braced(hooks, "struct SettingOutlineGuard") + ";",
+            "template<class Draw>\n" + braced(hooks, "bool DrawControl("),
+        ]))
+        self.compile_and_run(source, imgui_root=library_root)
+
     def test_native_scene_control_outline(self):
         library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
         if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
@@ -669,6 +818,7 @@ int main() {
         ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
         source = r'''
 #include <algorithm>
+#include "UTIL_MATH"
 #include <compare>
 #include <cmath>
 #include <format>
@@ -954,6 +1104,7 @@ int main() {
         for token, replacement in replacements.items():
             source = source.replace("\n" + token + ";\n", "\n" + replacement + ";\n")
             source = source.replace("\n" + token + "\n", "\n" + replacement + "\n")
+        source = source.replace("UTIL_MATH", (ROOT / "src/Utils/MathUtils.h").as_posix())
         self.compile_and_run(source)
 
     def test_native_feature_draft_switch_confirmation(self):
