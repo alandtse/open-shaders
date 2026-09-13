@@ -3013,7 +3013,7 @@
     "feature.vr.near_clip.enable": "Dynamic near clip",
     "feature.vr.near_clip.fog_constraint_reason": "Dynamic Near Clip disables vanilla fog so its depth probe is not confused by nearby fog geometry. Enable Exponential Height Fog for atmospheric fog instead.",
     "feature.vr.near_clip.fog_warning": "Enabling this option disables vanilla fog. Please enable Exponential Height Fog instead.",
-    "feature.vr.near_clip.header": "Dynamic Near Clip (Experimental)",
+    "feature.vr.near_clip.header": "Dynamic Near Clip",
     "feature.vr.near_clip.help": "Distances use Skyrim units. Both eyes share the smaller required near distance. The central depth probe cannot see transparent surfaces or geometry already clipped between samples.",
     "feature.vr.near_clip.minimum": "Minimum near clip",
     "feature.vr.near_clip.normal": "Normal near clip",

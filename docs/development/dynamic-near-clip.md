@@ -1,4 +1,4 @@
-# Experimental VR dynamic near clip
+# VR dynamic near clip
 
 The VR settings expose an adaptive near plane for both eyes:
 

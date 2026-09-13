@@ -508,7 +508,7 @@ void VRDynamicNearClip::DrawValues()
 
 void VRDynamicNearClip::DrawSettings()
 {
-	if (ImGui::CollapsingHeader(T("feature.vr.near_clip.header", "Dynamic Near Clip (Experimental)"))) {
+	if (ImGui::CollapsingHeader(T("feature.vr.near_clip.header", "Dynamic Near Clip"))) {
 		if (ImGui::Checkbox(T("feature.vr.near_clip.enable", "Dynamic near clip"), &settings.DynamicNearClip))
 			UpdateVanillaFogOverride();
 		ImGui::TextWrapped("%s", T("feature.vr.near_clip.fog_warning", "Enabling this option disables vanilla fog. Please enable Exponential Height Fog instead."));
