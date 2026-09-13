@@ -278,7 +278,7 @@ void WeatherWidget::DrawWidget()
 				return std::format("{} {}", recordType, ColorTimeLabel(colorTime));
 			};
 			auto anyTimeRecordMatches = [&](const char* recordType) {
-				for (int i = 0; i < ColorTimes::kTotal; i++) {
+				for (int i = 0; i < static_cast<int>(ColorTimes::kTotal); i++) {
 					if (MatchesSearch(makeTimeRecordLabel(recordType, i)))
 						return true;
 				}
@@ -321,7 +321,7 @@ void WeatherWidget::DrawWidget()
 					ImGui::SetNextItemOpen(true, ImGuiCond_Always);
 				if (!ImGui::CollapsingHeader(sectionLabel, ImGuiTreeNodeFlags_DefaultOpen))
 					return;
-				for (int i = 0; i < ColorTimes::kTotal; i++) {
+				for (int i = 0; i < static_cast<int>(ColorTimes::kTotal); i++) {
 					std::string rowId = makeTimeRecordLabel(sectionLabel, i);
 					if (!MatchesSearch(rowId))
 						continue;
@@ -617,7 +617,7 @@ void WeatherWidget::SetWeatherValues()
 		auto& cloudColors = weather->cloudColorData[i];
 		auto& cloudAlphas = weather->cloudAlpha[i];
 
-		for (int j = 0; j < ColorTimes::kTotal; j++) {
+		for (size_t j = 0; j < ColorTimes::kTotal; j++) {
 			cloudAlphas[j] = settingsCloud.cloudAlpha[j];
 			Float3ToColor(settingsCloud.color[j], cloudColors[j]);
 		}
@@ -673,7 +673,7 @@ void WeatherWidget::InitializeInheritFlags()
 		ensureFlag(key);
 	}
 
-	for (int i = 0; i < ColorTimes::kTotal; i++) {
+	for (size_t i = 0; i < ColorTimes::kTotal; i++) {
 		ensureFlag(std::format("ImageSpace_{}", i));
 		ensureFlag(std::format("VolumetricLighting_{}", i));
 	}
@@ -771,7 +771,7 @@ void WeatherWidget::LoadWeatherValues()
 		auto& cloudColors = weather->cloudColorData[i];
 		auto& cloudAlphas = weather->cloudAlpha[i];
 
-		for (int j = 0; j < ColorTimes::kTotal; j++) {
+		for (size_t j = 0; j < ColorTimes::kTotal; j++) {
 			settingsCloud.cloudAlpha[j] = cloudAlphas[j];
 			ColorToFloat3(cloudColors[j], settingsCloud.color[j]);
 		}
@@ -812,7 +812,7 @@ void WeatherWidget::DrawDALCSettings()
 		float3 parentDirYMax[4] = {}, parentDirYMin[4] = {};
 		float3 parentDirZMax[4] = {}, parentDirZMin[4] = {};
 
-		for (int i = 0; i < ColorTimes::kTotal; i++) {
+		for (size_t i = 0; i < ColorTimes::kTotal; i++) {
 			specularColors[i] = settings.dalc[i].specular;
 			fresnelPowers[i] = settings.dalc[i].fresnelPower;
 			directionalXMax[i] = settings.dalc[i].directional[0].max;
@@ -856,25 +856,25 @@ void WeatherWidget::DrawDALCSettings()
 
 		if (hasParent && parentWidget) {
 			if (drawDalcColor(WeatherSetting::kSpecular, T(TKEY("dalc_specular"), "Specular"), specularColors, &settings.inheritFlags[WeatherInherit::kDalcSpecular], parentSpecular)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].specular = specularColors[i];
 				changed = true;
 			}
 
 			if (drawDalcFloat(WeatherSetting::kFresnelPower, T(TKEY("dalc_fresnel_power"), "Fresnel Power"), fresnelPowers, &settings.inheritFlags[WeatherInherit::kDalcFresnel], parentFresnel)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].fresnelPower = fresnelPowers[i];
 				changed = true;
 			}
 		} else {
 			if (drawDalcColor(WeatherSetting::kSpecular, T(TKEY("dalc_specular"), "Specular"), specularColors)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].specular = specularColors[i];
 				changed = true;
 			}
 
 			if (drawDalcFloat(WeatherSetting::kFresnelPower, T(TKEY("dalc_fresnel_power"), "Fresnel Power"), fresnelPowers)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].fresnelPower = fresnelPowers[i];
 				changed = true;
 			}
@@ -885,73 +885,73 @@ void WeatherWidget::DrawDALCSettings()
 		// Directional colors with per-parameter inheritance
 		if (hasParent && parentWidget) {
 			if (drawDalcColor(WeatherSetting::kDirectionalXMax, T(TKEY("dalc_directional_x_max"), "Directional +X"), directionalXMax, &settings.inheritFlags[WeatherInherit::kDalcDirXMax], parentDirXMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[0].max = directionalXMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalXMin, T(TKEY("dalc_directional_x_min"), "Directional -X"), directionalXMin, &settings.inheritFlags[WeatherInherit::kDalcDirXMin], parentDirXMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[0].min = directionalXMin[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalYMax, T(TKEY("dalc_directional_y_max"), "Directional +Y"), directionalYMax, &settings.inheritFlags[WeatherInherit::kDalcDirYMax], parentDirYMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[1].max = directionalYMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalYMin, T(TKEY("dalc_directional_y_min"), "Directional -Y"), directionalYMin, &settings.inheritFlags[WeatherInherit::kDalcDirYMin], parentDirYMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[1].min = directionalYMin[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalZMax, T(TKEY("dalc_directional_z_max"), "Directional +Z"), directionalZMax, &settings.inheritFlags[WeatherInherit::kDalcDirZMax], parentDirZMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[2].max = directionalZMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalZMin, T(TKEY("dalc_directional_z_min"), "Directional -Z"), directionalZMin, &settings.inheritFlags[WeatherInherit::kDalcDirZMin], parentDirZMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[2].min = directionalZMin[i];
 				changed = true;
 			}
 		} else {
 			if (drawDalcColor(WeatherSetting::kDirectionalXMax, T(TKEY("dalc_directional_x_max"), "Directional +X"), directionalXMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[0].max = directionalXMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalXMin, T(TKEY("dalc_directional_x_min"), "Directional -X"), directionalXMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[0].min = directionalXMin[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalYMax, T(TKEY("dalc_directional_y_max"), "Directional +Y"), directionalYMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[1].max = directionalYMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalYMin, T(TKEY("dalc_directional_y_min"), "Directional -Y"), directionalYMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[1].min = directionalYMin[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalZMax, T(TKEY("dalc_directional_z_max"), "Directional +Z"), directionalZMax)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[2].max = directionalZMax[i];
 				changed = true;
 			}
 
 			if (drawDalcColor(WeatherSetting::kDirectionalZMin, T(TKEY("dalc_directional_z_min"), "Directional -Z"), directionalZMin)) {
-				for (int i = 0; i < ColorTimes::kTotal; i++)
+				for (size_t i = 0; i < ColorTimes::kTotal; i++)
 					settings.dalc[i].directional[2].min = directionalZMin[i];
 				changed = true;
 			}
@@ -1409,7 +1409,7 @@ void WeatherWidget::SyncInheritedValuesFromParent()
 	};
 	auto syncDalcTOD = [&](const char* flagKey, auto accessor) {
 		if (inherited(flagKey))
-			for (int i = 0; i < ColorTimes::kTotal; i++)
+			for (size_t i = 0; i < ColorTimes::kTotal; i++)
 				accessor(settings.dalc[i]) = accessor(parentWidget->settings.dalc[i]);
 	};
 	auto syncRecord = [&](const std::string& flagKey, auto& ref, const auto& parentRef) {
@@ -1446,10 +1446,10 @@ void WeatherWidget::SyncInheritedValuesFromParent()
 
 	for (int i = 0; i < TESWeather::kTotalLayers; i++) {
 		if (inherited(std::format("Cloud{}_Color", i)))
-			for (int j = 0; j < ColorTimes::kTotal; j++)
+			for (size_t j = 0; j < ColorTimes::kTotal; j++)
 				settings.clouds[i].color[j] = parentWidget->settings.clouds[i].color[j];
 		if (inherited(std::format("Cloud{}_Alpha", i)))
-			for (int j = 0; j < ColorTimes::kTotal; j++)
+			for (size_t j = 0; j < ColorTimes::kTotal; j++)
 				settings.clouds[i].cloudAlpha[j] = parentWidget->settings.clouds[i].cloudAlpha[j];
 	}
 
@@ -1538,7 +1538,7 @@ void WeatherWidget::InheritAllFromParent()
 		WeatherInherit::kDalcDirZMax,
 		WeatherInherit::kDalcDirZMin,
 	};
-	for (int i = 0; i < ColorTimes::kTotal; i++)
+	for (size_t i = 0; i < ColorTimes::kTotal; i++)
 		settings.dalc[i] = parentWidget->settings.dalc[i];
 	for (const auto* key : kDalcFlags)
 		settings.inheritFlags[key] = true;
@@ -1678,11 +1678,11 @@ std::vector<Widget::SearchResult> WeatherWidget::CollectSearchableSettings() con
 	}
 
 	// Records tab: one entry per time-of-day slot for each form-picker section
-	for (int i = 0; i < ColorTimes::kTotal; i++) {
+	for (int i = 0; i < static_cast<int>(ColorTimes::kTotal); i++) {
 		std::string label = std::format("{} {}", T(TKEY("record_imagespace"), "ImageSpace"), ColorTimeLabel(i));
 		results.push_back({ label, WeatherTab::kRecords, label });
 	}
-	for (int i = 0; i < ColorTimes::kTotal; i++) {
+	for (int i = 0; i < static_cast<int>(ColorTimes::kTotal); i++) {
 		std::string label = std::format("{} {}", T(TKEY("record_volumetric_lighting"), "Volumetric Lighting"), ColorTimeLabel(i));
 		results.push_back({ label, WeatherTab::kRecords, label });
 	}

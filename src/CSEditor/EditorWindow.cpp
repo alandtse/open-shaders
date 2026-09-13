@@ -508,7 +508,7 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				auto addTOD = [&](auto*(&fields)[RE::TESWeather::ColorTimes::kTotal], const WidgetVec& widgets) {
-					for (int tod = 0; tod < RE::TESWeather::ColorTimes::kTotal; ++tod) {
+					for (int tod = 0; tod < static_cast<int>(RE::TESWeather::ColorTimes::kTotal); ++tod) {
 						auto* form = fields[tod];
 						if (!form)
 							continue;

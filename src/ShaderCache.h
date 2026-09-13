@@ -324,7 +324,7 @@ namespace SIE
 		LARGE_INTEGER lastCalculation;
 		std::atomic<int64_t> completionTime;  // When compilation completed (QuadPart equivalent)
 		LARGE_INTEGER frequency;
-		LARGE_INTEGER totalTime = { 0 };
+		LARGE_INTEGER totalTime{};
 
 		CompilationSet()
 		{
@@ -383,7 +383,7 @@ namespace SIE
 		std::atomic<int64_t> digestComputeTimeUs = 0;       // cumulative microseconds spent computing content digests
 		std::atomic<uint64_t> digestHitTasks = 0;           // disk-cache validity checks where the manifest digest confirmed the cached blob is still valid
 		std::atomic<uint64_t> digestMissTasks = 0;          // disk-cache validity checks where the manifest digest marked the cached blob stale (recompile)
-		LARGE_INTEGER compilationPhaseStart = { 0 };        // time of first non-disk-hit task dispatch
+		LARGE_INTEGER compilationPhaseStart{};              // time of first non-disk-hit task dispatch
 		std::atomic<bool> compilationPhaseStarted = false;  // set when first actual compilation begins
 		std::atomic<uint64_t> slowTasks = 0;                // shaders taking >= 2s
 		std::atomic<uint64_t> verySlowTasks = 0;            // shaders taking >= 8s
