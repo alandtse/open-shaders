@@ -5970,7 +5970,8 @@ namespace SceneSettingsUI
 			[weatherId](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddWeatherSetting(
 					weatherId, feat, path, key, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 	}
 
