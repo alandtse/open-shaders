@@ -463,8 +463,13 @@ bool Feature::ReapplyOverrideSettings()
 
 	if (appliedCount > 0) {
 		// Load the override settings back into the feature
-		LoadSettings(featureJson);
-		return true;
+		try {
+			LoadSettings(featureJson);
+			return true;
+		} catch (const std::exception& e) {
+			logger::warn("Failed to reapply override settings for {}. Error: {}", featureName, e.what());
+			return false;
+		}
 	}
 
 	return false;

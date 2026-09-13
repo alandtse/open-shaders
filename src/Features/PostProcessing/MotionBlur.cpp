@@ -465,7 +465,7 @@ void MotionBlur::ExecuteHorizontalPass()
 	if (!motionVectorTex.texture || !motionVectorTex.SRV || !horizontalPassTexture || !horizontalPassTexture->uav)
 		return;
 
-	ID3D11ShaderResourceView* velocitySRV = motionVectorTex.SRV;
+	ID3D11ShaderResourceView* velocitySRV = Util::AsReal(motionVectorTex.SRV);
 
 	// Setup horizontal pass
 	ID3D11Buffer* reductionCB = reductionPassConstantBufferObj->CB();
@@ -509,12 +509,12 @@ void MotionBlur::ExecuteBlurPass(TextureInfo& inout_tex)
 
 	// Get engine resources
 	auto& motionVectorTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	auto* depthSRV = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 
 	if (!motionVectorTex.SRV || !depthSRV || !neighborMaxTexture || !neighborMaxTexture->srv || !blurOutputTexture || !blurOutputTexture->uav)
 		return;
 
-	ID3D11ShaderResourceView* velocitySRV = motionVectorTex.SRV;
+	ID3D11ShaderResourceView* velocitySRV = Util::AsReal(motionVectorTex.SRV);
 
 	// Set samplers
 	if (!linearSampler || !pointSampler)

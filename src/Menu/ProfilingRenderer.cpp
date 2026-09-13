@@ -356,8 +356,6 @@ void ProfilingRenderer::RenderGraph()
 void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 {
 	auto& profiler = (*globals::profiler);
-	// Being drawn at all means something wants fresh data this frame.
-	profiler.RequestCapture();
 
 	// Only the full profiling page offers the toggle; the overlay-embedded
 	// row (showModeToggle=false) just shows the off-state below rather than
@@ -379,6 +377,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 		cpuMode = (timingMode == TimingMode::CPU);
 		ImGui::Separator();
 	}
+	profiler.RequestCapture(cpuMode ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU);
 
 	float currentTime = static_cast<float>(ImGui::GetTime());
 	float deltaTime = currentTime - lastFrameTime;
@@ -388,54 +387,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 	if (timeSinceLastUpdate >= kStatsRefreshSeconds) {
 		timeSinceLastUpdate = 0.0f;
 
-		cachedGroups.clear();
-		cachedTotalAvgMs = 0.0f;
-		cachedTotalP95Ms = 0.0f;
-		cachedTotalP99Ms = 0.0f;
-		cachedMaxAvgMs = 0.0f;
-		cachedMaxP95Ms = 0.0f;
-		cachedMaxP99Ms = 0.0f;
-		std::unordered_map<std::string, size_t> groupIndex;
-
-		for (const auto& result : profiler.GetResults()) {
-			if (!result.valid || !HasLiveTimingMode(result, cpuMode))
-				continue;
-
-			float avg = cpuMode ? result.cpuAvgMs : result.avgMs;
-			float p95 = cpuMode ? result.cpuP95Ms : result.p95Ms;
-			float p99 = cpuMode ? result.cpuP99Ms : result.p99Ms;
-
-			cachedTotalAvgMs += avg;
-			cachedTotalP95Ms += p95;
-			cachedTotalP99Ms += p99;
-
-			auto pos = result.name.find("::");
-			if (pos != std::string::npos) {
-				std::string groupName = result.name.substr(0, pos);
-				std::string passLabel = result.name.substr(pos + 2);
-
-				auto it = groupIndex.find(groupName);
-				if (it == groupIndex.end()) {
-					groupIndex[groupName] = cachedGroups.size();
-					cachedGroups.push_back({ groupName, 0, 0, 0 });
-				}
-
-				auto& group = cachedGroups[groupIndex[groupName]];
-				group.totalAvgMs += avg;
-				group.totalP95Ms += p95;
-				group.totalP99Ms += p99;
-				group.passes.push_back({ passLabel, avg, p95, p99 });
-			} else {
-				groupIndex[result.name] = cachedGroups.size();
-				cachedGroups.push_back({ result.name, avg, p95, p99 });
-			}
-		}
-
-		for (const auto& group : cachedGroups) {
-			cachedMaxAvgMs = std::max(cachedMaxAvgMs, group.totalAvgMs);
-			cachedMaxP95Ms = std::max(cachedMaxP95Ms, group.totalP95Ms);
-			cachedMaxP99Ms = std::max(cachedMaxP99Ms, group.totalP99Ms);
-		}
+		UpdateStatistics(cpuMode);
 	}
 
 	const bool renderedFeatureOverview = showModeToggle && RenderFeatureOverview();
@@ -524,7 +476,8 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 // sample array so a Total row can sum actual per-frame samples instead of
 // summing each pass's own percentile (percentile(A)+percentile(B) overstates
 // percentile(A+B)).
-static uint32_t CollectDisplayTimingSamples(const Profiler::TimerResult& result, bool cpuMode, std::array<float, kDisplayedRollingFrameCount>& samples)
+template <size_t SampleCount>
+static uint32_t CollectDisplayTimingSamples(const Profiler::TimerResult& result, bool cpuMode, std::array<float, SampleCount>& samples)
 {
 	samples.fill(0.0f);
 
@@ -532,9 +485,9 @@ static uint32_t CollectDisplayTimingSamples(const Profiler::TimerResult& result,
 	if (historyCount == 0)
 		return 0;
 
-	std::array<float, kDisplayedRollingFrameCount> collectedSamples{};
+	std::array<float, SampleCount> collectedSamples{};
 	uint32_t sampleCount = 0;
-	for (uint32_t offset = 0; offset < historyCount && sampleCount < kDisplayedRollingFrameCount; ++offset) {
+	for (uint32_t offset = 0; offset < historyCount && sampleCount < SampleCount; ++offset) {
 		const uint32_t historyIndex = historyCount - 1 - offset;
 		const float sample = cpuMode ?
 		                         result.GetCpuHistorySample(historyIndex) :
@@ -542,18 +495,19 @@ static uint32_t CollectDisplayTimingSamples(const Profiler::TimerResult& result,
 		if (!IsDisplayTimingSampleValid(sample))
 			continue;
 
-		collectedSamples[kDisplayedRollingFrameCount - 1 - sampleCount] = sample;
+		collectedSamples[SampleCount - 1 - sampleCount] = sample;
 		sampleCount++;
 	}
 
-	const uint32_t sourceOffset = kDisplayedRollingFrameCount - sampleCount;
+	const auto sourceOffset = SampleCount - sampleCount;
 	for (uint32_t i = 0; i < sampleCount; ++i)
 		samples[i] = collectedSamples[sourceOffset + i];
 
 	return sampleCount;
 }
 
-static float GetSortedPercentile(const std::array<float, kDisplayedRollingFrameCount>& samples, uint32_t sampleCount, float percentile)
+template <size_t SampleCount>
+static float GetSortedPercentile(const std::array<float, SampleCount>& samples, uint32_t sampleCount, float percentile)
 {
 	if (sampleCount == 0)
 		return 0.0f;
@@ -572,7 +526,8 @@ struct DisplayTimingStats
 	float p99Ms = 0.0f;
 };
 
-static DisplayTimingStats ComputeDisplayTimingStats(std::array<float, kDisplayedRollingFrameCount> samples, uint32_t sampleCount)
+template <size_t SampleCount>
+static DisplayTimingStats ComputeDisplayTimingStats(std::array<float, SampleCount> samples, uint32_t sampleCount)
 {
 	DisplayTimingStats stats;
 	if (sampleCount == 0)
@@ -590,18 +545,19 @@ static DisplayTimingStats ComputeDisplayTimingStats(std::array<float, kDisplayed
 }
 
 // Accumulates several passes' per-frame samples (aligned to the same ring
-// position -- relies on Profiler::CollectResults pushing exactly one sample
-// per timer per cycle) so a feature's Total row can compute avg/P95/P99 from
+// position -- relies on each Profiler source pushing exactly one sample per
+// timer per cycle) so a feature's Total row can compute avg/P95/P99 from
 // the actual summed-per-frame series, not from summing each pass's own stats.
+template <size_t SampleCount>
 struct DisplayTimingSampleAccumulator
 {
-	void Add(const std::array<float, kDisplayedRollingFrameCount>& sourceSamples, uint32_t sourceSampleCount)
+	void Add(const std::array<float, SampleCount>& sourceSamples, uint32_t sourceSampleCount)
 	{
 		if (sourceSampleCount == 0)
 			return;
 
 		sampleCount = std::max(sampleCount, sourceSampleCount);
-		const uint32_t sampleOffset = kDisplayedRollingFrameCount - sourceSampleCount;
+		const auto sampleOffset = SampleCount - sourceSampleCount;
 		for (uint32_t i = 0; i < sourceSampleCount; ++i)
 			samples[sampleOffset + i] += sourceSamples[i];
 	}
@@ -611,22 +567,64 @@ struct DisplayTimingSampleAccumulator
 		if (sampleCount == 0)
 			return {};
 
-		std::array<float, kDisplayedRollingFrameCount> compactSamples{};
-		const uint32_t sampleOffset = kDisplayedRollingFrameCount - sampleCount;
+		std::array<float, SampleCount> compactSamples{};
+		const auto sampleOffset = SampleCount - sampleCount;
 		for (uint32_t i = 0; i < sampleCount; ++i)
 			compactSamples[i] = samples[sampleOffset + i];
 
 		return ComputeDisplayTimingStats(compactSamples, sampleCount);
 	}
 
-	std::array<float, kDisplayedRollingFrameCount> samples{};
+	std::array<float, SampleCount> samples{};
 	uint32_t sampleCount = 0;
 };
+
+void ProfilingRenderer::UpdateStatistics(bool cpuMode)
+{
+	cachedGroups.clear();
+	cachedTotalAvgMs = 0.0f;
+	cachedMaxAvgMs = 0.0f;
+	cachedMaxP95Ms = 0.0f;
+	cachedMaxP99Ms = 0.0f;
+	std::unordered_map<std::string, size_t> groupIndex;
+	std::unordered_map<std::string, DisplayTimingSampleAccumulator<Profiler::kHistorySize>> groupSamples;
+
+	for (const auto& result : globals::profiler->GetResults()) {
+		if (!result.valid || !HasLiveTimingMode(result, cpuMode))
+			continue;
+
+		std::array<float, Profiler::kHistorySize> samples{};
+		const uint32_t sampleCount = CollectDisplayTimingSamples(result, cpuMode, samples);
+		const auto separator = result.name.find("::");
+		const auto groupName = result.name.substr(0, separator);
+		const auto [it, inserted] = groupIndex.try_emplace(groupName, cachedGroups.size());
+		if (inserted)
+			cachedGroups.push_back({ groupName });
+		if (separator != std::string::npos) {
+			cachedGroups[it->second].passes.push_back({ result.name.substr(separator + 2),
+				cpuMode ? result.cpuAvgMs : result.avgMs,
+				cpuMode ? result.cpuP95Ms : result.p95Ms,
+				cpuMode ? result.cpuP99Ms : result.p99Ms });
+		}
+		groupSamples[groupName].Add(samples, sampleCount);
+	}
+
+	for (auto& group : cachedGroups) {
+		const auto stats = groupSamples.at(group.name).GetStats();
+		group.totalAvgMs = stats.avgMs;
+		group.totalP95Ms = stats.p95Ms;
+		group.totalP99Ms = stats.p99Ms;
+		cachedTotalAvgMs += stats.avgMs;
+		cachedMaxAvgMs = std::max(cachedMaxAvgMs, stats.avgMs);
+		cachedMaxP95Ms = std::max(cachedMaxP95Ms, stats.p95Ms);
+		cachedMaxP99Ms = std::max(cachedMaxP99Ms, stats.p99Ms);
+	}
+}
 
 ProfilingRenderer::FeatureTimingData ProfilingRenderer::CollectFeatureTimingData(const std::string& featurePrefix, bool cpuMode)
 {
 	FeatureTimingData data;
-	DisplayTimingSampleAccumulator totalSamples;
+	DisplayTimingSampleAccumulator<kDisplayedRollingFrameCount> totalSamples;
 	const auto prefix = GetFeatureTimerPrefix(featurePrefix);
 	for (const auto& r : globals::profiler->GetResults()) {
 		if (!IsFeatureTimerResult(r, prefix) || !HasLiveTimingMode(r, cpuMode))
@@ -765,6 +763,8 @@ bool ProfilingRenderer::RenderFeatureOverview()
 	if (activeFeatures.empty())
 		return false;
 
+	globals::profiler->RequestCapture(Profiler::CaptureMode::Both);
+
 	std::sort(activeFeatures.begin(), activeFeatures.end());
 
 	ImGui::SeparatorText(T("menu.profiling.feature_overview", "Feature Profiling Overview"));
@@ -895,7 +895,9 @@ float ProfilingRenderer::PrepareFeatureTimers(const std::string& featurePrefix, 
 	if (view.profilingDisabled) {
 		timingDataHeight = ImGui::GetTextLineHeightWithSpacing();
 	} else if (view.controlsVisible && view.mode != FeatureTimingMode::Off) {
-		profiler.RequestCapture();
+		profiler.RequestCapture(
+			view.mode == FeatureTimingMode::CPU ? Profiler::CaptureMode::CPU : Profiler::CaptureMode::GPU,
+			GetFeatureTimerPrefix(featurePrefix));
 		view.data = CollectFeatureTimingData(featurePrefix, view.mode == FeatureTimingMode::CPU);
 		timingDataHeight = GetFeatureTimingDataHeight(view.data);
 	}

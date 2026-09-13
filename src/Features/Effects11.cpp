@@ -162,12 +162,16 @@ namespace
 		const std::string category = args.value("category", std::string{});
 		const bool value = args.value("value", false);
 		auto& settingManager = SettingManager::GetSingleton();
-		const uint32_t id = settingManager.GetSettingID(key, category);
-		if (id == 0xFFFFFFFF) {
+		const auto* info = settingManager.GetSettingInfo(key, category);
+		if (!info) {
 			logger::warn("[Effects11] setBoolSetting: no setting matches {}.{}", category, key);
 			return;
 		}
-		settingManager.SetValue<bool>(id, value);
+		if (info->type != SettingType::Bool) {
+			logger::warn("[Effects11] setBoolSetting: {}.{} is not a bool setting", category, key);
+			return;
+		}
+		settingManager.SetValue<bool>(info->id, value);
 	}
 
 	void CommandSaveAndApply(Feature*, const json&)
@@ -947,7 +951,7 @@ void Effects11::DrawVolumetricRays()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
 	D3D11_TEXTURE2D_DESC mainTexDesc{};
-	main.texture->GetDesc(&mainTexDesc);
+	main.texture->GetDesc(Util::AsW32(&mainTexDesc));
 	float2 resolution = { static_cast<float>(mainTexDesc.Width), static_cast<float>(mainTexDesc.Height) };
 	resolution = Util::ConvertToDynamic(resolution);
 	uint32_t dynWidth = static_cast<uint32_t>(resolution.x);
@@ -1113,7 +1117,7 @@ void Effects11::DrawVolumetricRays()
 	// Pass 4: Apply blurred shadow with color → main RT (additive)
 	{
 		profiler->BeginPass("Effects11::VolumetricRays Pass 3");
-		ID3D11RenderTargetView* rtv = main.RTV;
+		ID3D11RenderTargetView* rtv = Util::AsReal(main.RTV);
 		context->OMSetRenderTargets(1, &rtv, nullptr);
 		context->RSSetViewports(1, &viewport);
 

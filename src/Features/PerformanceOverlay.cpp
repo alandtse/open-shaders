@@ -1607,8 +1607,14 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	// bucket below from overstating by the un-subtracted CS-passes cost when
 	// draw calls are shown without the separate CS-passes row also visible.
 	if (this->settings.ShowDrawCalls)
-		globals::profiler->RequestCapture();
+		globals::profiler->RequestCapture(Profiler::CaptureMode::GPU);
 	float csPassesTime = globals::profiler->GetTotalTimeMs();
+	for (const auto& result : globals::profiler->GetResults()) {
+		if (result.activeGpu && result.name == "Effects") {
+			csPassesTime = std::max(0.0f, csPassesTime - result.gpuTimeMs);
+			break;
+		}
+	}
 	float csPercent = smoothedFrameTime > 0.0f ? (csPassesTime / smoothedFrameTime) * 100.0f : 0.0f;
 	float remainingOtherTime = std::max(0.0f, otherFrameTime - csPassesTime);
 	float remainingOtherPercent = smoothedFrameTime > 0.0f ? (remainingOtherTime / smoothedFrameTime) * 100.0f : 0.0f;

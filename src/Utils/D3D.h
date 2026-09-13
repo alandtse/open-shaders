@@ -1,14 +1,23 @@
 #pragma once
+
+#include "REX/W32/Bridge.h"
 #include <array>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <type_traits>
 #include <winrt/base.h>
 
 namespace Util
 {
+	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
+	// table; re-exported here to keep this codebase's Util:: call sites.
+	using REX::W32::AsReal;
+	using REX::W32::AsW32;
+	using REX::W32::CastTo;
+
 	/**
 	 * @brief ID3DInclude handler resolving #include paths under Data\Shaders,
 	 *        shared by every HLSL compile call site in this codebase.
