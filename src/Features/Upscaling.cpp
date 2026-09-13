@@ -147,6 +147,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			shouldProxy = false;
 	}
 
+	// The proxy path creates extra D3D11/D3D12 devices and swap chains beyond what the
+	// game itself creates -- redundant, and likely riskier, alongside Smooth Motion.
+	if (shouldProxy && Streamline::IsSmoothMotionEnabledForProfile()) {
+		logger::warn("[Frame Generation] NVIDIA Smooth Motion is enabled; disabling this plugin's frame generation to avoid crashing alongside it");
+		shouldProxy = false;
+	}
+
 	upscaling.lowRefreshRate = refreshRate < 120;
 	upscaling.isWindowed = pSwapChainDesc->Windowed;
 

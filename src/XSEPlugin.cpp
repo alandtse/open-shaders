@@ -165,8 +165,16 @@ bool Load()
 	}
 
 	// Frame generation is flatrim-only; the DRS reset must precede any D3D device.
-	if (!REL::Module::IsVR())
+	if (!REL::Module::IsVR()) {
 		Streamline::EnsureDriverProfileAllowsDLSSG();
+
+		if (Streamline::IsSmoothMotionEnabledForProfile())
+			logger::warn(
+				"NVIDIA Smooth Motion is enabled for this profile. It is known to crash "
+				"alongside D3D11 hooking mods (including this plugin). Disable Smooth "
+				"Motion for Skyrim Special Edition in the NVIDIA App if you experience "
+				"crashes at startup.");
+	}
 
 	auto messaging = SKSE::GetMessagingInterface();
 	messaging->RegisterListener("SKSE", MessageHandler);
