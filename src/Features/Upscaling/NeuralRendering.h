@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/Tuning.h"
 
 #include <atomic>
@@ -22,12 +23,20 @@ struct NeuralRendering
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
 	void DrawSettings(bool& enabled, NR::Tuning& tuning);
-	/** @brief Replaces active kMAIN eye regions before the OS upscale/post chain. */
-	void DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning);
+	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
+	void DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
+	/** @brief Draws the bounded scheduling diagnostics overlay. */
+	void DrawDiagnosticsOverlay(bool enabled);
+	/** @brief Records progress through the existing post-processing chain. */
+	void RecordStage(bool finishedPost);
+
+	/** @brief Returns only this frame's successfully composited NR reactive mask. */
+	ID3D11ShaderResourceView* GetReactiveMask() const;
 
 private:
 	struct Impl;
 	std::unique_ptr<Impl> impl;
+	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	std::mutex statusMutex;
 	std::string status = "Disabled";

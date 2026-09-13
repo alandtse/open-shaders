@@ -31,7 +31,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -2686,7 +2686,7 @@ void Upscaling::Upscale()
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
 		// The shader applies EyeOffsetX to sample the correct half.
-		ID3D11ShaderResourceView* views[4] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV };
+		ID3D11ShaderResourceView* views[5] = { temporalAAMask.SRV, normals.SRV, motionVector.SRV, depth.depthSRV, neuralRendering.GetReactiveMask() };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		if (auto* encodeCS = GetEncodeTexturesCS()) {
@@ -2720,7 +2720,7 @@ void Upscaling::Upscale()
 			}
 		}
 
-		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* nullViews[5] = {};
 		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
 
 		ID3D11UnorderedAccessView* nullUAVs[4] = { nullptr, nullptr, nullptr, nullptr };
@@ -3166,7 +3166,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
-	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning);
+	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 
 	if (upscaling.ShouldUseFrameGenerationThisFrame()) {
 		if (postProcessing.loaded)
@@ -3196,6 +3197,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		}
 	}
 
+	upscaling.neuralRendering.RecordStage(false);
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA || upscaling.vrSubmit.ShouldApplyMenuTAA());
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
@@ -3213,6 +3215,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (upscaling.vrSubmit.IsHookActive() && !(hdrLoaded && globals::features::hdrDisplay.settings.enableHDR))
 		upscaling.vrSubmit.ReconstructMenuBackground(uint32_t(a_target));
 
+	upscaling.neuralRendering.RecordStage(true);
 	Util::SetTemporal(false);
 }
 

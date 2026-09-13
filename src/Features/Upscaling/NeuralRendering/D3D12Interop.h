@@ -30,6 +30,10 @@ namespace NR
 		void Drain();
 		/** @brief Returns the device used by NGX. */
 		ID3D12Device* Device() const { return device.get(); }
+		/** @brief Returns the most recently issued shared-fence value. */
+		uint64_t SubmittedFence() const { return value; }
+		/** @brief Samples GPU progress without waiting. */
+		uint64_t CompletedFence() const { return fence ? fence->GetCompletedValue() : 0; }
 
 	private:
 		struct Commands

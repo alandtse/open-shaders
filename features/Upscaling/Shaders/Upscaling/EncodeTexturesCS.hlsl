@@ -11,6 +11,7 @@ Texture2D<float2> TAAMask : register(t0);
 Texture2D<float4> NormalsWaterMask : register(t1);
 Texture2D<float2> MotionVectorMask : register(t2);
 Texture2D<float> DepthMask : register(t3);
+Texture2D<float> NeuralReactiveMask : register(t4);
 
 RWTexture2D<float> ReactiveMask : register(u0);
 RWTexture2D<float> TransparencyCompositionMask : register(u1);
@@ -82,7 +83,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 #endif
 
 	float reactiveMask = taaMask.x * 0.1 + taaMask.y;
-	ReactiveMask[dispatchID.xy] = reactiveMask;
+	ReactiveMask[dispatchID.xy] = max(reactiveMask, NeuralReactiveMask[srcCoord]);
 
 	TransparencyCompositionMask[dispatchID.xy] = transparencyCompositionMask;
 }

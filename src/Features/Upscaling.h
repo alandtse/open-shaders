@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Feature.h"
+#include "OverlayFeature.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
@@ -22,12 +22,16 @@
  * This feature handles various upscaling methods and frame generation technologies
  * to improve performance while maintaining visual quality.
  */
-struct Upscaling : Feature
+struct Upscaling : OverlayFeature
 {
 private:
 	static constexpr std::string_view MOD_ID = "156952";
 
 public:
+	/** @brief Shows NR scheduling diagnostics through the existing overlay system. */
+	void DrawOverlay() override { neuralRendering.DrawDiagnosticsOverlay(settings.neuralRenderingEnabled); }
+	/** @brief Enables the NR diagnostics overlay while NR is selected. */
+	bool IsOverlayVisible() const override { return settings.neuralRenderingEnabled; }
 	// Feature interface
 	virtual inline std::string GetName() override { return "Upscaling"; }
 	virtual std::string GetDisplayName() override { return T("feature.upscaling.name", "Upscaling"); }

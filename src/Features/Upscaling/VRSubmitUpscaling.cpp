@@ -936,6 +936,8 @@ void VRSubmitUpscaling::CaptureInputs()
 		}
 		context->CSSetShader(shader, nullptr, 0);
 		context->CSSetShaderResources(0, 4, views);
+		auto* nrReactive = upscaling.neuralRendering.GetReactiveMask();
+		context->CSSetShaderResources(4, 1, &nrReactive);
 		auto shared = state->sharedDataCB->CB();
 		context->CSSetConstantBuffers(5, 1, &shared);
 		for (uint32_t eye = 0; eye < 2; ++eye) {

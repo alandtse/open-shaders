@@ -14,6 +14,7 @@ namespace NR
 		using Shutdown = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12Device*);
 		using Allocate = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter**);
 		using Destroy = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
+		using Populate = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
 		using Create = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature, NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
 		using Evaluate = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, const NVSDK_NGX_Handle*, const NVSDK_NGX_Parameter*, PFN_NVSDK_NGX_ProgressCallback);
 		using Release = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Handle*);
@@ -114,6 +115,7 @@ namespace NR
 		Shutdown shutdown = nullptr;
 		Allocate allocate = nullptr;
 		Destroy destroy = nullptr;
+		Populate populate = nullptr;
 		Create create = nullptr;
 		NR::Evaluate evaluate = nullptr;
 		Release release = nullptr;
@@ -175,6 +177,7 @@ namespace NR
 		state.create = Resolve<Create>(state.module.get(), "NVSDK_NGX_D3D12_CreateFeature");
 		state.evaluate = Resolve<NR::Evaluate>(state.module.get(), "NVSDK_NGX_D3D12_EvaluateFeature");
 		state.release = Resolve<Release>(state.module.get(), "NVSDK_NGX_D3D12_ReleaseFeature");
+		state.populate = Resolve<Populate>(state.module.get(), "NVSDK_NGX_D3D12_PopulateParameters_Impl");
 		const auto appId = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetApplicationId")();
 		const auto api = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetAPIVersion")();
 		// This is an NGX caller identity string only; nvngx.dll need not exist on disk.
@@ -224,32 +227,62 @@ namespace NR
 
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
-		uint32_t width, uint32_t height, FrameParameters& frame, const Tuning& tuning)
+		uint32_t width, uint32_t height, uint32_t guideWidth, uint32_t guideHeight, FrameParameters& frame, const Tuning& tuning)
 	{
 		auto& state = *impl;
 		auto& eye = state.eyes.at(eyeIndex);
+		frame.created = false;
+		frame.result = 0;
 		auto* parameters = eye.parameters.get();
 		RuntimePath::Scope scope(state.compatibility);
 		if (!eye.feature) {
 			parameters->Reset();
-			for (auto key : { "Width", "OutWidth", "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
+			Check(state.populate(parameters), "NR parameter population");
+			for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
 				parameters->Set(key, width);
-			for (auto key : { "Height", "OutHeight", "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
+			for (auto key : { "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
 				parameters->Set(key, height);
+			parameters->Set("Width", width);
+			parameters->Set("Height", height);
+			parameters->Set("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+			parameters->Set("CreationNodeMask", 1u);
+			parameters->Set("VisibilityNodeMask", 1u);
+			parameters->Set("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+			parameters->Set("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
+			parameters->Set("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
 			parameters->Set("DLSSNR.Scale", 1.0f);
 			parameters->Set("DLSSNR.ScalingRatio", 1.0f);
-			parameters->Set("DLSSNR.Upscaling", 1u);
+			parameters->Set("DLSSNR.Upscaling", 0u);
 			parameters->Set("DLSSNR.Hint.Render.Preset", 0u);
+			const auto flags = static_cast<unsigned int>(
+				NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
+			parameters->Set("Feature_Flags", flags);
+			parameters->Set("NVSDK_NGX_Parameter_Feature_Flags", flags);
+			parameters->Set("InPreExposure", 1.0f);
+			parameters->Set("InExposureScale", 1.0f);
+			parameters->Set("NVSDK_NGX_Parameter_PreExposure", 1.0f);
+			parameters->Set("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
+			parameters->Set("DLSSNR.AutoExposure", 1u);
+			parameters->Set("DLSSNR.Hdr", 0u);
+			parameters->Set("DLSSNR.SDR", 1u);
+			parameters->Set("DLSSNR.Style", tuning.style);
+			parameters->Set("DLSSNR.Intensity", tuning.intensity);
+			parameters->Set("DLSSNR.LocalToneStrength", tuning.localToneStrength);
+			parameters->Set("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
+			parameters->Set("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+			parameters->Set("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
 			NVSDK_NGX_Handle* handle = nullptr;
 			const auto result = state.create(commands, static_cast<NVSDK_NGX_Feature>(18), parameters, &handle);
+			frame.result = static_cast<uint32_t>(result);
 			eye.feature.reset(handle);
 			if (NVSDK_NGX_FAILED(result) || !handle) {
-				logger::error("[NeuralRendering] Eye {} creation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
+				logger::error("[NeuralRendering] Eye {} SDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
 				return false;
 			}
+			logger::info("[NeuralRendering] Eye {} SDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
+			frame.created = true;
 			frame.reset = true;
 		}
-		parameters->Reset();
 		parameters->Set("DLSSNR.Color", color);
 		parameters->Set("DLSSNR.Depth", depth);
 		parameters->Set("DLSSNR.MVec", motion);
@@ -257,28 +290,32 @@ namespace NR
 		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.DepthSubrectBaseX", "DLSSNR.DepthSubrectBaseY",
 				 "DLSSNR.MVecSubrectBaseX", "DLSSNR.MVecSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
 			parameters->Set(key, 0u);
-		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.DepthSubrectWidth", "DLSSNR.MVecSubrectWidth", "DLSSNR.OutputSubrectWidth" })
+		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.OutputSubrectWidth" })
 			parameters->Set(key, width);
-		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight", "DLSSNR.OutputSubrectHeight" })
+		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
 			parameters->Set(key, height);
-		parameters->Set("DLSSNR.MVecScaleX", static_cast<float>(width));
-		parameters->Set("DLSSNR.MVecScaleY", static_cast<float>(height));
+		for (auto key : { "DLSSNR.DepthSubrectWidth", "DLSSNR.MVecSubrectWidth" })
+			parameters->Set(key, guideWidth);
+		for (auto key : { "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight" })
+			parameters->Set(key, guideHeight);
+		parameters->Set("DLSSNR.MVecScaleX", 1.0f);
+		parameters->Set("DLSSNR.MVecScaleY", 1.0f);
 		parameters->Set("DLSSNR.DepthInverted", 0u);
 		parameters->Set("DLSSNR.Enabled", 1u);
 		parameters->Set("DLSSNR.Reset", frame.reset ? 1u : 0u);
+		parameters->Set("DLSSNR.Upscaling", 0u);
+		parameters->Set("DLSSNR.Scale", 1.0f);
+		parameters->Set("DLSSNR.ScalingRatio", 1.0f);
 		parameters->Set("DLSSNR.Intensity", tuning.intensity);
 		parameters->Set("DLSSNR.LocalToneStrength", tuning.localToneStrength);
 		parameters->Set("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
 		parameters->Set("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
-		parameters->Set("DLSSNR.UseAutoMask", 0u);
-		parameters->Set("DLSSNR.Style", 0u);
+		parameters->Set("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+		parameters->Set("DLSSNR.Style", tuning.style);
 		parameters->Set("DLSSNR.UICorrection", 0u);
-		parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, frame.jitterX);
-		parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, frame.jitterY);
-		parameters->Set(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, frame.frameTimeMs);
-		parameters->Set(NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, static_cast<void*>(&frame.worldToView));
-		parameters->Set(NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, static_cast<void*>(&frame.viewToClip));
+		parameters->Set("Sharpness", 0.0f);
 		const auto result = state.evaluate(commands, eye.feature.get(), parameters, nullptr);
+		frame.result = static_cast<uint32_t>(result);
 		if (NVSDK_NGX_FAILED(result)) {
 			logger::error("[NeuralRendering] Eye {} evaluation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
 			return false;
