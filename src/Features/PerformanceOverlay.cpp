@@ -1639,7 +1639,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	DrawCallRow otherRow = {
 		"Other:", magic_enum::enum_integer(SpecialShaderType::Other), kDrawCallsNotApplicable, remainingOtherTime, remainingOtherPercent,
 		0.0f,
-		std::string(T(TKEY("tip_other"), "Frame time not attributed to any measured shader type or Open Shaders compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
+		std::string(T(TKEY("tip_misc"), "Frame time not attributed to any measured shader type or Open Shaders compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
 		true, otherTestFrameTime, otherTestCostPerCall
 	};
 	float totalFrameTime = smoothedFrameTime;
