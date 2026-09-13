@@ -369,8 +369,6 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 			profiler.ClearTimers();
 			cachedGroups.clear();
 			cachedTotalAvgMs = 0.0f;
-			cachedTotalP95Ms = 0.0f;
-			cachedTotalP99Ms = 0.0f;
 			cachedMaxAvgMs = 0.0f;
 			cachedMaxP95Ms = 0.0f;
 			cachedMaxP99Ms = 0.0f;
