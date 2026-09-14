@@ -323,6 +323,8 @@ void State::ClearTransientWindImpulses()
 
 void State::UpdateTransientWindImpulses(float a_frameTime)
 {
+	std::lock_guard lock(transientWindImpulseMutex);
+
 	previousTransientWindImpulses = transientWindImpulses;
 	previousTransientWindImpulseOwners = transientWindImpulseOwners;
 	previousActiveTransientWindImpulseCount = activeTransientWindImpulseCount;
@@ -347,12 +349,8 @@ void State::UpdateTransientWindImpulses(float a_frameTime)
 	}
 
 	std::vector<ManagedTransientWindSource> pendingSources;
-	std::vector<ManagedTransientWindSource> attachedSources;
-	{
-		std::lock_guard lock(transientWindImpulseMutex);
-		pendingSources.swap(pendingTransientWindSources);
-		attachedSources = attachedTransientWindSources;
-	}
+	pendingSources.swap(pendingTransientWindSources);
+	const std::vector<ManagedTransientWindSource>& attachedSources = attachedTransientWindSources;
 	for (auto& pendingSource : pendingSources) {
 		pendingSource.source.wavefrontDistance = 0.0f;
 		activeTransientWindSources.push_back(pendingSource);
