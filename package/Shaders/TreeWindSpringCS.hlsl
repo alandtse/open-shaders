@@ -106,7 +106,7 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 		uint groupThreadIndex = groupThreadId.y * 8u + groupThreadId.x;
 		float2 tileCenter = field.FieldMinimum +
 		                    (float2(groupId.xy * 8u) + 4.0f) * cellSize;
-		float tileRadius = cellSize * 4.94974747f;
+		float tileRadius = cellSize * TransientWindCulling::kEightCellTileRadiusFactor;
 		for (uint sourceIndex = groupThreadIndex; sourceIndex < activeSourceCount; sourceIndex += 64u) {
 			WindField::TransientWindSource source = SharedData::WindFieldTransientImpulses[sourceIndex];
 			if (TransientWindCulling::SourceMayAffectTile(source, tileCenter, tileRadius)) {

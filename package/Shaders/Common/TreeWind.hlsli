@@ -14,7 +14,6 @@ namespace TreeWind
 		static const float TRANSIENT_LEAF_FLUTTER_GAIN = 3.0;
 		static const float TRANSIENT_LEAF_STRUCTURAL_COUPLING = 0.75;
 
-		/** @brief Returns model-adjusted ambient leaf flutter gain. */
 		float GetLeafFlutterGain()
 		{
 			return max(Permutation::TreeLeafBaseWindFlutterGain, 0.0) *
@@ -61,7 +60,6 @@ namespace TreeWind
 			return UnpackTransientSample(packedSample, true);
 		}
 
-		/** @brief Reduces base, middle, and top probes into one tree impulse sample. */
 		WindField::TransientImpulseSample ResolveTransientSample(
 			float treeHeight,
 			WindField::TransientImpulseSample baseSample,
@@ -72,7 +70,7 @@ namespace TreeWind
 			sample.velocity = 0.0.xxx;
 			sample.intensity = max(baseSample.intensity,
 				max(middleSample.intensity, topSample.intensity));
-			if (treeHeight <= 1e-3 || sample.intensity <= 1e-4)
+			if (treeHeight <= EPSILON_WIND_HEIGHT || sample.intensity <= EPSILON_WIND_GEOMETRY)
 				return sample;
 
 			float2 combinedVelocity = baseSample.velocity.xy + middleSample.velocity.xy + topSample.velocity.xy;
@@ -80,15 +78,14 @@ namespace TreeWind
 			float strongestSpeed = max(length(baseSample.velocity.xy),
 				max(length(middleSample.velocity.xy), length(topSample.velocity.xy)));
 			sample.velocity.xy =
-				combinedSpeed > 1e-5 ? combinedVelocity * (strongestSpeed / combinedSpeed) : 0.0.xx;
+				combinedSpeed > EPSILON_WIND_RESPONSE ? combinedVelocity * (strongestSpeed / combinedSpeed) : 0.0.xx;
 			return sample;
 		}
 
-		/** @brief Returns the configured root-anchored quadratic trunk flexibility. */
 		float GetBendFlexibility(float localHeight)
 		{
 			float treeHeight = Permutation::TreeWindBoundsHeight;
-			if (treeHeight <= 1e-3)
+			if (treeHeight <= EPSILON_WIND_HEIGHT)
 				return 0.0;
 
 			float normalizedHeight = saturate(
@@ -100,11 +97,10 @@ namespace TreeWind
 		}
 	}
 
-	/** @brief Converts the combined tree response into a measured-height-weighted trunk shift. */
 	float2 GetWorldDisplacement(float localHeight, float2 windVelocity)
 	{
 		float treeHeight = Permutation::TreeWindBoundsHeight;
-		if (treeHeight <= 1e-3)
+		if (treeHeight <= EPSILON_WIND_HEIGHT)
 			return 0.0.xx;
 
 		float maximumDisplacement =
@@ -123,7 +119,6 @@ namespace TreeWind
 		float3 top;
 	};
 
-	/** @brief Builds consistent root and transient probe positions for one tree transform. */
 	SamplePositions BuildSamplePositions(row_major float3x4 worldMatrix, float3 worldOffset)
 	{
 		SamplePositions positions;
@@ -149,7 +144,6 @@ namespace TreeWind
 
 	namespace Detail
 	{
-		/** @brief Bounds extreme ambient response before model-specific displacement scaling. */
 		float2 LimitAmbientVelocity(float2 ambientVelocity)
 		{
 			float speed = length(ambientVelocity);
@@ -158,7 +152,6 @@ namespace TreeWind
 			           ambientVelocity;
 		}
 
-		/** @brief Applies the tree transient bend limit before the shared displacement path. */
 		float3 LimitTrunkTransientVelocity(float3 transientVelocity)
 		{
 			float bendSensitivity = max(Permutation::TrunkWindBendSensitivity, 0.0f) *
@@ -170,7 +163,6 @@ namespace TreeWind
 			           transientVelocity;
 		}
 
-		/** @brief Resolves the shared tree field plus structural and vertex-local transient samples. */
 		Sample ResolveSample(
 			WindField::TransientImpulseSample trunkTransientSample,
 			WindField::TransientImpulseSample leafTransientSample,
@@ -194,7 +186,6 @@ namespace TreeWind
 			return sample;
 		}
 
-		/** @brief Reduces three current transient probes into one tree impulse sample. */
 		WindField::TransientImpulseSample SampleCurrentTransient(SamplePositions positions)
 		{
 			return ResolveTransientSample(
@@ -204,7 +195,6 @@ namespace TreeWind
 				SampleCurrentTransientAt(positions.top));
 		}
 
-		/** @brief Reduces three previous transient probes into one tree impulse sample. */
 		WindField::TransientImpulseSample SamplePreviousTransient(SamplePositions positions)
 		{
 			return ResolveTransientSample(
@@ -233,7 +223,6 @@ namespace TreeWind
 		}
 	}
 
-	/** @brief Samples and resolves current tree wind from precomputed world-space positions. */
 	Sample SampleCurrent(SamplePositions positions, float2 transientInfluence)
 	{
 		return Detail::ResolveSample(
@@ -242,7 +231,6 @@ namespace TreeWind
 			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
 	}
 
-	/** @brief Samples current tree wind with transient leaf response localized to one vertex. */
 	Sample SampleCurrent(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)
@@ -253,7 +241,6 @@ namespace TreeWind
 			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
 	}
 
-	/** @brief Samples and resolves previous tree wind from precomputed world-space positions. */
 	Sample SamplePrevious(SamplePositions positions, float2 transientInfluence)
 	{
 		return Detail::ResolveSample(
@@ -262,7 +249,6 @@ namespace TreeWind
 			TreeWindSpring::SamplePrevious(positions.root.xy), transientInfluence);
 	}
 
-	/** @brief Samples previous tree wind with transient leaf response localized to one vertex. */
 	Sample SamplePrevious(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)

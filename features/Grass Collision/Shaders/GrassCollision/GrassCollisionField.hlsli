@@ -11,6 +11,9 @@ namespace GrassCollision
 
 	const static uint TEXTURE_SIZE = 1024;
 	const static float WORLD_SIZE = 8192.0;
+	// Half of WORLD_SIZE: the field's coverage radius from its center, used to fade collision
+	// influence out toward the edge of the sampled area.
+	const static float FADE_DISTANCE = WORLD_SIZE * 0.5;
 
 	float2 GetFieldUV(float2 worldPosition, float2 positionOffset, uint2 arrayOrigin, out bool isValid)
 	{

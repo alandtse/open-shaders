@@ -1,3 +1,5 @@
+#include "Common/Math.hlsli"
+
 cbuffer PerFrameCB : register(b0)
 {
 	float2 PosOffset;
@@ -45,7 +47,7 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 {
 	float2 segment = pointB - pointA;
 	float segmentLengthSquared = dot(segment, segment);
-	float segmentPosition = segmentLengthSquared > 1e-5 ?
+	float segmentPosition = segmentLengthSquared > EPSILON_WIND_RESPONSE ?
 	                            saturate(dot(position - pointA, segment) / segmentLengthSquared) :
 	                            0.0;
 	return pointA + segment * segmentPosition;
@@ -104,12 +106,12 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 				float distanceToSweep = length(delta);
 				float penetration = radius - distanceToSweep;
 				if (penetration > 0.0) {
-					float penetrationRatio = saturate(penetration / max(radius, 1e-4));
+					float penetrationRatio = saturate(penetration / max(radius, EPSILON_WIND_GEOMETRY));
 					float2 movement = currentCentre - previousCentre;
-					float2 fallbackDirection = dot(movement, movement) > 1e-5 ?
+					float2 fallbackDirection = dot(movement, movement) > EPSILON_WIND_RESPONSE ?
 					                               normalize(float2(-movement.y, movement.x)) :
 					                               float2(1.0, 0.0);
-					float2 outwardDirection = distanceToSweep > 1e-4 ? delta / distanceToSweep : fallbackDirection;
+					float2 outwardDirection = distanceToSweep > EPSILON_WIND_GEOMETRY ? delta / distanceToSweep : fallbackDirection;
 					collisionAcceleration += outwardDirection * penetrationRatio;
 					collisionCompression = max(collisionCompression, penetrationRatio);
 				}
@@ -127,7 +129,7 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 
 	float maximumBend = max(MaximumBend, 0.0);
 	float bendMagnitude = length(bend);
-	if (bendMagnitude > maximumBend && bendMagnitude > 1e-5) {
+	if (bendMagnitude > maximumBend && bendMagnitude > EPSILON_WIND_RESPONSE) {
 		float2 bendDirection = bend / bendMagnitude;
 		bend = bendDirection * maximumBend;
 		velocity -= bendDirection * max(dot(velocity, bendDirection), 0.0);

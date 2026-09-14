@@ -5,6 +5,10 @@
 
 namespace TransientWindCulling
 {
+	// 3.5*sqrt(2): tileRadius factor for the 8x8-cell tiles both GrassWindSpringCS.hlsl and
+	// TreeWindSpringCS.hlsl dispatch in (their [numthreads(8,8,1)] groups own one tile each).
+	static const float kEightCellTileRadiusFactor = 4.94974747f;
+
 	bool SourceMayAffectTile(
 		WindField::TransientWindSource source, float2 tileCenter, float tileRadius)
 	{

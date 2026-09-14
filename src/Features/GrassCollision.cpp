@@ -37,6 +37,9 @@ static constexpr float MIN_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT = 16.0f;
 static constexpr float MAX_MAXIMUM_COMPRESSIBLE_GRASS_HEIGHT = 512.0f;
 static constexpr float MIN_COMPRESSION_RECOVERY = 0.1f;
 static constexpr float MAX_COMPRESSION_RECOVERY = 10.0f;
+static constexpr float MAX_TIME_DELTA = 1.0f / 15.0f;
+static constexpr float LEGACY_COMPRESSION_HEIGHT_FRACTION_THRESHOLD = 1.0f;
+static constexpr float LEGACY_COMPRESSION_HEIGHT_FRACTION_TO_PERCENT = 100.0f;
 
 struct GrassCollisionActorCandidate
 {
@@ -287,7 +290,7 @@ void GrassCollision::Update()
 		perFrameData.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y };
 
 		perFrameData.TimeDelta = std::clamp(
-			*globals::game::deltaTime * !globals::game::ui->GameIsPaused(), 0.0f, 1.0f / 15.0f);
+			*globals::game::deltaTime * !globals::game::ui->GameIsPaused(), 0.0f, MAX_TIME_DELTA);
 		perFrameData.GrassInteractionRadius = std::clamp(settings.GrassInteractionRadius,
 			MIN_GRASS_INTERACTION_RADIUS, MAX_GRASS_INTERACTION_RADIUS);
 		perFrameData.CollisionStrength = std::clamp(settings.CollisionImpactStrength,
@@ -361,8 +364,9 @@ void GrassCollision::LoadSettings(json& o_json)
 	const Settings defaults{};
 	if (!std::isfinite(settings.CompressionHeight))
 		settings.CompressionHeight = defaults.CompressionHeight;
-	else if (settings.CompressionHeight <= 1.0f)
-		settings.CompressionHeight *= 100.0f;
+	else if (settings.CompressionHeight <= LEGACY_COMPRESSION_HEIGHT_FRACTION_THRESHOLD)
+		// Pre-existing saves stored this as a 0-1 fraction; the current range is 10-100.
+		settings.CompressionHeight *= LEGACY_COMPRESSION_HEIGHT_FRACTION_TO_PERCENT;
 	settings.CompressionHeight = std::clamp(settings.CompressionHeight,
 		MIN_COMPRESSION_HEIGHT, MAX_COMPRESSION_HEIGHT);
 	if (!std::isfinite(settings.MaximumCompressibleGrassHeight))

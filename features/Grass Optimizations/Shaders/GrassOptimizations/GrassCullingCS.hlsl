@@ -364,8 +364,8 @@ void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, 
 	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
 	currentCollision = GrassCollision::SampleCurrentDeformation(currentCollisionRoot.xy);
 	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
-	currentCollision.w = smoothstep(4096.0, 0.0, length(currentCollisionRoot));
-	previousCollision.w = smoothstep(4096.0, 0.0, length(previousRoot));
+	currentCollision.w = smoothstep(GrassCollision::FADE_DISTANCE, 0.0, length(currentCollisionRoot));
+	previousCollision.w = smoothstep(GrassCollision::FADE_DISTANCE, 0.0, length(previousRoot));
 #endif
 
 	if (visible0)
