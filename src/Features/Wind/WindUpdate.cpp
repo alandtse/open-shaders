@@ -8,6 +8,19 @@
 
 namespace
 {
+	bool IsFiniteSource(const WindField::TransientWindSource& a_source)
+	{
+		return std::isfinite(a_source.origin.x) && std::isfinite(a_source.origin.y) &&
+		       std::isfinite(a_source.origin.z) && std::isfinite(a_source.direction.x) &&
+		       std::isfinite(a_source.direction.y) && std::isfinite(a_source.direction.z) &&
+		       std::isfinite(a_source.wavefrontDistance) && std::isfinite(a_source.strength) &&
+		       std::isfinite(a_source.maxDistance) && std::isfinite(a_source.waveHalfWidth) &&
+		       std::isfinite(a_source.propagationSpeed) && std::isfinite(a_source.coneSpreadTangent) &&
+		       std::isfinite(a_source.decayTime) && std::isfinite(a_source.collisionRadius) &&
+		       std::isfinite(a_source.sideSpreadTangent) && std::isfinite(a_source.sideStrength) &&
+		       std::isfinite(a_source.verticalScale) && std::isfinite(a_source.falloffWidth);
+	}
+
 	struct WindSelection
 	{
 		float3 direction;
@@ -359,6 +372,9 @@ void Wind::UpdateTransientWindImpulses(float a_frameTime)
 
 	std::vector<ManagedTransientWindSource> composedSources = activeTransientWindSources;
 	composedSources.insert(composedSources.end(), attachedSources.begin(), attachedSources.end());
+	std::erase_if(composedSources, [](const auto& a_managed) {
+		return !IsFiniteSource(a_managed.source);
+	});
 	std::ranges::stable_sort(composedSources, [](const auto& left, const auto& right) {
 		if (left.priority != right.priority)
 			return left.priority > right.priority;
