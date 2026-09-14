@@ -612,13 +612,13 @@ std::function<void()> Wind::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
 	if (sensitivities.hasBounds) {
 		permutationData.TreeWindBoundsBase = sensitivities.boundMinimumZ;
 		permutationData.TreeWindBoundsHeight = sensitivities.boundHeight;
-		permutationData.TreeWindProbeBase = { sensitivities.probeBase.x, sensitivities.probeBase.y, sensitivities.probeBase.z, 0.0f };
-		permutationData.TreeWindProbeTop = { sensitivities.probeTop.x, sensitivities.probeTop.y, sensitivities.probeTop.z, 0.0f };
+		permutationData.TreeWindProbeBase = float4(sensitivities.probeBase.x, sensitivities.probeBase.y, sensitivities.probeBase.z, 0.0f);
+		permutationData.TreeWindProbeTop = float4(sensitivities.probeTop.x, sensitivities.probeTop.y, sensitivities.probeTop.z, 0.0f);
 	} else {
 		permutationData.TreeWindBoundsBase = 0.0f;
 		permutationData.TreeWindBoundsHeight = 0.0f;
-		permutationData.TreeWindProbeBase = {};
-		permutationData.TreeWindProbeTop = {};
+		permutationData.TreeWindProbeBase = float4();
+		permutationData.TreeWindProbeTop = float4();
 	}
 	UpdateTreeWindSpring();
 
