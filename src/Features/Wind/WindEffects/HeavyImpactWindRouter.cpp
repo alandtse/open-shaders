@@ -342,7 +342,7 @@ public:
 				if (std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z)) {
 					if (auto event = std::ranges::find(queuedEvents, key, &QueuedImpact::key);
 						event != queuedEvents.end()) {
-						event->contactPosition = { position.x, position.y, position.z };
+						event->contactPosition = float3(position.x, position.y, position.z);
 						event->hasContact = true;
 					}
 				}
@@ -358,7 +358,7 @@ public:
 		if (a_contact) {
 			const auto position = a_contact->GetPosition();
 			if (std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z)) {
-				event.contactPosition = { position.x, position.y, position.z };
+				event.contactPosition = float3(position.x, position.y, position.z);
 				event.hasContact = true;
 			}
 		}

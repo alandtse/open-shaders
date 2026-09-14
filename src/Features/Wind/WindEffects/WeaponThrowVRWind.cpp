@@ -230,7 +230,7 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 		impactAges.emplace(identity, 0.0f);
 		auto fallbackDirection = Normalize(impact.velocity);
 		if (fallbackDirection.x == 0.0f && fallbackDirection.y == 0.0f && fallbackDirection.z == 0.0f)
-			fallbackDirection = { 1.0f, 0.0f, 0.0f };
+			fallbackDirection = float3(1.0f, 0.0f, 0.0f);
 		const auto source = WindField::MakeRadialWave(
 			{ impact.position.x, impact.position.y, impact.position.z }, fallbackDirection,
 			settings.strength * settings.impactStrength, settings.radius * 2.0f,
