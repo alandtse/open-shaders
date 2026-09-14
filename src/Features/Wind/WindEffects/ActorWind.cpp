@@ -12,7 +12,9 @@ namespace ActorWind
 		const auto* race = a_actor.GetRace();
 		if (!race)
 			return false;
-		if (a_dragonKeyword ? race->HasKeyword(a_dragonKeyword) : race->HasKeywordString("ActorTypeDragon"))
+		if (a_dragonKeyword)
+			return race->HasKeyword(a_dragonKeyword);
+		if (race->HasKeywordString("ActorTypeDragon"))
 			return true;
 
 		constexpr std::string_view dragonGraph = "dragonbehavior.hkx";
