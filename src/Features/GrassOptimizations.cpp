@@ -739,11 +739,6 @@ void GrassOptimizations::ClearShaderCache()
 	bucketStore.ClearShaderCache();
 }
 
-ID3D11ComputeShader* GrassOptimizations::GetCullCS()
-{
-	return cullCS.Get(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0", "main", "GrassOptimizations::CullCS");
-}
-
 // VR needs one input layout per vertex descriptor: SV_InstanceID excludes StartInstanceLocation, so
 // eye 1's draw needs the compacted stream's TEXCOORD4-7 instance attrs at the right per-vertex offsets
 // for that descriptor (a descriptor-agnostic layout silently drops them, leaving VR grass invisible).
