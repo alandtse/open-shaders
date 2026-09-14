@@ -176,8 +176,7 @@ struct Wind : Feature
 		std::span<const TransientWindSourceSubmission> a_sources);
 	/** @brief Removes active, pending, and attached sources owned by one producer. */
 	void ClearTransientWindSources(TransientWindSourceOwner a_owner);
-	/** @brief Removes only active and pending transient wind impulses; attached sources
-	 * (which re-submit every frame) are left untouched, unlike ClearTransientWindSources. */
+	/** @brief Unlike ClearTransientWindSources, clears every owner's sources, not just one. */
 	void ClearTransientWindImpulses();
 	void UpdateWindEffects(float a_frameTime);
 	void SetTreeWindTestEnabled(bool a_enabled);
