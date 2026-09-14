@@ -610,7 +610,6 @@ namespace TreeWindPatcher
 			const float height = geometryBounds.maximum.z - geometryBounds.minimum.z;
 			if (height <= kMinimumBoundExtent)
 				return;
-			// Split tree geometry must sample one shared leaf-node axis despite having different local transforms.
 			const float probeBaseHeight = std::clamp(0.0f, a_leafBounds.minimum.z, a_leafBounds.maximum.z);
 			const RE::NiPoint3 probeBase = leafToGeometry * RE::NiPoint3{ 0.0f, 0.0f, probeBaseHeight };
 			const RE::NiPoint3 probeTop = leafToGeometry * RE::NiPoint3{ 0.0f, 0.0f, a_leafBounds.maximum.z };

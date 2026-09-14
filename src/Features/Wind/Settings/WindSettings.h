@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <string_view>
 
-/** Persistent settings owned by the Wind feature. */
 struct WindSettings
 {
 	struct GrassWindSpringQualityRange

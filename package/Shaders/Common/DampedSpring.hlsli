@@ -7,7 +7,6 @@ namespace DampedSpring
 {
 	static const float TAU = 6.28318530717958647692f;
 
-	/** @brief Advances an exact damped oscillator over one constant-target interval. */
 	void Advance(float4 position, float4 velocity, float4 target, float frameTime,
 		float frequency, float damping, out float4 nextPosition, out float4 nextVelocity)
 	{
@@ -50,7 +49,6 @@ namespace DampedSpring
 		}
 	}
 
-	/** @brief Advances a three-component oscillator through the shared exact solver. */
 	void Advance(float3 position, float3 velocity, float3 target, float frameTime,
 		float frequency, float damping, out float3 nextPosition, out float3 nextVelocity)
 	{
@@ -62,7 +60,6 @@ namespace DampedSpring
 		nextVelocity = extendedVelocity.xyz;
 	}
 
-	/** @brief Advances a two-component oscillator through the shared exact solver. */
 	void Advance(float2 position, float2 velocity, float2 target, float frameTime,
 		float frequency, float damping, out float2 nextPosition, out float2 nextVelocity)
 	{

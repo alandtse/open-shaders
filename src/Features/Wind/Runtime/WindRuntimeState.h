@@ -24,7 +24,6 @@ struct RuntimeWindTest
 	float gustAdvectionMultiplier = 1.0f;
 };
 
-/** Runtime-only wind overrides and visualization controls. */
 struct WindRuntimeState
 {
 	bool visualizeWindField = false;

@@ -54,7 +54,6 @@ static_assert(offsetof(TreeWindSpringData, gustSoftLimit) == 160);
 static_assert(offsetof(TreeWindSpringData, transientFieldMask) == 164);
 static_assert(offsetof(TreeWindSpringData, transientSpringFrequency) == 168);
 
-/** GPU resources and temporal field state for structural tree wind. */
 struct TreeWindState
 {
 	using TexturePair = std::array<std::unique_ptr<Texture2D>, 2>;

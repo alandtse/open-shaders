@@ -8,7 +8,6 @@
 
 namespace WindField
 {
-	/** @brief Resolves sampled wind components using independent gust and transient influence ratios. */
 	WindSample ResolveSample(Components components, float gustInfluence, float transientInfluence)
 	{
 		float3 ambientVelocity = components.baseAmbientVelocity +
@@ -90,7 +89,6 @@ namespace WindField
 		}
 	}
 
-	/** @brief Samples the original scalar noise using a field's fixed basis and independent scroll phase. */
 	WindSample SampleField(float3 worldPosition, Field field, WindTuning tuning)
 	{
 		WindSample sample;
@@ -103,7 +101,6 @@ namespace WindField
 
 	namespace Detail
 	{
-		/** @brief Accumulates one history snapshot's active transient impulses. */
 		TransientImpulseSample SampleTransientImpulses(
 			float3 worldPosition,
 			TransientWindSource impulses[TransientImpulseCapacity],
@@ -122,7 +119,6 @@ namespace WindField
 			return sample;
 		}
 
-		/** @brief Resolves field components with a separately sampled transient history. */
 		WindSample ResolveWithTransient(
 			Components components, TransientImpulseSample transientSample,
 			float gustInfluence, float transientInfluence)
@@ -132,7 +128,6 @@ namespace WindField
 			return ResolveSample(components, gustInfluence, transientInfluence);
 		}
 
-		/** @brief Samples the base and gust components of a transitioning wind field. */
 		Components SampleBlendedComponents(
 			float3 worldPosition, Field currentField, Field previousField, float blend)
 		{
@@ -159,7 +154,6 @@ namespace WindField
 		}
 	}
 
-	/** @brief Samples current-frame field components without transient impulses. */
 	Components SampleCurrentComponents(float3 worldPosition)
 	{
 		return Detail::SampleBlendedComponents(
@@ -167,7 +161,6 @@ namespace WindField
 			SharedData::WindFieldTransitionData.x);
 	}
 
-	/** @brief Samples previous-frame field components without transient impulses. */
 	Components SamplePreviousComponents(float3 worldPosition)
 	{
 		return Detail::SampleBlendedComponents(
@@ -175,7 +168,6 @@ namespace WindField
 			SharedData::WindFieldTransitionData.y);
 	}
 
-	/** @brief Accumulates active transient wind impulses at an absolute world position. */
 	TransientImpulseSample SampleCurrentTransientImpulses(float3 worldPosition)
 	{
 		return Detail::SampleTransientImpulses(
@@ -183,7 +175,6 @@ namespace WindField
 			SharedData::WindFieldActiveCounts.x);
 	}
 
-	/** @brief Accumulates previous-frame transient wind impulses at an absolute world position. */
 	TransientImpulseSample SamplePreviousTransientImpulses(float3 worldPosition)
 	{
 		return Detail::SampleTransientImpulses(
@@ -191,7 +182,6 @@ namespace WindField
 			SharedData::WindFieldActiveCounts.y);
 	}
 
-	/** @brief Samples and resolves the current shared wind field. */
 	WindSample SampleCurrent(float3 worldPosition, float gustInfluence, float transientInfluence)
 	{
 		return Detail::ResolveWithTransient(

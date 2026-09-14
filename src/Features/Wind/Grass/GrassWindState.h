@@ -41,7 +41,6 @@ STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
 static_assert(sizeof(GrassWindSpringData) == 208);
 static_assert(offsetof(GrassWindSpringData, transientFieldMask) == 196);
 
-/** GPU resources and temporal field state for grass spring simulation. */
 struct GrassWindState
 {
 	using TexturePair = std::array<std::unique_ptr<Texture2D>, 2>;
