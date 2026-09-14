@@ -514,6 +514,12 @@ void Wind::DrawTreeGlobalOverrideSettings()
 		overrideChanged |= ImGui::SliderFloat(T(TKEY("tree_override_leaf"), "Leaf Ambient Sensitivity"),
 			&universalValues.leafAmbient, TreeWindSettings::kLeafAmbient.minimum,
 			TreeWindSettings::kLeafAmbient.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		overrideChanged |= ImGui::SliderFloat(T(TKEY("tree_override_trunk_gust"), "Trunk Gust Influence"),
+			&universalValues.trunkGustInfluence, TreeWindSettings::kGustInfluence.minimum,
+			TreeWindSettings::kGustInfluence.maximum, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		overrideChanged |= ImGui::SliderFloat(T(TKEY("tree_override_leaf_gust"), "Leaf Gust Influence"),
+			&universalValues.leafGustInfluence, TreeWindSettings::kGustInfluence.minimum,
+			TreeWindSettings::kGustInfluence.maximum, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 		overrideChanged |= ImGui::SliderFloat(T(TKEY("tree_override_upper_bend"), "Upper Bend Range (%)"),
 			&universalValues.upperBendRange, TreeWindSettings::kUpperBendPercent.minimum,
 			TreeWindSettings::kUpperBendPercent.maximum, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
@@ -603,11 +609,13 @@ void Wind::DrawTreeMeshRulesTable()
 	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
 	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
 	                                   ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-	if (ImGui::BeginTable("##TreeMeshRules", 9, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
+	if (ImGui::BeginTable("##TreeMeshRules", 11, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_gust"), "Leaf Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_upper_bend_range"), "Upper Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_influence"), "Trunk Transient"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
@@ -624,6 +632,8 @@ void Wind::DrawTreeMeshRulesTable()
 				const auto rule = TreeWindPatcher::GetRule(ruleIndex);
 				float bend = rule.bend;
 				float leafAmbient = rule.leafAmbient;
+				float trunkGustInfluence = rule.trunkGustInfluence;
+				float leafGustInfluence = rule.leafGustInfluence;
 				float upperBendRange = rule.upperBendRange;
 				float maximumDisplacementPercent = rule.maximumDisplacementPercent;
 				float transientWindInfluence = rule.transientWindInfluence;
@@ -649,32 +659,42 @@ void Wind::DrawTreeMeshRulesTable()
 					TreeWindSettings::kLeafAmbient.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 				ImGui::TableSetColumnIndex(3);
 				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##TrunkGust", &trunkGustInfluence,
+					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
+					"%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(4);
+				ImGui::SetNextItemWidth(-1.0f);
+				changed |= ImGui::SliderFloat("##LeafGust", &leafGustInfluence,
+					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
+					"%.2f", ImGuiSliderFlags_AlwaysClamp);
+				ImGui::TableSetColumnIndex(5);
+				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##UpperBend", &upperBendRange,
 					TreeWindSettings::kUpperBendPercent.minimum, TreeWindSettings::kUpperBendPercent.maximum,
 					"%.0f%%", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(4);
+				ImGui::TableSetColumnIndex(6);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##MaximumDisplacement", &maximumDisplacementPercent,
 					TreeWindSettings::kMaximumDisplacementPercent.minimum,
 					TreeWindSettings::kMaximumDisplacementPercent.maximum, "%.2f%%",
 					ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(5);
+				ImGui::TableSetColumnIndex(7);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TrunkTransientInfluence", &transientWindInfluence,
 					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(6);
+				ImGui::TableSetColumnIndex(8);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##LeafTransientInfluence", &leafTransientWindInfluence,
 					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(7);
+				ImGui::TableSetColumnIndex(9);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TransientFlutterCap", &leafTransientFlutterMaximum,
 					TreeWindSettings::kLeafTransientFlutterMaximum.minimum,
 					TreeWindSettings::kLeafTransientFlutterMaximum.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(8);
+				ImGui::TableSetColumnIndex(10);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TransientBend", &transientMaximumBendMultiplier,
 					TreeWindSettings::kTransientMaximumBendMultiplier.minimum,
@@ -682,7 +702,7 @@ void Wind::DrawTreeMeshRulesTable()
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
 				if (changed) {
 					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient, upperBendRange,
-						maximumDisplacementPercent, rule.trunkGustInfluence, rule.leafGustInfluence,
+						maximumDisplacementPercent, trunkGustInfluence, leafGustInfluence,
 						transientWindInfluence, leafTransientWindInfluence,
 						leafTransientFlutterMaximum,
 						transientMaximumBendMultiplier);
