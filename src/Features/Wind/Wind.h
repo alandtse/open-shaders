@@ -91,7 +91,7 @@ struct Wind : Feature
 
 private:
 	/** @brief Whether a_pass draws tree geometry eligible for trunk/leaf bend. */
-	static bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass);
+	bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const;
 	static void SanitizeSettings(Settings& a_settings);
 	static void SanitizeGrassWindSettings(Settings& a_settings);
 	static uint32_t SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize);

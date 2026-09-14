@@ -580,7 +580,7 @@ void Wind::SetupResources()
 	SetupTreeWindResources();
 }
 
-bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass)
+bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const
 {
 	if (!loaded || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
 		!SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
