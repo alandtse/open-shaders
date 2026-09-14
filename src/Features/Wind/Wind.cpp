@@ -186,14 +186,13 @@ void Wind::SetTreeWindTestEnabled(bool a_enabled)
 		return;
 
 	if (a_enabled) {
-		const auto* state = globals::state;
-		runtimeState.treeWindTest.speed = ClampFiniteOrDefault(state ? state->windFieldSelectedSpeed : runtimeState.windFieldOverrideSpeed, 0.0f, 2.0f, 1.0f);
-		runtimeState.treeWindTest.gustScale = ClampFiniteOrDefault(state ? state->windFieldTuning.gustScale : settings.windFieldGustScale,
+		runtimeState.treeWindTest.speed = ClampFiniteOrDefault(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
+		runtimeState.treeWindTest.gustScale = ClampFiniteOrDefault(windFieldTuning.gustScale,
 			kWindFieldGustScaleMin, kWindFieldGustScaleMax, settings.windFieldGustScale);
-		runtimeState.treeWindTest.gustAmplitude = ClampFiniteOrDefault(state ? state->windFieldTuning.gustAmplitude : settings.windFieldGustAmplitude,
+		runtimeState.treeWindTest.gustAmplitude = ClampFiniteOrDefault(windFieldTuning.gustAmplitude,
 			kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, settings.windFieldGustAmplitude);
 		runtimeState.treeWindTest.gustAdvectionMultiplier = ClampFiniteOrDefault(
-			state ? state->windFieldTuning.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier,
+			windFieldTuning.gustAdvectionMultiplier,
 			kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, settings.windFieldGustAdvectionMultiplier);
 	}
 	runtimeState.treeWindTest.enabled = a_enabled;

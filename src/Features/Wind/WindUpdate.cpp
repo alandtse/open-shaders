@@ -1,10 +1,9 @@
-#include "State.h"
+#include "Wind.h"
 
 #include <algorithm>
 #include <cmath>
 
 #include "Features/Wind/Trees/TreeWindPatcher.h"
-#include "Features/Wind/Wind.h"
 #include "Globals.h"
 
 namespace
@@ -42,26 +41,25 @@ namespace
 	}
 }
 
-void State::UpdateWind()
+void Wind::Reset()
 {
-	auto& wind = globals::features::wind;
-	windFieldTuning.gustAmplitude = wind.GetEffectiveWindGustAmplitude();
-	windFieldTuning.gustScale = wind.GetEffectiveWindGustScale();
+	windFieldTuning.gustAmplitude = GetEffectiveWindGustAmplitude();
+	windFieldTuning.gustScale = GetEffectiveWindGustScale();
 	windFieldTuning.frontAspectRatio =
-		wind.settings.windFieldGustCrosswindScale / windFieldTuning.gustScale;
-	windFieldTuning.gustAdvectionMultiplier = wind.GetEffectiveWindGustAdvectionMultiplier();
+		settings.windFieldGustCrosswindScale / windFieldTuning.gustScale;
+	windFieldTuning.gustAdvectionMultiplier = GetEffectiveWindGustAdvectionMultiplier();
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
-	wind.UpdateWindEffects(frameTime);
+	UpdateWindEffects(frameTime);
 	AdvanceWindHistory(frameTime);
 	UpdateWeatherWind();
 	const float3 fallbackDirection =
 		windFieldHasPreviousSample ? windFieldCurrent.direction : float3{ 1.0f, 0.0f, 0.0f };
-	const auto selectedWind = SelectWind(wind, ambientWindVelocity, fallbackDirection);
+	const auto selectedWind = SelectWind(*this, ambientWindVelocity, fallbackDirection);
 	UpdateWindField(selectedWind.direction, selectedWind.speed, frameTime);
 }
 
-void State::AdvanceWindHistory(float a_frameTime)
+void Wind::AdvanceWindHistory(float a_frameTime)
 {
 	windFieldFrameTime = a_frameTime;
 	UpdateTransientWindImpulses(a_frameTime);
@@ -72,7 +70,7 @@ void State::AdvanceWindHistory(float a_frameTime)
 	previousWindFieldTransitionBlend = windFieldTransitionBlend;
 }
 
-void State::UpdateWeatherWind()
+void Wind::UpdateWeatherWind()
 {
 	ambientWindVelocity = float3{};
 	const auto* sky = globals::game::sky;
@@ -91,9 +89,8 @@ void State::UpdateWeatherWind()
 	}
 }
 
-void State::UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime)
+void Wind::UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime)
 {
-	const auto& wind = globals::features::wind;
 	const float gustAdvectionSpeed = a_speed * windFieldTuning.gustAdvectionBaseSpeed *
 	                                 windFieldTuning.gustAdvectionMultiplier;
 	windFieldAdvectionSpeed = std::isfinite(gustAdvectionSpeed) ? std::max(gustAdvectionSpeed, 0.0f) : 0.0f;
@@ -107,10 +104,10 @@ void State::UpdateWindField(const float3& a_direction, float a_speed, float a_fr
 		previousWindFieldTransitionBlend = 1.0f;
 		windFieldHasPreviousSample = true;
 	} else {
-		constexpr float kDirectionChangeCosine = 0.9998477f;  // one degree
+		constexpr float kOneDegreeDirectionChangeCosine = 0.9998477f;
 		const float directionDot = windFieldCurrent.direction.x * a_direction.x +
 		                           windFieldCurrent.direction.y * a_direction.y;
-		if (!windFieldTransitionActive && directionDot < kDirectionChangeCosine) {
+		if (!windFieldTransitionActive && directionDot < kOneDegreeDirectionChangeCosine) {
 			windFieldTransition = windFieldCurrent;
 			previousWindFieldTransition = previousWindFieldCurrent;
 			windFieldCurrent = WindField::CreateField(a_direction, a_speed);
@@ -125,7 +122,7 @@ void State::UpdateWindField(const float3& a_direction, float a_speed, float a_fr
 		WindField::SetFieldSpeed(windFieldTransition, a_speed);
 		WindField::AdvanceField(windFieldTransition, windFieldTravelDelta);
 		windFieldTransitionElapsed += a_frameTime;
-		const float configuredTransitionDuration = wind.settings.windFieldDirectionTransitionDuration;
+		const float configuredTransitionDuration = settings.windFieldDirectionTransitionDuration;
 		const float transitionDuration = std::isfinite(configuredTransitionDuration) ?
 		                                     std::clamp(configuredTransitionDuration, 0.0f, 30.0f) :
 		                                     1.0f;
@@ -145,33 +142,31 @@ void State::UpdateWindField(const float3& a_direction, float a_speed, float a_fr
 	previousWindFieldGustTravelDistance = previousWindFieldCurrent.travelDistance;
 }
 
-void State::UpdateWindPermutationData()
+WindPermutationContribution Wind::GetPermutationContribution() const
 {
-	const auto& wind = globals::features::wind;
-	const auto& settings = wind.settings;
-	permutationData.WindIntensityOverride = settings.trunkWindIntensityOverride;
-	permutationData.OverrideWindIntensity = wind.loaded && settings.overrideTrunkWindIntensity;
-	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
-	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
-		const TreeWindPatcher::Sensitivities treeDefaults{};
-		permutationData.TreeTransientWindInfluence = treeDefaults.transientWindInfluence;
-		permutationData.TreeLeafTransientWindInfluence = treeDefaults.leafTransientWindInfluence;
-		permutationData.TreeLeafTransientFlutterMaximum = treeDefaults.leafTransientFlutterMaximum;
-		permutationData.TreeTransientMaximumBendMultiplier = treeDefaults.transientMaximumBendMultiplier;
-	}
-	permutationData.TrunkWindBendSensitivity = settings.trunkWindBendSensitivity;
-	permutationData.TreeLeafBaseWindFlutterGain = settings.treeLeafBaseWindFlutterGain;
-	permutationData.EnableAmbientGrassWind = wind.loaded && settings.enableAmbientGrassWind;
-	permutationData.GrassWindSensitivity = settings.grassWindSensitivity;
-	permutationData.GrassWindBendProfile = settings.grassWindBendProfile;
-	permutationData.GrassWindCompressionToBend = settings.grassWindCompressionToBend;
-	permutationData.GrassWindFlutterStrength = settings.grassWindFlutterStrength;
-	permutationData.GrassWindFlutterFrequency = settings.grassWindFlutterFrequency;
+	const TreeWindPatcher::Sensitivities treeDefaults{};
+	return {
+		settings.trunkWindIntensityOverride,
+		loaded && settings.overrideTrunkWindIntensity,
+		treeDefaults.transientWindInfluence,
+		treeDefaults.leafTransientWindInfluence,
+		treeDefaults.leafTransientFlutterMaximum,
+		treeDefaults.transientMaximumBendMultiplier,
+		settings.trunkWindBendSensitivity,
+		settings.treeLeafBaseWindFlutterGain,
+		static_cast<uint32_t>(loaded && settings.enableAmbientGrassWind),
+		settings.grassWindSensitivity,
+		settings.grassWindBendProfile,
+		settings.grassWindCompressionToBend,
+		settings.grassWindFlutterStrength,
+		settings.grassWindFlutterFrequency
+	};
 }
 
-void State::UpdateWindSharedData(SharedDataCB& a_data) const
+WindSharedData Wind::GetSharedWindData() const
 {
-	a_data.WindFieldTuning = windFieldTuning;
+	WindSharedData data{};
+	data.tuning = windFieldTuning;
 	const float3 transitionVelocity = windFieldTransition.direction * windFieldTransition.speed;
 	const float3 previousTransitionVelocity = previousWindFieldTransition.direction * previousWindFieldTransition.speed;
 	const float3 blendedVelocity = transitionVelocity +
@@ -179,43 +174,42 @@ void State::UpdateWindSharedData(SharedDataCB& a_data) const
 	const float3 previousBlendedVelocity =
 		previousTransitionVelocity +
 		(previousWindFieldSelectedVelocity - previousTransitionVelocity) * previousWindFieldTransitionBlend;
-	a_data.WindFieldAmbient = float4{
+	data.ambient = float4{
 		blendedVelocity.x, blendedVelocity.y, blendedVelocity.z,
 		windFieldGustTravelDistance
 	};
-	a_data.WindFieldPreviousAmbient = float4{
+	data.previousAmbient = float4{
 		previousBlendedVelocity.x, previousBlendedVelocity.y, previousBlendedVelocity.z,
 		previousWindFieldGustTravelDistance
 	};
-	a_data.WindFieldCurrent = windFieldCurrent;
-	a_data.WindFieldPrevious = previousWindFieldCurrent;
-	a_data.WindFieldTransition = windFieldTransition;
-	a_data.WindFieldPreviousTransition = previousWindFieldTransition;
-	a_data.WindFieldTransitionData = float4{
+	data.current = windFieldCurrent;
+	data.previous = previousWindFieldCurrent;
+	data.transition = windFieldTransition;
+	data.previousTransition = previousWindFieldTransition;
+	data.transitionData = float4{
 		windFieldTransitionBlend,
 		previousWindFieldTransitionBlend,
 		0.0f,
 		0.0f
 	};
-	a_data.WindFieldSpringDebug = float4{
-		globals::features::wind.grassState.springFieldMinimum[0].x,
-		globals::features::wind.grassState.springFieldMinimum[0].y,
-		globals::features::wind.grassState.springFieldAvailable[0] ?
-			globals::features::wind.grassState.springWorldSizes[0] :
-			0.0f,
-		DirectX::XMConvertToRadians(globals::features::wind.settings.grassWindMaximumTilt)
+	data.springDebug = float4{
+		grassState.springFieldMinimum[0].x,
+		grassState.springFieldMinimum[0].y,
+		grassState.springFieldAvailable[0] ? grassState.springWorldSizes[0] : 0.0f,
+		DirectX::XMConvertToRadians(settings.grassWindMaximumTilt)
 	};
-	a_data.WindFieldActiveCounts = {
+	data.activeCounts = {
 		activeTransientWindImpulseCount,
 		previousActiveTransientWindImpulseCount,
 		0u,
 		0u
 	};
-	a_data.WindFieldTransientImpulses = transientWindImpulses;
-	a_data.WindFieldPreviousTransientImpulses = previousTransientWindImpulses;
+	data.transientImpulses = transientWindImpulses;
+	data.previousTransientImpulses = previousTransientWindImpulses;
+	return data;
 }
 
-WindField::WindSample State::SampleWind(const float3& a_worldPosition) const noexcept
+WindField::WindSample Wind::SampleWind(const float3& a_worldPosition) const noexcept
 {
 	auto sample = WindField::SampleField(a_worldPosition, windFieldCurrent, windFieldTuning);
 	if (windFieldTransitionBlend < 1.0f) {
@@ -231,7 +225,7 @@ WindField::WindSample State::SampleWind(const float3& a_worldPosition) const noe
 	return sample;
 }
 
-WindField::WindSample State::SampleWind(const float3& a_worldPosition,
+WindField::WindSample Wind::SampleWind(const float3& a_worldPosition,
 	const float3& a_windDirection, float a_windSpeed) const noexcept
 {
 	const auto field = WindField::CreateField(a_windDirection, a_windSpeed, windFieldGustTravelDistance);
@@ -243,13 +237,13 @@ WindField::WindSample State::SampleWind(const float3& a_worldPosition,
 	return sample;
 }
 
-void State::QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse)
+void Wind::QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse)
 {
 	QueueTransientWindSource(a_impulse, TransientWindSourceOwner::Generic,
 		TransientWindSourcePriority::Wingbeat);
 }
 
-void State::QueueTransientWindSource(const WindField::TransientWindSource& a_source,
+void Wind::QueueTransientWindSource(const WindField::TransientWindSource& a_source,
 	TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority)
 {
 	std::lock_guard lock(transientWindImpulseMutex);
@@ -265,7 +259,7 @@ void State::QueueTransientWindSource(const WindField::TransientWindSource& a_sou
 	}
 }
 
-void State::SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
+void Wind::SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
 	std::span<const TransientWindSourceSubmission> a_sources)
 {
 	std::lock_guard lock(transientWindImpulseMutex);
@@ -277,7 +271,7 @@ void State::SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
 	}
 }
 
-void State::ClearTransientWindSources(TransientWindSourceOwner a_owner)
+void Wind::ClearTransientWindSources(TransientWindSourceOwner a_owner)
 {
 	std::lock_guard lock(transientWindImpulseMutex);
 	auto removeOwned = [a_owner](auto& sources) {
@@ -307,7 +301,7 @@ void State::ClearTransientWindSources(TransientWindSourceOwner a_owner)
 		previousActiveTransientWindImpulseCount);
 }
 
-void State::ClearTransientWindImpulses()
+void Wind::ClearTransientWindImpulses()
 {
 	std::lock_guard lock(transientWindImpulseMutex);
 	transientWindImpulses = {};
@@ -321,7 +315,7 @@ void State::ClearTransientWindImpulses()
 	attachedTransientWindSources.clear();
 }
 
-void State::UpdateTransientWindImpulses(float a_frameTime)
+void Wind::UpdateTransientWindImpulses(float a_frameTime)
 {
 	std::lock_guard lock(transientWindImpulseMutex);
 

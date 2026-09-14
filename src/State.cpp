@@ -32,6 +32,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
+#include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -61,6 +62,7 @@ void State::UpdateLightingShaderPermutation(RE::BSRenderPass* a_pass)
 		permutationData.ExtraShaderDescriptor |= additiveLighting;
 	}
 }
+
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
 	permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
@@ -77,7 +79,24 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 
 void State::UpdatePermutationBuffer()
 {
-	UpdateWindPermutationData();
+	const auto windContribution = globals::features::wind.GetPermutationContribution();
+	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
+	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
+	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
+		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientWindInfluence = windContribution.treeLeafTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientFlutterMaximum = windContribution.treeLeafTransientFlutterMaximumDefault;
+		permutationData.TreeTransientMaximumBendMultiplier = windContribution.treeTransientMaximumBendMultiplierDefault;
+	}
+	permutationData.TrunkWindBendSensitivity = windContribution.trunkWindBendSensitivity;
+	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
+	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
+	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
+	permutationData.GrassWindBendProfile = windContribution.grassWindBendProfile;
+	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
+	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
+	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -336,7 +355,6 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
-	UpdateWind();
 
 	worldRenderedThisFrame = false;
 
@@ -1361,7 +1379,21 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
-		UpdateWindSharedData(data);
+		{
+			const auto windData = globals::features::wind.GetSharedWindData();
+			data.WindFieldTuning = windData.tuning;
+			data.WindFieldAmbient = windData.ambient;
+			data.WindFieldPreviousAmbient = windData.previousAmbient;
+			data.WindFieldCurrent = windData.current;
+			data.WindFieldPrevious = windData.previous;
+			data.WindFieldTransition = windData.transition;
+			data.WindFieldPreviousTransition = windData.previousTransition;
+			data.WindFieldTransitionData = windData.transitionData;
+			data.WindFieldSpringDebug = windData.springDebug;
+			data.WindFieldActiveCounts = windData.activeCounts;
+			data.WindFieldTransientImpulses = windData.transientImpulses;
+			data.WindFieldPreviousTransientImpulses = windData.previousTransientImpulses;
+		}
 
 		auto temporal = Util::GetTemporal();
 

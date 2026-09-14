@@ -2,9 +2,9 @@
 
 #include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
-#include "State.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -597,8 +597,8 @@ private:
 			                            kMaximumNpcPowerAttackLifetime;
 			activeNpcPowerAttackExpirations.insert_or_assign(actorFormID, elapsedTime + lifetime);
 		}
-		State::GetSingleton()->QueueTransientWindSource(source, State::TransientWindSourceOwner::HeavyImpact,
-			State::TransientWindSourcePriority::Impact);
+		globals::features::wind.QueueTransientWindSource(source, Wind::TransientWindSourceOwner::HeavyImpact,
+			Wind::TransientWindSourcePriority::Impact);
 		lastEmissionTimes[key] = elapsedTime;
 	}
 
@@ -725,7 +725,7 @@ void HeavyImpactWindRouter::Update(float a_frameTime)
 void HeavyImpactWindRouter::Reset()
 {
 	implementation->Reset();
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::HeavyImpact);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::HeavyImpact);
 }
 
 void HeavyImpactWindRouter::QueueImpact(RE::Actor& a_actor, ImpactKind a_kind)

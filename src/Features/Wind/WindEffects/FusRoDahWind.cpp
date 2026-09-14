@@ -2,10 +2,10 @@
 
 #include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
-#include "State.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -136,7 +136,7 @@ void FusRoDahWind::DrawSettings()
 {
 	if (ImGui::Checkbox(T("feature.wind.wind_effect.fus_ro_dah.enabled", "Enable Wind Impulse"), &settings.enabled) &&
 		!settings.enabled)
-		globals::state->ClearTransientWindSources(State::TransientWindSourceOwner::FusRoDah);
+		globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::FusRoDah);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.wind.wind_effect.fus_ro_dah.enabled_tooltip",
 			"Adds Unrelenting Force as a directional wave traveling through the shared wind field."));
@@ -243,7 +243,7 @@ void FusRoDahWind::Reset()
 		std::lock_guard lock(pendingCastsMutex);
 		pendingCasts.clear();
 	}
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::FusRoDah);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::FusRoDah);
 }
 
 RE::BSEventNotifyControl FusRoDahWind::ProcessEvent(const RE::TESSpellCastEvent* a_event,
@@ -313,9 +313,9 @@ void FusRoDahWind::QueueEffect(RE::Actor& a_actor, const Route& a_route) const
 		kVerticalScale,
 		profile.waveHalfWidth * settings.widthMultiplier * kFalloffWidthScale * kSizeScale,
 		0.0f };
-	State::GetSingleton()->QueueTransientWindSource(source,
-		State::TransientWindSourceOwner::FusRoDah,
-		State::TransientWindSourcePriority::FusRoDah);
+	globals::features::wind.QueueTransientWindSource(source,
+		Wind::TransientWindSourceOwner::FusRoDah,
+		Wind::TransientWindSourcePriority::FusRoDah);
 	logger::info(
 		"Queued Unrelenting Force wind impulse: rank {}, strength {:.3f}, core {:.1f} deg / {:.1f} radius, vertical {:.2f}x, "
 		"origin ({:.1f}, {:.1f}, {:.1f}), direction ({:.3f}, {:.3f}, {:.3f})",

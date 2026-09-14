@@ -1,11 +1,11 @@
 #include "WeaponThrowVRWind.h"
 
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ProjectileHookDispatcher.h"
-#include "State.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -183,12 +183,12 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 	});
 
 	if (!settings.enabled || settings.strength <= 0.0f) {
-		State::GetSingleton()->SetAttachedTransientWindSources(
-			State::TransientWindSourceOwner::WeaponThrowVR, {});
+		globals::features::wind.SetAttachedTransientWindSources(
+			Wind::TransientWindSourceOwner::WeaponThrowVR, {});
 		return;
 	}
 
-	std::vector<State::TransientWindSourceSubmission> attachedSources;
+	std::vector<Wind::TransientWindSourceSubmission> attachedSources;
 	attachedSources.reserve(motion.size());
 	for (const auto& [identity, observation] : motion) {
 		const float speed = Length(observation.velocity);
@@ -206,20 +206,20 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 		const float3 position{ observation.position.x, observation.position.y, observation.position.z };
 		attachedSources.push_back({ WindField::MakeOrientedFlow(position, direction, strength,
 										settings.radius, settings.bowLength, settings.wakeLength),
-			State::TransientWindSourcePriority::Flight });
+			Wind::TransientWindSourcePriority::Flight });
 
 		if (firstObservation && settings.launchStrength > 0.0f) {
 			const auto launch = WindField::MakeDirectionalWave(position, direction,
 				strength * settings.launchStrength, settings.wakeLength,
 				std::clamp(settings.radius * 0.6f, 48.0f, 500.0f),
 				std::clamp(speed, 800.0f, 5000.0f), 0.8f, settings.decayTime);
-			State::GetSingleton()->QueueTransientWindSource(launch,
-				State::TransientWindSourceOwner::WeaponThrowVR,
-				State::TransientWindSourcePriority::Flight);
+			globals::features::wind.QueueTransientWindSource(launch,
+				Wind::TransientWindSourceOwner::WeaponThrowVR,
+				Wind::TransientWindSourcePriority::Flight);
 		}
 	}
-	State::GetSingleton()->SetAttachedTransientWindSources(
-		State::TransientWindSourceOwner::WeaponThrowVR, attachedSources);
+	globals::features::wind.SetAttachedTransientWindSources(
+		Wind::TransientWindSourceOwner::WeaponThrowVR, attachedSources);
 
 	for (const auto& [identity, impact] : impacts) {
 		if (settings.impactStrength <= 0.0f)
@@ -234,9 +234,9 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 			{ impact.position.x, impact.position.y, impact.position.z }, fallbackDirection,
 			settings.strength * settings.impactStrength, settings.radius * 2.0f,
 			std::clamp(settings.radius * 0.5f, 48.0f, 500.0f), 1800.0f, settings.decayTime);
-		State::GetSingleton()->QueueTransientWindSource(source,
-			State::TransientWindSourceOwner::WeaponThrowVR,
-			State::TransientWindSourcePriority::Impact);
+		globals::features::wind.QueueTransientWindSource(source,
+			Wind::TransientWindSourceOwner::WeaponThrowVR,
+			Wind::TransientWindSourcePriority::Impact);
 	}
 }
 
@@ -249,7 +249,7 @@ void WeaponThrowVRWind::Reset()
 	}
 	projectileAges.clear();
 	impactAges.clear();
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::WeaponThrowVR);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::WeaponThrowVR);
 }
 
 void WeaponThrowVRWind::ObserveMotionCallback(void* a_owner, RE::Projectile& a_projectile, float)

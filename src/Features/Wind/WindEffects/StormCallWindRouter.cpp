@@ -1,10 +1,11 @@
 #include "StormCallWindRouter.h"
 
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
+#include "Features/Wind/WindEffects/ImpactDeduplication.h"
 #include "Features/Wind/WindMath.h"
 #include "I18n/I18n.h"
 #include "ProjectileHookDispatcher.h"
-#include "State.h"
 #include "StormCallRecords.h"
 #include "Utils/UI.h"
 
@@ -146,9 +147,9 @@ void StormCallWindRouter::Update(float)
 			{ impact.position.x, impact.position.y, impact.position.z }, GetHorizontalVelocityDirection(impact.velocity),
 			settings.strength * impact.strength, settings.radius, waveHalfWidth, propagationSpeed,
 			settings.decayTime);
-		State::GetSingleton()->QueueTransientWindSource(source,
-			State::TransientWindSourceOwner::StormCall,
-			State::TransientWindSourcePriority::Impact);
+		globals::features::wind.QueueTransientWindSource(source,
+			Wind::TransientWindSourceOwner::StormCall,
+			Wind::TransientWindSourcePriority::Impact);
 	}
 }
 
@@ -159,7 +160,7 @@ void StormCallWindRouter::Reset()
 		recentImpacts.clear();
 		pendingImpacts.clear();
 	}
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::StormCall);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::StormCall);
 }
 
 void StormCallWindRouter::ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
@@ -199,33 +200,9 @@ void StormCallWindRouter::ObserveImpact(RE::Projectile& a_projectile,
 bool StormCallWindRouter::AcceptImpactLocked(const RE::Projectile& a_projectile,
 	const RE::NiPoint3& a_position)
 {
-	const auto now = std::chrono::steady_clock::now();
 	const auto projectileIdentity = reinterpret_cast<std::uintptr_t>(std::addressof(a_projectile));
-	const auto secondsSince = [&](const RecentImpact& a_recent) {
-		return std::chrono::duration<float>(now - a_recent.time).count();
-	};
-
-	std::erase_if(recentImpacts, [&](const RecentImpact& a_recent) {
-		return secondsSince(a_recent) > kDuplicateWindow;
-	});
-	if (std::ranges::count_if(recentImpacts, [&](const RecentImpact& a_recent) {
-			return secondsSince(a_recent) <= kBurstWindow;
-		}) >= kMaximumSourcesPerBurst)
-		return false;
-
-	for (const auto& recent : recentImpacts) {
-		const bool sameProjectile = recent.projectile == projectileIdentity;
-		if (!sameProjectile && secondsSince(recent) > kCrossImpactWindow)
-			continue;
-		const float deduplicationRadius = sameProjectile ? 256.0f : 96.0f;
-		if (SquaredDistance(recent.position, a_position) <= deduplicationRadius * deduplicationRadius)
-			return false;
-	}
-
-	recentImpacts.push_back({ projectileIdentity, a_position, now });
-	if (recentImpacts.size() > kMaximumRecentImpacts)
-		recentImpacts.erase(recentImpacts.begin());
-	return true;
+	return WindImpactDedup::AcceptImpact(recentImpacts, projectileIdentity, a_position,
+		kDuplicateWindow, kCrossImpactWindow, kBurstWindow, kMaximumSourcesPerBurst, kMaximumRecentImpacts);
 }
 
 void StormCallWindRouter::SanitizeSettings()

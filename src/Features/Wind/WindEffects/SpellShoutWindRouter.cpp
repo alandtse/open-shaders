@@ -2,10 +2,11 @@
 
 #include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "I18n/I18n.h"
 #include "ShoutWindProfiles.h"
-#include "State.h"
+#include "SpellStormRecords.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -22,9 +23,9 @@ namespace
 	constexpr RE::FormID kFireBreathFormID = 0x3F9EA;
 	constexpr RE::FormID kFrostBreathFormID = 0x5D16B;
 	constexpr RE::FormID kCycloneFormID = 0x0200C0;
-	constexpr RE::FormID kFireStormFormID = 0x7A82B;
-	constexpr RE::FormID kBlizzardFormID = 0x7E8E4;
-	constexpr RE::FormID kLightningStormFormID = 0x7E8E5;
+	constexpr RE::FormID kFireStormFormID = SpellStormRecords::kSpells[0].localFormID;
+	constexpr RE::FormID kBlizzardFormID = SpellStormRecords::kSpells[1].localFormID;
+	constexpr RE::FormID kLightningStormFormID = SpellStormRecords::kSpells[2].localFormID;
 	constexpr float kStrengthMinimum = 0.0f;
 	constexpr float kStrengthMaximum = 5.0f;
 	constexpr std::size_t kMaximumPendingCasts = 64;
@@ -186,7 +187,7 @@ void SpellShoutWindRouter::Reset()
 		std::lock_guard lock(pendingCastsMutex);
 		pendingCasts.clear();
 	}
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::SpellShout);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::SpellShout);
 }
 
 void SpellShoutWindRouter::CollectOwnedMagicItems(RE::TESDataHandler& a_dataHandler,
@@ -303,19 +304,19 @@ void SpellShoutWindRouter::QueueEffect(RE::Actor& a_actor, const SpellShoutWindR
 			a_profile.propagationSpeed, ConeCosine(a_profile.coneHalfAngle), a_profile.decayTime);
 		const auto priority = a_route.effect == SpellShoutWindEffect::FireBreath ||
 		                              a_route.effect == SpellShoutWindEffect::FrostBreath ?
-		                          State::TransientWindSourcePriority::Breath :
-		                          State::TransientWindSourcePriority::Flight;
-		State::GetSingleton()->QueueTransientWindSource(
-			source, State::TransientWindSourceOwner::SpellShout, priority);
+		                          Wind::TransientWindSourcePriority::Breath :
+		                          Wind::TransientWindSourcePriority::Flight;
+		globals::features::wind.QueueTransientWindSource(
+			source, Wind::TransientWindSourceOwner::SpellShout, priority);
 	};
 	const auto queueRadial = [&](const RadialProfile& a_profile) {
 		const auto source = WindField::MakeRadialWave(
 			ActorWind::GetVisualOrigin(a_actor), ActorWind::GetAimDirection(a_actor),
 			settings.strength * a_profile.strength, a_profile.distance, a_profile.waveHalfWidth,
 			a_profile.propagationSpeed, a_profile.decayTime);
-		State::GetSingleton()->QueueTransientWindSource(source,
-			State::TransientWindSourceOwner::SpellShout,
-			State::TransientWindSourcePriority::Impact);
+		globals::features::wind.QueueTransientWindSource(source,
+			Wind::TransientWindSourceOwner::SpellShout,
+			Wind::TransientWindSourcePriority::Impact);
 	};
 
 	const std::size_t rank = std::min<std::size_t>(a_route.rank, RE::TESShout::VariationIDs::kTotal - 1);

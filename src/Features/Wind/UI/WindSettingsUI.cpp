@@ -85,11 +85,9 @@ void Wind::DrawWindFieldSettings()
 	if (ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"),
 			&runtimeState.windFieldUseRealDirection) &&
 		!runtimeState.windFieldUseRealDirection) {
-		const auto* state = globals::state;
-		const float currentDirectionDegrees = state ?
-		                                          std::atan2(state->windFieldCurrent.direction.y, state->windFieldCurrent.direction.x) *
-		                                              (180.0f / 3.14159265358979323846f) :
-		                                          0.0f;
+		const float currentDirectionDegrees =
+			std::atan2(windFieldCurrent.direction.y, windFieldCurrent.direction.x) *
+			(180.0f / 3.14159265358979323846f);
 		runtimeState.windFieldPendingDirectionDegrees = currentDirectionDegrees;
 		runtimeState.windFieldAppliedDirectionDegrees = currentDirectionDegrees;
 	}
@@ -128,28 +126,27 @@ void Wind::DrawWindFieldSettings()
 		runtimeState.visualizeWindField = true;
 	}
 	ImGui::SeparatorText(T(TKEY("wind_field_live_values"), "Wind Field Live Values"));
-	auto* const state = globals::state;
 	const auto* sky = globals::game::sky;
 	const auto* weather = sky ? sky->currentWeather : nullptr;
-	const float ambientDirectionLength = std::hypot(state->ambientWindVelocity.x, state->ambientWindVelocity.y);
+	const float ambientDirectionLength = std::hypot(ambientWindVelocity.x, ambientWindVelocity.y);
 	const float ambientDirectionDegrees = ambientDirectionLength > 0.0001f ?
-	                                          std::atan2(state->ambientWindVelocity.y, state->ambientWindVelocity.x) * (180.0f / 3.14159265358979323846f) :
+	                                          std::atan2(ambientWindVelocity.y, ambientWindVelocity.x) * (180.0f / 3.14159265358979323846f) :
 	                                          0.0f;
 	ImGui::Text("%s: (%.5f, %.5f, %.5f)", T(TKEY("wind_field_ambient_velocity"), "Ambient velocity"),
-		state->ambientWindVelocity.x, state->ambientWindVelocity.y, state->ambientWindVelocity.z);
-	ImGui::Text("%s: %.5f", T(TKEY("wind_field_ambient_speed"), "Selected ambient speed"), state->windFieldAmbientSpeed);
+		ambientWindVelocity.x, ambientWindVelocity.y, ambientWindVelocity.z);
+	ImGui::Text("%s: %.5f", T(TKEY("wind_field_ambient_speed"), "Selected ambient speed"), windFieldAmbientSpeed);
 	ImGui::Text("%s: %.2f deg", T(TKEY("wind_field_ambient_direction"), "Ambient direction"), ambientDirectionDegrees);
-	ImGui::Text("%s: %.6f s", T(TKEY("wind_field_frame_time"), "Frame delta"), state->windFieldFrameTime);
-	ImGui::Text("%s: %.6f", T(TKEY("wind_field_travel_delta"), "Travel delta"), state->windFieldTravelDelta);
-	ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), state->windFieldGustTravelDistance);
-	ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), state->windFieldAdvectionSpeed);
-	ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), state->timer);
-	ImGui::Text("Current field: direction (%.3f, %.3f), travel %.1f", state->windFieldCurrent.direction.x,
-		state->windFieldCurrent.direction.y, state->windFieldCurrent.travelDistance);
-	if (state->windFieldTransitionActive) {
-		ImGui::Text("Previous field: direction (%.3f, %.3f), travel %.1f", state->windFieldTransition.direction.x,
-			state->windFieldTransition.direction.y, state->windFieldTransition.travelDistance);
-		ImGui::Text("Transition: %.0f%%", state->windFieldTransitionBlend * 100.0f);
+	ImGui::Text("%s: %.6f s", T(TKEY("wind_field_frame_time"), "Frame delta"), windFieldFrameTime);
+	ImGui::Text("%s: %.6f", T(TKEY("wind_field_travel_delta"), "Travel delta"), windFieldTravelDelta);
+	ImGui::Text("%s: %.5f", T(TKEY("wind_field_travel_distance"), "Accumulated travel distance"), windFieldGustTravelDistance);
+	ImGui::Text("%s: %.3f units/s", T(TKEY("wind_field_advection_speed"), "Gust advection speed"), windFieldAdvectionSpeed);
+	ImGui::Text("%s: %.5f", T(TKEY("wind_field_global_time"), "Global timer"), globals::state->timer);
+	ImGui::Text("Current field: direction (%.3f, %.3f), travel %.1f", windFieldCurrent.direction.x,
+		windFieldCurrent.direction.y, windFieldCurrent.travelDistance);
+	if (windFieldTransitionActive) {
+		ImGui::Text("Previous field: direction (%.3f, %.3f), travel %.1f", windFieldTransition.direction.x,
+			windFieldTransition.direction.y, windFieldTransition.travelDistance);
+		ImGui::Text("Transition: %.0f%%", windFieldTransitionBlend * 100.0f);
 	}
 	if (sky)
 		ImGui::Text("%s: speed %.5f, angle %.5f", T(TKEY("wind_field_sky_input"), "Sky wind input"), sky->windSpeed, sky->windAngle);
@@ -157,19 +154,19 @@ void Wind::DrawWindFieldSettings()
 		ImGui::Text("%s: %.3f (raw %u), direction raw %u", T(TKEY("wind_field_weather_input"), "Weather input"),
 			static_cast<unsigned>(weather->data.windSpeed) / 255.0f, static_cast<unsigned>(weather->data.windSpeed),
 			static_cast<unsigned>(weather->data.windDirection));
-	const float selectedSpeed = state->windFieldSelectedSpeed;
+	const float selectedSpeed = windFieldSelectedSpeed;
 	const float appliedDirectionRadians = DirectX::XMConvertToRadians(runtimeState.windFieldAppliedDirectionDegrees);
 	const float selectedDirectionX = runtimeState.windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
-	                                     state->ambientWindVelocity.x / ambientDirectionLength :
+	                                     ambientWindVelocity.x / ambientDirectionLength :
 	                                     std::cos(appliedDirectionRadians);
 	const float selectedDirectionY = runtimeState.windFieldUseRealDirection && ambientDirectionLength > 0.0001f ?
-	                                     state->ambientWindVelocity.y / ambientDirectionLength :
+	                                     ambientWindVelocity.y / ambientDirectionLength :
 	                                     std::sin(appliedDirectionRadians);
 	const float weatherWindSpeed = std::sqrt(
-		state->ambientWindVelocity.x * state->ambientWindVelocity.x +
-		state->ambientWindVelocity.y * state->ambientWindVelocity.y +
-		state->ambientWindVelocity.z * state->ambientWindVelocity.z);
-	float localWindSpeed = state->windFieldSelectedSpeed;
+		ambientWindVelocity.x * ambientWindVelocity.x +
+		ambientWindVelocity.y * ambientWindVelocity.y +
+		ambientWindVelocity.z * ambientWindVelocity.z);
+	float localWindSpeed = windFieldSelectedSpeed;
 	float ambientGust = 0.0f;
 	ImGui::Text("%s: speed %.5f, direction (%.5f, %.5f, 0.00000)",
 		T(TKEY("wind_field_selected_input"), "Selected sampler input"), selectedSpeed, selectedDirectionX, selectedDirectionY);
@@ -179,11 +176,11 @@ void Wind::DrawWindFieldSettings()
 		const auto eyePosition = Util::GetAverageEyePosition();
 		const float3 samplePosition{ eyePosition.x, eyePosition.y, eyePosition.z };
 		const float rawAmbientSpeed = std::sqrt(
-			state->ambientWindVelocity.x * state->ambientWindVelocity.x +
-			state->ambientWindVelocity.y * state->ambientWindVelocity.y +
-			state->ambientWindVelocity.z * state->ambientWindVelocity.z);
-		const auto eyeSample = state->SampleWind(samplePosition, state->ambientWindVelocity, rawAmbientSpeed);
-		const auto selectedSample = state->SampleWind(samplePosition);
+			ambientWindVelocity.x * ambientWindVelocity.x +
+			ambientWindVelocity.y * ambientWindVelocity.y +
+			ambientWindVelocity.z * ambientWindVelocity.z);
+		const auto eyeSample = SampleWind(samplePosition, ambientWindVelocity, rawAmbientSpeed);
+		const auto selectedSample = SampleWind(samplePosition);
 		localWindSpeed = std::sqrt(
 			selectedSample.velocity.x * selectedSample.velocity.x +
 			selectedSample.velocity.y * selectedSample.velocity.y +
@@ -201,7 +198,7 @@ void Wind::DrawWindFieldSettings()
 	ImGui::Text("%s: %.2f", T(TKEY("wind_field_local_wind"), "Local Wind"), localWindSpeed);
 	ImGui::Text("%s: %+.2f", T(TKEY("wind_field_ambient_gust"), "Ambient Gust"), ambientGust);
 	ImGui::Text("%s: %.2f units/s", T(TKEY("wind_field_advection_speed_readout"), "Advection Speed"),
-		state->windFieldAdvectionSpeed);
+		windFieldAdvectionSpeed);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("wind_field_readout_tooltip"),
 			"Weather Wind is the raw ambient input. Local Wind is the canonical sampled velocity magnitude at the camera. Ambient Gust is the normalized field value used to modulate it."));
@@ -235,7 +232,7 @@ void Wind::DrawWindFieldSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("wind_field_gust_amplitude_tooltip"),
 				"Fractional velocity deviation around the mean; 0.35 produces a 0.65x to 1.35x range."));
-		const auto& tuning = state->windFieldTuning;
+		const auto& tuning = windFieldTuning;
 		ImGui::Text("Base advection %.2f units/s at wind speed 1.0, front aspect %.2f",
 			tuning.gustAdvectionBaseSpeed, tuning.frontAspectRatio);
 		ImGui::Text("Detail ratios %.3f / %.3f, turbulence %.3f, skew %.3f", tuning.detailScaleRatio,
@@ -369,9 +366,8 @@ void Wind::DrawWindEffectsSettings()
 
 void Wind::SpawnDebugWindEffects()
 {
-	auto* const state = globals::state;
 	auto* const player = globals::game::player;
-	if (!state || !player)
+	if (!player)
 		return;
 
 	static std::mt19937 randomGenerator{ std::random_device{}() };
@@ -385,7 +381,7 @@ void Wind::SpawnDebugWindEffects()
 	const auto playerPosition = player->GetPosition();
 	const int spawnCount = std::clamp(uiState.debugWindEffectSpawnCount, 1,
 		static_cast<int>(WindField::kTransientImpulseCapacity));
-	state->ClearTransientWindImpulses();
+	ClearTransientWindImpulses();
 	if (uiState.debugWindEffectWorstCase) {
 		const float innerRadiusSquared = kWorstCaseInnerRadius * kWorstCaseInnerRadius;
 		const float outerRadiusSquared = kWorstCaseOuterRadius * kWorstCaseOuterRadius;
@@ -399,7 +395,7 @@ void Wind::SpawnDebugWindEffects()
 			const float3 origin{ playerPosition.x + cosine * radius, playerPosition.y + sine * radius,
 				playerPosition.z + heightOffset };
 			const float3 direction{ -cosine, -sine, -heightOffset / kWorstCaseSourceDistance };
-			state->QueueTransientWindImpulse(WindField::MakeDirectionalWave(origin, direction, 2.5f,
+			QueueTransientWindImpulse(WindField::MakeDirectionalWave(origin, direction, 2.5f,
 				kWorstCaseSourceDistance, kWorstCaseWaveHalfWidth, kWorstCasePropagationSpeed,
 				kWorstCaseConeCosine, kWorstCaseDecayTime));
 		}
@@ -413,7 +409,7 @@ void Wind::SpawnDebugWindEffects()
 			offset *= kDebugWindSpawnRadius;
 			const float3 origin{ playerPosition.x + offset.x, playerPosition.y + offset.y,
 				playerPosition.z + offset.z };
-			state->QueueTransientWindImpulse({ origin,
+			QueueTransientWindImpulse({ origin,
 				0.0f,
 				{},
 				strengthDistribution(randomGenerator),
@@ -434,8 +430,7 @@ void Wind::SpawnDebugWindEffects()
 void Wind::DrawTreeWindTestSettings()
 {
 	if (!runtimeState.treeWindTest.enabled) {
-		if (const auto* state = globals::state)
-			runtimeState.treeWindTest.speed = ClampFiniteOrDefault(state->windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
+		runtimeState.treeWindTest.speed = ClampFiniteOrDefault(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
 		runtimeState.treeWindTest.gustScale = settings.windFieldGustScale;
 		runtimeState.treeWindTest.gustAmplitude = settings.windFieldGustAmplitude;
 		runtimeState.treeWindTest.gustAdvectionMultiplier = settings.windFieldGustAdvectionMultiplier;

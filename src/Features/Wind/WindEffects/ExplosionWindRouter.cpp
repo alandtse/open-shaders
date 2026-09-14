@@ -1,10 +1,11 @@
 #include "ExplosionWindRouter.h"
 
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "I18n/I18n.h"
 #include "ProjectileHookDispatcher.h"
-#include "State.h"
+#include "SpellStormRecords.h"
 #include "StormCallRecords.h"
 #include "Utils/UI.h"
 
@@ -32,18 +33,6 @@ namespace
 	constexpr std::size_t kMaximumRecentExplosions = 24;
 	constexpr std::size_t kMaximumPendingObservations = 64;
 	constexpr std::string_view kSkyrimMaster = "Skyrim.esm";
-
-	struct SpellShoutOwnedCast
-	{
-		RE::FormID localFormID;
-		std::string_view editorID;
-	};
-
-	constexpr std::array<SpellShoutOwnedCast, 3> kSpellShoutOwnedCasts{
-		SpellShoutOwnedCast{ 0x7A82B, "FireStorm" },
-		SpellShoutOwnedCast{ 0x7E8E4, "Blizzard" },
-		SpellShoutOwnedCast{ 0x7E8E5, "LightningStorm" }
-	};
 
 	float3 GetFallbackDirection(const RE::TESObjectREFR* a_cause, const RE::NiPoint3& a_position) noexcept
 	{
@@ -185,7 +174,7 @@ void ExplosionWindRouter::DataLoaded()
 				reservedMagicEffects.emplace(effect->baseEffect->GetFormID());
 		}
 	};
-	for (const auto& reservedCast : kSpellShoutOwnedCasts) {
+	for (const auto& reservedCast : SpellStormRecords::kSpells) {
 		const auto* spell = dataHandler->LookupForm<RE::SpellItem>(reservedCast.localFormID, kSkyrimMaster);
 		if (!spell)
 			spell = RE::TESForm::LookupByEditorID<RE::SpellItem>(reservedCast.editorID);
@@ -209,7 +198,7 @@ void ExplosionWindRouter::Reset()
 		pendingObservations.clear();
 	}
 	recentExplosions.clear();
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::Explosion);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::Explosion);
 }
 
 void ExplosionWindRouter::Update(float)
@@ -479,9 +468,9 @@ void ExplosionWindRouter::EmitExplosion(const ExplosionObservation& a_observatio
 		{ a_observation.position.x, a_observation.position.y, a_observation.position.z },
 		a_observation.direction, a_observation.profile.strength * settings.intensity, radius, waveHalfWidth, propagationSpeed,
 		settings.decayTime);
-	State::GetSingleton()->QueueTransientWindSource(source,
-		State::TransientWindSourceOwner::Explosion,
-		State::TransientWindSourcePriority::Impact);
+	globals::features::wind.QueueTransientWindSource(source,
+		Wind::TransientWindSourceOwner::Explosion,
+		Wind::TransientWindSourcePriority::Impact);
 }
 
 void ExplosionWindRouter::SanitizeSettings()

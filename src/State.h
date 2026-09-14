@@ -67,26 +67,6 @@ public:
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 
 	float timer = 0;
-	float windFieldFrameTime = 0.0f;
-	float windFieldAmbientSpeed = 0.0f;
-	float windFieldAdvectionSpeed = 0.0f;
-	float windFieldGustTravelDistance = 0.0f;
-	float previousWindFieldGustTravelDistance = 0.0f;
-	float windFieldTravelDelta = 0.0f;
-	float3 ambientWindVelocity = {};
-	float3 windFieldSelectedVelocity = {};
-	float3 previousWindFieldSelectedVelocity = {};
-	WindField::Field windFieldCurrent{};
-	WindField::Field previousWindFieldCurrent{};
-	WindField::Field windFieldTransition{};
-	WindField::Field previousWindFieldTransition{};
-	float windFieldTransitionElapsed = 0.0f;
-	float windFieldTransitionBlend = 1.0f;
-	float previousWindFieldTransitionBlend = 1.0f;
-	bool windFieldTransitionActive = false;
-	float windFieldSelectedSpeed = 0.0f;
-	bool windFieldHasPreviousSample = false;
-	WindField::WindTuning windFieldTuning{};
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
 	int drawCalls[RE::BSShader::Type::Total + 1];
 
@@ -116,55 +96,6 @@ public:
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
-	/** @brief Samples the current shared wind field at an absolute world position. */
-	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition) const noexcept;
-	/** @brief Samples the shared field with explicit ambient direction and speed inputs. */
-	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition,
-		const float3& a_windDirection, float a_windSpeed) const noexcept;
-
-	/** Identifies the producer that owns a transient wind source. */
-	enum class TransientWindSourceOwner : uint8_t
-	{
-		Generic,
-		FusRoDah,
-		Dragon,
-		SpellShout,
-		StormCall,
-		ProjectileMagic,
-		WeaponThrowVR,
-		Explosion,
-		HeavyImpact
-	};
-
-	/** Controls which sources survive when the shared pool reaches capacity. */
-	enum class TransientWindSourcePriority : uint8_t
-	{
-		Wingbeat = 10,
-		Flight = 20,
-		Impact = 40,
-		Breath = 50,
-		FusRoDah = 60
-	};
-
-	/** A frame-submitted source paired with its saturation priority. */
-	struct TransientWindSourceSubmission
-	{
-		WindField::TransientWindSource source;
-		TransientWindSourcePriority priority;
-	};
-
-	/** @brief Queues a transient XYZ pressure impulse for insertion into the shared wind field. */
-	void QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse);
-	/** @brief Queues a typed one-shot source with explicit ownership and saturation priority. */
-	void QueueTransientWindSource(const WindField::TransientWindSource& a_source,
-		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority);
-	/** @brief Replaces one producer's frame-updated attached sources. */
-	void SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
-		std::span<const TransientWindSourceSubmission> a_sources);
-	/** @brief Removes active, pending, and attached sources owned by one producer. */
-	void ClearTransientWindSources(TransientWindSourceOwner a_owner);
-	/** @brief Removes all active and pending transient wind impulses. */
-	void ClearTransientWindImpulses();
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
@@ -728,31 +659,6 @@ public:
 private:
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch);
-	void UpdateWind();
-	void AdvanceWindHistory(float a_frameTime);
-	void UpdateWeatherWind();
-	void UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime);
-	void UpdateWindPermutationData();
-	void UpdateWindSharedData(SharedDataCB& a_data) const;
-	void UpdateTransientWindImpulses(float a_frameTime);
-	struct ManagedTransientWindSource
-	{
-		WindField::TransientWindSource source;
-		TransientWindSourceOwner owner;
-		TransientWindSourcePriority priority;
-		uint64_t sequence;
-	};
-	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transientWindImpulses{};
-	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
-	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> transientWindImpulseOwners{};
-	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> previousTransientWindImpulseOwners{};
-	uint32_t activeTransientWindImpulseCount = 0;
-	uint32_t previousActiveTransientWindImpulseCount = 0;
-	std::vector<ManagedTransientWindSource> activeTransientWindSources;
-	std::vector<ManagedTransientWindSource> pendingTransientWindSources;
-	std::vector<ManagedTransientWindSource> attachedTransientWindSources;
-	uint64_t transientWindSourceSequence = 0;
-	std::mutex transientWindImpulseMutex;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

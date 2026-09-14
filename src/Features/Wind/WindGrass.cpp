@@ -132,7 +132,7 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		GrassWindSpringData data{};
 		data.transientFieldMask = GetTransientFieldMask();
 		const float fieldHeight = center.z;
-		const float frameTime = std::clamp(globals::state->windFieldFrameTime, 0.0f, 0.25f);
+		const float frameTime = std::clamp(windFieldFrameTime, 0.0f, 0.25f);
 		const float responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
 		const float maximumTiltRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindMaximumTilt);
 		const float sensitivity = sanitizedSettings.grassWindSensitivity;

@@ -312,7 +312,6 @@ void Wind::UpdateTreeWindSpring()
 		RE::NiPoint3 center{};
 		if (globals::game::player)
 			center = globals::game::player->GetPosition();
-		// The far-cell snap moves every cascade by whole texels with the configured resolutions.
 		const uint32_t anchorFieldIndex = kTreeWindSpringFieldCount - 1;
 		const float anchorCellSize = kTreeWindSpringMaximumDistances[anchorFieldIndex] * 2.0f /
 		                             static_cast<float>(kTreeWindSpringTextureSizes[anchorFieldIndex]);
@@ -322,7 +321,7 @@ void Wind::UpdateTreeWindSpring()
 		};
 
 		TreeWindSpringData data{};
-		const float frameTime = std::clamp(globals::state->windFieldFrameTime, 0.0f, 0.25f);
+		const float frameTime = std::clamp(windFieldFrameTime, 0.0f, 0.25f);
 		for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex) {
 			const float fieldSize = kTreeWindSpringMaximumDistances[qualityIndex] * 2.0f;
 			const float fieldHalfSize = fieldSize * 0.5f;

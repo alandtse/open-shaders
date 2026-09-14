@@ -2,12 +2,13 @@
 
 #include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
+#include "Features/Wind/WindEffects/ImpactDeduplication.h"
 #include "Features/Wind/WindMath.h"
 #include "FusRoDahWind.h"
 #include "I18n/I18n.h"
 #include "ProjectileHookDispatcher.h"
 #include "SpellShoutWindRouter.h"
-#include "State.h"
 #include "StormCallRecords.h"
 #include "Utils/UI.h"
 
@@ -225,7 +226,7 @@ void ProjectileMagicWindRouter::Reset()
 		pendingImpacts.clear();
 		pendingCasts.clear();
 	}
-	State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::ProjectileMagic);
+	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::ProjectileMagic);
 }
 
 void ProjectileMagicWindRouter::ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
@@ -359,9 +360,9 @@ void ProjectileMagicWindRouter::EmitCast(const PendingCast& a_cast) const
 		settings.launchStrength * dragonScale * profile.strength, profile.range,
 		std::clamp(profile.radius * 1.5f, 120.0f, 600.0f), profile.propagationSpeed,
 		profile.coneCosine, settings.decayTime);
-	State::GetSingleton()->QueueTransientWindSource(source,
-		State::TransientWindSourceOwner::ProjectileMagic,
-		State::TransientWindSourcePriority::Flight);
+	globals::features::wind.QueueTransientWindSource(source,
+		Wind::TransientWindSourceOwner::ProjectileMagic,
+		Wind::TransientWindSourcePriority::Flight);
 }
 
 void ProjectileMagicWindRouter::EmitImpact(const PendingImpact& a_impact)
@@ -375,41 +376,17 @@ void ProjectileMagicWindRouter::EmitImpact(const PendingImpact& a_impact)
 		GetHorizontalVelocityDirection(a_impact.velocity), settings.impactStrength * a_impact.profile.strength,
 		radius, std::clamp(radius * 0.35f, 64.0f, 600.0f),
 		std::clamp(a_impact.profile.propagationSpeed, 1400.0f, 4500.0f), settings.decayTime);
-	State::GetSingleton()->QueueTransientWindSource(source,
-		State::TransientWindSourceOwner::ProjectileMagic,
-		State::TransientWindSourcePriority::Impact);
+	globals::features::wind.QueueTransientWindSource(source,
+		Wind::TransientWindSourceOwner::ProjectileMagic,
+		Wind::TransientWindSourcePriority::Impact);
 }
 
 bool ProjectileMagicWindRouter::AcceptImpactLocked(const RE::Projectile& a_projectile,
 	const RE::NiPoint3& a_position)
 {
-	const auto now = std::chrono::steady_clock::now();
 	const auto projectileIdentity = reinterpret_cast<std::uintptr_t>(std::addressof(a_projectile));
-	const auto secondsSince = [&](const RecentImpact& a_recent) {
-		return std::chrono::duration<float>(now - a_recent.time).count();
-	};
-
-	std::erase_if(recentImpacts, [&](const RecentImpact& a_recent) {
-		return secondsSince(a_recent) > kDuplicateWindow;
-	});
-	if (std::ranges::count_if(recentImpacts, [&](const RecentImpact& a_recent) {
-			return secondsSince(a_recent) <= kBurstWindow;
-		}) >= kMaximumSourcesPerBurst)
-		return false;
-
-	for (const auto& recent : recentImpacts) {
-		const bool sameProjectile = recent.projectile == projectileIdentity;
-		if (!sameProjectile && secondsSince(recent) > kCrossImpactWindow)
-			continue;
-		const float deduplicationRadius = sameProjectile ? 256.0f : 96.0f;
-		if (SquaredDistance(recent.position, a_position) <= deduplicationRadius * deduplicationRadius)
-			return false;
-	}
-
-	recentImpacts.push_back({ projectileIdentity, a_position, now });
-	if (recentImpacts.size() > kMaximumRecentImpacts)
-		recentImpacts.erase(recentImpacts.begin());
-	return true;
+	return WindImpactDedup::AcceptImpact(recentImpacts, projectileIdentity, a_position,
+		kDuplicateWindow, kCrossImpactWindow, kBurstWindow, kMaximumSourcesPerBurst, kMaximumRecentImpacts);
 }
 
 void ProjectileMagicWindRouter::SanitizeSettings()

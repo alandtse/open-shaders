@@ -2,12 +2,12 @@
 
 #include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "FusRoDahWind.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ShoutWindProfiles.h"
-#include "State.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -294,33 +294,13 @@ namespace DragonWindRuntime
 				}
 				dragonStates.clear();
 				trackingRefreshRemaining = 0.0f;
-				State::GetSingleton()->ClearTransientWindSources(State::TransientWindSourceOwner::Dragon);
+				globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::Dragon);
 			}
 
 		private:
 			bool IsDragon(RE::Actor* a_actor) const
 			{
-				if (!a_actor)
-					return false;
-				auto* race = a_actor->GetRace();
-				if (!race)
-					return false;
-				if (dragonKeyword)
-					return race->HasKeyword(dragonKeyword);
-				for (const auto& behaviorGraph : race->behaviorGraphs) {
-					const char* model = behaviorGraph.GetModel();
-					if (!model)
-						continue;
-					const std::string_view path(model);
-					constexpr std::string_view dragonGraph = "dragonbehavior.hkx";
-					const auto match = std::search(path.begin(), path.end(), dragonGraph.begin(), dragonGraph.end(),
-						[](unsigned char left, unsigned char right) {
-							return std::tolower(left) == std::tolower(right);
-						});
-					if (match != path.end())
-						return true;
-				}
-				return false;
+				return a_actor && ActorWind::IsDragon(*a_actor, dragonKeyword);
 			}
 
 			bool DrainTrackingEvents()
@@ -555,9 +535,9 @@ namespace DragonWindRuntime
 					a_settings.wingbeatDistance, a_settings.wingbeatWaveHalfWidth,
 					a_settings.wingbeatPropagationSpeed, std::cos(coneHalfAngleRadians),
 					a_settings.wingbeatDecayTime);
-				State::GetSingleton()->QueueTransientWindSource(source,
-					State::TransientWindSourceOwner::Dragon,
-					State::TransientWindSourcePriority::Wingbeat);
+				globals::features::wind.QueueTransientWindSource(source,
+					Wind::TransientWindSourceOwner::Dragon,
+					Wind::TransientWindSourcePriority::Wingbeat);
 			}
 
 			void QueueImpact(RE::Actor& a_actor, DragonState& a_state,
@@ -574,9 +554,9 @@ namespace DragonWindRuntime
 					a_settings.strength * a_profile.strength, a_profile.distance,
 					a_profile.waveHalfWidth, a_profile.propagationSpeed,
 					a_settings.impactDecayTime);
-				State::GetSingleton()->QueueTransientWindSource(source,
-					State::TransientWindSourceOwner::Dragon,
-					State::TransientWindSourcePriority::Impact);
+				globals::features::wind.QueueTransientWindSource(source,
+					Wind::TransientWindSourceOwner::Dragon,
+					Wind::TransientWindSourcePriority::Impact);
 				a_state.impactElapsed = 0.0f;
 			}
 
@@ -594,9 +574,9 @@ namespace DragonWindRuntime
 					ActorWind::GetMagicOrigin(a_actor), ActorWind::GetAimDirection(a_actor),
 					a_settings.strength * profile.strength, profile.distance, profile.waveHalfWidth,
 					profile.propagationSpeed, std::cos(coneRadians), profile.decayTime);
-				State::GetSingleton()->QueueTransientWindSource(source,
-					State::TransientWindSourceOwner::Dragon,
-					State::TransientWindSourcePriority::Breath);
+				globals::features::wind.QueueTransientWindSource(source,
+					Wind::TransientWindSourceOwner::Dragon,
+					Wind::TransientWindSourcePriority::Breath);
 			}
 
 			RE::BGSKeyword* dragonKeyword{};
