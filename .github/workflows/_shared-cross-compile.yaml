@@ -22,6 +22,10 @@ on:
                 description: "Pass through actions/checkout's allow-unsafe-pr-checkout (only meaningful under pull_request_target)"
                 type: boolean
                 default: false
+            cache-write:
+                description: "Enable the downstream save-cache job. Only pass true from a trusted, non-PR caller -- the build job that compiles fork code never holds a write-capable token."
+                type: boolean
+                default: false
 
 jobs:
     build:
@@ -140,23 +144,17 @@ jobs:
                   vcpkgGitCommitId: ${{ steps.get_vcpkg_baseline.outputs.baseline }}
                   runVcpkgInstall: false
 
-            - name: Cache vcpkg binary packages (trusted, restore + save)
-              if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
-              uses: actions/cache@v4
-              with:
-                  path: ${{ github.workspace }}/vcpkg_binary_cache
-                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
-                  restore-keys: |
-                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
-
-            - name: Restore vcpkg binary packages (fork PR, restore-only)
-              if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+            # Restore-only: this job compiles fork-checked-out code and must
+            # never hold a write-capable token; see save-cache below.
+            - name: Restore vcpkg binary packages
               uses: actions/cache/restore@v4
               with:
                   path: ${{ github.workspace }}/vcpkg_binary_cache
-                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
+                  # Suffix precedes the hash so restore-keys' prefix fallback can't
+                  # cross into ci-test's -ci-test-suffixed entries.
+                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}
                   restore-keys: |
-                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
+                      ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-
 
             - name: Configure
               run: cmake -S main -B main/build/Linux-ClangCL --preset Linux-ClangCL -DBUILD_TESTS=OFF
@@ -175,6 +173,15 @@ jobs:
                   printf '%s\n' "$file_type"
                   grep -Eq '^PE32\+ executable \(DLL\).*x86-64, for MS Windows' <<<"$file_type"
 
+            - name: Upload vcpkg binary packages for caching
+              if: inputs.cache-write
+              uses: actions/upload-artifact@v4
+              with:
+                  name: vcpkg-binpkgs-linux-clangcl
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  retention-days: 1
+                  if-no-files-found: error
+
             # These logs don't match run-vcpkg's collection patterns, so they are
             # invisible on failure unless surfaced here.
             - name: Show diagnostics on failure
@@ -183,3 +190,40 @@ jobs:
                   WORKSPACE_DIR: ${{ github.workspace }}
               run: |
                   find "$WORKSPACE_DIR" \( -iname "compileshaders.log" -o -iname "cppwinrt-generate-*.log" \) -exec echo "=== {} ===" \; -exec cat {} \;
+
+    # Guards against a future caller passing cache-write under a PR event --
+    # this job won't run regardless, so no fork content can reach actions:write.
+    save-cache:
+        name: Save vcpkg binary cache
+        needs: build
+        if: inputs.cache-write && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: write
+        steps:
+            # No ref/repository: the checkout defaults to this run's own
+            # github.sha/github.repository, so there's no input expression
+            # left for a PR-controlled ref to ever reach.
+            - name: Checkout vcpkg.json (sparse)
+              uses: actions/checkout@v6
+              with:
+                  path: main
+                  sparse-checkout: vcpkg.json
+                  sparse-checkout-cone-mode: false
+                  persist-credentials: false
+
+            - name: Download built vcpkg binary packages
+              uses: actions/download-artifact@v4
+              with:
+                  name: vcpkg-binpkgs-linux-clangcl
+                  path: vcpkg_binary_cache
+
+            - name: Verify packages were downloaded
+              run: test -n "$(ls -A vcpkg_binary_cache)"
+
+            - name: Save vcpkg binary cache
+              uses: actions/cache/save@v4
+              with:
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}
