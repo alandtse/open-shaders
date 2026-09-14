@@ -22,6 +22,13 @@ namespace
 		return RE::NiPoint3(transformedPoint[0], transformedPoint[1], transformedPoint[2]) *
 		       RE::bhkWorld::GetWorldScaleInverse();
 	}
+
+	bool IsCapsuleFinite(const Util::ShapeCollisionCapsule& capsule)
+	{
+		return std::isfinite(capsule.pointA.x) && std::isfinite(capsule.pointA.y) && std::isfinite(capsule.pointA.z) &&
+		       std::isfinite(capsule.pointB.x) && std::isfinite(capsule.pointB.y) && std::isfinite(capsule.pointB.z) &&
+		       std::isfinite(capsule.radius) && capsule.radius > 0.0f;
+	}
 }
 
 namespace Util
@@ -105,9 +112,7 @@ namespace Util
 				capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
 				capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
 				capsule.radius = capsuleShape->radius * RE::bhkWorld::GetWorldScaleInverse();
-				if (capsule.pointB.z < capsule.pointA.z)
-					std::swap(capsule.pointA, capsule.pointB);
-				return std::isfinite(capsule.radius) && capsule.radius > 0.0f;
+				return IsCapsuleFinite(capsule);
 			}
 
 			RE::hkVector4 massCenter;
@@ -117,7 +122,7 @@ namespace Util
 			_mm_storeu_ps(massTrans, massCenter.quad);
 			capsule.pointA = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
 			capsule.pointB = capsule.pointA;
-			return Util::ExtractShapeBound(shape, capsule.radius);
+			return Util::ExtractShapeBound(shape, capsule.radius) && IsCapsuleFinite(capsule);
 		}
 		return false;
 	}
