@@ -348,7 +348,8 @@ namespace
 
 	bool IsFlatHdrScreenshotCapture()
 	{
-		return globals::features::hdrDisplay.loaded &&
+		return !globals::game::isVR &&
+		       globals::features::hdrDisplay.loaded &&
 		       globals::features::hdrDisplay.settings.enableHDR;
 	}
 
