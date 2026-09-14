@@ -84,8 +84,14 @@ private:
 	std::array<float, 2> inputFar{};
 	float inputMinimumNear = 0.0f;
 	float inputFarNearRatio = 0.0f;
+	// "No sample yet" sentinel, detected downstream via std::isfinite(); real
+	// under -ffast-math, harmless here since these are never involved in
+	// fast-math-optimized arithmetic before that check.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
 	std::array<float, 2> nearest{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
 	std::array<float, 2> absoluteNearest{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
+#pragma clang diagnostic pop
 	uint64_t nextSerial = 0;
 	uint64_t acceptedSerial = 0;
 	uint32_t updateFrame = UINT32_MAX;

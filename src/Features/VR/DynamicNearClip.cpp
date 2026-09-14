@@ -149,8 +149,12 @@ void VRDynamicNearClip::ReadDepth(double now)
 			continue;
 		acceptedSerial = readback.serial;
 		for (uint32_t eye = 0; eye < 2; ++eye) {
+			// Same "no sample yet" sentinel as the field declarations; see there.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnan-infinity-disabled"
 			absoluteNearest[eye] = sample[eye].validSamples && std::isfinite(sample[eye].absoluteNearest) && sample[eye].absoluteNearest > 0.0f ? sample[eye].absoluteNearest : std::numeric_limits<float>::infinity();
 			nearest[eye] = sample[eye].validSamples && std::isfinite(sample[eye].relevantNearest) && sample[eye].relevantNearest > 0.0f ? sample[eye].relevantNearest : std::numeric_limits<float>::infinity();
+#pragma clang diagnostic pop
 		}
 		lastSample = readback.captured;
 	}
