@@ -771,7 +771,13 @@ namespace TreeWindPatcher
 			return sensitivities;
 		}
 
-		const auto* leafParent = netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent);
+		const RE::BSLeafAnimNode* leafParent = nullptr;
+		for (const auto* ancestor = a_geometry->parent; ancestor; ancestor = ancestor->parent) {
+			if (const auto* candidate = netimmerse_cast<const RE::BSLeafAnimNode*>(ancestor)) {
+				leafParent = candidate;
+				break;
+			}
+		}
 		if (!leafParent)
 			return sensitivities;
 
