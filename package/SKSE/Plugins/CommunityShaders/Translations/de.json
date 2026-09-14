@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "Szeneneinstellungen löschen?",
     "feature.scene_manager.edit.discard_confirm": "Verwerfen und öffnen",
     "feature.scene_manager.edit.discard_message": "Nicht gespeicherte Szeneneinstellungen für {feature} werden verworfen. Scene Manager für {target} öffnen?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Verwerfen und wechseln",
     "feature.scene_manager.edit.discard_title": "Nicht gespeicherte Szeneneinstellungen verwerfen?",
     "feature.scene_manager.edit.overwrites_paused": "Feature-Überschreibungen sind vorübergehend pausiert",
     "feature.scene_manager.edit.overwritten_warning": "Feature-Einstellungen werden überschrieben",

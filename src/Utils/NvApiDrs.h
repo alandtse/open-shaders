@@ -41,6 +41,9 @@ namespace Util::NvApiDrs
 	// interpolation while every API still returns eOk (written by the NVIDIA App's
 	// DLSS-override panel; driver default is 0).
 	inline constexpr uint32_t kKeyDLSSGDisable = 0x10308298;
+	// DRS master switch for the driver's own frame-generation layer (NVIDIA App's
+	// "Smooth Motion" panel; NvPresent64.dll). Driver default is 0 (off); 1 = on.
+	inline constexpr uint32_t kKeySmoothMotionEnable = 0xB0D384C0;
 	inline constexpr wchar_t kSkyrimSEProfileName[] = L"The Elder Scrolls V: Skyrim Special Edition";
 
 	struct Api
@@ -86,6 +89,51 @@ namespace Util::NvApiDrs
 			for (; a_source[i] && i < 2047; i++)
 				a_profileName[i] = static_cast<uint16_t>(a_source[i]);
 			a_profileName[i] = 0;
+		}
+
+		/**
+		 * @brief Loads the driver, opens a session, and finds the Skyrim SE profile
+		 * within it. On success a_session is left open (caller must DestroySession);
+		 * on failure any partially-opened session is already closed.
+		 */
+		bool TryOpenSkyrimProfile(SessionHandle& a_session, ProfileHandle& a_profile)
+		{
+			if (!Load() || CreateSession(&a_session) != 0)
+				return false;
+			if (LoadSettings(a_session) != 0) {
+				DestroySession(a_session);
+				return false;
+			}
+
+			uint16_t profileName[2048]{};
+			CopyProfileName(kSkyrimSEProfileName, profileName);
+			if (FindProfileByName(a_session, profileName, &a_profile) == 0)
+				return true;
+
+			DestroySession(a_session);
+			return false;
+		}
+
+		/**
+		 * @brief Reads a_settingId from the Skyrim SE driver profile. Missing
+		 * profile/setting is not an error: a_outValue is left unset and false is
+		 * returned, matching driver defaults (no profile override).
+		 */
+		bool TryGetSkyrimSetting(uint32_t a_settingId, uint32_t& a_outValue)
+		{
+			SessionHandle session{};
+			ProfileHandle profile{};
+			if (!TryOpenSkyrimProfile(session, profile))
+				return false;
+
+			Setting setting{};
+			setting.version = kSettingVersion;
+			bool found = GetSetting(session, profile, a_settingId, &setting) == 0;
+			if (found)
+				a_outValue = setting.u32CurrentValue;
+
+			DestroySession(session);
+			return found;
 		}
 	};
 }

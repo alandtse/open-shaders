@@ -147,6 +147,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			shouldProxy = false;
 	}
 
+	// The proxy path creates extra D3D11/D3D12 devices and swap chains beyond what the
+	// game itself creates -- redundant, and likely riskier, alongside Smooth Motion.
+	if (shouldProxy && Streamline::IsSmoothMotionEnabledForProfile()) {
+		logger::warn("[Frame Generation] NVIDIA Smooth Motion is enabled; disabling this plugin's frame generation to avoid crashing alongside it");
+		shouldProxy = false;
+	}
+
 	upscaling.lowRefreshRate = refreshRate < 120;
 	upscaling.isWindowed = pSwapChainDesc->Windowed;
 
@@ -980,68 +987,6 @@ void Upscaling::DrawSettings()
 			}
 		}
 
-		// VR Debug visualization -- per-eye buffers and native inputs
-		if (globals::game::isVR) {
-			ImGui::Separator();
-			static float debugRescale = 0.15f;
-			ImGui::SliderFloat(T(TKEY("view_resize"), "View Resize"), &debugRescale, 0.05f, 1.f);
-
-			if (ImGui::TreeNode(T(TKEY("upscaling_intermediates"), "Upscaling Intermediates"))) {
-				if (vrIntermediateMotionVectors[0]) {
-					bool isDLSS = GetUpscaleMethod() == UpscaleMethod::kDLSS;
-					if (vrIntermediateColorIn[0] && vrIntermediateColorOut[0]) {
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[0], "Left Eye In", debugRescale)
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorIn[1], "Right Eye In", debugRescale)
-						if (!isDLSS)
-							BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[0], "Left Eye Out", debugRescale)
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateColorOut[1], "Right Eye Out", debugRescale)
-					}
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[0], "Left Eye MVec", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateMotionVectors[1], "Right Eye MVec", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[0], "Left Eye Reactive", debugRescale)
-					BUFFER_VIEWER_NODE_TITLE(vrIntermediateReactiveMask[1], "Right Eye Reactive", debugRescale)
-					if (vrIntermediateTransparencyMask[0]) {
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[0], "Left Eye Transparency", debugRescale)
-						BUFFER_VIEWER_NODE_TITLE(vrIntermediateTransparencyMask[1], "Right Eye Transparency", debugRescale)
-					}
-				} else {
-					ImGui::TextDisabled("%s", T(TKEY("vr_intermediates_not_created"), "VR intermediates not yet created (enter game world)"));
-				}
-				ImGui::TreePop();
-			}
-
-			if (ImGui::TreeNode(T(TKEY("native_inputs"), "Native Inputs"))) {
-				auto renderer = globals::game::renderer;
-				auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-				auto& mvec = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-				auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-				auto DisplayRT = [&](const char* label, ID3D11Texture2D* tex, ID3D11ShaderResourceView* srv) {
-					if (srv && tex) {
-						D3D11_TEXTURE2D_DESC desc;
-						tex->GetDesc(&desc);
-						char buf[128];
-						snprintf(buf, sizeof(buf), "%s (%ux%u)", label, desc.Width, desc.Height);
-						if (ImGui::TreeNode(buf)) {
-							ImGui::Image(srv, { desc.Width * debugRescale, desc.Height * debugRescale });
-							ImGui::TreePop();
-						}
-					}
-				};
-
-				DisplayRT("kMAIN (Color Input)", Util::AsReal(main.texture), Util::AsReal(main.SRV));
-				DisplayRT("Motion Vectors", Util::AsReal(mvec.texture), Util::AsReal(mvec.SRV));
-				DisplayRT("Depth", Util::AsReal(depth.texture), Util::AsReal(depth.depthSRV));
-
-				if (reactiveMaskTexture)
-					BUFFER_VIEWER_NODE_TITLE(reactiveMaskTexture, "Reactive Mask", debugRescale)
-				if (transparencyCompositionMaskTexture)
-					BUFFER_VIEWER_NODE_TITLE(transparencyCompositionMaskTexture, "Transparency Mask", debugRescale)
-
-				ImGui::TreePop();
-			}
-		}
-
 		ImGui::Separator();
 		Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
 		Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), streamline.pluginDir.c_str(), Streamline::dllVersions, "sl_dll_versions");
@@ -1316,11 +1261,6 @@ void Upscaling::PostPostLoad()
 
 	// Performs upscaling in between volumetric lighting and post processing
 	stl::write_thunk_call<Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
-
-	// Patches RSSetScissorRect calls to use dynamic resolution
-	// This is a PC-specific function hence it was missing
-	if (!globals::game::isVR)
-		stl::detour_thunk<SetScissorRect>(REL::RelocationID(75564, 77365));
 
 	// Patches facegen texture generation to not use dynamic resolution
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
@@ -3257,22 +3197,6 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		globals::features::hdrDisplay.RestoreFramebuffer();
 
 	Util::SetTemporal(false);
-}
-
-void Upscaling::SetScissorRect::thunk(RE::BSGraphics::Renderer* This, int a_left, int a_top, int a_right, int a_bottom)
-{
-	auto viewport = globals::game::graphicsState;
-	auto& runtimeData = viewport->GetRuntimeData();
-
-	if (!runtimeData.dynamicResolutionLock) {
-		a_left = static_cast<int>(a_left * runtimeData.dynamicResolutionWidthRatio);
-		a_right = static_cast<int>(a_right * runtimeData.dynamicResolutionWidthRatio);
-
-		a_top = static_cast<int>(a_top * runtimeData.dynamicResolutionHeightRatio);
-		a_bottom = static_cast<int>(a_bottom * runtimeData.dynamicResolutionHeightRatio);
-	}
-
-	func(This, a_left, a_top, a_right, a_bottom);
 }
 
 void Upscaling::Main_RenderPrecipitation::thunk()

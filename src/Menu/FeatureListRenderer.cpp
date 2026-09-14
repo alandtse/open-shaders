@@ -753,7 +753,8 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 		RenderFeatureActions(feat, isDisabled, isLoaded, sceneControlled,
 			canEditSceneSettings, featureActionsLayout);
 		SceneManagerUI::DrawFeaturePageControls(feat, !isDisabled && isLoaded);
-		const bool sceneEditing = sceneManager->IsFeatureSceneEditing(featureName);
+		const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat) &&
+		                          sceneManager->IsFeatureSceneEditing(featureName);
 		const float pageViewportHeight = std::max(ImGui::GetContentRegionAvail().y, 0.0f);
 
 		if (!featureProfilingAvailable) {

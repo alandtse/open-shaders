@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "Usunąć ustawienia sceny?",
     "feature.scene_manager.edit.discard_confirm": "Odrzuć i otwórz",
     "feature.scene_manager.edit.discard_message": "Niezapisane ustawienia sceny dla {feature} zostaną odrzucone. Otworzyć Scene Manager dla {target}?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Odrzuć i przełącz",
     "feature.scene_manager.edit.discard_title": "Odrzucić niezapisane ustawienia sceny?",
     "feature.scene_manager.edit.overwrites_paused": "Nadpisania funkcji są tymczasowo wstrzymane",
     "feature.scene_manager.edit.overwritten_warning": "Ustawienia funkcji są nadpisywane",

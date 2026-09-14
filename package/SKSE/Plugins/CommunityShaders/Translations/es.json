@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "¿Eliminar ajustes de escena?",
     "feature.scene_manager.edit.discard_confirm": "Descartar y abrir",
     "feature.scene_manager.edit.discard_message": "Se descartarán los ajustes de escena sin guardar de {feature}. ¿Abrir Scene Manager para {target}?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Descartar y cambiar",
     "feature.scene_manager.edit.discard_title": "¿Descartar los ajustes de escena sin guardar?",
     "feature.scene_manager.edit.overwrites_paused": "Las sobrescrituras de la función están pausadas temporalmente",
     "feature.scene_manager.edit.overwritten_warning": "Los ajustes de la función están siendo sobrescritos",

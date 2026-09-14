@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "Supprimer les paramètres de scène ?",
     "feature.scene_manager.edit.discard_confirm": "Abandonner et ouvrir",
     "feature.scene_manager.edit.discard_message": "Les paramètres de scène non enregistrés pour {feature} seront abandonnés. Ouvrir Scene Manager pour {target} ?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Abandonner et changer",
     "feature.scene_manager.edit.discard_title": "Abandonner les paramètres de scène non enregistrés ?",
     "feature.scene_manager.edit.overwrites_paused": "Les remplacements de la fonctionnalité sont temporairement suspendus",
     "feature.scene_manager.edit.overwritten_warning": "Les paramètres de la fonctionnalité sont remplacés",

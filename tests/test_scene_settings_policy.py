@@ -234,7 +234,8 @@ class SceneSettingsPolicyTests(unittest.TestCase):
         self.assertIn("state.deleteSettings.Draw() && requestedContext && !manager->AreFeatureSceneEditActionsLocked()", toolbar)
         self.assertIn("state.compatibleCount == 0 || (selectSettings && manager->AreFeatureSceneEditActionsLocked())", ui)
         renderer = (ROOT / "src/Menu/FeatureListRenderer.cpp").read_text(encoding="utf-8")
-        self.assertIn("const bool sceneEditing = sceneManager->IsFeatureSceneEditing(featureName);", renderer)
+        self.assertIn("const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat) &&", renderer)
+        self.assertIn("sceneManager->IsFeatureSceneEditing(featureName);", renderer)
 
     def test_copy_choices_and_execution_share_compatibility_policy(self):
         choices = extract_function(self.manager, "GetCopySourceSettings")

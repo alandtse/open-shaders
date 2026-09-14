@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "シーン設定を削除しますか？",
     "feature.scene_manager.edit.discard_confirm": "破棄して開く",
     "feature.scene_manager.edit.discard_message": "{feature} の未保存のシーン設定は破棄されます。{target} の Scene Manager を開きますか？",
+    "feature.scene_manager.edit.discard_switch_confirm": "破棄して切り替える",
     "feature.scene_manager.edit.discard_title": "未保存のシーン設定を破棄しますか？",
     "feature.scene_manager.edit.overwrites_paused": "機能の上書きを一時的に停止しています",
     "feature.scene_manager.edit.overwritten_warning": "機能の設定が上書きされています",

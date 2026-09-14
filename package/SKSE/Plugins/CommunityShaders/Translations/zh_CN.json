@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "删除场景设置？",
     "feature.scene_manager.edit.discard_confirm": "放弃并打开",
     "feature.scene_manager.edit.discard_message": "将放弃 {feature} 未保存的场景设置。是否为 {target} 打开 Scene Manager？",
+    "feature.scene_manager.edit.discard_switch_confirm": "放弃并切换",
     "feature.scene_manager.edit.discard_title": "放弃未保存的场景设置？",
     "feature.scene_manager.edit.overwrites_paused": "功能覆盖已暂时暂停",
     "feature.scene_manager.edit.overwritten_warning": "功能设置正在被覆盖",

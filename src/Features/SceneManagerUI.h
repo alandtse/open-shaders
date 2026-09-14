@@ -9,6 +9,6 @@ namespace SceneManagerUI
 	bool BeginFeaturePageEditing(Feature* feature);
 	bool IsFeaturePageEditing(Feature* feature);
 	bool DrawFeaturePageControls(Feature* feature, bool enabled);
-	/// Hide the toolbar while retaining its unsaved preview.
+	/// Hide the toolbar and suspend its preview while retaining the unsaved draft.
 	void HideFeaturePageEditing();
 }

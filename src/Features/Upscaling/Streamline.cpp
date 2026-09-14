@@ -362,45 +362,41 @@ void Streamline::SetD3DDevice12(ID3D12Device* a_device)
 void Streamline::EnsureDriverProfileAllowsDLSSG()
 {
 	Util::NvApiDrs::Api drs{};
-	if (!drs.Load())
+	uint32_t disableValue = 0;
+	// No profile/setting means driver defaults, which allow DLSS-G.
+	if (!drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeyDLSSGDisable, disableValue) || disableValue == 0)
 		return;
+
+	// The NVIDIA App may re-assert the key later, so this runs every boot.
+	logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
+		Util::NvApiDrs::kKeyDLSSGDisable, disableValue);
 
 	Util::NvApiDrs::SessionHandle session{};
-	if (drs.CreateSession(&session) != 0)
-		return;
-	if (drs.LoadSettings(session) != 0) {
-		drs.DestroySession(session);
-		return;
-	}
-
-	uint16_t profileName[2048]{};
-	Util::NvApiDrs::Api::CopyProfileName(Util::NvApiDrs::kSkyrimSEProfileName, profileName);
-
 	Util::NvApiDrs::ProfileHandle profile{};
-	// No profile means driver defaults, which allow DLSS-G.
-	if (drs.FindProfileByName(session, profileName, &profile) == 0) {
-		Util::NvApiDrs::Setting setting{};
-		setting.version = Util::NvApiDrs::kSettingVersion;
-		if (drs.GetSetting(session, profile, Util::NvApiDrs::kKeyDLSSGDisable, &setting) == 0 && setting.u32CurrentValue != 0) {
-			// The NVIDIA App may re-assert the key later, so this runs every boot.
-			logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
-				Util::NvApiDrs::kKeyDLSSGDisable, setting.u32CurrentValue);
-			Util::NvApiDrs::Setting newSetting{};
-			newSetting.version = Util::NvApiDrs::kSettingVersion;
-			newSetting.settingId = Util::NvApiDrs::kKeyDLSSGDisable;
-			newSetting.settingType = 0;
-			newSetting.u32CurrentValue = 0;
-			if (drs.SetSetting(session, profile, &newSetting) != 0 || drs.SaveSettings(session) != 0)
-				logger::warn(
-					"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
-					"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
-					Util::NvApiDrs::kKeyDLSSGDisable);
-			else
-				logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
-		}
-	}
+	if (!drs.TryOpenSkyrimProfile(session, profile))
+		return;
+
+	Util::NvApiDrs::Setting newSetting{};
+	newSetting.version = Util::NvApiDrs::kSettingVersion;
+	newSetting.settingId = Util::NvApiDrs::kKeyDLSSGDisable;
+	newSetting.settingType = 0;
+	newSetting.u32CurrentValue = 0;
+	if (drs.SetSetting(session, profile, &newSetting) != 0 || drs.SaveSettings(session) != 0)
+		logger::warn(
+			"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
+			"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
+			Util::NvApiDrs::kKeyDLSSGDisable);
+	else
+		logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
 
 	drs.DestroySession(session);
+}
+
+bool Streamline::IsSmoothMotionEnabledForProfile()
+{
+	Util::NvApiDrs::Api drs{};
+	uint32_t enableValue = 0;
+	return drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeySmoothMotionEnable, enableValue) && enableValue != 0;
 }
 
 /**

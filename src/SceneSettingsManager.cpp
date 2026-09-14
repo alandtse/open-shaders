@@ -2984,7 +2984,7 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 		suppressLocationTransitionUntilContextResolved = false;
 	};
 
-	if (!HasActiveSceneEntriesCached() && !featureSceneEdit) {
+	if (!HasActiveSceneEntriesCached() && !IsFeatureSceneEditPreviewActive()) {
 		applyFailures.clear();
 		if (!appliedSettings.empty() || !baselineSettings.empty())
 			RestoreAppliedSettings();
@@ -5933,6 +5933,15 @@ bool SceneSettingsManager::CanCaptureFeatureSceneEdit(std::string_view featureSh
 	return IsFeatureSceneEditing(featureShortName) && IsFeatureSceneEditPreviewActive();
 }
 
+void SceneSettingsManager::SetFeatureSceneEditPreviewEnabled(bool enabled)
+{
+	if (!featureSceneEdit || featureSceneEdit->previewEnabled == enabled)
+		return;
+	featureSceneEdit->previewEnabled = enabled;
+	++featureSceneEditRevision;
+	ReapplyIfActive(false);
+}
+
 bool SceneSettingsManager::IsFeatureSceneEditSetting(std::string_view featureShortName,
 	std::string_view settingPath, std::string_view settingKey) const
 {
@@ -7494,7 +7503,7 @@ void SceneSettingsManager::ApplyFeatureSceneEditPreview(ResolvedSettingMap& reso
 
 bool SceneSettingsManager::IsFeatureSceneEditPreviewActive() const
 {
-	if (!featureSceneEdit || !IsSceneReady())
+	if (!featureSceneEdit || !featureSceneEdit->previewEnabled || !IsSceneReady())
 		return false;
 	if (featureSceneEdit->context.type != SceneContextType::Location)
 		return true;

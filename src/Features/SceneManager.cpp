@@ -98,7 +98,7 @@ void SceneManager::RegisterUxActions()
 				{ "timeScale", calendar && calendar->timeScale ? json(calendar->timeScale->value) : json(nullptr) } };
 		}));
 	FEATURE_COMMAND("setEnvironmentPreviewPlaying",
-		"Press the retained feature toolbar's Play/Stop control. Args: playing=boolean, feature=shortName (required for Play). Play uses the toolbar's selected weather/period/location, locks weather and/or time, and can travel to a location. Time-only playback also holds the current weather. Requires a loaded player cell and an open toolbar for the named feature. Stop is always allowed. No scene settings are saved. Verify with environmentPreviewState; OS menu closure and visiting another page retain the lock, changing the selected weather/period while playing retargets the existing lock without releasing it. Replacing the toolbar's owning feature or using explicit OS Editor environment controls ends the preview. Time sliders hold the dominant weather only while active, releasing their temporary lock when the interaction ends.",
+		"Press the retained feature toolbar's Play/Stop control. Args: playing=boolean, feature=shortName (required for Play). Play uses the toolbar's selected weather/period/location, locks weather and/or time, and can travel to a location. Time-only playback also holds the current weather. Requires a loaded player cell and an open toolbar for the named feature. Stop is always allowed. No scene settings are saved. Verify with environmentPreviewState; OS menu closure and visiting another page retain the lock, changing the selected weather/period while playing retargets the existing lock without releasing it. Closing the toolbar, replacing its owning feature, or using explicit OS Editor environment controls ends the environment preview. Time sliders hold the dominant weather only while active, releasing their temporary lock when the interaction ends.",
 		([](Feature*, const json& args) {
 			const bool playing = args.at("playing").get<bool>();
 			if (playing && !SceneManagerUI::IsFeaturePageEditing(Feature::FindFeatureByShortName(args.at("feature").get<std::string>())))
@@ -107,7 +107,7 @@ void SceneManager::RegisterUxActions()
 				throw std::invalid_argument("The selected scene cannot be previewed, or the game is not ready");
 		}));
 	FEATURE_QUERY("featureScenePauseState",
-		"Read count, paused count, and activeOverwrites across both ownership layers for one feature and scene set, plus previewEditing, previewPendingEdits, toolbarOpen, previewOverwritesPaused and previewHasOverwrites for that feature's retained toolbar draft. sceneReady is false during main/loading menus or without a player cell; toolbarActionsLocked reports the loading/overwrite lock for Copy to, Pause and Delete. toolbarOpen means the toolbar is enabled on its owning feature, even while viewing another page or with the OS menu closed. Args: feature=shortName, type=interior|timeOfDay|weather|location, period=Normal|Dawn|Sunrise|Day|Sunset|Dusk|Night (default Normal; named period required for timeOfDay). Weather/location require formKey=SPID; location also requires locationType=Worldspace|Region|LocationType|Location|Cell. Entry pause is independent of feature-wide pause.",
+		"Read count, paused count, and activeOverwrites across both ownership layers for one feature and scene set, plus previewEditing, previewActive, previewPendingEdits, toolbarOpen, previewOverwritesPaused and previewHasOverwrites for that feature's retained toolbar draft. previewEditing indicates a retained draft; previewActive indicates that its settings are currently applied. Closing the toolbar suspends application and editing locks but retains unsaved changes for reopening. sceneReady is false during main/loading menus or without a player cell; toolbarActionsLocked reports the loading/overwrite lock for Copy to, Pause and Delete. toolbarOpen means the toolbar is enabled on its owning feature, even while viewing another page or with the OS menu closed. Args: feature=shortName, type=interior|timeOfDay|weather|location, period=Normal|Dawn|Sunrise|Day|Sunset|Dusk|Night (default Normal; named period required for timeOfDay). Weather/location require formKey=SPID; location also requires locationType=Worldspace|Region|LocationType|Location|Cell. Entry pause is independent of feature-wide pause.",
 		([](const Feature*, const json& args) -> json {
 			auto* manager = SceneSettingsManager::GetSingleton();
 			const auto feature = args.at("feature").get<std::string>();
@@ -116,13 +116,14 @@ void SceneManager::RegisterUxActions()
 				{ "sceneReady", manager->IsSceneReady() },
 				{ "toolbarActionsLocked", !manager->IsSceneReady() || (manager->IsFeatureSceneEditing(feature) && manager->AreFeatureSceneEditActionsLocked()) },
 				{ "previewEditing", manager->IsFeatureSceneEditing(feature) },
+				{ "previewActive", manager->CanCaptureFeatureSceneEdit(feature) },
 				{ "previewPendingEdits", manager->IsFeatureSceneEditing(feature) && manager->HasPendingFeatureSceneEdits() },
 				{ "toolbarOpen", SceneManagerUI::IsFeaturePageEditing(Feature::FindFeatureByShortName(feature)) },
 				{ "previewOverwritesPaused", manager->IsFeatureSceneEditing(feature) && manager->AreFeatureSceneEditOverwritesPaused() },
 				{ "previewHasOverwrites", manager->IsFeatureSceneEditing(feature) && manager->HasFeatureSceneEditOverwrites() } };
 		}));
 	FEATURE_COMMAND("openFeatureSceneEditor",
-		"Open or reopen a feature's Scene Manager toolbar without saving. Args: feature=shortName. Reopening the same feature retains its draft. Requesting another feature shows a discard confirmation on that feature page only if the existing draft has unsaved edits; otherwise it switches immediately. Navigate to the target feature page with the Open Shaders menu action to see the toolbar or confirmation. Verify with featureScenePauseState previewEditing, previewPendingEdits and toolbarOpen.",
+		"Open or reopen a feature's Scene Manager toolbar without saving. Args: feature=shortName. Reopening the same feature resumes its retained draft preview; closing the toolbar suspends it without saving or discarding changes. Requesting another feature shows a discard confirmation on that feature page only if the existing draft has unsaved edits; otherwise it switches immediately. Navigate to the target feature page with the Open Shaders menu action to see the toolbar or confirmation. Verify with featureScenePauseState previewEditing, previewPendingEdits and toolbarOpen.",
 		([](Feature*, const json& args) {
 			if (!SceneSettingsManager::GetSingleton()->IsSceneReady())
 				throw std::invalid_argument("Wait until a player cell is loaded before opening the scene editor");
@@ -132,7 +133,7 @@ void SceneManager::RegisterUxActions()
 			SceneManagerUI::BeginFeaturePageEditing(feature);
 		}));
 	FEATURE_COMMAND("setFeaturePreviewOverwritesPaused",
-		"Temporarily bypass or resume overwrites in a retained feature toolbar preview. Args: feature=shortName, paused=boolean. Does not save drafts or modify saved pause flags. The bypass survives closing the toolbar or OS menu and visiting other pages, along with the unsaved preview. Replacing the draft with another feature or exiting the game ends the bypass; entries already individually paused remain paused. Verify with featureScenePauseState previewOverwritesPaused and previewHasOverwrites.",
+		"Temporarily bypass or resume overwrites in a retained feature toolbar preview. Args: feature=shortName, paused=boolean. Does not save drafts or modify saved pause flags. The bypass preference stays with the draft when the toolbar closes, but saved overwrites apply normally until it reopens. Closing the OS menu or visiting other pages retains the active preview. Replacing the draft with another feature or exiting the game ends the bypass; entries already individually paused remain paused. Verify with featureScenePauseState previewOverwritesPaused and previewHasOverwrites.",
 		([](Feature*, const json& args) {
 			auto* manager = SceneSettingsManager::GetSingleton();
 			if (!manager->IsSceneReady())

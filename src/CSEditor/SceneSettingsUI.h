@@ -310,6 +310,6 @@ namespace SceneSettingsUI
 	/// Play or stop the selected toolbar scene's shared weather/time lock without saving settings.
 	bool SetFeaturePagePreviewPlaying(bool playing);
 
-	/// Hide the toolbar without saving, discarding, or stopping its scene preview.
+	/// Hide the toolbar and suspend its preview without saving or discarding the draft.
 	void HideFeaturePageEditing();
 }

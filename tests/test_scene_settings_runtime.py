@@ -40,7 +40,7 @@ std::string NormalizeLocationFormKey(const std::string& key) { return key; }
 struct SceneSettingsManager {
     enum class SceneContextType { Interior, Location };
     struct Context { SceneContextType type = SceneContextType::Interior; int locationType = 0; std::string locationFormKey; };
-    struct Edit { Context context; };
+    struct Edit { Context context; bool previewEnabled = true; };
     struct Target { int type; std::string formKey; };
     std::optional<Edit> featureSceneEdit{std::in_place};
     std::vector<Target> targets;
@@ -82,6 +82,14 @@ int main() {
     check(!manager.IsFeatureSceneEditPreviewActive(), "Location preview stays inactive outside its target");
     manager.targets.push_back({1, "Fixture"});
     check(manager.IsFeatureSceneEditPreviewActive(), "Location preview resumes inside its target");
+    manager.featureSceneEdit->previewEnabled = false;
+    check(!manager.IsFeatureSceneEditPreviewActive(), "Hidden location draft stays suspended inside its target");
+    manager.targets.clear();
+    check(!manager.IsFeatureSceneEditPreviewActive(), "Travel cannot reactivate a hidden location draft");
+    manager.featureSceneEdit->context.type = SceneSettingsManager::SceneContextType::Interior;
+    check(!manager.IsFeatureSceneEditPreviewActive(), "Non-location draft also stays suspended while hidden");
+    manager.featureSceneEdit->previewEnabled = true;
+    check(manager.IsFeatureSceneEditPreviewActive(), "Reopening resumes a valid preview");
 }
 '''
         for token, declaration in {
@@ -1153,7 +1161,8 @@ struct ConfirmationPopup {
 }
 struct SceneSettingsManager {
     std::string owner;
-    bool pending = false, overwritesPaused = false;
+    bool pending = false, overwritesPaused = false, previewEnabled = true;
+    void SetFeatureSceneEditPreviewEnabled(bool enabled) { previewEnabled = enabled; }
     int value = 1, stored = 1, begins = 0, ends = 0, saves = 0;
     static SceneSettingsManager* GetSingleton() { static SceneSettingsManager instance; return &instance; }
     static std::string GetFeatureDisplayName(const std::string& feature) { return feature; }
@@ -1204,9 +1213,11 @@ int main() {
     check(manager->value == 9 && manager->pending && manager->overwritesPaused, "Navigation preserves draft and overwrite bypass");
     const int begins = manager->begins;
     HideFeaturePageEditing();
-    check(!IsFeaturePageEditing(&first) && manager->pending && manager->value == 9, "Hiding the toolbar retains the draft preview");
-    check(environmentPlaying, "Hiding the toolbar keeps weather/time preview running");
+    check(!IsFeaturePageEditing(&first) && manager->pending && manager->value == 9, "Hiding the toolbar retains unsaved draft values");
+    check(!manager->previewEnabled && !environmentPlaying, "Hiding suspends settings and environment previews");
     check(BeginFeaturePageEditing(&first) && manager->begins == begins, "Reopening same feature resumes without restarting its context");
+    check(manager->previewEnabled, "Reopening resumes the retained settings preview");
+    environmentPlaying = true;
     check(!BeginFeaturePageEditing(&unsupported) && manager->owner == first.name, "Unsupported target leaves current draft intact");
     check(!BeginFeaturePageEditing(&second) && state.replaceEditor.IsOpen(), "Unsaved changes require confirmation before replacing the editor");
     DrawFeaturePageEditConfirmation(&second);
@@ -1265,7 +1276,7 @@ Menu* menu = nullptr;
 State* state = nullptr;
 }
 struct SceneSettingsManager {
-    struct Edit { std::string featureShortName; bool overwritesPaused = true; int value = 9; };
+    struct Edit { std::string featureShortName; bool overwritesPaused = true; int value = 9; bool previewEnabled = true; };
     struct Address {
         std::string featureShortName;
         std::vector<std::string> path;
@@ -1277,16 +1288,19 @@ struct SceneSettingsManager {
     std::map<Address, int> appliedSettings;
     bool resolverDirty = false;
     int lastUpdateFrame = -1, stores = 0;
+    unsigned long long featureSceneEditRevision = 0;
     int savedValue = 2, liveValue = 2;
     bool overwritePresent = false;
     std::atomic_bool queuedLoadingTransition = false;
     bool StoreFeatureSceneEdit() { ++stores; savedValue = liveValue; return true; }
     void ResolveAndApply(bool = false) {
-        liveValue = featureSceneEdit ? featureSceneEdit->value : overwritePresent ? 6 : savedValue;
+        liveValue = featureSceneEdit && featureSceneEdit->previewEnabled ? featureSceneEdit->value : overwritePresent ? 6 : savedValue;
     }
     void VerifyPendingApplies(bool = false) {}
     void FlushDeferredSceneChanges() {}
     void OnLoadingTransition() { ResolveAndApply(true); }
+    void ReapplyIfActive(bool) { ResolveAndApply(true); }
+    void SetFeatureSceneEditPreviewEnabled(bool enabled);
     void EndFeatureSceneEdit(bool storeChanges);
     void Update();
     void draft() {
@@ -1300,6 +1314,7 @@ struct SceneSettingsManager {
     }
 };
 END_EDIT
+SET_PREVIEW
 UPDATE
 void check(bool value, const char* message) {
     if (!value) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
@@ -1343,6 +1358,22 @@ int main() {
     ++state.frameCount;
     manager.Update();
     check(manager.stores == 1 && manager.savedValue == 9 && manager.liveValue == 12, "Closing retains edits after the last explicit save without saving them");
+    manager.draft();
+    manager.overwritePresent = true;
+    const int saves = manager.stores;
+    manager.SetFeatureSceneEditPreviewEnabled(false);
+    check(manager.liveValue == 6 && manager.featureSceneEdit->value == 9, "Closing restores saved overrides without discarding the draft");
+    check(manager.featureSceneEdit->overwritesPaused && manager.stores == saves, "Closing retains bypass preference and never saves");
+    const auto revision = manager.featureSceneEditRevision;
+    manager.SetFeatureSceneEditPreviewEnabled(false);
+    check(manager.featureSceneEditRevision == revision, "Repeated hiding is a no-op");
+    manager.overwritePresent = false;
+    manager.savedValue = 3;
+    manager.ResolveAndApply();
+    check(manager.liveValue == 3 && manager.featureSceneEdit->value == 9, "Normal scene changes do not overwrite the hidden draft");
+    manager.SetFeatureSceneEditPreviewEnabled(true);
+    check(manager.liveValue == 9 && manager.stores == saves, "Reopening reapplies the draft without saving");
+    check(manager.featureSceneEditRevision > revision, "Resume invalidates cached control restrictions");
     for (bool store : {false, true}) {
         SceneSettingsManager bypassed;
         bypassed.overwritePresent = true;
@@ -1353,6 +1384,7 @@ int main() {
     }
 }
 '''.replace("END_EDIT", braced(manager, "void SceneSettingsManager::EndFeatureSceneEdit("))
+        source = source.replace("SET_PREVIEW", braced(manager, "void SceneSettingsManager::SetFeatureSceneEditPreviewEnabled("))
         source = source.replace("UPDATE", braced(manager, "void SceneSettingsManager::Update("))
         self.compile_and_run(source)
 

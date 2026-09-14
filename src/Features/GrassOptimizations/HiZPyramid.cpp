@@ -5,28 +5,10 @@
 #include "GpuPass.h"
 #include "Profiler.h"
 #include "State.h"
-#include "Utils/D3D.h"
 
 void HiZPyramid::SetupResources()
 {
 	paramsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<BaseParams>(), "GrassOptimizations::HiZParamsCB");
-
-	D3D11_BUFFER_DESC bd{};
-	bd.ByteWidth = sizeof(uint32_t);
-	bd.Usage = D3D11_USAGE_DEFAULT;
-	bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
-	bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
-	const uint32_t zero = 0;
-	D3D11_SUBRESOURCE_DATA init{ &zero, 0, 0 };
-	spdCounter = std::make_unique<Buffer>(bd, &init, "GrassOptimizations::SpdCounter");
-
-	D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
-	uav.Format = DXGI_FORMAT_R32_TYPELESS;
-	uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-	uav.Buffer.FirstElement = 0;
-	uav.Buffer.NumElements = 1;
-	uav.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
-	spdCounter->CreateUAV(uav);
 }
 
 void HiZPyramid::ClearShaderCache()
@@ -64,6 +46,7 @@ ID3D11ShaderResourceView* HiZPyramid::GetLiveDepthSRV()
 bool HiZPyramid::CreateTexture(ID3D11Device* device, uint32_t dstW, uint32_t dstH)
 {
 	mipUAVs.clear();
+	mip0SRV = nullptr;
 	texture.reset();
 	paddedWidth = 0;
 	paddedHeight = 0;
@@ -93,6 +76,11 @@ bool HiZPyramid::CreateTexture(ID3D11Device* device, uint32_t dstW, uint32_t dst
 		sd.Texture2D.MostDetailedMip = 0;
 		sd.Texture2D.MipLevels = mips;
 		texture->CreateSRV(sd);
+
+		// A mip-0-only SRV lets SPD read mip 0 without overlapping the output UAVs.
+		sd.Texture2D.MipLevels = 1;
+		DX::ThrowIfFailed(device->CreateShaderResourceView(texture->resource.get(), &sd, mip0SRV.put()));
+		Util::SetResourceName(mip0SRV.get(), "GrassOptimizations::HiZ Mip0 SRV");
 	} catch (...) {
 		logger::error("[GRASS OPTIMIZATIONS] HiZ texture create failed");
 		texture.reset();
@@ -126,7 +114,8 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	// Not graphicsState->screenWidth/Height: that reads VR's desktop preview resolution, not the HMD's.
+	// globals::game::graphicsState->screenWidth/Height is the desktop preview window's resolution on
+	// VR, not the HMD's -- use the same nominal size UpdateGrass derives from the live render target.
 	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
@@ -211,14 +200,18 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 
 		if (usingLiveDepth) {
 			ctx->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, rtvs, dsv);
-			Util::SafeReleaseArray(rtvs);
-			Util::SafeRelease(dsv);
+			for (auto* rtv : rtvs) {
+				if (rtv)
+					rtv->Release();
+			}
+			if (dsv)
+				dsv->Release();
 		}
 	}
 
 	// Each level is the exact max of the one above, so an instance of any on-screen size is testable against a fixed number of texels.
 	// One dispatch for the whole chain, every group reducing its own tile from LDS.
-	if (spdCS && spdCounter && GetMipCount() > 1) {
+	if (spdCS && GetMipCount() > 1) {
 		CS_GPU_PASS("GrassOptimizations::HiZMips");
 
 		const uint32_t outputMips = GetMipCount() - 1;
@@ -228,18 +221,19 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 		const uint32_t totalGroups = groupsX * groupsY;
 		paramsCB->Update(SPDParams{ padW, padH, outputMips, totalGroups });
 
-		ID3D11UnorderedAccessView* spdUAVs[14]{};
+		ID3D11UnorderedAccessView* spdUAVs[6]{};
 		for (uint32_t i = 0; i < outputMips; ++i)
 			spdUAVs[i] = mipUAVs[i + 1].get();
-		spdUAVs[12] = spdCounter->uav.get();
-		spdUAVs[13] = mipUAVs[0].get();
+		ID3D11ShaderResourceView* spdSourceSRV = mip0SRV.get();
 
 		ctx->CSSetShader(spdCS, nullptr, 0);
-		ctx->CSSetUnorderedAccessViews(0, 14, spdUAVs, nullptr);
+		ctx->CSSetShaderResources(0, 1, &spdSourceSRV);
+		ctx->CSSetUnorderedAccessViews(0, 6, spdUAVs, nullptr);
 		ctx->Dispatch(groupsX, groupsY, 1);
 
-		ID3D11UnorderedAccessView* spdNulls[14]{};
-		ctx->CSSetUnorderedAccessViews(0, 14, spdNulls, nullptr);
+		ID3D11UnorderedAccessView* spdNulls[6]{};
+		ctx->CSSetUnorderedAccessViews(0, 6, spdNulls, nullptr);
+		ctx->CSSetShaderResources(0, 1, &nullSRV);
 	}
 
 	// The first build runs before Upscaling, so update the log after so accurate values are logged. The log key is the build's parameters, so it only logs when they change.

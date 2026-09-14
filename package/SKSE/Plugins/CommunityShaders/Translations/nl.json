@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "Scène-instellingen verwijderen?",
     "feature.scene_manager.edit.discard_confirm": "Verwerpen en openen",
     "feature.scene_manager.edit.discard_message": "Niet-opgeslagen scène-instellingen voor {feature} worden verworpen. Scene Manager openen voor {target}?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Verwerpen en wisselen",
     "feature.scene_manager.edit.discard_title": "Niet-opgeslagen scène-instellingen verwerpen?",
     "feature.scene_manager.edit.overwrites_paused": "Functie-overschrijvingen zijn tijdelijk gepauzeerd",
     "feature.scene_manager.edit.overwritten_warning": "Functie-instellingen worden overschreven",

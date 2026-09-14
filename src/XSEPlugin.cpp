@@ -7,6 +7,8 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
+#include "NativeMenu/NativeMenu.h"
+#include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "VRAPI/CSpluginapi.h"
@@ -140,6 +142,8 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 
 				Feature::ForEachLoadedFeature("DataLoaded", [](Feature* feature) { feature->DataLoaded(); });
 				globals::state->startupMenuInitializationComplete.store(true, std::memory_order_release);
+
+				NativeMenu::Register();
 			}
 
 			break;
@@ -156,7 +160,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.264.0", true);
+		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.265.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
@@ -165,8 +169,16 @@ bool Load()
 	}
 
 	// Frame generation is flatrim-only; the DRS reset must precede any D3D device.
-	if (!REL::Module::IsVR())
+	if (!REL::Module::IsVR()) {
 		Streamline::EnsureDriverProfileAllowsDLSSG();
+
+		if (Streamline::IsSmoothMotionEnabledForProfile())
+			logger::warn(
+				"NVIDIA Smooth Motion is enabled for this profile. It is known to crash "
+				"alongside D3D11 hooking mods (including this plugin). Disable Smooth "
+				"Motion for Skyrim Special Edition in the NVIDIA App if you experience "
+				"crashes at startup.");
+	}
 
 	auto messaging = SKSE::GetMessagingInterface();
 	messaging->RegisterListener("SKSE", MessageHandler);

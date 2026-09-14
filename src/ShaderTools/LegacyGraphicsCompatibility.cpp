@@ -55,6 +55,39 @@ namespace LegacyGraphicsCompatibility
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		// VR's call site already multiplies by the dynamic-resolution ratio (like 1.7.99+), so
+		// scaling it again here would double-scale the shadow-mask scissor rect.
+		struct ShadowBounds_SetViewport
+		{
+			static void thunk(
+				RE::BSGraphics::Renderer* a_renderer,
+				std::int32_t a_left,
+				std::int32_t a_top,
+				std::int32_t a_right,
+				std::int32_t a_bottom)
+			{
+				if (!globals::game::isVR) {
+					auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
+					const float widthRatio = runtimeData.dynamicResolutionLock ? 1.0f : runtimeData.dynamicResolutionWidthRatio;
+					const float heightRatio = runtimeData.dynamicResolutionLock ? 1.0f : runtimeData.dynamicResolutionHeightRatio;
+
+					// Truncate each edge independently, matching the per-edge CVTTSS2SI the engine emits.
+					a_left = static_cast<std::int32_t>(static_cast<float>(a_left) * widthRatio);
+					a_right = static_cast<std::int32_t>(static_cast<float>(a_right) * widthRatio);
+					a_top = static_cast<std::int32_t>(static_cast<float>(a_top) * heightRatio);
+					a_bottom = static_cast<std::int32_t>(static_cast<float>(a_bottom) * heightRatio);
+				}
+
+				const auto width = std::bit_cast<std::int32_t>(
+					static_cast<std::uint32_t>(a_right) - static_cast<std::uint32_t>(a_left));
+				const auto height = std::bit_cast<std::int32_t>(
+					static_cast<std::uint32_t>(a_bottom) - static_cast<std::uint32_t>(a_top));
+				func(a_renderer, a_left, a_top, width, height);
+			}
+
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		class ScopedCameraProjectionScale
 		{
 		public:
@@ -454,6 +487,21 @@ namespace LegacyGraphicsCompatibility
 			logger::info("Installed legacy AlphaBlend bounds-to-extents adapter");
 		}
 
+		void InstallShadowBoundsExtentsAdapter()
+		{
+			const auto callSite = REL::RelocationID(100979, 107762).address() + REL::Relocate(0x3B5, 0x360, 0x49B);
+			const auto expectedTarget = REL::RelocationID(75564, 77365).address();
+			constexpr auto callPattern = REL::make_pattern<"E8 ?? ?? ?? ??">();
+			if (!REL::verify_code(callSite, callPattern) || ReadRelativeCallTarget(callSite) != expectedTarget) {
+				logger::error("Legacy shadow bounds viewport call does not match the verified 1.5.97/1.6.1170/1.4.15 binary; adapter not installed");
+				return;
+			}
+
+			ShadowBounds_SetViewport::func = expectedTarget;
+			SKSE::GetTrampoline().write_call<5>(callSite, ShadowBounds_SetViewport::thunk);
+			logger::info("Installed legacy shadow bounds-to-extents adapter");
+		}
+
 		void InstallStateCameraProjectionAdapter()
 		{
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
@@ -629,6 +677,7 @@ namespace LegacyGraphicsCompatibility
 
 		detail::InstallShaderAdapters();
 		InstallAlphaBlendExtentsAdapter();
+		InstallShadowBoundsExtentsAdapter();
 		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
 		InstallShadowSceneNodeInitialization();

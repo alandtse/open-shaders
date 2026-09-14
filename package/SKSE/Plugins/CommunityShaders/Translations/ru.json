@@ -2207,6 +2207,7 @@
     "feature.scene_manager.edit.delete_title": "Удалить настройки сцены?",
     "feature.scene_manager.edit.discard_confirm": "Отбросить и открыть",
     "feature.scene_manager.edit.discard_message": "Несохранённые настройки сцены для {feature} будут отброшены. Открыть Scene Manager для {target}?",
+    "feature.scene_manager.edit.discard_switch_confirm": "Отбросить и переключить",
     "feature.scene_manager.edit.discard_title": "Отбросить несохранённые настройки сцены?",
     "feature.scene_manager.edit.overwrites_paused": "Переопределения функции временно приостановлены",
     "feature.scene_manager.edit.overwritten_warning": "Настройки функции переопределяются",

@@ -9,7 +9,7 @@
 
 cbuffer CullParams : register(b0)
 {
-	// [0..5] = eye 0's planes; [6..11] = eye 1's (VR only -- duplicated from eye 0 otherwise).
+	// [0..5] = eye 0's planes; [6..11] = eye 1's. VR planes use camera-relative coordinates.
 	float4 FrustumPlanes[12];
 
 	uint EyeCount;
@@ -81,11 +81,16 @@ RWByteAddressBuffer Counter : register(u2);
 
 RWByteAddressBuffer MidLODCompacted : register(u3);
 RWStructuredBuffer<float4> MidLODExtras : register(u4);
-RWByteAddressBuffer MidLODCounter : register(u5);
 
-RWByteAddressBuffer FarLODCompacted : register(u6);
-RWStructuredBuffer<float4> FarLODExtras : register(u7);
-RWByteAddressBuffer FarLODCounter : register(u8);
+RWByteAddressBuffer FarLODCompacted : register(u5);
+RWStructuredBuffer<float4> FarLODExtras : register(u6);
+// Mid and Far LOD survivor counts share one UAV so the shader stays within D3D11's eight-UAV limit.
+// Packed as 4 bytes per (eye, tier): eye 1's slots sit kLODCounterEyeStride bytes past eye 0's.
+RWByteAddressBuffer LODCounters : register(u7);
+
+static const uint kLODCounterEyeStride = 8;
+static const uint MiddleLODCountOffset = 0;
+static const uint FarLODCountOffset = 4;
 
 // Uses a uint hash to generate a random float between [0, 1)
 float RandFloat(uint bits)
@@ -99,41 +104,12 @@ float RandFloat(uint bits)
 	return asfloat(bits) - 1.0;
 }
 
-[numthreads(64, 1, 1)] void main(uint3 tid : SV_DispatchThreadID) {
-	const uint eyeIndex = tid.z;
-	const uint compactIdx = tid.x;
-	if (eyeIndex >= EyeCount || compactIdx >= InstanceCount || SliceCount == 0)
-		return;
-
-	// Map the compacted index back to a real instance, searching on the running total in .y.
-	uint lo = 0;
-	uint hi = SliceCount - 1;
-	[loop] while (lo < hi)
-	{
-		const uint mid = (lo + hi + 1) >> 1;
-		if (SliceTable[SliceTableOffset + mid].y <= compactIdx)
-			lo = mid;
-		else
-			hi = mid - 1;
-	}
-	const uint2 slice = SliceTable[SliceTableOffset + lo];
-
-	// Keyed off the real index, so an instance keeps its dither decisions as slices come and go.
-	const uint idx = slice.x + (compactIdx - slice.y);
-
-	// Utilize one hash for both dithers, since pcg2d's outputs are independent
-	const uint2 rand = Random::pcg2d(uint2(idx, 0u));
-
-	const uint base = idx * 32;
-	const uint4 raw0 = Instances.Load4(base);
-	const uint4 raw1 = Instances.Load4(base + 16);
-
-	const float2 localXY = float2(f16tof32(raw0.x & 0xFFFF), f16tof32(raw0.x >> 16));
-	const float localZ = f16tof32(raw0.y & 0xFFFF);
-
-	const float4 og = Origins[idx];
-	const float3 world = float3(localXY, localZ) + og.xyz;
-
+bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uint2 rand,
+	float sizeVariance, out float fade, out float flags, out uint tier)
+{
+	fade = 0.0;
+	flags = 0.0;
+	tier = 0u;
 	const float3 dv = world - FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	const float distSq = dot(dv, dv);
 
@@ -146,25 +122,30 @@ float RandFloat(uint bits)
 	const float dScale = lerp(1.0, DistScale, effCostBias);
 	const float effMaxDistSq = MaxDistSq * dScale * dScale;
 	if (distSq > effMaxDistSq)
-		return;
+		return false;
 
+	const float instanceRadius = ModelRadius * (1.0 + max(sizeVariance, 0.0));
+#if defined(VR)
+	// The VR planes are camera-relative and conservatively test the full instance bound.
+	const float frustumRadius = instanceRadius + length(BoundCenter) * (1.0 + max(sizeVariance, 0.0));
+#endif
 	[unroll] for (uint p = 0; p < 6; ++p)
 	{
 		const float4 plane = FrustumPlanes[eyeIndex * 6 + p];
+#if defined(VR)
+		if (dot(plane.xyz, dv) - plane.w < -frustumRadius)
+			return false;
+#else
 		if (dot(plane.xyz, world) - plane.w < 0.0)
-			return;
+			return false;
+#endif
 	}
-
-	// The vertex shader grows each instance by (1 + InstanceData4.y * ScaleMask). ScaleMask is not
-	// visible here, so assume 1 and ignore shrink: over-estimating the radius only costs culling.
-	const float sizeVariance = f16tof32(raw1.z >> 16);
-	const float instanceRadius = ModelRadius * (1.0 + max(sizeVariance, 0.0));
 
 	const float projPx = (instanceRadius / dist) * ProjScale;
 	const float pxScale = lerp(1.0, MinPixelScale, effCostBias);
 	const float effMinPx = MinPixelSize * pxScale;
 	if (projPx < effMinPx)
-		return;
+		return false;
 
 	if (HiZEnabled > 0.5) {
 		// ModelRadius bounds about BoundCenter, not the instance root, so the sphere has to be there to be accurately occluded.
@@ -206,7 +187,6 @@ float RandFloat(uint bits)
 
 				const int2 t0 = int2(floor(tcL - rTL));
 				const int2 t1 = int2(floor(tcL + rTL));
-
 				// An instance hides only once even its nearest point is behind the occluder. A camera inside
 				// the sphere collapses dvC, putting nearZ below any tile depth so the test never fires.
 				const float3 dvNear = dvC * (max(distC - occRadius, 0.0) / distC);
@@ -228,7 +208,7 @@ float RandFloat(uint bits)
 				// Behind the farthest occluder of every covering tile means hidden. The tolerance absorbs
 				// projection and depth error that would otherwise drop instances only marginally behind it.
 				if (nearZ > tileMax + OcclusionBias)
-					return;
+					return false;
 			}
 		}
 	}
@@ -240,7 +220,7 @@ float RandFloat(uint bits)
 		const float keep = lerp(1.0, LODMinKeep, t);
 		const float h = RandFloat(rand.x);
 		if (h > keep + LODFadeBand)
-			return;
+			return false;
 		lodFade = saturate((keep + LODFadeBand - h) / LODFadeBand);
 	}
 
@@ -252,43 +232,27 @@ float RandFloat(uint bits)
 	const float distFade = 1.0 - saturate((length(clip.xyz) - AlphaParam1) / AlphaParam2);
 	const float spawnFade = saturate((FadeNow - og.w) * FadeInTimeRcp);
 
-	const float fade = distFade * spawnFade * lodFade * edgeFade;
+	fade = distFade * spawnFade * lodFade * edgeFade;
 	if (fade <= InvisibleFadeCull)
-		return;
+		return false;
 
-	const float4 e0 = float4(og.xyz, IsComplex);
+	flags = (SimpleShadingPixelSize > 0.0 && projPx < SimpleShadingPixelSize) ? 2.0 : 0.0;
 
-	const float farFlag = (SimpleShadingPixelSize > 0.0 && projPx < SimpleShadingPixelSize) ? 2.0 : 0.0;
-
-	float4 currentResponse, previousResponse;
-	float2 flutter;
-	GrassWindResponse::Sample(localXY, world.xy, world.xy, Math::IdentityMatrix, Math::IdentityMatrix,
-		TimeBase * WavePeriod, PrevTimeBase * WavePeriod, currentResponse, previousResponse, flutter);
-	const float4 e1 = float4(flutter, fade, farFlag);
-	float4 currentCollision = 0.0;
-	float4 previousCollision = 0.0;
-#ifdef GRASS_COLLISION
-	const float3 currentCollisionRoot = world - FrameBuffer::CameraPosAdjust[0].xyz;
-	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
-	currentCollision = GrassCollision::SampleCurrentDeformation(currentCollisionRoot.xy);
-	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
-	currentCollision.w = smoothstep(4096.0, 0.0, length(currentCollisionRoot));
-	previousCollision.w = smoothstep(4096.0, 0.0, length(previousRoot));
-#endif
-
-	// Both thresholds are dithered over MeshLODBandPx so each swap is gradual rather than a visible
-	// line, and both compare the same hash so an instance crosses middle then far in order as it
-	// recedes, instead of picking each band independently and popping back to a nearer mesh.
+	// Both thresholds use the same hash so an instance crosses middle then far in order.
 	const float h = RandFloat(rand.y);
 	const float halfBand = MeshLODBandPx * 0.5;
 	const float bandRcp = 1.0 / max(MeshLODBandPx, 1e-4);
-
-	uint tier = 0;
 	if (MidLODEnabled > 0.5 && h < saturate((MidLODPixelSize + halfBand - projPx) * bandRcp))
-		tier = 1;
+		tier = 1u;
 	if (FarLODEnabled > 0.5 && h < saturate((FarLODPixelSize + halfBand - projPx) * bandRcp))
-		tier = 2;
+		tier = 2u;
 
+	return true;
+}
+
+void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, float4 e1,
+	float4 currentResponse, float4 previousResponse, float4 currentCollision, float4 previousCollision)
+{
 	// Scaled by 4 so it clears the far-shading flag already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
@@ -297,10 +261,11 @@ float RandFloat(uint bits)
 	static const uint kArgsBlockStride = 32;
 	const uint eyeByteOffset = eyeIndex * kArgsBlockStride;
 	const uint eyeSlotBase = eyeIndex * OutputCapacityPerEye;
+	const uint lodCounterEyeOffset = eyeIndex * kLODCounterEyeStride;
 
 	uint slot;
 	if (tier == 2) {
-		FarLODCounter.InterlockedAdd(eyeByteOffset, 1, slot);
+		LODCounters.InterlockedAdd(lodCounterEyeOffset + FarLODCountOffset, 1, slot);
 		slot += eyeSlotBase;
 		FarLODCompacted.Store4(slot * 32, raw0);
 		FarLODCompacted.Store4(slot * 32 + 16, raw1);
@@ -311,7 +276,7 @@ float RandFloat(uint bits)
 		FarLODExtras[slot * 6 + 4] = currentCollision;
 		FarLODExtras[slot * 6 + 5] = previousCollision;
 	} else if (tier == 1) {
-		MidLODCounter.InterlockedAdd(eyeByteOffset, 1, slot);
+		LODCounters.InterlockedAdd(lodCounterEyeOffset + MiddleLODCountOffset, 1, slot);
 		slot += eyeSlotBase;
 		MidLODCompacted.Store4(slot * 32, raw0);
 		MidLODCompacted.Store4(slot * 32 + 16, raw1);
@@ -333,4 +298,82 @@ float RandFloat(uint bits)
 		Extras[slot * 6 + 4] = currentCollision;
 		Extras[slot * 6 + 5] = previousCollision;
 	}
+}
+
+[numthreads(64, 1, 1)] void main(uint3 tid : SV_DispatchThreadID) {
+	const uint compactIdx = tid.x;
+	if (compactIdx >= InstanceCount || SliceCount == 0)
+		return;
+
+	// Find the source slice containing this compacted index.
+	uint lo = 0;
+	uint hi = SliceCount - 1;
+	[loop] while (lo < hi)
+	{
+		const uint mid = (lo + hi + 1) >> 1;
+		if (SliceTable[SliceTableOffset + mid].y <= compactIdx)
+			lo = mid;
+		else
+			hi = mid - 1;
+	}
+	const uint2 slice = SliceTable[SliceTableOffset + lo];
+
+	// Use the source index to keep dither decisions stable across slice changes.
+	const uint idx = slice.x + (compactIdx - slice.y);
+
+	// Generate independent density and LOD dither values with one hash.
+	const uint2 rand = Random::pcg2d(uint2(idx, 0u));
+
+	const uint base = idx * 32;
+	const uint4 raw0 = Instances.Load4(base);
+	const uint4 raw1 = Instances.Load4(base + 16);
+
+	const float2 localXY = float2(f16tof32(raw0.x & 0xFFFF), f16tof32(raw0.x >> 16));
+	const float localZ = f16tof32(raw0.y & 0xFFFF);
+
+	const float4 og = Origins[idx];
+	const float3 world = float3(localXY, localZ) + og.xyz;
+
+	const float sizeVariance = f16tof32(raw1.z >> 16);
+	const float4 e0 = float4(og.xyz, IsComplex);
+
+	float fade0, flags0;
+	uint tier0;
+	const bool visible0 = CullEye(0u, world, og, raw0, raw1, rand, sizeVariance, fade0, flags0, tier0);
+#if defined(VR)
+	float fade1 = 0.0, flags1 = 0.0;
+	uint tier1 = 0u;
+	const bool visible1 = CullEye(1u, world, og, raw0, raw1, rand, sizeVariance, fade1, flags1, tier1);
+
+	if (!visible0 && !visible1)
+		return;
+#else
+	if (!visible0)
+		return;
+#endif
+
+	// Both eyes share the wind and collision response while retaining independent visibility and draw records.
+	float4 currentResponse, previousResponse;
+	float2 flutter;
+	GrassWindResponse::Sample(localXY, world.xy, world.xy, Math::IdentityMatrix, Math::IdentityMatrix,
+		TimeBase * WavePeriod, PrevTimeBase * WavePeriod, currentResponse, previousResponse, flutter);
+	float4 currentCollision = 0.0;
+	float4 previousCollision = 0.0;
+#ifdef GRASS_COLLISION
+	const float3 currentCollisionRoot = world - FrameBuffer::CameraPosAdjust[0].xyz;
+	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
+	currentCollision = GrassCollision::SampleCurrentDeformation(currentCollisionRoot.xy);
+	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
+	currentCollision.w = smoothstep(4096.0, 0.0, length(currentCollisionRoot));
+	previousCollision.w = smoothstep(4096.0, 0.0, length(previousRoot));
+#endif
+
+	if (visible0)
+		StoreSurvivor(0u, tier0, raw0, raw1, e0, float4(flutter, fade0, flags0),
+			currentResponse, previousResponse, currentCollision, previousCollision);
+#if defined(VR)
+	if (visible1)
+		StoreSurvivor(1u, tier1, raw0, raw1, e0, float4(flutter, fade1, flags1),
+			currentResponse, previousResponse, currentCollision, previousCollision);
+#endif
 }
