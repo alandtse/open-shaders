@@ -2,8 +2,12 @@
 
 namespace ActorWind
 {
-	/** Returns whether the actor has a dragon race keyword or dragon behavior graph. */
-	[[nodiscard]] bool IsDragon(const RE::Actor& a_actor);
+	/**
+	 * @brief Returns whether the actor has a dragon race keyword or dragon behavior graph.
+	 * @param a_dragonKeyword Pre-resolved ActorTypeDragon keyword to check by pointer instead
+	 *  of by string; falls back to the string/behavior-graph checks when null.
+	 */
+	[[nodiscard]] bool IsDragon(const RE::Actor& a_actor, const RE::BGSKeyword* a_dragonKeyword = nullptr);
 
 	/** @brief Returns the actor's visual-root position with a bounded actor-position fallback. */
 	[[nodiscard]] float3 GetVisualOrigin(RE::Actor& a_actor) noexcept;

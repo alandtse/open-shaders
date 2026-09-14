@@ -22,10 +22,6 @@ namespace ShoutWindProfiles
 		DirectionalProfile{ 1.5f, 2100.0f, 360.0f, 2200.0f, 32.0f, 0.9f }
 	};
 
-	/** Generic dragon shout values. */
-	inline constexpr std::array<DirectionalProfile, 3> kGenericDragonShoutProfiles{
-		DirectionalProfile{ 0.8f, 1000.0f, 220.0f, 1800.0f, 24.0f, 0.6f },
-		DirectionalProfile{ 1.1f, 1500.0f, 280.0f, 2000.0f, 28.0f, 0.75f },
-		DirectionalProfile{ 1.5f, 2100.0f, 360.0f, 2200.0f, 32.0f, 0.9f }
-	};
+	/** Generic dragon shout values; currently tuned the same as Fire Breath. */
+	inline constexpr const std::array<DirectionalProfile, 3>& kGenericDragonShoutProfiles = kFireBreathProfiles;
 }

@@ -7,12 +7,12 @@
 
 namespace ActorWind
 {
-	bool IsDragon(const RE::Actor& a_actor)
+	bool IsDragon(const RE::Actor& a_actor, const RE::BGSKeyword* a_dragonKeyword)
 	{
 		const auto* race = a_actor.GetRace();
 		if (!race)
 			return false;
-		if (race->HasKeywordString("ActorTypeDragon"))
+		if (a_dragonKeyword ? race->HasKeyword(a_dragonKeyword) : race->HasKeywordString("ActorTypeDragon"))
 			return true;
 
 		constexpr std::string_view dragonGraph = "dragonbehavior.hkx";
