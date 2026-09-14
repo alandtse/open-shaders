@@ -1,11 +1,11 @@
 #include "FusRoDahWind.h"
 
-#include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -287,8 +287,8 @@ void FusRoDahWind::Update(float)
 
 void FusRoDahWind::QueueEffect(RE::Actor& a_actor, const Route& a_route) const
 {
-	const auto origin = ActorWind::GetMagicOrigin(a_actor);
-	const auto forward = ActorWind::GetAimDirection(a_actor);
+	const auto origin = Util::GetMagicOrigin(a_actor);
+	const auto forward = Util::GetAimDirection(a_actor);
 	const std::size_t rank = std::min<std::size_t>(a_route.rank, kRankProfiles.size() - 1);
 	const auto& profile = kRankProfiles[rank];
 	const auto [coneHalfAngle, collisionRadius] =

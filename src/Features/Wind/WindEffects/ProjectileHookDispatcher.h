@@ -15,6 +15,18 @@ public:
 	/** Receives one in-flight projectile update without taking ownership of the runtime object. */
 	using MotionObserver = void (*)(void*, RE::Projectile&, float);
 
+	/**
+	 * @brief Static ImpactObserver trampoline for routers whose ObserveImpact takes the full
+	 *  (projectile, position, velocity) triple -- covers callers where the callback body would
+	 *  otherwise be a byte-identical static_cast-and-forward one-liner.
+	 */
+	template <class T, void (T::*Method)(RE::Projectile&, const RE::NiPoint3&, const RE::NiPoint3&)>
+	static void ImpactObserverTrampoline(void* a_owner, RE::Projectile& a_projectile,
+		const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity)
+	{
+		(static_cast<T*>(a_owner)->*Method)(a_projectile, a_position, a_velocity);
+	}
+
 	/** Selects which projectile virtual functions a router needs observed. */
 	enum class Event : std::uint8_t
 	{

@@ -1,6 +1,5 @@
 #include "DragonWind.h"
 
-#include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
@@ -8,6 +7,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ShoutWindProfiles.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -300,7 +300,7 @@ namespace DragonWindRuntime
 		private:
 			bool IsDragon(RE::Actor* a_actor) const
 			{
-				return a_actor && ActorWind::IsDragon(*a_actor, dragonKeyword);
+				return a_actor && Util::IsDragon(*a_actor, dragonKeyword);
 			}
 
 			bool DrainTrackingEvents()
@@ -488,7 +488,7 @@ namespace DragonWindRuntime
 
 			void UpdateVelocity(RE::Actor& a_actor, DragonState& a_state, float a_frameTime)
 			{
-				const float3 position = ActorWind::GetVisualOrigin(a_actor);
+				const float3 position = Util::GetVisualOrigin(a_actor);
 				float3 sampledVelocity{};
 				RE::NiPoint3 linearVelocity{};
 				a_actor.GetLinearVelocity(linearVelocity);
@@ -521,7 +521,7 @@ namespace DragonWindRuntime
 				float3 horizontalDirection = Normalize(
 					{ a_state.filteredVelocity.x, a_state.filteredVelocity.y, 0.0f });
 				if (LengthSquared(horizontalDirection) <= 1e-6f) {
-					const auto aimDirection = ActorWind::GetAimDirection(a_actor);
+					const auto aimDirection = Util::GetAimDirection(a_actor);
 					horizontalDirection = Normalize({ aimDirection.x, aimDirection.y, 0.0f });
 				}
 				const float3 downwashDirection = Normalize({ horizontalDirection.x * kWingbeatHorizontalDrift,
@@ -530,7 +530,7 @@ namespace DragonWindRuntime
 				const float coneHalfAngleRadians = kWingbeatConeHalfAngle *
 				                                   (std::numbers::pi_v<float> / 180.0f);
 				const auto source = WindField::MakeDirectionalWave(
-					ActorWind::GetVisualOrigin(a_actor), downwashDirection,
+					Util::GetVisualOrigin(a_actor), downwashDirection,
 					a_settings.strength * a_settings.wingbeatStrength,
 					a_settings.wingbeatDistance, a_settings.wingbeatWaveHalfWidth,
 					a_settings.wingbeatPropagationSpeed, std::cos(coneHalfAngleRadians),
@@ -571,7 +571,7 @@ namespace DragonWindRuntime
 				const auto& profile = ShoutWindProfiles::kGenericDragonShoutProfiles[rank];
 				const float coneRadians = profile.coneHalfAngle * (std::numbers::pi_v<float> / 180.0f);
 				const auto source = WindField::MakeDirectionalWave(
-					ActorWind::GetMagicOrigin(a_actor), ActorWind::GetAimDirection(a_actor),
+					Util::GetMagicOrigin(a_actor), Util::GetAimDirection(a_actor),
 					a_settings.strength * profile.strength, profile.distance, profile.waveHalfWidth,
 					profile.propagationSpeed, std::cos(coneRadians), profile.decayTime);
 				globals::features::wind.QueueTransientWindSource(source,

@@ -149,7 +149,8 @@ void WeaponThrowVRWind::DataLoaded()
 	}
 
 	auto& dispatcher = ProjectileHookDispatcher::GetSingleton();
-	dispatcher.AddImpactObserver(this, ObserveImpactCallback);
+	dispatcher.AddImpactObserver(
+		this, ProjectileHookDispatcher::ImpactObserverTrampoline<WeaponThrowVRWind, &WeaponThrowVRWind::ObserveImpact>);
 	dispatcher.AddMotionObserver(this, ObserveMotionCallback);
 	subscribed = true;
 	for (const auto* projectile : projectiles) {
@@ -255,12 +256,6 @@ void WeaponThrowVRWind::Reset()
 void WeaponThrowVRWind::ObserveMotionCallback(void* a_owner, RE::Projectile& a_projectile, float)
 {
 	static_cast<WeaponThrowVRWind*>(a_owner)->ObserveMotion(a_projectile);
-}
-
-void WeaponThrowVRWind::ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
-	const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity)
-{
-	static_cast<WeaponThrowVRWind*>(a_owner)->ObserveImpact(a_projectile, a_position, a_velocity);
 }
 
 void WeaponThrowVRWind::ObserveMotion(RE::Projectile& a_projectile)

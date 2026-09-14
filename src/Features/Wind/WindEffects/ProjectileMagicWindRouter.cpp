@@ -1,6 +1,5 @@
 #include "ProjectileMagicWindRouter.h"
 
-#include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Wind.h"
 #include "Features/Wind/WindEffects/ImpactDeduplication.h"
@@ -10,6 +9,7 @@
 #include "ProjectileHookDispatcher.h"
 #include "SpellShoutWindRouter.h"
 #include "StormCallRecords.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -51,7 +51,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 ProjectileMagicWindRouter::ProjectileMagicWindRouter()
 {
-	ProjectileHookDispatcher::GetSingleton().AddImpactObserver(this, ObserveImpactCallback);
+	ProjectileHookDispatcher::GetSingleton().AddImpactObserver(
+		this, ProjectileHookDispatcher::ImpactObserverTrampoline<ProjectileMagicWindRouter, &ProjectileMagicWindRouter::ObserveImpact>);
 }
 
 ProjectileMagicWindRouter::~ProjectileMagicWindRouter()
@@ -229,13 +230,6 @@ void ProjectileMagicWindRouter::Reset()
 	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::ProjectileMagic);
 }
 
-void ProjectileMagicWindRouter::ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
-	const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity)
-{
-	static_cast<ProjectileMagicWindRouter*>(a_owner)->ObserveImpact(
-		a_projectile, a_position, a_velocity);
-}
-
 void ProjectileMagicWindRouter::ObserveImpact(RE::Projectile& a_projectile,
 	const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity)
 {
@@ -351,12 +345,12 @@ void ProjectileMagicWindRouter::EmitCast(const PendingCast& a_cast) const
 	auto actor = a_cast.actor.get();
 	if (!actor)
 		return;
-	if (shoutMagicItems.contains(a_cast.spellFormID) && ActorWind::IsDragon(*actor))
+	if (shoutMagicItems.contains(a_cast.spellFormID) && Util::IsDragon(*actor))
 		return;
-	const float dragonScale = ActorWind::IsDragon(*actor) ? settings.dragonStrength : 1.0f;
+	const float dragonScale = Util::IsDragon(*actor) ? settings.dragonStrength : 1.0f;
 	const auto& profile = route->second;
 	const auto source = WindField::MakeDirectionalWave(
-		ActorWind::GetMagicOrigin(*actor), ActorWind::GetAimDirection(*actor),
+		Util::GetMagicOrigin(*actor), Util::GetAimDirection(*actor),
 		settings.launchStrength * dragonScale * profile.strength, profile.range,
 		std::clamp(profile.radius * 1.5f, 120.0f, 600.0f), profile.propagationSpeed,
 		profile.coneCosine, settings.decayTime);

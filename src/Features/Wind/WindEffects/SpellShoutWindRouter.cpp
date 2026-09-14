@@ -1,12 +1,12 @@
 #include "SpellShoutWindRouter.h"
 
-#include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Wind.h"
 #include "Features/Wind/WindMath.h"
 #include "I18n/I18n.h"
 #include "ShoutWindProfiles.h"
 #include "SpellStormRecords.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -262,7 +262,7 @@ void SpellShoutWindRouter::Update(float)
 		auto actor = cast.actor.get();
 		if (!actor)
 			continue;
-		if (route->shout && ActorWind::IsDragon(*actor))
+		if (route->shout && Util::IsDragon(*actor))
 			continue;
 		QueueEffect(*actor, *route);
 	}
@@ -299,7 +299,7 @@ void SpellShoutWindRouter::QueueEffect(RE::Actor& a_actor, const SpellShoutWindR
 {
 	const auto queueDirectional = [&](const DirectionalProfile& a_profile) {
 		const auto source = WindField::MakeDirectionalWave(
-			ActorWind::GetMagicOrigin(a_actor), ActorWind::GetAimDirection(a_actor),
+			Util::GetMagicOrigin(a_actor), Util::GetAimDirection(a_actor),
 			settings.strength * a_profile.strength, a_profile.distance, a_profile.waveHalfWidth,
 			a_profile.propagationSpeed, ConeCosine(a_profile.coneHalfAngle), a_profile.decayTime);
 		const auto priority = a_route.effect == SpellShoutWindEffect::FireBreath ||
@@ -311,7 +311,7 @@ void SpellShoutWindRouter::QueueEffect(RE::Actor& a_actor, const SpellShoutWindR
 	};
 	const auto queueRadial = [&](const RadialProfile& a_profile) {
 		const auto source = WindField::MakeRadialWave(
-			ActorWind::GetVisualOrigin(a_actor), ActorWind::GetAimDirection(a_actor),
+			Util::GetVisualOrigin(a_actor), Util::GetAimDirection(a_actor),
 			settings.strength * a_profile.strength, a_profile.distance, a_profile.waveHalfWidth,
 			a_profile.propagationSpeed, a_profile.decayTime);
 		globals::features::wind.QueueTransientWindSource(source,

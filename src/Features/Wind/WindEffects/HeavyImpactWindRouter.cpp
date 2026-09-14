@@ -1,10 +1,10 @@
 #include "HeavyImpactWindRouter.h"
 
-#include "ActorWind.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -175,7 +175,7 @@ namespace
 
 	[[nodiscard]] float3 HorizontalAimDirection(RE::Actor& a_actor)
 	{
-		const auto aim = ActorWind::GetAimDirection(a_actor);
+		const auto aim = Util::GetAimDirection(a_actor);
 		const float squaredLength = aim.x * aim.x + aim.y * aim.y;
 		if (!std::isfinite(squaredLength) || squaredLength <= 1e-6f)
 			return { 0.0f, 1.0f, 0.0f };
@@ -248,10 +248,10 @@ namespace
 		const HeavyImpactWindRouter::DirectionalProfile& a_profile, float a_masterStrength,
 		bool a_horizontal)
 	{
-		const float3 direction = a_horizontal ? HorizontalAimDirection(a_actor) : ActorWind::GetAimDirection(a_actor);
+		const float3 direction = a_horizontal ? HorizontalAimDirection(a_actor) : Util::GetAimDirection(a_actor);
 		const float halfAngle = std::clamp(a_profile.coneHalfAngle, 5.0f, 90.0f) *
 		                        (std::numbers::pi_v<float> / 180.0f);
-		const float3 origin = a_horizontal ? ActorWind::GetVisualOrigin(a_actor) : ActorWind::GetMagicOrigin(a_actor);
+		const float3 origin = a_horizontal ? Util::GetVisualOrigin(a_actor) : Util::GetMagicOrigin(a_actor);
 		return WindField::MakeDirectionalWave(origin, direction,
 			std::clamp(a_profile.strength * a_masterStrength, 0.0f, kMaximumStrength),
 			std::clamp(a_profile.distance, kMinimumDistance, kMaximumDistance),

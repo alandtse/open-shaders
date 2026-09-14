@@ -85,9 +85,8 @@ void Wind::DrawWindFieldSettings()
 	if (ImGui::Checkbox(T(TKEY("wind_field_use_real_direction"), "Wind Debug: Use Real Wind Direction"),
 			&runtimeState.windFieldUseRealDirection) &&
 		!runtimeState.windFieldUseRealDirection) {
-		const float currentDirectionDegrees =
-			std::atan2(windFieldCurrent.direction.y, windFieldCurrent.direction.x) *
-			(180.0f / 3.14159265358979323846f);
+		const float currentDirectionDegrees = DirectX::XMConvertToDegrees(
+			std::atan2(windFieldCurrent.direction.y, windFieldCurrent.direction.x));
 		runtimeState.windFieldPendingDirectionDegrees = currentDirectionDegrees;
 		runtimeState.windFieldAppliedDirectionDegrees = currentDirectionDegrees;
 	}
@@ -130,7 +129,7 @@ void Wind::DrawWindFieldSettings()
 	const auto* weather = sky ? sky->currentWeather : nullptr;
 	const float ambientDirectionLength = std::hypot(ambientWindVelocity.x, ambientWindVelocity.y);
 	const float ambientDirectionDegrees = ambientDirectionLength > 0.0001f ?
-	                                          std::atan2(ambientWindVelocity.y, ambientWindVelocity.x) * (180.0f / 3.14159265358979323846f) :
+	                                          DirectX::XMConvertToDegrees(std::atan2(ambientWindVelocity.y, ambientWindVelocity.x)) :
 	                                          0.0f;
 	ImGui::Text("%s: (%.5f, %.5f, %.5f)", T(TKEY("wind_field_ambient_velocity"), "Ambient velocity"),
 		ambientWindVelocity.x, ambientWindVelocity.y, ambientWindVelocity.z);
@@ -767,7 +766,6 @@ void Wind::DrawGrassWindSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_damping_tooltip"),
 			"Below one allows a natural rebound; one is critically damped; above one settles without overshoot."));
 
-	static constexpr const char* qualityNames[] = { "Near", "Mid", "Far" };
 	static constexpr const char* textureSizeLabels[] = { "32", "64", "128", "256", "512", "1024" };
 	static constexpr const char* textureSizeKeys[] = {
 		"grass_wind_spring_near_texture_size",
@@ -790,7 +788,7 @@ void Wind::DrawGrassWindSettings()
 		"Far Range End"
 	};
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
-		ImGui::SeparatorText(qualityNames[index]);
+		ImGui::SeparatorText(kGrassWindSpringQualityRangeNames[index].data());
 		int textureSizeIndex = 0;
 		for (std::size_t option = 0; option < kGrassWindSpringTextureSizes.size(); ++option) {
 			if (settings.grassWindSpringQuality[index].textureSize == kGrassWindSpringTextureSizes[option]) {
@@ -834,7 +832,9 @@ void Wind::DrawGrassWindSettings()
 	ImGui::SeparatorText(T(TKEY("grass_wind_spring_memory"), "Spring Memory"));
 	ImGui::Text("%s: %.2f MiB", T(TKEY("grass_wind_spring_memory_total"), "Estimated GPU memory reserved"), totalSpringMemoryMiB);
 	ImGui::Text("%s: %.2f MiB | %s: %.2f MiB | %s: %.2f MiB",
-		qualityNames[0], springMemoryMiB[0], qualityNames[1], springMemoryMiB[1], qualityNames[2], springMemoryMiB[2]);
+		kGrassWindSpringQualityRangeNames[0].data(), springMemoryMiB[0],
+		kGrassWindSpringQualityRangeNames[1].data(), springMemoryMiB[1],
+		kGrassWindSpringQualityRangeNames[2].data(), springMemoryMiB[2]);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_memory_tooltip"),
 			"Estimate for four RGBA16F textures per field: two response textures and two velocity textures."));

@@ -97,8 +97,6 @@ private:
 	RE::BSEventNotifyControl ProcessEvent(const RE::TESSpellCastEvent* a_event,
 		RE::BSTEventSource<RE::TESSpellCastEvent>*) override;
 
-	static void ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
-		const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity);
 	void ObserveImpact(RE::Projectile& a_projectile, const RE::NiPoint3& a_position,
 		const RE::NiPoint3& a_velocity);
 	[[nodiscard]] bool AcceptImpactLocked(const RE::Projectile& a_projectile,

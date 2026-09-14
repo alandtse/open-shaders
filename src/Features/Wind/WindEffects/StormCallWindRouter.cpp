@@ -40,7 +40,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 StormCallWindRouter::StormCallWindRouter()
 {
-	ProjectileHookDispatcher::GetSingleton().AddImpactObserver(this, ObserveImpactCallback);
+	ProjectileHookDispatcher::GetSingleton().AddImpactObserver(
+		this, ProjectileHookDispatcher::ImpactObserverTrampoline<StormCallWindRouter, &StormCallWindRouter::ObserveImpact>);
 }
 
 StormCallWindRouter::~StormCallWindRouter()
@@ -161,12 +162,6 @@ void StormCallWindRouter::Reset()
 		pendingImpacts.clear();
 	}
 	globals::features::wind.ClearTransientWindSources(Wind::TransientWindSourceOwner::StormCall);
-}
-
-void StormCallWindRouter::ObserveImpactCallback(void* a_owner, RE::Projectile& a_projectile,
-	const RE::NiPoint3& a_position, const RE::NiPoint3& a_velocity)
-{
-	static_cast<StormCallWindRouter*>(a_owner)->ObserveImpact(a_projectile, a_position, a_velocity);
 }
 
 void StormCallWindRouter::ObserveImpact(RE::Projectile& a_projectile,
