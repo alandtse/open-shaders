@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Mnożnik udziału światła kierunkowego dodawanego do chmur.",
     "feature.cloud_relight.silver_lining": "Srebrna obwódka",
     "feature.cloud_relight.silver_lining_accent": "Akcent srebrnej obwódki",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Miesza płaską fazę izotropową z ostrym oświetleniem fazowym srebrnej obwódki.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Siła szerokiej poświaty i ostrej srebrnej obwódki dodawanych do bryły chmury. Nie zmniejsza oświetlenia bryły chmury.",
     "feature.cloud_relight.silver_lining_spread": "Zasięg srebrnej obwódki",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Wartość dodatnia: srebrna obwódka rozciąga się na gęstsze obszary chmur.\nWartość ujemna: srebrna obwódka pozostaje na cieńszych krawędziach chmur.",
     "feature.cloud_relight.vanilla_mix": "Mieszanie Vanilla",

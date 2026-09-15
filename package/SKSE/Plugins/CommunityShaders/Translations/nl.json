@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Vermenigvuldiger voor de bijdrage van gericht licht die aan wolken wordt toegevoegd.",
     "feature.cloud_relight.silver_lining": "Zilveren rand",
     "feature.cloud_relight.silver_lining_accent": "Accent van zilveren rand",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Mengt tussen een vlakke isotrope fase en scherpe faseverlichting van de zilveren rand.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Sterkte van de brede gloed en scherpe zilveren rand die aan de wolk worden toegevoegd. Vermindert de verlichting van de wolk zelf niet.",
     "feature.cloud_relight.silver_lining_spread": "Spreiding van zilveren rand",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Positief: de zilveren rand verspreidt zich naar dichtere delen van de wolk.\nNegatief: de zilveren rand blijft beperkt tot dunnere wolkenranden.",
     "feature.cloud_relight.vanilla_mix": "Vanilla-mix",

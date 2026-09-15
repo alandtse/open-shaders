@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Multiplicateur de la contribution de lumière directionnelle ajoutée aux nuages.",
     "feature.cloud_relight.silver_lining": "Contour argenté",
     "feature.cloud_relight.silver_lining_accent": "Accentuation du contour argenté",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Mélange entre une phase isotrope uniforme et un éclairage de phase marqué des contours argentés.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Intensité de la lueur diffuse et du contour argenté net ajoutés au corps du nuage. Ne réduit pas l’éclairage du corps.",
     "feature.cloud_relight.silver_lining_spread": "Étendue du contour argenté",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Positif : le contour argenté s’étend dans les zones plus denses des nuages.\nNégatif : le contour argenté reste limité aux bords plus fins.",
     "feature.cloud_relight.vanilla_mix": "Dosage Vanilla",

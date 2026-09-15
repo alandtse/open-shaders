@@ -54,18 +54,17 @@ namespace TestConstants
 	float cosThetas[5] = { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f };
 	[unroll] for (int i = 0; i < 5; i++)
 	{
-		ASSERT(IsTrue, CloudRelight::Phase::SilverLining(cosThetas[i], 0.0f) >= 0.0f);
+		ASSERT(IsTrue, CloudRelight::Phase::SilverLining(cosThetas[i]) >= 0.0f);
 	}
 }
 
 /// @tags cloud-relight, phase-function, regression
 [numthreads(1, 1, 1)] void TestSilverLiningKnownValues() {
-	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(-1.0f, 0.0f)) < TestConstants::EXACT_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.0f, 0.0f)) < TestConstants::EXACT_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.5f, 0.0f)) < TestConstants::EXACT_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.99f, 0.0f) - 3.682260f) < TestConstants::APPROX_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(1.0f, 0.0f) - 44.362514f) < TestConstants::APPROX_TOLERANCE);
-	ASSERT(IsTrue, CloudRelight::Phase::SilverLining(1.0f, 0.0f) > CloudRelight::Phase::SilverLining(1.0f, 1.0f));
+	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(-1.0f)) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.0f)) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.5f)) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(0.99f) - 3.682260f) < TestConstants::APPROX_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::Phase::SilverLining(1.0f) - 44.362514f) < TestConstants::APPROX_TOLERANCE);
 }
 
 	/// @tags cloud-relight, phase-function, regression
@@ -106,14 +105,59 @@ namespace TestConstants
 	/// @tags cloud-relight, optical-depth
 	[numthreads(1, 1, 1)] void TestSilverSingleScatterDensityWindow()
 {
-	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.08f), 0.08f)) < TestConstants::EXACT_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.2f), 0.2f) - 0.100706f) < TestConstants::APPROX_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.5f), 0.5f) - 0.456788f) < TestConstants::APPROX_TOLERANCE);
-	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.85f), 0.85f)) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.08f), 0.08f, 0.0f)) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.2f), 0.2f, 0.0f) - 0.100706f) < TestConstants::APPROX_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.5f), 0.5f, 0.0f) - 0.456788f) < TestConstants::APPROX_TOLERANCE);
+	ASSERT(IsTrue, abs(CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(0.85f), 0.85f, 0.0f)) < TestConstants::EXACT_TOLERANCE);
 }
 
-/// @tags cloud-relight, inner-shadow
-[numthreads(1, 1, 1)] void TestInnerShadowOpacity() {
+/// @tags cloud-relight, phase-function, regression
+[numthreads(1, 1, 1)] void TestSilverSpreadEndpoints() {
+	float densities[5] = { 0.0f, 0.001f, 0.5f, 0.999f, 1.0f };
+	[unroll] for (int i = 0; i < 5; i++)
+	{
+		float density = densities[i];
+		ASSERT(IsTrue, CloudRelight::GetBroadSilverDensityWeight(density, -1.0f) == float(density == 0.0f));
+		ASSERT(IsTrue, CloudRelight::GetBroadSilverDensityWeight(density, 1.0f) == float(density < 1.0f));
+		ASSERT(IsTrue, CloudRelight::GetSilverSingleScatter(CloudRelight::GetOpticalDepth(density), density, -1.0f) == 0.0f);
+	}
+}
+
+	/// @tags cloud-relight, phase-function, regression
+	[numthreads(1, 1, 1)] void TestSilverSpreadMonotonic()
+{
+	float spreads[5] = { -1.0f, -0.5f, 0.0f, 0.5f, 1.0f };
+	for (int i = 0; i <= 100; i++) {
+		float density = float(i) / 100.0f;
+		float opticalDepth = CloudRelight::GetOpticalDepth(density);
+		float previousBroad = 0.0f;
+		float previousSharp = 0.0f;
+		[unroll] for (int j = 0; j < 5; j++)
+		{
+			float broad = CloudRelight::GetBroadSilverDensityWeight(density, spreads[j]);
+			float sharp = CloudRelight::GetSilverSingleScatter(opticalDepth, density, spreads[j]);
+			ASSERT(IsTrue, broad >= previousBroad && broad <= 1.0f);
+			ASSERT(IsTrue, sharp >= previousSharp);
+			previousBroad = broad;
+			previousSharp = sharp;
+		}
+	}
+}
+
+/// @tags cloud-relight, phase-function, regression
+[numthreads(1, 1, 1)] void TestSilverAccentPreservesBody() {
+	float body = 0.25f;
+	float cosThetas[3] = { -1.0f, 0.0f, 1.0f };
+	[unroll] for (int i = 0; i < 3; i++)
+	{
+		ASSERT(IsTrue, CloudRelight::GetPhaseRelighting(cosThetas[i], float3(body, 0.0f, 0.0f)) == body);
+		ASSERT(IsTrue, CloudRelight::GetPhaseRelighting(cosThetas[i], float3(body, 0.1f, 0.1f)) >= body);
+	}
+}
+
+	/// @tags cloud-relight, inner-shadow
+	[numthreads(1, 1, 1)] void TestInnerShadowOpacity()
+{
 	ASSERT(IsTrue, CloudRelight::GetInnerShadowOpacity(0.0f) == 0.0f);
 	ASSERT(IsTrue, CloudRelight::GetInnerShadowOpacity(0.5f) == 0.25f);
 	ASSERT(IsTrue, CloudRelight::GetInnerShadowOpacity(1.0f) == 1.0f);

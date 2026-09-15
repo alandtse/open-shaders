@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Multiplier on the directional light contribution added to clouds.",
     "feature.cloud_relight.silver_lining": "Silver Lining",
     "feature.cloud_relight.silver_lining_accent": "Silver Lining Accent",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Blend between flat isotropic phase and sharp silver-lining phase lighting.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Strength of the broad glow and sharp silver lining added to the cloud body. Does not reduce body lighting.",
     "feature.cloud_relight.silver_lining_spread": "Silver Lining Spread",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Positive: silver lining spreads into thicker cloud areas.\nNegative: silver lining is confined to thinner cloud edges.",
     "feature.cloud_relight.vanilla_mix": "Vanilla Mix",

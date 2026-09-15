@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "添加到云层的方向光贡献倍数。",
     "feature.cloud_relight.silver_lining": "银边",
     "feature.cloud_relight.silver_lining_accent": "银边强调",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "在平坦的各向同性相位与锐利的银边相位照明之间混合。",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "添加到云体上的宽泛辉光和锐利银边的强度。不会减弱云体照明。",
     "feature.cloud_relight.silver_lining_spread": "银边扩展",
     "feature.cloud_relight.silver_lining_spread_tooltip": "正值：银边会扩展到更浓密的云层区域。\n负值：银边仅限于较薄的云层边缘。",
     "feature.cloud_relight.vanilla_mix": "原版混合",

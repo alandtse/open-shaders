@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Множитель вклада направленного света, добавляемого к облакам.",
     "feature.cloud_relight.silver_lining": "Серебряная кайма",
     "feature.cloud_relight.silver_lining_accent": "Акцент серебряной каймы",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Смешивает равномерную изотропную фазу с выраженным фазовым освещением серебряной каймы.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Интенсивность широкого свечения и чёткой серебряной каймы, добавляемых к телу облака. Не уменьшает освещение тела облака.",
     "feature.cloud_relight.silver_lining_spread": "Распространение серебряной каймы",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Положительное значение: серебряная кайма распространяется на более плотные участки облаков.\nОтрицательное значение: серебряная кайма ограничивается более тонкими краями облаков.",
     "feature.cloud_relight.vanilla_mix": "Смешивание Vanilla",

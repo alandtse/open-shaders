@@ -433,7 +433,7 @@
     "feature.cloud_relight.relight_mix_tooltip": "Multiplicador de la contribución de luz direccional añadida a las nubes.",
     "feature.cloud_relight.silver_lining": "Contorno plateado",
     "feature.cloud_relight.silver_lining_accent": "Realce del contorno plateado",
-    "feature.cloud_relight.silver_lining_accent_tooltip": "Mezcla entre una fase isotrópica plana y una iluminación de fase marcada del contorno plateado.",
+    "feature.cloud_relight.silver_lining_accent_tooltip": "Intensidad del resplandor amplio y del contorno plateado nítido que se añaden al cuerpo de la nube. No reduce la iluminación del cuerpo.",
     "feature.cloud_relight.silver_lining_spread": "Extensión del contorno plateado",
     "feature.cloud_relight.silver_lining_spread_tooltip": "Positivo: el contorno plateado se extiende hacia zonas más densas de las nubes.\nNegativo: el contorno plateado queda limitado a bordes más finos.",
     "feature.cloud_relight.vanilla_mix": "Mezcla Vanilla",
