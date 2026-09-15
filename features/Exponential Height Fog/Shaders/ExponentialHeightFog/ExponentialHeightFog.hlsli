@@ -82,6 +82,14 @@ namespace ExponentialHeightFog
 		return lerp(float4(0.0f.xxx, 1.0f), fog, nearWeight);
 	}
 
+	float4 CompositeFogScattering(float4 analyticalFog, float4 volume)
+	{
+		float opacity = saturate(1.0f - volume.a * (1.0f - analyticalFog.a));
+		// Both RGB inputs already include opacity; multiplying it again darkens the analytical tail.
+		float3 premultiplied = volume.rgb + volume.a * analyticalFog.rgb;
+		return float4(opacity > EPSILON_DIVISION ? premultiplied / opacity : 0.0f.xxx, opacity);
+	}
+
 	float4 CombineVolumetricFog(float4 analyticalFog, float3 positionWS, uint eyeIndex)
 	{
 		float2 volumeUV;
@@ -90,9 +98,7 @@ namespace ExponentialHeightFog
 		volumeUV = Stereo::ConvertToStereoUV(volumeUV, eyeIndex);
 #endif
 		float4 volume = sceneDepth > 0.0f && ShouldApplyVolumetricFog() ? SampleFogGrid(ExponentialHeightFogIntegratedLightScattering, volumeUV, sceneDepth, eyeIndex) : float4(0.0f.xxx, 1.0f);
-		float opacity = saturate(1.0f - volume.a * (1.0f - analyticalFog.a));
-		float3 premultiplied = volume.rgb + volume.a * analyticalFog.rgb;
-		return float4(opacity > EPSILON_DIVISION ? premultiplied / opacity : 0.0f.xxx, opacity);
+		return CompositeFogScattering(analyticalFog, volume);
 	}
 
 	float4 CombineVolumetricFog(float4 analyticalFog, float4 screenPosition)
@@ -111,9 +117,7 @@ namespace ExponentialHeightFog
 			            max(float2(width, height), 1.0f.xx);
 		}
 		float4 volume = ShouldApplyVolumetricFog() ? SampleFogGrid(ExponentialHeightFogIntegratedLightScattering, coarseUV, sceneDepth, eyeIndex) : float4(0.0f.xxx, 1.0f);
-		float opacity = saturate(1.0f - volume.a * (1.0f - analyticalFog.a));
-		float3 premultiplied = volume.rgb + volume.a * analyticalFog.rgb;
-		return float4(opacity > EPSILON_DIVISION ? premultiplied / opacity : 0.0f.xxx, opacity);
+		return CompositeFogScattering(analyticalFog, volume);
 	}
 
 	float4 GetExponentialHeightFogInternal(float3 positionWS, float3 cameraWS, float3 fogColor, bool useScreenPosition, float4 screenPosition, bool applyVolumetricFog)

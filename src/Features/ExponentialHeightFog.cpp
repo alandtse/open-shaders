@@ -15,6 +15,8 @@
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 
+#include <numbers>
+
 #define I18N_KEY_PREFIX "feature.exp_height_fog."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -59,6 +61,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	constexpr float kMinimumFogRange = 1.0f;
+	constexpr float kMinimumFogPower = 0.01f;
+	constexpr float kMaximumFogPower = 10.0f;
+	constexpr float kMinimumFogTransmittance = 0.0001f;
+	constexpr float kReferenceOpacityFraction = 0.5f;
+	constexpr float kAnalyticalExtinctionScale = 0.001f * std::numbers::ln2_v<float> * std::numbers::ln2_v<float>;
+	constexpr float4 kFallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
+
 	float Halton(uint32_t a_index, uint32_t a_base)
 	{
 		float result = 0.0f;
@@ -97,17 +107,16 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	data.vanillaFogDensity = 0.0f;
 	const auto* sky = globals::game::sky;
 	const float fogNear = sky ? std::max(std::isfinite(sky->fogNear) ? sky->fogNear : 0.0f, 0.0f) : 0.0f;
-	const float fogFar = sky ? std::max(std::isfinite(sky->fogFar) ? sky->fogFar : fogNear + 1.0f, fogNear + 1.0f) : 40960.0f;
-	const float fogPower = sky ? std::clamp(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, 0.01f, 10.0f) : 1.0f;
-	const float fogClamp = sky ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 0.9999f) : 0.0f;
+	const float fogFar = sky ? std::max(std::isfinite(sky->fogFar) ? sky->fogFar : fogNear + kMinimumFogRange, fogNear + kMinimumFogRange) : Settings{}.vanillaFogFar;
+	const float fogPower = sky ? std::clamp(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, kMinimumFogPower, kMaximumFogPower) : 1.0f;
+	const float fogClamp = sky ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 1.0f - kMinimumFogTransmittance) : 0.0f;
 
 	data.vanillaFogNear = fogNear;
 	data.vanillaFogFar = fogFar;
 	data.vanillaFogMaxOpacity = fogClamp;
 	data.vanillaFogPower = fogPower;
-	const float4 fallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
-	data.vanillaFogNearColor = fallbackFogColor;
-	data.vanillaFogFarColor = fallbackFogColor;
+	data.vanillaFogNearColor = kFallbackFogColor;
+	data.vanillaFogFarColor = kFallbackFogColor;
 	if (sky) {
 		auto sanitizeColor = [](const RE::NiColor& color, const float4& fallback) {
 			return float4{
@@ -116,8 +125,8 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 				std::max(std::isfinite(color.blue) ? color.blue : fallback.z, 0.0f), 1.0f
 			};
 		};
-		data.vanillaFogFarColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogFar)], fallbackFogColor);
-		data.vanillaFogNearColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogNear)], fallbackFogColor);
+		data.vanillaFogFarColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogFar)], kFallbackFogColor);
+		data.vanillaFogNearColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogNear)], kFallbackFogColor);
 	}
 
 	if (data.useVanillaFogSettings) {
@@ -125,11 +134,10 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 		data.respectVanillaFogFade = 0;
 		data.originalFogColorAmount = 1.0f;
 		data.startDistance = fogNear;
-		const float targetOpacity = data.vanillaFogMaxOpacity * 0.5f;
+		const float targetOpacity = data.vanillaFogMaxOpacity * kReferenceOpacityFraction;
 		const float normalizedReference = std::pow(targetOpacity, 1.0f / fogPower);
-		const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, 1.0f);
-		constexpr float kAnalyticalExtinctionScale = 0.001f * 0.69314718056f * 0.69314718056f;
-		data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, 0.0001f)) / (referenceDistance * kAnalyticalExtinctionScale);
+		const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, kMinimumFogRange);
+		data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, kMinimumFogTransmittance)) / (referenceDistance * kAnalyticalExtinctionScale);
 	}
 	return data;
 }
@@ -145,20 +153,20 @@ void ExponentialHeightFog::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
-	ImGui::SliderFloat(T(TKEY("start_distance"), "Start Distance"), &settings.startDistance, 0.0f, 100000.0f, "%.1f");
+	ImGui::SliderFloat(T(TKEY("start_distance"), "Start Distance"), &settings.startDistance, 0.0f, 100000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
-	ImGui::SliderFloat(T(TKEY("fog_height"), "Fog Height"), &settings.fogHeight, -22000.0f, 22000.0f, "%.1f");
-	ImGui::SliderFloat(T(TKEY("fog_height_falloff"), "Fog Height Falloff"), &settings.fogHeightFalloff, 0.001f, 2.0f, "%.3f");
+	ImGui::SliderFloat(T(TKEY("fog_height"), "Fog Height"), &settings.fogHeight, -22000.0f, 22000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("fog_height_falloff"), "Fog Height Falloff"), &settings.fogHeightFalloff, 0.001f, 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::ColorEdit4(T(TKEY("fog_inscattering_color"), "Fog Inscattering Color"), (float*)&settings.fogInscatteringColor);
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
-	ImGui::SliderFloat(T(TKEY("original_fog_color_amount"), "Original Fog Color Amount"), &settings.originalFogColorAmount, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("original_fog_color_amount"), "Original Fog Color Amount"), &settings.originalFogColorAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
-	ImGui::SliderFloat(T(TKEY("fog_density"), "Fog Density"), &settings.fogDensity, 0.0f, 1.0f, "%.3f");
+	ImGui::SliderFloat(T(TKEY("fog_density"), "Fog Density"), &settings.fogDensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
-	ImGui::SliderFloat(T(TKEY("dir_inscattering_mul"), "Directional Light Inscattering Multiplier"), &settings.directionalInscatteringMultiplier, 0.0f, 10.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("sunlight_attenuation"), "Sunlight Attenuation Amount"), &settings.sunlightAttenuationAmount, 0.0f, 1.0f, "%.2f");
-	ImGui::SliderFloat(T(TKEY("dir_inscattering_anisotropy"), "Directional Light Inscattering Anisotropy"), &settings.directionalInscatteringAnisotropy, -0.99f, 0.99f, "%.3f");
+	ImGui::SliderFloat(T(TKEY("dir_inscattering_mul"), "Directional Light Inscattering Multiplier"), &settings.directionalInscatteringMultiplier, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("sunlight_attenuation"), "Sunlight Attenuation Amount"), &settings.sunlightAttenuationAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("dir_inscattering_anisotropy"), "Directional Light Inscattering Anisotropy"), &settings.directionalInscatteringAnisotropy, -0.99f, 0.99f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("dir_inscattering_anisotropy_tooltip"),
 							  "Controls the asymmetry of inscattering via the Henyey-Greenstein phase function.\n"
@@ -177,24 +185,24 @@ void ExponentialHeightFog::DrawSettings()
 	}
 	Util::CheckboxFlag(T(TKEY("use_dynamic_cubemaps"), "Use Dynamic Cubemaps for Inscattering"), settings.useDynamicCubemaps);
 	ImGui::ColorEdit4(T(TKEY("inscattering_cubemap_tint"), "Inscattering Cubemap Tint"), (float*)&settings.inscatteringTint);
-	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f");
+	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 
 	ImGui::SeparatorText(T(TKEY("volumetric_fog"), "Volumetric Fog"));
 	Util::CheckboxFlag(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), settings.volumetricFogEnabled);
 	if (settings.volumetricFogEnabled) {
-		ImGui::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f");
+		ImGui::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
-		ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f");
-		ImGui::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f");
+		ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::EndDisabled();
-		ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), (float*)&settings.volumetricFogAlbedo);
 		ImGui::ColorEdit4(T(TKEY("volumetric_emissive"), "Volumetric Emissive"), (float*)&settings.volumetricFogEmissive);
-		ImGui::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f");
-		ImGui::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f");
+		ImGui::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (ImGui::TreeNode(T(TKEY("debug"), "Debug"))) {
 			uint32_t minGridPixelSize = 4;
 			uint32_t maxGridPixelSize = 64;
