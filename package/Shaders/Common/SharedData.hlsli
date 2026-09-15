@@ -293,7 +293,21 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
-		float3 pad0;
+		float emitColorMult;
+		float glowmapMult;
+		float effectLightingMult;
+		float skyGammaOffset;
+		float fogGammaOffset;
+		float fogAlphaGammaOffset;
+		float waterGammaOffset;
+		float vlGammaOffset;
+		float waterCausticsStrength;
+		float waterCausticsTiling;
+		float waterCausticsSpeed;
+		float waterCausticsDispersion;
+		float waterParallaxStrength;
+		float skySaturation;
+		uint waterParallaxQuality;
 	};
 
 	struct WindSettings

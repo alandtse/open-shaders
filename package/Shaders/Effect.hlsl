@@ -953,6 +953,7 @@ PS_OUTPUT main(PS_INPUT input)
 		                lightingInfluence * (propertyColor - shadowedWeatherReference);
 		lightingInfluence = 1.0;
 	}
+	propertyColor *= Color::EffectLightingMultiplier();
 #	elif defined(MEMBRANE)
 	propertyColor *= 0;
 	lightingInfluence = 0;
@@ -1051,7 +1052,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	if !defined(MOTIONVECTORS_NORMALS)
-	float fogFactor = input.FogParam.w;
+	float fogFactor = Color::FogAlpha(input.FogParam.w);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {

@@ -366,6 +366,11 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color = float4(0, 0, 0, 1.0);
 #	endif  // OCCLUSION
 
+#	if !defined(OCCLUSION) && !defined(MOONMASK)
+	if (SharedData::csUtilitySettings.skySaturation != 1.0)
+		psout.Color.xyz = Color::Saturation(psout.Color.xyz, SharedData::csUtilitySettings.skySaturation);
+#	endif
+
 #	if defined(EXP_HEIGHT_FOG)
 	const bool inReflection = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection) != 0;
 	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {

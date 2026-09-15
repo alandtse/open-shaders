@@ -77,11 +77,18 @@ struct CSUtility : Feature
 		float fresnelMin = 0.0f;
 		float fresnelMax = 1.0f;
 		float muddiness = 1.0f;
+		float causticsStrength = 1.0f;
+		float causticsTiling = 1.0f;
+		float causticsSpeed = 1.0f;
+		float causticsDispersion = 1.0f;
+		float parallaxStrength = 1.0f;
+		int parallaxQuality = 16;
 	};
 
 	struct Settings
 	{
 		float skyBrightness = 1.0f;
+		float skySaturation = 1.0f;
 		float ambientLightMult = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
@@ -90,6 +97,15 @@ struct CSUtility : Feature
 		float linearSpotlightMult = 1.0f;
 		float omnidirectionalBulbMult = 1.0f;
 		float linearOmnidirectionalBulbMult = 1.0f;
+		float sceneBrightness = 1.0f;
+		float emitColorMult = 1.0f;
+		float glowmapMult = 1.0f;
+		float effectLightingMult = 1.0f;
+		float skyGammaOffset = 0.0f;
+		float fogGammaOffset = 0.0f;
+		float fogAlphaGammaOffset = 0.0f;
+		float waterGammaOffset = 0.0f;
+		float vlGammaOffset = 0.0f;
 		WaterSettings water;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
@@ -127,10 +143,24 @@ struct CSUtility : Feature
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
-		float pad0[3];
+		float emitColorMult;
+		float glowmapMult;
+		float effectLightingMult;
+		float skyGammaOffset;
+		float fogGammaOffset;
+		float fogAlphaGammaOffset;
+		float waterGammaOffset;
+		float vlGammaOffset;
+		float waterCausticsStrength;
+		float waterCausticsTiling;
+		float waterCausticsSpeed;
+		float waterCausticsDispersion;
+		float waterParallaxStrength;
+		float skySaturation;
+		uint32_t waterParallaxQuality;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 80);
+	static_assert(sizeof(PerFrameData) == 128);
 
 	struct alignas(16) VanillaPointLightData
 	{
