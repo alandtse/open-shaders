@@ -348,7 +348,8 @@ namespace
 
 	bool IsFlatHdrScreenshotCapture()
 	{
-		return globals::features::hdrDisplay.loaded &&
+		return !globals::game::isVR &&
+		       globals::features::hdrDisplay.loaded &&
 		       globals::features::hdrDisplay.settings.enableHDR;
 	}
 
@@ -680,8 +681,7 @@ void ScreenshotFeature::DrawSettings()
 {
 	ImGui::TextWrapped("%s", T(TKEY("async_note"), "Capture and save run asynchronously without stalling the game."));
 
-	const bool hdrCaptureAvailable = globals::features::hdrDisplay.loaded &&
-	                                 globals::features::hdrDisplay.settings.enableHDR;
+	const bool hdrCaptureAvailable = IsFlatHdrScreenshotCapture();
 
 	if (hdrCaptureAvailable) {
 		ImGui::TextWrapped("%s",
