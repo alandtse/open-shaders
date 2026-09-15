@@ -8,6 +8,7 @@
 
 struct CloudShadows;
 struct CloudRelight;
+struct ProceduralSun;
 struct DynamicCubemaps;
 struct VolumetricShadows;
 struct ExtendedMaterials;
@@ -109,6 +110,7 @@ namespace globals
 	{
 		extern CloudShadows cloudShadows;
 		extern CloudRelight cloudRelight;
+		extern ProceduralSun proceduralSun;
 		extern DynamicCubemaps dynamicCubemaps;
 		extern VolumetricShadows volumetricShadows;
 		extern ExtendedMaterials extendedMaterials;

@@ -205,6 +205,10 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "CloudRelight/CloudRelight.hlsli"
 #	endif
 
+#	if defined(PROCEDURAL_SUN)
+#		include "ProceduralSun/ProceduralSun.hlsli"
+#	endif
+
 #	if defined(EXP_HEIGHT_FOG)
 #		define SampColorSampler SampBaseSampler
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
@@ -260,6 +264,59 @@ PS_OUTPUT main(PS_INPUT input)
 	if (SharedData::cloudRelightSettings.enabled) {
 		float3 viewDir = normalize(input.WorldPosition.xyz);
 		baseColor.rgb = CloudRelight::RelightCloud(baseColor, viewDir, SampBaseSampler);
+	}
+#		endif
+
+#		if defined(PROCEDURAL_SUN) && defined(TEX) && defined(DEFERRED) && !defined(DITHER)
+	bool effects11OwnsSun = false;
+#			if defined(EFFECTS11)
+	effects11OwnsSun = SharedData::enbSettings.EnableProceduralSun != 0;
+#			endif
+	bool proceduralSunActive = SharedData::proceduralSunSettings.enabled &&
+	                           !effects11OwnsSun &&
+	                           (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun) &&
+	                           (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	if (proceduralSunActive) {
+		float3 viewDirection = normalize(input.WorldPosition.xyz);
+		float cosTheta = clamp(dot(viewDirection, SharedData::SunDirection.xyz), -1.0f, 1.0f);
+		float3 limbDarkening;
+		float discCoverage;
+		ProceduralSun::EvaluateDisc(
+			cosTheta,
+			SharedData::proceduralSunSettings.sunDiskCos,
+			SharedData::proceduralSunSettings.edgeSoftness,
+			limbDarkening,
+			discCoverage);
+
+		float haloProfile = 0.0f;
+		if (SharedData::proceduralSunSettings.haloEnabled) {
+			haloProfile = ProceduralSun::EvaluateHalo(
+				cosTheta,
+				SharedData::proceduralSunSettings.sunDiskCos,
+				SharedData::proceduralSunSettings.sunHaloCos,
+				SharedData::proceduralSunSettings.haloFalloff);
+		}
+
+		float3 proceduralSunColor;
+		float sunCoverage;
+		ProceduralSun::ComposeDiscAndHalo(
+			limbDarkening,
+			discCoverage,
+			SharedData::proceduralSunSettings.diskIntensity,
+			haloProfile,
+			SharedData::proceduralSunSettings.haloIntensity,
+			proceduralSunColor,
+			sunCoverage);
+
+		baseColor.xyz = ENABLE_LL ? Color::GamutTransform(proceduralSunColor) : proceduralSunColor;
+		baseColor.w = sunCoverage;
+#			if defined(CLOUD_SHADOWS)
+		if (sunCoverage > 0.0f && SharedData::proceduralSunSettings.cloudOcclusionStrength > 0.0f) {
+			float cloudOpacity = CloudShadows::CloudShadowsTexture.SampleLevel(SampBaseSampler, viewDirection, 0).x;
+			baseColor.w *= ProceduralSun::GetCloudTransmission(cloudOpacity, SharedData::proceduralSunSettings.cloudOcclusionStrength);
+		}
+#			endif
+		skyScale = 0.0f;
 	}
 #		endif
 
