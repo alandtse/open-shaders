@@ -161,7 +161,7 @@ void LinearLighting::OnWorldRenderEnd(RE::RENDER_TARGET a_renderTarget)
 		return;
 
 	const auto targetIndex = static_cast<size_t>(a_renderTarget);
-	if (!sceneGammaDecodeCS || !globals::game::renderer || targetIndex >= Util::GetRenderTargetCount())
+	if (!sceneGammaDecodeCS || !globals::game::renderer || targetIndex >= static_cast<size_t>(Util::GetRenderTargetCount()))
 		return;
 
 	auto& target = globals::game::renderer->GetRuntimeData().renderTargets[targetIndex];

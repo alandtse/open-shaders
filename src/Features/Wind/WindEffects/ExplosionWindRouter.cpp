@@ -412,7 +412,7 @@ bool ExplosionWindRouter::AcceptExplosion(const ExplosionProfile& a_profile,
 	const auto burstCount = std::ranges::count_if(recentExplosions, [&](const RecentExplosion& a_recent) {
 		return secondsSince(a_recent) <= kBurstWindow;
 	});
-	if (burstCount >= kMaximumSourcesPerBurst)
+	if (static_cast<std::size_t>(burstCount) >= kMaximumSourcesPerBurst)
 		return false;
 
 	for (const auto& recent : recentExplosions) {

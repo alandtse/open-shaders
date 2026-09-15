@@ -1028,7 +1028,7 @@ namespace TreeWindPatcher
 				return result;
 			}
 
-			PendingFile pending{ path };
+			PendingFile pending{ .path = path };
 			try {
 				pending.root = nlohmann::json::parse(input);
 			} catch (const nlohmann::json::exception& exception) {
