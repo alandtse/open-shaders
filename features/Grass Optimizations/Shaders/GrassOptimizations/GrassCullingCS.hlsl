@@ -136,7 +136,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 		if (dot(plane.xyz, dv) - plane.w < -frustumRadius)
 			return false;
 #else
-		if (dot(plane.xyz, world) - plane.w < 0.0)
+		if (dot(plane.xyz, dv) - plane.w < 0.0)
 			return false;
 #endif
 	}

@@ -180,66 +180,17 @@ bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 	}
 }
 
-void GrassOptimizations::ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform)
+namespace
 {
-	const __m128 fwd = _mm_set_ps(0.0f, transform.rotate.entry[2][0], transform.rotate.entry[1][0], transform.rotate.entry[0][0]);
-	const __m128 col1 = _mm_set_ps(0.0f, transform.rotate.entry[2][1], transform.rotate.entry[1][1], transform.rotate.entry[0][1]);
-	const __m128 col2 = _mm_set_ps(0.0f, transform.rotate.entry[2][2], transform.rotate.entry[1][2], transform.rotate.entry[0][2]);
-	const __m128 trans = _mm_set_ps(0.0f, transform.translate.z, transform.translate.y, transform.translate.x);
-
-	const __m128 nearPt = _mm_add_ps(trans, _mm_mul_ps(fwd, _mm_set1_ps(viewFrustum.fNear)));
-	const __m128 farPt = _mm_add_ps(trans, _mm_mul_ps(fwd, _mm_set1_ps(viewFrustum.fFar)));
-
-	auto MakePlane = [&](int idx, __m128 normal, __m128 point) {
-		alignas(16) float n[4];
-		_mm_store_ps(n, normal);
-		out.cullingPlanes[idx].normal = { n[0], n[1], n[2] };
-		out.cullingPlanes[idx].constant = _mm_cvtss_f32(_mm_dp_ps(normal, point, 0x71));
-	};
-
-	MakePlane(0, fwd, nearPt);
-	const __m128 negFwd = _mm_xor_ps(fwd, _mm_set1_ps(-0.0f));
-	MakePlane(1, negFwd, farPt);
-
-	if (viewFrustum.bOrtho) {
-		__m128 leftVec = col2;
-		MakePlane(2, leftVec, _mm_add_ps(trans, _mm_mul_ps(leftVec, _mm_set1_ps(viewFrustum.fLeft))));
-		__m128 rightVec = _mm_xor_ps(col2, _mm_set1_ps(-0.0f));
-		MakePlane(3, rightVec, _mm_add_ps(trans, _mm_mul_ps(rightVec, _mm_set1_ps(viewFrustum.fRight))));
-		__m128 upVec = col1;
-		MakePlane(4, upVec, _mm_add_ps(trans, _mm_mul_ps(upVec, _mm_set1_ps(viewFrustum.fTop))));
-		__m128 botVec = _mm_xor_ps(col1, _mm_set1_ps(-0.0f));
-		MakePlane(5, botVec, _mm_add_ps(trans, _mm_mul_ps(botVec, _mm_set1_ps(viewFrustum.fBottom))));
-	} else {
-		// SetFrustrumPlanes: s = 1/sqrt(slope²+1); n = fwd*(±slope*s) + axis*(±s)
-		auto sidePlane = [&](int idx, __m128 axis, float slope, float fwdSign, float axisSign) {
-			const float s = 1.0f / std::sqrt(slope * slope + 1.0f);
-			__m128 n = _mm_add_ps(
-				_mm_mul_ps(fwd, _mm_set1_ps(fwdSign * slope * s)),
-				_mm_mul_ps(axis, _mm_set1_ps(axisSign * s)));
-			MakePlane(idx, n, trans);
-		};
-
-		sidePlane(2, col2, viewFrustum.fLeft, -1.0f, +1.0f);
-		sidePlane(3, col2, viewFrustum.fRight, +1.0f, -1.0f);
-		sidePlane(4, col1, viewFrustum.fTop, +1.0f, -1.0f);
-		sidePlane(5, col1, viewFrustum.fBottom, -1.0f, +1.0f);
-	}
-
-	out.activePlanes = RE::NiFrustumPlanes::ActivePlane(0x3F);
-
-	constexpr float edgePadding = 128.0f;
-	out.cullingPlanes[2].constant -= edgePadding;
-	out.cullingPlanes[3].constant -= edgePadding;
-	out.cullingPlanes[4].constant -= edgePadding;
-	out.cullingPlanes[5].constant -= edgePadding;
-}
-
-static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& viewProj)
-{
+	// World-unit safety margin on the four side planes, shared by every platform.
+	constexpr float kFrustumEdgePaddingUnits = 128.0f;
 	// Matches GrassCullingCS.hlsl's divide-by-zero guard convention (e.g. max(length(dvC), 1e-4)).
 	constexpr float kPlaneNormalizeEpsilon = 1e-4f;
+}
 
+// Shared by the CPU bucket-reject pass and the GPU per-instance pass so neither can disagree.
+static void ComputeCameraRelativeFrustumPlanes(RE::NiFrustumPlanes& out, const Matrix& viewProj)
+{
 	const float rows[4][4] = {
 		{ viewProj._11, viewProj._12, viewProj._13, viewProj._14 },
 		{ viewProj._21, viewProj._22, viewProj._23, viewProj._24 },
@@ -247,23 +198,24 @@ static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& vi
 		{ viewProj._41, viewProj._42, viewProj._43, viewProj._44 }
 	};
 
-	const auto setPlane = [&](uint32_t index, uint32_t rowA, float signA, uint32_t rowB, float signB) {
+	const auto setPlane = [&](uint32_t index, uint32_t rowA, float signA, uint32_t rowB, float signB, float padding) {
 		float plane[4];
 		for (uint32_t component = 0; component < 4; ++component)
 			plane[component] = rows[rowA][component] * signA + rows[rowB][component] * signB;
 		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), kPlaneNormalizeEpsilon);
-		out[index][0] = plane[0] * invLength;
-		out[index][1] = plane[1] * invLength;
-		out[index][2] = plane[2] * invLength;
-		out[index][3] = -plane[3] * invLength;
+		out.cullingPlanes[index].normal = { plane[0] * invLength, plane[1] * invLength, plane[2] * invLength };
+		// Normalized above, so padding subtracts real world units, not clip-space units.
+		out.cullingPlanes[index].constant = -plane[3] * invLength - padding;
 	};
 
-	setPlane(0, 2, 1.0f, 2, 0.0f);
-	setPlane(1, 3, 1.0f, 2, -1.0f);
-	setPlane(2, 3, 1.0f, 0, 1.0f);
-	setPlane(3, 3, 1.0f, 0, -1.0f);
-	setPlane(4, 3, 1.0f, 1, -1.0f);
-	setPlane(5, 3, 1.0f, 1, 1.0f);
+	setPlane(0 /* near */, 2, 1.0f, 2, 0.0f, 0.0f);
+	setPlane(1 /* far */, 3, 1.0f, 2, -1.0f, 0.0f);
+	setPlane(2 /* left */, 3, 1.0f, 0, 1.0f, kFrustumEdgePaddingUnits);
+	setPlane(3 /* right */, 3, 1.0f, 0, -1.0f, kFrustumEdgePaddingUnits);
+	setPlane(4 /* top */, 3, 1.0f, 1, -1.0f, kFrustumEdgePaddingUnits);
+	setPlane(5 /* bottom */, 3, 1.0f, 1, 1.0f, kFrustumEdgePaddingUnits);
+
+	out.activePlanes = RE::NiFrustumPlanes::ActivePlane(0x3F);
 }
 
 void GrassOptimizations::UpdateGrass()
@@ -319,23 +271,16 @@ void GrassOptimizations::UpdateGrass()
 
 	const bool isVR = globals::game::isVR;
 
-	// cam->world with its translate swapped for the given eye's actual position; flat non-VR keeps
-	// cam->world untouched since there's only one eye.
-	const auto eyeTransform = [&](uint32_t eye) {
-		RE::NiTransform t = cam->world;
-		if (isVR)
-			t.translate = Util::GetEyePosition(eye);
-		return t;
-	};
-
+	// Unjittered: a jittered matrix would reshape the culling frustum every frame independent of
+	// camera movement.
 	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, eyeTransform(0));
+	ComputeCameraRelativeFrustumPlanes(frustum, globals::game::frameBufferCached.GetCameraViewProjUnjittered(0));
 	const RE::NiPoint3 camPos = cam->world.translate;
 	const __m128 camPosV = _mm_setr_ps(camPos.x, camPos.y, camPos.z, 0.0f);
 
 	RE::NiFrustumPlanes frustum1{};
 	if (isVR)
-		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().viewFrustumArray[1], eyeTransform(1));
+		ComputeCameraRelativeFrustumPlanes(frustum1, globals::game::frameBufferCached.GetCameraViewProjUnjittered(1));
 
 	FrustumSoA frustumSoAs[2];
 	BuildFrustumSoA(frustumSoAs[0], frustum);
@@ -349,17 +294,16 @@ void GrassOptimizations::UpdateGrass()
 
 	{
 		CullParamsCB cp{};
-		if (isVR) {
-			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes, globals::game::frameBufferCached.GetCameraViewProj(0));
-			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes + 6, globals::game::frameBufferCached.GetCameraViewProj(1));
-		} else {
-			for (int i = 0; i < 6; ++i) {
-				cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
-				cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
-				cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
-				cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
-				std::copy_n(cp.frustumPlanes[i], 4, cp.frustumPlanes[6 + i]);
-			}
+		for (int i = 0; i < 6; ++i) {
+			cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
+			cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
+			cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
+			cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
+			const RE::NiFrustumPlanes& f1 = isVR ? frustum1 : frustum;
+			cp.frustumPlanes[6 + i][0] = f1.cullingPlanes[i].normal.x;
+			cp.frustumPlanes[6 + i][1] = f1.cullingPlanes[i].normal.y;
+			cp.frustumPlanes[6 + i][2] = f1.cullingPlanes[i].normal.z;
+			cp.frustumPlanes[6 + i][3] = f1.cullingPlanes[i].constant;
 		}
 		cp.eyeCount = frustumCount;
 
@@ -500,9 +444,11 @@ void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA* frus
 	if (b.sliceBounds.size() != b.slices.size())
 		return;
 
+	// Frustum planes are camera-relative (see ComputeCameraRelativeFrustumPlanes), so AABB
+	// corners tested against them need the same origin shift.
 	const __m128 bucketLo = _mm_setr_ps(b.coarseMin.x, b.coarseMin.y, b.coarseMin.z, 0.0f);
 	const __m128 bucketHi = _mm_setr_ps(b.coarseMax.x, b.coarseMax.y, b.coarseMax.z, 0.0f);
-	if (!AnyFrustumVisible(frustumSoAs, frustumCount, bucketLo, bucketHi))
+	if (!AnyFrustumVisible(frustumSoAs, frustumCount, _mm_sub_ps(bucketLo, camPosV), _mm_sub_ps(bucketHi, camPosV)))
 		return;
 
 	if (!b.clustersValid)
@@ -517,7 +463,7 @@ void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA* frus
 		auto distanceSq = _mm_cvtss_f32(_mm_dp_ps(beyond, beyond, 0x71));
 
 		const bool withinRenderDistance = distanceSq <= maxDistSq;
-		if (!withinRenderDistance || !AnyFrustumVisible(frustumSoAs, frustumCount, lo, hi))
+		if (!withinRenderDistance || !AnyFrustumVisible(frustumSoAs, frustumCount, _mm_sub_ps(lo, camPosV), _mm_sub_ps(hi, camPosV)))
 			continue;
 
 		sliceTableCPU.emplace_back(run.firstSliceOffset, b.visibleInstances);

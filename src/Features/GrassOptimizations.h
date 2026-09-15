@@ -169,9 +169,6 @@ public:
 	/** @brief AABB vs any of the given frustums (VR tests both eyes; a slice visible in either eye must not be dropped). */
 	static bool AnyFrustumVisible(const FrustumSoA* frustums, uint32_t frustumCount, __m128 lo, __m128 hi);
 
-	/** @brief Derives world-space frustum planes from the camera frustum and transform. */
-	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform);
-
 	/** @brief Once-per-frame grass update called in BSGrassShader::SetupGeometry: applies staged captures/removals, uploads dirty buckets, builds the Hi-Z pyramid and issues the culling dispatches. */
 	void UpdateGrass();
 
