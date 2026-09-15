@@ -1,11 +1,9 @@
 name: "Maint: Warm Linux vcpkg Cache"
 
-# The only trusted caller of _shared-cross-compile.yaml's save-cache job.
-# pr-checks.yaml (pull_request_target, fork-checked-out code) and ci-test.yaml
-# stay restore-only by never passing cache-write: true -- see
-# _shared-cross-compile.yaml for why that job never holds a write-capable
-# token. This workflow only ever runs already-merged dev code, so its token
-# is never ambient to unreviewed build-time scripts.
+# save-cache must stay local, not move into _shared-cross-compile.yaml: a
+# called reusable workflow's whole job graph is checked against the caller's
+# permissions before any job's own `if:` runs, so one actions:write job in
+# that file previously broke every read-only caller with startup_failure.
 
 on:
     push:
@@ -13,8 +11,10 @@ on:
         paths:
             - "vcpkg.json"
             - "vcpkg-configuration.json"
+            - "cmake/ports/**"
             - "cmake/ports-linux-clangcl/**"
             - "cmake/triplets/**"
+            - "extern/CommonLibSSE-NG"
             - "CMakePresets.json"
             - ".github/workflows/_shared-cross-compile.yaml"
             - ".github/workflows/maint-warm-linux-vcpkg-cache.yaml"
@@ -31,9 +31,50 @@ jobs:
     warm:
         permissions:
             contents: read
-            actions: write
         uses: ./.github/workflows/_shared-cross-compile.yaml
         with:
             ref: ${{ github.sha }}
             repository: ${{ github.repository }}
             cache-write: true
+
+    save-cache:
+        name: Save vcpkg binary cache
+        needs: warm
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: write
+        steps:
+            # Trusted-ref-only checkout: the cache-key hash below must not be
+            # computable from anything a caller's fork-executed code touched.
+            - name: Checkout vcpkg overlay inputs (sparse)
+              uses: actions/checkout@v6
+              with:
+                  path: main
+                  submodules: recursive
+                  sparse-checkout: |
+                      vcpkg.json
+                      vcpkg-configuration.json
+                      cmake/ports/**
+                      cmake/ports-linux-clangcl/**
+                      cmake/triplets/**
+                      extern/CommonLibSSE-NG
+                  sparse-checkout-cone-mode: false
+                  persist-credentials: false
+
+            - name: Download built vcpkg binary packages
+              uses: actions/download-artifact@v4
+              with:
+                  name: vcpkg-binpkgs-linux-clangcl
+                  path: vcpkg_binary_cache
+
+            - name: Verify packages were downloaded
+              run: test -n "$(ls -A vcpkg_binary_cache)"
+
+            - name: Save vcpkg binary cache
+              uses: actions/cache/save@v4
+              with:
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  # No cache-key-suffix: must exactly match _shared-cross-compile.yaml's
+                  # suffixless restore key, or restores silently miss forever.
+                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}

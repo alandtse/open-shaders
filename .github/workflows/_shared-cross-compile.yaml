@@ -23,7 +23,7 @@ on:
                 type: boolean
                 default: false
             cache-write:
-                description: "Enable the downstream save-cache job. Only pass true from a trusted, non-PR caller -- the build job that compiles fork code never holds a write-capable token."
+                description: "Upload built vcpkg packages as an artifact instead of saving the cache directly -- only maint-warm-linux-vcpkg-cache.yaml passes true, and saves them itself."
                 type: boolean
                 default: false
 
@@ -145,14 +145,16 @@ jobs:
                   runVcpkgInstall: false
 
             # Restore-only: this job compiles fork-checked-out code and must
-            # never hold a write-capable token; see save-cache below.
+            # never hold a write-capable token; saving happens in the caller.
             - name: Restore vcpkg binary packages
               uses: actions/cache/restore@v4
               with:
                   path: ${{ github.workspace }}/vcpkg_binary_cache
                   # Suffix precedes the hash so restore-keys' prefix fallback can't
                   # cross into ci-test's -ci-test-suffixed entries.
-                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}
+                  # Hash covers every VCPKG_OVERLAY_PORTS/TRIPLETS input, not just
+                  # vcpkg.json -- an overlay-only change must also bust this key.
+                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}
                   restore-keys: |
                       ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-
 
@@ -190,40 +192,3 @@ jobs:
                   WORKSPACE_DIR: ${{ github.workspace }}
               run: |
                   find "$WORKSPACE_DIR" \( -iname "compileshaders.log" -o -iname "cppwinrt-generate-*.log" \) -exec echo "=== {} ===" \; -exec cat {} \;
-
-    # Guards against a future caller passing cache-write under a PR event --
-    # this job won't run regardless, so no fork content can reach actions:write.
-    save-cache:
-        name: Save vcpkg binary cache
-        needs: build
-        if: inputs.cache-write && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            actions: write
-        steps:
-            # No ref/repository: the checkout defaults to this run's own
-            # github.sha/github.repository, so there's no input expression
-            # left for a PR-controlled ref to ever reach.
-            - name: Checkout vcpkg.json (sparse)
-              uses: actions/checkout@v6
-              with:
-                  path: main
-                  sparse-checkout: vcpkg.json
-                  sparse-checkout-cone-mode: false
-                  persist-credentials: false
-
-            - name: Download built vcpkg binary packages
-              uses: actions/download-artifact@v4
-              with:
-                  name: vcpkg-binpkgs-linux-clangcl
-                  path: vcpkg_binary_cache
-
-            - name: Verify packages were downloaded
-              run: test -n "$(ls -A vcpkg_binary_cache)"
-
-            - name: Save vcpkg binary cache
-              uses: actions/cache/save@v4
-              with:
-                  path: ${{ github.workspace }}/vcpkg_binary_cache
-                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}
