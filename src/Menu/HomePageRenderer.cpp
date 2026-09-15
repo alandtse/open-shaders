@@ -71,7 +71,7 @@ void HomePageRenderer::RenderWelcomeSection()
 	auto expectedTag = std::format("v{}", versionStr);
 	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ?
 	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to Open Shaders {version}") :
-	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) }, { "build", std::string(Plugin::BUILD_DESCRIBE) } }, "Welcome to Open Shaders {version} [{build}]");
+	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) } }, "Welcome to Open Shaders {version}");
 	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("%s", titleWithVersion.c_str());

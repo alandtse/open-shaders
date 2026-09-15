@@ -1169,12 +1169,12 @@ void RainRendering::DrawRain()
 	auto& stableWorldDepth =
 		renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& rainDepth = stableWorldDepth.depthSRV ? stableWorldDepth : mainDepth;
-	auto* depthResource = rainDepth.depthSRV;
-	auto* depthView = rainDepth.readOnlyViews[0];
+	auto* depthResource = Util::AsReal(rainDepth.depthSRV);
+	auto* depthView = Util::AsReal(rainDepth.readOnlyViews[0]);
 	if (!mainTarget.texture || !mainTarget.RTV || !depthResource)
 		return;
 	D3D11_TEXTURE2D_DESC mainDescription{};
-	mainTarget.texture->GetDesc(&mainDescription);
+	Util::AsReal(mainTarget.texture)->GetDesc(&mainDescription);
 	if (depthView) {
 		D3D11_DEPTH_STENCIL_VIEW_DESC viewDescription{};
 		depthView->GetDesc(&viewDescription);
@@ -1212,7 +1212,7 @@ void RainRendering::DrawRain()
 	CS_GPU_PASS("RainRendering::AirborneRain");
 	const bool hasSceneColor = mainTarget.SRV && usesWaterMaterial && settings.EnableRainRefraction &&
 	                           settings.RainRefractionStrength > 0.0f &&
-	                           EnsureSceneColorCopy(mainTarget.texture, mainTarget.RTV);
+	                           EnsureSceneColorCopy(Util::AsReal(mainTarget.texture), Util::AsReal(mainTarget.RTV));
 
 	PerFrame data = BuildPerFrameData(weather, mainDescription, dynamicSize, hasSceneColor);
 	const float rainTime = globals::state->timer;
@@ -1295,9 +1295,9 @@ void RainRendering::DrawRain()
 
 	RainPipelineState savedState(context);
 	if (hasSceneColor)
-		DownsampleSceneColor(mainTarget.SRV, depthResource, dynamicSize);
+		DownsampleSceneColor(Util::AsReal(mainTarget.SRV), depthResource, dynamicSize);
 	CS_GPU_PASS("RainRendering::DrawDrops");
-	ID3D11RenderTargetView* renderTarget = mainTarget.RTV;
+	ID3D11RenderTargetView* renderTarget = Util::AsReal(mainTarget.RTV);
 	context->OMSetRenderTargets(1, &renderTarget, depthTestState ? depthView : nullptr);
 	context->OMSetBlendState(blendState.get(), nullptr, UINT_MAX);
 	context->OMSetDepthStencilState(depthView && depthTestState ? depthTestState.get() : depthStencilState.get(), 0);

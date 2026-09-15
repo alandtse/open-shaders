@@ -17,15 +17,15 @@ void Border::DrawSettings()
 {
 	ImGui::ColorEdit3(T("feature.post_processing.border.border_color", "Border Color"), reinterpret_cast<float*>(&settings.BorderColor));
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.border.the_color_of_the_border", "The color of the border."));
+		ImGui::TextUnformatted(T("feature.post_processing.border.the_color_of_the_border", "The color of the border."));
 
 	ImGui::SliderFloat(T("feature.post_processing.border.depth_threshold", "Depth Threshold"), &settings.DepthThreshold, 0.f, 1.f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.border.the_depth_threshold_for_the_border_effect", "The depth threshold for the border effect."));
+		ImGui::TextUnformatted(T("feature.post_processing.border.the_depth_threshold_for_the_border_effect", "The depth threshold for the border effect."));
 
 	ImGui::SliderFloat4(T("feature.post_processing.border.scale_top_down_left_right", "Scale (Top, Down, Left, Right)"), reinterpret_cast<float*>(&settings.Scale), 0.f, 0.5f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.border.the_scale_of_the_border_on_each_side", "The scale of the border on each side of the screen."));
+		ImGui::TextUnformatted(T("feature.post_processing.border.the_scale_of_the_border_on_each_side", "The scale of the border on each side of the screen."));
 }
 
 void Border::RestoreDefaultSettings()
@@ -57,7 +57,7 @@ void Border::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(&texDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -98,8 +98,8 @@ void Border::ClearShaderCache()
 void Border::CompileComputeShaders()
 {
 	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &borderCS, "border.cs.hlsl" },
-		{ &borderClearMVCS, "border_clear_mv.cs.hlsl" },
+		{ &borderCS, "border.cs.hlsl", {} },
+		{ &borderClearMVCS, "border_clear_mv.cs.hlsl", {} },
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\Border", shaderInfos);
@@ -142,7 +142,7 @@ void Border::ClearMotionVectorsForFrameGen()
 
 	ID3D11ShaderResourceView* srvs[1] = { depthSRV };
 	context->CSSetShaderResources(0, 1, srvs);
-	ID3D11UnorderedAccessView* uavs[1] = { motion.UAV };
+	ID3D11UnorderedAccessView* uavs[1] = { Util::AsReal(motion.UAV) };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	ID3D11Buffer* cb = borderCB->CB();
 	context->CSSetConstantBuffers(1, 1, &cb);
@@ -182,9 +182,9 @@ void Border::Draw(TextureInfo& inout_tex)
 		return;
 	}
 	auto motion = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	ID3D11ShaderResourceView* srvs[2] = { inout_tex.srv, depthSRV };
+	ID3D11ShaderResourceView* srvs[2] = { inout_tex.srv, Util::AsReal(depthSRV) };
 	context->CSSetShaderResources(0, 2, srvs);
-	ID3D11UnorderedAccessView* uavs[2] = { texOutput->uav.get(), motion.UAV };
+	ID3D11UnorderedAccessView* uavs[2] = { texOutput->uav.get(), Util::AsReal(motion.UAV) };
 	context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
 	ID3D11Buffer* cb = borderCB->CB();
 	context->CSSetConstantBuffers(1, 1, &cb);

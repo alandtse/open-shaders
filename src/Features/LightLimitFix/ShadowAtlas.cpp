@@ -705,7 +705,7 @@ namespace ShadowCasterManager
 				if (requester) {
 					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
 					const uint32_t nodeSize = 1u << order;
-					int32_t bestNodeX = -1, bestNodeY = -1;
+					int32_t bestNodeX = -1;
 					double bestNodeCost = 0.0;
 					static std::vector<int32_t> candidateVictims, bestVictims;
 					for (uint32_t nx = 0; nx < cellsPerAxis; nx += nodeSize) {
@@ -771,7 +771,6 @@ namespace ShadowCasterManager
 							if (requester->lastScore > nodeCost * 2.0 &&
 								(bestNodeX < 0 || nodeCost < bestNodeCost)) {
 								bestNodeX = static_cast<int32_t>(nx);
-								bestNodeY = static_cast<int32_t>(ny);
 								bestNodeCost = nodeCost;
 								bestVictims = candidateVictims;
 							}

@@ -122,7 +122,7 @@ void UnifiedWater::DrawSettings()
 
 void UnifiedWater::DrawOverlay()
 {
-	if (!waterCache || !waterCache->IsBuildRunning() && !waterCache->HasBuildFailed())
+	if (!waterCache || (!waterCache->IsBuildRunning() && !waterCache->HasBuildFailed()))
 		return;
 
 	const float scale = Util::GetUIScale();
@@ -365,7 +365,7 @@ bool UnifiedWater::LoadOrderChanged()
 	};
 
 	auto addToHash = [&](const RE::TESFile* file) {
-		if (!file || !file->fileName)
+		if (!file || file->fileName[0] == '\0')
 			return;
 		addBytes(reinterpret_cast<const unsigned char*>(file->fileName));
 	};

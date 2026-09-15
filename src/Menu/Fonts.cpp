@@ -499,33 +499,6 @@ namespace Util
 			return display;
 		}
 
-		// Helper function to format any font filename into a user-friendly display name
-		std::string FormatFontDisplayName(const std::string& filename)
-		{
-			if (filename.empty()) {
-				return "Unknown";
-			}
-
-			std::filesystem::path filePath(filename);
-			std::string stem = filePath.stem().string();
-
-			if (stem.empty()) {
-				return "Unknown";
-			}
-
-			// Remove common font file prefixes if present
-			std::vector<std::string> prefixes = { "Font-", "Font_", "TTF-", "TTF_" };
-			for (const auto& prefix : prefixes) {
-				if (stem.size() > prefix.size() &&
-					ToLowerCopy(stem.substr(0, prefix.size())) == ToLowerCopy(prefix)) {
-					stem = stem.substr(prefix.size());
-					break;
-				}
-			}
-
-			return ToDisplayLabel(stem);
-		}
-
 		int StyleRank(const std::string& style)
 		{
 			std::string lower = ToLowerCopy(style);

@@ -529,7 +529,6 @@ namespace LightLimitFix
 
 		float4 positionLS = mul(shadowLightData.ShadowProj, float4(worldPositionWS, 1));
 
-		float rawShadow;
 		[branch] if (shadowLightData.ShadowLightParam.x == 0)
 		{
 			float shadowBaseVisibility = GetSpotlightShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
@@ -537,13 +536,11 @@ namespace LightLimitFix
 
 			float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
 
-			rawShadow = shadowBaseVisibility * spotFalloff;
-		}
-		else
-		{
-			rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
+			// Spotlight shadows define the light's footprint and must not fade toward fully lit.
+			return shadowBaseVisibility * spotFalloff;
 		}
 
+		float rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
 		// Blend toward fully lit while the shadow fades in after this caster
 		// first gained a shadow slot, so the shadow eases in instead of
 		// popping on top of a light that was already visible.

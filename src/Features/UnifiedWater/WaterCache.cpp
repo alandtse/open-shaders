@@ -110,7 +110,7 @@ std::vector<WaterCache::Instruction>* WaterCache::RuntimeCache::GetInstructions(
 		return nullptr;
 
 	const auto lodIndex = std::countr_zero(static_cast<uint32_t>(lodLevel)) - 2;
-	if (lodIndex < 0 || lodIndex >= instructions.size())
+	if (lodIndex < 0 || lodIndex >= static_cast<decltype(lodIndex)>(instructions.size()))
 		return nullptr;
 
 	auto& lodInstructions = instructions[lodIndex];
@@ -123,7 +123,7 @@ std::vector<WaterCache::Instruction>* WaterCache::RuntimeCache::GetInstructions(
 	const int32_t lodWidth = lodMaxX - lodMinX + 1;
 
 	const auto lodCellIndex = (lodCellY - lodMinY) * lodWidth + lodCellX - lodMinX;
-	if (lodCellIndex < 0 || lodCellIndex >= lodInstructions.size())
+	if (lodCellIndex < 0 || lodCellIndex >= static_cast<decltype(lodCellIndex)>(lodInstructions.size()))
 		return nullptr;
 
 	return &lodInstructions[lodCellIndex];
@@ -493,7 +493,7 @@ bool WaterCache::BuildDiskCache(RE::TESWorldSpace* worldSpace, DiskCache& diskCa
 			if (form)
 				waterCellCount++;
 
-			cellData[idx] = { landHeight, waterHeight, formID, form };
+			cellData[idx] = { { landHeight, waterHeight }, formID, form };
 		}
 	}
 
@@ -681,7 +681,7 @@ bool WaterCache::TryBuildRuntimeCache(const DiskCache& diskCache, RuntimeCache& 
 
 	cache.header = hdr;
 
-	int32_t diskReadIndex = 0;
+	size_t diskReadIndex = 0;
 	int32_t skippedInvalidInstructionCount = 0;
 	int32_t skippedUnresolvedFormCount = 0;
 

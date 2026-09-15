@@ -12,7 +12,7 @@ Texture2D<float4> AlbedoTexture : register(t3);
 		return;
 
 	float4 color = ColorTexture[DTid.xy];
-	float3 linearColor = Color::IrradianceToLinear(color.rgb);
+	float3 linearColor = Color::SceneGammaToLinear(color.rgb);
 	float3 albedo = SSSDecodeAlbedo(AlbedoTexture[DTid.xy].rgb);
 	color.rgb = SSSRemoveAlbedo(linearColor, albedo, ScatterMode);
 	OutputRW[DTid.xy] = color;

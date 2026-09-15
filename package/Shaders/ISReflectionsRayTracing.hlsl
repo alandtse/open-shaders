@@ -1,6 +1,8 @@
+#include "Common/Color.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/MotionBlur.hlsli"
+#include "Common/Permutation.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRReproject.hlsli"
@@ -196,6 +198,8 @@ float4 GetReflectionColor(
 #	endif
 				float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
 				float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
+				if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+					color = Color::SceneGammaToLinear(color);
 
 				// Final sample to world-space
 				float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);

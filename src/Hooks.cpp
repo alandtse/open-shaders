@@ -9,6 +9,7 @@
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "TruePBR.h"
 #include "Util.h"
 
 #include "Features/CSUtility.h"
@@ -25,7 +26,9 @@
 #include "Features/Upscaling/FoveatedRender/Bridge.h"
 #include "Features/VR.h"
 #include "Features/VolumetricLighting.h"
+#include "Features/Wind/Wind.h"
 
+#include <optional>
 #include <unordered_map>
 
 namespace
@@ -191,7 +194,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			shaderFound = false;
 		} else {
 			state->settingCustomShader = true;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 			if (skipPixelShader) {
@@ -199,7 +202,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			}
 			*globals::game::currentPixelShader = pixelShader;
 			if (pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 			state->settingCustomShader = false;
 			shaderFound = true;
 		}
@@ -266,6 +269,7 @@ namespace GrassExtensions
 			auto* lightingProperty = *reinterpret_cast<RE::BSLightingShaderProperty**>(lightingPropertyAddress);
 
 			RE::BSLightingShaderProperty* grassProperty = func(property);
+			globals::features::truePBR.SetupGrassMaterial(lightingProperty, grassProperty);
 
 			if (lightingProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kEffectLighting)) {
 				grassProperty->SetFlags(RE::BSShaderProperty::EShaderPropertyFlag8::kEffectLighting, true);
@@ -282,6 +286,8 @@ namespace GrassExtensions
 		{
 			func(shader, pass, renderFlags);
 			LegacyGraphicsCompatibility::BindLegacyGrassPerGeometryToPixelShader();
+			if (globals::features::wind.loaded)
+				globals::features::wind.UpdateGrassWindSpring();
 
 			auto state = globals::state;
 
@@ -309,7 +315,7 @@ namespace WaterBlendHistory
 			const float clearColor[4] = { 0.f, 0.f, 0.f, 0.f };
 			const auto target = renderTargets[1];
 			globals::d3d::context->ClearRenderTargetView(
-				globals::game::renderer->GetRuntimeData().renderTargets[target].RTV,
+				Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[target].RTV),
 				clearColor);
 
 			func(imageSpaceShader, shape, param);
@@ -331,6 +337,7 @@ namespace WeatherExtensions
 				globals::features::effects11.OnSkyUpdateColors(sky);
 #endif
 			globals::features::skySync.OnSkyUpdateColors(sky);
+			Feature::ForEachLoadedFeature("OnWeatherColorsUpdated", [sky](Feature* feature) { feature->OnWeatherColorsUpdated(sky); });
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -350,6 +357,7 @@ namespace WeatherExtensions
 					effects11.OverrideAmbientLighting(overridden);
 					effects11.vanillaAmbientCache = DirectionalAmbientColors;
 					effects11.gradedAmbientCache = overridden;
+					effects11.ambientSpecularTintCacheValid = AmbientSpecularTint != nullptr;
 					if (AmbientSpecularTint)
 						effects11.ambientSpecularTintCache = *AmbientSpecularTint;
 					effects11.ambientSpecularFresnelCache = AmbientSpecularFresnel;
@@ -365,21 +373,22 @@ namespace WeatherExtensions
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// renderMode 24 means something unrelated on SE/AE -- do not reuse this check outside VR.
+	// kVRWorldSpaceUIPass means something unrelated on SE/AE -- do not reuse this check outside VR.
 	struct VRUIPassAmbientFix_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags)
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (shaderAccumulator->GetRuntimeData().renderMode == 24 && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
+			if (shaderAccumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
+				RE::NiColor* const specularTint = effects11.ambientSpecularTintCacheValid ? &effects11.ambientSpecularTintCache : nullptr;
 				effects11.enableEffect = false;
-				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.vanillaAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				func(shaderAccumulator, renderFlags);
 				effects11.enableEffect = savedEnableEffect;
-				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, &effects11.ambientSpecularTintCache, effects11.ambientSpecularFresnelCache);
+				Sky_SetDirectionalAmbientColors::func(effects11.gradedAmbientCache, specularTint, effects11.ambientSpecularFresnelCache);
 				globals::state->UpdateSharedData(false, false);
 				return;
 			}
@@ -401,6 +410,8 @@ namespace PostProcessingExtensions
 			auto* state = globals::state;
 			const auto input = static_cast<RE::RENDER_TARGET>(a3);
 			const auto output = static_cast<RE::RENDER_TARGET>(a4);
+
+			Feature::ForEachLoadedFeature("OnBeforePostProcessing", [input](Feature* feature) { feature->OnBeforePostProcessing(input); });
 
 			if (state->HandlePostProcessing(input, output))
 				return;
@@ -454,6 +465,7 @@ struct IDXGISwapChain_Present
 
 		// Runs after HDR Present so the captured back buffer matches what's on screen.
 		globals::features::screenshotFeature.ProcessCaptureRequest();
+		globals::features::upscaling.dx12SwapChain.ClearWrappedBuffers();
 
 		TracyD3D11Collect(globals::state->tracyCtx);
 
@@ -524,6 +536,8 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
 	globals::state->Draw();
+	if (!isCompute)
+		globals::state->BindVertexPermutationData();
 }
 
 struct ID3D11Device_CreateVertexShader
@@ -883,7 +897,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*currentShader, state->modifiedVertexDescriptor);
 							if (vertexShader) {
-								globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(vertexShader->shader), NULL, NULL);
+								globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 								*globals::game::currentVertexShader = a_vertexShader;
 								globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 								return;
@@ -896,7 +910,7 @@ namespace Hooks
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
 
 			*globals::game::currentVertexShader = a_vertexShader;
-			globals::d3d::context->VSSetShader(reinterpret_cast<ID3D11VertexShader*>(a_vertexShader->shader), NULL, NULL);
+			globals::d3d::context->VSSetShader(Util::AsReal(a_vertexShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -916,7 +930,7 @@ namespace Hooks
 						if (state->enabledClasses[type - 1]) {
 							RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
 							if (pixelShader) {
-								globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader), NULL, NULL);
+								globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 								*globals::game::currentPixelShader = a_pixelShader;
 								return;
 							}
@@ -928,7 +942,7 @@ namespace Hooks
 			*globals::game::currentPixelShader = a_pixelShader;
 
 			if (a_pixelShader)
-				globals::d3d::context->PSSetShader(reinterpret_cast<ID3D11PixelShader*>(a_pixelShader->shader), NULL, NULL);
+				globals::d3d::context->PSSetShader(Util::AsReal(a_pixelShader->shader), NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1048,12 +1062,12 @@ namespace Hooks
 							techniqueId = 0;
 							isShader = vl.GetOrCreateBlurHCS(CurrentlyDispatchedComputeShader);
 							vl.SetDimensionsCB();
-							vl.SetGroupCountsHCS(threadGroupCountX);
+							vl.SetGroupCountsHCS(threadGroupCountX, threadGroupCountY);
 						} else if (CurrentlyDispatchedComputeShader->name == "ISVolumetricLightingBlurVCS"sv) {
 							techniqueId = 0;
 							isShader = vl.GetOrCreateBlurVCS(CurrentlyDispatchedComputeShader);
 							vl.SetDimensionsCB();
-							vl.SetGroupCountsVCS(threadGroupCountY);
+							vl.SetGroupCountsVCS(threadGroupCountX, threadGroupCountY);
 						}
 					}
 					if (isShader != nullptr) {
@@ -1138,6 +1152,9 @@ namespace Hooks
 #endif
 	}
 
+	// Generic per-render-pass hook: gives every feature that opted in via
+	// Feature::WantsRenderPassHook() a chance to react to a qualifying render pass, without this
+	// file naming any specific feature. See Feature::OnRenderPassBegin().
 	void BSBatchRenderer_RenderPassImmediately1::thunk(
 		RE::BSRenderPass* a_pass,
 		uint32_t a_technique,
@@ -1147,6 +1164,11 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		// No vector/std::function machinery touched at all until a feature opts in.
+		std::optional<Feature::RenderScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
+				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1159,6 +1181,10 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		std::optional<Feature::RenderScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
+				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1171,6 +1197,10 @@ namespace Hooks
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique))
 			return;
 
+		std::optional<Feature::RenderScope> renderPassHookScope;
+		if (!Feature::GetRenderPassHookFeatures().empty())
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
+				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 

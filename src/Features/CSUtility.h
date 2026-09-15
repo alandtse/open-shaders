@@ -5,7 +5,11 @@
 #include "Feature.h"
 #include "I18n/I18n.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 struct CSUtility : Feature
 {
@@ -78,6 +82,7 @@ struct CSUtility : Feature
 	struct Settings
 	{
 		float skyBrightness = 1.0f;
+		float ambientLightMult = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
 		float linearPointLightMult = 1.0f;
@@ -91,7 +96,7 @@ struct CSUtility : Feature
 		Bloom::PresetSettings bloomEnhancement;
 	} settings;
 
-	/** Identifies the OS Utility tab targeted by scoped default restoration. */
+	/** Identifies the utility tab targeted by scoped default restoration. */
 	enum class SettingsPage
 	{
 		Atmosphere,           ///< Sky atmosphere controls.
@@ -100,12 +105,13 @@ struct CSUtility : Feature
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
 		VanillaBloom          ///< Vanilla bloom controls.
 	};
-	/** The visible tab whose settings Restore Defaults changes. */
+	/** The visible utility tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
 
 	struct alignas(16) PerFrameData
 	{
 		float skyBrightness;
+		float ambientLightMult;
 		float directionalLightMult;
 		float pointLightMult;
 		float linearPointLightMult;
@@ -121,9 +127,10 @@ struct CSUtility : Feature
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
+		float pad0[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 64);
+	static_assert(sizeof(PerFrameData) == 80);
 
 	struct alignas(16) VanillaPointLightData
 	{

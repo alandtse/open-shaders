@@ -4,7 +4,11 @@
 #include <cmath>
 #include <format>
 #include <imgui.h>
+#include <imgui_internal.h>
+#include <iterator>
+#include <numbers>
 #include <ranges>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -12,6 +16,9 @@
 #include "FeatureConstraints.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
+#include "Features/FeatureOverwrites.h"
+#include "Features/SceneManagerUI.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -21,11 +28,11 @@
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/ThemeManager.h"
 #include "SceneSettingsManager.h"
+#include "SceneSettingsUIHooks.h"
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
 #include "Utils/UI.h"
-#include "WeatherVariableRegistry.h"
 
 namespace
 {
@@ -33,6 +40,16 @@ namespace
 	constexpr float FEATURE_ACTION_CHECKMARK_LEFT_OFFSET = 2.0f;
 	constexpr float FEATURE_PAGE_BOTTOM_TOLERANCE = 1.0f;
 	constexpr float FEATURE_PAGE_LAYOUT_EPSILON = 0.5f;
+	constexpr float FEATURE_ACTION_ICON_HALF_WIDTH_RATIO = 0.24f;
+	constexpr float FEATURE_ACTION_ICON_LINE_SPACING_RATIO = 0.16f;
+	constexpr float FEATURE_ACTION_ICON_STROKE_RATIO = 0.07f;
+	constexpr float FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO = 0.06f;
+	constexpr float FEATURE_ACTION_ICON_FULL_TURN = std::numbers::pi_v<float> * 2.0f;
+	constexpr float FEATURE_ACTION_ICON_SNAP_RATIO = 0.05f;
+	constexpr float FEATURE_ACTION_ICON_RESPONSE_SPEED = 21.0f;
+	constexpr float FEATURE_ACTION_ICON_START_BOOST = 13.0f;
+	constexpr float FEATURE_ACTION_ICON_MAX_DELTA_TIME = 1.0f / 30.0f;
+	constexpr float FEATURE_ACTION_ICON_FINISH_BIAS = 0.04f;
 
 	struct FeaturePageLayoutState
 	{
@@ -44,33 +61,66 @@ namespace
 	};
 
 	std::unordered_map<std::string, FeaturePageLayoutState> g_featurePageLayouts;
+	float g_featureActionsIconProgress = 0.0f;
 
-	// Core built-in menu names that always appear first in the menu list
-	// These are canonical identifiers used for logic — NOT translated
-	constexpr std::array<const char*, 6> CORE_MENU_NAMES = {
-		"Home", "General", "Performance", "Advanced", "Profiling", "Display"
-	};
-
-	const char* GetCoreMenuDisplayName(const char* canonicalName)
+	void DrawFeatureActionsIcon(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float progress)
 	{
-		if (std::strcmp(canonicalName, "Home") == 0)
-			return T("menu.features.home", "Home");
-		if (std::strcmp(canonicalName, "General") == 0)
-			return T("menu.features.general", "General");
-		if (std::strcmp(canonicalName, "Performance") == 0)
-			return T("menu.features.performance", "Performance");
-		if (std::strcmp(canonicalName, "Advanced") == 0)
-			return T("menu.features.advanced", "Advanced");
-		if (std::strcmp(canonicalName, "Profiling") == 0)
-			return T("menu.features.profiling", "Profiling");
-		if (std::strcmp(canonicalName, "Display") == 0)
-			return T("menu.features.display", "Display");
-		return canonicalName;
-	}
+		IM_ASSERT(drawList != nullptr);
+		IM_ASSERT(max.x >= min.x && max.y >= min.y);
 
-	bool IsCoreMenu(const std::string& canonicalId)
-	{
-		return std::find(CORE_MENU_NAMES.begin(), CORE_MENU_NAMES.end(), canonicalId) != CORE_MENU_NAMES.end();
+		const float iconSize = std::min(max.x - min.x, max.y - min.y);
+		const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+		const float halfWidth = iconSize * FEATURE_ACTION_ICON_HALF_WIDTH_RATIO;
+		const float lineSpacing = iconSize * FEATURE_ACTION_ICON_LINE_SPACING_RATIO;
+		const float triangleHalfHeight = halfWidth * std::numbers::sqrt3_v<float> * 0.5f;
+		const float strokeWidth = std::max(1.0f, iconSize * FEATURE_ACTION_ICON_STROKE_RATIO);
+		const float animationProgress = std::clamp(progress, 0.0f, 1.0f);
+		const float snapPhase = std::sin(std::numbers::pi_v<float> * 2.0f * animationProgress) *
+		                        std::sin(std::numbers::pi_v<float> * animationProgress);
+		const float morphProgress = std::clamp(
+			animationProgress + FEATURE_ACTION_ICON_SNAP_RATIO * snapPhase, 0.0f, 1.0f);
+		const float flightPhase = std::sin(std::numbers::pi_v<float> * animationProgress);
+		const auto interpolate = [morphProgress](float start, float end) {
+			return std::lerp(start, end, morphProgress);
+		};
+		struct LineTransform
+		{
+			ImVec2 center;
+			float angle;
+		};
+
+		const ImVec2 triangleLeft(center.x - halfWidth, center.y - triangleHalfHeight);
+		const ImVec2 triangleRight(center.x + halfWidth, center.y - triangleHalfHeight);
+		const ImVec2 triangleBottom(center.x, center.y + triangleHalfHeight);
+		const std::array<LineTransform, 3> hamburgerLines = { { { ImVec2(center.x, center.y - lineSpacing), 0.0f },
+			{ center, 0.0f },
+			{ ImVec2(center.x, center.y + lineSpacing), 0.0f } } };
+		const std::array<LineTransform, 3> triangleLines = { { { ImVec2((triangleBottom.x + triangleRight.x) * 0.5f, (triangleBottom.y + triangleRight.y) * 0.5f),
+																   std::atan2(triangleRight.y - triangleBottom.y, triangleRight.x - triangleBottom.x) - FEATURE_ACTION_ICON_FULL_TURN },
+			{ ImVec2((triangleLeft.x + triangleBottom.x) * 0.5f, (triangleLeft.y + triangleBottom.y) * 0.5f),
+				std::atan2(triangleBottom.y - triangleLeft.y, triangleBottom.x - triangleLeft.x) + FEATURE_ACTION_ICON_FULL_TURN },
+			{ ImVec2((triangleLeft.x + triangleRight.x) * 0.5f, triangleLeft.y), FEATURE_ACTION_ICON_FULL_TURN } } };
+		const std::array<ImVec2, 3> flightOffsets = { { ImVec2(-iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, lineSpacing / std::numbers::pi_v<float>),
+			ImVec2(-iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, 0.0f),
+			ImVec2(iconSize * FEATURE_ACTION_ICON_FLIGHT_ARC_RATIO, -lineSpacing / std::numbers::pi_v<float>) } };
+		const ImU32 lineColor = ImGui::GetColorU32(ImGuiCol_Text);
+		const float capRadius = strokeWidth * 0.5f;
+
+		for (std::size_t i = 0; i < hamburgerLines.size(); ++i) {
+			const ImVec2 lineCenter(
+				interpolate(hamburgerLines[i].center.x, triangleLines[i].center.x) + flightOffsets[i].x * flightPhase,
+				interpolate(hamburgerLines[i].center.y, triangleLines[i].center.y) + flightOffsets[i].y * flightPhase);
+			const float lineAngle = interpolate(hamburgerLines[i].angle, triangleLines[i].angle);
+			const ImVec2 halfLine(std::cos(lineAngle) * halfWidth, std::sin(lineAngle) * halfWidth);
+			const ImVec2 lineStart(lineCenter.x - halfLine.x, lineCenter.y - halfLine.y);
+			const ImVec2 lineEnd(lineCenter.x + halfLine.x, lineCenter.y + halfLine.y);
+			const float capStartAngle = lineAngle + std::numbers::pi_v<float> * 0.5f;
+			drawList->PathArcTo(lineStart, capRadius,
+				capStartAngle, capStartAngle + std::numbers::pi_v<float>);
+			drawList->PathArcTo(lineEnd, capRadius,
+				capStartAngle + std::numbers::pi_v<float>, capStartAngle + std::numbers::pi_v<float> * 2.0f);
+			drawList->PathFillConvex(lineColor);
+		}
 	}
 
 	// Color for the [ALPHA]/[BETA] stage marker. Alpha (less stable) reads as an error,
@@ -150,39 +200,6 @@ namespace
 	void SeparatorTextWithFont(const std::string& text, Menu::FontRole role)
 	{
 		SeparatorTextWithFont(text.c_str(), role);
-	}
-
-	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
-	{
-		return MenuFonts::BeginTabItemWithFont(label, role, flags);
-	}
-
-	std::string TranslateFeatureCategory(std::string_view category)
-	{
-		if (category == FeatureCategories::kCharacters)
-			return T("feature.category.characters", "Characters");
-		if (category == FeatureCategories::kDisplay)
-			return T("feature.category.display", "Display");
-		if (category == FeatureCategories::kFoliage)
-			return T("feature.category.grass", "Foliage");
-		if (category == FeatureCategories::kLandscapeAndTextures)
-			return T("feature.category.landscape_and_textures", "Landscape & Textures");
-		if (category == FeatureCategories::kLighting)
-			return T("feature.category.lighting", "Lighting");
-		if (category == FeatureCategories::kMaterials)
-			return T("feature.category.materials", "Materials");
-		if (category == "Post-Processing")
-			return T("feature.category.post_processing", "Post-Processing");
-		if (category == FeatureCategories::kOther)
-			return T("feature.category.other", "Other");
-		if (category == FeatureCategories::kSky)
-			return T("feature.category.sky", "Sky");
-		if (category == FeatureCategories::kUtility)
-			return T("feature.category.utility", "Utility");
-		if (category == FeatureCategories::kWater)
-			return T("feature.category.water", "Water");
-
-		return std::string(category);
 	}
 
 	/**
@@ -326,49 +343,206 @@ namespace
 
 	Util::FlyoutState g_featureActionsFlyout;
 	std::string g_featureActionsFlyoutFeature;
+	bool g_featurePreferenceSaveFailed = false;
+
+	std::string GetMenuId(const FeatureListRenderer::MenuFuncInfo& item)
+	{
+		if (const auto* feature = std::get_if<Feature*>(&item))
+			return (*feature)->GetShortName();
+		if (const auto* menu = std::get_if<FeatureListRenderer::BuiltInMenu>(&item))
+			return menu->canonicalId;
+		return {};
+	}
+
+	struct SidebarRow
+	{
+		std::string_view label;
+		ImVec4 textColor;
+		ID3D11ShaderResourceView* icon = nullptr;
+		std::string_view category;
+		std::string_view stageTag;
+		ImVec4 stageColor;
+		std::string_view version;
+	};
+
+	bool DrawSidebarRow(const SidebarRow& row, bool selected, bool expandClippedText)
+	{
+		auto* window = ImGui::GetCurrentWindow();
+		if (window->SkipItems)
+			return false;
+		const auto& style = ImGui::GetStyle();
+		const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+		const float height = ImGui::GetTextLineHeight();
+		const ImVec2 textPos(rowStart.x + (row.icon ? height + style.ItemSpacing.x : 0.0f), rowStart.y);
+		float contentRight = textPos.x + ImGui::CalcTextSize(row.label.data(), row.label.data() + row.label.size()).x;
+		const ImVec2 stagePos(contentRight + style.ItemSpacing.x, rowStart.y);
+		if (!row.stageTag.empty())
+			contentRight = stagePos.x + ImGui::CalcTextSize(row.stageTag.data(), row.stageTag.data() + row.stageTag.size()).x;
+		const ImVec2 versionPos(contentRight + style.ItemSpacing.x, rowStart.y);
+		if (!row.version.empty())
+			contentRight = versionPos.x + ImGui::CalcTextSize(row.version.data(), row.version.data() + row.version.size()).x;
+
+		ImGui::PushID(row.label.data(), row.label.data() + row.label.size());
+		const SKSE::stl::scope_exit restoreID([]() noexcept { ImGui::PopID(); });
+		const float width = std::max(window->ClipRect.Max.x - window->ParentWorkRect.Min.x, 0.0f);
+		const bool pressed = ImGui::Selectable("##MenuRow", selected, ImGuiSelectableFlags_SpanAllColumns, { width, height });
+		if (!ImGui::IsItemVisible())
+			return pressed;
+		const bool hovered = ImGui::IsItemHovered();
+		const ImRect rowRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		const auto drawContents = [&](ImDrawList* drawList) {
+			const ImU32 textColor = ImGui::GetColorU32(row.textColor);
+			if (row.icon)
+				drawList->AddImage(row.icon, rowStart, { rowStart.x + height, rowStart.y + height }, { 0, 0 }, { 1, 1 }, textColor);
+			drawList->AddText(textPos, textColor, row.label.data(), row.label.data() + row.label.size());
+			if (!row.stageTag.empty())
+				drawList->AddText(stagePos, ImGui::GetColorU32(row.stageColor), row.stageTag.data(), row.stageTag.data() + row.stageTag.size());
+			if (!row.version.empty())
+				drawList->AddText(versionPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), row.version.data(), row.version.data() + row.version.size());
+		};
+		drawContents(window->DrawList);
+
+		float expansionAlpha = 0.0f;
+		if (expandClippedText && contentRight > window->ClipRect.Max.x) {
+			auto* storage = ImGui::GetStateStorage();
+			const ImGuiID progressId = ImGui::GetID("##ExpansionProgress");
+			const ImGuiID frameId = ImGui::GetID("##ExpansionFrame");
+			const int frame = ImGui::GetFrameCount();
+			float progress = storage->GetInt(frameId, -1) == frame - 1 ? storage->GetFloat(progressId) : 0.0f;
+			const float step = ImGui::GetIO().DeltaTime / ThemeManager::Constants::SIDEBAR_ROW_FADE_DURATION;
+			progress = std::clamp(progress + (hovered ? step : -step), 0.0f, 1.0f);
+			storage->SetFloat(progressId, progress);
+			storage->SetInt(frameId, frame);
+			expansionAlpha = progress * progress * (3.0f - 2.0f * progress);
+		}
+		if (expansionAlpha > 0.0f) {
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * expansionAlpha);
+			const SKSE::stl::scope_exit restoreAlpha([]() noexcept { ImGui::PopStyleVar(); });
+			auto* drawList = ImGui::GetForegroundDrawList(window->Viewport);
+			const ImRect expanded(rowRect.Min, { contentRight + style.FramePadding.x, rowRect.Max.y });
+			ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg);
+			background.w = 1.0f;
+			drawList->PushClipRect({ window->Viewport->Pos.x, window->ClipRect.Min.y },
+				{ window->Viewport->Pos.x + window->Viewport->Size.x, window->ClipRect.Max.y });
+			drawList->AddRectFilled(expanded.Min, expanded.Max, ImGui::GetColorU32(background));
+			drawList->AddRectFilled(expanded.Min, expanded.Max, ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_HeaderActive : ImGuiCol_HeaderHovered));
+			drawList->AddRect(expanded.Min, expanded.Max, ImGui::GetColorU32(ImGuiCol_Border));
+			drawContents(drawList);
+			drawList->PopClipRect();
+		} else if (row.icon && hovered && ImGui::IsMouseHoveringRect(rowStart, { rowStart.x + height, rowStart.y + height })) {
+			Util::AddTooltip(row.category.data());
+		}
+		return pressed;
+	}
 }
 
 void FeatureListRenderer::RenderFeatureList(
 	float footerHeight,
+	Menu::SidebarState& sidebar,
 	size_t& selectedMenu,
 	std::string& featureSearch,
 	std::string& pendingFeatureSelection,
-	std::map<std::string, bool>& categoryExpansionStates,
 	const std::function<void()>& drawGeneralSettings,
-	const std::function<void()>& drawAdvancedSettings)
+	const std::function<void()>& drawAdvancedSettings,
+	bool editorLayout,
+	bool resetLayout)
 {
-	ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight));
+	if (!editorLayout && !ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight))) {
+		ImGui::EndChild();
+		return;
+	}
 
-	auto menuList = BuildMenuList(featureSearch, categoryExpansionStates, drawGeneralSettings, drawAdvancedSettings);
+	auto menuList = BuildMenuList(drawGeneralSettings, drawAdvancedSettings);
+	static std::string selectedMenuId = "Home";
+	selectedMenu = 0;
+	for (size_t i = 0; i < menuList.size(); ++i) {
+		if (GetMenuId(menuList[i]) == selectedMenuId) {
+			selectedMenu = i;
+			break;
+		}
+	}
 
 	HandlePendingFeatureSelection(pendingFeatureSelection, menuList, selectedMenu);
+	if (editorLayout) {
+		RenderEditorColumns(menuList, selectedMenu, featureSearch, pendingFeatureSelection, resetLayout);
+		if (selectedMenu < menuList.size())
+			selectedMenuId = GetMenuId(menuList[selectedMenu]);
+		return;
+	}
 
-	// Determine if left panel should be visible based on auto-hide settings
-	bool leftPanelVisible = ShouldShowLeftPanel();
-
-	// Create the table with appropriate number of columns based on visibility
-	int numColumns = leftPanelVisible ? 2 : 1;
-	if (ImGui::BeginTable("Menus Table", numColumns, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable)) {
-		if (leftPanelVisible) {
-			ImGui::TableSetupColumn("##ListOfMenus", 0, 2);
-			ImGui::TableSetupColumn("##MenuConfig", 0, 8);
-			RenderLeftColumn(menuList, selectedMenu, featureSearch, categoryExpansionStates);
-			RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
-		} else {
-			// When left panel is hidden, right column takes full width
-			ImGui::TableSetupColumn("##MenuConfig", 0, 1);
-			RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
+	const bool leftPanelVisible = ShouldShowLeftPanel() && sidebar.visible;
+	const float step = ImGui::GetIO().DeltaTime / ThemeManager::Constants::SIDEBAR_SLIDE_DURATION;
+	sidebar.progress = std::clamp(sidebar.progress + (leftPanelVisible ? step : -step), 0.0f, 1.0f);
+	const float easedProgress = sidebar.progress * sidebar.progress * (3.0f - 2.0f * sidebar.progress);
+	const ImVec2 available = ImGui::GetContentRegionAvail();
+	const bool windowResized = sidebar.availableWidth > 0.0f && sidebar.availableWidth != available.x;
+	const float contentWidth = windowResized ? sidebar.widthRatio * available.x : sidebar.contentWidth;
+	const float slideWidth = sidebar.width + contentWidth - sidebar.contentWidth;
+	const float slideOffset = std::floor(slideWidth * (1.0f - easedProgress));
+	const ImVec2 origin = ImGui::GetCursorScreenPos();
+	const ImVec2 tableOrigin(origin.x - slideOffset, origin.y);
+	ImGui::SetCursorScreenPos(tableOrigin);
+	if (ImGui::BeginTable("Menus Table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable,
+			ImVec2(available.x + slideOffset, 0.0f))) {
+		if (auto* savedLayout = ImGui::TableSettingsFindByID(ImGui::GetCurrentTable()->ID);
+			savedLayout && savedLayout->ColumnsCount == 2 && savedLayout->GetColumnSettings()[0].IsStretch) {
+			auto* columns = savedLayout->GetColumnSettings();
+			const float totalWeight = columns[0].WidthOrWeight + columns[1].WidthOrWeight;
+			const float widthRatio = totalWeight > 0.0f ? columns[0].WidthOrWeight / totalWeight : ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
+			auto* table = ImGui::GetCurrentTable();
+			const float spacing = table->OuterPaddingX * 2.0f + table->CellPaddingX * 2.0f * table->ColumnsCount +
+			                      (table->CellSpacingX1 + table->CellSpacingX2) * (table->ColumnsCount - 1);
+			columns[0].WidthOrWeight = std::floor(std::max(available.x - spacing, 0.0f) * widthRatio);
+			columns[0].IsStretch = false;
+			savedLayout->RefScale = ImGui::GetFontSize();
+			ImGui::TableLoadSettings(table);
 		}
+		ImGui::TableSetupColumn("##ListOfMenus", ImGuiTableColumnFlags_WidthFixed,
+			available.x * ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO);
+		ImGui::TableSetupColumn("##MenuConfig", ImGuiTableColumnFlags_WidthStretch);
+		if (windowResized)
+			ImGui::TableSetColumnWidth(0, contentWidth);
+		if (sidebar.progress > 0.0f) {
+			RenderLeftColumn(menuList, selectedMenu, featureSearch);
+		} else {
+			ImGui::TableNextColumn();
+		}
+		ImGui::TableNextColumn();
+		const float columnWidth = ImGui::GetCurrentTable()->Columns[0].WidthRequest;
+		if (!windowResized && columnWidth != sidebar.contentWidth)
+			sidebar.widthRatio = columnWidth / available.x;
+		sidebar.contentWidth = columnWidth;
+		sidebar.availableWidth = available.x;
+		sidebar.width = ImGui::GetCursorScreenPos().x - tableOrigin.x;
+		RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
 
 		ImGui::EndTable();
 	}
 
+	if (selectedMenu < menuList.size())
+		selectedMenuId = GetMenuId(menuList[selectedMenu]);
+
 	ImGui::EndChild();
 }
 
+void FeatureListRenderer::RenderEditorColumns(const std::vector<MenuFuncInfo>& menuList, size_t& selectedMenu,
+	std::string& featureSearch, std::string& pendingFeatureSelection, bool resetLayout)
+{
+	if (!ImGui::BeginTable("OSMenuTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner))
+		return;
+	const float sidebarWidth = ThemeManager::Constants::EDITOR_MENU_SIDEBAR_WIDTH * Util::GetUIScale();
+	ImGui::TableSetupColumn("##ListOfMenus", ImGuiTableColumnFlags_WidthFixed, sidebarWidth);
+	ImGui::TableSetupColumn("##MenuConfig", ImGuiTableColumnFlags_WidthStretch);
+	ImGui::TableNextRow();
+	if (resetLayout)
+		ImGui::TableSetColumnWidth(0, sidebarWidth);
+	RenderLeftColumn(menuList, selectedMenu, featureSearch, true);
+	ImGui::TableNextColumn();
+	RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
+	ImGui::EndTable();
+}
+
 std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuList(
-	const std::string& featureSearch,
-	std::map<std::string, bool>& categoryExpansionStates,
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)
 {
@@ -379,75 +553,49 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		return a->GetDisplayName() < b->GetDisplayName();
 	});
 
-	// Filter features by search string
-	if (!featureSearch.empty()) {
-		auto it = std::remove_if(sortedFeatureList.begin(), sortedFeatureList.end(),
-			[&featureSearch](Feature* feat) { return !Util::FeatureMatchesSearch(feat, featureSearch); });
-		sortedFeatureList.erase(it, sortedFeatureList.end());
-	}
-
 	auto menuList = std::vector<MenuFuncInfo>{
 		BuiltInMenu{ T("menu.features.home", "Home"), "Home", []() { HomePageRenderer::RenderHomePage(); } },
 		BuiltInMenu{ T("menu.features.general", "General"), "General", drawGeneralSettings },
 		BuiltInMenu{ T("menu.features.performance", "Performance"), "Performance", []() { PerformanceRenderer::Render(); } },
-		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings },
-		BuiltInMenu{ T("menu.features.profiling", "Profiling"), "Profiling", []() { ProfilingRenderer::RenderStatistics(); } }
-	};  // NOTE: The menu list is rebuilt every frame, so category expansion states
-	// persist correctly. This is acceptable since the list is small and built
-	// infrequently, but could be optimized if performance becomes an issue.
+		BuiltInMenu{ T("menu.features.advanced", "Advanced"), "Advanced", drawAdvancedSettings }
+	};
 
-	// Group features by category
-	std::map<std::string, std::vector<Feature*>> categorizedFeatures;
+	const auto isFavorite = [](Feature* feature) {
+		return feature != &globals::features::csEditor && globals::state->IsFeatureFavorite(feature->GetShortName());
+	};
+
+	menuList.push_back(CategoryHeader{ "Utility" });
+	if (globals::features::csEditor.IsInMenu() && globals::features::csEditor.loaded)
+		menuList.push_back(&globals::features::csEditor);
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded) {
-			std::string category(feat->GetCategory());
-			categorizedFeatures[category].push_back(feat);
-		}
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() == FeatureCategories::kUtility &&
+			feat != &globals::features::csEditor && feat != &globals::features::featureOverwrites && !isFavorite(feat))
+			menuList.push_back(feat);
 	}
-
-	// Sort features within each category
-	for (auto& [category, features] : categorizedFeatures) {
-		std::ranges::sort(features, [](Feature* a, Feature* b) {
-			return a->GetDisplayName() < b->GetDisplayName();
+	if (globals::features::featureOverwrites.loaded && !isFavorite(&globals::features::featureOverwrites)) {
+		const auto utility = std::ranges::find_if(menuList, [](const auto& item) {
+			const auto* feature = std::get_if<Feature*>(&item);
+			return feature && *feature == &globals::features::csUtility;
 		});
+		menuList.insert(utility == menuList.end() ? utility : std::next(utility), &globals::features::featureOverwrites);
 	}
 
-	// Define category order
-	std::vector<std::string> categoryOrder = { "Display", "Utility", "Characters", "Foliage", "Lighting", "Materials", "Post-Processing", "Sky", "Landscape & Textures", "Water", "Other" };
-	// Add categorized features to menu with collapsible headers
-	for (const std::string& category : categoryOrder) {
-		if (categorizedFeatures.find(category) != categorizedFeatures.end() && !categorizedFeatures[category].empty()) {
-			// Initialize expansion state if not exists
-			if (categoryExpansionStates.find(category) == categoryExpansionStates.end()) {
-				categoryExpansionStates[category] = true;  // Default to expanded
-			}
-
-			// Add category header
-			menuList.push_back(CategoryHeader{ category });
-
-			// Add features only if category is expanded
-			if (categoryExpansionStates[category]) {
-				std::ranges::copy(categorizedFeatures[category], std::back_inserter(menuList));
-			}
-		}
+	auto favorites = sortedFeatureList | std::ranges::views::filter([&isFavorite](Feature* feat) {
+		return feat->IsInMenu() && feat->loaded && isFavorite(feat);
+	});
+	const auto favoriteCount = std::ranges::distance(favorites);
+	if (favoriteCount != 0) {
+		menuList.push_back(CategoryHeader{ "Favorites", static_cast<int>(favoriteCount) });
+		std::ranges::copy(favorites, std::back_inserter(menuList));
 	}
 
-	// Add any categories not in the predefined order
-	for (const auto& [category, features] : categorizedFeatures) {
-		if (std::find(categoryOrder.begin(), categoryOrder.end(), category) == categoryOrder.end() && !features.empty()) {
-			// Initialize expansion state if not exists
-			if (categoryExpansionStates.find(category) == categoryExpansionStates.end()) {
-				categoryExpansionStates[category] = true;  // Default to expanded
-			}
-
-			// Add category header
-			menuList.push_back(CategoryHeader{ category });
-
-			// Add features only if category is expanded
-			if (categoryExpansionStates[category]) {
-				std::ranges::copy(features, std::back_inserter(menuList));
-			}
-		}
+	const auto featureCount = std::ranges::count_if(sortedFeatureList, [&isFavorite](Feature* feat) {
+		return feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat);
+	});
+	menuList.push_back(CategoryHeader{ "Features", static_cast<int>(featureCount) });
+	for (Feature* feat : sortedFeatureList) {
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
+			menuList.push_back(feat);
 	}
 
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {
@@ -459,7 +607,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	}
 	// Add top section for feature issues (rejected features, obsolete info, etc.)
 	if (FeatureIssues::HasFeatureIssues()) {
-		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), "", []() {
+		menuList.insert(menuList.begin(), BuiltInMenu{ T("menu.features.feature_issues", "Feature Issues"), "FeatureIssues", []() {
 														  FeatureIssues::DrawFeatureIssuesUI();
 													  } });
 	}
@@ -487,8 +635,6 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 					break;
 				}
 			} else if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				// Built-in pages (e.g. "Performance", "Home") aren't Features and have no
-				// GetShortName(); match on the same canonicalId used by IsCoreMenu() instead.
 				const auto& builtIn = std::get<BuiltInMenu>(menuList[i]);
 				if (!builtIn.canonicalId.empty() && builtIn.canonicalId == pendingFeatureSelection) {
 					selectedMenu = i;
@@ -505,49 +651,32 @@ void FeatureListRenderer::RenderLeftColumn(
 	const std::vector<MenuFuncInfo>& menuList,
 	size_t& selectedMenu,
 	std::string& featureSearch,
-	std::map<std::string, bool>& categoryExpansionStates)
+	bool editorLayout)
 {
 	ImGui::TableNextColumn();
 	// Draw the feature list
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4());
-	if (ImGui::BeginListBox("##MenusList", { -FLT_MIN, -FLT_MIN })) {
-		// Find where core built-in menus end (Home, General, Advanced, Display)
-		size_t coreMenuCount = 0;
-		for (size_t i = 0; i < menuList.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					coreMenuCount++;
-				}
+	const float listWidth = editorLayout ? ImGui::GetCurrentTable()->Columns[0].MaxX - ImGui::GetCursorScreenPos().x : -FLT_MIN;
+	if (ImGui::BeginListBox("##MenusList", { listWidth, -FLT_MIN })) {
+		bool filterFeatures = false;
+		for (size_t i = 0; i < menuList.size(); ++i) {
+			if (const auto* feature = std::get_if<Feature*>(&menuList[i]); editorLayout && feature && *feature == &globals::features::csEditor)
+				continue;
+			if (const auto* feature = std::get_if<Feature*>(&menuList[i]); feature && filterFeatures && !Util::FeatureMatchesSearch(*feature, featureSearch))
+				continue;
+			if (std::holds_alternative<std::string>(menuList[i]) && !featureSearch.empty() &&
+				std::ranges::none_of(menuList, [&featureSearch](const auto& item) {
+					const auto* feature = std::get_if<Feature*>(&item);
+					return feature && !(*feature)->loaded && Util::FeatureMatchesSearch(*feature, featureSearch);
+				}))
+				continue;
+			std::visit(ListMenuVisitor{ i, selectedMenu, editorLayout }, menuList[i]);
+			if (const auto* header = std::get_if<CategoryHeader>(&menuList[i]); header && header->name == "Features") {
+				filterFeatures = true;
+				Util::DrawFeatureSearchBar(featureSearch);
+				ImGui::Spacing();
 			}
-		}
-
-		// First render the core built-in menus (Home, General, Advanced, Display)
-		size_t renderedCoreMenus = 0;
-		for (size_t i = 0; i < menuList.size() && renderedCoreMenus < CORE_MENU_NAMES.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates }, menuList[i]);
-					renderedCoreMenus++;
-				}
-			}
-		}
-
-		// Add Features header and search bar after built-in settings
-		Util::DrawSectionHeader(T("menu.features.features", "Features"), true);
-		Util::DrawFeatureSearchBar(featureSearch);
-
-		// Then render the rest (features and categories, but skip already rendered core menus)
-		for (size_t i = 0; i < menuList.size(); i++) {
-			if (std::holds_alternative<BuiltInMenu>(menuList[i])) {
-				const BuiltInMenu& menu = std::get<BuiltInMenu>(menuList[i]);
-				if (IsCoreMenu(menu.canonicalId)) {
-					continue;  // Skip, already rendered
-				}
-			}
-			std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates }, menuList[i]);
 		}
 
 		ImGui::EndListBox();
@@ -561,8 +690,6 @@ void FeatureListRenderer::RenderRightColumn(
 	size_t selectedMenu,
 	std::string& pendingFeatureSelection)
 {
-	ImGui::TableNextColumn();
-
 	if (selectedMenu < menuList.size()) {
 		std::visit(DrawMenuVisitor{ pendingFeatureSelection }, menuList[selectedMenu]);
 	} else {
@@ -573,21 +700,12 @@ void FeatureListRenderer::RenderRightColumn(
 void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
-
-	// Use error color for Feature Issues menu item
-	bool isFeatureIssues = (menu.name == T("menu.features.feature_issues", "Feature Issues"));
-	if (isFeatureIssues) {
-		auto& themeSettings = globals::menu->GetSettings().Theme;
-		ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
-
-		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
-
-		ImGui::PopStyleColor();
-	} else {
-		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
-	}
+	const auto label = fmt::format(" {} ", menu.name);
+	const ImVec4 textColor = menu.name == T("menu.features.feature_issues", "Feature Issues") ?
+	                             globals::menu->GetSettings().Theme.StatusPalette.Error :
+	                             ImGui::GetStyleColorVec4(ImGuiCol_Text);
+	if (DrawSidebarRow({ .label = label, .textColor = textColor }, selectedMenuRef == listId, editorLayout))
+		selectedMenuRef = listId;
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
@@ -603,20 +721,14 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& header)
 {
-	// Get expansion state from static map
-	bool isExpanded = categoryExpansionStates[header.name];
-
-	// Draw category header with custom styling using util:UI function
-	// Use Heading font for category headers
-	{
-		MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
-		int count = Menu::categoryCounts[std::string(header.name)];
-		const auto categoryLabel = TranslateFeatureCategory(header.name);
-		Util::DrawCategoryHeader(header.name.c_str(), categoryLabel.c_str(), isExpanded, count);
+	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
+	if (header.name == "Utility") {
+		Util::DrawSectionHeader(T("feature.category.utility", "Utilities"), true, false);
+	} else {
+		const bool favorites = header.name == "Favorites";
+		const auto label = std::format("{} ({})", favorites ? T("menu.features.favorites", "Favorites") : T("menu.features.features", "Features"), header.count);
+		Util::DrawSectionHeader(label.c_str(), true, false, nullptr, favorites ? Util::DrawStarIcon : nullptr);
 	}
-
-	// Update expansion state
-	categoryExpansionStates[header.name] = isExpanded;
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
@@ -629,7 +741,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 
 	const auto featureName = feat->GetShortName();
-	bool isDisabled = globals::state->IsFeatureDisabled(featureName);
+	bool isDisabled = !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
 	auto& themeSettings = globals::menu->GetSettings().Theme;
@@ -653,26 +765,26 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		textColor = feat->installed ? themeSettings.StatusPalette.RestartNeeded : themeSettings.StatusPalette.Disable;
 	}
 
-	// Create selectable item with semantic color
-	ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-	if (ImGui::Selectable(fmt::format(" {} ", feat->GetDisplayName()).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns)) {
+	const auto label = fmt::format(" {} ", feat->GetDisplayName());
+	const auto category = feat->GetDisplayCategory();
+	const auto stage = feat->GetReleaseStage();
+	const auto stageTag = Feature::GetReleaseStageTag(stage);
+	std::string version;
+	if (isLoaded && !editorLayout) {
+		version = fmt::format("({})", feat->version);
+		std::replace(version.begin(), version.end(), '-', '.');
+	}
+	const SidebarRow row{
+		.label = label,
+		.textColor = textColor,
+		.icon = feat->GetCategory() != FeatureCategories::kUtility ? Util::GetCategoryIcon(feat->GetCategory()) : nullptr,
+		.category = category,
+		.stageTag = stageTag,
+		.stageColor = StageTagColor(stage),
+		.version = version
+	};
+	if (DrawSidebarRow(row, selectedMenuRef == listId, editorLayout))
 		selectedMenuRef = listId;
-	}
-	ImGui::PopStyleColor();
-
-	// Display the stage marker behind the name, regardless of loaded state
-	if (const auto stage = feat->GetReleaseStage(); stage != Feature::ReleaseStage::Release) {
-		ImGui::SameLine();
-		ImGui::TextColored(StageTagColor(stage), "%s", Feature::GetReleaseStageTag(stage).c_str());
-	}
-
-	// Display version if loaded
-	if (isLoaded) {
-		ImGui::SameLine();
-		std::string formattedVersion = feat->version;
-		std::replace(formattedVersion.begin(), formattedVersion.end(), '-', '.');
-		ImGui::TextDisabled(fmt::format("({})", formattedVersion).c_str());
-	}
 }
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
@@ -710,49 +822,74 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	}
 
 	const auto featureName = feat->GetShortName();
-	bool isDisabled = globals::state->IsFeatureDisabled(featureName);
+	bool isDisabled = !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
-	const bool featureProfilingAvailable = !isDisabled && isLoaded && ProfilingRenderer::IsFeatureProfilingAvailable();
+	const bool featureProfilingAvailable =
+		!isDisabled && isLoaded && ProfilingRenderer::IsFeatureProfilingAvailable(featureName);
 
 	ImGui::PushID(featureName.c_str());
 	const float profilingHeight = ProfilingRenderer::PrepareFeatureTimers(featureName, featureProfilingAvailable);
-	if (!featureProfilingAvailable) {
-		g_featurePageLayouts.erase(featureName);
-		if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true))
-			RenderFeatureMaterial(feat, isDisabled, isLoaded, hasFailedMessage);
-		ImGui::EndChild();
-		ImGui::PopID();
-		RenderReactiveConstraintWarningDialog();
-		return;
-	}
+	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true,
+			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+		auto* sceneManager = globals::sceneSettingsManager;
+		const bool sceneControlled = sceneManager->HasActiveSettingsForFeature(featureName) &&
+		                             !sceneManager->IsFeaturePaused(featureName);
+		const bool canEditSceneSettings = SceneManagerUI::CanEditFeaturePage(feat);
+		const auto featureActionsLayout = RenderFeatureHeader(
+			feat, isDisabled, isLoaded, canEditSceneSettings);
+		RenderFeatureActions(feat, isDisabled, isLoaded, sceneControlled,
+			canEditSceneSettings, featureActionsLayout);
+		SceneManagerUI::DrawFeaturePageControls(feat, !isDisabled && isLoaded);
+		const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat) &&
+		                          sceneManager->IsFeatureSceneEditing(featureName);
+		const float pageViewportHeight = std::max(ImGui::GetContentRegionAvail().y, 0.0f);
 
-	auto& pageLayout = g_featurePageLayouts[featureName];
-	const float pageViewportHeight = std::max(
-		ImGui::GetContentRegionAvail().y - ImGui::GetStyle().WindowPadding.y * 2.0f,
-		0.0f);
-	const float predictedProfilingStart = std::max(pageLayout.materialHeight, pageViewportHeight - profilingHeight);
-	const float predictedContentHeight = predictedProfilingStart + profilingHeight;
-	const float contentHeightDelta = predictedContentHeight - pageLayout.contentHeight;
-	const bool profilingWasAtBottom = pageLayout.scrollMaxY <= FEATURE_PAGE_BOTTOM_TOLERANCE ||
-	                                  pageLayout.scrollY >= pageLayout.scrollMaxY - FEATURE_PAGE_BOTTOM_TOLERANCE;
+		if (!featureProfilingAvailable) {
+			g_featurePageLayouts.erase(featureName);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+			const bool settingsVisible = ImGui::BeginChild("##FeatureSettingsScroll", { 0, 0 }, false);
+			ImGui::PopStyleVar();
+			if (settingsVisible)
+				RenderFeatureMaterial(feat, isDisabled, isLoaded, hasFailedMessage,
+					sceneControlled, sceneEditing);
+			ImGui::EndChild();
+		} else {
+			auto& pageLayout = g_featurePageLayouts[featureName];
+			const float predictedProfilingStart = std::max(
+				pageLayout.materialHeight, pageViewportHeight - profilingHeight);
+			const float predictedContentHeight = predictedProfilingStart + profilingHeight;
+			const float contentHeightDelta = predictedContentHeight - pageLayout.contentHeight;
+			const bool profilingWasAtBottom =
+				pageLayout.scrollMaxY <= FEATURE_PAGE_BOTTOM_TOLERANCE ||
+				pageLayout.scrollY >= pageLayout.scrollMaxY - FEATURE_PAGE_BOTTOM_TOLERANCE;
 
-	ImGui::SetNextWindowContentSize(ImVec2(0.0f, predictedContentHeight));
-	if (pageLayout.measured && profilingWasAtBottom && std::abs(contentHeightDelta) >= FEATURE_PAGE_LAYOUT_EPSILON)
-		ImGui::SetNextWindowScroll(ImVec2(-1.0f, std::max(pageLayout.scrollY + contentHeightDelta, 0.0f)));
+			ImGui::SetNextWindowContentSize(ImVec2(0.0f, predictedContentHeight));
+			if (pageLayout.measured && profilingWasAtBottom &&
+				std::abs(contentHeightDelta) >= FEATURE_PAGE_LAYOUT_EPSILON)
+				ImGui::SetNextWindowScroll(
+					ImVec2(-1.0f, std::max(pageLayout.scrollY + contentHeightDelta, 0.0f)));
 
-	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
-		const float materialStartY = ImGui::GetCursorPosY();
-		const float materialHeight = RenderFeatureMaterial(feat, isDisabled, isLoaded, hasFailedMessage);
-		const float profilingStart = std::max(materialHeight, pageViewportHeight - profilingHeight);
-		ImGui::SetCursorPosY(materialStartY + profilingStart);
-		ProfilingRenderer::RenderFeatureTimers(featureName);
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+			const bool settingsVisible = ImGui::BeginChild("##FeatureSettingsScroll", { 0, 0 }, false);
+			ImGui::PopStyleVar();
+			if (settingsVisible) {
+				const float materialStartY = ImGui::GetCursorPosY();
+				const float materialHeight = RenderFeatureMaterial(feat, isDisabled, isLoaded,
+					hasFailedMessage, sceneControlled, sceneEditing);
+				const float profilingStart = std::max(
+					materialHeight, pageViewportHeight - profilingHeight);
+				ImGui::SetCursorPosY(materialStartY + profilingStart);
+				ProfilingRenderer::RenderFeatureTimers(featureName);
 
-		pageLayout.measured = true;
-		pageLayout.materialHeight = materialHeight;
-		pageLayout.contentHeight = profilingStart + profilingHeight;
-		pageLayout.scrollY = ImGui::GetScrollY();
-		pageLayout.scrollMaxY = ImGui::GetScrollMaxY();
+				pageLayout.measured = true;
+				pageLayout.materialHeight = materialHeight;
+				pageLayout.contentHeight = profilingStart + profilingHeight;
+				pageLayout.scrollY = ImGui::GetScrollY();
+				pageLayout.scrollMaxY = ImGui::GetScrollMaxY();
+			}
+			ImGui::EndChild();
+		}
 	}
 	ImGui::EndChild();
 	ImGui::PopID();
@@ -760,20 +897,22 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	RenderReactiveConstraintWarningDialog();
 }
 
-float FeatureListRenderer::DrawMenuVisitor::RenderFeatureMaterial(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage)
+float FeatureListRenderer::DrawMenuVisitor::RenderFeatureMaterial(Feature* feat,
+	bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled,
+	bool sceneEditing)
 {
 	const float materialStartY = ImGui::GetCursorPosY();
-	auto* sceneManager = globals::sceneSettingsManager;
-	const auto featureName = feat->GetShortName();
-	const bool sceneControlled = sceneManager->HasActiveSettingsForFeature(featureName) && !sceneManager->IsFeaturePaused(featureName);
-	const auto featureActionsLayout = RenderFeatureHeader(feat, isLoaded);
-	RenderFeatureSettings(feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled);
-	RenderFeatureActions(feat, isDisabled, isLoaded, sceneControlled, featureActionsLayout);
+	RenderFeatureSettings(
+		feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled, sceneEditing);
 	return std::max(ImGui::GetCursorPosY() - materialStartY, 0.0f);
 }
 
-FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bool isLoaded)
+FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(
+	Feature* feat, bool isDisabled, bool isLoaded, bool canEditSceneSettings)
 {
+	const auto featureName = feat->GetShortName();
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
+	const bool hasOverrides = feat->UsesMainSettings() && overrideManager && overrideManager->HasFeatureOverrides(featureName);
 	// Get available content width for positioning
 	float availableWidth = ImGui::GetContentRegionAvail().x;
 
@@ -788,16 +927,19 @@ FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::
 	// Returns title-only height for button alignment
 	const auto stage = feat->GetReleaseStage();
 	const std::string stageTag = Feature::GetReleaseStageTag(stage);  // empty for Release; color unused when tag is empty
-	const float actionsButtonSize = ImGui::GetFrameHeight() * FEATURE_ACTION_BUTTON_SCALE;
+	const bool canRestoreDefaults = !isDisabled && isLoaded && feat->HasRestoreDefaults();
+	const bool canApplyOverrides = !isDisabled && isLoaded && hasOverrides;
+	const bool hasFeatureActions = !feat->IsAlwaysEnabled() || canRestoreDefaults ||
+	                               canApplyOverrides || canEditSceneSettings;
+	const float actionsButtonSize = hasFeatureActions ? ImGui::GetFrameHeight() * FEATURE_ACTION_BUTTON_SCALE : 0.0f;
 	const float titleOnlyHeight = DrawFeatureHeader(
 		feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, StageTagColor(stage), actionsButtonSize);
 
 	// Position the action button to the right of the header, middle-aligned with title only
-	// Calculate Y position to middle-align the button with title text only (not description)
 	const float buttonY = titleStartPos.y + (titleOnlyHeight - actionsButtonSize) * 0.5f;
 	const FeatureActionsLayout actionsLayout{
 		titleStartPos.x + availableWidth - actionsButtonSize,
-		buttonY + ImGui::GetScrollY(),
+		buttonY,
 		actionsButtonSize
 	};
 
@@ -809,14 +951,31 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	bool isDisabled,
 	bool isLoaded,
 	bool sceneControlled,
+	bool canEditSceneSettings,
 	const FeatureActionsLayout& layout)
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 	const auto featureName = feat->GetShortName();
-	auto overrideManager = SettingsOverrideManager::GetSingleton();
-	bool hasOverrides = overrideManager && overrideManager->HasFeatureOverrides(featureName);
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
+	const bool hasOverrides = feat->UsesMainSettings() && overrideManager && overrideManager->HasFeatureOverrides(featureName);
+	const bool canRestoreDefaults = !isDisabled && isLoaded && feat->HasRestoreDefaults();
+	const bool canApplyOverrides = !isDisabled && isLoaded && hasOverrides;
+	const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat);
+	if (layout.size <= 0.0f) {
+		if (g_featureActionsFlyoutFeature == featureName) {
+			Util::CloseFlyout(g_featureActionsFlyout);
+			g_featureActionsFlyoutFeature.clear();
+		}
+		return;
+	}
 
 	const ImVec2 cursorPosAfterSettings = ImGui::GetCursorScreenPos();
+	const SKSE::stl::scope_exit restoreCursor([cursorPosAfterSettings]() noexcept {
+		ImGui::SetCursorScreenPos(cursorPosAfterSettings);
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+		const SKSE::stl::scope_exit restoreSpacing([]() noexcept { ImGui::PopStyleVar(); });
+		ImGui::Dummy(ImVec2(0.0f, 0.0f));
+	});
 	ImGui::SetCursorScreenPos(ImVec2(layout.x, layout.y));
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 	const bool overlayVisible = ImGui::BeginChild(
@@ -827,16 +986,15 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	ImGui::PopStyleVar();
 	if (!overlayVisible) {
 		ImGui::EndChild();
-		ImGui::SetCursorScreenPos(cursorPosAfterSettings);
-		ImGui::Dummy(ImVec2(0.0f, 0.0f));
 		return;
 	}
 
-	// Feature actions dropdown
 	bool bootEnabled = !isDisabled;
 	if (g_featureActionsFlyoutFeature != featureName) {
 		Util::CloseFlyout(g_featureActionsFlyout);
 		g_featureActionsFlyoutFeature = featureName;
+		g_featurePreferenceSaveFailed = false;
+		g_featureActionsIconProgress = 0.0f;
 	}
 
 	ImGui::PushID(featureName.c_str());
@@ -845,16 +1003,20 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	const ImVec2 actionsButtonMin = ImGui::GetItemRectMin();
 	const ImVec2 actionsButtonMax = ImGui::GetItemRectMax();
 	auto* actionsButtonDrawList = ImGui::GetWindowDrawList();
-	float arrowProgress = 0.0f;
 	{
-		Util::FlyoutScope flyout(g_featureActionsFlyout, actionsButtonId, actionsButtonPressed);
-		arrowProgress = g_featureActionsFlyout.activeId == actionsButtonId ?
-		                    Util::GetFlyoutEasedProgress(g_featureActionsFlyout) :
-		                    0.0f;
-
+		const auto& style = ImGui::GetStyle();
+		const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
+		const ImVec2 flyoutPadding(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
+		Util::FlyoutScope flyout(
+			g_featureActionsFlyout, actionsButtonId, actionsButtonPressed,
+			{ .windowPadding = flyoutPadding,
+				.windowRounding = style.WindowRounding,
+				.windowBackgroundAlpha = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w,
+				.contentAlpha = style.Alpha,
+				.blurBackground = true });
 		if (flyout) {
 			bool closeFlyout = false;
-			{
+			if (!feat->IsAlwaysEnabled()) {
 				const bool failedToLoad = !feat->failedLoadedMessage.empty();
 				if (failedToLoad)
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
@@ -869,47 +1031,74 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 						true,
 						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
 					const bool nowDisabled = feat->ToggleAtBootSetting();
+					g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
 					bootEnabled = !nowDisabled;
-					logger::info("{}: {} at boot.", featureName, nowDisabled ? "Disabled" : "Enabled");
-				}
-			}
-
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text(
-					T("menu.features.boot_toggle_tooltip",
-						"Toggle feature loading at boot.\n"
-						"Current state: %s\n"
-						"Restart required for changes to take effect.\n"
-						"Disabling removes performance impact."),
-					bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
-			}
-
-			if (!isDisabled && isLoaded) {
-				ImGui::Separator();
-				if (Util::FlyoutMenuItem(
-						feat->HasScopedDefaultSettings() ?
-							T("menu.features.restore_page_defaults", "Restore Defaults (Page)") :
-							T("menu.features.restore_defaults", "Restore Defaults"))) {
-					feat->RestoreCurrentPageDefaultSettings();
-					closeFlyout = true;
 				}
 
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text(
-						"%s",
-						feat->HasScopedDefaultSettings() ?
-							T("menu.features.restore_page_defaults_tooltip", "Restore default settings for this page") :
-							T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
+						T("menu.features.boot_toggle_tooltip",
+							"Toggle feature loading at boot.\n"
+							"Current state: %s\n"
+							"Restart required for changes to take effect.\n"
+							"Disabling removes performance impact."),
+						bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
+				}
+			}
+
+			const bool favorite = globals::state->IsFeatureFavorite(featureName);
+			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
+				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+
+			if (canEditSceneSettings) {
+				if (Util::FlyoutMenuItem(
+						T("feature.scene_manager.name", "Scene Manager"),
+						sceneEditing,
+						!isDisabled && isLoaded,
+						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
+					if (sceneEditing)
+						SceneManagerUI::HideFeaturePageEditing();
+					else
+						SceneManagerUI::BeginFeaturePageEditing(feat);
+					closeFlyout = true;
+				}
+			}
+			if (g_featurePreferenceSaveFailed)
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
+
+			if (canRestoreDefaults || canApplyOverrides) {
+				ImGui::Separator();
+				if (canRestoreDefaults) {
+					ImGui::BeginDisabled(sceneEditing);
+					if (Util::FlyoutMenuItem(
+							feat->HasScopedDefaultSettings() ?
+								T("menu.features.restore_page_defaults", "Restore Defaults (Page)") :
+								T("menu.features.restore_defaults", "Restore Defaults"))) {
+						SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+						feat->RestoreCurrentPageDefaultSettings();
+						closeFlyout = true;
+					}
+					ImGui::EndDisabled();
+
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text(
+							"%s",
+							feat->HasScopedDefaultSettings() ?
+								T("menu.features.restore_page_defaults_tooltip", "Restore default settings for this page") :
+								T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
+					}
 				}
 
-				if (hasOverrides) {
+				if (canApplyOverrides) {
 					if (Util::FlyoutMenuItem(
 							feat->HasScopedOverrideSettings() ?
 								T("menu.features.apply_page_override", "Apply Override (Page)") :
 								T("menu.features.apply_override", "Apply Override"),
-							false,
-							!sceneControlled)) {
+							std::nullopt,
+							!sceneControlled && !sceneEditing)) {
 						closeFlyout = true;
+						SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 						if (feat->ReapplyCurrentPageOverrideSettings()) {
 							logger::info("Successfully reapplied override settings for {}", featureName);
 						} else {
@@ -946,14 +1135,23 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		}
 	}
 
-	Util::DrawDisclosureChevron(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, arrowProgress);
+	const bool actionsIconActive = g_featureActionsFlyout.activeId == actionsButtonId &&
+	                               g_featureActionsFlyout.isOpen && !g_featureActionsFlyout.closing;
+	const float iconTargetProgress = actionsIconActive ? 1.0f : 0.0f;
+	const float iconDeltaTime = std::min(ImGui::GetIO().DeltaTime, FEATURE_ACTION_ICON_MAX_DELTA_TIME);
+	const float iconDistance = iconTargetProgress - g_featureActionsIconProgress;
+	const float iconSpeed = FEATURE_ACTION_ICON_RESPONSE_SPEED + FEATURE_ACTION_ICON_START_BOOST * iconDistance * iconDistance;
+	const float iconResponse = 1.0f - std::exp(-iconSpeed * iconDeltaTime);
+	const float iconStep = (std::abs(iconDistance) + FEATURE_ACTION_ICON_FINISH_BIAS) * iconResponse;
+	g_featureActionsIconProgress += std::clamp(iconDistance, -iconStep, iconStep);
+	DrawFeatureActionsIcon(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, g_featureActionsIconProgress);
 	ImGui::PopID();
 	ImGui::EndChild();
-	ImGui::SetCursorScreenPos(cursorPosAfterSettings);
-	ImGui::Dummy(ImVec2(0.0f, 0.0f));
 }
 
-void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled)
+void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
+	bool isDisabled, bool isLoaded, bool hasFailedMessage, bool sceneControlled,
+	bool sceneEditing)
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 
@@ -963,53 +1161,47 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		ImGui::Text("%s", T("menu.features.enable_to_access_config", "Enable the feature above to access its configuration options."));
 	} else {
 		if (isLoaded) {
-			auto weatherRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();
-			if (weatherRegistry->HasWeatherSupport(feat->GetShortName())) {
-				bool paused = weatherRegistry->IsFeaturePaused(feat->GetShortName());
-				if (ImGui::Checkbox(T("menu.features.pause_weather_overrides", "Pause Weather Overrides"), &paused)) {
-					weatherRegistry->SetFeaturePaused(feat->GetShortName(), paused);
-				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text(
-						"%s",
-						T("menu.features.pause_weather_tooltip",
-							"Temporarily disable weather-based setting adjustments for this feature.\n"
-							"This state is not saved."));
-				}
-				ImGui::Separator();
-			}
-
-			// Scene-specific settings toggle (Interior Only / TimeOfDay / Weather-Specific)
-			// Show toggle whenever scene entries exist for this feature, even if feature-paused
-			{
+			if (!sceneEditing) {
 				const auto& featureShortName = feat->GetShortName();
 				auto* sceneMgr = globals::sceneSettingsManager;
 				bool scenePaused = sceneMgr->IsFeaturePaused(featureShortName);
-				if (sceneControlled || scenePaused) {
+				if (sceneMgr->HasCurrentSceneSettingsForFeature(featureShortName)) {
+					const auto rowStart = ImGui::GetCursorScreenPos();
+					const float rowHeight = ImGui::GetFrameHeight();
+					const ImVec2 toggleSize(rowHeight * 1.6f, rowHeight * 0.8f);
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + (rowHeight - toggleSize.y) * 0.5f));
 					bool active = !scenePaused;
-					if (Util::FeatureToggle("##PauseSceneSettings", &active))
+					if (Util::FeatureToggle("##PauseSceneSettings", &active, toggleSize)) {
 						sceneMgr->SetFeaturePaused(featureShortName, !active);
-					ImGui::SameLine();
-					ImGui::Text("%s", T("menu.features.scene_specific_settings", "Scene Specific Settings"));
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::Text("%s", T(scenePaused ? "menu.features.scene_paused_tooltip" : "menu.features.scene_active_tooltip",
-											  scenePaused ? "Paused - click to resume" : "Active - click to pause"));
+						scenePaused = !active;
+						sceneControlled = sceneMgr->HasActiveSettingsForFeature(featureShortName) && !scenePaused;
 					}
+					const auto toggleMaximum = ImGui::GetItemRectMax();
+					const ImVec2 labelPosition(toggleMaximum.x + ImGui::GetStyle().ItemSpacing.x,
+						rowStart.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f);
+					ImGui::GetWindowDrawList()->AddText(labelPosition, ImGui::GetColorU32(ImGuiCol_Text),
+						T("menu.features.scene_specific_settings", "Scene Specific Settings"));
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						const auto* tooltip = scenePaused ?
+						                          T("menu.features.scene_paused_tooltip", "Paused - click to resume") :
+						                          T("menu.features.scene_active_tooltip", "Active - click to pause");
+						ImGui::Text("%s", tooltip);
+					}
+					ImGui::SetCursorScreenPos(ImVec2(rowStart.x,
+						rowStart.y + rowHeight + ImGui::GetStyle().ItemSpacing.y));
 					ImGui::Separator();
 				}
 			}
 
-			// Disable feature settings while scene overrides are actively applied (not paused)
-			if (sceneControlled)
-				ImGui::BeginDisabled();
-
 			ImVec2 cursorPosBefore = ImGui::GetCursorPos();
-			feat->DrawSettings();
+			{
+				SceneSettingsUIHooks::FeatureDrawGuard featureDrawGuard(
+					feat, sceneControlled, sceneEditing);
+				feat->DrawSettings();
+			}
 
 			ImVec2 cursorPosAfter = ImGui::GetCursorPos();
-
-			if (sceneControlled)
-				ImGui::EndDisabled();
 
 			// --- Reactive constraint detection ---
 			// Compare the current full constraint set against g_knownConstraintKeys.
@@ -1085,7 +1277,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 	if (hasFailedMessage && feat->DrawFailLoadMessage() && !FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 		ImGui::Spacing();
 		SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
-		ImGui::TextColored(themeSettings.StatusPalette.Error, feat->failedLoadedMessage.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", feat->failedLoadedMessage.c_str());
 	}
 }
 

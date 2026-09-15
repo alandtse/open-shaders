@@ -5,9 +5,9 @@
 #include "Features/HDRDisplay.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
-#include "InteriorOnlyPanel.h"
 #include "Menu.h"
 #include "Menu/BackgroundBlur.h"
+#include "Menu/MenuHeaderRenderer.h"
 #include "PaletteWindow.h"
 #include "State.h"
 #include "Utils/Game.h"
@@ -144,6 +144,52 @@ namespace
 
 	constexpr int kFilterColumnCount = 5;
 
+	bool BeginEditorMenuBar()
+	{
+		auto& context = *ImGui::GetCurrentContext();
+		auto* viewport = static_cast<ImGuiViewportP*>(ImGui::GetMainViewport());
+		ImGui::SetCurrentViewport(nullptr, viewport);
+		const auto& style = ImGui::GetStyle();
+		const float border = style.WindowBorderSize;
+		const float safeAreaY = std::max(style.DisplaySafeAreaPadding.y - style.FramePadding.y, 0.0f);
+		const float height = ImGui::GetFrameHeight() + safeAreaY + border * 2.0f;
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(
+			std::max({ style.WindowPadding.x, style.ItemSpacing.x, style.DisplaySafeAreaPadding.x }) + border,
+			safeAreaY + border * 2.0f);
+
+		bool visible;
+		{
+			ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+			const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+			visible = ImGui::BeginViewportSideBar("##MainMenuBar", viewport, ImGuiDir_Up, height,
+				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar);
+		}
+		context.NextWindowData.MenuBarOffsetMinVal = ImVec2(0.0f, 0.0f);
+		if (!visible) {
+			ImGui::End();
+			return false;
+		}
+
+		auto* window = ImGui::GetCurrentWindow();
+		window->Flags &= ~ImGuiWindowFlags_NoSavedSettings;
+		window->DC.MenuBarOffset.y = safeAreaY + border;
+		ImGui::BeginMenuBar();
+		const ImRect outer = window->Rect();
+		ImRect inner = outer;
+		inner.Expand(-border);
+		if (border > 0.0f) {
+			const ImU32 color = ImGui::GetColorU32(ImGuiCol_Border);
+			auto* drawList = window->DrawList;
+			drawList->AddRectFilled(outer.Min, ImVec2(outer.Max.x, inner.Min.y), color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Max.y), outer.Max, color);
+			drawList->AddRectFilled(ImVec2(outer.Min.x, inner.Min.y), ImVec2(inner.Min.x, inner.Max.y), color);
+			drawList->AddRectFilled(ImVec2(inner.Max.x, inner.Min.y), ImVec2(outer.Max.x, inner.Max.y), color);
+		}
+		ImGui::PushClipRect(inner.Min, inner.Max, true);
+		return true;
+	}
+
 	// The editor can draw before globals are cached, so both fall back to the singleton.
 	RE::Calendar* GetCalendar()
 	{
@@ -214,9 +260,125 @@ std::string EditorWindow::ResolveEditorId(RE::TESForm* form, const WidgetVec& wi
 	return editorid ? editorid : std::format("0x{:08X}", form->GetFormID());
 }
 
+void EditorWindow::DrawBrowserHeader()
+{
+	auto* window = ImGui::GetCurrentWindow();
+	if (window->Hidden)
+		return;
+	const auto& style = ImGui::GetStyle();
+	const bool titleBar = !window->DockIsActive && window->TitleBarHeight > 0.0f;
+	const float headerInset = std::max(style.WindowPadding.x, window->WindowRounding + window->WindowBorderSize);
+	const bool savedSkipItems = window->SkipItems;
+	const auto savedNavLayer = window->DC.NavLayerCurrent;
+	const ImVec2 savedCursorMax = window->DC.CursorMaxPos;
+	const ImVec2 savedIdealMax = window->DC.IdealMaxPos;
+	if (titleBar) {
+		window->SkipItems = false;
+		ImGui::BeginGroup();
+		ImRect clip = window->TitleBarRect();
+		clip.Expand(-window->WindowBorderSize);
+		ImGui::PushClipRect(clip.Min, clip.Max, false);
+		window->DC.NavLayerCurrent = ImGuiNavLayer_Menu;
+		ImGui::SetCursorScreenPos({ window->Pos.x + style.FramePadding.x + window->WindowBorderSize, window->Pos.y + (window->TitleBarHeight - ImGui::GetFrameHeight()) * 0.5f });
+	} else {
+		window->DC.MenuBarOffset.y = (window->MenuBarRect().GetHeight() - ImGui::GetFrameHeight()) * 0.5f;
+		if (!ImGui::BeginMenuBar())
+			return;
+	}
+	const SKSE::stl::scope_exit restoreHeader([&]() noexcept {
+		if (titleBar) {
+			ImGui::PopClipRect();
+			ImGui::GetCurrentContext()->GroupStack.back().EmitItem = false;
+			ImGui::EndGroup();
+			window->DC.CursorMaxPos = savedCursorMax;
+			window->DC.IdealMaxPos = savedIdealMax;
+			window->DC.NavLayerCurrent = savedNavLayer;
+			window->SkipItems = savedSkipItems;
+		} else {
+			ImGui::EndMenuBar();
+		}
+	});
+
+	const auto buttonStyle = Util::TransparentIconButtonStyle();
+	if (titleBar) {
+		const float buttonSize = ImGui::GetFrameHeight();
+		if (ImGui::Button("##BrowserCollapse", { buttonSize, buttonSize }))
+			window->WantCollapseToggle = true;
+		const ImVec2 buttonMin = ImGui::GetItemRectMin();
+		const float iconSize = buttonSize * ThemeManager::Constants::EDITOR_BROWSER_CHEVRON_SCALE;
+		ImGui::RenderArrow(window->DrawList, { buttonMin.x + (buttonSize - ImGui::GetFontSize()) * 0.5f, buttonMin.y + (buttonSize - iconSize) * 0.5f },
+			ImGui::GetColorU32(ImGuiCol_Text), window->Collapsed ? ImGuiDir_Right : ImGuiDir_Down, iconSize / ImGui::GetFontSize());
+		ImGui::SameLine();
+	}
+	const auto drawMode = [&](const char* label, BrowserMode mode) {
+		ImGui::PushStyleColor(ImGuiCol_Button, browserMode == mode ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4());
+		const SKSE::stl::scope_exit restoreColor([]() noexcept { ImGui::PopStyleColor(); });
+		if (ImGui::Button(label)) {
+			browserMode = mode;
+			ImGui::SetWindowCollapsed(false);
+		}
+	};
+	drawMode(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), BrowserMode::Editor);
+	ImGui::SameLine();
+	drawMode(T(TKEY("os_menu"), "OS Menu"), BrowserMode::Menu);
+	if (browserMode == BrowserMode::Menu) {
+		const auto& icons = globals::menu->uiIcons;
+		ImGui::SameLine();
+		const float right = std::min(window->Pos.x + window->Size.x - headerInset, window->ClipRect.Max.x - window->WindowBorderSize);
+		const float actionsX = right - window->Pos.x - MenuHeaderRenderer::GetCompactActionsWidth(icons);
+		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), actionsX));
+		MenuHeaderRenderer::RenderCompactActions(icons);
+	}
+}
+
 void EditorWindow::ShowObjectsWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), nullptr);
+	if (resetLayout) {
+		resetBrowserSidebar = true;
+		resetMenuSidebar = true;
+	}
+	const int requestedMode = pendingBrowserMode.exchange(-1, std::memory_order_relaxed);
+	if (requestedMode != -1)
+		browserMode = static_cast<BrowserMode>(requestedMode);
+
+	const auto& headerStyle = ImGui::GetStyle();
+	const float modeButtonsWidth = ImGui::CalcTextSize(T(TKEY("weather_lighting_browser"), "OS Editor Browser")).x +
+	                               ImGui::CalcTextSize(T(TKEY("os_menu"), "OS Menu")).x + headerStyle.FramePadding.x * 4.0f;
+	const float headerInset = std::max(headerStyle.WindowPadding.x, headerStyle.WindowRounding + headerStyle.WindowBorderSize);
+	const float minWidth = ImGui::GetFrameHeight() + modeButtonsWidth + MenuHeaderRenderer::GetCompactActionsWidth(globals::menu->uiIcons) +
+	                       headerStyle.ItemSpacing.x * 4.0f + headerInset * 2.0f;
+	ImGui::SetNextWindowSizeConstraints({ minWidth, headerStyle.WindowMinSize.y }, { FLT_MAX, FLT_MAX });
+	constexpr auto windowId = "###OS Editor Browser";
+	const auto* previousWindow = ImGui::FindWindowByName(windowId);
+	const auto* dockNode = previousWindow ? previousWindow->DockNode : nullptr;
+	const bool docked = dockNode && dockNode->HostWindow;
+	const auto title = std::format("{}{}", docked ? T(TKEY("weather_lighting_browser"), "OS Editor Browser") : "", windowId);
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+	if (docked)
+		flags |= ImGuiWindowFlags_MenuBar;
+	bool visible;
+	{
+		const auto menuButtonPosition = headerStyle.WindowMenuButtonPosition;
+		ImGui::GetStyle().WindowMenuButtonPosition = ImGuiDir_None;
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(headerStyle.FramePadding.x,
+															headerStyle.FramePadding.y + ThemeManager::Constants::EDITOR_BROWSER_HEADER_PADDING * Util::GetUIScale()));
+		const SKSE::stl::scope_exit restorePadding([menuButtonPosition]() noexcept {
+			ImGui::PopStyleVar();
+			ImGui::GetStyle().WindowMenuButtonPosition = menuButtonPosition;
+		});
+		visible = Util::BeginWithRoundedClose(title.c_str(), nullptr, flags);
+	}
+	DrawBrowserHeader();
+	if (!visible) {
+		ImGui::End();
+		return;
+	}
+	if (browserMode == BrowserMode::Menu) {
+		globals::menu->DrawEditorSettings(resetMenuSidebar);
+		resetMenuSidebar = false;
+		ImGui::End();
+		return;
+	}
 
 	// Reset filter state when the user switches categories so stale column
 	// selections (e.g. Status) don't hide all items in the new category.
@@ -228,14 +390,16 @@ void EditorWindow::ShowObjectsWindow()
 	// Create a table with two columns
 	if (ImGui::BeginTable("ObjectTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner)) {
 		// Fixed categories column, objects column fills remaining width
-		const float categoriesWidth = 180.0f * Util::GetUIScale();
+		const float categoriesWidth = ThemeManager::Constants::EDITOR_BROWSER_SIDEBAR_WIDTH * Util::GetUIScale();
 		ImGui::TableSetupColumn(T(TKEY("categories"), "Categories"), ImGuiTableColumnFlags_WidthFixed, categoriesWidth);
 		ImGui::TableSetupColumn(T(TKEY("objects"), "Objects"), ImGuiTableColumnFlags_WidthStretch);
 
 		ImGui::TableNextRow();
 
-		if (resetLayout)
+		if (resetBrowserSidebar) {
 			ImGui::TableSetColumnWidth(0, categoriesWidth);
+			resetBrowserSidebar = false;
+		}
 
 		// Left column: Categories
 		ImGui::TableSetColumnIndex(0);
@@ -262,7 +426,6 @@ void EditorWindow::ShowObjectsWindow()
 				{ "Shader Particle Geometry", T(TKEY("category_shader_particle"), "Shader Particle Geometry") },
 				{ "Lens Flare", T(TKEY("category_lens_flare"), "Lens Flare") },
 				{ "Visual Effect", T(TKEY("category_visual_effect"), "Visual Effect") },
-				{ "Interior Only", T(TKEY("category_interior_only"), "Interior Only") },
 				{ "Light Editor", T(TKEY("category_lighting_editor"), "Light Editor") }
 			};
 			for (int i = 0; i < IM_ARRAYSIZE(categories); ++i) {
@@ -280,15 +443,6 @@ void EditorWindow::ShowObjectsWindow()
 		ImGui::TableSetColumnIndex(1);
 
 		if (ImGui::BeginChild("##ObjectsContent", { 0, 0 }, ImGuiChildFlags_Borders, kStickyHeaderFlags)) {
-			// Interior Only category has its own panel
-			if (m_selectedCategory == "Interior Only") {
-				InteriorOnlyPanel::Draw();
-				ImGui::EndChild();
-				ImGui::EndTable();
-				ImGui::End();
-				return;
-			}
-
 			if (m_selectedCategory == "Light Editor") {
 				BeginScrollableContent("##LightEditorScroll");
 				lightEditor.DrawSettings();
@@ -354,7 +508,7 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				auto addTOD = [&](auto*(&fields)[RE::TESWeather::ColorTimes::kTotal], const WidgetVec& widgets) {
-					for (int tod = 0; tod < RE::TESWeather::ColorTimes::kTotal; ++tod) {
+					for (int tod = 0; tod < static_cast<int>(RE::TESWeather::ColorTimes::kTotal); ++tod) {
 						auto* form = fields[tod];
 						if (!form)
 							continue;
@@ -767,7 +921,7 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				// Filtered display of widgets
-				for (int i = 0; i < sortedWidgets.size(); ++i) {
+				for (size_t i = 0; i < sortedWidgets.size(); ++i) {
 					if (!shouldShowWidget(sortedWidgets[i]))
 						continue;
 
@@ -862,11 +1016,11 @@ void EditorWindow::ShowObjectsWindow()
 
 					// Form ID column
 					ImGui::TableNextColumn();
-					ImGui::Text(sortedWidgets[i]->GetFormID().c_str());
+					ImGui::TextUnformatted(sortedWidgets[i]->GetFormID().c_str());
 
 					// File column
 					ImGui::TableNextColumn();
-					ImGui::Text(sortedWidgets[i]->GetFilename().c_str());
+					ImGui::TextUnformatted(sortedWidgets[i]->GetFilename().c_str());
 
 					// Status column
 					ImGui::TableNextColumn();
@@ -910,37 +1064,149 @@ void EditorWindow::ShowObjectsWindow()
 	ImGui::End();
 }
 
+static ImVec2 GetViewportBorderInsets()
+{
+	const auto& style = ImGui::GetStyle();
+	return ImVec2(
+		style.WindowBorderSize > 0.0f ? std::ceil((style.WindowBorderSize + 1.0f) * 0.5f) : 0.0f,
+		std::max(0.0f, std::ceil((style.FrameBorderSize - 1.0f) * 0.5f)));
+}
+
 void EditorWindow::ShowViewportWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("viewport"), "Viewport"), nullptr, ImGuiWindowFlags_NoFocusOnAppearing);
+	const ImU32 borderHoveredColor = ImGui::GetColorU32(ImGuiCol_SeparatorHovered);
+	const ImU32 borderActiveColor = ImGui::GetColorU32(ImGuiCol_SeparatorActive);
+	const ImU32 gripHoveredColor = ImGui::GetColorU32(ImGuiCol_ResizeGripHovered);
+	const ImU32 gripActiveColor = ImGui::GetColorU32(ImGuiCol_ResizeGripActive);
+	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+	ImGui::PushStyleVar(ImGuiStyleVar_ImageBorderSize, 0.0f);
+	ImGui::PushStyleColor(ImGuiCol_ResizeGrip, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripHovered, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_ResizeGripActive, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_SeparatorHovered, IM_COL32(0, 0, 0, 0));
+	ImGui::PushStyleColor(ImGuiCol_SeparatorActive, IM_COL32(0, 0, 0, 0));
+	const SKSE::stl::scope_exit restoreStyle([]() noexcept {
+		ImGui::PopStyleColor(5);
+		ImGui::PopStyleVar(2);
+	});
 
-	// The size of the image in ImGui																														   // Get the available space in the current window
-	ImVec2 availableSpace = ImGui::GetContentRegionAvail();
+	const char* windowName = T(TKEY("viewport"), "Viewport");
+	const ImVec2 borderInsets = GetViewportBorderInsets();
+	struct ViewportSizeConstraint
+	{
+		ImGuiWindow* window;
+		ImVec2 frameSize;
+	};
+	ViewportSizeConstraint constraint{
+		ImGui::FindWindowByName(windowName),
+		ImVec2(borderInsets.x * 2.0f, ImGui::GetFrameHeight() + borderInsets.x + borderInsets.y)
+	};
+	ImGui::SetNextWindowSizeConstraints(ImGui::GetStyle().WindowMinSize, ImVec2(FLT_MAX, FLT_MAX), [](ImGuiSizeCallbackData* data) {
+		const auto& constraint = *static_cast<const ViewportSizeConstraint*>(data->UserData);
+		const auto displaySize = ImGui::GetIO().DisplaySize;
+		const float aspectRatio = displaySize.x / displaySize.y;
+		float imageWidth = data->DesiredSize.x - constraint.frameSize.x;
+		const float imageHeight = data->DesiredSize.y - constraint.frameSize.y;
+		if (auto* window = constraint.window) {
+			const ImGuiID activeID = ImGui::GetActiveID();
+			if (activeID == ImGui::GetWindowResizeBorderID(window, ImGuiDir_Up) || activeID == ImGui::GetWindowResizeBorderID(window, ImGuiDir_Down)) {
+				imageWidth = imageHeight * aspectRatio;
+			} else if (activeID == ImGui::GetWindowResizeCornerID(window, 0) || activeID == ImGui::GetWindowResizeCornerID(window, 1)) {
+				const float aspectRatioSquared = aspectRatio * aspectRatio;
+				imageWidth = (imageWidth * aspectRatioSquared + imageHeight * aspectRatio) / (aspectRatioSquared + 1.0f);
+			}
+		}
+		const auto minSize = ImGui::GetStyle().WindowMinSize;
+		const float minHeight = std::max(minSize.y, ImGui::GetFrameHeight() + std::max(0.0f, ImGui::GetStyle().WindowRounding - 1.0f));
+		const float minWidth = std::ceil(std::max(minSize.x, (minHeight - constraint.frameSize.y) * aspectRatio + constraint.frameSize.x));
+		data->DesiredSize.x = std::max(std::round(imageWidth + constraint.frameSize.x), minWidth);
+		data->DesiredSize.y = std::round((data->DesiredSize.x - constraint.frameSize.x) / aspectRatio + constraint.frameSize.y); }, &constraint);
 
-	// Calculate aspect ratio of the image
-	float aspectRatio = ImGui::GetIO().DisplaySize.x / ImGui::GetIO().DisplaySize.y;
+	viewportWindowVisible = Util::BeginWithRoundedClose(windowName, nullptr,
+		ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+	const SKSE::stl::scope_exit endWindow([]() noexcept { ImGui::End(); });
+	if (!viewportWindowVisible)
+		return;
 
-	// Determine the size to fit while preserving the aspect ratio
-	ImVec2 imageSize;
-	if (availableSpace.x / availableSpace.y < aspectRatio) {
-		// Fit width
-		imageSize.x = availableSpace.x;
-		imageSize.y = availableSpace.x / aspectRatio;
-	} else {
-		// Fit height
-		imageSize.y = availableSpace.y;
-		imageSize.x = availableSpace.y * aspectRatio;
+	auto* window = ImGui::GetCurrentWindow();
+	auto* drawList = ImGui::GetWindowDrawList();
+	ImRect imageRect = window->InnerRect;
+	if (!window->DockIsActive) {
+		imageRect.Min.x += borderInsets.x;
+		imageRect.Min.y += borderInsets.y;
+		imageRect.Max.x -= borderInsets.x;
+		imageRect.Max.y -= borderInsets.x;
 	}
+	ImRect clipRect = imageRect;
+	clipRect.ClipWith(window->OuterRectClipped);
+	ImGui::PushClipRect(clipRect.Min, clipRect.Max, false);
+	const SKSE::stl::scope_exit restoreClip([]() noexcept { ImGui::PopClipRect(); });
+	if (window->DockIsActive) {
+		const auto displaySize = ImGui::GetIO().DisplaySize;
+		const float aspectRatio = displaySize.x / displaySize.y;
+		const float imageWidth = std::min(imageRect.GetWidth(), imageRect.GetHeight() * aspectRatio);
+		imageRect.Max = ImVec2(imageRect.Min.x + imageWidth, imageRect.Min.y + imageWidth / aspectRatio);
+		drawList->AddRectFilled(window->InnerRect.Min, window->InnerRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
+	}
+	ImGui::SetCursorScreenPos(imageRect.Min);
+	const ImVec2 imageSize = imageRect.GetSize();
 
 	if (tempTexture && tempTexture->srv) {
 		// Opaque draw: the preview SRV is a render target with non-1 alpha, which a plain
 		// ImGui::Image would show as a transparency mask (a cutout through the HMD in VR).
 		Util::Subrect::ImageOpaque(tempTexture->srv.get(), imageSize);
 	} else {
+		drawList->AddRectFilled(imageRect.Min, imageRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
 		ImGui::TextDisabled("%s", T(TKEY("viewport_unavailable"), "Viewport unavailable"));
 	}
 
-	ImGui::End();
+	if (!window->DockIsActive) {
+		const ImRect hostRect = window->Viewport->GetMainRect();
+		drawList->PushClipRect(hostRect.Min, hostRect.Max);
+		const SKSE::stl::scope_exit restoreBorderClip([drawList]() noexcept { drawList->PopClipRect(); });
+		if (window->WindowBorderSize > 0.0f)
+			drawList->AddRect(window->Pos, window->Rect().Max, ImGui::GetColorU32(ImGuiCol_Border), window->WindowRounding, ImDrawFlags_RoundCornersTop, window->WindowBorderSize);
+		const bool borderHeld = window->ResizeBorderHeld != -1;
+		const int resizeBorder = borderHeld ? window->ResizeBorderHeld : window->ResizeBorderHovered;
+		if (resizeBorder != -1) {
+			constexpr float minResizeBorderThickness = 2.0f;
+			const float rounding = window->WindowRounding;
+			const ImVec2 borderMin(window->Pos.x + 0.5f, window->Pos.y + 0.5f);
+			const ImVec2 borderMax(window->Rect().Max.x - 0.5f, window->Rect().Max.y - 0.5f);
+			const ImVec2 topLeftCenter(borderMin.x + rounding, borderMin.y + rounding);
+			const ImVec2 topRightCenter(borderMax.x - rounding, borderMin.y + rounding);
+			switch (resizeBorder) {
+			case ImGuiDir_Left:
+				drawList->PathLineTo(ImVec2(borderMin.x, borderMax.y));
+				drawList->PathArcTo(topLeftCenter, rounding, IM_PI, IM_PI * 1.25f);
+				break;
+			case ImGuiDir_Right:
+				drawList->PathArcTo(topRightCenter, rounding, -IM_PI * 0.25f, 0.0f);
+				drawList->PathLineTo(ImVec2(borderMax.x, borderMax.y));
+				break;
+			case ImGuiDir_Up:
+				drawList->PathArcTo(topLeftCenter, rounding, IM_PI * 1.25f, IM_PI * 1.5f);
+				drawList->PathArcTo(topRightCenter, rounding, IM_PI * 1.5f, IM_PI * 1.75f);
+				break;
+			case ImGuiDir_Down:
+				drawList->PathLineTo(ImVec2(borderMin.x, borderMax.y));
+				drawList->PathLineTo(borderMax);
+				break;
+			}
+			drawList->PathStroke(borderHeld ? borderActiveColor : borderHoveredColor, ImDrawFlags_None, std::max(minResizeBorderThickness, window->WindowBorderSize));
+		}
+		for (int cornerIndex = 0; cornerIndex < 2; ++cornerIndex) {
+			const ImGuiID cornerID = ImGui::GetWindowResizeCornerID(window, cornerIndex);
+			const bool held = ImGui::GetActiveID() == cornerID;
+			if (!held && ImGui::GetHoveredID() != cornerID)
+				continue;
+			const ImU32 color = held ? gripActiveColor : gripHoveredColor;
+			const float gripSize = ImGui::GetFontSize();
+			const ImVec2 corner(cornerIndex == 0 ? window->Rect().Max.x : window->Pos.x, window->Rect().Max.y);
+			const float direction = cornerIndex == 0 ? -1.0f : 1.0f;
+			drawList->AddTriangleFilled(corner, ImVec2(corner.x + direction * gripSize, corner.y), ImVec2(corner.x, corner.y - gripSize), color);
+		}
+	}
 }
 
 void EditorWindow::ShowWidgetWindow()
@@ -987,14 +1253,9 @@ void EditorWindow::RenderUI()
 		}
 	}
 
-	if (ImGui::BeginMainMenuBar()) {
-		// Tighten bottom clip rect to prevent content bleeding over the bottom border
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			float borderInset = std::ceil(window->WindowBorderSize * 0.5f);
-			ImGui::PushClipRect(window->ClipRect.Min,
-				ImVec2(window->ClipRect.Max.x, window->ClipRect.Max.y - borderInset), true);
-		}
+	float menuBarHeight = 0.0f;
+	if (BeginEditorMenuBar()) {
+		menuBarHeight = ImGui::GetWindowSize().y;
 
 		if (ImGui::BeginMenu(T(TKEY("file"), "File"))) {
 			if (ImGui::MenuItem(T(TKEY("save_all_open_widgets"), "Save All Open Widgets"), "Ctrl+S")) {
@@ -1187,18 +1448,18 @@ void EditorWindow::RenderUI()
 		const float cursorY = ImGui::GetCursorScreenPos().y;
 		const float closeButtonSize = ImGui::GetFrameHeight();
 		const float& itemSpacing = ImGui::GetStyle().ItemSpacing.x;
-		const float sliderWidth = kMenuBarSliderWidth * scale;
+		const float sliderWidth = std::floor(kMenuBarSliderWidth * scale);
+		const float closeButtonSpacing = std::round(ThemeManager::Constants::BUTTON_SPACING * scale);
+		const float frameBorderOutset = std::max(0.0f, std::ceil((ImGui::GetStyle().FrameBorderSize - 1.0f) * 0.5f));
 
 		// Measure right-side elements to compute positions right-to-left
-		constexpr float kCloseButtonInset = 3.0f;
-		float rightCursor = clipRight - kCloseButtonInset * scale;
+		constexpr float kCloseButtonRightSpacingAdjustment = 2.0f;
+		float rightCursor = clipRight - closeButtonSpacing - frameBorderOutset + std::round(kCloseButtonRightSpacingAdjustment * scale);
 
-		// X button
+		// Time slider and close button
 		rightCursor -= closeButtonSize;
 		const float xButtonX = rightCursor;
-
-		// Time slider
-		rightCursor -= itemSpacing + sliderWidth;
+		rightCursor -= closeButtonSpacing + frameBorderOutset * 2.0f + sliderWidth;
 		const float sliderX = rightCursor;
 
 		// Period text
@@ -1235,7 +1496,7 @@ void EditorWindow::RenderUI()
 		char previewStatusBuf[128] = {};
 		bool showPreviewStatus = previewMode != PreviewMode::None;
 		if (showPreviewStatus) {
-			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().CSEditorToggleKey);
+			std::string hotkey = Util::Input::KeyIdToString(menu->GetSettings().ToggleKey);
 			if (previewMode == PreviewMode::FreeCamera)
 				std::snprintf(previewStatusBuf, sizeof(previewStatusBuf), T(TKEY("preview_free_camera"), " [ %s ] FREE CAMERA (Speed: %.0f)"), hotkey.c_str(), flySpeed);
 			else if (previewMode == PreviewMode::FreeCameraLocked)
@@ -1346,22 +1607,11 @@ void EditorWindow::RenderUI()
 
 		// Close button
 		ImGui::SetCursorScreenPos(ImVec2(xButtonX, cursorY));
-		if (Util::ErrorButton("X", ImVec2(closeButtonSize, closeButtonSize)))
+		if (Util::ErrorTextButton("X", ImVec2(closeButtonSize, closeButtonSize)))
 			open = false;
 		Util::AddTooltip(T(TKEY("close_cs_editor"), "Close OS Editor (Esc)"));
 
-		ImGui::PopClipRect();  // End bottom-border clip rect
-
-		// Redraw the menu bar border on top of all content so elements appear behind it
-		{
-			auto* window = ImGui::GetCurrentWindowRead();
-			const float border = ImGui::GetStyle().WindowBorderSize;
-			if (window && border > 0.0f) {
-				ImU32 borderCol = ImGui::GetColorU32(ImGuiCol_Border);
-				window->DrawList->AddRect(window->Pos, ImVec2(window->Pos.x + window->Size.x, window->Pos.y + window->Size.y), borderCol, 0.0f, 0, border);
-			}
-		}
-
+		ImGui::PopClipRect();
 		ImGui::EndMainMenuBar();
 	}
 
@@ -1372,7 +1622,6 @@ void EditorWindow::RenderUI()
 	auto height = ImGui::GetIO().DisplaySize.y;
 	const float scale = Util::GetUIScale();
 	const float pad = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * scale;
-	const float menuBarHeight = ImGui::GetFrameHeight();
 	const float availableWidth = width - pad * 3.0f;  // left pad + gap + right pad
 	const float availableHeight = (height - menuBarHeight - pad * 2.0f) * 0.85f;
 	const auto layoutCond = resetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
@@ -1387,8 +1636,9 @@ void EditorWindow::RenderUI()
 	if (IsViewportActive()) {
 		// Size viewport height to match game aspect ratio so the preview fits snugly
 		const float aspectRatio = width / height;
-		const float imageHeight = viewportWidth / aspectRatio;
-		const float chromeHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().WindowPadding.y * 2.0f;
+		const ImVec2 borderInsets = GetViewportBorderInsets();
+		const float imageHeight = (viewportWidth - borderInsets.x * 2.0f) / aspectRatio;
+		const float chromeHeight = ImGui::GetFrameHeight() + borderInsets.x + borderInsets.y;
 		const float viewportHeight = imageHeight + chromeHeight;
 		ImGui::SetNextWindowSize(ImVec2(viewportWidth, viewportHeight), layoutCond);
 		ImGui::SetNextWindowPos(ImVec2(pad + browserWidth + pad, menuBarHeight + pad), layoutCond);
@@ -1420,36 +1670,6 @@ void EditorWindow::RenderUI()
 
 	// Restore previous font scale
 	ImGui::GetStyle().FontScaleMain = previousScale;
-}
-
-void EditorWindow::OpenWeatherFeatureSetting(RE::TESWeather* weather, const std::string& featureName, const std::string& settingName)
-{
-	if (!weather) {
-		return;
-	}
-
-	// Open the editor if it's not already open
-	if (!open) {
-		open = true;
-	}
-
-	// Find the weather widget
-	for (auto& widget : weatherWidgets) {
-		auto* weatherWidget = dynamic_cast<WeatherWidget*>(widget.get());
-		if (weatherWidget && weatherWidget->weather == weather) {
-			// Open the widget if it's not already open
-			if (!weatherWidget->open) {
-				weatherWidget->open = true;
-			}
-
-			// Set up navigation to the specific feature/setting
-			weatherWidget->NavigateToFeatureSetting(featureName, settingName);
-
-			// Focus the widget window
-			weatherWidget->RequestFocus();
-			break;
-		}
-	}
 }
 
 EditorWindow::~EditorWindow()
@@ -1525,13 +1745,13 @@ void EditorWindow::Draw()
 	if (!IsViewportActive()) {
 		delete tempTexture;
 		tempTexture = nullptr;
-	} else {
+	} else if (viewportWindowVisible) {
 		auto renderer = globals::game::renderer;
 		if (renderer) {
 			auto& framebuffer = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 			if (framebuffer.SRV) {
 				ID3D11Resource* resource = nullptr;
-				framebuffer.SRV->GetResource(&resource);
+				framebuffer.SRV->GetResource(Util::AsW32(&resource));
 
 				if (resource) {
 					auto texture = static_cast<ID3D11Texture2D*>(resource);
@@ -1550,7 +1770,7 @@ void EditorWindow::Draw()
 						tempTexture = nullptr;
 
 						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-						framebuffer.SRV->GetDesc(&srvDesc);
+						framebuffer.SRV->GetDesc(Util::AsW32(&srvDesc));
 
 						tempTexture = new Texture2D(texDesc);
 						tempTexture->CreateSRV(srvDesc);
@@ -1601,12 +1821,19 @@ void EditorWindow::LoadSettings()
 		}
 	}
 	m_selectedCategory = settings.selectedCategory;
+	if (m_selectedCategory == "Interior Only") {
+		m_selectedCategory = "Weather";
+		settings.selectedCategory = m_selectedCategory;
+	}
 	SetWidgetTypeSizesFromJson(settings.widgetTypeSizes);
 }
 
 void EditorWindow::ShowSettingsWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("settings"), "Settings"), &showSettingsWindow);
+	if (!Util::BeginWithRoundedClose(T(TKEY("settings"), "Settings"), &showSettingsWindow)) {
+		ImGui::End();
+		return;
+	}
 
 	if (ImGui::BeginTable("SettingsTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner | ImGuiTableFlags_NoHostExtendX)) {
 		ImGui::TableSetupColumn(T(TKEY("options"), "Options"), ImGuiTableColumnFlags_WidthStretch, 0.3f);
@@ -1849,14 +2076,6 @@ void EditorWindow::Load()
 // Credits: Isoprovophlex
 namespace
 {
-	// Toggled from the render thread, read by the hooked engine calls.
-	std::atomic<RE::TESWeather*> g_lockedWeather{ nullptr };
-	std::atomic_bool g_weatherLockActive{ false };
-
-	// Set once InstallWeatherLockHooks has actually redirected both call sets; gates the
-	// Lock Weather UI so a failed install can't be engaged as a silent no-op.
-	std::atomic_bool g_weatherLockHooksInstalled{ false };
-
 	constexpr std::uint8_t kCallOpcode = 0xE8;           // CALL rel32
 	constexpr std::uint8_t kJumpOpcode = 0xE9;           // JMP rel32 (tail call)
 	constexpr std::size_t kRelativeInstructionSize = 5;  // opcode + int32 displacement
@@ -1874,7 +2093,7 @@ namespace
 
 	RE::TESWeather* GetActiveLock()
 	{
-		return g_weatherLockActive.load(std::memory_order_acquire) ? g_lockedWeather.load(std::memory_order_acquire) : nullptr;
+		return Util::EnvironmentControls::GetLockedWeather();
 	}
 
 	/** @brief Forces the sky onto the locked weather, claiming the override slot so nothing lerps away from it. */
@@ -1998,102 +2217,59 @@ void EditorWindow::InstallWeatherLockHooks()
 		return;
 	}
 
-	g_weatherLockHooksInstalled.store(true, std::memory_order_release);
+	Util::EnvironmentControls::SetWeatherLockAvailable();
 	logger::info("[CSEditor] Weather lock hooked {} SetWeather and {} ForceWeather call sites", setWeatherSites.size(), forceWeatherSites.size());
 }
 
 bool EditorWindow::AreWeatherLockHooksInstalled()
 {
-	return g_weatherLockHooksInstalled.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::IsWeatherLockAvailable();
 }
 
 void EditorWindow::MaintainWeatherLock()
 {
-	auto* locked = GetActiveLock();
-	auto* sky = globals::game::sky;
-	if (!locked || !sky)
-		return;
-
-	// The engine applies the release on its next sky update, so clear the flag before it lands.
-	const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
-	if (!releasePending && sky->currentWeather == locked && sky->overrideWeather == locked)
-		return;
-
-	sky->flags.reset(RE::Sky::Flags::kReleaseWeatherOverride);
-	ReapplyLock(sky, locked);
+	Util::EnvironmentControls::MaintainLocks();
 }
 
 bool EditorWindow::IsWeatherLocked() const
 {
-	return g_weatherLockActive.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::GetLockedWeather() != nullptr;
 }
 
 RE::TESWeather* EditorWindow::GetLockedWeather() const
 {
-	return g_lockedWeather.load(std::memory_order_acquire);
+	return Util::EnvironmentControls::GetLockedWeather();
 }
 
 void EditorWindow::LockWeather(RE::TESWeather* weather)
 {
-	if (!weather)
-		return;
-
-	g_lockedWeather.store(weather, std::memory_order_release);
-	g_weatherLockActive.store(true, std::memory_order_release);
-	MaintainWeatherLock();
-
-	logger::info("Weather locked: {}", weather->GetFormEditorID() ? weather->GetFormEditorID() : "Unknown");
+	if (weather)
+		Util::EnvironmentControls::SetLockedWeather(weather);
 }
 
 void EditorWindow::UnlockWeather()
 {
-	auto* locked = GetActiveLock();
-	if (!locked)
-		return;
-
-	g_weatherLockActive.store(false, std::memory_order_release);
-	g_lockedWeather.store(nullptr, std::memory_order_release);
-
-	if (auto* sky = globals::game::sky)
-		sky->ReleaseWeatherOverride();
-
-	logger::info("Weather unlocked: {}", locked->GetFormEditorID() ? locked->GetFormEditorID() : "Unknown");
+	Util::EnvironmentControls::SetLockedWeather(nullptr);
 }
 
 void EditorWindow::PauseTime()
 {
-	if (timePaused)
-		return;
-	auto calendar = GetCalendar();
-	if (calendar && calendar->timeScale) {
-		savedTimeScale = calendar->timeScale->value;
-		calendar->timeScale->value = 0.0f;
-		timePaused = true;
-		logger::info("Time paused (saved timescale: {})", savedTimeScale);
-	}
+	Util::EnvironmentControls::PauseTime();
 }
 
 void EditorWindow::ResumeTime()
 {
-	if (!timePaused)
-		return;
-	auto calendar = GetCalendar();
-	if (calendar && calendar->timeScale) {
-		calendar->timeScale->value = savedTimeScale;
-		timePaused = false;
-		logger::info("Time resumed (timescale: {})", savedTimeScale);
-	}
+	Util::EnvironmentControls::ResumeTime();
+}
+
+bool EditorWindow::IsTimePaused() const
+{
+	return Util::EnvironmentControls::IsTimePaused();
 }
 
 void EditorWindow::ResetTimeScale()
 {
-	auto calendar = GetCalendar();
-	if (!calendar || !calendar->timeScale)
-		return;
-	if (timePaused)
-		savedTimeScale = kVanillaTimeScale;
-	else
-		calendar->timeScale->value = kVanillaTimeScale;
+	Util::EnvironmentControls::ResetTimeScale();
 	timeScaleSlider = kVanillaTimeScale;
 }
 
@@ -2119,30 +2295,7 @@ namespace
 
 void EditorWindow::SetTimeRunningForMenu(bool a_needsRunningTime)
 {
-	auto calendar = GetCalendar();
-	if (!calendar || !calendar->timeScale)
-		return;
-
-	if (a_needsRunningTime) {
-		if (timeRestoredForMenu || calendar->timeScale->value != 0.0f)
-			return;
-		// Only re-pause afterwards if the pause is ours; a zero timescale we did not set (stale
-		// save, console, other mod) stays restored so it cannot freeze the game again.
-		wasPausedBeforeMenu = timePaused;
-		// A non-positive snapshot would restore straight back to frozen time.
-		if (savedTimeScale <= 0.0f)
-			savedTimeScale = kVanillaTimeScale;
-		if (timePaused)
-			ResumeTime();
-		else
-			calendar->timeScale->value = std::max(savedTimeScale, kVanillaTimeScale);
-		timeRestoredForMenu = true;
-	} else if (timeRestoredForMenu) {
-		if (wasPausedBeforeMenu)
-			PauseTime();
-		timeRestoredForMenu = false;
-		wasPausedBeforeMenu = false;
-	}
+	Util::EnvironmentControls::SetTimeRunningForMenu(a_needsRunningTime);
 }
 
 RE::BSEventNotifyControl EditorWindow::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
@@ -2176,9 +2329,15 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	auto calendar = GetCalendar();
 	if (!calendar || !calendar->gameHour)
 		return false;
-	const bool changed = ImGui::SliderFloat(label, &calendar->gameHour->value, 0.0f, kGameHourMax, format);
-	if (ImGui::IsItemActivated())
+	float gameHour = calendar->gameHour->value;
+	const bool changed = ImGui::SliderFloat(label, &gameHour, 0.0f, kGameHourMax, format);
+	if (ImGui::IsItemActivated()) {
+		Util::EnvironmentControls::BeginGameHourScrub();
+		gameHourScrubId = ImGui::GetItemID();
 		gameHourScrubRefreshIssued = false;
+	}
+	if (changed)
+		Util::EnvironmentControls::SetGameHour(gameHour, false);
 
 	if (changed && ImGui::IsItemActive()) {
 		const double currentTime = ImGui::GetTime();
@@ -2190,9 +2349,22 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 	}
 
 	// Always refresh on release so the final value is reflected even if the throttle swallowed it.
-	if (ImGui::IsItemDeactivatedAfterEdit())
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
 		Util::RequestTimeJumpTransition();
+		gameHourScrubRefreshIssued = false;
+	}
 	return true;
+}
+
+void EditorWindow::FinishGameHourSliderFrame(bool widgetsDrawn)
+{
+	if (gameHourScrubId && (!widgetsDrawn || ImGui::GetActiveID() != gameHourScrubId ||
+							   GImGui->ActiveIdIsAlive != gameHourScrubId)) {
+		Util::EnvironmentControls::EndGameHourScrub();
+		gameHourScrubId = 0;
+		if (gameHourScrubRefreshIssued)
+			Util::RequestTimeJumpTransition();
+	}
 }
 
 void EditorWindow::DrawTimeControls()
@@ -2200,10 +2372,6 @@ void EditorWindow::DrawTimeControls()
 	auto calendar = GetCalendar();
 	if (!calendar || !calendar->gameHour || !calendar->timeScale)
 		return;
-
-	// An external timescale change (console, other mods, the menu guard) overrides our pause
-	if (timePaused && calendar->timeScale->value > 0.0f)
-		timePaused = false;
 
 	const float framePadX = ImGui::GetStyle().FramePadding.x * 2.0f;
 	const char* resumeTimeText = T(TKEY("resume_time"), "Resume Time");
@@ -2213,7 +2381,7 @@ void EditorWindow::DrawTimeControls()
 								  ImGui::CalcTextSize(pauseTimeText).x,
 								  ImGui::CalcTextSize(resetSpeedText).x }) +
 	                          framePadX;
-	if (ImGui::Button(timePaused ? resumeTimeText : pauseTimeText, ImVec2(buttonWidth, 0)))
+	if (ImGui::Button(IsTimePaused() ? resumeTimeText : pauseTimeText, ImVec2(buttonWidth, 0)))
 		TogglePause();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("pause_time_tooltip"), "Pause or resume game time progression"));
@@ -2223,8 +2391,8 @@ void EditorWindow::DrawTimeControls()
 		ImGui::Text("%s", T(TKEY("game_time_tooltip"), "Adjust the current game time"));
 
 	// Sync slider with actual value
-	if (timePaused)
-		timeScaleSlider = std::max(savedTimeScale, kTimeScaleMin);
+	if (IsTimePaused())
+		timeScaleSlider = std::max(Util::EnvironmentControls::GetSavedTimeScale(), kTimeScaleMin);
 	else if (std::abs(calendar->timeScale->value - timeScaleSlider) > 0.01f)
 		timeScaleSlider = calendar->timeScale->value;
 
@@ -2235,10 +2403,10 @@ void EditorWindow::DrawTimeControls()
 		ImGui::Text(T(TKEY("reset_speed_tooltip"), "Reset time speed to vanilla (%.1fx)"), kVanillaTimeScale);
 
 	ImGui::SameLine();
-	ImGui::BeginDisabled(timePaused);
+	ImGui::BeginDisabled(IsTimePaused());
 	if (ImGui::SliderFloat("##TimeScale", &timeScaleSlider, kTimeScaleMin, kTimeScaleMax,
 			timeScaleSlider == kVanillaTimeScale ? T(TKEY("vanilla_speed"), "Vanilla Speed") : "", ImGuiSliderFlags_Logarithmic))
-		calendar->timeScale->value = timeScaleSlider;
+		Util::EnvironmentControls::SetTimeScale(timeScaleSlider);
 	ImGui::EndDisabled();
 
 	ImGui::SameLine();

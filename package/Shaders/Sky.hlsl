@@ -234,8 +234,7 @@ float ComputeProceduralSun(float2 uv)
 PS_OUTPUT main(PS_INPUT input)
 {
 	PS_OUTPUT psout;
-	// Color::Sky is float3->float3 (per-channel sky gamma). PParams.yyy broadcasts the packed
-	// scalar in PParams.y to RGB; float3 matches output .xyz where skyScale is added.
+	const bool gammaRenderTarget = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) != 0;
 	float3 skyScale = Color::Sky(PParams.yyy);
 #	if !defined(VR)
 	uint eyeIndex = 0;
@@ -375,6 +374,9 @@ PS_OUTPUT main(PS_INPUT input)
 		psout.Color.xyz = lerp(psout.Color.xyz, exponentialHeightFog.xyz, exponentialHeightFog.w);
 	}
 #	endif
+
+	if (ENABLE_LL && gammaRenderTarget)
+		psout.Color.xyz = Color::SceneLinearToGamma(psout.Color.xyz);
 
 	float2 screenMotionVector = MotionBlur::GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
 

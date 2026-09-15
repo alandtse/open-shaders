@@ -4,7 +4,9 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/RainRendering.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
+#include "Common/TransientWindImpulse.hlsli"
 #include "Common/VR.hlsli"
+#include "Common/WindFieldTypes.hlsli"
 
 namespace SharedData
 {
@@ -39,6 +41,18 @@ namespace SharedData
 		float4 HDRData;
 		float RefractionScale;
 		float3 pad1;
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;
+		float4 WindFieldPreviousAmbient;
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
+		uint4 WindFieldActiveCounts;     // x/y: current/previous transient impulse counts, z/w: reserved
+		WindField::TransientWindSource WindFieldTransientImpulses[WindField::TransientImpulseCapacity];
+		WindField::TransientWindSource WindFieldPreviousTransientImpulses[WindField::TransientImpulseCapacity];
 	};
 
 	struct GrassLightingSettings
@@ -51,7 +65,10 @@ namespace SharedData
 		float BasicGrassBrightness;
 		bool EnableWrappedLighting;
 		float ComplexGrassThreshold;
-		float1 pad0;
+		// Only read by the GRASS_OPTIMIZATIONS permutation, for grass drawn with an LOD mesh.
+		float MidLODBrightness;
+		float FarLODBrightness;
+		float3 pad0;
 	};
 
 	struct CPMSettings
@@ -121,7 +138,7 @@ namespace SharedData
 		float PuddleMinWetness;
 
 		float MinRainWetness;
-		float SkinWetness;
+		float HairWetness;
 		float WeatherTransitionSpeed;
 		bool EnableRaindropFx;
 
@@ -143,6 +160,22 @@ namespace SharedData
 		float RippleRadius;
 		float RippleBreadth;
 		float RippleLifetimeRcp;
+
+		uint EnableCharacterRainSpots;
+		float CharacterSpotDensity;
+		float CharacterSpotRadius;
+		float CharacterSpotStrength;
+		float CharacterSpotRoughness;
+		float CharacterSpotNormalStrength;
+		uint CharacterSpotDebug;
+		float CharacterCoatIntensity;
+		float CharacterWetSheen;
+		float CharacterRainActivityMultiplier;
+		float CharacterDryTime;
+		uint EnableWeaponRainDrops;
+		float CharacterImpactIntensity;
+		float CharacterRetainedWetness;
+		float2 CharacterStatePadding;
 	};
 
 	struct SkylightingSettings
@@ -214,7 +247,8 @@ namespace SharedData
 	struct TerrainVariationSettings
 	{
 		uint enableLODTerrainTilingFix;  ///< 1 = apply variation to LOD terrain.
-		uint3 pad;
+		uint enableMeshSupport;          ///< 1 = apply variation to landscape-textured meshes.
+		uint2 pad;
 	};
 
 	struct IBLSettings
@@ -244,6 +278,7 @@ namespace SharedData
 	struct CSUtilitySettings
 	{
 		float skyBrightness;
+		float ambientLightMult;
 		float directionalLightMult;
 		float pointLightMult;
 		float linearPointLightMult;
@@ -259,6 +294,14 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
+		float3 pad0;
+	};
+
+	struct WindSettings
+	{
+		uint windFieldDebugEnabled;
+		uint windFieldDebugView;
+		float2 padding;
 	};
 
 	struct LinearLightingSettings
@@ -267,29 +310,13 @@ namespace SharedData
 		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
-		float lightGamma;
-		float colorGamma;
-		float emitColorGamma;
-		float glowmapGamma;
-		float ambientGamma;
-		float fogGamma;
-		float fogAlphaGamma;
-		float effectGamma;
-		float effectAlphaGamma;
-		float skyGamma;
-		float waterGamma;
-		float vlGamma;
-		float ambientMult;
+		float authoredColorGamma;
 		float vanillaDiffuseColorMult;
-		float emitColorMult;
-		float glowmapMult;
-		float effectLightingMult;
-		float membraneEffectMult;
-		float bloodEffectMult;
-		float projectedEffectMult;
-		float deferredEffectMult;
-		float otherEffectMult;
 		float2 pad0;
+		float3 effectLightingColor;
+		float ambientMult;
+		float3 skyStaticsColor;
+		float pad1;
 	};
 
 	struct ENBSettings
@@ -440,6 +467,17 @@ namespace SharedData
 		uint3 pad0;
 	};
 
+	struct GrassCollisionData
+	{
+		float2 PosOffset;
+		uint2 ArrayOrigin;
+		float2 PreviousPosOffset;
+		uint2 PreviousArrayOrigin;
+		float CompressionHeight;
+		float MaximumCompressibleGrassHeight;
+		float2 pad0;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -457,6 +495,7 @@ namespace SharedData
 		IBLSettings iblSettings;
 		ExtendedTranslucencySettings extendedTranslucencySettings;
 		CSUtilitySettings csUtilitySettings;
+		WindSettings windSettings;
 		LinearLightingSettings linearLightingSettings;
 		ENBSettings enbSettings;
 		TerrainBlendingSettings terrainBlendingSettings;
@@ -467,6 +506,7 @@ namespace SharedData
 		VanillaFresnelSettings vanillaFresnelSettings;
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
+		GrassCollisionData grassCollisionData;
 		RainRenderingSettings rainRenderingSettings;
 	};
 

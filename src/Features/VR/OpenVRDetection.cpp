@@ -229,7 +229,7 @@ namespace VRDetection
 			return false;
 
 		using pfnIsValid = bool(__cdecl*)(const char*);
-		auto IsValid = reinterpret_cast<pfnIsValid>(GetProcAddress(hModule, "VR_IsInterfaceVersionValid"));
+		auto IsValid = reinterpret_cast<pfnIsValid>(reinterpret_cast<void*>(GetProcAddress(hModule, "VR_IsInterfaceVersionValid")));
 		if (!IsValid)
 			return false;
 

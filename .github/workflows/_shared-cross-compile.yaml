@@ -22,6 +22,10 @@ on:
                 description: "Pass through actions/checkout's allow-unsafe-pr-checkout (only meaningful under pull_request_target)"
                 type: boolean
                 default: false
+            cache-write:
+                description: "Upload built vcpkg packages as an artifact instead of saving the cache directly -- only maint-warm-linux-vcpkg-cache.yaml passes true, and saves them itself."
+                type: boolean
+                default: false
 
 jobs:
     build:
@@ -38,9 +42,11 @@ jobs:
             # Unpinned, xwin takes the newest manifest/SDK/CRT, and the cached
             # sysroot silently stops matching the cache key built from these.
             XWIN_VERSION: "0.10.0"
-            XWIN_MANIFEST_VERSION: "17"
-            XWIN_SDK_VERSION: "10.0.26100"
-            XWIN_CRT_VERSION: "14.44.17.14"
+            # Must track CommonLibVR's prebuilt toolset (windows-latest, VS2026/
+            # MSVC 14.51) or the final link fails on missing STL symbols.
+            XWIN_MANIFEST_VERSION: "18"
+            XWIN_SDK_VERSION: "10.0.28000"
+            XWIN_CRT_VERSION: "14.51"
         steps:
             - name: Checkout
               uses: actions/checkout@v6
@@ -65,11 +71,11 @@ jobs:
                   # wine64 named explicitly: with i386 multiarch on, apt can satisfy `wine` from
                   # wine32:i386 alone, leaving no 64-bit loader (x86-64 PEs fail "Bad EXE format").
                   sudo apt-get install -y ninja-build wine wine64 wine32:i386 g++ lsb-release wget gnupg software-properties-common
-                  curl -fsSL --retry 3 --retry-all-errors -o /tmp/llvm.sh https://raw.githubusercontent.com/opencollab/llvm-jenkins.debian.net/cf853fefa308484749df8a87004c580a6c0fe830/llvm.sh
-                  echo "03878e08f47b66cc95bc4b544b0db3c6d9ce8d60e6cf2492ae357984330a9eae  /tmp/llvm.sh" | sha256sum -c -
-                  chmod +x /tmp/llvm.sh
-                  # Clang 19+ required for MSVC STL; mixed clang-cl/lld-link/llvm-rc/llvm-mt versions crash lld.
-                  sudo /tmp/llvm.sh 19
+                  # Ubuntu noble already ships Clang 20 natively; installing from
+                  # apt.llvm.org (the old llvm.sh path) pulls a conflicting libllvm20
+                  # build and apt refuses the transaction. MSVC 14.51's STL headers
+                  # hard-require Clang 20+ (static_assert STL1000).
+                  sudo apt-get install -y clang-20 clang-tools-20 lld-20 llvm-20 libclang-common-20-dev
 
             # Create the prefix here: left implicit, its first-run setup races the
             # shader/header-generation steps that trigger it and fails half-initialized.
@@ -95,6 +101,20 @@ jobs:
                   echo "d870eb4b2f390878af6da1ccd3cf321d22fcb72720984853b4be732ae597fc88  xwin.tar.gz" | sha256sum -c -
                   tar xzf xwin.tar.gz
                   install -Dm755 xwin-0.10.0-x86_64-unknown-linux-musl/xwin "$RUNNER_TEMP_DIR/bin/xwin"
+
+                  # A bogus --crt-version still populates the manifest cache before failing.
+                  "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
+                      --manifest-version "$XWIN_MANIFEST_VERSION" \
+                      --sdk-version "$XWIN_SDK_VERSION" --crt-version "0.0.0" splat \
+                      --output /tmp/xwin-probe-unused || true
+
+                  # Works around an xwin 0.10.0 + SDK 10.0.28000 manifest bug: an unescaped
+                  # space in one payload URL trips its URI parser. Idempotent.
+                  manifest_file="$RUNNER_TEMP_DIR/xwin-cache/dl/pkg_manifest_"*.vsman
+                  if grep -q 'w kits2' $manifest_file 2>/dev/null; then
+                      sed -i 's/w kits2/w%20kits2/g' $manifest_file
+                  fi
+
                   "$RUNNER_TEMP_DIR/bin/xwin" --accept-license --cache-dir "$RUNNER_TEMP_DIR/xwin-cache" \
                       --manifest-version "$XWIN_MANIFEST_VERSION" \
                       --sdk-version "$XWIN_SDK_VERSION" --crt-version "$XWIN_CRT_VERSION" splat \
@@ -124,23 +144,19 @@ jobs:
                   vcpkgGitCommitId: ${{ steps.get_vcpkg_baseline.outputs.baseline }}
                   runVcpkgInstall: false
 
-            - name: Cache vcpkg binary packages (trusted, restore + save)
-              if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
-              uses: actions/cache@v4
-              with:
-                  path: ${{ github.workspace }}/vcpkg_binary_cache
-                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
-                  restore-keys: |
-                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
-
-            - name: Restore vcpkg binary packages (fork PR, restore-only)
-              if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name != github.repository
+            # Restore-only: this job compiles fork-checked-out code and must
+            # never hold a write-capable token; saving happens in the caller.
+            - name: Restore vcpkg binary packages
               uses: actions/cache/restore@v4
               with:
                   path: ${{ github.workspace }}/vcpkg_binary_cache
-                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json') }}${{ inputs.cache-key-suffix }}
+                  # Suffix precedes the hash so restore-keys' prefix fallback can't
+                  # cross into ci-test's -ci-test-suffixed entries.
+                  # Hash covers every VCPKG_OVERLAY_PORTS/TRIPLETS input, not just
+                  # vcpkg.json -- an overlay-only change must also bust this key.
+                  key: ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}
                   restore-keys: |
-                      ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-
+                      ${{ runner.os }}-vcpkg-binpkgs${{ inputs.cache-key-suffix }}-x64-windows-clangcl-
 
             - name: Configure
               run: cmake -S main -B main/build/Linux-ClangCL --preset Linux-ClangCL -DBUILD_TESTS=OFF
@@ -158,6 +174,15 @@ jobs:
                   file_type="$(file --brief main/build/Linux-ClangCL/CommunityShaders.dll)"
                   printf '%s\n' "$file_type"
                   grep -Eq '^PE32\+ executable \(DLL\).*x86-64, for MS Windows' <<<"$file_type"
+
+            - name: Upload vcpkg binary packages for caching
+              if: inputs.cache-write
+              uses: actions/upload-artifact@v4
+              with:
+                  name: vcpkg-binpkgs-linux-clangcl
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  retention-days: 1
+                  if-no-files-found: error
 
             # These logs don't match run-vcpkg's collection patterns, so they are
             # invisible on failure unless surfaced here.

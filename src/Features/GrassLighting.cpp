@@ -1,6 +1,8 @@
 #include "GrassLighting.h"
 
+#include "GrassOptimizations.h"
 #include "I18n/I18n.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.grass_lighting."
 
@@ -12,7 +14,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	OverrideComplexGrassSettings,
 	BasicGrassBrightness,
 	EnableWrappedLighting,
-	ComplexGrassThreshold)
+	ComplexGrassThreshold,
+	MidLODBrightness,
+	FarLODBrightness)
 
 void GrassLighting::DrawSettings()
 {
@@ -57,7 +61,7 @@ void GrassLighting::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx(T(TKEY("lighting"), "Lighting"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), (bool*)&settings.EnableWrappedLighting);
+		Util::CheckboxFlag(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), settings.EnableWrappedLighting);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_wrapped_lighting_tooltip"),
 								  "Enables a softer-looking wrapped lighting model from CS 1.3. "
@@ -65,7 +69,7 @@ void GrassLighting::DrawSettings()
 		}
 		ImGui::Spacing();
 		ImGui::Spacing();
-		ImGui::Checkbox(T(TKEY("override_complex"), "Override Complex Grass Lighting Settings"), (bool*)&settings.OverrideComplexGrassSettings);
+		Util::CheckboxFlag(T(TKEY("override_complex"), "Override Complex Grass Lighting Settings"), settings.OverrideComplexGrassSettings);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("override_complex_tooltip"),
 								  "Override the settings set by the grass mesh author. "
@@ -80,6 +84,28 @@ void GrassLighting::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("brightness"), "Brightness"), &settings.BasicGrassBrightness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("brightness_tooltip"), "Darkens the grass textures to look better with the new lighting"));
+		}
+
+		if (globals::features::grassOptimizations.loaded) {
+			ImGui::Spacing();
+			ImGui::TextWrapped("%s", T(TKEY("mid_lod_grass"), "Middle LOD Grass"));
+			ImGui::PushID("midlod");
+			ImGui::SliderFloat(T(TKEY("lod_brightness"), "Brightness"), &settings.MidLODBrightness, 0.0f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("mid_lod_brightness_tooltip"),
+									  "Raise or lower until middle-distance LOD grass matches the full-detail grass around it. Requires Grass Optimizations with Middle LOD enabled."));
+			}
+			ImGui::PopID();
+
+			ImGui::Spacing();
+			ImGui::TextWrapped("%s", T(TKEY("far_lod_grass"), "Far LOD Grass"));
+			ImGui::PushID("farlod");
+			ImGui::SliderFloat(T(TKEY("lod_brightness"), "Brightness"), &settings.FarLODBrightness, 0.0f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("far_lod_brightness_tooltip"),
+									  "Raise or lower until the most distant LOD grass matches the middle LOD grass in front of it. Requires Grass Optimizations with Far LOD enabled."));
+			}
+			ImGui::PopID();
 		}
 
 		ImGui::TreePop();

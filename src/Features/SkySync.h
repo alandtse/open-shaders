@@ -108,9 +108,6 @@ private:
 		Count
 	};
 
-	const char* MoonLightSourceNames[static_cast<uint8_t>(MoonLightSource::Count)] = { "Brightest", "Masser", "Secunda" };
-	const char* SunPathNames[static_cast<uint8_t>(SunPath::Count)] = { "Southern Sky", "Northern Sky", "Vanilla", "Custom" };
-
 	struct ShadowFader
 	{
 		RE::NiPoint3 currentDir = { 0.0f, 0.0f, 1.0f };

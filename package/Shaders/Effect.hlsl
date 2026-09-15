@@ -536,14 +536,63 @@ cbuffer PerGeometry : register(b2)
 #		include "InverseSquareLighting/InverseSquareLighting.hlsli"
 #	endif
 
-#	if defined(LIGHTING)
-float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPosition, uint eyeIndex, inout float shadowVariance)
+float3 GetEffectDirectionalLighting()
 {
-	float3 color = DLightColor.xyz * Color::EffectLightingMult();
+	float intensity = (ENABLE_LL && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0;
+	return Color::EffectLight(SharedData::DirLightColor.xyz / max(intensity, ShadowSampling::MinDirectionalLightMultiplier), SharedData::linearLightingSettings.isDirLightLinear) *
+	       intensity * SharedData::csUtilitySettings.directionalLightMult;
+}
+
+void ExtractEffectLightingReference(
+	float3 inputReference,
+	float3 ambientReference,
+	float3 directionalReference,
+	out float3 dirColor,
+	out float3 ambientColor)
+{
+	static const float minLightingLuminance = 1e-5;
+
+	float inputLuminance = Color::RGBToLuminance(inputReference);
+	float ambientLuminance = Color::RGBToLuminance(ambientReference);
+	float directionalLuminance = Color::RGBToLuminance(directionalReference);
+	float totalLuminance = ambientLuminance + directionalLuminance;
+
+	if (totalLuminance > minLightingLuminance && ambientLuminance > minLightingLuminance)
+		ambientReference *= inputLuminance / totalLuminance;
+
+	ambientColor = ambientReference;
+	dirColor = max(0.0, inputReference - ambientColor);
+}
+
+void ExtractEffectLighting(float3 inputColor, float3 ambientLighting, out float3 dirColor, out float3 ambientColor)
+{
+	ExtractEffectLightingReference(
+		Color::EffectLightToGamma(inputColor),
+		Color::EffectLightToGamma(ambientLighting),
+		Color::EffectLightToGamma(GetEffectDirectionalLighting()),
+		dirColor,
+		ambientColor);
+}
+
+#	if defined(LIGHTING)
+float3 GetLightingColor(
+	float3 msPosition,
+	float3 worldPosition,
+	float2 screenPosition,
+	uint eyeIndex,
+	float lightingInfluence,
+	out float3 shadowedWeatherReference,
+	out float3 shadowedInfluencedWeatherReference,
+	out bool applyWeatherInfluenceToShadows,
+	inout float shadowVariance)
+{
+	const bool isSkyObject = Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject;
+	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
+	float3 color = ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
 	bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
-	if (suppressExternalEmittance) {
-		color = ShadowSampling::GetAmbientLighting() + ShadowSampling::GetDirectionalLighting();
-	}
+	shadowedWeatherReference = 0.0;
+	shadowedInfluencedWeatherReference = 0.0;
+	applyWeatherInfluenceToShadows = false;
 
 #		if defined(SKYLIGHTING)
 	float skylightingDiffuse = 1.0;
@@ -561,14 +610,37 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 
 	float3 dirColor;
 	float3 ambientColor;
+	float3 influencedDirColor = 0.0;
+	float3 influencedAmbientColor = 0.0;
+	bool useWeatherEffectLighting = !suppressExternalEmittance;
+	if (useWeatherEffectLighting) {
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, skylightingDiffuse);
+		float3 effectAmbientLighting = ShadowSampling::GetAmbientLighting(skylightingDiffuse);
 #		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+		float3 effectAmbientLighting = ShadowSampling::GetAmbientLighting();
 #		endif
+		float3 weatherReference = Color::EffectLightToGamma(color);
+		float3 ambientReference = Color::EffectLightToGamma(effectAmbientLighting);
+		float3 directionalReference = Color::EffectLightToGamma(GetEffectDirectionalLighting());
+		ExtractEffectLightingReference(weatherReference, ambientReference, directionalReference, dirColor, ambientColor);
+		applyWeatherInfluenceToShadows = ENABLE_LL && lightingInfluence > 0.0 && lightingInfluence < 1.0;
+		if (applyWeatherInfluenceToShadows) {
+			float3 influencedReference = lerp(1.0.xxx, weatherReference, lightingInfluence);
+			ExtractEffectLightingReference(influencedReference, ambientReference, directionalReference, influencedDirColor, influencedAmbientColor);
+		}
+	} else {
+		dirColor = ShadowSampling::GetDirectionalLighting();
+#		if defined(SKYLIGHTING) && !defined(INTERIOR)
+		ambientColor = ShadowSampling::GetAmbientLighting(skylightingDiffuse);
+#		else
+		ambientColor = ShadowSampling::GetAmbientLighting();
+#		endif
+	}
 
 #		if defined(EFFECTS11)
 	if (SharedData::enbSettings.Enable) {
+		useWeatherEffectLighting = false;
+		applyWeatherInfluenceToShadows = false;
 		dirColor = ShadowSampling::GetDirectionalLighting();
 #			if defined(SKYLIGHTING) && !defined(INTERIOR)
 		ambientColor = ShadowSampling::GetAmbientLighting(skylightingDiffuse);
@@ -604,26 +676,45 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(dirShadow)));
 
-	dirColor *= dirShadow;
-
+	float sunlightFogAttenuation = 1.0;
 #		if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled) {
-		dirColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
-	}
+	if (SharedData::exponentialHeightFogSettings.enabled)
+		sunlightFogAttenuation = ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 #		endif
+	dirColor *= dirShadow * sunlightFogAttenuation;
+	if (applyWeatherInfluenceToShadows)
+		influencedDirColor *= dirShadow * sunlightFogAttenuation;
 
 #		if defined(SKYLIGHTING)
 #			if defined(IBL)
 	if (!SharedData::iblSettings.EnableIBL)
 #			endif
 	{
+		if (useWeatherEffectLighting)
+			ambientColor = Color::EffectLight(ambientColor);
 		ambientColor = Color::IrradianceToLinear(ambientColor);
 		ambientColor *= skylightingDiffuse;
 		ambientColor = Color::IrradianceToGamma(ambientColor);
+		if (useWeatherEffectLighting)
+			ambientColor = Color::EffectLightToGamma(ambientColor);
+		if (applyWeatherInfluenceToShadows) {
+			influencedAmbientColor = Color::EffectLight(influencedAmbientColor);
+			influencedAmbientColor = Color::IrradianceToLinear(influencedAmbientColor);
+			influencedAmbientColor *= skylightingDiffuse;
+			influencedAmbientColor = Color::IrradianceToGamma(influencedAmbientColor);
+			influencedAmbientColor = Color::EffectLightToGamma(influencedAmbientColor);
+		}
 	}
 #		endif
 
-	color = dirColor + ambientColor;
+	if (useWeatherEffectLighting) {
+		shadowedWeatherReference = dirColor + ambientColor;
+		color = Color::EffectLight(shadowedWeatherReference);
+		if (applyWeatherInfluenceToShadows)
+			shadowedInfluencedWeatherReference = influencedDirColor + influencedAmbientColor;
+	} else {
+		color = dirColor + ambientColor;
+	}
 
 #		if defined(LIGHT_LIMIT_FIX)
 	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
@@ -636,9 +727,9 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #		else
 		float pointScale = 1.0;
 #		endif
-		color.x += dot(Color::PointLight(PLightColorR.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
-		color.y += dot(Color::PointLight(PLightColorG.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
-		color.z += dot(Color::PointLight(PLightColorB.xxx).x * lightFadeMul * Color::EffectLightingMult(), 1.0.xxxx) * pointScale;
+		color.x += dot(Color::EffectPointLight(PLightColorR.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
+		color.y += dot(Color::EffectPointLight(PLightColorG.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
+		color.z += dot(Color::EffectPointLight(PLightColorB.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
 	}
 
 	return color;
@@ -646,12 +737,14 @@ float3 GetLightingColor(float3 msPosition, float3 worldPosition, float2 screenPo
 #	else
 float3 GetLightingShadow(float3 color, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise)
 {
+	color = Color::EffectLight(color);
+
 	float3 dirColor;
 	float3 ambientColor;
 #		if defined(SKYLIGHTING) && !defined(INTERIOR)
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor, 1.0);
+	ExtractEffectLighting(color, ShadowSampling::GetAmbientLighting(1.0), dirColor, ambientColor);
 #		else
-	ShadowSampling::ExtractLighting(color, dirColor, ambientColor);
+	ExtractEffectLighting(color, ShadowSampling::GetAmbientLighting(), dirColor, ambientColor);
 #		endif
 
 	static const uint sampleCount = 8;
@@ -747,7 +840,10 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	float lightingInfluence = LightingInfluence.x;
-	float3 propertyColor = Color::Effect(PropertyColor.xyz);
+	float3 propertyColor = PropertyColor.xyz;
+	float3 shadowedWeatherReference = 0.0;
+	float3 shadowedInfluencedWeatherReference = 0.0;
+	bool applyWeatherInfluenceToShadows = false;
 	float shadowVariance = 1.0;
 
 	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
@@ -774,7 +870,16 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	if defined(LIGHTING)
-	propertyColor = GetLightingColor(input.MSPosition.xyz, input.WorldPosition.xyz, input.Position.xy, eyeIndex, shadowVariance);
+	propertyColor = GetLightingColor(
+		input.MSPosition.xyz,
+		input.WorldPosition.xyz,
+		input.Position.xy,
+		eyeIndex,
+		lightingInfluence,
+		shadowedWeatherReference,
+		shadowedInfluencedWeatherReference,
+		applyWeatherInfluenceToShadows,
+		shadowVariance);
 
 #		if defined(LIGHT_LIMIT_FIX)
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
@@ -837,11 +942,17 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif
 
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade * Color::EffectLightingMult();
+		float3 lightColor = Color::EffectPointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade;
 		propertyColor += lightColor;
 	}
 
 #		endif
+	propertyColor = Color::EffectLightToGamma(propertyColor);
+	if (applyWeatherInfluenceToShadows) {
+		propertyColor = shadowedInfluencedWeatherReference +
+		                lightingInfluence * (propertyColor - shadowedWeatherReference);
+		lightingInfluence = 1.0;
+	}
 #	elif defined(MEMBRANE)
 	propertyColor *= 0;
 	lightingInfluence = 0;
@@ -854,7 +965,6 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 	{
 		baseTexColor = TexBaseSampler.Sample(SampBaseSampler, input.TexCoord0.xy);
-		baseTexColor.xyz = Color::Effect(baseTexColor.xyz);
 		baseColor *= baseTexColor;
 		if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::IgnoreTexAlpha || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) {
 			baseColor.w = 1;
@@ -865,9 +975,8 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColorMul = float4(1, 1, 1, 1);
 #	else
 	float4 baseColorMul = BaseColor;
-	baseColorMul.xyz = Color::Effect(baseColorMul.xyz);
 #		if defined(VC) && !defined(PROJECTED_UV)
-	baseColorMul *= float4(Color::Effect(input.Color.xyz), input.Color.w);
+	baseColorMul *= input.Color;
 #		endif
 #	endif
 
@@ -920,7 +1029,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	if defined(MEMBRANE)
 		grayscaleToColorUv.y = PropertyColor.x;
 #	endif
-		baseColor.xyz = Color::Effect(baseColorScale * TexGrayscaleSampler.Sample(SampGrayscaleSampler, grayscaleToColorUv).xyz);
+		baseColor.xyz = baseColorScale * TexGrayscaleSampler.Sample(SampGrayscaleSampler, grayscaleToColorUv).xyz;
 	}
 
 	float3 lightColor = lerp(baseColor.xyz, propertyColor * baseColor.xyz, lightingInfluence);
@@ -936,10 +1045,13 @@ PS_OUTPUT main(PS_INPUT input)
 		lightColor = GetLightingShadow(lightColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise);
 #	endif
 
-	lightColor = Color::EffectMult(lightColor);
+#	if defined(PROJECTED_UV) && !defined(TRUE_PBR)
+	lightColor = Color::EffectLightToGamma(
+		Color::EffectLight(lightColor) * Color::VanillaDiffuseColorMult());
+#	endif
 
 #	if !defined(MOTIONVECTORS_NORMALS)
-	float fogFactor = Color::FogAlpha(input.FogParam.w);
+	float fogFactor = input.FogParam.w;
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
@@ -950,6 +1062,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float vanillaFogFactor = fogFactor;
 	float3 vanillaFogColor = fogColor;
 	float expFogFactor = 0;
+	bool disableVanillaFog = false;
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		expFogFactor = exponentialHeightFog.w;
@@ -961,11 +1074,16 @@ PS_OUTPUT main(PS_INPUT input)
 		fogFactor = exponentialHeightFog.w;
 		alpha *= 1 - exponentialHeightFog.w;
 #			endif
-		if (ExponentialHeightFog::ShouldDisableVanillaFog()) {
-			vanillaFogColor = lightColor;
-			vanillaFogFactor = 0;
-		}
+		disableVanillaFog = ExponentialHeightFog::ShouldDisableVanillaFog();
 	}
+	vanillaFogColor = Color::EffectLightToGamma(vanillaFogColor);
+	fogColor = Color::EffectLightToGamma(fogColor);
+	if (disableVanillaFog) {
+		vanillaFogColor = lightColor;
+		vanillaFogFactor = 0;
+	}
+#		else
+	fogColor = Color::EffectLightToGamma(fogColor);
 #		endif
 #		if defined(ADDBLEND)
 #			if defined(EXP_HEIGHT_FOG)
@@ -991,7 +1109,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
-	blendedColor = lerp(blendedColor, fogColor, fogFactor.xxx);
+	blendedColor = lerp(blendedColor, fogColor, expFogFactor.xxx);
 #			else
 	float3 blendedColor = lerp(lightColor, fogColor, fogFactor.xxx);
 #			endif
@@ -1000,13 +1118,27 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 blendedColor = lightColor.xyz;
 #	endif
 
-	alpha = Color::EffectAlpha(alpha);
-
 	float4 finalColor = float4(blendedColor, alpha);
 #	if defined(MULTBLEND_DECAL)
 	finalColor.xyz *= alpha;
 #	else
 	finalColor *= fogMul;
+#	endif
+#	if !defined(DEFERRED)
+	const bool inReflection = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection;
+	const bool linearRenderTarget = ENABLE_LL &&
+	                                inReflection &&
+	                                !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget);
+	[branch] if (linearRenderTarget)
+	{
+		float3 linearDiffuse = Color::SceneGammaToLinear(blendedColor);
+#		if defined(MULTBLEND_DECAL)
+		linearDiffuse *= alpha;
+#		else
+		linearDiffuse *= fogMul.xyz;
+#		endif
+		finalColor.xyz = linearDiffuse;
+	}
 #	endif
 	psout.Diffuse = finalColor;
 #	if defined(LIGHTING) && defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
@@ -1021,8 +1153,16 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 
-#	if defined(DEFERRED)
+#	if defined(DEFERRED) || !defined(MOTIONVECTORS_NORMALS)
+	float3 auxiliaryColor = ENABLE_LL ? Color::SceneGammaToLinear(blendedColor) : blendedColor;
+#		if defined(MULTBLEND_DECAL)
+	auxiliaryColor *= alpha;
+#		else
+	auxiliaryColor *= fogMul.xyz;
+#		endif
+#	endif
 
+#	if defined(DEFERRED)
 #		if defined(MOTIONVECTORS_NORMALS)
 #			if (defined(MEMBRANE) && defined(SKINNED) && defined(NORMALS))
 	float3 screenSpaceNormal = normalize(input.TBN0);
@@ -1035,13 +1175,13 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if defined(MULTBLEND) || defined(MULTBLEND_DECAL)
-	psout.Specular = float4(psout.Diffuse.xyz, finalColor.w);
-	psout.Albedo = float4(psout.Diffuse.xyz, finalColor.w);
-	psout.Reflectance = float4(psout.Diffuse.xyz, finalColor.w);
-	psout.Masks = float4(Color::RGBToLuminance(psout.Diffuse.xyz).xxx, finalColor.w);
+	psout.Specular = float4(auxiliaryColor, finalColor.w);
+	psout.Albedo = float4(auxiliaryColor, finalColor.w);
+	psout.Reflectance = float4(auxiliaryColor, finalColor.w);
+	psout.Masks = float4(Color::RGBToLuminance(auxiliaryColor).xxx, finalColor.w);
 	psout.Masks2 = float4(0, 0, 0, finalColor.w);
 #		else
-	psout.Albedo = float4(psout.Diffuse.xyz * !(Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject), finalColor.w);
+	psout.Albedo = float4(auxiliaryColor * !(Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject), finalColor.w);
 	psout.Specular = float4(0, 0, 0, finalColor.w);
 	psout.Reflectance = float4(0, 0, 0, finalColor.w);
 	psout.Masks = float4(0, 0, 0, finalColor.w);
@@ -1063,14 +1203,9 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.ScreenSpaceNormals.xy = screenSpaceNormal.xy + 0.5.xx;
 	psout.ScreenSpaceNormals.zw = 0.0.xx;
 #	else
-	psout.Color2 = finalColor;
+	psout.Color2 = float4(auxiliaryColor, finalColor.w);
 #	endif
 
-#	if !defined(HDR_OUTPUT)
-	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) && SharedData::linearLightingSettings.enableLinearLighting) {
-		psout.Diffuse.xyz = Color::LinearToSrgb(psout.Diffuse.xyz);
-	}
-#	endif
 	return psout;
 }
 #endif

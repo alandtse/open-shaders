@@ -177,7 +177,7 @@ bool ScreenSpaceShadows::MatchesPerformanceProfile(PerfProfile profile) const
 void ScreenSpaceShadows::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("general"), "General"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Checkbox(T(TKEY("enable"), "Enable"), (bool*)&bendSettings.Enable);
+		Util::CheckboxFlag(T(TKEY("enable"), "Enable"), bendSettings.Enable);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("enable_tooltip"), "Enable screen-space contact shadows from the sun/moon direction."));
 
@@ -643,8 +643,8 @@ void ScreenSpaceShadows::SetupResources()
 		D3D11_TEXTURE2D_DESC texDesc{};
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 
-		shadowMask.texture->GetDesc(&texDesc);
-		shadowMask.SRV->GetDesc(&srvDesc);
+		shadowMask.texture->GetDesc(Util::AsW32(&texDesc));
+		shadowMask.SRV->GetDesc(Util::AsW32(&srvDesc));
 
 		texDesc.Format = DXGI_FORMAT_R8_UNORM;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;

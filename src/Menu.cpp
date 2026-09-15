@@ -159,7 +159,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GlobalScale,
 	FontRoles,
 	UseSimplePalette,
-	ShowActionIcons,
 	UseMonochromeIcons,
 	UseMonochromeLogo,
 	ShowFooter,
@@ -367,6 +366,7 @@ const Menu::ThemeSettings::FontRoleSettings& Menu::GetDefaultFontRole(FontRole r
 
 Menu::~Menu()
 {  // Release icon textures if loaded
+	uiIcons.sidebar.Release();
 	uiIcons.saveSettings.Release();
 	uiIcons.loadSettings.Release();
 	uiIcons.deleteSettings.Release();
@@ -816,16 +816,11 @@ void Menu::DrawSettings()
 		}
 
 		const float uiScale = exp2(globalScale);  // User's manual GlobalScale for header icons
-		// Check if we can show icons - require setting enabled and at least some icons loaded (for undocked)
-		// For docked mode, always show icons if textures are available
-		bool canShowIcons = settings.Theme.ShowActionIcons &&
-		                    (uiIcons.saveSettings.texture ||
-								uiIcons.loadSettings.texture ||
-								uiIcons.clearCache.texture);  // Always show logo if available, regardless of action icons setting
+		bool canShowIcons = uiIcons.saveSettings.texture || uiIcons.loadSettings.texture || uiIcons.clearCache.texture;
 		bool showLogo = uiIcons.logo.texture != nullptr;
 
 		// Render header using extracted component
-		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons);
+		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons, sidebar.visible);
 
 		// Main content starts here - no additional separator needed as it's already handled in the conditions above
 
@@ -835,15 +830,14 @@ void Menu::DrawSettings()
 
 		// Static storage for menu state - must persist across frames
 		static size_t selectedMenu = 0;
-		static std::map<std::string, bool> categoryExpansionStates;
 
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
 			footer_height,
+			sidebar,
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
-			categoryExpansionStates,
 			[&]() { DrawGeneralSettings(); },
 			[&]() { DrawAdvancedSettings(); });
 
@@ -858,6 +852,17 @@ void Menu::DrawSettings()
 		Util::DrawClearShaderCacheConfirmation();
 	}
 	ImGui::End();
+}
+
+void Menu::DrawEditorSettings(bool resetEditorLayout)
+{
+	if (focusChanged) {
+		OnFocusChanged();
+		focusChanged = false;
+	}
+	size_t selectedMenu = 0;
+	FeatureListRenderer::RenderFeatureList(0.0f, sidebar, selectedMenu, featureSearch, pendingFeatureSelection, [this]() { DrawGeneralSettings(); }, [this]() { DrawAdvancedSettings(); }, true, resetEditorLayout);
+	Util::DrawClearShaderCacheConfirmation();
 }
 
 /**
@@ -902,7 +907,8 @@ void Menu::DrawAdvancedSettings()
 void Menu::DrawDisableAtBootSettings()
 {
 	auto state = globals::state;
-	auto& disabledFeatures = state->GetDisabledFeatures();
+	static std::unordered_set<std::string> preferenceSaveFailures;
+	static int lastVisibleFrame = -1;
 
 	ImGui::Text("%s",
 		T("menu.disable_at_boot_desc",
@@ -913,6 +919,11 @@ void Menu::DrawDisableAtBootSettings()
 	ImGui::Spacing();
 
 	if (ImGui::CollapsingHeader(T("menu.features", "Features"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		const int currentFrame = ImGui::GetFrameCount();
+		if (ImGui::IsWindowAppearing() || currentFrame > lastVisibleFrame + 1)
+			preferenceSaveFailures.clear();
+		lastVisibleFrame = currentFrame;
+
 		// Prepare a sorted list of feature pointers
 		auto featureList = Feature::GetFeatureList();
 		std::sort(featureList.begin(), featureList.end(), [](Feature* a, Feature* b) {
@@ -921,17 +932,21 @@ void Menu::DrawDisableAtBootSettings()
 
 		// Display sorted features
 		for (auto* feature : featureList) {
-			if (feature->IsHiddenUnreleased())
+			if (feature->IsAlwaysEnabled() || feature->IsHiddenUnreleased())
 				continue;
 
 			const std::string featureName = feature->GetShortName();
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
-			bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+			bool isDisabled = state->IsFeatureDisabled(featureName);
 
 			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
-				// Update the disabledFeatures map based on user interaction
-				disabledFeatures[featureName] = isDisabled;
+				if (state->SetFeatureBootEnabled(featureName, !isDisabled))
+					preferenceSaveFailures.erase(featureName);
+				else
+					preferenceSaveFailures.insert(featureName);
 			}
+			if (preferenceSaveFailures.contains(featureName))
+				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
 		}
 	}
 }
@@ -1058,6 +1073,10 @@ static std::vector<InputCombo> DeriveCSEditorKey(const std::vector<InputCombo>& 
 
 void Menu::ProcessInputEventQueue()
 {
+	const int requestedSidebarVisibility = pendingSidebarVisibility.exchange(-1, std::memory_order_relaxed);
+	if (requestedSidebarVisibility != -1)
+		sidebar.visible = requestedSidebarVisibility != 0;
+
 	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
 	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
 	// Absolute open/close first, then toggle parity, so rapid sub-frame toggles aren't dropped.
@@ -1174,7 +1193,19 @@ void Menu::ProcessInputEventQueue()
 					std::function<void()> action;
 				};
 				auto shaderCache = globals::shaderCache;
+				auto* editorWindow = EditorWindow::GetSingleton();
 				KeyAction keyActions[] = {
+					{ editorWindow && editorWindow->IsInPreviewMode() ? settings.ToggleKey : settings.CSEditorToggleKey, [editorWindow]() {
+						 if (!editorWindow)
+							 return;
+						 if (editorWindow->GetPreviewMode() == EditorWindow::PreviewMode::FreeCamera) {
+							 editorWindow->ToggleFreeCameraLock();
+						 } else if (editorWindow->IsInPreviewMode()) {
+							 editorWindow->ExitPreviewMode();
+						 } else {
+							 CSEditor::ToggleEditorWindow();
+						 }
+					 } },
 					{ settings.ToggleKey, [this]() {
 						 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
 							 IsEnabled = !IsEnabled;
@@ -1187,20 +1218,6 @@ void Menu::ProcessInputEventQueue()
 					{ settings.ShaderBlockPrevKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(); } },
 					{ settings.ShaderBlockNextKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(false); } },
 					{ settings.OverlayToggleKey, []() { Menu::GetSingleton()->overlayVisible = !Menu::GetSingleton()->overlayVisible; } },
-					{ settings.CSEditorToggleKey, []() {
-						 auto* ew = EditorWindow::GetSingleton();
-						 if (!ew)
-							 return;
-						 if (ew->GetPreviewMode() == EditorWindow::PreviewMode::FreeCamera) {
-							 // Flying → lock camera position for editing
-							 ew->ToggleFreeCameraLock();
-						 } else if (ew->IsInPreviewMode()) {
-							 // Locked or PlayMode → fully exit preview
-							 ew->ExitPreviewMode();
-						 } else {
-							 CSEditor::ToggleEditorWindow();
-						 }
-					 } },
 					{ settings.ScreenshotKey, []() {
 						 if (globals::features::screenshotFeature.loaded)
 							 globals::features::screenshotFeature.captureRequested = true;

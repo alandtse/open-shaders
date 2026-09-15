@@ -1,11 +1,22 @@
 #ifndef __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_COMMON_HLSLI__
 #define __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_COMMON_HLSLI__
 
+#include "Common/Color.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
 
 namespace ExponentialHeightFog
 {
+	float3 GetDirectionalLightColor()
+	{
+		if (!ENABLE_LL)
+			return SharedData::DirLightColor.xyz;
+
+		float lightScale = SharedData::linearLightingSettings.dirLightMult;
+		float3 lightColor = lightScale > 0.0f ? SharedData::DirLightColor.xyz / lightScale : 0.0f.xxx;
+		return (SharedData::linearLightingSettings.isDirLightLinear ? Color::GamutTransform(lightColor) : Color::AuthoredColor(lightColor)) * lightScale;
+	}
+
 	float HenyeyGreenstein(float cosTheta, float g)
 	{
 		float g2 = g * g;

@@ -7,6 +7,7 @@
 #include "EditorWindow.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 #include "Utils/UI.h"
 #include "WeatherUtils.h"
 #include "imgui_internal.h"
@@ -291,19 +292,14 @@ bool Widget::BeginWidgetWindow()
 
 void Widget::ForceWeatherReinit(RE::TESWeather* weather)
 {
-	auto* sky = globals::game::sky;
-	if (weather && sky && sky->currentWeather == weather) {
-		sky->ForceWeather(weather, true);
-		sky->ReleaseWeatherOverride();
-	}
+	Util::EnvironmentControls::RefreshWeather(weather);
 }
 
 void Widget::ForceCurrentWeatherReinit()
 {
 	auto* sky = globals::game::sky;
 	if (sky && sky->currentWeather) {
-		sky->ForceWeather(sky->currentWeather, true);
-		sky->ReleaseWeatherOverride();
+		Util::EnvironmentControls::RefreshWeather(sky->currentWeather);
 	}
 }
 
@@ -311,7 +307,7 @@ void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSav
 {
 	auto editorWindow = EditorWindow::GetSingleton();
 	auto menu = globals::menu;
-	bool useIcons = !editorWindow->settings.useTextButtons && menu && menu->GetSettings().Theme.ShowActionIcons;
+	bool useIcons = !editorWindow->settings.useTextButtons && menu;
 	const float scale = Util::GetUIScale();
 	if (navigatedFromSearch) {
 		ClearSearchState(true);
