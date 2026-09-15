@@ -207,9 +207,9 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -1495,7 +1495,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDepthPyramidCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal(depth.depthSRV) };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
@@ -1541,7 +1541,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDemandCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal(depth.depthSRV), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
 			tileDepthRange->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 

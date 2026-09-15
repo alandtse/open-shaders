@@ -173,11 +173,6 @@ namespace
 		ImGui::SeparatorText(text);
 	}
 
-	void SeparatorTextWithFont(const std::string& text, Menu::FontRole role)
-	{
-		SeparatorTextWithFont(text.c_str(), role);
-	}
-
 	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
 	{
 		return MenuFonts::BeginTabItemWithFont(label, role, flags);
@@ -461,29 +456,18 @@ void SettingsTabRenderer::RenderBehaviorTab()
 
 		SeparatorTextWithFont(T("menu.settings.ui_behavior", "UI Behavior"), Menu::FontRole::Subheading);
 
-		ImGui::Checkbox(T("menu.settings.show_icon_buttons_in_header", "Show Icon Buttons in Header"), &themeSettings.ShowActionIcons);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.settings.show_icon_buttons_in_header_tooltip",
-								  "When enabled: Shows action buttons (Save, Load, Clear Cache) as icons in the header\n"
-								  "When disabled: Shows as text buttons below the header"));
+		if (ImGui::Checkbox(T("menu.settings.use_monochrome_icons", "Use Monochrome Icons"), &themeSettings.UseMonochromeIcons)) {
+			globals::menu->pendingIconReload = true;
 		}
-
-		if (themeSettings.ShowActionIcons) {
-			ImGui::Indent();
-			if (ImGui::Checkbox(T("menu.settings.use_monochrome_icons", "Use Monochrome Icons"), &themeSettings.UseMonochromeIcons)) {
-				globals::menu->pendingIconReload = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.use_monochrome_icons_tooltip", "Uses white monochrome icons that adapt to your theme's text color"));
-			}
-			ImGui::SameLine();
-			if (ImGui::Checkbox(T("menu.settings.use_monochrome_cs_logo", "Use Monochrome OS Logo"), &themeSettings.UseMonochromeLogo)) {
-				globals::menu->pendingIconReload = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.use_monochrome_cs_logo_tooltip", "Uses monochrome version of the logo"));
-			}
-			ImGui::Unindent();
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.settings.use_monochrome_icons_tooltip", "Uses white monochrome icons that adapt to your theme's text color"));
+		}
+		ImGui::SameLine();
+		if (ImGui::Checkbox(T("menu.settings.use_monochrome_cs_logo", "Use Monochrome OS Logo"), &themeSettings.UseMonochromeLogo)) {
+			globals::menu->pendingIconReload = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.settings.use_monochrome_cs_logo_tooltip", "Uses monochrome version of the logo"));
 		}
 
 		ImGui::Checkbox(T("menu.settings.show_footer", "Show Footer"), &themeSettings.ShowFooter);

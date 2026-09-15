@@ -16,7 +16,7 @@ struct LinearLighting : Feature
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.linear_lighting.description", "Linear Lighting does internal color space conversion to improve lighting calculation accuracy."),
-			{ T("feature.linear_lighting.key_feature_1", "Customizable gamma correction"),
+			{ T("feature.linear_lighting.key_feature_1", "Semantic authored-color conversion"),
 				T("feature.linear_lighting.key_feature_2", "Corrects lighting calculations"),
 				T("feature.linear_lighting.key_feature_3", "Makes PBR really work") } };
 	};
@@ -28,32 +28,10 @@ struct LinearLighting : Feature
 	{
 		uint enableLinearLighting = false;
 		uint enableACEScg = false;
-		float lightGamma = 1.8f;
-		float colorGamma = 1.8f;
-		float emitColorGamma = 1.8f;
-		float glowmapGamma = 1.8f;
-		float ambientGamma = 1.8f;
-		float fogGamma = 1.97f;
-		float fogAlphaGamma = 1.8f;
-		float effectGamma = 1.4f;
-		float effectAlphaGamma = 1.55f;
-		float skyGamma = 1.8f;
-		float waterGamma = 1.8f;
-		float vlGamma = 1.8f;
 
 		// Lighting multipliers
-		float ambientMult = 1.0f;
-		float vanillaDiffuseColorMult = 1.0f;
-		float emitColorMult = 1.0f;
-		float glowmapMult = 0.66f;
-
-		// Effect multipliers
-		float effectLightingMult = 0.32f;
-		float membraneEffectMult = 1.0f;
-		float bloodEffectMult = 1.0f;
-		float projectedEffectMult = 1.0f;
-		float deferredEffectMult = 1.0f;
-		float otherEffectMult = 1.0f;
+		float ambientMult = 0.32f;
+		float vanillaDiffuseColorMult = 1.5f;
 	} settings;
 
 	struct alignas(16) PerFrameData
@@ -62,44 +40,41 @@ struct LinearLighting : Feature
 		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
-		float lightGamma;
-		float colorGamma;
-		float emitColorGamma;
-		float glowmapGamma;
-		float ambientGamma;
-		float fogGamma;
-		float fogAlphaGamma;
-		float effectGamma;
-		float effectAlphaGamma;
-		float skyGamma;
-		float waterGamma;
-		float vlGamma;
-		float ambientMult;
+		float authoredColorGamma;
 		float vanillaDiffuseColorMult;
-		float emitColorMult;
-		float glowmapMult;
-		float effectLightingMult;
-		float membraneEffectMult;
-		float bloodEffectMult;
-		float projectedEffectMult;
-		float deferredEffectMult;
-		float otherEffectMult;
 		float pad0[2];
+		RE::NiColor effectLightingColor;
+		float ambientMult;
+		RE::NiColor skyStaticsColor;
+		float pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
+	static_assert(sizeof(PerFrameData) == 0x40);
+
+	static constexpr std::array<float, 3> kNoProjectedMaterialColorScale{ -1.0f, -1.0f, -1.0f };
 
 	struct alignas(16) PerGeometryData
 	{
 		float emissiveMult;
-		float pad0[3];
+		std::array<float, 3> projectedMaterialColorScale = kNoProjectedMaterialColorScale;
 	};
+	static_assert(sizeof(PerGeometryData) == 16);
+
+	std::array<std::array<float, 3>, 2> lodProjectedMaterialColorScales{ kNoProjectedMaterialColorScale, kNoProjectedMaterialColorScale };
 
 	ConstantBuffer* PerGeometryCB = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> sceneGammaDecodeCS;
+	bool sceneGammaActive = false;
 
 	uint isDirLightLinear = false;
 	float dirLightMult = 1.0f;
+	RE::NiColor effectLightingColor{ 1.0f, 1.0f, 1.0f };
+	RE::NiColor skyStaticsColor{ 1.0f, 1.0f, 1.0f };
+	RE::NiColor weatherEffectLightingSource{};
+	RE::NiColor weatherSkyStaticsSource{};
+	bool weatherLightingColorsInitialized = false;
 
-	/** @brief Draws the ImGui settings UI for gamma correction and lighting multiplier configuration. */
+	/** @brief Draws the Linear Lighting controls and lighting multipliers. */
 	virtual void DrawSettings() override;
 
 	virtual void LoadSettings(json& o_json) override;
@@ -107,31 +82,47 @@ struct LinearLighting : Feature
 
 	virtual void RestoreDefaultSettings() override;
 
-	/** @brief Reads the directional light multiplier from ImageSpaceManager during the prepass. */
+	/** @brief Reads the directional light multiplier and projected LOD material colors. */
 	virtual void Prepass() override;
-	/** @brief Installs the BSLightingShader geometry setup hook. */
+	/** @brief Installs the lighting geometry hook. */
 	virtual void PostPostLoad() override;
 
-	/** @brief Creates the per-geometry constant buffer for emissive multiplier data. */
+	/** @brief Creates the emissive data buffer and compiles the scene gamma decode shader. */
 	virtual void SetupResources() override;
+	/** @brief Recompiles the scene gamma decode shader after a shader-cache clear. */
+	virtual void ClearShaderCache() override;
+	/** @brief Marks kMAIN as gamma-domain storage for the main world-rendering interval. */
+	virtual void OnWorldRenderBegin() override;
+	/** @brief Decodes the completed gamma-domain world scene in place. */
+	virtual void OnWorldRenderEnd(RE::RENDER_TARGET a_renderTarget) override;
+	/** @brief Finishes any pending scene decode before post-processing consumes its input. */
+	virtual void OnBeforePostProcessing(RE::RENDER_TARGET a_renderTarget) override;
+	/** @brief Suspends gamma-target storage for cubemap rendering and restores it on scope exit. */
+	virtual std::function<void()> OnReflectionsRenderBegin() override;
 
 	/** @brief Populates and returns the per-frame constant buffer data with gamma and multiplier settings. */
 	PerFrameData GetCommonBufferData();
+	/** @brief Returns whether the engine and shaders should currently use linear lighting data. */
+	bool IsLinearLightingActive() const;
+	/** @brief Compiles the scene gamma decode shader when the target format supports typed UAV loads. */
+	void CompileSceneGammaDecodeShader();
+
+	/** @brief Caches linear copies of the interpolated weather colors used by effect meshes. */
+	virtual void OnWeatherColorsUpdated(RE::Sky* a_sky) override;
 
 	/**
-	 * @brief Converts an NiColor from gamma space to linear space using the specified gamma value.
+	 * @brief Decodes an authored Skyrim color into linear sRGB.
 	 * @param inColor The input color in gamma space.
-	 * @param gamma The gamma exponent to apply.
 	 * @return The color converted to linear space.
 	 */
-	RE::NiColor ColorToLinear(RE::NiColor inColor, float gamma);
+	static RE::NiColor DecodeAuthoredColor(RE::NiColor inColor);
 
 	/**
-	 * @brief Uploads emissive multiplier data to the per-geometry constant buffer during shader setup.
+	 * @brief Uploads emissive and projected material data during lighting geometry setup.
 	 * @param a_pass The render pass whose lighting properties to read.
 	 */
 	void BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass);
 
-	/** @brief Contains the BSLightingShader geometry setup hook implementation. */
+	/** @brief Contains the lighting shader hook implementation. */
 	struct Hooks;
 };

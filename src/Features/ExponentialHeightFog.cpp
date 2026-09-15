@@ -101,13 +101,9 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	const float fogPower = sky ? std::clamp(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, 0.01f, 10.0f) : 1.0f;
 	const float fogClamp = sky ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 0.9999f) : 0.0f;
 
-	const auto lighting = globals::features::linearLighting.GetCommonBufferData();
-	data.fogAlphaGamma = lighting.enableLinearLighting ?
-	                         std::clamp(std::isfinite(lighting.fogAlphaGamma) ? lighting.fogAlphaGamma : 1.0f, 0.01f, 8.0f) :
-	                         1.0f;
 	data.vanillaFogNear = fogNear;
 	data.vanillaFogFar = fogFar;
-	data.vanillaFogMaxOpacity = std::pow(fogClamp, data.fogAlphaGamma);
+	data.vanillaFogMaxOpacity = fogClamp;
 	data.vanillaFogPower = fogPower;
 	const float4 fallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
 	data.vanillaFogNearColor = fallbackFogColor;
@@ -130,7 +126,7 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 		data.originalFogColorAmount = 1.0f;
 		data.startDistance = fogNear;
 		const float targetOpacity = data.vanillaFogMaxOpacity * 0.5f;
-		const float normalizedReference = std::pow(targetOpacity, 1.0f / (fogPower * data.fogAlphaGamma));
+		const float normalizedReference = std::pow(targetOpacity, 1.0f / fogPower);
 		const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, 1.0f);
 		constexpr float kAnalyticalExtinctionScale = 0.001f * 0.69314718056f * 0.69314718056f;
 		data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, 0.0001f)) / (referenceDistance * kAnalyticalExtinctionScale);
@@ -143,7 +139,7 @@ void ExponentialHeightFog::DrawSettings()
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
 	Util::CheckboxFlag(T(TKEY("use_vanilla_fog_settings"), "Follow vanilla fog"), settings.useVanillaFogSettings);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives volumetric and distant fog from the active weather, including opacity gamma. Strength 1.0 preserves the optical-depth baseline; 1.25 is the tuned default. Replaces vanilla distance fog."));
+		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives volumetric and distant fog from the active weather. Strength 1.0 preserves the optical-depth baseline; 1.25 is the tuned default. Replaces vanilla distance fog."));
 	}
 	ImGui::BeginDisabled(settings.useVanillaFogSettings == 0);
 	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -438,7 +434,7 @@ void ExponentialHeightFog::Prepass()
 	EnsureVolumetricResources();
 	bool historySettingsMatch = lastPrepassFrame != UINT32_MAX;
 	for (const auto field : {
-			 &Settings::vanillaFogNear, &Settings::vanillaFogFar, &Settings::fogAlphaGamma,
+			 &Settings::vanillaFogNear, &Settings::vanillaFogFar,
 			 &Settings::vanillaFogMaxOpacity, &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
 			 &Settings::fogDensity, &Settings::fogHeight, &Settings::fogHeightFalloff,
 			 &Settings::volumetricFogDistance, &Settings::volumetricFogStartDistance,
@@ -469,10 +465,13 @@ void ExponentialHeightFog::Prepass()
 	                    ibl.skyIBLTexture;
 	const bool hasSkylighting = skylighting.loaded && skylighting.texProbeArray;
 
+	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
+	const std::array currentColorSpace{ linearLightingData.enableLinearLighting, linearLightingData.enableACEScg };
 	const bool temporalReprojection = Util::GetTemporal();
 	const bool temporalHistoryValid =
 		temporalReprojection &&
 		hasLightScatteringHistory &&
+		historyColorSpace == currentColorSpace &&
 		lastPrepassFrame != UINT32_MAX &&
 		globals::state->frameCount == lastPrepassFrame + 1u;
 
@@ -659,6 +658,7 @@ void ExponentialHeightFog::Prepass()
 	if (temporalReprojection && allStagesOk) {
 		context->CopyResource(lightScatteringHistory->resource.get(), lightScattering->resource.get());
 		hasLightScatteringHistory = true;
+		historyColorSpace = currentColorSpace;
 		if (depthSrv) {
 			context->CopyResource(conservativeDepthHistory->resource.get(), conservativeDepth->resource.get());
 			hasConservativeDepthHistory = true;

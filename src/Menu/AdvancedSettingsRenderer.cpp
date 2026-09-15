@@ -216,7 +216,7 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	auto& menuSettings = globals::menu->GetSettings();
 	ImGui::Checkbox("Background Compile on Boot", &menuSettings.BackgroundShaderCompilationOnBoot);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
+		ImGui::TextUnformatted(
 			"Load the menu immediately and compile shaders in the background on boot "
 			"(same as the Skip Compilation key). Shaders still compile - only the startup wait "
 			"is skipped. Takes effect on the next launch. Default off.");
@@ -381,7 +381,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 			ImGui::Text(T("menu.advanced.infinite_core_efficiency_metric", "Infinite-core efficiency (S/T_p): %.1f%%"), 100.0 * p.infiniteCoreEfficiency);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T("menu.advanced.infinite_core_efficiency_tooltip_1", "How close runtime is to the infinite-core lower bound."));
-				ImGui::Text(T("menu.advanced.infinite_core_efficiency_tooltip_2", "100%% means T_p == S."));
+				ImGui::TextUnformatted(T("menu.advanced.infinite_core_efficiency_tooltip_2", "100% means T_p == S."));
 			}
 			ImGui::Text(T("menu.advanced.infinite_core_gap_metric", "Infinite-core gap: %.1f%%"), p.infiniteCoreGapPercent);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -720,7 +720,7 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 
 		float maxHeight = ImGui::GetContentRegionAvail().y * 0.3f;  // Limit to 30% to keep Active Shaders visible
 		if (ImGui::BeginChild("##BlockedShaderInfo", ImVec2(0, maxHeight), true, ImGuiChildFlags_AutoResizeY)) {
-			Util::Text::Error(T("menu.advanced.shader_blocking_active", "Shader Blocking Active"));
+			Util::Text::Error("%s", T("menu.advanced.shader_blocking_active", "Shader Blocking Active"));
 			ImGui::SameLine();
 			if (ImGui::SmallButton(T("menu.advanced.stop_blocking", "Stop Blocking##Section"))) {
 				shaderCache->DisableShaderBlocking();
@@ -891,7 +891,7 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 			}
 		};
 
-		auto onRowRightClick = [shaderCache](const ShaderRow& row) {
+		auto onRowRightClick = [](const ShaderRow& row) {
 			std::string diskPathStr;
 			diskPathStr.reserve(row.shader.diskPath.size());
 			for (wchar_t wc : row.shader.diskPath) {

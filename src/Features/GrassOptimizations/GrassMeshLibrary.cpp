@@ -1,5 +1,7 @@
 #include "GrassMeshLibrary.h"
 
+#include "Utils/D3D.h"
+
 namespace
 {
 	RE::BSTriShape* FindFirstTriShape(RE::NiAVObject* obj)
@@ -96,8 +98,8 @@ void GrassMeshLibrary::LoadLODMesh(LODMesh& entry, const std::string& stem, LODT
 			auto* rd = grd.rendererData;
 			if (rd && rd->vertexBuffer && rd->indexBuffer) {
 				entry.keepAlive = RE::NiPointer<RE::NiAVObject>(root.get());
-				entry.vertexBuffer = reinterpret_cast<ID3D11Buffer*>(rd->vertexBuffer);
-				entry.indexBuffer = reinterpret_cast<ID3D11Buffer*>(rd->indexBuffer);
+				entry.vertexBuffer = Util::AsReal(rd->vertexBuffer);
+				entry.indexBuffer = Util::AsReal(rd->indexBuffer);
 				// Alter the descriptor to match the BSMultistreaminstanceTrishapes of normal grass
 				entry.descVal = *reinterpret_cast<const uint64_t*>(&grd.vertexDesc) | 0x8000000000000080ull;
 				entry.meshStride = VertexStrideFromDesc(entry.descVal);

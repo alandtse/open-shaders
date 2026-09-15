@@ -2769,6 +2769,7 @@ namespace SceneSettingsUI
 		auto& state = s_featurePageEditor;
 		if (state.featureShortName == feature->GetShortName()) {
 			state.toolbarOpen = true;
+			SceneSettingsManager::GetSingleton()->SetFeatureSceneEditPreviewEnabled(true);
 			return true;
 		}
 		if (!state.featureShortName.empty() && SceneSettingsManager::GetSingleton()->HasPendingFeatureSceneEdits()) {
@@ -2836,6 +2837,8 @@ namespace SceneSettingsUI
 	void HideFeaturePageEditing()
 	{
 		s_featurePageEditor.toolbarOpen = false;
+		SetFeaturePagePreviewPlaying(false);
+		SceneSettingsManager::GetSingleton()->SetFeatureSceneEditPreviewEnabled(false);
 	}
 
 	bool DrawFeaturePageControls(Feature* feature, bool enabled)
@@ -2862,7 +2865,7 @@ namespace SceneSettingsUI
 				T("feature.scene_manager.edit.discard_title", "Discard Unsaved Scene Settings?"));
 			state.replaceScene.message = T("feature.scene_manager.edit.discard_scene_message",
 				"Unsaved scene settings will be discarded. Switch to the selected scene?");
-			state.replaceScene.confirmLabel = T("feature.scene_manager.edit.discard_confirm", "Discard and Open");
+			state.replaceScene.confirmLabel = T("feature.scene_manager.edit.discard_switch_confirm", "Discard and Switch");
 			state.replaceScene.cancelLabel = T("feature.scene_manager.action.cancel", "Cancel");
 			if (state.replaceScene.Draw()) {
 				FinishActiveFeatureSceneEdit(state);
@@ -3587,7 +3590,7 @@ namespace SceneSettingsUI
 			if (info.controlType != first.controlType || info.settingPath != first.settingPath ||
 				info.settingKey != first.settingKey || info.componentStart != first.componentStart ||
 				info.componentCount != first.componentCount ||
-				info.componentIndex != first.componentStart + component ||
+				info.componentIndex != static_cast<std::int8_t>(first.componentStart + component) ||
 				info.aggregatePresentation != first.aggregatePresentation ||
 				info.unifiedEditMode != first.unifiedEditMode)
 				return false;
@@ -3596,7 +3599,7 @@ namespace SceneSettingsUI
 
 		std::array<float, 4> values{};
 		for (size_t component = 0; component < components.size(); ++component)
-			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.get<float>();
+			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.template get<float>();
 
 		if (readOnly)
 			ImGui::BeginDisabled();
@@ -4701,8 +4704,8 @@ namespace SceneSettingsUI
 
 		if (open) {
 			if (hasActiveOverrides) {
-				Util::Text::WrappedError(T("feature.scene_manager.overridden_warning",
-					"Feature values are being overridden. Pause overwrites to see changes."));
+				Util::Text::WrappedError("%s", T("feature.scene_manager.overridden_warning",
+												   "Feature values are being overridden. Pause overwrites to see changes."));
 			}
 			if (onExportAll) {
 				if (ImGui::SmallButton(std::format("{}{}",
@@ -4758,7 +4761,7 @@ namespace SceneSettingsUI
 		ImGui::InputText(T("feature.scene_manager.export.mod_name", "Mod Name"), state.modName, IM_ARRAYSIZE(state.modName));
 		auto modName = Util::FileHelpers::SanitizeFileName(state.modName);
 		if (modName.empty())
-			Util::Text::WrappedDisabled(T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
+			Util::Text::WrappedDisabled("%s", T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
 		ImGui::Spacing();
 
 		ImGui::TextUnformatted(T("feature.scene_manager.export.select_settings", "Select settings to export as overwrite files:"));
@@ -5162,7 +5165,8 @@ namespace SceneSettingsUI
 			},
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->TogglePauseEntry(SceneType::InteriorOnly, idx); },
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->RevertEntryToDefault(SceneType::InteriorOnly, idx); },
-			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); }
+			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); },
+			{}, nullptr, {}
 		};
 
 		RefreshSourcePanelCache(s_interiorTableCache, entries, 1, true);
@@ -5263,7 +5267,8 @@ namespace SceneSettingsUI
 			[](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddSetting(SceneType::TimeOfDay, feat, path, key,
 					SceneSettingsManager::GetFeatureSettingValue(feat, path, key), static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 
 		auto& overwrite = s_todTableCache.overwrite;
@@ -5781,7 +5786,8 @@ namespace SceneSettingsUI
 			[&selectedTarget](size_t index) { SceneSettingsManager::GetSingleton()->RemoveLocationSetting(selectedTarget.type, selectedTarget.formKey, index); },
 			[&selectedTarget](const std::string& feature, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddLocationSetting(selectedTarget.type, selectedTarget.formKey, selectedTarget.name, selectedTarget.cocCode, feature, path, key, false, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 		if (hasTransitionEntries) {
 			callbacks.auxiliaryColumnLabel = T("feature.scene_manager.location.transition.column", "Transition");
@@ -5964,7 +5970,8 @@ namespace SceneSettingsUI
 			[weatherId](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddWeatherSetting(
 					weatherId, feat, path, key, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 	}
 

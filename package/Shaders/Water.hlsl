@@ -1012,6 +1012,8 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(refractionUvRaw);
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		refractionColor = Color::SceneGammaToLinear(refractionColor);
 	float3 refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 
 #				if defined(UNDERWATER)
@@ -1352,8 +1354,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
 #						endif
 
-	fogDistanceFactor = Color::FogAlpha(fogDistanceFactor);
-
 #						if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
@@ -1367,18 +1367,15 @@ PS_OUTPUT main(PS_INPUT input)
 			fogColor *= GetWaterFogFade(eyeIndex);
 			finalColorPreFog = lerp(finalColorPreFog, fogColor, exponentialHeightFog.w);
 		} else {
-			fogColor *= GetWaterFogFade(eyeIndex);
-			finalColorPreFog = lerp(finalColorPreFog, fogColor, fogDistanceFactor);
+			finalColorPreFog = Color::BlendFog(finalColorPreFog, fogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 			float3 expFogColor = exponentialHeightFog.xyz * GetWaterFogFade(eyeIndex);
 			finalColorPreFog = lerp(finalColorPreFog, expFogColor, exponentialHeightFog.w);
 		}
 	} else {
-		fogColor *= GetWaterFogFade(eyeIndex);
-		finalColorPreFog = lerp(finalColorPreFog, fogColor, fogDistanceFactor);
+		finalColorPreFog = Color::BlendFog(finalColorPreFog, fogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 	}
 #						else
-	fogColor *= GetWaterFogFade(eyeIndex);
-	finalColorPreFog = lerp(finalColorPreFog, fogColor, fogDistanceFactor);
+	finalColorPreFog = Color::BlendFog(finalColorPreFog, fogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 #						endif
 
 	float3 finalColor = finalColorPreFog;
@@ -1403,8 +1400,6 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 preFogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogDistanceFactor));
 #						endif
 
-	fogDistanceFactor = Color::FogAlpha(fogDistanceFactor);
-
 #						if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		preFogColor = ImageBasedLighting::GetFogIBLColor(preFogColor);
@@ -1418,19 +1413,15 @@ PS_OUTPUT main(PS_INPUT input)
 			preFogColor *= GetWaterFogFade(eyeIndex);
 			finalColorPreFog = lerp(finalColorPreFog, preFogColor, exponentialHeightFog.w);
 		} else {
-			preFogColor *= GetWaterFogFade(eyeIndex);
-			finalColorPreFog = lerp(finalColorPreFog, preFogColor, fogDistanceFactor);
+			finalColorPreFog = Color::BlendFog(finalColorPreFog, preFogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 			float3 expFogColor = exponentialHeightFog.xyz * GetWaterFogFade(eyeIndex);
 			finalColorPreFog = lerp(finalColorPreFog, expFogColor, exponentialHeightFog.w);
 		}
 	} else {
-		preFogColor *= GetWaterFogFade(eyeIndex);
-		finalColorPreFog = lerp(finalColorPreFog, preFogColor, fogDistanceFactor);
+		finalColorPreFog = Color::BlendFog(finalColorPreFog, preFogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 	}
 #						else
-	preFogColor *= GetWaterFogFade(eyeIndex);
-
-	finalColorPreFog = lerp(finalColorPreFog, preFogColor, fogDistanceFactor);
+	finalColorPreFog = Color::BlendFog(finalColorPreFog, preFogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
 #						endif
 
 	float3 refractionColor = diffuseOutput.refractionColor;
@@ -1447,7 +1438,7 @@ PS_OUTPUT main(PS_INPUT input)
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #						endif
-	refractionColor = lerp(refractionColor, fogColor, Color::FogAlpha(fogFactor));
+	refractionColor = Color::BlendFog(refractionColor, fogColor, fogFactor);
 
 	float3 finalColor = lerp(refractionColor, finalColorPreFog, diffuseOutput.refractionMul);
 #						if defined(WETNESS_EFFECTS) && defined(DEBUG_WETNESS_EFFECTS)
@@ -1472,6 +1463,11 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.WaterMask = float4(0, 0, VdotN, 0);
 
 	psout.MotionVector = MotionBlur::GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition);
+#		endif
+
+#		if defined(UNDERWATER) || defined(SIMPLE) || defined(LOD) || defined(SPECULAR)
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Lighting.xyz = Color::SceneLinearToGamma(psout.Lighting.xyz);
 #		endif
 
 	return psout;

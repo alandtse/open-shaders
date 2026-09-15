@@ -12,10 +12,46 @@ namespace RE
 	class bhkNiCollisionObject;
 	class hkpShape;
 	class NiPoint3;
+	class BGSKeyword;
 }
 
 namespace Util
 {
+	/**
+	 * @brief Returns whether the actor has a dragon race keyword or dragon behavior graph.
+	 * @param a_dragonKeyword Pre-resolved ActorTypeDragon keyword to check by pointer instead
+	 *  of by string; falls back to the string/behavior-graph checks when null.
+	 */
+	[[nodiscard]] bool IsDragon(const RE::Actor& a_actor, const RE::BGSKeyword* a_dragonKeyword = nullptr);
+
+	/** @brief Returns the actor's visual-root position with a bounded actor-position fallback. */
+	[[nodiscard]] float3 GetVisualOrigin(RE::Actor& a_actor) noexcept;
+
+	/** @brief Returns the actor's magic-node position with an upper-body fallback. */
+	[[nodiscard]] float3 GetMagicOrigin(RE::Actor& a_actor) noexcept;
+
+	/** @brief Returns the actor's normalized aim direction in Skyrim's Z-up world space. */
+	[[nodiscard]] float3 GetAimDirection(RE::Actor& a_actor) noexcept;
+
+	/** @brief World-space capsule used to approximate an actor collision shape. */
+	struct ShapeCollisionCapsule
+	{
+		RE::NiPoint3 pointA;
+		RE::NiPoint3 pointB;
+		float radius;
+	};
+
+	/**
+	 * @brief Extracts a world-space capsule from a collision object.
+	 *
+	 * Native capsules retain their endpoints and radius. Other supported shapes
+	 * are returned as degenerate capsules with coincident endpoints.
+	 * @param collisionObj Collision object whose Havok shape is queried.
+	 * @param capsule Resulting world-space collision capsule.
+	 * @return True when a supported shape was extracted.
+	 */
+	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule);
+
 	/**
 	 * @brief Visits actors currently resolvable from the player and high-process actor list.
 	 * @param a_callback Callback invoked once for each actor.

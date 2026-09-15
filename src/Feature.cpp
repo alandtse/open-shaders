@@ -52,6 +52,7 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SettingsOverrideManager.h"
@@ -276,6 +277,7 @@ namespace
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
+			&globals::features::wind,
 			&globals::features::featureOverwrites,
 			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
@@ -328,6 +330,21 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	} else {
 		return GetAllFeatures();
 	}
+}
+
+const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
+{
+	// Built once from the full feature list; VR developer mode's feature-list toggle (see
+	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
+	static const std::vector<Feature*> hookFeatures = [] {
+		std::vector<Feature*> v;
+		for (auto* feature : GetFeatureList()) {
+			if (feature->WantsRenderPassHook())
+				v.push_back(feature);
+		}
+		return v;
+	}();
+	return hookFeatures;
 }
 
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
@@ -463,8 +480,13 @@ bool Feature::ReapplyOverrideSettings()
 
 	if (appliedCount > 0) {
 		// Load the override settings back into the feature
-		LoadSettings(featureJson);
-		return true;
+		try {
+			LoadSettings(featureJson);
+			return true;
+		} catch (const std::exception& e) {
+			logger::warn("Failed to reapply override settings for {}. Error: {}", featureName, e.what());
+			return false;
+		}
 	}
 
 	return false;
@@ -583,7 +605,7 @@ void Feature::DrawUnloadedUI()
 	if (!failedLoadedMessage.empty()) {
 		// Use error color for all failure messages
 		auto& themeSettings = Menu::GetSingleton()->GetTheme();
-		ImGui::TextColored(themeSettings.StatusPalette.Error, failedLoadedMessage.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", failedLoadedMessage.c_str());
 		return;
 	}
 
@@ -593,7 +615,7 @@ void Feature::DrawUnloadedUI()
 	std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
 	auto missingFileMessage = std::format("The feature file for {} is missing. This feature is not installed! Version required: {}", GetDisplayName(), requiredVersion);
-	ImGui::TextColored(themeSettings.StatusPalette.Error, missingFileMessage.c_str());
+	ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", missingFileMessage.c_str());
 
 	// Also show feature summary if available
 	auto [description, keyFeatures] = GetFeatureSummary();

@@ -97,10 +97,7 @@ void ExtendedTranslucency::DrawSettings()
 
 		static constexpr int AlphaModeSize = static_cast<int>(std::size(AlphaModeNames));
 
-		bool changed = false;
-		if (ImGui::Combo(T(TKEY("default_material_model"), "Default Material Model"), (int*)&settings.AlphaMode, AlphaModeNames, AlphaModeSize)) {
-			changed = true;
-		}
+		ImGui::Combo(T(TKEY("default_material_model"), "Default Material Model"), (int*)&settings.AlphaMode, AlphaModeNames, AlphaModeSize);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("default_material_model_tooltip"),
 								  "Anisotropic translucency will adjust the opacity based on your view angle to the translucent surface.\n"
@@ -109,30 +106,22 @@ void ExtendedTranslucency::DrawSettings()
 								  "  - Isotropic Fabric: Imaginary fabric weaved from threads in one direction, respect normal map, also works well for layer of glass panels.\n"
 								  "  - Anisotropic Fabric: Common fabric weaved from tangent and birnormal direction, ignores normal map.\n"));
 		}
-		if (ImGui::Checkbox(T(TKEY("skinned_mesh_only"), "Skinned Mesh Only"), &settings.SkinnedOnly)) {
-			changed = true;
-		}
+		ImGui::Checkbox(T(TKEY("skinned_mesh_only"), "Skinned Mesh Only"), &settings.SkinnedOnly);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("skinned_mesh_only_tooltip"), "Control if this effect should only apply to skinned mesh. Check this option if you are seeing undesired effects on random objects."));
 		}
 
-		if (ImGui::SliderFloat(T(TKEY("transparency_increase"), "Transparency Increase"), &settings.AlphaReduction, 0, 1.f)) {
-			changed = true;
-		}
+		ImGui::SliderFloat(T(TKEY("transparency_increase"), "Transparency Increase"), &settings.AlphaReduction, 0, 1.f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("transparency_increase_tooltip"), "Translucent material will make the material more opaque on average, which could be different from the intent. Reduce the alpha to counter this effect and increase the dynamic range of the output."));
 		}
 
-		if (ImGui::SliderFloat(T(TKEY("softness"), "Softness"), &settings.AlphaSoftness, 0.0f, 1.0f)) {
-			changed = true;
-		}
+		ImGui::SliderFloat(T(TKEY("softness"), "Softness"), &settings.AlphaSoftness, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("softness_tooltip"), "Control the softness of the alpha increase, increase the softness reduce the increased amount of alpha."));
 		}
 
-		if (ImGui::SliderFloat(T(TKEY("blend_weight"), "Blend Weight"), &settings.AlphaStrength, 0.0f, 1.0f)) {
-			changed = true;
-		}
+		ImGui::SliderFloat(T(TKEY("blend_weight"), "Blend Weight"), &settings.AlphaStrength, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("blend_weight_tooltip"), "Control the blend weight of the effect applied to the final result."));
 		}

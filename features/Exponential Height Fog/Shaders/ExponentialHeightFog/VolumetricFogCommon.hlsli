@@ -10,6 +10,17 @@ namespace ExponentialHeightFog
 	static const float kMinimumTransmittance = 0.0001f;
 	// Extinction is per world unit and can be much smaller than the generic division epsilon.
 	static const float kMinimumExtinction = 1e-20f;
+
+	float3 GetDirectionalLightColor()
+	{
+		if (!ENABLE_LL)
+			return SharedData::DirLightColor.xyz;
+
+		float lightScale = SharedData::linearLightingSettings.dirLightMult;
+		float3 lightColor = lightScale > 0.0f ? SharedData::DirLightColor.xyz / lightScale : 0.0f.xxx;
+		return (SharedData::linearLightingSettings.isDirLightLinear ? Color::GamutTransform(lightColor) : Color::AuthoredColor(lightColor)) * lightScale;
+	}
+
 	float HenyeyGreenstein(float cosTheta, float g)
 	{
 		float g2 = g * g;
@@ -96,9 +107,7 @@ namespace ExponentialHeightFog
 	{
 		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
 										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
-		float exponent = SharedData::exponentialHeightFogSettings.vanillaFogPower *
-		                 SharedData::exponentialHeightFogSettings.fogAlphaGamma;
-		float opacity = min(pow(normalizedRange, exponent), SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
+		float opacity = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower), SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
 		return -log(max(1.0f - opacity, kMinimumTransmittance));
 	}
 
@@ -116,8 +125,7 @@ namespace ExponentialHeightFog
 		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
 										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
 		float maxOpacity = saturate(SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
-		float colorBlend = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower),
-			pow(maxOpacity, rcp(SharedData::exponentialHeightFogSettings.fogAlphaGamma)));
+		float colorBlend = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower), maxOpacity);
 		float3 color = Color::Fog(lerp(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb,
 			SharedData::exponentialHeightFogSettings.vanillaFogFarColor.rgb, colorBlend));
 		return color;

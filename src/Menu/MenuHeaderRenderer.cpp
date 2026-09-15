@@ -277,7 +277,50 @@ void MenuHeaderRenderer::RenderSidebarToggle(const ImVec2& buttonSize, const Men
 		ImGui::TextUnformatted(tooltip);
 }
 
-std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons)
+float MenuHeaderRenderer::GetCompactActionsWidth(const Menu::UIIcons& uiIcons)
+{
+	const auto icons = BuildActionIcons(true, uiIcons, true);
+	float width = ImGui::GetStyle().ItemSpacing.x * static_cast<float>(icons.size() - 1);
+	for (const auto& icon : icons)
+		width += icon.texture ? ImGui::GetFrameHeight() : ImGui::CalcTextSize(icon.tooltip).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+	return width;
+}
+
+void MenuHeaderRenderer::RenderCompactActions(const Menu::UIIcons& uiIcons)
+{
+	const auto icons = BuildActionIcons(true, uiIcons, true);
+	const auto buttonStyle = Util::TransparentIconButtonStyle();
+	const float size = ImGui::GetFrameHeight();
+	const float imageSize = ImGui::GetFontSize();
+	const auto tint = ImGui::GetColorU32(Util::GetIconTint());
+	for (size_t i = 0; i < icons.size(); ++i) {
+		if (i != 0)
+			ImGui::SameLine();
+		const auto& icon = icons[i];
+		const bool clearing = i == icons.size() - 1;
+		const bool disabled = clearing && (globals::shaderCache->IsCapturingActiveShaders() || globals::shaderCache->IsAwaitingMenuCloseCapture());
+		ImGui::BeginDisabled(disabled);
+		ImGui::PushID(static_cast<int>(i));
+		if (icon.texture) {
+			if (ImGui::InvisibleButton("##MenuAction", { size, size }, ImGuiButtonFlags_EnableNav))
+				icon.callback();
+			Util::DrawCurrentItemRoundedButtonHighlight();
+			const auto min = ImGui::GetItemRectMin();
+			const float inset = (size - imageSize) * 0.5f;
+			ImGui::GetWindowDrawList()->AddImage(icon.texture, { min.x + inset, min.y + inset },
+				{ min.x + inset + imageSize, min.y + inset + imageSize }, { 0, 0 }, { 1, 1 }, tint);
+		} else if (ImGui::Button(icon.tooltip)) {
+			icon.callback();
+		}
+		ImGui::PopID();
+		ImGui::EndDisabled();
+		if (auto tooltip = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(icon.tooltip);
+		}
+	}
+}
+
+std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons, bool includeMissing)
 {
 	std::vector<ActionIcon> actionIcons;
 
@@ -286,21 +329,21 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 	}
 
 	// Build list of available action icons (in display order)
-	if (uiIcons.saveSettings.texture) {
+	if (uiIcons.saveSettings.texture || includeMissing) {
 		actionIcons.push_back({ uiIcons.saveSettings.texture,
 			T("menu.save_settings", "Save Settings"),
 			[]() {
 				globals::state->Save();
 			} });
 	}
-	if (uiIcons.loadSettings.texture) {
+	if (uiIcons.loadSettings.texture || includeMissing) {
 		actionIcons.push_back({ uiIcons.loadSettings.texture,
 			T("menu.restore_settings", "Restore Saved Settings"),
 			[]() {
 				globals::state->Load();
 			} });
 	}
-	if (uiIcons.clearCache.texture) {
+	if (uiIcons.clearCache.texture || includeMissing) {
 		actionIcons.push_back({ uiIcons.clearCache.texture,
 			Util::ResolveShaderCacheClearScope() == Util::ShaderCacheClearScope::ActiveOnly ?
 				T("menu.clear_active_shaders", "Clear Active Shaders") :

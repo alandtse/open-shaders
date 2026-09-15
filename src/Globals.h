@@ -1,5 +1,9 @@
 #pragma once
 
+// CommonLibVR's RE:: headers no longer transitively pull this in (they use their own
+// REX::W32 D3D11 reimplementation); the real Windows SDK types below need it directly.
+#include <d3d11.h>
+
 #include <atomic>
 
 struct CloudShadows;
@@ -41,6 +45,7 @@ struct Upscaling;
 class Profiler;
 struct CSEditor;
 struct CSUtility;
+struct Wind;
 struct FeatureOverwrites;
 #if defined(ENABLE_EFFECTS11)
 struct Effects11;
@@ -147,6 +152,7 @@ namespace globals
 		extern ScreenshotFeature screenshotFeature;
 		extern CSEditor csEditor;
 		extern CSUtility csUtility;
+		extern Wind wind;
 		extern FeatureOverwrites featureOverwrites;
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;

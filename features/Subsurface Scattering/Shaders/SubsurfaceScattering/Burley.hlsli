@@ -136,8 +136,8 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 	colorSum *= any(weightSum == 0.0f) ? 0.0f : (1.0f / weightSum);
 	colorSum = lerp(colorSum, originalIrradiance, saturate(centerWeight));
 
-	float3 color = SSSApplyAlbedo(colorSum, Color::IrradianceToLinear(originalSceneColor.rgb), surfaceAlbedo, SSS_SCATTER_MODE_POST);
-	color = Color::IrradianceToGamma(color);
+	float3 color = SSSApplyAlbedo(colorSum, Color::SceneGammaToLinear(originalSceneColor.rgb), surfaceAlbedo, SSS_SCATTER_MODE_POST);
+	color = Color::SceneLinearToGamma(color);
 
 	float4 outColor = float4(color, originalSceneColor.w);
 	return outColor;

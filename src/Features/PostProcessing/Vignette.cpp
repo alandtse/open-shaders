@@ -15,15 +15,15 @@ void Vignette::DrawSettings()
 {
 	ImGui::SliderFloat(T("feature.post_processing.vignette.focal_length", "Focal Length"), &settings.FocalLength, 0.1f, 2.f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.vignette.the_focal_length_of_the_lens_relative_to", "The focal length of the lens, relative to image width."));
+		ImGui::TextUnformatted(T("feature.post_processing.vignette.the_focal_length_of_the_lens_relative_to", "The focal length of the lens, relative to image width."));
 
 	ImGui::SliderFloat(T("feature.post_processing.vignette.anamorphic_squeeze", "Anamorphic Squeeze"), &settings.Anamorphism, 0.1f, 1.f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.vignette.how_flat_the_vignette_looks_simulating_anamorphic_lens", "How flat the vignette looks, simulating anamorphic lens."));
+		ImGui::TextUnformatted(T("feature.post_processing.vignette.how_flat_the_vignette_looks_simulating_anamorphic_lens", "How flat the vignette looks, simulating anamorphic lens."));
 
 	ImGui::SliderFloat(T("feature.post_processing.vignette.power", "Power"), &settings.Power, 0.f, 4.f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(
+		ImGui::TextUnformatted(
 			T("feature.post_processing.vignette.the_natural_vignetting_of_a_camera_follows_the",
 				"The natural vignetting of a camera follows the fourth law, where the vignette is proportional to the fourth power of the incident angle. "
 				"The actual power in a camera is usually lower due to designed compensation."));
@@ -58,7 +58,7 @@ void Vignette::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(&texDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -99,7 +99,7 @@ void Vignette::ClearShaderCache()
 void Vignette::CompileComputeShaders()
 {
 	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &vignetteCS, "vignette.cs.hlsl" },
+		{ &vignetteCS, "vignette.cs.hlsl", {} },
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\Vignette", shaderInfos);

@@ -70,6 +70,29 @@ if(MSVC AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION)
   endforeach()
 endif()
 
+# The vendored SDK's own headers/sources aren't held to this project's warning
+# policy: SYSTEM marks each target's include dirs so warnings in its headers
+# don't surface while compiling OUR sources that include them, and disabling
+# warnings-as-errors + dropping the level covers its own .cpp files (compiled
+# as part of these targets, not ours). No effect on the FFX-SDK repo itself.
+foreach(
+  _ffx_target
+  ffx_backend_dx11_x64
+  ffx_fsr3_x64
+  ffx_fsr3upscaler_x64
+  ffx_frameinterpolation_x64
+  ffx_opticalflow_x64
+)
+  if(TARGET ${_ffx_target})
+    set_target_properties(${_ffx_target} PROPERTIES SYSTEM TRUE COMPILE_WARNING_AS_ERROR OFF)
+    target_compile_options(
+      ${_ffx_target} PRIVATE
+      "$<$<CXX_COMPILER_ID:MSVC>:/W0>"
+      "$<$<CXX_COMPILER_ID:Clang>:-w>"
+    )
+  endif()
+endforeach()
+
 target_link_libraries(
   ${PROJECT_NAME}
   PRIVATE

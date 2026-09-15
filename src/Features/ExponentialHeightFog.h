@@ -88,9 +88,8 @@ public:
 		float vanillaFogNear = 0.0f;
 		float vanillaFogFar = 40960.0f;
 		float vanillaFogPower = 1.0f;
-		float fogAlphaGamma = 1.0f;
 		float vanillaFogStrength = 1.25f;
-		float2 pad0 = {};
+		float3 pad0 = {};
 		float4 vanillaFogNearColor = {};
 		float4 vanillaFogFarColor = {};
 		float fogLightingInfluence = 0.35f;
@@ -143,6 +142,7 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
 	bool hasLightScatteringHistory = false;
+	std::array<uint, 2> historyColorSpace{};
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
 };

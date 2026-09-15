@@ -339,7 +339,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 #endif
 
 		if (renderDocAvailable)
-			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
 		ImGui::End();
 		return;
@@ -358,7 +358,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 #endif
 
 		if (renderDocAvailable)
-			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
 		ImGui::End();
 	} else if (renderDocAvailable) {
@@ -367,7 +367,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::End();
 			return;
 		}
-		ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 		ImGui::End();
 	}
 }
@@ -464,7 +464,7 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 		return;
 	}
 
-	Util::Text::Error(T("overlay.shader_blocking_active", "Shader Blocking Active"));
+	Util::Text::Error("%s", T("overlay.shader_blocking_active", "Shader Blocking Active"));
 	ImGui::Text(T("overlay.blocked_key", "Blocked: %s"), shaderCache->blockedKey.c_str());
 
 	// Try to get more details from active shaders

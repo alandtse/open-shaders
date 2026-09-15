@@ -677,7 +677,9 @@ public:
 	bool StoreFeatureSceneEdit();
 	/** @brief Finish feature-page editing, optionally storing pending changes first. */
 	void EndFeatureSceneEdit(bool storeChanges = true);
-	/** @brief Return whether the named feature owns the active feature-page edit session. */
+	/** @brief Suspend or resume preview application while retaining the feature-page draft. */
+	void SetFeatureSceneEditPreviewEnabled(bool enabled);
+	/** @brief Return whether the named feature owns the retained feature-page draft. */
 	bool IsFeatureSceneEditing(std::string_view featureShortName) const;
 	/** @brief Return whether the feature's native controls currently show its edit preview. */
 	bool CanCaptureFeatureSceneEdit(std::string_view featureShortName) const;
@@ -787,6 +789,7 @@ private:
 		json workingSettings = json::object();
 		ResolvedSettingMap workingOverrides;
 		bool dirty = false;
+		bool previewEnabled = true;
 		bool overwritesPaused = false;
 		std::set<SettingAddress> overwriteAddresses;
 		std::set<SettingAddress> alteredAddresses;

@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #if defined(ENABLE_EFFECTS11)
@@ -31,6 +32,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
+#include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -75,9 +77,58 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 }
 
+void State::UpdatePermutationBuffer()
+{
+	const auto windContribution = globals::features::wind.GetPermutationContribution();
+	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
+	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
+	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
+		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientWindInfluence = windContribution.treeLeafTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientFlutterMaximum = windContribution.treeLeafTransientFlutterMaximumDefault;
+		permutationData.TreeTransientMaximumBendMultiplier = windContribution.treeTransientMaximumBendMultiplierDefault;
+	}
+	permutationData.TrunkWindBendSensitivity = windContribution.trunkWindBendSensitivity;
+	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
+	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
+	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
+	permutationData.GrassWindBendProfile = windContribution.grassWindBendProfile;
+	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
+	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
+	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
+	if (permutationData != permutationDataPrevious) {
+		permutationCB->Update(permutationData);
+		permutationDataPrevious = permutationData;
+	}
+}
+
+void State::BindVertexPermutationData(const RE::BSShader* a_shader)
+{
+	constexpr UINT kPermutationVertexRegister = 4;
+
+	if (!a_shader)
+		a_shader = currentShader;
+	if (!a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
+		return;
+
+	const auto shaderType = a_shader->shaderType.get();
+	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
+		shaderType != RE::BSShader::Type::Grass)
+		return;
+
+	ID3D11Buffer* buffers[] = {
+		permutationCB->CB(),
+		sharedDataCB->CB(),
+		featureDataCB->CB(),
+	};
+	globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
+}
+
 void State::Draw()
 {
 	ZoneScoped;
+	UpdateGrassGpuPass();
 	if (globals::features::sceneManager.loaded)
 		globals::features::sceneManager.Update();
 
@@ -128,10 +179,7 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
-		if (permutationData != permutationDataPrevious) {
-			permutationCB->Update(permutationData);
-			permutationDataPrevious = permutationData;
-		}
+		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
 			if (currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
@@ -146,6 +194,17 @@ void State::Draw()
 			Debug();
 
 		updateShader = false;
+	}
+}
+
+void State::UpdateGrassGpuPass()
+{
+	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
+	if (isGrassDraw) {
+		if (!grassGpuPass)
+			grassGpuPass.emplace("Grass::Draw");
+	} else {
+		grassGpuPass.reset();
 	}
 }
 
@@ -257,7 +316,7 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
 {
 	auto renderer = globals::game::renderer;
 	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
-	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+	globals::d3d::context->OMSetRenderTargets(1, Util::AsReal(&outputRT.RTV), nullptr);
 
 	auto shadowState = globals::game::shadowState;
 	auto applyStateData = [a_output](auto& stateData) {
@@ -284,6 +343,8 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
  */
 void State::Reset()
 {
+	grassGpuPass.reset();
+
 	// Land staged SKSE API setter writes before features consume settings this frame.
 	CSPluginAPI::ProcessStagedSettings();
 
@@ -323,7 +384,7 @@ void State::Reset()
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
-	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
+	globals::shaderCache->TickActiveShaderCapture(globals::menu->ShouldSwallowInput());
 	globals::shaderCache->ProcessPendingClear();
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
@@ -962,7 +1023,7 @@ std::vector<std::pair<std::string, std::string>>* State::GetDefines()
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
 	auto index = magic_enum::enum_integer(a_type) + 1;
-	if (index < sizeof(enabledClasses)) {
+	if (index < static_cast<int>(sizeof(enabledClasses))) {
 		return enabledClasses[index];
 	}
 	return false;
@@ -1016,8 +1077,8 @@ void State::CheckTypedUAVLoadSupport()
 		const char* usage;
 	};
 	static const FormatEntry kFormats[] = {
-		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) — non-HDR" },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
+		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) - non-HDR" },
+		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Linear Lighting scene decode, Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
 		{ DXGI_FORMAT_R16G16B16A16_UNORM, "R16G16B16A16_UNORM", "Grass Collision (collisionTexture)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
@@ -1081,7 +1142,7 @@ void State::SetupResources()
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
 	D3D11_TEXTURE2D_DESC texDesc{};
-	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
+	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(Util::AsW32(&texDesc));
 
 	screenSize = float2{ (float)texDesc.Width, (float)texDesc.Height };
 	globals::d3d::context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
@@ -1194,6 +1255,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= 256;
 			}
+			break;
+		default:
 			break;
 		}
 	}
@@ -1318,6 +1381,21 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
+		{
+			const auto windData = globals::features::wind.GetSharedWindData();
+			data.WindFieldTuning = windData.tuning;
+			data.WindFieldAmbient = windData.ambient;
+			data.WindFieldPreviousAmbient = windData.previousAmbient;
+			data.WindFieldCurrent = windData.current;
+			data.WindFieldPrevious = windData.previous;
+			data.WindFieldTransition = windData.transition;
+			data.WindFieldPreviousTransition = windData.previousTransition;
+			data.WindFieldTransitionData = windData.transitionData;
+			data.WindFieldSpringDebug = windData.springDebug;
+			data.WindFieldActiveCounts = windData.activeCounts;
+			data.WindFieldTransientImpulses = windData.transientImpulses;
+			data.WindFieldPreviousTransientImpulses = windData.previousTransientImpulses;
+		}
 
 		auto temporal = Util::GetTemporal();
 

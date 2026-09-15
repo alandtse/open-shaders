@@ -140,7 +140,7 @@ void SceneSelector::DrawShowInOverlayToggle()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("show_in_overlay_tooltip"),
 							  "Opens weather details in a separate window that stays open\neven when the main menu is closed. "));
-		ImGui::Text(T(TKEY("toggle_with"), "Toggle with "));
+		ImGui::TextUnformatted(T(TKEY("toggle_with"), "Toggle with "));
 		ImGui::SameLine();
 		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s", Util::Input::KeyIdToString(menuSettings.OverlayToggleKey).c_str());
 	}
@@ -921,7 +921,7 @@ bool SceneSelector::RenderMultiColorWeatherName(RE::TESWeather* weather, const s
 
 	// Display flags as colored chips on the same line
 	ImGui::SameLine();
-	ImGui::Text(" ");
+	ImGui::TextUnformatted(" ");
 
 	for (size_t i = 0; i < flagNames.size(); ++i) {
 		if (flagNames[i] == "None" || flagNames[i].find("Unknown") == 0) {

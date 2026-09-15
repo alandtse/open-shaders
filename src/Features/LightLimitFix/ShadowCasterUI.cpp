@@ -154,7 +154,7 @@ namespace ShadowCasterManager
 		}
 
 		if (rows.empty()) {
-			ImGui::TextDisabled(T(TKEY("no_shadow_slots_this_frame"), "No shadow slots this frame."));
+			ImGui::TextDisabled("%s", T(TKEY("no_shadow_slots_this_frame"), "No shadow slots this frame."));
 			return;
 		}
 
@@ -375,7 +375,7 @@ namespace ShadowCasterManager
 			if (ImGui::InputText("##slotfilter", buf, sizeof(buf)))
 				s_filterText = buf;
 			ImGui::SameLine();
-			ImGui::TextDisabled(sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)"));
+			ImGui::TextDisabled("%s", sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)"));
 			// Developer capture: same path as devbench capture kind=shadowmaps.
 			if (AtlasActive()) {
 				ImGui::SameLine();
@@ -562,7 +562,7 @@ namespace ShadowCasterManager
 				// Hidden in readOnly mode (overlay with menu closed).
 				// Focus rows skip Mode/Solo entirely -- engine owns the slot.
 				if (row.isFocus && col == modeColIdx) {
-					ImGui::TextDisabled(T(TKEY("mode_eng"), "eng"));
+					ImGui::TextDisabled("%s", T(TKEY("mode_eng"), "eng"));
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("%s", T(TKEY("mode_eng_tooltip"), "Engine-controlled focus shadow; not pinnable/suppressible."));
 					return;
@@ -650,7 +650,7 @@ namespace ShadowCasterManager
 					// Merged "In Scene" + "Slot" column. Four mutually-exclusive
 					// states; suppressed wins because the user explicitly hid it.
 					if (suppressed) {
-						ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.35f, 1), T(TKEY("status_suppr"), "Suppr"));
+						ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.35f, 1), "%s", T(TKEY("status_suppr"), "Suppr"));
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip("%s", T(TKEY("status_suppr_tooltip"), "Suppressed by debug override.\nClick the Mode button to clear."));
 					} else if (row.inScene) {
@@ -658,7 +658,7 @@ namespace ShadowCasterManager
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
 					} else if (row.converted) {
-						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), T(TKEY("status_conv"), "Conv"));
+						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), "%s", T(TKEY("status_conv"), "Conv"));
 						if (ImGui::IsItemHovered()) {
 							// Append the per-light demotion reason (captured from the
 							// validation flags) so it's clear WHY this light has no shadow.
@@ -669,7 +669,7 @@ namespace ShadowCasterManager
 								reason ? "\n" : "", reason ? reason : "");
 						}
 					} else {
-						ImGui::TextDisabled(T(TKEY("status_out"), "Out"));
+						ImGui::TextDisabled("%s", T(TKEY("status_out"), "Out"));
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip("%s", T(TKEY("status_out_tooltip"), "Out of range / not active in the current frame."));
 					}
@@ -700,7 +700,7 @@ namespace ShadowCasterManager
 						ImGui::SetTooltip("#%02X%02X%02X", ri, gi, bi);
 				} else if (col == typeColIdx) {
 					if (row.isFocus) {
-						ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), T(TKEY("type_focus"), "Focus"));
+						ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "%s", T(TKEY("type_focus"), "Focus"));
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip(
 								T(TKEY("type_focus_tooltip"),
@@ -884,7 +884,7 @@ namespace ShadowCasterManager
 		const bool headroom = avgCost > 0 && budgetMs > 0.0f && usedMs < budgetMs * 0.5f && !capLimited;
 
 		if (avgCost <= 0 || budgetMs <= 0.0f) {
-			ImGui::TextDisabled(T(TKEY("budget_usage_warming_up"), "Budget usage      : (warming up)"));
+			ImGui::TextDisabled("%s", T(TKEY("budget_usage_warming_up"), "Budget usage      : (warming up)"));
 			return;
 		}
 

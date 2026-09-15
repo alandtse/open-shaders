@@ -52,6 +52,8 @@ public:
 	 * @param pendingFeatureSelection Name of a feature to auto-select (cleared after processing).
 	 * @param drawGeneralSettings Callback that renders the General settings page content.
 	 * @param drawAdvancedSettings Callback that renders the Advanced settings page content.
+	 * @param editorLayout Use the editor browser's fixed sidebar layout.
+	 * @param resetLayout Reset the editor sidebar width.
 	 */
 	static void RenderFeatureList(
 		float footerHeight,
@@ -60,13 +62,19 @@ public:
 		std::string& featureSearch,
 		std::string& pendingFeatureSelection,
 		const std::function<void()>& drawGeneralSettings,
-		const std::function<void()>& drawAdvancedSettings);
+		const std::function<void()>& drawAdvancedSettings,
+		bool editorLayout = false,
+		bool resetLayout = false);
 
 private:
+	static void RenderEditorColumns(const std::vector<MenuFuncInfo>& menuList, size_t& selectedMenu,
+		std::string& featureSearch, std::string& pendingFeatureSelection, bool resetLayout);
+
 	struct ListMenuVisitor
 	{
 		size_t listId;
 		size_t& selectedMenuRef;
+		bool editorLayout = false;
 
 		void operator()(const BuiltInMenu& menu);
 		void operator()(const std::string& label);
@@ -118,7 +126,8 @@ private:
 	static void RenderLeftColumn(
 		const std::vector<MenuFuncInfo>& menuList,
 		size_t& selectedMenu,
-		std::string& featureSearch);
+		std::string& featureSearch,
+		bool editorLayout = false);
 
 	static void RenderRightColumn(
 		const std::vector<MenuFuncInfo>& menuList,
