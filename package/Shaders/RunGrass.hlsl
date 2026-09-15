@@ -843,19 +843,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 	float dirDetailedShadow = 1.0;
+	float grassDirectionalShadowScale = 1.0;
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
 	if (ShadowSampling::HasDirectionalShadows()) {
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x);
+		float directionalCoverage;
+		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage);
+#				if defined(LIGHT_LIMIT_FIX)
+		grassDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, directionalCoverage);
+#				endif
 	}
 
 #				if defined(SCREEN_SPACE_SHADOWS)
+	bool applyScreenSpaceShadow = dirLightAngle >= 0.0 || SharedData::foliageLightingSettings.EnableGrassScattering != 0;
 #					ifdef GRASS_OPTIMIZATIONS
-	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0 && input.IsFar <= 0.5)
+	if (ShadowSampling::HasDirectionalShadows() && applyScreenSpaceShadow && input.IsFar <= 0.5)
 #					else
-	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0)
+	if (ShadowSampling::HasDirectionalShadows() && applyScreenSpaceShadow)
 #					endif
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
 #				endif  // SCREEN_SPACE_SHADOWS
@@ -879,7 +885,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
 	}
 	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
-		lightsDiffuseColor += dirLightColor * dirDetailedShadow * GetFoliageTransmission(dirLightAngle, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
+		lightsDiffuseColor += dirLightColor * dirDetailedShadow * grassDirectionalShadowScale * GetFoliageTransmission(dirLightAngle, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 
 	float3 vertexColor = Color::AuthoredColor(input.Color.xyz);
 	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
