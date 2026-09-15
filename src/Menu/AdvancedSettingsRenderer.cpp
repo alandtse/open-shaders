@@ -7,9 +7,11 @@
 #include <thread>
 
 #include "FeatureIssues.h"
+#include "Features/DynamicCubemaps.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/TerrainShadows.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -90,6 +92,14 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 
 void AdvancedSettingsRenderer::RenderShadersSection()
 {
+	Util::DrawSectionHeader(T("menu.advanced.shader_options_header", "Shader Options"));
+	Util::DrawEmbeddedFeatureSettings(globals::features::terrainShadows);
+	Util::DrawEmbeddedFeatureSettings(globals::features::dynamicCubemaps);
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+
 	RenderShaderCompileFlags();
 
 	ImGui::Spacing();

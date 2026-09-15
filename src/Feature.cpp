@@ -440,7 +440,7 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 {
 	std::vector<std::string> names;
 	for (auto* feature : GetFeatureList()) {
-		if (feature->loaded && feature->IsInMenu())
+		if (feature->loaded)
 			names.push_back(feature->GetShortName());
 	}
 	std::sort(names.begin(), names.end());

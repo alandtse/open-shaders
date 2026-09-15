@@ -103,7 +103,8 @@ struct CSUtility : Feature
 		Water,                ///< Water rendering controls.
 		Multipliers,          ///< Lighting multiplier controls.
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
-		VanillaBloom          ///< Vanilla bloom controls.
+		VanillaBloom,         ///< Vanilla bloom controls.
+		VolumetricLighting
 	};
 	/** The visible utility tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;

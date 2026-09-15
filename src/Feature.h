@@ -523,7 +523,7 @@ public:
 	static Feature* FindRegisteredFeatureByShortName(const std::string& shortName);
 
 	/**
-	 * @brief Gets sorted short names of all loaded features that appear in the menu.
+	 * @brief Gets sorted short names of all loaded features.
 	 *
 	 * @return Sorted vector of short name strings.
 	 */

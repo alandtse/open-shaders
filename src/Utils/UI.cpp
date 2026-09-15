@@ -9,6 +9,8 @@
 #include "Menu/IconLoader.h"
 #include "Menu/ThemeManager.h"
 #include "PerfUtils.h"
+#include "SceneSettingsManager.h"
+#include "SceneSettingsUIHooks.h"
 #include "ShaderCache.h"
 
 #ifndef DIRECTINPUT_VERSION
@@ -50,6 +52,21 @@
 
 namespace Util
 {
+	void DrawEmbeddedFeatureSettings(Feature& feature)
+	{
+		if (!feature.loaded)
+			return;
+
+		const auto featureName = feature.GetShortName();
+		auto* sceneManager = globals::sceneSettingsManager;
+		const bool sceneControlled = sceneManager->HasActiveSettingsForFeature(featureName) &&
+		                             !sceneManager->IsFeaturePaused(featureName);
+		ImGui::PushID(featureName.c_str());
+		const SKSE::stl::scope_exit restoreID([]() noexcept { ImGui::PopID(); });
+		SceneSettingsUIHooks::FeatureDrawGuard featureDrawGuard(&feature, sceneControlled);
+		feature.DrawSettings();
+	}
+
 	void DrawSelectionButtons(std::span<uint8_t> selected, const char* selectAll, const char* selectNone)
 	{
 		if (ImGui::SmallButton(selectAll))

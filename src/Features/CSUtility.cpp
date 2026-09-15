@@ -9,6 +9,7 @@
 #include "Utils/MathUtils.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
+#include "VolumetricLighting.h"
 
 #include <algorithm>
 #include <array>
@@ -164,6 +165,13 @@ void CSUtility::DrawSettings()
 		DrawDepthOfFieldSettings();
 		DrawVanillaBloomSettings();
 
+		auto& volumetricLighting = globals::features::volumetricLighting;
+		if (volumetricLighting.loaded && ImGui::BeginTabItem(volumetricLighting.GetDisplayName().c_str())) {
+			activeSettingsPage = SettingsPage::VolumetricLighting;
+			Util::DrawEmbeddedFeatureSettings(volumetricLighting);
+			ImGui::EndTabItem();
+		}
+
 		ImGui::EndTabBar();
 	}
 }
@@ -264,6 +272,9 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	case SettingsPage::VanillaBloom:
 		settings.bloomEnhancement = defaults.bloomEnhancement;
 		break;
+	case SettingsPage::VolumetricLighting:
+		globals::features::volumetricLighting.RestoreDefaultSettings();
+		break;
 	}
 }
 
@@ -295,6 +306,8 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		return ReapplyOverrideSettingsForKeys(depthOfFieldKeys);
 	case SettingsPage::VanillaBloom:
 		return ReapplyOverrideSettingsForKeys(bloomKeys);
+	case SettingsPage::VolumetricLighting:
+		return globals::features::volumetricLighting.ReapplyOverrideSettings();
 	}
 	return false;
 }

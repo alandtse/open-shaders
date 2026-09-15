@@ -163,6 +163,7 @@ public:
 	virtual inline std::string GetShortName() override { return "DynamicCubemaps"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "DYNAMIC_CUBEMAPS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
+	bool IsInMenu() const override { return false; }
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return { T("feature.dynamic_cubemaps.description", "Provides real-time environment mapping and reflections by generating dynamic cube maps that capture the surrounding environment, enabling realistic reflections on surfaces."),
