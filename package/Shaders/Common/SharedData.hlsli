@@ -2,6 +2,7 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/RainRendering.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/TransientWindImpulse.hlsli"
 #include "Common/VR.hlsli"
@@ -506,6 +507,7 @@ namespace SharedData
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
+		RainRenderingSettings rainRenderingSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
