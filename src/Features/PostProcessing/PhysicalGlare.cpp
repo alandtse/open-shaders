@@ -105,9 +105,9 @@ void PhysicalGlare::DrawSettings()
 		ImGui::TextUnformatted(
 			T("feature.post_processing.physical_glare.zero_padding_per_side_to_prevent_fft_wrap",
 				"Zero-padding per side to prevent FFT wrap-around.\n"
-				"0.25 = paper default (50%% effective resolution).\n"
-				"0.1  = 80%% effective (recommended for high-res).\n"
-				"0.0  = 100%% (maximum sharpness, may wrap at edges).\n"
+				"0.25 = paper default (50% effective resolution).\n"
+				"0.1  = 80% effective (recommended for high-res).\n"
+				"0.0  = 100% (maximum sharpness, may wrap at edges).\n"
 				"Lower = sharper glare on high-res screens."));
 
 	ImGui::SliderFloat(T("feature.post_processing.physical_glare.kernel_scale", "Kernel Scale"), &settings.KernelScale, 0.01f, 1.f, "%.2f");

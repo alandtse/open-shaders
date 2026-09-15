@@ -381,7 +381,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileStatistics()
 			ImGui::Text(T("menu.advanced.infinite_core_efficiency_metric", "Infinite-core efficiency (S/T_p): %.1f%%"), 100.0 * p.infiniteCoreEfficiency);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T("menu.advanced.infinite_core_efficiency_tooltip_1", "How close runtime is to the infinite-core lower bound."));
-				ImGui::TextUnformatted(T("menu.advanced.infinite_core_efficiency_tooltip_2", "100%% means T_p == S."));
+				ImGui::TextUnformatted(T("menu.advanced.infinite_core_efficiency_tooltip_2", "100% means T_p == S."));
 			}
 			ImGui::Text(T("menu.advanced.infinite_core_gap_metric", "Infinite-core gap: %.1f%%"), p.infiniteCoreGapPercent);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
