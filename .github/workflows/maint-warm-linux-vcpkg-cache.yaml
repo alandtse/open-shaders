@@ -51,7 +51,7 @@ jobs:
               uses: actions/checkout@v6
               with:
                   path: main
-                  submodules: recursive
+                  submodules: false
                   sparse-checkout: |
                       vcpkg.json
                       vcpkg-configuration.json
@@ -61,6 +61,22 @@ jobs:
                       extern/CommonLibSSE-NG
                   sparse-checkout-cone-mode: false
                   persist-credentials: false
+
+            # actions/checkout's own `submodules: recursive` hits a known
+            # git/actions-checkout bug here: fetching the submodule through
+            # the partial-clone promisor remote sends both the checkout's
+            # token auth header and a re-derived one from its global
+            # url.insteadOf rewrite, producing "Duplicate header:
+            # Authorization" / HTTP 400. Both this repo and the submodule
+            # (alandtse/CommonLibVR) are public, so fetch it manually,
+            # unauthenticated, after clearing any leftover auth config from
+            # the checkout step above.
+            - name: Fetch CommonLibSSE-NG submodule (public repo, unauthenticated)
+              working-directory: main
+              run: |
+                  git config --global --unset-all "http.https://github.com/.extraheader" || true
+                  git config --global --unset-all "url.https://github.com/.insteadOf" || true
+                  git submodule update --init --depth 1 -- extern/CommonLibSSE-NG
 
             - name: Download built vcpkg binary packages
               uses: actions/download-artifact@v4
