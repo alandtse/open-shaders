@@ -76,7 +76,7 @@ jobs:
               run: |
                   git config --global --unset-all "http.https://github.com/.extraheader" || true
                   git config --global --unset-all "url.https://github.com/.insteadOf" || true
-                  git submodule update --init --depth 1 -- extern/CommonLibSSE-NG
+                  git submodule update --init --recursive --depth 1 -- extern/CommonLibSSE-NG
 
             - name: Download built vcpkg binary packages
               uses: actions/download-artifact@v4
