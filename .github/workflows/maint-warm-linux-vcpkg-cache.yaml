@@ -62,15 +62,8 @@ jobs:
                   sparse-checkout-cone-mode: false
                   persist-credentials: false
 
-            # actions/checkout's own `submodules: recursive` hits a known
-            # git/actions-checkout bug here: fetching the submodule through
-            # the partial-clone promisor remote sends both the checkout's
-            # token auth header and a re-derived one from its global
-            # url.insteadOf rewrite, producing "Duplicate header:
-            # Authorization" / HTTP 400. Both this repo and the submodule
-            # (alandtse/CommonLibVR) are public, so fetch it manually,
-            # unauthenticated, after clearing any leftover auth config from
-            # the checkout step above.
+            # Do not set submodules: recursive above -- it reintroduces a
+            # git/actions-checkout duplicate-Authorization-header bug here.
             - name: Fetch CommonLibSSE-NG submodule (public repo, unauthenticated)
               working-directory: main
               run: |
