@@ -12,6 +12,7 @@
 #include "Features/Effects11.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
+#include "Features/RainRendering.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
 #include "Features/SubsurfaceScattering.h"
@@ -783,6 +784,8 @@ void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 	state->worldRenderedThisFrame = true;
 	Feature::ForEachLoadedFeature("OnWorldRenderBegin", [](Feature* feature) { feature->OnWorldRenderBegin(); });
 	func(a1);
+	if (globals::features::rainRendering.loaded)
+		globals::features::rainRendering.DrawForcedRainFallback();
 	if (globals::game::isVR)
 		Feature::ForEachLoadedFeature("OnWorldRenderEnd", [](Feature* feature) { feature->OnWorldRenderEnd(RE::RENDER_TARGET::kMAIN); });
 

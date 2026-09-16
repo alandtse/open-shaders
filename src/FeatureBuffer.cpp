@@ -20,6 +20,7 @@
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRendering.h"
 #include "Features/Skin.h"
 #include "Features/Skylighting.h"
 #include "Features/TerrainBlending.h"
@@ -87,5 +88,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::vanillaFresnel.settings,
 		Bloom::GetCommonBufferData(bloomSettings),
 		globals::features::postProcessing.GetCommonBufferData(),
-		globals::features::grassCollision.GetCommonBufferData());
+		globals::features::grassCollision.GetCommonBufferData(),
+		globals::features::rainRendering.GetCommonBufferData());
 }
