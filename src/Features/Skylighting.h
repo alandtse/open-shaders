@@ -72,7 +72,8 @@ public:
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		uint ShadowDataAvailable;
+		uint _pad2;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -179,6 +180,7 @@ public:
 	};
 
 private:
+	bool HasShadowData() const;
 	uint32_t* GetRasterCullMode() const;
 	void BeginInteriorOcclusionGeometry();
 	void EndInteriorOcclusionGeometry();

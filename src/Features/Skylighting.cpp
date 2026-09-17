@@ -225,8 +225,30 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
-		.MinSpecularVisibility = settings.MinSpecularVisibility
+		.MinSpecularVisibility = settings.MinSpecularVisibility,
+		.ShadowDataAvailable = HasShadowData()
 	};
+}
+
+bool Skylighting::HasShadowData() const
+{
+	auto* renderer = globals::game::renderer;
+	auto* deferred = globals::deferred;
+	auto* shaderManager = globals::game::smState;
+	if (!renderer || !deferred || !shaderManager || !globals::state->HasDirectionalShadows() ||
+		!deferred->directionalShadowLights || !deferred->directionalShadowLights->srv)
+		return false;
+
+	auto shadowScene = shaderManager->shadowSceneNode[0];
+	if (!shadowScene || !shadowScene->GetRuntimeData().sunShadowDirLight)
+		return false;
+
+	auto* shadowDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV;
+	if (!shadowDepth)
+		return false;
+	D3D11_SHADER_RESOURCE_VIEW_DESC desc{};
+	Util::AsReal(shadowDepth)->GetDesc(&desc);
+	return desc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY && desc.Texture2DArray.ArraySize >= 2;
 }
 
 void Skylighting::Prepass()
@@ -254,13 +276,13 @@ void Skylighting::Prepass()
 		CS_GPU_PASS_SELECT(interior, "Skylighting::InteriorProbeUpdate", "Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
-		auto& cascadeDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM];
+		const bool shadowDataAvailable = !interior && HasShadowData();
 
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
 			nullptr,
-			interior ? nullptr : globals::deferred->directionalShadowLights->srv.get(),
-			interior ? nullptr : Util::AsReal(cascadeDepthStencil.depthSRV)
+			shadowDataAvailable ? globals::deferred->directionalShadowLights->srv.get() : nullptr,
+			shadowDataAvailable ? Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV) : nullptr
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
