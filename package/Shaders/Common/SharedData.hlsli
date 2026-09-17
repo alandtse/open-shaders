@@ -191,6 +191,9 @@ namespace SharedData
 		uint ProbeDataReady;
 		uint pad0;
 		uint4 ArrayDims;
+		uint SliceStart;
+		uint SliceCount;
+		uint2 pad1;
 	};
 
 	struct CloudShadowsSettings
