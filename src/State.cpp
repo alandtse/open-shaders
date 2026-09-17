@@ -1542,15 +1542,15 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		sharedDataCB->Update(data);
 	}
 
-	UpdateFeatureData(a_inWorld);
+	UpdateFeatureData(a_inWorld, true);
 
 	auto* srv = Util::GetCurrentSceneDepthSRV(true);
 	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
 }
 
-void State::UpdateFeatureData(bool a_inWorld)
+void State::UpdateFeatureData(bool a_inWorld, bool a_advanceFrameState)
 {
-	auto [data, size] = GetFeatureBufferData(a_inWorld);
+	auto [data, size] = GetFeatureBufferData(a_inWorld, a_advanceFrameState);
 	featureDataCB->Update(data, size);
 }
 
