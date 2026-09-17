@@ -533,13 +533,35 @@ namespace ShadowCasterManager
 		       e.untouchedSamples >= EffectiveZeroDemandStreak();
 	}
 
-	/// Tests whether a cached bake uses this light's current transform and radius.
+	// Absorbs float32 recompute noise; far below the smallest visible pose change,
+	// so a real move still fails the match.
+	constexpr float kPoseMatchPosEpsilon = 0.01f;     ///< world units
+	constexpr float kPoseMatchRotEpsilon = 1.0e-4f;   ///< rotation matrix entries
+	constexpr float kPoseMatchRadiusEpsilon = 0.01f;  ///< light radius units
+
+	static bool NearlyEqual(const RE::NiPoint3& a, const RE::NiPoint3& b, float eps)
+	{
+		return std::abs(a.x - b.x) <= eps && std::abs(a.y - b.y) <= eps && std::abs(a.z - b.z) <= eps;
+	}
+
+	static bool NearlyEqual(const RE::NiMatrix3& a, const RE::NiMatrix3& b, float eps)
+	{
+		for (int i = 0; i < 3; ++i)
+			for (int j = 0; j < 3; ++j)
+				if (std::abs(a.entry[i][j] - b.entry[i][j]) > eps)
+					return false;
+		return true;
+	}
+
+	/// Tests whether a cached bake uses this light's current transform and radius,
+	/// within float32-noise tolerance.
 	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
 	{
 		const auto* ni = light->light.get();
 		return ni && st.bakePoseValid &&
-		       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
-		       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+		       std::abs(ni->GetLightRuntimeData().radius.x - st.bakeRadius) <= kPoseMatchRadiusEpsilon &&
+		       NearlyEqual(ni->world.translate, st.bakePos, kPoseMatchPosEpsilon) &&
+		       NearlyEqual(ni->world.rotate, st.bakeRot, kPoseMatchRotEpsilon);
 	}
 
 	/// Shared cache-validity check for caster selection and sleeping shadows.
