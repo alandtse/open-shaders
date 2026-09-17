@@ -10,6 +10,7 @@
 #include "Utils/MathUtils.h"
 
 #include <cmath>
+#include <format>
 #include <memory>
 #include <numbers>
 
@@ -97,8 +98,71 @@ void Skylighting::ClearProbes()
 	lastOcclusionRenderFrame = static_cast<uint>(-1);
 }
 
+Skylighting::ProbeProfile Skylighting::GetProbeProfile(PerfProfile profile)
+{
+	switch (profile) {
+	case PerfProfile::Performance:
+		return { 0, 8, 16, 8, 2.5f };
+	case PerfProfile::Balanced:
+		return { 1, 6, 13, 11, 3.1666667f };
+	case PerfProfile::Quality:
+	default:
+		return { 2, 5, 9, 13, 3.8333333f };
+	}
+}
+
+bool Skylighting::MatchesProbeProfile(const ProbeProfile& profile) const
+{
+	return settings.EnableReducedUpdateFrequency && settings.EnableIncrementalProbeUpdates && settings.EnableFastProbeSampling &&
+	       settings.ProbeGridQuality == profile.gridQuality && settings.OcclusionUpdateInterval == profile.captureInterval &&
+	       settings.ProbeUpdateInterval == profile.probeInterval && settings.StableSliceCount == profile.sliceCount &&
+	       std::abs(settings.ProbeArrayWorldSizeCells - profile.fieldWidthCells) <= 1e-4f;
+}
+
+void Skylighting::ApplyProbeProfile(const ProbeProfile& profile)
+{
+	if (MatchesProbeProfile(profile))
+		return;
+	settings.ProbeGridQuality = profile.gridQuality;
+	settings.OcclusionUpdateInterval = profile.captureInterval;
+	settings.ProbeUpdateInterval = profile.probeInterval;
+	settings.StableSliceCount = profile.sliceCount;
+	settings.ProbeArrayWorldSizeCells = profile.fieldWidthCells;
+	settings.EnableReducedUpdateFrequency = true;
+	settings.EnableIncrementalProbeUpdates = true;
+	settings.EnableFastProbeSampling = true;
+	ResetSkylighting();
+}
+
+void Skylighting::ApplyPerformanceProfile(PerfProfile profile)
+{
+	ApplyProbeProfile(GetProbeProfile(profile));
+}
+
+bool Skylighting::MatchesPerformanceProfile(PerfProfile profile) const
+{
+	return MatchesProbeProfile(GetProbeProfile(profile));
+}
+
+std::string Skylighting::GetProfilePreviewText(PerfProfile profile) const
+{
+	const auto values = GetProbeProfile(profile);
+	const auto dimensions = GetProbeArrayDims(values.gridQuality);
+	return std::vformat(T(TKEY("profile_preview"), "{} x {} x {} probes; capture every {} frames; {} slices per captured quadrant; {:.2f} cells wide; fast sampling."),
+		std::make_format_args(dimensions[0], dimensions[1], dimensions[2], values.captureInterval, values.sliceCount, values.fieldWidthCells));
+}
+
+void Skylighting::DrawPerformancePresets()
+{
+	if (ImGui::Button(T(TKEY("hoshipa_preset"), "Apply Hoshipa Preset")))
+		ApplyProbeProfile(kHoshipaProfile);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("hoshipa_tooltip"), "256 x 256 x 128 probes, 4.5-cell width, 3-frame captures, 16 slices per quadrant and fast sampling. Rebuilds probe history when settings change."));
+}
+
 void Skylighting::DrawSettings()
 {
+	DrawPerformancePresets();
 	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
@@ -504,6 +568,8 @@ void Skylighting::OnSceneTransitionReset(bool)
 
 void Skylighting::RegisterUxActions()
 {
+	FEATURE_COMMAND("applyHoshipaPreset", "Apply the Skylighting Hoshipa preset: high grid, 4.5-cell width, 3-frame captures, 6-frame full-grid interval, 16 slices, incremental updates and fast sampling; queue a rebuild when changed.",
+		[](Feature* self, const json&) { static_cast<Skylighting*>(self)->ApplyProbeProfile(kHoshipaProfile); });
 	FEATURE_COMMAND("rebuild", "Queue a Skylighting probe rebuild on the render thread.",
 		[](Feature* self, const json&) { static_cast<Skylighting*>(self)->ResetSkylighting(); });
 }

@@ -34,6 +34,18 @@ public:
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings panel for Skylighting configuration. */
 	virtual void DrawSettings() override;
+	/** @brief Exposes Skylighting's shared profile section in the Performance hub. */
+	std::string GetPerformanceSectionLabel() override { return GetDisplayName(); }
+	/** @brief Orders the probe controls among the hub's rendering features. */
+	int GetPerformanceOrder() const override { return 30; }
+	/** @brief Draws the feature-local Hoshipa preset. */
+	void DrawPerformancePresets() override;
+	/** @brief Applies the shared probe profile and queues a rebuild when it changes. */
+	void ApplyPerformanceProfile(PerfProfile profile) override;
+	/** @brief Matches the same mapping used to apply a profile. */
+	bool MatchesPerformanceProfile(PerfProfile profile) const override;
+	/** @brief Describes the probe controls changed by the selected profile. */
+	std::string GetProfilePreviewText(PerfProfile profile) const override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
@@ -180,6 +192,18 @@ public:
 	};
 
 private:
+	struct ProbeProfile
+	{
+		uint gridQuality;
+		uint captureInterval;
+		uint probeInterval;
+		uint sliceCount;
+		float fieldWidthCells;
+	};
+	static constexpr ProbeProfile kHoshipaProfile{ 2, 3, 6, 16, 4.5f };
+	static ProbeProfile GetProbeProfile(PerfProfile profile);
+	void ApplyProbeProfile(const ProbeProfile& profile);
+	bool MatchesProbeProfile(const ProbeProfile& profile) const;
 	float3 GetProbeCellSize() const;
 	float3 GetProbeCell(float3 eyePosition) const;
 	bool HasProbeResources() const;
