@@ -6,6 +6,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/MathUtils.h"
 
 #include <cmath>
 #include <numbers>
@@ -21,6 +22,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void Skylighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.MaxZenith = Util::ClampFinite(settings.MaxZenith, 0.0f, std::numbers::pi_v<float> / 2.0f, Settings{}.MaxZenith);
 }
 
 void Skylighting::SaveSettings(json& o_json)
