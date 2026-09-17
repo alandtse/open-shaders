@@ -40,9 +40,10 @@ void Skylighting::ResetSkylighting()
 	const float unitSH[4] = { std::sqrt(4.0f * std::numbers::pi_v<float>), 0.0f, 0.0f, 0.0f };
 	context->ClearUnorderedAccessViewFloat(texProbeArray->uav.get(), unitSH);
 
-	UINT clr[1] = { 0 };
+	UINT clr[4] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
-	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), clr);
+	const UINT litHistory[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), litHistory);
 
 	float clrf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 	context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), clrf);
