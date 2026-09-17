@@ -7,6 +7,7 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
+#include "Utils/MathUtils.h"
 
 #include <cmath>
 #include <numbers>
@@ -17,11 +18,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility)
+	MinSpecularVisibility,
+	ProbeArrayWorldSizeCells)
 
 void Skylighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.ProbeArrayWorldSizeCells = Util::ClampFinite(settings.ProbeArrayWorldSizeCells, Settings::kMinProbeFieldSizeCells, Settings::kMaxProbeFieldSizeCells, Settings{}.ProbeArrayWorldSizeCells);
 }
 
 void Skylighting::SaveSettings(json& o_json)
@@ -74,6 +77,9 @@ void Skylighting::DrawSettings()
 	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("probe_field_width"), "Probe Field Width (Cells)"), &settings.ProbeArrayWorldSizeCells, Settings::kMinProbeFieldSizeCells, Settings::kMaxProbeFieldSizeCells, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("probe_field_width_desc"), "Extends skylighting coverage without adding probes. Larger fields reduce spatial detail and rebuild the probe history."));
 
 	ImGui::Separator();
 
@@ -244,7 +250,8 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
 		.MinSpecularVisibility = settings.MinSpecularVisibility,
-		.ProbeDataReady = probeDataReady && HasProbeResources() && !queuedResetSkylighting.load()
+		.ProbeDataReady = probeDataReady && HasProbeResources() && !queuedResetSkylighting.load(),
+		.ProbeArrayWorldSize = occlusionDistance
 	};
 }
 
@@ -612,6 +619,12 @@ void Skylighting::RenderOcclusion()
 
 	if (lastOcclusionRenderFrame == globals::state->frameCount)
 		return;
+
+	const float requestedDistance = settings.ProbeArrayWorldSizeCells * Settings::kWorldCellSize;
+	if (requestedDistance != occlusionDistance) {
+		occlusionDistance = requestedDistance;
+		ClearProbes();
+	}
 
 	CS_GPU_PASS("Skylighting::SkylightingMask");
 	++frameCount;
