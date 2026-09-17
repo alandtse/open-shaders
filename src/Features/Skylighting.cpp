@@ -16,7 +16,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Skylighting::Settings,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility)
+	MinSpecularVisibility,
+	EnableFastProbeSampling)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -55,6 +56,9 @@ void Skylighting::DrawSettings()
 	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
+	ImGui::Checkbox(T(TKEY("fast_probe_sampling"), "Fast Probe Sampling"), &settings.EnableFastProbeSampling);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("fast_probe_sampling_desc"), "Skips normal-based probe weighting. May increase light leaking near thin geometry."));
 
 	ImGui::Separator();
 
@@ -225,7 +229,8 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
-		.MinSpecularVisibility = settings.MinSpecularVisibility
+		.MinSpecularVisibility = settings.MinSpecularVisibility,
+		.EnableFastProbeSampling = settings.EnableFastProbeSampling
 	};
 }
 
