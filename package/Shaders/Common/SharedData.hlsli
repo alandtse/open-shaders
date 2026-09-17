@@ -189,7 +189,7 @@ namespace SharedData
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
 		uint ProbeDataReady;
-		uint pad0;
+		float ProbeArrayWorldSize;
 		uint4 ArrayDims;
 		uint SliceStart;
 		uint SliceCount;

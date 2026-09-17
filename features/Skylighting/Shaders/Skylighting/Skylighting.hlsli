@@ -24,10 +24,14 @@ namespace Skylighting
 	{
 		return max(SharedData::skylightingSettings.ArrayDims.xyz, uint3(1, 1, 1));
 	}
-	const static float3 ARRAY_SIZE = 10000.f * float3(1, 1, 0.5);
+	float3 GetArraySize()
+	{
+		return max(SharedData::skylightingSettings.ProbeArrayWorldSize, 10000.0) * float3(1, 1, 0.5);
+	}
 
 	float GetFadeOutFactor(float3 positionMS)
 	{
+		const float3 ARRAY_SIZE = GetArraySize();
 		float3 uvw = saturate(positionMS / ARRAY_SIZE + .5);
 		float3 dists = min(uvw, 1 - uvw);
 		float edgeDist = min(dists.x, min(dists.y, dists.z));
@@ -107,6 +111,7 @@ namespace Skylighting
 			return scaledUnitSH;
 
 		const uint3 ARRAY_DIM = GetArrayDims();
+		const float3 ARRAY_SIZE = GetArraySize();
 		const float3 CELL_SIZE = ARRAY_SIZE / ARRAY_DIM;
 		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
 
@@ -180,6 +185,7 @@ namespace Skylighting
 	sh2 SampleNoBias(float3 positionMS)
 	{
 		const uint3 ARRAY_DIM = GetArrayDims();
+		const float3 ARRAY_SIZE = GetArraySize();
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
 		if (SharedData::InInterior || SharedData::skylightingSettings.ProbeDataReady == 0)

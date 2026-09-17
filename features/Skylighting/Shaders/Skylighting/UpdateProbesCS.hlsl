@@ -84,7 +84,7 @@ static const float3 noise3D[32] = {
 	uint storedAccumFrames = probeUpdateState & 0xFFu;
 	uint shadowSampleIndex = (probeUpdateState >> 8) & 31u;
 	float3 cellCentreMS = float3(cellID) + 0.5 - float3(arrayDims) * 0.5;
-	cellCentreMS = cellCentreMS / float3(arrayDims) * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
+	cellCentreMS = cellCentreMS / float3(arrayDims) * Skylighting::GetArraySize() + settings.PosOffset.xyz;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;

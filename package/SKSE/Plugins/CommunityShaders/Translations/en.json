@@ -2703,6 +2703,8 @@
     "feature.skylighting.probe_grid_high": "256 x 256 x 128",
     "feature.skylighting.probe_grid_low": "128 x 128 x 64",
     "feature.skylighting.probe_grid_medium": "192 x 192 x 96",
+    "feature.skylighting.probe_field_width": "Probe Field Width (Cells)",
+    "feature.skylighting.probe_field_width_desc": "Extends skylighting coverage without adding probes. Larger fields reduce spatial detail and rebuild the probe history.",
     "feature.skylighting.rebuild": "Rebuild Skylighting",
     "feature.skylighting.rebuild_tooltip": "Changes below require rebuilding, a loading screen, or moving away from the current location to apply.",
     "feature.skylighting.specular_min_visibility": "Specular Min Visibility",
