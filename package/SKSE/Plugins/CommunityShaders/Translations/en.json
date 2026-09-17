@@ -2683,6 +2683,7 @@
     "feature.sky_sync.use_alternate_sun_path_tooltip": "Calculate sun position based on time of day and season instead of vanilla movement.",
     "feature.skylighting.description": "Simulates realistic ambient lighting by calculating sky occlusion and directional lighting, providing more accurate and natural illumination in outdoor environments.",
     "feature.skylighting.diffuse_min_visibility": "Diffuse Min Visibility",
+    "feature.skylighting.enabled": "Enable Skylighting",
     "feature.skylighting.key_feature_1": "Sky occlusion calculation for ambient lighting",
     "feature.skylighting.key_feature_2": "Directional skylighting based on environment geometry",
     "feature.skylighting.key_feature_3": "Enhanced ambient lighting for outdoor scenes",
