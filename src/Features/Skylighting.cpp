@@ -268,6 +268,18 @@ void Skylighting::Prepass()
 		lastOcclusionRenderFrame = static_cast<uint>(-1);
 	}
 
+	const bool shadowDataAvailable = !interior && HasShadowData();
+	if (shadowDataAvailable && !previousShadowDataAvailable) {
+		// A resource outage must not expose shadow history from before the outage.
+		ID3D11ShaderResourceView* nullShadow = nullptr;
+		context->PSSetShaderResources(53, 1, &nullShadow);
+		const UINT litHistory[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+		context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), litHistory);
+		const float litVisibility[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), litVisibility);
+	}
+	previousShadowDataAvailable = shadowDataAvailable;
+
 	if (interior)
 		RenderOcclusion();
 
@@ -276,7 +288,6 @@ void Skylighting::Prepass()
 		CS_GPU_PASS_SELECT(interior, "Skylighting::InteriorProbeUpdate", "Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
-		const bool shadowDataAvailable = !interior && HasShadowData();
 
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
