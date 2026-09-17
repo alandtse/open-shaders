@@ -26,7 +26,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableReducedUpdateFrequency,
 	OcclusionUpdateInterval,
 	ProbeUpdateInterval,
-	ProbeArrayWorldSizeCells)
+	ProbeArrayWorldSizeCells,
+	EnableFastProbeSampling)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -137,6 +138,9 @@ void Skylighting::DrawSettings()
 	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("cadence_tooltip"), "Intervals are minimum frame delays while stationary. Probe updates consume fresh captures; incremental updates consume every captured quadrant. Movement and rebuilds bypass the delays."));
+	ImGui::Checkbox(T(TKEY("fast_probe_sampling"), "Fast Probe Sampling"), &settings.EnableFastProbeSampling);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("fast_probe_sampling_desc"), "Skips normal-based probe weighting. May increase light leaking near thin geometry."));
 
 	ImGui::Separator();
 
@@ -367,7 +371,8 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.ProbeArrayWorldSize = occlusionDistance,
 		.ArrayDims = { probeArrayDims[0], probeArrayDims[1], probeArrayDims[2] },
 		.SliceStart = dispatchSliceStart,
-		.SliceCount = dispatchSliceCount
+		.SliceCount = dispatchSliceCount,
+		.EnableFastProbeSampling = settings.EnableFastProbeSampling
 	};
 }
 

@@ -74,6 +74,7 @@ public:
 		uint OcclusionUpdateInterval = 1;
 		uint ProbeUpdateInterval = 1;
 		float ProbeArrayWorldSizeCells = kMinProbeFieldSizeCells;
+		bool EnableFastProbeSampling = false;
 	} settings;
 
 	struct SkylightingCB
@@ -95,7 +96,8 @@ public:
 		uint _pad3;
 		uint SliceStart;
 		uint SliceCount;
-		uint _pad4[2];
+		uint EnableFastProbeSampling;
+		uint _pad4;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
