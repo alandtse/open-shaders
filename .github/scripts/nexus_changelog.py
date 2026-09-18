@@ -33,6 +33,72 @@ def strip_audit(body: str) -> str:
     return _AUDIT_RE.sub("", body or "").strip()
 
 
+# Nexus's changelog field renders neither Markdown nor BBCode, so a release
+# body must be reduced to plain text before posting there (see markdown_to_plain_text).
+_MD_HEADING_RE = re.compile(r"^#{1,6}[ \t]+", re.MULTILINE)
+# semantic-release wraps each PR/commit link in its own parens, e.g. "([#678](url))" --
+# the (?(1)...) conditional consumes that enclosing "(...)" with the link so it isn't
+# doubled up with the "label (url)" parens the substitution below adds.
+_MD_LINK_RE = re.compile(r"(\()?\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)(?(1)\))")
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_BOLD_ITALIC_RE = re.compile(r"(\*{1,3}|_{1,3})(\S(?:.*?\S)?)\1")
+_MD_STRIKETHROUGH_RE = re.compile(r"~~(.*?)~~")
+_MD_INLINE_CODE_RE = re.compile(r"`([^`]*)`")
+_MD_CODE_FENCE_RE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL)
+_MD_BLOCKQUOTE_RE = re.compile(r"^>[ \t]?", re.MULTILINE)
+_MD_BULLET_RE = re.compile(r"^(\s*)[*+-][ \t]+", re.MULTILINE)
+_MD_HR_RE = re.compile(r"^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$", re.MULTILINE)
+# A link label matching the id already in its URL (issue "#678", commit hash) is
+# pure repetition, so it's dropped in favor of the bare URL below.
+_ISSUE_LABEL_RE = re.compile(r"^#(\d+)$")
+_HEX_LABEL_RE = re.compile(r"^[0-9a-fA-F]{6,40}$")
+
+
+def _link_label_is_redundant_with_url(label: str, url: str) -> bool:
+    issue_match = _ISSUE_LABEL_RE.match(label)
+    if issue_match:
+        return url.rstrip("/").endswith("/" + issue_match.group(1))
+    if _HEX_LABEL_RE.match(label):
+        return label.lower() in url.lower()
+    return False
+
+
+def _replace_link(match: re.Match[str]) -> str:
+    label, url = match.group(2), match.group(3)
+    if not label or _link_label_is_redundant_with_url(label, url):
+        return url
+    return f"{label} ({url})"
+
+
+def markdown_to_plain_text(body: str) -> str:
+    """Reduce a GitHub-Markdown release body to plain text for Nexus.
+
+    Strips formatting markers (headings, bold/italic, code, blockquotes,
+    horizontal rules) and unwraps links/images to "label (url)" -- or the
+    bare URL when the label is empty or just repeats an id already in the
+    URL (issue/PR number, commit hash) -- while preserving line breaks and
+    list structure so the changelog stays readable without any rendering.
+    """
+    text = body or ""
+    text = _MD_CODE_FENCE_RE.sub(lambda m: m.group(1), text)
+    text = _MD_HR_RE.sub("", text)
+    text = _MD_IMAGE_RE.sub(lambda m: m.group(1), text)
+    text = _MD_LINK_RE.sub(_replace_link, text)
+    text = _MD_HEADING_RE.sub("", text)
+    text = _MD_BLOCKQUOTE_RE.sub("", text)
+    text = _MD_BULLET_RE.sub(lambda m: f"{m.group(1)}- ", text)
+    text = _MD_INLINE_CODE_RE.sub(lambda m: m.group(1), text)
+    text = _MD_STRIKETHROUGH_RE.sub(lambda m: m.group(1), text)
+    # Bold/italic markers can nest (e.g. "**_text_**"), so repeat until stable.
+    previous = None
+    while previous != text:
+        previous = text
+        text = _MD_BOLD_ITALIC_RE.sub(lambda m: m.group(2), text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def nexus_versions(
     api_key: str,
     game_id: str,
