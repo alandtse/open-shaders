@@ -127,6 +127,22 @@ void PerfMode::GetRenderTargetSize_Hook::thunk(RE::BSOpenVR* a_this, uint32_t* a
 
 	auto& perfMode = globals::features::upscaling.perfMode;
 
+	// Baseline against this hook's own first result, not displayEyeWidth/Height
+	// (a separate, differently-scaled call made before hook install) -- that
+	// mismatch false-positives on frame one.
+	if (!perfMode.hookBaselineCaptured) {
+		perfMode.hookBaselineEyeWidth = *a_width;
+		perfMode.hookBaselineEyeHeight = *a_height;
+		perfMode.hookBaselineCaptured = true;
+	} else if (!perfMode.displaySizeChanged &&
+			   (*a_width != perfMode.hookBaselineEyeWidth || *a_height != perfMode.hookBaselineEyeHeight)) {
+		// Engine RTs and testTexture are sized once, for this latch; flag a live
+		// drift instead of silently stretching the present until a restart re-latches.
+		logger::warn("[PerfMode] HMD render target size changed from {}x{} to {}x{} mid-session; restart required to re-latch",
+			perfMode.hookBaselineEyeWidth, perfMode.hookBaselineEyeHeight, *a_width, *a_height);
+		perfMode.displaySizeChanged = true;
+	}
+
 	*a_width = perfMode.renderEyeWidth;
 	*a_height = perfMode.renderEyeHeight;
 }

@@ -638,6 +638,12 @@ void Upscaling::DrawSettings()
 				"Pending restart: currently active method = %s (selected = %s).",
 				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
 		}
+
+		if (perfMode.IsDisplaySizeChanged()) {
+			Util::Text::RestartNeeded(
+				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
+				"per-app resolution slider). Restart to re-latch at the new size.");
+		}
 	}
 
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
