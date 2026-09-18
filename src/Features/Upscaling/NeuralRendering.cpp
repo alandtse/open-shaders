@@ -30,7 +30,10 @@ struct NeuralRendering::Impl
 	struct alignas(16) ColorTransferData
 	{
 		uint32_t width, height, eyeOffsetX, hasExposure = 0;
+		uint32_t conversionMode = 0, exposureMode = 0, compositeMode = 0, maskMode = 0;
+		uint32_t visualMode = 0;
 		float exposureCompensation = 1.0f, exposureMin = 1.0f, exposureMax = 1.0f, manualExposure = 1.0f;
+		float differenceStrength = 1.0f, splitPosition = 0.5f;
 	};
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
@@ -42,6 +45,14 @@ struct NeuralRendering::Impl
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
 	uint32_t lastDiagnosticOptions = 0;
+	uint32_t debugOptions = 0;
+	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
+	NR::Diagnostics::ExposureMode exposureMode = NR::Diagnostics::ExposureMode::Production;
+	NR::Diagnostics::CompositeMode compositeMode = NR::Diagnostics::CompositeMode::Production;
+	NR::Diagnostics::VisualMode visualMode = NR::Diagnostics::VisualMode::None;
+	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
+	NR::Diagnostics* captureDiagnostics = nullptr;
+	uint32_t captureFrame = UINT32_MAX;
 
 	~Impl()
 	{
@@ -209,12 +220,29 @@ struct NeuralRendering::Impl
 		context->ClearState();
 		auto& eye = eyes[i];
 		ColorTransferData data{ width, height, i * width };
+		data.conversionMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableColorTransform) ? NR::Diagnostics::ColorConversion::Raw : conversionMode);
+		data.exposureMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableExposure) ? NR::Diagnostics::ExposureMode::Ignore : exposureMode);
+		data.compositeMode = static_cast<uint32_t>(compositeMode);
+		data.visualMode = static_cast<uint32_t>(visualMode);
+		if (debugOptions & (NR::Diagnostics::VisualizeMask | NR::Diagnostics::VisualizeSkinMask | NR::Diagnostics::VisualizeAutoMask))
+			data.visualMode = static_cast<uint32_t>(NR::Diagnostics::VisualMode::Mask);
+		data.manualExposure = manualExposure;
+		data.differenceStrength = differenceStrength;
+		data.splitPosition = splitPosition;
+		if (debugOptions & NR::Diagnostics::ForceMaskZero)
+			data.maskMode = 1;
+		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
+			data.maskMode = 2;
+		else if (debugOptions & NR::Diagnostics::BypassMask)
+			data.maskMode = 2;
 		ID3D11ShaderResourceView* exposure = nullptr;
 		auto& post = globals::features::postProcessing;
 		if (prepare && post.loaded && !post.bypass) {
 			auto* adaptation = post.GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure);
 			if (adaptation && adaptation->enabled) {
 				exposure = adaptation->GetAdaptationSRV();
+				if (captureDiagnostics && i == 0)
+					captureDiagnostics->CaptureView("NR_exposure", exposure, captureFrame);
 				data.hasExposure = exposure != nullptr;
 				data.exposureCompensation = std::exp2(std::clamp(adaptation->settings.ExposureCompensation, -16.0f, 16.0f));
 				data.exposureMin = std::exp2(std::clamp(adaptation->settings.AdaptationRange.x - 3.0f, -16.0f, 16.0f));
@@ -242,9 +270,11 @@ struct NeuralRendering::Impl
 		context->ClearState();
 	}
 
-	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic)
+	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
 	{
 		CS_GPU_PASS("NeuralRendering::Evaluate");
+		captureDiagnostics = &diagnostics;
+		captureFrame = diagnostic.number;
 		struct ContextScope
 		{
 			ID3D11DeviceContext1* context;
@@ -263,8 +293,22 @@ struct NeuralRendering::Impl
 		maskFrame = UINT32_MAX;
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
+		const bool capture = diagnostics.BeginCapture(diagnostic.number);
+		if (capture)
+			diagnostics.DumpTexture("00_original_scene", original->resource.get(), diagnostic.number);
+		if (capture) {
+			diagnostics.CaptureView("NR_depth", inputs[3], diagnostic.number);
+			diagnostics.CaptureView("NR_motion", inputs[2], diagnostic.number);
+		}
 		for (uint32_t i = 0; i < eyeCount; ++i)
 			TransferColor(i, true);
+		if (capture)
+			diagnostics.DumpTexture("01_input", eyes[0].color.texture->resource.get(), diagnostic.number);
+		if (debugOptions & NR::Diagnostics::BypassEvaluation) {
+			diagnostic.outcome = NR::Diagnostics::Outcome::Bypassed;
+			diagnostics.FinishCapture(diagnostic.number);
+			return true;
+		}
 		context->CSSetShader(shader, nullptr, 0);
 		context->CSSetShaderResources(0, 4, inputs);
 		auto shared = globals::state->sharedDataCB->CB();
@@ -299,8 +343,23 @@ struct NeuralRendering::Impl
 		for (uint32_t i = 0; i < eyeCount && success; ++i) {
 			auto& eye = eyes[i];
 			Transition(commands, eye, true);
-			success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
-				eye.motion.resource.get(), eye.output.resource.get(), width, height, guideWidth, guideHeight, eye.frame, tuning);
+			if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
+				D3D12_RESOURCE_BARRIER copyBarriers[2]{};
+				copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+				copyBarriers[0].Transition = { eye.color.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE };
+				copyBarriers[1].Transition = { eye.output.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST };
+				commands->ResourceBarrier(2, copyBarriers);
+				commands->CopyResource(eye.output.resource.get(), eye.color.resource.get());
+				copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+				copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+				copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+				copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+				commands->ResourceBarrier(2, copyBarriers);
+			} else
+				success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
+					eye.motion.resource.get(), eye.output.resource.get(), width, height, guideWidth, guideHeight, eye.frame, tuning);
 			diagnostic.result[i] = eye.frame.result;
 			if (success)
 				diagnostic.evaluated |= 1u << i;
@@ -315,18 +374,35 @@ struct NeuralRendering::Impl
 			interop.Drain();
 		diagnostic.submittedFence = interop.SubmittedFence();
 		diagnostic.completedFence = interop.CompletedFence();
-		if (!success)
+		if (!success) {
+			diagnostics.FinishCapture(diagnostic.number);
 			return false;
-		if (diagnostic.options & NR::Diagnostics::BypassWriteback)
+		}
+		if (capture) {
+			interop.Drain();
+			diagnostics.DumpTexture("02_output", eyes[0].output.texture->resource.get(), diagnostic.number);
+		}
+		if (diagnostic.options & NR::Diagnostics::BypassWriteback) {
+			diagnostics.FinishCapture(diagnostic.number);
 			return true;
-		for (uint32_t i = 0; i < eyeCount; ++i)
+		}
+		for (uint32_t i = 0; i < eyeCount; ++i) {
 			TransferColor(i, false);
+		}
+		if (capture) {
+			diagnostics.DumpTexture("03_pre_composite", original->resource.get(), diagnostic.number);
+			diagnostics.DumpTexture("NR_mask", reactive->resource.get(), diagnostic.number);
+		}
 		const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			context->CopySubresourceRegion(color, 0, i * width, 0, 0, eyes[i].resolved->resource.get(), 0, &box);
 			diagnostic.copied |= 1u << i;
 		}
+		if (capture)
+			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
 		maskFrame = globals::state->frameCount;
+		diagnostics.FinishCapture(diagnostic.number);
+		captureDiagnostics = nullptr;
 		return true;
 	}
 };
@@ -413,6 +489,25 @@ void NeuralRendering::RecordStage(bool finishedPost)
 	diagnostics.Stage(globals::state->frameCount, finishedPost, reinterpret_cast<uintptr_t>(main));
 }
 
+void NeuralRendering::CaptureBeforeUpscaling()
+{
+	if (!globals::state)
+		return;
+	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	if (!diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
+		diagnostics.CaptureStage("00_original_scene", main.texture, globals::state->frameCount);
+	diagnostics.CaptureStage("05_pre_sr", main.texture, globals::state->frameCount);
+}
+
+void NeuralRendering::CaptureAfterUpscaling()
+{
+	if (!globals::state)
+		return;
+	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	diagnostics.CaptureStage("06_post_sr", main.texture, globals::state->frameCount);
+	diagnostics.FinishCapture(globals::state->frameCount);
+}
+
 void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
 {
 	using Outcome = NR::Diagnostics::Outcome;
@@ -474,6 +569,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.height = h;
 		diagnostic.eyeCount = count;
 		diagnostic.format = desc.Format;
+		diagnostic.proxyFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		diagnostic.source = reinterpret_cast<uintptr_t>(color);
 		if (!w || !h || !gw || !gh || desc.Width < w * count || desc.Height < h || desc.ArraySize != 1 || desc.SampleDesc.Count != 1 ||
 			(desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
@@ -498,6 +594,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			{}, "cs_5_0", "Composite", "NeuralRendering::CompositeHDR CS");
 		if (!shader || !prepare || !composite)
 			throw std::runtime_error("NR encoder or color-transfer shader unavailable");
+		work.debugOptions = diagnostic.options;
+		work.conversionMode = diagnostics.ConversionMode();
+		work.exposureMode = diagnostics.ExposureSetting();
+		work.compositeMode = diagnostics.CompositionMode();
+		work.visualMode = diagnostics.ViewMode();
+		work.manualExposure = diagnostics.ManualExposure();
+		work.differenceStrength = diagnostics.DifferenceStrength();
+		work.splitPosition = diagnostics.SplitPosition();
 		uint32_t reset = resetHistory.exchange(false) ? NR::Diagnostics::Requested : 0;
 		if (work.lastFrame == UINT32_MAX)
 			reset |= NR::Diagnostics::FirstFrame;
@@ -505,7 +609,24 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			reset |= NR::Diagnostics::FrameGap;
 		auto boundedTuning = tuning;
 		boundedTuning.Sanitize();
-		if (!work.Draw(color, inputs, shader, reset, boundedTuning, diagnostic))
+		if (diagnostic.options & NR::Diagnostics::DisableTone)
+			boundedTuning.localToneStrength = 0.0f;
+		if (diagnostic.options & NR::Diagnostics::DisableStructure)
+			boundedTuning.localStructureStrength = 0.0f;
+		if (diagnostic.options & NR::Diagnostics::DisableSkin)
+			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
+		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
+		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
+		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
+		diagnostic.visualMode = static_cast<uint32_t>(work.visualMode);
+		diagnostic.manualExposure = work.manualExposure;
+		diagnostic.differenceStrength = work.differenceStrength;
+		diagnostic.splitPosition = work.splitPosition;
+		diagnostic.intensity = boundedTuning.intensity;
+		diagnostic.localTone = boundedTuning.localToneStrength;
+		diagnostic.localStructure = boundedTuning.localStructureStrength;
+		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
+		if (!work.Draw(color, inputs, shader, reset, boundedTuning, diagnostic, diagnostics))
 			throw std::runtime_error(std::format("SDR-proxy Feature 18 creation/evaluation failed (NGX L/R: 0x{:08X}/0x{:08X})", diagnostic.result[0], diagnostic.result[1]));
 		if (reset)
 			SetStatus(std::format("Active: SDR proxy into scene-linear HDR, {} x {}, {} eye(s), before upscaling", w, h, count));

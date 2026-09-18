@@ -3168,6 +3168,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
 	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	if (upscaling.ShouldUseFrameGenerationThisFrame()) {
 		if (postProcessing.loaded)
@@ -3182,6 +3183,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	} else if (globals::game::isVR) {
 		upscaling.UpscaleDepth();
 	}
+	upscaling.neuralRendering.CaptureAfterUpscaling();
 
 	if (!upscaling.vrSubmit.IsHookActive() && upscaleMethod == UpscaleMethod::kDLSS) {
 		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the

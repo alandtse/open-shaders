@@ -29,6 +29,10 @@ struct NeuralRendering
 	void DrawDiagnosticsOverlay(bool enabled);
 	/** @brief Records progress through the existing post-processing chain. */
 	void RecordStage(bool finishedPost);
+	/** @brief Captures the scene immediately before the existing upscaler. */
+	void CaptureBeforeUpscaling();
+	/** @brief Captures the scene immediately after the existing upscaler. */
+	void CaptureAfterUpscaling();
 
 	/** @brief Returns only this frame's successfully composited NR reactive mask. */
 	ID3D11ShaderResourceView* GetReactiveMask() const;

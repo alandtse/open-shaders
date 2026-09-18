@@ -7,6 +7,9 @@
 #include <mutex>
 #include <string>
 
+struct ID3D11Resource;
+struct ID3D11ShaderResourceView;
+
 namespace NR
 {
 	/** @brief Bounded CPU-side tracing of NR scheduling and command submission. */
@@ -43,10 +46,89 @@ namespace NR
 			ZeroMotion = 8,
 			ZeroJitter = 16,
 			SerializeGPU = 32,
-			BypassWriteback = 64
+			BypassWriteback = 64,
+			BypassEvaluation = 128,
+			CopyInputToOutput = 256,
+			InteropRoundTrip = 512,
+			BypassMask = 1024,
+			ForceMaskZero = 2048,
+			ForceMaskOne = 4096,
+			VisualizeMask = 8192,
+			DisableTone = 16384,
+			DisableStructure = 32768,
+			DisableSkin = 65536,
+			DisableExposure = 131072,
+			DisableColorTransform = 262144,
+			VisualizeSkinMask = 524288,
+			VisualizeAutoMask = 1048576
+		};
+		enum class ColorConversion : uint32_t
+		{
+			Raw,
+			LinearToSRGB,
+			SRGBToLinear,
+			LinearToGamma22,
+			Gamma22ToLinear,
+			Production
+		};
+		enum class ExposureMode : uint32_t
+		{
+			Production,
+			Ignore,
+			ForceOne,
+			Game,
+			Manual,
+			DeExposeReExpose,
+			PassOnly,
+			DoNotPass
+		};
+		enum class CompositeMode : uint32_t
+		{
+			Production,
+			Replacement,
+			MaskedLerp,
+			HalfMaskedLerp,
+			PreserveLuminance,
+			PreserveRatio,
+			Residual,
+			Ratio
+		};
+		enum class VisualMode : uint32_t
+		{
+			None,
+			Input,
+			Output,
+			Difference,
+			Ratio,
+			Original,
+			PostComposite,
+			LuminanceDifference,
+			ChromaDifference,
+			Mask,
+			Exposure,
+			SplitOriginalOutput,
+			SplitOriginalComposite,
+			SplitInputOutput,
+			SplitPrePost
 		};
 		/** @brief Returns the live, session-only isolation options. */
 		uint32_t Options() const { return options.load(); }
+		ColorConversion ConversionMode() const { return static_cast<ColorConversion>(conversionMode.load()); }
+		ExposureMode ExposureSetting() const { return static_cast<ExposureMode>(exposureMode.load()); }
+		CompositeMode CompositionMode() const { return static_cast<CompositeMode>(compositeMode.load()); }
+		VisualMode ViewMode() const { return static_cast<VisualMode>(visualMode.load()); }
+		float ManualExposure() const { return manualExposure.load(); }
+		float DifferenceStrength() const { return differenceStrength.load(); }
+		float SplitPosition() const { return splitPosition.load(); }
+		/** @brief Requests one lossless DDS capture of every stage in the next NR frame. */
+		void RequestCapture() { captureRequested = true; }
+		bool BeginCapture(uint32_t frame) { return captureRequested.exchange(false) ? (captureFrame = frame, true) : false; }
+		bool CaptureActive(uint32_t frame) const { return captureFrame.load() == frame; }
+		void FinishCapture(uint32_t frame) { captureFrame.compare_exchange_strong(frame, UINT32_MAX); }
+		void CaptureStage(const char* stage, ID3D11Resource* resource, uint32_t frame);
+		void CaptureView(const char* stage, ID3D11ShaderResourceView* view, uint32_t frame);
+		/** @brief Writes a developer-requested texture dump and logs its resource description. */
+		void DumpTexture(const char* stage, ID3D11Resource* resource, uint32_t frame);
 		struct CameraSample
 		{
 			std::array<float, 3> position{}, previous{}, enginePrevious{}, viewTranslation{};
@@ -64,6 +146,9 @@ namespace NR
 			std::array<uint32_t, 2> reset{}, result{};
 			uintptr_t source = 0;
 			uint64_t submittedFence = 0, completedFence = 0;
+			uint32_t conversion = 0, exposureMode = 0, compositeMode = 0, visualMode = 0;
+			float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
+			float intensity = 0.0f, localTone = 0.0f, localStructure = 0.0f, skinStructure = 0.0f;
 		};
 		/** @brief Records entry without overwriting a successful result on duplicate calls. */
 		Frame& BeginHook(uint32_t frame, uint32_t target);
@@ -81,6 +166,10 @@ namespace NR
 		static constexpr uint32_t kTraceFrames = 300;
 		Frame current;
 		std::atomic<uint32_t> options = 0;
+		std::atomic<uint32_t> conversionMode = static_cast<uint32_t>(ColorConversion::Production), exposureMode = 0, compositeMode = 0, visualMode = 0;
+		std::atomic<float> manualExposure = 1.0f, differenceStrength = 4.0f, splitPosition = 0.5f;
+		std::atomic_bool captureRequested = false;
+		std::atomic<uint32_t> captureFrame = UINT32_MAX;
 		std::atomic_bool startSuite = false, startTrace = false, markFlicker = false;
 		std::atomic_bool stopSuite = false;
 		bool suite = false;

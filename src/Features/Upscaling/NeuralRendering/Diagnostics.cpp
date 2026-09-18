@@ -2,12 +2,93 @@
 
 #include "Globals.h"
 #include "Menu.h"
+#include "Utils/D3D.h"
+#include <DirectXTex.h>
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 
 namespace NR
 {
+	void Diagnostics::DumpTexture(const char* stage, ID3D11Resource* resource, uint32_t frame)
+	{
+		if (!resource || !stage || !globals::d3d::device || !globals::d3d::context)
+			return;
+		winrt::com_ptr<ID3D11Texture2D> source;
+		if (FAILED(resource->QueryInterface(source.put())))
+			return;
+		D3D11_TEXTURE2D_DESC desc{};
+		source->GetDesc(&desc);
+		logger::info("[NRDiag/v2] dump {} resource=0x{:X} {}x{} format={} array={} samples={} misc=0x{:X}", stage,
+			reinterpret_cast<uintptr_t>(resource), desc.Width, desc.Height, static_cast<uint32_t>(desc.Format), desc.ArraySize,
+			desc.SampleDesc.Count, desc.MiscFlags);
+		D3D11_TEXTURE2D_DESC stagingDesc = desc;
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.BindFlags = 0;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		stagingDesc.MiscFlags = 0;
+		stagingDesc.ArraySize = 1;
+		stagingDesc.SampleDesc.Count = 1;
+		stagingDesc.SampleDesc.Quality = 0;
+		winrt::com_ptr<ID3D11Texture2D> staging;
+		if (FAILED(globals::d3d::device->CreateTexture2D(&stagingDesc, nullptr, staging.put())))
+			return;
+		globals::d3d::context->CopySubresourceRegion(staging.get(), 0, 0, 0, 0, source.get(), 0, nullptr);
+		globals::d3d::context->Flush();
+		DirectX::ScratchImage image;
+		if (FAILED(DirectX::CaptureTexture(globals::d3d::device, globals::d3d::context, staging.get(), image)))
+			return;
+		DirectX::ScratchImage statistics;
+		if (SUCCEEDED(DirectX::Convert(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DXGI_FORMAT_R32G32B32A32_FLOAT,
+				DirectX::TEX_FILTER_DEFAULT, 0.0f, statistics))) {
+			const auto* pixels = reinterpret_cast<const float*>(statistics.GetPixels());
+			const size_t pixelCount = static_cast<size_t>(statistics.GetPixelsSize() / (sizeof(float) * 4));
+			if (pixels && pixelCount) {
+				float minimum = std::numeric_limits<float>::max(), maximum = 0.0f, average = 0.0f;
+				for (size_t i = 0; i < pixelCount; ++i) {
+					const float luminance = std::max(0.0f, pixels[i * 4 + 0] * 0.2126f + pixels[i * 4 + 1] * 0.7152f + pixels[i * 4 + 2] * 0.0722f);
+					minimum = std::min(minimum, luminance);
+					maximum = std::max(maximum, luminance);
+					average += luminance;
+				}
+				logger::info("[NRDiag/v2] stats {} pixels={} avgY={} minY={} maxY={}", stage, pixelCount, average / pixelCount, minimum, maximum);
+			}
+		}
+		std::error_code ec;
+		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/Captures");
+		std::filesystem::create_directories(directory, ec);
+		const auto path = directory / std::format("NR_{:02}_{}_f{}.dds", frame % 100, stage, frame);
+		if (FAILED(DirectX::SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::DDS_FLAGS_NONE, path.c_str())))
+			logger::warn("[NRDiag/v2] failed to save {}", path.string());
+		else
+			logger::info("[NRDiag/v2] wrote {}", path.string());
+	}
+
+	void Diagnostics::CaptureStage(const char* stage, ID3D11Resource* resource, uint32_t frame)
+	{
+		if (CaptureActive(frame))
+			DumpTexture(stage, resource, frame);
+	}
+
+	void Diagnostics::CaptureView(const char* stage, ID3D11ShaderResourceView* view, uint32_t frame)
+	{
+		if (!CaptureActive(frame) || !view)
+			return;
+		winrt::com_ptr<ID3D11Resource> resource;
+		view->GetResource(resource.put());
+		D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+		view->GetDesc(&viewDesc);
+		D3D11_TEXTURE2D_DESC resourceDesc{};
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		if (resource && SUCCEEDED(resource->QueryInterface(texture.put())))
+			texture->GetDesc(&resourceDesc);
+		logger::info("[NRDiag/v2] view {} resourceFormat={} viewFormat={} dimension={}", stage, static_cast<uint32_t>(resourceDesc.Format),
+			static_cast<uint32_t>(viewDesc.Format), static_cast<uint32_t>(viewDesc.ViewDimension));
+		CaptureStage(stage, resource.get(), frame);
+	}
+
 	const char* Diagnostics::Name(Outcome outcome)
 	{
 		switch (outcome) {
@@ -71,6 +152,12 @@ namespace NR
 			frame.width, frame.height, frame.format, frame.proxyFormat, frame.source, frame.eyeCount, frame.evaluated, frame.copied, frame.created,
 			frame.reset[0], frame.reset[1], frame.result[0], frame.result[1], frame.recreated, frame.afterUpscale, frame.afterPost, frame.mainChanged,
 			frame.completedFence, frame.submittedFence);
+		logger::info(
+			"[NRDiag/v2] parameters frame={} conversion={} exposureMode={} compositeMode={} visualMode={} manualExposure={} diffStrength={} split={} "
+			"intensity={} localTone={} localStructure={} skinStructure={}",
+			frame.number, frame.conversion, frame.exposureMode,
+			frame.compositeMode, frame.visualMode, frame.manualExposure, frame.differenceStrength, frame.splitPosition, frame.intensity, frame.localTone,
+			frame.localStructure, frame.skinStructure);
 	}
 
 	void Diagnostics::OpenTrace()
@@ -85,7 +172,7 @@ namespace NR
 				throw std::runtime_error("Cannot open diagnostic trace");
 			traceFile << std::setprecision(9);
 			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>256, directionDot<0.5, projectionDelta>0.1.\n"
-						 "Options: 1=ignorePosition,2=ignoreCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback.\n"
+						 "Options: 1=ignorePosition,2=ignoreCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,128=bypassEvaluation,256=copyInput,512=interopRoundTrip.\n"
 						 "Reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation.\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
@@ -183,6 +270,8 @@ namespace NR
 				traceFile.flush();
 			}
 		}
+		if (enabled && world && !paused && current.options != 0)
+			LogFrame(current);
 		if (enabled && ++framesSinceSummary >= kHistorySize) {
 			std::string outcomes;
 			uint32_t resets = 0, recreations = 0, duplicates = 0;
@@ -223,6 +312,36 @@ namespace NR
 		toggle("Zero NR jitter parameter", ZeroJitter);
 		toggle("Serialize GPU (slow diagnostic)", SerializeGPU);
 		toggle("Bypass NR writeback (keep evaluating)", BypassWriteback);
+		toggle("Bypass NR evaluation entirely", BypassEvaluation);
+		toggle("Copy NR input directly to output", CopyInputToOutput);
+		toggle("DX11 -> DX12 -> DX11 round trip only", InteropRoundTrip);
+		toggle("Bypass NR mask", BypassMask);
+		toggle("Force NR mask = 0", ForceMaskZero);
+		toggle("Force NR mask = 1", ForceMaskOne);
+		toggle("Visualize NR mask", VisualizeMask);
+		toggle("Visualize skin mask (if supplied)", VisualizeSkinMask);
+		toggle("Visualize auto mask (if supplied)", VisualizeAutoMask);
+		toggle("Disable local tone", DisableTone);
+		toggle("Disable local structure", DisableStructure);
+		toggle("Disable skin processing", DisableSkin);
+		toggle("Disable exposure adaptation", DisableExposure);
+		toggle("Disable color transform", DisableColorTransform);
+		uint32_t conversion = conversionMode.load(), exposure = exposureMode.load(), composition = compositeMode.load(), view = visualMode.load();
+		float exposureValue = manualExposure.load(), differenceValue = differenceStrength.load(), split = splitPosition.load();
+		if (ImGui::Combo("Color conversion", reinterpret_cast<int*>(&conversion), "Raw / none\0Linear -> sRGB\0sRGB -> Linear\0Linear -> Gamma 2.2\0Gamma 2.2 -> Linear\0Production\0"))
+			conversionMode = std::min(conversion, 5u);
+		if (ImGui::Combo("Exposure mode", reinterpret_cast<int*>(&exposure), "Production\0Ignore\0Force 1.0\0Game exposure\0Manual\0De-expose/re-expose\0Pass only\0Do not pass\0"))
+			exposureMode = std::min(exposure, 7u);
+		if (ImGui::SliderFloat("Manual exposure", &exposureValue, 0.01f, 16.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
+			manualExposure = exposureValue;
+		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition), "Production\0Raw replacement\0Masked lerp\050% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
+			compositeMode = std::min(composition, 7u);
+		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0"))
+			visualMode = std::min(view, 14u);
+		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
+			differenceStrength = differenceValue;
+		if (ImGui::SliderFloat("Split position", &split, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+			splitPosition = split;
 		if (ImGui::Button("Restore Diagnostic Defaults"))
 			options = 0;
 		if (ImGui::Button("Run All NR Tests"))
@@ -233,6 +352,8 @@ namespace NR
 			stopSuite = true;
 		if (ImGui::Button("Mark Flicker in Trace"))
 			markFlicker = true;
+		if (ImGui::Button("Capture NR stages (lossless DDS)"))
+			RequestCapture();
 		if (!tracePath.empty()) {
 			ImGui::TextWrapped("Trace: %s", tracePath.c_str());
 			if (ImGui::Button("Copy Trace Path"))
