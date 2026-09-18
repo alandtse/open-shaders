@@ -99,6 +99,33 @@ class MarkdownToPlainTextTests(unittest.TestCase):
             "int x = 1;",
         )
 
+    def test_code_fence_body_is_not_mangled_by_other_passes(self):
+        # A fenced "# ..." line must not lose its "#" to the heading pass, and
+        # a fenced "---" line must not be removed by the horizontal-rule pass.
+        body = "```cpp\n# define FEATURE 1\n---\nint x = 1;\n```"
+        self.assertEqual(
+            nexus_changelog.markdown_to_plain_text(body),
+            "# define FEATURE 1\n---\nint x = 1;",
+        )
+
+    def test_inline_code_identifier_is_not_mangled_by_emphasis_pass(self):
+        self.assertEqual(
+            nexus_changelog.markdown_to_plain_text("call `snake_case_name` here"),
+            "call snake_case_name here",
+        )
+
+    def test_intraword_underscores_are_not_treated_as_emphasis(self):
+        self.assertEqual(
+            nexus_changelog.markdown_to_plain_text("foo_bar_baz stays literal"),
+            "foo_bar_baz stays literal",
+        )
+
+    def test_underscore_emphasis_at_word_boundary_still_converts(self):
+        self.assertEqual(
+            nexus_changelog.markdown_to_plain_text("__init__ is special"),
+            "init is special",
+        )
+
     def test_blockquote_marker_is_dropped(self):
         self.assertEqual(nexus_changelog.markdown_to_plain_text("> A quoted note"), "A quoted note")
 
