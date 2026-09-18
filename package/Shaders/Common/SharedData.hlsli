@@ -20,8 +20,6 @@ namespace SharedData
 		float4 SecundaColor;
 		float4 CameraData;
 		float4 BufferDim;
-		float4 CameraPosAdjust[2];
-		float4 CameraPreviousPosAdjust[2];
 		float Timer;
 		uint FrameCount;
 		uint FrameCountAlwaysActive;
@@ -260,20 +258,6 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
-		uint enableFireEffects;
-		float fireDisplacement;
-		float fireNoiseScale;
-		float fireSpeed;
-		float fireOpacityMin;
-		float fireOpacityMax;
-		float fireColorMin;
-		float fireColorMax;
-		float fireDepthFadeDistance;
-		float fireFresnelPower;
-		float fireEdgeFade;
-		float fireEmission;
-		float4 fireLowColor;
-		float4 fireHighColor;
 	};
 
 	struct LinearLightingSettings

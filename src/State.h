@@ -319,7 +319,6 @@ public:
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
-		FireEffect = 1u << 30,
 		IsEye = 1u << 31
 	};
 
@@ -420,8 +419,6 @@ public:
 		float4 SecundaColor;
 		float4 CameraData;
 		float4 BufferDim;
-		float4 CameraPosAdjust[2];
-		float4 CameraPreviousPosAdjust[2];
 		float Timer;
 		uint FrameCount;
 		uint FrameCountAlwaysActive;

@@ -20,7 +20,7 @@ struct CSUtility : Feature
 	virtual inline std::string GetShortName() override { return "CSUtility"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "CS_UTILITY"; }
 	virtual inline std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
-	virtual bool HasShaderDefine(RE::BSShader::Type a_shaderType) override { return a_shaderType == RE::BSShader::Type::Lighting || a_shaderType == RE::BSShader::Type::Water || a_shaderType == RE::BSShader::Type::ImageSpace || a_shaderType == RE::BSShader::Type::Effect; }
+	virtual bool HasShaderDefine(RE::BSShader::Type a_shaderType) override { return a_shaderType == RE::BSShader::Type::Lighting || a_shaderType == RE::BSShader::Type::Water || a_shaderType == RE::BSShader::Type::ImageSpace; }
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }
 	virtual bool IsInMenu() const override { return true; }
@@ -75,24 +75,6 @@ struct CSUtility : Feature
 		float muddiness = 1.0f;
 	};
 
-	struct FireEffectSettings
-	{
-		bool enabled = true;
-		float displacement = 0.08f;
-		float noiseScale = 0.16f;
-		float speed = 1.4f;
-		float opacityMin = 0.25f;
-		float opacityMax = 0.70f;
-		float colorMin = 0.45f;
-		float colorMax = 0.82f;
-		float depthFadeDistance = 12.0f;
-		float fresnelPower = 1.5f;
-		float edgeFade = 0.12f;
-		float emission = 2.5f;
-		float4 lowColor{ 1.0f, 0.12f, 0.01f, 0.0f };
-		float4 highColor{ 1.0f, 0.78f, 0.22f, 0.0f };
-	};
-
 	struct Settings
 	{
 		float skyBrightness = 1.0f;
@@ -104,7 +86,6 @@ struct CSUtility : Feature
 		float omnidirectionalBulbMult = 1.0f;
 		float linearOmnidirectionalBulbMult = 1.0f;
 		WaterSettings water;
-		FireEffectSettings fireEffects;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
 		Bloom::PresetSettings bloomEnhancement;
@@ -117,8 +98,7 @@ struct CSUtility : Feature
 		Water,                ///< Water rendering controls.
 		Multipliers,          ///< Lighting multiplier controls.
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
-		VanillaBloom,         ///< Vanilla bloom controls.
-		FireEffects           ///< Fire effect controls.
+		VanillaBloom          ///< Vanilla bloom controls.
 	};
 	/** The visible tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
@@ -141,23 +121,9 @@ struct CSUtility : Feature
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
-		uint enableFireEffects;
-		float fireDisplacement;
-		float fireNoiseScale;
-		float fireSpeed;
-		float fireOpacityMin;
-		float fireOpacityMax;
-		float fireColorMin;
-		float fireColorMax;
-		float fireDepthFadeDistance;
-		float fireFresnelPower;
-		float fireEdgeFade;
-		float fireEmission;
-		float4 fireLowColor;
-		float4 fireHighColor;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 144);
+	static_assert(sizeof(PerFrameData) == 64);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -186,8 +152,6 @@ struct CSUtility : Feature
 
 	PerFrameData GetCommonBufferData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
-	/** Marks fire Effect passes for procedural flame shading. */
-	void ModifyEffect(RE::BSRenderPass* a_pass) const;
 	void DrawDepthOfFieldSettings();
 	/** Draws water tuning controls. */
 	void DrawWaterSettings();

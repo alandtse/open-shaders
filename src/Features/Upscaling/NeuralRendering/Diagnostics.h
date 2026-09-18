@@ -69,6 +69,10 @@ namespace NR
 			SRGBToLinear,
 			LinearToGamma22,
 			Gamma22ToLinear,
+			SRGBToGamma22,
+			SkyrimGammaToGamma22,
+			LinearToSkyrimGamma,
+			LinearToLinear,
 			Production
 		};
 		enum class ExposureMode : uint32_t
@@ -109,7 +113,8 @@ namespace NR
 			SplitOriginalOutput,
 			SplitOriginalComposite,
 			SplitInputOutput,
-			SplitPrePost
+			SplitPrePost,
+			LogRatio
 		};
 		/** @brief Returns the live, session-only isolation options. */
 		uint32_t Options() const { return options.load(); }
@@ -120,6 +125,8 @@ namespace NR
 		float ManualExposure() const { return manualExposure.load(); }
 		float DifferenceStrength() const { return differenceStrength.load(); }
 		float SplitPosition() const { return splitPosition.load(); }
+		float ShadowProtect() const { return shadowProtect.load(); }
+		float HighlightProtect() const { return highlightProtect.load(); }
 		/** @brief Requests one lossless DDS capture of every stage in the next NR frame. */
 		void RequestCapture() { captureRequested = true; }
 		bool BeginCapture(uint32_t frame) { return captureRequested.exchange(false) ? (captureFrame = frame, true) : false; }
@@ -168,6 +175,7 @@ namespace NR
 		std::atomic<uint32_t> options = 0;
 		std::atomic<uint32_t> conversionMode = static_cast<uint32_t>(ColorConversion::Production), exposureMode = 0, compositeMode = 0, visualMode = 0;
 		std::atomic<float> manualExposure = 1.0f, differenceStrength = 4.0f, splitPosition = 0.5f;
+		std::atomic<float> shadowProtect = 0.0f, highlightProtect = 0.0f;
 		std::atomic_bool captureRequested = false;
 		std::atomic<uint32_t> captureFrame = UINT32_MAX;
 		std::atomic_bool startSuite = false, startTrace = false, markFlicker = false;

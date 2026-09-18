@@ -328,20 +328,25 @@ namespace NR
 		toggle("Disable color transform", DisableColorTransform);
 		uint32_t conversion = conversionMode.load(), exposure = exposureMode.load(), composition = compositeMode.load(), view = visualMode.load();
 		float exposureValue = manualExposure.load(), differenceValue = differenceStrength.load(), split = splitPosition.load();
-		if (ImGui::Combo("Color conversion", reinterpret_cast<int*>(&conversion), "Raw / none\0Linear -> sRGB\0sRGB -> Linear\0Linear -> Gamma 2.2\0Gamma 2.2 -> Linear\0Production\0"))
-			conversionMode = std::min(conversion, 5u);
+		float shadowValue = shadowProtect.load(), highlightValue = highlightProtect.load();
+		if (ImGui::Combo("Color conversion", reinterpret_cast<int*>(&conversion), "Raw / none\0Linear -> sRGB\0sRGB -> Linear\0Linear -> Gamma 2.2\0Gamma 2.2 -> Linear\0sRGB -> Gamma 2.2\0Skyrim Gamma -> Gamma 2.2\0Linear -> Skyrim Gamma\0Linear -> Linear\0Production\0"))
+			conversionMode = std::min(conversion, 9u);
 		if (ImGui::Combo("Exposure mode", reinterpret_cast<int*>(&exposure), "Production\0Ignore\0Force 1.0\0Game exposure\0Manual\0De-expose/re-expose\0Pass only\0Do not pass\0"))
 			exposureMode = std::min(exposure, 7u);
 		if (ImGui::SliderFloat("Manual exposure", &exposureValue, 0.01f, 16.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
 			manualExposure = exposureValue;
 		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition), "Production\0Raw replacement\0Masked lerp\050% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, 7u);
-		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0"))
-			visualMode = std::min(view, 14u);
+		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0"))
+			visualMode = std::min(view, 15u);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
 			differenceStrength = differenceValue;
 		if (ImGui::SliderFloat("Split position", &split, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
 			splitPosition = split;
+		if (ImGui::SliderFloat("Shadow protect", &shadowValue, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+			shadowProtect = shadowValue;
+		if (ImGui::SliderFloat("Highlight protect", &highlightValue, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+			highlightProtect = highlightValue;
 		if (ImGui::Button("Restore Diagnostic Defaults"))
 			options = 0;
 		if (ImGui::Button("Run All NR Tests"))

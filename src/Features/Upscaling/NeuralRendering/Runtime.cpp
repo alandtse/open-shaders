@@ -322,7 +322,7 @@ namespace NR
 			writer.SetUInt("DLSSNR.Upscaling", 0u);
 			writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
 			const auto flags = static_cast<unsigned int>(
-				NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
+				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
 			writer.SetUInt("Feature_Flags", flags);
 			writer.SetUInt("NVSDK_NGX_Parameter_Feature_Flags", flags);
 			writer.SetFloat("InPreExposure", 1.0f);
@@ -330,8 +330,8 @@ namespace NR
 			writer.SetFloat("NVSDK_NGX_Parameter_PreExposure", 1.0f);
 			writer.SetFloat("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
 			writer.SetUInt("DLSSNR.AutoExposure", 1u);
-			writer.SetUInt("DLSSNR.Hdr", 0u);
-			writer.SetUInt("DLSSNR.SDR", 1u);
+			writer.SetUInt("DLSSNR.Hdr", 1u);
+			writer.SetUInt("DLSSNR.SDR", 0u);
 			writer.SetUInt("DLSSNR.Style", tuning.style);
 			writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
 			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
@@ -343,10 +343,10 @@ namespace NR
 			frame.result = static_cast<uint32_t>(result);
 			eye.feature.reset(handle);
 			if (NVSDK_NGX_FAILED(result) || !handle) {
-				logger::error("[NeuralRendering] Eye {} SDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
+				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
 				return false;
 			}
-			logger::info("[NeuralRendering] Eye {} SDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
+			logger::info("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
 			frame.created = true;
 			frame.reset = true;
 		}

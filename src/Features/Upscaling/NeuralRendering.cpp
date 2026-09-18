@@ -34,6 +34,7 @@ struct NeuralRendering::Impl
 		uint32_t visualMode = 0;
 		float exposureCompensation = 1.0f, exposureMin = 1.0f, exposureMax = 1.0f, manualExposure = 1.0f;
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
+		float4 dynamicRangeProtect{};
 	};
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
@@ -51,6 +52,7 @@ struct NeuralRendering::Impl
 	NR::Diagnostics::CompositeMode compositeMode = NR::Diagnostics::CompositeMode::Production;
 	NR::Diagnostics::VisualMode visualMode = NR::Diagnostics::VisualMode::None;
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
+	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -229,6 +231,7 @@ struct NeuralRendering::Impl
 		data.manualExposure = manualExposure;
 		data.differenceStrength = differenceStrength;
 		data.splitPosition = splitPosition;
+		data.dynamicRangeProtect = float4{ shadowProtect, highlightProtect, 0.0f, 0.0f };
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = 1;
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
@@ -602,6 +605,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.manualExposure = diagnostics.ManualExposure();
 		work.differenceStrength = diagnostics.DifferenceStrength();
 		work.splitPosition = diagnostics.SplitPosition();
+		work.shadowProtect = diagnostics.ShadowProtect();
+		work.highlightProtect = diagnostics.HighlightProtect();
 		uint32_t reset = resetHistory.exchange(false) ? NR::Diagnostics::Requested : 0;
 		if (work.lastFrame == UINT32_MAX)
 			reset |= NR::Diagnostics::FirstFrame;

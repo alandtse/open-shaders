@@ -17,6 +17,7 @@ cbuffer ColorTransfer : register(b0)
 	float ManualExposure;
 	float DifferenceStrength;
 	float SplitPosition;
+	float4 DynamicRangeProtect;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -27,6 +28,27 @@ RWTexture2D<float4> Output : register(u0);
 RWTexture2D<float> NeuralReactive : register(u1);
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
+
+float3 ProxyLinearToSrgb(float3 value)
+{
+	value = saturate(value);
+	return lerp(value * 12.92, 1.055 * pow(max(value, 1e-8), 1.0 / 2.4) - 0.055, step(0.0031308, value));
+}
+
+float3 ProxySrgbToLinear(float3 value)
+{
+	value = saturate(value);
+	return lerp(value / 12.92, pow((value + 0.055) / 1.055, 2.4), step(0.04045, value));
+}
+
+float3 NeutwoEncode(float3 value)
+{
+	value = max(value, 0.0);
+	float peak = max(value.r, max(value.g, value.b));
+	if (peak <= 1e-6)
+		return value;
+	return value * ((peak * rsqrt(peak * peak + 1.0)) / peak);
+}
 
 float3 ProductionToLinear(float3 nativeColor)
 {
@@ -48,11 +70,19 @@ float3 ToLinear(float3 value)
 	case 1:
 		return value;
 	case 2:
-		return Color::SrgbToLinear(saturate(value));
+		return ProxySrgbToLinear(value);
 	case 3:
 		return pow(max(value, 0.0), 2.2);
 	case 4:
 		return pow(saturate(value), 1.0 / 2.2);
+	case 5:
+		return ProxySrgbToLinear(value);
+	case 6:
+		return Color::SkyrimGammaToLinear(value);
+	case 7:
+		return value;
+	case 8:
+		return value;
 	default:
 		return ProductionToLinear(value);
 	}
@@ -64,11 +94,19 @@ float3 FromLinear(float3 value)
 	case 0:
 		return value;
 	case 1:
-		return Color::LinearToSrgb(max(value, 0.0));
+		return ProxyLinearToSrgb(max(value, 0.0));
 	case 3:
 		return pow(max(value, 0.0), 1.0 / 2.2);
 	case 4:
 		return pow(saturate(value), 2.2);
+	case 5:
+		return ProxyLinearToSrgb(max(value, 0.0));
+	case 6:
+		return pow(max(value, 0.0), 1.0 / 2.2);
+	case 7:
+		return Color::LinearToSkyrimGamma(max(value, 0.0));
+	case 8:
+		return value;
 	default:
 		return ProductionFromLinear(value);
 	}
@@ -82,27 +120,24 @@ float3 ProxyToLinear(float3 value)
 	case 1:
 		return value;
 	case 2:
-		return Color::SrgbToLinear(saturate(value));
+		return ProxySrgbToLinear(value);
 	case 3:
 		return pow(max(value, 0.0), 2.2);
 	case 4:
 		return pow(saturate(value), 1.0 / 2.2);
+	case 5:
+	case 6:
+	case 7:
+	case 8:
+		return ProxySrgbToLinear(value);
 	default:
-		return Color::SrgbToLinear(saturate(value));
+		return ProxySrgbToLinear(value);
 	}
 }
 
 float3 MakeDisplayProxy(float3 linearColor)
 {
-	float luminance = dot(linearColor, Luma);
-	if (luminance > 0.75) {
-		float rolled = 0.75 + 0.25 * (1.0 - exp(-(luminance - 0.75) / 0.25));
-		linearColor *= rolled / luminance;
-	}
-	float peak = max(linearColor.r, max(linearColor.g, linearColor.b));
-	if (peak > 1.0)
-		linearColor /= peak;
-	return saturate(Color::LinearToSrgb(linearColor));
+	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
 [numthreads(8, 8, 1)] void Prepare(uint3 id : SV_DispatchThreadID) {
@@ -163,7 +198,16 @@ float3 MakeDisplayProxy(float3 linearColor)
 	float mask = MaskMode == 1 ? 0.0 : (MaskMode == 2 ? 1.0 : saturate(4.0 * abs(ratio - 1.0)));
 	float3 originalLinear = max(ToLinear(original.rgb), 0.0);
 	float3 neuralLinear = max(ProxyToLinear(rawNeural), 0.0);
+	float sceneLuminance = dot(originalLinear, Luma);
+	float logSceneLuminance = log2(max(sceneLuminance, ratioFloor));
+	float shadowWeight = smoothstep(-8.0, -3.0, logSceneLuminance);
+	float highlightWeight = 1.0 - smoothstep(0.0, 2.0, logSceneLuminance);
+	float protectionWeight = (1.0 - DynamicRangeProtect.x * (1.0 - shadowWeight)) *
+	                         (1.0 - DynamicRangeProtect.y * (1.0 - highlightWeight));
+	float protectedRatio = exp2(log2(max(ratio, 1.0 / ratioLimit)) * saturate(protectionWeight));
 	float3 result = originalLinear * ratio;
+	if (CompositeMode == 0 || CompositeMode == 5 || CompositeMode == 7)
+		result = originalLinear * protectedRatio;
 	if (CompositeMode == 1)
 		result = neuralLinear;
 	else if (CompositeMode == 2)
@@ -198,6 +242,8 @@ float3 MakeDisplayProxy(float3 linearColor)
 		result = mask.xxx;
 	else if (VisualMode == 10)
 		result = exposure.xxx;
+	else if (VisualMode == 15)
+		result = (log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor))).xxx * DifferenceStrength;
 	else if (VisualMode >= 11) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
 		if (VisualMode == 11)
