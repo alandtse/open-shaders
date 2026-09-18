@@ -35,6 +35,7 @@ struct NeuralRendering::Impl
 		float exposureCompensation = 1.0f, exposureMin = 1.0f, exposureMax = 1.0f, manualExposure = 1.0f;
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
 		float4 dynamicRangeProtect{};
+		float toneLowStrength = 1.0f, toneRadius = 1.5f, toneHighStrength = 1.0f, tonePadding = 0.0f;
 	};
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
@@ -53,6 +54,7 @@ struct NeuralRendering::Impl
 	NR::Diagnostics::VisualMode visualMode = NR::Diagnostics::VisualMode::None;
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
+	float toneLowStrength = 1.0f, toneRadius = 1.5f, toneHighStrength = 1.0f;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -232,6 +234,9 @@ struct NeuralRendering::Impl
 		data.differenceStrength = differenceStrength;
 		data.splitPosition = splitPosition;
 		data.dynamicRangeProtect = float4{ shadowProtect, highlightProtect, 0.0f, 0.0f };
+		data.toneLowStrength = toneLowStrength;
+		data.toneRadius = toneRadius;
+		data.toneHighStrength = toneHighStrength;
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = 1;
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
@@ -607,6 +612,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.splitPosition = diagnostics.SplitPosition();
 		work.shadowProtect = diagnostics.ShadowProtect();
 		work.highlightProtect = diagnostics.HighlightProtect();
+		work.toneRadius = diagnostics.ToneRadius();
 		uint32_t reset = resetHistory.exchange(false) ? NR::Diagnostics::Requested : 0;
 		if (work.lastFrame == UINT32_MAX)
 			reset |= NR::Diagnostics::FirstFrame;
@@ -620,6 +626,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			boundedTuning.localStructureStrength = 0.0f;
 		if (diagnostic.options & NR::Diagnostics::DisableSkin)
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
+		work.toneLowStrength = boundedTuning.localToneStrength;
+		work.toneHighStrength = boundedTuning.localStructureStrength;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);

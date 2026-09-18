@@ -18,6 +18,10 @@ cbuffer ColorTransfer : register(b0)
 	float DifferenceStrength;
 	float SplitPosition;
 	float4 DynamicRangeProtect;
+	float ToneLowStrength;
+	float ToneRadius;
+	float ToneHighStrength;
+	float TonePadding;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -140,6 +144,44 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
+float ToneDeltaAt(int2 pixel)
+{
+	int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+	pixel = clamp(pixel, int2(0, 0), limit);
+	float3 input = ProxySrgbToLinear(NeuralInput[pixel].rgb);
+	float3 output = ProxySrgbToLinear(NeuralOutput[pixel].rgb);
+	float inputLuma = max(dot(input, Luma), 1e-5);
+	float outputLuma = max(dot(output, Luma), 1e-5);
+	return log2(outputLuma) - log2(inputLuma);
+}
+
+float ToneLowAt(int2 pixel, float centerDelta)
+{
+	float radius = ToneRadius;
+	if (radius <= 0.01)
+		return centerDelta;
+	float3 center = ProxySrgbToLinear(NeuralInput[clamp(pixel, int2(0, 0), int2(max(Width, 1u) - 1, max(Height, 1u) - 1))].rgb);
+	float centerLuma = max(dot(center, Luma), 1e-5);
+	float weighted = 0.0;
+	float weightSum = 0.0;
+	for (int y = -2; y <= 2; ++y) {
+		for (int x = -2; x <= 2; ++x) {
+			float distance = float(x * x + y * y);
+			float spatial = exp(-distance / max(2.0 * radius * radius, 1e-4));
+			int2 samplePixel = pixel + int2(x, y);
+			int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+			samplePixel = clamp(samplePixel, int2(0, 0), limit);
+			float3 sample = ProxySrgbToLinear(NeuralInput[samplePixel].rgb);
+			float sampleLuma = max(dot(sample, Luma), 1e-5);
+			float edge = exp(-abs(log2(sampleLuma) - log2(centerLuma)) * 2.0);
+			float weight = spatial * edge;
+			weighted += ToneDeltaAt(samplePixel) * weight;
+			weightSum += weight;
+		}
+	}
+	return weightSum > 1e-5 ? weighted / weightSum : centerDelta;
+}
+
 [numthreads(8, 8, 1)] void Prepare(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
@@ -198,16 +240,20 @@ float3 MakeDisplayProxy(float3 linearColor)
 	float mask = MaskMode == 1 ? 0.0 : (MaskMode == 2 ? 1.0 : saturate(4.0 * abs(ratio - 1.0)));
 	float3 originalLinear = max(ToLinear(original.rgb), 0.0);
 	float3 neuralLinear = max(ProxyToLinear(rawNeural), 0.0);
+	float toneDelta = log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor));
+	float toneLow = ToneLowAt(int2(id.xy), toneDelta);
+	float toneHigh = toneDelta - toneLow;
+	float tone = toneLow * ToneLowStrength + toneHigh * ToneHighStrength;
+	float toneGain = exp2(tone);
 	float sceneLuminance = dot(originalLinear, Luma);
 	float logSceneLuminance = log2(max(sceneLuminance, ratioFloor));
 	float shadowWeight = smoothstep(-8.0, -3.0, logSceneLuminance);
 	float highlightWeight = 1.0 - smoothstep(0.0, 2.0, logSceneLuminance);
 	float protectionWeight = (1.0 - DynamicRangeProtect.x * (1.0 - shadowWeight)) *
 	                         (1.0 - DynamicRangeProtect.y * (1.0 - highlightWeight));
-	float protectedRatio = exp2(log2(max(ratio, 1.0 / ratioLimit)) * saturate(protectionWeight));
 	float3 result = originalLinear * ratio;
 	if (CompositeMode == 0 || CompositeMode == 5 || CompositeMode == 7)
-		result = originalLinear * protectedRatio;
+		result = originalLinear * exp2(tone * saturate(protectionWeight));
 	if (CompositeMode == 1)
 		result = neuralLinear;
 	else if (CompositeMode == 2)
@@ -244,6 +290,16 @@ float3 MakeDisplayProxy(float3 linearColor)
 		result = exposure.xxx;
 	else if (VisualMode == 15)
 		result = (log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor))).xxx * DifferenceStrength;
+	else if (VisualMode == 16)
+		result = toneDelta.xxx * DifferenceStrength;
+	else if (VisualMode == 17)
+		result = toneLow.xxx * DifferenceStrength;
+	else if (VisualMode == 18)
+		result = toneHigh.xxx * DifferenceStrength;
+	else if (VisualMode == 19)
+		result = toneGain.xxx;
+	else if (VisualMode == 20)
+		result = (dot(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
 	else if (VisualMode >= 11) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
 		if (VisualMode == 11)
