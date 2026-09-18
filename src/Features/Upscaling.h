@@ -437,11 +437,13 @@ public:
 	 * instead of testTexture) is active this frame. Shared by Streamline::Upscale (which
 	 * picks colorOut) and PerfMode::MaybeBlitMenuBG (which must resolve the redirect).
 	 */
+	bool IsDlssSharpeningEnabled() const { return settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f; }
+
 	bool IsPerfModeSharpenRedirectActive() const
 	{
 		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
-		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f;
+		       IsDlssSharpeningEnabled();
 	}
 
 	static void TimerSleepQPC(int64_t targetQPC);
