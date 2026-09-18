@@ -11,6 +11,31 @@
 
 #define EFFECT
 
+#if defined(CS_UTILITY)
+float GetFireEffectNoise(float3 absoluteWorldPosition, float timer)
+{
+	float3 noisePosition = absoluteWorldPosition * SharedData::csUtilitySettings.fireNoiseScale;
+	noisePosition.z -= timer * SharedData::csUtilitySettings.fireSpeed;
+	float broadNoise = Random::perlinNoise(noisePosition, 0x4A3B2C1Du);
+	float detailNoise = Random::perlinNoise(noisePosition * 2.07 + 17.31, 0x71C8E53Bu);
+	return saturate((broadNoise + detailNoise * 0.35) * 0.5 + 0.5);
+}
+
+float GetFireUvMask(float2 uv)
+{
+	float edgeFade = SharedData::csUtilitySettings.fireEdgeFade;
+	return smoothstep(0.0, edgeFade, uv.y) * smoothstep(0.0, edgeFade, 1.0 - uv.y);
+}
+
+float3 GetFireEffectOffset(float3 worldPosition, float3 worldNormal, float2 uv, float timer, float3 cameraPosAdjust)
+{
+	float noise = GetFireEffectNoise(worldPosition + cameraPosAdjust, timer) * 2.0 - 1.0;
+	float uvMask = GetFireUvMask(uv);
+	float displacement = Permutation::EffectRadius * SharedData::csUtilitySettings.fireDisplacement;
+	return worldNormal * noise * displacement * uvMask;
+}
+#endif
+
 #if defined(SOFT) && defined(NORMALS) && defined(TEXTURE) && defined(FALLOFF) && defined(VC) && \
 	!defined(LIGHTING) && !defined(PARTICLES) && !defined(STRIP_PARTICLES) &&                   \
 	!defined(BLOOD) && !defined(MEMBRANE) && !defined(ADDBLEND) && !defined(MULTBLEND) &&       \
@@ -56,6 +81,12 @@ struct VS_OUTPUT
 	float4 Position: SV_POSITION0;
 	float4 TexCoord0: TEXCOORD0;
 	float4 WorldPosition: POSITION1;
+#if defined(CS_UTILITY) && defined(TEXCOORD)
+	float2 FireTexCoord: TEXCOORD8;
+#endif
+#if defined(CS_UTILITY) && defined(NORMALS)
+	float3 FireWorldNormal: TEXCOORD9;
+#endif
 #if defined(VC)
 	float4 Color: COLOR0;
 #endif
@@ -259,6 +290,22 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 #	endif
 
+#	if defined(CS_UTILITY) && defined(NORMALS) && defined(TEXCOORD) && !defined(PARTICLES)
+	if (SharedData::csUtilitySettings.enableFireEffects &&
+		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::FireEffect)) {
+		worldPosition.xyz += GetFireEffectOffset(
+			worldPosition.xyz, worldNormal, input.TexCoord0.xy, SharedData::Timer,
+			SharedData::CameraPosAdjust[eyeIndex].xyz);
+		viewPos = mul(viewProj, worldPosition);
+		vsout.Position = viewPos;
+#		if defined(MOTIONVECTORS_NORMALS)
+		previousWorldPosition.xyz += GetFireEffectOffset(
+			previousWorldPosition.xyz, worldNormal, input.TexCoord0.xy, SharedData::Timer,
+			SharedData::CameraPreviousPosAdjust[eyeIndex].xyz);
+#		endif
+	}
+#	endif
+
 #	if defined(VC)
 	vsout.Color = input.Color;
 #	endif
@@ -400,6 +447,12 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif
 
 	vsout.WorldPosition = worldPosition;
+#	if defined(CS_UTILITY) && defined(TEXCOORD)
+	vsout.FireTexCoord = input.TexCoord0.xy;
+#	endif
+#	if defined(CS_UTILITY) && defined(NORMALS)
+	vsout.FireWorldNormal = worldNormal;
+#	endif
 #	if defined(MOTIONVECTORS_NORMALS)
 	vsout.PreviousWorldPosition = previousWorldPosition;
 #	endif
@@ -878,7 +931,13 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 	baseColor = baseColorMul * baseColor;
+#	if defined(CS_UTILITY)
+	bool proceduralFire = SharedData::csUtilitySettings.enableFireEffects &&
+	                      (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::FireEffect);
+	baseColor.w *= proceduralFire ? 1.0 : softMul;
+#	else
 	baseColor.w *= softMul;
+#	endif
 
 #	if defined(SOFT) && !(defined(FALLOFF) && defined(MULTBLEND))
 	if (baseColor.w - 0.003 < 0) {
@@ -922,6 +981,55 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 		baseColor.xyz = Color::Effect(baseColorScale * TexGrayscaleSampler.Sample(SampGrayscaleSampler, grayscaleToColorUv).xyz);
 	}
+
+#	if defined(CS_UTILITY)
+	if (proceduralFire) {
+		float3 absoluteWorldPosition = input.WorldPosition.xyz + SharedData::CameraPosAdjust[eyeIndex].xyz;
+		float flameNoise = GetFireEffectNoise(absoluteWorldPosition, SharedData::Timer);
+		float opacityMask = smoothstep(
+			SharedData::csUtilitySettings.fireOpacityMin,
+			SharedData::csUtilitySettings.fireOpacityMax,
+			flameNoise);
+		float colorMask = smoothstep(
+			SharedData::csUtilitySettings.fireColorMin,
+			SharedData::csUtilitySettings.fireColorMax,
+			flameNoise);
+
+		float uvMask = 1.0;
+#		if defined(TEXCOORD)
+		uvMask = GetFireUvMask(input.FireTexCoord);
+#		endif
+
+		float intersectionFade = 1.0;
+#		if defined(SOFT)
+		intersectionFade = smoothstep(0.0, 1.0, softMul);
+#		else
+		float sceneDepth = SharedData::GetScreenDepth(SharedData::DepthTexture.Load(int3(input.Position.xy, 0)).x);
+		float fragmentDepth = SharedData::GetScreenDepth(input.Position.z);
+		intersectionFade = saturate((sceneDepth - fragmentDepth) / SharedData::csUtilitySettings.fireDepthFadeDistance);
+#		endif
+
+		float fresnelFade = 1.0;
+#		if defined(NORMALS)
+		float3 viewDirection = normalize(-input.WorldPosition.xyz);
+		fresnelFade = pow(
+			saturate(abs(dot(normalize(input.FireWorldNormal), viewDirection))),
+			SharedData::csUtilitySettings.fireFresnelPower);
+#		endif
+
+#		if defined(PARTICLES)
+		float particleEmission = sqrt(max(SharedData::csUtilitySettings.fireEmission, 0.0));
+		baseColor.xyz *= lerp(0.8, 1.2, colorMask) * particleEmission;
+		alpha *= lerp(0.82, 1.0, opacityMask) * intersectionFade;
+#		else
+		float3 lowColor = Color::Effect(SharedData::csUtilitySettings.fireLowColor.xyz);
+		float3 highColor = Color::Effect(SharedData::csUtilitySettings.fireHighColor.xyz);
+		float3 emissionColor = lerp(lowColor, highColor, colorMask) * SharedData::csUtilitySettings.fireEmission;
+		baseColor.xyz = emissionColor;
+		alpha = opacityMask * uvMask * intersectionFade * fresnelFade;
+#		endif
+	}
+#	endif
 
 	float3 lightColor = lerp(baseColor.xyz, propertyColor * baseColor.xyz, lightingInfluence);
 

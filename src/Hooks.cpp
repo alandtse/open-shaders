@@ -44,6 +44,23 @@ namespace
 		a_vertexDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_vertexDescriptor);
 		a_pixelDescriptor = LegacyGraphicsCompatibility::NormalizeLegacyUtilityDescriptor(a_pixelDescriptor);
 	}
+
+	void BindVertexPermutationData(const RE::BSShader* a_shader)
+	{
+		auto* state = globals::state;
+		if (!state || !a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
+			return;
+
+		if (a_shader->shaderType.get() != RE::BSShader::Type::Effect)
+			return;
+
+		ID3D11Buffer* buffers[] = {
+			state->permutationCB->CB(),
+			state->sharedDataCB->CB(),
+			state->featureDataCB->CB(),
+		};
+		globals::d3d::context->VSSetConstantBuffers(4, ARRAYSIZE(buffers), buffers);
+	}
 }
 
 void RegisterShaderBytecode(void* Shader, const void* Bytecode, size_t BytecodeLength)
@@ -229,9 +246,11 @@ namespace EffectExtensions
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
+			if (globals::features::csUtility.loaded)
+				globals::features::csUtility.ModifyEffect(pass);
+			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
 			func(shader, pass, renderFlags);
 			ExternalEmittance::UpdatePermutation(pass);
-			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -519,6 +538,8 @@ void Hooks::BSGraphics_SetDirtyStates::thunk(bool isCompute)
 {
 	func(isCompute);
 	globals::state->Draw();
+	if (!isCompute)
+		BindVertexPermutationData(globals::state ? globals::state->currentShader : nullptr);
 }
 
 struct ID3D11Device_CreateVertexShader

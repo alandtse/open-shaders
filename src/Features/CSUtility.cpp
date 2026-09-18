@@ -5,8 +5,11 @@
 #include "I18n/I18n.h"
 #include "LightLimitFix.h"
 #include "LinearLighting.h"
+#include "ShaderCache.h"
+#include "State.h"
 #include "UnderwaterDepthOfField.h"
 #include "Utils/PointLightFlags.h"
+#include "Utils/StringUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -29,6 +32,13 @@ namespace
 	constexpr float kWaterSunSpecularMax = 5.0f;
 	constexpr float kWaterFresnelMin = 0.0f;
 	constexpr float kWaterFresnelMax = 1.0f;
+	constexpr float kFireDisplacementMax = 0.3f;
+	constexpr float kFireNoiseScaleMin = 0.01f;
+	constexpr float kFireNoiseScaleMax = 1.0f;
+	constexpr float kFireSpeedMax = 10.0f;
+	constexpr float kFireEmissionMax = 25.0f;
+	constexpr float kFireDepthFadeMax = 64.0f;
+	constexpr float kFireFresnelPowerMax = 8.0f;
 	constexpr uint32_t kMaxVanillaPointLights = 7;
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
@@ -51,6 +61,17 @@ namespace
 		a_settings.omnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.omnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.omnidirectionalBulbMult);
 		a_settings.linearOmnidirectionalBulbMult = ClampFiniteOrDefault(a_settings.linearOmnidirectionalBulbMult, kMultiplierMin, kMultiplierMax, defaults.linearOmnidirectionalBulbMult);
 		CSUtility::SanitizeWaterSettings(a_settings.water);
+		a_settings.fireEffects.displacement = ClampFiniteOrDefault(a_settings.fireEffects.displacement, 0.0f, kFireDisplacementMax, defaults.fireEffects.displacement);
+		a_settings.fireEffects.noiseScale = ClampFiniteOrDefault(a_settings.fireEffects.noiseScale, kFireNoiseScaleMin, kFireNoiseScaleMax, defaults.fireEffects.noiseScale);
+		a_settings.fireEffects.speed = ClampFiniteOrDefault(a_settings.fireEffects.speed, 0.0f, kFireSpeedMax, defaults.fireEffects.speed);
+		a_settings.fireEffects.opacityMin = ClampFiniteOrDefault(a_settings.fireEffects.opacityMin, 0.0f, 0.99f, defaults.fireEffects.opacityMin);
+		a_settings.fireEffects.opacityMax = ClampFiniteOrDefault(a_settings.fireEffects.opacityMax, a_settings.fireEffects.opacityMin + 0.01f, 1.0f, defaults.fireEffects.opacityMax);
+		a_settings.fireEffects.colorMin = ClampFiniteOrDefault(a_settings.fireEffects.colorMin, 0.0f, 0.99f, defaults.fireEffects.colorMin);
+		a_settings.fireEffects.colorMax = ClampFiniteOrDefault(a_settings.fireEffects.colorMax, a_settings.fireEffects.colorMin + 0.01f, 1.0f, defaults.fireEffects.colorMax);
+		a_settings.fireEffects.depthFadeDistance = ClampFiniteOrDefault(a_settings.fireEffects.depthFadeDistance, 0.1f, kFireDepthFadeMax, defaults.fireEffects.depthFadeDistance);
+		a_settings.fireEffects.fresnelPower = ClampFiniteOrDefault(a_settings.fireEffects.fresnelPower, 0.1f, kFireFresnelPowerMax, defaults.fireEffects.fresnelPower);
+		a_settings.fireEffects.edgeFade = ClampFiniteOrDefault(a_settings.fireEffects.edgeFade, 0.01f, 0.49f, defaults.fireEffects.edgeFade);
+		a_settings.fireEffects.emission = ClampFiniteOrDefault(a_settings.fireEffects.emission, 0.0f, kFireEmissionMax, defaults.fireEffects.emission);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
 		Bloom::SanitizeSettings(a_settings.bloomEnhancement);
@@ -80,6 +101,45 @@ namespace
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextWrapped("%s", a_tooltip);
 		}
+	}
+
+	bool ContainsFireKeyword(std::string_view a_value)
+	{
+		const std::string value = Util::ToLowerAscii(a_value);
+		static constexpr std::array keywords{ "fire", "flame", "torch", "ember", "burn" };
+		return std::any_of(keywords.begin(), keywords.end(), [&](std::string_view a_keyword) { return value.contains(a_keyword); });
+	}
+
+	bool IsKnownFirePermutation(uint32_t a_descriptor)
+	{
+		using Flags = SIE::ShaderCache::EffectShaderFlags;
+		auto has = [&](Flags a_flag) { return (a_descriptor & static_cast<uint32_t>(a_flag)) != 0; };
+		return has(Flags::AddBlend) &&
+		       ((has(Flags::Soft) && has(Flags::GrayscaleToColor) && has(Flags::GrayscaleToAlpha)) ||
+				   (has(Flags::Particles) && has(Flags::TexCoordIndex) && has(Flags::IndexedTexture)));
+	}
+
+	bool IsParticlePermutation(uint32_t a_descriptor)
+	{
+		using Flags = SIE::ShaderCache::EffectShaderFlags;
+		return (a_descriptor & static_cast<uint32_t>(Flags::Particles)) != 0;
+	}
+
+	bool IsFireParticleGeometry(std::string_view a_name)
+	{
+		const std::string name = Util::ToLowerAscii(a_name);
+		if (name.contains("ember") || name.contains("smoke") || name.contains("spark"))
+			return false;
+
+		return name.contains("fireballcore") || name.contains("torchfire") || name.contains("flame");
+	}
+
+	bool IsAuxiliaryTorchEffect(std::string_view a_name)
+	{
+		const std::string name = Util::ToLowerAscii(a_name);
+		return name.contains("glowmesh") || name.contains("glowaddmesh") ||
+		       name.contains("heatrefraction") || name.contains("ember") ||
+		       name.contains("smoke") || name.contains("spark");
 	}
 }
 
@@ -122,6 +182,23 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	muddiness)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::FireEffectSettings,
+	enabled,
+	displacement,
+	noiseScale,
+	speed,
+	opacityMin,
+	opacityMax,
+	colorMin,
+	colorMax,
+	depthFadeDistance,
+	fresnelPower,
+	edgeFade,
+	emission,
+	lowColor,
+	highColor)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	skyBrightness,
 	directionalLightMult,
@@ -132,6 +209,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	omnidirectionalBulbMult,
 	linearOmnidirectionalBulbMult,
 	water,
+	fireEffects,
 	sceneDof,
 	underwaterDof,
 	bloomEnhancement)
@@ -146,6 +224,26 @@ void CSUtility::DrawSettings()
 		}
 
 		DrawWaterSettings();
+
+		if (ImGui::BeginTabItem(T(TKEY("tab_fire_effects"), "Fire Effects"))) {
+			activeSettingsPage = SettingsPage::FireEffects;
+			auto& fire = settings.fireEffects;
+			ImGui::Checkbox(T(TKEY("fire_effects_enable"), "Enable Procedural Fire"), &fire.enabled);
+			ImGui::SliderFloat(T(TKEY("fire_displacement"), "Displacement"), &fire.displacement, 0.0f, kFireDisplacementMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_noise_scale"), "Noise Scale"), &fire.noiseScale, kFireNoiseScaleMin, kFireNoiseScaleMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_speed"), "Speed"), &fire.speed, 0.0f, kFireSpeedMax, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_opacity_min"), "Opacity Threshold"), &fire.opacityMin, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_opacity_max"), "Opacity Softness"), &fire.opacityMax, 0.01f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_color_min"), "Color Threshold"), &fire.colorMin, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_color_max"), "Color Softness"), &fire.colorMax, 0.01f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_depth_fade"), "Intersection Fade"), &fire.depthFadeDistance, 0.1f, kFireDepthFadeMax, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_fresnel_power"), "Edge Fresnel"), &fire.fresnelPower, 0.1f, kFireFresnelPowerMax, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_edge_fade"), "Top / Bottom Fade"), &fire.edgeFade, 0.01f, 0.49f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T(TKEY("fire_emission"), "Emission"), &fire.emission, 0.0f, kFireEmissionMax, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::ColorEdit3(T(TKEY("fire_low_color"), "Outer Color"), reinterpret_cast<float*>(&fire.lowColor));
+			ImGui::ColorEdit3(T(TKEY("fire_high_color"), "Core Color"), reinterpret_cast<float*>(&fire.highColor));
+			ImGui::EndTabItem();
+		}
 
 		if (ImGui::BeginTabItem(T(TKEY("tab_multipliers"), "Multipliers"))) {
 			activeSettingsPage = SettingsPage::Multipliers;
@@ -265,6 +363,9 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	case SettingsPage::VanillaBloom:
 		settings.bloomEnhancement = defaults.bloomEnhancement;
 		break;
+	case SettingsPage::FireEffects:
+		settings.fireEffects = defaults.fireEffects;
+		break;
 	}
 }
 
@@ -283,6 +384,7 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 	};
 	static constexpr std::array<std::string_view, 2> depthOfFieldKeys{ "sceneDof", "underwaterDof" };
 	static constexpr std::array<std::string_view, 1> bloomKeys{ "bloomEnhancement" };
+	static constexpr std::array<std::string_view, 1> fireEffectKeys{ "fireEffects" };
 
 	switch (activeSettingsPage) {
 	case SettingsPage::Atmosphere:
@@ -295,6 +397,8 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		return ReapplyOverrideSettingsForKeys(depthOfFieldKeys);
 	case SettingsPage::VanillaBloom:
 		return ReapplyOverrideSettingsForKeys(bloomKeys);
+	case SettingsPage::FireEffects:
+		return ReapplyOverrideSettingsForKeys(fireEffectKeys);
 	}
 	return false;
 }
@@ -326,7 +430,51 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	data.waterFresnelMin = sanitizedSettings.water.fresnelMin;
 	data.waterFresnelMax = sanitizedSettings.water.fresnelMax;
 	data.waterMuddiness = sanitizedSettings.water.muddiness;
+	data.enableFireEffects = sanitizedSettings.fireEffects.enabled;
+	data.fireDisplacement = sanitizedSettings.fireEffects.displacement;
+	data.fireNoiseScale = sanitizedSettings.fireEffects.noiseScale;
+	data.fireSpeed = sanitizedSettings.fireEffects.speed;
+	data.fireOpacityMin = sanitizedSettings.fireEffects.opacityMin;
+	data.fireOpacityMax = sanitizedSettings.fireEffects.opacityMax;
+	data.fireColorMin = sanitizedSettings.fireEffects.colorMin;
+	data.fireColorMax = sanitizedSettings.fireEffects.colorMax;
+	data.fireDepthFadeDistance = sanitizedSettings.fireEffects.depthFadeDistance;
+	data.fireFresnelPower = sanitizedSettings.fireEffects.fresnelPower;
+	data.fireEdgeFade = sanitizedSettings.fireEffects.edgeFade;
+	data.fireEmission = sanitizedSettings.fireEffects.emission;
+	data.fireLowColor = sanitizedSettings.fireEffects.lowColor;
+	data.fireHighColor = sanitizedSettings.fireEffects.highColor;
 	return data;
+}
+
+void CSUtility::ModifyEffect(RE::BSRenderPass* a_pass) const
+{
+	auto& descriptor = globals::state->permutationData.ExtraShaderDescriptor;
+	const auto fireDescriptor = static_cast<uint32_t>(State::ExtraShaderDescriptors::FireEffect);
+	descriptor &= ~fireDescriptor;
+
+	if (!settings.fireEffects.enabled || !a_pass || !a_pass->geometry || !a_pass->shaderProperty)
+		return;
+
+	const auto pixelDescriptor = globals::state->currentPixelDescriptor;
+	const bool particlePermutation = IsParticlePermutation(pixelDescriptor);
+	const bool knownFirePermutation = IsKnownFirePermutation(pixelDescriptor);
+	auto* effectProperty = a_pass->shaderProperty->GetRTTI() == globals::rtti::BSEffectShaderPropertyRTTI.get() ?
+	                           static_cast<RE::BSEffectShaderProperty*>(a_pass->shaderProperty) :
+	                           nullptr;
+	const auto* material = effectProperty ? effectProperty->GetMaterial() : nullptr;
+	const auto* parent = a_pass->geometry->parent;
+	if (IsAuxiliaryTorchEffect(a_pass->geometry->name.c_str()))
+		return;
+
+	const bool fireParticle = particlePermutation && IsFireParticleGeometry(a_pass->geometry->name.c_str());
+	const bool fireAsset = !particlePermutation && (ContainsFireKeyword(a_pass->geometry->name.c_str()) ||
+													   (parent && ContainsFireKeyword(parent->name.c_str())) ||
+													   (material && (ContainsFireKeyword(material->sourceTexturePath.c_str()) ||
+																		ContainsFireKeyword(material->greyscaleTexturePath.c_str()))));
+
+	if (fireParticle || (!particlePermutation && (knownFirePermutation || fireAsset)))
+		descriptor |= fireDescriptor;
 }
 
 void CSUtility::UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount)

@@ -1283,6 +1283,10 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
+		for (uint32_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
+			data.CameraPosAdjust[eyeIndex] = globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
+			data.CameraPreviousPosAdjust[eyeIndex] = globals::game::frameBufferCached.GetCameraPreviousPosAdjust(eyeIndex);
+		}
 		data.Timer = timer;
 
 		auto temporal = Util::GetTemporal();

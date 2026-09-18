@@ -60,7 +60,7 @@ namespace NR
 			uint32_t number = UINT32_MAX, calls = 0, duplicates = 0, target = 0;
 			Outcome outcome = Outcome::NoHook;
 			bool enabled = false, world = false, paused = false, recreated = false, afterUpscale = false, afterPost = false, mainChanged = false;
-			uint32_t width = 0, height = 0, format = 0, eyeCount = 0, evaluated = 0, copied = 0, created = 0;
+			uint32_t width = 0, height = 0, format = 0, proxyFormat = 0, eyeCount = 0, evaluated = 0, copied = 0, created = 0;
 			std::array<uint32_t, 2> reset{}, result{};
 			uintptr_t source = 0;
 			uint64_t submittedFence = 0, completedFence = 0;

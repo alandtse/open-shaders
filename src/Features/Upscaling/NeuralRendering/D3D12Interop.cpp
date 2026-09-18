@@ -17,7 +17,9 @@ namespace NR
 		winrt::check_hresult(adapter->GetDesc(&desc));
 		if (desc.VendorId != 0x10DE)
 			throw std::runtime_error("Neural Rendering requires an NVIDIA adapter");
-		winrt::check_hresult(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(device.put())));
+		// Match the bridge used by OptiScaler: create a D3D12 device on the game's
+		// D3D11 adapter, using the baseline level accepted by the DX11-on-DX12 path.
+		winrt::check_hresult(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.put())));
 		D3D12_COMMAND_QUEUE_DESC queueDesc{};
 		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 		winrt::check_hresult(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));

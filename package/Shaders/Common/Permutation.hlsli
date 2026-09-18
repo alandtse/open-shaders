@@ -78,6 +78,7 @@ namespace Permutation
 		static const uint SuppressExternalEmittance = (1 << 5);
 		static const uint AdditiveLighting = (1 << 6);
 		// Fork-only flags reserve the high end so upstream's next sequential flag never collides.
+		static const uint FireEffect = (1u << 30);
 		static const uint IsEye = (1u << 31);
 	}
 

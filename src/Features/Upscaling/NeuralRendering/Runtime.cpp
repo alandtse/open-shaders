@@ -40,6 +40,70 @@ namespace NR
 				throw std::runtime_error(std::format("{} failed: NGX 0x{:08X}", operation, static_cast<uint32_t>(result)));
 		}
 
+		// Feature 18 uses the driver's private parameter block.  Its resource and
+		// float setters are not guaranteed to occupy the public SDK vtable slots.
+		// OptiScaler handles this by probing the live block and then using the
+		// discovered slots for every private parameter write.
+		class ParameterWriter
+		{
+		public:
+			explicit ParameterWriter(NVSDK_NGX_Parameter* parameters, int& floatSlot) : parameters(parameters), floatSlot(floatSlot) {}
+
+			void DiscoverFloatSlot()
+			{
+				if (floatSlot >= 0)
+					return;
+				static constexpr int candidates[] = { 1, 2, 5, 6, 7, 4, 3, 0 };
+				constexpr float probeValue = 0.375f;
+				for (const auto slot : candidates) {
+					SetFloatAt(slot, "DLSSNR.OpenShadersFloatProbe", probeValue);
+					float readBack = 0.0f;
+					if (parameters->Get("DLSSNR.OpenShadersFloatProbe", &readBack) == NVSDK_NGX_Result_Success && readBack == probeValue) {
+						floatSlot = slot;
+						logger::info("[NeuralRendering] Feature 18 float parameters use vtable slot {}", slot);
+						return;
+					}
+				}
+				logger::warn("[NeuralRendering] Feature 18 float setter slot was not discovered; tuning may be ignored");
+			}
+
+			void SetUInt(const char* name, unsigned int value) const
+			{
+				SetUIntAt(name, value);
+			}
+			void SetFloat(const char* name, float value) const
+			{
+				if (floatSlot >= 0)
+					SetFloatAt(floatSlot, name, value);
+				else
+					parameters->Set(name, value);
+			}
+			void SetResource(const char* name, ID3D12Resource* resource) const
+			{
+				void** table = *reinterpret_cast<void***>(parameters);
+				reinterpret_cast<SetULL>(table[0])(parameters, name, reinterpret_cast<unsigned long long>(resource));
+			}
+
+		private:
+			using SetULL = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned long long);
+			using SetFloatFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, float);
+			using SetUIntFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned int);
+
+			void SetFloatAt(int slot, const char* name, float value) const
+			{
+				void** table = *reinterpret_cast<void***>(parameters);
+				reinterpret_cast<SetFloatFn>(table[slot])(parameters, name, value);
+			}
+			void SetUIntAt(const char* name, unsigned int value) const
+			{
+				void** table = *reinterpret_cast<void***>(parameters);
+				reinterpret_cast<SetUIntFn>(table[3])(parameters, name, value);
+			}
+
+			NVSDK_NGX_Parameter* parameters;
+			int& floatSlot;
+		};
+
 		// The NR import checks this synthetic caller identity during scoped NGX calls.
 		class RuntimePath
 		{
@@ -119,6 +183,7 @@ namespace NR
 		Create create = nullptr;
 		NR::Evaluate evaluate = nullptr;
 		Release release = nullptr;
+		int floatSlot = -1;
 		bool initialized = false;
 		struct FeatureDeleter
 		{
@@ -234,43 +299,45 @@ namespace NR
 		frame.created = false;
 		frame.result = 0;
 		auto* parameters = eye.parameters.get();
+		ParameterWriter writer(parameters, state.floatSlot);
 		RuntimePath::Scope scope(state.compatibility);
 		if (!eye.feature) {
 			parameters->Reset();
 			Check(state.populate(parameters), "NR parameter population");
+			writer.DiscoverFloatSlot();
 			for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
-				parameters->Set(key, width);
+				writer.SetUInt(key, width);
 			for (auto key : { "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
-				parameters->Set(key, height);
-			parameters->Set("Width", width);
-			parameters->Set("Height", height);
-			parameters->Set("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-			parameters->Set("CreationNodeMask", 1u);
-			parameters->Set("VisibilityNodeMask", 1u);
-			parameters->Set("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-			parameters->Set("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
-			parameters->Set("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
-			parameters->Set("DLSSNR.Scale", 1.0f);
-			parameters->Set("DLSSNR.ScalingRatio", 1.0f);
-			parameters->Set("DLSSNR.Upscaling", 0u);
-			parameters->Set("DLSSNR.Hint.Render.Preset", 0u);
+				writer.SetUInt(key, height);
+			writer.SetUInt("Width", width);
+			writer.SetUInt("Height", height);
+			writer.SetUInt("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+			writer.SetUInt("CreationNodeMask", 1u);
+			writer.SetUInt("VisibilityNodeMask", 1u);
+			writer.SetUInt("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+			writer.SetUInt("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
+			writer.SetUInt("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
+			writer.SetFloat("DLSSNR.Scale", 1.0f);
+			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
+			writer.SetUInt("DLSSNR.Upscaling", 0u);
+			writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
 			const auto flags = static_cast<unsigned int>(
 				NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
-			parameters->Set("Feature_Flags", flags);
-			parameters->Set("NVSDK_NGX_Parameter_Feature_Flags", flags);
-			parameters->Set("InPreExposure", 1.0f);
-			parameters->Set("InExposureScale", 1.0f);
-			parameters->Set("NVSDK_NGX_Parameter_PreExposure", 1.0f);
-			parameters->Set("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
-			parameters->Set("DLSSNR.AutoExposure", 1u);
-			parameters->Set("DLSSNR.Hdr", 0u);
-			parameters->Set("DLSSNR.SDR", 1u);
-			parameters->Set("DLSSNR.Style", tuning.style);
-			parameters->Set("DLSSNR.Intensity", tuning.intensity);
-			parameters->Set("DLSSNR.LocalToneStrength", tuning.localToneStrength);
-			parameters->Set("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
-			parameters->Set("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
-			parameters->Set("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+			writer.SetUInt("Feature_Flags", flags);
+			writer.SetUInt("NVSDK_NGX_Parameter_Feature_Flags", flags);
+			writer.SetFloat("InPreExposure", 1.0f);
+			writer.SetFloat("InExposureScale", 1.0f);
+			writer.SetFloat("NVSDK_NGX_Parameter_PreExposure", 1.0f);
+			writer.SetFloat("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
+			writer.SetUInt("DLSSNR.AutoExposure", 1u);
+			writer.SetUInt("DLSSNR.Hdr", 0u);
+			writer.SetUInt("DLSSNR.SDR", 1u);
+			writer.SetUInt("DLSSNR.Style", tuning.style);
+			writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
+			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
+			writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
+			writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
 			NVSDK_NGX_Handle* handle = nullptr;
 			const auto result = state.create(commands, static_cast<NVSDK_NGX_Feature>(18), parameters, &handle);
 			frame.result = static_cast<uint32_t>(result);
@@ -283,37 +350,41 @@ namespace NR
 			frame.created = true;
 			frame.reset = true;
 		}
-		parameters->Set("DLSSNR.Color", color);
-		parameters->Set("DLSSNR.Depth", depth);
-		parameters->Set("DLSSNR.MVec", motion);
-		parameters->Set("DLSSNR.Output", output);
+		writer.SetResource("DLSSNR.Color", color);
+		writer.SetResource("DLSSNR.Depth", depth);
+		writer.SetResource("DLSSNR.MVec", motion);
+		writer.SetResource("DLSSNR.Output", output);
 		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.DepthSubrectBaseX", "DLSSNR.DepthSubrectBaseY",
 				 "DLSSNR.MVecSubrectBaseX", "DLSSNR.MVecSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
-			parameters->Set(key, 0u);
+			writer.SetUInt(key, 0u);
 		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.OutputSubrectWidth" })
-			parameters->Set(key, width);
+			writer.SetUInt(key, width);
 		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
-			parameters->Set(key, height);
+			writer.SetUInt(key, height);
 		for (auto key : { "DLSSNR.DepthSubrectWidth", "DLSSNR.MVecSubrectWidth" })
-			parameters->Set(key, guideWidth);
+			writer.SetUInt(key, guideWidth);
 		for (auto key : { "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight" })
-			parameters->Set(key, guideHeight);
-		parameters->Set("DLSSNR.MVecScaleX", static_cast<float>(guideWidth));
-		parameters->Set("DLSSNR.MVecScaleY", static_cast<float>(guideHeight));
-		parameters->Set("DLSSNR.DepthInverted", 0u);
-		parameters->Set("DLSSNR.Enabled", 1u);
-		parameters->Set("DLSSNR.Reset", frame.reset ? 1u : 0u);
-		parameters->Set("DLSSNR.Upscaling", 0u);
-		parameters->Set("DLSSNR.Scale", 1.0f);
-		parameters->Set("DLSSNR.ScalingRatio", 1.0f);
-		parameters->Set("DLSSNR.Intensity", tuning.intensity);
-		parameters->Set("DLSSNR.LocalToneStrength", tuning.localToneStrength);
-		parameters->Set("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
-		parameters->Set("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
-		parameters->Set("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
-		parameters->Set("DLSSNR.Style", tuning.style);
-		parameters->Set("DLSSNR.UICorrection", 0u);
-		parameters->Set("Sharpness", 0.0f);
+			writer.SetUInt(key, guideHeight);
+		// Skyrim's motion-vector buffer is already in the normalized units used by the
+		// upscaler; Streamline keeps these constants at identity. Scaling by the guide
+		// dimensions turns small camera motion into a large reprojection and makes the
+		// model's temporal result unstable.
+		writer.SetFloat("DLSSNR.MVecScaleX", 1.0f);
+		writer.SetFloat("DLSSNR.MVecScaleY", 1.0f);
+		writer.SetUInt("DLSSNR.DepthInverted", 0u);
+		writer.SetUInt("DLSSNR.Enabled", 1u);
+		writer.SetUInt("DLSSNR.Reset", frame.reset ? 1u : 0u);
+		writer.SetUInt("DLSSNR.Upscaling", 0u);
+		writer.SetFloat("DLSSNR.Scale", 1.0f);
+		writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
+		writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
+		writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
+		writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
+		writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+		writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+		writer.SetUInt("DLSSNR.Style", tuning.style);
+		writer.SetUInt("DLSSNR.UICorrection", 0u);
+		writer.SetFloat("Sharpness", 0.0f);
 		const auto result = state.evaluate(commands, eye.feature.get(), parameters, nullptr);
 		frame.result = static_cast<uint32_t>(result);
 		if (NVSDK_NGX_FAILED(result)) {

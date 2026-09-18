@@ -65,10 +65,10 @@ namespace NR
 	{
 		logger::info(
 			"[NRDiag/v2] frame={} outcome={} enabled={} world={} paused={} calls={} duplicates={} target={} "
-			"size={}x{} format={} source=0x{:X} eyes={} eval=0x{:X} copyQueued=0x{:X} created=0x{:X} "
+			"size={}x{} sourceFormat={} proxyFormat={} source=0x{:X} eyes={} eval=0x{:X} copyQueued=0x{:X} created=0x{:X} "
 			"resetL=0x{:X} resetR=0x{:X} ngxL=0x{:X} ngxR=0x{:X} recreated={} upscale={} post={} mainChanged={} fence={}/{}",
 			frame.number, Name(frame.outcome), frame.enabled, frame.world, frame.paused, frame.calls, frame.duplicates, frame.target,
-			frame.width, frame.height, frame.format, frame.source, frame.eyeCount, frame.evaluated, frame.copied, frame.created,
+			frame.width, frame.height, frame.format, frame.proxyFormat, frame.source, frame.eyeCount, frame.evaluated, frame.copied, frame.created,
 			frame.reset[0], frame.reset[1], frame.result[0], frame.result[1], frame.recreated, frame.afterUpscale, frame.afterPost, frame.mainChanged,
 			frame.completedFence, frame.submittedFence);
 	}
@@ -101,6 +101,7 @@ namespace NR
 		traceFile << "frame=" << frame.number << " options=" << frame.options << " outcome=" << Name(frame.outcome)
 				  << " eval=" << frame.evaluated << " copy=" << frame.copied << " created=" << frame.created
 				  << " recreated=" << frame.recreated << " size=" << frame.width << 'x' << frame.height
+				  << " sourceFormat=" << frame.format << " proxyFormat=" << frame.proxyFormat
 				  << " calls=" << frame.calls << " duplicates=" << frame.duplicates << " upscale=" << frame.afterUpscale
 				  << " post=" << frame.afterPost << " mainChanged=" << frame.mainChanged
 				  << " fence=" << frame.completedFence << '/' << frame.submittedFence << '\n';
@@ -301,7 +302,7 @@ namespace NR
 				snapshotCount, outcomes[size_t(Outcome::Applied)], outcomes[size_t(Outcome::NoHook)], outcomes[size_t(Outcome::Disabled)],
 				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
 			ImGui::Text("Reset frames %u | recreations %u | duplicate calls %u", resets, recreations, duplicates);
-			ImGui::Text("%ux%u | DXGI format %u | eyes %u | eval 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.eyeCount, latest.evaluated, latest.copied);
+			ImGui::Text("%ux%u | source/proxy DXGI %u/%u | eyes %u | eval 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.proxyFormat, latest.eyeCount, latest.evaluated, latest.copied);
 			ImGui::Text("Reset L/R 0x%X/0x%X | NGX L/R 0x%X/0x%X", latest.reset[0], latest.reset[1], latest.result[0], latest.result[1]);
 			ImGui::Text("After upscale/post %u/%u | target %u | main changed %u", latest.afterUpscale, latest.afterPost, latest.target, latest.mainChanged);
 			ImGui::TextUnformatted(sequence.c_str());
