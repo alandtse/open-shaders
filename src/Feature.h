@@ -47,7 +47,9 @@ struct Feature
 	// True if any restart-gated setting's live value differs from the
 	// boot-latched value. Drives the green "RestartNeeded" tint in the
 	// feature list and the `pending` flag in MCP's `list` response.
-	bool HasAnyPendingRestart() const
+	// Virtual so a feature with a non-settings restart trigger (e.g.
+	// Upscaling's live HMD-size drift) can OR in its own condition.
+	virtual bool HasAnyPendingRestart() const
 	{
 		const auto fields = GetRestartRequiredFields();
 		if (fields.empty())
