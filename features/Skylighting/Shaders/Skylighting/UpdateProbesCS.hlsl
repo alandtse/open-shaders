@@ -111,7 +111,10 @@ static const float3 noise3D[32] = {
 	float2 screenUV = (cellCentreCS.xy / cellCentreCS.w) * float2(0.5, -0.5) + 0.5;
 	bool onScreen = cellCentreCS.w > 0 && all(screenUV > 0) && all(screenUV < 1);
 
-	if (onScreen) {
+	if (settings.ShadowDataAvailable == 0) {
+		outShadowBitmask[dtid] = 0xFFFFFFFFu;
+		outShadowVisibility[dtid] = 1.0;
+	} else if (onScreen) {
 		float shadowSample = 1.0;
 		DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
