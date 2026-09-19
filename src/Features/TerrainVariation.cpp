@@ -52,6 +52,7 @@ namespace
 {
 	constexpr std::string_view LandscapeDirectory = "landscape/";
 	constexpr std::string_view LandscapeTreeDirectory = "landscape/trees/";
+	constexpr std::string_view DirtCliffRootsTexture = "dirtcliffsroots01.dds";
 
 	std::string CanonicaliseTexturePath(std::string_view a_path)
 	{
@@ -128,7 +129,9 @@ bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name
 	auto [it, inserted] = meshTextureCache.try_emplace(key, false);
 	if (inserted) {
 		const auto canonical = CanonicaliseTexturePath(key);
-		it->second = (canonical.starts_with(LandscapeDirectory) && !canonical.starts_with(LandscapeTreeDirectory)) || landscapeDiffusePaths.contains(canonical);
+		const auto textureFilename = std::string_view(canonical).substr(canonical.find_last_of('/') + 1);
+		it->second = textureFilename != DirtCliffRootsTexture &&
+		             ((canonical.starts_with(LandscapeDirectory) && !canonical.starts_with(LandscapeTreeDirectory)) || landscapeDiffusePaths.contains(canonical));
 		meshTextureKeepAlive.push_back(a_name);
 	}
 
