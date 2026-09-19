@@ -40,6 +40,7 @@ find_package(directxtk CONFIG REQUIRED)
 # Input.h uses magic_enum for device enum handling.
 find_package(magic_enum CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 # test_generationclaim.cpp uses <thread>/<latch>; MSVC links this in
 # implicitly, but Threads::Threads keeps the target portable to other toolchains.
 find_package(Threads REQUIRED)
@@ -65,6 +66,7 @@ add_executable(cpp_tests
     test_shadercachemanifest.cpp
     test_shadercacheclear.cpp
 	test_generationclaim.cpp
+	test_shaderinclude.cpp
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
 	test_effectsourcecompatibility.cpp
@@ -78,6 +80,7 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
@@ -108,6 +111,8 @@ target_link_libraries(cpp_tests PRIVATE
     Microsoft::DirectXTK
     magic_enum::magic_enum
     xxHash::xxhash
+    spdlog::spdlog
+    d3dcompiler
     Threads::Threads
 )
 

@@ -375,17 +375,21 @@ namespace SIE
 		// Captured include paths (normalized)
 		std::vector<std::string> includes;
 		// Owned buffers for include contents; kept alive for the lifetime of this handler
-		std::vector<std::vector<char>> buffers;
+		std::vector<std::unique_ptr<char[]>> buffers;
 		std::filesystem::path baseDir;
+		std::filesystem::path sourcePath;
 
-		TrackingIncludeHandler(const std::filesystem::path& base) :
-			baseDir(base) {}
+		TrackingIncludeHandler(const std::filesystem::path& source) :
+			baseDir(source.parent_path()), sourcePath(source) {}
 
 		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) noexcept override
 		{
 			(void)IncludeType;
+			*ppData = nullptr;
+			*pBytes = 0;
+			std::filesystem::path includePath;
 			try {
-				std::filesystem::path includePath = baseDir / pFileName;
+				includePath = baseDir / pFileName;
 				// Normalize path to reduce duplicates (weakly_canonical may throw)
 				std::error_code ec;
 				auto canonical = std::filesystem::weakly_canonical(includePath, ec);
@@ -396,25 +400,23 @@ namespace SIE
 #endif
 				includes.push_back(pathStr);
 
-				// Read file into owned buffer
-				std::ifstream ifs(pathStr, std::ios::binary | std::ios::ate);
-				if (!ifs)
+				Util::ShaderInclude::File contents;
+				Util::ShaderInclude::ReadError error;
+				if (!Util::ShaderInclude::Read(pathStr, contents, error)) {
+					Util::ShaderInclude::Report(sourcePath, pathStr, error);
 					return E_FAIL;
-				std::streamsize size = ifs.tellg();
-				if (size < 0)
-					return E_FAIL;
-				ifs.seekg(0, std::ios::beg);
-				std::vector<char> buf(static_cast<size_t>(size));
-				if (size > 0) {
-					if (!ifs.read(buf.data(), size))
-						return E_FAIL;
 				}
-				buffers.push_back(std::move(buf));
-				const auto& storage = buffers.back();
-				*ppData = storage.empty() ? nullptr : storage.data();
-				*pBytes = static_cast<UINT>(storage.size());
+				buffers.push_back(std::move(contents.data));
+				*ppData = buffers.back().get();
+				*pBytes = contents.size;
 				return S_OK;
+			} catch (const std::bad_alloc&) {
+				Util::ShaderInclude::Report(sourcePath, includePath,
+					{ "prepare_include", ERROR_NOT_ENOUGH_MEMORY });
+				return E_OUTOFMEMORY;
 			} catch (...) {
+				Util::ShaderInclude::Report(sourcePath, includePath,
+					{ "prepare_include", ERROR_UNHANDLED_EXCEPTION });
 				return E_FAIL;
 			}
 		}
@@ -1914,7 +1916,7 @@ namespace SIE
 			cache.MarkCompilationPhaseStarted();
 
 			// Track includes
-			TrackingIncludeHandler includeHandler(std::filesystem::path(path).parent_path());
+			TrackingIncludeHandler includeHandler(path);
 			const HRESULT compileResult = D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
 				GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
 			// If the include handler captured any includes, register them so the watcher
@@ -3016,7 +3018,7 @@ namespace SIE
 				}
 
 				if (!shader) {
-					Util::CustomInclude include;
+					Util::CustomInclude include(srcPath);
 
 					std::vector<D3D_SHADER_MACRO> macros;
 					for (const auto& d : defines) {
