@@ -932,6 +932,9 @@ namespace ShadowCasterManager
 						logger::warn("[SCM] Skipped duplicate same-frame Accumulate (light={}, firstSlot={}, thisSlot={}, frame={}, n={})",
 							(void*)light, it->second.second, idx, accumFrame, n);
 				} else {
+					const auto rendered = s_lightRenderFrame.find(light);
+					if (rendered == s_lightRenderFrame.end() || rendered->second < it->second.first)
+						ClearStaleAccumulatedPasses(light);
 					it->second = { accumFrame, idx };
 				}
 			}
@@ -2896,6 +2899,7 @@ namespace ShadowCasterManager
 				snap.passGuardCycleRepairsTotal = s_passGuardCycleRepairsTotal.load(std::memory_order_relaxed);
 				snap.staleAccumulatesTotal = s_staleAccumulateTotal.load(std::memory_order_relaxed);
 				snap.staleAfterRenderSkipTotal = s_staleAfterRenderSkipTotal.load(std::memory_order_relaxed);
+				snap.stalePassClearsTotal = s_stalePassClearsTotal.load(std::memory_order_relaxed);
 				for (size_t i = 0; i < kRenderSkipReasonCount; ++i)
 					snap.renderSkipsByReason[i] = s_renderSkipByReason[i].load(std::memory_order_relaxed);
 				snap.passRegChecksTotal = s_passRegChecksTotal.load(std::memory_order_relaxed);

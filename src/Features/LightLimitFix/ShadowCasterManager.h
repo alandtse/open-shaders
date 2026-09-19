@@ -696,6 +696,7 @@ namespace ShadowCasterManager
 		/// reason (session reset, portal rebuild, teardown wait, teardown race).
 		uint64_t staleAccumulatesTotal = 0;
 		uint64_t staleAfterRenderSkipTotal = 0;
+		uint64_t stalePassClearsTotal = 0;
 		uint64_t renderSkipsByReason[4] = {};
 
 		/// Registrations checked and rings found at registration (only while the registration trace is on).

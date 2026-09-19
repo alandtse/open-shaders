@@ -18,6 +18,7 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_passGuardCapExceededTotal{ 0 };
 	std::atomic<uint64_t> s_staleAccumulateTotal{ 0 };
 	std::atomic<uint64_t> s_staleAfterRenderSkipTotal{ 0 };
+	std::atomic<uint64_t> s_stalePassClearsTotal{ 0 };
 	std::atomic<uint32_t> s_lastRenderSkipFrame{ 0 };
 	std::atomic<size_t> s_lastRenderSkipReason{ 0 };
 	std::atomic<uint64_t> s_renderSkipByReason[kRenderSkipReasonCount]{};
@@ -300,8 +301,46 @@ namespace ShadowCasterManager
 		};
 	}
 
+	namespace
+	{
+		std::pair<std::uintptr_t, std::uintptr_t> GameImageRange()
+		{
+			const auto base = REL::Module::get().base();
+			const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(
+				base + reinterpret_cast<const IMAGE_DOS_HEADER*>(base)->e_lfanew);
+			return { base, base + nt->OptionalHeader.SizeOfImage };
+		}
+
+		bool PassShaderVtableInModule(const RE::BSRenderPass* a_pass, std::uintptr_t base, std::uintptr_t end)
+		{
+			__try {
+				const auto* shader = *reinterpret_cast<const std::uintptr_t* const*>(a_pass);
+				const auto vtable = shader ? *shader : 0;
+				return vtable >= base && vtable < end;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		struct Hook_SetupAndDrawPass
+		{
+			static void thunk(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
+			{
+				static const auto [imageBase, imageEnd] = GameImageRange();
+				if (InShadowRenderWindow() && a_pass && !PassShaderVtableInModule(a_pass, imageBase, imageEnd)) {
+					s_passGuardFaultSkipsTotal.fetch_add(1, std::memory_order_relaxed);
+					s_passGuardTripsThisRender.fetch_add(1, std::memory_order_relaxed);
+					return;
+				}
+				func(a_pass, a_technique, a_alphaTest, a_renderFlags);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+	}
+
 	void InstallPassRegistrationHooks()
 	{
+		stl::detour_thunk<Hook_SetupAndDrawPass>(REL::RelocationID(100854, 107644));
 		stl::write_vfunc<0x01, Hook_RegisterPassSorted>(RE::VTABLE_BSBatchRenderer[0]);
 		stl::write_vfunc<0x02, Hook_RegisterPass>(RE::VTABLE_BSBatchRenderer[0]);
 	}
@@ -377,6 +416,33 @@ namespace ShadowCasterManager
 		if (skip)
 			s_passGuardTripsThisRender.fetch_add(1, std::memory_order_relaxed);
 		return skip;
+	}
+
+	static void ClearRendererGuarded(RE::BSBatchRenderer* a_renderer)
+	{
+		__try {
+			GameClearAllRenderPasses(a_renderer);
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			s_passGuardFaultSkipsTotal.fetch_add(1, std::memory_order_relaxed);
+		}
+	}
+
+	void ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light)
+	{
+		s_stalePassClearsTotal.fetch_add(1, std::memory_order_relaxed);
+		const auto clearAccumulator = [](RE::BSShaderAccumulator* a_accumulator) {
+			if (a_accumulator)
+				if (auto* renderer = a_accumulator->GetRuntimeData().batchRenderer)
+					ClearRendererGuarded(renderer);
+		};
+		if (globals::game::isVR) {
+			for (auto& desc : a_light->GetVRRuntimeData().shadowmapDescriptors)
+				for (auto& accumulator : desc.shaderAccumulator)
+					clearAccumulator(accumulator.get());
+		} else {
+			for (auto& desc : a_light->GetRuntimeData().shadowmapDescriptors)
+				clearAccumulator(desc.shaderAccumulator.get());
+		}
 	}
 
 	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index)

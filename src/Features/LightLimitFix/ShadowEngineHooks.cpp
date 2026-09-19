@@ -528,6 +528,13 @@ namespace ShadowCasterManager
 		func(ssn, light);
 	}
 
+	void GameClearAllRenderPasses(RE::BSBatchRenderer* renderer)
+	{
+		using F = void (*)(RE::BSBatchRenderer*);
+		static REL::Relocation<F> func{ REL::RelocationID(100843, 107633) };
+		func(renderer);
+	}
+
 	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk)
 	{
 		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*, uint32_t, uint32_t);

@@ -396,6 +396,7 @@ namespace ShadowCasterManager
 	extern std::atomic<uint64_t> s_staleAccumulateTotal;
 	/// Stale lights whose accumulate frame was one in which the render function exited early, and that frame/reason.
 	extern std::atomic<uint64_t> s_staleAfterRenderSkipTotal;
+	extern std::atomic<uint64_t> s_stalePassClearsTotal;
 	extern std::atomic<uint32_t> s_lastRenderSkipFrame;
 	extern std::atomic<size_t> s_lastRenderSkipReason;
 	/// Frame each light was last rendered by RenderLightGuarded (render thread only).
@@ -410,6 +411,10 @@ namespace ShadowCasterManager
 	extern std::atomic<uint64_t> s_passRegRingsTotal;
 	/// Hooks BSBatchRenderer::RegisterPass/RegisterPassSorted; inert until the trace is enabled.
 	void InstallPassRegistrationHooks();
+
+	/// Unlinks the pass groups a light's accumulators kept from an accumulate that was never rendered, so the
+	/// next accumulate does not register recycled passes into them.
+	void ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light);
 
 	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
 	/// passes, in which case the light is not fully drawn and must not be marked rendered.
@@ -494,6 +499,7 @@ namespace ShadowCasterManager
 	void GameSetupFocusShadowAccumulators(RE::BSShadowLight* light);
 	void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam);
 	void GameEnableLight(RE::ShadowSceneNode* ssn, RE::BSLight* light);
+	void GameClearAllRenderPasses(RE::BSBatchRenderer* renderer);
 	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk);
 	void GameClearPortalVisibility(RE::BSPortalGraphEntry* entry);
 	bool GamePortalHasSharedVisibility(RE::BSPortalGraphEntry* a, RE::BSPortalGraphEntry* b);
