@@ -1469,6 +1469,7 @@ namespace ShadowCasterManager
 		// Parabolic Render (vtable 0x0A): repair the engine's omission of copying
 		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
+		InstallPassRegistrationHooks();
 
 		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
 		InstallCasterCullHook();
