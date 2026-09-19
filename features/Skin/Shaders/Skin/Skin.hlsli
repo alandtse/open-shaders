@@ -80,6 +80,7 @@ namespace Skin
 		return D * G * F;
 	}
 
+#	if !defined(TRUE_PBR)
 	void SkinDirectLightInput(
 		out DirectLightingOutput lightingOutput,
 		DirectContext context,
@@ -173,6 +174,7 @@ namespace Skin
 
 		lobeWeights.specular *= saturate(1 - material.Curvature);
 	}
+#	endif
 
 	float FBM(float2 uv, float base_scale, int octaves, float lacunarity, float persistence, float z_offset_multiplier)
 	{
