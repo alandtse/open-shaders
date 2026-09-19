@@ -189,6 +189,7 @@ namespace SharedData
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
 		uint2 pad0;
+		uint4 ArrayDims;
 	};
 
 	struct CloudShadowsSettings
