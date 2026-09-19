@@ -3,6 +3,9 @@
 /** @brief Relights vanilla clouds from the active directional light. */
 struct CloudRelight : Feature
 {
+	/** @brief Selects the engine directional light when celestial source weights are unavailable. */
+	static constexpr float3 DirectionalLightFallbackWeights = { -1.0f, 0.0f, 0.0f };
+
 	/** @brief Per-frame Cloud Relight settings shared with HLSL. */
 	struct alignas(16) Settings
 	{
@@ -12,9 +15,11 @@ struct CloudRelight : Feature
 		float silverLiningMix = 1.0f;
 
 		float silverLiningSpread = 0.0f;
-		float pad[3] = {};
+		float3 celestialLightWeights = DirectionalLightFallbackWeights;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
+	static_assert(sizeof(Settings) == 32);
+	static_assert(offsetof(Settings, celestialLightWeights) == 20);
 
 	Settings settings;
 

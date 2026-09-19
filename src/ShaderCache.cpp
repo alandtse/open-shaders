@@ -175,7 +175,7 @@ namespace SIE
 				includes.push_back(std::move(includePath));
 			}
 			std::lock_guard lock(parseCacheMutex);
-			parseCache[key] = IncludeParseEntry{ selfMTime, includes };
+			parseCache[key] = IncludeParseEntry{ selfMTime, includes, std::nullopt };
 		}
 
 		auto maxTime = selfMTime;
@@ -347,6 +347,13 @@ namespace SIE
 		return Util::ContentHash::HashString(state);
 	}
 
+	// `key` already encodes the descriptor's actual #defines; omitting it lets a C++-side
+	// change to that mapping keep a stale disk-cached blob reading as valid forever.
+	static Util::ContentHash::Hash128 GetPerShaderDefinesDigest(const std::string& key)
+	{
+		return Util::ContentHash::HashString(key);
+	}
+
 	// Batches manifest writes instead of re-serializing the whole file per
 	// shader; CompilationSet::Complete() guarantees a final flush per batch.
 	constexpr uint64_t kManifestFlushBatchSize = 25;
@@ -374,7 +381,7 @@ namespace SIE
 		TrackingIncludeHandler(const std::filesystem::path& base) :
 			baseDir(base) {}
 
-		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) override
+		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) noexcept override
 		{
 			(void)IncludeType;
 			try {
@@ -412,7 +419,7 @@ namespace SIE
 			}
 		}
 
-		HRESULT Close(LPCVOID /*pData*/) override
+		HRESULT Close(LPCVOID /*pData*/) noexcept override
 		{
 			// Buffers are owned by this handler; no action required on Close.
 			return S_OK;
@@ -421,7 +428,6 @@ namespace SIE
 
 	namespace SShaderCache
 	{
-		static void GetShaderDefines(const RE::BSShader&, uint32_t, D3D_SHADER_MACRO*);
 		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false);
 		/**
 		 * @brief Resolve image-space shader descriptor when applicable.
@@ -476,6 +482,8 @@ namespace SIE
 				return PixelShaderProfile;
 			case ShaderClass::Compute:
 				return ComputeShaderProfile;
+			case ShaderClass::Total:
+				break;
 			}
 			return nullptr;
 		}
@@ -636,6 +644,8 @@ namespace SIE
 			if (technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepthStencil) ||
 				technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth)) {
 				defines[lastIndex++] = { "RENDER_DEPTH", nullptr };
+			} else if (technique == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::TruePbr)) {
+				defines[lastIndex++] = { "TRUE_PBR", nullptr };
 			}
 			if (descriptor & static_cast<uint32_t>(ShaderCache::GrassShaderFlags::AlphaTest)) {
 				defines[lastIndex++] = { "DO_ALPHA_TEST", nullptr };
@@ -657,6 +667,8 @@ namespace SIE
 			const auto technique = static_cast<ShaderCache::ParticleShaderTechniques>(descriptor);
 			size_t lastIndex = 0;
 			switch (technique) {
+			case Particles:
+				break;
 			case ParticlesGryColor:
 				{
 					defines[lastIndex++] = { "GRAYSCALE_TO_COLOR", nullptr };
@@ -1073,6 +1085,9 @@ namespace SIE
 				break;
 			case RE::BSShader::Type::Utility:
 				GetUtilityShaderDefines(descriptor, defines);
+				break;
+			case RE::BSShader::Type::None:
+			case RE::BSShader::Type::Total:
 				break;
 			}
 		}
@@ -1684,6 +1699,12 @@ namespace SIE
 
 		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
 		{
+			// Both grass depth techniques share bytecode and must use the same disk entry.
+			if (name == "RunGrass" &&
+				(descriptor & 0b1111) == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepthStencil)) {
+				descriptor = (descriptor & ~0b1111u) | static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth);
+			}
+
 			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
@@ -1695,6 +1716,8 @@ namespace SIE
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
 			case ShaderClass::Compute:
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
+			case ShaderClass::Total:
+				break;
 			}
 			return {};
 		}
@@ -1783,7 +1806,7 @@ namespace SIE
 					if (std::filesystem::exists(shaderSourcePath)) {
 						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
-							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+							const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
 							diskCacheOutdated = *recorded != combined.ToHex();
 							if (diskCacheOutdated) {
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
@@ -1990,7 +2013,7 @@ namespace SIE
 					// Record the digest of what just got compiled; the manifest-first
 					// check above reads this back to decide disk-cache validity.
 					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
-						const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+						const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
 						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
 					}
 				}
@@ -2037,21 +2060,21 @@ namespace SIE
 					ShaderClass::Vertex, descriptor, shader);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						(REX::W32::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
+						Util::AsW32(perTechniqueBuffersArray.get()[bufferSizes[0]]);
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
 					newShader->constantBuffers[0].data = bufferData.get();
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						(REX::W32::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
+						Util::AsW32(perMaterialBuffersArray.get()[bufferSizes[1]]);
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
 					newShader->constantBuffers[1].data = bufferData.get();
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						(REX::W32::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
+						Util::AsW32(perGeometryBuffersArray.get()[bufferSizes[2]]);
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
 					newShader->constantBuffers[2].data = bufferData.get();
@@ -2090,21 +2113,21 @@ namespace SIE
 					ShaderClass::Pixel, descriptor, shader);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						(REX::W32::ID3D11Buffer*)perTechniqueBuffersArray.get()[bufferSizes[0]];
+						Util::AsW32(perTechniqueBuffersArray.get()[bufferSizes[0]]);
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
 					newShader->constantBuffers[0].data = bufferData.get();
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						(REX::W32::ID3D11Buffer*)perMaterialBuffersArray.get()[bufferSizes[1]];
+						Util::AsW32(perMaterialBuffersArray.get()[bufferSizes[1]]);
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
 					newShader->constantBuffers[1].data = bufferData.get();
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						(REX::W32::ID3D11Buffer*)perGeometryBuffersArray.get()[bufferSizes[2]];
+						Util::AsW32(perGeometryBuffersArray.get()[bufferSizes[2]]);
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
 					newShader->constantBuffers[2].data = bufferData.get();
@@ -2351,7 +2374,7 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableVShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableVShaders)) {
 			return nullptr;
 		}
 
@@ -2395,7 +2418,7 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enablePShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enablePShaders)) {
 			return nullptr;
 		}
 
@@ -2439,7 +2462,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		auto state = globals::state;
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableCShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableCShaders)) {
 			return nullptr;
 		}
 
@@ -3218,14 +3241,9 @@ namespace SIE
 		return Util::CacheInvalidation::HasFailedFeature(mismatches);
 	}
 
-	// The rollback slot's on-disk presence is the one filesystem check these
+	// The rollback slot's on-disk presence is the one filesystem check this
 	// can't do without ShaderCache's path helpers, so it's evaluated here and
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
-	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
-	{
-		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches);
-	}
-
 	static bool SetPreviousCacheRestoreCandidate(
 		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
 		bool& previousDiskCacheAvailable,
@@ -3851,7 +3869,7 @@ namespace SIE
 			}
 
 			const auto result = device->CreateVertexShader(shaderBlob->GetBufferPointer(),
-				newShader->byteCodeSize, nullptr, reinterpret_cast<ID3D11VertexShader**>(&newShader->shader));
+				newShader->byteCodeSize, nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
 				logger::error("Failed to create vertex shader {}::{:X}",
 					magic_enum::enum_name(shader.shaderType.get()), descriptor);
@@ -3894,7 +3912,7 @@ namespace SIE
 			}
 
 			const auto result = device->CreatePixelShader(shaderBlob->GetBufferPointer(),
-				shaderBlob->GetBufferSize(), nullptr, reinterpret_cast<ID3D11PixelShader**>(&newShader->shader));
+				shaderBlob->GetBufferSize(), nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
 				logger::error("Failed to create pixel shader {}::{:X}",
 					magic_enum::enum_name(shader.shaderType.get()),
@@ -3938,7 +3956,7 @@ namespace SIE
 			}
 
 			const auto result = device->CreateComputeShader(shaderBlob->GetBufferPointer(),
-				shaderBlob->GetBufferSize(), nullptr, reinterpret_cast<ID3D11ComputeShader**>(&newShader->shader));
+				shaderBlob->GetBufferSize(), nullptr, Util::AsReal(&newShader->shader));
 			if (FAILED(result)) {
 				logger::error("Failed to create pixel shader {}::{:X}",
 					magic_enum::enum_name(shader.shaderType.get()),
@@ -4320,11 +4338,11 @@ namespace SIE
 
 		// Fallback to original behavior with full shader map
 		std::scoped_lock lockM{ mapMutex };
-		auto targetIndex = a_forward ? 0 : shaderMap.size() - 1;           // default start or last element
-		if (blockedKeyIndex >= 0 && shaderMap.size() > blockedKeyIndex) {  // grab next element
-			targetIndex = (blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
+		size_t targetIndex = a_forward ? 0 : shaderMap.size() - 1;                              // default start or last element
+		if (blockedKeyIndex >= 0 && shaderMap.size() > static_cast<size_t>(blockedKeyIndex)) {  // grab next element
+			targetIndex = static_cast<size_t>(blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
 		}
-		auto index = 0;
+		size_t index = 0;
 		for (auto& [key, value] : shaderMap) {
 			if (index++ == targetIndex) {
 				blockedKey = key;
@@ -4931,7 +4949,7 @@ namespace SIE
 		digestHitTasks = 0;
 		digestMissTasks = 0;
 		compilationPhaseStarted = false;
-		compilationPhaseStart = { 0 };
+		compilationPhaseStart = {};
 		generation.fetch_add(1, std::memory_order_relaxed);
 		slowTasks = 0;
 		verySlowTasks = 0;
@@ -4941,8 +4959,8 @@ namespace SIE
 		QueryPerformanceCounter(&lastReset);
 		lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 		QueryPerformanceCounter(&lastCalculation);
-		completionTime = { 0 };  // Reset completion time
-		totalTime = { 0 };
+		completionTime = 0;  // Reset completion time
+		totalTime = {};
 		{
 			std::lock_guard slowLock(slowTasksMutex);
 			slowTaskRecords.clear();

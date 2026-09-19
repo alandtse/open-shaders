@@ -199,7 +199,7 @@ jobs:
                     export RELEASE_VER
                     python3 << 'PYEOF'
                   import json, os
-                  from nexus_changelog import strip_audit
+                  from nexus_changelog import strip_audit, markdown_to_plain_text
                   with open('release.json') as f:
                       release = json.load(f)
                   if not isinstance(release, dict):
@@ -208,7 +208,9 @@ jobs:
                   # Post this version's release notes (minus the internal audit
                   # block). Re-run duplicates are prevented by the idempotency
                   # filter below, not by reformatting the body (issue #198).
-                  changelog = strip_audit(release.get('body') or '')
+                  # Nexus's changelog field renders neither Markdown nor BBCode, so the
+                  # GitHub release body is reduced to plain text before posting.
+                  changelog = markdown_to_plain_text(strip_audit(release.get('body') or ''))
                   row = {
                       'name': 'core',
                       'is_core': True,
@@ -248,12 +250,12 @@ jobs:
                     # Splice this version's changelog (audit-stripped body) into the CORE row.
                     python3 << 'PYEOF'
                   import json, os
-                  from nexus_changelog import strip_audit
+                  from nexus_changelog import strip_audit, markdown_to_plain_text
                   with open('release.json') as f:
                       release = json.load(f)
                   if not isinstance(release, dict):
                       release = {}
-                  changelog = strip_audit(release.get('body') or '')
+                  changelog = markdown_to_plain_text(strip_audit(release.get('body') or ''))
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   for row in data:

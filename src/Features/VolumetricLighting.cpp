@@ -4,6 +4,7 @@
 #include "InteriorSun.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/Game.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.volumetric_lighting."
@@ -218,20 +219,33 @@ void VolumetricLighting::SetupResources()
 
 void VolumetricLighting::EarlyPrepass()
 {
-	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	// globals::game::graphicsState->screenWidth/Height is the desktop preview window's resolution on
+	// VR, not the HMD's -- use the same nominal size UpdateGrass/HiZPyramid derive from the live
+	// render target.
+	int32_t width = static_cast<int32_t>(globals::state->screenSize.x);
+	int32_t height = static_cast<int32_t>(globals::state->screenSize.y);
 
-	int32_t width = static_cast<int32_t>(renderSize.x);
-	int32_t height = static_cast<int32_t>(renderSize.y);
-
-	if (width != vlData.screenX || height != vlData.screenY) {
+	if (width != fullScreenX || height != fullScreenY) {
 		blurHCS = nullptr;
 		blurVCS = nullptr;
 	}
 
-	vlData.screenX = width;
-	vlData.screenY = height;
-	vlData.screenXMin1 = width - 1;
-	vlData.screenYMin1 = height - 1;
+	fullScreenX = width;
+	fullScreenY = height;
+
+	// The blur targets are allocated at the full screen size, but under dynamic resolution only
+	// the top-left render area holds valid data. Clamping and dispatching against the full size
+	// makes the blur taps read stale pixels from outside that area along the right/bottom edges.
+	const float2 renderSize = Util::ConvertToDynamic(float2{ (float)width, (float)height });
+
+	vlData.screenX = std::max(1, static_cast<int32_t>(renderSize.x));
+	vlData.screenY = std::max(1, static_cast<int32_t>(renderSize.y));
+	vlData.screenXMin1 = vlData.screenX - 1;
+	vlData.screenYMin1 = vlData.screenY - 1;
+	vlData.eyeWidth = globals::game::isVR ? vlData.screenX / 2 : vlData.screenX;
+	const int32_t maximumEyeWidth = globals::game::isVR ? vlData.screenX - vlData.eyeWidth : vlData.screenX;
+	vlData.horizontalGroupsPerEye =
+		(maximumEyeWidth + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
 	vlDataCB->Update(vlData);
 
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
@@ -339,13 +353,18 @@ void VolumetricLighting::SetDimensionsCB() const
 	globals::d3d::context->CSSetConstantBuffers(1, 1, &cb);
 }
 
-void VolumetricLighting::SetGroupCountsHCS(uint32_t& threadGroupCountX) const
+void VolumetricLighting::SetGroupCountsHCS(uint32_t& threadGroupCountX, uint32_t& threadGroupCountY) const
 {
-	threadGroupCountX = (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
+	threadGroupCountX = globals::game::isVR ? 2u * vlData.horizontalGroupsPerEye :
+	                                          (vlData.screenX + BlurThreadGroupSizeX - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeX - BlurWindow * 2u);
+	// One group per row, so the game's full-height count would blur rows outside the dynamic resolution area.
+	threadGroupCountY = static_cast<uint32_t>(vlData.screenY);
 }
 
-void VolumetricLighting::SetGroupCountsVCS(uint32_t& threadGroupCountY) const
+void VolumetricLighting::SetGroupCountsVCS(uint32_t& threadGroupCountX, uint32_t& threadGroupCountY) const
 {
+	// One group per column, so the game's full-width count would blur columns outside the dynamic resolution area.
+	threadGroupCountX = static_cast<uint32_t>(vlData.screenX);
 	threadGroupCountY = (vlData.screenY + BlurThreadGroupSizeY - BlurWindow * 2u - 1u) / (BlurThreadGroupSizeY - BlurWindow * 2u);
 }
 

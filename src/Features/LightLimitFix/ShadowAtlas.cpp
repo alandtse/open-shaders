@@ -12,6 +12,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Util.h"
+#include "../../Utils/LazyShader.h"
 #include "AtlasAllocator.h"
 #include "ShadowCasterInternal.h"
 #include "ShadowCasterMath.h"
@@ -30,9 +31,10 @@ namespace ShadowCasterManager
 			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
 			bool staticValid = false;      ///< static tile holds baked content
 			bool staticEmpty = false;      ///< baked tile captured zero casters
-			const void* owner = nullptr;   ///< light whose depths the content holds
-			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
-			ShadowBakeSnapshot bake{};     ///< radius/bias the tile depth was rastered with
+			bool staticCompositePending = false;
+			const void* owner = nullptr;  ///< light whose depths the content holds
+			uint32_t orphanSince = 0;     ///< frame the owning light left the slot (0 = occupied)
+			ShadowBakeSnapshot bake{};    ///< radius/bias the tile depth was rastered with
 			bool bakeValid = false;
 			bool bakePending = false;  ///< content landed; renderer must refresh the snapshot
 		};
@@ -57,6 +59,11 @@ namespace ShadowCasterManager
 			// pose-stable ("static") shadow depth that the dynamic pass copies in.
 			winrt::com_ptr<ID3D11Texture2D> staticTexture;
 			winrt::com_ptr<ID3D11DepthStencilView> staticDsv;
+			winrt::com_ptr<ID3D11ShaderResourceView> staticSrv;
+			winrt::com_ptr<ID3D11DepthStencilState> copyDepthState;
+			winrt::com_ptr<ID3D11RasterizerState> copyRasterizerState;
+			Util::LazyShader<ID3D11VertexShader> copyVS;
+			Util::LazyShader<ID3D11PixelShader> copyPS;
 			bool staticReady = false;
 			bool staticFailed = false;
 			DXGI_FORMAT texFormat = DXGI_FORMAT_UNKNOWN;  ///< chosen typeless depth format
@@ -316,10 +323,16 @@ namespace ShadowCasterManager
 		// runs the live atlas alone, unsplit.
 		bool EnsureStaticResources()
 		{
-			if (s_atlas.staticReady)
+			if (StaticAtlasReady())
 				return true;
 			if (s_atlas.staticFailed || !s_atlas.ready)
 				return false;
+			constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthCopy.hlsl";
+			if (!s_atlas.copyVS.Get(shaderPath, { { "VSHADER", "" } }, "vs_5_0", "main", "SCM::ShadowDepthCopy VS") ||
+				!s_atlas.copyPS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthCopy PS"))
+				return false;
+			if (s_atlas.staticReady)
+				return true;
 			auto* device = globals::d3d::device;
 			if (!device)
 				return false;
@@ -336,7 +349,7 @@ namespace ShadowCasterManager
 			desc.Format = s_atlas.texFormat;
 			desc.SampleDesc.Count = 1;
 			desc.Usage = D3D11_USAGE_DEFAULT;
-			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
 			if (FAILED(device->CreateTexture2D(&desc, nullptr, s_atlas.staticTexture.put())))
 				return fail("static atlas texture creation failed");
 			Util::SetResourceName(s_atlas.staticTexture.get(), "SCM::StaticShadowAtlas");
@@ -347,6 +360,28 @@ namespace ShadowCasterManager
 			if (FAILED(device->CreateDepthStencilView(s_atlas.staticTexture.get(), &dsvDesc, s_atlas.staticDsv.put())))
 				return fail("static atlas DSV creation failed");
 			Util::SetResourceName(s_atlas.staticDsv.get(), "SCM::StaticShadowAtlas DSV");
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			s_atlas.srv->GetDesc(&srvDesc);
+			if (FAILED(device->CreateShaderResourceView(s_atlas.staticTexture.get(), &srvDesc, s_atlas.staticSrv.put())))
+				return fail("static atlas SRV creation failed");
+			Util::SetResourceName(s_atlas.staticSrv.get(), "SCM::StaticShadowAtlas SRV");
+
+			D3D11_DEPTH_STENCIL_DESC depthDesc{};
+			depthDesc.DepthEnable = TRUE;
+			depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+			depthDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			if (FAILED(device->CreateDepthStencilState(&depthDesc, s_atlas.copyDepthState.put())))
+				return fail("static depth copy state creation failed");
+			Util::SetResourceName(s_atlas.copyDepthState.get(), "SCM::ShadowDepthCopy DepthState");
+
+			D3D11_RASTERIZER_DESC rasterizerDesc{};
+			rasterizerDesc.FillMode = D3D11_FILL_SOLID;
+			rasterizerDesc.CullMode = D3D11_CULL_NONE;
+			rasterizerDesc.DepthClipEnable = TRUE;
+			if (FAILED(device->CreateRasterizerState(&rasterizerDesc, s_atlas.copyRasterizerState.put())))
+				return fail("static depth copy rasterizer creation failed");
+			Util::SetResourceName(s_atlas.copyRasterizerState.get(), "SCM::ShadowDepthCopy Rasterizer");
 
 			// Far-depth clear once so never-baked regions read as unshadowed.
 			const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -496,6 +531,7 @@ namespace ShadowCasterManager
 					slot.owner = nullptr;
 					slot.valid = false;
 					slot.staticValid = false;
+					slot.staticCompositePending = false;
 					slot.bakeValid = false;
 				}
 				if (age > 60u)
@@ -535,6 +571,7 @@ namespace ShadowCasterManager
 					// a different light must not advertise the previous owner's shadow.
 					slot.valid = false;
 					slot.staticValid = false;
+					slot.staticCompositePending = false;
 					slot.bakeValid = false;
 					// Reschedule immediately: invalidation alone leaves the slot
 					// dark for its whole redraw interval; the
@@ -705,7 +742,7 @@ namespace ShadowCasterManager
 				if (requester) {
 					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
 					const uint32_t nodeSize = 1u << order;
-					int32_t bestNodeX = -1, bestNodeY = -1;
+					int32_t bestNodeX = -1;
 					double bestNodeCost = 0.0;
 					static std::vector<int32_t> candidateVictims, bestVictims;
 					for (uint32_t nx = 0; nx < cellsPerAxis; nx += nodeSize) {
@@ -771,7 +808,6 @@ namespace ShadowCasterManager
 							if (requester->lastScore > nodeCost * 2.0 &&
 								(bestNodeX < 0 || nodeCost < bestNodeCost)) {
 								bestNodeX = static_cast<int32_t>(nx);
-								bestNodeY = static_cast<int32_t>(ny);
 								bestNodeCost = nodeCost;
 								bestVictims = candidateVictims;
 							}
@@ -814,6 +850,7 @@ namespace ShadowCasterManager
 			// The staged rect has no bake behind it; the composite must not
 			// seed the NEW rect from static content baked at the OLD one.
 			slot.staticValid = false;
+			slot.staticCompositePending = false;
 			slot.escalateFrame = fresh.order < requestedOrder ?
 			                         currentFrame + kAtlasEscalateRetryFrames :
 			                         0;
@@ -840,6 +877,8 @@ namespace ShadowCasterManager
 			slot.pending = {};
 		}
 		if (slot.tile.valid) {
+			if (a_swapComplete)
+				slot.staticCompositePending = false;
 			// Refresh the bake snapshot only when this mark actually rewrote the
 			// sampled rect (swap or first landing); bake/composite no-op marks
 			// must not rebase the snapshot onto depth rastered at an older radius.
@@ -1039,7 +1078,13 @@ namespace ShadowCasterManager
 
 	bool StaticAtlasReady()
 	{
-		return s_atlas.staticReady;
+		return s_atlas.staticReady && s_atlas.copyVS && s_atlas.copyPS;
+	}
+
+	void ClearAtlasShaders()
+	{
+		s_atlas.copyVS.Reset();
+		s_atlas.copyPS.Reset();
 	}
 
 	ID3D11DepthStencilView* StaticAtlasDSV(bool)
@@ -1062,16 +1107,30 @@ namespace ShadowCasterManager
 	void CopyStaticTileToLive(int32_t poolSlot)
 	{
 		AtlasTileTexels t{};
-		if (!s_atlas.staticReady || !GetSlotTileTexels(poolSlot, t))
+		if (!StaticAtlasReady() || !GetSlotTileTexels(poolSlot, t))
 			return;
 		CS_GPU_PASS("SCM::Render::StaticCopy");
 		auto* context = globals::d3d::context;
-		// Unbind first: the static texture is the copy source and may still be
-		// the OM depth target from the bake pass; a resource cannot be both.
+		Util::FullscreenPassScope savedState(context);
+		// Depth-stencil subresources cannot be partially copied with CopySubresourceRegion.
+		context->OMSetRenderTargets(0, nullptr, s_atlas.dsv.get());
+		context->OMSetDepthStencilState(s_atlas.copyDepthState.get(), 0);
+		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		context->RSSetState(s_atlas.copyRasterizerState.get());
+		const D3D11_VIEWPORT viewport{ static_cast<float>(t.x), static_cast<float>(t.y),
+			static_cast<float>(t.size), static_cast<float>(t.size), 0.0f, 1.0f };
+		context->RSSetViewports(1, &viewport);
+		context->IASetInputLayout(nullptr);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		context->VSSetShader(s_atlas.copyVS.get(), nullptr, 0);
+		context->HSSetShader(nullptr, nullptr, 0);
+		context->DSSetShader(nullptr, nullptr, 0);
+		context->GSSetShader(nullptr, nullptr, 0);
+		context->PSSetShader(s_atlas.copyPS.get(), nullptr, 0);
+		auto* source = s_atlas.staticSrv.get();
+		context->PSSetShaderResources(0, 1, &source);
+		context->Draw(3, 0);
 		context->OMSetRenderTargets(0, nullptr, nullptr);
-		D3D11_BOX box{ t.x, t.y, 0, t.x + t.size, t.y + t.size, 1 };
-		context->CopySubresourceRegion(s_atlas.texture.get(), 0, t.x, t.y, 0,
-			s_atlas.staticTexture.get(), 0, &box);
 	}
 
 	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut)
@@ -1088,6 +1147,14 @@ namespace ShadowCasterManager
 		return true;
 	}
 
+	bool SlotStaticCompositePending(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || !StaticAtlasReady() || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		return slot.tile.valid && slot.staticValid && slot.staticCompositePending;
+	}
+
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters)
 	{
 		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
@@ -1095,6 +1162,7 @@ namespace ShadowCasterManager
 			s_atlas.slots[poolSlot].staticValid = true;
 			s_atlas.slots[poolSlot].staticHash = staticHash;
 			s_atlas.slots[poolSlot].staticEmpty = !a_sawCasters;
+			s_atlas.slots[poolSlot].staticCompositePending = a_sawCasters;
 		}
 	}
 
@@ -1111,6 +1179,7 @@ namespace ShadowCasterManager
 			slot.staticValid = false;
 			slot.staticHash = 0;
 			slot.staticEmpty = false;
+			slot.staticCompositePending = false;
 		}
 	}
 }

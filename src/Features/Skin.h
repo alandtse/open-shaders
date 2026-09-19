@@ -32,7 +32,7 @@ struct Skin : Feature
 		return t == RE::BSShader::Type::Lighting;
 	};
 
-	virtual inline bool SupportsVR() { return true; }
+	virtual inline bool SupportsVR() override { return true; }
 
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings panel for Advanced Skin configuration. */

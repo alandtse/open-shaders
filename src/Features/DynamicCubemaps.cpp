@@ -32,19 +32,16 @@ std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetS
 
 void DynamicCubemaps::DrawSettings()
 {
-	if (ImGui::TreeNodeEx(T(TKEY("screen_space_reflections"), "Screen Space Reflections"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		recompileFlag |= ImGui::Checkbox(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), reinterpret_cast<bool*>(&settings.EnabledSSR));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
-		}
-		if (globals::game::isVR)
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
-		ImGui::TreePop();
+	recompileFlag |= Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
 	}
+	if (globals::game::isVR)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
 
-	if (ImGui::TreeNodeEx(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"), ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::TreeNode(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"))) {
 		ImGui::Text("%s", T(TKEY("creator_info"), "You must enable creator mode by adding the shader define CREATOR"));
-		ImGui::Checkbox(T(TKEY("enable_creator"), "Enable Creator"), reinterpret_cast<bool*>(&settings.EnabledCreator));
+		Util::CheckboxFlag(T(TKEY("enable_creator"), "Enable Creator"), settings.EnabledCreator);
 		if (settings.EnabledCreator) {
 			ImGui::ColorEdit3(T(TKEY("color"), "Color"), reinterpret_cast<float*>(&settings.CubemapColor));
 			ImGui::SliderFloat(T(TKEY("roughness"), "Roughness"), &settings.CubemapColor.w, 0.0f, 1.0f, "%.2f");
@@ -254,7 +251,7 @@ bool DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 
-	ID3D11ShaderResourceView* srvs[2] = { depth.depthSRV, main.SRV };
+	ID3D11ShaderResourceView* srvs[2] = { Util::AsReal(depth.depthSRV), Util::AsReal(main.SRV) };
 	context->CSSetShaderResources(0, 2, srvs);
 
 	uint index = a_reflections ? 1 : 0;
@@ -345,7 +342,7 @@ bool DynamicCubemaps::Inferrence(bool a_reflections)
 
 	auto& cubemap = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
 
-	ID3D11ShaderResourceView* srvs[3] = { (a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get(), cubemap.SRV, defaultCubemap };
+	ID3D11ShaderResourceView* srvs[3] = { (a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get(), Util::AsReal(cubemap.SRV), defaultCubemap };
 	context->CSSetShaderResources(0, 3, srvs);
 
 	context->CSSetSamplers(0, 1, &computeSampler);
@@ -430,7 +427,7 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 			for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 				const UINT numGroups = (UINT)std::max(1u, (size + 7u) / 8u);
 
-				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
+				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness, {} };
 				spmapCB->Update(spmapConstants);
 
 				auto uav = a_reflections ? uavReflectionsArray[level - 1] : uavArray[level - 1];
@@ -634,11 +631,11 @@ void DynamicCubemaps::SetupResources()
 
 	{
 		D3D11_TEXTURE2D_DESC texDesc;
-		cubemap.texture->GetDesc(&texDesc);
+		cubemap.texture->GetDesc(Util::AsW32(&texDesc));
 		assert(texDesc.Width == (1u << (MIPLEVELS - 1)));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc;
-		cubemap.SRV->GetDesc(&srvDesc);
+		cubemap.SRV->GetDesc(Util::AsW32(&srvDesc));
 
 		texDesc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 

@@ -223,9 +223,7 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 	swapChainBufferWrapped = newSwapChainBuffer.release();
 	uiBufferWrapped = newUiBuffer.release();
 
-	const float clearColor[4]{};
-	d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
-	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+	ClearWrappedBuffers();
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -412,9 +410,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
-
-	float clearColor[4]{ 0, 0, 0, 0 };
-	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
 	if (SyncInterval == 0)
@@ -679,6 +674,18 @@ void DX12SwapChain::SetColorSpace(bool enableHDR)
 	}
 }
 
+void DX12SwapChain::ClearWrappedBuffers()
+{
+	if (!d3d11Context)
+		return;
+
+	float clearColor[4]{ 0, 0, 0, 0 };
+	if (swapChainBufferWrapped && swapChainBufferWrapped->rtv)
+		d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
+	if (uiBufferWrapped && uiBufferWrapped->rtv)
+		d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+}
+
 DX12SwapChain::BlurResources DX12SwapChain::GetBlurResources() const
 {
 	BlurResources res;
@@ -701,12 +708,12 @@ void DX12SwapChain::CreateSharedResources()
 	// Create depth buffer
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	D3D11_TEXTURE2D_DESC texDesc{};
-	main.texture->GetDesc(&texDesc);
+	main.texture->GetDesc(Util::AsW32(&texDesc));
 	texDesc.Format = DXGI_FORMAT_R32_FLOAT;
 	depthBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::DepthBufferShared");
 
 	// Create motion vector buffer
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
-	motionVector.texture->GetDesc(&texDesc);
+	motionVector.texture->GetDesc(Util::AsW32(&texDesc));
 	motionVectorBufferShared12 = new WrappedResource(texDesc, d3d11Device.get(), d3d12Device.get(), "DX12SwapChain::MotionVectorBufferShared");
 }

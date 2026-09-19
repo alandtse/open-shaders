@@ -75,10 +75,12 @@ public:
 	/**
 	 * @brief Checks whether per-feature profiling can be shown.
 	 *
-	 * Always true while the profiler exists, so the CPU/GPU/Off controls stay
-	 * reachable even before any capture has produced timer results.
+	 * True when an executed GPU pass declared this feature prefix or a legacy
+	 * profiler timer has produced a matching result.
+	 *
+	 * @param featurePrefix The profiler timer name prefix identifying the feature.
 	 */
-	static bool IsFeatureProfilingAvailable();
+	static bool IsFeatureProfilingAvailable(const std::string& featurePrefix);
 
 private:
 	static inline TimingMode timingMode = TimingMode::GPU;
@@ -101,8 +103,6 @@ private:
 		std::vector<PassEntry> passes;
 	};
 	static inline float cachedTotalAvgMs = 0.0f;
-	static inline float cachedTotalP95Ms = 0.0f;
-	static inline float cachedTotalP99Ms = 0.0f;
 	static inline float cachedMaxAvgMs = 0.0f;
 	static inline float cachedMaxP95Ms = 0.0f;
 	static inline float cachedMaxP99Ms = 0.0f;
@@ -156,6 +156,7 @@ private:
 	static void RenderTimingModeToggle();
 	static void SetupTimingTableColumns(float passColumnWidth, bool includePercentColumn);
 	static void RenderGraph();
+	static void UpdateStatistics(bool cpuMode);
 	static std::string GetFeatureTimerPrefix(const std::string& featurePrefix);
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);
 

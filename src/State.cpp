@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
+#include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #if defined(ENABLE_EFFECTS11)
@@ -20,6 +21,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
@@ -30,6 +32,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
+#include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -37,10 +40,9 @@
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
-#include "WeatherManager.h"
-#include "WeatherVariableRegistry.h"
 
 #ifdef TRACY_ENABLE
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
@@ -75,32 +77,71 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 }
 
+void State::UpdatePermutationBuffer()
+{
+	const auto windContribution = globals::features::wind.GetPermutationContribution();
+	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
+	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
+	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
+		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientWindInfluence = windContribution.treeLeafTransientWindInfluenceDefault;
+		permutationData.TreeLeafTransientFlutterMaximum = windContribution.treeLeafTransientFlutterMaximumDefault;
+		permutationData.TreeTransientMaximumBendMultiplier = windContribution.treeTransientMaximumBendMultiplierDefault;
+	}
+	permutationData.TrunkWindBendSensitivity = windContribution.trunkWindBendSensitivity;
+	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
+	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
+	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
+	permutationData.GrassWindBendProfile = windContribution.grassWindBendProfile;
+	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
+	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
+	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
+	if (permutationData != permutationDataPrevious) {
+		permutationCB->Update(permutationData);
+		permutationDataPrevious = permutationData;
+	}
+}
+
+void State::BindVertexPermutationData(const RE::BSShader* a_shader)
+{
+	constexpr UINT kPermutationVertexRegister = 4;
+
+	if (!a_shader)
+		a_shader = currentShader;
+	if (!a_shader || !globals::shaderCache || !globals::shaderCache->IsEnabled() || !globals::d3d::context)
+		return;
+
+	const auto shaderType = a_shader->shaderType.get();
+	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
+		shaderType != RE::BSShader::Type::Grass)
+		return;
+
+	ID3D11Buffer* buffers[] = {
+		permutationCB->CB(),
+		sharedDataCB->CB(),
+		featureDataCB->CB(),
+	};
+	globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
+}
+
 void State::Draw()
 {
 	ZoneScoped;
+	UpdateGrassGpuPass();
+	if (globals::features::sceneManager.loaded)
+		globals::features::sceneManager.Update();
 
 	auto shaderCache = globals::shaderCache;
-	auto weatherManager = globals::weatherManager;
-	auto sceneSettingsManager = globals::sceneSettingsManager;
 	auto& terrainBlending = globals::features::terrainBlending;
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
-	auto& csEditor = globals::features::csEditor;
-	auto& sceneSelector = globals::features::sceneSelector;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
 	auto& volumetricShadows = globals::features::volumetricShadows;
 
 	if (shaderCache->IsEnabled()) {
-		// Process deferred cell transitions (interior detection)
-		sceneSettingsManager->Update();
-
-		if (csEditor.loaded || sceneSelector.loaded) {
-			ZoneScopedN("WeatherManager::UpdateFeatures");
-			weatherManager->UpdateFeatures();
-		}
-
 		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
 			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
@@ -138,10 +179,7 @@ void State::Draw()
 			volumetricShadows.SetShaderResources(context);
 		}
 
-		if (permutationData != permutationDataPrevious) {
-			permutationCB->Update(permutationData);
-			permutationDataPrevious = permutationData;
-		}
+		UpdatePermutationBuffer();
 
 		if (currentShader && updateShader) {
 			if (currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
@@ -156,6 +194,17 @@ void State::Draw()
 			Debug();
 
 		updateShader = false;
+	}
+}
+
+void State::UpdateGrassGpuPass()
+{
+	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
+	if (isGrassDraw) {
+		if (!grassGpuPass)
+			grassGpuPass.emplace("Grass::Draw");
+	} else {
+		grassGpuPass.reset();
 	}
 }
 
@@ -244,9 +293,9 @@ State::TonemapOwner State::GetTonemapOwner()
 bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 #if defined(ENABLE_EFFECTS11)
-	// Vanilla's blend does a compositor handoff for this target that Effects11's own
-	// tonemap replacement doesn't replicate -- must stay on the native path.
-	if (a_output == RE::RENDER_TARGETS::kMENUBG)
+	// VR-only: world-space menus need vanilla's kMENUBG compositor handoff, which
+	// Effects11's tonemap doesn't replicate; flatrim's blur should keep grading.
+	if (globals::game::isVR && a_output == RE::RENDER_TARGETS::kMENUBG)
 		return false;
 
 	if (GetTonemapOwner() != TonemapOwner::kEffects11 ||
@@ -267,7 +316,7 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
 {
 	auto renderer = globals::game::renderer;
 	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
-	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+	globals::d3d::context->OMSetRenderTargets(1, Util::AsReal(&outputRT.RTV), nullptr);
 
 	auto shadowState = globals::game::shadowState;
 	auto applyStateData = [a_output](auto& stateData) {
@@ -294,6 +343,8 @@ void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
  */
 void State::Reset()
 {
+	grassGpuPass.reset();
+
 	// Land staged SKSE API setter writes before features consume settings this frame.
 	CSPluginAPI::ProcessStagedSettings();
 
@@ -333,7 +384,7 @@ void State::Reset()
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
-	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
+	globals::shaderCache->TickActiveShaderCapture(globals::menu->ShouldSwallowInput());
 	globals::shaderCache->ProcessPendingClear();
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
@@ -369,12 +420,6 @@ void State::Setup()
 
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
-
-	// Load per-weather settings after features are setup
-	globals::weatherManager->LoadPerWeatherSettingsFromDisk();
-
-	// Load scene-specific settings (Interior Only, etc.)
-	globals::sceneSettingsManager->LoadAll();
 }
 
 static std::string GetConfigPath(State::ConfigMode a_configMode)
@@ -433,28 +478,9 @@ static bool WriteConfigAtomically(const std::filesystem::path& a_configPath, std
 	return true;
 }
 
-static void SaveUserOverrides(const nlohmann::json& a_settings)
-{
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	for (auto* feature : Feature::GetFeatureList()) {
-		const std::string featureName = feature->GetShortName();
-		const auto featureSettings = a_settings.find(feature->GetName());
-		if (!feature->loaded || !overrideManager->HasFeatureOverrides(featureName) || featureSettings == a_settings.end()) {
-			continue;
-		}
-
-		const json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-		overrideManager->SaveUserOverride(featureName, *featureSettings, overrideSettings);
-	}
-
-	const json globalOverrideSettings = overrideManager->GetMergedOverrideSettings("Global", json::object());
-	if (!globalOverrideSettings.empty()) {
-		overrideManager->SaveUserOverride("Global", a_settings, globalOverrideSettings);
-	}
-}
-
 void State::Load(ConfigMode a_configMode, bool a_allowReload)
 {
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	json settings;
 	bool errorDetected = false;
 
@@ -528,12 +554,13 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 	// Step 3: Discover and prepare overrides (applied after user settings, so overrides take priority)
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
+	overrideManager->CaptureBaseSettings(settings);
 	size_t overridesDiscovered = overrideManager->DiscoverOverrides();
+	if (!overrideManager->CleanupStaleUserOverrides())
+		logger::warn("Could not clean up orphaned user overwrite settings");
 
-	// Cleanup stale user override files (where override hash has changed)
 	if (overridesDiscovered > 0) {
 		logger::info("Discovered {} override files", overridesDiscovered);
-		overrideManager->CleanupStaleUserOverrides();
 
 		// Apply global overrides to main settings
 		size_t globalOverrides = overrideManager->ApplyGlobalOverrides(settings);
@@ -551,22 +578,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		// Load core settings (Menu, Advanced, General, Replace Original Shaders)
 		logger::info("Loading core settings");
 		LoadFromJson(settings);
-		// Ensure 'Disable at Boot' section exists in the JSON
-		if (!settings.contains("Disable at Boot") || !settings["Disable at Boot"].is_object()) {
-			// Initialize to an empty object if it doesn't exist
-			settings["Disable at Boot"] = json::object();
-		}
-
-		json& disabledFeaturesJson = settings["Disable at Boot"];
-		logger::info("Loading 'Disable at Boot' settings");
-
-		for (auto& [featureName, featureStatus] : disabledFeaturesJson.items()) {
-			if (featureStatus.is_boolean()) {
-				disabledFeatures[featureName] = featureStatus.get<bool>();
-			} else {
-				logger::warn("Invalid entry for feature '{}' in 'Disable at Boot', expected boolean.", featureName);
-			}
-		}
 		for (auto* feature : Feature::GetFeatureList()) {
 			try {
 				const std::string featureName = feature->GetShortName();
@@ -578,22 +589,15 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (ec)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
-				if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault()) {
-					disabledFeatures[featureName] = true;
-					logger::info("Feature '{}' is disabled by default", featureName);
-				}
-				bool isDisabled = disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
 					// Load base feature settings from merged config (default + user)
 					feature->Load(settings);
 
-					// Register weather variables (features opt-in by implementing this)
-					feature->RegisterWeatherVariables();
-
 					// Apply feature-specific overrides on top (overrides take priority over user settings)
-					if (overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
+					if (feature->UsesMainSettings() && overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
 						json featureJson;
 						feature->SaveSettings(featureJson);  // Get current settings as JSON
 
@@ -616,8 +620,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 						}
 					}
 
-					// Capture current values as user settings baseline for weather overrides
-					WeatherVariables::GlobalWeatherRegistry::GetSingleton()->CaptureFeatureUserSettings(featureName);
 				} else {
 					logger::info("Feature '{}' is disabled at boot.", featureName);
 				}
@@ -628,6 +630,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
+
+		json appliedSettings;
+		SaveToJson(appliedSettings);
+		overrideManager->CaptureAppliedSettings(appliedSettings);
 
 		if (settings["Version"].is_string() && settings["Version"].get<std::string>() != Plugin::VERSION.string()) {
 			logger::info("Found older config for version {}; upgrading to {}", (std::string)settings["Version"], Plugin::VERSION.string());
@@ -703,6 +709,7 @@ void State::SaveToJson(nlohmann::json& settings)
 		disabledFeaturesJson[featureName] = isDisabled;
 	}
 	settings["Disable at Boot"] = disabledFeaturesJson;
+	settings["Favorites"] = favoriteFeatures;
 
 	settings["Version"] = Plugin::VERSION.string();
 
@@ -713,12 +720,39 @@ void State::SaveToJson(nlohmann::json& settings)
 			feature->Save(settings);
 		}
 	}
+	SceneSettingsManager::GetSingleton()->RestoreBaselinesInSerializedSettings(settings);
 }
 
 void State::LoadFromJson(nlohmann::json& settings)
 {
 	std::lock_guard<std::mutex> lock(m_mutex);
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	const auto shaderCache = globals::shaderCache;
+
+	disabledFeatures.clear();
+	if (const auto disabled = settings.find("Disable at Boot"); disabled != settings.end() && disabled->is_object()) {
+		for (const auto& [featureName, featureStatus] : disabled->items()) {
+			if (featureStatus.is_boolean())
+				disabledFeatures[featureName] = featureStatus.get<bool>();
+			else
+				logger::warn("Invalid entry for feature '{}' in 'Disable at Boot', expected boolean.", featureName);
+		}
+	}
+	for (auto* feature : Feature::GetFeatureList()) {
+		const auto featureName = feature->GetShortName();
+		if (feature->IsAlwaysEnabled())
+			disabledFeatures.erase(featureName);
+		else if (!disabledFeatures.contains(featureName) && feature->IsDisabledByDefault())
+			disabledFeatures[featureName] = true;
+	}
+
+	favoriteFeatures.clear();
+	if (const auto favorites = settings.find("Favorites"); favorites != settings.end() && favorites->is_object()) {
+		for (const auto& [featureName, favorite] : favorites->items()) {
+			if (favorite.is_boolean())
+				favoriteFeatures[featureName] = favorite.get<bool>();
+		}
+	}
 
 	// Load Menu settings
 	if (settings.contains("Menu") && settings["Menu"].is_object()) {
@@ -834,15 +868,25 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 
 	std::string serializedSettings;
+	json effectiveSettings;
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	try {
 		SaveToJson(settings);
+		if (a_configMode == ConfigMode::USER) {
+			effectiveSettings = settings;
+			overrideManager->PrepareUserSettings(settings);
+		}
 		serializedSettings = settings.dump(1);
 	} catch (const std::exception& e) {
 		logger::warn("Failed to serialize settings for {}: {}", configPath, e.what());
 		return;
 	}
 
-	if (!WriteConfigAtomically(configPath, serializedSettings)) {
+	const auto saveConfig = [&] { return WriteConfigAtomically(configPath, serializedSettings); };
+	if (!(a_configMode == ConfigMode::USER && a_isExplicitUserSave ?
+				overrideManager->SaveUserEdits(effectiveSettings, saveConfig) :
+				saveConfig())) {
+		logger::error("Could not save settings and feature overwrites");
 		return;
 	}
 	logger::info("Saving settings to {}", configPath);
@@ -851,7 +895,7 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	// gated) was actually intentional; record it so next boot's disk-cache mismatch
 	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
 	if (a_configMode == ConfigMode::USER) {
-		SaveUserOverrides(settings);
+		overrideManager->CaptureBaseSettings(settings);
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
 
@@ -864,6 +908,57 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 		}
 #endif
 	}
+}
+
+bool State::SaveFeaturePreference(const json& patch)
+{
+	const auto configPath = GetConfigPath(ConfigMode::USER);
+	try {
+		json settings = json::object();
+		if (std::filesystem::exists(configPath)) {
+			std::ifstream input(configPath);
+			input >> settings;
+			if (!settings.is_object())
+				return false;
+		}
+		settings.merge_patch(patch);
+		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
+
+		auto* overrides = SettingsOverrideManager::GetSingleton();
+		const auto serializedSettings = settings.dump(1);
+		if (!overrides->SaveUserEdits(patch, [&] { return WriteConfigAtomically(configPath, serializedSettings); }))
+			return false;
+		return true;
+	} catch (const std::exception& e) {
+		logger::error("Could not save feature preference to {}: {}", configPath, e.what());
+		return false;
+	}
+}
+
+bool State::SetFeatureBootEnabled(const std::string& featureName, bool enabled)
+{
+	if (!SaveFeaturePreference(json{ { "Disable at Boot", { { featureName, !enabled } } } }))
+		return false;
+	SetFeatureDisabled(featureName, !enabled);
+	globals::shaderCache->MarkExpectedFeatureFlip();
+	return true;
+}
+
+bool State::SetFeatureFavorite(const std::string& featureName, bool favorite)
+{
+	const auto* feature = Feature::FindFeatureByShortName(featureName);
+	if (!feature || !feature->IsInMenu() || feature == &globals::features::csEditor)
+		return false;
+	if (!SaveFeaturePreference(json{ { "Favorites", { { featureName, favorite } } } }))
+		return false;
+	favoriteFeatures[featureName] = favorite;
+	return true;
+}
+
+bool State::IsFeatureFavorite(const std::string& featureName) const
+{
+	const auto favorite = favoriteFeatures.find(featureName);
+	return favorite != favoriteFeatures.end() && favorite->second;
 }
 
 bool State::ValidateCache(CSimpleIniA& a_ini)
@@ -928,7 +1023,7 @@ std::vector<std::pair<std::string, std::string>>* State::GetDefines()
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
 	auto index = magic_enum::enum_integer(a_type) + 1;
-	if (index < sizeof(enabledClasses)) {
+	if (index < static_cast<int>(sizeof(enabledClasses))) {
 		return enabledClasses[index];
 	}
 	return false;
@@ -982,8 +1077,8 @@ void State::CheckTypedUAVLoadSupport()
 		const char* usage;
 	};
 	static const FormatEntry kFormats[] = {
-		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) — non-HDR" },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
+		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) - non-HDR" },
+		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Linear Lighting scene decode, Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
 		{ DXGI_FORMAT_R16G16B16A16_UNORM, "R16G16B16A16_UNORM", "Grass Collision (collisionTexture)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
@@ -1047,7 +1142,7 @@ void State::SetupResources()
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD
 	D3D11_TEXTURE2D_DESC texDesc{};
-	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(&texDesc);
+	renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture->GetDesc(Util::AsW32(&texDesc));
 
 	screenSize = float2{ (float)texDesc.Width, (float)texDesc.Height };
 	globals::d3d::context->QueryInterface(__uuidof(pPerf), reinterpret_cast<void**>(&pPerf));
@@ -1160,6 +1255,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= 256;
 			}
+			break;
+		default:
 			break;
 		}
 	}
@@ -1284,6 +1381,21 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.CameraData = Util::GetCameraData();
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
+		{
+			const auto windData = globals::features::wind.GetSharedWindData();
+			data.WindFieldTuning = windData.tuning;
+			data.WindFieldAmbient = windData.ambient;
+			data.WindFieldPreviousAmbient = windData.previousAmbient;
+			data.WindFieldCurrent = windData.current;
+			data.WindFieldPrevious = windData.previous;
+			data.WindFieldTransition = windData.transition;
+			data.WindFieldPreviousTransition = windData.previousTransition;
+			data.WindFieldTransitionData = windData.transitionData;
+			data.WindFieldSpringDebug = windData.springDebug;
+			data.WindFieldActiveCounts = windData.activeCounts;
+			data.WindFieldTransientImpulses = windData.transientImpulses;
+			data.WindFieldPreviousTransientImpulses = windData.previousTransientImpulses;
+		}
 
 		auto temporal = Util::GetTemporal();
 
@@ -1446,6 +1558,12 @@ void State::ClearDisabledFeatures()
 
 bool State::SetFeatureDisabled(const std::string& featureName, bool isDisabled)
 {
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->GetShortName() == featureName && feature->IsAlwaysEnabled()) {
+			disabledFeatures.erase(featureName);
+			return false;
+		}
+	}
 	bool wasPreviouslyDisabled = disabledFeatures.count(featureName) > 0 ? disabledFeatures[featureName] : false;  // Properly check if it exists
 	disabledFeatures[featureName] = isDisabled;
 
@@ -1461,6 +1579,9 @@ bool State::SetFeatureDisabled(const std::string& featureName, bool isDisabled)
 
 bool State::IsFeatureDisabled(const std::string& featureName)
 {
+	for (auto* feature : Feature::GetFeatureList())
+		if (feature->GetShortName() == featureName && feature->IsAlwaysEnabled())
+			return false;
 	return disabledFeatures.contains(featureName) && disabledFeatures[featureName];
 }
 

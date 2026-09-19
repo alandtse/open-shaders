@@ -106,7 +106,7 @@ void LensFlare::DrawSettings()
 
 	// Ghost Settings
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.ghost_settings", "Ghost Settings"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.ghost_settings", "Ghost Settings"));
 	ImGui::Separator();
 
 	{
@@ -173,7 +173,7 @@ void LensFlare::DrawSettings()
 
 	// Halo Settings
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.halo_settings", "Halo Settings"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.halo_settings", "Halo Settings"));
 	ImGui::Separator();
 	ImGui::SliderFloat(T("feature.post_processing.lens_flare.halo_strength", "Halo Strength"), &settings.HaloStrength, 0.0f, 1.0f, "%.3f");
 	ImGui::SliderFloat(T("feature.post_processing.lens_flare.halo_radius", "Halo Radius"), &settings.HaloRadius, 0.0f, 1.0f, "%.3f");
@@ -184,7 +184,7 @@ void LensFlare::DrawSettings()
 
 	// Tint
 	ImGui::Spacing();
-	ImGui::Text(T("feature.post_processing.lens_flare.color_tint", "Color Tint"));
+	ImGui::TextUnformatted(T("feature.post_processing.lens_flare.color_tint", "Color Tint"));
 	ImGui::Separator();
 	ImGui::ColorEdit3(T("feature.post_processing.lens_flare.tint", "Tint"), settings.Tint.data());
 	tooltip("Radial color gradient applied to the flare effect");
@@ -257,7 +257,7 @@ void LensFlare::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC baseDesc;
-		gameTexMainCopy.texture->GetDesc(&baseDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsW32(&baseDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -397,19 +397,11 @@ void LensFlare::CreateFFTTextures(uint resolution)
 void LensFlare::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&thresholdCS, &ghostHaloCS, &blurDownCS, &blurUpCS, &mixCS,
-		&fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &fftMultiplyCS,
-		&bokehPrepareCS, &fftThresholdCS, &fftGhostComposeCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, ghostHaloCS, blurDownCS, blurUpCS, mixCS,
+			fftRowCS, fftColCS, fftRowInvCS, fftColInvCS, fftMultiplyCS,
+			bokehPrepareCS, fftThresholdCS, fftGhostComposeCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LensFlare");

@@ -27,10 +27,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void LUT::DrawSettings()
 {
-	ImGui::TextWrapped(T("feature.post_processing.lut.relative_path_starts_from_game_executable_directory_supports", "Relative path starts from game executable directory. Supports dds/bmp/png format."));
-	ImGui::BulletText(T("feature.post_processing.lut.1d_lut_n_x_1_sized_images", "1D LUT: N x 1 sized images."));
-	ImGui::BulletText(T("feature.post_processing.lut.3d_lut_in_2d_format_n_r_x", "3D LUT in 2D format: N (R) x N (G) sized images, stacked horizontally along blue axis."));
-	ImGui::BulletText(T("feature.post_processing.lut.3d_lut_3d_dds_only", "3D LUT: 3D dds only."));
+	ImGui::TextWrapped("%s", T("feature.post_processing.lut.relative_path_starts_from_game_executable_directory_supports", "Relative path starts from game executable directory. Supports dds/bmp/png format."));
+	ImGui::BulletText("%s", T("feature.post_processing.lut.1d_lut_n_x_1_sized_images", "1D LUT: N x 1 sized images."));
+	ImGui::BulletText("%s", T("feature.post_processing.lut.3d_lut_in_2d_format_n_r_x", "3D LUT in 2D format: N (R) x N (G) sized images, stacked horizontally along blue axis."));
+	ImGui::BulletText("%s", T("feature.post_processing.lut.3d_lut_3d_dds_only", "3D LUT: 3D dds only."));
 
 	ImGui::InputText(T("feature.post_processing.lut.lut_texture_path", "LUT Texture Path"), &tempPath);
 
@@ -47,7 +47,7 @@ void LUT::DrawSettings()
 	}
 
 	if (LutType == -1)
-		ImGui::Text(T("feature.post_processing.lut.loaded_texture_none", "Loaded Texture: None"));
+		ImGui::TextUnformatted(T("feature.post_processing.lut.loaded_texture_none", "Loaded Texture: None"));
 	else
 		ImGui::Text(T("feature.post_processing.lut.loaded_texture", "Loaded Texture: %s"), settings.LutPath.c_str());
 
@@ -113,7 +113,7 @@ void LUT::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(&texDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -226,17 +226,9 @@ void LUT::ReadTexture(std::filesystem::path path)
 void LUT::ClearShaderCache()
 {
 	BumpShaderGeneration();
-	const auto shaderPtrs = std::array{
-		&lutCS
-	};
-
 	{
 		std::lock_guard lock(shaderMutex);
-		for (auto shader : shaderPtrs)
-			if ((*shader)) {
-				(*shader)->Release();
-				shader->detach();
-			}
+		Util::ClearShaders<ID3D11ComputeShader>({ lutCS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LUT");
@@ -246,7 +238,7 @@ void LUT::ClearShaderCache()
 void LUT::CompileComputeShaders()
 {
 	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &lutCS, "lut.cs.hlsl" },
+		{ &lutCS, "lut.cs.hlsl", {} },
 	};
 
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\LUT", shaderInfos);

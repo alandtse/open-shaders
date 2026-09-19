@@ -151,7 +151,6 @@ namespace Util
 
 		Catalog DiscoverFontCatalog();
 		Catalog DiscoverFontCatalog(bool forceRefresh);  // Explicit refresh control
-		std::string FormatFontDisplayName(const std::string& filename);
 
 		[[nodiscard]] const StyleInfo* FindRegularStyle(const FamilyInfo& family);
 		[[nodiscard]] int FindFamilyIndex(const Catalog& catalog, const std::string& familyName);

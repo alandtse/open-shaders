@@ -345,11 +345,8 @@ namespace FrameAnnotations
 	{
 		static void thunk(void* accumulator, uint32_t renderFlags)
 		{
-			globals::state->BeginPerfEvent("Effects");
-
+			CS_GPU_PASS("Effects");
 			func(accumulator, renderFlags);
-
-			globals::state->EndPerfEvent();
 		};
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -406,6 +403,8 @@ namespace FrameAnnotations
 
 	void OnPostPostLoad()
 	{
+		stl::detour_thunk<BSShaderAccumulator_RenderEffects>(REL::RelocationID(99940, 106585));
+
 		if (!globals::state->frameAnnotations)
 			return;
 
@@ -1082,7 +1081,6 @@ namespace FrameAnnotations
 		stl::detour_thunk<Main_RenderWaterEffects>(REL::RelocationID(35561, 36560));
 		stl::detour_thunk<BSShaderAccumulator_RenderBatches>(REL::RelocationID(99963, 106609));
 		stl::detour_thunk<BSShaderAccumulator_RenderPersistentPassList>(REL::RelocationID(100840, 107630));
-		stl::detour_thunk<BSShaderAccumulator_RenderEffects>(REL::RelocationID(99940, 106585));
 	}
 
 	void OnDataLoaded()
@@ -1093,11 +1091,11 @@ namespace FrameAnnotations
 		auto renderer = globals::game::renderer;
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetRenderTargetCount(); ++renderTargetIndex) {
+			renderTargetIndex < static_cast<size_t>(Util::GetRenderTargetCount()); ++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS::RENDER_TARGET>(renderTargetIndex));
 			if (auto texture = renderer->GetRuntimeData().renderTargets[renderTargetIndex].texture) {
-				texture->SetPrivateData(WKPDID_D3DDebugObjectName,
+				texture->SetPrivateData(*Util::AsW32(&WKPDID_D3DDebugObjectName),
 					static_cast<UINT>(renderTargetName.size()), renderTargetName.data());
 			}
 		}
@@ -1108,19 +1106,19 @@ namespace FrameAnnotations
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS_CUBEMAP::RENDER_TARGET_CUBEMAP>(renderTargetIndex));
 			if (auto texture = renderer->GetRendererData().cubemapRenderTargets[renderTargetIndex].texture) {
-				texture->SetPrivateData(WKPDID_D3DDebugObjectName,
+				texture->SetPrivateData(*Util::AsW32(&WKPDID_D3DDebugObjectName),
 					static_cast<UINT>(renderTargetName.size()), renderTargetName.data());
 			}
 		}
 
 		for (size_t renderTargetIndex = 0;
-			renderTargetIndex < Util::GetDepthStencilCount();
+			renderTargetIndex < static_cast<size_t>(Util::GetDepthStencilCount());
 			++renderTargetIndex) {
 			const auto renderTargetName = magic_enum::enum_name(
 				static_cast<RE::RENDER_TARGETS_DEPTHSTENCIL::RENDER_TARGET_DEPTHSTENCIL>(
 					renderTargetIndex));
 			if (auto texture = renderer->GetDepthStencilData().depthStencils[renderTargetIndex].texture) {
-				texture->SetPrivateData(WKPDID_D3DDebugObjectName,
+				texture->SetPrivateData(*Util::AsW32(&WKPDID_D3DDebugObjectName),
 					static_cast<UINT>(renderTargetName.size()), renderTargetName.data());
 			}
 		}

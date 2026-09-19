@@ -1,13 +1,23 @@
 #pragma once
+
+#include "REX/W32/Bridge.h"
 #include <array>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <type_traits>
 #include <winrt/base.h>
 
 namespace Util
 {
+	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
+	// table; re-exported here to keep this codebase's Util:: call sites.
+	using REX::W32::AsReal;
+	using REX::W32::AsW32;
+	using REX::W32::CastTo;
+
 	/**
 	 * @brief ID3DInclude handler resolving #include paths under Data\Shaders,
 	 *        shared by every HLSL compile call site in this codebase.
@@ -92,6 +102,16 @@ namespace Util
 	bool GetTexture2DDesc(ID3D11View* View, D3D11_TEXTURE2D_DESC& OutDesc);
 
 	/**
+	 * @brief Compile an HLSL shader from file and return the compiled bytecode blob.
+	 * @param FilePath Path to the HLSL source file.
+	 * @param Defines Preprocessor macro name/value pairs to pass to the compiler.
+	 * @param ProgramType Shader model target (e.g. "ps_5_0", "vs_5_0", "cs_5_0").
+	 * @param Program Entry point function name (defaults to "main").
+	 * @return The compiled shader bytecode blob, or nullptr on failure.
+	 */
+	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program = "main");
+
+	/**
 	 * @brief Compile an HLSL shader from file and create the appropriate D3D11 shader object.
 	 * @param FilePath Path to the HLSL source file.
 	 * @param Defines Preprocessor macro name/value pairs to pass to the compiler.
@@ -131,6 +151,40 @@ namespace Util
 	 */
 	HRESULT CreateOverlayTextureAndRTV(ID3D11Device* device, int width, int height, ID3D11Texture2D** outTex, ID3D11RenderTargetView** outRTV);
 
+	/**
+	 * @brief Release and null each listed shader com_ptr in one call.
+	 *
+	 * Prefer this over hand-rolling `for (auto ptr : ptrs) ...`: a loop over raw
+	 * pointers-to-com_ptr silently no-ops if a call site forgets to dereference
+	 * (it nulls the loop variable, not the shader). Passing references here
+	 * makes that mistake a compile error instead.
+	 * @param shaders Shader com_ptr members to clear, e.g. `Util::ClearShaders<ID3D11ComputeShader>({ myCS, otherCS })`.
+	 */
+	template <typename T>
+	void ClearShaders(std::initializer_list<std::reference_wrapper<winrt::com_ptr<T>>> shaders)
+	{
+		for (auto& shader : shaders)
+			shader.get() = nullptr;
+	}
+
+	/** @brief Release a raw D3D11 COM pointer if non-null, then null it. */
+	template <typename T>
+	inline void SafeRelease(T*& ptr)
+	{
+		if (ptr) {
+			ptr->Release();
+			ptr = nullptr;
+		}
+	}
+
+	/** @brief SafeRelease every element of a fixed-size array of raw D3D11 COM pointers. */
+	template <typename T, size_t N>
+	inline void SafeReleaseArray(T* (&arr)[N])
+	{
+		for (size_t i = 0; i < N; ++i)
+			SafeRelease(arr[i]);
+	}
+
 	// VR-aware counts for render targets
 	inline int GetRenderTargetCount()
 	{
@@ -167,9 +221,10 @@ namespace Util
 	 *
 	 * The caller does NOT own the returned pointer.
 	 *
-	 * @param prefer16bit When false (default) returns R32_FLOAT for compute shaders doing
-	 *        arithmetic on depth; when true returns R16_UNORM for pixel shaders via
-	 *        slot 17 / SharedData::GetDepth.
+	 * Returns prepass depth until Deferred::DeferredPasses copies the finished opaque
+	 * depth, and that final depth for the rest of the frame.
+	 * @param prefer16bit When true, returns the Terrain Blending R16_UNORM texture during
+	 *        the prepass phase; ignored once the final depth is available.
 	 * @return The depth SRV, or nullptr if unavailable.
 	 */
 	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV(bool prefer16bit = false);

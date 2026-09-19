@@ -47,7 +47,9 @@ struct Feature
 	// True if any restart-gated setting's live value differs from the
 	// boot-latched value. Drives the green "RestartNeeded" tint in the
 	// feature list and the `pending` flag in MCP's `list` response.
-	bool HasAnyPendingRestart() const
+	// Virtual so a feature with a non-settings restart trigger (e.g.
+	// Upscaling's live HMD-size drift) can OR in its own condition.
+	virtual bool HasAnyPendingRestart() const
 	{
 		const auto fields = GetRestartRequiredFields();
 		if (fields.empty())
@@ -176,6 +178,9 @@ public:
 	 * them via the "Disable at Boot" menu.
 	 */
 	virtual bool IsDisabledByDefault() const { return GetReleaseStage() != ReleaseStage::Release; }
+	virtual bool IsAlwaysEnabled() const { return false; }
+	virtual bool UsesMainSettings() const { return true; }
+	virtual bool HasRestoreDefaults() const { return true; }
 
 	/**
 	 * Whether the feature will show up in the GUI menu
@@ -295,6 +300,40 @@ public:
 
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
+
+	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
+	virtual void OnWorldRenderBegin() {}
+
+	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
+	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Called before a post-processing implementation consumes the scene target. */
+	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Called after reflection prepasses; returned cleanup runs after cubemap rendering. */
+	virtual std::function<void()> OnReflectionsRenderBegin() { return nullptr; }
+
+	/** @brief Called after engine weather colors and weather extensions have finished updating. */
+	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
+
+	/**
+	 * @brief Opt-in flag checked once, when the render-pass hook's feature list is built: return
+	 * true to have OnRenderPassBegin() visited for qualifying render passes. Default false keeps
+	 * the common case (a feature with no render-pass-scoped state) off that hot path entirely.
+	 */
+	virtual bool WantsRenderPassHook() const { return false; }
+
+	/**
+	 * @brief Called once per qualifying BSRenderPass, before the engine draws it, for every
+	 * loaded feature that opted in via WantsRenderPassHook(). Lets a feature apply render-pass
+	 * -scoped state (e.g. permutation data) without editing the shared render-pass hooks
+	 * directly -- filter to the passes you care about inside this override.
+	 * @param a_pass The render pass about to be drawn.
+	 * @return An optional cleanup invoked after the pass draws, in reverse registration order
+	 *         (e.g. to restore state this call temporarily overrode). Return nullptr if nothing
+	 *         needs to run afterward.
+	 */
+	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* /*a_pass*/) { return nullptr; }
 
 	/**
 	 * @brief Called during disk-cache shader loading to generate additional shader permutations.
@@ -417,13 +456,6 @@ public:
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const { return {}; }
 
 	/**
-	 * @brief Called during feature initialization to register weather-controllable variables
-	 * Features should register their weather variables here using the WeatherVariables::GlobalWeatherRegistry
-	 * The weather system will automatically handle save/load/lerp for all registered variables
-	 */
-	virtual void RegisterWeatherVariables() {}
-
-	/**
 	 * @brief Returns constraints this feature imposes on other features' settings
 	 *
 	 * Features override this to declare runtime incompatibilities with other features.
@@ -461,6 +493,13 @@ public:
 	static const std::vector<Feature*>& GetFeatureList();
 
 	/**
+	 * @brief The loaded features that opted into OnRenderPassBegin() via WantsRenderPassHook(),
+	 * cached once. Callers on a hot render-pass path should hold this reference across a frame
+	 * rather than calling GetFeatureList() and filtering it themselves each time.
+	 */
+	static const std::vector<Feature*>& GetRenderPassHookFeatures();
+
+	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.
 	 *
 	 * Lazily registers a single LoadingMenu MenuOpenCloseEvent sink. The sink (main thread) only
@@ -486,7 +525,7 @@ public:
 	static Feature* FindRegisteredFeatureByShortName(const std::string& shortName);
 
 	/**
-	 * @brief Gets sorted short names of all loaded features that appear in the menu.
+	 * @brief Gets sorted short names of all loaded features.
 	 *
 	 * @return Sorted vector of short name strings.
 	 */
@@ -526,7 +565,21 @@ public:
 	template <typename Func>
 	static inline void ForEachLoadedFeature(std::string_view methodName, Func&& callback, bool emitGpuZone = false)
 	{
-		for (auto* feature : GetFeatureList()) {
+		ForEachLoadedFeature(GetFeatureList(), methodName, std::forward<Func>(callback), emitGpuZone);
+	}
+
+	/**
+	 * @brief Invokes a callback on every loaded feature in a caller-supplied list (e.g. a cached,
+	 * pre-filtered subset), with the same Tracy profiling as the full-list overload above.
+	 * @param features The features to visit.
+	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
+	 * @param callback Callable receiving a Feature* for each loaded feature.
+	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
+	 */
+	template <typename Func>
+	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false)
+	{
+		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
 				{
@@ -545,6 +598,32 @@ public:
 			}
 		}
 	}
+
+	/** @brief Applies feature render callbacks and runs their cleanup in reverse order on scope exit. */
+	class RenderScope
+	{
+	public:
+		template <typename Func>
+		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback)
+		{
+			ForEachLoadedFeature(a_features, a_methodName, [&](Feature* feature) {
+				if (auto cleanup = a_callback(feature))
+					cleanups.push_back(std::move(cleanup));
+			});
+		}
+
+		RenderScope(const RenderScope&) = delete;
+		RenderScope& operator=(const RenderScope&) = delete;
+
+		~RenderScope()
+		{
+			for (auto it = cleanups.rbegin(); it != cleanups.rend(); ++it)
+				(*it)();
+		}
+
+	private:
+		std::vector<std::function<void()>> cleanups;
+	};
 
 protected:
 	/** Reapplies override-controlled values for the selected top-level setting keys. */

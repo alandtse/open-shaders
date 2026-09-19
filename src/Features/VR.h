@@ -3,6 +3,7 @@
 #include "Menu.h"
 #include "OverlayFeature.h"
 #include "Utils/Input.h"
+#include "VR/DynamicNearClip.h"
 #include "VR/OpenVRDetection.h"  // In Features/VR/
 #include "VRStereoOptimizations.h"
 #include <algorithm>
@@ -102,6 +103,8 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	virtual json GetDiagnostics() override;
+	virtual std::vector<FeatureConstraints::Constraint> GetActiveConstraints() const override;
 
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
@@ -223,6 +226,7 @@ public:
 	eastl::unique_ptr<ConstantBuffer> stereoBlendCB;
 
 	VRStereoOptimizations stereoOpt;
+	VRDynamicNearClip dynamicNearClip;
 
 	struct alignas(16) StereoBlendCB
 	{

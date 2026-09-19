@@ -527,9 +527,11 @@ namespace ShadowCasterManager
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
 	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
 
-	/// Radius and bias snapshot rasterized into a tile depth.
+	/// Sampling parameters belonging to the rendered tile depth.
 	struct ShadowBakeSnapshot
 	{
+		DirectX::XMFLOAT4X4 projection{};
+		DirectX::XMFLOAT4X4 inverseProjection{};
 		float radius = 0.0f;
 		float bias = 0.0f;
 	};
@@ -581,6 +583,9 @@ namespace ShadowCasterManager
 	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
 	/// the baked tile captured zero casters (a blank bake latched valid).
 	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut = nullptr);
+
+	/// True while a nonempty static bake awaits a completed live composite.
+	bool SlotStaticCompositePending(int32_t poolSlot);
 
 	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);

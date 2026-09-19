@@ -37,7 +37,6 @@ using json = nlohmann::json;
  *     ],
  *
  *     "TooltipHoverDelay": 0.5,            // Seconds before tooltip appears
- *     "ShowActionIcons": true,             // Show icons on action buttons
  *     "UseCustomCursor": false,
  *     "Cursor": {
  *       "Scale": 1.0,
@@ -113,7 +112,7 @@ using json = nlohmann::json;
  * BLUR SHADER SYSTEM:
  * ===================
  * Separable Gaussian blur (horizontal + vertical passes) rendered at eighth resolution.
- * Hardcoded intensity (0.04) for consistent appearance. Toggle via BackgroundBlurEnabled.
+ * Rounded window compositing. Toggle via BackgroundBlurEnabled.
  * Based on Unrimp rendering engine: https://github.com/cofenberg/unrimp
  *
  * MIGRATION FROM OLD CONFIGS:
@@ -178,6 +177,7 @@ public:
 		// Header rendering constants
 		static constexpr float HEADER_BASE_TEXT_SCALE = 1.7f;
 		static constexpr float HEADER_BASE_ICON_MULTIPLIER = 1.85f;
+		static constexpr float SIDEBAR_ICON_SIZE_MULTIPLIER = 1.6f;
 		static constexpr float HEADER_FALLBACK_TEXT_SCALE = 1.5f;
 		static constexpr float DOCKED_ICON_SIZE_MULTIPLIER = 1.5f;
 		static constexpr float DOCKED_ICON_SPACING = 8.0f;
@@ -195,7 +195,12 @@ public:
 		static constexpr float SEPARATOR_THICKNESS = 3.0f;
 		static constexpr float UNDOCKED_ICON_ITEM_SPACING = 6.0f;
 		static constexpr float POPUP_BUTTON_WIDTH = 180.0f;
+		static constexpr float DIALOG_RESIZE_RESPONSE = 20.0f;
 		static constexpr float EDITOR_VIEWPORT_BACKGROUND_DIM_ALPHA = 0.35f;  // Extra backdrop dim while the CS Editor viewport is open
+		static constexpr float EDITOR_BROWSER_SIDEBAR_WIDTH = 180.0f;
+		static constexpr float EDITOR_MENU_SIDEBAR_WIDTH = 198.0f;
+		static constexpr float EDITOR_BROWSER_HEADER_PADDING = 8.0f;
+		static constexpr float EDITOR_BROWSER_CHEVRON_SCALE = 0.85f;
 
 		// Feature header constants
 		static constexpr float DEFAULT_FEATURE_TITLE_SCALE = 1.5f;  // Default scale for feature title text
@@ -205,13 +210,24 @@ public:
 		static constexpr float AUTOHIDE_ACTIVATION_ZONE_WIDTH = 50.0f;  // Width of hover zone at left edge (px)
 		static constexpr float AUTOHIDE_EXPAND_DELAY = 0.25f;           // Delay before expanding panel (seconds)
 		static constexpr float AUTOHIDE_PANEL_WIDTH_RATIO = 0.2f;       // Ratio of window width for panel (2/10)
+		static constexpr float SIDEBAR_SLIDE_DURATION = 0.15f;
+		static constexpr float SIDEBAR_ROW_FADE_DURATION = 0.15f;
 
-		// Scene settings panel constants
-		static constexpr float SCENE_VALUE_INPUT_WIDTH = 240.0f;       // Width for float/int value inputs
-		static constexpr float SCENE_DELETE_BUTTON_WIDTH = 40.0f;      // Width for delete (X) buttons
-		static constexpr float SCENE_FEATURE_DROPDOWN_RATIO = 0.45f;   // Feature dropdown width ratio
-		static constexpr float SCENE_SETTING_DROPDOWN_RATIO = 0.6f;    // Setting dropdown width ratio
-		static constexpr float SCENE_VALUE_LABEL_OFFSET_RATIO = 0.5f;  // Value label right-alignment ratio
+		// Scene settings panel constants (multipliers of ImGui::GetFontSize())
+		static constexpr float SCENE_TOD_PARAM_COL_EM = 5.0f;            // Parameter column width (TOD table)
+		static constexpr float SCENE_TOD_PERIOD_COL_EM = 2.6f;           // Per-period column width (TOD table)
+		static constexpr float SCENE_ENTRY_INDENT_EM = 0.4f;             // Indent for setting entries under feature headers
+		static constexpr float SCENE_TOD_FEATURE_TEXT_SCALE = 0.85f;     // Smaller text scale for feature names in TOD table
+		static constexpr int SCENE_SETTING_MAX_LINES = 2;                // Max visible lines for setting names in table rows
+		static constexpr float SCENE_SECTION_HEADER_TARGET_COLS = 4.3f;  // Header width measured in value columns
+		static constexpr float SCENE_ADD_PERIOD_BTN_EM = 1.2f;           // Size of + button in empty period cells
+		static constexpr float SCENE_ADD_DIALOG_WIDTH_EM = 22.0f;        // Width of add-setting dialog
+		static constexpr float SCENE_ADD_LIST_HEIGHT_EM = 12.0f;         // Height of scrollable setting list in dialog
+		static constexpr float FLYOUT_BUTTON_SCALE = 0.8f;               // Button size relative to frame height
+		static constexpr float FLYOUT_TOGGLE_SCALE = 0.7f;               // Toggle icon scale within flyout
+		static constexpr float FLYOUT_REVERT_PAD_SCALE = 0.08f;          // Revert icon inner padding ratio
+
+		static float Em(float multiplier) { return multiplier * ImGui::GetFontSize(); }
 
 		// Search input constants
 		static constexpr float SEARCH_BASELINE_SCREEN_HEIGHT = 1440.0f;  // Search chrome is authored for 2K.
@@ -226,12 +242,6 @@ public:
 		static constexpr float COMBO_SEARCH_ICON_ALPHA = 0.5f;     // Icon alpha for subtle appearance
 		static constexpr float COMBO_SEARCH_ICON_OFFSET_X = 5.0f;  // Icon horizontal offset from input edge
 		static constexpr float COMBO_SEARCH_PADDING_LEFT = 24.0f;  // Left padding to make room for icon
-
-		// Window overlap readability constants
-		static constexpr float OVERLAP_MIN_ALPHA = 0.85f;       // Background alpha when windows overlap
-		static constexpr float OVERLAP_FADEIN_SPEED = 8.0f;     // Fade-in speed (units/sec)
-		static constexpr float OVERLAP_FADEOUT_SPEED = 4.0f;    // Fade-out speed (units/sec)
-		static constexpr float OVERLAP_ALPHA_EPSILON = 0.005f;  // Below this alpha is clamped to zero
 
 		// Status button brightness adjustment offsets. Bright colors are darkened by the same amounts for contrast.
 		static constexpr float BUTTON_MIN_COLOR_CHANNEL = 0.0f;

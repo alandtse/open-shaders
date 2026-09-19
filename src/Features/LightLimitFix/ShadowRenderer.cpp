@@ -9,6 +9,7 @@
 #include "ShadowCasterInternal.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/D3D.h"
 
 // False means no usable descriptors; see the ShadowParam.y sentinel contract
 // below (CopyShadowLightData) for what the caller must do with that.
@@ -19,7 +20,7 @@ static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 		return false;
 
 	auto& desc = lightData.shadowmapDescriptors[0];
-	DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(reinterpret_cast<const DirectX::XMFLOAT4X4*>(&desc.lightTransform));
+	DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(Util::AsReal(&desc.lightTransform));
 	DirectX::XMStoreFloat4x4(&sd.ShadowProj, proj);
 
 	DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
@@ -103,8 +104,8 @@ void LightLimitFix::CopyShadowLightData()
 	ShadowCasterManager::BeginSlotFrame(slots);
 	auto context = globals::d3d::context;
 
-	ID3D11ShaderResourceView* shadowMapsSRV =
-		globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV;
+	ID3D11ShaderResourceView* shadowMapsSRV = Util::AsReal(
+		globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV);
 
 	uint32_t plCount = 0;
 	uint32_t unshadowedLights = 0;
@@ -168,10 +169,14 @@ void LightLimitFix::CopyShadowLightData()
 					if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						ShadowCasterManager::ShadowBakeSnapshot snap{};
 						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
+							snap.projection = sd[depthSlot].ShadowProj;
+							snap.inverseProjection = sd[depthSlot].InvShadowProj;
 							snap.radius = sd[depthSlot].ShadowParam.y;
 							snap.bias = sd[depthSlot].ShadowParam.z;
 							ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
 						} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
+							sd[depthSlot].ShadowProj = snap.projection;
+							sd[depthSlot].InvShadowProj = snap.inverseProjection;
 							sd[depthSlot].ShadowParam.y = snap.radius;
 							sd[depthSlot].ShadowParam.z = snap.bias;
 						}
@@ -183,6 +188,9 @@ void LightLimitFix::CopyShadowLightData()
 					sd[depthSlot].ShadowParam.y = 0.0f;
 				}
 			}
+			// Spotlights require a valid shadow footprint before they can illuminate the scene.
+			if (shadowTypeF == 0.0f && sd[depthSlot].ShadowParam.y == 0.0f)
+				sd[depthSlot].ShadowParam.y = -1.0f;
 			// Name resolved once per NiLight (owner ref, then scenegraph node,
 			// then form ID) to identify the light for the diagnostics table.
 			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;

@@ -1,0 +1,89 @@
+name: "Maint: Warm Linux vcpkg Cache"
+
+# save-cache must stay local, not move into _shared-cross-compile.yaml: a
+# called reusable workflow's whole job graph is checked against the caller's
+# permissions before any job's own `if:` runs, so one actions:write job in
+# that file previously broke every read-only caller with startup_failure.
+
+on:
+    push:
+        branches: [dev]
+        paths:
+            - "vcpkg.json"
+            - "vcpkg-configuration.json"
+            - "cmake/ports/**"
+            - "cmake/ports-linux-clangcl/**"
+            - "cmake/triplets/**"
+            - "extern/CommonLibSSE-NG"
+            - "CMakePresets.json"
+            - ".github/workflows/_shared-cross-compile.yaml"
+            - ".github/workflows/maint-warm-linux-vcpkg-cache.yaml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: warm-linux-vcpkg-cache-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    warm:
+        permissions:
+            contents: read
+        uses: ./.github/workflows/_shared-cross-compile.yaml
+        with:
+            ref: ${{ github.sha }}
+            repository: ${{ github.repository }}
+            cache-write: true
+
+    save-cache:
+        name: Save vcpkg binary cache
+        needs: warm
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: write
+        steps:
+            # Trusted-ref-only checkout: the cache-key hash below must not be
+            # computable from anything a caller's fork-executed code touched.
+            - name: Checkout vcpkg overlay inputs (sparse)
+              uses: actions/checkout@v6
+              with:
+                  path: main
+                  submodules: false
+                  sparse-checkout: |
+                      vcpkg.json
+                      vcpkg-configuration.json
+                      cmake/ports/**
+                      cmake/ports-linux-clangcl/**
+                      cmake/triplets/**
+                      extern/CommonLibSSE-NG
+                  sparse-checkout-cone-mode: false
+                  persist-credentials: false
+
+            # Do not set submodules: recursive above -- it reintroduces a
+            # git/actions-checkout duplicate-Authorization-header bug here.
+            - name: Fetch CommonLibSSE-NG submodule (public repo, unauthenticated)
+              working-directory: main
+              run: |
+                  git config --global --unset-all "http.https://github.com/.extraheader" || true
+                  git config --global --unset-all "url.https://github.com/.insteadOf" || true
+                  git submodule update --init --recursive --depth 1 -- extern/CommonLibSSE-NG
+
+            - name: Download built vcpkg binary packages
+              uses: actions/download-artifact@v4
+              with:
+                  name: vcpkg-binpkgs-linux-clangcl
+                  path: vcpkg_binary_cache
+
+            - name: Verify packages were downloaded
+              run: test -n "$(ls -A vcpkg_binary_cache)"
+
+            - name: Save vcpkg binary cache
+              uses: actions/cache/save@v4
+              with:
+                  path: ${{ github.workspace }}/vcpkg_binary_cache
+                  # No cache-key-suffix: must exactly match _shared-cross-compile.yaml's
+                  # suffixless restore key, or restores silently miss forever.
+                  key: ${{ runner.os }}-vcpkg-binpkgs-x64-windows-clangcl-${{ hashFiles('main/vcpkg.json', 'main/vcpkg-configuration.json', 'main/cmake/ports/**', 'main/cmake/ports-linux-clangcl/**', 'main/cmake/triplets/**', 'main/extern/CommonLibSSE-NG/examples/linux-cross-compile/custom-ports/**', 'main/extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake') }}

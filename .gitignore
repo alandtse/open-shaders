@@ -11,7 +11,7 @@ shadertoolsconfig.json
 **/.DS_Store
 .claude/settings.local.json
 
-tools/__pycache__/
+**/__pycache__/
 
 # Semantic Release's plugin dependencies (CI installs these into the
 # checkout via cycjimmy/semantic-release-action); also produced by a local

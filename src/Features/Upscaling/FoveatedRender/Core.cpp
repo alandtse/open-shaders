@@ -417,9 +417,9 @@ namespace FoveatedRenderImpl::Ops
 		}
 
 		auto context = globals::d3d::context;
-		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-		                     .depthSRV;
+		auto* depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData()
+			.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+			.depthSRV);
 		if (!depthSRV)
 			return false;
 		for (uint32_t i = 0; i < 2; ++i) {
@@ -777,9 +777,9 @@ namespace FoveatedRenderImpl::Ops
 
 	void ClearHMDMaskOnSnapshot(const VRDlssParams& p)
 	{
-		auto* depthSRV = globals::game::renderer->GetDepthStencilData()
-		                     .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
-		                     .depthSRV;
+		auto* depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData()
+				.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+				.depthSRV);
 		if (!Core::vrRenderSBS || !Core::vrRenderSBS->uav || !depthSRV)
 			return;
 		auto& upscaling = globals::features::upscaling;

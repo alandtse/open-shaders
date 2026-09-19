@@ -60,12 +60,17 @@
             "version": "3.27.1"
         },
         {
+            "name": "fmt",
+            "version": "12.2.0",
+            "port-version": 1
+        },
+        {
             "name": "imgui",
             "version": "1.92.6"
         },
         {
             "name": "tracy",
-            "version-string": "0.14.1"
+            "version-string": "0.14.1-a6d16f55"
         },
         {
             "name": "directx-headers",

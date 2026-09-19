@@ -55,6 +55,39 @@ namespace LegacyGraphicsCompatibility
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		// VR's call site already multiplies by the dynamic-resolution ratio (like 1.7.99+), so
+		// scaling it again here would double-scale the shadow-mask scissor rect.
+		struct ShadowBounds_SetViewport
+		{
+			static void thunk(
+				RE::BSGraphics::Renderer* a_renderer,
+				std::int32_t a_left,
+				std::int32_t a_top,
+				std::int32_t a_right,
+				std::int32_t a_bottom)
+			{
+				if (!globals::game::isVR) {
+					auto& runtimeData = globals::game::graphicsState->GetRuntimeData();
+					const float widthRatio = runtimeData.dynamicResolutionLock ? 1.0f : runtimeData.dynamicResolutionWidthRatio;
+					const float heightRatio = runtimeData.dynamicResolutionLock ? 1.0f : runtimeData.dynamicResolutionHeightRatio;
+
+					// Truncate each edge independently, matching the per-edge CVTTSS2SI the engine emits.
+					a_left = static_cast<std::int32_t>(static_cast<float>(a_left) * widthRatio);
+					a_right = static_cast<std::int32_t>(static_cast<float>(a_right) * widthRatio);
+					a_top = static_cast<std::int32_t>(static_cast<float>(a_top) * heightRatio);
+					a_bottom = static_cast<std::int32_t>(static_cast<float>(a_bottom) * heightRatio);
+				}
+
+				const auto width = std::bit_cast<std::int32_t>(
+					static_cast<std::uint32_t>(a_right) - static_cast<std::uint32_t>(a_left));
+				const auto height = std::bit_cast<std::int32_t>(
+					static_cast<std::uint32_t>(a_bottom) - static_cast<std::uint32_t>(a_top));
+				func(a_renderer, a_left, a_top, width, height);
+			}
+
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		class ScopedCameraProjectionScale
 		{
 		public:
@@ -454,6 +487,21 @@ namespace LegacyGraphicsCompatibility
 			logger::info("Installed legacy AlphaBlend bounds-to-extents adapter");
 		}
 
+		void InstallShadowBoundsExtentsAdapter()
+		{
+			const auto callSite = REL::RelocationID(100979, 107762).address() + REL::Relocate(0x3B5, 0x360, 0x49B);
+			const auto expectedTarget = REL::RelocationID(75564, 77365).address();
+			constexpr auto callPattern = REL::make_pattern<"E8 ?? ?? ?? ??">();
+			if (!REL::verify_code(callSite, callPattern) || ReadRelativeCallTarget(callSite) != expectedTarget) {
+				logger::error("Legacy shadow bounds viewport call does not match the verified 1.5.97/1.6.1170/1.4.15 binary; adapter not installed");
+				return;
+			}
+
+			ShadowBounds_SetViewport::func = expectedTarget;
+			SKSE::GetTrampoline().write_call<5>(callSite, ShadowBounds_SetViewport::thunk);
+			logger::info("Installed legacy shadow bounds-to-extents adapter");
+		}
+
 		void InstallStateCameraProjectionAdapter()
 		{
 			const auto updateJitter = REL::RelocationID(75709, 77518).address();
@@ -502,20 +550,16 @@ namespace LegacyGraphicsCompatibility
 		{
 			const auto setupAddress = REL::RelocationID(101564, 108562).address();
 			const auto shutdownAddress = REL::RelocationID(101562, 108560).address();
-			// SE/VR fold the destructor's stage-loop body into shutdown()'s; only AE
-			// keeps a distinct body, hence reusing shutdown's id (101562) here for SE/VR.
-			const auto destructorAddress = REL::RelocationID(101562, 108568).address();
+			const auto destructorAddress = REL::RelocationID(101570, 108568).address();
 			constexpr auto setupContext = REL::make_pattern<
 				"48 8B EA 48 8B D9 BA 0A 00 00 00 E8 ?? ?? ?? ??">();
 			constexpr auto shutdownContext = REL::make_pattern<
 				"48 89 2C 06 FF C7 83 FF 0A 7C AF">();
 			constexpr auto destructorContext = REL::make_pattern<
 				"4C 89 34 06 FF C7 83 FF 0A 7C AF">();
-			const bool destructorSharesShutdownBody = destructorAddress == shutdownAddress;
 			if (!REL::verify_code(setupAddress + 0x24, setupContext) ||
 				!REL::verify_code(shutdownAddress + 0x86, shutdownContext) ||
-				(!destructorSharesShutdownBody &&
-					!REL::verify_code(destructorAddress + 0x86, destructorContext))) {
+				!REL::verify_code(destructorAddress + 0x86, destructorContext)) {
 				logger::error("Legacy FullScreenBlur stage-count opcode contexts do not match the verified 1.5.97/1.6.1170 sequences; no blur adapters installed");
 				return false;
 			}
@@ -633,6 +677,7 @@ namespace LegacyGraphicsCompatibility
 
 		detail::InstallShaderAdapters();
 		InstallAlphaBlendExtentsAdapter();
+		InstallShadowBoundsExtentsAdapter();
 		InstallStateCameraProjectionAdapter();
 		(void)InstallFullScreenBlurAdapters();
 		InstallShadowSceneNodeInitialization();

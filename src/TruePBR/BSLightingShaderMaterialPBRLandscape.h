@@ -112,9 +112,15 @@ public:
 
 	std::array<GlintParameters, NumTiles> glintParameters;
 };
+
+// offsetof on these non-standard-layout (vtable-having) types is the established
+// CommonLibVR idiom for layout verification (see its own -Wno-invalid-offsetof).
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Winvalid-offsetof"
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, terrainOverlayTexture) == offsetof(RE::BSLightingShaderMaterialLandscape, terrainOverlayTexture));
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, terrainNoiseTexture) == offsetof(RE::BSLightingShaderMaterialLandscape, terrainNoiseTexture));
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, landBlendParams) == offsetof(RE::BSLightingShaderMaterialLandscape, landBlendParams));
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, terrainTexOffsetX) == offsetof(RE::BSLightingShaderMaterialLandscape, terrainTexOffsetX));
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, terrainTexOffsetY) == offsetof(RE::BSLightingShaderMaterialLandscape, terrainTexOffsetY));
 static_assert(offsetof(BSLightingShaderMaterialPBRLandscape, terrainTexFade) == offsetof(RE::BSLightingShaderMaterialLandscape, terrainTexFade));
+#pragma clang diagnostic pop

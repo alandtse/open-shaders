@@ -62,6 +62,7 @@ struct PerfMode
 	// an explicit vrRenderScale). DLSS dispatch uses this, not the live preset.
 	uint32_t GetLatchedQualityMode() const { return latchedQualityMode; }
 	bool IsExplicitScaleLatched() const { return explicitScaleLatched; }
+	bool IsDisplaySizeChanged() const { return displaySizeChanged; }
 
 	// Phase 3: real HMD display resolution in SBS format (e.g. 3072×1632)
 	// Used by Upscaling pipeline to override polluted screenSize (which equals RenderRes after hook)
@@ -170,6 +171,10 @@ private:
 	uint32_t renderEyeHeight = 0;
 	uint32_t latchedQualityMode = 0;
 	bool explicitScaleLatched = false;
+	bool displaySizeChanged = false;
+	bool hookBaselineCaptured = false;
+	uint32_t hookBaselineEyeWidth = 0;
+	uint32_t hookBaselineEyeHeight = 0;
 
 	// Phase 2: vtable hook for BSOpenVR::GetRenderTargetSize (vfunc 0x12)
 	struct GetRenderTargetSize_Hook
@@ -229,7 +234,7 @@ private:
 	bool isCopyHookInstalled = false;
 
 	// UI pass hook: FinishAccumulatingDispatch (vfunc 0x2A on BSShaderAccumulator)
-	// When renderMode==24 (UI pass), swaps KMAIN DS → fakeDS so 3k kMENUBG gets 3k depth.
+	// On kVRWorldSpaceUIPass, swaps KMAIN DS → fakeDS so 3k kMENUBG gets 3k depth.
 	struct UIPassDispatch_Hook
 	{
 		static void thunk(RE::BSGraphics::BSShaderAccumulator* shaderAccumulator, uint32_t renderFlags);

@@ -64,6 +64,9 @@ public:
 	 */
 	void OnSkyUpdateColors(RE::Sky* sky);
 
+	/** @brief Returns sun/Masser/Secunda transition weights, or nullopt when synchronization is inactive. */
+	std::optional<float3> GetCelestialLightWeights() const;
+
 	/** @brief Installs rendering hooks and detects conflicting mods after plugin load. */
 	virtual void PostPostLoad() override;
 	/** @brief Checks for conflicting ESP files after game data is loaded. */
@@ -108,13 +111,12 @@ private:
 		Count
 	};
 
-	const char* MoonLightSourceNames[static_cast<uint8_t>(MoonLightSource::Count)] = { "Brightest", "Masser", "Secunda" };
-	const char* SunPathNames[static_cast<uint8_t>(SunPath::Count)] = { "Southern Sky", "Northern Sky", "Vanilla", "Custom" };
-
 	struct ShadowFader
 	{
 		RE::NiPoint3 currentDir = { 0.0f, 0.0f, 1.0f };
 		RE::NiPoint3 startDir = { 0.0f, 0.0f, 1.0f };
+		float3 lightWeights = { 1.0f, 0.0f, 0.0f };
+		float3 startLightWeights = { 1.0f, 0.0f, 0.0f };
 		Caster target = Caster::Sun;
 		Caster previousTarget = Caster::Sun;
 		float fadeTimer = 0.0f;
@@ -163,6 +165,7 @@ private:
 	bool sunSetting = false;
 	bool sunRising = false;
 	bool sunBelowHorizon = false;
+	bool celestialLightingValid = false;
 	ShadowFader shadowFader;
 
 	void DisableOnConflict(std::string_view conflictName);
