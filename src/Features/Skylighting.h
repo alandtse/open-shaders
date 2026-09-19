@@ -57,6 +57,7 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		bool EnableFastProbeSampling = false;
 	} settings;
 
 	struct SkylightingCB
@@ -72,7 +73,8 @@ public:
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		uint EnableFastProbeSampling;
+		uint _pad2;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
