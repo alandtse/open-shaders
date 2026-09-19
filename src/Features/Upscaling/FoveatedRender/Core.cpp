@@ -989,6 +989,287 @@ namespace FoveatedRenderImpl::Ops
 
 namespace FoveatedRenderImpl
 {
+	namespace
+	{
+		struct alignas(16) AdaptiveCropHandoffConstants
+		{
+			uint32_t colorWidth = 0;
+			uint32_t colorHeight = 0;
+			uint32_t guideWidth = 0;
+			uint32_t guideHeight = 0;
+			float motionScaleX = 0.5f;
+			float motionScaleY = 1.0f;
+			float blendAlpha = 1.0f;
+			float depthThreshold = 0.05f;
+			uint32_t historyValid = 0;
+			uint32_t useDepth = 0;
+			uint32_t useMotion = 0;
+			uint32_t padding = 0;
+		};
+		static_assert(sizeof(AdaptiveCropHandoffConstants) == 48);
+
+		bool GetTextureDesc(ID3D11Resource* resource, D3D11_TEXTURE2D_DESC& desc)
+		{
+			if (!resource)
+				return false;
+			winrt::com_ptr<ID3D11Texture2D> texture;
+			if (FAILED(resource->QueryInterface(IID_PPV_ARGS(texture.put()))))
+				return false;
+			texture->GetDesc(&desc);
+			return true;
+		}
+
+		bool EnsureResourceSRV(ID3D11Resource* resource,
+			winrt::com_ptr<ID3D11ShaderResourceView>& srv, ID3D11Resource*& owner,
+			const char* name)
+		{
+			if (!resource || !globals::d3d::device)
+				return false;
+			if (owner == resource && srv)
+				return true;
+
+			srv = nullptr;
+			owner = nullptr;
+			D3D11_TEXTURE2D_DESC desc{};
+			if (!GetTextureDesc(resource, desc))
+				return false;
+			D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+			viewDesc.Format = desc.Format;
+			viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			viewDesc.Texture2D.MipLevels = 1;
+			if (FAILED(globals::d3d::device->CreateShaderResourceView(resource, &viewDesc, srv.put())))
+				return false;
+			Util::SetResourceName(srv.get(), name);
+			owner = resource;
+			return true;
+		}
+
+		bool EnsureAdaptiveCropColorResources(ID3D11Resource* color, uint32_t width, uint32_t height)
+		{
+			D3D11_TEXTURE2D_DESC sourceDesc{};
+			if (!GetTextureDesc(color, sourceDesc))
+				return false;
+			const bool shapeMatches = Core::vrAdaptiveCropHistory[0] && Core::vrAdaptiveCropHistory[1] &&
+				Core::vrAdaptiveCropTarget && Core::vrAdaptiveCropHistoryW == width &&
+				Core::vrAdaptiveCropHistoryH == height &&
+				Core::vrAdaptiveCropHistory[0]->desc.Format == sourceDesc.Format &&
+				Core::vrAdaptiveCropTarget->desc.Format == sourceDesc.Format;
+			if (shapeMatches)
+				return true;
+
+			Core::vrAdaptiveCropHistory[0] = Ops::CreateTextureFromSource(
+				color, width, height, false, true, true, "FoveatedRender::AdaptiveCropHistoryA");
+			Core::vrAdaptiveCropHistory[1] = Ops::CreateTextureFromSource(
+				color, width, height, false, true, true, "FoveatedRender::AdaptiveCropHistoryB");
+			Core::vrAdaptiveCropTarget = Ops::CreateTextureFromSource(
+				color, width, height, false, true, true, "FoveatedRender::AdaptiveCropTarget");
+			if (!Core::vrAdaptiveCropHistory[0] || !Core::vrAdaptiveCropHistory[1] ||
+				!Core::vrAdaptiveCropTarget || !Core::vrAdaptiveCropHistory[0]->srv ||
+				!Core::vrAdaptiveCropTarget->uav)
+				return false;
+
+			Core::vrAdaptiveCropHistoryW = width;
+			Core::vrAdaptiveCropHistoryH = height;
+			Core::vrAdaptiveCropFrameIdx = 0;
+			Core::vrAdaptiveCropHistoryValid = false;
+			return true;
+		}
+
+		bool EnsureAdaptiveCropDepthResources(uint32_t width, uint32_t height)
+		{
+			if (Core::vrAdaptiveCropDepthHistory[0] && Core::vrAdaptiveCropDepthHistory[1] &&
+				Core::vrAdaptiveCropGuideW == width && Core::vrAdaptiveCropGuideH == height)
+				return true;
+
+			for (uint32_t index = 0; index < 2; ++index) {
+				D3D11_TEXTURE2D_DESC desc{};
+				desc.Width = width;
+				desc.Height = height;
+				desc.MipLevels = 1;
+				desc.ArraySize = 1;
+				desc.Format = DXGI_FORMAT_R32_FLOAT;
+				desc.SampleDesc.Count = 1;
+				desc.Usage = D3D11_USAGE_DEFAULT;
+				desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+				Core::vrAdaptiveCropDepthHistory[index] = eastl::make_unique<Texture2D>(
+					desc, index == 0 ? "FoveatedRender::AdaptiveCropDepthA" : "FoveatedRender::AdaptiveCropDepthB");
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+				srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				srvDesc.Texture2D.MipLevels = 1;
+				Core::vrAdaptiveCropDepthHistory[index]->CreateSRV(srvDesc);
+				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+				uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+				Core::vrAdaptiveCropDepthHistory[index]->CreateUAV(uavDesc);
+			}
+
+			Core::vrAdaptiveCropGuideW = width;
+			Core::vrAdaptiveCropGuideH = height;
+			Core::vrAdaptiveCropHistoryValid = false;
+			return true;
+		}
+
+		bool EnsureAdaptiveCropHandoffPipeline()
+		{
+			if (!Core::vrAdaptiveCropHandoffCS) {
+				Core::vrAdaptiveCropHandoffCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(
+					L"Data\\Shaders\\Upscaling\\NeuralRendering\\AdaptiveCropHandoffCS.hlsl", {}, "cs_5_0")));
+				if (!Core::vrAdaptiveCropHandoffCS)
+					return false;
+				Util::SetResourceName(Core::vrAdaptiveCropHandoffCS.get(), "FoveatedRender::AdaptiveCropHandoffCS");
+			}
+			if (!Core::vrAdaptiveCropHandoffCB) {
+				D3D11_BUFFER_DESC desc{};
+				desc.ByteWidth = sizeof(AdaptiveCropHandoffConstants);
+				desc.Usage = D3D11_USAGE_DYNAMIC;
+				desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+				desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+				if (FAILED(globals::d3d::device->CreateBuffer(&desc, nullptr, Core::vrAdaptiveCropHandoffCB.put())))
+					return false;
+				Util::SetResourceName(Core::vrAdaptiveCropHandoffCB.get(), "FoveatedRender::AdaptiveCropHandoffCB");
+			}
+			if (!Core::vrAdaptiveCropHandoffSampler) {
+				D3D11_SAMPLER_DESC desc{};
+				desc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+				desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+				desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+				desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+				if (FAILED(globals::d3d::device->CreateSamplerState(&desc, Core::vrAdaptiveCropHandoffSampler.put())))
+					return false;
+				Util::SetResourceName(Core::vrAdaptiveCropHandoffSampler.get(), "FoveatedRender::AdaptiveCropHandoffSampler");
+			}
+			return true;
+		}
+
+		bool SnapshotAdaptiveCropDepth(ID3D11Resource* depth, uint32_t width, uint32_t height, uint32_t index)
+		{
+			if (!depth || !Core::vrAdaptiveCropDepthHistory[index] ||
+				!Core::vrAdaptiveCropDepthHistory[index]->uav)
+				return false;
+			return Ops::CopyDepthRegionToTexture(depth, nullptr,
+				Core::vrAdaptiveCropDepthHistory[index]->uav.get(), 0, 0, width, height);
+		}
+	}
+
+	bool Core::ApplyAdaptiveCropHandoff(ID3D11Resource* color,
+		ID3D11Resource* depth, ID3D11Resource* motionVectors)
+	{
+		auto& foveated = globals::features::upscaling.foveatedRender;
+		if (!foveated.IsAdaptiveCropRuntimeActive() || !color || !globals::d3d::device || !globals::d3d::context)
+			return false;
+
+		D3D11_TEXTURE2D_DESC colorDesc{};
+		if (!GetTextureDesc(color, colorDesc) || colorDesc.Width == 0 || colorDesc.Height == 0 ||
+			colorDesc.ArraySize != 1 || colorDesc.MipLevels != 1 || colorDesc.SampleDesc.Count != 1)
+			return false;
+
+		D3D11_TEXTURE2D_DESC guideDesc{};
+		const bool haveDepth = GetTextureDesc(depth, guideDesc);
+		if (!haveDepth && !GetTextureDesc(motionVectors, guideDesc)) {
+			guideDesc.Width = colorDesc.Width;
+			guideDesc.Height = colorDesc.Height;
+		}
+		if (!EnsureAdaptiveCropColorResources(color, colorDesc.Width, colorDesc.Height) ||
+			!EnsureAdaptiveCropDepthResources(guideDesc.Width, guideDesc.Height) ||
+			!EnsureResourceSRV(color, Core::vrAdaptiveCropColorSRV, Core::vrAdaptiveCropColorSRVOwner,
+				"FoveatedRender::AdaptiveCropColorSRV"))
+			return false;
+
+		if (!motionVectors) {
+			Core::vrAdaptiveCropMotionSRV = nullptr;
+			Core::vrAdaptiveCropMotionSRVOwner = nullptr;
+		} else if (!EnsureResourceSRV(motionVectors, Core::vrAdaptiveCropMotionSRV,
+			Core::vrAdaptiveCropMotionSRVOwner, "FoveatedRender::AdaptiveCropMotionSRV")) {
+			Core::vrAdaptiveCropMotionSRV = nullptr;
+			Core::vrAdaptiveCropMotionSRVOwner = nullptr;
+		}
+		const bool haveMotion = Core::vrAdaptiveCropMotionSRV != nullptr;
+		auto* context = globals::d3d::context;
+		const uint32_t readIndex = Core::vrAdaptiveCropFrameIdx & 1u;
+		const uint32_t writeIndex = readIndex ^ 1u;
+		if (!Core::vrAdaptiveCropHistoryValid) {
+			context->CopyResource(Core::vrAdaptiveCropHistory[writeIndex]->resource.get(), color);
+			if (haveDepth)
+				SnapshotAdaptiveCropDepth(depth, guideDesc.Width, guideDesc.Height, writeIndex);
+			Core::vrAdaptiveCropHistoryValid = true;
+			++Core::vrAdaptiveCropFrameIdx;
+			return true;
+		}
+
+		const float blendAlpha = foveated.IsAdaptiveCropTransitioning() ?
+			foveated.adaptiveCropController.HandoffAlpha() : 1.0f;
+		if (blendAlpha >= 0.999f || !EnsureAdaptiveCropHandoffPipeline()) {
+			context->CopyResource(Core::vrAdaptiveCropHistory[writeIndex]->resource.get(), color);
+			if (haveDepth)
+				SnapshotAdaptiveCropDepth(depth, guideDesc.Width, guideDesc.Height, writeIndex);
+			++Core::vrAdaptiveCropFrameIdx;
+			return blendAlpha >= 0.999f;
+		}
+
+		bool useDepth = haveDepth && Core::vrAdaptiveCropDepthHistory[writeIndex] &&
+			Core::vrAdaptiveCropDepthHistory[writeIndex]->uav &&
+			Core::vrAdaptiveCropDepthHistory[readIndex] && Core::vrAdaptiveCropDepthHistory[readIndex]->srv;
+		if (useDepth)
+			useDepth = SnapshotAdaptiveCropDepth(depth, guideDesc.Width, guideDesc.Height, writeIndex);
+
+		AdaptiveCropHandoffConstants constants{};
+		constants.colorWidth = colorDesc.Width;
+		constants.colorHeight = colorDesc.Height;
+		constants.guideWidth = guideDesc.Width;
+		constants.guideHeight = guideDesc.Height;
+		constants.blendAlpha = std::clamp(blendAlpha, 0.05f, 1.0f);
+		constants.historyValid = 1;
+		constants.useDepth = useDepth ? 1u : 0u;
+		constants.useMotion = haveMotion ? 1u : 0u;
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (FAILED(context->Map(Core::vrAdaptiveCropHandoffCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped)) || !mapped.pData)
+			return false;
+		std::memcpy(mapped.pData, &constants, sizeof(constants));
+		context->Unmap(Core::vrAdaptiveCropHandoffCB.get(), 0);
+
+		CS_GPU_PASS("FoveatedRender::AdaptiveCropHandoff");
+		context->CSSetShader(Core::vrAdaptiveCropHandoffCS.get(), nullptr, 0);
+		ID3D11Buffer* constantBuffers[] = { Core::vrAdaptiveCropHandoffCB.get() };
+		context->CSSetConstantBuffers(0, 1, constantBuffers);
+		ID3D11ShaderResourceView* shaderResources[] = {
+			Core::vrAdaptiveCropColorSRV.get(),
+			Core::vrAdaptiveCropHistory[readIndex]->srv.get(),
+			useDepth ? Core::vrAdaptiveCropDepthHistory[writeIndex]->srv.get() : nullptr,
+			useDepth ? Core::vrAdaptiveCropDepthHistory[readIndex]->srv.get() : nullptr,
+			Core::vrAdaptiveCropMotionSRV.get()
+		};
+		context->CSSetShaderResources(0, 5, shaderResources);
+		ID3D11SamplerState* samplers[] = { Core::vrAdaptiveCropHandoffSampler.get() };
+		context->CSSetSamplers(0, 1, samplers);
+		ID3D11UnorderedAccessView* uavs[] = { Core::vrAdaptiveCropTarget->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->Dispatch((colorDesc.Width + 7) / 8, (colorDesc.Height + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[5]{};
+		ID3D11UnorderedAccessView* nullUAVs[1]{};
+		ID3D11Buffer* nullCBs[1]{};
+		ID3D11SamplerState* nullSamplers[1]{};
+		context->CSSetShaderResources(0, 5, nullSRVs);
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+		context->CSSetConstantBuffers(0, 1, nullCBs);
+		context->CSSetSamplers(0, 1, nullSamplers);
+		context->CSSetShader(nullptr, nullptr, 0);
+
+		context->CopyResource(Core::vrAdaptiveCropHistory[writeIndex]->resource.get(), Core::vrAdaptiveCropTarget->resource.get());
+		context->CopyResource(color, Core::vrAdaptiveCropTarget->resource.get());
+		++Core::vrAdaptiveCropFrameIdx;
+		return true;
+	}
+
+	void Core::ResetAdaptiveCropHandoff()
+	{
+		Core::vrAdaptiveCropFrameIdx = 0;
+		Core::vrAdaptiveCropHistoryValid = false;
+		Core::vrAdaptiveCropDepthSource = nullptr;
+		Core::vrAdaptiveCropMotionSource = nullptr;
+	}
+
 	bool Core::PrepareVRPerEyeInputs(
 		ID3D11Resource* colorSrc,
 		ID3D11Resource* depthSrc,
@@ -1040,7 +1321,10 @@ namespace FoveatedRenderImpl
 
 			vrTemporalHistory[i].reset();
 			vrFasterColorOut[i].reset();
+			vrAdaptiveCropHistory[i].reset();
+			vrAdaptiveCropDepthHistory[i].reset();
 		}
+		vrAdaptiveCropTarget.reset();
 		vrSubrectInW = vrSubrectInH = vrSubrectOutW = vrSubrectOutH = 0;
 
 		vrRenderSBS.reset();
@@ -1059,6 +1343,15 @@ namespace FoveatedRenderImpl
 
 		vrBlendSrcSRV = nullptr;
 		vrBlendSrcSRVOwner = nullptr;
+		vrAdaptiveCropColorSRV = nullptr;
+		vrAdaptiveCropColorSRVOwner = nullptr;
+		vrAdaptiveCropMotionSRV = nullptr;
+		vrAdaptiveCropMotionSRVOwner = nullptr;
+		vrAdaptiveCropHistoryW = vrAdaptiveCropHistoryH = 0;
+		vrAdaptiveCropGuideW = vrAdaptiveCropGuideH = 0;
+		vrAdaptiveCropDepthSource = nullptr;
+		vrAdaptiveCropMotionSource = nullptr;
+		ResetAdaptiveCropHandoff();
 
 		activeSubrectUVHash = 0;
 		neuralGuidesFrame = UINT32_MAX;
@@ -1072,6 +1365,9 @@ namespace FoveatedRenderImpl
 		vrTemporalFrameIdx = 0;
 		vrTemporalHistoryValid = false;
 		neuralGuidesFrame = UINT32_MAX;
+		if (!globals::features::upscaling.foveatedRender.IsAdaptiveCropRuntimeActive() ||
+			!globals::features::upscaling.foveatedRender.IsAdaptiveCropTransitioning())
+			ResetAdaptiveCropHandoff();
 		NeuralRendering::ResetHistory();
 	}
 
@@ -1089,5 +1385,8 @@ namespace FoveatedRenderImpl
 
 		vrSubrectBlendCS = nullptr;
 		vrSubrectBlendCB = nullptr;
+		vrAdaptiveCropHandoffCS = nullptr;
+		vrAdaptiveCropHandoffCB = nullptr;
+		vrAdaptiveCropHandoffSampler = nullptr;
 	}
 }

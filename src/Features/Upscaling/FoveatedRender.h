@@ -23,8 +23,11 @@
 
 #include "../../Utils/BootSnapshot.h"
 #include "../../Utils/Subrect.h"
+#include "NeuralRendering/AdaptiveController.h"
+#include "NeuralRendering/AdaptiveCropController.h"
 
 #include <chrono>
+#include <cstdint>
 
 struct FoveatedRender
 {
@@ -125,6 +128,30 @@ struct FoveatedRender
 		// 2 = three sequential Feature 18 evaluations. Runtime-gated away from
 		// pre-upscale and cropped VR paths.
 		uint neuralRenderingMultiPass = 0;
+		// Opt-in in-game adaptive resolution test. The controller uses native
+		// single-pass NR in either Full Eye or the selected foveated crop and uses
+		// the refresh rate to derive its 2:1 application budget.
+		bool neuralRenderingAdaptiveEnabled = false;
+		uint neuralRenderingAdaptiveRefreshHz = 80;
+		// Zero derives the application budget from headset refresh; otherwise use
+		// an explicit 15-60 FPS target for non-standard pacing configurations.
+		uint neuralRenderingAdaptiveTargetFps = 0;
+		uint neuralRenderingAdaptiveMinimumResolution = 70;
+		uint neuralRenderingAdaptiveDownshiftFrames = 4;
+		uint neuralRenderingAdaptiveUpshiftFrames = 12;
+		uint neuralRenderingAdaptiveMinimumDwellFrames = 30;
+		float neuralRenderingAdaptiveGuardTimeMs = 1.0f;
+		bool neuralRenderingAdaptiveDiagnostics = false;
+		// Optional companion controller for the shared foveated crop. It is
+		// deliberately disabled by default while the NR-only prototype is being
+		// tested. When enabled, it is subordinate to adaptive NR: NR moves first
+		// on pressure and restores first on headroom.
+		bool neuralRenderingAdaptiveCropEnabled = false;
+		uint neuralRenderingAdaptiveCropMinimumCoverage = 75;
+		uint neuralRenderingAdaptiveCropDownshiftFrames = 2;
+		uint neuralRenderingAdaptiveCropUpshiftFrames = 24;
+		uint neuralRenderingAdaptiveCropMinimumDwellFrames = 60;
+		uint neuralRenderingAdaptiveCropTransitionFrames = 8;
 	};
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
@@ -142,6 +169,8 @@ struct FoveatedRender
 	static constexpr const char* kPresetNasalConvergence70 = "Nasal Convergence 70%";  ///< 70% crop biased toward nasal convergence.
 
 	Settings settings;
+	NeuralRendering::AdaptiveController adaptiveController;
+	NeuralRendering::AdaptiveCropController adaptiveCropController;
 	Util::Subrect::Controller subrectController;
 
 	// Called from Upscaling::DrawSettings. DrawEnable renders the always-visible
@@ -169,6 +198,30 @@ struct FoveatedRender
 	bool IsRuntimeSupported() const;
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
+
+	/**
+	 * Update the shared adaptive policy once for the current engine frame.
+	 *
+	 * The foveated route, VRS setup, and the NR post-upscale hook can all reach
+	 * this method. The underlying controllers deduplicate repeated calls so the
+	 * crop/NR decision is made before the route resolves its UVs and the same
+	 * effective state is then visible to every consumer.
+	 */
+	void UpdateAdaptiveState(std::uint32_t frame, bool routeEligible);
+
+	/** @brief Reset both adaptive controllers without changing user settings. */
+	void ResetAdaptiveState();
+
+	/** @brief True when an explicit eye-tracking path owns foveation geometry. */
+	bool IsEyeTrackedFoveationEnabled() const;
+
+	/** @brief Effective UVs consumed by foveated DLSS, VRS, and NR. */
+	Util::Subrect::UVRegion GetEffectiveLeftUV() const;
+	Util::Subrect::UVRegion GetEffectiveRightUV() const;
+
+	/** @brief Whether the adaptive crop currently owns the effective UVs. */
+	bool IsAdaptiveCropRuntimeActive() const { return adaptiveCropController.IsRuntimeActive(); }
+	bool IsAdaptiveCropTransitioning() const { return adaptiveCropController.IsTransitioning(); }
 
 	/** @brief True while drag-resizing the crop region, and for a few seconds after.
 	 *  Read by the stretch pass alongside settings.debugVisualize. */

@@ -68,6 +68,8 @@ add_executable(cpp_tests
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
 	test_effectsourcecompatibility.cpp
+	test_adaptive_crop_controller.cpp
+	test_adaptive_nr_controller.cpp
 	test_windfield.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
@@ -82,6 +84,8 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Upscaling/NeuralRendering/AdaptiveController.cpp"
 )
 
 # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the

@@ -27,6 +27,14 @@ namespace NeuralRendering
 		// 2 = 3x sequential Feature 18 evaluations. Each stage has separate
 		// resources/history; the renderer gates this away from cropped VR paths.
 		std::uint32_t multiPass = 0;
+		// Opt-in adaptive-resolution handoff. The renderer keeps native tier
+		// resources separate and performs the visual handoff outside Feature 18.
+		bool adaptiveResolution = false;
+		float adaptiveHandoffAlpha = 1.0f;
+		float adaptiveDepthThreshold = 0.05f;
+		// Learned session ceiling after a Streamline VRAM warning. The renderer
+		// keeps the active tier valid but does not prewarm tiers above this limit.
+		std::uint32_t adaptiveMemoryCeiling = 100;
 	};
 
 	enum class RuntimeStatus
@@ -72,7 +80,9 @@ namespace NeuralRendering
 		[[nodiscard]] std::uint64_t SuccessfulFrames() const { return successfulFrames_; }
 
 	private:
-		static constexpr std::uint32_t kFeatureSlotCount = 6;  // two eyes x three cascade stages
+		// Seven adaptive buckets plus the two manual low-resolution buckets, two
+		// eyes, and three possible cascade stages. Handles remain isolated by tier.
+		static constexpr std::uint32_t kFeatureSlotCount = 54;
 		Runtime() = default;
 		void* module_ = nullptr;
 		void* parameters_ = nullptr;

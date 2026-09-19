@@ -99,13 +99,23 @@ float4 SampleExactArea(uint2 targetPixel)
 	return sum / max((end.x - begin.x) * (end.y - begin.y), 1e-6);
 }
 
+float4 SampleValidSource(Texture2D<float4> source, float2 uv)
+{
+	uint width, height;
+	source.GetDimensions(width, height);
+	const float2 validSize = float2(gSourceWidth, gSourceHeight);
+	// Clamp to valid texel centers; sampler clamping alone includes unused envelope pixels.
+	const float2 pixel = clamp(uv * validSize, 0.5, validSize - 0.5);
+	return source.SampleLevel(gLinear, pixel / float2(width, height), 0);
+}
+
 [numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= gWidth || id.y >= gHeight)
 		return;
 
 	const float2 uv = (float2(id.xy) + 0.5) / float2(gWidth, gHeight);
 	if (gMode == 0) {
-		gTarget[id.xy] = gProxy.SampleLevel(gLinear, uv, 0);
+		gTarget[id.xy] = SampleValidSource(gProxy, uv);
 		return;
 	}
 	if (gMode == 2) {
@@ -113,8 +123,8 @@ float4 SampleExactArea(uint2 targetPixel)
 		return;
 	}
 
-	const float3 proxy = gProxy.SampleLevel(gLinear, uv, 0).rgb;
-	const float3 model = gModel.SampleLevel(gLinear, uv, 0).rgb;
+	const float3 proxy = SampleValidSource(gProxy, uv).rgb;
+	const float3 model = SampleValidSource(gModel, uv).rgb;
 	const float4 originalSample = gOriginal.Load(int3(id.xy, 0));
 	const float3 original = max(originalSample.rgb, float3(0.0, 0.0, 0.0));
 	if (gMode == 3) {
