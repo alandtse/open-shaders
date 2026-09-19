@@ -528,6 +528,13 @@ namespace ShadowCasterManager
 		func(ssn, light);
 	}
 
+	void GameClearAllRenderPasses(RE::BSBatchRenderer* renderer)
+	{
+		using F = void (*)(RE::BSBatchRenderer*);
+		static REL::Relocation<F> func{ REL::RelocationID(100843, 107633) };
+		func(renderer);
+	}
+
 	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk)
 	{
 		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*, uint32_t, uint32_t);
@@ -1469,6 +1476,7 @@ namespace ShadowCasterManager
 		// Parabolic Render (vtable 0x0A): repair the engine's omission of copying
 		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
+		InstallPassRegistrationHooks();
 
 		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
 		InstallCasterCullHook();

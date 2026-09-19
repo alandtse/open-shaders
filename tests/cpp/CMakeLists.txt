@@ -59,6 +59,7 @@ add_executable(cpp_tests
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_llf_sanitize.cpp
+    test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
     test_contenthash.cpp

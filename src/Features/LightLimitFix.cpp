@@ -21,6 +21,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/ExternalEmittance.h"
 
 #include <algorithm>
@@ -1075,6 +1076,19 @@ void LightLimitFix::DataLoaded()
 			logger::info("[LLF] Unlocked magic light limit");
 		}
 	}
+}
+
+void LightLimitFix::RegisterUxActions()
+{
+	FEATURE_COMMAND("forcePassGuardTrips",
+		"Forces the next N SCM shadow-render pass-chain guard checks to report a cycle, so the skip path can be exercised without a real ring. Watch inspect kind=llfshadows budget.passGuardCycleSkipsTotal. Params: count (int, default 1, max 1000).",
+		[](Feature*, const json& args) { ShadowCasterManager::ForcePassGuardTrips(args.value("count", 1u)); });
+	FEATURE_COMMAND("forcePassGuardRings",
+		"Closes a real passGroupNext ring on the chain of each of the next N checked shadow-render passes, so the guard's detection and in-place repair run on live passes (the chain is restored, so shadows are unaffected). Watch inspect kind=llfshadows budget.passGuardCycleRepairsTotal. Params: count (int, default 1, max 1000).",
+		[](Feature*, const json& args) { ShadowCasterManager::ForcePassGuardRings(args.value("count", 1u)); });
+	FEATURE_COMMAND("tracePassRegistration",
+		"Checks every BSBatchRenderer::RegisterPass/RegisterPassSorted call for a passGroupNext ring and logs the creating call stack as module+RVA (SkyrimSE.exe+RVA maps to Ghidra imageBase+RVA). Adds a chain walk per registration, so enable only while reproducing. Params: enabled (bool, default true).",
+		[](Feature*, const json& args) { ShadowCasterManager::SetPassRegistrationTrace(args.value("enabled", true)); });
 }
 
 void LightLimitFix::ClearShaderCache()

@@ -212,6 +212,37 @@ namespace ShadowCasterManager
 	/// Prevents duplicate Accumulate registrations per light per frame.
 	std::unordered_map<RE::BSShadowLight*, std::pair<uint32_t, uint32_t>> s_lightAccumFrame;
 
+	/// An accumulated light that is never rendered keeps its pass groups linked, and a recycled pass
+	/// registered into one closes a ring (BSBatchRenderer::RegisterPassSorted).
+	static void AuditStaleAccumulates()
+	{
+		static std::unordered_map<RE::BSShadowLight*, uint32_t> s_seen;
+		const uint32_t now = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+		for (const auto& [light, accum] : s_lightAccumFrame) {
+			if (accum.first >= now)
+				continue;
+			const auto rendered = s_lightRenderFrame.find(light);
+			if (rendered != s_lightRenderFrame.end() && rendered->second >= accum.first)
+				continue;
+			auto& seen = s_seen[light];
+			if (seen == accum.first)
+				continue;
+			seen = accum.first;
+			const bool promoted = IsPromotedLight(light->light.get());
+			const bool demoted = std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
+			if (promoted)
+				s_stalePromotedTotal.fetch_add(1, std::memory_order_relaxed);
+			const bool afterSkippedRender = accum.first == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
+			if (afterSkippedRender)
+				s_staleAfterRenderSkipTotal.fetch_add(1, std::memory_order_relaxed);
+			if (s_staleAccumulateTotal.fetch_add(1, std::memory_order_relaxed) < 8)
+				logger::warn("[SCM] Light {} (promoted={}, demoted={}) was accumulated in frame {} and not rendered by frame {} (afterSkippedRender={}, skipReason={}, slot={}, sessionReset={}, teardownWaiting={})",
+					(void*)light, promoted, demoted, accum.first, now, afterSkippedRender, s_lastRenderSkipReason.load(std::memory_order_relaxed), accum.second, s_pendingSessionReset.load(std::memory_order_relaxed),
+					s_teardownWaiting.load(std::memory_order_relaxed));
+		}
+		PruneIfOversized(s_seen, 512);
+	}
+
 	/// Camera position when the current light's accumulate begins. The contribution
 	/// cull measures caster size from here (viewer footprint), not the light.
 	RE::NiPoint3 s_cullCameraPos{};
@@ -901,6 +932,9 @@ namespace ShadowCasterManager
 						logger::warn("[SCM] Skipped duplicate same-frame Accumulate (light={}, firstSlot={}, thisSlot={}, frame={}, n={})",
 							(void*)light, it->second.second, idx, accumFrame, n);
 				} else {
+					const auto rendered = s_lightRenderFrame.find(light);
+					if (rendered == s_lightRenderFrame.end() || rendered->second < it->second.first)
+						ClearStaleAccumulatedPasses(light);
 					it->second = { accumFrame, idx };
 				}
 			}
@@ -2858,6 +2892,21 @@ namespace ShadowCasterManager
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
+				snap.passGuardChecksTotal = s_passGuardChecksTotal.load(std::memory_order_relaxed);
+				snap.passGuardCycleSkipsTotal = s_passGuardCycleSkipsTotal.load(std::memory_order_relaxed);
+				snap.passGuardFaultSkipsTotal = s_passGuardFaultSkipsTotal.load(std::memory_order_relaxed);
+				snap.passGuardCapExceededTotal = s_passGuardCapExceededTotal.load(std::memory_order_relaxed);
+				snap.passGuardCycleRepairsTotal = s_passGuardCycleRepairsTotal.load(std::memory_order_relaxed);
+				snap.staleAccumulatesTotal = s_staleAccumulateTotal.load(std::memory_order_relaxed);
+				snap.staleAfterRenderSkipTotal = s_staleAfterRenderSkipTotal.load(std::memory_order_relaxed);
+				snap.stalePassClearsTotal = s_stalePassClearsTotal.load(std::memory_order_relaxed);
+				for (size_t i = 0; i < kRenderSkipReasonCount; ++i)
+					snap.renderSkipsByReason[i] = s_renderSkipByReason[i].load(std::memory_order_relaxed);
+				snap.passRegChecksTotal = s_passRegChecksTotal.load(std::memory_order_relaxed);
+				snap.passRegRingsTotal = s_passRegRingsTotal.load(std::memory_order_relaxed);
+				snap.stalePromotedTotal = s_stalePromotedTotal.load(std::memory_order_relaxed);
+				snap.passGuardRepairsPromotedTotal = s_passGuardRepairsPromotedTotal.load(std::memory_order_relaxed);
+				snap.passRegRingsPromotedTotal = s_passRegRingsPromotedTotal.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
@@ -3085,16 +3134,22 @@ namespace ShadowCasterManager
 
 	void RenderScheduledShadowLights()
 	{
+		AuditStaleAccumulates();
+
 		// A teardown landing between schedule and this pass would flush a freed
 		// accumulator -> AV in BSBatchRenderer. Skip while a reset is pending; only
 		// LOAD here, never exchange, or s_lights would never reset (ScheduleShadowCasters owns the drain).
-		if (s_pendingSessionReset.load(std::memory_order_acquire))
+		if (s_pendingSessionReset.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::SessionReset);
 			return;
+		}
 
 		// Pause during portal-graph rebuild: BSShadowLight::Render walks portal
 		// culling that derefs ssn->portalGraph.
-		if (IsPortalGraphTransitioning())
+		if (IsPortalGraphTransitioning()) {
+			NoteRenderSkipped(RenderSkipReason::PortalTransition);
 			return;
+		}
 
 		// Exclusive against ShadowCasterManager::Update's pool resize; see the matching
 		// lock in ScheduleShadowCasters for why it must cover the whole pass.
@@ -3103,15 +3158,19 @@ namespace ShadowCasterManager
 		// Reader side of the teardown serialization: ClearLightArrays must not free
 		// lights/passes while this pass iterates them. Counter (not a shared_mutex)
 		// so nested engine re-entry on this thread stays defined.
-		if (s_teardownWaiting.load(std::memory_order_acquire))
+		if (s_teardownWaiting.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::TeardownWaiting);
 			return;
+		}
 		s_shadowFlushReaders.fetch_add(1, std::memory_order_acq_rel);
 		struct FlushReaderGuard
 		{
 			~FlushReaderGuard() { s_shadowFlushReaders.fetch_sub(1, std::memory_order_acq_rel); }
 		} flushReaderGuard;
-		if (s_teardownWaiting.load(std::memory_order_acquire))
+		if (s_teardownWaiting.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::TeardownRace);
 			return;  // teardown won the race between our check and increment
+		}
 
 		// Atlas resource creation happens here at the pass boundary so
 		// readiness cannot flip between draws of the same frame.
@@ -3186,7 +3245,7 @@ namespace ShadowCasterManager
 			ZoneNamedN(zSun, "SCM::Render::Sun", true);
 			CS_GPU_PASS("SCM::Render::Sun");
 			s_budget.BeginLight(s_lights.Lights[0].Light, 1);
-			s_lights.Lights[0].Light->Render(tmp);
+			RenderLightGuarded(s_lights.Lights[0].Light, tmp);
 			s_budget.EndLight(s_lights.Lights[0].Light, 1);
 		}
 
@@ -3215,7 +3274,7 @@ namespace ShadowCasterManager
 						// group is freed-but-not-unlinked at frame end. The viewport hook
 						// collapses a tile-less raster to zero size, so this draws nothing.
 						s_budget.BeginLight(e.Light, 1);
-						s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+						s_cpuSubmitUs.fetch_add(TimeUs([&] { RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 						s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 						s_budget.EndLight(e.Light, 1);
 						// This frame bailed before running the bake EnableLight already
@@ -3234,11 +3293,18 @@ namespace ShadowCasterManager
 							s_staticPassActive.store(true, std::memory_order_relaxed);
 							ClearStaticSlotTile(i);
 							s_budget.BeginLight(e.Light, 1);
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+							bool rendered = true;
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
-							MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
+							// A skipped bake leaves the static tile blank: record it as an empty bake and re-arm.
+							MarkSlotStaticRendered(i, st.pendingHash, rendered && st.bakeSawStatic);  // atlas slot = source of truth
 							st.bakeThisFrame = false;
+							if (!rendered) {
+								st.bakeQueued = true;
+								s_budget.EndLight(e.Light, 1);
+								continue;
+							}
 							// Keep last frame's complete live content on bake frames -- copying
 							// the fresh static-only bake in flashed a mover-less shadow for one
 							// frame. Only a tile with no valid content takes the copy.
@@ -3281,12 +3347,13 @@ namespace ShadowCasterManager
 									ClearSlotTile(i);
 								st.bakeQueued = true;
 							}
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
+							bool rendered = true;
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
-							if (!compositeKeepPrior && composedContent) {
+							if (rendered && !compositeKeepPrior && composedContent) {
 								e.renderedScale = e.pendingScale;
 								MarkSlotTileRendered(i, compositeValid);
 							}
@@ -3303,13 +3370,14 @@ namespace ShadowCasterManager
 						ClearSlotTile(i);
 				}
 				s_budget.BeginLight(e.Light, 1);
-				s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+				bool rendered = true;
+				s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 				s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 				s_budget.EndLight(e.Light, 1);
 				// Commit the content scale only after the raster actually ran: a skipped
 				// render must keep advertising the slot's held scale, or shaders sample
 				// tile UVs against full-slice content until the geometry hash changes.
-				if (!keepPriorContent) {
+				if (rendered && !keepPriorContent) {
 					e.renderedScale = e.pendingScale;
 					// Never mark an EMPTY render valid: a starved fresh tile stays
 					// contentValid=false, so the sample side reads UNSHADOWED, never a

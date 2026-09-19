@@ -684,6 +684,30 @@ namespace ShadowCasterManager
 		/// measures the rebuild cost per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
 
+		/// Cumulative pass-chain guard activity during SCM shadow renders: chains checked, calls skipped for a
+		/// cycle or an unreadable link, and chains too long to prove either way (allowed through).
+		uint64_t passGuardChecksTotal = 0;
+		uint64_t passGuardCycleSkipsTotal = 0;
+		uint64_t passGuardFaultSkipsTotal = 0;
+		uint64_t passGuardCapExceededTotal = 0;
+		uint64_t passGuardCycleRepairsTotal = 0;
+
+		/// Lights accumulated in an earlier frame and never rendered since, and renders skipped outright, by
+		/// reason (session reset, portal rebuild, teardown wait, teardown race).
+		uint64_t staleAccumulatesTotal = 0;
+		uint64_t staleAfterRenderSkipTotal = 0;
+		uint64_t stalePassClearsTotal = 0;
+		uint64_t renderSkipsByReason[4] = {};
+
+		/// Registrations checked and rings found at registration (only while the registration trace is on).
+		uint64_t passRegChecksTotal = 0;
+		uint64_t passRegRingsTotal = 0;
+
+		/// The subsets of stale accumulates, in-place repairs and registration rings that involved a promoted light.
+		uint64_t stalePromotedTotal = 0;
+		uint64_t passGuardRepairsPromotedTotal = 0;
+		uint64_t passRegRingsPromotedTotal = 0;
+
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
 		uint64_t cellResetsTotal = 0;
@@ -817,6 +841,22 @@ namespace ShadowCasterManager
 
 	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
+
+	/// True while SCM drives a shadow light's Render(); render-pass hooks validate pass chains only inside it.
+	bool InShadowRenderWindow();
+
+	/// True when the pass chains reachable from `head` are cyclic or unreadable and the engine call must be
+	/// skipped: its walk of them would never return.
+	bool RejectCyclicPassChain(const RE::BSRenderPass* head);
+
+	/// Forces the next `count` guard checks to report a cycle, exercising the skip path without a real ring.
+	void ForcePassGuardTrips(uint32_t count);
+
+	/// Closes a real ring on the chain of each of the next `count` checked passes, so detection and repair run on live passes.
+	void ForcePassGuardRings(uint32_t count);
+
+	/// Enables checking every BSBatchRenderer pass registration for a ring, logging the creating call stack.
+	void SetPassRegistrationTrace(bool enabled);
 
 	/// Releases the static depth-copy shaders for recompilation.
 	void ClearAtlasShaders();
