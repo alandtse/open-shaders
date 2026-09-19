@@ -781,7 +781,7 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 			auto renderer = globals::game::renderer;
 			if (renderer) {
 				auto& fb = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
-				auto* tex = static_cast<ID3D11Texture2D*>(fb.texture);
+				auto* tex = Util::AsReal(fb.texture);
 				subrectController.DrawEditor(fb.SRV, tex, 0.5f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 			} else {
 				subrectController.DrawEditor(nullptr, nullptr, 0.5f);
