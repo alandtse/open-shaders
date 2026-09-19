@@ -225,6 +225,14 @@ namespace ShadowCasterManager
 	/// can difference it across a run without attaching a profiler.
 	std::atomic<uint64_t> s_staticBakeTotal{ 0 };
 
+	/// Cumulative split-cache accumulates by CasterPass; DynamicOnly over the sum is the cache hit ratio.
+	std::atomic<uint64_t> s_splitAccumByMode[3]{};
+	/// Cumulative permanent split exclusions by trigger: a pose mismatch against the bake, or the rebake window.
+	std::atomic<uint64_t> s_splitLatchMismatchTotal{ 0 };
+	std::atomic<uint64_t> s_splitLatchWindowTotal{ 0 };
+	/// Bakes retired (latched or dropped on slot reassignment) before any DynamicOnly accumulate reused them.
+	std::atomic<uint64_t> s_splitWastedBakeTotal{ 0 };
+
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
 	/// whether Hook_ResetScene fires only on real zone transitions or also
 	/// on ordinary exterior cell-grid streaming during normal movement.
@@ -253,8 +261,18 @@ namespace ShadowCasterManager
 		/// The latest StaticOnly bake appended >= 1 static caster. False for a
 		/// bake taken before any caster settled: its cache tile is blank.
 		bool bakeSawStatic = false;
+		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
+		bool bakeUnproven = false;
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
+
+	static void RetireSplitBake(SplitState& st)
+	{
+		if (st.bakeUnproven) {
+			s_splitWastedBakeTotal.fetch_add(1, std::memory_order_relaxed);
+			st.bakeUnproven = false;
+		}
+	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
 
@@ -807,6 +825,10 @@ namespace ShadowCasterManager
 					// it, so it renders full every redraw (no bake, no copy).
 					st->bakeThisFrame = false;
 					st->fullThisFrame = true;
+					if (!st->splitExcluded) {
+						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
+						RetireSplitBake(*st);
+					}
 					st->splitExcluded = true;
 					split = false;
 				}
@@ -853,12 +875,18 @@ namespace ShadowCasterManager
 						st->poseRebakes = 0;
 					}
 					if (++st->poseRebakes >= 4) {
+						if (!st->splitExcluded) {
+							s_splitLatchWindowTotal.fetch_add(1, std::memory_order_relaxed);
+							RetireSplitBake(*st);
+						}
 						st->splitExcluded = true;
 						st->bakeThisFrame = false;
 						st->fullThisFrame = true;
 						mode = CasterPass::All;
 					} else {
 						s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
+						RetireSplitBake(*st);
+						st->bakeUnproven = true;
 					}
 				}
 				// posStep is coarse (16 units) on purpose: a 1-unit step would
@@ -915,6 +943,9 @@ namespace ShadowCasterManager
 				s_cpuAccumUs.fetch_add(TimeUs([&] { light->Accumulate(idx, idx, nullptr); }), std::memory_order_relaxed);
 				s_accumRebuildAttach.store(false, std::memory_order_relaxed);
 				s_cpuAccumN.fetch_add(1, std::memory_order_relaxed);
+				s_splitAccumByMode[static_cast<int>(mode)].fetch_add(1, std::memory_order_relaxed);
+				if (mode == CasterPass::DynamicOnly)
+					st->bakeUnproven = false;
 				*GetAccumLightSlot() += light->shadowMapCount;
 			}
 
@@ -1593,7 +1624,10 @@ namespace ShadowCasterManager
 				// erase them explicitly or it inherits the previous occupant's state.
 				s_lastValidFrame.erase(cp->light);
 				s_belowFloorStreak.erase(cp->light);
-				s_splitState.erase(cp->light);
+				if (const auto splitIt = s_splitState.find(cp->light); splitIt != s_splitState.end()) {
+					RetireSplitBake(splitIt->second);
+					s_splitState.erase(splitIt);
+				}
 				if (auto* ni = cp->light->light.get()) {
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
@@ -2858,6 +2892,11 @@ namespace ShadowCasterManager
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
+				for (size_t i = 0; i < std::size(snap.splitAccumByMode); ++i)
+					snap.splitAccumByMode[i] = s_splitAccumByMode[i].load(std::memory_order_relaxed);
+				snap.splitLatchMismatchTotal = s_splitLatchMismatchTotal.load(std::memory_order_relaxed);
+				snap.splitLatchWindowTotal = s_splitLatchWindowTotal.load(std::memory_order_relaxed);
+				snap.splitWastedBakesTotal = s_splitWastedBakeTotal.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
