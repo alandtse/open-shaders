@@ -695,6 +695,7 @@ namespace ShadowCasterManager
 		/// Lights accumulated in an earlier frame and never rendered since, and renders skipped outright, by
 		/// reason (session reset, portal rebuild, teardown wait, teardown race).
 		uint64_t staleAccumulatesTotal = 0;
+		uint64_t staleAfterRenderSkipTotal = 0;
 		uint64_t renderSkipsByReason[4] = {};
 
 		/// Registrations checked and rings found at registration (only while the registration trace is on).

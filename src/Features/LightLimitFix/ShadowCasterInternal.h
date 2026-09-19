@@ -394,6 +394,10 @@ namespace ShadowCasterManager
 
 	/// Lights accumulated in an earlier frame that were never rendered since.
 	extern std::atomic<uint64_t> s_staleAccumulateTotal;
+	/// Stale lights whose accumulate frame was one in which the render function exited early, and that frame/reason.
+	extern std::atomic<uint64_t> s_staleAfterRenderSkipTotal;
+	extern std::atomic<uint32_t> s_lastRenderSkipFrame;
+	extern std::atomic<size_t> s_lastRenderSkipReason;
 	/// Frame each light was last rendered by RenderLightGuarded (render thread only).
 	extern std::unordered_map<RE::BSShadowLight*, uint32_t> s_lightRenderFrame;
 

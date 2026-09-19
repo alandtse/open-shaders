@@ -232,9 +232,12 @@ namespace ShadowCasterManager
 			const bool demoted = std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
 			if (promoted)
 				s_stalePromotedTotal.fetch_add(1, std::memory_order_relaxed);
+			const bool afterSkippedRender = accum.first == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
+			if (afterSkippedRender)
+				s_staleAfterRenderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			if (s_staleAccumulateTotal.fetch_add(1, std::memory_order_relaxed) < 8)
-				logger::warn("[SCM] Light {} (promoted={}, demoted={}) was accumulated in frame {} and not rendered by frame {} (slot={}, sessionReset={}, teardownWaiting={})",
-					(void*)light, promoted, demoted, accum.first, now, accum.second, s_pendingSessionReset.load(std::memory_order_relaxed),
+				logger::warn("[SCM] Light {} (promoted={}, demoted={}) was accumulated in frame {} and not rendered by frame {} (afterSkippedRender={}, skipReason={}, slot={}, sessionReset={}, teardownWaiting={})",
+					(void*)light, promoted, demoted, accum.first, now, afterSkippedRender, s_lastRenderSkipReason.load(std::memory_order_relaxed), accum.second, s_pendingSessionReset.load(std::memory_order_relaxed),
 					s_teardownWaiting.load(std::memory_order_relaxed));
 		}
 		PruneIfOversized(s_seen, 512);
@@ -2892,6 +2895,7 @@ namespace ShadowCasterManager
 				snap.passGuardCapExceededTotal = s_passGuardCapExceededTotal.load(std::memory_order_relaxed);
 				snap.passGuardCycleRepairsTotal = s_passGuardCycleRepairsTotal.load(std::memory_order_relaxed);
 				snap.staleAccumulatesTotal = s_staleAccumulateTotal.load(std::memory_order_relaxed);
+				snap.staleAfterRenderSkipTotal = s_staleAfterRenderSkipTotal.load(std::memory_order_relaxed);
 				for (size_t i = 0; i < kRenderSkipReasonCount; ++i)
 					snap.renderSkipsByReason[i] = s_renderSkipByReason[i].load(std::memory_order_relaxed);
 				snap.passRegChecksTotal = s_passRegChecksTotal.load(std::memory_order_relaxed);

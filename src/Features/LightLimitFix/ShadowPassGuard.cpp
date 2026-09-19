@@ -17,6 +17,9 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_passGuardFaultSkipsTotal{ 0 };
 	std::atomic<uint64_t> s_passGuardCapExceededTotal{ 0 };
 	std::atomic<uint64_t> s_staleAccumulateTotal{ 0 };
+	std::atomic<uint64_t> s_staleAfterRenderSkipTotal{ 0 };
+	std::atomic<uint32_t> s_lastRenderSkipFrame{ 0 };
+	std::atomic<size_t> s_lastRenderSkipReason{ 0 };
 	std::atomic<uint64_t> s_renderSkipByReason[kRenderSkipReasonCount]{};
 	std::atomic<uint64_t> s_passRegChecksTotal{ 0 };
 	std::atomic<uint64_t> s_passRegRingsTotal{ 0 };
@@ -31,7 +34,8 @@ namespace ShadowCasterManager
 		constexpr uint32_t kRegistrationWalkCap = 4096;
 		constexpr uint32_t kGuardLogLimit = 6;
 		constexpr uint32_t kGuardDumpLimit = 3;
-		constexpr uint32_t kRegistrationLogLimit = 8;
+		constexpr uint32_t kRegistrationLogLimit = 24;
+		constexpr size_t kRegistrationHistoryCap = 1u << 17;
 		constexpr uint32_t kGuardLogNodes = 12;
 		constexpr size_t kPassBytes = 0x48;
 
@@ -217,12 +221,36 @@ namespace ShadowCasterManager
 			}
 		};
 
+		struct Registration
+		{
+			const void* renderer;
+			const void* light;
+			uint32_t frame;
+			DWORD thread;
+		};
+		// Registrations arrive from several job threads at once.
+		std::mutex s_registrationsMutex;
+		std::unordered_map<const RE::BSRenderPass*, Registration> s_registrations;
+
 		void CheckRegistration(const RE::BSRenderPass* a_pass, const RE::BSRenderPass* a_preLinked, const char* a_what,
 			const void* a_renderer, uint32_t a_technique)
 		{
 			if (!a_pass)
 				return;
 			s_passRegChecksTotal.fetch_add(1, std::memory_order_relaxed);
+
+			const DWORD thread = GetCurrentThreadId();
+			std::string history = "no earlier registration seen";
+			{
+				std::scoped_lock lock(s_registrationsMutex);
+				if (const auto it = s_registrations.find(a_pass); it != s_registrations.end()) {
+					const Registration& previous = it->second;
+					history = std::format("registered into {} renderer {} {} frames ago by thread {} (light {})",
+						previous.renderer == a_renderer ? "THIS" : "ANOTHER", previous.renderer, CurrentFrame() - previous.frame, previous.thread, previous.light);
+				}
+				s_registrations[a_pass] = { a_renderer, CurrentCullLight(), CurrentFrame(), thread };
+				PruneIfOversized(s_registrations, kRegistrationHistoryCap);
+			}
 
 			bool fault = false;
 			const auto nextOf = [&](const RE::BSRenderPass* pass) { return LoadLink(pass, true, fault); };
@@ -239,6 +267,8 @@ namespace ShadowCasterManager
 				a_what, a_renderer, a_technique, (const void*)a_pass, (const void*)a_preLinked, (void*)CurrentCullLight(),
 				IsPromoted(CurrentCullLight()), (void*)s_renderingLight.load(std::memory_order_relaxed),
 				IsPromoted(s_renderingLight.load(std::memory_order_relaxed)), CurrentFrame(), s_pendingSessionReset.load(std::memory_order_relaxed));
+			logger::warn("[SCM]   history: {}; thread now={}; rebuildAttach={} cullPassMode={}", history, thread,
+				s_accumRebuildAttach.load(std::memory_order_relaxed), s_cullPassMode.load(std::memory_order_relaxed));
 			logger::warn("[SCM]   stack:{}", CaptureStack(2));
 			LogNodes(a_pass, true, false);
 		}
@@ -284,6 +314,8 @@ namespace ShadowCasterManager
 	void NoteRenderSkipped(RenderSkipReason a_reason)
 	{
 		s_renderSkipByReason[static_cast<size_t>(a_reason)].fetch_add(1, std::memory_order_relaxed);
+		s_lastRenderSkipFrame.store(CurrentFrame(), std::memory_order_relaxed);
+		s_lastRenderSkipReason.store(static_cast<size_t>(a_reason), std::memory_order_relaxed);
 	}
 
 	bool InShadowRenderWindow()
