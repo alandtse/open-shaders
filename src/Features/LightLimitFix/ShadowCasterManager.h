@@ -684,6 +684,13 @@ namespace ShadowCasterManager
 		/// measures the rebuild cost per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
 
+		/// Cumulative accumulates by CasterPass (All, StaticOnly, DynamicOnly); DynamicOnly over the sum is the split-cache hit ratio.
+		uint64_t splitAccumByMode[3] = {};
+		/// Cumulative permanent split exclusions by trigger, and bakes retired before any cache reuse.
+		uint64_t splitLatchMismatchTotal = 0;
+		uint64_t splitLatchWindowTotal = 0;
+		uint64_t splitWastedBakesTotal = 0;
+
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
 		uint64_t cellResetsTotal = 0;
