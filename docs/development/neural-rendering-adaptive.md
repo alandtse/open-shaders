@@ -45,12 +45,12 @@ motion, depth, and stereo-boundary checks while the new resources settle.
 The same public path contains the existing neural-rendering controls and their
 interaction rules:
 
-- reduced model resolution with valid-source-envelope sampling;
-- classic bounded resolve and matched-residual resolve;
-- optional pre-upscale NR with route eligibility checks;
-- sequential 2x and 3x NR modes using separate cascade resources and history;
-- adaptive UI status and warning text;
-- safe reset/fallback behavior when a shader, resource, or route contract fails.
+-   reduced model resolution with valid-source-envelope sampling;
+-   classic bounded resolve and matched-residual resolve;
+-   optional pre-upscale NR with route eligibility checks;
+-   sequential 2x and 3x NR modes using separate cascade resources and history;
+-   adaptive UI status and warning text;
+-   safe reset/fallback behavior when a shader, resource, or route contract fails.
 
 Streamline VRAM warnings are treated as successful-but-pressure samples so the
 current frame remains valid while the adaptive controller reduces future

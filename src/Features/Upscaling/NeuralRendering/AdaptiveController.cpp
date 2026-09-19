@@ -122,11 +122,11 @@ namespace NeuralRendering
 
 		const Config config = NormalizeConfig(requestedConfig);
 		const bool configurationChanged = config.enabled != config_.enabled ||
-			config.refreshHz != config_.refreshHz || config.targetFps != config_.targetFps ||
-			config.minimumResolution != config_.minimumResolution ||
-			config.downshiftFrames != config_.downshiftFrames || config.upshiftFrames != config_.upshiftFrames ||
-			config.minimumDwellFrames != config_.minimumDwellFrames ||
-			std::abs(config.guardTimeMs - config_.guardTimeMs) > 0.001f;
+		                                  config.refreshHz != config_.refreshHz || config.targetFps != config_.targetFps ||
+		                                  config.minimumResolution != config_.minimumResolution ||
+		                                  config.downshiftFrames != config_.downshiftFrames || config.upshiftFrames != config_.upshiftFrames ||
+		                                  config.minimumDwellFrames != config_.minimumDwellFrames ||
+		                                  std::abs(config.guardTimeMs - config_.guardTimeMs) > 0.001f;
 		config_ = config;
 
 		const bool shouldRun = config.enabled && eligible;
@@ -163,7 +163,7 @@ namespace NeuralRendering
 		if (frameTimeMs > 0.0f) {
 			lastFrameTimeMs_ = frameTimeMs;
 			smoothedFrameTimeMs_ = smoothedFrameTimeMs_ == 0.0f ? frameTimeMs :
-				smoothedFrameTimeMs_ * 0.90f + frameTimeMs * 0.10f;
+			                                                      smoothedFrameTimeMs_ * 0.90f + frameTimeMs * 0.10f;
 		}
 
 		if (transitionFrameCount_ != 0) {
@@ -190,7 +190,7 @@ namespace NeuralRendering
 		const float guardedDeadline = std::max(1.0f, applicationDeadlineMs_ - config.guardTimeMs);
 		const bool emergencyOverrun = frameTimeMs > applicationDeadlineMs_ * 1.25f;
 		const bool overrun = emergencyOverrun || frameTimeMs > guardedDeadline ||
-			(smoothedFrameTimeMs_ > guardedDeadline && frameTimeMs > applicationDeadlineMs_ * 0.95f);
+		                     (smoothedFrameTimeMs_ > guardedDeadline && frameTimeMs > applicationDeadlineMs_ * 0.95f);
 		const float restorationBudget = std::min(applicationDeadlineMs_ * 0.85f,
 			applicationDeadlineMs_ - config.guardTimeMs * 2.0f);
 		const bool headroom = frameTimeMs < restorationBudget && smoothedFrameTimeMs_ < restorationBudget;

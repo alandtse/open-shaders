@@ -1050,10 +1050,10 @@ namespace FoveatedRenderImpl
 			if (!GetTextureDesc(color, sourceDesc))
 				return false;
 			const bool shapeMatches = Core::vrAdaptiveCropHistory[0] && Core::vrAdaptiveCropHistory[1] &&
-				Core::vrAdaptiveCropTarget && Core::vrAdaptiveCropHistoryW == width &&
-				Core::vrAdaptiveCropHistoryH == height &&
-				Core::vrAdaptiveCropHistory[0]->desc.Format == sourceDesc.Format &&
-				Core::vrAdaptiveCropTarget->desc.Format == sourceDesc.Format;
+			                          Core::vrAdaptiveCropTarget && Core::vrAdaptiveCropHistoryW == width &&
+			                          Core::vrAdaptiveCropHistoryH == height &&
+			                          Core::vrAdaptiveCropHistory[0]->desc.Format == sourceDesc.Format &&
+			                          Core::vrAdaptiveCropTarget->desc.Format == sourceDesc.Format;
 			if (shapeMatches)
 				return true;
 
@@ -1180,7 +1180,7 @@ namespace FoveatedRenderImpl
 			Core::vrAdaptiveCropMotionSRV = nullptr;
 			Core::vrAdaptiveCropMotionSRVOwner = nullptr;
 		} else if (!EnsureResourceSRV(motionVectors, Core::vrAdaptiveCropMotionSRV,
-			Core::vrAdaptiveCropMotionSRVOwner, "FoveatedRender::AdaptiveCropMotionSRV")) {
+					   Core::vrAdaptiveCropMotionSRVOwner, "FoveatedRender::AdaptiveCropMotionSRV")) {
 			Core::vrAdaptiveCropMotionSRV = nullptr;
 			Core::vrAdaptiveCropMotionSRVOwner = nullptr;
 		}
@@ -1198,7 +1198,8 @@ namespace FoveatedRenderImpl
 		}
 
 		const float blendAlpha = foveated.IsAdaptiveCropTransitioning() ?
-			foveated.adaptiveCropController.HandoffAlpha() : 1.0f;
+		                             foveated.adaptiveCropController.HandoffAlpha() :
+		                             1.0f;
 		if (blendAlpha >= 0.999f || !EnsureAdaptiveCropHandoffPipeline()) {
 			context->CopyResource(Core::vrAdaptiveCropHistory[writeIndex]->resource.get(), color);
 			if (haveDepth)
@@ -1208,8 +1209,8 @@ namespace FoveatedRenderImpl
 		}
 
 		bool useDepth = haveDepth && Core::vrAdaptiveCropDepthHistory[writeIndex] &&
-			Core::vrAdaptiveCropDepthHistory[writeIndex]->uav &&
-			Core::vrAdaptiveCropDepthHistory[readIndex] && Core::vrAdaptiveCropDepthHistory[readIndex]->srv;
+		                Core::vrAdaptiveCropDepthHistory[writeIndex]->uav &&
+		                Core::vrAdaptiveCropDepthHistory[readIndex] && Core::vrAdaptiveCropDepthHistory[readIndex]->srv;
 		if (useDepth)
 			useDepth = SnapshotAdaptiveCropDepth(depth, guideDesc.Width, guideDesc.Height, writeIndex);
 

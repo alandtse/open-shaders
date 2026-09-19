@@ -56,10 +56,10 @@ namespace NeuralRendering
 				barriers[index].Transition.pResource = resources[index];
 				barriers[index].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
 				barriers[index].Transition.StateBefore = entering ? D3D12_RESOURCE_STATE_COMMON :
-					(index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+				                                                    (index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 				barriers[index].Transition.StateAfter = entering ?
-					(index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) :
-					D3D12_RESOURCE_STATE_COMMON;
+				                                            (index == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE) :
+				                                            D3D12_RESOURCE_STATE_COMMON;
 			}
 			commandList->ResourceBarrier(static_cast<UINT>(std::size(barriers)), barriers);
 		}
@@ -88,8 +88,8 @@ namespace NeuralRendering
 			D3D11_TEXTURE2D_DESC actual{};
 			texture->GetDesc(&actual);
 			return actual.Width == desc.Width && actual.Height == desc.Height &&
-				actual.Format == desc.Format && actual.ArraySize == desc.ArraySize &&
-				actual.MipLevels == desc.MipLevels && actual.SampleDesc.Count == desc.SampleDesc.Count;
+			       actual.Format == desc.Format && actual.ArraySize == desc.ArraySize &&
+			       actual.MipLevels == desc.MipLevels && actual.SampleDesc.Count == desc.SampleDesc.Count;
 		}
 
 		std::uint32_t NormalizeModelResolution(std::uint32_t percent)
@@ -155,7 +155,7 @@ namespace NeuralRendering
 		std::uint32_t ScaleDimension(std::uint32_t dimension, std::uint32_t percent)
 		{
 			return std::max<std::uint32_t>(1, static_cast<std::uint32_t>(
-				(static_cast<std::uint64_t>(dimension) * percent + 50) / 100));
+												  (static_cast<std::uint64_t>(dimension) * percent + 50) / 100));
 		}
 
 		D3D11_TEXTURE2D_DESC MakeSharedDesc(const D3D11_TEXTURE2D_DESC& source, std::uint32_t width,
@@ -255,8 +255,8 @@ namespace NeuralRendering
 			const std::uint32_t tierIndex = ResolutionTierIndex(modelResolution);
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
 			if (!EnsureResources(device, eyeIndex, color, depth, motionVectors, guideWidth, guideHeight,
-				colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution,
-				tuning.adaptiveResolution, tuning.adaptiveMemoryCeiling))
+					colorWidth, colorHeight, modelWidth, modelHeight, passCount, modelResolution,
+					tuning.adaptiveResolution, tuning.adaptiveMemoryCeiling))
 				return LatchFailure("shared resource creation", interop.LastError());
 
 			auto& eye = eyes[eyeIndex];
@@ -265,7 +265,7 @@ namespace NeuralRendering
 				eye.handoff.valid = false;
 			context->CopyResource(eye.color.resource11.Get(), color);
 			if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
-				 tuning.modelResolveMode == 1))
+											  tuning.modelResolveMode == 1))
 				return LatchFailure("model input downsample", E_FAIL);
 			if (!CopyDepthGuide(context, depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
 				return LatchFailure("depth guide conversion", E_FAIL);
@@ -293,7 +293,7 @@ namespace NeuralRendering
 			}
 
 			if (tier.reducedResolution && !DispatchModelResolve(device, context, eye, tier, colorWidth, colorHeight, resolveSettings,
-				 tuning.modelResolveMode == 1)) {
+											  tuning.modelResolveMode == 1)) {
 				return LatchFailure("model output resolve", E_FAIL);
 			}
 			ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
@@ -353,7 +353,7 @@ namespace NeuralRendering
 				auto& tier = eye.tiers[tierIndex];
 				context->CopySubresourceRegion(eye.color.resource11.Get(), 0, 0, 0, 0, color, 0, &sourceBox);
 				if (tier.reducedResolution && !DispatchModelInput(device, context, eye, tier, colorWidth, colorHeight, modelWidth, modelHeight,
-					 tuning.modelResolveMode == 1))
+												  tuning.modelResolveMode == 1))
 					return LatchFailure("model input downsample stereo", E_FAIL);
 				if (!CopyDepthGuide(context, input.depthSRV, eye.depth.uav11.Get(), guideWidth, guideHeight))
 					return LatchFailure("depth guide conversion", E_FAIL);
@@ -401,7 +401,7 @@ namespace NeuralRendering
 				auto& eye = eyes[eyeIndex];
 				auto& tier = eye.tiers[tierIndex];
 				if (tier.reducedResolution && !DispatchModelResolve(device, context, eye, tier, colorWidth, colorHeight, resolveSettings,
-					 tuning.modelResolveMode == 1)) {
+												  tuning.modelResolveMode == 1)) {
 					return LatchFailure("model output resolve stereo", E_FAIL);
 				}
 				ID3D11Resource* neuralOutput = tier.reducedResolution ? tier.resolved.Get() : tier.output.resource11.Get();
@@ -527,8 +527,8 @@ namespace NeuralRendering
 			if (!device)
 				return false;
 			if (!modelResolutionCS.Get(
-				L"Data\\Shaders\\Upscaling\\NeuralRendering\\ModelResolutionCS.hlsl", {}, "cs_5_0",
-				"main", "NeuralRendering::ModelResolutionCS"))
+					L"Data\\Shaders\\Upscaling\\NeuralRendering\\ModelResolutionCS.hlsl", {}, "cs_5_0",
+					"main", "NeuralRendering::ModelResolutionCS"))
 				return false;
 
 			if (!modelResolutionCB) {
@@ -628,8 +628,8 @@ namespace NeuralRendering
 			if (!device)
 				return false;
 			if (!adaptiveHandoffCS.Get(
-				L"Data\\Shaders\\Upscaling\\NeuralRendering\\AdaptiveHandoffCS.hlsl", {}, "cs_5_0",
-				"main", "NeuralRendering::AdaptiveHandoffCS"))
+					L"Data\\Shaders\\Upscaling\\NeuralRendering\\AdaptiveHandoffCS.hlsl", {}, "cs_5_0",
+					"main", "NeuralRendering::AdaptiveHandoffCS"))
 				return false;
 
 			if (!adaptiveHandoffCB) {
@@ -685,10 +685,10 @@ namespace NeuralRendering
 
 			auto& handoff = eye.handoff;
 			const bool matches = handoff.width == eye.colorWidth && handoff.height == eye.colorHeight &&
-				handoff.guideWidth == eye.guideWidth && handoff.guideHeight == eye.guideHeight &&
-				handoff.color[0].resource && handoff.color[0].srv && handoff.color[0].uav &&
-				handoff.color[1].resource && handoff.color[1].srv && handoff.color[1].uav &&
-				handoff.depth.resource && handoff.depth.srv && handoff.depth.uav;
+			                     handoff.guideWidth == eye.guideWidth && handoff.guideHeight == eye.guideHeight &&
+			                     handoff.color[0].resource && handoff.color[0].srv && handoff.color[0].uav &&
+			                     handoff.color[1].resource && handoff.color[1].srv && handoff.color[1].uav &&
+			                     handoff.depth.resource && handoff.depth.srv && handoff.depth.uav;
 			if (matches)
 				return true;
 
@@ -697,11 +697,11 @@ namespace NeuralRendering
 			D3D11_TEXTURE2D_DESC guideDesc = eye.depth.desc;
 			HandoffEyeState replacement;
 			if (!EnsureAdaptiveHandoffTexture(device, colorDesc, replacement.color[0],
-				("NeuralRendering::AdaptiveHandoffColor" + suffix + "A").c_str()) ||
+					("NeuralRendering::AdaptiveHandoffColor" + suffix + "A").c_str()) ||
 				!EnsureAdaptiveHandoffTexture(device, colorDesc, replacement.color[1],
-				("NeuralRendering::AdaptiveHandoffColor" + suffix + "B").c_str()) ||
+					("NeuralRendering::AdaptiveHandoffColor" + suffix + "B").c_str()) ||
 				!EnsureAdaptiveHandoffTexture(device, guideDesc, replacement.depth,
-				("NeuralRendering::AdaptiveHandoffDepth" + suffix).c_str()))
+					("NeuralRendering::AdaptiveHandoffDepth" + suffix).c_str()))
 				return false;
 			replacement.width = eye.colorWidth;
 			replacement.height = eye.colorHeight;
@@ -779,9 +779,9 @@ namespace NeuralRendering
 
 			auto& handoff = eye.handoff;
 			const bool regionChanged = handoff.valid &&
-				(handoff.regionX != regionX || handoff.regionY != regionY ||
-				 handoff.width != colorWidth || handoff.height != colorHeight ||
-				 handoff.guideWidth != guideWidth || handoff.guideHeight != guideHeight);
+			                           (handoff.regionX != regionX || handoff.regionY != regionY ||
+										   handoff.width != colorWidth || handoff.height != colorHeight ||
+										   handoff.guideWidth != guideWidth || handoff.guideHeight != guideHeight);
 			if (regionChanged)
 				handoff.valid = false;
 
@@ -849,7 +849,8 @@ namespace NeuralRendering
 			Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
 			Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
 			HRESULT result = device->QueryInterface(IID_PPV_ARGS(&dxgiDevice));
-			if (SUCCEEDED(result)) result = dxgiDevice->GetAdapter(&adapter);
+			if (SUCCEEDED(result))
+				result = dxgiDevice->GetAdapter(&adapter);
 			if (FAILED(result) || !interop.Initialize(adapter.Get(), device, context))
 				return LatchFailure("D3D12 interop initialization", FAILED(result) ? result : interop.LastError());
 			return true;
@@ -882,13 +883,13 @@ namespace NeuralRendering
 			const auto resolvedDesc = MakeSharedDesc(eye.color.desc, eye.colorWidth, eye.colorHeight, sharedFlags);
 			auto& tier = eye.tiers[tierIndex];
 			const bool intermediatesMatch = !multiPass ||
-				(Matches(tier.cascadeIntermediates[0], outputDesc) &&
-				 (passCount < 3 || Matches(tier.cascadeIntermediates[1], outputDesc)));
+			                                (Matches(tier.cascadeIntermediates[0], outputDesc) &&
+												(passCount < 3 || Matches(tier.cascadeIntermediates[1], outputDesc)));
 			const bool resourcesMatch = tier.modelResolution == modelResolution && tier.passCount == passCount &&
-				tier.reducedResolution == reducedResolution &&
-				(!reducedResolution || Matches(tier.modelInput, modelInputDesc)) &&
-				Matches(tier.output, outputDesc) && intermediatesMatch &&
-				(!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
+			                            tier.reducedResolution == reducedResolution &&
+			                            (!reducedResolution || Matches(tier.modelInput, modelInputDesc)) &&
+			                            Matches(tier.output, outputDesc) && intermediatesMatch &&
+			                            (!reducedResolution || (MatchesResolved(tier.resolved, resolvedDesc) && tier.resolvedSRV && tier.resolvedUAV));
 			if (resourcesMatch)
 				return true;
 
@@ -902,11 +903,11 @@ namespace NeuralRendering
 			const std::string suffix = eyeIndex == 0 ? "Left" : "Right";
 			const std::string tierSuffix = suffix + "_" + std::to_string(modelResolution);
 			if ((reducedResolution && !interop.CreateSharedTexture(modelInputDesc, tier.modelInput,
-				("NeuralRendering::ModelInput" + tierSuffix).c_str())) ||
+										  ("NeuralRendering::ModelInput" + tierSuffix).c_str())) ||
 				(multiPass && !interop.CreateSharedTexture(outputDesc, tier.cascadeIntermediates[0],
-				("NeuralRendering::CascadeIntermediate0" + tierSuffix).c_str())) ||
+								  ("NeuralRendering::CascadeIntermediate0" + tierSuffix).c_str())) ||
 				(passCount > 2 && !interop.CreateSharedTexture(outputDesc, tier.cascadeIntermediates[1],
-				("NeuralRendering::CascadeIntermediate1" + tierSuffix).c_str())) ||
+									  ("NeuralRendering::CascadeIntermediate1" + tierSuffix).c_str())) ||
 				!interop.CreateSharedTexture(outputDesc, tier.output, ("NeuralRendering::Output" + tierSuffix).c_str()))
 				return false;
 			if (reducedResolution) {
@@ -923,8 +924,8 @@ namespace NeuralRendering
 			tier.reducedResolution = reducedResolution;
 			resetPending[eyeIndex][tierIndex] = true;
 			const float modelAreaPercent = 100.0f *
-				(static_cast<float>(modelWidth) / static_cast<float>(eye.colorWidth)) *
-				(static_cast<float>(modelHeight) / static_cast<float>(eye.colorHeight));
+			                               (static_cast<float>(modelWidth) / static_cast<float>(eye.colorWidth)) *
+			                               (static_cast<float>(modelHeight) / static_cast<float>(eye.colorHeight));
 			const auto resolveSettings = GetModelResolveSettings(modelResolution);
 			logger::info("[DLSSNR] resources eye={} tier={} guides={}x{} color={}x{} model={}x{} modelPercent={}% modelArea={:.1f}% passes={} resolve=transfer:{:.2f},colour:{:.2f},maxRatio:{:.2f},residual:{:.2f}",
 				eyeIndex, modelResolution, eye.guideWidth, eye.guideHeight, eye.colorWidth, eye.colorHeight,
@@ -955,8 +956,8 @@ namespace NeuralRendering
 			const auto motionDesc = MakeSharedDesc(motionSource, guideWidth, guideHeight, sharedFlags);
 			auto& eye = eyes[eyeIndex];
 			const bool sharedMatch = eye.sharedResourcesValid && eye.colorWidth == colorWidth && eye.colorHeight == colorHeight &&
-				eye.guideWidth == guideWidth && eye.guideHeight == guideHeight && Matches(eye.color, colorDesc) &&
-				Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc);
+			                         eye.guideWidth == guideWidth && eye.guideHeight == guideHeight && Matches(eye.color, colorDesc) &&
+			                         Matches(eye.depth, depthDesc) && Matches(eye.motionVectors, motionDesc);
 			if (!sharedMatch) {
 				if (eye.sharedResourcesValid) {
 					if (!interop.WaitForIdle())
@@ -987,7 +988,7 @@ namespace NeuralRendering
 					if (resolution > memoryCeiling && resolution != modelResolution)
 						continue;
 					if (!EnsureTierResources(device, eyeIndex, eye, prewarmIndex,
-						ScaleDimension(colorWidth, resolution), ScaleDimension(colorHeight, resolution), 1, resolution))
+							ScaleDimension(colorWidth, resolution), ScaleDimension(colorHeight, resolution), 1, resolution))
 						return false;
 				}
 			}
@@ -1017,7 +1018,11 @@ namespace NeuralRendering
 
 	Renderer::Renderer() : state_(new State()) {}
 	Renderer::~Renderer() { delete state_; }
-	Renderer& Renderer::Instance() { static Renderer instance; return instance; }
+	Renderer& Renderer::Instance()
+	{
+		static Renderer instance;
+		return instance;
+	}
 
 	bool Renderer::Apply(ID3D11Device* device, ID3D11DeviceContext* context, std::uint32_t eyeIndex,
 		ID3D11Resource* color, ID3D11Resource* depth, ID3D11ShaderResourceView* depthSRV,

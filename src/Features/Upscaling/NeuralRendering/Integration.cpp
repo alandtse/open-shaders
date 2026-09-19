@@ -136,7 +136,7 @@ namespace NeuralRendering
 			// Keep the two experimental stage-order features mutually exclusive:
 			// pre-upscale already adds a second NR route before the normal DLSS pass.
 			tuning.multiPass = adaptive ? 0u :
-				(settings.neuralRenderingPreUpscale == 0 ? std::min(settings.neuralRenderingMultiPass, 2u) : 0u);
+			                              (settings.neuralRenderingPreUpscale == 0 ? std::min(settings.neuralRenderingMultiPass, 2u) : 0u);
 			tuning.adaptiveResolution = adaptive;
 			tuning.adaptiveHandoffAlpha = adaptive ? foveated.adaptiveController.HandoffAlpha() : 1.0f;
 			tuning.adaptiveMemoryCeiling = adaptive ? foveated.adaptiveController.MemoryCeiling() : 100u;

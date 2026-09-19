@@ -83,12 +83,12 @@ namespace NeuralRendering
 		const std::uint32_t minimumBucket = std::max(
 			maximumBucket, FindBucketIndexAtOrBelow(config.minimumCoverage));
 		const bool configurationChanged = config.enabled != config_.enabled ||
-			config.minimumCoverage != config_.minimumCoverage ||
-			config.downshiftFrames != config_.downshiftFrames ||
-			config.upshiftFrames != config_.upshiftFrames ||
-			config.minimumDwellFrames != config_.minimumDwellFrames ||
-			config.transitionFrames != config_.transitionFrames ||
-			maximumBucket != maximumBucket_;
+		                                  config.minimumCoverage != config_.minimumCoverage ||
+		                                  config.downshiftFrames != config_.downshiftFrames ||
+		                                  config.upshiftFrames != config_.upshiftFrames ||
+		                                  config.minimumDwellFrames != config_.minimumDwellFrames ||
+		                                  config.transitionFrames != config_.transitionFrames ||
+		                                  maximumBucket != maximumBucket_;
 		config_ = config;
 		maximumBucket_ = maximumBucket;
 		minimumBucket_ = minimumBucket;
@@ -196,6 +196,7 @@ namespace NeuralRendering
 		if (transitionFrameCount_ == 0)
 			return 1.0f;
 		return std::clamp(static_cast<float>(transitionFrame_ + 1) /
-			static_cast<float>(transitionFrameCount_), 0.05f, 1.0f);
+							  static_cast<float>(transitionFrameCount_),
+			0.05f, 1.0f);
 	}
 }

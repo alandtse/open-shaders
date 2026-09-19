@@ -1,7 +1,7 @@
 #include "Features/Upscaling/NeuralRendering/AdaptiveController.h"
 #include "Features/Upscaling/NeuralRendering/RuntimePolicy.h"
-#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <limits>
 
 using NRController = NeuralRendering::AdaptiveController;

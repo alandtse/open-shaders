@@ -52,9 +52,7 @@ bool InBounds(float2 pixel)
 	return all(pixel >= 0.5) && pixel.x < (float)gColorWidth - 0.5 && pixel.y < (float)gColorHeight - 0.5;
 }
 
-[numthreads(8, 8, 1)]
-void main(uint3 id : SV_DispatchThreadID)
-{
+[numthreads(8, 8, 1)] void main(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= gColorWidth || id.y >= gColorHeight)
 		return;
 
@@ -64,16 +62,14 @@ void main(uint3 id : SV_DispatchThreadID)
 	const float2 previousPosition = float2(pixel) + 0.5 + motionPixels;
 	bool historyAccepted = gHistoryValid != 0 && InBounds(previousPosition);
 
-	if (historyAccepted && gUseDepth != 0)
-	{
+	if (historyAccepted && gUseDepth != 0) {
 		const uint2 currentGuidePixel = GuidePixel(float2(pixel));
 		const uint2 previousGuidePixel = GuidePixel(previousPosition);
 		const float currentDepth = gCurrentDepth.Load(int3(currentGuidePixel, 0));
 		const float previousDepth = gPreviousDepth.Load(int3(previousGuidePixel, 0));
 		const bool currentDepthValid = currentDepth > 0.00001;
 		const bool previousDepthValid = previousDepth > 0.00001;
-		if (currentDepthValid && previousDepthValid)
-		{
+		if (currentDepthValid && previousDepthValid) {
 			const float depthScale = max(max(abs(currentDepth), abs(previousDepth)), 1.0);
 			historyAccepted = abs(currentDepth - previousDepth) <= gDepthThreshold * depthScale;
 		}

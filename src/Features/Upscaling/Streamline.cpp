@@ -746,8 +746,8 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 bool Streamline::IsVRAMPressure() const
 {
 	return globals::state && lastVRAMPressureFrame != UINT32_MAX &&
-		globals::state->frameCount >= lastVRAMPressureFrame &&
-		globals::state->frameCount - lastVRAMPressureFrame < 120;
+	       globals::state->frameCount >= lastVRAMPressureFrame &&
+	       globals::state->frameCount - lastVRAMPressureFrame < 120;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
