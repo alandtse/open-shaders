@@ -1149,11 +1149,12 @@ namespace Hooks
 
 	bool ShouldSkipRenderPassForFeatures(const RE::BSRenderPass* a_pass)
 	{
-		for (auto* feature : Feature::GetRenderPassSkipFeatures()) {
-			if (feature->loaded && feature->ShouldSkipRenderPass(a_pass))
-				return true;
-		}
-		return false;
+		bool skip = false;
+		Feature::ForEachLoadedFeature(
+			Feature::GetRenderPassSkipFeatures(), "ShouldSkipRenderPass",
+			[&](Feature* feature) { skip = skip || feature->ShouldSkipRenderPass(a_pass); },
+			false, false);
+		return skip;
 	}
 
 	// Generic per-render-pass hook: gives every feature that opted in via

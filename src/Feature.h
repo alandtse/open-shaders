@@ -594,13 +594,18 @@ public:
 	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
 	 * @param callback Callable receiving a Feature* for each loaded feature.
 	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
+	 * @param emitCpuZone When false, skips the per-feature CPU zone; use on per-pass hot paths.
 	 */
 	template <typename Func>
-	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false)
+	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false, bool emitCpuZone = true)
 	{
 		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
+				if (!emitCpuZone) {
+					callback(feature);
+					continue;
+				}
 				{
 					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
 					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);
