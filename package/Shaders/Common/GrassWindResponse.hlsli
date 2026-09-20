@@ -11,10 +11,12 @@ namespace GrassWindResponse
 		float4x4 worldMatrix, float4x4 previousWorldMatrix, float windTimer, float previousWindTimer,
 		out float4 currentResponse, out float4 previousResponse, out float2 flutter)
 	{
-		currentResponse = previousResponse = float4(0.0, 1.0, 0.0, 0.0);
+		currentResponse = previousResponse = 0.0f.xxxx;
 		float intensityScale = GrassWind::GetWindIntensityOverrideScale();
-		float currentFrequency = 1.0;
-		float previousFrequency = 1.0;
+		flutter = float2(
+					  GrassWind::CalculateFlutterWave(instanceCoordinates, windTimer),
+					  GrassWind::CalculateFlutterWave(instanceCoordinates, previousWindTimer)) *
+		          intensityScale;
 		if (Permutation::EnableAmbientGrassWind != 0) {
 			uint currentField = GrassWindSpring::SelectField(rootWorldPosition);
 			uint previousField = GrassWindSpring::SelectField(previousRootWorldPosition);
@@ -32,19 +34,10 @@ namespace GrassWindResponse
 					Permutation::GrassWindCompressionToBend, previousAxis, previousResponse.z, previousResponse.w);
 				currentResponse.xy = currentAxis.xy;
 				previousResponse.xy = previousAxis.xy;
-				float inverseMaximumTilt = rcp(max(
-					GrassWindSpring::Fields[currentField].MaximumTiltRadians, EPSILON_WIND_GEOMETRY));
-				float currentWindResponse = saturate(max(length(currentSample.xy) * inverseMaximumTilt, currentSample.z));
-				float previousWindResponse = saturate(max(length(previousSample.xy) * inverseMaximumTilt, previousSample.z));
-				currentFrequency = lerp(1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), currentWindResponse);
-				previousFrequency = lerp(1.0, max(Permutation::GrassWindFlutterFrequency, 1.0), previousWindResponse);
-				intensityScale *= max(Permutation::GrassWindFlutterStrength, 0.0) * max(Permutation::GrassWindSensitivity, 0.0);
+				float fieldStrength = max(Permutation::GrassWindFlutterStrength, 0.0f) * intensityScale;
+				flutter = float2(currentSample.w, previousSample.w) * fieldStrength;
 			}
 		}
-		flutter = float2(
-					  GrassWind::CalculateFlutterWave(instanceCoordinates, windTimer * currentFrequency),
-					  GrassWind::CalculateFlutterWave(instanceCoordinates, previousWindTimer * previousFrequency)) *
-		          intensityScale;
 	}
 }
 

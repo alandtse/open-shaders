@@ -1,4 +1,5 @@
 #define GRASS_WIND_SPRING_COMPUTE
+#include "Common/GrassWind.hlsli"
 #include "Common/GrassWindSpring.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
@@ -64,7 +65,18 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 	                       (float2(dispatchThreadId.xy) + 0.5f) * cellSize;
 	float3 samplePosition = float3(worldPosition, field.FieldHeight);
 	WindField::Components components = WindField::SampleCurrentComponents(samplePosition);
-	float3 windVelocity = components.baseAmbientVelocity + components.gustVelocity +
+	float3 ambientVelocity = components.baseAmbientVelocity + components.gustVelocity;
+	float horizontalSpeed = length(ambientVelocity.xy);
+	if (horizontalSpeed > EPSILON_WIND_RESPONSE) {
+		float2 ambientDirection = ambientVelocity.xy / horizontalSpeed;
+		float2 crosswindDirection = float2(-ambientDirection.y, ambientDirection.x);
+		float directionalTurbulence = components.ambientTurbulence *
+		                              max(SharedData::WindFieldTuning.turbulenceStrength, 0.0f);
+		ambientVelocity.xy = normalize(
+								 ambientDirection + crosswindDirection * directionalTurbulence) *
+		                     horizontalSpeed;
+	}
+	float3 windVelocity = ambientVelocity +
 	                      SampleRelevantTransientVelocity(samplePosition, relevantSourceCount);
 	float3 target = GrassWindSpring::CalculateTarget(
 		windVelocity, field);
@@ -101,6 +113,18 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 		velocity.z = min(velocity.z, 0.0f);
 	}
 
-	Response[dispatchThreadId.xy] = float4(response, 0.0f);
+	float flutterEnvelope = max(
+		1.0f + (components.ambientGust * 2.0f - 1.0f) *
+				   max(SharedData::WindFieldTuning.gustAmplitude, 0.0f),
+		0.0f);
+	float flutterFrequency = max(GrassWindSpring::FlutterFrequency, 0.0f);
+	float flutterPhase = (components.ambientTurbulence * GrassWindSpring::FlutterTurbulencePhaseScale +
+							 (components.ambientGust * 2.0f - 1.0f) * GrassWindSpring::FlutterGustPhaseScale) *
+	                     flutterFrequency;
+	float flutter = flutterFrequency > 0.0f ?
+	                    GrassWind::CalculateFlutterWave(flutterPhase) * flutterEnvelope :
+	                    0.0f;
+
+	Response[dispatchThreadId.xy] = float4(response, flutter);
 	Velocity[dispatchThreadId.xy] = float4(velocity, 0.0f);
 }

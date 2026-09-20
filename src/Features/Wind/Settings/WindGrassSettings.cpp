@@ -50,6 +50,8 @@ void Wind::ResetGrassWindSettings()
 	settings.overrideTrunkWindIntensity = defaults.overrideTrunkWindIntensity;
 	settings.trunkWindIntensityOverride = defaults.trunkWindIntensityOverride;
 	settings.enableAmbientGrassWind = defaults.enableAmbientGrassWind;
+	settings.enableGrassWindSpring = defaults.enableGrassWindSpring;
+	settings.enableGrassWindSpringBend = defaults.enableGrassWindSpringBend;
 	settings.grassWindResponse = defaults.grassWindResponse;
 	settings.grassWindSensitivity = defaults.grassWindSensitivity;
 	settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;

@@ -23,22 +23,24 @@ struct WindSettings
 	float treeWindSpringDamping = 0.7f;
 	float treeTransientSpringFrequency = 2.0f;
 	float treeTransientSpringDamping = 0.7f;
-	float windFieldGustScale = 853.0f;
-	float windFieldGustCrosswindScale = 824.0f;
+	float windFieldGustScale = 269.0f;
+	float windFieldGustCrosswindScale = 259.0f;
 	float windFieldGustAmplitude = 1.0f;
-	float windFieldGustAdvectionMultiplier = 0.93f;
+	float windFieldGustAdvectionMultiplier = 1.01f;
 	float windFieldDirectionTransitionDuration = 15.0f;
 	bool processMidRangeTransients = true;
 	bool processFarRangeTransients = false;
 	bool enableAmbientGrassWind = true;
-	float grassWindResponse = 20.0f;
-	float grassWindSensitivity = 2.59f;
-	float grassWindMaximumTilt = 89.0f;
-	float grassWindBendProfile = 0.5f;
+	bool enableGrassWindSpring = true;
+	bool enableGrassWindSpringBend = true;
+	float grassWindResponse = 22.0f;
+	float grassWindSensitivity = 2.51f;
+	float grassWindMaximumTilt = 63.0f;
+	float grassWindBendProfile = 0.35f;
 	float grassWindCompressionToBend = 0.5f;
-	float grassWindSpringFrequency = 2.0f;
-	float grassWindSpringDamping = 0.82f;
-	std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 512, 3000.0f },
+	float grassWindSpringFrequency = 4.09f;
+	float grassWindSpringDamping = 0.85f;
+	std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 1024, 3000.0f },
 		{ 512, 6262.0f },
 		{ 256, 12000.0f } } };
 	float grassWindFlutterStrength = 1.0f;

@@ -7,6 +7,8 @@
 namespace GrassWindSpring
 {
 	static const uint QualityRangeCount = 3u;
+	static const float FlutterTurbulencePhaseScale = 12.0f;
+	static const float FlutterGustPhaseScale = 3.0f;
 
 	struct FieldData
 	{
@@ -35,7 +37,8 @@ namespace GrassWindSpring
 		FieldData Fields[QualityRangeCount];
 		uint ActiveField;
 		uint TransientFieldMask;
-		float2 SpringPadding;
+		float FlutterFrequency;
+		float SpringPadding;
 	};
 
 #if defined(GRASS_WIND_SPRING_COMPUTE)

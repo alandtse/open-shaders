@@ -34,7 +34,8 @@ struct alignas(16) GrassWindSpringData
 	std::array<GrassWindSpringFieldData, WindSettingsLimits::kGrassWindSpringQualityRangeCount> fields;
 	uint32_t activeField;
 	uint32_t transientFieldMask;
-	float2 padding;
+	float flutterFrequency;
+	float padding;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);

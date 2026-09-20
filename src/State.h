@@ -422,7 +422,7 @@ public:
 		float EffectRadius;
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float pad0;
+		uint EnableGrassWindSpringBend;
 
 		float TreeWindUpperBendRange;
 		float TreeWindMaximumDisplacementPercent;
@@ -459,6 +459,7 @@ public:
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
+			       EnableGrassWindSpringBend == other.EnableGrassWindSpringBend &&
 			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
 			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
 			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&

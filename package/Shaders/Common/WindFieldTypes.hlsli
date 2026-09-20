@@ -28,6 +28,7 @@ namespace WindField
 	{
 		float3 velocity;
 		float ambientGust;
+		float ambientTurbulence;
 		float transientImpulse;
 	};
 
@@ -37,6 +38,7 @@ namespace WindField
 		float3 gustVelocity;
 		float3 transientVelocity;
 		float ambientGust;
+		float ambientTurbulence;
 		float transientImpulse;
 	};
 

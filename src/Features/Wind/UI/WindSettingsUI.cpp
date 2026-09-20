@@ -716,6 +716,14 @@ void Wind::DrawGrassWindSettings()
 	uiState.activeSettingsPage = SettingsPage::Grass;
 
 	ImGui::Checkbox(T(TKEY("enable_ambient_grass_wind"), "Enable Ambient Grass Wind"), &settings.enableAmbientGrassWind);
+	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring"), "Enable Grass Spring"), &settings.enableGrassWindSpring);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_tooltip"), "Runs the GPU response used by ambient grass bending and gust-driven flutter. Disable to use Skyrim's vanilla grass motion."));
+	ImGui::BeginDisabled(!settings.enableGrassWindSpring);
+	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring_bend"), "Enable Spring Bend"), &settings.enableGrassWindSpringBend);
+	ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_bend_tooltip"), "Disable broad spring bending while keeping the custom gust-driven flutter active, so flutter can be tested by itself."));
 	ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Vanilla Wind Intensity"), &settings.overrideTrunkWindIntensity);
 	ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
 	ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Vanilla Wind Intensity"), &settings.trunkWindIntensityOverride,
@@ -726,7 +734,7 @@ void Wind::DrawGrassWindSettings()
 	if (ImGui::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
 		ResetGrassWindSettings();
 
-	ImGui::BeginDisabled(!settings.enableAmbientGrassWind);
+	ImGui::BeginDisabled(!settings.enableAmbientGrassWind || !settings.enableGrassWindSpring);
 	ImGui::SliderFloat(T(TKEY("grass_wind_response"), "Bend Strength"), &settings.grassWindResponse,
 		kGrassWindResponseMin, kGrassWindResponseMax, "%.0f deg/unit", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -734,7 +742,7 @@ void Wind::DrawGrassWindSettings()
 	ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Wind Sensitivity"), &settings.grassWindSensitivity,
 		kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales grass-only wind speed. At 2x, wind at speed 1 is treated as speed 2 for grass bending and flutter."));
+		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales grass-only wind speed. At 2x, wind at speed 1 is treated as speed 2 for spring bending."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_maximum_tilt"), "Maximum Bend Angle"), &settings.grassWindMaximumTilt,
 		kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -815,11 +823,13 @@ void Wind::DrawGrassWindSettings()
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"), "Scales Skyrim-style per-blade flutter."));
+		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
+			"Scales Skyrim's blade flutter motion, with stronger motion inside local gust regions."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"), "Controls how quickly Skyrim-style flutter oscillates for each grass blade."));
+		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
+			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
 	std::array<double, kGrassWindSpringQualityRangeCount> springMemoryMiB{};
 	double totalSpringMemoryMiB = 0.0;
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {

@@ -106,7 +106,7 @@ namespace Permutation
 		float EffectRadius;
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float pad0;
+		uint EnableGrassWindSpringBend;
 
 		float TreeWindUpperBendRange;
 		float TreeWindMaximumDisplacementPercent;

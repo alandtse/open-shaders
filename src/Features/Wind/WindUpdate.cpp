@@ -161,6 +161,7 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 	return {
 		settings.trunkWindIntensityOverride,
 		loaded && settings.overrideTrunkWindIntensity,
+		loaded && settings.enableGrassWindSpringBend,
 		treeDefaults.transientWindInfluence,
 		treeDefaults.leafTransientWindInfluence,
 		treeDefaults.leafTransientFlutterMaximum,

@@ -22,6 +22,7 @@ struct WindPermutationContribution
 {
 	float windIntensityOverride;
 	uint32_t overrideWindIntensity;
+	uint32_t enableGrassWindSpringBend;
 	float treeTransientWindInfluenceDefault;
 	float treeLeafTransientWindInfluenceDefault;
 	float treeLeafTransientFlutterMaximumDefault;

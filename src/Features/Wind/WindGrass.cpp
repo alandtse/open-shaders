@@ -131,6 +131,7 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 
 		GrassWindSpringData data{};
 		data.transientFieldMask = GetTransientFieldMask();
+		data.flutterFrequency = sanitizedSettings.grassWindFlutterFrequency;
 		const float fieldHeight = center.z;
 		const float frameTime = std::clamp(windFieldFrameTime, 0.0f, 0.25f);
 		const float responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
@@ -180,7 +181,7 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB(), globals::state->sharedDataCB->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
 		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
-		auto* shader = sanitizedSettings.enableAmbientGrassWind ?
+		auto* shader = sanitizedSettings.enableAmbientGrassWind && sanitizedSettings.enableGrassWindSpring ?
 		                   grassState.springComputeShader.Get(
 							   L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
 							   "Wind::GrassWindSpringCS") :

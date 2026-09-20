@@ -169,6 +169,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	processMidRangeTransients,
 	processFarRangeTransients,
 	enableAmbientGrassWind,
+	enableGrassWindSpring,
+	enableGrassWindSpringBend,
 	grassWindResponse,
 	grassWindSensitivity,
 	grassWindMaximumTilt,
@@ -540,10 +542,12 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 13> grassKeys{
+	static constexpr std::array<std::string_view, 15> grassKeys{
 		"overrideTrunkWindIntensity",
 		"trunkWindIntensityOverride",
 		"enableAmbientGrassWind",
+		"enableGrassWindSpring",
+		"enableGrassWindSpringBend",
 		"grassWindResponse",
 		"grassWindSensitivity",
 		"grassWindMaximumTilt",

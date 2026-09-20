@@ -82,6 +82,7 @@ void State::UpdatePermutationBuffer()
 	const auto windContribution = globals::features::wind.GetPermutationContribution();
 	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
 	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	permutationData.EnableGrassWindSpringBend = windContribution.enableGrassWindSpringBend;
 	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
 	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
 		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
