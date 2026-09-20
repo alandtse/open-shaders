@@ -39,8 +39,8 @@ namespace FoveatedRenderImpl::Ops
 			if (auto* renderer = globals::game::renderer) {
 				auto& depth = renderer->GetDepthStencilData()
 				                  .depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-				if (depth.texture == source && depth.depthSRV)
-					return depth.depthSRV;
+				if (Util::AsReal(depth.texture) == source && depth.depthSRV)
+					return Util::AsReal(depth.depthSRV);
 			}
 
 			winrt::com_ptr<ID3D11Texture2D> texture;
