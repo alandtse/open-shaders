@@ -301,7 +301,7 @@ namespace
 		winrt::com_ptr<ID3D11Texture2D>& holder)
 	{
 		if (slot.texture) {
-			return slot.texture;
+			return Util::AsReal(slot.texture);
 		}
 		auto resolveFromView = [&](ID3D11View* view) -> ID3D11Texture2D* {
 			if (!view) {
@@ -317,10 +317,10 @@ namespace
 			}
 			return holder.get();
 		};
-		if (auto* tex = resolveFromView(slot.SRV)) {
+		if (auto* tex = resolveFromView(Util::AsReal(slot.SRV))) {
 			return tex;
 		}
-		return resolveFromView(slot.RTV);
+		return resolveFromView(Util::AsReal(slot.RTV));
 	}
 
 	// Returns the texture that was presented to the display (post-ApplyHDR).
@@ -348,7 +348,8 @@ namespace
 
 	bool IsFlatHdrScreenshotCapture()
 	{
-		return globals::features::hdrDisplay.loaded &&
+		return !globals::game::isVR &&
+		       globals::features::hdrDisplay.loaded &&
 		       globals::features::hdrDisplay.settings.enableHDR;
 	}
 
@@ -367,10 +368,15 @@ namespace
 		}
 
 		if (globals::game::isVR) {
-			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
+			// Real object is VR-sized (kVRTOTAL) here; the multi-runtime build's
+			// compile-time array type stays kTOTAL-sized.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warray-bounds"
+			auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kVR_FRAMEBUFFER];
+#pragma clang diagnostic pop
 			src.texture = ResolveSlotTexture(slot, holder);
-			src.srv = slot.SRV;
-			src.description = "kTOTAL (VR final composite)";
+			src.srv = Util::AsReal(slot.SRV);
+			src.description = "kVR_FRAMEBUFFER (VR final composite)";
 			return src;
 		}
 
@@ -400,7 +406,7 @@ namespace
 
 		auto& slot = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 		src.texture = ResolveSlotTexture(slot, holder);
-		src.srv = slot.SRV;
+		src.srv = Util::AsReal(slot.SRV);
 		src.needsPreviewCache = true;
 		src.description = "kFRAMEBUFFER";
 		return src;
@@ -680,8 +686,7 @@ void ScreenshotFeature::DrawSettings()
 {
 	ImGui::TextWrapped("%s", T(TKEY("async_note"), "Capture and save run asynchronously without stalling the game."));
 
-	const bool hdrCaptureAvailable = globals::features::hdrDisplay.loaded &&
-	                                 globals::features::hdrDisplay.settings.enableHDR;
+	const bool hdrCaptureAvailable = IsFlatHdrScreenshotCapture();
 
 	if (hdrCaptureAvailable) {
 		ImGui::TextWrapped("%s",
@@ -761,10 +766,9 @@ void ScreenshotFeature::DrawSettings()
 		"Change##ScreenshotFeature");
 
 	if (HotkeyCollidesWithVanilla()) {
-		Util::Text::WrappedWarning(
-			T(TKEY("hotkey_collision"),
-				"This hotkey collides with vanilla PrintScreen; both saves will fire. "
-				"Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
+		Util::Text::WrappedWarning("%s", T(TKEY("hotkey_collision"),
+											 "This hotkey collides with vanilla PrintScreen; both saves will fire. "
+											 "Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
 	}
 
 	ImGui::SeparatorText(T(TKEY("crop"), "Crop"));
@@ -836,7 +840,13 @@ void ScreenshotFeature::Reset()
 void ScreenshotFeature::ProcessCaptureRequest()
 {
 	if (captureRequested.exchange(false)) {
-		Capture();
+		try {
+			Capture();
+		} catch (const std::exception& e) {
+			logger::error("Screenshot capture failed: {}", e.what());
+		} catch (...) {
+			logger::error("Screenshot capture failed with an unknown exception.");
+		}
 	}
 }
 

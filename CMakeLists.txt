@@ -25,7 +25,7 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.11.0
+    VERSION 2.13.0
     LANGUAGES CXX
 )
 
@@ -174,6 +174,18 @@ target_include_directories(
         ${EXPRTK_INCLUDE_DIRS}
 )
 
+# Vendored third-party API headers (FidelityFX's api/ vendor copy, TDM's
+# plugin API) aren't held to this project's warning policy. They live under
+# their own root (not include/, which also holds our own PCH.h, VRAPI/, etc.)
+# specifically so SYSTEM here suppresses only their warnings -- SYSTEM applies
+# per include-directory entry, not per subtree, so it can't be scoped within
+# a directory shared with headers we don't want suppressed.
+target_include_directories(
+    ${PROJECT_NAME}
+    SYSTEM
+    PRIVATE "${CMAKE_SOURCE_DIR}/vendor/include"
+)
+
 # ImGuiVRHelper client API — fetched from upstream so the dependency and its
 # pinned version are explicit instead of a vendored copy. Configures only the
 # helper's api/ CMake target (SOURCE_SUBDIR) and skips its submodules. The
@@ -257,6 +269,16 @@ if(MSVC)
     # Large translation units (e.g. LightLimitFix/ShadowCasterUI.cpp pulling the
     # full feature + editor headers) exceed the default COFF section limit; /bigobj.
     target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
+endif()
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    # A designated initializer that intentionally sets only some fields
+    # (the rest correctly zero-init) is idiomatic C++20, not an omission;
+    # this diagnostic has no equivalent under real MSVC's warning set.
+    target_compile_options(
+        ${PROJECT_NAME}
+        PRIVATE "-Wno-missing-designated-field-initializers"
+    )
 endif()
 
 # https://gitlab.kitware.com/cmake/cmake/-/issues/24922#note_1371990
@@ -420,6 +442,73 @@ configure_file(
 target_sources(
     "${PROJECT_NAME}"
     PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/cmake/ThemePresets.h
+)
+
+# #######################################################################################################################
+# # Scene settings catalog
+# #######################################################################################################################
+
+set(SCENE_SETTINGS_PYTHON_ARGS "")
+if(WIN32)
+    find_program(SCENE_SETTINGS_PYTHON_EXECUTABLE NAMES py.exe)
+    if(SCENE_SETTINGS_PYTHON_EXECUTABLE)
+        set(SCENE_SETTINGS_PYTHON_ARGS -3)
+    endif()
+endif()
+if(NOT SCENE_SETTINGS_PYTHON_EXECUTABLE)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(SCENE_SETTINGS_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
+endif()
+
+set(SCENE_SETTINGS_CATALOG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(SCENE_SETTINGS_CATALOG_HEADER
+    "${SCENE_SETTINGS_CATALOG_DIR}/SceneSettingsCatalog.generated.h"
+)
+set(SCENE_SETTINGS_CATALOG_SOURCE
+    "${SCENE_SETTINGS_CATALOG_DIR}/SceneSettingsCatalog.generated.cpp"
+)
+set(SCENE_SETTINGS_ADAPTERS_SOURCE
+    "${SCENE_SETTINGS_CATALOG_DIR}/FeatureSceneSettingsAdapters.generated.cpp"
+)
+
+file(
+    GLOB_RECURSE SCENE_SETTINGS_CATALOG_INPUTS
+    LIST_DIRECTORIES false
+    CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
+)
+
+add_custom_command(
+    OUTPUT
+        "${SCENE_SETTINGS_CATALOG_HEADER}"
+        "${SCENE_SETTINGS_CATALOG_SOURCE}"
+        "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
+    COMMAND
+        ${SCENE_SETTINGS_PYTHON_EXECUTABLE} ${SCENE_SETTINGS_PYTHON_ARGS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
+        --source-dir "${CMAKE_CURRENT_SOURCE_DIR}" --out-dir
+        "${SCENE_SETTINGS_CATALOG_DIR}" --min-entries 250
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
+        ${SCENE_SETTINGS_CATALOG_INPUTS}
+    COMMENT "Generating scene settings catalog"
+    VERBATIM
+)
+
+target_include_directories(
+    "${PROJECT_NAME}"
+    PRIVATE "${SCENE_SETTINGS_CATALOG_DIR}"
+)
+
+target_sources(
+    "${PROJECT_NAME}"
+    PRIVATE
+        "${SCENE_SETTINGS_CATALOG_HEADER}"
+        "${SCENE_SETTINGS_CATALOG_SOURCE}"
+        "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
 )
 
 # #######################################################################################################################

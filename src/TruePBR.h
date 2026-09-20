@@ -111,6 +111,13 @@ public:
 	 * @return True if PBR setup was performed, false if the material is not PBR.
 	 */
 	bool BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::BSLightingShaderMaterialBase const* material);
+	/**
+	 * @brief Converts a generated grass material to PBR.
+	 *
+	 * @param sourceProperty Source lighting property containing the PBR material.
+	 * @param grassProperty Generated grass property to update.
+	 */
+	void SetupGrassMaterial(RE::BSLightingShaderProperty* sourceProperty, RE::BSLightingShaderProperty* grassProperty);
 
 	/**
 	 * @brief Binds extended PBR shader resources (displacement, RMAOS textures) to the device context.
@@ -192,7 +199,7 @@ public:
 	{
 		std::array<float, 3> baseColorScale = { 1.f, 1.f, 1.f };
 		float roughness = 1.f;
-		float specularLevel = 1.f;
+		float specularLevel = 0.04f;
 
 		GlintParameters glintParameters;
 	};

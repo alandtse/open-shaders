@@ -141,6 +141,10 @@ public:
 
 	bool deferredPass = false;
 
+	/// Set once DeferredPasses copies the finished opaque depth, cleared at frame start;
+	/// Util::GetCurrentSceneDepthSRV returns that final depth while set.
+	bool sceneDepthFinal = false;
+
 	ID3D11SamplerState* linearSampler = nullptr;
 	ID3D11SamplerState* pointSampler = nullptr;
 
@@ -187,6 +191,12 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		struct Main_RenderPlayerView_EndWorld
+		{
+			static void thunk(bool a1);
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
 		struct Renderer_ResetState
 		{
 			static void thunk(void* This);
@@ -206,8 +216,10 @@ public:
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_BlendedDecals>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 
-			if (!globals::game::isVR)
+			if (!globals::game::isVR) {
 				stl::write_thunk_call<Main_RenderFirstPersonView>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x944, isAE1799 ? 0x971 : 0x954));
+				stl::write_thunk_call<Main_RenderPlayerView_EndWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0xA01, isAE1799 ? 0xA2C : 0xA0F));
+			}
 
 			stl::detour_thunk<Renderer_ResetState>(REL::RelocationID(75570, 77371));
 

@@ -1,0 +1,56 @@
+name: "Maint: Warm Windows PR-Preset Build Cache"
+
+# pr-checks.yaml's C++ build always runs cmake-preset PR under
+# pull_request_target, which GitHub denies cache writes for unconditionally
+# (see setup-build-environment's trust check) -- so nothing has ever warmed
+# this preset's cache. The ALL preset already warms itself via ordinary
+# push-to-dev builds; this workflow only covers the PR preset gap.
+
+on:
+    push:
+        branches: [dev]
+        paths:
+            - ".gitmodules"
+            - "extern/**"
+            - "CMakePresets.json"
+            - "vcpkg.json"
+            - "vcpkg-configuration.json"
+            - ".github/workflows/maint-warm-windows-build-cache.yaml"
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: warm-windows-build-cache-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    warm-pr-preset:
+        name: Warm PR-preset build cache (vs2026)
+        runs-on: windows-2025-vs2026
+        permissions:
+            contents: read
+            actions: write
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  submodules: recursive
+                  persist-credentials: false
+
+            # Must match pr-checks.yaml's build job's key inputs exactly, or this
+            # warms a keyspace nobody restores from.
+            - name: Setup Build Environment
+              uses: ./.github/actions/setup-build-environment
+              with:
+                  cache-key-suffix: "cpp-vs2026"
+                  cmake-preset: PR
+                  build-dir: build/PR
+
+            - name: Build using run-cmake
+              uses: lukka/run-cmake@v10
+              with:
+                  configurePreset: PR
+                  configurePresetAdditionalArgs: "['-DBUILD_SHADER_TESTS=OFF']"
+                  buildPreset: PR

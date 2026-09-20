@@ -12,6 +12,7 @@
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 #include <bit>
 
@@ -48,32 +49,25 @@ namespace
 	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
 
-	float ClampFiniteOrDefault(float a_value, float a_min, float a_max, float a_default)
-	{
-		if (!std::isfinite(a_value))
-			return a_default;
-		return std::clamp(a_value, a_min, a_max);
-	}
-
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
 		a_settings.ParticleLightsSaturation =
-			ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleLightsSaturation, kParticleLightsSaturationMin, kParticleLightsSaturationMax, 1.0f);
 		a_settings.ParticleBrightness =
-			ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleBrightness, kParticleBrightnessMin, kParticleBrightnessMax, 1.0f);
 		a_settings.ParticleRadius =
-			ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleRadius, kParticleRadiusMin, kParticleRadiusMax, 1.0f);
 		a_settings.BillboardBrightness =
-			ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.BillboardBrightness, kBillboardBrightnessMin, kBillboardBrightnessMax, 1.0f);
 		a_settings.BillboardRadius =
-			ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.BillboardRadius, kBillboardRadiusMin, kBillboardRadiusMax, 1.0f);
 		a_settings.ParticleClusterThreshold =
-			ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
+			Util::ClampFiniteOrDefault(a_settings.ParticleClusterThreshold, kParticleClusterThresholdMin, kParticleClusterThresholdMax, 32.0f);
 		a_settings.MaxParticlesPerEmitter = std::clamp(a_settings.MaxParticlesPerEmitter, kMaxParticlesPerEmitterMin, kMaxParticlesPerEmitterMax);
 		a_settings.MaxParticleDistance =
-			ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
+			Util::ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
 		a_settings.JsonPlacedLightIntensity =
-			ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
+			Util::ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
 	}
 
 	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
@@ -213,9 +207,9 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -1085,6 +1079,7 @@ void LightLimitFix::DataLoaded()
 
 void LightLimitFix::ClearShaderCache()
 {
+	ShadowCasterManager::ClearAtlasShaders();
 	clusterBuildingCS.Reset();
 	clusterCullingCS.Reset();
 	shadowDemandCS.Reset();
@@ -1501,7 +1496,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDepthPyramidCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal(depth.depthSRV) };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
@@ -1547,7 +1542,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDemandCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
+		ID3D11ShaderResourceView* srvs[] = { Util::AsReal(depth.depthSRV), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
 			tileDepthRange->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 

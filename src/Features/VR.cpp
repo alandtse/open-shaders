@@ -38,6 +38,24 @@ void VR::LoadSettings(json& o_json)
 {
 	settings = o_json.get<Settings>();
 	settings.ClampToValidRanges();
+	auto& nearClip = dynamicNearClip.settings;
+	const auto loadBool = [&](std::string_view key, bool& value) {
+		const auto entry = o_json.find(key);
+		if (entry != o_json.end() && entry->is_boolean())
+			value = entry->get<bool>();
+	};
+	const auto loadFloat = [&](std::string_view key, float& value) {
+		const auto entry = o_json.find(key);
+		if (entry != o_json.end() && entry->is_number())
+			value = entry->get<float>();
+	};
+	loadBool("DynamicNearClip", nearClip.DynamicNearClip);
+	loadFloat("NormalNearClip", nearClip.NormalNearClip);
+	loadFloat("MinimumNearClip", nearClip.MinimumNearClip);
+	loadFloat("NearDistanceScale", nearClip.NearDistanceScale);
+	loadFloat("RestoreSpeed", nearClip.RestoreSpeed);
+	loadBool("DynamicNearClipReadout", nearClip.DynamicNearClipReadout);
+	nearClip.ClampNearClipSettings();
 	if (o_json.contains("StereoOptimizations")) {
 		json stereoOptJson = o_json["StereoOptimizations"];
 		stereoOpt.LoadSettings(stereoOptJson);
@@ -47,6 +65,13 @@ void VR::LoadSettings(json& o_json)
 void VR::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	const auto& nearClip = dynamicNearClip.settings;
+	o_json["DynamicNearClip"] = nearClip.DynamicNearClip;
+	o_json["NormalNearClip"] = nearClip.NormalNearClip;
+	o_json["MinimumNearClip"] = nearClip.MinimumNearClip;
+	o_json["NearDistanceScale"] = nearClip.NearDistanceScale;
+	o_json["RestoreSpeed"] = nearClip.RestoreSpeed;
+	o_json["DynamicNearClipReadout"] = nearClip.DynamicNearClipReadout;
 	{
 		json stereoOptJson;
 		stereoOpt.SaveSettings(stereoOptJson);
@@ -62,17 +87,28 @@ json VR::GetDiagnostics()
 void VR::RestoreDefaultSettings()
 {
 	settings = {};
+	dynamicNearClip.settings = {};
 	stereoOpt.RestoreDefaultSettings();
+}
+
+std::vector<FeatureConstraints::Constraint> VR::GetActiveConstraints() const
+{
+	if (!dynamicNearClip.settings.DynamicNearClip)
+		return {};
+	return { { { "Engine", "bFogEnabled:Weather" }, false,
+		T("feature.vr.near_clip.fog_constraint_reason", "Dynamic Near Clip disables vanilla fog so its depth probe is not confused by nearby fog geometry. Enable Exponential Height Fog for atmospheric fog instead."),
+		false } };
 }
 
 void VR::SetupResources()
 {
+	dynamicNearClip.SetupResources();
 	CompileStereoBlendShaders();
 
 	auto renderer = globals::game::renderer;
 	auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	D3D11_TEXTURE2D_DESC mainDesc;
-	mainTex.texture->GetDesc(&mainDesc);
+	mainTex.texture->GetDesc(Util::AsW32(&mainDesc));
 	mainDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	mainDesc.MiscFlags = 0;
 	stereoBlendCopyTex = eastl::make_unique<Texture2D>(mainDesc, "VR::StereoBlendCopyTex");
@@ -124,6 +160,7 @@ void VR::SetupResources()
 
 void VR::PostPostLoad()
 {
+	dynamicNearClip.Install();
 	stereoOpt.LatchBootSnapshot();
 
 	gDepthBufferCulling = reinterpret_cast<bool*>(REL::Offset(0x1EC6B88).address());

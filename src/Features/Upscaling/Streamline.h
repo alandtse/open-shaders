@@ -144,6 +144,9 @@ public:
 	 */
 	static void EnsureDriverProfileAllowsDLSSG();
 
+	/** @brief Reads the driver's "Smooth Motion" DRS setting (see NvApiDrs::kKeySmoothMotionEnable) for this executable; not a Streamline feature. */
+	static bool IsSmoothMotionEnabledForProfile();
+
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();
 

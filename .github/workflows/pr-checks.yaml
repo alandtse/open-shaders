@@ -95,8 +95,10 @@ jobs:
             # warnings (e.g. X4000) that would break the release cache are caught pre-merge.
             # run-full-config-validation stays on, so PRs cover both sets.
             release-parity-validation: true
-            # Mild optimization (no LTCG) for faster CI; releases keep ALL.
-            # Non-fork PRs now save their own PR-preset cache generation.
+            # Mild optimization (no LTCG) for faster CI; releases keep ALL. This
+            # job is always restore-only (pull_request_target can never save,
+            # see setup-build-environment's trust check) -- maint-warm-windows-
+            # build-cache.yaml is what keeps this preset's cache warm.
             cmake-preset: PR
 
     # Inline (no secrets in scope, read-only permissions) and build-only/unmatrixed: proves the

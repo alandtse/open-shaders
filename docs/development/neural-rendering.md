@@ -6,8 +6,8 @@ and frame-generation input capture. It processes the active render-resolution re
 of `kMAIN` and writes them back into the existing pipeline. NR is not evaluated at
 the larger display resolution when render scaling is active.
 
-The implementation is layered on PR #625 at
-`659913c8da5e4b018febc1576a2abe1ca23f9eb7`.
+The implementation owns its render-resolution integration directly and does not
+depend on the VR submit-upscaling implementation from PR #625.
 
 ## Enable
 
@@ -29,18 +29,18 @@ The controls persist under `Upscaling.neuralRenderingTuning`:
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
 | ------------------------ | ------------------------ | --------------------------- | ---------- | ------------------------------- |
 | Style                    | `style`                  | Style 0 / Style 1 / Style 2 | 0          | `DLSSNR.Style`                  |
-| Intensity                | `intensity`              | 0–2                         | 1.7        | `DLSSNR.Intensity`              |
-| Local Tone Strength      | `localToneStrength`      | 0–2                         | 1.7        | `DLSSNR.LocalToneStrength`      |
-| Local Structure Strength | `localStructureStrength` | 0–2                         | 1.7        | `DLSSNR.LocalStructureStrength` |
+| Intensity                | `intensity`              | 0–2                         | 1.0        | `DLSSNR.Intensity`              |
+| Local Tone Strength      | `localToneStrength`      | 0–2                         | 1.0        | `DLSSNR.LocalToneStrength`      |
+| Local Structure Strength | `localStructureStrength` | 0–2                         | 1.0        | `DLSSNR.LocalStructureStrength` |
 | Skin Structure Strength  | `skinStructureStrength`  | -1–2 (-1 displays Auto)     | -1         | `DLSSNR.SkinStructureStrength`  |
-| Use Auto Mask            | `useAutoMask`            | Off / On                    | Off        | `DLSSNR.UseAutoMask`            |
+| Use Auto Mask            | `useAutoMask`            | Off / On                    | On         | `DLSSNR.UseAutoMask`            |
 
-All six values are written in `NR::Runtime::Evaluate()` before each evaluation
-and take effect on the next NR pass without resetting history or recreating the
-feature. Existing values and the original OS strength defaults of 1.7 are
-preserved, including when new config keys are absent. Invalid/nonfinite config
-values are bounded or restored to defaults. **Restore NR Defaults** resets all six controls;
-**Reset NR History** invalidates both eye histories without changing tuning.
+All six values are written in `NR::Runtime::Evaluate()`. Committing a tuning edit
+recreates the Feature 18 handles because the runtime can latch appearance tuning
+during creation. Existing config values are preserved when present. Missing or
+invalid values use the defaults above and are bounded to the documented ranges.
+**Restore NR Defaults** resets all six controls; **Reset NR History** invalidates
+both eye histories without changing tuning.
 
 The public [private-contract findings](https://github.com/kibblerz/DLSS5-Reshade-AIO/blob/main/lab/PRIVATE-CONTRACT-FINDINGS.md)
 establish Style 0/1/2 and distinguish the runtime callback's double/fixed-point
@@ -64,17 +64,20 @@ or explicitly recreating resources recreates the NR instances.
     including VR's R24 depth view, and writes non-inverted device depth to
     R32 float. Depth is not linearized.
 -   Motion: the same encoder's undilated path writes RG16 float, preserving
-    correspondence with the center-pixel depth guide. OS motion vectors store
-    current-to-previous displacement in normalized UV units, so Feature 18
-    receives the per-eye guide dimensions as its motion-vector scales. Reset
-    frames submit zero motion because their previous history is invalid.
--   Frame data: camera cuts use the existing `Util::GetEyePosition` renderer
-    position, cached view direction, and projection changes. No undocumented
+    correspondence with the center-pixel depth guide. OS motion vectors already
+    use the normalized units expected by the upscaler, so Feature 18 receives
+    identity motion-vector scales. Reset frames submit zero motion because their
+    previous history is invalid.
+-   Frame data: diagnostics observe cached camera position, view direction, and
+    projection changes. These inferred cuts do not reset production history.
+    No undocumented
     jitter, frame-time, or camera-matrix aliases are supplied to Feature 18.
     Before a history reset, prior NR GPU work is retired. Frames retaining
     history keep GPU-only interop ordering.
--   Loading transitions, skipped world frames, menus, enable changes,
-    shader invalidation, and resource recreation invalidate history.
+-   Loading transitions, skipped world frames, enable changes, shader
+    invalidation, and resource recreation invalidate history. Ordinary UI menus
+    continue evaluating NR when the world rendered that frame; UI composition
+    remains later in the frame and is not passed through Feature 18.
     Resolution, format, eye-count changes, or explicit resource recreation retire
     GPU work and recreate the eye resources and NGX instances together. Changing
     only the engine texture pointer does not recreate NR.
@@ -255,34 +258,32 @@ required by this document.
 
 ## Flicker diagnostics
 
-In Upscaling's NR section, click **Run All NR Tests**, close the menu, and
-reproduce the problem. The overlay labels eight tests of 600 world frames each:
+Enable developer mode, then click **Run All NR Tests** in Upscaling's NR section,
+close the menu, and reproduce the problem. The overlay labels eight tests of 600
+world frames each:
 
 1. Baseline.
-2. Ignore camera-position resets.
-3. Ignore all camera-cut resets.
+2. Apply inferred camera-cut resets.
+3. Apply inferred direction/projection resets while ignoring position.
 4. Force a reset every frame.
 5. Zero NR motion vectors (most useful while stationary).
 6. Zero NR jitter parameters (the renderer's jitter remains active).
 7. Serialize GPU execution using an explicit retirement wait; expect lower FPS.
 8. Bypass NR output writeback while continuing NGX evaluation.
 
-Tests 4–8 keep camera-position resets suppressed to isolate the other variables.
 Repeat the same standing-still, turning, and walking pattern in each phase.
 The sequence pauses when the OS menu is open, the world is inactive, NR is off,
 or the game is paused. **Stop Tests and Restore** ends it early. Completion and
 stopping restore the options selected before the sequence. Changes apply live,
 reset history once, and do not recreate Feature 18. Loading, frame-gap and
-resource resets remain active even when camera-cut detection is suppressed.
+resource resets remain active when inferred camera-cut resets are disabled.
 
 All switches can also be changed manually during the same game session. They are
 session-only, default off, and **Restore Diagnostic Defaults** clears them.
-**Mark Flicker in Trace** adds a frame/options marker for a just-observed event.
-**Record 300 NR Frames** captures a manual comparison, excluding menu/paused
-frames. **Copy Trace Path** copies the location of a separate timestamped text
-file in the Windows temporary directory. Send this file after testing; a game
-restart does not overwrite it. An incomplete sequence still saves completed
-phases and periodically flushes its current phase.
+**Copy Trace Path** copies the location of the suite's timestamped text file in
+the Windows temporary directory. A game restart does not overwrite it. An
+incomplete sequence still saves completed phases and periodically flushes its
+current phase.
 
 Each trace records options, scheduling, NGX results, detected and applied reset
 bits, current/previous camera coordinates, engine previous camera coordinates,

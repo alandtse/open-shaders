@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Permutation.hlsli"
 #include "Common/SharedData.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
@@ -142,6 +143,9 @@ PS_OUTPUT main(PS_INPUT input)
 	float2 screenPosition = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord);
 	float ao = SAOTex.Sample(SAOSampler, screenPosition).x;
 	float4 sourceColor = sourceTex.SampleLevel(sourceSampler, screenPosition, 0);
+	const bool gammaRenderTarget = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) != 0;
+	if (ENABLE_LL && gammaRenderTarget)
+		sourceColor.xyz = Color::SceneGammaToLinear(sourceColor.xyz);
 
 	float4 composedColor = sourceColor;
 
@@ -180,7 +184,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(APPLY_FOG)
 	float fogDistanceFactor = (2 * CameraNearFar.x * CameraNearFar.y) / ((CameraNearFar.y + CameraNearFar.x) - (2 * (1.01 * depth - 0.01) - 1) * (CameraNearFar.y - CameraNearFar.x));
-	float fogFactor = SharedData::InMapMenu ? 0.0 : min(FogParam.w, pow(saturate(fogDistanceFactor * FogParam.y - FogParam.x), FogParam.z));
+	float fogFactor = min(FogParam.w, pow(saturate(fogDistanceFactor * FogParam.y - FogParam.x), FogParam.z));
 	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogFactor));
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
@@ -201,21 +205,22 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 	if (isGeometryDepth || exponentialHeightFogEnabled) {
 		float fogFade = exponentialHeightFogEnabled ? ExponentialHeightFog::GetVanillaFogFade(FogNearColor.w) : FogNearColor.w;
-		float3 fogSource = exponentialHeightFogEnabled && !isGeometryDepth ? composedColor.xyz : fogFade * composedColor.xyz;
+		float fogSourceScale = exponentialHeightFogEnabled && !isGeometryDepth ? 1.0 : fogFade;
 		if (exponentialHeightFogEnabled && !ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			// Apply vanilla fog first, then exp fog on top
-			composedColor.xyz = lerp(fogSource, fogFade * fogColor, Color::FogAlpha(fogFactor));
+			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogSourceScale, fogFade);
 			composedColor.xyz = lerp(composedColor.xyz, fogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
 		} else if (exponentialHeightFogEnabled) {
 			// Disable vanilla fog, only apply exp height fog
+			float3 fogSource = fogSourceScale * composedColor.xyz;
 			composedColor.xyz = lerp(fogSource, fogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
 		} else {
-			composedColor.xyz = lerp(fogSource, fogFade * fogColor, Color::FogAlpha(fogFactor));
+			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogFade, fogFade);
 		}
 	}
 #		else
 	if (isGeometryDepth) {
-		composedColor.xyz = FogNearColor.w * lerp(composedColor.xyz, fogColor, Color::FogAlpha(fogFactor));
+		composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, FogNearColor.w, FogNearColor.w);
 	}
 #		endif
 #	endif
@@ -244,11 +249,14 @@ PS_OUTPUT main(PS_INPUT input)
 		sparklesInput *= sparklesAttenuation;
 	}
 	sparklesInput *= snowMask;
-	float4 sparklesColor = float4(SparklesParameters4.yzw * sparklesInput, sparklesInput);
+	float4 sparklesColor = float4(Color::AuthoredColor(SparklesParameters4.yzw) * sparklesInput, sparklesInput);
 
 	composedColor *= 1 - SparklesParameters2.w;
 	composedColor += sparklesColor;
 #	endif
+
+	if (ENABLE_LL && gammaRenderTarget)
+		composedColor.xyz = Color::SceneLinearToGamma(composedColor.xyz);
 
 	psout.Color = composedColor;
 

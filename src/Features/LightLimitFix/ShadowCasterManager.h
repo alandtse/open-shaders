@@ -818,6 +818,9 @@ namespace ShadowCasterManager
 	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
 
+	/// Releases the static depth-copy shaders for recompilation.
+	void ClearAtlasShaders();
+
 	/// Publishes this frame's GPU-measured per-slot screen-visibility demand for
 	/// the redraw scheduler to read. Call once per frame before Update().
 	void SetShadowDemand(const ShadowDemandSample& sample);

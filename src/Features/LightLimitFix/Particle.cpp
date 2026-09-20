@@ -14,8 +14,6 @@
 
 namespace
 {
-	constexpr uint MAX_LIGHTS = 1024;
-
 	bool IsNearWhiteTint(const RE::NiColorA& a_color)
 	{
 		const float avg = (a_color.red + a_color.green + a_color.blue) / 3.0f;

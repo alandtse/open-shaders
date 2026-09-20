@@ -5,16 +5,22 @@
 #include <Tracy/TracyD3D11.hpp>
 
 #include <Buffer.h>
+#include <array>
 #include <atomic>
 #include <format>
 #include <iterator>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <span>
 
 using json = nlohmann::json;
 
+#include "GpuPass.h"
 #include <FeatureBuffer.h>
 
+#include "Features/Wind/TransientWindImpulse.h"
+#include "Features/Wind/WindField.h"
 #include <Hooks.h>
 #include <mutex>
 
@@ -72,6 +78,7 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
+	std::optional<ScopedGpuPass> grassGpuPass;
 
 	enum ConfigMode
 	{
@@ -83,6 +90,8 @@ public:
 
 	/** @brief Per-draw-call hook: updates feature state, constant buffers, and overlay. */
 	void Draw();
+	/** @brief Keeps one GPU timer open across each contiguous batch of Grass draw calls. */
+	void UpdateGrassGpuPass();
 	/** @brief Accumulates per-shader-type draw call counts and frame timing for the performance overlay. */
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
@@ -119,6 +128,13 @@ public:
 	 *  re-saves, which must not also persist Effects11's separate ENB-side state.
 	 */
 	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
+
+	/** @brief Saves a feature's boot preference immediately; returns false on failure. */
+	bool SetFeatureBootEnabled(const std::string& featureName, bool enabled);
+	/** @brief Saves a loaded feature's favorite status immediately; returns false on failure. */
+	bool SetFeatureFavorite(const std::string& featureName, bool favorite);
+	/** @brief Returns the saved favorite status, including for unloaded features. */
+	bool IsFeatureFavorite(const std::string& featureName) const;
 
 	/**
 	 * @brief Serializes all settings to a JSON object (in-memory, no disk I/O).
@@ -319,7 +335,11 @@ public:
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
-		IsEye = 1u << 31
+		IsEye = 1u << 31,
+		IsCharacterRainSurface = 1u << 30,
+		IsHeldWeapon = 1u << 29,
+		TreeBend = 1u << 28,
+		GammaRenderTarget = 1u << 27
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */
@@ -332,7 +352,8 @@ public:
 		THLand4HasDisplacement = 1 << 4,
 		THLand5HasDisplacement = 1 << 5,
 		ETMaterialModel = 0b111 << 6,
-		THLandHasDisplacement = 1 << 9
+		THLandHasDisplacement = 1 << 9,
+		TVMeshVariation = 1 << 10
 	};
 
 	bool inWorld = false;
@@ -379,6 +400,13 @@ public:
 	 * @param a_pass The render pass to inspect.
 	 */
 	void UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass);
+	void UpdatePermutationBuffer();
+	/**
+	 * @brief Binds permutationCB/sharedDataCB/featureDataCB at the vertex stage, since vertex
+	 * shaders (grass/tree bend) now read permutation fields in addition to pixel shaders.
+	 * @param a_shader Shader to bind for; defaults to the currently bound shader.
+	 */
+	void BindVertexPermutationData(const RE::BSShader* a_shader = nullptr);
 	/**
 	 * @brief Checks whether directional shadows are available for the current scene.
 	 * @returns true if directional shadows are present, false otherwise.
@@ -393,15 +421,81 @@ public:
 		uint ExtraFeatureDescriptor;
 
 		float EffectRadius;
-		float3 pad0;
+		float WindIntensityOverride;
+		uint OverrideWindIntensity;
+		float pad0;
+
+		float TreeWindUpperBendRange;
+		float TreeWindMaximumDisplacementPercent;
+		float TreeBendModelSensitivity;
+		float TreeLeafModelSensitivity;
+
+		float TreeTransientWindInfluence;
+		float TrunkWindBendSensitivity;
+		float TreeLeafBaseWindFlutterGain;
+		uint EnableAmbientGrassWind;
+
+		float GrassWindBendProfile;
+		float GrassWindFlutterStrength;
+		float GrassWindFlutterFrequency;
+		float GrassWindSensitivity;
+
+		float TreeWindBoundsBase;
+		float TreeWindBoundsHeight;
+		float TreeWindTrunkGustInfluence;
+		float TreeLeafGustInfluence;
+
+		float TreeTransientMaximumBendMultiplier;
+		float TreeLeafTransientWindInfluence;
+		float TreeLeafTransientFlutterMaximum;
+		float GrassWindCompressionToBend;
+
+		float4 TreeWindProbeBase;
+		float4 TreeWindProbeTop;
 
 		bool operator==(const PermutationCB& other) const
 		{
 			return PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
-			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius;
+			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
+			       WindIntensityOverride == other.WindIntensityOverride &&
+			       OverrideWindIntensity == other.OverrideWindIntensity &&
+			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
+			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
+			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&
+			       TreeLeafModelSensitivity == other.TreeLeafModelSensitivity &&
+			       TreeTransientWindInfluence == other.TreeTransientWindInfluence &&
+			       TreeLeafTransientWindInfluence == other.TreeLeafTransientWindInfluence &&
+			       TreeLeafTransientFlutterMaximum == other.TreeLeafTransientFlutterMaximum &&
+			       TreeTransientMaximumBendMultiplier == other.TreeTransientMaximumBendMultiplier &&
+			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
+			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
+			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
+			       GrassWindSensitivity == other.GrassWindSensitivity &&
+			       GrassWindBendProfile == other.GrassWindBendProfile &&
+			       GrassWindCompressionToBend == other.GrassWindCompressionToBend &&
+			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
+			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
+			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
+			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
+			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
+			       TreeLeafGustInfluence == other.TreeLeafGustInfluence &&
+			       TreeWindProbeBase.x == other.TreeWindProbeBase.x &&
+			       TreeWindProbeBase.y == other.TreeWindProbeBase.y &&
+			       TreeWindProbeBase.z == other.TreeWindProbeBase.z &&
+			       TreeWindProbeTop.x == other.TreeWindProbeTop.x &&
+			       TreeWindProbeTop.y == other.TreeWindProbeTop.y &&
+			       TreeWindProbeTop.z == other.TreeWindProbeTop.z;
 		}
 	};
+	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
+	static_assert(offsetof(PermutationCB, GrassWindFlutterStrength) == 68);
+	static_assert(offsetof(PermutationCB, TreeTransientMaximumBendMultiplier) == 96);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientWindInfluence) == 100);
+	static_assert(offsetof(PermutationCB, TreeLeafTransientFlutterMaximum) == 104);
+	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
+	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
+	static_assert(sizeof(PermutationCB) == 144);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	ConstantBuffer* permutationCB = nullptr;
@@ -437,6 +531,18 @@ public:
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
+		WindField::WindTuning WindFieldTuning;
+		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
+		float4 WindFieldPreviousAmbient;
+		WindField::Field WindFieldCurrent;
+		WindField::Field WindFieldPrevious;
+		WindField::Field WindFieldTransition;
+		WindField::Field WindFieldPreviousTransition;
+		float4 WindFieldTransitionData;  // x/y: current/previous blend, z/w: reserved
+		float4 WindFieldSpringDebug;     // xy: field minimum, z: field size, w: maximum tilt radians
+		std::array<uint32_t, 4> WindFieldActiveCounts;
+		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldTransientImpulses;
+		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> WindFieldPreviousTransientImpulses;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
@@ -444,6 +550,19 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationData0) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldCurrent) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPrevious) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransition) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransitionData) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldSpringDebug) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldActiveCounts) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldTransientImpulses) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
+	static_assert(sizeof(SharedDataCB) <= D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
 
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
@@ -539,6 +658,8 @@ public:
 	}
 
 private:
+	std::unordered_map<std::string, bool> favoriteFeatures;
+	bool SaveFeaturePreference(const json& patch);
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

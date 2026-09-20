@@ -77,13 +77,13 @@ void DoF::DrawSettings()
 	ImGui::SliderFloat(T("feature.post_processing.do_f.near_plane_max_blur", "Near Plane Max Blur"), &settings.NearPlaneMaxBlur, 0.0f, 4.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.max_far_coc_radius", "Max Far Blur Radius"), &settings.MaxFarCoCRadius, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.do_f.max_far_coc_radius_desc", "Upper bound of the far field blur disc radius, as a fraction of the screen width. Caps how expensive/undersampled the gather can get."));
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.max_far_coc_radius_desc", "Upper bound of the far field blur disc radius, as a fraction of the screen width. Caps how expensive/undersampled the gather can get."));
 	ImGui::SliderFloat(T("feature.post_processing.do_f.max_near_coc_radius", "Max Near Blur Radius"), &settings.MaxNearCoCRadius, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.do_f.max_near_coc_radius_desc", "Upper bound of the near field blur disc radius, as a fraction of the screen width."));
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.max_near_coc_radius_desc", "Upper bound of the near field blur disc radius, as a fraction of the screen width."));
 	ImGui::Checkbox(T("feature.post_processing.do_f.adaptive_gather", "Adaptive Gather"), &settings.UseAdaptiveGather);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.do_f.adaptive_gather_desc", "Uses a fixed low-sample kernel and a CoC-aware image pyramid."));
+		ImGui::TextUnformatted(T("feature.post_processing.do_f.adaptive_gather_desc", "Uses a fixed low-sample kernel and a CoC-aware image pyramid."));
 	if (settings.UseAdaptiveGather)
 		ImGui::Combo(T("feature.post_processing.do_f.gather_quality", "Gather Quality"), &settings.GatherQuality, "Performance (4 rings)\0Quality (5 rings)\0");
 	if (!settings.UseAdaptiveGather)
@@ -98,7 +98,7 @@ void DoF::DrawSettings()
 		ImGui::SliderInt(T("feature.post_processing.do_f.bokeh_blade_count", "Aperture Blades"), &settings.BokehBladeCount, 4, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_blade_roundness", "Blade Roundness"), &settings.BokehBladeRoundness, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (!settings.UseAdaptiveGather)
-			ImGui::TextDisabled(T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."));
+			ImGui::TextDisabled("%s", T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."));
 	} else if (owner) {
 		const int shapeCount = owner->bokehResources.GetTotalShapeCount();
 		settings.HighlightShape = std::clamp(settings.HighlightShape, 1, std::max(shapeCount, 1));
@@ -113,7 +113,7 @@ void DoF::DrawSettings()
 			}
 			ImGui::EndCombo();
 		}
-		ImGui::TextDisabled(T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
+		ImGui::TextDisabled("%s", T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
 	}
 	ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_shape_rotation", "Highlight Shape Rotation"), &settings.HighlightShapeRotationAngle, 0.0f, 1.0f, "%.2f");
 	ImGui::Checkbox(T("feature.post_processing.do_f.target_focus", "Target Focus"), &settings.targetFocus);
@@ -257,7 +257,7 @@ void DoF::SetupResources()
 		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 
 		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(&texDesc);
+		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -510,7 +510,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 	auto state = globals::state;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
-	auto* depthSRV = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV;
+	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 	if (!depthSRV) {
 		return;
 	}
@@ -532,7 +532,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		RE::TESObjectREFR* target = nullptr;
 		const auto consoleRef = RE::Console::GetSelectedRef();
-		if (settings.consoleSelection)
+		if (settings.consoleSelection) {
 			if (consoleRef && !consoleRef->IsDisabled() && !consoleRef->IsDeleted() && consoleRef->Is3DLoaded()) {
 				currentRef = consoleRef->formID;
 				target = consoleRef.get();
@@ -540,6 +540,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 			} else {
 				currentRef = 0;
 			}
+		}
 
 		if (GetTargetLockEnabled()) {
 			target = g_TDM->GetCurrentTarget().get().get();

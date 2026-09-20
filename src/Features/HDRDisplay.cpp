@@ -242,7 +242,7 @@ namespace
 				hdr->hdrTexture && hdr->hdrTexture->resource) {
 				auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kFRAMEBUFFER];
 				if (fb.texture)
-					globals::d3d::context->CopyResource(fb.texture, hdr->hdrTexture->resource.get());
+					globals::d3d::context->CopyResource(Util::AsReal(fb.texture), hdr->hdrTexture->resource.get());
 			}
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -296,23 +296,23 @@ void HDRDisplay::DrawSettings()
 	auto hdrWarningPopupTitle = std::format("{}##HDRDisplay", T(TKEY("warning_popup_title"), "HDR Warning"));
 
 	if (isHDRMonitor) {
-		Util::Text::Success(T(TKEY("display_detected"), "HDR Display Detected"));
+		Util::Text::Success("%s", T(TKEY("display_detected"), "HDR Display Detected"));
 	} else if (isHDRCapableMonitor) {
-		Util::Text::Warning(T(TKEY("capable_display_windows_hdr_off"), "HDR Capable Display (Windows HDR is off)"));
+		Util::Text::Warning("%s", T(TKEY("capable_display_windows_hdr_off"), "HDR Capable Display (Windows HDR is off)"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T(TKEY("capable_display_windows_hdr_off_tooltip_0"), "Your monitor supports HDR, but Windows HDR is currently disabled."));
 			ImGui::TextUnformatted(T(TKEY("capable_display_windows_hdr_off_tooltip_1"), "Enable HDR in Windows Display Settings to allow auto-detection."));
 		}
 	} else {
-		Util::Text::Warning(T(TKEY("sdr_display_not_detected"), "SDR Display (HDR not detected)"));
+		Util::Text::Warning("%s", T(TKEY("sdr_display_not_detected"), "SDR Display (HDR not detected)"));
 	}
 
 	const bool isExclusiveFullscreen = globals::features::upscaling.loaded ? !globals::features::upscaling.isWindowed : wasExclusiveFullscreen;
 
 	if (isExclusiveFullscreen) {
 		ImGui::Spacing();
-		Util::Text::WrappedWarning(T(TKEY("exclusive_fullscreen_warning"), "WARNING: Exclusive Fullscreen detected."));
-		Util::Text::WrappedWarning(T(TKEY("exclusive_fullscreen_warning_detail"), "HDR is not compatible with Exclusive Fullscreen and may not work correctly. Switch to Borderless Windowed mode for proper HDR support."));
+		Util::Text::WrappedWarning("%s", T(TKEY("exclusive_fullscreen_warning"), "WARNING: Exclusive Fullscreen detected."));
+		Util::Text::WrappedWarning("%s", T(TKEY("exclusive_fullscreen_warning_detail"), "HDR is not compatible with Exclusive Fullscreen and may not work correctly. Switch to Borderless Windowed mode for proper HDR support."));
 		ImGui::Spacing();
 	}
 
@@ -399,7 +399,7 @@ void HDRDisplay::DrawSettings()
 		std::lock_guard<std::mutex> lock(settingsMutex);
 		if (!isHDRMonitor && settings.enableHDR) {
 			ImGui::Spacing();
-			Util::Text::WrappedWarning(T(TKEY("enabled_without_detected_display"), "HDR is enabled but no HDR display was detected."));
+			Util::Text::WrappedWarning("%s", T(TKEY("enabled_without_detected_display"), "HDR is enabled but no HDR display was detected."));
 		}
 	}
 
@@ -407,11 +407,11 @@ void HDRDisplay::DrawSettings()
 		// Prevent background dimming by pushing lower modal dimming
 		ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
 
-		Util::Text::Warning(T(TKEY("force_enable_hdr_warning"), "WARNING: Force Enable HDR"));
+		Util::Text::Warning("%s", T(TKEY("force_enable_hdr_warning"), "WARNING: Force Enable HDR"));
 		ImGui::Separator();
 		ImGui::Spacing();
-		Util::Text::WrappedWarning(T(TKEY("force_enable_hdr_detected_warning"), "HDR was not detected on your monitor."));
-		Util::Text::WrappedWarning(T(TKEY("force_enable_hdr_sdr_warning"), "The game will look VERY WRONG on an SDR (standard) display."));
+		Util::Text::WrappedWarning("%s", T(TKEY("force_enable_hdr_detected_warning"), "HDR was not detected on your monitor."));
+		Util::Text::WrappedWarning("%s", T(TKEY("force_enable_hdr_sdr_warning"), "The game will look VERY WRONG on an SDR (standard) display."));
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", T(TKEY("force_enable_hdr_confirm"), "Only proceed if you have an HDR-capable display that was not detected correctly."));
 		ImGui::Spacing();
@@ -648,9 +648,9 @@ void HDRDisplay::SetupResources()
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 
-	main.texture->GetDesc(&texDesc);
-	main.SRV->GetDesc(&srvDesc);
-	main.UAV->GetDesc(&uavDesc);
+	main.texture->GetDesc(Util::AsW32(&texDesc));
+	main.SRV->GetDesc(Util::AsW32(&srvDesc));
+	main.UAV->GetDesc(Util::AsW32(&uavDesc));
 
 	// Get the actual swap chain format for output texture
 	DXGI_FORMAT swapChainFormat = DXGI_FORMAT_R10G10B10A2_UNORM;  // HDR format
@@ -793,14 +793,14 @@ void HDRDisplay::RedirectFramebuffer()
 
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	savedFramebufferTexture = fb.texture;
-	savedFramebufferSRV = fb.SRV;
-	savedFramebufferRTV = fb.RTV;
+	savedFramebufferTexture = Util::AsReal(fb.texture);
+	savedFramebufferSRV = Util::AsReal(fb.SRV);
+	savedFramebufferRTV = Util::AsReal(fb.RTV);
 
 	// Redirect to hdrTexture (R16G16B16A16_FLOAT) so ISHDR can write values >1.0
-	fb.texture = reinterpret_cast<ID3D11Texture2D*>(hdrTexture->resource.get());
-	fb.SRV = hdrTexture->srv.get();
-	fb.RTV = hdrTexture->rtv.get();
+	fb.texture = Util::AsW32(hdrTexture->resource.get());
+	fb.SRV = Util::AsW32(hdrTexture->srv.get());
+	fb.RTV = Util::AsW32(hdrTexture->rtv.get());
 
 	framebufferRedirected = true;
 }
@@ -810,11 +810,12 @@ void HDRDisplay::RestoreFramebuffer()
 	if (!framebufferRedirected)
 		return;
 
+	++sceneGeneration;
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
 
-	fb.texture = savedFramebufferTexture;
-	fb.SRV = savedFramebufferSRV;
-	fb.RTV = savedFramebufferRTV;
+	fb.texture = Util::AsW32(savedFramebufferTexture);
+	fb.SRV = Util::AsW32(savedFramebufferSRV);
+	fb.RTV = Util::AsW32(savedFramebufferRTV);
 
 	savedFramebufferTexture = nullptr;
 	savedFramebufferSRV = nullptr;
@@ -878,16 +879,17 @@ void HDRDisplay::SetUIBuffer()
 
 		ID3D11RenderTargetView* targetRTV = uiBufferMode.useUIBuffer ?
 		                                        upscaling.dx12SwapChain.uiBufferWrapped->rtv :
-		                                    uiBufferMode.useFallbackCopy ? fb.RTV :
+		                                    uiBufferMode.useFallbackCopy ? Util::AsReal(fb.RTV) :
 		                                                                   upscaling.dx12SwapChain.swapChainBufferWrapped->rtv;
 
 		if (uiBufferMode.useUIBuffer) {
 			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 			globals::d3d::context->ClearRenderTargetView(targetRTV, clearColor);
+			++uiGeneration;
 		}
 
-		fb.RTV = targetRTV;
-		globals::d3d::context->OMSetRenderTargets(1, &fb.RTV, nullptr);
+		fb.RTV = Util::AsW32(targetRTV);
+		globals::d3d::context->OMSetRenderTargets(1, &targetRTV, nullptr);
 		return;
 	}
 
@@ -903,14 +905,16 @@ void HDRDisplay::SetUIBuffer()
 		return;
 
 	if (!savedFramebufferRTV) {
-		savedFramebufferRTV = fb.RTV;
+		savedFramebufferRTV = Util::AsReal(fb.RTV);
 	}
 
 	float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	globals::d3d::context->ClearRenderTargetView(uiTexture->rtv.get(), clearColor);
+	++uiGeneration;
 
-	fb.RTV = uiTexture->rtv.get();
-	globals::d3d::context->OMSetRenderTargets(1, &fb.RTV, nullptr);
+	fb.RTV = Util::AsW32(uiTexture->rtv.get());
+	auto* uiRTV = uiTexture->rtv.get();
+	globals::d3d::context->OMSetRenderTargets(1, &uiRTV, nullptr);
 }
 
 bool HDRDisplay::UsesDeferredPresentComposite() const
@@ -925,8 +929,9 @@ void HDRDisplay::SyncFramebufferUIRedirect()
 		return;
 
 	auto& fb = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-	fb.RTV = uiTexture->rtv.get();
-	globals::d3d::context->OMSetRenderTargets(1, &fb.RTV, nullptr);
+	auto* uiRTV = uiTexture->rtv.get();
+	fb.RTV = Util::AsW32(uiRTV);
+	globals::d3d::context->OMSetRenderTargets(1, &uiRTV, nullptr);
 }
 
 namespace
@@ -1035,7 +1040,8 @@ void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
 {
 	if (frameGenActive) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
+		auto* dataRTV = Util::AsReal(data.RTV);
+		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	} else if (hdrReady && !globals::game::isVR && uiTexture && uiTexture->rtv && uiTexture->resource) {
 		ID3D11RenderTargetView* uiRTV = uiTexture->rtv.get();
 		D3D11_TEXTURE2D_DESC texDesc{};
@@ -1053,7 +1059,8 @@ void HDRDisplay::DrawImGuiForPresent(bool frameGenActive, bool hdrReady)
 		}
 	} else {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
+		auto* dataRTV = Util::AsReal(data.RTV);
+		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	}
 }
 
@@ -1099,7 +1106,8 @@ HRESULT HDRDisplay::RunPresentChainWithHDR(
 			ClearUIBuffer();
 		}
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		globals::d3d::context->OMSetRenderTargets(1, &data.RTV, nullptr);
+		auto* dataRTV = Util::AsReal(data.RTV);
+		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	}
 
 	return presentChain(swapChain, syncInterval, flags);
@@ -1138,7 +1146,7 @@ void HDRDisplay::ClearUIBuffer()
 
 	if (savedFramebufferRTV) {
 		auto& data = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kFRAMEBUFFER];
-		data.RTV = savedFramebufferRTV;
+		data.RTV = Util::AsW32(savedFramebufferRTV);
 		savedFramebufferRTV = nullptr;
 	}
 }
@@ -1172,9 +1180,9 @@ void HDRDisplay::ApplyHDR()
 		// - Non-VR HDR: hdrTexture has float16 scene values >1.0 preserved from ISHDR.
 		// - Non-VR SDR: kFRAMEBUFFER has the tonemapped 0-1 ISHDR output.
 		ID3D11ShaderResourceView* sceneSRV =
-			globals::game::isVR                                   ? framebufferRT.SRV :
+			globals::game::isVR                                   ? Util::AsReal(framebufferRT.SRV) :
 			(settings.enableHDR && hdrTexture && hdrTexture->srv) ? hdrTexture->srv.get() :
-																	framebufferRT.SRV;
+																	Util::AsReal(framebufferRT.SRV);
 
 		// Choose the correct UI buffer based on which path is active.
 		// VR uses the framebuffer directly, which already contains vanilla UI/ImGui.
@@ -1193,12 +1201,12 @@ void HDRDisplay::ApplyHDR()
 			if (upscaling.d3d12SwapChainActive) {
 				// SetUIBuffer keeps non-FG fallback UI in kFRAMEBUFFER; FG keeps using
 				// uiBufferWrapped for FidelityFX UI composition.
-				context->CopyResource(upscaling.dx12SwapChain.swapChainBufferWrapped->resource11, framebufferRT.texture);
+				context->CopyResource(upscaling.dx12SwapChain.swapChainBufferWrapped->resource11, Util::AsReal(framebufferRT.texture));
 			} else {
 				ID3D11Texture2D* backBuffer = nullptr;
 				HRESULT hr = globals::d3d::swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
 				if (SUCCEEDED(hr) && backBuffer) {
-					context->CopyResource(backBuffer, framebufferRT.texture);
+					context->CopyResource(backBuffer, Util::AsReal(framebufferRT.texture));
 					backBuffer->Release();
 				}
 			}
@@ -1266,6 +1274,8 @@ void HDRDisplay::SnapshotCleanScene()
 {
 	if (!hdrTexture || !hdrTexture->resource)
 		return;
+	if (IsCleanSceneCaptureFresh())
+		return;
 
 	const D3D11_TEXTURE2D_DESC& sceneDesc = hdrTexture->desc;
 
@@ -1310,11 +1320,13 @@ void HDRDisplay::SnapshotCleanScene()
 
 	globals::d3d::context->CopyResource(cleanSceneCapture->resource.get(), hdrTexture->resource.get());
 	cleanSceneCaptureFrame = globals::state->frameCount;
+	cleanSceneCaptureGeneration = sceneGeneration;
 }
 
 bool HDRDisplay::IsCleanSceneCaptureFresh() const
 {
-	return cleanSceneCapture && cleanSceneCapture->srv && cleanSceneCaptureFrame == globals::state->frameCount;
+	return cleanSceneCapture && cleanSceneCapture->srv && cleanSceneCaptureFrame == globals::state->frameCount &&
+	       cleanSceneCaptureGeneration == sceneGeneration;
 }
 
 ID3D11Texture2D* HDRDisplay::ComposeCleanCapture(ID3D11ShaderResourceView* sceneSRV, bool sdrPreview)
@@ -1410,16 +1422,16 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 			continue;
 
 		D3D11_TEXTURE2D_DESC origDesc{};
-		rt.texture->GetDesc(&origDesc);
+		rt.texture->GetDesc(Util::AsW32(&origDesc));
 
 		if (origDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
 			continue;
 
 		SavedRenderTarget saved;
-		saved.texture = rt.texture;
-		saved.RTV = rt.RTV;
-		saved.SRV = rt.SRV;
-		saved.UAV = rt.UAV;
+		saved.texture = Util::AsReal(rt.texture);
+		saved.RTV = Util::AsReal(rt.RTV);
+		saved.SRV = Util::AsReal(rt.SRV);
+		saved.UAV = Util::AsReal(rt.UAV);
 
 		D3D11_TEXTURE2D_DESC newDesc = origDesc;
 		newDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -1453,7 +1465,7 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 		ID3D11UnorderedAccessView* newUAV = nullptr;
 		if (rt.UAV) {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
-			rt.UAV->GetDesc(&uavDesc);
+			rt.UAV->GetDesc(Util::AsW32(&uavDesc));
 			uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 			if (FAILED(device->CreateUnorderedAccessView(newTexture, &uavDesc, &newUAV))) {
@@ -1464,10 +1476,10 @@ void HDRDisplay::UpgradeLDRRenderTargets()
 			}
 		}
 
-		rt.texture = newTexture;
-		rt.RTV = newRTV;
-		rt.SRV = newSRV;
-		rt.UAV = newUAV;
+		rt.texture = Util::AsW32(newTexture);
+		rt.RTV = Util::AsW32(newRTV);
+		rt.SRV = Util::AsW32(newSRV);
+		rt.UAV = Util::AsW32(newUAV);
 
 		savedLDRTargets.push_back({ targetId, saved });
 		logger::info("[HDR] Upgraded render target {} to R16G16B16A16_FLOAT (was format {})", static_cast<int>(targetId), static_cast<int>(origDesc.Format));
@@ -1490,10 +1502,10 @@ void HDRDisplay::RestoreLDRRenderTargets()
 		if (rt.UAV)
 			rt.UAV->Release();
 
-		rt.texture = saved.texture;
-		rt.RTV = saved.RTV;
-		rt.SRV = saved.SRV;
-		rt.UAV = saved.UAV;
+		rt.texture = Util::AsW32(saved.texture);
+		rt.RTV = Util::AsW32(saved.RTV);
+		rt.SRV = Util::AsW32(saved.SRV);
+		rt.UAV = Util::AsW32(saved.UAV);
 	}
 	savedLDRTargets.clear();
 }

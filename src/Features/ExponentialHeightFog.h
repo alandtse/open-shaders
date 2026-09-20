@@ -43,8 +43,6 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
-	/** @brief Registers all fog parameters as weather-interpolatable variables. */
-	void RegisterWeatherVariables() override;
 	/** @brief Captures the current directional shadow map SRV for use in volumetric fog light scattering. */
 	void CaptureDirectionalShadowMap();
 
@@ -127,6 +125,7 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
 	bool hasLightScatteringHistory = false;
+	std::array<uint, 2> historyColorSpace{};
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
 };

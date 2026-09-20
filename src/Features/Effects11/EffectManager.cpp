@@ -350,13 +350,13 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
 		if (a_input.texture && kMain.texture) {
-			a_input.texture->GetDesc(&srcDesc);
-			kMain.texture->GetDesc(&dstDesc);
+			a_input.texture->GetDesc(Util::AsW32(&srcDesc));
+			kMain.texture->GetDesc(Util::AsW32(&dstDesc));
 		}
 		if (a_input.texture && kMain.texture && srcDesc.Format == dstDesc.Format && srcDesc.Width == dstDesc.Width && srcDesc.Height == dstDesc.Height && srcDesc.SampleDesc.Count == dstDesc.SampleDesc.Count) {
-			context->CopyResource(kMain.texture, a_input.texture);
+			context->CopyResource(Util::AsReal(kMain.texture), Util::AsReal(a_input.texture));
 		} else {
-			CopyTexture(a_input.SRV, kMain.RTV);
+			CopyTexture(Util::AsReal(a_input.SRV), Util::AsReal(kMain.RTV));
 			ID3D11RenderTargetView* nullRTV = nullptr;
 			context->OMSetRenderTargets(1, &nullRTV, nullptr);
 		}
@@ -402,10 +402,10 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 
 		globals::profiler->BeginPass("Effects11::ColorCorrection");
-		ApplyColorCorrection(textureOriginal.UAV);
+		ApplyColorCorrection(Util::AsReal(textureOriginal.UAV));
 		globals::profiler->EndPass();
 
-		textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+		textureManager.UpdateDownsampledTexture(Util::AsReal(textureOriginal.SRV));
 
 		ExecuteEffect(enbBloom, ids.useBloom);
 		ExecuteEffect(enbLens, ids.useLens);
@@ -437,7 +437,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	const bool wroteOutput = textureSDRTemp && a_output.RTV;
 	if (wroteOutput) {
 		globals::profiler->BeginPass("Effects11::CopyToOutput");
-		CopyTexture(textureSDRTemp->srv.get(), a_output.RTV);
+		CopyTexture(textureSDRTemp->srv.get(), Util::AsReal(a_output.RTV));
 		globals::profiler->EndPass();
 	}
 
@@ -445,16 +445,6 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	stateBackup.Release();
 
 	return wroteOutput;
-}
-
-std::string EffectManager::LoadShaderFile(const char* path)
-{
-	std::ifstream ifs(path, std::ios::binary);
-	if (!ifs.is_open()) {
-		logger::error("[EFFECTS11] Failed to open shader file: {}", path);
-		return {};
-	}
-	return { std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>() };
 }
 
 void EffectManager::CreateCommonResources()
@@ -498,24 +488,13 @@ void EffectManager::CreateQuadGeometry()
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
-	auto vertexShaderSource = LoadShaderFile("Data\\Shaders\\Effects11\\QuadVS.hlsl");
-	if (vertexShaderSource.empty())
-		return;
-
-	winrt::com_ptr<ID3DBlob> vertexShaderBlob;
-	winrt::com_ptr<ID3DBlob> errorBlob;
-	HRESULT hr = D3DCompile(vertexShaderSource.data(), vertexShaderSource.size(), "QuadVS.hlsl", nullptr, nullptr,
-		"main", "vs_4_0", 0, 0, vertexShaderBlob.put(), errorBlob.put());
-
-	if (FAILED(hr)) {
-		if (errorBlob) {
-			logger::error("[EFFECTS11] Failed to compile input layout vertex shader: {}", static_cast<char*>(errorBlob->GetBufferPointer()));
-		}
+	auto vertexShaderBlob = Util::CompileShaderBlob(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_4_0");
+	if (!vertexShaderBlob) {
+		logger::error("[EFFECTS11] Failed to compile input layout vertex shader");
 		return;
 	}
-	Util::LogShaderCompileWarnings(errorBlob.get(), "EFFECTS11 input layout vertex shader");
 
-	hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
+	HRESULT hr = globals::d3d::device->CreateInputLayout(inputElementDescs, ARRAYSIZE(inputElementDescs),
 		vertexShaderBlob->GetBufferPointer(),
 		vertexShaderBlob->GetBufferSize(),
 		inputLayout.put());
@@ -783,7 +762,7 @@ void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 	auto renderer = globals::game::renderer;
 
 	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(depthData.texture, depthData.depthSRV));
+	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(Util::AsReal(depthData.texture), Util::AsReal(depthData.depthSRV)));
 
 	static const char* const formatTargets[] = {
 		"RenderTargetRGBA32", "RenderTargetRGBA64", "RenderTargetRGBA64F",
@@ -955,8 +934,8 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		if (!kMain.texture || !kMain.SRV)
 			return false;
-		sourceTexture = kMain.texture;
-		sourceSRV = kMain.SRV;
+		sourceTexture = Util::AsReal(kMain.texture);
+		sourceSRV = Util::AsReal(kMain.SRV);
 	}
 
 	D3D11_TEXTURE2D_DESC mainDesc{};
@@ -966,12 +945,12 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 
 	if (!EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource"))
 		return false;
-	eyeSourceData.texture = eyeSourceTexture.get();
+	eyeSourceData.texture = Util::AsW32(eyeSourceTexture.get());
 	eyeSourceData.textureCopy = nullptr;
-	eyeSourceData.RTV = eyeSourceRTV.get();
-	eyeSourceData.SRV = eyeSourceSRV.get();
+	eyeSourceData.RTV = Util::AsW32(eyeSourceRTV.get());
+	eyeSourceData.SRV = Util::AsW32(eyeSourceSRV.get());
 	eyeSourceData.SRVCopy = nullptr;
-	eyeSourceData.UAV = eyeSourceUAV.get();
+	eyeSourceData.UAV = Util::AsW32(eyeSourceUAV.get());
 
 	return CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl");
 }

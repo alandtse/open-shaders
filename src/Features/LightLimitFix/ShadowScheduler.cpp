@@ -235,12 +235,14 @@ namespace ShadowCasterManager
 	// atlas slot owns what's actually baked, so a realloc can't leave this stale.
 	struct SplitState
 	{
-		uint64_t pendingHash = 0;      ///< static hash observed on the latest accumulate
-		bool bakeQueued = true;        ///< a rebake is due -- next accumulate is StaticOnly
-		bool bakeThisFrame = false;    ///< this frame's accumulate was StaticOnly (render to cache)
-		uint8_t mismatchStreak = 0;    ///< consecutive accumulates whose hash differed from the bake
-		RE::NiPoint3 bakePos{};        ///< light position the static tile was baked at
-		RE::NiMatrix3 bakeRot{};       ///< light rotation the static tile was baked at (frustum-light drift check)
+		uint64_t pendingHash = 0;    ///< static hash observed on the latest accumulate
+		bool bakeQueued = true;      ///< a rebake is due -- next accumulate is StaticOnly
+		bool bakeThisFrame = false;  ///< this frame's accumulate was StaticOnly (render to cache)
+		uint8_t mismatchStreak = 0;  ///< consecutive accumulates whose hash differed from the bake
+		RE::NiPoint3 bakePos{};      ///< light position the static tile was baked at
+		RE::NiMatrix3 bakeRot{};     ///< light rotation the static tile was baked at
+		float bakeRadius = 0.0f;
+		bool bakePoseValid = false;
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
 		bool splitExcluded = false;    ///< jitter outruns the bake's validity: render full, no split
@@ -255,11 +257,6 @@ namespace ShadowCasterManager
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
-
-	// A composited bake stays valid only while the light sits within this
-	// drift of the pose it was baked at (world units). Carried torches move
-	// past this every frame, which is what keeps their shadows live.
-	constexpr float kSplitPoseDriftMax = 4.0f;
 
 	// Staleness backstop for sleeping lights: a real redraw at least this
 	// often bounds every change the sleep predicate cannot observe (player,
@@ -536,47 +533,24 @@ namespace ShadowCasterManager
 		       e.untouchedSamples >= EffectiveZeroDemandStreak();
 	}
 
-	/// True when this light's single accumulate can run DynamicOnly: split
-	/// cache on and usable for it, slot bake valid, pose within bake drift.
-	/// EnableLight picks its filter mode through this and the schedule-time
-	/// sleep skip reuses it, so the two can never drift apart.
-	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid,
-		float pendingScale)
+	/// Tests whether a cached bake uses this light's current transform and radius.
+	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
+	{
+		const auto* ni = light->light.get();
+		return ni && st.bakePoseValid &&
+		       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
+		       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+	}
+
+	/// Shared cache-validity check for caster selection and sleeping shadows.
+	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid)
 	{
 		if (!StaticAtlasReady())
 			return false;
 		if (st.splitExcluded || st.bakeQueued || !staticValid)
 			return false;
-		if (auto* ni = light->light.get()) {
-			// Pose freshness: compositing movers over a bake taken at a
-			// drifted pose shows two misaligned shadows at once (reads as
-			// extra darkness).
-			const float px = ni->world.translate.x - st.bakePos.x;
-			const float py = ni->world.translate.y - st.bakePos.y;
-			const float pz = ni->world.translate.z - st.bakePos.z;
-			if (px * px + py * py + pz * pz > kSplitPoseDriftMax * kSplitPoseDriftMax)
-				return false;
-			// Rotation freshness (frustum lights only): reject once the forward
-			// axis drifts past the bake's own texel resolution. semiWidth<=0
-			// (degenerate field) skips rather than fails closed.
-			if (const auto* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light)) {
-				const auto& frustumRtd = frustumLight->GetShadowFrustumLightRuntimeData();
-				if (frustumRtd.semiWidth > 0.0f) {
-					const float baseTileTexels = s_initialShadowMapResolution > 0 ?
-					                                 static_cast<float>(s_initialShadowMapResolution) :
-					                                 2048.0f;
-					const float texels = baseTileTexels * std::max(pendingScale, kTileScaleFloor);
-					const float halfAngle = frustumRtd.semiWidth / texels;
-					const float maxCosDrift = std::clamp(1.0f - 2.0f * halfAngle * halfAngle, -1.0f, 1.0f);
-					const RE::NiPoint3 fwd = ni->world.rotate.GetVectorY();
-					const RE::NiPoint3 bakeFwd = st.bakeRot.GetVectorY();
-					const float dot = fwd.x * bakeFwd.x + fwd.y * bakeFwd.y + fwd.z * bakeFwd.z;
-					if (dot < maxCosDrift)
-						return false;
-				}
-			}
-		}
-		return true;
+		// Static and dynamic depths must use the same projection and radius.
+		return SplitPoseMatches(light, st);
 	}
 
 	/// Schedule-time sleep predicate: every condition proving this light's
@@ -585,7 +559,7 @@ namespace ShadowCasterManager
 	/// re-read every frame so an atlas reclaim or realloc wakes the light.
 	static bool SleepSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
 	{
-		if (e.LastDrawnFrame < 0)
+		if (e.LastDrawnFrame < 0 || SlotStaticCompositePending(slot))
 			return false;
 		// A staged class change must rerender before the light may sleep.
 		if (e.pendingScale != e.renderedScale)
@@ -610,7 +584,7 @@ namespace ShadowCasterManager
 		AtlasTileTexels tile{};
 		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
 			return false;
-		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid, e.pendingScale))
+		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid))
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due,
 		// and keep pressing for it every frame until the budget grants it.
@@ -621,12 +595,10 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	/// Schedule-time zero-demand predicate: unlike SleepSkipEligible (tile
-	/// reproduces exactly), this only asserts nothing samples it. Reuses only
-	/// sleep's tile-existence checks, not its static-bake/mover checks.
+	/// Skips an unsampled tile only after pending allocation and static-composite work completes.
 	static bool DemandSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
 	{
-		if (!s_settings.SkipZeroDemandRedraw)
+		if (!s_settings.SkipZeroDemandRedraw || SlotStaticCompositePending(slot))
 			return false;
 		// Unmeasured, stale or cluster-saturated all read as fully visible.
 		if (!DemandSampleUsable())
@@ -822,19 +794,20 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			bool split = StaticAtlasReady();
-			SplitState* st = nullptr;
+			SplitState* st = &s_splitState[light];
+			st->fullThisFrame = !split;
+			st->bakeThisFrame = false;
 			CasterPass mode = CasterPass::All;
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
 			if (split) {
-				st = &s_splitState[light];
-				st->fullThisFrame = false;
-				if (st->splitExcluded) {
+				if (st->splitExcluded || (st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
 					// it, so it renders full every redraw (no bake, no copy).
 					st->bakeThisFrame = false;
 					st->fullThisFrame = true;
+					st->splitExcluded = true;
 					split = false;
 				}
 			}
@@ -843,12 +816,8 @@ namespace ShadowCasterManager
 				// change) that drops the cache reads back as invalid here and
 				// forces a rebake -- state keyed on the light alone would miss it.
 				GetSlotStaticState(slotIndex, bakedHash, staticValid, &staticEmpty);
-				// Do not inline this read into SplitDynamicOnlyEligible's call as a 4th
-				// argument: unspecified argument-evaluation order let the inlined callee's
-				// pose-drift float reuse slotIndex's spilled stack slot before this read, corrupting it.
 				const bool slotInRange = slotIndex >= 0 && slotIndex < s_lights.Size;
-				const float pendingScale = slotInRange ? s_lights.Lights[slotIndex].pendingScale : 1.0f;
-				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid, pendingScale)) ?
+				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
@@ -869,12 +838,13 @@ namespace ShadowCasterManager
 					if (auto* ni = light->light.get()) {
 						st->bakePos = ni->world.translate;
 						st->bakeRot = ni->world.rotate;
+						st->bakeRadius = ni->GetLightRuntimeData().radius.x;
+						st->bakePoseValid = true;
 					}
 					st->bakeQueued = false;
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
 				if (st->bakeThisFrame) {
-					s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
 					// A pose-stable light bakes once per window; >=4 bakes in 300
 					// frames means the cache never holds -- render full and stop it.
 					const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
@@ -882,18 +852,24 @@ namespace ShadowCasterManager
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
 					}
-					if (++st->poseRebakes >= 4)
+					if (++st->poseRebakes >= 4) {
 						st->splitExcluded = true;
+						st->bakeThisFrame = false;
+						st->fullThisFrame = true;
+						mode = CasterPass::All;
+					} else {
+						s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
+					}
 				}
 				// posStep is coarse (16 units) on purpose: a 1-unit step would
 				// re-hash on every flicker jitter, queueing a rebake per flicker.
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
-				s_visitDynamicCount.store(0, std::memory_order_relaxed);
-				s_visitStaticCount.store(0, std::memory_order_relaxed);
-				s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 			}
+			s_visitDynamicCount.store(0, std::memory_order_relaxed);
+			s_visitStaticCount.store(0, std::memory_order_relaxed);
+			s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
@@ -942,12 +918,10 @@ namespace ShadowCasterManager
 				*GetAccumLightSlot() += light->shadowMapCount;
 			}
 
+			if (!duplicateAccum)
+				st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 			if (split) {
 				st->pendingHash = s_visitStaticHash;
-				// Latch mover presence for the sleep skip; StaticOnly counts
-				// the movers it filters, so bake passes update this too.
-				if (!duplicateAccum)
-					st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 				if (mode == CasterPass::StaticOnly)
 					st->bakeSawStatic = !duplicateAccum && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
 				// Queue a rebake only once the hash divergence PERSISTS (3
@@ -1124,7 +1098,7 @@ namespace ShadowCasterManager
 		case ConvertReason::Excess:
 			return T(TKEY("conv_reason_excess"), "Reason: excess -- ranked below the shadow-caster budget.");
 		case ConvertReason::CameraOther:
-			return T(TKEY("conv_reason_other"), "Reason: rejected by the engine visibility test.");
+			return T(TKEY("conv_reason_misc"), "Reason: rejected by the engine visibility test.");
 		default:
 			return nullptr;
 		}
@@ -2068,12 +2042,14 @@ namespace ShadowCasterManager
 			AtlasTileTexels schedDirtyTile{};
 			const bool tileInvalid = AtlasActive() &&
 			                         (!GetSlotTileTexels(e->Index, schedDirtyTile) || !schedDirtyTile.contentValid);
+			const bool staticCompositePending = SlotStaticCompositePending(e->Index);
 			e->schedDirty = e->LastDrawnFrame < 0 ||
 			                e->lastGeomHash == 0 ||
 			                e->pendingGeomHash != e->lastGeomHash ||
 			                e->pendingScale != e->renderedScale ||
 			                displacementTexels >= 1.0 ||
 			                tileInvalid ||
+			                staticCompositePending ||
 			                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
 
 			// VSM-style demand tiebreaker: must stay in RedrawScore's native frame-count
@@ -2124,6 +2100,9 @@ namespace ShadowCasterManager
 				e->tileFailStreak = 0;
 				e->tileRetryFrame = -1;
 			}
+
+			if (staticCompositePending)
+				e->RedrawScore = std::min(e->RedrawScore, static_cast<double>(now));
 
 			// Skinned pose animation never registers in the geom hash, so a
 			// light with live dynamic casters is dirty the moment it is due.
@@ -3257,7 +3236,6 @@ namespace ShadowCasterManager
 							s_budget.BeginLight(e.Light, 1);
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
-							s_budget.EndLight(e.Light, 1);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
 							MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
 							st.bakeThisFrame = false;
@@ -3270,6 +3248,7 @@ namespace ShadowCasterManager
 							// tile from it would advertise a flat tile as content.
 							if (!liveHasContent && st.bakeSawStatic)
 								CopyStaticTileToLive(i);
+							s_budget.EndLight(e.Light, 1);
 							if (liveHasContent || st.bakeSawStatic) {
 								e.renderedScale = e.pendingScale;
 								// Live content unchanged this frame: never swap a staged promotion in on a bake.
@@ -3293,6 +3272,7 @@ namespace ShadowCasterManager
 							AtlasTileTexels liveTile{};
 							const bool compositeKeepPrior = !composedContent &&
 							                                GetSlotTileTexels(i, liveTile) && liveTile.contentValid;
+							s_budget.BeginLight(e.Light, 1);
 							if (compositeValid) {
 								if (!compositeKeepPrior)
 									CopyStaticTileToLive(i);  // seed the tile with cached static depth
@@ -3301,7 +3281,6 @@ namespace ShadowCasterManager
 									ClearSlotTile(i);
 								st.bakeQueued = true;
 							}
-							s_budget.BeginLight(e.Light, 1);
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);

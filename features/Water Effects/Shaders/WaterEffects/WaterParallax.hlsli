@@ -1,5 +1,13 @@
 namespace WaterEffects
 {
+	static const float WaterParallaxScale = 20.0;
+	static const float FlowmapParallaxUVScale = 80.0;
+	static const float FlowmapParallaxScale = 0.008;
+	static const float FlowmapParallaxMinViewDotUp = 0.05;
+	static const float FlowmapParallaxAngleFade = 2.0;
+	static const float FlowmapParallaxGrazingStepsScale = 2.0;
+	static const float FlowmapParallaxUprightStepsScale = 0.5;
+
 	// https://github.com/tgjones/slimshader-cpp/blob/master/src/Shaders/Sdk/Direct3D11/DetailTessellation11/POM.hlsl
 	// https://github.com/alandtse/SSEShaderTools/blob/main/shaders_vr/ParallaxEffect.h
 
@@ -54,11 +62,14 @@ namespace WaterEffects
 
 	float2 GetParallaxOffset(PS_INPUT input, float3 normalScalesRcp)
 	{
+		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+			return 0.0.xx;
+
 		float3 viewDirection = normalize(input.WPosition.xyz);
 		float2 parallaxOffsetTS = viewDirection.xy / -viewDirection.z;
 
 		// Parallax scale is also multiplied by normalScalesRcp
-		parallaxOffsetTS *= 20.0;
+		parallaxOffsetTS *= WaterParallaxScale * SharedData::csUtilitySettings.waterParallaxStrength;
 
 		float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.HPosition.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
 
@@ -67,7 +78,7 @@ namespace WaterEffects
 		mipLevels.y = GetMipLevel(input.TexCoord1.zw, Normals02Tex, screenNoise);
 		mipLevels.z = GetMipLevel(input.TexCoord2.xy, Normals03Tex, screenNoise);
 
-		float stepSize = rcp(16.0);
+		float stepSize = rcp((float)SharedData::csUtilitySettings.waterParallaxQuality);
 		float currBound = 0.0;
 		float currHeight = 1.0;
 		float prevHeight = 1.0;
@@ -111,22 +122,32 @@ namespace WaterEffects
 		return blendedHeight;
 	}
 
-	float GetFlowmapParallaxAmount(PS_INPUT input, float2 flowmapDims, float3 viewDirection)
+	float2 GetFlowmapParallaxDirection(float3 viewDirection)
 	{
 		float viewDotUp = -viewDirection.z;
 
-		if (viewDotUp < 0.05)
-			return 0.0;
+		if (viewDotUp < FlowmapParallaxMinViewDotUp || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+			return 0.0.xx;
 
 		float2 parallaxDir = viewDirection.xy / -viewDirection.z;
 		parallaxDir.y = -parallaxDir.y;
 
-		float parallaxScale = 0.008 * saturate(viewDotUp * 2.0);
-		parallaxDir *= parallaxScale;
+		float parallaxScale = FlowmapParallaxScale * saturate(viewDotUp * FlowmapParallaxAngleFade);
+		return parallaxDir * (parallaxScale * SharedData::csUtilitySettings.waterParallaxStrength);
+	}
+
+	float GetFlowmapParallaxAmount(PS_INPUT input, float2 flowmapDims, float3 viewDirection)
+	{
+		float viewDotUp = -viewDirection.z;
+		if (viewDotUp < FlowmapParallaxMinViewDotUp || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+			return 0.0;
+
+		float2 parallaxDir = GetFlowmapParallaxDirection(viewDirection);
 
 		float2 uvShiftPx = 1 / (128 * flowmapDims);
 
-		int numSteps = (int)lerp(32.0, 8.0, viewDotUp);
+		float quality = (float)SharedData::csUtilitySettings.waterParallaxQuality;
+		int numSteps = (int)lerp(quality * FlowmapParallaxGrazingStepsScale, quality * FlowmapParallaxUprightStepsScale, viewDotUp);
 		float stepSize = rcp((float)numSteps);
 
 		float currBound = 0.0;
@@ -163,13 +184,16 @@ namespace WaterEffects
 
 	float2 GetFlowmapParallaxUVOffset(PS_INPUT input, float3 viewDirection, float3 normalScalesRcp)
 	{
+		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+			return 0.0.xx;
+
 		float2 parallaxOffsetTS = viewDirection.xy / -viewDirection.z;
-		parallaxOffsetTS *= 80.0;
+		parallaxOffsetTS *= FlowmapParallaxUVScale * SharedData::csUtilitySettings.waterParallaxStrength;
 
 		float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.HPosition.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
 		float mipLevel = GetMipLevel(input.TexCoord1.xy, Normals01Tex, screenNoise);
 
-		float stepSize = rcp(16.0);
+		float stepSize = rcp((float)SharedData::csUtilitySettings.waterParallaxQuality);
 		float currBound = 0.0;
 		float currHeight = 1.0;
 		float prevHeight = 1.0;

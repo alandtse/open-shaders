@@ -504,8 +504,8 @@ void NeuralRendering::CaptureBeforeUpscaling()
 		return;
 	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (!diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
-		diagnostics.CaptureStage("00_original_scene", main.texture, globals::state->frameCount);
-	diagnostics.CaptureStage("05_pre_sr", main.texture, globals::state->frameCount);
+		diagnostics.CaptureStage("00_original_scene", Util::AsReal(main.texture), globals::state->frameCount);
+	diagnostics.CaptureStage("05_pre_sr", Util::AsReal(main.texture), globals::state->frameCount);
 }
 
 void NeuralRendering::CaptureAfterUpscaling()
@@ -513,7 +513,7 @@ void NeuralRendering::CaptureAfterUpscaling()
 	if (!globals::state)
 		return;
 	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	diagnostics.CaptureStage("06_post_sr", main.texture, globals::state->frameCount);
+	diagnostics.CaptureStage("06_post_sr", Util::AsReal(main.texture), globals::state->frameCount);
 	diagnostics.FinishCapture(globals::state->frameCount);
 }
 
@@ -562,9 +562,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-		auto* color = targets[RE::RENDER_TARGETS::kMAIN].texture;
-		ID3D11ShaderResourceView* inputs[]{ targets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK].SRV,
-			targets[globals::deferred->forwardRenderTargets[2]].SRV, targets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV, depth.depthSRV };
+		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
+		ID3D11ShaderResourceView* inputs[]{ Util::AsReal(targets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK].SRV),
+			Util::AsReal(targets[globals::deferred->forwardRenderTargets[2]].SRV), Util::AsReal(targets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV), Util::AsReal(depth.depthSRV) };
 		const auto count = globals::game::isVR ? 2u : 1u;
 		const auto gw = static_cast<uint32_t>(renderSize.x) / count;
 		const auto gh = static_cast<uint32_t>(renderSize.y);

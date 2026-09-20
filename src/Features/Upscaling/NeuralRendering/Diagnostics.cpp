@@ -35,6 +35,7 @@ namespace NR
 		winrt::com_ptr<ID3D11Texture2D> staging;
 		if (FAILED(globals::d3d::device->CreateTexture2D(&stagingDesc, nullptr, staging.put())))
 			return;
+		Util::SetResourceName(staging.get(), "NeuralRendering::CaptureStaging");
 		globals::d3d::context->CopySubresourceRegion(staging.get(), 0, 0, 0, 0, source.get(), 0, nullptr);
 		globals::d3d::context->Flush();
 		DirectX::ScratchImage image;

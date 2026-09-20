@@ -1,26 +1,143 @@
 #include "ActorUtils.h"
+
+#include "Globals.h"
+
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string_view>
+
+namespace
+{
+	RE::NiPoint3 TransformHavokPoint(const RE::hkTransform& transform, const RE::hkVector4& point)
+	{
+		alignas(16) float localPoint[4];
+		_mm_store_ps(localPoint, point.quad);
+
+		__m128 worldPoint = transform.translation.quad;
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col0.quad, _mm_set1_ps(localPoint[0])));
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col1.quad, _mm_set1_ps(localPoint[1])));
+		worldPoint = _mm_add_ps(worldPoint, _mm_mul_ps(transform.rotation.col2.quad, _mm_set1_ps(localPoint[2])));
+
+		alignas(16) float transformedPoint[4];
+		_mm_store_ps(transformedPoint, worldPoint);
+		return RE::NiPoint3(transformedPoint[0], transformedPoint[1], transformedPoint[2]) *
+		       RE::bhkWorld::GetWorldScaleInverse();
+	}
+
+	bool IsCapsuleFinite(const Util::ShapeCollisionCapsule& capsule)
+	{
+		return std::isfinite(capsule.pointA.x) && std::isfinite(capsule.pointA.y) && std::isfinite(capsule.pointA.z) &&
+		       std::isfinite(capsule.pointB.x) && std::isfinite(capsule.pointB.y) && std::isfinite(capsule.pointB.z) &&
+		       std::isfinite(capsule.radius) && capsule.radius > 0.0f;
+	}
+}
 
 namespace Util
 {
-	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
+	// Actor query pattern adapted from po3 under MIT.
+	// https://github.com/powerof3/PapyrusExtenderSSE/blob/7a73b47bc87331bec4e16f5f42f2dbc98b66c3a7/include/Papyrus/Functions/Faction.h#L24C7-L46
+	void ForEachLoadedActor(const std::function<void(RE::Actor*)>& a_callback)
+	{
+		if (!a_callback)
+			return;
+
+		auto* player = globals::game::player;
+		if (player)
+			a_callback(player);
+
+		if (const auto* processLists = RE::ProcessLists::GetSingleton()) {
+			for (const auto& actorHandle : processLists->highActorHandles) {
+				if (const auto actor = actorHandle.get(); actor && actor.get() != player)
+					a_callback(actor.get());
+			}
+		}
+	}
+
+	void ForEachGeometry(RE::NiAVObject* a_root, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_root || !a_callback)
+			return;
+
+		RE::BSVisit::TraverseScenegraphGeometries(a_root, [&a_callback](RE::BSGeometry* a_geometry) {
+			a_callback(a_geometry);
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+	}
+
+	void ForEachActorGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_actor || !a_actor->Is3DLoaded() || !a_callback)
+			return;
+
+		auto* thirdPersonRoot = a_actor->Get3D(false);
+		auto* firstPersonRoot = a_actor->Get3D(true);
+		ForEachGeometry(thirdPersonRoot, a_callback);
+		if (firstPersonRoot != thirdPersonRoot)
+			ForEachGeometry(firstPersonRoot, a_callback);
+	}
+
+	void ForEachHeldWeaponGeometry(RE::Actor* a_actor, const std::function<void(RE::BSGeometry*)>& a_callback)
+	{
+		if (!a_actor || !a_callback)
+			return;
+
+		const std::uint32_t bipedCount = a_actor == globals::game::player ? 2u : 1u;
+		for (std::uint32_t bipedIndex = 0; bipedIndex < bipedCount; ++bipedIndex) {
+			const auto& biped = a_actor->GetBiped(bipedIndex != 0);
+			if (!biped)
+				continue;
+
+			for (std::uint32_t slot = RE::BIPED_OBJECTS::kOneHandSword;
+				slot <= RE::BIPED_OBJECTS::kCrossbow; ++slot) {
+				const auto& object = biped->objects[slot];
+				if (object.item && object.item->IsWeapon() && object.partClone)
+					ForEachGeometry(object.partClone.get(), a_callback);
+			}
+		}
+	}
+
+	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule)
 	{
 		if (!collisionObj)
 			return false;
 
 		RE::bhkRigidBody* bhkRigid = collisionObj->body.get() ? collisionObj->body.get()->AsBhkRigidBody() : nullptr;
 		RE::hkpRigidBody* hkpRigid = bhkRigid ? skyrim_cast<RE::hkpRigidBody*>(bhkRigid->referencedObject.get()) : nullptr;
-		if (bhkRigid && hkpRigid && !skyrim_cast<RE::hkpListShape*>(hkpRigid)) {  // Ignore hkpListShape, unsupported
+		const auto* shape = hkpRigid ? hkpRigid->collidable.GetShape() : nullptr;
+		if (bhkRigid && hkpRigid && shape && !skyrim_cast<const RE::hkpListShape*>(shape)) {  // Ignore hkpListShape, unsupported
+			if (shape->type == RE::hkpShapeType::kCapsule) {
+				const auto* capsuleShape = static_cast<const RE::hkpCapsuleShape*>(shape);
+				RE::hkTransform transform;
+				bhkRigid->GetTransform(transform);
+
+				capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
+				capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
+				capsule.radius = capsuleShape->radius * RE::bhkWorld::GetWorldScaleInverse();
+				return IsCapsuleFinite(capsule);
+			}
+
 			RE::hkVector4 massCenter;
 			bhkRigid->GetCenterOfMassWorld(massCenter);
 			float massTrans[4];
 			// Use unaligned store to avoid UB from potential stack misalignment
 			_mm_storeu_ps(massTrans, massCenter.quad);
-			centerPos = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
-			return Util::ExtractShapeBound(hkpRigid->collidable.GetShape(), radius);
+			capsule.pointA = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
+			capsule.pointB = capsule.pointA;
+			return Util::ExtractShapeBound(shape, capsule.radius) && IsCapsuleFinite(capsule);
 		}
 		return false;
+	}
+
+	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
+	{
+		ShapeCollisionCapsule capsule;
+		if (!GetShapeCollisionCapsule(collisionObj, capsule))
+			return false;
+
+		centerPos = (capsule.pointA + capsule.pointB) * 0.5f;
+		radius = capsule.radius + capsule.pointA.GetDistance(capsule.pointB) * 0.5f;
+		return true;
 	}
 
 	bool ExtractShapeBound(const RE::hkpShape* shape, float& radius)
@@ -85,5 +202,72 @@ namespace Util
 			radius = std::max(hx, std::max(hy, hz));
 			return true;
 		}
+	}
+
+	bool IsDragon(const RE::Actor& a_actor, const RE::BGSKeyword* a_dragonKeyword)
+	{
+		const auto* race = a_actor.GetRace();
+		if (!race)
+			return false;
+		if (a_dragonKeyword)
+			return race->HasKeyword(a_dragonKeyword);
+		if (race->HasKeywordString("ActorTypeDragon"))
+			return true;
+
+		constexpr std::string_view dragonGraph = "dragonbehavior.hkx";
+		for (const auto& behaviorGraph : race->behaviorGraphs) {
+			const char* model = behaviorGraph.GetModel();
+			if (!model)
+				continue;
+			const std::string_view path(model);
+			const auto match = std::search(path.begin(), path.end(), dragonGraph.begin(), dragonGraph.end(),
+				[](unsigned char a_left, unsigned char a_right) {
+					return std::tolower(a_left) == std::tolower(a_right);
+				});
+			if (match != path.end())
+				return true;
+		}
+		return false;
+	}
+
+	float3 GetVisualOrigin(RE::Actor& a_actor) noexcept
+	{
+		if (auto* root = a_actor.Get3D(false)) {
+			const auto& origin = root->world.translate;
+			return { origin.x, origin.y, origin.z };
+		}
+
+		auto origin = a_actor.GetPosition();
+		origin.z += (a_actor.GetBoundMax().z - a_actor.GetBoundMin().z) * 0.5f;
+		return { origin.x, origin.y, origin.z };
+	}
+
+	float3 GetMagicOrigin(RE::Actor& a_actor) noexcept
+	{
+		if (auto* caster = a_actor.GetMagicCaster(RE::MagicSystem::CastingSource::kOther)) {
+			if (auto* magicNode = caster->GetMagicNode()) {
+				const auto& origin = magicNode->world.translate;
+				return { origin.x, origin.y, origin.z };
+			}
+		}
+		auto origin = a_actor.GetPosition();
+		origin.z += (a_actor.GetBoundMax().z - a_actor.GetBoundMin().z) * 0.7f;
+		return { origin.x, origin.y, origin.z };
+	}
+
+	float3 GetAimDirection(RE::Actor& a_actor) noexcept
+	{
+		float aimAngle = a_actor.GetAimAngle();
+		float aimHeading = a_actor.GetAimHeading();
+		if (!std::isfinite(aimAngle))
+			aimAngle = a_actor.GetAngleX();
+		if (!std::isfinite(aimHeading))
+			aimHeading = a_actor.GetAngleZ();
+		const float horizontalScale = std::cos(aimAngle);
+		return {
+			horizontalScale * std::sin(aimHeading),
+			horizontalScale * std::cos(aimHeading),
+			-std::sin(aimAngle)
+		};
 	}
 }

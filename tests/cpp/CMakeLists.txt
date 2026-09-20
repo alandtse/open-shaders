@@ -40,6 +40,7 @@ find_package(directxtk CONFIG REQUIRED)
 # Input.h uses magic_enum for device enum handling.
 find_package(magic_enum CONFIG REQUIRED)
 find_package(xxHash CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
 # test_generationclaim.cpp uses <thread>/<latch>; MSVC links this in
 # implicitly, but Threads::Threads keeps the target portable to other toolchains.
 find_package(Threads REQUIRED)
@@ -47,6 +48,7 @@ find_package(Threads REQUIRED)
 add_executable(cpp_tests
     test_main.cpp
     test_bootsnapshot.cpp
+    test_dynamicnearclip.cpp
     test_subrect.cpp
     test_perfutils.cpp
     test_restartsettings.cpp
@@ -56,16 +58,19 @@ add_executable(cpp_tests
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
     test_atlas_allocator.cpp
+    test_mathutils.cpp
     test_llf_sanitize.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
     test_contenthash.cpp
     test_shadercachemanifest.cpp
     test_shadercacheclear.cpp
-    test_generationclaim.cpp
-    test_settingspatch.cpp
-    test_weatheridparser.cpp
-    test_effectsourcecompatibility.cpp
+	test_generationclaim.cpp
+	test_shaderinclude.cpp
+	test_settingspatch.cpp
+	test_weatheridparser.cpp
+	test_effectsourcecompatibility.cpp
+	test_windfield.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -73,10 +78,13 @@ add_executable(cpp_tests
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
-    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
 
 # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
@@ -93,6 +101,7 @@ set_property(TARGET cpp_tests PROPERTY CXX_STANDARD_REQUIRED ON)
 
 target_include_directories(cpp_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
+    "${CMAKE_SOURCE_DIR}/package/Shaders"
 )
 
 target_link_libraries(cpp_tests PRIVATE
@@ -102,6 +111,8 @@ target_link_libraries(cpp_tests PRIVATE
     Microsoft::DirectXTK
     magic_enum::magic_enum
     xxHash::xxhash
+    spdlog::spdlog
+    d3dcompiler
     Threads::Threads
 )
 

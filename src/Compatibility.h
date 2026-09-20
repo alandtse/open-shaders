@@ -30,6 +30,7 @@ namespace Compatibility
 		{ L"Data/SKSE/Plugins/MARA.dll" },
 		{ L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll",
 			"superseded by Sky Reflection and Light Limit Fix" },
+		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
 		{ L"Data/SKSE/Plugins/DynamicWetness.dll" }
 	};
 }

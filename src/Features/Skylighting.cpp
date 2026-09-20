@@ -81,9 +81,9 @@ void Skylighting::SetupResources()
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 
-		precipitationOcclusion.texture->GetDesc(&texDesc);
-		precipitationOcclusion.depthSRV->GetDesc(&srvDesc);
-		precipitationOcclusion.views[0]->GetDesc(&dsvDesc);
+		precipitationOcclusion.texture->GetDesc(Util::AsW32(&texDesc));
+		precipitationOcclusion.depthSRV->GetDesc(Util::AsW32(&srvDesc));
+		precipitationOcclusion.views[0]->GetDesc(Util::AsW32(&dsvDesc));
 
 		texOcclusion = new Texture2D(texDesc, "Skylighting::Occlusion");
 		texOcclusion->CreateSRV(srvDesc);
@@ -260,7 +260,7 @@ void Skylighting::Prepass()
 			texOcclusion->srv.get(),
 			nullptr,
 			interior ? nullptr : globals::deferred->directionalShadowLights->srv.get(),
-			interior ? nullptr : cascadeDepthStencil.depthSRV
+			interior ? nullptr : Util::AsReal(cascadeDepthStencil.depthSRV)
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -318,6 +318,13 @@ void Skylighting::PostPostLoad()
 		stl::write_thunk_call<SetViewFrustum>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D, 0x5DC));
 
 	MenuOpenCloseEventHandler::Register();
+}
+
+void Skylighting::GameLoaded()
+{
+	queuedResetSkylighting = true;
+	previousInteriorState.reset();
+	lastOcclusionRenderFrame = static_cast<uint>(-1);
 }
 
 //////////////////////////////////////////////////////////////
@@ -422,8 +429,14 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 			return precipitationOcclusionMapRenderPassList;
 	}
 
+	const bool validOccluder = property->flags.any(kZBufferWrite) &&
+	                           property->flags.none(kRefraction, kTempRefraction, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal) &&
+	                           (skylighting.inOcclusion || property->flags.none(kMultiTextureLandscape, kNoLODLandBlend));
+	if (!validOccluder || !(geometry->worldBound.radius > 32))
+		return precipitationOcclusionMapRenderPassList;
+
 	if (skylighting.inOcclusion) {
-		if (auto userData = geometry->GetUserData()) {
+		if (geometry->GetUserData()) {
 			RE::BSFadeNode* fadeNode = nullptr;
 
 			RE::NiNode* parent = geometry->parent;
@@ -453,44 +466,33 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 		}
 	}
 
-	bool valid = false;
+	stl::enumeration<RE::BSUtilityShader::Flags> technique;
+	technique.set(RenderDepth);
 
-	if (skylighting.inOcclusion) {
-		valid = property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal);
-	} else {
-		valid = property->flags.any(kZBufferWrite) && property->flags.none(kRefraction, kTempRefraction, kMultiTextureLandscape, kNoLODLandBlend, kLODLandscape, kEyeReflect, kDecal, kDynamicDecal);
+	if (property->flags.any(kVertexColors)) {
+		technique.set(Vc);
 	}
 
-	if (valid) {
-		if (geometry->worldBound.radius > 32) {
-			stl::enumeration<RE::BSUtilityShader::Flags> technique;
-			technique.set(RenderDepth);
-
-			if (property->flags.any(kVertexColors)) {
-				technique.set(Vc);
-			}
-
-			const auto alphaProperty = static_cast<RE::NiAlphaProperty*>(geometry->GetGeometryRuntimeData().alphaProperty.get());
-			if (alphaProperty && alphaProperty->GetAlphaTesting()) {
-				technique.set(Texture);
-				technique.set(AlphaTest);
-			}
-
-			if (property->flags.any(kLODObjects, kHDLODObjects)) {
-				technique.set(LodObject);
-			}
-
-			if (property->flags.any(kTreeAnim)) {
-				technique.set(TreeAnim);
-			}
-
-			precipitationOcclusionMapRenderPassList->EmplacePass(
-				globals::game::utilityShader,
-				property,
-				geometry,
-				technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
-		}
+	const auto alphaProperty = static_cast<RE::NiAlphaProperty*>(geometry->GetGeometryRuntimeData().alphaProperty.get());
+	if (alphaProperty && alphaProperty->GetAlphaTesting()) {
+		technique.set(Texture);
+		technique.set(AlphaTest);
 	}
+
+	if (property->flags.any(kLODObjects, kHDLODObjects)) {
+		technique.set(LodObject);
+	}
+
+	if (property->flags.any(kTreeAnim)) {
+		technique.set(TreeAnim);
+	}
+
+	precipitationOcclusionMapRenderPassList->EmplacePass(
+		globals::game::utilityShader,
+		property,
+		geometry,
+		technique.underlying() + static_cast<uint32_t>(ShaderTechnique::UtilityGeneralStart));
+
 	return precipitationOcclusionMapRenderPassList;
 }
 
@@ -597,9 +599,9 @@ void Skylighting::RenderOcclusion()
 		}
 	});
 
-	precipitationTarget.depthSRV = texOcclusion->srv.get();
-	precipitationTarget.texture = texOcclusion->resource.get();
-	precipitationTarget.views[0] = texOcclusion->dsv.get();
+	precipitationTarget.depthSRV = Util::AsW32(texOcclusion->srv.get());
+	precipitationTarget.texture = Util::AsW32(texOcclusion->resource.get());
+	precipitationTarget.views[0] = Util::AsW32(texOcclusion->dsv.get());
 	inOcclusion = true;
 	forceInteriorOcclusionTwoSided = interior;
 	precipitationCubeSize = occlusionDistance;

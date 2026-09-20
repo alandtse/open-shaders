@@ -144,7 +144,7 @@ namespace ShadowSampling
 
 	float3 GetAmbientLighting()
 	{
-		float3 ambientColor = GetRawAmbientLighting();
+		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
@@ -158,7 +158,7 @@ namespace ShadowSampling
 #if defined(SKYLIGHTING) && !defined(INTERIOR)
 	float3 GetAmbientLighting(float skylightingDiffuse)
 	{
-		float3 ambientColor = GetRawAmbientLighting();
+		float3 ambientColor = Color::Ambient(GetRawAmbientLighting());
 
 #	if defined(IBL)
 		if (SharedData::iblSettings.EnableIBL) {
@@ -197,16 +197,13 @@ namespace ShadowSampling
 		float inputLuma = Color::RGBToLuminance(inputColor);
 		float ambientLuma = Color::RGBToLuminance(ambientColorAmb);
 		float dirLightLuma = Color::RGBToLuminance(dirLightColorDir);
-
 		float totalLuma = ambientLuma + dirLightLuma;
 
 		if (totalLuma > 0.0 && ambientLuma > 0.0)
 			ambientColorAmb *= inputLuma / totalLuma;
 
-		float3 dirLightColorAmb = max(0.0, inputColor - ambientColorAmb);
-
-		dirColor = dirLightColorAmb;
 		ambientColor = ambientColorAmb;
+		dirColor = max(0.0, inputColor - ambientColor);
 	}
 }
 

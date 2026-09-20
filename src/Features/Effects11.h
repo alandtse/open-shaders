@@ -135,6 +135,7 @@ public:
 	DirectionalAmbientColors vanillaAmbientCache{};
 	DirectionalAmbientColors gradedAmbientCache{};
 	RE::NiColor ambientSpecularTintCache{};
+	bool ambientSpecularTintCacheValid = false;
 	float ambientSpecularFresnelCache = 0.0f;
 	bool ambientGradeCacheValid = false;
 

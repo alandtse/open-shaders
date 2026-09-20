@@ -15,7 +15,7 @@ repos:
             args: [--style=file]
             types_or: [file]
             files: \.(h|hpp|c|cpp|hlsl|hlsli)$
-            exclude: ^(extern|include)/
+            exclude: ^(extern|include|vendor)/
 
     - repo: https://github.com/pre-commit/mirrors-prettier
       rev: v4.0.0-alpha.8

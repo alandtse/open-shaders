@@ -21,33 +21,32 @@ void HistogramAutoExposure::DrawSettings()
 {
 	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.exposure_compensation", "Exposure Compensation"), &settings.ExposureCompensation, -5.f, 5.f, "%+.2f EV");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.histogram_auto_exposure.applying_additional_exposure_adjustment_to_the_image", "Applying additional exposure adjustment to the image."));
+		ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.applying_additional_exposure_adjustment_to_the_image", "Applying additional exposure adjustment to the image."));
 
 	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.adaptation_speed", "Adaptation Speed"), &settings.AdaptSpeed, 0.1f, 5.f, "%.2f");
 	ImGui::SliderFloat2(T("feature.post_processing.histogram_auto_exposure.focus_area_width_height", "Focus Area Width/Height"), &settings.AdaptArea.x, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.histogram_auto_exposure.specifies_the_proportion_of_the_area_width_height", "Specifies the proportion of the area [width, height] that auto exposure will adapt to."));
+		ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.specifies_the_proportion_of_the_area_width_height", "Specifies the proportion of the area [width, height] that auto exposure will adapt to."));
 
 	ImGui::SliderFloat2(T("feature.post_processing.histogram_auto_exposure.adaptation_range_min_max", "Adaptation Range Min/Max"), &settings.AdaptationRange.x, -10.f, 21.f, "%.2f EV100");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(
+		ImGui::TextUnformatted(
 			T("feature.post_processing.histogram_auto_exposure.min_max_the_average_scene_luminance_will_be",
 				"[Min, Max] The average scene luminance will be clamped between them when doing auto exposure."
 				"Turning up the minimum, for example, makes it adapt less to darkness and therefore prevents over-brightening of dark scenes."));
 
 	if (ImGui::TreeNodeEx(T("feature.post_processing.histogram_auto_exposure.purkinje_effect", "Purkinje Effect"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::TextWrapped(
-			T("feature.post_processing.histogram_auto_exposure.the_purkinje_effect_simulates_the_blue_shift_of",
-				"The Purkinje effect simulates the blue shift of human vision under low light.\n"
-				"If you don't like the effect, you can set the strength to zero."));
+		ImGui::TextWrapped("%s", T("feature.post_processing.histogram_auto_exposure.the_purkinje_effect_simulates_the_blue_shift_of",
+									 "The Purkinje effect simulates the blue shift of human vision under low light.\n"
+									 "If you don't like the effect, you can set the strength to zero."));
 
 		ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.max_strength", "Max Strength"), &settings.PurkinjeStrength, 0.f, 5.f, "%.2f");
 		ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.fade_in_ev", "Fade In EV100"), &settings.PurkinjeStartEV, -10.f, 3.f, "%.2f EV100");
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text(T("feature.post_processing.histogram_auto_exposure.the_purkinje_effect_will_start_to_take_place", "The Purkinje effect will start to take place when the average scene luminance falls lower than this."));
+			ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.the_purkinje_effect_will_start_to_take_place", "The Purkinje effect will start to take place when the average scene luminance falls lower than this."));
 		ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.max_effect_ev", "Max Effect EV100"), &settings.PurkinjeMaxEV, -7.f, 3.f, "%.2f EV100");
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text(T("feature.post_processing.histogram_auto_exposure.from_this_point_onward_the_purkinje_effect_remains", "From this point onward, the Purkinje effect remains the greatest."));
+			ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.from_this_point_onward_the_purkinje_effect_remains", "From this point onward, the Purkinje effect remains the greatest."));
 
 		ImGui::TreePop();
 	}
@@ -126,7 +125,7 @@ void HistogramAutoExposure::DrawSettings()
 			const int bin = std::clamp(static_cast<int>((mouseX - canvasPos.x) / binWidth), 0, kHistogramBins - 1);
 			ImGui::BeginTooltip();
 			if (bin == 0) {
-				ImGui::Text(T("feature.post_processing.histogram_auto_exposure.bin_0_below_luminance_threshold", "Bin 0: below luminance threshold"));
+				ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.bin_0_below_luminance_threshold", "Bin 0: below luminance threshold"));
 			} else {
 				const float histogramPos = static_cast<float>(bin - kFirstLuminanceBin) / static_cast<float>(kLastLuminanceBin - kFirstLuminanceBin);
 				const float ev = histogramPos * (kMaxEV100 - kMinEV100) + kMinEV100;
@@ -138,11 +137,11 @@ void HistogramAutoExposure::DrawSettings()
 			ImGui::EndTooltip();
 		}
 
-		ImGui::TextColored(ImVec4(0, 1, 0, 1), T("feature.post_processing.histogram_auto_exposure.green_adapted_ev", "Green: Adapted EV100"));
+		ImGui::TextColored(ImVec4(0, 1, 0, 1), "%s", T("feature.post_processing.histogram_auto_exposure.green_adapted_ev", "Green: Adapted EV100"));
 		ImGui::SameLine();
-		ImGui::TextColored(ImVec4(0, 0.86f, 1, 1), T("feature.post_processing.histogram_auto_exposure.cyan_compensation_target", "Cyan: Compensation Target"));
+		ImGui::TextColored(ImVec4(0, 0.86f, 1, 1), "%s", T("feature.post_processing.histogram_auto_exposure.cyan_compensation_target", "Cyan: Compensation Target"));
 		ImGui::SameLine();
-		ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), T("feature.post_processing.histogram_auto_exposure.yellow_adaptation_range", "Yellow: Adaptation Range"));
+		ImGui::TextColored(ImVec4(1, 0.8f, 0, 1), "%s", T("feature.post_processing.histogram_auto_exposure.yellow_adaptation_range", "Yellow: Adaptation Range"));
 	} else {
 		histogramReadbackRequested = false;
 	}
