@@ -9,8 +9,8 @@ namespace
 	constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
 	constexpr std::uintptr_t kPoolTailOffset = 0x10008;
 
-	// Absorbs concurrent worker pops between the check and the append.
-	constexpr std::uint32_t kFreeEntryMargin = 16;
+	// Workers pop between the check and the append, so the margin must exceed the max concurrent cull threads.
+	constexpr std::uint32_t kFreeEntryMargin = 64;
 
 	struct BaseVtable;
 	struct ParabolicVtable;
