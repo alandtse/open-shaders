@@ -344,8 +344,7 @@ public:
 
 	/**
 	 * @brief Called before the engine draws each BSRenderPass, for every loaded feature that opted
-	 * in via WantsRenderPassSkipHook(). Runs on the render thread for every pass, so keep it cheap
-	 * and fail open.
+	 * in via WantsRenderPassSkipHook(). Runs on the render thread for every pass, so keep it cheap.
 	 * @param a_pass The render pass about to be drawn.
 	 * @return True to drop this pass instead of drawing it.
 	 */

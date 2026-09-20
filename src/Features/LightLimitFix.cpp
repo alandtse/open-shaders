@@ -1080,7 +1080,7 @@ void LightLimitFix::DataLoaded()
 
 bool LightLimitFix::ShouldSkipRenderPass(const RE::BSRenderPass* a_pass)
 {
-	return ShadowCasterManager::InShadowRenderWindow() && ShadowCasterManager::RejectCyclicPassChain(a_pass);
+	return ShadowCasterManager::RejectCyclicPassChain(a_pass);
 }
 
 void LightLimitFix::RegisterUxActions()

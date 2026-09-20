@@ -846,7 +846,7 @@ namespace ShadowCasterManager
 	bool InShadowRenderWindow();
 
 	/// True when the pass chains reachable from `head` are cyclic or unreadable and the engine call must be
-	/// skipped: its walk of them would never return.
+	/// skipped: its walk of them would never return. Always false outside the render window.
 	bool RejectCyclicPassChain(const RE::BSRenderPass* head);
 
 	/// Forces the next `count` guard checks to report a cycle, exercising the skip path without a real ring.

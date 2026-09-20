@@ -39,7 +39,7 @@ namespace ShadowCasterManager
 		constexpr size_t kRegistrationHistoryCap = 1u << 17;
 		constexpr uint32_t kGuardLogNodes = 12;
 		constexpr USHORT kRegistrationStackDepth = 24;
-		constexpr size_t kPassBytes = 0x48;
+		constexpr size_t kPassBytes = sizeof(RE::BSRenderPass);
 		constexpr size_t kRenderFrameHistoryCap = 512;
 		constexpr uint32_t kRenderFrameHistoryMaxAge = 3600;
 		constexpr uint32_t kMaxForcedGuardEvents = 1000;
@@ -164,13 +164,15 @@ namespace ShadowCasterManager
 		{
 			bool fault = false;
 			const RE::BSRenderPass* tail = a_head;
-			for (uint32_t i = 0; i < kPassChainWalkCap; ++i) {
+			bool reachedEnd = false;
+			for (uint32_t i = 0; i < kPassChainWalkCap && !reachedEnd; ++i) {
 				const auto* next = LoadLink(tail, true, fault);
-				if (!next)
-					break;
-				tail = next;
+				if (next)
+					tail = next;
+				else
+					reachedEnd = true;
 			}
-			if (!fault && tail != a_head)
+			if (reachedEnd && !fault && tail != a_head)
 				StoreLink(tail, true, a_head);
 		}
 
@@ -329,6 +331,7 @@ namespace ShadowCasterManager
 
 		struct Hook_SetupAndDrawPass
 		{
+			// No `this`: the pass is the first argument. CommonLib's member binding of this id passes `this` first.
 			static void thunk(RE::BSRenderPass* a_pass, std::uint32_t a_technique, bool a_alphaTest, std::uint32_t a_renderFlags)
 			{
 				static const auto [imageBase, imageEnd] = GameImageRange();
@@ -380,7 +383,7 @@ namespace ShadowCasterManager
 
 	bool RejectCyclicPassChain(const RE::BSRenderPass* a_head)
 	{
-		if (!a_head)
+		if (!a_head || !InShadowRenderWindow())
 			return false;
 		s_passGuardChecksTotal.fetch_add(1, std::memory_order_relaxed);
 

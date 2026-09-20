@@ -392,6 +392,7 @@ namespace ShadowCasterManager
 		TeardownRace,
 	};
 	inline constexpr size_t kRenderSkipReasonCount = 4;
+	static_assert(static_cast<size_t>(RenderSkipReason::TeardownRace) + 1 == kRenderSkipReasonCount);
 	extern std::atomic<uint64_t> s_renderSkipByReason[kRenderSkipReasonCount];
 	void NoteRenderSkipped(RenderSkipReason a_reason);
 
