@@ -11,6 +11,7 @@
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/VersionGate.h"
 #include "VRAPI/CSpluginapi.h"
 
 std::list<std::string> errors;
@@ -215,7 +216,7 @@ bool Load()
 
 	for (const auto& plugin : Compatibility::outdatedPlugins) {
 		const auto version = Util::GetDllVersion(plugin.dll);
-		if (version && *version < plugin.minimumVersion) {
+		if (Util::IsBelowMinimum(version, plugin.minimumVersion)) {
 			auto dllName = stl::utf16_to_utf8(plugin.dll).value_or("<unicode conversion error>"s);
 			auto errorMessage = plugin.reason.empty() ?
 			                        std::format("Incompatible version {} of {} detected ({} or newer required). Update or remove it to use Open Shaders.", version->string("."), dllName, plugin.minimumVersion.string(".")) :

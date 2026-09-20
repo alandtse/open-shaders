@@ -71,6 +71,7 @@ add_executable(cpp_tests
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
 	test_effectsourcecompatibility.cpp
+	test_versiongate.cpp
 	test_windfield.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
