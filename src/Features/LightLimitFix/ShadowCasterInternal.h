@@ -102,21 +102,6 @@ namespace ShadowCasterManager
 	// freeze the snapshot and let every light in it look permanently absent.
 	inline constexpr uint64_t kDemandStaleFrames = 8;
 
-	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array (Hook_StartGroupingAlphas'
-	// ceiling), a literal in the binary's own array constructor -- VR was built with twice the slots,
-	// a genuine runtime difference, not worth unifying away.
-	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
-	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
-
-	// Engine claims entries with LOCK XADD, so another worker can claim one between the guard's
-	// read and its own increment -- must exceed max concurrent threads, not just "some margin".
-	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
-
-	// High-water alpha GeometryGroup count since load, and refused-at-ceiling count.
-	// Peak well under capacity = no scene neared the array; any drop = one reached it.
-	extern std::atomic<uint32_t> s_alphaGroupPeak;
-	extern std::atomic<uint64_t> s_alphaGroupDrops;
-
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters
 	{
@@ -339,7 +324,6 @@ namespace ShadowCasterManager
 	// Contribution-culling diagnostics, defined in ShadowCasterClassifier.cpp;
 	// exchanged/read by ScheduleShadowCasters for Tracy plots and the snapshot.
 	extern std::atomic<uint32_t> s_casterCullCount;
-	extern std::atomic<uint32_t> s_cullPoolDropCount;
 	extern std::atomic<uint64_t> s_cullPoolDropTotal;
 	extern std::atomic<uint64_t> s_casterCullTotal;
 

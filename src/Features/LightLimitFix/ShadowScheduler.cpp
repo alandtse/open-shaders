@@ -6,6 +6,8 @@
 #include <cmath>
 
 #include "../../Deferred.h"
+#include "../../EngineFixes/AlphaGeometryGroupCeilingFix.h"
+#include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
 #include "../../State.h"
@@ -2757,7 +2759,7 @@ namespace ShadowCasterManager
 			const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
 			if (culledThisFrame)
 				s_casterCullTotal.fetch_add(culledThisFrame, std::memory_order_relaxed);
-			const uint32_t poolDropsThisFrame = s_cullPoolDropCount.exchange(0, std::memory_order_relaxed);
+			const uint32_t poolDropsThisFrame = CullPoolExhaustionFix::dropCount.exchange(0, std::memory_order_relaxed);
 			if (poolDropsThisFrame)
 				s_cullPoolDropTotal.fetch_add(poolDropsThisFrame, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
@@ -2863,8 +2865,8 @@ namespace ShadowCasterManager
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				snap.demandSkips = s_schedDiag.demand_skips;
 				snap.demandSkipsTotal = s_demandSkipTotal.load(std::memory_order_relaxed);
-				snap.alphaGroupPeak = s_alphaGroupPeak.load(std::memory_order_relaxed);
-				snap.alphaGroupDrops = s_alphaGroupDrops.load(std::memory_order_relaxed);
+				snap.alphaGroupPeak = AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed);
+				snap.alphaGroupDrops = AlphaGeometryGroupCeilingFix::drops.load(std::memory_order_relaxed);
 				snap.frustumAuditCandidates = s_schedDiag.frustum_audit_candidates;
 				snap.frustumAuditKeptOut = s_schedDiag.frustum_audit_kept_out;
 				snap.frustumAuditSuspects = s_schedDiag.frustum_audit_suspects;
@@ -2912,7 +2914,7 @@ namespace ShadowCasterManager
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
 			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
 			TracyPlot("scm.demand_skips", (int64_t)s_schedDiag.demand_skips);
-			TracyPlot("scm.alpha_groups", (int64_t)s_alphaGroupPeak.load(std::memory_order_relaxed));
+			TracyPlot("scm.alpha_groups", (int64_t)AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed));
 			TracyPlot("scm.demand.skip_eligible", (int64_t)s_schedDiag.demand_skip_eligible);
 			TracyPlot("scm.demand.swap_in", (int64_t)s_schedDiag.demand_swap_in);
 			TracyPlot("scm.demand.swap_in_above_eps", (int64_t)s_schedDiag.demand_swap_in_above_eps);
