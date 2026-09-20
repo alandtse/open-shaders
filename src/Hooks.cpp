@@ -1150,7 +1150,7 @@ namespace Hooks
 	bool ShouldSkipRenderPassForFeatures(const RE::BSRenderPass* a_pass)
 	{
 		for (auto* feature : Feature::GetRenderPassSkipFeatures()) {
-			if (feature->ShouldSkipRenderPass(a_pass))
+			if (feature->loaded && feature->ShouldSkipRenderPass(a_pass))
 				return true;
 		}
 		return false;
