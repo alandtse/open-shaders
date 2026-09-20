@@ -349,6 +349,19 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	return hookFeatures;
 }
 
+const std::vector<Feature*>& Feature::GetRenderPassSkipFeatures()
+{
+	static const std::vector<Feature*> skipFeatures = [] {
+		std::vector<Feature*> v;
+		for (auto* feature : GetFeatureList()) {
+			if (feature->WantsRenderPassSkipHook())
+				v.push_back(feature);
+		}
+		return v;
+	}();
+	return skipFeatures;
+}
+
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
 {
 	for (auto* feature : GetAllFeatures()) {

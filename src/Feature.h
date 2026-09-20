@@ -336,6 +336,22 @@ public:
 	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* /*a_pass*/) { return nullptr; }
 
 	/**
+	 * @brief Opt-in flag checked once, when the skip hook's feature list is built: return true to
+	 * have ShouldSkipRenderPass() consulted before every render pass draws. Default false keeps the
+	 * per-pass hot path free of the call for features that never drop passes.
+	 */
+	virtual bool WantsRenderPassSkipHook() const { return false; }
+
+	/**
+	 * @brief Called before the engine draws each BSRenderPass, for every loaded feature that opted
+	 * in via WantsRenderPassSkipHook(). Runs on the render thread for every pass, so keep it cheap
+	 * and fail open.
+	 * @param a_pass The render pass about to be drawn.
+	 * @return True to drop this pass instead of drawing it.
+	 */
+	virtual bool ShouldSkipRenderPass(const RE::BSRenderPass* /*a_pass*/) { return false; }
+
+	/**
 	 * @brief Called during disk-cache shader loading to generate additional shader permutations.
 	 *
 	 * Invoked once per BSShader load when the shader cache is in disk-cache mode.
@@ -498,6 +514,9 @@ public:
 	 * rather than calling GetFeatureList() and filtering it themselves each time.
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
+
+	/** @brief The loaded features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once. */
+	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
 
 	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.

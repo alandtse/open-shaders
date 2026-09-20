@@ -1147,11 +1147,13 @@ namespace Hooks
 #endif
 	}
 
-	bool ShouldSkipRenderPassForCyclicShadowChain(RE::BSRenderPass* a_pass)
+	bool ShouldSkipRenderPassForFeatures(const RE::BSRenderPass* a_pass)
 	{
-		return globals::features::lightLimitFix.loaded &&
-		       ShadowCasterManager::InShadowRenderWindow() &&
-		       ShadowCasterManager::RejectCyclicPassChain(a_pass);
+		for (auto* feature : Feature::GetRenderPassSkipFeatures()) {
+			if (feature->ShouldSkipRenderPass(a_pass))
+				return true;
+		}
+		return false;
 	}
 
 	// Generic per-render-pass hook: gives every feature that opted in via
@@ -1164,7 +1166,7 @@ namespace Hooks
 		uint32_t a_renderFlags)
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique) ||
-			ShouldSkipRenderPassForCyclicShadowChain(a_pass))
+			ShouldSkipRenderPassForFeatures(a_pass))
 			return;
 
 		// No vector/std::function machinery touched at all until a feature opts in.
@@ -1182,7 +1184,7 @@ namespace Hooks
 		uint32_t a_renderFlags)
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique) ||
-			ShouldSkipRenderPassForCyclicShadowChain(a_pass))
+			ShouldSkipRenderPassForFeatures(a_pass))
 			return;
 
 		std::optional<Feature::RenderScope> renderPassHookScope;
@@ -1199,7 +1201,7 @@ namespace Hooks
 		uint32_t a_renderFlags)
 	{
 		if (ShouldSkipRenderPassForParticleLights(a_pass, a_technique) ||
-			ShouldSkipRenderPassForCyclicShadowChain(a_pass))
+			ShouldSkipRenderPassForFeatures(a_pass))
 			return;
 
 		std::optional<Feature::RenderScope> renderPassHookScope;

@@ -339,6 +339,9 @@ public:
 	void CompileComputeShaders();
 	virtual void Reset() override;
 	virtual void OnSceneTransitionReset(bool opening) override;
+	virtual bool WantsRenderPassSkipHook() const override { return true; }
+	/** @copydoc Feature::ShouldSkipRenderPass */
+	virtual bool ShouldSkipRenderPass(const RE::BSRenderPass* a_pass) override;
 	/** @copydoc Feature::RegisterUxActions */
 	virtual void RegisterUxActions() override;
 
