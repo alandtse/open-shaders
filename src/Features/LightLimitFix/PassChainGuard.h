@@ -24,11 +24,19 @@ namespace PassChainGuard
 	Verdict Walk(const Node* head, NextFn&& nextOf, uint32_t cap, uint32_t* stepsOut = nullptr)
 	{
 		uint32_t steps = 0;
+		bool capped = false;
+		const auto read = [&](const Node* node) -> const Node* {
+			if (steps >= cap) {
+				capped = true;
+				return nullptr;
+			}
+			++steps;
+			return nextOf(node);
+		};
 		Verdict verdict = Verdict::Clean;
 		if (head) {
 			const Node* tortoise = head;
-			const Node* hare = nextOf(head);
-			++steps;
+			const Node* hare = read(head);
 			uint32_t power = 1;
 			uint32_t lambda = 1;
 			while (hare) {
@@ -36,19 +44,16 @@ namespace PassChainGuard
 					verdict = Verdict::Cycle;
 					break;
 				}
-				if (steps >= cap) {
-					verdict = Verdict::CapExceeded;
-					break;
-				}
 				if (lambda == power) {
 					tortoise = hare;
 					power <<= 1;
 					lambda = 0;
 				}
-				hare = nextOf(hare);
+				hare = read(hare);
 				++lambda;
-				++steps;
 			}
+			if (capped)
+				verdict = Verdict::CapExceeded;
 		}
 		if (stepsOut)
 			*stepsOut = steps;
@@ -69,35 +74,40 @@ namespace PassChainGuard
 		if (!head)
 			return nullptr;
 
+		uint32_t reads = 0;
+		const auto read = [&](const Node* node) -> const Node* {
+			if (reads >= cap)
+				return nullptr;
+			++reads;
+			return nextOf(node);
+		};
+
 		const Node* slow = head;
 		const Node* fast = head;
-		uint32_t steps = 0;
 		do {
-			fast = nextOf(fast);
-			if (!fast)
-				return nullptr;
-			fast = nextOf(fast);
-			if (!fast)
-				return nullptr;
-			slow = nextOf(slow);
-			if (++steps > cap)
+			fast = read(fast);
+			fast = fast ? read(fast) : nullptr;
+			slow = read(slow);
+			if (!fast || !slow)
 				return nullptr;
 		} while (slow != fast);
 
 		slow = head;
-		for (steps = 0; slow != fast; ++steps) {
-			if (steps > cap)
+		while (slow != fast) {
+			slow = read(slow);
+			fast = read(fast);
+			if (!slow || !fast)
 				return nullptr;
-			slow = nextOf(slow);
-			fast = nextOf(fast);
 		}
 
 		const Node* closing = slow;
-		for (steps = 0; nextOf(closing) != slow; ++steps) {
-			if (steps > cap)
+		for (;;) {
+			const Node* next = read(closing);
+			if (!next)
 				return nullptr;
-			closing = nextOf(closing);
+			if (next == slow)
+				return closing;
+			closing = next;
 		}
-		return closing;
 	}
 }

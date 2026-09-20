@@ -139,3 +139,35 @@ TEST_CASE("FindCycleClosingNode gives up beyond the cap", "[llf][passguard]")
 	auto bigRing = MakeChain(1000, 0);
 	REQUIRE(FindCycleClosingNode(&bigRing[0], kNext, 100) == nullptr);
 }
+
+TEST_CASE("Successor reads never exceed the cap", "[llf][passguard]")
+{
+	auto bigRing = MakeChain(1000, 0);
+	auto longChain = MakeChain(1000);
+	uint32_t reads = 0;
+	const auto counting = [&reads](const Node* n) {
+		++reads;
+		return n->next;
+	};
+
+	for (const uint32_t cap : { 1u, 7u, 100u }) {
+		reads = 0;
+		Walk(&longChain[0], counting, cap);
+		REQUIRE(reads <= cap);
+
+		reads = 0;
+		Walk(&bigRing[0], counting, cap);
+		REQUIRE(reads <= cap);
+
+		reads = 0;
+		FindCycleClosingNode(&bigRing[0], counting, cap);
+		REQUIRE(reads <= cap);
+	}
+}
+
+TEST_CASE("Walk accepts a chain whose end is read exactly at the cap", "[llf][passguard]")
+{
+	auto chain = MakeChain(50);
+	REQUIRE(Walk(&chain[0], kNext, 50) == Verdict::Clean);
+	REQUIRE(Walk(&chain[0], kNext, 49) == Verdict::CapExceeded);
+}
