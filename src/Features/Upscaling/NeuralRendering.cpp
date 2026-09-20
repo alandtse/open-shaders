@@ -427,7 +427,7 @@ void NeuralRendering::Reset(bool enabled)
 	diagnostics.EndFrame(globals::state->frameCount, enabled, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
 	if (!enabled)
 		retryRequested = true;
-	if (!enabled || !globals::state->worldRenderedThisFrame || globals::state->IsPausedOrMenuOpen(globals::game::ui))
+	if (!enabled || !globals::state->worldRenderedThisFrame)
 		resetHistory = true;
 }
 
@@ -475,7 +475,8 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		retryRequested = resetHistory = true;
 		SetStatus("Retry queued for the next rendered world frame");
 	}
-	diagnostics.DrawSettings();
+	if (globals::state->IsDeveloperMode())
+		diagnostics.DrawSettings();
 	std::scoped_lock lock(statusMutex);
 	ImGui::TextWrapped("%s", enabled ? status.c_str() : "Disabled");
 	ImGui::PopID();
@@ -526,8 +527,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		return;
 	}
 	auto* state = globals::state;
-	if (!state->worldRenderedThisFrame || state->IsPausedOrMenuOpen(globals::game::ui)) {
-		diagnostic.outcome = state->worldRenderedThisFrame ? Outcome::Paused : Outcome::NoWorld;
+	if (!state->worldRenderedThisFrame) {
+		diagnostic.outcome = Outcome::NoWorld;
 		resetHistory = true;
 		return;
 	}
@@ -580,7 +581,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.source = reinterpret_cast<uintptr_t>(color);
 		if (!w || !h || !gw || !gh || desc.Width < w * count || desc.Height < h || desc.ArraySize != 1 || desc.SampleDesc.Count != 1 ||
 			(desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
-				desc.Format != DXGI_FORMAT_R10G10B10A2_UNORM))
+				desc.Format != DXGI_FORMAT_R10G10B10A2_UNORM && desc.Format != DXGI_FORMAT_R11G11B10_FLOAT))
 			throw std::runtime_error(std::format("Unsupported NR output: {}x{}, DXGI format {}, array {}, samples {}, guides {}x{}",
 				desc.Width, desc.Height, static_cast<uint32_t>(desc.Format), desc.ArraySize, desc.SampleDesc.Count, gw, gh));
 		for (auto* input : inputs) {
