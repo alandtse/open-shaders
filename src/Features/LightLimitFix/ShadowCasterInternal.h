@@ -617,6 +617,10 @@ namespace ShadowCasterManager
 	/// Clears slot tile to far depth.
 	void ClearSlotTile(int32_t poolSlot);
 
+	/// Marks the sampled tile's content invalid so the scheduler redraws it. No-op while a
+	/// staged promotion exists, because the sampled tile is then not the one being rendered.
+	void InvalidateSlotTileContent(int32_t poolSlot);
+
 	// --- Static/dynamic split cache (parallel static depth atlas) ------------
 
 	/// True when parallel static-cache atlas resources are ready.

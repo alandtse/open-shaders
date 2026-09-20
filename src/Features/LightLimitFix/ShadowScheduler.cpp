@@ -965,8 +965,8 @@ namespace ShadowCasterManager
 				st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 			if (split) {
 				st->pendingHash = s_visitStaticHash;
-				if (mode == CasterPass::StaticOnly)
-					st->bakeSawStatic = !skipAccumulate && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
+				if (mode == CasterPass::StaticOnly && !skipAccumulate)
+					st->bakeSawStatic = s_visitStaticCount.load(std::memory_order_relaxed) != 0;
 				// Queue a rebake only once the hash divergence PERSISTS (3
 				// accumulates), so a flickering hash that oscillates back to the
 				// baked value doesn't rebake, but a genuine set change does.
@@ -3363,6 +3363,8 @@ namespace ShadowCasterManager
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
+							if (!rendered && !compositeValid && !compositeKeepPrior)
+								InvalidateSlotTileContent(i);
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
 							if (rendered && !compositeKeepPrior && composedContent) {
@@ -3386,6 +3388,8 @@ namespace ShadowCasterManager
 				s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 				s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 				s_budget.EndLight(e.Light, 1);
+				if (!rendered && !keepPriorContent)
+					InvalidateSlotTileContent(i);
 				// Commit the content scale only after the raster actually ran: a skipped
 				// render must keep advertising the slot's held scale, or shaders sample
 				// tile UVs against full-slice content until the geometry hash changes.
