@@ -221,7 +221,6 @@ namespace NR
 			suite = true;
 			suiteStep = suiteFrames = 0;
 			options = kSuiteOptions[0];
-			traceRemaining = 0;
 			OpenTrace();
 			traceFile << "TEST Baseline\n";
 			return;
@@ -232,26 +231,9 @@ namespace NR
 			traceFile << "SUITE STOPPED\n";
 			traceFile.flush();
 		}
-		if (startTrace.exchange(false))
-			OpenTrace();
-		if (markFlicker.exchange(false)) {
-			logger::info("[NRDiag/v2] FLICKER MARKER frame={} options={}", frame, current.options);
-			traceFile << "FLICKER MARKER frame=" << frame << " options=" << current.options << '\n';
-			traceFile.flush();
-		}
-		if (clearRequested.exchange(false))
-			next = count = framesSinceSummary = 0;
 		history[next] = current;
 		next = (next + 1) % kHistorySize;
 		count = std::min(count + 1, kHistorySize);
-		if (auto remaining = traceRemaining.load(); remaining != 0 && enabled && world && !paused && !globals::menu->IsEnabled) {
-			WriteCameraTrace(current);
-			LogFrame(current);
-			if (traceRemaining.fetch_sub(1) == 1)
-				logger::info("[NRDiag/v2] bounded trace complete");
-			if (traceRemaining.load() == 0)
-				traceFile.flush();
-		}
 		if (suite && enabled && world && !paused && !globals::menu->IsEnabled) {
 			WriteCameraTrace(current);
 			if (suiteFrames % kHistorySize == 0)
@@ -295,7 +277,7 @@ namespace NR
 	{
 		std::scoped_lock lock(mutex);
 		ImGui::Separator();
-		ImGui::TextWrapped("Session-only isolation tests. Camera-cut overrides preserve loading, frame-gap and resource resets. Option changes reset history once.");
+		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
 		ImGui::BeginDisabled(suite);
 		uint32_t selected = options.load();
 		auto toggle = [&](const char* name, uint32_t bit) {
@@ -305,8 +287,9 @@ namespace NR
 				options = selected;
 			}
 		};
-		toggle("Ignore camera-position resets", IgnorePosition);
-		toggle("Ignore all camera-cut resets", IgnoreCameraCuts);
+		toggle("Apply inferred camera-cut resets", ApplyCameraCuts);
+		if (selected & ApplyCameraCuts)
+			toggle("Ignore inferred camera-position resets", IgnorePosition);
 		toggle("Reset NR every frame", ForceReset);
 		toggle("Zero NR motion vectors (stationary test)", ZeroMotion);
 		toggle("Zero NR jitter parameter", ZeroJitter);
@@ -353,30 +336,16 @@ namespace NR
 			options = 0;
 		if (ImGui::Button("Run All NR Tests"))
 			startSuite = true;
-		ImGui::TextWrapped("8 tests, 600 world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open. Tests 4-8 retain Ignore Position to isolate other causes.");
+		ImGui::TextWrapped("8 tests, 600 world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.");
 		ImGui::EndDisabled();
 		if (suite && ImGui::Button("Stop Tests and Restore"))
 			stopSuite = true;
-		if (ImGui::Button("Mark Flicker in Trace"))
-			markFlicker = true;
-		if (ImGui::Button("Capture NR stages (lossless DDS)"))
-			RequestCapture();
 		if (!tracePath.empty()) {
 			ImGui::TextWrapped("Trace: %s", tracePath.c_str());
 			if (ImGui::Button("Copy Trace Path"))
 				ImGui::SetClipboardText(tracePath.c_str());
 		}
 		ImGui::Checkbox("Show NR Diagnostics", &showOverlay);
-		ImGui::BeginDisabled(suite);
-		if (ImGui::Button("Record 300 NR Frames")) {
-			startTrace = true;
-			logger::info("[NRDiag/v2] recording requested; reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation");
-			traceRemaining = kTraceFrames;
-		}
-		ImGui::EndDisabled();
-		ImGui::SameLine();
-		if (ImGui::Button("Clear NR Counters"))
-			clearRequested = true;
 		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in CommunityShaders.log.");
 	}
 
@@ -435,7 +404,6 @@ namespace NR
 			ImGui::Text("After upscale/post %u/%u | target %u | main changed %u", latest.afterUpscale, latest.afterPost, latest.target, latest.mainChanged);
 			ImGui::TextUnformatted(sequence.c_str());
 			ImGui::TextUnformatted("A=copy queued N=no hook D=disabled W=no world P=paused L=latched E=error B=bypassed");
-			ImGui::Text("Trace frames remaining: %u (controls in Upscaling)", traceRemaining.load());
 		}
 		ImGui::End();
 	}

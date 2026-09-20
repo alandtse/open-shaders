@@ -35,7 +35,7 @@ struct NeuralRendering::Impl
 		float exposureCompensation = 1.0f, exposureMin = 1.0f, exposureMax = 1.0f, manualExposure = 1.0f;
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
 		float4 dynamicRangeProtect{};
-		float toneLowStrength = 1.0f, toneRadius = 1.5f, toneHighStrength = 1.0f, tonePadding = 0.0f;
+		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f, tonePadding = 0.0f;
 	};
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
@@ -54,7 +54,7 @@ struct NeuralRendering::Impl
 	NR::Diagnostics::VisualMode visualMode = NR::Diagnostics::VisualMode::None;
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
-	float toneLowStrength = 1.0f, toneRadius = 1.5f, toneHighStrength = 1.0f;
+	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -160,7 +160,7 @@ struct NeuralRendering::Impl
 		auto& cached = globals::game::frameBufferCached;
 		const auto inverseView = cached.GetCameraViewInverse(i).Transpose();
 		const auto projection = cached.GetCameraProjUnjittered(i).Transpose();
-		const auto adjusted = Util::GetEyePosition(i);
+		const auto adjusted = cached.GetCameraPosAdjust(i);
 		const DirectX::SimpleMath::Vector3 position{ adjusted.x, adjusted.y, adjusted.z };
 		const DirectX::SimpleMath::Vector3 forward{ inverseView._31, inverseView._32, inverseView._33 };
 		auto& sample = diagnostic.camera[i];
@@ -181,11 +181,11 @@ struct NeuralRendering::Impl
 			std::abs(projection._22 - eye.frame.viewToClip._22) > kProjectionCutThreshold)
 			cameraReset |= NR::Diagnostics::Projection;
 		sample.detected = cameraReset;
-		if (diagnostic.options & NR::Diagnostics::IgnorePosition)
-			cameraReset &= ~NR::Diagnostics::CameraPosition;
-		if (diagnostic.options & NR::Diagnostics::IgnoreCameraCuts)
-			cameraReset = 0;
-		reset |= cameraReset;
+		if (diagnostic.options & NR::Diagnostics::ApplyCameraCuts) {
+			if (diagnostic.options & NR::Diagnostics::IgnorePosition)
+				cameraReset &= ~NR::Diagnostics::CameraPosition;
+			reset |= cameraReset;
+		}
 		if (diagnostic.options & NR::Diagnostics::ForceReset)
 			reset |= NR::Diagnostics::Requested;
 		eye.frame.reset = reset != 0;
@@ -565,9 +565,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		ID3D11ShaderResourceView* inputs[]{ targets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK].SRV,
 			targets[globals::deferred->forwardRenderTargets[2]].SRV, targets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV, depth.depthSRV };
 		const auto count = globals::game::isVR ? 2u : 1u;
-		const auto& submit = globals::features::upscaling.vrSubmit;
-		const auto gw = submit.IsHookActive() ? submit.GetRenderEyeWidth() : static_cast<uint32_t>(renderSize.x) / count;
-		const auto gh = submit.IsHookActive() ? submit.GetRenderEyeHeight() : static_cast<uint32_t>(renderSize.y);
+		const auto gw = static_cast<uint32_t>(renderSize.x) / count;
+		const auto gh = static_cast<uint32_t>(renderSize.y);
 		D3D11_TEXTURE2D_DESC desc{};
 		if (color)
 			color->GetDesc(&desc);

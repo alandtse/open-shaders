@@ -33,22 +33,23 @@ void RCAS::CreateComputeShader()
 	rcasComputeShader.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\Upscaling\\RCAS\\RCAS.hlsl", defines, "cs_5_0"));
 }
 
-bool RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
+void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAccessView* outputUAV, float sharpness)
 {
 	if (!rcasComputeShader) {
 		logger::warn("[RCAS] Compute shader not compiled");
-		return false;
+		return;
 	}
 
 	CS_GPU_PASS("Upscaling::RCAS");
 
 	auto context = globals::d3d::context;
 
-	// Submit-stage sharpening targets can exceed the engine's render dimensions.
+	// Derived from outputUAV, not state->screenSize -- under PerfMode that's polluted to
+	// render res while sharpening targets are display res, silently under-dispatching.
 	D3D11_TEXTURE2D_DESC outputDesc{};
 	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
 		logger::warn("[RCAS] Could not resolve output texture dimensions");
-		return false;
+		return;
 	}
 	uint32_t screenWidth = outputDesc.Width;
 	uint32_t screenHeight = outputDesc.Height;
@@ -79,5 +80,4 @@ bool RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
-	return true;
 }

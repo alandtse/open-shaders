@@ -10,14 +10,14 @@ namespace NR
 	struct Tuning
 	{
 		static constexpr float kMinStrength = 0.0f, kMaxStrength = 2.0f;
-		static constexpr float kDefaultStrength = 1.7f, kAutomaticSkinStructure = -1.0f;
+		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
 		static constexpr uint32_t kMaxStyle = 2;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
 		float localStructureStrength = kDefaultStrength;
 		float skinStructureStrength = kAutomaticSkinStructure;
-		bool useAutoMask = false;
+		bool useAutoMask = true;
 
 		/** @brief Bounds user input to the reference runtime's tuning range. */
 		void Sanitize()

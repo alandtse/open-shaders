@@ -149,8 +149,7 @@ bool FoveatedRender::IsRuntimeSupported() const
 
 FoveatedRender::DlssMode FoveatedRender::GetDlssMode() const
 {
-	if (globals::features::upscaling.vrSubmit.IsHookActive() ||
-		globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR)
+	if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR)
 		return DlssMode::kDefault;
 	return (DlssMode)std::min(settings.dlssMode, 1u);
 }
@@ -344,13 +343,10 @@ void FoveatedRender::DrawSettings()
 		}
 
 		const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
-		const bool submitStage = globals::features::upscaling.vrSubmit.IsHookActive();
-		if (isFSR || submitStage)
+		if (isFSR)
 			ImGui::BeginDisabled();
 		uint prevMode = settings.dlssMode;
-		int displayedMode = submitStage ? 0 : int(settings.dlssMode);
-		if (ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), &displayedMode, 0, 1, DlssModeName((DlssMode)std::min(uint(displayedMode), 1u))))
-			settings.dlssMode = uint(displayedMode);
+		ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, DlssModeName((DlssMode)std::min(settings.dlssMode, 1u)));
 		if (settings.dlssMode != prevMode) {
 			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();
@@ -359,11 +355,8 @@ void FoveatedRender::DrawSettings()
 					prevPreset, globals::features::upscaling.settings.presetDLSS);
 			}
 		}
-		if (isFSR || submitStage)
+		if (isFSR) {
 			ImGui::EndDisabled();
-		if (submitStage) {
-			ImGui::TextWrapped("%s", T(TKEY("foveated_submit_desc"), "Render scaling reconstructs each eye's selected region independently. All DLSS presets are supported."));
-		} else if (isFSR) {
 			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
 		} else {
 			switch (GetDlssMode()) {

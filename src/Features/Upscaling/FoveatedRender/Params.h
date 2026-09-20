@@ -6,7 +6,10 @@
 
 namespace FoveatedRenderImpl
 {
-	/** @brief Engine-space inputs and output for pre-post-processing foveated reconstruction. */
+	// Unified parameter block consumed by Mode functions. Resolved from
+	// current global state — when DLSSperf is active, Params::Resolve routes
+	// `colorDst`/`colorDstUAV` and the output extents through PerfMode's
+	// testTexture (see Params.cpp).
 	struct VRDlssParams
 	{
 		// Dimensions
@@ -19,7 +22,7 @@ namespace FoveatedRenderImpl
 
 		// Textures
 		ID3D11Resource* colorSrc;                // input color  (kMAIN)
-		ID3D11Resource* colorDst;                // output color (kMAIN)
+		ID3D11Resource* colorDst;                // output color (kMAIN, or PerfMode's testTexture when DLSSperf is active)
 		ID3D11UnorderedAccessView* colorDstUAV;  // UAV for stretch output target
 		ID3D11Resource* depthTexture;
 		ID3D11Resource* reactiveMask;

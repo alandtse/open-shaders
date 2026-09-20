@@ -41,7 +41,7 @@ namespace NR
 		enum TestOption : uint32_t
 		{
 			IgnorePosition = 1,
-			IgnoreCameraCuts = 2,
+			ApplyCameraCuts = 2,
 			ForceReset = 4,
 			ZeroMotion = 8,
 			ZeroJitter = 16,
@@ -169,38 +169,35 @@ namespace NR
 		void Stage(uint32_t frame, bool finishedPost, uintptr_t main);
 		/** @brief Publishes one record per engine frame, including frames with no NR hook. */
 		void EndFrame(uint32_t frame, bool enabled, bool world, bool paused);
-		/** @brief Draws trace controls in Upscaling's existing settings panel. */
+		/** @brief Draws diagnostic settings in Upscaling's existing settings panel. */
 		void DrawSettings();
 		/** @brief Draws the latest completed-frame outcome and recent scheduling history. */
 		void DrawOverlay(bool enabled, const std::string& status);
 
 	private:
 		static constexpr size_t kHistorySize = 120;
-		static constexpr uint32_t kTraceFrames = 300;
 		Frame current;
 		std::atomic<uint32_t> options = 0;
 		std::atomic<uint32_t> conversionMode = static_cast<uint32_t>(ColorConversion::Production), exposureMode = 0, compositeMode = 0, visualMode = 0;
 		std::atomic<float> manualExposure = 1.0f, differenceStrength = 4.0f, splitPosition = 0.5f;
-		std::atomic<float> shadowProtect = 0.0f, highlightProtect = 0.0f, toneRadius = 1.5f;
+		std::atomic<float> shadowProtect = 0.0f, highlightProtect = 0.0f, toneRadius = 1.0f;
 		std::atomic_bool captureRequested = false;
 		std::atomic<uint32_t> captureFrame = UINT32_MAX;
-		std::atomic_bool startSuite = false, startTrace = false, markFlicker = false;
+		std::atomic_bool startSuite = false;
 		std::atomic_bool stopSuite = false;
 		bool suite = false;
 		uint32_t suiteStep = 0, suiteFrames = 0, savedOptions = 0;
 		std::ofstream traceFile;
 		std::string tracePath;
 		static constexpr uint32_t kSuiteFrames = 600;
-		static constexpr std::array<uint32_t, 8> kSuiteOptions{ 0, IgnorePosition, IgnoreCameraCuts, IgnorePosition | ForceReset, IgnorePosition | ZeroMotion, IgnorePosition | ZeroJitter, IgnorePosition | SerializeGPU, IgnorePosition | BypassWriteback };
-		static constexpr std::array<const char*, 8> kSuiteNames{ "Baseline", "Ignore position resets", "Ignore all camera cuts", "Reset every frame", "Zero motion", "Zero NR jitter", "Serialize GPU", "Bypass NR writeback" };
+		static constexpr std::array<uint32_t, 8> kSuiteOptions{ 0, ApplyCameraCuts, ApplyCameraCuts | IgnorePosition, ForceReset, ZeroMotion, ZeroJitter, SerializeGPU, BypassWriteback };
+		static constexpr std::array<const char*, 8> kSuiteNames{ "Baseline", "Apply inferred camera cuts", "Apply direction/projection cuts", "Reset every frame", "Zero motion", "Zero NR jitter", "Serialize GPU", "Bypass NR writeback" };
 		void OpenTrace();
 		void WriteCameraTrace(const Frame& frame);
 		std::mutex mutex;
 		std::array<Frame, kHistorySize> history{};
 		size_t next = 0, count = 0;
-		std::atomic<uint32_t> traceRemaining = 0;
-		std::atomic_bool clearRequested = false;
-		bool showOverlay = true;
+		bool showOverlay = false;
 		uint32_t framesSinceSummary = 0;
 		static const char* Name(Outcome outcome);
 		static char Code(Outcome outcome);

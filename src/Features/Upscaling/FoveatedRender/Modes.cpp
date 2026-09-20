@@ -9,7 +9,6 @@
 
 #include "Bridge.h"
 #include "Core.h"
-#include "GpuPass.h"
 #include "Ops.h"
 #include "Params.h"
 
@@ -22,16 +21,6 @@
 namespace FoveatedRenderImpl
 {
 	using namespace Ops;
-
-	static void RestoreInputForFallback(const VRDlssParams& p)
-	{
-		CS_GPU_PASS("FoveatedRender::RestoreInput");
-		if (p.colorSrc == p.colorDst && Core::vrRenderSBS) {
-			const D3D11_BOX box{ 0, 0, 0, p.renderW, p.renderH, 1 };
-			globals::d3d::context->CopySubresourceRegion(p.colorSrc, 0, 0, 0, 0,
-				Core::vrRenderSBS->resource.get(), 0, &box);
-		}
-	}
 
 	// ── Router: resolves params via Params module, dispatches to the selected mode ──
 
@@ -146,10 +135,7 @@ namespace FoveatedRenderImpl
 		// Snapshot + clear HMD hidden-area ring before cropping into subrect inputs.
 		SnapshotSBS(p.colorSrc, p.renderW, p.renderH);
 		ClearHMDMaskOnSnapshot(p);
-		if (!StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p))) {
-			RestoreInputForFallback(p);
-			return false;
-		}
+		StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 
 		// Crop subrect per-eye from mask-cleared snapshot (not kMAIN which was overwritten by stretch)
 		auto context = globals::d3d::context;
@@ -182,7 +168,6 @@ namespace FoveatedRenderImpl
 					subInW, subInH, subOutW, subOutH,
 					p.eyeWidthIn, p.eyeHeightIn)) {
 				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
-				RestoreInputForFallback(p);
 				return false;
 			}
 		}
@@ -197,11 +182,8 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			if (!BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
-					dstX, dstCropY, subOutW, subOutH)) {
-				RestoreInputForFallback(p);
-				return false;
-			}
+			BlendSubrectToOutput(Core::vrSubrectColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+				dstX, dstCropY, subOutW, subOutH);
 		}
 
 		return true;
@@ -274,10 +256,7 @@ namespace FoveatedRenderImpl
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.
 		if (!p.isFullEye) {
-			if (!StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p))) {
-				RestoreInputForFallback(p);
-				return false;
-			}
+			StretchDRSBothEyes(p.colorDstUAV, p.eyeWidthOut, p.eyeHeightOut, p.eyeWidthIn, p.eyeHeightIn, p.renderW, p.renderH, MaybeTemporalSmooth(p));
 		}
 
 		// Step 4: Copy DLSS output back (with optional blend)
@@ -290,11 +269,8 @@ namespace FoveatedRenderImpl
 			uint32_t dstCropX = p.isFullEye ? 0 : (uint32_t)(uv.x * p.eyeWidthOut);
 			uint32_t dstCropY = p.isFullEye ? 0 : (uint32_t)(uv.y * p.eyeHeightOut);
 			uint32_t dstX = (i == 1 ? p.eyeWidthOut : 0) + dstCropX;
-			if (!BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
-					dstX, dstCropY, subOutW, subOutH)) {
-				RestoreInputForFallback(p);
-				return false;
-			}
+			BlendSubrectToOutput(Core::vrFasterColorOut[i]->resource.get(), p.colorDst, p.colorDstUAV,
+				dstX, dstCropY, subOutW, subOutH);
 		}
 
 		return true;
