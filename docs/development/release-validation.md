@@ -11,7 +11,8 @@ the baseline bar for a release.
 This runbook covers full release validation, but the same devbench tools are also the
 fastest way to verify a single PR's runtime-affecting change during development —
 launch, call the relevant `openshaders.*` tool(s), and check the log — without waiting
-for a full release pass.
+for a full release pass. For a single PR, verifying on VR plus one flat variant (SE or AE) is
+sufficient; run both editions for a release candidate.
 
 ## Prerequisites
 
