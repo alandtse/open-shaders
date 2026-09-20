@@ -38,6 +38,7 @@ namespace ShadowCasterManager
 		constexpr uint32_t kRegistrationLogLimit = 24;
 		constexpr size_t kRegistrationHistoryCap = 1u << 17;
 		constexpr uint32_t kGuardLogNodes = 12;
+		constexpr USHORT kRegistrationStackDepth = 24;
 		constexpr size_t kPassBytes = 0x48;
 
 		std::atomic<uint32_t> s_forcedSkips{ 0 };
@@ -46,8 +47,6 @@ namespace ShadowCasterManager
 		std::atomic<uint32_t> s_registrationLogCount{ 0 };
 		std::atomic<bool> s_traceRegistration{ false };
 
-		// The engine calls the guard once per pass of a group chain; following a verified chain by
-		// cursor keeps the check linear instead of re-walking the chain from every pass.
 		const RE::BSRenderPass* s_cursorExpected = nullptr;
 		uint32_t s_cursorRemaining = 0;
 
@@ -114,8 +113,8 @@ namespace ShadowCasterManager
 
 		std::string CaptureStack(ULONG a_skip)
 		{
-			void* frames[24]{};
-			const USHORT count = CaptureStackBackTrace(a_skip, 24, frames, nullptr);
+			void* frames[kRegistrationStackDepth]{};
+			const USHORT count = CaptureStackBackTrace(a_skip, kRegistrationStackDepth, frames, nullptr);
 			std::string out;
 			for (USHORT i = 0; i < count; ++i)
 				out += std::format(" {}", ModuleRelative(frames[i]));
@@ -401,7 +400,6 @@ namespace ShadowCasterManager
 				s_forcedRings.store(rings - 1, std::memory_order_relaxed);
 				InjectRing(a_head);
 			}
-			// Cut cycles in place: skipping a cyclic chain would only make the engine's per-pass loop spin faster.
 			uint32_t steps = 0;
 			uint32_t groupLength = 0;
 			for (const bool groupLink : { true, false }) {

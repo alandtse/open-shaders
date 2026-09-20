@@ -208,9 +208,8 @@ namespace ShadowCasterManager
 			std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
 	}
 
-	/// Frame, slot and NiLight of each light's most recent Accumulate (render thread only).
-	/// Prevents duplicate Accumulate registrations per light per frame. Deliberately kept across
-	/// ResetSession, which is what skips the render; the keys can dangle, so never dereference them.
+	/// Kept across ResetSession on purpose: that reset skips the render, and dropping this record
+	/// brings pass-group rings back. Keys can dangle, so never dereference them.
 	struct AccumulateRecord
 	{
 		uint32_t frame;
@@ -219,8 +218,6 @@ namespace ShadowCasterManager
 	};
 	std::unordered_map<RE::BSShadowLight*, AccumulateRecord> s_lightAccumFrame;
 
-	/// An accumulated light that is never rendered keeps its pass groups linked, and a recycled pass
-	/// registered into one closes a ring (BSBatchRenderer::RegisterPassSorted).
 	static void AuditStaleAccumulates()
 	{
 		static std::unordered_map<RE::BSShadowLight*, uint32_t> s_seen;

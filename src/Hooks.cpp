@@ -1147,7 +1147,6 @@ namespace Hooks
 #endif
 	}
 
-	// Cyclic pass chains hang the engine's pass loop; only checked inside SCM's shadow render window.
 	bool ShouldSkipRenderPassForCyclicShadowChain(RE::BSRenderPass* a_pass)
 	{
 		return globals::features::lightLimitFix.loaded &&
