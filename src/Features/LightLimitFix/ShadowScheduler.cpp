@@ -208,9 +208,16 @@ namespace ShadowCasterManager
 			std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
 	}
 
-	/// Frame + slot of each light's most recent Accumulate (render thread only).
-	/// Prevents duplicate Accumulate registrations per light per frame.
-	std::unordered_map<RE::BSShadowLight*, std::pair<uint32_t, uint32_t>> s_lightAccumFrame;
+	/// Frame, slot and NiLight of each light's most recent Accumulate (render thread only).
+	/// Prevents duplicate Accumulate registrations per light per frame. Deliberately kept across
+	/// ResetSession, which is what skips the render; the keys can dangle, so never dereference them.
+	struct AccumulateRecord
+	{
+		uint32_t frame;
+		uint32_t slot;
+		RE::NiLight* niLight;
+	};
+	std::unordered_map<RE::BSShadowLight*, AccumulateRecord> s_lightAccumFrame;
 
 	/// An accumulated light that is never rendered keeps its pass groups linked, and a recycled pass
 	/// registered into one closes a ring (BSBatchRenderer::RegisterPassSorted).
@@ -219,25 +226,25 @@ namespace ShadowCasterManager
 		static std::unordered_map<RE::BSShadowLight*, uint32_t> s_seen;
 		const uint32_t now = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		for (const auto& [light, accum] : s_lightAccumFrame) {
-			if (accum.first >= now)
+			if (accum.frame >= now)
 				continue;
 			const auto rendered = s_lightRenderFrame.find(light);
-			if (rendered != s_lightRenderFrame.end() && rendered->second >= accum.first)
+			if (rendered != s_lightRenderFrame.end() && rendered->second >= accum.frame)
 				continue;
 			auto& seen = s_seen[light];
-			if (seen == accum.first)
+			if (seen == accum.frame)
 				continue;
-			seen = accum.first;
-			const bool promoted = IsPromotedLight(light->light.get());
+			seen = accum.frame;
+			const bool promoted = IsPromotedLight(accum.niLight);
 			const bool demoted = std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
 			if (promoted)
 				s_stalePromotedTotal.fetch_add(1, std::memory_order_relaxed);
-			const bool afterSkippedRender = accum.first == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
+			const bool afterSkippedRender = accum.frame == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
 			if (afterSkippedRender)
 				s_staleAfterRenderSkipTotal.fetch_add(1, std::memory_order_relaxed);
 			if (s_staleAccumulateTotal.fetch_add(1, std::memory_order_relaxed) < 8)
 				logger::warn("[SCM] Light {} (promoted={}, demoted={}) was accumulated in frame {} and not rendered by frame {} (afterSkippedRender={}, skipReason={}, slot={}, sessionReset={}, teardownWaiting={})",
-					(void*)light, promoted, demoted, accum.first, now, afterSkippedRender, s_lastRenderSkipReason.load(std::memory_order_relaxed), accum.second, s_pendingSessionReset.load(std::memory_order_relaxed),
+					(void*)light, promoted, demoted, accum.frame, now, afterSkippedRender, s_lastRenderSkipReason.load(std::memory_order_relaxed), accum.slot, s_pendingSessionReset.load(std::memory_order_relaxed),
 					s_teardownWaiting.load(std::memory_order_relaxed));
 		}
 		PruneIfOversized(s_seen, 512);
@@ -922,25 +929,27 @@ namespace ShadowCasterManager
 			// the ring-forming double and log which two slots collided.
 			const uint32_t accumFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-			bool duplicateAccum = false;
-			if (auto [it, inserted] = s_lightAccumFrame.try_emplace(light, accumFrame, idx); !inserted) {
-				duplicateAccum = it->second.first == accumFrame;
-				if (duplicateAccum) {
+			bool skipAccumulate = false;
+			if (auto [it, inserted] = s_lightAccumFrame.try_emplace(light, AccumulateRecord{ accumFrame, idx, light->light.get() }); !inserted) {
+				skipAccumulate = it->second.frame == accumFrame;
+				if (skipAccumulate) {
 					static std::atomic<uint32_t> s_dupAccumCount{ 0 };
 					const uint32_t n = s_dupAccumCount.fetch_add(1, std::memory_order_relaxed) + 1;
 					if (n <= 8u || (n % 1000u) == 0u)
 						logger::warn("[SCM] Skipped duplicate same-frame Accumulate (light={}, firstSlot={}, thisSlot={}, frame={}, n={})",
-							(void*)light, it->second.second, idx, accumFrame, n);
+							(void*)light, it->second.slot, idx, accumFrame, n);
 				} else {
 					const auto rendered = s_lightRenderFrame.find(light);
-					if (rendered == s_lightRenderFrame.end() || rendered->second < it->second.first)
-						ClearStaleAccumulatedPasses(light);
-					it->second = { accumFrame, idx };
+					const bool stale = rendered == s_lightRenderFrame.end() || rendered->second < it->second.frame;
+					if (stale && !ClearStaleAccumulatedPasses(light))
+						skipAccumulate = true;
+					else
+						it->second = { accumFrame, idx, light->light.get() };
 				}
 			}
 			if (s_lightAccumFrame.size() > 512)
-				std::erase_if(s_lightAccumFrame, [&](const auto& kv) { return kv.second.first != accumFrame; });
-			if (!duplicateAccum) {
+				std::erase_if(s_lightAccumFrame, [&](const auto& kv) { return kv.second.frame != accumFrame; });
+			if (!skipAccumulate) {
 				// Rebuild missed attachments: the engine attaches geometry once
 				// per geometry (kRenderUse latch), so a light created after scene
 				// attach otherwise casts nothing forever.
@@ -952,12 +961,12 @@ namespace ShadowCasterManager
 				*GetAccumLightSlot() += light->shadowMapCount;
 			}
 
-			if (!duplicateAccum)
+			if (!skipAccumulate)
 				st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 			if (split) {
 				st->pendingHash = s_visitStaticHash;
 				if (mode == CasterPass::StaticOnly)
-					st->bakeSawStatic = !duplicateAccum && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
+					st->bakeSawStatic = !skipAccumulate && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
 				// Queue a rebake only once the hash divergence PERSISTS (3
 				// accumulates), so a flickering hash that oscillates back to the
 				// baked value doesn't rebake, but a genuine set change does.
@@ -3297,8 +3306,11 @@ namespace ShadowCasterManager
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
-							// A skipped bake leaves the static tile blank: record it as an empty bake and re-arm.
-							MarkSlotStaticRendered(i, st.pendingHash, rendered && st.bakeSawStatic);  // atlas slot = source of truth
+							// A skipped bake leaves the static tile blank: drop the slot's static cache and re-arm.
+							if (rendered)
+								MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
+							else
+								InvalidateSlotStaticBake(i);
 							st.bakeThisFrame = false;
 							if (!rendered) {
 								st.bakeQueued = true;

@@ -413,8 +413,8 @@ namespace ShadowCasterManager
 	void InstallPassRegistrationHooks();
 
 	/// Unlinks the pass groups a light's accumulators kept from an accumulate that was never rendered, so the
-	/// next accumulate does not register recycled passes into them.
-	void ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light);
+	/// next accumulate does not register recycled passes into them. False if any renderer faulted while clearing.
+	bool ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light);
 
 	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
 	/// passes, in which case the light is not fully drawn and must not be marked rendered.
@@ -643,6 +643,9 @@ namespace ShadowCasterManager
 
 	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);
+
+	/// Drops one slot's static cache after a bake that did not complete, leaving its live tile and ownership.
+	void InvalidateSlotStaticBake(int32_t poolSlot);
 
 	/// Drops every occupied slot's static cache (not the live tile or ownership) --
 	/// cell-grid-shift response, see s_pendingCellReset.

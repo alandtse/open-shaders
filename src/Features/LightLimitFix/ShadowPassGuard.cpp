@@ -127,16 +127,19 @@ namespace ShadowCasterManager
 			bool fault = false;
 			const RE::BSRenderPass* pass = a_head;
 			for (uint32_t i = 0; pass && i < kGuardLogNodes; ++i) {
-				logger::warn("[SCM]   node[{}] {} enum={:X} geom={} prop={} pad44={:X}", i, (const void*)pass, pass->passEnum,
-					(const void*)pass->geometry, (const void*)pass->shaderProperty, pass->pad44);
+				alignas(RE::BSRenderPass) uint8_t bytes[kPassBytes]{};
+				if (!CopyPassBytes(pass, bytes)) {
+					logger::warn("[SCM]   node[{}] {} unreadable", i, (const void*)pass);
+					break;
+				}
+				const auto& snapshot = *reinterpret_cast<const RE::BSRenderPass*>(bytes);
+				logger::warn("[SCM]   node[{}] {} enum={:X} geom={} prop={} pad44={:X}", i, (const void*)pass, snapshot.passEnum,
+					(const void*)snapshot.geometry, (const void*)snapshot.shaderProperty, snapshot.pad44);
 				if (a_rawBytes) {
-					uint8_t bytes[kPassBytes]{};
-					if (CopyPassBytes(pass, bytes)) {
-						std::string hex;
-						for (const uint8_t b : bytes)
-							hex += std::format("{:02X}", b);
-						logger::warn("[SCM]   node[{}] raw {}", i, hex);
-					}
+					std::string hex;
+					for (const uint8_t b : bytes)
+						hex += std::format("{:02X}", b);
+					logger::warn("[SCM]   node[{}] raw {}", i, hex);
 				}
 				pass = LoadLink(pass, a_groupLink, fault);
 			}
@@ -219,6 +222,7 @@ namespace ShadowCasterManager
 			~ShadowRenderWindowScope()
 			{
 				s_shadowRenderWindow.store(false, std::memory_order_relaxed);
+				s_renderingLight.store(nullptr, std::memory_order_relaxed);
 			}
 		};
 
@@ -340,7 +344,8 @@ namespace ShadowCasterManager
 
 	void InstallPassRegistrationHooks()
 	{
-		stl::detour_thunk<Hook_SetupAndDrawPass>(REL::RelocationID(100854, 107644));
+		if (const long rc = stl::detour_thunk<Hook_SetupAndDrawPass>(REL::RelocationID(100854, 107644)); rc != 0)
+			logger::error("[SCM] SetupAndDrawPass entry guard not installed (Detours error {})", rc);
 		stl::write_vfunc<0x01, Hook_RegisterPassSorted>(RE::VTABLE_BSBatchRenderer[0]);
 		stl::write_vfunc<0x02, Hook_RegisterPass>(RE::VTABLE_BSBatchRenderer[0]);
 	}
@@ -418,22 +423,25 @@ namespace ShadowCasterManager
 		return skip;
 	}
 
-	static void ClearRendererGuarded(RE::BSBatchRenderer* a_renderer)
+	static bool ClearRendererGuarded(RE::BSBatchRenderer* a_renderer)
 	{
 		__try {
 			GameClearAllRenderPasses(a_renderer);
+			return true;
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			s_passGuardFaultSkipsTotal.fetch_add(1, std::memory_order_relaxed);
+			return false;
 		}
 	}
 
-	void ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light)
+	bool ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light)
 	{
 		s_stalePassClearsTotal.fetch_add(1, std::memory_order_relaxed);
-		const auto clearAccumulator = [](RE::BSShaderAccumulator* a_accumulator) {
+		bool cleared = true;
+		const auto clearAccumulator = [&cleared](RE::BSShaderAccumulator* a_accumulator) {
 			if (a_accumulator)
 				if (auto* renderer = a_accumulator->GetRuntimeData().batchRenderer)
-					ClearRendererGuarded(renderer);
+					cleared &= ClearRendererGuarded(renderer);
 		};
 		if (globals::game::isVR) {
 			for (auto& desc : a_light->GetVRRuntimeData().shadowmapDescriptors)
@@ -443,14 +451,18 @@ namespace ShadowCasterManager
 			for (auto& desc : a_light->GetRuntimeData().shadowmapDescriptors)
 				clearAccumulator(desc.shaderAccumulator.get());
 		}
+		return cleared;
 	}
 
 	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index)
 	{
 		ShadowRenderWindowScope scope(a_light);
 		a_light->Render(a_index);
-		s_lightRenderFrame[a_light] = CurrentFrame();
-		PruneIfOversized(s_lightRenderFrame, 512);
-		return s_passGuardTripsThisRender.load(std::memory_order_relaxed) == 0;
+		const bool complete = s_passGuardTripsThisRender.load(std::memory_order_relaxed) == 0;
+		if (complete) {
+			s_lightRenderFrame[a_light] = CurrentFrame();
+			PruneIfOversized(s_lightRenderFrame, 512);
+		}
+		return complete;
 	}
 }

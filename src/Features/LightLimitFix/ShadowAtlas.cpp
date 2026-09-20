@@ -1166,6 +1166,17 @@ namespace ShadowCasterManager
 		}
 	}
 
+	void InvalidateSlotStaticBake(int32_t poolSlot)
+	{
+		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size()) {
+			auto& slot = s_atlas.slots[poolSlot];
+			slot.staticValid = false;
+			slot.staticHash = 0;
+			slot.staticEmpty = false;
+			slot.staticCompositePending = false;
+		}
+	}
+
 	void InvalidateAllStaticBakes()
 	{
 		// Cell-grid-shift response: drop only the static cache, not the live
