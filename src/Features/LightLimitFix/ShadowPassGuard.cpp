@@ -424,7 +424,7 @@ namespace ShadowCasterManager
 	static bool ClearRendererGuarded(RE::BSBatchRenderer* a_renderer)
 	{
 		__try {
-			GameClearAllRenderPasses(a_renderer);
+			a_renderer->ClearAllRenderPasses();
 			return true;
 		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			s_passGuardFaultSkipsTotal.fetch_add(1, std::memory_order_relaxed);

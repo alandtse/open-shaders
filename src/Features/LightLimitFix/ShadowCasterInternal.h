@@ -499,7 +499,6 @@ namespace ShadowCasterManager
 	void GameSetupFocusShadowAccumulators(RE::BSShadowLight* light);
 	void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam);
 	void GameEnableLight(RE::ShadowSceneNode* ssn, RE::BSLight* light);
-	void GameClearAllRenderPasses(RE::BSBatchRenderer* renderer);
 	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk);
 	void GameClearPortalVisibility(RE::BSPortalGraphEntry* entry);
 	bool GamePortalHasSharedVisibility(RE::BSPortalGraphEntry* a, RE::BSPortalGraphEntry* b);
