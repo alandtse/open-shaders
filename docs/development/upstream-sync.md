@@ -49,6 +49,8 @@ gh pr create --base dev \
     --body "Merges upstream community-shaders/skyrim-community-shaders dev as of $(git rev-parse --short upstream/dev)."
 ```
 
+For a clean sync, record the per-commit outcomes from the conflict guidelines in the merge commit body by rewriting its message before pushing (`git commit --amend`).
+
 **Never push the merge straight to `dev`**, and never use an admin/PAT bypass of the `dev` ruleset to skip the PR — this applies even to a trivial, conflict-free sync. Merge the PR with **"Create a merge commit"** (never squash, never rebase-merge — either would break the ancestry a future sync's 3-way merge depends on; see [Commit structure](#commit-structure-for-a-conflicted-sync)).
 
 The scheduled workflow opens this PR automatically every Monday 08:00 UTC. Manual dispatch via `gh workflow run "Maint: Sync upstream/dev"` is available for urgent syncs and accepts a `dry_run` flag (fetches and merges locally in the runner, but skips pushing the branch/opening the PR).
