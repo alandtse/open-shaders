@@ -415,7 +415,7 @@ void FoveatedRender::UpdateAdaptiveState(std::uint32_t frame, bool routeEligible
 	const bool eyeTracking = false;
 	const bool cropEligible = adaptiveNRActive && geometryCompatible;
 	adaptiveCropController.Update(frame, cropConfig, cropEligible,
-		static_cast<std::uint32_t>(std::lround(configuredCoverage)), geometryCompatible,
+		static_cast<std::uint32_t>(std::round(configuredCoverage)), geometryCompatible,
 		eyeTracking, adaptiveController.IsAtMinimum(), adaptiveController.IsTransitioning(),
 		adaptiveController.IsAtMaximum(), adaptiveController.LastSampleOverBudget(),
 		adaptiveController.LastSampleHadHeadroom());

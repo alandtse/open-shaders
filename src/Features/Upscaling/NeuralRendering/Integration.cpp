@@ -342,8 +342,8 @@ namespace NeuralRendering
 
 		D3D11_TEXTURE2D_DESC colorDesc{};
 		D3D11_TEXTURE2D_DESC motionDesc{};
-		main.texture->GetDesc(&colorDesc);
-		motionVector.texture->GetDesc(&motionDesc);
+		Util::AsReal(main.texture)->GetDesc(&colorDesc);
+		Util::AsReal(motionVector.texture)->GetDesc(&motionDesc);
 		if (colorDesc.Width == 0 || colorDesc.Height == 0 ||
 			(globals::game::isVR && (colorDesc.Width < 2 || (colorDesc.Width & 1u) != 0)) ||
 			motionDesc.Width == 0 || motionDesc.Height == 0) {
@@ -387,7 +387,7 @@ namespace NeuralRendering
 					auto& total = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTOTAL];
 					if (total.texture) {
 						D3D11_TEXTURE2D_DESC totalDesc{};
-						total.texture->GetDesc(&totalDesc);
+						Util::AsReal(total.texture)->GetDesc(&totalDesc);
 						if (totalDesc.Width >= 2 && totalDesc.Height > 0) {
 							outputEyeWidth = totalDesc.Width / 2;
 							outputEyeHeight = totalDesc.Height;
@@ -505,7 +505,7 @@ namespace NeuralRendering
 		}
 
 		D3D11_TEXTURE2D_DESC totalDesc{};
-		total.texture->GetDesc(&totalDesc);
+		Util::AsReal(total.texture)->GetDesc(&totalDesc);
 		if (leftUV.w != rightUV.w || leftUV.h != rightUV.h) {
 			foveated.ResetAdaptiveState();
 			return false;
