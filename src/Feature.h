@@ -515,7 +515,7 @@ public:
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
 
-	/** @brief The loaded features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once. */
+	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
 
 	/**
@@ -594,7 +594,7 @@ public:
 	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
 	 * @param callback Callable receiving a Feature* for each loaded feature.
 	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
-	 * @param emitCpuZone When false, skips the per-feature CPU zone; use on per-pass hot paths.
+	 * @param emitCpuZone When false, skips the per-feature Tracy zones (CPU and GPU); use on per-pass hot paths.
 	 */
 	template <typename Func>
 	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false, bool emitCpuZone = true)

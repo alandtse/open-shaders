@@ -842,7 +842,7 @@ namespace ShadowCasterManager
 	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
 
-	/// True while SCM drives a shadow light's Render(); render-pass hooks validate pass chains only inside it.
+	/// True on the thread driving a shadow light's Render(); render-pass hooks validate pass chains only inside it.
 	bool InShadowRenderWindow();
 
 	/// True when the pass chains reachable from `head` are cyclic or unreadable and the engine call must be

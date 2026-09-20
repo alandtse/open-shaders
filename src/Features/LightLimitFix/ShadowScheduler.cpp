@@ -2906,6 +2906,7 @@ namespace ShadowCasterManager
 				snap.staleAccumulatesTotal = s_staleAccumulateTotal.load(std::memory_order_relaxed);
 				snap.staleAfterRenderSkipTotal = s_staleAfterRenderSkipTotal.load(std::memory_order_relaxed);
 				snap.stalePassClearsTotal = s_stalePassClearsTotal.load(std::memory_order_relaxed);
+				static_assert(std::extent_v<decltype(snap.renderSkipsByReason)> == kRenderSkipReasonCount);
 				for (size_t i = 0; i < kRenderSkipReasonCount; ++i)
 					snap.renderSkipsByReason[i] = s_renderSkipByReason[i].load(std::memory_order_relaxed);
 				snap.passRegChecksTotal = s_passRegChecksTotal.load(std::memory_order_relaxed);

@@ -1149,11 +1149,13 @@ namespace Hooks
 
 	bool ShouldSkipRenderPassForFeatures(const RE::BSRenderPass* a_pass)
 	{
+		constexpr bool kNoGpuZone = false;
+		constexpr bool kNoCpuZone = false;
 		bool skip = false;
 		Feature::ForEachLoadedFeature(
 			Feature::GetRenderPassSkipFeatures(), "ShouldSkipRenderPass",
 			[&](Feature* feature) { skip = skip || feature->ShouldSkipRenderPass(a_pass); },
-			false, false);
+			kNoGpuZone, kNoCpuZone);
 		return skip;
 	}
 

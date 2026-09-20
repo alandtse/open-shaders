@@ -367,8 +367,11 @@ namespace ShadowCasterManager
 	};
 	extern std::atomic<int> s_cullPassMode;
 
-	/// Set while RenderLightGuarded drives a light's Render(); read by InShadowRenderWindow().
-	extern std::atomic<bool> s_shadowRenderWindow;
+	extern std::atomic<uint32_t> s_staticCasterDraws;
+	extern std::atomic<uint32_t> s_dynamicCasterDraws;
+
+	/// Thread running RenderLightGuarded's Render(), or 0; InShadowRenderWindow() is true only on that thread.
+	extern std::atomic<uint32_t> s_shadowRenderThreadId;
 	/// Guard skips during the current Render() call; non-zero means the light was not fully drawn.
 	extern std::atomic<uint32_t> s_passGuardTripsThisRender;
 	/// The light being rendered, for the guard's one-shot diagnostic log.
@@ -394,19 +397,20 @@ namespace ShadowCasterManager
 
 	/// Lights accumulated in an earlier frame that were never rendered since.
 	extern std::atomic<uint64_t> s_staleAccumulateTotal;
-	/// Stale lights whose accumulate frame was one in which the render function exited early, and that frame/reason.
+	/// Stale lights that were accumulated in a frame whose render exited early.
 	extern std::atomic<uint64_t> s_staleAfterRenderSkipTotal;
 	extern std::atomic<uint64_t> s_stalePassClearsTotal;
+	/// Frame and reason of the most recent early-exit render.
 	extern std::atomic<uint32_t> s_lastRenderSkipFrame;
 	extern std::atomic<size_t> s_lastRenderSkipReason;
 	/// Frame each light was last rendered by RenderLightGuarded (render thread only).
 	extern std::unordered_map<RE::BSShadowLight*, uint32_t> s_lightRenderFrame;
 
-	/// Passes whose registration closed a passGroupNext ring (only counted while the trace is enabled).
 	/// Subsets of the stale, repair and registration-ring counts that involved a promoted (normal->shadow) light.
 	extern std::atomic<uint64_t> s_stalePromotedTotal;
 	extern std::atomic<uint64_t> s_passGuardRepairsPromotedTotal;
 	extern std::atomic<uint64_t> s_passRegRingsPromotedTotal;
+	/// Registrations checked, and those whose pass closed a passGroupNext ring (counted only while the trace is enabled).
 	extern std::atomic<uint64_t> s_passRegChecksTotal;
 	extern std::atomic<uint64_t> s_passRegRingsTotal;
 	/// Hooks BSBatchRenderer::RegisterPass/RegisterPassSorted; inert until the trace is enabled.
@@ -419,8 +423,6 @@ namespace ShadowCasterManager
 	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
 	/// passes, in which case the light is not fully drawn and must not be marked rendered.
 	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index);
-	extern std::atomic<uint32_t> s_staticCasterDraws;
-	extern std::atomic<uint32_t> s_dynamicCasterDraws;
 
 	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
 	extern std::uint64_t s_visitStaticHash;

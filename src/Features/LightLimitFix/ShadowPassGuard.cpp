@@ -8,7 +8,7 @@
 
 namespace ShadowCasterManager
 {
-	std::atomic<bool> s_shadowRenderWindow{ false };
+	std::atomic<uint32_t> s_shadowRenderThreadId{ 0 };
 	std::atomic<uint32_t> s_passGuardTripsThisRender{ 0 };
 	std::atomic<RE::BSShadowLight*> s_renderingLight{ nullptr };
 	std::atomic<uint64_t> s_passGuardChecksTotal{ 0 };
@@ -40,6 +40,9 @@ namespace ShadowCasterManager
 		constexpr uint32_t kGuardLogNodes = 12;
 		constexpr USHORT kRegistrationStackDepth = 24;
 		constexpr size_t kPassBytes = 0x48;
+		constexpr size_t kRenderFrameHistoryCap = 512;
+		constexpr uint32_t kRenderFrameHistoryMaxAge = 3600;
+		constexpr uint32_t kMaxForcedGuardEvents = 1000;
 
 		std::atomic<uint32_t> s_forcedSkips{ 0 };
 		std::atomic<uint32_t> s_forcedRings{ 0 };
@@ -171,14 +174,13 @@ namespace ShadowCasterManager
 				StoreLink(tail, true, a_head);
 		}
 
-		LinkResult ValidateLink(const RE::BSRenderPass* a_head, bool a_groupLink, uint32_t& a_steps, uint32_t& a_length)
+		LinkResult ValidateLink(const RE::BSRenderPass* a_head, bool a_groupLink, uint32_t& a_length)
 		{
 			bool fault = false;
 			const auto nextOf = [&](const RE::BSRenderPass* pass) { return LoadLink(pass, a_groupLink, fault); };
 
 			uint32_t steps = 0;
 			const auto verdict = PassChainGuard::Walk(a_head, nextOf, kPassChainWalkCap, &steps);
-			a_steps += steps;
 			a_length = steps;
 			if (fault) {
 				LogGuardEvent(a_head, a_groupLink, "unreadable link, skipped", steps);
@@ -216,11 +218,11 @@ namespace ShadowCasterManager
 				s_renderingLight.store(a_light, std::memory_order_relaxed);
 				s_cursorExpected = nullptr;
 				s_cursorRemaining = 0;
-				s_shadowRenderWindow.store(true, std::memory_order_relaxed);
+				s_shadowRenderThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
 			}
 			~ShadowRenderWindowScope()
 			{
-				s_shadowRenderWindow.store(false, std::memory_order_relaxed);
+				s_shadowRenderThreadId.store(0, std::memory_order_relaxed);
 				s_renderingLight.store(nullptr, std::memory_order_relaxed);
 			}
 		};
@@ -320,7 +322,7 @@ namespace ShadowCasterManager
 				const auto* shader = *reinterpret_cast<const std::uintptr_t* const*>(a_pass);
 				const auto vtable = shader ? *shader : 0;
 				return vtable >= base && vtable < end;
-			} __except (EXCEPTION_EXECUTE_HANDLER) {
+			} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 				return false;
 			}
 		}
@@ -363,17 +365,17 @@ namespace ShadowCasterManager
 
 	bool InShadowRenderWindow()
 	{
-		return s_shadowRenderWindow.load(std::memory_order_relaxed);
+		return s_shadowRenderThreadId.load(std::memory_order_relaxed) == GetCurrentThreadId();
 	}
 
 	void ForcePassGuardTrips(uint32_t a_count)
 	{
-		s_forcedSkips.store((std::min)(a_count, 1000u), std::memory_order_relaxed);
+		s_forcedSkips.store((std::min)(a_count, kMaxForcedGuardEvents), std::memory_order_relaxed);
 	}
 
 	void ForcePassGuardRings(uint32_t a_count)
 	{
-		s_forcedRings.store((std::min)(a_count, 1000u), std::memory_order_relaxed);
+		s_forcedRings.store((std::min)(a_count, kMaxForcedGuardEvents), std::memory_order_relaxed);
 	}
 
 	bool RejectCyclicPassChain(const RE::BSRenderPass* a_head)
@@ -400,11 +402,10 @@ namespace ShadowCasterManager
 				s_forcedRings.store(rings - 1, std::memory_order_relaxed);
 				InjectRing(a_head);
 			}
-			uint32_t steps = 0;
 			uint32_t groupLength = 0;
 			for (const bool groupLink : { true, false }) {
 				uint32_t length = 0;
-				if (ValidateLink(a_head, groupLink, steps, length) == LinkResult::Unrepairable)
+				if (ValidateLink(a_head, groupLink, length) == LinkResult::Unrepairable)
 					skip = true;
 				else if (groupLink)
 					groupLength = length;
@@ -426,8 +427,8 @@ namespace ShadowCasterManager
 		__try {
 			a_renderer->ClearAllRenderPasses();
 			return true;
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			s_passGuardFaultSkipsTotal.fetch_add(1, std::memory_order_relaxed);
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+			logger::warn("[SCM] ClearAllRenderPasses faulted on renderer {}", (void*)a_renderer);
 			return false;
 		}
 	}
@@ -459,7 +460,8 @@ namespace ShadowCasterManager
 		const bool complete = s_passGuardTripsThisRender.load(std::memory_order_relaxed) == 0;
 		if (complete) {
 			s_lightRenderFrame[a_light] = CurrentFrame();
-			PruneIfOversized(s_lightRenderFrame, 512);
+			if (s_lightRenderFrame.size() > kRenderFrameHistoryCap)
+				std::erase_if(s_lightRenderFrame, [now = CurrentFrame()](const auto& entry) { return now - entry.second > kRenderFrameHistoryMaxAge; });
 		}
 		return complete;
 	}
