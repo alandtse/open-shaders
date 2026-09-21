@@ -63,7 +63,21 @@ cbuffer SSGICB : register(b1)
 	float DistanceNormalisation;
 
 	uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
-	float pad;
+	uint RRHistoryValid;
+
+	float4x4 InvViewMat[2]; // Current-frame view -> world transform for Radiance Cache queries
+
+
+	float4 RadianceCacheVolumeCenter; // xyz = snapped world-space center
+	float4 RadianceCacheVolumeExtent; // xyz = independent half extents
+
+
+	// Radiance Cache composition parameters.
+
+	uint RadianceCacheOutputMode;
+	float RadianceCacheContribution;
+	uint RadianceCacheGridSize;
+	uint RadianceCacheResultGridSize;
 };
 
 SamplerState samplerPointClamp : register(s0);
