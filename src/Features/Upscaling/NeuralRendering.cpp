@@ -21,12 +21,17 @@ struct NeuralRendering::Impl
 		NR::SharedTexture color, depth, motion, output;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved;
+		std::array<std::unique_ptr<Texture2D>, 2> residualHistory;
+		std::unique_ptr<Texture2D> depthHistory;
+		uint32_t residualIndex = 0;
+		bool residualValid = false;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
 	};
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> encode, prepareColor, compositeColor;
+	Util::LazyShader<ID3D11ComputeShader> encode, prepareColor, stabilizeResidual, compositeColor;
+	winrt::com_ptr<ID3D11SamplerState> temporalSampler;
 	struct alignas(16) ColorTransferData
 	{
 		uint32_t width, height, eyeOffsetX, hasExposure = 0;
@@ -36,6 +41,8 @@ struct NeuralRendering::Impl
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
 		float4 dynamicRangeProtect{};
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f, tonePadding = 0.0f;
+		uint32_t historyValid = 0;
+		float temporalAlpha = 0.12f, temporalClamp = 0.05f, depthThreshold = 0.02f;
 	};
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
@@ -77,6 +84,11 @@ struct NeuralRendering::Impl
 		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		D3D11_SAMPLER_DESC samplerDesc{};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, temporalSampler.put()));
+		Util::SetResourceName(temporalSampler.get(), "NeuralRendering::TemporalResidual Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		runtime.Initialize(interop.Device(), std::filesystem::absolute(Upscaling::streamline.pluginDir));
@@ -137,9 +149,37 @@ struct NeuralRendering::Impl
 			eye.color = interop.CreateTexture(w, h, srv.Format, name + " HDRInput");
 			eye.color.texture->CreateSRV(srv);
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
+			srv.Format = DXGI_FORMAT_R32_FLOAT;
+			eye.depth.texture->CreateSRV(srv);
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
+			srv.Format = DXGI_FORMAT_R16G16_FLOAT;
+			eye.motion.texture->CreateSRV(srv);
+			srv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 			eye.output = interop.CreateTexture(w, h, srv.Format, name + " HDROutput");
 			eye.output.texture->CreateSRV(srv);
+
+			D3D11_TEXTURE2D_DESC historyDesc = colorDesc;
+			historyDesc.Width = w;
+			historyDesc.Format = DXGI_FORMAT_R16_FLOAT;
+			historyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			D3D11_SHADER_RESOURCE_VIEW_DESC historySRV = srv;
+			historySRV.Format = historyDesc.Format;
+			D3D11_UNORDERED_ACCESS_VIEW_DESC historyUAV = colorUAV;
+			historyUAV.Format = historyDesc.Format;
+			for (uint32_t history = 0; history < eye.residualHistory.size(); ++history) {
+				eye.residualHistory[history] = std::make_unique<Texture2D>(historyDesc,
+					std::format("{} ResidualHistory{}", name, history).c_str());
+				eye.residualHistory[history]->CreateSRV(historySRV);
+				eye.residualHistory[history]->CreateUAV(historyUAV);
+			}
+			D3D11_TEXTURE2D_DESC depthHistoryDesc = historyDesc;
+			depthHistoryDesc.Width = gw;
+			depthHistoryDesc.Height = gh;
+			depthHistoryDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			depthHistoryDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+			historySRV.Format = depthHistoryDesc.Format;
+			eye.depthHistory = std::make_unique<Texture2D>(depthHistoryDesc, (name + " DepthHistory").c_str());
+			eye.depthHistory->CreateSRV(historySRV);
 		}
 		source.copy_from(color);
 		width = w;
@@ -197,6 +237,7 @@ struct NeuralRendering::Impl
 		eye.frame.jitterX = -jitter.x;
 		eye.frame.jitterY = -jitter.y;
 		eye.frame.frameTimeMs = *globals::game::deltaTime * 1000.0f;
+		eye.frame.feedCameraData = (diagnostic.options & NR::Diagnostics::FeedCameraData) != 0;
 		if (diagnostic.options & NR::Diagnostics::ZeroJitter)
 			eye.frame.jitterX = eye.frame.jitterY = 0;
 		sample.jitterX = eye.frame.jitterX;
@@ -268,7 +309,8 @@ struct NeuralRendering::Impl
 		context->CSSetConstantBuffers(0, 1, &buffer);
 		context->CSSetConstantBuffers(5, 1, &shared);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color.texture->srv.get(),
-			prepare ? nullptr : eye.output.texture->srv.get(), exposure };
+			prepare ? nullptr : eye.output.texture->srv.get(), exposure,
+			prepare ? nullptr : eye.residualHistory[eye.residualIndex]->srv.get() };
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color.texture->uav.get() : eye.resolved->uav.get(),
 			prepare ? nullptr : reactive->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
@@ -276,6 +318,36 @@ struct NeuralRendering::Impl
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		context->ClearState();
+	}
+
+	void StabilizeToneResidual(uint32_t i)
+	{
+		CS_GPU_PASS("NeuralRendering::StabilizeToneResidual");
+		context->ClearState();
+		auto& eye = eyes[i];
+		const auto readIndex = eye.residualIndex;
+		const auto writeIndex = readIndex ^ 1u;
+		ColorTransferData data{ width, height, i * width };
+		data.toneRadius = toneRadius;
+		data.historyValid = eye.residualValid && !eye.frame.reset;
+		colorBuffer->Update(data);
+		auto buffer = colorBuffer->CB();
+		auto shared = globals::state->sharedDataCB->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+		context->CSSetConstantBuffers(5, 1, &shared);
+		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color.texture->srv.get(), eye.output.texture->srv.get(), nullptr,
+			eye.residualHistory[readIndex]->srv.get(), eye.motion.texture->srv.get(), eye.depth.texture->srv.get(), eye.depthHistory->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		ID3D11SamplerState* samplers[]{ temporalSampler.get() };
+		context->CSSetSamplers(0, 1, samplers);
+		ID3D11UnorderedAccessView* outputs[]{ nullptr, nullptr, eye.residualHistory[writeIndex]->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+		context->CSSetShader(stabilizeResidual.get(), nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+		context->CopyResource(eye.depthHistory->resource.get(), eye.depth.texture->resource.get());
+		eye.residualIndex = writeIndex;
+		eye.residualValid = true;
 	}
 
 	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
@@ -394,11 +466,15 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
 		}
+		for (uint32_t i = 0; i < eyeCount; ++i)
+			StabilizeToneResidual(i);
+		if (capture)
+			diagnostics.DumpTexture("03_stabilized_tone", eyes[0].residualHistory[eyes[0].residualIndex]->resource.get(), diagnostic.number);
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			TransferColor(i, false);
 		}
 		if (capture) {
-			diagnostics.DumpTexture("03_pre_composite", original->resource.get(), diagnostic.number);
+			diagnostics.DumpTexture("04_pre_composite", original->resource.get(), diagnostic.number);
 			diagnostics.DumpTexture("NR_mask", reactive->resource.get(), diagnostic.number);
 		}
 		const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
@@ -407,7 +483,7 @@ struct NeuralRendering::Impl
 			diagnostic.copied |= 1u << i;
 		}
 		if (capture)
-			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
+			diagnostics.DumpTexture("05_post_composite", color, diagnostic.number);
 		maskFrame = globals::state->frameCount;
 		diagnostics.FinishCapture(diagnostic.number);
 		captureDiagnostics = nullptr;
@@ -543,6 +619,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.options = diagnostics.Options();
 		if (diagnostic.options != work.lastDiagnosticOptions) {
 			resetHistory = true;
+			if ((diagnostic.options ^ work.lastDiagnosticOptions) & NR::Diagnostics::FeedCameraData)
+				work.runtime.ResetFeatures();
 			work.lastDiagnosticOptions = diagnostic.options;
 		}
 		if (work.failed) {
@@ -558,6 +636,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		if (clearShaders.exchange(false)) {
 			work.encode.Reset();
 			work.prepareColor.Reset();
+			work.stabilizeResidual.Reset();
 			work.compositeColor.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
@@ -598,9 +677,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			{ { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::Encode CS");
 		auto* prepare = work.prepareColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "Prepare", "NeuralRendering::PrepareColor CS");
+		auto* stabilize = work.stabilizeResidual.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
+			{}, "cs_5_0", "StabilizeResidual", "NeuralRendering::StabilizeResidual CS");
 		auto* composite = work.compositeColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "Composite", "NeuralRendering::CompositeHDR CS");
-		if (!shader || !prepare || !composite)
+		if (!shader || !prepare || !stabilize || !composite)
 			throw std::runtime_error("NR encoder or color-transfer shader unavailable");
 		work.debugOptions = diagnostic.options;
 		work.conversionMode = diagnostics.ConversionMode();

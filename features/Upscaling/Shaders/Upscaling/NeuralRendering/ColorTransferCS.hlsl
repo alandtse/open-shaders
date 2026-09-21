@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/SharedData.hlsli"
 
 cbuffer ColorTransfer : register(b0)
 {
@@ -22,14 +23,24 @@ cbuffer ColorTransfer : register(b0)
 	float ToneRadius;
 	float ToneHighStrength;
 	float TonePadding;
+	uint HistoryValid;
+	float TemporalAlpha;
+	float TemporalClamp;
+	float DepthThreshold;
 };
 
 Texture2D<float4> Original : register(t0);
 Texture2D<float4> NeuralInput : register(t1);
 Texture2D<float4> NeuralOutput : register(t2);
 StructuredBuffer<float> Adaptation : register(t3);
+Texture2D<float> TemporalResidual : register(t4);
+Texture2D<float2> NeuralMotion : register(t5);
+Texture2D<float> NeuralDepth : register(t6);
+Texture2D<float> NeuralDepthHistory : register(t7);
+SamplerState TemporalSampler : register(s0);
 RWTexture2D<float4> Output : register(u0);
 RWTexture2D<float> NeuralReactive : register(u1);
+RWTexture2D<float> TemporalResidualOutput : register(u2);
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
 
@@ -182,6 +193,32 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	return weightSum > 1e-5 ? weighted / weightSum : centerDelta;
 }
 
+float ResidualLowAt(int2 pixel, float centerDelta)
+{
+	float radius = ToneRadius;
+	if (radius <= 0.01)
+		return centerDelta;
+	int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+	float3 center = ProxySrgbToLinear(NeuralInput[clamp(pixel, int2(0, 0), limit)].rgb);
+	float centerLuma = max(dot(center, Luma), 1e-5);
+	float weighted = 0.0;
+	float weightSum = 0.0;
+	for (int y = -2; y <= 2; ++y) {
+		for (int x = -2; x <= 2; ++x) {
+			float distance = float(x * x + y * y);
+			float spatial = exp(-distance / max(2.0 * radius * radius, 1e-4));
+			int2 samplePixel = clamp(pixel + int2(x, y), int2(0, 0), limit);
+			float3 sample = ProxySrgbToLinear(NeuralInput[samplePixel].rgb);
+			float sampleLuma = max(dot(sample, Luma), 1e-5);
+			float edge = exp(-abs(log2(sampleLuma) - log2(centerLuma)) * 2.0);
+			float weight = spatial * edge;
+			weighted += TemporalResidual[samplePixel] * weight;
+			weightSum += weight;
+		}
+	}
+	return weightSum > 1e-5 ? weighted / weightSum : centerDelta;
+}
+
 [numthreads(8, 8, 1)] void Prepare(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
@@ -203,8 +240,46 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	Output[id.xy] = float4(all(isfinite(proxy)) ? proxy : 0.0, 1.0);
 }
 
-	[numthreads(8, 8, 1)] void Composite(uint3 id : SV_DispatchThreadID)
+	[numthreads(8, 8, 1)] void StabilizeResidual(uint3 id : SV_DispatchThreadID)
 {
+	if (id.x >= Width || id.y >= Height)
+		return;
+	int2 pixel = int2(id.xy);
+	int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+	float current = ToneDeltaAt(pixel);
+	float neighborhoodSum = 0.0;
+	float neighborhoodSquareSum = 0.0;
+	[unroll] for (int y = -1; y <= 1; ++y)
+	{
+		[unroll] for (int x = -1; x <= 1; ++x)
+		{
+			float neighbor = ToneDeltaAt(clamp(pixel + int2(x, y), int2(0, 0), limit));
+			neighborhoodSum += neighbor;
+			neighborhoodSquareSum += neighbor * neighbor;
+		}
+	}
+	float neighborhoodMean = neighborhoodSum / 9.0;
+	float neighborhoodVariance = max(neighborhoodSquareSum / 9.0 - neighborhoodMean * neighborhoodMean, 0.0);
+	float clipRadius = max(2.0 * sqrt(neighborhoodVariance), TemporalClamp);
+
+	float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
+	float2 previousUV = uv + NeuralMotion[id.xy];
+	bool valid = HistoryValid != 0 && all(previousUV > 0.0) && all(previousUV < 1.0);
+	float history = TemporalResidual.SampleLevel(TemporalSampler, saturate(previousUV), 0);
+	float currentDepth = NeuralDepth[id.xy];
+	float previousDepth = NeuralDepthHistory.SampleLevel(TemporalSampler, saturate(previousUV), 0);
+	float currentScreenDepth = SharedData::GetScreenDepth(currentDepth);
+	float previousScreenDepth = SharedData::GetScreenDepth(previousDepth);
+	float relativeDepthDelta = abs(currentScreenDepth - previousScreenDepth) /
+	                           max(max(abs(currentScreenDepth), abs(previousScreenDepth)), 1e-4);
+	valid = valid && isfinite(history) && isfinite(currentDepth) && isfinite(previousDepth) &&
+	        isfinite(relativeDepthDelta) && relativeDepthDelta <= DepthThreshold;
+	history = clamp(history, neighborhoodMean - clipRadius, neighborhoodMean + clipRadius);
+	float stabilized = lerp(history, current, valid ? TemporalAlpha : 1.0);
+	TemporalResidualOutput[id.xy] = isfinite(stabilized) ? stabilized : current;
+}
+
+[numthreads(8, 8, 1)] void Composite(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
 	uint2 sourcePixel = id.xy + uint2(EyeOffsetX, 0);
@@ -240,8 +315,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float mask = MaskMode == 1 ? 0.0 : (MaskMode == 2 ? 1.0 : saturate(4.0 * abs(ratio - 1.0)));
 	float3 originalLinear = max(ToLinear(original.rgb), 0.0);
 	float3 neuralLinear = max(ProxyToLinear(rawNeural), 0.0);
-	float toneDelta = log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor));
-	float toneLow = ToneLowAt(int2(id.xy), toneDelta);
+	float toneDelta = TemporalResidual[id.xy];
+	float toneLow = ResidualLowAt(int2(id.xy), toneDelta);
 	float toneHigh = toneDelta - toneLow;
 	float tone = toneLow * ToneLowStrength + toneHigh * ToneHighStrength;
 	float toneGain = exp2(tone);

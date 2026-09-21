@@ -12,6 +12,7 @@ namespace NR
 	{
 		float jitterX = 0, jitterY = 0, frameTimeMs = 0;
 		DirectX::SimpleMath::Matrix worldToView, viewToClip;
+		bool feedCameraData = false;
 		bool reset = true;
 		bool created = false;
 		uint32_t result = 0;

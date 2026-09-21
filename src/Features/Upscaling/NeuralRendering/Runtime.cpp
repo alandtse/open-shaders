@@ -337,7 +337,9 @@ namespace NR
 			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
 			writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
 			writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+			writer.SetResource("DLSSNR.ControlMask", nullptr);
 			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+			writer.SetUInt("DLSSNR.UICorrection", 1u);
 			NVSDK_NGX_Handle* handle = nullptr;
 			const auto result = state.create(commands, static_cast<NVSDK_NGX_Feature>(18), parameters, &handle);
 			frame.result = static_cast<uint32_t>(result);
@@ -365,12 +367,10 @@ namespace NR
 			writer.SetUInt(key, guideWidth);
 		for (auto key : { "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight" })
 			writer.SetUInt(key, guideHeight);
-		// Skyrim's motion-vector buffer is already in the normalized units used by the
-		// upscaler; Streamline keeps these constants at identity. Scaling by the guide
-		// dimensions turns small camera motion into a large reprojection and makes the
-		// model's temporal result unstable.
-		writer.SetFloat("DLSSNR.MVecScaleX", 1.0f);
-		writer.SetFloat("DLSSNR.MVecScaleY", 1.0f);
+		// Feature 18 expects source-pixel motion; scale Skyrim's normalized UV motion
+		// by the active guide extent, matching Streamline's NGX conversion.
+		writer.SetFloat("DLSSNR.MVecScaleX", static_cast<float>(guideWidth));
+		writer.SetFloat("DLSSNR.MVecScaleY", static_cast<float>(guideHeight));
 		writer.SetUInt("DLSSNR.DepthInverted", 0u);
 		writer.SetUInt("DLSSNR.Enabled", 1u);
 		writer.SetUInt("DLSSNR.Reset", frame.reset ? 1u : 0u);
@@ -381,10 +381,17 @@ namespace NR
 		writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
 		writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
 		writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+		writer.SetResource("DLSSNR.ControlMask", nullptr);
 		writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
 		writer.SetUInt("DLSSNR.Style", tuning.style);
-		writer.SetUInt("DLSSNR.UICorrection", 0u);
 		writer.SetFloat("Sharpness", 0.0f);
+		if (frame.feedCameraData) {
+			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, frame.jitterX);
+			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, frame.jitterY);
+			parameters->Set(NVSDK_NGX_Parameter_FrameTimeDeltaInMsec, frame.frameTimeMs);
+			parameters->Set(NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, static_cast<void*>(&frame.worldToView));
+			parameters->Set(NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, static_cast<void*>(&frame.viewToClip));
+		}
 		const auto result = state.evaluate(commands, eye.feature.get(), parameters, nullptr);
 		frame.result = static_cast<uint32_t>(result);
 		if (NVSDK_NGX_FAILED(result)) {

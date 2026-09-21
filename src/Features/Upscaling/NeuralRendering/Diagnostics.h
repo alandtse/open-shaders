@@ -60,7 +60,8 @@ namespace NR
 			DisableExposure = 131072,
 			DisableColorTransform = 262144,
 			VisualizeSkinMask = 524288,
-			VisualizeAutoMask = 1048576
+			VisualizeAutoMask = 1048576,
+			FeedCameraData = 2097152
 		};
 		enum class ColorConversion : uint32_t
 		{

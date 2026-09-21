@@ -173,7 +173,7 @@ namespace NR
 				throw std::runtime_error("Cannot open diagnostic trace");
 			traceFile << std::setprecision(9);
 			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>256, directionDot<0.5, projectionDelta>0.1.\n"
-						 "Options: 1=ignorePosition,2=ignoreCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,128=bypassEvaluation,256=copyInput,512=interopRoundTrip.\n"
+						 "Options: 1=ignorePosition,2=ignoreCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,128=bypassEvaluation,256=copyInput,512=interopRoundTrip,2097152=feedCameraData.\n"
 						 "Reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation.\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
@@ -305,6 +305,7 @@ namespace NR
 		toggle("Visualize NR mask", VisualizeMask);
 		toggle("Visualize skin mask (if supplied)", VisualizeSkinMask);
 		toggle("Visualize auto mask (if supplied)", VisualizeAutoMask);
+		toggle("Feed historical camera parameters", FeedCameraData);
 		toggle("Disable local tone", DisableTone);
 		toggle("Disable local structure", DisableStructure);
 		toggle("Disable skin processing", DisableSkin);
