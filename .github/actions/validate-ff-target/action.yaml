@@ -70,6 +70,14 @@ runs:
               fi
               echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
               START="${RANGE_START:-origin/main}"
+              if ! git rev-parse --verify "${START}^{commit}" >/dev/null 2>&1; then
+                echo "::error::range start ${START} does not exist."
+                exit 1
+              fi
+              if ! git merge-base --is-ancestor "${START}" "${FF_TARGET}"; then
+                echo "::error::range start ${START} is not an ancestor of ff_target ${FF_TARGET}."
+                exit 1
+              fi
               {
                 echo "## Promotion plan"
                 echo "- Source branch: \`${SOURCE}\`"

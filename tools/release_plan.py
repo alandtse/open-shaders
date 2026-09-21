@@ -35,6 +35,8 @@ def definitions_differ(cwd, head_sha, ff_target):
 
 def plan(cwd, ref_name, ff_target, single_phase, base_sha, head_sha):
     if not ff_target:
+        if base_sha:
+            raise PlanError("base_sha requires ff_target")
         return "release", "", "no ff_target"
     if ref_name != "main":
         return "release", "", "not dispatched on main"

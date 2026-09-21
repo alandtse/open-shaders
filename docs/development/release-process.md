@@ -64,7 +64,7 @@ After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-r
 
 ### Two-phase promotion
 
-A dispatch loads workflow and composite-action files from the dispatched ref, so a promotion whose `ff_target` changes `.github/workflows/` or `.github/actions/` would otherwise run main's stale copies. In that case the run fast-forwards `main`, then re-dispatches itself (phase 2) with `base_sha` set to main's previous tip, and phase 2 performs the release. `tools/` is checked out at `ff_target` and never skews.
+A dispatch loads workflow and composite-action files from the dispatched ref, so a promotion whose `ff_target` changes `.github/workflows/` or `.github/actions/` would otherwise run main's stale copies. In that case the run fast-forwards `main`, then re-dispatches itself (phase 2) with `base_sha` set to main's previous tip, and phase 2 performs the release with the promoted workflow, action and `tools/` files. Phase 1 (`plan` and `promote`) runs `tools/release_plan.py` from the dispatched `main` checkout.
 
 -   If the re-dispatched run is superseded by a newer dispatch, main is promoted but no release exists. The stranded run's summary prints the recovery `gh workflow run ... -f ff_target=... -f base_sha=...` command.
 -   `single_phase=true` skips detection and is the only bypass if the plan itself is broken.

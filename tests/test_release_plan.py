@@ -70,6 +70,10 @@ class PlanTests(unittest.TestCase):
     def test_empty_ff_target_releases(self):
         self.assertEqual(self.decide("")[0], "release")
 
+    def test_base_sha_without_ff_target_is_refused(self):
+        with self.assertRaises(release_plan.PlanError):
+            self.decide("", base_sha=self.main)
+
     def test_non_main_ref_releases(self):
         target = self.repo.commit(".github/workflows/a.yaml", "two")
         self.assertEqual(self.decide(target, ref_name="dev")[0], "release")
