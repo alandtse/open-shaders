@@ -555,9 +555,9 @@ void FoveatedRender::DrawEnable()
 	ClampSettings();
 
 	ImGui::TextWrapped("%s", T(TKEY("foveated_overview"),
-		"Foveated subrect upscaling: only the user-selected region gets full DLSS/FSR "
-		"upscaling, the periphery is cheaply stretched. Significant upscaler cost reduction "
-		"at the cost of peripheral sharpness. VR only."));
+								 "Foveated subrect upscaling: only the user-selected region gets full DLSS/FSR "
+								 "upscaling, the periphery is cheaply stretched. Significant upscaler cost reduction "
+								 "at the cost of peripheral sharpness. VR only."));
 
 	const bool runtimeSupported = IsRuntimeSupported();
 	if (!runtimeSupported) {
@@ -754,16 +754,16 @@ void FoveatedRender::DrawSettings(bool showSharedPanelNote, bool vrControlsFirst
 				SubrectMaskModeName(GetSubrectMaskMode()));
 			if (GetSubrectMaskMode() == SubrectMaskMode::kOval)
 				ImGui::TextWrapped("%s", T(TKEY("foveated_mask_oval_desc"),
-					"Oval: a distance-corrected elliptical feather/dither mask that removes the box corners. The DLSS/Feature 18 work is still evaluated over the rectangular bounding region; this changes only the composite edge."));
+											 "Oval: a distance-corrected elliptical feather/dither mask that removes the box corners. The DLSS/Feature 18 work is still evaluated over the rectangular bounding region; this changes only the composite edge."));
 			else
 				ImGui::TextWrapped("%s", T(TKEY("foveated_mask_rectangle_desc"),
-					"Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
+											 "Rectangle: keep the original rectangular feather/dither mask. Use this fallback if the oval edge is not preferred."));
 
 			ImGui::Separator();
 			ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
 			ImGui::TextWrapped("%s", T(TKEY("foveated_subrect_region_desc"),
-				"Drag in the preview below to select the region that gets full upscaling. "
-				"The rest is cheaply stretched — saves significant upscaling cost."));
+										 "Drag in the preview below to select the region that gets full upscaling. "
+										 "The rest is cheaply stretched — saves significant upscaling cost."));
 			Util::Text::WrappedInfo(T(TKEY("foveated_screenshot_subrect_note"), "Screenshot has its own subrect; align them only if you want pixel-matched captures."));
 
 			bool debugBool = settings.debugVisualize != 0;

@@ -94,6 +94,7 @@ namespace Util::Subrect
 		const bool hasExplicitLeft =
 			a_json.contains("CropX") && a_json.contains("CropY") &&
 			a_json.contains("CropW") && a_json.contains("CropH");
+		explicitCropLoadedFromJson = hasExplicitLeft;
 		const bool hasExplicitRight =
 			a_json.contains("CropRightX") && a_json.contains("CropRightY") &&
 			a_json.contains("CropRightW") && a_json.contains("CropRightH");
@@ -223,7 +224,7 @@ namespace Util::Subrect
 		// LoadSettings may have created a temporary Full Frame placeholder before
 		// the host had a chance to seed its named defaults. Replace only that
 		// internally-created placeholder so a named first-run selection can win.
-		if (placeholderDefaultPreset) {
+		if (placeholderDefaultPreset && !explicitCropLoadedFromJson) {
 			presets.clear();
 			placeholderDefaultPreset = false;
 			selectedPresetIndex = 0;

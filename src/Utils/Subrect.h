@@ -197,6 +197,9 @@ namespace Util::Subrect
 		std::vector<Preset> seededDefaults;
 		std::string defaultPresetName;
 		bool placeholderDefaultPreset = false;
+		// True when LoadSettings read a complete explicit left-eye crop quartet.
+		// Keep that crop when seeded defaults are materialized after the load.
+		bool explicitCropLoadedFromJson = false;
 		// Names of seeded defaults ever offered via presets/ApplyPresetByName --
 		// lets a later-added seed stay reachable while an explicitly deleted
 		// default is never silently resurrected.

@@ -55,6 +55,27 @@ TEST_CASE("SeedDefaultPresets selects the named first-run preset", "[subrect][de
 	REQUIRE(saved["SelectedPresetIndex"] == 1);
 }
 
+TEST_CASE("MaterializeNewDefaults preserves an explicit crop loaded before seeding", "[subrect][defaults][regression]")
+{
+	Controller c;
+	c.SeedDefaultPresets({
+							 Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+							 Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+						 },
+		"Center 75%");
+
+	json in = {
+		{ "CropX", 0.20f },
+		{ "CropY", 0.10f },
+		{ "CropW", 0.60f },
+		{ "CropH", 0.80f },
+	};
+	c.LoadSettings(in);
+	c.MaterializeNewDefaults();
+
+	REQUIRE(UVApprox(c.GetUV(), { 0.20f, 0.10f, 0.60f, 0.80f }));
+}
+
 TEST_CASE("SaveSettings in mono mode emits no right-eye keys", "[subrect][backcompat]")
 {
 	// Pre-stereo screenshot JSON shape must round-trip bit-identically: this is

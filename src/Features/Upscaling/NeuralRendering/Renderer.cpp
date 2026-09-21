@@ -983,7 +983,9 @@ namespace NeuralRendering
 			if (!EnsureTierResources(device, eyeIndex, eye, tierIndex, modelWidth, modelHeight, passCount, modelResolution))
 				return false;
 			if (prewarmAdaptive && passCount == 1) {
-				for (std::uint32_t prewarmIndex = 0; prewarmIndex < kAdaptiveTierCount; ++prewarmIndex) {
+				const std::uint32_t firstPrewarm = tierIndex > 0 ? tierIndex - 1 : 0;
+				const std::uint32_t lastPrewarm = std::min(tierIndex + 1, kAdaptiveTierCount - 1);
+				for (std::uint32_t prewarmIndex = firstPrewarm; prewarmIndex <= lastPrewarm; ++prewarmIndex) {
 					const auto resolution = kResolutionTiers[prewarmIndex];
 					if (resolution > memoryCeiling && resolution != modelResolution)
 						continue;

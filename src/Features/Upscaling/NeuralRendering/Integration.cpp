@@ -241,12 +241,9 @@ namespace NeuralRendering
 				}
 			}
 
-			context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, savedRTVs, savedDSV);
-			for (auto*& rtv : savedRTVs)
-				if (rtv)
-					rtv->Release();
-			if (savedDSV)
-				savedDSV->Release();
+			RestoreRenderTargets(context, savedRTVs, savedDSV);
+			if (!succeeded && Renderer::Instance().IsFailureLatched())
+				Renderer::Instance().Reset();
 			return succeeded;
 		}
 	}
@@ -477,7 +474,9 @@ namespace NeuralRendering
 		if (preUpscaleAppliedFrame == frame)
 			return false;
 		const std::uint32_t guideFrame = FoveatedRenderImpl::Core::neuralGuidesFrame;
-		if (lastAppliedFrame == frame || (guideFrame != frame && !(frame > 0 && guideFrame == frame - 1))) {
+		if (lastAppliedFrame == frame)
+			return false;
+		if (guideFrame != frame && !(frame > 0 && guideFrame == frame - 1)) {
 			foveated.ResetAdaptiveState();
 			return false;
 		}
