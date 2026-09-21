@@ -107,6 +107,10 @@ float FalloffAlpha(float normalizedDistance, float curve)
 		DstTex[dstPos] = dlss;
 		return;
 	}
+	// Outside an oval mask, leave the stretched background untouched. Without
+	// this guard, dither noise can leak DLSS pixels into the oval's corners.
+	if (edgeDist <= 0.0)
+		return;
 
 	// We're in the feather band — need background
 	float4 bg = DstTex[dstPos];
