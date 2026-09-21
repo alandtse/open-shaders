@@ -497,6 +497,7 @@ private:
 	// forceRefresh re-probes the config; otherwise the cached result is returned.
 	const VRDetection::OpenCompositeUpscalingState& GetOpenCompositeUpscalingBlocker(bool a_forceRefresh = false) const;
 	void ApplyOpenCompositeUpscalingBlocker(bool a_forceRefresh = false);
+	UpscaleMethod DrawUpscaleMethodControl();
 
 	mutable VRDetection::OpenCompositeUpscalingState openCompositeUpscalingBlocker;
 	mutable bool openCompositeUpscalingBlockerCacheValid = false;

@@ -340,12 +340,8 @@ void Upscaling::DrawPerfModeToggle()
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScale);
 }
 
-void Upscaling::DrawDLSSNRSharedControls()
+Upscaling::UpscaleMethod Upscaling::DrawUpscaleMethodControl()
 {
-	// These are the same settings used by the main Upscaling page. They are
-	// intentionally rendered here as a second entry point so a user can tune
-	// the complete DLSS 5 NR route without navigating between pages.
-	ImGui::PushID("DLSS5NRSharedUpscaling");
 	ApplyOpenCompositeUpscalingBlocker();
 	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
 	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
@@ -372,17 +368,64 @@ void Upscaling::DrawDLSSNRSharedControls()
 		if (openCompositeBlocksUpscaling)
 			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
 		else
-			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend. DLSS 5 NR requires NVIDIA DLSS as the active method."));
+			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend."));
 	}
 	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
 
 	if (openCompositeBlocksUpscaling) {
-		Util::Text::WrappedWarning(
-			"Upscaling is locked to None because OpenComposite has %s=true.",
-			openCompositeBlocker.settingName.c_str());
+		if (openCompositeBlocker.configPath.empty())
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true.",
+				openCompositeBlocker.settingName.c_str());
+		else
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
+				openCompositeBlocker.settingName.c_str(),
+				openCompositeBlocker.configPath.c_str());
 	}
 
 	const auto upscaleMethod = GetUpscaleMethod();
+	if (perfMode.IsHookActive()) {
+		ImGui::TextWrapped("%s", T(TKEY("perfmode_active_note"),
+									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
+									 "Sharpness / model preset / Reflex remain live."));
+
+		if (currentUpscaleMode == &settings.upscaleMethod &&
+			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
+			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
+			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
+			Util::Text::RestartNeeded(
+				"Pending restart: currently active method = %s (selected = %s).",
+				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
+		}
+
+		if (perfMode.IsDisplaySizeChanged()) {
+			Util::Text::RestartNeeded(
+				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
+				"per-app resolution slider). Restart to re-latch at the new size.");
+		}
+	}
+
+	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically).
+	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
+		auto screenSize = globals::state->screenSize;
+		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
+			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
+				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
+			Util::Text::Warning("%s", T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
+		}
+	}
+
+	return upscaleMethod;
+}
+
+void Upscaling::DrawDLSSNRSharedControls()
+{
+	// These are the same settings used by the main Upscaling page. They are
+	// intentionally rendered here as a second entry point so a user can tune
+	// the complete DLSS 5 NR route without navigating between pages.
+	ImGui::PushID("DLSS5NRSharedUpscaling");
+	const auto upscaleMethod = DrawUpscaleMethodControl();
 	if (upscaleMethod == UpscaleMethod::kDLSS) {
 		const char* baseLabel = GetQualityModeName(settings.qualityMode);
 		if (baseLabel) {
@@ -694,107 +737,7 @@ void Upscaling::RegisterUxActions()
 
 void Upscaling::DrawSettings()
 {
-	// Force method to None up front so the picker reflects the locked state.
-	ApplyOpenCompositeUpscalingBlocker();
-	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
-	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
-
-	// Display upscaling options in the UI
-	std::vector<std::string> upscaleModes = {
-		T(TKEY("method_none"), "None"),
-		T(TKEY("method_taa"), "TAA")
-	};
-
-	std::string fsrLabel = "AMD FSR 3.1";
-	upscaleModes.push_back(fsrLabel);
-
-	std::string dlssLabel = "NVIDIA DLSS";
-	upscaleModes.push_back(dlssLabel);
-
-	// Determine available modes
-	bool featureDLSS = streamline.featureDLSS;
-	bool featureFSR = true;  // FSR is always available
-
-	uint32_t* currentUpscaleMode = &settings.upscaleMethod;
-	uint32_t availableModes = 1;  // Start with TAA
-	if (featureFSR)
-		availableModes = 2;  // Add FSR
-	if (featureDLSS)
-		availableModes = 3;  // Add DLSS if available
-	else
-		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
-
-	// Dropdown for method selection
-	std::vector<const char*> modeLabels;
-	for (uint32_t i = 0; i <= availableModes; ++i)
-		modeLabels.push_back(upscaleModes[i].c_str());
-	if (openCompositeBlocksUpscaling)
-		ImGui::BeginDisabled();
-	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
-	if (openCompositeBlocksUpscaling)
-		ImGui::EndDisabled();
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		if (openCompositeBlocksUpscaling)
-			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
-		else
-			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend."));
-	}
-
-	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
-
-	if (openCompositeBlocksUpscaling) {
-		if (openCompositeBlocker.configPath.empty())
-			Util::Text::WrappedWarning(
-				"Upscaling is locked to None because OpenComposite has %s=true.",
-				openCompositeBlocker.settingName.c_str());
-		else
-			Util::Text::WrappedWarning(
-				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
-				openCompositeBlocker.settingName.c_str(),
-				openCompositeBlocker.configPath.c_str());
-	}
-
-	// Check the current upscale method
-	auto upscaleMethod = GetUpscaleMethod();
-
-	// PerfMode: BSOpenVR size hook + RT::Create run once at world load, so
-	// runtime reads of method/qualityMode route through the boot snapshot.
-	// The always-present explanation is plain text — only the staged-change
-	// diff uses the RestartNeeded color so users learn the cue means "you
-	// changed something that won't apply yet."
-	if (perfMode.IsHookActive()) {
-		ImGui::TextWrapped("%s", T(TKEY("perfmode_active_note"),
-									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
-									 "Sharpness / model preset / Reflex remain live."));
-
-		// Method pending-diff. Only fires when the user is editing the DLSS-
-		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
-		// that's the one the boot snapshot locked.
-		if (currentUpscaleMode == &settings.upscaleMethod &&
-			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
-			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
-			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
-			Util::Text::RestartNeeded(
-				"Pending restart: currently active method = %s (selected = %s).",
-				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
-		}
-
-		if (perfMode.IsDisplaySizeChanged()) {
-			Util::Text::RestartNeeded(
-				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
-				"per-app resolution slider). Restart to re-latch at the new size.");
-		}
-	}
-
-	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
-	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
-		auto screenSize = globals::state->screenSize;
-		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
-			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
-				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
-			Util::Text::Warning("%s", T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
-		}
-	}
+	const auto upscaleMethod = DrawUpscaleMethodControl();
 
 	// Display upscaling settings if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
