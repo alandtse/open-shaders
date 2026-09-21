@@ -22,6 +22,15 @@ on:
                 type: boolean
                 required: false
                 default: false
+            single_phase:
+                description: "Skip two-phase promotion and run with the workflow definitions already on main. Use only to recover from a broken promotion plan."
+                type: boolean
+                required: false
+                default: false
+            base_sha:
+                description: "Set by the promotion re-dispatch: main's SHA before it was fast-forwarded. Leave empty."
+                required: false
+                default: ""
 
 permissions:
     contents: write
@@ -33,10 +42,113 @@ concurrency:
     cancel-in-progress: false
 
 jobs:
+    # Workflow/action files load from the dispatched ref, not ff_target: promote
+    # fast-forwards main first when they differ. Other jobs run only in mode 'release'.
+    plan:
+        name: Plan promotion
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        outputs:
+            mode: ${{ steps.plan.outputs.mode }}
+            base_sha: ${{ steps.plan.outputs.base_sha }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Fetch promotion target
+              if: ${{ inputs.ff_target != '' }}
+              env:
+                  FF_TARGET: ${{ inputs.ff_target }}
+              run: git fetch origin main "${FF_TARGET}"
+
+            - name: Decide mode
+              id: plan
+              env:
+                  FF_TARGET: ${{ inputs.ff_target }}
+                  SINGLE_PHASE: ${{ inputs.single_phase }}
+                  BASE_SHA: ${{ inputs.base_sha }}
+                  REF_NAME: ${{ github.ref_name }}
+                  HEAD_SHA: ${{ github.sha }}
+              run: |
+                  python tools/release_plan.py decide \
+                    --ref-name "${REF_NAME}" \
+                    --ff-target "${FF_TARGET}" \
+                    --single-phase "${SINGLE_PHASE}" \
+                    --base-sha "${BASE_SHA}" \
+                    --head-sha "${HEAD_SHA}"
+
+    promote:
+        name: Promote main and re-dispatch
+        needs: plan
+        if: needs.plan.outputs.mode == 'promote'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: write
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+                  persist-credentials: false
+                  token: ${{ secrets.RELEASE_PAT }}
+
+            - name: Validate ff_target
+              uses: ./.github/actions/validate-ff-target
+              with:
+                  ff-target: ${{ inputs.ff_target }}
+                  ref-name: ${{ github.ref_name }}
+
+            - name: Fast-forward main to ff_target
+              env:
+                  TOKEN: ${{ secrets.RELEASE_PAT }}
+                  FF_TARGET: ${{ inputs.ff_target }}
+              run: |
+                  set -euo pipefail
+                  REMOTE="https://x-access-token:${TOKEN}@github.com/${{ github.repository }}.git"
+                  CURRENT_MAIN=$(git rev-parse origin/main)
+                  git push --force-with-lease="main:${CURRENT_MAIN}" "${REMOTE}" "${FF_TARGET}:refs/heads/main"
+
+            - name: Re-dispatch release on the promoted main
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  FF_TARGET: ${{ inputs.ff_target }}
+                  BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+                  SKIP_FEATURE_BUMPS: ${{ inputs.skip_feature_bumps }}
+              run: |
+                  set -euo pipefail
+                  mapfile -t DISPATCH_ARGS < <(python tools/release_plan.py dispatch-args \
+                    --ff-target "${FF_TARGET}" --base-sha "${BASE_SHA}" --skip-feature-bumps "${SKIP_FEATURE_BUMPS}")
+                  if ! gh workflow run release-semantic.yaml --ref main "${DISPATCH_ARGS[@]}"; then
+                    RECOVERY="gh workflow run release-semantic.yaml --ref main ${DISPATCH_ARGS[*]}"
+                    {
+                      echo "## ⚠️ Promotion re-dispatch failed"
+                      echo "main is already at \`${FF_TARGET}\` but no release was cut. Run:"
+                      echo ""
+                      echo '```bash'
+                      echo "${RECOVERY}"
+                      echo '```'
+                    } >> "$GITHUB_STEP_SUMMARY"
+                    echo "::error::main was promoted but the release re-dispatch failed. Recover with: ${RECOVERY}"
+                    exit 1
+                  fi
+                  {
+                    echo "## Promoted main, release re-dispatched"
+                    echo "If the queued run is superseded by another dispatch, recover with:"
+                    echo ""
+                    echo '```bash'
+                    echo "gh workflow run release-semantic.yaml --ref main ${DISPATCH_ARGS[*]}"
+                    echo '```'
+                  } >> "$GITHUB_STEP_SUMMARY"
+
     # origin/main's tip is always a sound "last validated state" baseline: main only
-    # ever advances via this same validated-release-promotion path.
+    # ever advances via this same validated-release-promotion path (base_sha in phase 2).
     check-changes:
         name: Check for shader/build changes since main
+        needs: plan
+        if: needs.plan.outputs.mode == 'release'
         runs-on: ubuntu-latest
         permissions:
             contents: read
@@ -51,10 +163,11 @@ jobs:
               id: resolve
               env:
                   TARGET_REF: ${{ inputs.ff_target || github.sha }}
+                  BASE_REF: ${{ needs.plan.outputs.base_sha }}
               run: |
                   set -euo pipefail
                   git fetch origin main "${TARGET_REF}"
-                  echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+                  echo "main_sha=$(git rev-parse "${BASE_REF:-origin/main}")" >> "$GITHUB_OUTPUT"
                   echo "target_sha=$(git rev-parse "${TARGET_REF}")" >> "$GITHUB_OUTPUT"
 
             - name: Check for build/shader changes
@@ -90,11 +203,11 @@ jobs:
             run-full-config-validation: false
 
     release:
-        needs: [validate-shaders, check-changes]
+        needs: [plan, validate-shaders, check-changes]
         # An all-skipped validate-shaders (no shader/cmake/build-ci changes) reports
         # "skipped", same as a failed check-changes blocking it -- check-changes must
         # be checked directly here, not inferred from validate-shaders alone.
-        if: always() && !cancelled() && needs.check-changes.result == 'success' && needs.validate-shaders.result != 'failure'
+        if: always() && !cancelled() && needs.plan.outputs.mode == 'release' && needs.check-changes.result == 'success' && needs.validate-shaders.result != 'failure'
         runs-on: ubuntu-latest
         outputs:
             new-release-published: ${{ steps.semantic.outputs.new_release_published }}
@@ -119,60 +232,11 @@ jobs:
             - name: Validate ff_target (promotion mode)
               id: validate
               if: ${{ inputs.ff_target != '' }}
-              env:
-                  FF_TARGET: ${{ inputs.ff_target }}
-              run: |
-                  set -euo pipefail
-                  if [[ '${{ github.ref_name }}' != 'main' ]]; then
-                    echo "::error::ff_target is only valid when this workflow is dispatched on 'main' (got '${{ github.ref_name }}')."
-                    exit 1
-                  fi
-                  # Fetch dev + every hotfix branch so the ancestor checks can
-                  # find ff_target regardless of which staging branch it's on.
-                  git fetch origin main dev '+refs/heads/hotfix/*:refs/remotes/origin/hotfix/*'
-                  if ! git rev-parse --verify "${FF_TARGET}^{commit}" >/dev/null 2>&1; then
-                    echo "::error::ff_target SHA ${FF_TARGET} does not exist."
-                    exit 1
-                  fi
-                  if ! git merge-base --is-ancestor origin/main "${FF_TARGET}"; then
-                    echo "::error::main is not an ancestor of ff_target ${FF_TARGET} — fast-forward is not possible."
-                    exit 1
-                  fi
-                  # Identify the source branch for the promotion.
-                  #   dev source     → FF-reconcile dev afterward (no rewrite).
-                  #   hotfix-staging → rebase-reconcile dev afterward so the
-                  #                    release commit + tag enter dev's
-                  #                    ancestry. Force-with-lease push; `git
-                  #                    rebase` drops patch-id duplicates of
-                  #                    the cherry-picks already on main.
-                  SOURCE=""
-                  if git merge-base --is-ancestor "${FF_TARGET}" origin/dev; then
-                    SOURCE="dev"
-                  else
-                    while read -r REF; do
-                      [[ -z "${REF}" ]] && continue
-                      if git merge-base --is-ancestor "${FF_TARGET}" "${REF}"; then
-                        SOURCE="${REF#origin/}"
-                        break
-                      fi
-                    done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/hotfix/*')
-                  fi
-                  if [[ -z "${SOURCE}" ]]; then
-                    echo "::error::ff_target ${FF_TARGET} is not an ancestor of dev or any origin/hotfix/* branch — refusing to promote an unreviewed SHA."
-                    exit 1
-                  fi
-                  echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
-                  {
-                    echo "## Promotion plan"
-                    echo "- Source branch: \`${SOURCE}\`"
-                    echo "- Target SHA: \`$(git rev-parse --short=9 "${FF_TARGET}")\`"
-                    PRERELEASE_TAG=$(git tag --points-at "${FF_TARGET}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-(rc|pr)[.0-9]+$' | head -n1 || true)
-                    echo "- Prerelease tag at target: \`${PRERELEASE_TAG:-<none>}\`"
-                    echo "- Commits being promoted ($(git rev-list --count "origin/main..${FF_TARGET}")):"
-                    echo ""
-                    # 4-space indent renders the commits as a code block under the preceding list item in GitHub-flavored markdown.
-                    git log --oneline "origin/main..${FF_TARGET}" | sed 's/^/    /'
-                  } >> "$GITHUB_STEP_SUMMARY"
+              uses: ./.github/actions/validate-ff-target
+              with:
+                  ff-target: ${{ inputs.ff_target }}
+                  range-start: ${{ inputs.base_sha }}
+                  ref-name: ${{ github.ref_name }}
 
             - name: Fast-forward main to ff_target
               if: ${{ inputs.ff_target != '' }}
@@ -336,11 +400,11 @@ jobs:
     # Publishing before this finishes races release-build.yaml's own
     # fallback build -- wait for attach-artifacts to finish first.
     build-artifacts:
-        needs: [release, check-changes]
+        needs: [plan, release, check-changes]
         # always()/!cancelled(): new-release-published reflects only the
         # Semantic Release step, which can succeed even if a LATER step
         # (dev reconciliation) fails the job's overall result.
-        if: always() && !cancelled() && needs.release.outputs.new-release-published == 'true'
+        if: always() && !cancelled() && needs.plan.outputs.mode == 'release' && needs.release.outputs.new-release-published == 'true'
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ needs.release.outputs.new-release-tag }}
@@ -352,10 +416,11 @@ jobs:
             reuse-compiled-shaders: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
 
     attach-artifacts:
-        needs: [release, build-artifacts]
+        needs: [plan, release, build-artifacts]
         # Publishing requires the plugin and validated caches from this build.
         if: >
             always() && !cancelled() &&
+            needs.plan.outputs.mode == 'release' &&
             needs.release.outputs.new-release-published == 'true' &&
             needs.build-artifacts.outputs.cpp-built == 'true' &&
             needs.build-artifacts.outputs.cache-validated == 'true'
@@ -374,8 +439,8 @@ jobs:
     # won't trigger release-build.yaml's downstream Nexus Upload run.
     publish:
         name: Publish release draft
-        needs: [release, attach-artifacts]
-        if: always() && !cancelled() && needs.attach-artifacts.result == 'success'
+        needs: [plan, release, attach-artifacts]
+        if: always() && !cancelled() && needs.plan.outputs.mode == 'release' && needs.attach-artifacts.result == 'success'
         runs-on: ubuntu-latest
         steps:
             - name: Publish draft release

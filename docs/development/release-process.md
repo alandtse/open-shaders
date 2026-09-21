@@ -62,6 +62,14 @@ After a hotfix release, open PRs targeting `dev` are auto-rebased by the `Auto-r
 1. Cut RCs from `dev`: dispatch **Release: Semantic Version** on `dev`, `ff_target` empty → `vX.Y.Z-rc.N`.
 2. When ready, dispatch **Release: Semantic Version** on `main` with `ff_target = <dev SHA>` (typically the latest RC's SHA). The workflow FFs `main`, runs semantic-release to cut stable, then FFs `dev` to absorb the `chore(release):` commit.
 
+### Two-phase promotion
+
+A dispatch loads workflow and composite-action files from the dispatched ref, so a promotion whose `ff_target` changes `.github/workflows/` or `.github/actions/` would otherwise run main's stale copies. In that case the run fast-forwards `main`, then re-dispatches itself (phase 2) with `base_sha` set to main's previous tip, and phase 2 performs the release. `tools/` is checked out at `ff_target` and never skews.
+
+-   If the re-dispatched run is superseded by a newer dispatch, main is promoted but no release exists. The stranded run's summary prints the recovery `gh workflow run ... -f ff_target=... -f base_sha=...` command.
+-   `single_phase=true` skips detection and is the only bypass if the plan itself is broken.
+-   The cut that first lands this mechanism still runs main's old workflow. For a coupled workflow-plus-tool change in that cut, fast-forward `main` to `ff_target` by hand, then dispatch with `base_sha` set to main's previous tip.
+
 ---
 
 ## Release Stages (Alpha / Beta)
