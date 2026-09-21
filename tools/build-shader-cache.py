@@ -586,6 +586,21 @@ def default_plugin_version() -> str:
     return "-".join(m.groups()) + "-0"
 
 
+def record_compile(cache_dir: Path, shaders: Path, runtime: str) -> int:
+    """Record the release-parity compile's cache manifest before finalization.
+
+    The shared CI workflow records the freshly compiled cache before a trusted
+    release job finalizes it. Older branches do not need the newer
+    CompileInputs.json format, but they must still perform the same safe
+    remap-and-manifest step and accept the workflow's option.
+    """
+    if not cache_dir.is_dir():
+        raise ValueError(f"Compiled cache directory does not exist: {cache_dir}")
+    imagespace_remap = remap_imagespace_dirs(cache_dir, runtime)
+    write_shader_cache_manifest(cache_dir, shaders, runtime, imagespace_remap)
+    return 0
+
+
 def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runtime: str, profile: str) -> int:
     """Turn a validation-produced compile dir into a shippable cache. The compile
     itself must have used the profile config (--emit-profile-config), so this only
@@ -603,8 +618,10 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plugin-version", help='Plugin::VERSION string, e.g. "1-7-1-0" (default: derived from CMakeLists.txt)')
-    ap.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
-    ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
+    mode.add_argument("--record-compile", help="record a freshly compiled cache before finalization")
+    ap.add_argument("--shader-dir", help="merged shader tree used for --record-compile/--finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
     ap.add_argument("--profile", choices=["aio", "full"], default="aio",
         help="feature profile the cache targets; aio = default install (the cache is INVALID once any extra feature is added)")
@@ -648,9 +665,11 @@ def main() -> int:
         print(f"profile config ({args.profile}) -> {args.emit_profile_config[1]}; stripped: {sorted(strip)}")
         return 0
 
-    if args.finalize_existing:
+    if args.finalize_existing or args.record_compile:
         if not args.shader_dir or args.runtime == "both":
-            raise SystemExit("--finalize-existing requires --shader-dir and a single --runtime")
+            raise SystemExit("--record-compile/--finalize-existing requires --shader-dir and a single --runtime")
+        if args.record_compile:
+            return record_compile(Path(args.record_compile), Path(args.shader_dir), args.runtime)
         return finalize_existing(Path(args.finalize_existing), Path(args.shader_dir), plugin_version, args.runtime, args.profile)
 
     out_root = Path(args.out)
