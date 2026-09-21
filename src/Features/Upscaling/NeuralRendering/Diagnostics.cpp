@@ -334,8 +334,19 @@ namespace NR
 			highlightProtect = highlightValue;
 		if (ImGui::SliderFloat("Local tone radius", &toneRadiusValue, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
 			toneRadius = toneRadiusValue;
-		if (ImGui::Button("Restore Diagnostic Defaults"))
+		if (ImGui::Button("Restore Diagnostic Defaults")) {
 			options = 0;
+			conversionMode = static_cast<uint32_t>(ColorConversion::Production);
+			exposureMode = static_cast<uint32_t>(ExposureMode::Production);
+			compositeMode = static_cast<uint32_t>(CompositeMode::Production);
+			visualMode = static_cast<uint32_t>(VisualMode::None);
+			manualExposure = 1.0f;
+			differenceStrength = 4.0f;
+			splitPosition = 0.5f;
+			shadowProtect = 0.0f;
+			highlightProtect = 0.0f;
+			toneRadius = 1.0f;
+		}
 		if (ImGui::Button("Run All NR Tests"))
 			startSuite = true;
 		ImGui::TextWrapped("8 tests, 600 world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.");

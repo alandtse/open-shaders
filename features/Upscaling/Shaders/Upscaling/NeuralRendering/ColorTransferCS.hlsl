@@ -43,11 +43,17 @@ RWTexture2D<float> NeuralReactive : register(u1);
 RWTexture2D<float> TemporalResidualOutput : register(u2);
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
+static const float kProxyEpsilon = 1e-8;
+static const float kPeakEpsilon = 1e-6;
+static const float kLumaEpsilon = 1e-5;
+static const float kWeightEpsilon = 1e-5;
+static const float kSpatialEpsilon = 1e-4;
+static const float kDepthEpsilon = 1e-4;
 
 float3 ProxyLinearToSrgb(float3 value)
 {
 	value = saturate(value);
-	return lerp(value * 12.92, 1.055 * pow(max(value, 1e-8), 1.0 / 2.4) - 0.055, step(0.0031308, value));
+	return lerp(value * 12.92, 1.055 * pow(max(value, kProxyEpsilon), 1.0 / 2.4) - 0.055, step(0.0031308, value));
 }
 
 float3 ProxySrgbToLinear(float3 value)
@@ -60,7 +66,7 @@ float3 NeutwoEncode(float3 value)
 {
 	value = max(value, 0.0);
 	float peak = max(value.r, max(value.g, value.b));
-	if (peak <= 1e-6)
+	if (peak <= kPeakEpsilon)
 		return value;
 	return value * ((peak * rsqrt(peak * peak + 1.0)) / peak);
 }
@@ -161,36 +167,9 @@ float ToneDeltaAt(int2 pixel)
 	pixel = clamp(pixel, int2(0, 0), limit);
 	float3 input = ProxySrgbToLinear(NeuralInput[pixel].rgb);
 	float3 output = ProxySrgbToLinear(NeuralOutput[pixel].rgb);
-	float inputLuma = max(dot(input, Luma), 1e-5);
-	float outputLuma = max(dot(output, Luma), 1e-5);
+	float inputLuma = max(dot(input, Luma), kLumaEpsilon);
+	float outputLuma = max(dot(output, Luma), kLumaEpsilon);
 	return log2(outputLuma) - log2(inputLuma);
-}
-
-float ToneLowAt(int2 pixel, float centerDelta)
-{
-	float radius = ToneRadius;
-	if (radius <= 0.01)
-		return centerDelta;
-	float3 center = ProxySrgbToLinear(NeuralInput[clamp(pixel, int2(0, 0), int2(max(Width, 1u) - 1, max(Height, 1u) - 1))].rgb);
-	float centerLuma = max(dot(center, Luma), 1e-5);
-	float weighted = 0.0;
-	float weightSum = 0.0;
-	for (int y = -2; y <= 2; ++y) {
-		for (int x = -2; x <= 2; ++x) {
-			float distance = float(x * x + y * y);
-			float spatial = exp(-distance / max(2.0 * radius * radius, 1e-4));
-			int2 samplePixel = pixel + int2(x, y);
-			int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
-			samplePixel = clamp(samplePixel, int2(0, 0), limit);
-			float3 sample = ProxySrgbToLinear(NeuralInput[samplePixel].rgb);
-			float sampleLuma = max(dot(sample, Luma), 1e-5);
-			float edge = exp(-abs(log2(sampleLuma) - log2(centerLuma)) * 2.0);
-			float weight = spatial * edge;
-			weighted += ToneDeltaAt(samplePixel) * weight;
-			weightSum += weight;
-		}
-	}
-	return weightSum > 1e-5 ? weighted / weightSum : centerDelta;
 }
 
 float ResidualLowAt(int2 pixel, float centerDelta)
@@ -200,23 +179,23 @@ float ResidualLowAt(int2 pixel, float centerDelta)
 		return centerDelta;
 	int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
 	float3 center = ProxySrgbToLinear(NeuralInput[clamp(pixel, int2(0, 0), limit)].rgb);
-	float centerLuma = max(dot(center, Luma), 1e-5);
+	float centerLuma = max(dot(center, Luma), kLumaEpsilon);
 	float weighted = 0.0;
 	float weightSum = 0.0;
 	for (int y = -2; y <= 2; ++y) {
 		for (int x = -2; x <= 2; ++x) {
 			float distance = float(x * x + y * y);
-			float spatial = exp(-distance / max(2.0 * radius * radius, 1e-4));
+			float spatial = exp(-distance / max(2.0 * radius * radius, kSpatialEpsilon));
 			int2 samplePixel = clamp(pixel + int2(x, y), int2(0, 0), limit);
 			float3 sample = ProxySrgbToLinear(NeuralInput[samplePixel].rgb);
-			float sampleLuma = max(dot(sample, Luma), 1e-5);
+			float sampleLuma = max(dot(sample, Luma), kLumaEpsilon);
 			float edge = exp(-abs(log2(sampleLuma) - log2(centerLuma)) * 2.0);
 			float weight = spatial * edge;
 			weighted += TemporalResidual[samplePixel] * weight;
 			weightSum += weight;
 		}
 	}
-	return weightSum > 1e-5 ? weighted / weightSum : centerDelta;
+	return weightSum > kWeightEpsilon ? weighted / weightSum : centerDelta;
 }
 
 [numthreads(8, 8, 1)] void Prepare(uint3 id : SV_DispatchThreadID) {
@@ -271,7 +250,7 @@ float ResidualLowAt(int2 pixel, float centerDelta)
 	float currentScreenDepth = SharedData::GetScreenDepth(currentDepth);
 	float previousScreenDepth = SharedData::GetScreenDepth(previousDepth);
 	float relativeDepthDelta = abs(currentScreenDepth - previousScreenDepth) /
-	                           max(max(abs(currentScreenDepth), abs(previousScreenDepth)), 1e-4);
+	                           max(max(abs(currentScreenDepth), abs(previousScreenDepth)), kDepthEpsilon);
 	valid = valid && isfinite(history) && isfinite(currentDepth) && isfinite(previousDepth) &&
 	        isfinite(relativeDepthDelta) && relativeDepthDelta <= DepthThreshold;
 	history = clamp(history, neighborhoodMean - clipRadius, neighborhoodMean + clipRadius);
