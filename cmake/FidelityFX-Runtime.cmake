@@ -43,8 +43,18 @@ download_ffx_runtime(
     E2D85AA05A9BD9ED8B38935FDF5199372CCA6F74C12015143BB6F945EE1608AA
 )
 download_ffx_runtime(
+    amd_fidelityfx_denoiser_dx12.dll
+    48F1E5888BA6A0A3D59A98B9751E37C392B0F7B8C223D0082D5C1F40642879D3
+)
+download_ffx_runtime(
     amd_fidelityfx_upscaler_dx12.dll
     D0DCCCC74A43C44BA435B7A369B456E0970D8A4464E4BD683119B374F2C9FB46
+)
+
+# FidelityFX Radiance Cache 0.9 provider from the pinned SDK release.
+download_ffx_runtime(
+    amd_fidelityfx_radiancecache_dx12.dll
+    256DB18D924C8CD38923D04E3ECD210695D3F0F796B240EAB9663AD4D54E31A0
 )
 
 register_feature_payload(

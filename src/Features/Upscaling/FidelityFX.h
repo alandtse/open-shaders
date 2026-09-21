@@ -17,6 +17,7 @@
 #include <FidelityFX/api/include/ffx_api.hpp>
 #include <FidelityFX/api/include/ffx_api_loader.h>
 #include <FidelityFX/framegeneration/include/dx12/ffx_api_framegeneration_dx12.hpp>
+#include <FidelityFX/denoisers/include/ffx_denoiser.h>
 #include <FidelityFX/framegeneration/include/ffx_framegeneration.hpp>
 #include <FidelityFX/upscalers/include/ffx_upscale.hpp>
 
@@ -47,6 +48,23 @@ public:
 	bool featureRuntimeUpscaler = false;
 
 	// Track if FidelityFX is currently being used for frame generation
+	bool featureRayRegeneration = false;
+bool featureRadianceCache = false;
+bool radianceCacheFailureLatched = false;
+	bool rayRegenerationFailureLatched = false;
+	bool CanDispatchRayRegeneration() const
+{
+    return featureRayRegeneration && !rayRegenerationFailureLatched;
+}
+    uint64_t GetRayRegenerationSuccessfulDispatches() const { return rayRegenerationSuccessfulDispatches; }
+    uint64_t GetRayRegenerationFailedDispatches() const { return rayRegenerationFailedDispatches; }
+    uint64_t GetRayRegenerationHistoryResets() const { return rayRegenerationHistoryResets; }
+    uint32_t GetRayRegenerationWidth() const { return rayRegenerationWidth; }
+    uint32_t GetRayRegenerationHeight() const { return rayRegenerationHeight; }
+    uint64_t GetReflectionRayRegenerationSuccessfulDispatches() const { return reflectionRayRegenerationSuccessfulDispatches; }
+    uint64_t GetReflectionRayRegenerationFailedDispatches() const { return reflectionRayRegenerationFailedDispatches; }
+    uint32_t GetReflectionRayRegenerationWidth() const { return reflectionRayRegenerationWidth; }
+    uint32_t GetReflectionRayRegenerationHeight() const { return reflectionRayRegenerationHeight; }
 	bool isFrameGenActive = false;
 
 	// Track HDR state for frame generation callback (needs to be accessible from static callback)
@@ -163,11 +181,52 @@ public:
 	 *  must force the host path, whose context already supports dynamic per-dispatch render size.
 	 * @return True if the region was upscaled.
 	 */
+	/** Dispatch FidelityFX Denoiser 1.2 indirect-specular Ray Regeneration through the shared DX12 bridge. */
+	bool DispatchRayRegeneration(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
+		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
+		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory);
+	void ResetRayRegeneration();
+
+    /** Create the FidelityFX Radiance Cache 0.9 context through the shared DX12 runtime bridge. */
+    bool EnsureRadianceCacheContext();
+bool EnsureRadianceCacheBuffers();
+bool DispatchRadianceCacheCapturedInference(
+    const float* a_inputValues,
+    const uint32_t* a_sourceQueryIndices,
+    uint32_t a_sampleCount,
+    const float* a_trainingInputValues,
+    const float* a_trainingTargetValues,
+    uint32_t a_trainingSampleCount,
+    float* a_outputRadiance,
+    uint32_t* a_outputSourceQueryIndices,
+    uint32_t* a_outputSampleCount,
+    bool* a_outputReady);
+void RequestRadianceCacheReset();  // Reset NRC state on the next Radiance Cache dispatch.
+void SetRRDiagnosticsEnabled(bool a_enabled) { rrDiagnosticsEnabled = a_enabled; }
+void SetRadianceCacheTrainingParameters(float a_learningRate, float a_weightSmoothing)
+{
+    radianceCacheLearningRate = a_learningRate;
+    radianceCacheWeightSmoothing = a_weightSmoothing;
+}
+    void ResetRadianceCache();
+	/** @brief Dispatches a history-independent RR context dedicated to engine screen-space reflections. */
+	bool DispatchReflectionRayRegeneration(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
+		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
+		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory);
+	void ResetReflectionRayRegeneration();
 	bool UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
 		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness, bool a_forceHostPath = false);
 
+    // Asynchronous NRC inference diagnostics.
+    bool GetRadianceCacheCapturedInferencePending() const { return radianceCacheCapturedInferencePending; }
+    uint64_t GetRadianceCacheCapturedInferenceFence() const { return radianceCacheCapturedInferenceFence; }
+    uint64_t GetRadianceCacheCompletedRuntimeFence() const
+    {
+        return runtimeD3D12Fence ? runtimeD3D12Fence->GetCompletedValue() : 0;
+    }
+    uint32_t GetRadianceCacheCapturedInferencePollCount() const { return radianceCacheCapturedInferencePollCount; }
 private:
 	// Bounded poll for GPU idle before destroying the host FSR3 context; see
 	// RuntimeUpscaler.cpp for the shared D3D11 fence-poll primitive.
@@ -219,6 +278,98 @@ private:
 
 	HMODULE frameGenerationModule = nullptr;
 	HMODULE runtimeUpscalerModule = nullptr;
+
+	HMODULE denoiserModule = nullptr;
+HMODULE radianceCacheModule = nullptr;
+
+	ffxContext rayRegenerationContext = nullptr;
+
+    struct RadianceCacheInput
+{
+    float position[3];
+    float normal[2];
+    float viewDir[2];
+    float diffuseAlbedo[3];
+    float roughness;
+};
+
+struct RadianceCacheOutput
+{
+    float radiance[3];
+};
+
+static_assert(sizeof(RadianceCacheInput) == 44);
+static_assert(sizeof(RadianceCacheOutput) == 12);
+
+ffxContext radianceCacheContext = nullptr;
+
+winrt::com_ptr<ID3D12Resource> radianceCachePredictionInputs;
+winrt::com_ptr<ID3D12Resource> radianceCachePredictionOutputs;
+winrt::com_ptr<ID3D12Resource> radianceCacheTrainInputs;
+winrt::com_ptr<ID3D12Resource> radianceCacheTrainTargets;
+winrt::com_ptr<ID3D12Resource> radianceCacheSampleCounters;
+winrt::com_ptr<ID3D12Resource> radianceCacheCounterUpload;
+winrt::com_ptr<ID3D12Resource> radianceCacheInputUpload;
+winrt::com_ptr<ID3D12Resource> radianceCacheTrainingInputUpload;
+winrt::com_ptr<ID3D12Resource> radianceCacheTrainingTargetUpload;
+winrt::com_ptr<ID3D12Resource> radianceCacheInputReadback;
+	winrt::com_ptr<ID3D12Resource> radianceCacheOutputReadback;
+
+
+bool radianceCacheBuffersReady = false;
+
+
+
+uint64_t radianceCacheLastFenceValue = 0;
+
+// At most one asynchronous NRC inference batch may be in flight.
+// The single upload/readback resources therefore never alias another
+// outstanding dispatch, while the render thread never waits for NRC.
+bool radianceCacheCapturedInferencePending = false;
+uint64_t radianceCacheCapturedInferenceFence = 0;
+uint32_t radianceCacheCapturedInferencePollCount = 0;
+uint32_t radianceCacheCapturedInferenceSampleCount = 0;
+uint32_t radianceCacheCapturedInferenceSourceIndices[4096]{};
+std::atomic_bool radianceCacheResetPending = false;
+// Live NRC training parameters. Defaults follow AMD documentation.
+float radianceCacheLearningRate = 0.002f;
+float radianceCacheWeightSmoothing = 0.99f;
+    uint32_t radianceCacheInferenceCapacity = 65536;
+    uint32_t radianceCacheTrainingCapacity = 4096;
+	bool rrDiagnosticsEnabled = false;
+	uint64_t rayRegenerationSuccessfulDispatches = 0;
+	uint64_t rayRegenerationFailedDispatches = 0;
+	uint64_t rayRegenerationHistoryResets = 0;
+
+	uint32_t rayRegenerationWidth = 0;
+	uint32_t rayRegenerationHeight = 0;
+	WrappedResource* rrSharedSignal = nullptr;
+	WrappedResource* rrSharedDepth = nullptr;
+	WrappedResource* rrSharedMotion = nullptr;
+	WrappedResource* rrSharedNormal = nullptr;
+	WrappedResource* rrSharedSpecularAlbedo = nullptr;
+	WrappedResource* rrSharedDiffuseAlbedo = nullptr;
+	WrappedResource* rrSharedOutput = nullptr;
+	bool EnsureRayRegenerationResources(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
+		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
+		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height);
+
+	ffxContext reflectionRayRegenerationContext = nullptr;
+	uint64_t reflectionRayRegenerationSuccessfulDispatches = 0;
+	uint64_t reflectionRayRegenerationFailedDispatches = 0;
+	bool reflectionRayRegenerationFirstSuccessLogged = false;
+	uint32_t reflectionRayRegenerationWidth = 0;
+	uint32_t reflectionRayRegenerationHeight = 0;
+	WrappedResource* reflectionRRSharedSignal = nullptr;
+	WrappedResource* reflectionRRSharedDepth = nullptr;
+	WrappedResource* reflectionRRSharedMotion = nullptr;
+	WrappedResource* reflectionRRSharedNormal = nullptr;
+	WrappedResource* reflectionRRSharedSpecularAlbedo = nullptr;
+	WrappedResource* reflectionRRSharedDiffuseAlbedo = nullptr;
+	WrappedResource* reflectionRRSharedOutput = nullptr;
+	bool EnsureReflectionRayRegenerationResources(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
+		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
+		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height);
 
 	enum class RuntimeUpscalerFramePath : uint8_t
 	{
