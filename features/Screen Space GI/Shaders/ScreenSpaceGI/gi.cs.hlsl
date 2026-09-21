@@ -345,12 +345,12 @@ void CalculateGI(
 
 						radianceSpecular += specularRadiance;
 
-					// RR expects a ray hit distance in alpha. The horizon marcher can
-					// contribute several samples to one pixel, so retain a radiance-weighted
-					// representative view-space distance for the noisy specular estimate.
-					float rrWeight = max(max(specularRadiance.r, specularRadiance.g), specularRadiance.b);
-					rrHitDistanceWeighted += length(sampleDelta) * rrWeight;
-					rrHitWeight += rrWeight;
+						// RR expects a ray hit distance in alpha. The horizon marcher can
+						// contribute several samples to one pixel, so retain a radiance-weighted
+						// representative view-space distance for the noisy specular estimate.
+						float rrWeight = max(max(specularRadiance.r, specularRadiance.g), specularRadiance.b);
+						rrHitDistanceWeighted += length(sampleDelta) * rrWeight;
+						rrHitWeight += rrWeight;
 #	endif
 					}
 				}
@@ -427,9 +427,9 @@ void CalculateGI(
 			outAo[pxCoord] = 0;
 			outY[pxCoord] = 0;
 			outCoCg[pxCoord] = 0;
-#ifdef GI_SPECULAR
+#	ifdef GI_SPECULAR
 			outRRSpecular[pxCoord] = float4(0, 0, 0, -1);
-#endif
+#	endif
 			return;
 		}
 	}

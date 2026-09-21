@@ -65,12 +65,10 @@ cbuffer SSGICB : register(b1)
 	uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
 	uint RRHistoryValid;
 
-	float4x4 InvViewMat[2]; // Current-frame view -> world transform for Radiance Cache queries
+	float4x4 InvViewMat[2];  // Current-frame view -> world transform for Radiance Cache queries
 
-
-	float4 RadianceCacheVolumeCenter; // xyz = snapped world-space center
-	float4 RadianceCacheVolumeExtent; // xyz = independent half extents
-
+	float4 RadianceCacheVolumeCenter;  // xyz = snapped world-space center
+	float4 RadianceCacheVolumeExtent;  // xyz = independent half extents
 
 	// Radiance Cache composition parameters.
 

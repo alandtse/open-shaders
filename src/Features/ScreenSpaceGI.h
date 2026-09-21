@@ -107,17 +107,17 @@ public:
 		bool EnableGI = REL::Module::IsVR() ? false : true;  // AO only for VR by default
 		bool EnableExperimentalSpecularGI = false;
 		bool EnableRayRegeneration = true;
-        bool EnableRadianceCache = false;
-        bool EnableRadianceCacheDiagnostics = false;
-        // NRC output mode: 0 = Base RR, 1 = NRC only, 2 = Combined.
-        int RadianceCacheOutputMode = 2;
-        float RadianceCacheContribution = 0.45f;
-        int RadianceCacheQuality = 2;  // Quality = 64x64 every frame.
-        // NRC learning can be paused without resetting learned weights.
-        bool EnableRadianceCacheTraining = true;
-        // Live AMD NRC training parameters.
-        float RadianceCacheLearningRate = 0.002f;
-        float RadianceCacheWeightSmoothing = 0.99f;
+		bool EnableRadianceCache = false;
+		bool EnableRadianceCacheDiagnostics = false;
+		// NRC output mode: 0 = Base RR, 1 = NRC only, 2 = Combined.
+		int RadianceCacheOutputMode = 2;
+		float RadianceCacheContribution = 0.45f;
+		int RadianceCacheQuality = 2;  // Quality = 64x64 every frame.
+		// NRC learning can be paused without resetting learned weights.
+		bool EnableRadianceCacheTraining = true;
+		// Live AMD NRC training parameters.
+		float RadianceCacheLearningRate = 0.002f;
+		float RadianceCacheWeightSmoothing = 0.99f;
 		bool EnableVanillaSSAO = false;
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;  // AO preset for VR
@@ -249,9 +249,9 @@ public:
 	// Raw, pre-temporal indirect-specular signal for AMD FSR Ray Regeneration.
 	// RGB = noisy radiance, A = representative view-space ray hit distance; A < 0 means inactive.
 	eastl::unique_ptr<Texture2D> texRRSpecularInput = nullptr;
-    // Pre-RR radiance composition target.
-    // RGB may receive NRC contribution; alpha preserves the original RR hit distance.
-    eastl::unique_ptr<Texture2D> texRRCombinedInput = nullptr;
+	// Pre-RR radiance composition target.
+	// RGB may receive NRC contribution; alpha preserves the original RR hit distance.
+	eastl::unique_ptr<Texture2D> texRRCombinedInput = nullptr;
 	eastl::unique_ptr<Texture2D> texRRSpecularOutput = nullptr;
 
 	// Ray Regeneration feature maps.
@@ -292,7 +292,8 @@ public:
 			texRRMotionVectors ? texRRMotionVectors->resource.get() : nullptr,
 			texRRNormalRoughness ? texRRNormalRoughness->resource.get() : nullptr,
 			texRRSpecularAlbedo ? texRRSpecularAlbedo->resource.get() : nullptr,
-			texRRDiffuseAlbedo ? texRRDiffuseAlbedo->resource.get() : nullptr };
+			texRRDiffuseAlbedo ? texRRDiffuseAlbedo->resource.get() : nullptr
+		};
 	}
 
 	/** @brief Returns the current output SRVs for AO, indirect lighting Y/CoCg, and specular GI (or nullptrs if disabled). */
@@ -324,86 +325,86 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> reprojectDebugCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> rrPrepareInputsCompute = nullptr;
-    winrt::com_ptr<ID3D11ComputeShader> rcCaptureInputCompute = nullptr;
-    winrt::com_ptr<ID3D11ComputeShader> rcComposeRadianceCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> rcCaptureInputCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> rcComposeRadianceCompute = nullptr;
 
-    // Automatic NRC inference cadence. Quality modes remain locked:
-    // Potato 16x16/2, Performance 32x32/2, Balanced 64x64/2, Quality 64x64/1.
-    uint32_t rcAutomaticFrameIndex = 0;
-    void ResetRadianceCacheAutomaticCadence() { rcAutomaticFrameIndex = 0; }
+	// Automatic NRC inference cadence. Quality modes remain locked:
+	// Potato 16x16/2, Performance 32x32/2, Balanced 64x64/2, Quality 64x64/1.
+	uint32_t rcAutomaticFrameIndex = 0;
+	void ResetRadianceCacheAutomaticCadence() { rcAutomaticFrameIndex = 0; }
 
-    bool EnsureRadianceCacheCaptureResources();
-    void EnsureRadianceCacheOutputTexture();
-    void ProcessRadianceCacheInference(uint32_t a_gridSize, uint32_t a_validCount, uint32_t a_trainingCount);
+	bool EnsureRadianceCacheCaptureResources();
+	void EnsureRadianceCacheOutputTexture();
+	void ProcessRadianceCacheInference(uint32_t a_gridSize, uint32_t a_validCount, uint32_t a_trainingCount);
 
-    // Persistent CPU working storage. Keeping this outside DrawSSGI avoids
-    // placing roughly half a MiB of NRC scratch data on the frame stack.
-    static constexpr uint32_t kRCScratchMaxSampleCount = 4096;
-    static constexpr uint32_t kRCScratchInputFloatCount = 11;
-    struct RadianceCacheScratch
-    {
-        float positionExtentX[kRCScratchMaxSampleCount]{};
-        float positionExtentY[kRCScratchMaxSampleCount]{};
-        float positionExtentZ[kRCScratchMaxSampleCount]{};
+	// Persistent CPU working storage. Keeping this outside DrawSSGI avoids
+	// placing roughly half a MiB of NRC scratch data on the frame stack.
+	static constexpr uint32_t kRCScratchMaxSampleCount = 4096;
+	static constexpr uint32_t kRCScratchInputFloatCount = 11;
+	struct RadianceCacheScratch
+	{
+		float positionExtentX[kRCScratchMaxSampleCount]{};
+		float positionExtentY[kRCScratchMaxSampleCount]{};
+		float positionExtentZ[kRCScratchMaxSampleCount]{};
 
-        float compactedInputs[kRCScratchMaxSampleCount * kRCScratchInputFloatCount]{};
-        float compactedTrainingInputs[kRCScratchMaxSampleCount * kRCScratchInputFloatCount]{};
-        float compactedTrainingTargets[kRCScratchMaxSampleCount * 3]{};
-        uint32_t sourceQueryIndices[kRCScratchMaxSampleCount]{};
+		float compactedInputs[kRCScratchMaxSampleCount * kRCScratchInputFloatCount]{};
+		float compactedTrainingInputs[kRCScratchMaxSampleCount * kRCScratchInputFloatCount]{};
+		float compactedTrainingTargets[kRCScratchMaxSampleCount * 3]{};
+		uint32_t sourceQueryIndices[kRCScratchMaxSampleCount]{};
 
-        float predictedRadiance[kRCScratchMaxSampleCount * 3]{};
-        uint32_t predictedSourceQueryIndices[kRCScratchMaxSampleCount]{};
-        float radiancePixels[kRCScratchMaxSampleCount * 4]{};
-    };
-    RadianceCacheScratch rcScratch{};
+		float predictedRadiance[kRCScratchMaxSampleCount * 3]{};
+		uint32_t predictedSourceQueryIndices[kRCScratchMaxSampleCount]{};
+		float radiancePixels[kRCScratchMaxSampleCount * 4]{};
+	};
+	RadianceCacheScratch rcScratch{};
 
-    // Paired asynchronous D3D11 capture/teacher staging ring.
-    static constexpr uint32_t kRCCaptureReadbackRingSize = 3;
-    winrt::com_ptr<ID3D11Buffer> rcCaptureBuffer = nullptr;
-    winrt::com_ptr<ID3D11UnorderedAccessView> rcCaptureUAV = nullptr;
-    winrt::com_ptr<ID3D11Buffer> rcTrainingTargetBuffer = nullptr;
-    winrt::com_ptr<ID3D11UnorderedAccessView> rcTrainingTargetUAV = nullptr;
-    winrt::com_ptr<ID3D11Buffer> rcTrainingTargetReadbacks[kRCCaptureReadbackRingSize]{};
-    winrt::com_ptr<ID3D11Buffer> rcCaptureReadbacks[kRCCaptureReadbackRingSize]{};
-    bool rcCaptureReadbackPending[kRCCaptureReadbackRingSize]{};
-    uint32_t rcCaptureReadbackGridSize[kRCCaptureReadbackRingSize]{};
-    uint32_t rcCaptureWriteSlot = 0;
-    uint32_t rcCaptureReadSlot = 0;
+	// Paired asynchronous D3D11 capture/teacher staging ring.
+	static constexpr uint32_t kRCCaptureReadbackRingSize = 3;
+	winrt::com_ptr<ID3D11Buffer> rcCaptureBuffer = nullptr;
+	winrt::com_ptr<ID3D11UnorderedAccessView> rcCaptureUAV = nullptr;
+	winrt::com_ptr<ID3D11Buffer> rcTrainingTargetBuffer = nullptr;
+	winrt::com_ptr<ID3D11UnorderedAccessView> rcTrainingTargetUAV = nullptr;
+	winrt::com_ptr<ID3D11Buffer> rcTrainingTargetReadbacks[kRCCaptureReadbackRingSize]{};
+	winrt::com_ptr<ID3D11Buffer> rcCaptureReadbacks[kRCCaptureReadbackRingSize]{};
+	bool rcCaptureReadbackPending[kRCCaptureReadbackRingSize]{};
+	uint32_t rcCaptureReadbackGridSize[kRCCaptureReadbackRingSize]{};
+	uint32_t rcCaptureWriteSlot = 0;
+	uint32_t rcCaptureReadSlot = 0;
 
-    // Grid topology survives the asynchronous NRC inference boundary.
-    uint32_t rcPendingInferenceGridSize = 0;
-    uint32_t rcResultGridSize = 0;
+	// Grid topology survives the asynchronous NRC inference boundary.
+	uint32_t rcPendingInferenceGridSize = 0;
+	uint32_t rcResultGridSize = 0;
 
-    // Reconstructed NRC prediction field. RGB = radiance, A = validity.
-    eastl::unique_ptr<Texture2D> texRCRadiance = nullptr;
+	// Reconstructed NRC prediction field. RGB = radiance, A = validity.
+	eastl::unique_ptr<Texture2D> texRCRadiance = nullptr;
 
-    // NRC health telemetry.
-    uint32_t rcTelemetryTrainingSamples = 0;
-    uint32_t rcTelemetryValidQueries = 0;
-    uint32_t rcTelemetryFiniteCaptures = 0;
-    uint32_t rcTelemetryOutsideVolume = 0;
-    uint32_t rcTelemetryNonFiniteCaptures = 0;
-    float rcTelemetryMaxPositionExtent = 0.0f;
-    float rcTelemetryPositionP95X = 0.0f;
-    float rcTelemetryPositionP95Y = 0.0f;
-    float rcTelemetryPositionP95Z = 0.0f;
-    float rcTelemetryPositionMaxX = 0.0f;
-    float rcTelemetryPositionMaxY = 0.0f;
-    float rcTelemetryPositionMaxZ = 0.0f;
-    uint32_t rcTelemetryPredictionCount = 0;
-    uint32_t rcTelemetryFinitePredictions = 0;
-    uint32_t rcTelemetryValidOutputCells = 0;
-    uint32_t rcTelemetryResultAgeFrames = UINT32_MAX;
-    float rcTelemetryMeanLuminance = 0.0f;
-    float rcTelemetryMeanRGBMagnitude = 0.0f;
-    float rcTelemetryMaxLuminance = 0.0f;
+	// NRC health telemetry.
+	uint32_t rcTelemetryTrainingSamples = 0;
+	uint32_t rcTelemetryValidQueries = 0;
+	uint32_t rcTelemetryFiniteCaptures = 0;
+	uint32_t rcTelemetryOutsideVolume = 0;
+	uint32_t rcTelemetryNonFiniteCaptures = 0;
+	float rcTelemetryMaxPositionExtent = 0.0f;
+	float rcTelemetryPositionP95X = 0.0f;
+	float rcTelemetryPositionP95Y = 0.0f;
+	float rcTelemetryPositionP95Z = 0.0f;
+	float rcTelemetryPositionMaxX = 0.0f;
+	float rcTelemetryPositionMaxY = 0.0f;
+	float rcTelemetryPositionMaxZ = 0.0f;
+	uint32_t rcTelemetryPredictionCount = 0;
+	uint32_t rcTelemetryFinitePredictions = 0;
+	uint32_t rcTelemetryValidOutputCells = 0;
+	uint32_t rcTelemetryResultAgeFrames = UINT32_MAX;
+	float rcTelemetryMeanLuminance = 0.0f;
+	float rcTelemetryMeanRGBMagnitude = 0.0f;
+	float rcTelemetryMaxLuminance = 0.0f;
 
-    // Persistent anisotropic NRC spatial-domain controller.
-    float3 rcAdaptiveVolumeExtent{ 4096.0f, 4096.0f, 4096.0f };
-    float3 rcAdaptiveRequestedExtent{ 4096.0f, 4096.0f, 4096.0f };
-    uint32_t rcAdaptiveDomainResetCount = 0;
-    uint32_t rcAdaptiveShrinkFramesX = 0;
-    uint32_t rcAdaptiveShrinkFramesY = 0;
-    uint32_t rcAdaptiveShrinkFramesZ = 0;
+	// Persistent anisotropic NRC spatial-domain controller.
+	float3 rcAdaptiveVolumeExtent{ 4096.0f, 4096.0f, 4096.0f };
+	float3 rcAdaptiveRequestedExtent{ 4096.0f, 4096.0f, 4096.0f };
+	uint32_t rcAdaptiveDomainResetCount = 0;
+	uint32_t rcAdaptiveShrinkFramesX = 0;
+	uint32_t rcAdaptiveShrinkFramesY = 0;
+	uint32_t rcAdaptiveShrinkFramesZ = 0;
 	winrt::com_ptr<ID3D11ComputeShader> rrApplyOutputCompute = nullptr;
 };
