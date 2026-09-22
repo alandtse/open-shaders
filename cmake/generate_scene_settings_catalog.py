@@ -281,7 +281,7 @@ PERSISTENT_CATEGORY_CONTROL_NAMES = {
 }
 
 DIRECT_UI_CONTROL_RE = re.compile(
-    r"(?:ImGui|Util)::(Checkbox|InvertedCheckbox|CheckboxFlags|RadioButton|Combo|BeginCombo|"
+    r"(?:ImGui|Util(?:::UI)?)::(Checkbox|InvertedCheckbox|CheckboxFlags?|CheckboxUint|RadioButton|Combo|BeginCombo|"
     r"Drag(?:Float[234]?|Int[234]?|ScalarN?)|"
     r"Slider(?:Float[234]?|Int[234]?|ScalarN?|Angle)|"
     r"Input(?:Float[234]?|Int[234]?|ScalarN?)|ColorEdit[34]|PercentageSlider)\s*\(")
@@ -1081,6 +1081,8 @@ def extract_draw_settings_body(text: str) -> tuple[str, str] | None:
 def collect_tab_selector_roots(
         paths: list[Path]) -> dict[tuple[str, tuple[str, ...]], tuple[tuple[str, ...], tuple[str, ...]]]:
     candidates = {}
+    fallback_candidates = {}
+    tabs_by_body = {}
     method_pattern = re.compile(
         r"\b(?:bool|void)\s+([A-Za-z_]\w*)::Draw[A-Za-z_]\w*\s*\([^;{]*\)\s*(?:const\s*)?\{")
     tab_pattern = re.compile(r"\b(?:ImGui|Util)::BeginTabItem\s*\(")
@@ -1144,16 +1146,82 @@ def collect_tab_selector_roots(
                 if block_end >= 0:
                     tabs.append((block_start, block_end, translated[1], translated[0]))
 
+            tabs_by_body[(method.group(1), body)] = tabs
             for setting in setting_pattern.finditer(masked_body):
                 selectors = sorted(
                     (tab for tab in tabs if tab[0] < setting.start() < tab[1]),
                     key=lambda tab: (tab[0], -tab[1]))
-                if not selectors:
-                    continue
-                identity = (method.group(1), tuple(setting.group(1).split(".")))
-                candidates.setdefault(identity, set()).add((
-                    tuple(tab[2] for tab in selectors),
-                    tuple(tab[3] for tab in selectors)))
+                if selectors:
+                    identity = (method.group(1), tuple(setting.group(1).split(".")))
+                    fallback_candidates.setdefault(identity, set()).add((
+                        tuple(tab[2] for tab in selectors),
+                        tuple(tab[3] for tab in selectors)))
+
+    functions = collect_source_functions(paths, include_qualifiers=True)
+    call_sites = _collect_control_call_sites(functions)
+    controls = {}
+    parameters = {
+        function: tuple((parameter.type_name, parameter.name, parameter.default)
+                        for parameter in function.parameters)
+        for function in functions
+    }
+    storage_parameters = {function: set() for function in functions}
+    for function in functions:
+        controls[function] = []
+        for control in DIRECT_UI_CONTROL_RE.finditer(function.masked_body):
+            close = find_matching_paren(function.body, control.end() - 1)
+            args = split_args(function.body[control.end():close]) if close >= 0 else []
+            storage_index = control_storage_argument_index(control.group(1))
+            if len(args) <= storage_index:
+                continue
+            controls[function].append((control.start(), args[storage_index]))
+            origin = find_parameter_origin(args[storage_index], parameters[function])
+            if origin:
+                storage_parameters[function].add(origin[0])
+    changed = True
+    while changed:
+        changed = False
+        for caller, calls in call_sites.items():
+            for callee, _, args in calls:
+                for index in tuple(storage_parameters[callee]):
+                    if index < len(args):
+                        origin = find_parameter_origin(args[index], parameters[caller])
+                        if origin and origin[0] not in storage_parameters[caller]:
+                            storage_parameters[caller].add(origin[0])
+                            changed = True
+
+    def visit(function, inherited, active):
+        if function in active:
+            return
+        active = active | {function}
+        tabs = tabs_by_body.get((function.owner, function.body), ())
+
+        def selectors_at(position):
+            local = sorted(
+                (tab for tab in tabs if tab[0] < position < tab[1]),
+                key=lambda tab: (tab[0], -tab[1]))
+            return (inherited[0] + tuple(tab[2] for tab in local),
+                    inherited[1] + tuple(tab[3] for tab in local))
+
+        aliases = collect_local_setting_aliases(function.body)
+        storage = list(controls[function])
+        for callee, position, args in call_sites[function]:
+            storage.extend((position, args[index]) for index in storage_parameters[callee]
+                           if index < len(args))
+        for position, argument in storage:
+            setting_path = extract_control_setting_path("Checkbox", ["", argument], aliases)
+            selectors = selectors_at(position)
+            if setting_path and selectors[0]:
+                candidates.setdefault((function.owner, setting_path), set()).add(selectors)
+        for callee, position, _ in call_sites[function]:
+            if callee.qualifier == function.qualifier:
+                visit(callee, selectors_at(position), active)
+
+    for function in functions:
+        if function.name == "DrawSettings" and function.owner:
+            visit(function, ((), ()), set())
+    for identity, selectors in fallback_candidates.items():
+        candidates.setdefault(identity, selectors)
     return {
         identity: next(iter(values))
         for identity, values in candidates.items()
@@ -1549,7 +1617,7 @@ def resolve_editor_semantic(
         return "Generic" if value_type in {"Boolean", "Integer", "Float", "String"} else "None"
     if binding.choices and value_type == "Integer":
         return "Choice"
-    if ((binding.control_kind == "Checkbox" or
+    if ((binding.control_kind in {"Checkbox", "CheckboxFlag", "CheckboxUint"} or
          binding.control_kind.endswith("Checkbox")) and
             value_type in {"Boolean", "Integer"}):
         return "Toggle"
@@ -3294,14 +3362,11 @@ def resolve_record_array_radio_choices(
     return tuple(choices)
 
 
-def _project_standard_controls(
-        paths: list[Path], provider_paths: list[Path]) -> dict[
-            tuple[str, tuple[str, ...]], ControlBinding]:
-    functions = collect_source_functions(paths, include_qualifiers=True)
+def _collect_control_call_sites(functions):
     definitions: dict[str, list[SourceFunction]] = {}
     for function in functions:
         definitions.setdefault(function.name, []).append(function)
-    def resolve_callee(name: str, qualifier: tuple[str, ...], argument_count: int):
+    def resolve_callee(caller, name: str, qualifier: tuple[str, ...], argument_count: int):
         candidates = [
             function for function in definitions.get(name, ())
             if sum(parameter.default is None for parameter in function.parameters) <=
@@ -3314,22 +3379,11 @@ def _project_standard_controls(
                 function.qualifier[-len(qualifier):] == qualifier
             ]
             candidates = qualified
+        else:
+            local = [function for function in candidates if function.qualifier == caller.qualifier]
+            if local:
+                candidates = local
         return candidates[0] if len(candidates) == 1 else None
-    text_by_path = {path: read_text(path) for path in paths}
-    aliases_by_path = {
-        path: collect_type_aliases(text) for path, text in text_by_path.items()
-    }
-    constants_by_path = {
-        path: collect_numeric_constants(
-            text + (read_text(path.with_suffix(".h"))
-                    if path.with_suffix(".h").exists() else ""))
-        for path, text in text_by_path.items()
-    }
-    selector_helpers_by_path = {
-        path: collect_member_selector_helpers(text)
-        for path, text in text_by_path.items()
-    }
-    providers = collect_string_array_providers(provider_paths)
     call_sites = {}
     for function in functions:
         calls = []
@@ -3345,10 +3399,33 @@ def _project_standard_controls(
             if close >= 0:
                 arguments = split_args(function.body[invocation.end():close])
                 callee = resolve_callee(
-                    name, qualifier, len(arguments))
+                    function, name, qualifier, len(arguments))
                 if callee:
                     calls.append((callee, invocation.start(), arguments))
         call_sites[function] = calls
+    return call_sites
+
+
+def _project_standard_controls(
+        paths: list[Path], provider_paths: list[Path]) -> dict[
+            tuple[str, tuple[str, ...]], ControlBinding]:
+    functions = collect_source_functions(paths, include_qualifiers=True)
+    call_sites = _collect_control_call_sites(functions)
+    text_by_path = {path: read_text(path) for path in paths}
+    aliases_by_path = {
+        path: collect_type_aliases(text) for path, text in text_by_path.items()
+    }
+    constants_by_path = {
+        path: collect_numeric_constants(
+            text + (read_text(path.with_suffix(".h"))
+                    if path.with_suffix(".h").exists() else ""))
+        for path, text in text_by_path.items()
+    }
+    selector_helpers_by_path = {
+        path: collect_member_selector_helpers(text)
+        for path, text in text_by_path.items()
+    }
+    providers = collect_string_array_providers(provider_paths)
     draw_control_functions = {
         function for function in functions
         if function.name == "DrawSettings" and function.owner
@@ -3463,7 +3540,8 @@ def _project_standard_controls(
             if setting_path:
                 identity = function.owner, setting_path
                 add_metadata(identity, make_binding(
-                    function, control.start(), *identity, kind, args, choices=choices), 3)
+                    function, control.start(), *identity, kind, args, choices=choices),
+                    2 if kind in {"CheckboxFlag", "CheckboxUint"} else 3)
                 add_choices(identity, choices)
 
             origins = []

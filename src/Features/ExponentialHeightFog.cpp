@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "Features/CloudShadows.h"
+#include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
@@ -178,7 +179,27 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 void ExponentialHeightFog::DrawSettings()
 {
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
-	Util::CheckboxFlag(T(TKEY("use_vanilla_fog_settings"), "Follow vanilla fog"), settings.useVanillaFogSettings);
+	if (!ImGui::BeginTabBar("##ExponentialHeightFogTabs"))
+		return;
+
+	if (ImGui::BeginTabItem(T(TKEY("tab_general"), "General"))) {
+		ImGui::BeginDisabled(settings.enabled == 0);
+		DrawGeneralSettings();
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+	}
+	if (ImGui::BeginTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
+		ImGui::BeginDisabled(settings.enabled == 0);
+		DrawVolumetricSettings();
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+	}
+	ImGui::EndTabBar();
+}
+
+void ExponentialHeightFog::DrawGeneralSettings()
+{
+	Util::CheckboxFlag(T(TKEY("use_vanilla_fog_settings"), "Follow Vanilla Fog"), settings.useVanillaFogSettings);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives fog density, start distance, and colors from the active weather while keeping exponential height falloff. Weather Fog Strength scales density. Replaces vanilla distance fog."));
 	}
@@ -186,18 +207,29 @@ void ExponentialHeightFog::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
+
+	ImGui::SeparatorText(T(TKEY("density_height"), "Density and Height"));
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
+	ImGui::SliderFloat(T(TKEY("fog_density"), "Fog Density"), &settings.fogDensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat(T(TKEY("start_distance"), "Start Distance"), &settings.startDistance, 0.0f, 100000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::SliderFloat(T(TKEY("fog_height"), "Fog Height"), &settings.fogHeight, -22000.0f, 22000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat(T(TKEY("fog_height_falloff"), "Fog Height Falloff"), &settings.fogHeightFalloff, 0.001f, 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(settings.useVanillaFogSettings == 0 && settings.volumetricFogEnabled == 0);
+	ImGui::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Extinction Scale"), &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("volumetric_extinction_scale_tooltip"), "Scales fog density when following vanilla fog, including when volumetric fog is off. In manual mode, affects only volumetric fog."));
+	}
+	ImGui::EndDisabled();
+
+	ImGui::SeparatorText(T(TKEY("color_lighting"), "Color and Lighting"));
 	ImGui::ColorEdit4(T(TKEY("fog_inscattering_color"), "Fog Inscattering Color"), (float*)&settings.fogInscatteringColor);
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	ImGui::SliderFloat(T(TKEY("original_fog_color_amount"), "Original Fog Color Amount"), &settings.originalFogColorAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("fog_density"), "Fog Density"), &settings.fogDensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0 && settings.fogLightingInfluence <= 0.0f);
 	ImGui::SliderFloat(T(TKEY("dir_inscattering_mul"), "Directional Light Inscattering Multiplier"), &settings.directionalInscatteringMultiplier, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("sunlight_attenuation"), "Sunlight Attenuation Amount"), &settings.sunlightAttenuationAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(settings.directionalInscatteringMultiplier <= 0.0f);
 	ImGui::SliderFloat(T(TKEY("dir_inscattering_anisotropy"), "Directional Light Inscattering Anisotropy"), &settings.directionalInscatteringAnisotropy, -0.99f, 0.99f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("dir_inscattering_anisotropy_tooltip"),
@@ -205,6 +237,11 @@ void ExponentialHeightFog::DrawSettings()
 							  "Positive values produce forward scattering (glow around sun).\n"
 							  "Zero is isotropic. Negative values produce back scattering."));
 	}
+	ImGui::EndDisabled();
+	ImGui::SliderFloat(T(TKEY("sunlight_attenuation"), "Sunlight Attenuation Amount"), &settings.sunlightAttenuationAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+
+	ImGui::SeparatorText(T(TKEY("vanilla_fog"), "Vanilla Fog"));
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	Util::CheckboxFlag(T(TKEY("disable_vanilla_fog"), "Disable Vanilla Fog"), settings.disableVanillaFog);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -215,57 +252,82 @@ void ExponentialHeightFog::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("apply_vanilla_fade_tooltip"), "Applies vanilla fade brightness to exponential height fog."));
 	}
-	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
+
+	ImGui::SeparatorText(T("feature.dynamic_cubemaps.name", "Dynamic Cubemaps"));
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0 || !globals::features::dynamicCubemaps.loaded);
 	Util::CheckboxFlag(T(TKEY("use_dynamic_cubemaps"), "Use Dynamic Cubemaps for Inscattering"), settings.useDynamicCubemaps);
+	ImGui::BeginDisabled(settings.useDynamicCubemaps == 0);
 	ImGui::ColorEdit4(T(TKEY("inscattering_cubemap_tint"), "Inscattering Cubemap Tint"), (float*)&settings.inscatteringTint);
+	ImGui::BeginDisabled(settings.inscatteringTint.w <= 0.0f);
 	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+}
 
-	ImGui::SeparatorText(T(TKEY("volumetric_fog"), "Volumetric Fog"));
+void ExponentialHeightFog::DrawVolumetricSettings()
+{
 	Util::CheckboxFlag(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), settings.volumetricFogEnabled);
-	if (settings.volumetricFogEnabled) {
-		ImGui::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
-		ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(settings.volumetricFogEnabled == 0);
+	ImGui::SliderFloat(T(TKEY("volumetric_view_distance"), "Volumetric View Distance"), &settings.volumetricFogDistance, 1000.0f, 200000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
+	ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+
+	ImGui::SeparatorText(T(TKEY("color_lighting"), "Color and Lighting"));
+	ImGui::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), (float*)&settings.volumetricFogAlbedo);
+	ImGui::ColorEdit4(T(TKEY("volumetric_emissive"), "Volumetric Emissive"), (float*)&settings.volumetricFogEmissive);
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0 && settings.fogLightingInfluence <= 0.0f);
+	ImGui::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(settings.volumetricDirectionalScatteringIntensity <= 0.0f);
+	ImGui::SliderFloat(T(TKEY("directional_shadow_bias"), "Directional Shadow Bias"), &settings.volumetricShadowBias, 0.0f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	ImGui::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::BeginDisabled(!globals::features::lightLimitFix.loaded);
+	ImGui::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	const bool hasScattering = settings.volumetricDirectionalScatteringIntensity > 0.0f || settings.volumetricSkyLightingIntensity > 0.0f ||
+	                           (globals::features::lightLimitFix.loaded && settings.volumetricLocalLightScatteringIntensity > 0.0f);
+	ImGui::BeginDisabled(!hasScattering);
+	ImGui::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+
+	if (ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
+		uint32_t minGridPixelSize = 4;
+		uint32_t maxGridPixelSize = 64;
+		uint32_t minGridSizeZ = 16;
+		uint32_t maxGridSizeZ = 160;
+		ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+		const bool temporalReprojection = Util::GetTemporal();
+		ImGui::BeginDisabled(!temporalReprojection);
+		ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::EndDisabled();
-		ImGui::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), (float*)&settings.volumetricFogAlbedo);
-		ImGui::ColorEdit4(T(TKEY("volumetric_emissive"), "Volumetric Emissive"), (float*)&settings.volumetricFogEmissive);
-		ImGui::SliderFloat(T(TKEY("directional_scattering_intensity"), "Directional Scattering Intensity"), &settings.volumetricDirectionalScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("sky_lighting_scattering_intensity"), "Sky Lighting Scattering Intensity"), &settings.volumetricSkyLightingIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		ImGui::SliderFloat(T(TKEY("local_light_scattering_intensity"), "Local Light Scattering Intensity"), &settings.volumetricLocalLightScatteringIntensity, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (ImGui::TreeNode(T(TKEY("debug"), "Debug"))) {
-			uint32_t minGridPixelSize = 4;
-			uint32_t maxGridPixelSize = 64;
-			uint32_t minGridSizeZ = 16;
-			uint32_t maxGridSizeZ = 160;
-			ImGui::SliderScalar(T(TKEY("grid_pixel_size"), "Grid Pixel Size"), ImGuiDataType_U32, &settings.volumetricGridPixelSize, &minGridPixelSize, &maxGridPixelSize, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderScalar(T(TKEY("grid_depth_slices"), "Grid Depth Slices"), ImGuiDataType_U32, &settings.volumetricGridSizeZ, &minGridSizeZ, &maxGridSizeZ, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("directional_shadow_bias"), "Directional Shadow Bias"), &settings.volumetricShadowBias, 0.0f, 0.05f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("depth_distribution_scale"), "Depth Distribution Scale"), &settings.volumetricDepthDistributionScale, 1.0f, 128.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("temporal_history_weight"), "Temporal History Weight"), &settings.volumetricHistoryWeight, 0.0f, 0.99f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			uint32_t minHistoryMissSampleCount = 1;
-			uint32_t maxHistoryMissSampleCount = 16;
-			ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
-									  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
-									  "Adds per-voxel random offset on top of the Halton sequence.\n"
-									  "0 = UE default; nonzero values need stronger temporal filtering."));
-			}
-			ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
-									  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
-									  "Jitters the final 3D fog lookup in screen space to hide\n"
-									  "low-resolution froxel pixelization. 0 = UE default."));
-			}
-			ImGui::TreePop();
+		uint32_t minHistoryMissSampleCount = 1;
+		uint32_t maxHistoryMissSampleCount = 16;
+		ImGui::SliderScalar(T(TKEY("history_miss_samples"), "History Miss Samples"), ImGuiDataType_U32, &settings.volumetricHistoryMissSampleCount, &minHistoryMissSampleCount, &maxHistoryMissSampleCount, "%u", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::BeginDisabled(!temporalReprojection);
+		ImGui::SliderFloat(T(TKEY("sample_jitter_multiplier"), "Sample Jitter Multiplier"), &settings.volumetricSampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("sample_jitter_multiplier_tooltip"),
+								  "Matches UE's r.VolumetricFog.LightScatteringSampleJitterMultiplier.\n"
+								  "Adds per-voxel random offset on top of the Halton sequence.\n"
+								  "0 = UE default; nonzero values need stronger temporal filtering."));
 		}
+		ImGui::EndDisabled();
+		ImGui::SliderFloat(T(TKEY("upsample_jitter_multiplier"), "Upsample Jitter Multiplier"), &settings.volumetricUpsampleJitterMultiplier, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("upsample_jitter_multiplier_tooltip"),
+								  "Matches UE's r.VolumetricFog.UpsampleJitterMultiplier.\n"
+								  "Jitters the final 3D fog lookup in screen space to hide\n"
+								  "low-resolution froxel pixelization. 0 = UE default."));
+		}
+		ImGui::TreePop();
 	}
+	ImGui::EndDisabled();
 }
 
 void ExponentialHeightFog::SetupResources()

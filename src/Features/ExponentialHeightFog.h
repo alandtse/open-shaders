@@ -59,7 +59,7 @@ public:
 		float4 inscatteringTint = { 1.0f, 1.0f, 1.0f, 1.0f };
 		float cubemapMipLevel = 8.0f;
 		float sunlightAttenuationAmount = 1.0f;
-		uint respectVanillaFogFade = 0;
+		uint respectVanillaFogFade = 1;
 		uint disableVanillaFog = 1;
 		float4 fogInscatteringColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 		float originalFogColorAmount = 0.0f;
@@ -104,6 +104,9 @@ public:
 	Settings GetCommonBufferData() const;
 
 private:
+	void DrawGeneralSettings();
+	void DrawVolumetricSettings();
+
 	Settings previousFogSettings = {};
 
 	struct VolumetricFogCB

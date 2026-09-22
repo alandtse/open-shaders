@@ -355,6 +355,117 @@ void FactoryFeature::Setup()
                 {component[0] for component in components["FactoryFeature"]},
                 {"UniqueComponent", "SharedComponent"})
 
+    def test_member_tab_helpers_preserve_controls_with_name_collisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/TabbedFeature.h").write_text(r'''
+struct TabbedFeature : Feature
+{
+    struct Settings
+    {
+        uint32_t enabled = 1;
+        uint32_t detailEnabled = 0;
+        float amount = 0.5f;
+        float4 tint{};
+    } settings;
+    std::string GetShortName() { return "Tabbed"; }
+    std::string GetName() { return "Tabbed Feature"; }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    TabbedFeature::Settings, enabled, detailEnabled, amount, tint)
+''', encoding="utf-8")
+            (root / "src/TabbedFeature.cpp").write_text(r'''
+#define I18N_KEY_PREFIX "feature.tabbed."
+void TabbedFeature::DrawSettings()
+{
+    if (!ImGui::BeginTabBar("tabs"))
+        return;
+    if (ImGui::BeginTabItem(T(TKEY("general"), "General"))) {
+        DrawGeneralSettings();
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem(T(TKEY("details"), "Details"))) {
+        ImGui::BeginDisabled(settings.enabled == 0);
+        DrawDetailSettings();
+        ImGui::EndDisabled();
+        ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+}
+void TabbedFeature::DrawGeneralSettings()
+{
+    Util::CheckboxFlag(T(TKEY("enabled"), "Enable Effect"), settings.enabled);
+    ImGui::SeparatorText(T(TKEY("shape"), "Shape"));
+    ImGui::SliderFloat(T(TKEY("amount"), "Effect Amount"), &settings.amount,
+        0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+}
+void TabbedFeature::DrawDetailSettings()
+{
+    Util::UI::CheckboxUint(T(TKEY("detail_enabled"), "Enable Details"), settings.detailEnabled);
+    if (ImGui::BeginTabItem(T(TKEY("color"), "Color"))) {
+        DrawTint();
+        ImGui::EndTabItem();
+    }
+}
+void TabbedFeature::DrawTint()
+{
+    ImGui::ColorEdit4(T(TKEY("tint"), "Effect Tint"), (float*)&settings.tint);
+    DrawDetailSettings();
+}
+void UnrelatedPage::DrawGeneralSettings()
+{
+    ImGui::SliderFloat("Wrong Amount", &settings.amount, -100.0f, 100.0f);
+}
+''', encoding="utf-8")
+            entries = GENERATOR.build_entries(root)
+            GENERATOR.validate_entries(entries, 7)
+            by_key = {(entry["path"], entry["key"]): entry for entry in entries}
+            enabled = by_key[("", "enabled")]
+            self.assertEqual(enabled["displayName"], "Enable Effect")
+            self.assertEqual(enabled["displayNameKey"], "feature.tabbed.enabled")
+            self.assertEqual(enabled["editorSemantic"], "Toggle")
+            self.assertEqual(enabled["sourceWidget"], "CheckboxFlag")
+            self.assertEqual(enabled["selectorPath"], "General")
+            details = by_key[("", "detailEnabled")]
+            self.assertEqual(details["editorSemantic"], "Toggle")
+            self.assertEqual(details["selectorPath"], "Details")
+            amount = by_key[("", "amount")]
+            self.assertEqual(amount["displayName"], "Effect Amount")
+            self.assertEqual(amount["displayPath"], "Shape")
+            self.assertEqual(amount["selectorPath"], "General")
+            self.assertEqual((amount["minimum"], amount["maximum"]), (0.0, 2.0))
+            self.assertTrue(amount["clampNumericInput"])
+            for component in "xyzw":
+                tint = by_key[("tint", component)]
+                self.assertEqual(tint["sourceWidget"], "ColorEdit4")
+                self.assertEqual(tint["selectorPath"], "Details/Color")
+                self.assertEqual(tint["selectorPathKeys"], "feature.tabbed.details/feature.tabbed.color")
+
+    def test_integer_checkbox_adapter_preserves_existing_direct_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "Controls.cpp"
+            source.write_text(r'''
+#define I18N_KEY_PREFIX "feature.shared."
+void SharedFeature::DrawSettings()
+{
+    ImGui::SeparatorText(T(TKEY("general"), "General"));
+    Util::CheckboxFlag(T(TKEY("enabled"), "Enable Effect"), settings.enabled);
+    DrawDetails();
+}
+void SharedFeature::DrawDetails()
+{
+    ImGui::SeparatorText(T(TKEY("details"), "Details"));
+    bool enabled = settings.enabled != 0;
+    if (ImGui::Checkbox(T(TKEY("enabled"), "Enable Effect"), &enabled))
+        settings.enabled = enabled;
+}
+''', encoding="utf-8")
+            binding = GENERATOR.collect_control_index([source]).bindings[("SharedFeature", ("enabled",))]
+            self.assertEqual(binding.source_widget, "Checkbox")
+            self.assertEqual(binding.label.text, "Enable Effect")
+            self.assertEqual(binding.category.text, "Details")
+
     def test_feature_type_aliases_resolve_to_their_underlying_struct(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
