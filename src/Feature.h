@@ -336,6 +336,21 @@ public:
 	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* /*a_pass*/) { return nullptr; }
 
 	/**
+	 * @brief Opt-in flag checked once, when the skip hook's feature list is built: return true to
+	 * have ShouldSkipRenderPass() consulted before every render pass draws. Default false keeps the
+	 * per-pass hot path free of the call for features that never drop passes.
+	 */
+	virtual bool WantsRenderPassSkipHook() const { return false; }
+
+	/**
+	 * @brief Called before the engine draws each BSRenderPass, for every loaded feature that opted
+	 * in via WantsRenderPassSkipHook(). Runs on the render thread for every pass, so keep it cheap.
+	 * @param a_pass The render pass about to be drawn.
+	 * @return True to drop this pass instead of drawing it.
+	 */
+	virtual bool ShouldSkipRenderPass(const RE::BSRenderPass* /*a_pass*/) { return false; }
+
+	/**
 	 * @brief Called during disk-cache shader loading to generate additional shader permutations.
 	 *
 	 * Invoked once per BSShader load when the shader cache is in disk-cache mode.
@@ -499,6 +514,9 @@ public:
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
 
+	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
+	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
+
 	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.
 	 *
@@ -575,13 +593,18 @@ public:
 	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
 	 * @param callback Callable receiving a Feature* for each loaded feature.
 	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
+	 * @param emitCpuZone When false, skips the per-feature Tracy zones (CPU and GPU); use on per-pass hot paths.
 	 */
 	template <typename Func>
-	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false)
+	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false, bool emitCpuZone = true)
 	{
 		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
+				if (!emitCpuZone) {
+					callback(feature);
+					continue;
+				}
 				{
 					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
 					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);

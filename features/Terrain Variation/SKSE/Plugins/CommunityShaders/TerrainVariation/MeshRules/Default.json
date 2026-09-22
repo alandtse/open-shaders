@@ -1,0 +1,14 @@
+{
+    "include": {
+        "directories": [
+            "landscape/mountains/",
+            "pbr/landscape/mountains/",
+            "landscape/dirtcliffs/",
+            "pbr/landscape/dirtcliffs/"
+        ]
+    },
+    "exclude": {
+        "filenames": ["dirtcliffsroots01.dds"],
+        "directories": ["landscape/trees/"]
+    }
+}

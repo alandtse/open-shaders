@@ -67,9 +67,6 @@ namespace ShadowCasterManager
 
 	ShadowDemandSample s_shadowDemand{};
 
-	std::atomic<uint32_t> s_alphaGroupPeak{ 0 };
-	std::atomic<uint64_t> s_alphaGroupDrops{ 0 };
-
 	SchedDiagCounters s_schedDiag;
 
 	int32_t s_installedShadowLightCount;

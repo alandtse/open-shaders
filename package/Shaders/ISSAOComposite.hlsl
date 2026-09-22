@@ -206,7 +206,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if (isGeometryDepth || exponentialHeightFogEnabled) {
 		float fogFade = exponentialHeightFogEnabled ? ExponentialHeightFog::GetVanillaFogFade(FogNearColor.w) : FogNearColor.w;
 		float fogSourceScale = exponentialHeightFogEnabled && !isGeometryDepth ? 1.0 : fogFade;
-		if (exponentialHeightFogEnabled && !ExponentialHeightFog::ShouldDisableVanillaFog()) {
+		if (exponentialHeightFogEnabled && isGeometryDepth && !ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			// Apply vanilla fog first, then exp fog on top
 			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogSourceScale, fogFade);
 			composedColor.xyz = lerp(composedColor.xyz, fogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);

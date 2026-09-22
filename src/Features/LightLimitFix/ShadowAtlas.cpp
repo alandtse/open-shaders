@@ -1076,6 +1076,15 @@ namespace ShadowCasterManager
 		s_tileClears.fetch_add(1, std::memory_order_relaxed);
 	}
 
+	void InvalidateSlotTileContent(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return;
+		auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.pending.valid)
+			slot.valid = false;
+	}
+
 	bool StaticAtlasReady()
 	{
 		return s_atlas.staticReady && s_atlas.copyVS && s_atlas.copyPS;
@@ -1163,6 +1172,17 @@ namespace ShadowCasterManager
 			s_atlas.slots[poolSlot].staticHash = staticHash;
 			s_atlas.slots[poolSlot].staticEmpty = !a_sawCasters;
 			s_atlas.slots[poolSlot].staticCompositePending = a_sawCasters;
+		}
+	}
+
+	void InvalidateSlotStaticBake(int32_t poolSlot)
+	{
+		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size()) {
+			auto& slot = s_atlas.slots[poolSlot];
+			slot.staticValid = false;
+			slot.staticHash = 0;
+			slot.staticEmpty = false;
+			slot.staticCompositePending = false;
 		}
 	}
 

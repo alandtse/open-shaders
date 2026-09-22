@@ -33,4 +33,17 @@ namespace Compatibility
 		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
 		{ L"Data/SKSE/Plugins/DynamicWetness.dll" }
 	};
+
+	/** @brief A plugin that is only blocked below a minimum file version. */
+	struct OutdatedPlugin
+	{
+		const wchar_t* dll;           ///< Path relative to the game root.
+		REL::Version minimumVersion;  ///< Oldest file version that may coexist with Open Shaders.
+		std::string_view reason{};    ///< Shown to the user; empty when the rationale is not recorded.
+	};
+
+	/** @brief Version-probed at startup without loading the DLL; any hit disables all hooks and features. */
+	inline constexpr OutdatedPlugin outdatedPlugins[] = {
+		{ L"Data/SKSE/Plugins/SexLabUtil.dll", REL::Version(2, 0, 0, 0), "use SexLab P+ instead" }
+	};
 }

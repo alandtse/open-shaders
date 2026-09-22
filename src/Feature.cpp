@@ -334,19 +334,32 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+namespace
+{
+	template <typename Predicate>
+	std::vector<Feature*> FilterFeatureList(Predicate&& a_wants)
+	{
+		std::vector<Feature*> v;
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (a_wants(feature))
+				v.push_back(feature);
+		}
+		return v;
+	}
+}
+
 const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 {
 	// Built once from the full feature list; VR developer mode's feature-list toggle (see
 	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
-	static const std::vector<Feature*> hookFeatures = [] {
-		std::vector<Feature*> v;
-		for (auto* feature : GetFeatureList()) {
-			if (feature->WantsRenderPassHook())
-				v.push_back(feature);
-		}
-		return v;
-	}();
+	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassHook(); });
 	return hookFeatures;
+}
+
+const std::vector<Feature*>& Feature::GetRenderPassSkipFeatures()
+{
+	static const std::vector<Feature*> skipFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassSkipHook(); });
+	return skipFeatures;
 }
 
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)

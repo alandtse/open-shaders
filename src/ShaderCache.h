@@ -1124,19 +1124,25 @@ namespace SIE
 
 		void StartActiveShaderCaptureWindow(ActiveShaderCaptureStage a_stage);
 
-		/** @brief Releases one compiled shader from memory and, unless a_deleteDiskBlob is
-		 *  false, deletes its disk blob. Does not touch the compilation set; callers must
-		 *  Forget() the task id. */
-		void EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
+		/** @brief Releases one runtime shader and, unless a_deleteDiskBlob is false, deletes
+		 *  its disk blob. Does not touch shaderMap; callers own the shared bytecode entry
+		 *  and must Forget() the task id. */
+		void EvictShaderResources(RE::BSShader::Type a_type, uint32_t a_descriptor,
 			ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob = true);
+
+		/** @brief EvictShaderResources() plus, unless a_evictSharedBytecode is false, erasing
+		 *  the shared bytecode entry from shaderMap. Callers must Forget() the task id. */
+		void EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
+			ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob = true, bool a_evictSharedBytecode = true);
 
 		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };                       // read cross-thread (TrackActiveShader)
 		ActiveShaderCaptureStage activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;  // render thread only
 		std::chrono::steady_clock::time_point activeShaderCaptureDeadline;                   // render thread only
 		bool activeShaderCaptureMenuWasVisible = false;                                      // render thread only
 		std::atomic<std::thread::id> activeShaderCaptureThread;                              // read cross-thread (TrackActiveShader)
-		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> capturedShaders;         // guarded by activeShadersMutex
-		std::unordered_set<std::string> clearedThisCaptureCycle;                             // render thread only; reset per BeginActiveShaderCapture()
+		ankerl::unordered_dense::map<size_t, ActiveShaderInfo> capturedShaders;              // guarded by activeShadersMutex
+		std::unordered_set<size_t> clearedThisCaptureCycle;                                  // render thread only; reset per BeginActiveShaderCapture()
+		std::unordered_set<std::string> clearedBytecodeThisCaptureCycle;
 		size_t lastScopedClearCount = 0;
 		double lastScopedClearMs = 0.0;
 

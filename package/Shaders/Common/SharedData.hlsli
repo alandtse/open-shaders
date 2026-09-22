@@ -221,7 +221,8 @@ namespace SharedData
 		float haloFalloff;
 
 		float cloudOcclusionStrength;
-		float3 pad0;
+		float sunQuadModelRadius;
+		float2 pad0;
 	};
 
 	struct LODBlendingSettings

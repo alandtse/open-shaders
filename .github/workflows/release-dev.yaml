@@ -23,6 +23,8 @@ on:
             - "features/**"
             - "package/Shaders/**"
             - "tests/**"
+            - "tools/build-shader-cache.py"
+            - "tools/verify_shader_cache.py"
             - "CMakeLists.txt"
             - "CMakePresets.json"
             - "vcpkg.json"
@@ -104,6 +106,7 @@ jobs:
             run-shader-validation: true
             run-shader-tests: true
             run-cpp-tests: true
+            cache-artifacts: true
 
     prune-stale-cache:
         name: Prune superseded CMake build-dir cache generations
@@ -145,7 +148,7 @@ jobs:
     prerelease:
         name: Publish rolling dev-latest prerelease
         needs: build
-        if: needs.build.outputs.cpp-built == 'true'
+        if: needs.build.outputs.cpp-built == 'true' && needs.build.outputs.cache-validated == 'true'
         runs-on: ubuntu-latest
         permissions:
             contents: write

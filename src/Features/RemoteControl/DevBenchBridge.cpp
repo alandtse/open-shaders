@@ -700,6 +700,29 @@ namespace
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },
 							{ "estPassMsPerFrame", snap.avgLightCostUs / 1000.0 * snap.avgRedrawsPerFrame },
 							{ "staticBakesTotal", snap.staticBakesTotal },
+							{ "passGuardChecksTotal", snap.passGuardChecksTotal },
+							{ "passGuardCycleSkipsTotal", snap.passGuardCycleSkipsTotal },
+							{ "passGuardFaultSkipsTotal", snap.passGuardFaultSkipsTotal },
+							{ "passGuardCapExceededTotal", snap.passGuardCapExceededTotal },
+							{ "passGuardCycleRepairsTotal", snap.passGuardCycleRepairsTotal },
+							{ "staleAccumulatesTotal", snap.staleAccumulatesTotal },
+							{ "staleAfterRenderSkipTotal", snap.staleAfterRenderSkipTotal },
+							{ "stalePassClearsTotal", snap.stalePassClearsTotal },
+							{ "renderSkipSessionResetTotal", snap.renderSkipsByReason[0] },
+							{ "renderSkipPortalTransitionTotal", snap.renderSkipsByReason[1] },
+							{ "renderSkipTeardownWaitingTotal", snap.renderSkipsByReason[2] },
+							{ "renderSkipTeardownRaceTotal", snap.renderSkipsByReason[3] },
+							{ "passRegChecksTotal", snap.passRegChecksTotal },
+							{ "passRegRingsTotal", snap.passRegRingsTotal },
+							{ "stalePromotedTotal", snap.stalePromotedTotal },
+							{ "passGuardRepairsPromotedTotal", snap.passGuardRepairsPromotedTotal },
+							{ "passRegRingsPromotedTotal", snap.passRegRingsPromotedTotal },
+							{ "splitAccumAllTotal", snap.splitAccumByMode[0] },
+							{ "splitAccumStaticOnlyTotal", snap.splitAccumByMode[1] },
+							{ "splitAccumDynamicOnlyTotal", snap.splitAccumByMode[2] },
+							{ "splitLatchMismatchTotal", snap.splitLatchMismatchTotal },
+							{ "splitLatchWindowTotal", snap.splitLatchWindowTotal },
+							{ "splitWastedBakesTotal", snap.splitWastedBakesTotal },
 							{ "cellResetsTotal", snap.cellResetsTotal },
 							{ "cullPoolDropsTotal", snap.cullPoolDropsTotal },
 							{ "casterCullDropsTotal", snap.casterCullDropsTotal },
@@ -1309,7 +1332,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =
-				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,passGuardChecksTotal,passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, *Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
 
 			static constexpr const char* inspectProfilerDesc =

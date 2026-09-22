@@ -10,6 +10,69 @@ namespace TestConstants
 	static const float SUN_HALO_COS = 0.9968761f;
 }
 
+/// @tags procedural-sun, billboard, occlusion
+[numthreads(1, 1, 1)] void TestOcclusionCoverageIsIndependentOfSunBaseSize() {
+	float3 baseSizes = float3(15.0f, 425.0f, 600.0f);
+	for (uint i = 0; i < 3; ++i) {
+		float scale = ProceduralSun::GetOcclusionBillboardScale(sqrt(2.0f) * baseSizes[i]);
+		float queryHalfWidth = baseSizes[i] * scale * 0.04f;
+		ASSERT(IsTrue, abs(queryHalfWidth - 17.0f) < TestConstants::EXACT_TOLERANCE);
+	}
+}
+
+	/// @tags procedural-sun, billboard, occlusion, robustness
+	[numthreads(1, 1, 1)] void TestOcclusionScalePreservesDefaultAndMissingGeometry()
+{
+	ASSERT(IsTrue, abs(ProceduralSun::GetOcclusionBillboardScale(sqrt(2.0f) * 425.0f) - 1.0f) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, ProceduralSun::GetOcclusionBillboardScale(0.0f) == 1.0f);
+	ASSERT(IsTrue, ProceduralSun::GetOcclusionBillboardScale(-1.0f) == 1.0f);
+}
+
+/// @tags procedural-sun, billboard
+[numthreads(1, 1, 1)] void TestBillboardSizeIsIndependentOfVanillaScale() {
+	float modelRadius = sqrt(2.0f);
+	float sunDistance = 400.0f;
+	float3 engineScales = float3(1.0f, 15.0f, 600.0f);
+	float expectedHalfWidth = sunDistance * sqrt(1.0f - TestConstants::SUN_HALO_COS * TestConstants::SUN_HALO_COS) / TestConstants::SUN_HALO_COS;
+	for (uint i = 0; i < 3; ++i) {
+		float scale = ProceduralSun::GetBillboardScale(TestConstants::SUN_HALO_COS, sunDistance, modelRadius * engineScales[i]);
+		ASSERT(IsTrue, abs(engineScales[i] * scale - expectedHalfWidth) < TestConstants::APPROX_TOLERANCE);
+	}
+}
+
+	/// @tags procedural-sun, billboard
+	[numthreads(1, 1, 1)] void TestBillboardContainsHaloAtEveryEdge()
+{
+	float sunDistance = 400.0f;
+	float scale = ProceduralSun::GetBillboardScale(TestConstants::SUN_HALO_COS, sunDistance, sqrt(2.0f));
+	float edgeCos = dot(normalize(float3(scale, 0.0f, sunDistance)), float3(0.0f, 0.0f, 1.0f));
+	float cornerCos = dot(normalize(float3(scale, scale, sunDistance)), float3(0.0f, 0.0f, 1.0f));
+	ASSERT(IsTrue, abs(edgeCos - TestConstants::SUN_HALO_COS) < TestConstants::EXACT_TOLERANCE);
+	ASSERT(IsTrue, cornerCos < TestConstants::SUN_HALO_COS);
+	ASSERT(IsTrue, ProceduralSun::EvaluateHalo(cornerCos, TestConstants::SUN_DISK_COS, TestConstants::SUN_HALO_COS, 10.0f) == 0.0f);
+}
+
+/// @tags procedural-sun, billboard
+[numthreads(1, 1, 1)] void TestBillboardUsesCurrentAndPreviousTransformsIndependently() {
+	float4x4 currentWorld = float4x4(15, 0, 0, 0, 0, 15, 0, 0, 0, 0, 15, 400, 0, 0, 0, 1);
+	float4x4 previousWorld = float4x4(600, 0, 0, 0, 0, 600, 0, 0, 0, 0, 600, 280, 0, 0, 0, 1);
+	float3 vertex = float3(1.0f, 1.0f, 0.0f);
+	float3 current = ProceduralSun::ResizeBillboardVertex(vertex, currentWorld, sqrt(2.0f), TestConstants::SUN_HALO_COS);
+	float3 previous = ProceduralSun::ResizeBillboardVertex(vertex, previousWorld, sqrt(2.0f), TestConstants::SUN_HALO_COS);
+	float3 currentDirection = normalize(mul(currentWorld, float4(current, 1.0f)).xyz);
+	float3 previousDirection = normalize(mul(previousWorld, float4(previous, 1.0f)).xyz);
+	ASSERT(IsTrue, all(abs(currentDirection - previousDirection) < TestConstants::EXACT_TOLERANCE));
+}
+
+	/// @tags procedural-sun, billboard, robustness
+	[numthreads(1, 1, 1)] void TestBillboardMissingGeometryPreservesVertices()
+{
+	ASSERT(IsTrue, ProceduralSun::GetBillboardScale(TestConstants::SUN_HALO_COS, 400.0f, 0.0f) == 1.0f);
+	ASSERT(IsTrue, ProceduralSun::GetBillboardScale(TestConstants::SUN_HALO_COS, 0.0f, 1.0f) == 1.0f);
+	ASSERT(IsTrue, ProceduralSun::GetBillboardScale(1.0f, 400.0f, 1.0f) == 1.0f);
+	ASSERT(IsTrue, ProceduralSun::GetBillboardScale(0.0f, 400.0f, 1.0f) == 1.0f);
+}
+
 /// @tags procedural-sun, limb-darkening
 [numthreads(1, 1, 1)] void TestHestrofferCenterAndLimb() {
 	float3 center = ProceduralSun::GetHestrofferLimbDarkening(0.0f);

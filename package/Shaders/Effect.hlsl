@@ -1078,7 +1078,6 @@ PS_OUTPUT main(PS_INPUT input)
 		disableVanillaFog = ExponentialHeightFog::ShouldDisableVanillaFog();
 	}
 	vanillaFogColor = Color::EffectLightToGamma(vanillaFogColor);
-	fogColor = Color::EffectLightToGamma(fogColor);
 	if (disableVanillaFog) {
 		vanillaFogColor = lightColor;
 		vanillaFogFactor = 0;
@@ -1110,7 +1109,11 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
-	blendedColor = lerp(blendedColor, fogColor, expFogFactor.xxx);
+	if (SharedData::exponentialHeightFogSettings.enabled) {
+		float fogFade = ExponentialHeightFog::GetVanillaFogFade(input.FogAlpha);
+		blendedColor = Color::EffectLightToGamma(fogFade * lerp(Color::EffectLight(blendedColor), fogColor, expFogFactor.xxx));
+		fogMul.xyz = 1.0.xxx;
+	}
 #			else
 	float3 blendedColor = lerp(lightColor, fogColor, fogFactor.xxx);
 #			endif
