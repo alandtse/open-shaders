@@ -42,12 +42,14 @@ namespace BackgroundBlur
 		// DirectX resources (RAII managed)
 		winrt::com_ptr<ID3D11VertexShader> vertexShader;
 		winrt::com_ptr<ID3D11PixelShader> downsamplePixelShader;
+		winrt::com_ptr<ID3D11PixelShader> hdrDownsamplePixelShader;
 		winrt::com_ptr<ID3D11PixelShader> copyPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> horizontalPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> verticalPixelShader;
 		winrt::com_ptr<ID3D11PixelShader> compositePixelShader;  // For rounded corner compositing
 		winrt::com_ptr<ID3D11PixelShader> clearPixelShader;      // For rounded corner UI buffer clearing
 		winrt::com_ptr<ID3D11PixelShader> layerPixelShader;
+		winrt::com_ptr<ID3D11PixelShader> scenePixelShader;
 		winrt::com_ptr<ID3D11Buffer> constantBuffer;
 		winrt::com_ptr<ID3D11SamplerState> samplerState;
 		winrt::com_ptr<ID3D11BlendState> blendState;
@@ -86,6 +88,13 @@ namespace BackgroundBlur
 		};
 		RetainedBuffer retainedScene;
 		RetainedBuffer retainedUI;
+		struct SceneImage
+		{
+			ImDrawList* drawList = nullptr;
+			ImRect rect;
+			ImRect clip;
+		};
+		SceneImage sceneImage;
 
 		UINT textureWidth = 0;
 		UINT textureHeight = 0;
@@ -101,8 +110,9 @@ namespace BackgroundBlur
 			float blurTextureSize[4];
 			float windowRect[4];
 			float windowParams[4];
+			float uiParams[4];
 		};
-		static_assert(sizeof(BlurConstants) == 48);
+		static_assert(sizeof(BlurConstants) == 64);
 
 		struct UIBufferViews
 		{
@@ -117,6 +127,7 @@ namespace BackgroundBlur
 			ID3D11RenderTargetView* imguiRTV;
 			UIBufferViews uiBuffer;
 			bool uiOnly = false;
+			bool hdr = false;
 		};
 
 		struct WindowBlur
@@ -331,9 +342,13 @@ namespace BackgroundBlur
 				windows.push_back({ &frame, drawList, constants, static_cast<int>(it - drawData->CmdLists.begin()) });
 			}
 			if (csEditorActive) {
+				const auto imageOrder = std::ranges::find(drawData->CmdLists, sceneImage.drawList);
 				for (auto& window : windows) {
 					const auto* rect = window.constants.windowRect;
-					window.needed = std::ranges::any_of(windows, [&](const WindowBlur& lower) {
+					const bool overlapsImage = imageOrder != drawData->CmdLists.end() &&
+					                           imageOrder - drawData->CmdLists.begin() < window.drawOrder &&
+					                           ImRect(ImVec2(rect[0], rect[1]), ImVec2(rect[2], rect[3])).Overlaps(sceneImage.clip);
+					window.needed = overlapsImage || std::ranges::any_of(windows, [&](const WindowBlur& lower) {
 						const auto* other = lower.constants.windowRect;
 						return lower.drawOrder < window.drawOrder && rect[0] < other[2] && rect[2] > other[0] &&
 						       rect[1] < other[3] && rect[3] > other[1];
@@ -348,6 +363,7 @@ namespace BackgroundBlur
 
 	void RestoreRetainedBuffers()
 	{
+		sceneImage = {};
 		if (globals::game::isVR || !globals::d3d::context)
 			return;
 		std::lock_guard<std::mutex> lock(resourceMutex);
@@ -397,10 +413,12 @@ namespace BackgroundBlur
 		if (!compileShader(vertexShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "vs_5_0", "VS_Main", "blur vertex shader") ||
 			!compileShader(copyPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Copy", "UI composite pixel shader") ||
 			!compileShader(downsamplePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Downsample", "blur downsample pixel shader") ||
+			!compileShader(hdrDownsamplePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_HDRDownsample", "HDR blur downsample pixel shader") ||
 			!compileShader(horizontalPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurHorizontal.hlsl", "ps_5_0", "PS_Main", "horizontal blur pixel shader") ||
 			!compileShader(verticalPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurVertical.hlsl", "ps_5_0", "PS_Main", "vertical blur pixel shader") ||
 			!compileShader(compositePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Main", "composite blur pixel shader") ||
 			!compileShader(layerPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Layer", "UI blur pixel shader") ||
+			!compileShader(scenePixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Scene", "HDR viewport pixel shader") ||
 			!compileShader(clearPixelShader, L"Data\\Shaders\\Menu\\BackgroundBlurComposite.hlsl", "ps_5_0", "PS_Clear", "clear pixel shader"))
 			return false;
 
@@ -553,12 +571,28 @@ namespace BackgroundBlur
 
 		auto downsampleRTVPtr = downsampleRTV.get();
 		context->OMSetRenderTargets(1, &downsampleRTVPtr, nullptr);
-		context->PSSetShader(downsamplePixelShader.get(), nullptr, 0);
+		context->PSSetShader(frame.hdr ? hdrDownsamplePixelShader.get() : downsamplePixelShader.get(), nullptr, 0);
 		context->PSSetShaderResources(0, 1, &frame.sourceSRV);
-		context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
+		if (frame.hdr) {
+			winrt::com_ptr<ID3D11ShaderResourceView> savedUI;
+			winrt::com_ptr<ID3D11Buffer> savedShared, savedFeatures;
+			context->PSGetShaderResources(1, 1, savedUI.put());
+			context->PSGetConstantBuffers(5, 1, savedShared.put());
+			context->PSGetConstantBuffers(6, 1, savedFeatures.put());
+			ID3D11Buffer* sharedBuffers[]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
+			context->PSSetConstantBuffers(5, ARRAYSIZE(sharedBuffers), sharedBuffers);
+			context->PSSetShaderResources(1, 1, &frame.uiBuffer.srv);
+			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
+			auto savedSRV = savedUI.get();
+			ID3D11Buffer* savedBuffers[]{ savedShared.get(), savedFeatures.get() };
+			context->PSSetShaderResources(1, 1, &savedSRV);
+			context->PSSetConstantBuffers(5, ARRAYSIZE(savedBuffers), savedBuffers);
+		} else {
+			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
+		}
 		context->PSSetShaderResources(0, 1, &nullSRV);
 
-		if (frame.uiBuffer.srv) {
+		if (frame.uiBuffer.srv && !frame.hdr) {
 			context->OMSetBlendState(compositeBlendState.get(), nullptr, 0xFFFFFFFF);
 			context->PSSetShaderResources(0, 1, &frame.uiBuffer.srv);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
@@ -646,11 +680,13 @@ namespace BackgroundBlur
 		vertexShader = nullptr;
 		copyPixelShader = nullptr;
 		downsamplePixelShader = nullptr;
+		hdrDownsamplePixelShader = nullptr;
 		horizontalPixelShader = nullptr;
 		verticalPixelShader = nullptr;
 		compositePixelShader = nullptr;
 		clearPixelShader = nullptr;
 		layerPixelShader = nullptr;
+		scenePixelShader = nullptr;
 		constantBuffer = nullptr;
 		samplerState = nullptr;
 		blendState = nullptr;
@@ -683,6 +719,64 @@ namespace BackgroundBlur
 	bool IsCSEditorActive()
 	{
 		return csEditorActive;
+	}
+
+	bool ImageHDRScene(const ImVec2& size)
+	{
+		auto& hdr = globals::features::hdrDisplay;
+		if (!hdr.loaded || !hdr.settings.enableHDR || !hdr.hdrTexture || !hdr.hdrTexture->rtv ||
+			!hdr.hdrOutputCS || !hdr.IsCleanSceneCaptureFresh() || (!initialized && !Initialize()) || initializationFailed ||
+			size.x <= 0.0f || size.y <= 0.0f)
+			return false;
+
+		auto* drawList = ImGui::GetWindowDrawList();
+		const auto* drawData = ImGui::GetMainViewport();
+		const auto scale = ImGui::GetIO().DisplayFramebufferScale;
+		const auto toPixels = [&](ImVec2 point) {
+			return ImVec2((point.x - drawData->Pos.x) * scale.x, (point.y - drawData->Pos.y) * scale.y);
+		};
+		const auto min = ImGui::GetCursorScreenPos();
+		sceneImage = { drawList, ImRect(toPixels(min), toPixels(ImVec2(min.x + size.x, min.y + size.y))),
+			ImRect(toPixels(drawList->GetClipRectMin()), toPixels(drawList->GetClipRectMax())) };
+		sceneImage.clip.ClipWith(sceneImage.rect);
+		drawList->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+			auto& hdr = globals::features::hdrDisplay;
+			if (!hdr.IsCleanSceneCaptureFresh() || sceneImage.clip.GetWidth() <= 0.0f || sceneImage.clip.GetHeight() <= 0.0f)
+				return;
+			CS_GPU_PASS("CSEditor::HDRViewport");
+			auto context = globals::d3d::context;
+			Util::FullscreenPassScope restoreState(context);
+			D3D11_RECT savedScissor{};
+			UINT scissorCount = 1;
+			context->RSGetScissorRects(&scissorCount, &savedScissor);
+			const SKSE::stl::scope_exit restoreScissor([&]() noexcept { context->RSSetScissorRects(scissorCount, &savedScissor); });
+			winrt::com_ptr<ID3D11RenderTargetView> uiRTV;
+			context->OMGetRenderTargets(1, uiRTV.put(), nullptr);
+			if (!uiRTV)
+				return;
+			retainedScene = { hdr.hdrTexture->resource, hdr.cleanSceneCapture->resource, hdr.sceneGeneration, true };
+			ID3D11RenderTargetView* targets[]{ uiRTV.get(), hdr.hdrTexture->rtv.get() };
+			D3D11_VIEWPORT viewport{ sceneImage.rect.Min.x, sceneImage.rect.Min.y, sceneImage.rect.GetWidth(), sceneImage.rect.GetHeight(), 0.0f, 1.0f };
+			D3D11_RECT scissor{ static_cast<LONG>(sceneImage.clip.Min.x), static_cast<LONG>(sceneImage.clip.Min.y),
+				static_cast<LONG>(sceneImage.clip.Max.x), static_cast<LONG>(sceneImage.clip.Max.y) };
+			context->OMSetRenderTargets(ARRAYSIZE(targets), targets, nullptr);
+			context->OMSetBlendState(nullptr, nullptr, UINT_MAX);
+			context->RSSetViewports(1, &viewport);
+			context->RSSetScissorRects(1, &scissor);
+			context->RSSetState(scissorRasterizerState.get());
+			context->IASetInputLayout(nullptr);
+			context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			context->VSSetShader(vertexShader.get(), nullptr, 0);
+			context->PSSetShader(scenePixelShader.get(), nullptr, 0);
+			auto source = hdr.cleanSceneCapture->srv.get();
+			auto sampler = samplerState.get();
+			context->PSSetShaderResources(0, 1, &source);
+			context->PSSetSamplers(0, 1, &sampler);
+			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
+		},
+			nullptr);
+		ImGui::Dummy(size);
+		return true;
 	}
 
 	bool RenderDrawData(ImDrawData* drawData)
@@ -789,20 +883,21 @@ namespace BackgroundBlur
 		if (!imguiRTV)
 			return false;
 
-		const BlurFrame frame{ sourceSRV, currentRTV.get(), imguiRTV.get(), uiBuffer };
+		const BlurFrame frame{ sourceSRV, currentRTV.get(), imguiRTV.get(), uiBuffer, false, hdrActive };
 		BlurConstants constants{
 			{ static_cast<float>(downsampledWidth), static_cast<float>(downsampledHeight), 1.0f / downsampledWidth, 1.0f / downsampledHeight },
 			{ 0.0f, 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) },
-			{ 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height), csEditorActive ? 1.0f : 0.0f }
+			{ 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height), csEditorActive ? 1.0f : 0.0f },
+			{ hdrActive ? hdr->settings.hdrUIBrightness : 1.0f, 0.0f, 0.0f, 0.0f }
 		};
 
 		auto windows = GatherWindows(drawData, frame, constants);
 		if (windows.empty() && !csEditorActive)
 			return false;
-		const bool useEditorLayer = csEditorActive && !windows.empty();
+		const bool useEditorLayer = csEditorActive && !hdrActive && !windows.empty();
 		if (useEditorLayer && !CreateEditorLayer(texDesc.Width, texDesc.Height))
 			return false;
-		if (!csEditorActive)
+		if (!useEditorLayer)
 			ReleaseEditorLayer();
 		const BlurFrame editorFrame{ editorUISRV.get(), editorUIRTV.get(), editorUIRTV.get(), {}, true };
 		if (!PreserveUIBuffer(uiBuffer))

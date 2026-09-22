@@ -5,6 +5,7 @@
 #include <winrt/base.h>
 
 struct ImDrawData;
+struct ImVec2;
 
 namespace BackgroundBlur
 {
@@ -18,6 +19,8 @@ namespace BackgroundBlur
 	bool RenderDrawData(ImDrawData* drawData);
 	/** @brief Restores blur-modified buffers only when the engine has retained their previous contents. */
 	void RestoreRetainedBuffers();
+	/** @brief Draws an opaque HDR scene preview without passing scene color through the SDR UI buffer. */
+	bool ImageHDRScene(const ImVec2& size);
 
 	/**
 	 * @brief Cleans up all blur resources

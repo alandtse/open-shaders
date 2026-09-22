@@ -717,10 +717,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	float2 flowmapParallaxOffset = float2(0, 0);
 #				if defined(WATER_PARALLAX) && !defined(LOD)
 	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection);
-	float2 parallaxDir = viewDirection.xy / -viewDirection.z;
-	parallaxDir.y = -parallaxDir.y;
-	float viewDotUp = -viewDirection.z;
-	parallaxDir *= 0.008 * saturate(viewDotUp * 2.0);
+	float2 parallaxDir = WaterEffects::GetFlowmapParallaxDirection(viewDirection);
 	flowmapInput.TexCoord3.xy = input.TexCoord3.xy + parallaxAmount * parallaxDir;
 	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp);
 #				endif
@@ -967,6 +964,19 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 
 	float2 refractionUvRaw = float2(refractionNormal.x, refractionNormal.w - refractionNormal.y) / refractionNormal.ww;
 	refractionUvRaw = Stereo::ConvertToStereoUV(refractionUvRaw, eyeIndex);  // need to convert here for VR due to refractionNormal values
+	uint2 refractionDimensions;
+	RefractionTex.GetDimensions(refractionDimensions.x, refractionDimensions.y);
+	float2 refractionRenderSize = float2(refractionDimensions) * FrameBuffer::DynamicResolutionParams1.xy;
+	float2 depthRenderSize = FrameBuffer::DynamicResolutionParams1.xy / VPOSOffset.xy;
+	float2 eyeMinUV = Stereo::ConvertToStereoUV(float2(0, 0), eyeIndex);
+	float2 eyeMaxUV = Stereo::ConvertToStereoUV(float2(1, 1), eyeIndex);
+	float2 refractionMinUV = max(
+		(floor(eyeMinUV * refractionRenderSize) + 0.5) / refractionRenderSize,
+		(floor(eyeMinUV * depthRenderSize) + 0.5) / depthRenderSize);
+	float2 refractionMaxUV = min(
+		(floor(eyeMaxUV * refractionRenderSize) - 0.5) / refractionRenderSize,
+		(floor(eyeMaxUV * depthRenderSize) - 0.5) / depthRenderSize);
+	refractionUvRaw = clamp(refractionUvRaw, refractionMinUV, refractionMaxUV);
 
 #				if defined(VR)
 	float2 refractionUvRawNoStereo = Stereo::ConvertFromStereoUV(refractionUvRaw, eyeIndex, 1);
@@ -1010,7 +1020,8 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 #					endif
 #				endif
 
-	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(refractionUvRaw);
+	float2 refractionUV = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(
+		clamp(refractionUvRaw, refractionMinUV, refractionMaxUV));
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
 		refractionColor = Color::SceneGammaToLinear(refractionColor);

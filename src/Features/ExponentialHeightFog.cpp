@@ -63,11 +63,45 @@ namespace
 {
 	constexpr float kMinimumFogRange = 1.0f;
 	constexpr float kMinimumFogPower = 0.01f;
-	constexpr float kMaximumFogPower = 10.0f;
 	constexpr float kMinimumFogTransmittance = 0.0001f;
 	constexpr float kReferenceOpacityFraction = 0.5f;
+	constexpr float kMaximumWeatherHistoryChange = 0.1f;
 	constexpr float kAnalyticalExtinctionScale = 0.001f * std::numbers::ln2_v<float> * std::numbers::ln2_v<float>;
 	constexpr float4 kFallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
+
+	bool CanReuseFogHistory(const ExponentialHeightFog::Settings& current, const ExponentialHeightFog::Settings& previous)
+	{
+		using Settings = ExponentialHeightFog::Settings;
+		if (current.useVanillaFogSettings != previous.useVanillaFogSettings)
+			return false;
+		for (const auto field : {
+				 &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
+				 &Settings::fogDensity, &Settings::fogHeight, &Settings::fogHeightFalloff,
+				 &Settings::volumetricFogDistance, &Settings::volumetricFogStartDistance,
+				 &Settings::volumetricFogNearFadeInDistance, &Settings::volumetricFogExtinctionScale,
+				 &Settings::volumetricDepthDistributionScale }) {
+			if (current.*field != previous.*field)
+				return false;
+		}
+		if (current.useVanillaFogSettings) {
+			auto weatherHistoryMatches = [](float value, float previousValue) {
+				return std::abs(value - previousValue) <= kMaximumWeatherHistoryChange * std::max({ 1.0f, std::abs(value), std::abs(previousValue) });
+			};
+			for (const auto field : { &Settings::vanillaFogNear, &Settings::vanillaFogFar, &Settings::vanillaFogMaxOpacity, &Settings::vanillaFogPower }) {
+				if (!weatherHistoryMatches(current.*field, previous.*field))
+					return false;
+			}
+			for (const auto field : { &Settings::vanillaFogNearColor, &Settings::vanillaFogFarColor }) {
+				const auto& color = current.*field;
+				const auto& previousColor = previous.*field;
+				if (!weatherHistoryMatches(color.x, previousColor.x) ||
+					!weatherHistoryMatches(color.y, previousColor.y) ||
+					!weatherHistoryMatches(color.z, previousColor.z))
+					return false;
+			}
+		}
+		return true;
+	}
 
 	float Halton(uint32_t a_index, uint32_t a_base)
 	{
@@ -106,10 +140,11 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	data.vanillaFogMaxOpacity = 1.0f;
 	data.vanillaFogDensity = 0.0f;
 	const auto* sky = globals::game::sky;
+	const bool hasUnboundedFogRange = sky && (sky->fogNear == std::numeric_limits<float>::infinity() || sky->fogFar == std::numeric_limits<float>::infinity());
 	const float fogNear = sky ? std::max(std::isfinite(sky->fogNear) ? sky->fogNear : 0.0f, 0.0f) : 0.0f;
 	const float fogFar = sky ? std::max(std::isfinite(sky->fogFar) ? sky->fogFar : fogNear + kMinimumFogRange, fogNear + kMinimumFogRange) : Settings{}.vanillaFogFar;
-	const float fogPower = sky ? std::clamp(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, kMinimumFogPower, kMaximumFogPower) : 1.0f;
-	const float fogClamp = sky ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 1.0f - kMinimumFogTransmittance) : 0.0f;
+	const float fogPower = sky ? std::max(std::isfinite(sky->fogPower) ? sky->fogPower : 1.0f, kMinimumFogPower) : 1.0f;
+	const float fogClamp = sky && !hasUnboundedFogRange ? std::clamp(std::isfinite(sky->fogClamp) ? sky->fogClamp : 0.0f, 0.0f, 1.0f - kMinimumFogTransmittance) : 0.0f;
 
 	data.vanillaFogNear = fogNear;
 	data.vanillaFogFar = fogFar;
@@ -131,7 +166,6 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 
 	if (data.useVanillaFogSettings) {
 		data.disableVanillaFog = 1;
-		data.respectVanillaFogFade = 0;
 		data.originalFogColorAmount = 1.0f;
 		data.startDistance = fogNear;
 		const float targetOpacity = data.vanillaFogMaxOpacity * kReferenceOpacityFraction;
@@ -151,6 +185,7 @@ void ExponentialHeightFog::DrawSettings()
 	}
 	ImGui::BeginDisabled(settings.useVanillaFogSettings == 0);
 	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	ImGui::SliderFloat(T(TKEY("start_distance"), "Start Distance"), &settings.startDistance, 0.0f, 100000.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
@@ -183,9 +218,11 @@ void ExponentialHeightFog::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("apply_vanilla_fade_tooltip"), "Applies vanilla fade brightness to exponential height fog."));
 	}
+	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	Util::CheckboxFlag(T(TKEY("use_dynamic_cubemaps"), "Use Dynamic Cubemaps for Inscattering"), settings.useDynamicCubemaps);
 	ImGui::ColorEdit4(T(TKEY("inscattering_cubemap_tint"), "Inscattering Cubemap Tint"), (float*)&settings.inscatteringTint);
 	ImGui::SliderFloat(T(TKEY("cubemap_mip_level"), "Cubemap Mip Level"), &settings.cubemapMipLevel, 1.0f, 8.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
 
 	ImGui::SeparatorText(T(TKEY("volumetric_fog"), "Volumetric Fog"));
 	Util::CheckboxFlag(T(TKEY("enable_volumetric_fog"), "Enable Volumetric Fog"), settings.volumetricFogEnabled);
@@ -195,7 +232,6 @@ void ExponentialHeightFog::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("volumetric_start_distance"), "Volumetric Start Distance"), &settings.volumetricFogStartDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("near_fade_in_distance"), "Near Fade In Distance"), &settings.volumetricFogNearFadeInDistance, 0.0f, 20000.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::EndDisabled();
-		ImGui::SliderFloat(T(TKEY("lighting_influence"), "Weather Lighting Influence"), &settings.fogLightingInfluence, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("volumetric_extinction_scale"), "Volumetric Extinction Scale"), &settings.volumetricFogExtinctionScale, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("volumetric_scattering_distribution"), "Volumetric Scattering Distribution"), &settings.volumetricFogScatteringDistribution, -0.9f, 0.9f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::ColorEdit4(T(TKEY("volumetric_albedo"), "Volumetric Albedo"), (float*)&settings.volumetricFogAlbedo);
@@ -440,18 +476,7 @@ void ExponentialHeightFog::Prepass()
 		return;
 	}
 	EnsureVolumetricResources();
-	bool historySettingsMatch = lastPrepassFrame != UINT32_MAX;
-	for (const auto field : {
-			 &Settings::vanillaFogNear, &Settings::vanillaFogFar,
-			 &Settings::vanillaFogMaxOpacity, &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
-			 &Settings::fogDensity, &Settings::fogHeight, &Settings::fogHeightFalloff,
-			 &Settings::volumetricFogDistance, &Settings::volumetricFogStartDistance,
-			 &Settings::volumetricFogNearFadeInDistance, &Settings::volumetricFogExtinctionScale,
-			 &Settings::volumetricDepthDistributionScale, &Settings::vanillaFogPower }) {
-		historySettingsMatch &= frameSettings.*field == previousFogSettings.*field;
-	}
-	historySettingsMatch &= frameSettings.useVanillaFogSettings == previousFogSettings.useVanillaFogSettings;
-	if (!historySettingsMatch) {
+	if (lastPrepassFrame == UINT32_MAX || !CanReuseFogHistory(frameSettings, previousFogSettings)) {
 		hasLightScatteringHistory = false;
 	}
 	previousFogSettings = frameSettings;

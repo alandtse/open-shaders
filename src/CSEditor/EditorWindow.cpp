@@ -1151,11 +1151,13 @@ void EditorWindow::ShowViewportWindow()
 	ImGui::SetCursorScreenPos(imageRect.Min);
 	const ImVec2 imageSize = imageRect.GetSize();
 
-	if (tempTexture && tempTexture->srv) {
+	const auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	if (!hdrActive && tempTexture && tempTexture->srv) {
 		// Opaque draw: the preview SRV is a render target with non-1 alpha, which a plain
 		// ImGui::Image would show as a transparency mask (a cutout through the HMD in VR).
 		Util::Subrect::ImageOpaque(tempTexture->srv.get(), imageSize);
-	} else {
+	} else if (!hdrActive || !BackgroundBlur::ImageHDRScene(imageSize)) {
 		drawList->AddRectFilled(imageRect.Min, imageRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
 		ImGui::TextDisabled("%s", T(TKEY("viewport_unavailable"), "Viewport unavailable"));
 	}
@@ -1336,16 +1338,9 @@ void EditorWindow::RenderUI()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(T(TKEY("window"), "Window"))) {
-			const bool hdrActive = globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR;
-			if (hdrActive)
-				ImGui::BeginDisabled();
 			if (ImGui::Checkbox(T(TKEY("viewport"), "Viewport"), &settings.showViewport)) {
 				BackgroundBlur::SetCSEditorActive(settings.showViewport);
 				Save();
-			}
-			if (hdrActive) {
-				ImGui::EndDisabled();
-				Util::AddTooltip(T(TKEY("viewport_unavailable_hdr"), "Viewport is unavailable when HDR Display is enabled"), ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
 			}
 			if (ImGui::Checkbox(T(TKEY("palette"), "Palette"), &PaletteWindow::GetSingleton()->open)) {
 			}
@@ -1705,7 +1700,7 @@ void EditorWindow::SetupResources()
 
 bool EditorWindow::IsViewportActive() const
 {
-	return settings.showViewport && !(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR);
+	return settings.showViewport;
 }
 
 void EditorWindow::UpdateOpenState()
@@ -1732,19 +1727,13 @@ void EditorWindow::Draw()
 	if (open)
 		lightEditor.GatherLights();
 
-	// Keep background blur in sync when HDR toggles while the editor stays open
-	{
-		static bool prevViewportActive = false;
-		const bool viewportActive = IsViewportActive();
-		if (viewportActive != prevViewportActive) {
-			BackgroundBlur::SetCSEditorActive(viewportActive);
-			prevViewportActive = viewportActive;
-		}
-	}
-
-	if (!IsViewportActive()) {
+	auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	if (!IsViewportActive() || hdrActive) {
 		delete tempTexture;
 		tempTexture = nullptr;
+		if (IsViewportActive() && viewportWindowVisible && hdrActive)
+			hdr.SnapshotCleanScene();
 	} else if (viewportWindowVisible) {
 		auto renderer = globals::game::renderer;
 		if (renderer) {
@@ -1772,7 +1761,7 @@ void EditorWindow::Draw()
 						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 						framebuffer.SRV->GetDesc(Util::AsW32(&srvDesc));
 
-						tempTexture = new Texture2D(texDesc);
+						tempTexture = new Texture2D(texDesc, "CSEditor::Viewport");
 						tempTexture->CreateSRV(srvDesc);
 					}
 

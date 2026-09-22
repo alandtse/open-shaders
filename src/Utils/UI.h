@@ -1076,6 +1076,9 @@ namespace Util
 	 */
 	void DrawFeatureSearchBar(std::string& searchString, float availableWidth = 0.0f);
 
+	/** @brief Draws loaded feature controls with their own settings context inside another page. */
+	void DrawEmbeddedFeatureSettings(Feature& feature);
+
 	/**
 	 * Provides access to theme-aware UI colors for consistent styling.
 	 * These functions return colors from the active theme's StatusPalette,

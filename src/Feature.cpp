@@ -7,6 +7,7 @@
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #endif
@@ -253,6 +254,7 @@ namespace
 			&globals::features::dynamicCubemaps,
 			&globals::features::cloudShadows,
 			&globals::features::cloudRelight,
+			&globals::features::proceduralSun,
 			&globals::features::waterEffects,
 			&globals::features::performanceOverlay,
 			&globals::features::subsurfaceScattering,
@@ -332,19 +334,32 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 	}
 }
 
+namespace
+{
+	template <typename Predicate>
+	std::vector<Feature*> FilterFeatureList(Predicate&& a_wants)
+	{
+		std::vector<Feature*> v;
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (a_wants(feature))
+				v.push_back(feature);
+		}
+		return v;
+	}
+}
+
 const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 {
 	// Built once from the full feature list; VR developer mode's feature-list toggle (see
 	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
-	static const std::vector<Feature*> hookFeatures = [] {
-		std::vector<Feature*> v;
-		for (auto* feature : GetFeatureList()) {
-			if (feature->WantsRenderPassHook())
-				v.push_back(feature);
-		}
-		return v;
-	}();
+	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassHook(); });
 	return hookFeatures;
+}
+
+const std::vector<Feature*>& Feature::GetRenderPassSkipFeatures()
+{
+	static const std::vector<Feature*> skipFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassSkipHook(); });
+	return skipFeatures;
 }
 
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
@@ -440,7 +455,7 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 {
 	std::vector<std::string> names;
 	for (auto* feature : GetFeatureList()) {
-		if (feature->loaded && feature->IsInMenu())
+		if (feature->loaded)
 			names.push_back(feature->GetShortName());
 	}
 	std::sort(names.begin(), names.end());

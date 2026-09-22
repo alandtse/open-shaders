@@ -102,21 +102,6 @@ namespace ShadowCasterManager
 	// freeze the snapshot and let every light in it look permanently absent.
 	inline constexpr uint64_t kDemandStaleFrames = 8;
 
-	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array (Hook_StartGroupingAlphas'
-	// ceiling), a literal in the binary's own array constructor -- VR was built with twice the slots,
-	// a genuine runtime difference, not worth unifying away.
-	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
-	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
-
-	// Engine claims entries with LOCK XADD, so another worker can claim one between the guard's
-	// read and its own increment -- must exceed max concurrent threads, not just "some margin".
-	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
-
-	// High-water alpha GeometryGroup count since load, and refused-at-ceiling count.
-	// Peak well under capacity = no scene neared the array; any drop = one reached it.
-	extern std::atomic<uint32_t> s_alphaGroupPeak;
-	extern std::atomic<uint64_t> s_alphaGroupDrops;
-
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters
 	{
@@ -339,7 +324,6 @@ namespace ShadowCasterManager
 	// Contribution-culling diagnostics, defined in ShadowCasterClassifier.cpp;
 	// exchanged/read by ScheduleShadowCasters for Tracy plots and the snapshot.
 	extern std::atomic<uint32_t> s_casterCullCount;
-	extern std::atomic<uint32_t> s_cullPoolDropCount;
 	extern std::atomic<uint64_t> s_cullPoolDropTotal;
 	extern std::atomic<uint64_t> s_casterCullTotal;
 
@@ -366,8 +350,64 @@ namespace ShadowCasterManager
 		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	extern std::atomic<int> s_cullPassMode;
+
 	extern std::atomic<uint32_t> s_staticCasterDraws;
 	extern std::atomic<uint32_t> s_dynamicCasterDraws;
+
+	/// Thread running RenderLightGuarded's Render(), or 0; InShadowRenderWindow() is true only on that thread.
+	extern std::atomic<uint32_t> s_shadowRenderThreadId;
+	/// Guard skips during the current Render() call; non-zero means the light was not fully drawn.
+	extern std::atomic<uint32_t> s_passGuardTripsThisRender;
+	/// The light being rendered, for the guard's one-shot diagnostic log.
+	extern std::atomic<RE::BSShadowLight*> s_renderingLight;
+	extern std::atomic<uint64_t> s_passGuardChecksTotal;
+	extern std::atomic<uint64_t> s_passGuardCycleSkipsTotal;
+	extern std::atomic<uint64_t> s_passGuardFaultSkipsTotal;
+	extern std::atomic<uint64_t> s_passGuardCapExceededTotal;
+	extern std::atomic<uint64_t> s_passGuardCycleRepairsTotal;
+
+	/// Why RenderScheduledShadowLights returned without rendering. Lights accumulated that frame keep
+	/// their pass groups linked, so a later registration of a recycled pass can close a ring.
+	enum class RenderSkipReason : size_t
+	{
+		SessionReset,
+		PortalTransition,
+		TeardownWaiting,
+		TeardownRace,
+	};
+	inline constexpr size_t kRenderSkipReasonCount = 4;
+	static_assert(static_cast<size_t>(RenderSkipReason::TeardownRace) + 1 == kRenderSkipReasonCount);
+	extern std::atomic<uint64_t> s_renderSkipByReason[kRenderSkipReasonCount];
+	void NoteRenderSkipped(RenderSkipReason a_reason);
+
+	/// Lights accumulated in an earlier frame that were never rendered since.
+	extern std::atomic<uint64_t> s_staleAccumulateTotal;
+	/// Stale lights that were accumulated in a frame whose render exited early.
+	extern std::atomic<uint64_t> s_staleAfterRenderSkipTotal;
+	extern std::atomic<uint64_t> s_stalePassClearsTotal;
+	/// Frame and reason of the most recent early-exit render.
+	extern std::atomic<uint32_t> s_lastRenderSkipFrame;
+	extern std::atomic<size_t> s_lastRenderSkipReason;
+	/// Frame each light was last rendered by RenderLightGuarded (render thread only).
+	extern std::unordered_map<RE::BSShadowLight*, uint32_t> s_lightRenderFrame;
+
+	/// Subsets of the stale, repair and registration-ring counts that involved a promoted (normal->shadow) light.
+	extern std::atomic<uint64_t> s_stalePromotedTotal;
+	extern std::atomic<uint64_t> s_passGuardRepairsPromotedTotal;
+	extern std::atomic<uint64_t> s_passRegRingsPromotedTotal;
+	/// Registrations checked, and those whose pass closed a passGroupNext ring (counted only while the trace is enabled).
+	extern std::atomic<uint64_t> s_passRegChecksTotal;
+	extern std::atomic<uint64_t> s_passRegRingsTotal;
+	/// Hooks BSBatchRenderer::RegisterPass/RegisterPassSorted; inert until the trace is enabled.
+	void InstallPassRegistrationHooks();
+
+	/// Unlinks the pass groups a light's accumulators kept from an accumulate that was never rendered, so the
+	/// next accumulate does not register recycled passes into them. False if any renderer faulted while clearing.
+	bool ClearStaleAccumulatedPasses(RE::BSShadowLight* a_light);
+
+	/// Renders one shadow light with the pass-chain guard armed. False if the guard skipped any of its
+	/// passes, in which case the light is not fully drawn and must not be marked rendered.
+	bool RenderLightGuarded(RE::BSShadowLight* a_light, uint32_t& a_index);
 
 	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
 	extern std::uint64_t s_visitStaticHash;
@@ -527,9 +567,11 @@ namespace ShadowCasterManager
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
 	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
 
-	/// Radius and bias snapshot rasterized into a tile depth.
+	/// Sampling parameters belonging to the rendered tile depth.
 	struct ShadowBakeSnapshot
 	{
+		DirectX::XMFLOAT4X4 projection{};
+		DirectX::XMFLOAT4X4 inverseProjection{};
 		float radius = 0.0f;
 		float bias = 0.0f;
 	};
@@ -561,6 +603,10 @@ namespace ShadowCasterManager
 	/// Clears slot tile to far depth.
 	void ClearSlotTile(int32_t poolSlot);
 
+	/// Marks the sampled tile's content invalid so the scheduler redraws it. No-op while a
+	/// staged promotion exists, because the sampled tile is then not the one being rendered.
+	void InvalidateSlotTileContent(int32_t poolSlot);
+
 	// --- Static/dynamic split cache (parallel static depth atlas) ------------
 
 	/// True when parallel static-cache atlas resources are ready.
@@ -582,8 +628,14 @@ namespace ShadowCasterManager
 	/// the baked tile captured zero casters (a blank bake latched valid).
 	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut = nullptr);
 
+	/// True while a nonempty static bake awaits a completed live composite.
+	bool SlotStaticCompositePending(int32_t poolSlot);
+
 	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);
+
+	/// Drops one slot's static cache after a bake that did not complete, leaving its live tile and ownership.
+	void InvalidateSlotStaticBake(int32_t poolSlot);
 
 	/// Drops every occupied slot's static cache (not the live tile or ownership) --
 	/// cell-grid-shift response, see s_pendingCellReset.

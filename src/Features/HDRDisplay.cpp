@@ -1274,6 +1274,8 @@ void HDRDisplay::SnapshotCleanScene()
 {
 	if (!hdrTexture || !hdrTexture->resource)
 		return;
+	if (IsCleanSceneCaptureFresh())
+		return;
 
 	const D3D11_TEXTURE2D_DESC& sceneDesc = hdrTexture->desc;
 
@@ -1318,11 +1320,13 @@ void HDRDisplay::SnapshotCleanScene()
 
 	globals::d3d::context->CopyResource(cleanSceneCapture->resource.get(), hdrTexture->resource.get());
 	cleanSceneCaptureFrame = globals::state->frameCount;
+	cleanSceneCaptureGeneration = sceneGeneration;
 }
 
 bool HDRDisplay::IsCleanSceneCaptureFresh() const
 {
-	return cleanSceneCapture && cleanSceneCapture->srv && cleanSceneCaptureFrame == globals::state->frameCount;
+	return cleanSceneCapture && cleanSceneCapture->srv && cleanSceneCaptureFrame == globals::state->frameCount &&
+	       cleanSceneCaptureGeneration == sceneGeneration;
 }
 
 ID3D11Texture2D* HDRDisplay::ComposeCleanCapture(ID3D11ShaderResourceView* sceneSRV, bool sdrPreview)

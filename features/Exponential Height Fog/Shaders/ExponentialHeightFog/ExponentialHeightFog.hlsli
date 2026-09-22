@@ -187,7 +187,7 @@ namespace ExponentialHeightFog
 		}
 #endif
 
-		fogColor = fogInscatteringColor * (1.0f - expFogFactor);
+		fogColor = fogInscatteringColor;
 
 		float3 directionalInscattering = 0;
 
@@ -199,13 +199,13 @@ namespace ExponentialHeightFog
 			float cosTheta = dot(lightDirection, viewDirection);
 			float phase = HenyeyGreenstein(cosTheta, SharedData::exponentialHeightFogSettings.directionalInscatteringAnisotropy);
 			float3 directionalLightInscattering = GetDirectionalLightColor() * phase;
-			directionalInscattering = directionalLightInscattering * (1.0f - expFogFactor) * SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier;
+			directionalInscattering = directionalLightInscattering * SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier;
 			if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
 				directionalInscattering *= SharedData::exponentialHeightFogSettings.fogLightingInfluence;
 		}
 
 		fogColor += directionalInscattering;
-		float4 analyticalFog = float4(fogColor, 1.0f - expFogFactor);
+		float4 analyticalFog = float4(fogColor * (1.0f - expFogFactor), 1.0f - expFogFactor);
 		if (!applyVolumetricFog) {
 			return float4(analyticalFog.a > EPSILON_DIVISION ? analyticalFog.rgb / analyticalFog.a : 0.0f.xxx, analyticalFog.a);
 		}

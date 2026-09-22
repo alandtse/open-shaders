@@ -1,6 +1,8 @@
 #ifndef LIGHTING_COMMON_HLSLI
 #define LIGHTING_COMMON_HLSLI
 
+#include "Common/Math.hlsli"
+
 struct DirectContext
 {
 	float3 worldNormal;
@@ -111,6 +113,12 @@ namespace Foliage
 		static const float Wrap = 0.5f;
 		static const float ScatterRoughness = 0.6f;
 		static const float Pi = 3.14159265f;
+	}
+
+	float GetDirectionalShadowScale(float detailedShadow, float directionalCoverage)
+	{
+		// The lit cascade fallback must not contribute to foliage transmission.
+		return max(detailedShadow - (1.0 - directionalCoverage), 0.0) / max(detailedShadow, EPSILON_DIVISION);
 	}
 }
 

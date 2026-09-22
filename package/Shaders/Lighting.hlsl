@@ -2091,7 +2091,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif  // VANILLA_FRESNEL
 #	endif      // TRUE_PBR
 
-#	if defined(SKIN) && defined(CS_SKIN)
+#	if defined(SKIN) && defined(CS_SKIN) && !defined(TRUE_PBR)
 	const float ExtraRoughness = BRDF::F_Schlick(0.04, saturate(dot(worldNormal.xyz, viewDirection))).x * SharedData::skinData.fuzzParams.w;
 	material.Roughness = SharedData::skinData.skinParams.x;
 	material.Roughness = saturate(SharedData::skinData.skinParams.x - SharedData::skinData.skinParams.z * material.Glossiness);
@@ -2537,6 +2537,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 	float dirDetailedShadow = 1.0;
+#	if defined(TREE_ANIM) && defined(LIGHT_LIMIT_FIX) && defined(DEFERRED)
+	float foliageDirectionalShadowScale = 1.0;
+#	endif
 
 	float2 rotation;
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
@@ -2563,11 +2566,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if !defined(LOD)
 		// On non-deferred passes, use the cheaper VSM shadows if available
 #		if defined(LIGHT_LIMIT_FIX) && (defined(DEFERRED) || !defined(VOLUMETRIC_SHADOWS))
-#			if defined(DEFERRED) && defined(VOLUMETRIC_SHADOWS)
+#			if defined(DEFERRED) && (defined(VOLUMETRIC_SHADOWS) || defined(TREE_ANIM))
 		float llfDirectionalCoverage = 0.0;
 		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
 			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0,
 			llfDirectionalCoverage);
+#				if defined(TREE_ANIM)
+		foliageDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, llfDirectionalCoverage);
+#				endif
 #			else
 		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
 			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0);
@@ -2604,7 +2610,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
-	if (!SharedData::InInterior && dirLightAngle >= 0.0)
+	bool applyScreenSpaceShadow = dirLightAngle >= 0.0;
+#		if defined(TREE_ANIM)
+	applyScreenSpaceShadow = applyScreenSpaceShadow || SharedData::foliageLightingSettings.EnableFoliageScattering != 0;
+#		endif
+	if (!SharedData::InInterior && applyScreenSpaceShadow)
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.Position.xyz, screenUV, screenNoise, eyeIndex);
 #	endif  // SCREEN_SPACE_SHADOWS
 
@@ -2695,6 +2705,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(LOD_LAND_BLEND)
 	lodLandDiffuseColor += dirLightColor / Math::PI * saturate(dirLightAngle) * dirDetailedShadow;
 #		endif
+#	endif
+#	if defined(TREE_ANIM) && defined(LIGHT_LIMIT_FIX) && defined(DEFERRED)
+	dirLightOutput.transmission *= foliageDirectionalShadowScale;
 #	endif
 	transmissionColor += dirLightOutput.transmission;
 

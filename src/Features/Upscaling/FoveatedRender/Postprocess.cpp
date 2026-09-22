@@ -11,10 +11,7 @@ namespace FoveatedRenderImpl
 {
 	bool Postprocess::ApplyDlssSharpening(Upscaling& upscaling)
 	{
-		// sharpnessDLSS <= 0 is the single disable signal — sharpness lives on
-		// Upscaling::Settings so the route shares the global slider.
-		const float sharpnessSetting = upscaling.settings.sharpnessDLSS;
-		if (sharpnessSetting <= 0.0f) {
+		if (!upscaling.IsDlssSharpeningEnabled()) {
 			return true;
 		}
 
@@ -38,7 +35,7 @@ namespace FoveatedRenderImpl
 
 		// Same exponential mapping Upscaling::ApplySharpening uses: lower
 		// setting = stronger sharpen.
-		float currentSharpness = (-2.0f * sharpnessSetting) + 2.0f;
+		float currentSharpness = (-2.0f * upscaling.settings.sharpnessDLSS) + 2.0f;
 		currentSharpness = exp2(-currentSharpness);
 
 		// In-place RCAS on kMAIN through sharpenerTexture.

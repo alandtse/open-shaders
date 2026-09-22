@@ -2977,7 +2977,7 @@ namespace SceneSettingsUI
 
 			ImGui::TableSetColumnIndex(3);
 			ImGui::BeginDisabled(!state.activeContext || !manager->HasPendingFeatureSceneEdits());
-			const auto saveLabel = GetScenePickerLabel(T("menu.save_settings", "Save Settings"), manager->HasPendingFeatureSceneEdits() ? SceneSettingMarker::Settings : SceneSettingMarker::None) + "###FeatureSceneSave";
+			const auto saveLabel = GetScenePickerLabel(T("feature.scene_manager.action.save", "Save"), manager->HasPendingFeatureSceneEdits() ? SceneSettingMarker::Settings : SceneSettingMarker::None) + "###FeatureSceneSave";
 			if (ImGui::Button(saveLabel.c_str()))
 				state.saveFailed = !manager->StoreFeatureSceneEdit();
 			ImGui::EndDisabled();
@@ -2992,7 +2992,7 @@ namespace SceneSettingsUI
 			}
 			ImGui::TableSetColumnIndex(4);
 			ImGui::BeginDisabled(!state.hasSavedSettings || manager->HasPendingFeatureSceneEdits() || manager->AreFeatureSceneEditActionsLocked());
-			if (ImGui::Button(T("feature.scene_manager.copy.to", "Copy to")) && requestedContext) {
+			if (ImGui::Button(T("ui.copy", "Copy")) && requestedContext) {
 				state.copy.Reset();
 				state.copy.sourceLayer = EntrySource::User;
 				state.copySource = requestedContext;
@@ -3027,7 +3027,7 @@ namespace SceneSettingsUI
 			return false;
 		}
 		if (state.saveFailed && manager->HasPendingFeatureSceneEdits())
-			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save Settings again."));
+			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save again."));
 		if (manager->HasFeatureSceneEditOverwrites() || manager->AreFeatureSceneEditOverwritesPaused()) {
 			const bool paused = manager->AreFeatureSceneEditOverwritesPaused();
 			ImGui::TextColored(Util::Colors::GetError(), "%s", paused ? T("feature.scene_manager.edit.overwrites_paused", "Feature overwrites are temporarily paused") : T("feature.scene_manager.edit.overwritten_warning", "Feature settings are being overwritten"));

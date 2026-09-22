@@ -84,6 +84,20 @@ float4 PS_Layer(VS_OUTPUT input) : SV_TARGET
 	return SampleBicubic(input.TexCoord);
 }
 
+struct SceneOutput
+{
+	float4 ui: SV_TARGET0;
+	float4 scene: SV_TARGET1;
+};
+
+SceneOutput PS_Scene(VS_OUTPUT input)
+{
+	SceneOutput output;
+	output.ui = 0.0;
+	output.scene = float4(InputTexture.SampleLevel(LinearSampler, input.TexCoord, 0).rgb, 1.0);
+	return output;
+}
+
 // Clear shader entry point - outputs transparent black inside rounded rect only
 // Used to clear UI buffer (HUD) in the exact same shape as the blur
 float4 PS_Clear(VS_OUTPUT input) :

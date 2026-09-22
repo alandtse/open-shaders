@@ -70,7 +70,7 @@
         },
         {
             "name": "tracy",
-            "version-string": "0.14.1"
+            "version-string": "0.14.1-a6d16f55"
         },
         {
             "name": "directx-headers",

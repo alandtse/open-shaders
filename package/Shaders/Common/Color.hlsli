@@ -39,6 +39,8 @@ namespace Color
 	static const uint PointLightFlagOmnidirectionalBulb = POINT_LIGHT_FLAG_OMNIDIRECTIONAL;
 	static const uint PackedPointLightFlagVectorSize = 4;
 	static const uint MaxVanillaPointLightFlags = 8;
+	static const float MinAdjustedGamma = 0.1;
+	static const float MaxAdjustedGamma = 3.0;
 
 	// Copyright 2019 Google LLC.
 	// SPDX-License-Identifier: Apache-2.0
@@ -266,6 +268,15 @@ namespace Color
 		return ENABLE_LL ? DecodeAuthoredColor(color) : color;
 	}
 
+	float3 AdjustedAuthoredColor(float3 color, float gammaOffset)
+	{
+		if (ENABLE_LL || gammaOffset != 0.0) {
+			float gamma = (ENABLE_LL ? SharedData::linearLightingSettings.authoredColorGamma : 1.0) + gammaOffset;
+			color = SignedPow(color, clamp(gamma, MinAdjustedGamma, MaxAdjustedGamma));
+		}
+		return ENABLE_LL ? GamutTransform(color) : color;
+	}
+
 	float3 Diffuse(float3 color)
 	{
 #	if defined(EFFECTS11)
@@ -376,17 +387,25 @@ namespace Color
 #	if defined(LIGHTING)
 	float3 EmitColor(float3 color)
 	{
-		return ENABLE_LL ? DecodeAuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
+		color = ENABLE_LL ? DecodeAuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
+		return color * SharedData::csUtilitySettings.emitColorMult;
 	}
 #	endif
 
 	float3 Glowmap(float3 color)
 	{
 #	if defined(TRUE_PBR)
-		return ENABLE_LL ? GamutTransform(color) : LinearToSrgb(color);
+		color = ENABLE_LL ? GamutTransform(color) : LinearToSrgb(color);
 #	else
-		return AuthoredColor(color);
+		color = AuthoredColor(color);
 #	endif
+		return color * SharedData::csUtilitySettings.glowmapMult;
+	}
+
+	float EffectLightingMultiplier()
+	{
+		float multiplier = SharedData::csUtilitySettings.effectLightingMult;
+		return ENABLE_LL ? pow(abs(multiplier), 1.0 / SharedData::linearLightingSettings.authoredColorGamma) : multiplier;
 	}
 
 	float3 Ambient(float3 color)
@@ -398,11 +417,18 @@ namespace Color
 
 	float3 Fog(float3 color)
 	{
-		return AuthoredColor(color);
+		return AdjustedAuthoredColor(color, SharedData::csUtilitySettings.fogGammaOffset);
+	}
+
+	float FogAlpha(float alpha)
+	{
+		float gammaOffset = SharedData::csUtilitySettings.fogAlphaGammaOffset;
+		return gammaOffset == 0.0 ? alpha : pow(saturate(alpha), clamp(1.0 + gammaOffset, MinAdjustedGamma, MaxAdjustedGamma));
 	}
 
 	float3 BlendFog(float3 color, float3 fogColor, float fogFactor, float colorScale, float fogColorScale)
 	{
+		fogFactor = FogAlpha(fogFactor);
 		if (!ENABLE_LL)
 			return lerp(colorScale * color, fogColorScale * fogColor, fogFactor);
 
@@ -420,12 +446,21 @@ namespace Color
 
 	float3 Sky(float3 color)
 	{
-		return AuthoredColor(color);
+		return AdjustedAuthoredColor(color, SharedData::csUtilitySettings.skyGammaOffset);
 	}
 
 	float3 Water(float3 color)
 	{
-		return AuthoredColor(color);
+		return AdjustedAuthoredColor(color, SharedData::csUtilitySettings.waterGammaOffset);
+	}
+
+	float VolumetricLighting(float intensity)
+	{
+		float gammaOffset = SharedData::csUtilitySettings.vlGammaOffset;
+		if (gammaOffset == 0.0)
+			return ENABLE_LL ? AuthoredGammaToLinear(intensity.xxx).x : intensity;
+		float gamma = (ENABLE_LL ? SharedData::linearLightingSettings.authoredColorGamma : 1.0) + gammaOffset;
+		return sign(intensity) * pow(abs(intensity), clamp(gamma, MinAdjustedGamma, MaxAdjustedGamma));
 	}
 
 	float3 RadianceToLinear(float3 color)

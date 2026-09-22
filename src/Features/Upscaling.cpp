@@ -638,6 +638,12 @@ void Upscaling::DrawSettings()
 				"Pending restart: currently active method = %s (selected = %s).",
 				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
 		}
+
+		if (perfMode.IsDisplaySizeChanged()) {
+			Util::Text::RestartNeeded(
+				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
+				"per-app resolution slider). Restart to re-latch at the new size.");
+		}
 	}
 
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
@@ -3054,7 +3060,7 @@ void Upscaling::RunUnderwaterMaskRepair()
 
 void Upscaling::ApplySharpening()
 {
-	if (!settings.sharpnessEnabledDLSS || settings.sharpnessDLSS <= 0.0f)
+	if (!IsDlssSharpeningEnabled())
 		return;
 
 	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
@@ -3086,7 +3092,7 @@ void Upscaling::ApplySharpening()
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	if (settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f && main.UAV) {
+	if (IsDlssSharpeningEnabled() && main.UAV) {
 		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
 		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
 		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)

@@ -6,6 +6,7 @@ cbuffer BlurBuffer : register(b1)
 	float4 BlurTextureSize;  // xy = size, zw = inverse size
 	float4 WindowRect;
 	float4 WindowParams;  // x = corner radius, yz = screen size, w = fullscreen
+	float4 UIParams;
 };
 
 SamplerState LinearSampler : register(s0);

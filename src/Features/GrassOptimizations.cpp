@@ -649,7 +649,8 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 	ctx->CSSetShaderResources(0, 4, nullSRVs);
 	ID3D11ShaderResourceView* nullDeformationSRVs[11] = {};
 	ctx->CSSetShaderResources(100, ARRAYSIZE(nullDeformationSRVs), nullDeformationSRVs);
-	ID3D11Buffer* nullDeformationBuffers[4] = {};
+	// Shared b5/b6 must stay bound for subsequent compute passes.
+	ID3D11Buffer* nullDeformationBuffers[2] = {};
 	ctx->CSSetConstantBuffers(3, ARRAYSIZE(nullDeformationBuffers), nullDeformationBuffers);
 	ID3D11SamplerState* nullDeformationSamplers[2] = {};
 	ctx->CSSetSamplers(14, ARRAYSIZE(nullDeformationSamplers), nullDeformationSamplers);

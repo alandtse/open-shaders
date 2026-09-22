@@ -114,7 +114,7 @@ void State::BindVertexPermutationData(const RE::BSShader* a_shader)
 
 	const auto shaderType = a_shader->shaderType.get();
 	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
-		shaderType != RE::BSShader::Type::Grass)
+		shaderType != RE::BSShader::Type::Grass && shaderType != RE::BSShader::Type::Sky)
 		return;
 
 	ID3D11Buffer* buffers[] = {
