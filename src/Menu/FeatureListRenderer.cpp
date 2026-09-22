@@ -19,6 +19,7 @@
 #include "Features/CSUtility.h"
 #include "Features/FeatureOverwrites.h"
 #include "Features/SceneManagerUI.h"
+#include "Features/Upscaling.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -588,6 +589,15 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		menuList.push_back(CategoryHeader{ "Favorites", static_cast<int>(favoriteCount) });
 		std::ranges::copy(favorites, std::back_inserter(menuList));
 	}
+
+	// Keep the neural-rendering controls discoverable as a dedicated page near
+	// the regular feature list.  The current upstream menu groups all loaded
+	// non-utility features under one header, so this is the stable equivalent
+	// of placing the page immediately above Upscaling in the older category UI.
+	menuList.push_back(BuiltInMenu{
+		T("menu.features.dlssnr", "DLSS 5 NR"),
+		"DLSSNR",
+		[]() { globals::features::upscaling.DrawDLSSNRPage(); } });
 
 	const auto featureCount = std::ranges::count_if(sortedFeatureList, [&isFavorite](Feature* feat) {
 		return feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat);

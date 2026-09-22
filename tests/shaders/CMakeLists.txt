@@ -22,7 +22,14 @@ FetchContent_Declare(
     GIT_CONFIG core.longpaths=true  # Enable long path support for Windows
 )
 
-FetchContent_MakeAvailable(ShaderTestFramework)
+# The project maps Debug imports to Release for single-configuration plugin
+# dependencies. ShaderTestFramework declares config-less DXC/WINPIX imports;
+# keep that mapping out of its subdirectory so CMake 4.2 can use those imports
+# for the multi-config shader test target.
+block(SCOPE_FOR VARIABLES)
+    set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG "")
+    FetchContent_MakeAvailable(ShaderTestFramework)
+endblock()
 
 # Get the ShaderTestFramework source directory to access its CMake utilities
 FetchContent_GetProperties(ShaderTestFramework SOURCE_DIR STF_SOURCE_DIR)

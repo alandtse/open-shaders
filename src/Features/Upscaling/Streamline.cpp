@@ -183,6 +183,11 @@ void Streamline::LoadInterposer()
 		reflexSupportedOnCurrentAdapter = false;
 		reflexOptionsCache = {};
 		lastReflexSleepFrame = UINT32_MAX;
+		constantsFrames = { UINT32_MAX, UINT32_MAX };
+		constantsFoveated = {};
+		lastDLSSFailureFrame = UINT32_MAX;
+		lastVRAMPressureFrame = UINT32_MAX;
+		lastDLSSErrorLogFrame = UINT32_MAX;
 		logger::info("[Streamline {}] Successfully initialized Streamline", instanceTag);
 	}
 }
@@ -430,6 +435,12 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 
 	if (!EnsureFrameToken())
 		return false;
+	const auto frame = globals::state->frameCount;
+	const auto index = globals::game::isVR ? eyeIndex : 0u;
+	if (index >= constantsFrames.size())
+		return false;
+	if (constantsFrames[index] == frame)
+		return constantsFoveated[index] == FoveatedRenderImpl::Bridge::foveatedEvaluating;
 
 	// In VR, we need to set constants for each viewport/eye separately
 	// In non-VR, this is called once per frame
@@ -479,9 +490,10 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
-	// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
-	slConstants.reset = (state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid) ?
+	// Static menu backdrops render no reliable motion vectors; camera-derived MVs
+	// restore valid reprojection there. Reset only when that fill could not run —
+	// accumulating against zero MVs ghosts.
+	slConstants.reset = (state->IsStaticMenuBackdropOpen(globals::game::ui) && !upscaling.menuCameraMVsValid) ?
 	                        sl::Boolean::eTrue :
 	                        sl::Boolean::eFalse;
 
@@ -500,9 +512,16 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.motionVectorsJittered = sl::Boolean::eFalse;
 
 	if (SL_FAILED(res, slSetConstants(slConstants, *frameToken, p_viewport))) {
-		logger::error("[Streamline {}] Could not set constants for eye {}", instanceTag, eyeIndex);
+		if (lastDLSSErrorLogFrame == UINT32_MAX || frame - lastDLSSErrorLogFrame >= 300) {
+			logger::error("[Streamline {}] Could not set constants for eye {} frame={} result={} ({})",
+				instanceTag, eyeIndex, frame, static_cast<int>(res), magic_enum::enum_name(res));
+			lastDLSSErrorLogFrame = frame;
+		}
+		lastDLSSFailureFrame = frame;
 		return false;
 	}
+	constantsFrames[index] = frame;
+	constantsFoveated[index] = FoveatedRenderImpl::Bridge::foveatedEvaluating;
 
 	return true;
 }
@@ -704,17 +723,31 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
+	const auto frame = globals::state->frameCount;
+	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+		if (!IsVRAMPressure())
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded frame={}; reducing adaptive workload", instanceTag, frame);
+		lastVRAMPressureFrame = frame;
+		return true;
+	}
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline {}] slEvaluateFeature failed{} result={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
+		lastDLSSFailureFrame = frame;
+		if (lastDLSSErrorLogFrame == UINT32_MAX || frame - lastDLSSErrorLogFrame >= 300) {
+			lastDLSSErrorLogFrame = frame;
+			logger::error("[Streamline {}] slEvaluateFeature failed eye={} frame={} result={} ({})", instanceTag,
+				eyeIndex, frame, static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
 		}
 		return false;
 	}
 
 	return true;
+}
+
+bool Streamline::IsVRAMPressure() const
+{
+	return globals::state && lastVRAMPressureFrame != UINT32_MAX &&
+	       globals::state->frameCount >= lastVRAMPressureFrame &&
+	       globals::state->frameCount - lastVRAMPressureFrame < 120;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)

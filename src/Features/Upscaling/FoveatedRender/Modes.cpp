@@ -51,7 +51,11 @@ namespace FoveatedRenderImpl
 		ID3D11Resource* upscalingTexture, ID3D11Resource* depthTexture,
 		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11Resource* motionVectors)
 	{
+		const auto frame = globals::state ? globals::state->frameCount : 0;
+		globals::features::upscaling.foveatedRender.UpdateAdaptiveState(frame, true);
 		auto p = VRDlssParams::Resolve(upscalingTexture, depthTexture, reactiveMask, transparencyMask, motionVectors);
+		Core::vrAdaptiveCropDepthSource = p.depthTexture;
+		Core::vrAdaptiveCropMotionSource = p.motionVectors;
 
 		// Detect UV/mode change → destroy DLSS resources so SL recreates them at
 		// the new size. Both eye UVs feed the hash; asymmetric presets (e.g.
@@ -60,6 +64,8 @@ namespace FoveatedRenderImpl
 		if (uvHash != Core::activeSubrectUVHash) {
 			logger::info("[FOVEATED] Subrect UV or mode changed, recreating DLSS resources");
 			streamline.DestroyDLSSResources();
+			Core::InvalidateTemporalState();
+			logger::debug("[FOVEATED] Temporal state invalidated after subrect/mode change; waiting for fresh per-eye guides");
 			Core::activeSubrectUVHash = uvHash;
 		}
 
@@ -103,7 +109,10 @@ namespace FoveatedRenderImpl
 				}
 			}
 
-			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
+			const bool finalized = FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
+			if (finalized)
+				Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
+			return finalized;
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
@@ -153,7 +162,11 @@ namespace FoveatedRenderImpl
 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
 
 			context->CopySubresourceRegion(Core::vrSubrectColorIn[i]->resource.get(), 0, 0, 0, 0, Core::vrRenderSBS->resource.get(), 0, &sbsCrop);
-			context->CopySubresourceRegion(Core::vrSubrectDepth[i]->resource.get(), 0, 0, 0, 0, p.depthTexture, 0, &sbsCrop);
+			if (!CopyDepthRegionToTexture(p.depthTexture, nullptr, Core::vrSubrectDepth[i]->uav.get(),
+					sbsX, cropY, subInW, subInH)) {
+				logger::error("[FOVEATED] Failed to convert native depth for subrect eye {}", i);
+				return false;
+			}
 			context->CopySubresourceRegion(Core::vrSubrectMotionVectors[i]->resource.get(), 0, 0, 0, 0, p.motionVectors, 0, &sbsCrop);
 			if (p.reactiveMask)
 				context->CopySubresourceRegion(Core::vrSubrectReactiveMask[i]->resource.get(), 0, 0, 0, 0, p.reactiveMask, 0, &sbsCrop);
@@ -171,6 +184,7 @@ namespace FoveatedRenderImpl
 				return false;
 			}
 		}
+		Core::neuralGuidesFrame = globals::state ? globals::state->frameCount : UINT32_MAX;
 
 		// Write DLSS output back at subrect position (with optional blend)
 		for (uint32_t i = 0; i < 2; ++i) {

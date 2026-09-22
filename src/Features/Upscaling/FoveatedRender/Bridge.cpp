@@ -31,7 +31,7 @@ void FoveatedRenderImpl::Bridge::ComputeMvecScale(uint32_t eyeIndex, float& outX
 	// Stereo Subrect: GetUV() == left-eye, GetRightEyeUV() == right-eye. Asymmetric
 	// presets (e.g. Nasal Convergence) size the two eyes differently, so the scale must
 	// be computed per-eye rather than always reading the left eye's UV.
-	const auto& uv = (eyeIndex == 1) ? enhancer.subrectController.GetRightEyeUV() : enhancer.subrectController.GetUV();
+	const auto uv = (eyeIndex == 1) ? enhancer.GetEffectiveRightUV() : enhancer.GetEffectiveLeftUV();
 	const bool isFullEye = uv.IsFullEye();
 
 	if (isFullEye)

@@ -3,6 +3,7 @@
 #include "../../Buffer.h"
 #include "../../State.h"
 
+#include <array>
 #include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
@@ -96,6 +97,13 @@ public:
 
 	Util::FrameChecker frameChecker;
 	sl::FrameToken* frameToken = nullptr;
+	std::array<uint32_t, 2> constantsFrames{ UINT32_MAX, UINT32_MAX };
+	std::array<bool, 2> constantsFoveated{};
+	uint32_t lastDLSSFailureFrame = UINT32_MAX;
+	uint32_t lastVRAMPressureFrame = UINT32_MAX;
+	uint32_t lastDLSSErrorLogFrame = UINT32_MAX;
+	/** @brief Reports a recent successful DLSS evaluation that exceeded the VRAM budget. */
+	bool IsVRAMPressure() const;
 
 	struct ReflexOptionsCache
 	{

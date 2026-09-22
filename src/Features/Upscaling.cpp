@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "RE/C/Console.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -13,6 +14,7 @@
 #include "Upscaling/FoveatedRender/Core.h"
 #include "Upscaling/FoveatedRender/Postprocess.h"
 #include "Upscaling/FoveatedRender/Preprocess.h"
+#include "Upscaling/NeuralRendering/Integration.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/DevBenchUx.h"
@@ -338,9 +340,151 @@ void Upscaling::DrawPerfModeToggle()
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScale);
 }
 
+Upscaling::UpscaleMethod Upscaling::DrawUpscaleMethodControl()
+{
+	ApplyOpenCompositeUpscalingBlocker();
+	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
+	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
+
+	std::vector<std::string> upscaleModes = {
+		T(TKEY("method_none"), "None"),
+		T(TKEY("method_taa"), "TAA"),
+		"AMD FSR 3.1",
+		"NVIDIA DLSS"
+	};
+	const bool featureDLSS = streamline.featureDLSS;
+	const uint32_t availableModes = featureDLSS ? 3u : 2u;
+	uint32_t* currentUpscaleMode = featureDLSS ? &settings.upscaleMethod : &settings.upscaleMethodNoDLSS;
+	std::vector<const char*> modeLabels;
+	for (uint32_t i = 0; i <= availableModes; ++i)
+		modeLabels.push_back(upscaleModes[i].c_str());
+
+	if (openCompositeBlocksUpscaling)
+		ImGui::BeginDisabled();
+	ImGui::Combo(T(TKEY("method"), "Method"), reinterpret_cast<int*>(currentUpscaleMode), modeLabels.data(), static_cast<int>(modeLabels.size()));
+	if (openCompositeBlocksUpscaling)
+		ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		if (openCompositeBlocksUpscaling)
+			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
+		else
+			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend."));
+	}
+	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
+
+	if (openCompositeBlocksUpscaling) {
+		if (openCompositeBlocker.configPath.empty())
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true.",
+				openCompositeBlocker.settingName.c_str());
+		else
+			Util::Text::WrappedWarning(
+				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
+				openCompositeBlocker.settingName.c_str(),
+				openCompositeBlocker.configPath.c_str());
+	}
+
+	const auto upscaleMethod = GetUpscaleMethod();
+	if (perfMode.IsHookActive()) {
+		ImGui::TextWrapped("%s", T(TKEY("perfmode_active_note"),
+									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
+									 "Sharpness / model preset / Reflex remain live."));
+
+		if (currentUpscaleMode == &settings.upscaleMethod &&
+			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
+			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
+			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
+			Util::Text::RestartNeeded(
+				"Pending restart: currently active method = %s (selected = %s).",
+				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
+		}
+
+		if (perfMode.IsDisplaySizeChanged()) {
+			Util::Text::RestartNeeded(
+				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
+				"per-app resolution slider). Restart to re-latch at the new size.");
+		}
+	}
+
+	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically).
+	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
+		auto screenSize = globals::state->screenSize;
+		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
+			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
+				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
+			Util::Text::Warning("%s", T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
+		}
+	}
+
+	return upscaleMethod;
+}
+
+void Upscaling::DrawDLSSNRSharedControls()
+{
+	// These are the same settings used by the main Upscaling page. They are
+	// intentionally rendered here as a second entry point so a user can tune
+	// the complete DLSS 5 NR route without navigating between pages.
+	ImGui::PushID("DLSS5NRSharedUpscaling");
+	const auto upscaleMethod = DrawUpscaleMethodControl();
+	if (upscaleMethod == UpscaleMethod::kDLSS) {
+		const char* baseLabel = GetQualityModeName(settings.qualityMode);
+		if (baseLabel) {
+			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
+			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
+			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), reinterpret_cast<int*>(&settings.qualityMode), 0, 4, labelWithScale.c_str());
+			if (perfMode.IsExplicitScaleLatched()) {
+				Util::Text::Disabled(T(TKEY("upscale_preset_ignored_render_scale"),
+					"The Upscale Preset is ignored while VR Render Scale is set. Move it back to Auto to use the preset again (restart required)."));
+			} else if (perfMode.IsHookActive() && bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
+				const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::qualityMode), 0u, 4u);
+				Util::Text::RestartNeeded(
+					"Pending restart: currently active = %s ( %.2fx ). Change applies after game restart.",
+					GetQualityModeName(boot), 1.0f / GetQualityModeRatio(boot));
+			}
+		}
+
+		ImGui::Checkbox(T(TKEY("enable_sharpening"), "Enable Sharpening"), &settings.sharpnessEnabledDLSS);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("enable_sharpening_tooltip"), "Applies RCAS sharpening to the DLSS output. Off by default; DLSS already resolves a sharp image."));
+		if (settings.sharpnessEnabledDLSS)
+			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessDLSS, 0.0f, 1.0f, "%.1f");
+
+		const char* presets[] = {
+			T(TKEY("dlss_model_preset_default"), "Default"),
+			T(TKEY("dlss_model_preset_j"), "Preset J"),
+			T(TKEY("dlss_model_preset_k"), "Preset K"),
+			T(TKEY("dlss_model_preset_l"), "Preset L"),
+			T(TKEY("dlss_model_preset_m"), "Preset M")
+		};
+		ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), reinterpret_cast<int*>(&settings.presetDLSS), presets, IM_ARRAYSIZE(presets));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("dlss_model_preset_tooltip"),
+				"Choose the DLSS AI model preset. Default lets the NVIDIA runtime choose; an explicit preset overrides every upscale mode."));
+
+		const char* logLevels[] = {
+			T(TKEY("streamline_log_level_off"), "Off"),
+			T(TKEY("streamline_log_level_default"), "Default"),
+			T(TKEY("streamline_log_level_verbose"), "Verbose")
+		};
+		int logLevel = static_cast<int>(std::min(settings.streamlineLogLevel, 2u));
+		if (ImGui::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &logLevel, logLevels, IM_ARRAYSIZE(logLevels)))
+			settings.streamlineLogLevel = static_cast<uint>(logLevel);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
+			T(TKEY("streamline_logging_tooltip"), "Controls NVIDIA Streamline logging for DLSS and DLSS-G. Verbose output is useful when diagnosing a failed NR route."));
+
+		if (globals::game::isVR)
+			DrawPerfModeToggle();
+	} else {
+		Util::Text::WrappedWarning(T(TKEY("dlssnr_requires_dlss"),
+			"DLSS 5 NR is inactive because NVIDIA DLSS is not the selected upscaler. Select NVIDIA DLSS above, then enable the NR route below."));
+	}
+	ImGui::PopID();
+}
+
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
-// for discoverability; the body knobs are collapsed by default and greyed until opted in.
-void Upscaling::DrawFoveationControls(bool showTuning)
+// for discoverability; the dedicated DLSS 5 NR page can keep the full tuning body open
+// so first-time VR users see the primary coverage controls immediately.
+void Upscaling::DrawFoveationControls(bool showTuning, bool showSharedPanelNote, bool tuningDefaultOpen)
 {
 	ImGui::Separator();
 	foveatedRender.DrawEnable();
@@ -350,12 +494,46 @@ void Upscaling::DrawFoveationControls(bool showTuning)
 	const bool enabled = foveatedRender.settings.enabled != 0;
 	if (!enabled)
 		ImGui::BeginDisabled();
-	if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated Upscaling Tuning"))) {
-		foveatedRender.DrawSettings();
+	const ImGuiTreeNodeFlags tuningFlags = tuningDefaultOpen ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+	if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated Rendering Controls"), tuningFlags)) {
+		// Keep the Neural Rendering section at the top of the shared panel. The
+		// dedicated page controls whether the foveated container starts expanded.
+		foveatedRender.DrawSettings(showSharedPanelNote, false);
 		ImGui::TreePop();
 	}
 	if (!enabled)
 		ImGui::EndDisabled();
+}
+
+void Upscaling::DrawDLSSNRPage()
+{
+	ImGui::PushID("DLSS5NRPage");
+	ImGui::TextUnformatted(T("menu.dlssnr.title", "DLSS 5 NR"));
+	ImGui::TextWrapped("%s", T("menu.dlssnr.description",
+								 "Dedicated controls for DLSS 5 Neural Rendering, foveated coverage, and the oval edge blend. Shared Upscaling values below write to the same settings used by the Upscaling page."));
+	Util::Text::WrappedInfo(T("menu.dlssnr.route_info",
+		"Recommended VR route: NVIDIA DLSS + PerfMode active + Foveated Default mode. Foveated Rendering is the primary VR control: enable it first, choose your coverage preset, then tune DLSS 5 NR below. Settings that show a restart marker are staged until the next game launch."));
+	if (globals::game::isVR) {
+		ImGui::TextUnformatted(T("menu.dlssnr.foveation_header", "Foveated Rendering"));
+		ImGui::TextWrapped("%s", T("menu.dlssnr.foveation_description",
+									 "Start here for VR. Enable the foveated route, then choose the Nasal Convergence 70% oval preset or adjust the region, periphery fill, edge blend, and falloff. The full panel is opened by default so the primary coverage controls are visible."));
+		Util::Text::WrappedInfo(T("menu.dlssnr.foveation_recommended",
+			"Recommended first install: Enable Foveated Rendering, use Nasal Convergence 70%, keep Edge Shape on Oval, and start with Feather blending. DLSS 5 NR controls and shared upscaler settings are below."));
+		DrawFoveationControls(true, false, true);
+		ImGui::Separator();
+		ImGui::TextUnformatted(T("menu.dlssnr.shared_header", "DLSS and Upscaling"));
+		ImGui::TextWrapped("%s", T("menu.dlssnr.shared_description",
+									 "These shared controls are also available on the Upscaling page. They affect the same active runtime settings."));
+		DrawDLSSNRSharedControls();
+	} else {
+		DrawDLSSNRSharedControls();
+		ImGui::Separator();
+		ImGui::TextUnformatted(T("menu.dlssnr.neural_header", "DLSS Neural Rendering"));
+		ImGui::TextWrapped("%s", T("menu.dlssnr.flat_description",
+									 "Flat mode exposes the same Feature 18 tuning without the VR-only crop and periphery controls."));
+		foveatedRender.DrawSettings(false);
+	}
+	ImGui::PopID();
 }
 
 // Narrower than the feature name: the hub section only covers the VR perf knobs.
@@ -550,111 +728,16 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
+	FEATURE_COMMAND("applyNeuralRenderingPreset",
+		"Apply a DLSS 5 Neural Rendering tuning preset from the dedicated DLSS 5 NR page. Params: name (string): Default, Balanced, Fabric Detail, Natural, Strong, or Custom.",
+		[](Feature*, const json& args) {
+			foveatedRender.ApplyNeuralRenderingPreset(args.value("name", std::string("Default")));
+		});
 }
 
 void Upscaling::DrawSettings()
 {
-	// Force method to None up front so the picker reflects the locked state.
-	ApplyOpenCompositeUpscalingBlocker();
-	const auto& openCompositeBlocker = GetOpenCompositeUpscalingBlocker();
-	const bool openCompositeBlocksUpscaling = openCompositeBlocker.active;
-
-	// Display upscaling options in the UI
-	std::vector<std::string> upscaleModes = {
-		T(TKEY("method_none"), "None"),
-		T(TKEY("method_taa"), "TAA")
-	};
-
-	std::string fsrLabel = "AMD FSR 3.1";
-	upscaleModes.push_back(fsrLabel);
-
-	std::string dlssLabel = "NVIDIA DLSS";
-	upscaleModes.push_back(dlssLabel);
-
-	// Determine available modes
-	bool featureDLSS = streamline.featureDLSS;
-	bool featureFSR = true;  // FSR is always available
-
-	uint32_t* currentUpscaleMode = &settings.upscaleMethod;
-	uint32_t availableModes = 1;  // Start with TAA
-	if (featureFSR)
-		availableModes = 2;  // Add FSR
-	if (featureDLSS)
-		availableModes = 3;  // Add DLSS if available
-	else
-		currentUpscaleMode = &settings.upscaleMethodNoDLSS;
-
-	// Dropdown for method selection
-	std::vector<const char*> modeLabels;
-	for (uint32_t i = 0; i <= availableModes; ++i)
-		modeLabels.push_back(upscaleModes[i].c_str());
-	if (openCompositeBlocksUpscaling)
-		ImGui::BeginDisabled();
-	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
-	if (openCompositeBlocksUpscaling)
-		ImGui::EndDisabled();
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		if (openCompositeBlocksUpscaling)
-			ImGui::Text(T(TKEY("method_locked_opencomposite"), "Locked to None while OpenComposite has %s=true."), openCompositeBlocker.settingName.c_str());
-		else
-			ImGui::TextUnformatted(T(TKEY("method_tooltip"), "Selects the upscaling backend."));
-	}
-
-	*currentUpscaleMode = std::min(availableModes, *currentUpscaleMode);
-
-	if (openCompositeBlocksUpscaling) {
-		if (openCompositeBlocker.configPath.empty())
-			Util::Text::WrappedWarning(
-				"Upscaling is locked to None because OpenComposite has %s=true.",
-				openCompositeBlocker.settingName.c_str());
-		else
-			Util::Text::WrappedWarning(
-				"Upscaling is locked to None because OpenComposite has %s=true in %s.",
-				openCompositeBlocker.settingName.c_str(),
-				openCompositeBlocker.configPath.c_str());
-	}
-
-	// Check the current upscale method
-	auto upscaleMethod = GetUpscaleMethod();
-
-	// PerfMode: BSOpenVR size hook + RT::Create run once at world load, so
-	// runtime reads of method/qualityMode route through the boot snapshot.
-	// The always-present explanation is plain text — only the staged-change
-	// diff uses the RestartNeeded color so users learn the cue means "you
-	// changed something that won't apply yet."
-	if (perfMode.IsHookActive()) {
-		ImGui::TextWrapped("%s", T(TKEY("perfmode_active_note"),
-									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
-									 "Sharpness / model preset / Reflex remain live."));
-
-		// Method pending-diff. Only fires when the user is editing the DLSS-
-		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
-		// that's the one the boot snapshot locked.
-		if (currentUpscaleMode == &settings.upscaleMethod &&
-			bootSnapshot.HasPendingChange(settings, &Settings::upscaleMethod)) {
-			const uint live = std::clamp<uint>(settings.upscaleMethod, 0u, availableModes);
-			const uint boot = std::clamp<uint>(bootSnapshot.Boot(&Settings::upscaleMethod), 0u, availableModes);
-			Util::Text::RestartNeeded(
-				"Pending restart: currently active method = %s (selected = %s).",
-				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
-		}
-
-		if (perfMode.IsDisplaySizeChanged()) {
-			Util::Text::RestartNeeded(
-				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
-				"per-app resolution slider). Restart to re-latch at the new size.");
-		}
-	}
-
-	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
-	if (!globals::game::isVR && upscaleMethod == UpscaleMethod::kDLSS) {
-		auto screenSize = globals::state->screenSize;
-		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
-			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
-				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
-			Util::Text::Warning("%s", T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
-		}
-	}
+	const auto upscaleMethod = DrawUpscaleMethodControl();
 
 	// Display upscaling settings if applicable
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
@@ -908,10 +991,10 @@ void Upscaling::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	// Foveated DLSS lives here rather than as a peer Feature so all DLSS surfaces share
-	// one settings panel; also mirrored in the Performance hub.
-	if (globals::game::isVR)
-		DrawFoveationControls();
+	// Foveated and neural controls live on the dedicated page beside Upscaling.
+	// Keep this handoff visible here so existing users can find the new surface.
+	if (globals::game::isVR || upscaleMethod == UpscaleMethod::kDLSS)
+		Util::Text::WrappedInfo(T("menu.dlssnr.open_dedicated", "DLSS 5 NR controls are available on the dedicated DLSS 5 NR page beside Upscaling."));
 
 	if (ImGui::TreeNodeEx(T(TKEY("backend_diagnostics"), "Backend Diagnostics"))) {
 		// Streamline log level selection
@@ -1165,11 +1248,26 @@ void Upscaling::DataLoaded()
 		MenuOpenCloseEventHandler::Register();
 }
 
+void Upscaling::OnSceneTransitionReset(bool opening)
+{
+	// Loading screens do not provide meaningful world motion vectors for the
+	// screen-space backdrop. Drop both the Feature 18 history and the guide-frame
+	// latch so stale temporal data cannot bleed into the first resumed frame.
+	FoveatedRenderImpl::Core::neuralGuidesFrame = UINT32_MAX;
+	NeuralRendering::ResetHistory();
+	logger::debug("[Upscaling] DLSSNR temporal history reset on LoadingMenu {}", opening ? "open" : "close");
+}
+
 RE::BSEventNotifyControl Upscaling::MenuOpenCloseEventHandler::ProcessEvent(
 	const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
 {
-	if (a_event && a_event->menuName == RE::LoadingMenu::MENU_NAME && !a_event->opening)
-		globals::features::upscaling.pendingDLSSReset.store(true, std::memory_order_relaxed);
+	if (a_event && a_event->menuName == RE::LoadingMenu::MENU_NAME) {
+		if (!a_event->opening)
+			globals::features::upscaling.pendingDLSSReset.store(true, std::memory_order_relaxed);
+		NeuralRendering::RequestHistoryReset();
+	} else if (a_event && a_event->menuName == RE::Console::MENU_NAME) {
+		NeuralRendering::RequestHistoryReset();
+	}
 	return RE::BSEventNotifyControl::kContinue;
 }
 
@@ -2602,6 +2700,7 @@ void Upscaling::FillMenuCameraMotionVectors()
 
 void Upscaling::Upscale()
 {
+	NeuralRendering::UpdateFrameState();
 	ZoneScoped;
 	auto upscaleMethod = GetUpscaleMethod();
 
@@ -2613,10 +2712,10 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// Camera-only synthesized MVs are only valid for a static flat menu background.
-	// Loading screens and any real scene rendered behind a menu (VR Playroom) have
-	// their own motion the camera-derived MVs can't represent, so keep the reset.
-	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen && !globals::state->worldRenderedThisFrame)
+	// Static menu backdrops (including map/stats) have no reliable engine motion
+	// vector stream. Synthesize camera-derived MVs so DLSS can reproject while the
+	// headset moves. A live VR Playroom/world backdrop keeps its real vectors.
+	if (globals::state->IsStaticMenuBackdropOpen(globals::game::ui))
 		FillMenuCameraMotionVectors();
 	else
 		menuCameraMVsValid = false;
@@ -2696,7 +2795,8 @@ void Upscaling::Upscale()
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
 			auto* ui = globals::game::ui;
 			auto* st = globals::state;
-			const bool menuOpen = st && st->IsPausedOrMenuOpen(ui);
+			const bool consoleOpen = ui && ui->IsMenuOpen(RE::Console::MENU_NAME);
+			const bool menuOpen = consoleOpen || (st && st->IsPausedOrMenuOpen(ui));
 			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
@@ -3138,6 +3238,12 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		postProcessing.DrawBeforeUpscaling();
 	}
 
+	// Optional DLSSNR experiment: this is the last safe point before the normal
+	// DLSS/FSR dispatch. It mutates the native render image only when the user
+	// explicitly enabled pre-upscale NR; failures leave the standard upscaler
+	// untouched and the existing post-upscale NR route remains available.
+	NeuralRendering::ApplyPreUpscale();
+
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 
@@ -3201,6 +3307,11 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	// Restore kFRAMEBUFFER after ISHDR — hdrTexture now has the HDR scene
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
+
+	// Flat SDR reaches its final tonemapped scene in kFRAMEBUFFER when the
+	// engine Post chain returns. Run NR here, before DrawInterfaceStart adds UI.
+	if (!globals::game::isVR)
+		NeuralRendering::ApplyFoveatedLdr();
 
 	Util::SetTemporal(false);
 }

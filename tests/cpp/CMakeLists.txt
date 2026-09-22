@@ -4,7 +4,7 @@
 # ShaderTestFramework). Add test sources here for any plugin code that
 # doesn't require a live DirectX device or ImGui context.
 
-cmake_minimum_required(VERSION 4.2)
+cmake_minimum_required(VERSION 3.31)
 
 option(BUILD_CPP_TESTS "Build C++ unit tests for plugin utilities" ON)
 
@@ -71,6 +71,8 @@ add_executable(cpp_tests
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
 	test_effectsourcecompatibility.cpp
+	test_adaptive_crop_controller.cpp
+	test_adaptive_nr_controller.cpp
 	test_versiongate.cpp
 	test_presetinclude.cpp
 	test_windfield.cpp
@@ -89,6 +91,8 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Upscaling/NeuralRendering/AdaptiveCropController.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Upscaling/NeuralRendering/AdaptiveController.cpp"
 )
 
 # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the

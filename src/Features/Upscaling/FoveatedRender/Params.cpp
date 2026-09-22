@@ -55,9 +55,11 @@ namespace FoveatedRenderImpl
 		// UV (= left-eye in stereo mode); GetRightEyeUV() returns the
 		// mirrored right-eye UV.
 		auto& enhancer = globals::features::upscaling.foveatedRender;
+		const std::uint32_t frame = globals::state ? globals::state->frameCount : 0;
+		enhancer.UpdateAdaptiveState(frame, true);
 		p.mode = enhancer.GetDlssMode();
-		p.leftUV = enhancer.subrectController.GetUV();
-		p.rightUV = enhancer.subrectController.GetRightEyeUV();
+		p.leftUV = enhancer.GetEffectiveLeftUV();
+		p.rightUV = enhancer.GetEffectiveRightUV();
 		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
 
 		// Jitter — ConfigureUpscaling already computed correct DLSS jitter.
