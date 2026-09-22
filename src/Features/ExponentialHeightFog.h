@@ -100,7 +100,7 @@ public:
 	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
 	static_assert(sizeof(Settings) == 272);
 
-	/** @brief Builds the shared visibility curve from the effective weather and lighting settings. */
+	/** @brief Derives fog density, start distance, and colors when following the active weather. */
 	Settings GetCommonBufferData() const;
 
 private:

@@ -10,13 +10,19 @@ RWTexture3D<float4> VBufferA : register(u0);
 	float viewDepth;
 	float3 positionWS = ExponentialHeightFog::ComputeCellWorldPosition(dispatchID, 0.5f.xxx, eyeIndex, viewDepth);
 
-	uint boundaryEye;
-	float boundaryDepth;
-	float3 frontPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(dispatchID, float3(0.5f, 0.5f, 0.0f), boundaryEye, boundaryDepth);
-	float3 backPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(dispatchID, float3(0.5f, 0.5f, 1.0f), boundaryEye, boundaryDepth);
-	float nearDistance = dispatchID.z == 0u && ExponentialHeightFog::GetVolumetricStartDistance() == 0.0f ? 0.0f : length(frontPositionWS);
-	float extinction = ExponentialHeightFog::EvaluateFogExtinctionSegment(
-		nearDistance, length(backPositionWS), positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+	float extinction;
+	[branch] if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 && SharedData::exponentialHeightFogSettings.startDistance > 0.0f)
+	{
+		uint boundaryEye;
+		float boundaryDepth;
+		float3 frontPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(dispatchID, float3(0.5f, 0.5f, 0.0f), boundaryEye, boundaryDepth);
+		float3 backPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(dispatchID, float3(0.5f, 0.5f, 1.0f), boundaryEye, boundaryDepth);
+		float nearDistance = dispatchID.z == 0u ? 0.0f : length(frontPositionWS);
+		extinction = ExponentialHeightFog::EvaluateFogExtinctionSegment(
+			nearDistance, length(backPositionWS), positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+	} else {
+		extinction = ExponentialHeightFog::EvaluateHeightFogExtinction(positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+	}
 	float3 scattering = extinction * saturate(SharedData::exponentialHeightFogSettings.volumetricFogAlbedo.rgb) *
 	                    SharedData::exponentialHeightFogSettings.volumetricFogAlbedo.a;
 

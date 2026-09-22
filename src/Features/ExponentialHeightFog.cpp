@@ -137,8 +137,10 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
-	data.vanillaFogMaxOpacity = 1.0f;
 	data.vanillaFogDensity = 0.0f;
+	if (!data.useVanillaFogSettings)
+		return data;
+
 	const auto* sky = globals::game::sky;
 	const bool hasUnboundedFogRange = sky && (sky->fogNear == std::numeric_limits<float>::infinity() || sky->fogFar == std::numeric_limits<float>::infinity());
 	const float fogNear = sky ? std::max(std::isfinite(sky->fogNear) ? sky->fogNear : 0.0f, 0.0f) : 0.0f;
@@ -164,15 +166,12 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 		data.vanillaFogNearColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogNear)], kFallbackFogColor);
 	}
 
-	if (data.useVanillaFogSettings) {
-		data.disableVanillaFog = 1;
-		data.originalFogColorAmount = 1.0f;
-		data.startDistance = fogNear;
-		const float targetOpacity = data.vanillaFogMaxOpacity * kReferenceOpacityFraction;
-		const float normalizedReference = std::pow(targetOpacity, 1.0f / fogPower);
-		const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, kMinimumFogRange);
-		data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, kMinimumFogTransmittance)) / (referenceDistance * kAnalyticalExtinctionScale);
-	}
+	data.disableVanillaFog = 1;
+	data.startDistance = fogNear;
+	const float targetOpacity = data.vanillaFogMaxOpacity * kReferenceOpacityFraction;
+	const float normalizedReference = std::pow(targetOpacity, 1.0f / fogPower);
+	const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, kMinimumFogRange);
+	data.vanillaFogDensity = -std::log(std::max(1.0f - targetOpacity, kMinimumFogTransmittance)) / (referenceDistance * kAnalyticalExtinctionScale);
 	return data;
 }
 
@@ -195,8 +194,6 @@ void ExponentialHeightFog::DrawSettings()
 	ImGui::ColorEdit4(T(TKEY("fog_inscattering_color"), "Fog Inscattering Color"), (float*)&settings.fogInscatteringColor);
 	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	ImGui::SliderFloat(T(TKEY("original_fog_color_amount"), "Original Fog Color Amount"), &settings.originalFogColorAmount, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::EndDisabled();
-	ImGui::BeginDisabled(settings.useVanillaFogSettings != 0);
 	ImGui::SliderFloat(T(TKEY("fog_density"), "Fog Density"), &settings.fogDensity, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::SliderFloat(T(TKEY("dir_inscattering_mul"), "Directional Light Inscattering Multiplier"), &settings.directionalInscatteringMultiplier, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -463,7 +460,6 @@ ID3D11ComputeShader* ExponentialHeightFog::GetIntegrationCS()
 void ExponentialHeightFog::Prepass()
 {
 	CS_GPU_PASS("ExponentialHeightFog::Prepass");
-	const Settings frameSettings = GetCommonBufferData();
 	if (!settings.enabled || !settings.volumetricFogEnabled || settings.volumetricFogExtinctionScale <= 0.0f) {
 		ReleaseVolumetricResources();
 		return;
@@ -472,6 +468,12 @@ void ExponentialHeightFog::Prepass()
 	const auto cameraData = Util::GetCameraData();
 	const float volumeStart = settings.useVanillaFogSettings ? 0.0f : std::max(settings.volumetricFogStartDistance, 0.0f);
 	if (settings.volumetricFogDistance <= std::max(cameraData.y, volumeStart) + 10.0f) {
+		ReleaseVolumetricResources();
+		return;
+	}
+	const Settings frameSettings = GetCommonBufferData();
+	const float fogDensity = frameSettings.useVanillaFogSettings ? frameSettings.vanillaFogDensity * frameSettings.vanillaFogStrength : frameSettings.fogDensity;
+	if (fogDensity <= 0.0f) {
 		ReleaseVolumetricResources();
 		return;
 	}
