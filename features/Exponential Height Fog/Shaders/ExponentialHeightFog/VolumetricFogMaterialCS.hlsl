@@ -20,7 +20,9 @@ RWTexture3D<float4> VBufferA : register(u0);
 		float nearDistance = dispatchID.z == 0u ? 0.0f : length(frontPositionWS);
 		extinction = ExponentialHeightFog::EvaluateFogExtinctionSegment(
 			nearDistance, length(backPositionWS), positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
-	} else {
+	}
+	else
+	{
 		extinction = ExponentialHeightFog::EvaluateHeightFogExtinction(positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 	float3 scattering = extinction * saturate(SharedData::exponentialHeightFogSettings.volumetricFogAlbedo.rgb) *

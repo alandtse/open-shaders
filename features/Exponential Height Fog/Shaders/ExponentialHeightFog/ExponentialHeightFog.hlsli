@@ -45,8 +45,8 @@ namespace ExponentialHeightFog
 		volumeSize = 0u.xxx;
 		bool applyVolumetricFog = false;
 		[branch] if (SharedData::exponentialHeightFogSettings.enabled != 0 &&
-		             SharedData::exponentialHeightFogSettings.volumetricFogEnabled != 0 &&
-		             SharedData::exponentialHeightFogSettings.volumetricFogDistance > GetVolumetricStartDistance() + 1.0f)
+					 SharedData::exponentialHeightFogSettings.volumetricFogEnabled != 0 &&
+					 SharedData::exponentialHeightFogSettings.volumetricFogDistance > GetVolumetricStartDistance() + 1.0f)
 		{
 			ExponentialHeightFogIntegratedLightScattering.GetDimensions(volumeSize.x, volumeSize.y, volumeSize.z);
 			applyVolumetricFog = all(volumeSize > 0u);
