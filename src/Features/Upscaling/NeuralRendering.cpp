@@ -39,11 +39,21 @@ struct NeuralRendering::Impl
 		uint32_t visualMode = 0;
 		float exposureCompensation = 1.0f, exposureMin = 1.0f, exposureMax = 1.0f, manualExposure = 1.0f;
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
+		float dynamicRangePadding = 0.0f;
 		float4 dynamicRangeProtect{};
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f, tonePadding = 0.0f;
 		uint32_t historyValid = 0;
 		float temporalAlpha = 0.12f, temporalClamp = 0.05f, depthThreshold = 0.02f;
 	};
+	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
+	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
+	static_assert(offsetof(ColorTransferData, toneRadius) == 84);
+	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
+	static_assert(offsetof(ColorTransferData, historyValid) == 96);
+	static_assert(offsetof(ColorTransferData, temporalAlpha) == 100);
+	static_assert(offsetof(ColorTransferData, temporalClamp) == 104);
+	static_assert(offsetof(ColorTransferData, depthThreshold) == 108);
+	static_assert(sizeof(ColorTransferData) == 112);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
 	uint32_t maskFrame = UINT32_MAX;
@@ -62,6 +72,7 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	bool useResolutionMotionScale = true;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -437,9 +448,17 @@ struct NeuralRendering::Impl
 				copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 				copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 				commands->ResourceBarrier(2, copyBarriers);
-			} else
+			} else {
+				// The encoder extracts render-resolution guides into zero-origin per-eye textures.
+				NR::GuideParameters guides;
+				guides.depth = { 0, 0, guideWidth, guideHeight };
+				guides.motion = { 0, 0, guideWidth, guideHeight };
+				// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
+				guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+				guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
 				success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
-					eye.motion.resource.get(), eye.output.resource.get(), width, height, guideWidth, guideHeight, eye.frame, tuning);
+					eye.motion.resource.get(), eye.output.resource.get(), width, height, guides, eye.frame, tuning);
+			}
 			diagnostic.result[i] = eye.frame.result;
 			if (success)
 				diagnostic.evaluated |= 1u << i;
@@ -552,6 +571,9 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		SetStatus("Retry queued for the next rendered world frame");
 	}
 	if (globals::state->IsDeveloperMode())
+		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
+			resetHistory = true;
+	if (globals::state->IsDeveloperMode())
 		diagnostics.DrawSettings();
 	std::scoped_lock lock(statusMutex);
 	ImGui::TextWrapped("%s", enabled ? status.c_str() : "Disabled");
@@ -619,8 +641,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.options = diagnostics.Options();
 		if (diagnostic.options != work.lastDiagnosticOptions) {
 			resetHistory = true;
-			if ((diagnostic.options ^ work.lastDiagnosticOptions) & NR::Diagnostics::FeedCameraData)
+			if ((diagnostic.options ^ work.lastDiagnosticOptions) & NR::Diagnostics::FeedCameraData) {
+				work.interop.Drain();
 				work.runtime.ResetFeatures();
+			}
 			work.lastDiagnosticOptions = diagnostic.options;
 		}
 		if (work.failed) {

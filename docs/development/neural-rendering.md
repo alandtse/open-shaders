@@ -42,6 +42,11 @@ invalid values use the defaults above and are bounded to the documented ranges.
 **Restore NR Defaults** resets all six controls; **Reset NR History** invalidates
 both eye histories without changing tuning.
 
+Developer mode also exposes **Use resolution-scaled NR motion**. It is a
+session-only A/B switch and defaults on. The enabled path supplies the NR input
+dimensions as `DLSSNR.MVecScaleX/Y`; the disabled path supplies identity
+scales (`1.0, 1.0`). Changing the switch invalidates NR history once.
+
 The public [private-contract findings](https://github.com/kibblerz/DLSS5-Reshade-AIO/blob/main/lab/PRIVATE-CONTRACT-FINDINGS.md)
 establish Style 0/1/2 and distinguish the runtime callback's double/fixed-point
 encodings from the NGX parameter object used here. OS keeps float strength
@@ -64,16 +69,19 @@ or explicitly recreating resources recreates the NR instances.
     including VR's R24 depth view, and writes non-inverted device depth to
     R32 float. Depth is not linearized.
 -   Motion: the same encoder's undilated path writes RG16 float, preserving
-    correspondence with the center-pixel depth guide. OS motion vectors already
-    use the normalized units expected by the upscaler, so Feature 18 receives
-    identity motion-vector scales. Reset frames submit zero motion because their
-    previous history is invalid.
+    correspondence with the center-pixel depth guide. The default Feature 18
+    contract converts normalized eye-UV displacement to NR input pixels using
+    the input width and height independently as motion-vector scales. The
+    developer A/B switch can instead send identity scales. Reset frames submit
+    zero motion because their previous history is invalid.
 -   Frame data: diagnostics observe cached camera position, view direction, and
     projection changes. These inferred cuts do not reset production history.
-    No undocumented
-    jitter, frame-time, or camera-matrix aliases are supplied to Feature 18.
-    Before a history reset, prior NR GPU work is retired. Frames retaining
-    history keep GPU-only interop ordering.
+    Production evaluation does not supply camera aliases to Feature 18. When
+    the developer **Feed historical camera parameters** option is enabled, the
+    current jitter, frame time, world-to-view matrix, and view-to-clip matrix
+    are supplied for the diagnostic comparison. Before a history reset, prior
+    NR GPU work is retired. Frames retaining history keep GPU-only interop
+    ordering.
 -   Loading transitions, skipped world frames, enable changes, shader
     invalidation, and resource recreation invalidate history. Ordinary UI menus
     continue evaluating NR when the world rendered that frame; UI composition
@@ -82,55 +90,65 @@ or explicitly recreating resources recreates the NR instances.
     GPU work and recreate the eye resources and NGX instances together. Changing
     only the engine texture pointer does not recreate NR.
 
+The runtime receives independent depth and motion subrects and X/Y motion scales
+from the producer. It clamps each subrect against its own D3D12 allocation before
+writing the Feature 18 parameters; an empty region fails evaluation. This follows
+the resource-metadata handling in [OptiScaler DLSSNR PR #42](https://github.com/Dagherbou/OptiScaler_DLSSNR/pull/42).
+That integration uses the game's SR `MVLowRes` flag to select render- versus
+output-resolution motion. OS owns its guide encoder instead: it always extracts
+the active render-resolution region, including the eye offset, into a separate
+texture starting at `(0, 0)`. Its NR metadata therefore describes that extracted
+texture, not the original packed engine allocation or the subsequent SR output.
+No SR creation flags are copied into the Feature 18 creation flags.
+
+For the current pre-SR path, NR input, depth, and motion extents are equal, so
+making this metadata explicit does not change the normal values sent to NGX.
+The OptiScaler fix alone does not establish the cause of OS's reported flicker.
+
 The Feature 18 parameter contract and HDR behavior were checked against the
 [DLSS5VKLayer contract notes](https://github.com/bmitch87/DLSS5VKLayer/blob/main/extracted_pipeline_notes.md)
 and its current implementation. Feature 18 uses a private runtime interface;
 the version gate bounds this implementation to its observed ABI.
 
-## Experimental native HDR contract
+## Current Feature 18 contract
 
-The native-HDR D3D12 route described below failed image-quality validation with
-the 310.8 DVS Production runtime. It must not be treated as an established
-Feature 18 contract. It accepts feature creation and evaluation but produces
-unstable colored blocks around scene-linear highlights and incorrect localized
-relighting when Local Tone or Local Structure is active.
+The runtime creates one persistent Feature 18 instance per rendered eye using
+the observed 310.8.x private ABI. It creates a same-resolution pass with
+`DLSSNR.Upscaling=0u`, `DLSSNR.Scale=1.0f`,
+`DLSSNR.ScalingRatio=1.0f`, and `DLSSNR.Hint.Render.Preset=0u`.
+The creation flags are `IsHDR | DoSharpening | AutoExposure` (`0x61`) in both
+`Feature_Flags` and `NVSDK_NGX_Parameter_Feature_Flags`. The private selectors
+are `DLSSNR.AutoExposure=1u`, `DLSSNR.Hdr=1u`, and `DLSSNR.SDR=0u`.
+`InPreExposure`, `InExposureScale`, `NVSDK_NGX_Parameter_PreExposure`, and
+`NVSDK_NGX_Parameter_ExposureScale` are initialized to `1.0f`. Parameters are
+populated through `NVSDK_NGX_D3D12_PopulateParameters_Impl` before creation.
+The creation contract also supplies `DLSSNR.ControlMask=nullptr`,
+`DLSSNR.UseAutoMask`, and `DLSSNR.UICorrection=1u`.
 
-The rejected experiment created every Feature 18 instance with
-`IsHDR | DoSharpening | AutoExposure` (`0x61`) in `Feature_Flags` and
-`NVSDK_NGX_Parameter_Feature_Flags`, plus `DLSSNR.Upscaling=0u`,
-`DLSSNR.Hdr=1u`, `DLSSNR.SDR=0u`, and `DLSSNR.AutoExposure=1u` for the
-same-resolution HDR path. `InPreExposure`,
-`InExposureScale`, `NVSDK_NGX_Parameter_PreExposure`, and
-`NVSDK_NGX_Parameter_ExposureScale` are floats initialized to `1.0f`.
-Each parameter object is populated through the runtime's
-`NVSDK_NGX_D3D12_PopulateParameters_Impl` before the create contract is written.
-The per-eye parameter object retained these creation values across evaluations.
-Frame resources and resets are updated in place. Appearance tuning is written before
-creation and UI edits recreate the persistent eye handles after the edit is committed.
-The experiment always used HDR model input, including
-when the final display is SDR; there is no live HDR/SDR model switch or reuse of
-an SDR instance. Any future contract switch must retire GPU work and recreate the
-eye handles. An HDR creation failure pauses NR with its NGX result in the UI/log;
-it does not retry through an SDR approximation.
+The HDR-selected model contract does not mean that unbounded scene-linear
+values are sent to Feature 18. The input is the bounded display-referred proxy
+described below. The original scene-linear frame remains separate and is used
+for reconstruction after model evaluation. This D3D12 private ABI is observed
+rather than officially documented; successful creation and evaluation do not by
+themselves establish image quality or temporal correctness.
 
-The contract follows the public
-[DLSS5VKLayer creation code](https://github.com/bmitch87/DLSS5VKLayer/blob/main/core/ngx_snippet.cpp#L509-L523)
-and [HDR input description](https://github.com/bmitch87/DLSS5VKLayer#hdr-input).
-Its Vulkan implementation is reference evidence, not a runtime validation of this
-D3D12 integration. The bundled public D3D12 requirements API reports general feature
-support rather than the private Vulkan structure's HDR feature flags; the latter's
-D3D12 ABI has not been established here. No speculative capability query is made,
-and a successful create/evaluate alone does not verify correct HDR output.
+Feature resources and frame parameters are updated in place after creation.
+Appearance tuning is written before creation, and committed UI tuning changes
+recreate the persistent eye handles. A contract change must likewise retire
+queued GPU work before releasing the handles and recreate both eye instances
+when it changes creation-latched parameters.
 
-Independent public implementations do not establish this exact D3D12 HDR route.
+The runtime discovers the private float setter slot from the populated parameter
+object before writing Feature 18 floats. Unsigned and resource parameters use
+the corresponding private ABI slots rather than the public SDK overloads.
+
+The public [DLSS5VKLayer creation code](https://github.com/bmitch87/DLSS5VKLayer/blob/main/core/ngx_snippet.cpp#L509-L523)
+and [HDR input description](https://github.com/bmitch87/DLSS5VKLayer#hdr-input)
+are reference evidence for the selector names and values. They do not establish
+the complete D3D12 private ABI. Independent projects such as
 [video2dlssnr](https://github.com/DaniilSokolyuk/video2dlssnr#neural-rendering)
-can omit its normal sRGB encoding, but its D3D12 forwarder does not set the
-Feature 18 HDR flags used here and its ordinary image inputs remain bounded.
-[DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler)
-reports operation with scRGB float16 and HDR10/PQ resources without publishing
-the resource-value or D3D12 creation contract needed to reproduce it. NVIDIA
-has not published a Feature 18 programming guide, so these projects establish an
-observed pre-release contract rather than an official compatibility guarantee.
+and [DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) likewise
+provide observed pre-release behavior rather than an official Feature 18 guide.
 
 `ColorTransferCS.hlsl` now keeps the scene-linear frame in `Original` and builds
 a separate bounded proxy for Feature 18. It applies the current exposure, a
@@ -186,36 +204,31 @@ Shaders' exposed-linear value `1.0` represents the current scene paper white,
 matching the documented float-HDR convention. Applying another paper-white
 multiplier would double-scale the image and would not fix red/blue inversion.
 
-## Validated D3D12 color boundary
+## Color boundary and reconstruction
 
-The public D3D12 contract evidence summarized by DLSS5VKLayer establishes a bounded route:
-same-resolution `R8G8B8A8_UNORM` color and output, with Feature 18 operating on
-a display-referred image. ComfyUI-DLSS5-NR and obs-dlss5-nr use RGBA16F carrier
-textures but explicitly derive them from 8-bit color and clamp the values to
-0–1. None of these paths demonstrates unbounded scene-linear HDR through the
-signed D3D12 Feature 18 entry points.
+Public D3D12 implementations consistently bound the image presented to Feature
+18 to a display-referred range. Open Shaders follows that resource-value rule
+while retaining an RGBA16F carrier: `ColorTransferCS.hlsl` derives a bounded
+proxy from the scene, and Feature 18 receives that proxy at render-eye
+resolution. The HDR selectors in the private creation contract describe the
+model route; they do not authorize passing unbounded scene-linear values to the
+model.
 
-The rejected Open Shaders route sent `max(ToLinear(kMAIN), 0) * exposure` without an upper
-bound and forces `IsHDR`, `DLSSNR.Hdr=1`, and `DLSSNR.SDR=0`. Those flags and
-the model capability negotiation were taken from DLSS5VKLayer's Vulkan path.
-That path queries private Vulkan feature requirements and falls back when the
-model refuses HDR; no equivalent D3D12 ABI has been established here. Successful
-D3D12 create/evaluate results therefore did not validate the color contract.
+The implementation avoids the earlier unbounded form
+`max(ToLinear(kMAIN), 0) * exposure`. Exposure and the current scene white point
+are applied while building the proxy, then a soft knee and peak bound keep the
+model input in display-referred range. The original scene-linear RGB and alpha
+remain untouched for reconstruction. This separation is required because the
+public D3D12 evidence does not establish an unbounded scene-linear Feature 18
+contract.
 
-This mismatch explains the observed boundary conditions: corruption clusters
-around fire, emissives, sky, and other values above display white; Local Tone and
-Local Structure amplify it; running NR after tone mapping substantially improves
-it; temporal resets, motion vectors, jitter, serialization, DLAA/DLSS selection,
-and an output-channel swap do not repair it.
-
-The current pre-upscale integration is a bounded, display-referred NR proxy at the
-render resolution. Feature 18 operates on that proxy using the proven SDR D3D12
-contract. Its output is not inverse-tone-mapped. Instead, Open Shaders derives a
+Feature 18 output is decoded in the same proxy space. Open Shaders derives a
 luminance/detail ratio between the NR result and the original proxy, bounds that
-ratio against invalid or near-black pixels, and applies it to the untouched
-scene-linear HDR color. This preserves the original hue and HDR highlight energy,
-keeps Feature 18 before DLSS for performance, and leaves the existing downstream
-tone mapper as the only tone mapper whose output reaches the display.
+ratio around invalid or near-black pixels, and applies it to the untouched
+scene-linear HDR color. The model cannot replace the frame's hue or alpha, its
+output is never inverse-tone-mapped, and the existing downstream tone mapper
+remains the only tone mapper whose result reaches the display. This keeps NR
+before DLSS for performance while preserving the scene's HDR highlight energy.
 
 ## Ownership and synchronization
 
@@ -231,9 +244,10 @@ output copies. D3D11 flush submits the input signal without waiting on
 the CPU. Shared resources transition from COMMON to shader reads/UAV and
 back to COMMON before D3D11 consumes them. Three command allocators are
 reused only after their completion values retire. CPU waits occur for
-allocator backpressure, history resets, recreation, and teardown. Both eyes must succeed
-before either result is copied back. D3D11 pipeline state is restored on
-all exit paths.
+allocator backpressure, history resets, recreation, and teardown. Changing
+the historical-camera diagnostic option also drains the queue before releasing
+the existing Feature 18 handles. Both eyes must succeed before either result
+is copied back. D3D11 pipeline state is restored on all exit paths.
 
 `Runtime` caches the NR and NGX core exports at initialization. Handles,
 parameter objects, loaded modules, and COM resources have RAII owners.
@@ -274,12 +288,16 @@ world frames each:
 Repeat the same standing-still, turning, and walking pattern in each phase.
 The sequence pauses when the OS menu is open, the world is inactive, NR is off,
 or the game is paused. **Stop Tests and Restore** ends it early. Completion and
-stopping restore the options selected before the sequence. Changes apply live,
-reset history once, and do not recreate Feature 18. Loading, frame-gap and
-resource resets remain active when inferred camera-cut resets are disabled.
+stopping restore the options selected before the sequence. Most diagnostic
+changes apply live and reset history once. Changing **Feed historical camera
+parameters** also recreates Feature 18 after retiring queued work. Loading,
+frame-gap and resource resets remain active when inferred camera-cut resets are
+disabled.
 
-All switches can also be changed manually during the same game session. They are
-session-only, default off, and **Restore Diagnostic Defaults** clears them.
+All diagnostic switches can also be changed manually during the same game session.
+They are session-only, default off, and **Restore Diagnostic Defaults** clears
+them. Toggling **Feed historical camera parameters** retires queued GPU work and
+recreates the Feature 18 handles because it changes the frame-data contract.
 **Copy Trace Path** copies the location of the suite's timestamped text file in
 the Windows temporary directory. A game restart does not overwrite it. An
 incomplete sequence still saves completed phases and periodically flushes its

@@ -8,6 +8,19 @@
 
 namespace NR
 {
+	/** @brief Active texel region of a guide resource supplied to Feature 18. */
+	struct GuideRegion
+	{
+		uint32_t baseX = 0, baseY = 0, width = 0, height = 0;
+	};
+
+	/** @brief Independent guide regions and motion conversion to NR input pixels. */
+	struct GuideParameters
+	{
+		GuideRegion depth, motion;
+		float motionScaleX = 1.0f, motionScaleY = 1.0f;
+	};
+
 	struct FrameParameters
 	{
 		float jitterX = 0, jitterY = 0, frameTimeMs = 0;
@@ -33,7 +46,8 @@ namespace NR
 		/** @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye. */
 		bool Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eye,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
-			uint32_t width, uint32_t height, uint32_t guideWidth, uint32_t guideHeight, FrameParameters& frame, const Tuning& tuning);
+			uint32_t width, uint32_t height, const GuideParameters& guides,
+			FrameParameters& frame, const Tuning& tuning);
 
 	private:
 		struct Impl;

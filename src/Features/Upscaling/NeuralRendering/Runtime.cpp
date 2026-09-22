@@ -292,12 +292,27 @@ namespace NR
 
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
-		uint32_t width, uint32_t height, uint32_t guideWidth, uint32_t guideHeight, FrameParameters& frame, const Tuning& tuning)
+		uint32_t width, uint32_t height, const GuideParameters& guides,
+		FrameParameters& frame, const Tuning& tuning)
 	{
 		auto& state = *impl;
 		auto& eye = state.eyes.at(eyeIndex);
 		frame.created = false;
 		frame.result = 0;
+		const auto clampRegion = [](ID3D12Resource* resource, GuideRegion region) {
+			if (!resource)
+				throw std::runtime_error("Missing NR guide resource");
+			const auto desc = resource->GetDesc();
+			region.baseX = static_cast<uint32_t>(std::min<uint64_t>(region.baseX, desc.Width));
+			region.baseY = std::min(region.baseY, desc.Height);
+			region.width = static_cast<uint32_t>(std::min<uint64_t>(region.width, desc.Width - region.baseX));
+			region.height = std::min(region.height, desc.Height - region.baseY);
+			if (!region.width || !region.height)
+				throw std::runtime_error("Empty NR guide subrect");
+			return region;
+		};
+		const auto depthRegion = clampRegion(depth, guides.depth);
+		const auto motionRegion = clampRegion(motion, guides.motion);
 		auto* parameters = eye.parameters.get();
 		ParameterWriter writer(parameters, state.floatSlot);
 		RuntimePath::Scope scope(state.compatibility);
@@ -356,21 +371,22 @@ namespace NR
 		writer.SetResource("DLSSNR.Depth", depth);
 		writer.SetResource("DLSSNR.MVec", motion);
 		writer.SetResource("DLSSNR.Output", output);
-		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.DepthSubrectBaseX", "DLSSNR.DepthSubrectBaseY",
-				 "DLSSNR.MVecSubrectBaseX", "DLSSNR.MVecSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
+		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
 			writer.SetUInt(key, 0u);
 		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.OutputSubrectWidth" })
 			writer.SetUInt(key, width);
 		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
 			writer.SetUInt(key, height);
-		for (auto key : { "DLSSNR.DepthSubrectWidth", "DLSSNR.MVecSubrectWidth" })
-			writer.SetUInt(key, guideWidth);
-		for (auto key : { "DLSSNR.DepthSubrectHeight", "DLSSNR.MVecSubrectHeight" })
-			writer.SetUInt(key, guideHeight);
-		// Feature 18 expects source-pixel motion; scale Skyrim's normalized UV motion
-		// by the active guide extent, matching Streamline's NGX conversion.
-		writer.SetFloat("DLSSNR.MVecScaleX", static_cast<float>(guideWidth));
-		writer.SetFloat("DLSSNR.MVecScaleY", static_cast<float>(guideHeight));
+		writer.SetUInt("DLSSNR.DepthSubrectBaseX", depthRegion.baseX);
+		writer.SetUInt("DLSSNR.DepthSubrectBaseY", depthRegion.baseY);
+		writer.SetUInt("DLSSNR.DepthSubrectWidth", depthRegion.width);
+		writer.SetUInt("DLSSNR.DepthSubrectHeight", depthRegion.height);
+		writer.SetUInt("DLSSNR.MVecSubrectBaseX", motionRegion.baseX);
+		writer.SetUInt("DLSSNR.MVecSubrectBaseY", motionRegion.baseY);
+		writer.SetUInt("DLSSNR.MVecSubrectWidth", motionRegion.width);
+		writer.SetUInt("DLSSNR.MVecSubrectHeight", motionRegion.height);
+		writer.SetFloat("DLSSNR.MVecScaleX", guides.motionScaleX);
+		writer.SetFloat("DLSSNR.MVecScaleY", guides.motionScaleY);
 		writer.SetUInt("DLSSNR.DepthInverted", 0u);
 		writer.SetUInt("DLSSNR.Enabled", 1u);
 		writer.SetUInt("DLSSNR.Reset", frame.reset ? 1u : 0u);
