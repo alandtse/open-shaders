@@ -192,9 +192,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 #		if defined(EXP_HEIGHT_FOG)
-	// Weather conversion follows vanilla's geometry-only fog; sky colors already include the weather.
-	bool exponentialHeightFogEnabled = SharedData::exponentialHeightFogSettings.enabled && !SharedData::InMapMenu &&
-	                                   (isGeometryDepth || SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0);
+	bool exponentialHeightFogEnabled = SharedData::exponentialHeightFogSettings.enabled && !SharedData::InMapMenu;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord.xy);
 	float2 monoUV = Stereo::ConvertFromStereoUV(input.TexCoord.xy, eyeIndex);
 	float4 positionWS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
