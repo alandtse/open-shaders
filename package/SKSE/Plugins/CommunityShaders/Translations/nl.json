@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Standaardmist volgen",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Leidt volumetrische en verre mist af van het actieve weer. Sterkte 1.0 behoudt de oorspronkelijke optische diepte; 1.25 is de afgestemde standaardwaarde. Vervangt de standaardafstandsmist.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Leidt mistdichtheid, beginafstand en kleuren af van het actieve weer en behoudt de exponentiële afname met de hoogte. Weermiststerkte schaalt de dichtheid. Vervangt de standaardafstandsmist.",
     "feature.exp_height_fog.vanilla_strength": "Sterkte van weersmist",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",

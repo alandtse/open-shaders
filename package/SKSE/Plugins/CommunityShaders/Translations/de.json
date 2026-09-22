@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Vanilla-Nebel folgen",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Leitet volumetrischen und entfernten Nebel vom aktiven Wetter ab. Stärke 1.0 erhält die ursprüngliche optische Tiefe; 1.25 ist der abgestimmte Standardwert. Ersetzt den Vanilla-Entfernungsnebel.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Leitet Nebeldichte, Startentfernung und Farben vom aktiven Wetter ab und behält den exponentiellen Höhenabfall bei. Wetternebelstärke skaliert die Dichte. Ersetzt den Vanilla-Entfernungsnebel.",
     "feature.exp_height_fog.vanilla_strength": "Stärke des Wetternebels",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",

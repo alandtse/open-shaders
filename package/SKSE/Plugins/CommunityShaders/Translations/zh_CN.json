@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "对应 UE 的 r.VolumetricFog.UpsampleJitterMultiplier。\n在屏幕空间抖动最终 3D 雾查找，以隐藏\n低分辨率 froxel 像素化。0 = UE 默认值。",
     "feature.exp_height_fog.use_dynamic_cubemaps": "使用动态立方体贴图进行内散射",
     "feature.exp_height_fog.use_vanilla_fog_settings": "跟随原版雾效",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "根据当前天气计算体积雾和远景雾。强度 1.0 保留基准光学厚度；1.25 为调校后的默认值。替换原版距离雾。",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "根据当前天气推导雾的密度、起始距离和颜色，同时保留指数高度衰减。天气雾强度用于缩放密度。替换原版距离雾。",
     "feature.exp_height_fog.vanilla_strength": "天气雾强度",
     "feature.exp_height_fog.volumetric_albedo": "体积雾反照率",
     "feature.exp_height_fog.volumetric_emissive": "体积雾自发光",

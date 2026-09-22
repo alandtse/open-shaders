@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Dostosuj do oryginalnej mgły",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Wyznacza mgłę wolumetryczną i odległą na podstawie aktualnej pogody. Siła 1.0 zachowuje bazową grubość optyczną; 1.25 to dostrojona wartość domyślna. Zastępuje oryginalną mgłę odległościową.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Wyznacza gęstość, odległość początkową i kolory mgły na podstawie aktualnej pogody, zachowując wykładniczy spadek gęstości wraz z wysokością. Siła mgły pogodowej skaluje gęstość. Zastępuje oryginalną mgłę odległościową.",
     "feature.exp_height_fog.vanilla_strength": "Siła mgły pogodowej",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",

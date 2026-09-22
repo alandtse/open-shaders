@@ -123,10 +123,9 @@ namespace ExponentialHeightFog
 	float4 GetExponentialHeightFogInternal(float3 positionWS, float3 cameraWS, float3 fogColor, bool useScreenPosition, float4 screenPosition, bool applyVolumetricFog)
 	{
 		float fogHeightFalloff = SharedData::exponentialHeightFogSettings.fogHeightFalloff * 0.001f;
-		float fogDensity = (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
-								   SharedData::exponentialHeightFogSettings.vanillaFogDensity :
-								   SharedData::exponentialHeightFogSettings.fogDensity) *
-		                   0.001f;
+		float fogDensity = GetHeightFogDensity();
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
+			fogDensity *= SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale;
 		uint eyeIndex = GetEyeIndexFromCameraWS(cameraWS);
 		if (fogDensity <= 0.0f)
 			return 0.0f.xxxx;
@@ -166,14 +165,6 @@ namespace ExponentialHeightFog
 		float exponentialHeightLineIntegral = exponentialHeightLineIntegralCalc * rayLength;
 
 		float expFogFactor = saturate(exp2(-exponentialHeightLineIntegral));
-		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0) {
-			float opticalDepth = max(EvaluateVanillaOpticalDepth(viewToPosLength) - EvaluateVanillaOpticalDepth(excludeDistance), 0.0f);
-			float3 midpoint = viewToPos * (0.5f * (1.0f + excludeDistance * viewToPosLengthInv));
-			opticalDepth *= SharedData::exponentialHeightFogSettings.vanillaFogStrength *
-			                SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale *
-			                GetFogHeightWeight(midpoint, cameraWS);
-			expFogFactor = exp(-opticalDepth);
-		}
 
 		float3 fogInscatteringColor = SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
 		                                  GetFogAmbientColor(viewToPosLength) :
@@ -235,13 +226,9 @@ namespace ExponentialHeightFog
 	float GetSunlightFogAttenuation(float3 positionWS, float3 cameraWS)
 	{
 		float fogHeightFalloff = SharedData::exponentialHeightFogSettings.fogHeightFalloff * 0.001f;
-		float fogDensity = (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
-								   SharedData::exponentialHeightFogSettings.vanillaFogDensity :
-								   SharedData::exponentialHeightFogSettings.fogDensity) *
-		                   0.001f;
+		float fogDensity = GetHeightFogDensity();
 		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
-			fogDensity *= SharedData::exponentialHeightFogSettings.vanillaFogStrength *
-			              SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale;
+			fogDensity *= SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale;
 		if (fogDensity <= 0.0f) {
 			return 1.0f;
 		}

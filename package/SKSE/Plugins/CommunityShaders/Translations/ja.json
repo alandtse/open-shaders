@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "バニラの霧に合わせる",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "現在の天候からボリュームフォグと遠景の霧を算出します。強度 1.0 は基準の光学的厚さを維持し、1.25 は調整済みの既定値です。バニラの距離フォグを置き換えます。",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "指数関数的な高さ減衰を維持しながら、現在の天候から霧の密度、開始距離、色を算出します。天候フォグの強度は密度を調整します。バニラの距離フォグを置き換えます。",
     "feature.exp_height_fog.vanilla_strength": "天候の霧の強度",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",

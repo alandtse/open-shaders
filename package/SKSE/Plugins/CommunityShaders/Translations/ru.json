@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "Соответствует r.VolumetricFog.UpsampleJitterMultiplier в UE.\nДобавляет джиттер финального поиска 3D-тумана в экранном пространстве, скрывая\nпикселизацию низкого разрешения фрокселей. 0 = стандарт UE.",
     "feature.exp_height_fog.use_dynamic_cubemaps": "Использовать динамические кубические карты для рассеяния",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Следовать оригинальному туману",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Рассчитывает объёмный и дальний туман по текущей погоде. Интенсивность 1.0 сохраняет исходную оптическую толщину; по умолчанию используется настроенное значение 1.25. Заменяет оригинальный туман расстояния.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Определяет плотность, начальное расстояние и цвета тумана по текущей погоде, сохраняя экспоненциальное уменьшение плотности с высотой. Интенсивность погодного тумана масштабирует плотность. Заменяет оригинальный туман расстояния.",
     "feature.exp_height_fog.vanilla_strength": "Интенсивность погодного тумана",
     "feature.exp_height_fog.volumetric_albedo": "Объёмное альбедо",
     "feature.exp_height_fog.volumetric_emissive": "Объёмное излучение",

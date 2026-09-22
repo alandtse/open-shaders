@@ -7,7 +7,6 @@
 
 namespace ExponentialHeightFog
 {
-	static const float kMinimumTransmittance = 0.0001f;
 	// Extinction is per world unit and can be much smaller than the generic division epsilon.
 	static const float kMinimumExtinction = 1e-20f;
 
@@ -35,7 +34,10 @@ namespace ExponentialHeightFog
 
 	float GetHeightFogDensity()
 	{
-		return SharedData::exponentialHeightFogSettings.fogDensity * 0.001f;
+		float density = SharedData::exponentialHeightFogSettings.fogDensity;
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
+			density = SharedData::exponentialHeightFogSettings.vanillaFogDensity * SharedData::exponentialHeightFogSettings.vanillaFogStrength;
+		return density * 0.001f;
 	}
 
 	float GetVolumetricStartDistance()
@@ -103,23 +105,6 @@ namespace ExponentialHeightFog
 		return ComputeVolumetricNormalizedSlice(viewDepth, GetVolumetricGridSizeZ());
 	}
 
-	float EvaluateVanillaOpticalDepth(float distance)
-	{
-		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
-										 max(SharedData::exponentialHeightFogSettings.vanillaFogFar - SharedData::exponentialHeightFogSettings.vanillaFogNear, 1.0f));
-		float opacity = min(pow(normalizedRange, SharedData::exponentialHeightFogSettings.vanillaFogPower), SharedData::exponentialHeightFogSettings.vanillaFogMaxOpacity);
-		return -log(max(1.0f - opacity, kMinimumTransmittance));
-	}
-
-	float GetFogHeightWeight(float3 positionWS, float3 cameraWS)
-	{
-		float height = max(positionWS.z + cameraWS.z - SharedData::exponentialHeightFogSettings.fogHeight, 0.0f);
-		float referenceHeight = SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
-		                            max(cameraWS.z - SharedData::exponentialHeightFogSettings.fogHeight, 0.0f) :
-		                            0.0f;
-		return exp2(clamp(-GetHeightFogFalloff() * (height - referenceHeight), -32.0f, 2.0f));
-	}
-
 	float3 GetFogAmbientColor(float distance)
 	{
 		float normalizedRange = saturate((distance - SharedData::exponentialHeightFogSettings.vanillaFogNear) /
@@ -143,15 +128,10 @@ namespace ExponentialHeightFog
 
 	float EvaluateFogExtinctionSegment(float nearDistance, float farDistance, float3 positionWS, float3 cameraWS)
 	{
-		float extinction;
+		float extinction = EvaluateHeightFogExtinction(positionWS, cameraWS);
 		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0) {
-			float opticalDepth = max(EvaluateVanillaOpticalDepth(farDistance) - EvaluateVanillaOpticalDepth(nearDistance), 0.0f);
-			extinction = opticalDepth / max(farDistance - nearDistance, EPSILON_DIVISION) *
-			             SharedData::exponentialHeightFogSettings.vanillaFogStrength *
-			             SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale *
-			             GetFogHeightWeight(positionWS, cameraWS);
-		} else {
-			extinction = EvaluateHeightFogExtinction(positionWS, cameraWS);
+			float fogDistance = max(farDistance - max(nearDistance, SharedData::exponentialHeightFogSettings.startDistance), 0.0f);
+			extinction *= saturate(fogDistance / max(farDistance - nearDistance, EPSILON_DIVISION));
 		}
 		return max(extinction, 0.0f);
 	}

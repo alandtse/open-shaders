@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Suivre le brouillard d’origine",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Calcule le brouillard volumétrique et lointain à partir de la météo active. Une intensité de 1.0 préserve la profondeur optique de référence ; 1.25 est la valeur ajustée par défaut. Remplace le brouillard de distance d’origine.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Calcule la densité, la distance de début et les couleurs du brouillard à partir de la météo active, tout en conservant l’atténuation exponentielle avec l’altitude. L’intensité du brouillard météo multiplie la densité. Remplace le brouillard de distance d’origine.",
     "feature.exp_height_fog.vanilla_strength": "Intensité du brouillard météo",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",

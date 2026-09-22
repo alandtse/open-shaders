@@ -181,7 +181,7 @@ void ExponentialHeightFog::DrawSettings()
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
 	Util::CheckboxFlag(T(TKEY("use_vanilla_fog_settings"), "Follow vanilla fog"), settings.useVanillaFogSettings);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives volumetric and distant fog from the active weather. Strength 1.0 preserves the optical-depth baseline; 1.25 is the tuned default. Replaces vanilla distance fog."));
+		ImGui::Text("%s", T(TKEY("use_vanilla_fog_settings_tooltip"), "Derives fog density, start distance, and colors from the active weather while keeping exponential height falloff. Weather Fog Strength scales density. Replaces vanilla distance fog."));
 	}
 	ImGui::BeginDisabled(settings.useVanillaFogSettings == 0);
 	ImGui::SliderFloat(T(TKEY("vanilla_strength"), "Weather Fog Strength"), &settings.vanillaFogStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);

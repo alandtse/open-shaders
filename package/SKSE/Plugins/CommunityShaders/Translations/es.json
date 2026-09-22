@@ -653,7 +653,7 @@
     "feature.exp_height_fog.upsample_jitter_multiplier_tooltip": "",
     "feature.exp_height_fog.use_dynamic_cubemaps": "",
     "feature.exp_height_fog.use_vanilla_fog_settings": "Seguir la niebla original",
-    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Deriva la niebla volumétrica y distante del clima activo. La intensidad 1.0 conserva la profundidad óptica de referencia; 1.25 es el valor predeterminado ajustado. Sustituye la niebla de distancia original.",
+    "feature.exp_height_fog.use_vanilla_fog_settings_tooltip": "Deriva la densidad, la distancia inicial y los colores de la niebla del clima activo, conservando la atenuación exponencial por altura. La intensidad de la niebla climática escala la densidad. Sustituye la niebla de distancia original.",
     "feature.exp_height_fog.vanilla_strength": "Intensidad de la niebla del clima",
     "feature.exp_height_fog.volumetric_albedo": "",
     "feature.exp_height_fog.volumetric_emissive": "",
