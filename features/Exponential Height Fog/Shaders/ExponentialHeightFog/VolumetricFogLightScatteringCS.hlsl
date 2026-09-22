@@ -294,7 +294,8 @@ float3 AccumulateLocalLightScattering(
 
 	uint cornerEyeIndex;
 	float cornerViewDepth;
-	float3 cellCornerWS = ExponentialHeightFog::ComputeCellWorldPosition(coord + uint3(1, 1, 1), cellOffset, cornerEyeIndex, cornerViewDepth);
+	// Advancing the cell coordinate at the stereo boundary would select the other eye's camera.
+	float3 cellCornerWS = ExponentialHeightFog::ComputeCellWorldPosition(coord, cellOffset + 1.0f.xxx, cornerEyeIndex, cornerViewDepth);
 	float cellRadius = max(length(cellCornerWS - positionWS), 1.0f);
 
 	float phaseG = SharedData::exponentialHeightFogSettings.volumetricFogScatteringDistribution;
