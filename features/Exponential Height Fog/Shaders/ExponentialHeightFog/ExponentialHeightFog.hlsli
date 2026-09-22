@@ -20,6 +20,12 @@ namespace ExponentialHeightFog
 		return SharedData::exponentialHeightFogSettings.respectVanillaFogFade != 0 ? vanillaFogFade : 1.0f;
 	}
 
+	float GetLinearVanillaFogFade(float vanillaFogFade)
+	{
+		float fogFade = GetVanillaFogFade(vanillaFogFade);
+		return ENABLE_LL ? Color::AuthoredGammaToLinear(fogFade.xxx).x : fogFade;
+	}
+
 	bool ShouldDisableVanillaFog()
 	{
 		return SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.disableVanillaFog != 0;

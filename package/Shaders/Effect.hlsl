@@ -1108,7 +1108,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
 	if (SharedData::exponentialHeightFogSettings.enabled) {
-		float fogFade = ExponentialHeightFog::GetVanillaFogFade(input.FogAlpha);
+		float fogFade = ExponentialHeightFog::GetLinearVanillaFogFade(input.FogAlpha);
 		blendedColor = Color::EffectLightToGamma(fogFade * lerp(Color::EffectLight(blendedColor), fogColor, expFogFactor.xxx));
 		fogMul.xyz = 1.0.xxx;
 	}
