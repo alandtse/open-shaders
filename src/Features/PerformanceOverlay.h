@@ -241,8 +241,8 @@ struct PerformanceOverlay : OverlayFeature
 
 		// Update timing using QueryPerformanceCounter
 		float updateTimer = 0.0f;
-		LARGE_INTEGER overlayTimingFrequency = { 0 };
-		LARGE_INTEGER lastUpdateTime = { 0 };
+		LARGE_INTEGER overlayTimingFrequency{};
+		LARGE_INTEGER lastUpdateTime{};
 
 		// Min/max tracking
 		float minFrameTime = 1000.0f;
@@ -328,6 +328,6 @@ private:
 	void CaptureTestData();
 	void ClearTestData();
 	TestDataSource testDataSource = TestDataSource::None;
-	LARGE_INTEGER testDataLastUpdated = { 0 };
+	LARGE_INTEGER testDataLastUpdated{};
 	std::unordered_map<int, TestData> testData;
 };

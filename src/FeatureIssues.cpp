@@ -842,7 +842,7 @@ namespace FeatureIssues
 		return feature ? feature->loaded : false;
 	}
 
-	std::string FeatureIssues::GetFeatureModLink(const std::string& featureName)
+	std::string GetFeatureModLink(const std::string& featureName)
 	{
 		Feature* feature = s_featureLookupCache.FindFeature(featureName);
 		if (feature && !feature->IsCore()) {
@@ -1607,7 +1607,7 @@ namespace FeatureIssues
 					ImGui::PopStyleColor();  // Show detailed test state information
 					ImGui::Spacing();
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
-					ImGui::TextWrapped(GetTestStateDescription().c_str());
+					ImGui::TextWrapped("%s", GetTestStateDescription().c_str());
 					ImGui::PopStyleColor();
 					ImGui::Spacing();
 				}

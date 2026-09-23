@@ -65,7 +65,7 @@ namespace Util::NvApiDrs
 			if (!nvapi)
 				return false;
 			using PQueryInterface = void*(__cdecl*)(uint32_t);
-			auto queryInterface = (PQueryInterface)GetProcAddress(nvapi, "nvapi_QueryInterface");
+			auto queryInterface = reinterpret_cast<PQueryInterface>(reinterpret_cast<void*>(GetProcAddress(nvapi, "nvapi_QueryInterface")));
 			if (!queryInterface)
 				return false;
 			*(void**)&Initialize = queryInterface(0x0150E828);

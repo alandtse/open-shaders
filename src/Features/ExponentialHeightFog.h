@@ -125,6 +125,7 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
 	bool hasLightScatteringHistory = false;
+	std::array<uint, 2> historyColorSpace{};
 	bool hasConservativeDepthHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
 };

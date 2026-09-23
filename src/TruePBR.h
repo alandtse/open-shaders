@@ -199,7 +199,7 @@ public:
 	{
 		std::array<float, 3> baseColorScale = { 1.f, 1.f, 1.f };
 		float roughness = 1.f;
-		float specularLevel = 1.f;
+		float specularLevel = 0.04f;
 
 		GlintParameters glintParameters;
 	};

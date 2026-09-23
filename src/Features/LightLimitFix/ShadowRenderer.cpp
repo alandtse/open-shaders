@@ -169,10 +169,14 @@ void LightLimitFix::CopyShadowLightData()
 					if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						ShadowCasterManager::ShadowBakeSnapshot snap{};
 						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
+							snap.projection = sd[depthSlot].ShadowProj;
+							snap.inverseProjection = sd[depthSlot].InvShadowProj;
 							snap.radius = sd[depthSlot].ShadowParam.y;
 							snap.bias = sd[depthSlot].ShadowParam.z;
 							ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
 						} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
+							sd[depthSlot].ShadowProj = snap.projection;
+							sd[depthSlot].InvShadowProj = snap.inverseProjection;
 							sd[depthSlot].ShadowParam.y = snap.radius;
 							sd[depthSlot].ShadowParam.z = snap.bias;
 						}

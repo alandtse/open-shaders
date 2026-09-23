@@ -67,6 +67,8 @@ void LoggingCallback(sl::LogType type, const char* msg)
 	case sl::LogType::eError:
 		logger::error("{} {}", prefix, cleanMsg);
 		break;
+	case sl::LogType::eCount:
+		break;
 	}
 }
 
@@ -151,24 +153,24 @@ void Streamline::LoadInterposer()
 		pref.flags |= sl::PreferenceFlags::eUseFrameBasedResourceTagging;
 
 	// Hook up all of the functions exported by the SL Interposer Library
-	slInit = (PFun_slInit*)GetProcAddress(interposer, "slInit");
-	slShutdown = (PFun_slShutdown*)GetProcAddress(interposer, "slShutdown");
-	slIsFeatureSupported = (PFun_slIsFeatureSupported*)GetProcAddress(interposer, "slIsFeatureSupported");
-	slIsFeatureLoaded = (PFun_slIsFeatureLoaded*)GetProcAddress(interposer, "slIsFeatureLoaded");
-	slSetFeatureLoaded = (PFun_slSetFeatureLoaded*)GetProcAddress(interposer, "slSetFeatureLoaded");
-	slEvaluateFeature = (PFun_slEvaluateFeature*)GetProcAddress(interposer, "slEvaluateFeature");
-	slAllocateResources = (PFun_slAllocateResources*)GetProcAddress(interposer, "slAllocateResources");
-	slFreeResources = (PFun_slFreeResources*)GetProcAddress(interposer, "slFreeResources");
-	slSetTag = (PFun_slSetTag*)GetProcAddress(interposer, "slSetTag");
-	slSetTagForFrame = (PFun_slSetTagForFrame*)GetProcAddress(interposer, "slSetTagForFrame");
-	slGetFeatureRequirements = (PFun_slGetFeatureRequirements*)GetProcAddress(interposer, "slGetFeatureRequirements");
-	slGetFeatureVersion = (PFun_slGetFeatureVersion*)GetProcAddress(interposer, "slGetFeatureVersion");
-	slUpgradeInterface = (PFun_slUpgradeInterface*)GetProcAddress(interposer, "slUpgradeInterface");
-	slSetConstants = (PFun_slSetConstants*)GetProcAddress(interposer, "slSetConstants");
-	slGetNativeInterface = (PFun_slGetNativeInterface*)GetProcAddress(interposer, "slGetNativeInterface");
-	slGetFeatureFunction = (PFun_slGetFeatureFunction*)GetProcAddress(interposer, "slGetFeatureFunction");
-	slGetNewFrameToken = (PFun_slGetNewFrameToken*)GetProcAddress(interposer, "slGetNewFrameToken");
-	slSetD3DDevice = (PFun_slSetD3DDevice*)GetProcAddress(interposer, "slSetD3DDevice");
+	slInit = reinterpret_cast<PFun_slInit*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slInit")));
+	slShutdown = reinterpret_cast<PFun_slShutdown*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slShutdown")));
+	slIsFeatureSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slIsFeatureSupported")));
+	slIsFeatureLoaded = reinterpret_cast<PFun_slIsFeatureLoaded*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slIsFeatureLoaded")));
+	slSetFeatureLoaded = reinterpret_cast<PFun_slSetFeatureLoaded*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetFeatureLoaded")));
+	slEvaluateFeature = reinterpret_cast<PFun_slEvaluateFeature*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slEvaluateFeature")));
+	slAllocateResources = reinterpret_cast<PFun_slAllocateResources*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slAllocateResources")));
+	slFreeResources = reinterpret_cast<PFun_slFreeResources*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slFreeResources")));
+	slSetTag = reinterpret_cast<PFun_slSetTag*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetTag")));
+	slSetTagForFrame = reinterpret_cast<PFun_slSetTagForFrame*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetTagForFrame")));
+	slGetFeatureRequirements = reinterpret_cast<PFun_slGetFeatureRequirements*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slGetFeatureRequirements")));
+	slGetFeatureVersion = reinterpret_cast<PFun_slGetFeatureVersion*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slGetFeatureVersion")));
+	slUpgradeInterface = reinterpret_cast<PFun_slUpgradeInterface*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slUpgradeInterface")));
+	slSetConstants = reinterpret_cast<PFun_slSetConstants*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetConstants")));
+	slGetNativeInterface = reinterpret_cast<PFun_slGetNativeInterface*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slGetNativeInterface")));
+	slGetFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slGetFeatureFunction")));
+	slGetNewFrameToken = reinterpret_cast<PFun_slGetNewFrameToken*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slGetNewFrameToken")));
+	slSetD3DDevice = reinterpret_cast<PFun_slSetD3DDevice*>(reinterpret_cast<void*>(GetProcAddress(interposer, "slSetD3DDevice")));
 
 	if (SL_FAILED(res, slInit(pref, sl::kSDKVersion))) {
 		logger::critical("[Streamline {}] Failed to initialize Streamline", instanceTag);

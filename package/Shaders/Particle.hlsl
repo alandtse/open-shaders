@@ -1,5 +1,6 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Permutation.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
@@ -350,6 +351,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		psout.Color.xyz = Color::IrradianceToGamma(lerp(refractColor, reflectColor, fresnel));
 		psout.Color.w = alpha;
 		psout.Normal = float4(0, 1, 0, alpha);
+		if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+			psout.Color.xyz = Color::SceneLinearToGamma(psout.Color.xyz);
 		return psout;
 	}
 #	endif
@@ -397,13 +400,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 	}
 
-	float3 ambientColor = max(0, SharedData::GetAmbient(float3(0, 0, 1)));
+	float3 ambientColor = Color::Ambient(max(0, SharedData::GetAmbient(float3(0, 0, 1))));
 #	if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, float3(0, 0, -1));
 	}
 #	endif
-	ambientColor = Color::GamutTransform(ambientColor);
 
 	// Exactly one of dirSoftShadow / dirDetailedShadow is < 1.0 (the two paths
 	// above are mutually exclusive); the other stays at its default 1.0.
@@ -449,6 +451,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Color.w = baseColor.w;
 	psout.Normal.w = baseColor.w;
 	psout.Normal.xyz = float3(0, 1, 0);
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Color.xyz = Color::SceneLinearToGamma(psout.Color.xyz);
 
 	return psout;
 }

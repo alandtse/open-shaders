@@ -217,7 +217,7 @@ namespace Util
 				hover = std::format("{}\n\nNOTE: Open Shaders cannot save this game setting directly. Setting {} '{}' might be able to be saved manually in the ini. Use the Copy button to export to clipboard.", settingData.description, collectionName, settingName);
 			else
 				hover = settingData.description;
-			ImGui::Text(hover.c_str());
+			ImGui::TextUnformatted(hover.c_str());
 		}
 		if (settingData.offset != 0) {
 			ImGui::SameLine();
@@ -225,7 +225,7 @@ namespace Util
 				ImGui::SetClipboardText(settingName.c_str());
 			}
 			if (auto _tt = HoverTooltipWrapper()) {
-				ImGui::Text(std::format("Copy {} '{}' to clipboard.", collectionName, settingName).c_str());
+				ImGui::TextUnformatted(std::format("Copy {} '{}' to clipboard.", collectionName, settingName).c_str());
 			}
 		}
 		ImGui::PopID();  // End unique ID scope

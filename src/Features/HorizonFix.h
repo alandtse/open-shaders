@@ -23,8 +23,7 @@ struct HorizonFix : Feature
 	virtual inline bool HasShaderDefine(RE::BSShader::Type t) override { return t == RE::BSShader::Type::Water; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kWater; }
 	virtual inline bool SupportsVR() override { return true; }
-	/** @brief Shows the feature only while the HorizonFix companion plugin is present. */
-	virtual bool IsInMenu() const override;
+	virtual bool IsInMenu() const override { return false; }
 
 	/** @brief Returns a summary description for the UI. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override

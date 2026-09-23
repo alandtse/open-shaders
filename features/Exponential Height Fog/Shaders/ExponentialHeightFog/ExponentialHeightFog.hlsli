@@ -212,16 +212,16 @@ namespace ExponentialHeightFog
 		float expFogFactor = saturate(exp2(-exponentialHeightLineIntegral));
 
 		float3 fogInscatteringColor = fogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
-		fogInscatteringColor += SharedData::exponentialHeightFogSettings.fogInscatteringColor.rgb * SharedData::exponentialHeightFogSettings.fogInscatteringColor.a;
+		fogInscatteringColor += Color::GamutTransform(SharedData::exponentialHeightFogSettings.fogInscatteringColor.rgb) * SharedData::exponentialHeightFogSettings.fogInscatteringColor.a;
 
 #if defined(DYNAMIC_CUBEMAPS)
 		if (SharedData::exponentialHeightFogSettings.useDynamicCubemaps > 0) {
 			float3 cubemapColor = DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampColorSampler, normalize(lerp(positionWS, float3(0, 0, 1), saturate((SharedData::exponentialHeightFogSettings.cubemapMipLevel + 1) / 9))), SharedData::exponentialHeightFogSettings.cubemapMipLevel).xyz;
-			fogInscatteringColor += cubemapColor * SharedData::exponentialHeightFogSettings.inscatteringTint.rgb * SharedData::exponentialHeightFogSettings.inscatteringTint.a;
+			fogInscatteringColor += Color::ApplyLinearSrgbTint(cubemapColor, SharedData::exponentialHeightFogSettings.inscatteringTint.rgb) * SharedData::exponentialHeightFogSettings.inscatteringTint.a;
 		}
 #endif
 
-		fogColor = fogInscatteringColor * (1.0f - expFogFactor);
+		fogColor = fogInscatteringColor;
 
 		float3 directionalInscattering = 0;
 
@@ -232,8 +232,8 @@ namespace ExponentialHeightFog
 			float3 lightDirection = normalize(SharedData::DirLightDirection.xyz);
 			float cosTheta = dot(lightDirection, viewDirection);
 			float phase = HenyeyGreenstein(cosTheta, SharedData::exponentialHeightFogSettings.directionalInscatteringAnisotropy);
-			float3 directionalLightInscattering = Color::GamutTransform(SharedData::DirLightColor.xyz) * phase;
-			directionalInscattering = directionalLightInscattering * (1.0f - expFogFactor) * SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier;
+			float3 directionalLightInscattering = GetDirectionalLightColor() * phase;
+			directionalInscattering = directionalLightInscattering * SharedData::exponentialHeightFogSettings.directionalInscatteringMultiplier;
 		}
 
 		fogColor += directionalInscattering;

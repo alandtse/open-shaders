@@ -47,7 +47,7 @@ class Feature;
 	BUFFER_VIEWER_NODE_IMPL(a_value, a_title, a_scale)
 
 #define BUFFER_VIEWER_NODE_BULLET(a_value, a_scale) \
-	ImGui::BulletText(#a_value);                    \
+	ImGui::BulletText("%s", #a_value);              \
 	ImGui::Image(a_value->srv.get(), { a_value->desc.Width * a_scale, a_value->desc.Height * a_scale });
 
 #define ADDRESS_NODE(a_value)                                                                        \
@@ -55,7 +55,7 @@ class Feature;
 		ImGui::SetClipboardText(std::format("{0:x}", reinterpret_cast<uintptr_t>(a_value)).c_str()); \
 	}                                                                                                \
 	if (ImGui::IsItemHovered())                                                                      \
-		ImGui::SetTooltip(std::format("Copy {} Address to Clipboard", #a_value).c_str());
+		ImGui::SetTooltip("%s", std::format("Copy {} Address to Clipboard", #a_value).c_str());
 
 namespace Util
 {
@@ -1075,6 +1075,9 @@ namespace Util
 	 * @param availableWidth The available width for the search bar
 	 */
 	void DrawFeatureSearchBar(std::string& searchString, float availableWidth = 0.0f);
+
+	/** @brief Draws loaded feature controls with their own settings context inside another page. */
+	void DrawEmbeddedFeatureSettings(Feature& feature);
 
 	/**
 	 * Provides access to theme-aware UI colors for consistent styling.

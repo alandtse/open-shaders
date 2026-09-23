@@ -579,9 +579,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	material.Metallic = saturate(rawRMAOS.y);
 	material.AO = rawRMAOS.z;
 
-	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
-	vertexColor /= max(vertexAO, EPSILON_DIVISION);
+	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
+	float3 vertexColor = Color::AuthoredColor(input.Color.xyz / max(vertexAO, EPSILON_DIVISION));
 	material.BaseColor = baseColor.xyz * vertexColor;
 	material.F0 = lerp(saturate(rawRMAOS.w), material.BaseColor, material.Metallic);
 	material.BaseColor *= 1 - material.Metallic;
@@ -608,7 +607,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
 	float dirDetailedShadow = SharedData::InInterior ? 1.0 : shadowColor.x;
-	dirDetailedShadow += ShadowClampValue * (1.0 - dirDetailedShadow);
 #				if defined(SCREEN_SPACE_SHADOWS)
 #					ifdef GRASS_OPTIMIZATIONS
 	if (!SharedData::InInterior && dot(normal, SharedData::DirLightDirection.xyz) >= 0 && input.IsFar <= 0.5)
@@ -656,8 +654,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 					continue;
 				float attenuation = 1 - distanceFactor * distanceFactor;
 #					endif
-				float3 lightColor = Color::PointLight(light.color.xyz) * attenuation * light.fade;
-				float lightShadow = (light.lightFlags & LightLimitFix::LightFlags::Shadow) ? shadowColor[light.shadowLightIndex] : 1.0;
+				const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+				float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * attenuation * light.fade;
+				float lightShadow = 1.0;
+				if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+					float2 rotation;
+					sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
+					float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+					float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+					bool shadowCoverage = false;
+					lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
+				}
 				float3 lightDirection = lightVector / max(lightDist, EPSILON_DIVISION);
 				DirectContext pointContext = CreateDirectLightingContext(normal, normal, vertexNormal, viewDirection, viewDirection,
 					lightDirection, lightDirection, lightColor, lightShadow, lightShadow);
@@ -689,7 +696,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	Skylighting::ApplySkylighting(directColor, directionalAmbientColor, outputAlbedo, skylightingDiffuse);
 #				endif
 
-	float3 outputColor = FogNearColor.w * directColor;
+	float3 outputColor = directColor;
 #				if defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
 	if (SharedData::lightLimitFixSettings.EnableLightsVisualisation) {
 		if (SharedData::lightLimitFixSettings.LightsVisualisationMode < 2) {
@@ -708,6 +715,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Reflectance = float4(indirectLobes.specular, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
 	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 1);
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
 	return psout;
 #			endif
 }
@@ -785,10 +794,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
 	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.HPosition.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
 
-	// Swaps direction of the backfaces otherwise they seem to get lit from the wrong direction.
-	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GrassSphereNormal))
-		if (dot(normal, viewDirection) < 0.0)
-			normal = -normal;
+	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GrassSphereNormal) && !frontFace)
+		normal = -normal;
 
 	float3x3 tbn = 0;
 
@@ -843,19 +850,25 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 	float dirDetailedShadow = 1.0;
+	float grassDirectionalShadowScale = 1.0;
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
 	if (ShadowSampling::HasDirectionalShadows()) {
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x);
+		float directionalCoverage;
+		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage);
+#				if defined(LIGHT_LIMIT_FIX)
+		grassDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, directionalCoverage);
+#				endif
 	}
 
 #				if defined(SCREEN_SPACE_SHADOWS)
+	bool applyScreenSpaceShadow = dirLightAngle >= 0.0 || SharedData::foliageLightingSettings.EnableGrassScattering != 0;
 #					ifdef GRASS_OPTIMIZATIONS
-	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0 && input.IsFar <= 0.5)
+	if (ShadowSampling::HasDirectionalShadows() && applyScreenSpaceShadow && input.IsFar <= 0.5)
 #					else
-	if (ShadowSampling::HasDirectionalShadows() && dirLightAngle >= 0.0)
+	if (ShadowSampling::HasDirectionalShadows() && applyScreenSpaceShadow)
 #					endif
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
 #				endif  // SCREEN_SPACE_SHADOWS
@@ -879,10 +892,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirLightAngle) * Color::VanillaNormalization();
 	}
 	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
-		lightsDiffuseColor += dirLightColor * dirDetailedShadow * GetFoliageTransmission(dirLightAngle, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
+		lightsDiffuseColor += dirLightColor * dirDetailedShadow * grassDirectionalShadowScale * GetFoliageTransmission(dirLightAngle, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 
-	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	float3 vertexColor = Color::AuthoredColor(input.Color.xyz);
+	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
 
 #				if defined(SKYLIGHTING)
 #					if defined(VR)
@@ -1042,7 +1055,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		psout.Diffuse = float4(diffuseColor, 1);
 	}
 #				else
-	psout.Diffuse.xyz = FogNearColor.w * diffuseColor;
+	psout.Diffuse.xyz = diffuseColor;
 #				endif
 
 	float3 normalVS = normalize(FrameBuffer::WorldToView(normal, false, eyeIndex));
@@ -1053,6 +1066,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Specular = float4(specularColor, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
 	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
+#			endif
+#			if !defined(RENDER_DEPTH)
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
 #			endif
 	return psout;
 }
@@ -1197,8 +1214,8 @@ PS_OUTPUT main(PS_INPUT input)
 	if (dot(normal, -normalize(input.WorldPosition.xyz)) < 0.0)
 		normal = -normal;
 
-	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
-	float vertexAO = max(max(vertexColor.r, vertexColor.g), vertexColor.b);
+	float3 vertexColor = Color::AuthoredColor(input.Color.xyz);
+	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
 
 #			if defined(SKYLIGHTING)
 #				if defined(VR)
@@ -1256,6 +1273,10 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
 #		endif
 
+#		if !defined(RENDER_DEPTH)
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
+#		endif
 	return psout;
 }
 #	endif

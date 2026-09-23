@@ -691,11 +691,6 @@ namespace
 		return node->is_object() ? node : nullptr;
 	}
 
-	json* GetObjectAtPath(json& data, const std::vector<std::string>& path)
-	{
-		return const_cast<json*>(GetObjectAtPath(std::as_const(data), path));
-	}
-
 	bool ParseCatalogArrayIndex(std::string_view value, size_t& index)
 	{
 		const auto result = std::from_chars(value.data(), value.data() + value.size(), index);
@@ -1422,7 +1417,7 @@ namespace
 			});
 			bool complete = descriptor.members.size() == expectedCount;
 			for (size_t index = 0; complete && index < descriptor.members.size(); ++index)
-				complete = descriptor.members[index].componentIndex == expectedStart + index;
+				complete = descriptor.members[index].componentIndex == static_cast<std::int8_t>(expectedStart + index);
 			if (complete) {
 				descriptors.push_back(std::move(descriptor));
 				continue;
@@ -4837,7 +4832,7 @@ static bool ParseOverwriteFileEntries(const std::filesystem::path& filePath,
 			if (const auto* transitionNode = GetObjectAtPath(*entryTransitions, settingPath)) {
 				if (auto transitionIt = transitionNode->find(key); transitionIt != transitionNode->end()) {
 					if (transitionIt->is_number()) {
-						const auto seconds = transitionIt->get<float>();
+						const auto seconds = transitionIt->template get<float>();
 						if (std::isfinite(seconds) && seconds >= 0.0f &&
 							seconds <= SSM::kMaxLocationTransitionSeconds)
 							entry.transitionSeconds = seconds;
@@ -5068,7 +5063,7 @@ std::optional<float> SceneSettingsManager::ResolveWeatherLowerValue(RE::FormID w
 	float lowerValue = baselineValue;
 	const auto& timeOfDayValues = BuildTimeOfDayValueGroups(
 		selectedSource == EntrySource::User ? std::optional{ EntrySource::User } : std::nullopt);
-	if (auto valueIt = timeOfDayValues.find(address); valueIt != timeOfDayValues.end())
+	if (auto valueIt = timeOfDayValues.find(address); valueIt != timeOfDayValues.end()) {
 		if (period == TimeOfDayPeriod::Count) {
 			std::array<float, kPeriodCount> factors{};
 			GetTimeOfDayFactors(factors.data());
@@ -5078,6 +5073,7 @@ std::optional<float> SceneSettingsManager::ResolveWeatherLowerValue(RE::FormID w
 		} else {
 			lowerValue = valueIt->second[periodIndex].value_or(baselineValue);
 		}
+	}
 	if (selectedSource != EntrySource::Overwrite)
 		return lowerValue;
 

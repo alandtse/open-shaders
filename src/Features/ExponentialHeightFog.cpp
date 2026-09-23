@@ -8,6 +8,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/IBL.h"
 #include "Features/LightLimitFix.h"
+#include "Features/LinearLighting.h"
 #include "Features/Skylighting.h"
 #include "Features/TerrainShadows.h"
 #include "Globals.h"
@@ -215,6 +216,7 @@ void ExponentialHeightFog::ClearShaderCache()
 	conservativeDepthCS.Reset();
 	lightScatteringCS.Reset();
 	integrationCS.Reset();
+	hasLightScatteringHistory = false;
 }
 
 void ExponentialHeightFog::CaptureDirectionalShadowMap()
@@ -407,10 +409,13 @@ void ExponentialHeightFog::Prepass()
 	                    ibl.skyIBLTexture;
 	const bool hasSkylighting = skylighting.loaded && skylighting.texProbeArray;
 
+	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
+	const std::array currentColorSpace{ linearLightingData.enableLinearLighting, linearLightingData.enableACEScg };
 	const bool temporalReprojection = Util::GetTemporal();
 	const bool temporalHistoryValid =
 		temporalReprojection &&
 		hasLightScatteringHistory &&
+		historyColorSpace == currentColorSpace &&
 		lastPrepassFrame != UINT32_MAX &&
 		globals::state->frameCount == lastPrepassFrame + 1u;
 
@@ -598,6 +603,7 @@ void ExponentialHeightFog::Prepass()
 	if (temporalReprojection && allStagesOk) {
 		context->CopyResource(lightScatteringHistory->resource.get(), lightScattering->resource.get());
 		hasLightScatteringHistory = true;
+		historyColorSpace = currentColorSpace;
 		if (depthSrv) {
 			context->CopyResource(conservativeDepthHistory->resource.get(), conservativeDepth->resource.get());
 			hasConservativeDepthHistory = true;

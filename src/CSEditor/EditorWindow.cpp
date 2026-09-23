@@ -7,6 +7,7 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Menu/BackgroundBlur.h"
+#include "Menu/MenuHeaderRenderer.h"
 #include "PaletteWindow.h"
 #include "State.h"
 #include "Utils/Game.h"
@@ -259,9 +260,122 @@ std::string EditorWindow::ResolveEditorId(RE::TESForm* form, const WidgetVec& wi
 	return editorid ? editorid : std::format("0x{:08X}", form->GetFormID());
 }
 
+void EditorWindow::DrawBrowserHeader()
+{
+	auto* window = ImGui::GetCurrentWindow();
+	if (window->Hidden)
+		return;
+	const auto& style = ImGui::GetStyle();
+	const bool titleBar = !window->DockIsActive && window->TitleBarHeight > 0.0f;
+	const float headerInset = std::max(style.WindowPadding.x, window->WindowRounding + window->WindowBorderSize);
+	const bool savedSkipItems = window->SkipItems;
+	const auto savedNavLayer = window->DC.NavLayerCurrent;
+	const ImVec2 savedCursorMax = window->DC.CursorMaxPos;
+	const ImVec2 savedIdealMax = window->DC.IdealMaxPos;
+	if (titleBar) {
+		window->SkipItems = false;
+		ImGui::BeginGroup();
+		ImRect clip = window->TitleBarRect();
+		clip.Expand(-window->WindowBorderSize);
+		ImGui::PushClipRect(clip.Min, clip.Max, false);
+		window->DC.NavLayerCurrent = ImGuiNavLayer_Menu;
+		ImGui::SetCursorScreenPos({ window->Pos.x + style.FramePadding.x + window->WindowBorderSize, window->Pos.y + (window->TitleBarHeight - ImGui::GetFrameHeight()) * 0.5f });
+	} else {
+		window->DC.MenuBarOffset.y = (window->MenuBarRect().GetHeight() - ImGui::GetFrameHeight()) * 0.5f;
+		if (!ImGui::BeginMenuBar())
+			return;
+	}
+	const SKSE::stl::scope_exit restoreHeader([&]() noexcept {
+		if (titleBar) {
+			ImGui::PopClipRect();
+			ImGui::GetCurrentContext()->GroupStack.back().EmitItem = false;
+			ImGui::EndGroup();
+			window->DC.CursorMaxPos = savedCursorMax;
+			window->DC.IdealMaxPos = savedIdealMax;
+			window->DC.NavLayerCurrent = savedNavLayer;
+			window->SkipItems = savedSkipItems;
+		} else {
+			ImGui::EndMenuBar();
+		}
+	});
+
+	const auto buttonStyle = Util::TransparentIconButtonStyle();
+	if (titleBar) {
+		const float buttonSize = ImGui::GetFrameHeight();
+		if (ImGui::Button("##BrowserCollapse", { buttonSize, buttonSize }))
+			window->WantCollapseToggle = true;
+		const ImVec2 buttonMin = ImGui::GetItemRectMin();
+		const float iconSize = buttonSize * ThemeManager::Constants::EDITOR_BROWSER_CHEVRON_SCALE;
+		ImGui::RenderArrow(window->DrawList, { buttonMin.x + (buttonSize - ImGui::GetFontSize()) * 0.5f, buttonMin.y + (buttonSize - iconSize) * 0.5f },
+			ImGui::GetColorU32(ImGuiCol_Text), window->Collapsed ? ImGuiDir_Right : ImGuiDir_Down, iconSize / ImGui::GetFontSize());
+		ImGui::SameLine();
+	}
+	const auto drawMode = [&](const char* label, BrowserMode mode) {
+		ImGui::PushStyleColor(ImGuiCol_Button, browserMode == mode ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImVec4());
+		const SKSE::stl::scope_exit restoreColor([]() noexcept { ImGui::PopStyleColor(); });
+		if (ImGui::Button(label)) {
+			browserMode = mode;
+			ImGui::SetWindowCollapsed(false);
+		}
+	};
+	drawMode(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), BrowserMode::Editor);
+	ImGui::SameLine();
+	drawMode(T(TKEY("os_menu"), "OS Menu"), BrowserMode::Menu);
+	if (browserMode == BrowserMode::Menu) {
+		const auto& icons = globals::menu->uiIcons;
+		ImGui::SameLine();
+		const float right = std::min(window->Pos.x + window->Size.x - headerInset, window->ClipRect.Max.x - window->WindowBorderSize);
+		const float actionsX = right - window->Pos.x - MenuHeaderRenderer::GetCompactActionsWidth(icons);
+		ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), actionsX));
+		MenuHeaderRenderer::RenderCompactActions(icons);
+	}
+}
+
 void EditorWindow::ShowObjectsWindow()
 {
-	if (!Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), nullptr)) {
+	if (resetLayout) {
+		resetBrowserSidebar = true;
+		resetMenuSidebar = true;
+	}
+	const int requestedMode = pendingBrowserMode.exchange(-1, std::memory_order_relaxed);
+	if (requestedMode != -1)
+		browserMode = static_cast<BrowserMode>(requestedMode);
+
+	const auto& headerStyle = ImGui::GetStyle();
+	const float modeButtonsWidth = ImGui::CalcTextSize(T(TKEY("weather_lighting_browser"), "OS Editor Browser")).x +
+	                               ImGui::CalcTextSize(T(TKEY("os_menu"), "OS Menu")).x + headerStyle.FramePadding.x * 4.0f;
+	const float headerInset = std::max(headerStyle.WindowPadding.x, headerStyle.WindowRounding + headerStyle.WindowBorderSize);
+	const float minWidth = ImGui::GetFrameHeight() + modeButtonsWidth + MenuHeaderRenderer::GetCompactActionsWidth(globals::menu->uiIcons) +
+	                       headerStyle.ItemSpacing.x * 4.0f + headerInset * 2.0f;
+	ImGui::SetNextWindowSizeConstraints({ minWidth, headerStyle.WindowMinSize.y }, { FLT_MAX, FLT_MAX });
+	constexpr auto windowId = "###OS Editor Browser";
+	const auto* previousWindow = ImGui::FindWindowByName(windowId);
+	const auto* dockNode = previousWindow ? previousWindow->DockNode : nullptr;
+	const bool docked = dockNode && dockNode->HostWindow;
+	const auto title = std::format("{}{}", docked ? T(TKEY("weather_lighting_browser"), "OS Editor Browser") : "", windowId);
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+	if (docked)
+		flags |= ImGuiWindowFlags_MenuBar;
+	bool visible;
+	{
+		const auto menuButtonPosition = headerStyle.WindowMenuButtonPosition;
+		ImGui::GetStyle().WindowMenuButtonPosition = ImGuiDir_None;
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(headerStyle.FramePadding.x,
+															headerStyle.FramePadding.y + ThemeManager::Constants::EDITOR_BROWSER_HEADER_PADDING * Util::GetUIScale()));
+		const SKSE::stl::scope_exit restorePadding([menuButtonPosition]() noexcept {
+			ImGui::PopStyleVar();
+			ImGui::GetStyle().WindowMenuButtonPosition = menuButtonPosition;
+		});
+		visible = Util::BeginWithRoundedClose(title.c_str(), nullptr, flags);
+	}
+	DrawBrowserHeader();
+	if (!visible) {
+		ImGui::End();
+		return;
+	}
+	if (browserMode == BrowserMode::Menu) {
+		globals::menu->DrawEditorSettings(resetMenuSidebar);
+		resetMenuSidebar = false;
 		ImGui::End();
 		return;
 	}
@@ -276,14 +390,16 @@ void EditorWindow::ShowObjectsWindow()
 	// Create a table with two columns
 	if (ImGui::BeginTable("ObjectTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner)) {
 		// Fixed categories column, objects column fills remaining width
-		const float categoriesWidth = 180.0f * Util::GetUIScale();
+		const float categoriesWidth = ThemeManager::Constants::EDITOR_BROWSER_SIDEBAR_WIDTH * Util::GetUIScale();
 		ImGui::TableSetupColumn(T(TKEY("categories"), "Categories"), ImGuiTableColumnFlags_WidthFixed, categoriesWidth);
 		ImGui::TableSetupColumn(T(TKEY("objects"), "Objects"), ImGuiTableColumnFlags_WidthStretch);
 
 		ImGui::TableNextRow();
 
-		if (resetLayout)
+		if (resetBrowserSidebar) {
 			ImGui::TableSetColumnWidth(0, categoriesWidth);
+			resetBrowserSidebar = false;
+		}
 
 		// Left column: Categories
 		ImGui::TableSetColumnIndex(0);
@@ -392,7 +508,7 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				auto addTOD = [&](auto*(&fields)[RE::TESWeather::ColorTimes::kTotal], const WidgetVec& widgets) {
-					for (int tod = 0; tod < RE::TESWeather::ColorTimes::kTotal; ++tod) {
+					for (int tod = 0; tod < static_cast<int>(RE::TESWeather::ColorTimes::kTotal); ++tod) {
 						auto* form = fields[tod];
 						if (!form)
 							continue;
@@ -805,7 +921,7 @@ void EditorWindow::ShowObjectsWindow()
 				};
 
 				// Filtered display of widgets
-				for (int i = 0; i < sortedWidgets.size(); ++i) {
+				for (size_t i = 0; i < sortedWidgets.size(); ++i) {
 					if (!shouldShowWidget(sortedWidgets[i]))
 						continue;
 
@@ -900,11 +1016,11 @@ void EditorWindow::ShowObjectsWindow()
 
 					// Form ID column
 					ImGui::TableNextColumn();
-					ImGui::Text(sortedWidgets[i]->GetFormID().c_str());
+					ImGui::TextUnformatted(sortedWidgets[i]->GetFormID().c_str());
 
 					// File column
 					ImGui::TableNextColumn();
-					ImGui::Text(sortedWidgets[i]->GetFilename().c_str());
+					ImGui::TextUnformatted(sortedWidgets[i]->GetFilename().c_str());
 
 					// Status column
 					ImGui::TableNextColumn();
@@ -1035,11 +1151,13 @@ void EditorWindow::ShowViewportWindow()
 	ImGui::SetCursorScreenPos(imageRect.Min);
 	const ImVec2 imageSize = imageRect.GetSize();
 
-	if (tempTexture && tempTexture->srv) {
+	const auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	if (!hdrActive && tempTexture && tempTexture->srv) {
 		// Opaque draw: the preview SRV is a render target with non-1 alpha, which a plain
 		// ImGui::Image would show as a transparency mask (a cutout through the HMD in VR).
 		Util::Subrect::ImageOpaque(tempTexture->srv.get(), imageSize);
-	} else {
+	} else if (!hdrActive || !BackgroundBlur::ImageHDRScene(imageSize)) {
 		drawList->AddRectFilled(imageRect.Min, imageRect.Max, ImGui::GetColorU32(ImGuiCol_WindowBg));
 		ImGui::TextDisabled("%s", T(TKEY("viewport_unavailable"), "Viewport unavailable"));
 	}
@@ -1220,16 +1338,9 @@ void EditorWindow::RenderUI()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(T(TKEY("window"), "Window"))) {
-			const bool hdrActive = globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR;
-			if (hdrActive)
-				ImGui::BeginDisabled();
 			if (ImGui::Checkbox(T(TKEY("viewport"), "Viewport"), &settings.showViewport)) {
 				BackgroundBlur::SetCSEditorActive(settings.showViewport);
 				Save();
-			}
-			if (hdrActive) {
-				ImGui::EndDisabled();
-				Util::AddTooltip(T(TKEY("viewport_unavailable_hdr"), "Viewport is unavailable when HDR Display is enabled"), ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
 			}
 			if (ImGui::Checkbox(T(TKEY("palette"), "Palette"), &PaletteWindow::GetSingleton()->open)) {
 			}
@@ -1589,7 +1700,7 @@ void EditorWindow::SetupResources()
 
 bool EditorWindow::IsViewportActive() const
 {
-	return settings.showViewport && !(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR);
+	return settings.showViewport;
 }
 
 void EditorWindow::UpdateOpenState()
@@ -1616,19 +1727,13 @@ void EditorWindow::Draw()
 	if (open)
 		lightEditor.GatherLights();
 
-	// Keep background blur in sync when HDR toggles while the editor stays open
-	{
-		static bool prevViewportActive = false;
-		const bool viewportActive = IsViewportActive();
-		if (viewportActive != prevViewportActive) {
-			BackgroundBlur::SetCSEditorActive(viewportActive);
-			prevViewportActive = viewportActive;
-		}
-	}
-
-	if (!IsViewportActive()) {
+	auto& hdr = globals::features::hdrDisplay;
+	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	if (!IsViewportActive() || hdrActive) {
 		delete tempTexture;
 		tempTexture = nullptr;
+		if (IsViewportActive() && viewportWindowVisible && hdrActive)
+			hdr.SnapshotCleanScene();
 	} else if (viewportWindowVisible) {
 		auto renderer = globals::game::renderer;
 		if (renderer) {
@@ -1656,7 +1761,7 @@ void EditorWindow::Draw()
 						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 						framebuffer.SRV->GetDesc(Util::AsW32(&srvDesc));
 
-						tempTexture = new Texture2D(texDesc);
+						tempTexture = new Texture2D(texDesc, "CSEditor::Viewport");
 						tempTexture->CreateSRV(srvDesc);
 					}
 

@@ -26,7 +26,12 @@ BSLightingShaderMaterialPBR* BSLightingShaderMaterialPBR::Make()
 	auto* scrapHeap = globals::game::memoryManager->GetThreadScrapHeap();
 	auto* material = static_cast<BSLightingShaderMaterialPBR*>(scrapHeap->Allocate(sizeof(BSLightingShaderMaterialPBR), 8));
 	if (material) {
+		// Zeroes RE::BSLightingShaderMaterialBase's raw fields, which have no
+		// constructor of their own; construct_at then properly sets the vtable.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdynamic-class-memaccess"
 		std::memset(material, 0, sizeof(BSLightingShaderMaterialPBR));
+#pragma clang diagnostic pop
 		std::construct_at(material);
 	}
 	return material;

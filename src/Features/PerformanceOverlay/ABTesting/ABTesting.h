@@ -98,8 +98,8 @@ private:
 	uint32_t testInterval = 0;
 	bool abTestingEnabled = false;
 	bool usingTestConfig = false;
-	LARGE_INTEGER timingFrequency = { 0 };
-	LARGE_INTEGER lastTestSwitch = { 0 };
+	LARGE_INTEGER timingFrequency{};
+	LARGE_INTEGER lastTestSwitch{};
 	ABTestAggregator aggregator;
 
 	// In-memory storage for both variants to avoid disk I/O during swapping

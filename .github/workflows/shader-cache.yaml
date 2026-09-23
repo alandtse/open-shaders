@@ -51,13 +51,16 @@ jobs:
                   python-version: "3.12"
 
             - name: Install hlslkit (pinned)
-              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git@6fa0bab8642af2ee78597140778b29ac8542eb48
+              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git@682751d1d98ac13bab8e8a7e85b414b8b2a2f6a6
 
             - name: Build ${{ matrix.runtime }} cache from ${{ inputs.tag }} shaders
               shell: pwsh
               run: |
                   python tools/build-shader-cache.py --source-root target --runtime ${{ matrix.runtime }} `
                     --out dist/shader-cache --jobs 4
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  python tools/verify_shader_cache.py artifact --source-root target --runtime ${{ matrix.runtime }} `
+                    --cache dist/shader-cache/${{ matrix.runtime }}/ShaderCache --shaders dist/shader-cache/staged-shaders
 
             - name: Upload cache artifact
               uses: actions/upload-artifact@v7

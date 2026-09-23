@@ -51,12 +51,12 @@ void PostProcessing::DrawSettings()
 	static int presetIdx = -1;
 
 	ImGui::BeginGroup();
-	std::string currentPreset = (presetIdx >= 0 && presetIdx < presets.size()) ? presets[presetIdx] : T("feature.post_processing.select_a_preset", "Select a preset");
+	std::string currentPreset = (presetIdx >= 0 && presetIdx < static_cast<int>(presets.size())) ? presets[presetIdx] : T("feature.post_processing.select_a_preset", "Select a preset");
 
 	if (ImGui::BeginCombo("##PresetCombo", currentPreset.c_str())) {
 		presets = LoadPresets();
 
-		for (int i = 0; i < presets.size(); ++i) {
+		for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
 			bool isSelected = presetIdx == i;
 			if (ImGui::Selectable(presets[i].c_str(), isSelected))
 				presetIdx = i;
@@ -68,7 +68,7 @@ void PostProcessing::DrawSettings()
 
 	ImGui::SameLine();
 	if (PostProcessingUI::ActionButton(T("feature.post_processing.load", "Load"))) {
-		if (presetIdx >= 0 && presetIdx < presets.size()) {
+		if (presetIdx >= 0 && presetIdx < static_cast<int>(presets.size())) {
 			LoadPresetFrom(presets[presetIdx]);
 		}
 	}

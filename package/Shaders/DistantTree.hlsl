@@ -315,6 +315,11 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif  // DEFERRED
 #	endif      // RENDER_DEPTH
 
+#	if !defined(RENDER_DEPTH)
+	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
+#	endif
+
 	return psout;
 }
 #endif  // PSHADER

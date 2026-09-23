@@ -15,11 +15,7 @@ namespace ShadowCasterManager
 	/// Casters culled last frame across all lights (Tracy plot for A/B).
 	std::atomic<uint32_t> s_casterCullCount{ 0 };
 
-	/// Appends dropped because the culling process's free pool was near
-	/// exhaustion (see the guard in Hook_ParabolicCullAppend).
-	std::atomic<uint32_t> s_cullPoolDropCount{ 0 };
-
-	/// Running total of s_cullPoolDropCount (frame-reset, Tracy-only),
+	/// Running total of CullPoolExhaustionFix::dropCount (frame-reset, Tracy-only),
 	/// published for devbench inspect kind=llfshadows -- catches drops the
 	/// empty-render guard's geomList.empty() check misses.
 	std::atomic<uint64_t> s_cullPoolDropTotal{ 0 };
@@ -356,27 +352,6 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	// RE::BSCullingProcess::Data free-object-pool layout, Ghidra-verified
-	// byte-identical across SE/AE/VR. kFreePoolOffset/kPoolHeadOffset/
-	// kPoolTailOffset map PtrMultiProdCons<Data,8192,0>'s free/start/end;
-	// PopFreeQueueEntry's CAS loop guarantees tail >= head (no underflow).
-	constexpr std::uintptr_t kFreePoolOffset = 0x20150;
-	constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
-	constexpr std::uintptr_t kPoolTailOffset = 0x10008;
-	constexpr std::uint32_t kFreeEntryMargin = 16;
-
-	/// True when the free pool backing `a_this` is within kFreeEntryMargin of
-	/// exhaustion. AppendVirtual writes through PopFreeQueueEntry's result
-	/// with no null check, so exhaustion is a guaranteed CTD -- the caller
-	/// drops the caster instead. Margin absorbs concurrent worker pops.
-	static bool CullPoolNearExhaustion(const RE::BSCullingProcess* a_this)
-	{
-		const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
-		const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
-		const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
-		return tail - head < kFreeEntryMargin;
-	}
-
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
 	/// threshold, or when it does not belong to the active split-cache pass.
@@ -422,18 +397,14 @@ namespace ShadowCasterManager
 			// cascade cull (see CurrentCullLight).
 			if (light && CasterFilteredByPass(a_visible))
 				return;
-			if (CullPoolNearExhaustion(a_this)) {
-				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
-				return;
-			}
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	/// Pool-exhaustion guard for the base culling process (frustum/spot lights'
-	/// vtable, RE::VTABLE_BSCullingProcess[0], also reached by the engine's
-	/// room/scene cull walks) -- same unchecked AppendVirtual write as above.
+	/// Caster filter for the base culling process (frustum/spot lights' vtable,
+	/// RE::VTABLE_BSCullingProcess[0], also reached by the engine's room/scene
+	/// cull walks).
 	struct Hook_BaseCullAppendGuard
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
@@ -452,10 +423,6 @@ namespace ShadowCasterManager
 			// vtable slot (see CurrentCullLight), not our accumulate.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
-			if (CullPoolNearExhaustion(a_this)) {
-				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
-				return;
-			}
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

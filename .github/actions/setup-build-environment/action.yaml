@@ -19,21 +19,18 @@ outputs:
 runs:
     using: "composite"
     steps:
-        # Single source of truth for the cache trust split below. head.repo.fork
-        # is unusable here (this repo is itself an upstream fork); compare full_name.
+        # GitHub denies cache writes for pull_request/pull_request_target jobs at
+        # the token layer regardless of permissions granted, so treat both as
+        # untrusted unconditionally rather than keep a write attempt that always
+        # fails today but would become a real cache-poisoning path if that changed.
         - name: Determine cache-write trust
           id: trust
           shell: bash
           run: |
-              if [[ "${{ github.event_name }}" != "pull_request" && "${{ github.event_name }}" != "pull_request_target" ]]; then
-                  trusted=true
-              elif [[ "${{ github.event_name }}" == "pull_request_target" && "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.event.pull_request.base.repo.full_name }}" ]]; then
-                  case "${{ github.event.pull_request.author_association }}" in
-                      OWNER | MEMBER | COLLABORATOR) trusted=true ;;
-                      *) trusted=false ;;
-                  esac
-              else
+              if [[ "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "pull_request_target" ]]; then
                   trusted=false
+              else
+                  trusted=true
               fi
               echo "trusted=$trusted" >> "$GITHUB_OUTPUT"
 

@@ -18,7 +18,7 @@ void CODBloom::DrawSettings()
 	ImGui::SliderFloat(T("feature.post_processing.codbloom.threshold", "Threshold"), &settings.Threshold, -7.f, 23.f, "%+.2f EV100");
 	ImGui::SliderFloat(T("feature.post_processing.codbloom.upsampling_radius", "Upsampling Radius"), &settings.UpsampleRadius, 1.f, 5.f, "%.1f px");
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.codbloom.a_greater_radius_makes_the_bloom_slightly_blurrier", "A greater radius makes the bloom slightly blurrier."));
+		ImGui::TextUnformatted(T("feature.post_processing.codbloom.a_greater_radius_makes_the_bloom_slightly_blurrier", "A greater radius makes the bloom slightly blurrier."));
 
 	ImGui::SliderFloat(T("feature.post_processing.codbloom.mix", "Mix"), &settings.BlendFactor, 0.f, 1.f, "%.2f");
 
@@ -30,7 +30,7 @@ void CODBloom::DrawSettings()
 		mipLevel = maxMipLevel;
 	ImGui::SliderInt(T("feature.post_processing.codbloom.mip_level", "Mip Level"), &mipLevel, 1, maxMipLevel, "%d", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text(T("feature.post_processing.codbloom.the_greater_the_level_the_blurrier_the_part", "The greater the level, the blurrier the part it controls"));
+		ImGui::TextUnformatted(T("feature.post_processing.codbloom.the_greater_the_level_the_blurrier_the_part", "The greater the level, the blurrier the part it controls"));
 	ImGui::Indent();
 	{
 		ImGui::SliderFloat(T("feature.post_processing.codbloom.mip_level_intensity", "Mip Level Intensity"), &settings.MipBlendFactor[mipLevel - 1], 0.f, 1.f, "%.2f");
@@ -43,7 +43,7 @@ void CODBloom::DrawSettings()
 		static int mip = 0;
 		ImGui::SliderInt(T("feature.post_processing.codbloom.debug_mip_level", "Debug Mip Level"), &mip, 0, (int)s_BloomMips - 1, "%d", ImGuiSliderFlags_NoInput | ImGuiSliderFlags_AlwaysClamp);
 
-		ImGui::BulletText(T("feature.post_processing.codbloom.texbloom", "texBloom"));
+		ImGui::BulletText("%s", T("feature.post_processing.codbloom.texbloom", "texBloom"));
 		ImGui::Image(texBloomMipSRVs[mip].get(), { texBloom->desc.Width * previewScale, texBloom->desc.Height * previewScale });
 	}
 }
@@ -85,12 +85,6 @@ void CODBloom::SetupResources()
 			.Format = texDesc.Format,
 			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
-		};
-
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MipSlice = 0 }
 		};
 
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = s_BloomMips;
@@ -220,7 +214,7 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 	{
 		CS_GPU_PASS("PostProcessing::CODBloom::Downsample");
 		context->CSSetShader(downsampleFirstMipCS.get(), nullptr, 0);
-		for (int i = 0; i < s_BloomMips - 1; i++) {
+		for (int i = 0; i < static_cast<int>(s_BloomMips) - 1; i++) {
 			resetViews();
 
 			srvs.at(1) = texBloomMipSRVs[i].get();

@@ -53,7 +53,7 @@ std::string LightPicker::FormatRefFormEntry(RE::TESObjectREFR* refr)
 	if (!refr)
 		return {};
 	const auto* ownerFile = refr->GetDescriptionOwnerFile();
-	if (!ownerFile || !ownerFile->fileName)
+	if (!ownerFile || ownerFile->fileName[0] == '\0')
 		return {};
 	return FormatFormEntry(refr->formID, ownerFile->fileName);
 }

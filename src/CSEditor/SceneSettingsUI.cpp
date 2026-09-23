@@ -2977,7 +2977,7 @@ namespace SceneSettingsUI
 
 			ImGui::TableSetColumnIndex(3);
 			ImGui::BeginDisabled(!state.activeContext || !manager->HasPendingFeatureSceneEdits());
-			const auto saveLabel = GetScenePickerLabel(T("menu.save_settings", "Save Settings"), manager->HasPendingFeatureSceneEdits() ? SceneSettingMarker::Settings : SceneSettingMarker::None) + "###FeatureSceneSave";
+			const auto saveLabel = GetScenePickerLabel(T("feature.scene_manager.action.save", "Save"), manager->HasPendingFeatureSceneEdits() ? SceneSettingMarker::Settings : SceneSettingMarker::None) + "###FeatureSceneSave";
 			if (ImGui::Button(saveLabel.c_str()))
 				state.saveFailed = !manager->StoreFeatureSceneEdit();
 			ImGui::EndDisabled();
@@ -2992,7 +2992,7 @@ namespace SceneSettingsUI
 			}
 			ImGui::TableSetColumnIndex(4);
 			ImGui::BeginDisabled(!state.hasSavedSettings || manager->HasPendingFeatureSceneEdits() || manager->AreFeatureSceneEditActionsLocked());
-			if (ImGui::Button(T("feature.scene_manager.copy.to", "Copy to")) && requestedContext) {
+			if (ImGui::Button(T("ui.copy", "Copy")) && requestedContext) {
 				state.copy.Reset();
 				state.copy.sourceLayer = EntrySource::User;
 				state.copySource = requestedContext;
@@ -3027,7 +3027,7 @@ namespace SceneSettingsUI
 			return false;
 		}
 		if (state.saveFailed && manager->HasPendingFeatureSceneEdits())
-			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save Settings again."));
+			ImGui::TextColored(Util::Colors::GetError(), "%s", T("feature.scene_manager.edit.save_failed", "Could not save scene settings. Your unsaved changes are kept. Try Save again."));
 		if (manager->HasFeatureSceneEditOverwrites() || manager->AreFeatureSceneEditOverwritesPaused()) {
 			const bool paused = manager->AreFeatureSceneEditOverwritesPaused();
 			ImGui::TextColored(Util::Colors::GetError(), "%s", paused ? T("feature.scene_manager.edit.overwrites_paused", "Feature overwrites are temporarily paused") : T("feature.scene_manager.edit.overwritten_warning", "Feature settings are being overwritten"));
@@ -3590,7 +3590,7 @@ namespace SceneSettingsUI
 			if (info.controlType != first.controlType || info.settingPath != first.settingPath ||
 				info.settingKey != first.settingKey || info.componentStart != first.componentStart ||
 				info.componentCount != first.componentCount ||
-				info.componentIndex != first.componentStart + component ||
+				info.componentIndex != static_cast<std::int8_t>(first.componentStart + component) ||
 				info.aggregatePresentation != first.aggregatePresentation ||
 				info.unifiedEditMode != first.unifiedEditMode)
 				return false;
@@ -3599,7 +3599,7 @@ namespace SceneSettingsUI
 
 		std::array<float, 4> values{};
 		for (size_t component = 0; component < components.size(); ++component)
-			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.get<float>();
+			values[component] = entries[orderedComponents[component]->entryIndices.back()].value.template get<float>();
 
 		if (readOnly)
 			ImGui::BeginDisabled();
@@ -4704,8 +4704,8 @@ namespace SceneSettingsUI
 
 		if (open) {
 			if (hasActiveOverrides) {
-				Util::Text::WrappedError(T("feature.scene_manager.overridden_warning",
-					"Feature values are being overridden. Pause overwrites to see changes."));
+				Util::Text::WrappedError("%s", T("feature.scene_manager.overridden_warning",
+												   "Feature values are being overridden. Pause overwrites to see changes."));
 			}
 			if (onExportAll) {
 				if (ImGui::SmallButton(std::format("{}{}",
@@ -4761,7 +4761,7 @@ namespace SceneSettingsUI
 		ImGui::InputText(T("feature.scene_manager.export.mod_name", "Mod Name"), state.modName, IM_ARRAYSIZE(state.modName));
 		auto modName = Util::FileHelpers::SanitizeFileName(state.modName);
 		if (modName.empty())
-			Util::Text::WrappedDisabled(T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
+			Util::Text::WrappedDisabled("%s", T("feature.scene_manager.export.enter_mod_name", "Enter a mod name to export."));
 		ImGui::Spacing();
 
 		ImGui::TextUnformatted(T("feature.scene_manager.export.select_settings", "Select settings to export as overwrite files:"));
@@ -5165,7 +5165,8 @@ namespace SceneSettingsUI
 			},
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->TogglePauseEntry(SceneType::InteriorOnly, idx); },
 			[](size_t idx) { SceneSettingsManager::GetSingleton()->RevertEntryToDefault(SceneType::InteriorOnly, idx); },
-			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); }
+			[](size_t idx) { SceneSettingsManager::GetSingleton()->RemoveSetting(SceneType::InteriorOnly, idx); },
+			{}, nullptr, {}
 		};
 
 		RefreshSourcePanelCache(s_interiorTableCache, entries, 1, true);
@@ -5266,7 +5267,8 @@ namespace SceneSettingsUI
 			[](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddSetting(SceneType::TimeOfDay, feat, path, key,
 					SceneSettingsManager::GetFeatureSettingValue(feat, path, key), static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 
 		auto& overwrite = s_todTableCache.overwrite;
@@ -5784,7 +5786,8 @@ namespace SceneSettingsUI
 			[&selectedTarget](size_t index) { SceneSettingsManager::GetSingleton()->RemoveLocationSetting(selectedTarget.type, selectedTarget.formKey, index); },
 			[&selectedTarget](const std::string& feature, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddLocationSetting(selectedTarget.type, selectedTarget.formKey, selectedTarget.name, selectedTarget.cocCode, feature, path, key, false, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 		if (hasTransitionEntries) {
 			callbacks.auxiliaryColumnLabel = T("feature.scene_manager.location.transition.column", "Transition");
@@ -5967,7 +5970,8 @@ namespace SceneSettingsUI
 			[weatherId](const std::string& feat, const std::vector<std::string>& path, const std::string& key, int p) {
 				SceneSettingsManager::GetSingleton()->AddWeatherSetting(
 					weatherId, feat, path, key, static_cast<Period>(p));
-			}
+			},
+			nullptr, {}
 		};
 	}
 

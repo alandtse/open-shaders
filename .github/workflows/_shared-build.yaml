@@ -78,6 +78,9 @@ on:
             cpp-built:
                 description: "'true' if the C++ build job ran and succeeded"
                 value: ${{ jobs.cpp-build.result == 'success' }}
+            cache-validated:
+                description: "'true' if both distributable runtime caches were validated and uploaded"
+                value: ${{ inputs.cache-artifacts && inputs.run-shader-validation && github.event_name != 'pull_request_target' && inputs.repository == github.repository && jobs.shader-validation.result == 'success' }}
 
 jobs:
     cpp-build:
@@ -302,6 +305,8 @@ jobs:
                     python tools/build-shader-cache.py --emit-profile-config "$PLAIN_CONFIG" "$PROFILE_CONFIG"
                     python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
                       hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3 --timing-report "build/shader-compile-timing-${{ matrix.config.runtime }}.json"
+                    cp "$PROFILE_CONFIG" build/ShaderCache/CompileConfig.yaml
+                    python tools/build-shader-cache.py --record-compile build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
                     echo "::endgroup::"
                   fi
 
@@ -315,16 +320,17 @@ jobs:
                   if-no-files-found: error
 
             # Never runs in pull_request_target contexts or on fork checkouts
-            # (cache-artifacts is only set by release-build); the guards make
+            # (cache-artifacts is only set by trusted builds); the guards make
             # that structural for CodeQL and future callers. release-parity
             # only: ShaderCache/ is that pass's output dir.
             - name: Finalize distributable shader cache (${{ matrix.config.runtime }})
               if: matrix.pass == 'release-parity' && inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'
               shell: bash
               run: |
-                  # Re-profiles default-disabled features' shaders (validation keeps their
-                  # defines on for coverage), prunes sidecars, writes Info.ini.
+                  python -m unittest discover -s tests -p test_build_shader_cache.py
+                  python -m unittest discover -s tests -p test_verify_shader_cache.py
                   python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
+                  python tools/verify_shader_cache.py artifact --cache build/ShaderCache --shaders build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
 
             - name: Upload shader cache artifact (${{ matrix.config.runtime }})
               if: matrix.pass == 'release-parity' && inputs.cache-artifacts && github.event_name != 'pull_request_target' && inputs.repository == github.repository && steps.check-hlsl.outputs.skip != 'true'

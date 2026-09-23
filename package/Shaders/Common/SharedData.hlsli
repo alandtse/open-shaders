@@ -205,7 +205,24 @@ namespace SharedData
 		float silverLiningMix;
 
 		float silverLiningSpread;
-		float3 pad;
+		float3 celestialLightWeights;
+	};
+
+	struct ProceduralSunSettings
+	{
+		uint enabled;
+		float sunDiskCos;
+		float diskIntensity;
+		float edgeSoftness;
+
+		uint haloEnabled;
+		float sunHaloCos;
+		float haloIntensity;
+		float haloFalloff;
+
+		float cloudOcclusionStrength;
+		float sunQuadModelRadius;
+		float2 pad0;
 	};
 
 	struct LODBlendingSettings
@@ -277,6 +294,7 @@ namespace SharedData
 	struct CSUtilitySettings
 	{
 		float skyBrightness;
+		float ambientLightMult;
 		float directionalLightMult;
 		float pointLightMult;
 		float linearPointLightMult;
@@ -292,6 +310,21 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
+		float emitColorMult;
+		float glowmapMult;
+		float effectLightingMult;
+		float skyGammaOffset;
+		float fogGammaOffset;
+		float fogAlphaGammaOffset;
+		float waterGammaOffset;
+		float vlGammaOffset;
+		float waterCausticsStrength;
+		float waterCausticsTiling;
+		float waterCausticsSpeed;
+		float waterCausticsDispersion;
+		float waterParallaxStrength;
+		float skySaturation;
+		uint waterParallaxQuality;
 	};
 
 	struct WindSettings
@@ -307,29 +340,13 @@ namespace SharedData
 		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
-		float lightGamma;
-		float colorGamma;
-		float emitColorGamma;
-		float glowmapGamma;
-		float ambientGamma;
-		float fogGamma;
-		float fogAlphaGamma;
-		float effectGamma;
-		float effectAlphaGamma;
-		float skyGamma;
-		float waterGamma;
-		float vlGamma;
-		float ambientMult;
+		float authoredColorGamma;
 		float vanillaDiffuseColorMult;
-		float emitColorMult;
-		float glowmapMult;
-		float effectLightingMult;
-		float membraneEffectMult;
-		float bloodEffectMult;
-		float projectedEffectMult;
-		float deferredEffectMult;
-		float otherEffectMult;
 		float2 pad0;
+		float3 effectLightingColor;
+		float ambientMult;
+		float3 skyStaticsColor;
+		float pad1;
 	};
 
 	struct ENBSettings
@@ -502,6 +519,7 @@ namespace SharedData
 		SkylightingSettings skylightingSettings;
 		CloudShadowsSettings cloudShadowsSettings;
 		CloudRelightSettings cloudRelightSettings;
+		ProceduralSunSettings proceduralSunSettings;
 		LODBlendingSettings lodBlendingSettings;
 		HairSpecularSettings hairSpecularSettings;
 		TerrainVariationSettings terrainVariationSettings;

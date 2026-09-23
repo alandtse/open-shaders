@@ -21,6 +21,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/ExternalEmittance.h"
 
 #include <algorithm>
@@ -207,9 +208,9 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -1077,8 +1078,27 @@ void LightLimitFix::DataLoaded()
 	}
 }
 
+bool LightLimitFix::ShouldSkipRenderPass(const RE::BSRenderPass* a_pass)
+{
+	return ShadowCasterManager::RejectCyclicPassChain(a_pass);
+}
+
+void LightLimitFix::RegisterUxActions()
+{
+	FEATURE_COMMAND("forcePassGuardTrips",
+		"Forces the next N SCM shadow-render pass-chain guard checks to report a cycle, so the skip path can be exercised without a real ring. Watch inspect kind=llfshadows budget.passGuardCycleSkipsTotal. Params: count (int, default 1, max 1000).",
+		[](Feature*, const json& args) { ShadowCasterManager::ForcePassGuardTrips(args.value("count", 1u)); });
+	FEATURE_COMMAND("forcePassGuardRings",
+		"Closes a real passGroupNext ring on the chain of each of the next N checked shadow-render passes, so the guard's detection and in-place repair run on live passes (the chain is restored, so shadows are unaffected). Watch inspect kind=llfshadows budget.passGuardCycleRepairsTotal. Params: count (int, default 1, max 1000).",
+		[](Feature*, const json& args) { ShadowCasterManager::ForcePassGuardRings(args.value("count", 1u)); });
+	FEATURE_COMMAND("tracePassRegistration",
+		"Checks every BSBatchRenderer::RegisterPass/RegisterPassSorted call for a passGroupNext ring and logs the creating call stack as module+RVA (SkyrimSE.exe+RVA maps to Ghidra imageBase+RVA). Adds a chain walk per registration, so enable only while reproducing. Params: enabled (bool, default true).",
+		[](Feature*, const json& args) { ShadowCasterManager::SetPassRegistrationTrace(args.value("enabled", true)); });
+}
+
 void LightLimitFix::ClearShaderCache()
 {
+	ShadowCasterManager::ClearAtlasShaders();
 	clusterBuildingCS.Reset();
 	clusterCullingCS.Reset();
 	shadowDemandCS.Reset();

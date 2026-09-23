@@ -556,7 +556,7 @@ void Deferred::OverrideBlendStates()
 					for (int d = 0; d < 2; d++) {
 						forwardBlendStates[a][b][c][d] = blendStates->a[a][b][c][d];
 
-						if (auto blendState = forwardBlendStates[a][b][c][d]) {
+						if (forwardBlendStates[a][b][c][d]) {
 							D3D11_BLEND_DESC blendDesc;
 							forwardBlendStates[a][b][c][d]->GetDesc(&blendDesc);
 
@@ -781,7 +781,10 @@ void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
 	state->inWorld = true;
 	state->worldRenderedThisFrame = true;
+	Feature::ForEachLoadedFeature("OnWorldRenderBegin", [](Feature* feature) { feature->OnWorldRenderBegin(); });
 	func(a1);
+	if (globals::game::isVR)
+		Feature::ForEachLoadedFeature("OnWorldRenderEnd", [](Feature* feature) { feature->OnWorldRenderEnd(RE::RENDER_TARGET::kMAIN); });
 
 	state->inWorld = false;
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
@@ -824,6 +827,8 @@ void Deferred::Hooks::BSCubeMapCamera_RenderCubemap::thunk(RE::NiAVObject* camer
 	auto state = globals::state;
 
 	deferred->ReflectionsPrepasses();
+	Feature::RenderScope reflectionsScope(Feature::GetFeatureList(), "OnReflectionsRenderBegin",
+		[](Feature* feature) { return feature->OnReflectionsRenderBegin(); });
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
 	func(camera, a2, a3, a4, a5);
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
@@ -835,6 +840,12 @@ void Deferred::Hooks::Main_RenderFirstPersonView::thunk(bool a1, bool a2)
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
 	func(a1, a2);
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
+}
+
+void Deferred::Hooks::Main_RenderPlayerView_EndWorld::thunk(bool a1)
+{
+	func(a1);
+	Feature::ForEachLoadedFeature("OnWorldRenderEnd", [](Feature* feature) { feature->OnWorldRenderEnd(RE::RENDER_TARGET::kMAIN); });
 }
 
 void Deferred::Hooks::Renderer_ResetState::thunk(void* This)

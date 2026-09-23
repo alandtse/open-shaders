@@ -40,7 +40,6 @@
             }
         ],
         "UseSimplePalette": false,
-        "ShowActionIcons": true,
         "ShowFooter": true,
         "CenterHeader": true,
         "TooltipHoverDelay": 0.5,

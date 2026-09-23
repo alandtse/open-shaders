@@ -1,0 +1,27 @@
+name: "CI: Prebuilt Shader Cache"
+
+on:
+    workflow_dispatch:
+        inputs:
+            ref:
+                description: "Same-repository ref to validate without publishing"
+                required: true
+                default: dev
+                type: string
+
+permissions:
+    contents: read
+
+jobs:
+    cache:
+        cache-mode: read
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ inputs.ref }}
+            repository: ${{ github.repository }}
+            run-cpp: false
+            run-shader-validation: true
+            run-shader-tests: false
+            run-cpp-tests: false
+            run-full-config-validation: false
+            cache-artifacts: true

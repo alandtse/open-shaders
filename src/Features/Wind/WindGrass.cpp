@@ -231,7 +231,6 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		context->CSSetShader(nullptr, nullptr, 0);
 		ID3D11Buffer* nullBuffer = nullptr;
 		context->CSSetConstantBuffers(0, 1, &nullBuffer);
-		context->CSSetConstantBuffers(5, 1, &nullBuffer);
 		context->CSSetShaderResources(0, ARRAYSIZE(nullSrvs), nullSrvs);
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
 

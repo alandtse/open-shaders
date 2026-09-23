@@ -308,12 +308,12 @@ void Upscaling::DrawPerfModeToggle()
 							  "Requires DLSS or FSR. Sharpness / model preset / Reflex remain live."));
 	}
 	if (!methodSupportsPerf && settings.renderAtUpscaleRes)
-		Util::Text::Disabled(T(TKEY("render_at_upscale_res_requires"), "Render-at-upscaled-resolution requires DLSS or FSR. Switch upscaler Method to activate."));
+		Util::Text::Disabled("%s", T(TKEY("render_at_upscale_res_requires"), "Render-at-upscaled-resolution requires DLSS or FSR. Switch upscaler Method to activate."));
 	// At Native AA (1x) the size hook is a no-op unless an explicit scale engages
 	// it; surface that rather than implying the toggle does something.
 	if (methodSupportsPerf && settings.renderAtUpscaleRes &&
 		GetQualityModeRatio(settings.qualityMode) <= 1.0f && settings.vrRenderScale <= 0.0f)
-		Util::Text::Disabled(T(TKEY("render_at_upscale_res_native_noop"), "No effect at Native AA (1x): renders at full resolution; raise the Upscale Preset to engage."));
+		Util::Text::Disabled("%s", T(TKEY("render_at_upscale_res_native_noop"), "No effect at Native AA (1x): renders at full resolution; raise the Upscale Preset to engage."));
 	if (methodSupportsPerf)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
 
@@ -623,9 +623,9 @@ void Upscaling::DrawSettings()
 	// diff uses the RestartNeeded color so users learn the cue means "you
 	// changed something that won't apply yet."
 	if (perfMode.IsHookActive()) {
-		ImGui::TextWrapped(T(TKEY("perfmode_active_note"),
-			"Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
-			"Sharpness / model preset / Reflex remain live."));
+		ImGui::TextWrapped("%s", T(TKEY("perfmode_active_note"),
+									 "Render-at-upscaled-resolution is active: Method and Upscale Preset changes only take effect after a game restart. "
+									 "Sharpness / model preset / Reflex remain live."));
 
 		// Method pending-diff. Only fires when the user is editing the DLSS-
 		// path mode slot (upscaleMethod, not upscaleMethodNoDLSS), since
@@ -638,6 +638,12 @@ void Upscaling::DrawSettings()
 				"Pending restart: currently active method = %s (selected = %s).",
 				upscaleModes[boot].c_str(), upscaleModes[live].c_str());
 		}
+
+		if (perfMode.IsDisplaySizeChanged()) {
+			Util::Text::RestartNeeded(
+				"Pending restart: the headset's render resolution changed since launch (e.g. SteamVR's "
+				"per-app resolution slider). Restart to re-latch at the new size.");
+		}
 	}
 
 	// Display warning for DLSS resolution limits (non-VR only; VR handles this automatically)
@@ -646,7 +652,7 @@ void Upscaling::DrawSettings()
 		if (screenSize.x > streamline.MAX_RESOLUTION || screenSize.y > streamline.MAX_RESOLUTION) {
 			Util::Text::Warning(T(TKEY("dlss_resolution_warning"), "Warning: Requested resolution %.0f x %.0f exceeds maximum supported resolution %d x %d for DLSS."),
 				screenSize.x, screenSize.y, streamline.MAX_RESOLUTION, streamline.MAX_RESOLUTION);
-			Util::Text::Warning(T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
+			Util::Text::Warning("%s", T(TKEY("dlss_will_not_function"), "DLSS will not function. Lower your resolution or select a different upscaling method."));
 		}
 	}
 
@@ -666,8 +672,8 @@ void Upscaling::DrawSettings()
 			// Pending-diff vs the boot snapshot the runtime upscaler actually
 			// uses; while an explicit scale is latched the preset is inert.
 			if (perfMode.IsExplicitScaleLatched()) {
-				Util::Text::Disabled(T(TKEY("upscale_preset_ignored_render_scale"),
-					"The Upscale Preset is ignored while VR Render Scale is set. Move it back to Auto to use the preset again (restart required)."));
+				Util::Text::Disabled("%s", T(TKEY("upscale_preset_ignored_render_scale"),
+											   "The Upscale Preset is ignored while VR Render Scale is set. Move it back to Auto to use the preset again (restart required)."));
 			} else if (perfMode.IsHookActive() &&
 					   bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
 				const uint bm = std::clamp<uint>(bootSnapshot.Boot(&Settings::qualityMode), 0u, 4u);
@@ -686,9 +692,9 @@ void Upscaling::DrawSettings()
 				if (settings.fsr4RuntimeEnable) {
 					ImGui::TextDisabled("%s: %s", T(TKEY("fsr4_active_path"), "Active path"), fidelityFX.GetDisplayedFsrPathLabel().c_str());
 					if (fidelityFX.IsRuntimeFsr4FailureLatched())
-						Util::Text::Warning(T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
+						Util::Text::Warning("%s", T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
 					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())
-						Util::Text::Warning(T(TKEY("fsr4_runtime_failed_fallback"), "Runtime upscaler DLL failed this session -- using host FSR3 SDK."));
+						Util::Text::Warning("%s", T(TKEY("fsr4_runtime_failed_fallback"), "Runtime upscaler DLL failed this session -- using host FSR3 SDK."));
 				}
 			}
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
@@ -782,15 +788,15 @@ void Upscaling::DrawSettings()
 			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
 
 			if (!isWindowed) {
-				Util::Text::Warning(T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
+				Util::Text::Warning("%s", T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
 			}
 
 			if (lowRefreshRate && !settings.frameGenerationForceEnable) {
-				Util::Text::Warning(T(TKEY("fg_warn_refresh_rate"), "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation"));
+				Util::Text::Warning("%s", T(TKEY("fg_warn_refresh_rate"), "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation"));
 			}
 
 			if (fidelityFXMissing) {
-				Util::Text::Warning(T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
+				Util::Text::Warning("%s", T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
 			}
 
 			if (!frameGenerationDx12PathActive)
@@ -3054,7 +3060,7 @@ void Upscaling::RunUnderwaterMaskRepair()
 
 void Upscaling::ApplySharpening()
 {
-	if (!settings.sharpnessEnabledDLSS || settings.sharpnessDLSS <= 0.0f)
+	if (!IsDlssSharpeningEnabled())
 		return;
 
 	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
@@ -3086,7 +3092,7 @@ void Upscaling::ApplySharpening()
 
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 
-	if (settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f && main.UAV) {
+	if (IsDlssSharpeningEnabled() && main.UAV) {
 		// Match FSR3's slider->RCAS conversion exactly (ffx_fsr3upscaler.cpp + FsrRcasCon):
 		//   sharpenessRemapped = -2*slider + 2   (sharpness in stops)
 		//   rcasAttenuation    = exp2(-sharpenessRemapped) = exp2(2*slider - 2)

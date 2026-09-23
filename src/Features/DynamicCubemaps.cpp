@@ -32,17 +32,14 @@ std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetS
 
 void DynamicCubemaps::DrawSettings()
 {
-	if (ImGui::TreeNodeEx(T(TKEY("screen_space_reflections"), "Screen Space Reflections"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		recompileFlag |= Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
-		}
-		if (globals::game::isVR)
-			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
-		ImGui::TreePop();
+	recompileFlag |= Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
 	}
+	if (globals::game::isVR)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
 
-	if (ImGui::TreeNodeEx(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"), ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::TreeNode(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"))) {
 		ImGui::Text("%s", T(TKEY("creator_info"), "You must enable creator mode by adding the shader define CREATOR"));
 		Util::CheckboxFlag(T(TKEY("enable_creator"), "Enable Creator"), settings.EnabledCreator);
 		if (settings.EnabledCreator) {
@@ -430,7 +427,7 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 			for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 				const UINT numGroups = (UINT)std::max(1u, (size + 7u) / 8u);
 
-				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness };
+				const SpecularMapFilterSettingsCB spmapConstants = { level * delta_roughness, {} };
 				spmapCB->Update(spmapConstants);
 
 				auto uav = a_reflections ? uavReflectionsArray[level - 1] : uavArray[level - 1];

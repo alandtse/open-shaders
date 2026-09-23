@@ -73,6 +73,8 @@ void OverlayRenderer::RenderOverlay(
 	float& cachedFontSize,
 	float currentFontSize)
 {
+	BackgroundBlur::RestoreRetainedBuffers();
+
 	// Apply the VR panel size before pumping input: PumpInput reads
 	// io.DisplaySize to map wand UV to pixels for this frame.
 	ApplyVRPanelDisplaySize();
@@ -337,7 +339,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 #endif
 
 		if (renderDocAvailable)
-			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
 		ImGui::End();
 		return;
@@ -356,7 +358,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 #endif
 
 		if (renderDocAvailable)
-			ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
 		ImGui::End();
 	} else if (renderDocAvailable) {
@@ -365,7 +367,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::End();
 			return;
 		}
-		ImGui::TextColored(themeSettings.StatusPalette.Warning, renderDocInformation.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 		ImGui::End();
 	}
 }
@@ -415,8 +417,8 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui::Render();
 
-	BackgroundBlur::RenderBackgroundBlur();
-	ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+	if (!BackgroundBlur::RenderDrawData(ImGui::GetDrawData()))
+		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
@@ -462,7 +464,7 @@ void OverlayRenderer::RenderShaderBlockingStatus()
 		return;
 	}
 
-	Util::Text::Error(T("overlay.shader_blocking_active", "Shader Blocking Active"));
+	Util::Text::Error("%s", T("overlay.shader_blocking_active", "Shader Blocking Active"));
 	ImGui::Text(T("overlay.blocked_key", "Blocked: %s"), shaderCache->blockedKey.c_str());
 
 	// Try to get more details from active shaders

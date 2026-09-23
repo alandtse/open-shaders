@@ -45,6 +45,7 @@ public:
 	/** @brief Returns the short identifier used for file paths and logging. */
 	virtual inline std::string GetShortName() override { return "VolumetricLighting"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
+	bool IsInMenu() const override { return false; }
 
 	/** @brief Returns a summary description and list of key features for the UI. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
@@ -181,8 +182,6 @@ private:
 		Custom,
 		Count
 	};
-
-	const char* QualityNames[static_cast<uint8_t>(Quality::Count)] = { "Low", "Medium", "High", "Custom" };
 
 	TextureSize exteriorSizeInUnits;
 	TextureSize interiorSizeInUnits;

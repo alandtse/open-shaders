@@ -117,6 +117,8 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float3 normalVS = GBuffer::DecodeNormal(normalGlossiness.xy);
 
 	float3 diffuseColor = MainRW[dispatchID.xy].xyz;
+	if (ENABLE_LL)
+		diffuseColor = Color::SceneGammaToLinear(diffuseColor);
 	float3 specularColor = SpecularTexture[dispatchID.xy];
 	float3 albedo = AlbedoTexture[dispatchID.xy];
 
@@ -310,7 +312,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 
 #endif
 
-	color = Color::IrradianceToGamma(color);
+	color = Color::SceneLinearToGamma(color);
 
 #if defined(DEBUG)
 

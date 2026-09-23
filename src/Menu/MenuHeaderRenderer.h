@@ -35,10 +35,14 @@ public:
 	 * @param sidebarVisible Sidebar visibility toggled by the top-left button.
 	 */
 	static void RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons, bool& sidebarVisible);
+	/** @brief Returns the width of the compact Save, Restore, and Clear Cache buttons. */
+	static float GetCompactActionsWidth(const Menu::UIIcons& uiIcons);
+	/** @brief Renders menu actions at the current cursor position using compact buttons. */
+	static void RenderCompactActions(const Menu::UIIcons& uiIcons);
 
 private:
 	static void RenderSidebarToggle(const ImVec2& buttonSize, const Menu::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible);
-	static std::vector<ActionIcon> BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons);
+	static std::vector<ActionIcon> BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons, bool includeMissing = false);
 	static void RenderActionIcons(const std::vector<ActionIcon>& actionIcons, bool isDocked, float uiScale);
 	static void RenderDockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale);
 	static void RenderUndockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale);

@@ -15,6 +15,7 @@
 #include "WeatherUtils.h"
 #include "Widget.h"
 
+#include <atomic>
 #include <unordered_map>
 
 class EditorWindow
@@ -37,6 +38,16 @@ public:
 	};
 
 	bool open = false;
+	/** @brief Selects the content shown in the editor browser panel. */
+	enum class BrowserMode
+	{
+		Editor,
+		Menu
+	};
+
+	/** @brief Queues a browser mode change for the render thread without saving settings. */
+	void RequestBrowserMode(BrowserMode mode) { pendingBrowserMode.store(static_cast<int>(mode), std::memory_order_relaxed); }
+
 	PreviewMode previewMode = PreviewMode::None;
 	const static int maxRecordMarkers = 10;
 
@@ -370,6 +381,11 @@ private:
 	json j;
 	std::string settingsFilename = "EditorSettings";
 	bool showSettingsWindow = false;
+	BrowserMode browserMode = BrowserMode::Editor;
+	bool resetBrowserSidebar = false;
+	bool resetMenuSidebar = false;
+	std::atomic<int> pendingBrowserMode{ -1 };
+	void DrawBrowserHeader();
 	bool viewportWindowVisible = true;
 	std::string settingsSelectedCategory = "Flags";
 

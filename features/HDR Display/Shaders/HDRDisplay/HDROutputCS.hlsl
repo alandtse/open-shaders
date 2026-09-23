@@ -6,6 +6,7 @@
 #include "Common/Color.hlsli"
 #include "Common/DisplayMapping.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/UIComposition.hlsli"
 
 Texture2D<float4> SceneTex : register(t0);
 Texture2D<float4> UITex : register(t1);
@@ -50,51 +51,10 @@ cbuffer PerFrame : register(b0)
 			scene.xyz = sceneIsLinear ? outputColor : Color::LinearToGammaSafe(outputColor);
 		}
 
-		float3 compositedColorLinear;
-
-		if (sceneIsLinear) {
-			float3 sceneLinear = max(0.0, scene.rgb);
-			if (skipUI) {
-				compositedColorLinear = sceneLinear;
-			} else {
-				float3 uiLinear = Color::SrgbToLinear(max(0.0, ui.rgb));
-				if (!isMainLoading) {  // UI and scene can't be separated in main menu or loading screen
-					// scale UI brightness (multiplier based on paperWhite)
-					uiLinear *= uiBrightness;
-				}
-				if (postProcessOutput) {
-					compositedColorLinear = Color::BT709ToBT2020(uiLinear) + sceneLinear * (1.0 - ui.a);
-				} else {
-					compositedColorLinear = uiLinear + sceneLinear * (1.0 - ui.a);
-				}
-			}
-		} else {
-			float3 sceneGamma = scene.rgb;
-			float3 compositedColorGamma;
-			if (skipUI) {
-				compositedColorGamma = sceneGamma;
-			} else {
-				float3 uiGamma = ui.rgb;
-				if (!isMainLoading) {  // UI and scene can't be separated in main menu or loading screen
-					// scale UI brightness (multiplier based on paperWhite)
-					float3 uiLinear = Color::SrgbToLinear(max(0, uiGamma));
-					uiLinear *= uiBrightness;
-					uiGamma = Color::LinearToSrgb(uiLinear);
-				}
-#if 0
-            if (fgTweenMenuMidAlphaBoost > 0.5 && ui.a > 1e-3) {
-                float midBand = smoothstep(0.3, 0.35, ui.a) * (1.0 - smoothstep(0.55, 0.6, ui.a));
-                const float fgMidAlphaBoost = 0.12;
-                ui.a = saturate(ui.a + midBand * fgMidAlphaBoost);
-            }
-#endif
-
-				compositedColorGamma = uiGamma + sceneGamma * (1.0 - ui.a);
-			}
-
-			// Non-LL path: ISHDR output is gamma-encoded at this stage.
-			compositedColorLinear = Color::GammaToLinearSafe(compositedColorGamma);
-		}
+		float3 compositedColor = sceneIsLinear ? max(0.0, scene.rgb) : scene.rgb;
+		if (!skipUI)
+			compositedColor = UIComposition::CompositeSDR(compositedColor, ui, sceneIsLinear, postProcessOutput, isMainLoading ? 1.0 : uiBrightness);
+		float3 compositedColorLinear = sceneIsLinear ? compositedColor : Color::GammaToLinearSafe(compositedColor);
 
 		if (previewSDR > 0.5) {
 			// Crop preview lives in the SDR menu buffer: emit sRGB instead of PQ.

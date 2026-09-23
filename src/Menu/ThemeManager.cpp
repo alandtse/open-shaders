@@ -64,15 +64,6 @@ namespace
 		}
 	}
 
-	bool IsSimplifiedChineseLocale(const std::string& locale)
-	{
-		return locale == "zh" ||
-		       locale == "zh_CN" ||
-		       locale == "zh_SG" ||
-		       locale == "zh_Hans" ||
-		       locale.starts_with("zh-Hans");
-	}
-
 	bool IsTraditionalChineseLocale(const std::string& locale)
 	{
 		return locale == "zh_TW" ||

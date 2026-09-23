@@ -56,8 +56,8 @@ SamplerState PointSampler : register(s0);
 		float4 originalColor = SSSRW[DTid.xy];
 		float4 color = SSSSBlurCS(texCoord, float2(0.0, 1.0), sssAmount, humanProfile);
 		float3 albedo = SSSDecodeAlbedo(AlbedoTexture[DTid.xy].rgb);
-		color.rgb = SSSApplyAlbedo(color.rgb, Color::IrradianceToLinear(originalColor.rgb), albedo, ScatterMode);
-		color.rgb = Color::IrradianceToGamma(color.rgb);
+		color.rgb = SSSApplyAlbedo(color.rgb, Color::SceneGammaToLinear(originalColor.rgb), albedo, ScatterMode);
+		color.rgb = Color::SceneLinearToGamma(color.rgb);
 		SSSRW[DTid.xy] = float4(color.rgb, originalColor.a);
 	}
 

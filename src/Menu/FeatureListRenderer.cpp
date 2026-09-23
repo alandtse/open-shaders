@@ -5,8 +5,10 @@
 #include <format>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <iterator>
 #include <numbers>
 #include <ranges>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -200,11 +202,6 @@ namespace
 		SeparatorTextWithFont(text.c_str(), role);
 	}
 
-	bool BeginTabItemWithFont(const char* label, Menu::FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None)
-	{
-		return MenuFonts::BeginTabItemWithFont(label, role, flags);
-	}
-
 	/**
 	 * @brief Draws a feature header with the feature name in large text and version in smaller text
 	 * @param featureName The display name of the feature
@@ -356,6 +353,87 @@ namespace
 			return menu->canonicalId;
 		return {};
 	}
+
+	struct SidebarRow
+	{
+		std::string_view label;
+		ImVec4 textColor;
+		ID3D11ShaderResourceView* icon = nullptr;
+		std::string_view category;
+		std::string_view stageTag;
+		ImVec4 stageColor;
+		std::string_view version;
+	};
+
+	bool DrawSidebarRow(const SidebarRow& row, bool selected, bool expandClippedText)
+	{
+		auto* window = ImGui::GetCurrentWindow();
+		if (window->SkipItems)
+			return false;
+		const auto& style = ImGui::GetStyle();
+		const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+		const float height = ImGui::GetTextLineHeight();
+		const ImVec2 textPos(rowStart.x + (row.icon ? height + style.ItemSpacing.x : 0.0f), rowStart.y);
+		float contentRight = textPos.x + ImGui::CalcTextSize(row.label.data(), row.label.data() + row.label.size()).x;
+		const ImVec2 stagePos(contentRight + style.ItemSpacing.x, rowStart.y);
+		if (!row.stageTag.empty())
+			contentRight = stagePos.x + ImGui::CalcTextSize(row.stageTag.data(), row.stageTag.data() + row.stageTag.size()).x;
+		const ImVec2 versionPos(contentRight + style.ItemSpacing.x, rowStart.y);
+		if (!row.version.empty())
+			contentRight = versionPos.x + ImGui::CalcTextSize(row.version.data(), row.version.data() + row.version.size()).x;
+
+		ImGui::PushID(row.label.data(), row.label.data() + row.label.size());
+		const SKSE::stl::scope_exit restoreID([]() noexcept { ImGui::PopID(); });
+		const float width = std::max(window->ClipRect.Max.x - window->ParentWorkRect.Min.x, 0.0f);
+		const bool pressed = ImGui::Selectable("##MenuRow", selected, ImGuiSelectableFlags_SpanAllColumns, { width, height });
+		if (!ImGui::IsItemVisible())
+			return pressed;
+		const bool hovered = ImGui::IsItemHovered();
+		const ImRect rowRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		const auto drawContents = [&](ImDrawList* drawList) {
+			const ImU32 textColor = ImGui::GetColorU32(row.textColor);
+			if (row.icon)
+				drawList->AddImage(row.icon, rowStart, { rowStart.x + height, rowStart.y + height }, { 0, 0 }, { 1, 1 }, textColor);
+			drawList->AddText(textPos, textColor, row.label.data(), row.label.data() + row.label.size());
+			if (!row.stageTag.empty())
+				drawList->AddText(stagePos, ImGui::GetColorU32(row.stageColor), row.stageTag.data(), row.stageTag.data() + row.stageTag.size());
+			if (!row.version.empty())
+				drawList->AddText(versionPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), row.version.data(), row.version.data() + row.version.size());
+		};
+		drawContents(window->DrawList);
+
+		float expansionAlpha = 0.0f;
+		if (expandClippedText && contentRight > window->ClipRect.Max.x) {
+			auto* storage = ImGui::GetStateStorage();
+			const ImGuiID progressId = ImGui::GetID("##ExpansionProgress");
+			const ImGuiID frameId = ImGui::GetID("##ExpansionFrame");
+			const int frame = ImGui::GetFrameCount();
+			float progress = storage->GetInt(frameId, -1) == frame - 1 ? storage->GetFloat(progressId) : 0.0f;
+			const float step = ImGui::GetIO().DeltaTime / ThemeManager::Constants::SIDEBAR_ROW_FADE_DURATION;
+			progress = std::clamp(progress + (hovered ? step : -step), 0.0f, 1.0f);
+			storage->SetFloat(progressId, progress);
+			storage->SetInt(frameId, frame);
+			expansionAlpha = progress * progress * (3.0f - 2.0f * progress);
+		}
+		if (expansionAlpha > 0.0f) {
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * expansionAlpha);
+			const SKSE::stl::scope_exit restoreAlpha([]() noexcept { ImGui::PopStyleVar(); });
+			auto* drawList = ImGui::GetForegroundDrawList(window->Viewport);
+			const ImRect expanded(rowRect.Min, { contentRight + style.FramePadding.x, rowRect.Max.y });
+			ImVec4 background = ImGui::GetStyleColorVec4(ImGuiCol_PopupBg);
+			background.w = 1.0f;
+			drawList->PushClipRect({ window->Viewport->Pos.x, window->ClipRect.Min.y },
+				{ window->Viewport->Pos.x + window->Viewport->Size.x, window->ClipRect.Max.y });
+			drawList->AddRectFilled(expanded.Min, expanded.Max, ImGui::GetColorU32(background));
+			drawList->AddRectFilled(expanded.Min, expanded.Max, ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_HeaderActive : ImGuiCol_HeaderHovered));
+			drawList->AddRect(expanded.Min, expanded.Max, ImGui::GetColorU32(ImGuiCol_Border));
+			drawContents(drawList);
+			drawList->PopClipRect();
+		} else if (row.icon && hovered && ImGui::IsMouseHoveringRect(rowStart, { rowStart.x + height, rowStart.y + height })) {
+			Util::AddTooltip(row.category.data());
+		}
+		return pressed;
+	}
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -365,9 +443,11 @@ void FeatureListRenderer::RenderFeatureList(
 	std::string& featureSearch,
 	std::string& pendingFeatureSelection,
 	const std::function<void()>& drawGeneralSettings,
-	const std::function<void()>& drawAdvancedSettings)
+	const std::function<void()>& drawAdvancedSettings,
+	bool editorLayout,
+	bool resetLayout)
 {
-	if (!ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight))) {
+	if (!editorLayout && !ImGui::BeginChild("Menus Table", ImVec2(0, -footerHeight))) {
 		ImGui::EndChild();
 		return;
 	}
@@ -383,6 +463,12 @@ void FeatureListRenderer::RenderFeatureList(
 	}
 
 	HandlePendingFeatureSelection(pendingFeatureSelection, menuList, selectedMenu);
+	if (editorLayout) {
+		RenderEditorColumns(menuList, selectedMenu, featureSearch, pendingFeatureSelection, resetLayout);
+		if (selectedMenu < menuList.size())
+			selectedMenuId = GetMenuId(menuList[selectedMenu]);
+		return;
+	}
 
 	const bool leftPanelVisible = ShouldShowLeftPanel() && sidebar.visible;
 	const float step = ImGui::GetIO().DeltaTime / ThemeManager::Constants::SIDEBAR_SLIDE_DURATION;
@@ -393,21 +479,24 @@ void FeatureListRenderer::RenderFeatureList(
 	const float contentWidth = windowResized ? sidebar.widthRatio * available.x : sidebar.contentWidth;
 	const float slideWidth = sidebar.width + contentWidth - sidebar.contentWidth;
 	const float slideOffset = std::floor(slideWidth * (1.0f - easedProgress));
-	if (auto* savedLayout = ImGui::TableSettingsFindByID(ImGui::GetID("Menus Table"));
-		savedLayout && savedLayout->ColumnsCount == 2 && savedLayout->GetColumnSettings()[0].IsStretch) {
-		auto* columns = savedLayout->GetColumnSettings();
-		const float totalWeight = columns[0].WidthOrWeight + columns[1].WidthOrWeight;
-		const float widthRatio = totalWeight > 0.0f ? columns[0].WidthOrWeight / totalWeight : ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
-		// Saved stretch weights must become pixel widths before restoring the fixed sidebar column.
-		columns[0].WidthOrWeight = available.x * widthRatio;
-		columns[0].IsStretch = false;
-		savedLayout->RefScale = ImGui::GetFontSize();
-	}
 	const ImVec2 origin = ImGui::GetCursorScreenPos();
 	const ImVec2 tableOrigin(origin.x - slideOffset, origin.y);
 	ImGui::SetCursorScreenPos(tableOrigin);
 	if (ImGui::BeginTable("Menus Table", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_Resizable,
 			ImVec2(available.x + slideOffset, 0.0f))) {
+		if (auto* savedLayout = ImGui::TableSettingsFindByID(ImGui::GetCurrentTable()->ID);
+			savedLayout && savedLayout->ColumnsCount == 2 && savedLayout->GetColumnSettings()[0].IsStretch) {
+			auto* columns = savedLayout->GetColumnSettings();
+			const float totalWeight = columns[0].WidthOrWeight + columns[1].WidthOrWeight;
+			const float widthRatio = totalWeight > 0.0f ? columns[0].WidthOrWeight / totalWeight : ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
+			auto* table = ImGui::GetCurrentTable();
+			const float spacing = table->OuterPaddingX * 2.0f + table->CellPaddingX * 2.0f * table->ColumnsCount +
+			                      (table->CellSpacingX1 + table->CellSpacingX2) * (table->ColumnsCount - 1);
+			columns[0].WidthOrWeight = std::floor(std::max(available.x - spacing, 0.0f) * widthRatio);
+			columns[0].IsStretch = false;
+			savedLayout->RefScale = ImGui::GetFontSize();
+			ImGui::TableLoadSettings(table);
+		}
 		ImGui::TableSetupColumn("##ListOfMenus", ImGuiTableColumnFlags_WidthFixed,
 			available.x * ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO);
 		ImGui::TableSetupColumn("##MenuConfig", ImGuiTableColumnFlags_WidthStretch);
@@ -434,6 +523,23 @@ void FeatureListRenderer::RenderFeatureList(
 		selectedMenuId = GetMenuId(menuList[selectedMenu]);
 
 	ImGui::EndChild();
+}
+
+void FeatureListRenderer::RenderEditorColumns(const std::vector<MenuFuncInfo>& menuList, size_t& selectedMenu,
+	std::string& featureSearch, std::string& pendingFeatureSelection, bool resetLayout)
+{
+	if (!ImGui::BeginTable("OSMenuTable", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInner))
+		return;
+	const float sidebarWidth = ThemeManager::Constants::EDITOR_MENU_SIDEBAR_WIDTH * Util::GetUIScale();
+	ImGui::TableSetupColumn("##ListOfMenus", ImGuiTableColumnFlags_WidthFixed, sidebarWidth);
+	ImGui::TableSetupColumn("##MenuConfig", ImGuiTableColumnFlags_WidthStretch);
+	ImGui::TableNextRow();
+	if (resetLayout)
+		ImGui::TableSetColumnWidth(0, sidebarWidth);
+	RenderLeftColumn(menuList, selectedMenu, featureSearch, true);
+	ImGui::TableNextColumn();
+	RenderRightColumn(menuList, selectedMenu, pendingFeatureSelection);
+	ImGui::EndTable();
 }
 
 std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuList(
@@ -471,7 +577,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 			const auto* feature = std::get_if<Feature*>(&item);
 			return feature && *feature == &globals::features::csUtility;
 		});
-		menuList.insert(utility, &globals::features::featureOverwrites);
+		menuList.insert(utility == menuList.end() ? utility : std::next(utility), &globals::features::featureOverwrites);
 	}
 
 	auto favorites = sortedFeatureList | std::ranges::views::filter([&isFavorite](Feature* feat) {
@@ -544,15 +650,19 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 void FeatureListRenderer::RenderLeftColumn(
 	const std::vector<MenuFuncInfo>& menuList,
 	size_t& selectedMenu,
-	std::string& featureSearch)
+	std::string& featureSearch,
+	bool editorLayout)
 {
 	ImGui::TableNextColumn();
 	// Draw the feature list
 	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
 	ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4());
-	if (ImGui::BeginListBox("##MenusList", { -FLT_MIN, -FLT_MIN })) {
+	const float listWidth = editorLayout ? ImGui::GetCurrentTable()->Columns[0].MaxX - ImGui::GetCursorScreenPos().x : -FLT_MIN;
+	if (ImGui::BeginListBox("##MenusList", { listWidth, -FLT_MIN })) {
 		bool filterFeatures = false;
 		for (size_t i = 0; i < menuList.size(); ++i) {
+			if (const auto* feature = std::get_if<Feature*>(&menuList[i]); editorLayout && feature && *feature == &globals::features::csEditor)
+				continue;
 			if (const auto* feature = std::get_if<Feature*>(&menuList[i]); feature && filterFeatures && !Util::FeatureMatchesSearch(*feature, featureSearch))
 				continue;
 			if (std::holds_alternative<std::string>(menuList[i]) && !featureSearch.empty() &&
@@ -561,7 +671,7 @@ void FeatureListRenderer::RenderLeftColumn(
 					return feature && !(*feature)->loaded && Util::FeatureMatchesSearch(*feature, featureSearch);
 				}))
 				continue;
-			std::visit(ListMenuVisitor{ i, selectedMenu }, menuList[i]);
+			std::visit(ListMenuVisitor{ i, selectedMenu, editorLayout }, menuList[i]);
 			if (const auto* header = std::get_if<CategoryHeader>(&menuList[i]); header && header->name == "Features") {
 				filterFeatures = true;
 				Util::DrawFeatureSearchBar(featureSearch);
@@ -590,21 +700,12 @@ void FeatureListRenderer::RenderRightColumn(
 void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
-
-	// Use error color for Feature Issues menu item
-	bool isFeatureIssues = (menu.name == T("menu.features.feature_issues", "Feature Issues"));
-	if (isFeatureIssues) {
-		auto& themeSettings = globals::menu->GetSettings().Theme;
-		ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
-
-		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
-
-		ImGui::PopStyleColor();
-	} else {
-		if (ImGui::Selectable(fmt::format(" {} ", menu.name).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns))
-			selectedMenuRef = listId;
-	}
+	const auto label = fmt::format(" {} ", menu.name);
+	const ImVec4 textColor = menu.name == T("menu.features.feature_issues", "Feature Issues") ?
+	                             globals::menu->GetSettings().Theme.StatusPalette.Error :
+	                             ImGui::GetStyleColorVec4(ImGuiCol_Text);
+	if (DrawSidebarRow({ .label = label, .textColor = textColor }, selectedMenuRef == listId, editorLayout))
+		selectedMenuRef = listId;
 }
 
 void FeatureListRenderer::ListMenuVisitor::operator()(const std::string& label)
@@ -664,39 +765,26 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		textColor = feat->installed ? themeSettings.StatusPalette.RestartNeeded : themeSettings.StatusPalette.Disable;
 	}
 
-	auto* icon = feat->GetCategory() != FeatureCategories::kUtility ? Util::GetCategoryIcon(feat->GetCategory()) : nullptr;
-	const ImVec2 iconMin = ImGui::GetCursorScreenPos();
-	const float iconSize = ImGui::GetTextLineHeight();
-	if (icon) {
-		ImGui::Dummy(ImVec2(iconSize, iconSize));
-		Util::AddTooltip(feat->GetDisplayCategory().c_str());
-		ImGui::SameLine();
+	const auto label = fmt::format(" {} ", feat->GetDisplayName());
+	const auto category = feat->GetDisplayCategory();
+	const auto stage = feat->GetReleaseStage();
+	const auto stageTag = Feature::GetReleaseStageTag(stage);
+	std::string version;
+	if (isLoaded && !editorLayout) {
+		version = fmt::format("({})", feat->version);
+		std::replace(version.begin(), version.end(), '-', '.');
 	}
-
-	// Create selectable item with semantic color
-	ImGui::PushStyleColor(ImGuiCol_Text, textColor);
-	if (ImGui::Selectable(fmt::format(" {} ", feat->GetDisplayName()).c_str(), selectedMenuRef == listId, ImGuiSelectableFlags_SpanAllColumns)) {
+	const SidebarRow row{
+		.label = label,
+		.textColor = textColor,
+		.icon = feat->GetCategory() != FeatureCategories::kUtility ? Util::GetCategoryIcon(feat->GetCategory()) : nullptr,
+		.category = category,
+		.stageTag = stageTag,
+		.stageColor = StageTagColor(stage),
+		.version = version
+	};
+	if (DrawSidebarRow(row, selectedMenuRef == listId, editorLayout))
 		selectedMenuRef = listId;
-	}
-	ImGui::PopStyleColor();
-
-	if (icon)
-		ImGui::GetWindowDrawList()->AddImage(icon, iconMin, ImVec2(iconMin.x + iconSize, iconMin.y + iconSize),
-			ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(textColor));
-
-	// Display the stage marker behind the name, regardless of loaded state
-	if (const auto stage = feat->GetReleaseStage(); stage != Feature::ReleaseStage::Release) {
-		ImGui::SameLine();
-		ImGui::TextColored(StageTagColor(stage), "%s", Feature::GetReleaseStageTag(stage).c_str());
-	}
-
-	// Display version if loaded
-	if (isLoaded) {
-		ImGui::SameLine();
-		std::string formattedVersion = feat->version;
-		std::replace(formattedVersion.begin(), formattedVersion.end(), '-', '.');
-		ImGui::TextDisabled(fmt::format("({})", formattedVersion).c_str());
-	}
 }
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
@@ -1189,7 +1277,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 	if (hasFailedMessage && feat->DrawFailLoadMessage() && !FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 		ImGui::Spacing();
 		SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
-		ImGui::TextColored(themeSettings.StatusPalette.Error, feat->failedLoadedMessage.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", feat->failedLoadedMessage.c_str());
 	}
 }
 

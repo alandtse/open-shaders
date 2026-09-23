@@ -115,7 +115,7 @@ void State::BindVertexPermutationData(const RE::BSShader* a_shader)
 
 	const auto shaderType = a_shader->shaderType.get();
 	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
-		shaderType != RE::BSShader::Type::Grass)
+		shaderType != RE::BSShader::Type::Grass && shaderType != RE::BSShader::Type::Sky)
 		return;
 
 	ID3D11Buffer* buffers[] = {
@@ -385,7 +385,7 @@ void State::Reset()
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
-	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
+	globals::shaderCache->TickActiveShaderCapture(globals::menu->ShouldSwallowInput());
 	globals::shaderCache->ProcessPendingClear();
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
@@ -1024,7 +1024,7 @@ std::vector<std::pair<std::string, std::string>>* State::GetDefines()
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
 	auto index = magic_enum::enum_integer(a_type) + 1;
-	if (index < sizeof(enabledClasses)) {
+	if (index < static_cast<int>(sizeof(enabledClasses))) {
 		return enabledClasses[index];
 	}
 	return false;
@@ -1078,8 +1078,8 @@ void State::CheckTypedUAVLoadSupport()
 		const char* usage;
 	};
 	static const FormatEntry kFormats[] = {
-		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) — non-HDR" },
-		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
+		{ DXGI_FORMAT_R11G11B10_FLOAT, "R11G11B10_FLOAT", "Dynamic Cubemaps (envCapture/Raw/Position) - non-HDR" },
+		{ DXGI_FORMAT_R16G16B16A16_FLOAT, "R16G16B16A16_FLOAT", "Linear Lighting scene decode, Dynamic Cubemaps (HDR), Skylighting outProbeArray" },
 		{ DXGI_FORMAT_R16G16B16A16_UNORM, "R16G16B16A16_UNORM", "Grass Collision (collisionTexture)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
@@ -1256,6 +1256,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= 256;
 			}
+			break;
+		default:
 			break;
 		}
 	}

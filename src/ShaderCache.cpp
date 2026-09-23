@@ -175,7 +175,7 @@ namespace SIE
 				includes.push_back(std::move(includePath));
 			}
 			std::lock_guard lock(parseCacheMutex);
-			parseCache[key] = IncludeParseEntry{ selfMTime, includes };
+			parseCache[key] = IncludeParseEntry{ selfMTime, includes, std::nullopt };
 		}
 
 		auto maxTime = selfMTime;
@@ -375,17 +375,21 @@ namespace SIE
 		// Captured include paths (normalized)
 		std::vector<std::string> includes;
 		// Owned buffers for include contents; kept alive for the lifetime of this handler
-		std::vector<std::vector<char>> buffers;
+		std::vector<std::unique_ptr<char[]>> buffers;
 		std::filesystem::path baseDir;
+		std::filesystem::path sourcePath;
 
-		TrackingIncludeHandler(const std::filesystem::path& base) :
-			baseDir(base) {}
+		TrackingIncludeHandler(const std::filesystem::path& source) :
+			baseDir(source.parent_path()), sourcePath(source) {}
 
-		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) override
+		HRESULT Open(D3D_INCLUDE_TYPE IncludeType, LPCSTR pFileName, LPCVOID /*pParentData*/, LPCVOID* ppData, UINT* pBytes) noexcept override
 		{
 			(void)IncludeType;
+			*ppData = nullptr;
+			*pBytes = 0;
+			std::filesystem::path includePath;
 			try {
-				std::filesystem::path includePath = baseDir / pFileName;
+				includePath = baseDir / pFileName;
 				// Normalize path to reduce duplicates (weakly_canonical may throw)
 				std::error_code ec;
 				auto canonical = std::filesystem::weakly_canonical(includePath, ec);
@@ -396,30 +400,28 @@ namespace SIE
 #endif
 				includes.push_back(pathStr);
 
-				// Read file into owned buffer
-				std::ifstream ifs(pathStr, std::ios::binary | std::ios::ate);
-				if (!ifs)
+				Util::ShaderInclude::File contents;
+				Util::ShaderInclude::ReadError error;
+				if (!Util::ShaderInclude::Read(pathStr, contents, error)) {
+					Util::ShaderInclude::Report(sourcePath, pathStr, error);
 					return E_FAIL;
-				std::streamsize size = ifs.tellg();
-				if (size < 0)
-					return E_FAIL;
-				ifs.seekg(0, std::ios::beg);
-				std::vector<char> buf(static_cast<size_t>(size));
-				if (size > 0) {
-					if (!ifs.read(buf.data(), size))
-						return E_FAIL;
 				}
-				buffers.push_back(std::move(buf));
-				const auto& storage = buffers.back();
-				*ppData = storage.empty() ? nullptr : storage.data();
-				*pBytes = static_cast<UINT>(storage.size());
+				buffers.push_back(std::move(contents.data));
+				*ppData = buffers.back().get();
+				*pBytes = contents.size;
 				return S_OK;
+			} catch (const std::bad_alloc&) {
+				Util::ShaderInclude::Report(sourcePath, includePath,
+					{ "prepare_include", ERROR_NOT_ENOUGH_MEMORY });
+				return E_OUTOFMEMORY;
 			} catch (...) {
+				Util::ShaderInclude::Report(sourcePath, includePath,
+					{ "prepare_include", ERROR_UNHANDLED_EXCEPTION });
 				return E_FAIL;
 			}
 		}
 
-		HRESULT Close(LPCVOID /*pData*/) override
+		HRESULT Close(LPCVOID /*pData*/) noexcept override
 		{
 			// Buffers are owned by this handler; no action required on Close.
 			return S_OK;
@@ -428,7 +430,6 @@ namespace SIE
 
 	namespace SShaderCache
 	{
-		static void GetShaderDefines(const RE::BSShader&, uint32_t, D3D_SHADER_MACRO*);
 		static std::string GetShaderString(ShaderClass, const RE::BSShader&, uint32_t, bool = false);
 		/**
 		 * @brief Resolve image-space shader descriptor when applicable.
@@ -483,6 +484,8 @@ namespace SIE
 				return PixelShaderProfile;
 			case ShaderClass::Compute:
 				return ComputeShaderProfile;
+			case ShaderClass::Total:
+				break;
 			}
 			return nullptr;
 		}
@@ -666,6 +669,8 @@ namespace SIE
 			const auto technique = static_cast<ShaderCache::ParticleShaderTechniques>(descriptor);
 			size_t lastIndex = 0;
 			switch (technique) {
+			case Particles:
+				break;
 			case ParticlesGryColor:
 				{
 					defines[lastIndex++] = { "GRAYSCALE_TO_COLOR", nullptr };
@@ -1082,6 +1087,9 @@ namespace SIE
 				break;
 			case RE::BSShader::Type::Utility:
 				GetUtilityShaderDefines(descriptor, defines);
+				break;
+			case RE::BSShader::Type::None:
+			case RE::BSShader::Type::Total:
 				break;
 			}
 		}
@@ -1710,6 +1718,8 @@ namespace SIE
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.vso", wname, descriptor, suffix);
 			case ShaderClass::Compute:
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.cso", wname, descriptor, suffix);
+			case ShaderClass::Total:
+				break;
 			}
 			return {};
 		}
@@ -1906,7 +1916,7 @@ namespace SIE
 			cache.MarkCompilationPhaseStarted();
 
 			// Track includes
-			TrackingIncludeHandler includeHandler(std::filesystem::path(path).parent_path());
+			TrackingIncludeHandler includeHandler(path);
 			const HRESULT compileResult = D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
 				GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
 			// If the include handler captured any includes, register them so the watcher
@@ -2366,14 +2376,15 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableVShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableVShaders)) {
 			return nullptr;
 		}
 
-		if (state->IsDeveloperMode()) {
-			// Track this shader as active
+		if (IsTrackingActiveShaders()) {
 			TrackActiveShader(ShaderClass::Vertex, shader, descriptor);
+		}
 
+		if (state->IsDeveloperMode()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Vertex, shader, descriptor, true);
 			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
@@ -2410,7 +2421,7 @@ namespace SIE
 			// use vanilla shader
 			return nullptr;
 
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enablePShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enablePShaders)) {
 			return nullptr;
 		}
 
@@ -2418,10 +2429,11 @@ namespace SIE
 			return nullptr;
 		}
 
-		if (state->IsDeveloperMode()) {
-			// Track this shader as active
+		if (IsTrackingActiveShaders()) {
 			TrackActiveShader(ShaderClass::Pixel, shader, descriptor);
+		}
 
+		if (state->IsDeveloperMode()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Pixel, shader, descriptor, true);
 			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
@@ -2454,7 +2466,7 @@ namespace SIE
 		uint32_t descriptor)
 	{
 		auto state = globals::state;
-		if (!((ShaderCache::IsSupportedShader(shader) || state->IsDeveloperMode() && state->IsShaderEnabled(shader)) && state->enableCShaders)) {
+		if (!((ShaderCache::IsSupportedShader(shader) || (state->IsDeveloperMode() && state->IsShaderEnabled(shader))) && state->enableCShaders)) {
 			return nullptr;
 		}
 
@@ -2462,10 +2474,11 @@ namespace SIE
 			return nullptr;
 		}
 
-		if (state->IsDeveloperMode()) {
-			// Track this shader as active
+		if (IsTrackingActiveShaders()) {
 			TrackActiveShader(ShaderClass::Compute, shader, descriptor);
+		}
 
+		if (state->IsDeveloperMode()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Compute, shader, descriptor, true);
 			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
@@ -3008,7 +3021,7 @@ namespace SIE
 				}
 
 				if (!shader) {
-					Util::CustomInclude include;
+					Util::CustomInclude include(srcPath);
 
 					std::vector<D3D_SHADER_MACRO> macros;
 					for (const auto& d : defines) {
@@ -3233,14 +3246,9 @@ namespace SIE
 		return Util::CacheInvalidation::HasFailedFeature(mismatches);
 	}
 
-	// The rollback slot's on-disk presence is the one filesystem check these
+	// The rollback slot's on-disk presence is the one filesystem check this
 	// can't do without ShaderCache's path helpers, so it's evaluated here and
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
-	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
-	{
-		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches);
-	}
-
 	static bool SetPreviousCacheRestoreCandidate(
 		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
 		bool& previousDiskCacheAvailable,
@@ -4335,11 +4343,11 @@ namespace SIE
 
 		// Fallback to original behavior with full shader map
 		std::scoped_lock lockM{ mapMutex };
-		auto targetIndex = a_forward ? 0 : shaderMap.size() - 1;           // default start or last element
-		if (blockedKeyIndex >= 0 && shaderMap.size() > blockedKeyIndex) {  // grab next element
-			targetIndex = (blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
+		size_t targetIndex = a_forward ? 0 : shaderMap.size() - 1;                              // default start or last element
+		if (blockedKeyIndex >= 0 && shaderMap.size() > static_cast<size_t>(blockedKeyIndex)) {  // grab next element
+			targetIndex = static_cast<size_t>(blockedKeyIndex + (a_forward ? 1 : -1)) % shaderMap.size();
 		}
-		auto index = 0;
+		size_t index = 0;
 		for (auto& [key, value] : shaderMap) {
 			if (index++ == targetIndex) {
 				blockedKey = key;
@@ -4367,30 +4375,34 @@ namespace SIE
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		std::lock_guard lock(activeShadersMutex);
 
-		auto& info = activeShaders[key];
-		if (info.key.empty()) {
-			// First time seeing this shader
+		const auto initializeInfo = [&](ActiveShaderInfo& info) {
 			info.key = key;
 			info.shaderType = shader.shaderType.get();
 			info.shaderClass = shaderClass;
 			info.descriptor = descriptor;
-
-			// Construct disk path. Unlike the HLSL source path (which uses originalShaderName for
-			// ImageSpace shaders), the compiled blob is always keyed on fxpFilename - see GetDiskPath's
-			// other call sites (AddCompletedShader, hlslRecord construction).
 			info.diskPath = SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
-		}
+		};
 
-		info.isActive = true;
-		info.drawCalls++;
-		info.lastUsed = std::chrono::steady_clock::now();
+		if (globals::state->IsDeveloperMode()) {
+			auto& info = activeShaders[key];
+			if (info.key.empty()) {
+				initializeInfo(info);
+			}
+			info.isActive = true;
+			info.drawCalls++;
+			info.lastUsed = std::chrono::steady_clock::now();
+		}
 
 		// Render thread only: BSShader::LoadShaders drives Get*Shader in bulk off-thread
 		// (Hooks.cpp BSShader_LoadShaders, TruePBR::GenerateShaderPermutations). Ingesting that
 		// would balloon a scene-scoped capture into a near-full clear.
 		if (activeShaderCaptureFramesRemaining.load(std::memory_order_relaxed) > 0 &&
 			std::this_thread::get_id() == activeShaderCaptureThread.load(std::memory_order_relaxed)) {
-			capturedShaders.try_emplace(key, info);  // first sighting wins; info is descriptor-complete
+			const auto taskId = ShaderCompilationTask::MakeId(shaderClass, shader.shaderType.get(), descriptor);
+			auto [captured, wasAdded] = capturedShaders.try_emplace(taskId);
+			if (wasAdded) {
+				initializeInfo(captured->second);
+			}
 		}
 	}
 
@@ -4735,7 +4747,8 @@ namespace SIE
 		std::unique_lock lock(compilationMutex);
 		auto inProgressIt = tasksInProgress.find(task);
 		auto processedIt = processedTasks.find(task);
-		if (inProgressIt == tasksInProgress.end() && processedIt == processedTasks.end() && !globals::shaderCache->GetCompletedShader(task)) {
+		// Shared bytecode still needs a runtime shader object for each descriptor.
+		if (inProgressIt == tasksInProgress.end() && processedIt == processedTasks.end()) {
 			LARGE_INTEGER now;
 			QueryPerformanceCounter(&now);
 			auto queuedTask = task;
@@ -4946,7 +4959,7 @@ namespace SIE
 		digestHitTasks = 0;
 		digestMissTasks = 0;
 		compilationPhaseStarted = false;
-		compilationPhaseStart = { 0 };
+		compilationPhaseStart = {};
 		generation.fetch_add(1, std::memory_order_relaxed);
 		slowTasks = 0;
 		verySlowTasks = 0;
@@ -4956,8 +4969,8 @@ namespace SIE
 		QueryPerformanceCounter(&lastReset);
 		lastResetQpc.store(lastReset.QuadPart, std::memory_order_relaxed);
 		QueryPerformanceCounter(&lastCalculation);
-		completionTime = { 0 };  // Reset completion time
-		totalTime = { 0 };
+		completionTime = 0;  // Reset completion time
+		totalTime = {};
 		{
 			std::lock_guard slowLock(slowTasksMutex);
 			slowTaskRecords.clear();

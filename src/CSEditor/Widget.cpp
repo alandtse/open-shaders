@@ -307,7 +307,7 @@ void Widget::DrawWidgetHeader(const char* searchId, bool showApply, bool showSav
 {
 	auto editorWindow = EditorWindow::GetSingleton();
 	auto menu = globals::menu;
-	bool useIcons = !editorWindow->settings.useTextButtons && menu && menu->GetSettings().Theme.ShowActionIcons;
+	bool useIcons = !editorWindow->settings.useTextButtons && menu;
 	const float scale = Util::GetUIScale();
 	if (navigatedFromSearch) {
 		ClearSearchState(true);

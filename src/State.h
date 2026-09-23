@@ -338,7 +338,8 @@ public:
 		IsEye = 1u << 31,
 		IsCharacterRainSurface = 1u << 30,
 		IsHeldWeapon = 1u << 29,
-		TreeBend = 1u << 28
+		TreeBend = 1u << 28,
+		GammaRenderTarget = 1u << 27
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */

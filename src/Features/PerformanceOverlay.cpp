@@ -434,7 +434,7 @@ void PerformanceOverlay::DrawFPS()
 		ImGui::TableSetupColumn("##value");
 
 		ImGui::TableNextColumn();
-		ImGui::Text(this->state.isFrameGenerationActive ? T(TKEY("raw_fps"), "Raw FPS:") : T(TKEY("fps"), "FPS:"));
+		ImGui::TextUnformatted(this->state.isFrameGenerationActive ? T(TKEY("raw_fps"), "Raw FPS:") : T(TKEY("fps"), "FPS:"));
 		ImGui::TableNextColumn();
 
 		// Check if buffer is full for the avg
@@ -452,7 +452,7 @@ void PerformanceOverlay::DrawFPS()
 
 		if (this->state.isFrameGenerationActive) {
 			ImGui::TableNextColumn();
-			ImGui::Text(T(TKEY("post_fg_fps"), "Post-FG FPS:"));
+			ImGui::TextUnformatted(T(TKEY("post_fg_fps"), "Post-FG FPS:"));
 			ImGui::TableNextColumn();
 			ImGui::Text("%.1f (%.2f ms)", this->state.postFGSmoothFps, this->state.postFGSmoothFrameTimeMs);
 		}
@@ -535,7 +535,7 @@ void PerformanceOverlay::DrawVRAM()
 		float percent = currentGpuUsage / totalGpuMemory;
 
 		// Center the VRAM text
-		ImGui::Text(T(TKEY("vram_usage"), "VRAM Usage:"));
+		ImGui::TextUnformatted(T(TKEY("vram_usage"), "VRAM Usage:"));
 
 		// Use a centered text format for the numeric values
 		std::string vramText = std::format("{:.2f}GB/{:.2f}GB ({:.1f}%)", currentGpuUsage, totalGpuMemory, 100 * percent);
@@ -760,6 +760,9 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 					break;
 				case SpecialShaderType::Other:
 					row.tooltip = T(TKEY("tip_other_abtest"), "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.");
+					break;
+				case SpecialShaderType::CSPasses:
+					row.tooltip = T(TKEY("tip_cs_passes"), "Total time spent in compute shader passes.");
 					break;
 				}
 			}
@@ -1172,7 +1175,6 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 	auto* menu = Menu::GetSingleton();
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	bool abTestingEnabled = abTestingManager && abTestingManager->IsEnabled();
-	static ABVariant lastVariant = ABVariant::A;
 	static bool lastUsingTestConfig = false;
 	static bool wasAbTestActive = false;
 	bool currentUsingTestConfig = abTestingManager && abTestingManager->IsUsingTestConfig();
@@ -1581,7 +1583,7 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 	float smoothedFrameTime = static_cast<float>(this->state.smoothFrameTimeMs);
 	float measuredSum = 0.0f;
 
-	globals::state->ForEachShaderTypeWithMetrics([&mainRows, &measuredSum, smoothedFrameTime, this](auto type, int typeIndex, float drawCalls, float frameTime, float percent, float costPerCall) {
+	globals::state->ForEachShaderTypeWithMetrics([&mainRows, &measuredSum, this](auto type, int typeIndex, float drawCalls, float frameTime, float percent, float costPerCall) {
 		bool enabled = globals::state->enabledClasses[typeIndex - 1];
 		std::optional<float> testFrameTime, testCostPerCall;
 		auto it = this->testData.find(typeIndex);
@@ -1869,7 +1871,7 @@ void PerformanceOverlay::UpdateAllShaderTestData()
 	float smoothedFrameTime = static_cast<float>(this->state.smoothFrameTimeMs);
 	float measuredSum = 0.0f;
 
-	globals::state->ForEachShaderTypeWithMetrics([&measuredSum, smoothedFrameTime, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
+	globals::state->ForEachShaderTypeWithMetrics([&measuredSum, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
 		this->UpdateShaderTestDataEntry(typeIndex, frameTime, costPerCall, percent);
 		measuredSum += frameTime;
 	});
@@ -1915,7 +1917,7 @@ void PerformanceOverlay::CaptureTestData()
 	float measuredSum = 0.0f;
 	if (abTestActive) {
 		measuredSum = 0.0f;
-		globals::state->ForEachShaderTypeWithMetrics([&measuredSum, smoothedFrameTime, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
+		globals::state->ForEachShaderTypeWithMetrics([&measuredSum, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
 			this->UpdateShaderTestDataEntry(typeIndex, frameTime, costPerCall, percent);
 			measuredSum += frameTime;
 		});
@@ -1925,7 +1927,7 @@ void PerformanceOverlay::CaptureTestData()
 		QueryPerformanceCounter(&testDataLastUpdated);
 	} else if (anyShaderDisabled) {
 		measuredSum = 0.0f;
-		globals::state->ForEachShaderTypeWithMetrics([&measuredSum, smoothedFrameTime, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
+		globals::state->ForEachShaderTypeWithMetrics([&measuredSum, this]([[maybe_unused]] auto type, int typeIndex, [[maybe_unused]] float drawCalls, float frameTime, float percent, float costPerCall) {
 			bool enabled = globals::state->enabledClasses[typeIndex - 1];
 			if (!enabled) {
 				this->UpdateShaderTestDataEntry(typeIndex, frameTime, costPerCall, percent);

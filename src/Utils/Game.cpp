@@ -37,8 +37,11 @@ namespace Util
 			return;
 
 		// Bitwise or, not ||: both requests must be drained even when the first one was already pending.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wbitwise-instead-of-logical"
 		const bool hadPendingTransition = timeJumpTransitionRequested.exchange(false, std::memory_order_acq_rel) |
 		                                  gameLoadTransitionRequested.exchange(false, std::memory_order_acq_rel);
+#pragma clang diagnostic pop
 		if (hadPendingTransition)
 			MarkCelestialTransitionComplete();
 	}
@@ -113,9 +116,10 @@ namespace Util
 					if (auto extraCellWaterType = cell->extraList.GetByType<RE::ExtraCellWaterType>()) {
 						if (auto water = extraCellWaterType->water) {
 							{
-								data = { float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
+								data = float4(float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
 									float(water->data.deepWaterColor.green) + float(water->data.shallowWaterColor.green),
-									float(water->data.deepWaterColor.blue) + float(water->data.shallowWaterColor.blue) };
+									float(water->data.deepWaterColor.blue) + float(water->data.shallowWaterColor.blue),
+									0.0f);
 
 								data.x /= 255.0f;
 								data.y /= 255.0f;
@@ -132,9 +136,10 @@ namespace Util
 					if (!extraCellWater) {
 						if (auto worldSpace = tes->GetRuntimeData2().worldSpace) {
 							if (auto water = worldSpace->worldWater) {
-								data = { float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
+								data = float4(float(water->data.deepWaterColor.red) + float(water->data.shallowWaterColor.red),
 									float(water->data.deepWaterColor.green) + float(water->data.shallowWaterColor.green),
-									float(water->data.deepWaterColor.blue) + float(water->data.shallowWaterColor.blue) };
+									float(water->data.deepWaterColor.blue) + float(water->data.shallowWaterColor.blue),
+									0.0f);
 
 								data.x /= 255.0f;
 								data.y /= 255.0f;
