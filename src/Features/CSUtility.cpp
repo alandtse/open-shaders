@@ -488,18 +488,29 @@ void CSUtility::UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a
 
 	VanillaPointLightData data{};
 	const uint32_t lightCount = std::min(a_lightCount, kMaxVanillaPointLights);
-	for (uint32_t lightIndex = 0; lightIndex < lightCount; ++lightIndex) {
-		const uint32_t sceneLightIndex = lightIndex + kFirstPointLightSceneIndex;
-		if (sceneLightIndex >= a_pass->numLights)
-			break;
+#if defined(_MSC_VER)
+	__try
+#endif
+	{
+		for (uint32_t lightIndex = 0; lightIndex < lightCount; ++lightIndex) {
+			const uint32_t sceneLightIndex = lightIndex + kFirstPointLightSceneIndex;
+			if (sceneLightIndex >= a_pass->numLights)
+				break;
 
-		auto* bsLight = a_pass->sceneLights[sceneLightIndex];
-		if (!bsLight)
-			continue;
+			auto* bsLight = a_pass->sceneLights[sceneLightIndex];
+			if (!bsLight)
+				continue;
 
-		auto* niLight = bsLight->light.get();
-		data.pointLightFlags[lightIndex] = PointLightFlags::GetVanillaPointLightFlags(bsLight, niLight);
+			auto* niLight = bsLight->light.get();
+			data.pointLightFlags[lightIndex] = PointLightFlags::GetVanillaPointLightFlags(bsLight, niLight);
+		}
 	}
+#if defined(_MSC_VER)
+	__except (1) {
+		// A stale sceneLights entry means the rest of the array is suspect; stop
+		// rather than resume. Zeroed flags fall back to vanilla falloff.
+	}
+#endif
 
 	vanillaPointLightCB->Update(data);
 
