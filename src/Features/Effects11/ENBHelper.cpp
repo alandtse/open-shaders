@@ -74,13 +74,15 @@ namespace ENBHelper
 		}
 
 		if (const auto* player = globals::game::player) {
-			if (const auto* location = player->GetCurrentLocation()) {
-				cachedLocation.locationFormID = location->formID;
-			} else {
-				cachedLocation.locationFormID = 0;
-			}
-
+			// GetCurrentLocation() derefs the parent cell with no null check and crashes
+			// before the player is placed in the world (e.g. main menu); guard on the cell.
 			if (const auto* parentCell = player->GetParentCell()) {
+				if (const auto* location = player->GetCurrentLocation()) {
+					cachedLocation.locationFormID = location->formID;
+				} else {
+					cachedLocation.locationFormID = 0;
+				}
+
 				cachedLocation.isInterior = parentCell->IsInteriorCell();
 				if (!cachedLocation.isInterior) {
 					if (const auto* worldSpace = player->GetWorldspace()) {
@@ -92,6 +94,7 @@ namespace ENBHelper
 					cachedLocation.worldSpaceFormID = 0;
 				}
 			} else {
+				cachedLocation.locationFormID = 0;
 				cachedLocation.isInterior = false;
 				cachedLocation.worldSpaceFormID = 0;
 			}
