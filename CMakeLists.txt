@@ -205,6 +205,13 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ImGuiVRHelper)
 target_link_libraries(${PROJECT_NAME} PRIVATE ImGuiVRHelper::api)
 
+target_include_directories(
+    ${PROJECT_NAME}
+    SYSTEM
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/extern/Streamline-DX12/external/ngx-sdk/include"
+)
+
 # stb_image_write impl (incl. ReShade's vendored HDR-PNG extension) builds as C, like
 # upstream's deps/stb_impl.c: the extension passes unsigned char* where stb's
 # encode_png_line takes signed char* (legal in C, an error in C++). Not picked up by the

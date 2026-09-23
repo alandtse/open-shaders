@@ -29,6 +29,11 @@
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
+namespace NR
+{
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
 	upscaleMethod,
@@ -45,6 +50,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessEnabledDLSS,
 	sharpnessDLSS,
 	presetDLSS,
+	neuralRenderingEnabled,
+	neuralRenderingTuning,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
 	reflexUseMarkersToOptimize,
@@ -908,6 +915,8 @@ void Upscaling::DrawSettings()
 		ImGui::TreePop();
 	}
 
+	neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingTuning);
+
 	// Foveated DLSS lives here rather than as a peer Feature so all DLSS surfaces share
 	// one settings panel; also mirrored in the Performance hub.
 	if (globals::game::isVR)
@@ -1070,6 +1079,8 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
+	settings.neuralRenderingTuning.Sanitize();
+	neuralRendering.ResetHistory();
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
@@ -1140,6 +1151,7 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	neuralRendering.ResetHistory();
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
 }
@@ -2035,6 +2047,7 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 void Upscaling::SetupResources()
 {
+	neuralRendering.SetupResources();
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
 		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
@@ -2128,6 +2141,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
+	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
 	for (int i = 0; i < 5; ++i) {
 		encodeTexturesCS[i].Reset();
@@ -2639,7 +2653,7 @@ void Upscaling::Upscale()
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
 		// The shader applies EyeOffsetX to sample the correct half.
-		ID3D11ShaderResourceView* views[4] = { Util::AsReal(temporalAAMask.SRV), Util::AsReal(normals.SRV), Util::AsReal(motionVector.SRV), Util::AsReal(depth.depthSRV) };
+		ID3D11ShaderResourceView* views[5] = { Util::AsReal(temporalAAMask.SRV), Util::AsReal(normals.SRV), Util::AsReal(motionVector.SRV), Util::AsReal(depth.depthSRV), neuralRendering.GetReactiveMask() };
 		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
 
 		if (auto* encodeCS = GetEncodeTexturesCS()) {
@@ -2673,7 +2687,7 @@ void Upscaling::Upscale()
 			}
 		}
 
-		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
+		ID3D11ShaderResourceView* nullViews[5] = {};
 		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
 
 		ID3D11UnorderedAccessView* nullUAVs[4] = { nullptr, nullptr, nullptr, nullptr };
@@ -3140,6 +3154,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
+	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	if (upscaling.ShouldUseFrameGenerationThisFrame()) {
 		if (postProcessing.loaded)
@@ -3152,6 +3169,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	} else if (globals::game::isVR) {
 		upscaling.UpscaleDepth();
 	}
+	upscaling.neuralRendering.CaptureAfterUpscaling();
 
 	if (upscaleMethod == UpscaleMethod::kDLSS) {
 		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the
@@ -3167,6 +3185,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		}
 	}
 
+	upscaling.neuralRendering.RecordStage(false);
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
@@ -3202,6 +3221,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
 
+	upscaling.neuralRendering.RecordStage(true);
 	Util::SetTemporal(false);
 }
 
