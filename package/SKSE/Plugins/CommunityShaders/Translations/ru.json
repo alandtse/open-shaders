@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "Порог обнаружения",
     "feature.grass_lighting.detection_threshold_tooltip": "Порог для обнаружения сложных текстур травы. Меньшие значения более строгие.",
     "feature.grass_lighting.effects": "Эффекты",
-    "feature.grass_lighting.enable_alpha_coverage": "Улучшенная прозрачность травы",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "Уменьшает блочный вид далёкой травы, повышая нагрузку на GPU. Отключите, чтобы восстановить исходную прозрачность травы.",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "Глянцевость",

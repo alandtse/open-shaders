@@ -16,8 +16,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableWrappedLighting,
 	ComplexGrassThreshold,
 	MidLODBrightness,
-	FarLODBrightness,
-	EnableAlphaCoverage)
+	FarLODBrightness)
 
 void GrassLighting::DrawSettings()
 {
@@ -47,13 +46,6 @@ void GrassLighting::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx(T(TKEY("effects"), "Effects"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		Util::CheckboxFlag(T(TKEY("enable_alpha_coverage"), "Improved Grass Transparency"), settings.EnableAlphaCoverage);
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("enable_alpha_coverage_tooltip"),
-								  "Reduces blocky distant grass at an additional GPU cost. Disable to restore the original grass transparency."));
-		}
-		ImGui::Spacing();
-
 		ImGui::SliderFloat(T(TKEY("sss_amount"), "SSS Amount"), &settings.SubsurfaceScatteringAmount, 0.0f, 1.0f);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("sss_tooltip"),

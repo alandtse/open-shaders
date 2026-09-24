@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "",
     "feature.grass_lighting.detection_threshold_tooltip": "",
     "feature.grass_lighting.effects": "",
-    "feature.grass_lighting.enable_alpha_coverage": "Ulepszona przezroczystość trawy",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "Zmniejsza kanciasty wygląd odległej trawy kosztem dodatkowego obciążenia GPU. Wyłącz, aby przywrócić oryginalną przezroczystość trawy.",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "",

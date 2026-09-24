@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "检测阈值",
     "feature.grass_lighting.detection_threshold_tooltip": "检测复杂草纹理的阈值。值越低越严格。",
     "feature.grass_lighting.effects": "效果",
-    "feature.grass_lighting.enable_alpha_coverage": "改进草地透明效果",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "减少远处草地的块状外观，但会增加 GPU 开销。禁用可恢复原有的草地透明效果。",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "光泽度",

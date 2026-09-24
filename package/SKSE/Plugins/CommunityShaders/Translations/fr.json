@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "",
     "feature.grass_lighting.detection_threshold_tooltip": "",
     "feature.grass_lighting.effects": "",
-    "feature.grass_lighting.enable_alpha_coverage": "Transparence améliorée de l’herbe",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "Réduit l’aspect en blocs de l’herbe lointaine au prix d’une charge GPU supplémentaire. Désactivez cette option pour rétablir la transparence d’origine de l’herbe.",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "",

@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "",
     "feature.grass_lighting.detection_threshold_tooltip": "",
     "feature.grass_lighting.effects": "",
-    "feature.grass_lighting.enable_alpha_coverage": "草の透過表現を改善",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "GPU負荷が増加しますが、遠くの草が塊状に見える現象を軽減します。無効にすると元の透過表現に戻ります。",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "",

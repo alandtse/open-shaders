@@ -789,8 +789,6 @@
     "feature.grass_lighting.detection_threshold": "",
     "feature.grass_lighting.detection_threshold_tooltip": "",
     "feature.grass_lighting.effects": "",
-    "feature.grass_lighting.enable_alpha_coverage": "Verbeterde grastransparantie",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "Vermindert het blokkerige uiterlijk van gras in de verte, maar verhoogt de GPU-belasting. Schakel dit uit om de oorspronkelijke grastransparantie te herstellen.",
     "feature.grass_lighting.enable_wrapped_lighting": "",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "",
     "feature.grass_lighting.glossiness": "",

@@ -801,8 +801,6 @@
     "feature.grass_lighting.detection_threshold": "Detection Threshold",
     "feature.grass_lighting.detection_threshold_tooltip": "Threshold for detecting complex grass textures. Lower values are more strict.",
     "feature.grass_lighting.effects": "Effects",
-    "feature.grass_lighting.enable_alpha_coverage": "Improved Grass Transparency",
-    "feature.grass_lighting.enable_alpha_coverage_tooltip": "Reduces blocky distant grass at an additional GPU cost. Disable to restore the original grass transparency.",
     "feature.grass_lighting.enable_wrapped_lighting": "Enable Wrapped Lighting",
     "feature.grass_lighting.enable_wrapped_lighting_tooltip": "Enables a softer-looking wrapped lighting model from CS 1.3. Useful for certain non-complex grass textures that look too dark during midday, when the sun is directly overhead.",
     "feature.grass_lighting.far_lod_brightness_tooltip": "Raise or lower until the most distant LOD grass matches the middle LOD grass in front of it. Requires Grass Optimizations with Far LOD enabled.",
