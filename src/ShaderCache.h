@@ -2,6 +2,7 @@
 
 #include <BS_thread_pool.hpp>
 #include <atomic>
+#include <deque>
 #include <efsw/efsw.hpp>
 #include <functional>
 #include <optional>
@@ -847,7 +848,9 @@ namespace SIE
 		/** @brief Updates compilation mode and wakes the dispatcher to recheck its capacity. */
 		void SetBackgroundCompilation(bool value);
 		std::atomic_bool backgroundCompilation{ false };
-		bool menuLoaded = false;
+		// atomic: written from the SKSE messaging handler (kDataLoaded),
+		// read on the render/UI threads (OverlayRenderer, BackgroundBlur).
+		std::atomic<bool> menuLoaded = false;
 
 		enum class LightingShaderTechniques
 		{

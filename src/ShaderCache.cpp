@@ -1831,20 +1831,20 @@ namespace SIE
 				} else if (!decidedByDigest && cache.IsSkipUnchangedShaders()) {
 					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
-					const auto diskCacheTime = std::filesystem::last_write_time(diskPath, ec);
+					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
 					if (ec) {
 						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
 					} else {
-						const std::wstring shaderSourcePath = GetShaderPath(
+						const std::wstring mtimeSourcePath = GetShaderPath(
 							shader.shaderType == RE::BSShader::Type::ImageSpace ?
 								static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
 								shader.fxpFilename);
-						const auto sourceTime = std::filesystem::last_write_time(shaderSourcePath, ec);
-						if (ec) {
-							logger::debug("Failed to read source mtime for {}: {}", Util::WStringToString(shaderSourcePath), ec.message());
-						} else if (sourceTime > diskCacheTime) {
-							diskCacheOutdated = true;
-							logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+						if (std::filesystem::exists(mtimeSourcePath)) {
+							const auto sourceTime = GetMaxShaderMTime(mtimeSourcePath, std::filesystem::path(mtimeSourcePath).parent_path());
+							if (sourceTime > diskCacheTime) {
+								diskCacheOutdated = true;
+								logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+							}
 						}
 					}
 				}
@@ -3161,7 +3161,140 @@ namespace SIE
 		compilationSet.conditionVariable.notify_one();
 	}
 
-	void ShaderCache::DeleteDiskCache()
+	static const std::filesystem::path& DiskCachePath()
+	{
+		static const std::filesystem::path path{ L"Data/ShaderCache" };
+		return path;
+	}
+
+	static const std::filesystem::path& PreviousDiskCachePath()
+	{
+		static const std::filesystem::path path{ L"Data/ShaderCache.Previous" };
+		return path;
+	}
+
+	static const std::filesystem::path& SwapDiskCachePath()
+	{
+		static const std::filesystem::path path{ L"Data/ShaderCache.Swap" };
+		return path;
+	}
+
+	/// Info.ini presence is the "this is a real cache" marker for both slots.
+	static bool HasDiskCacheInfo(const std::filesystem::path& cachePath)
+	{
+		std::error_code ec;
+		const bool exists = std::filesystem::exists(cachePath / L"Info.ini", ec);
+		return exists && !ec;
+	}
+
+	static bool LoadDiskCacheInfo(const std::filesystem::path& cachePath, CSimpleIniA& ini)
+	{
+		ini.SetUnicode();
+		return ini.LoadFile((cachePath / L"Info.ini").c_str()) >= 0;
+	}
+
+	static bool RemoveCachePath(const std::filesystem::path& path, std::string_view label)
+	{
+		std::error_code ec;
+		std::filesystem::remove_all(path, ec);
+		if (ec) {
+			logger::error("Failed to remove {} shader cache path {}: {}", label, Util::WStringToString(path.wstring()), ec.message());
+			return false;
+		}
+		return true;
+	}
+
+	static std::vector<Util::CacheInvalidation::FeatureState> GetCurrentFeatureStates()
+	{
+		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
+		for (auto* feature : Feature::GetFeatureList()) {
+			// Only a non-empty failedLoadedMessage is a genuine load failure; !loaded
+			// alone also covers ordinary and environment-gated disables.
+			featureStates.push_back({ feature->GetShortName(), feature->GetDisplayName(), feature->loaded,
+				feature->version, std::string(feature->GetShaderDefineName()),
+				!feature->loaded && !feature->failedLoadedMessage.empty() });
+		}
+		return featureStates;
+	}
+
+	/// Compare a cache manifest (active or rollback slot) against the current runtime state.
+	static std::vector<Util::CacheInvalidation::CacheMismatch> ClassifyCacheInfo(const CSimpleIniA& ini,
+		const std::vector<Util::CacheInvalidation::FeatureState>& featureStates)
+	{
+		std::optional<std::string> cachedPluginVersion;
+		if (auto pluginVersion = ini.GetValue("Cache", "PluginVersion"))
+			cachedPluginVersion = pluginVersion;
+
+		std::map<std::string, Util::CacheInvalidation::CacheIniEntry> cacheEntries;
+		for (const auto& featureState : featureStates) {
+			Util::CacheInvalidation::CacheIniEntry entry;
+			entry.enabled = ini.GetBoolValue(featureState.shortName.c_str(), "Enabled", false);
+			if (auto version = ini.GetValue(featureState.shortName.c_str(), "Version"))
+				entry.version = version;
+			cacheEntries[featureState.shortName] = entry;
+		}
+		return Util::CacheInvalidation::ClassifyMismatches(
+			Plugin::VERSION.string(), cachedPluginVersion, featureStates, cacheEntries);
+	}
+
+	static std::vector<std::string> GetDefinesForMismatches(
+		const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches,
+		const std::vector<Util::CacheInvalidation::FeatureState>& featureStates,
+		Util::CacheInvalidation::CacheMismatch::Kind kind)
+	{
+		std::vector<std::string> defines;
+		for (const auto& mismatch : mismatches) {
+			if (mismatch.kind != kind)
+				continue;
+			const auto stateIt = std::ranges::find_if(featureStates,
+				[&](const Util::CacheInvalidation::FeatureState& featureState) {
+					return featureState.shortName == mismatch.shortName;
+				});
+			if (stateIt != featureStates.end())
+				defines.push_back(stateIt->define);
+		}
+		return defines;
+	}
+
+	using Util::CacheInvalidation::OnlyEnabledFlips;
+
+	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
+	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
+	{
+		return Util::CacheInvalidation::HasFailedFeature(mismatches);
+	}
+
+	// The rollback slot's on-disk presence is the one filesystem check this
+	// can't do without ShaderCache's path helpers, so it's evaluated here and
+	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
+	static bool SetPreviousCacheRestoreCandidate(
+		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
+		bool& previousDiskCacheAvailable,
+		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
+	{
+		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
+			HasDiskCacheInfo(PreviousDiskCachePath()),
+			previousDiskCacheAvailable, previousCacheMismatches);
+	}
+
+	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
+	// outDestructive is set when the active cache was left partially deleted --
+	// the caller must wipe it outright rather than rotate it into the rollback slot.
+	static bool PartialInvalidation(const std::vector<std::string>& defines, bool& outDestructive)
+	{
+		size_t deleted = 0, kept = 0;
+		const bool ok = Util::CacheInvalidation::TryPartialInvalidation(
+			DiskCachePath(), L"Data/Shaders", defines, &deleted, &kept, &outDestructive);
+		if (ok)
+			logger::info("Partial disk cache invalidation: deleted {} shader dirs, kept {}", deleted, kept);
+		else if (outDestructive)
+			logger::warn("Partial disk cache invalidation failed mid-delete: active cache is now inconsistent, wiping outright");
+		else
+			logger::warn("Partial disk cache invalidation unavailable, falling back to full wipe");
+		return ok;
+	}
+
+	void ShaderCache::DeleteActiveDiskCache()
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
 		if (RemoveCachePath(DiskCachePath(), "active"))
@@ -4563,7 +4696,7 @@ namespace SIE
 		auto shaderCache = globals::shaderCache;
 		if (!conditionVariable.wait(
 				lock, stoken,
-				[this, &shaderCache]() { return !availableTasks.empty() &&
+				[this, &shaderCache]() { return (!availableTasks.empty() || !pendingAuxTasks.empty()) &&
 			                                    // Complete() erases this entry before notifying. The pool's count
 			                                    // only drops after the callback returns, without notifying us.
 			                                    static_cast<int>(tasksInProgress.size()) <
