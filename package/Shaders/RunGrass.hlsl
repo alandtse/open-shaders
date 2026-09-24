@@ -245,11 +245,13 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 #		endif
 
 	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+#		if defined(VR)
 	// WorldViewProj carries the per-eye matrix (FrameBuffer::CameraViewProj is identical for both eyes in VR).
 	const float4 projSpacePosition = mul(WorldViewProj[CurrentEyeIndex], msPosition);
-#		if !defined(VR)
+#		else
+	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[0], float4(eyeRel, 1.0));
 	vsout.HPosition = projSpacePosition;
-#		endif  // !VR
+#		endif  // VR
 
 #		if defined(RENDER_DEPTH)
 	vsout.Fade = e1.z;

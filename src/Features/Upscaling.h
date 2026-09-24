@@ -184,6 +184,7 @@ public:
 	bool lowRefreshRate = false;
 	bool fidelityFXMissing = false;
 	bool d3d12SwapChainActive = false;
+	bool frameGenerationPrepared = false;
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
@@ -193,6 +194,9 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
+	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
+	bool ShouldPrepareFrameGeneration() const;
+	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */
 	bool ShouldUseFrameGenerationThisFrame() const;
 	bool IsUpscalingActive() const;
 
@@ -407,7 +411,8 @@ public:
 	/// only; flat has no repro and per-eye extent asymmetry doesn't apply.
 	std::atomic<bool> pendingDLSSReset{ false };
 
-	void CopySharedD3D12Resources();
+	/** @brief Copies depth and motion inputs, returning false if the required shaders are unavailable. */
+	bool CopySharedD3D12Resources();
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
@@ -481,6 +486,11 @@ public:
 	BlurResources GetBlurResources() const;
 
 private:
+	void DrawUpscalingSettings();
+	void DrawFrameGenerationSettings();
+	void DrawReflexSettings();
+	void DrawBackendDiagnostics();
+
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
 	// Detection lives in VRDetection; this class owns the force-to-None policy.

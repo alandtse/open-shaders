@@ -130,9 +130,19 @@ void Wind::SanitizeSettings(Settings& a_settings)
 		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 	a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier,
 		kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+	for (uint32_t index = 0; index < a_settings.windFieldGustAdvectionResponse.size(); ++index)
+		a_settings.windFieldGustAdvectionResponse[index] = ClampFiniteOrDefault(
+			a_settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
+			defaults.windFieldGustAdvectionResponse[index]);
 	a_settings.windFieldDirectionTransitionDuration = ClampFiniteOrDefault(a_settings.windFieldDirectionTransitionDuration,
 		kWindFieldDirectionTransitionDurationMin, kWindFieldDirectionTransitionDurationMax,
 		defaults.windFieldDirectionTransitionDuration);
+	a_settings.grassTransientFlutterStrength = ClampFiniteOrDefault(a_settings.grassTransientFlutterStrength,
+		kGrassTransientFlutterStrengthMin, kGrassTransientFlutterStrengthMax,
+		defaults.grassTransientFlutterStrength);
+	a_settings.grassTransientFlutterFrequency = ClampFiniteOrDefault(a_settings.grassTransientFlutterFrequency,
+		kGrassTransientFlutterFrequencyMin, kGrassTransientFlutterFrequencyMax,
+		defaults.grassTransientFlutterFrequency);
 	SanitizeGrassWindSettings(a_settings);
 }
 
@@ -165,9 +175,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustCrosswindScale,
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
+	windFieldGustAdvectionResponse,
 	windFieldDirectionTransitionDuration,
 	processMidRangeTransients,
 	processFarRangeTransients,
+	grassTransientFlutterStrength,
+	grassTransientFlutterFrequency,
 	enableAmbientGrassWind,
 	enableGrassWindSpring,
 	enableGrassWindSpringBend,
@@ -180,7 +193,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindSpringDamping,
 	grassWindSpringQuality,
 	grassWindFlutterStrength,
-	grassWindFlutterFrequency)
+	grassWindFlutterFrequency,
+	grassWindFlutterAmplitudeResponse)
 
 void Wind::SetTreeWindTestEnabled(bool a_enabled)
 {
@@ -220,6 +234,8 @@ json Wind::GetDiagnostics()
 		{ "treeTransientSpringDamping", settings.treeTransientSpringDamping },
 		{ "processMidRangeTransients", settings.processMidRangeTransients },
 		{ "processFarRangeTransients", settings.processFarRangeTransients },
+		{ "grassTransientFlutterStrength", settings.grassTransientFlutterStrength },
+		{ "grassTransientFlutterFrequency", settings.grassTransientFlutterFrequency },
 		{ "universalTreeResponseOverride", universalOverrideEnabled },
 		{ "universalTreeResponse", {
 									   { "bendSensitivity", universalValues.bend },
@@ -239,6 +255,26 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("setGrassTransientFlutterStrength",
+		"Set the additive grass impulse flutter strength from 0 to 2. Args: strength (number). Zero disables the extra oscillation without changing spring bending.",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("strength") || !args["strength"].is_number())
+				return;
+			auto* wind = static_cast<Wind*>(feature);
+			wind->settings.grassTransientFlutterStrength = ClampFiniteOrDefault(
+				args["strength"].get<float>(), kGrassTransientFlutterStrengthMin,
+				kGrassTransientFlutterStrengthMax, wind->settings.grassTransientFlutterStrength);
+		});
+	FEATURE_COMMAND("setGrassTransientFlutterFrequency",
+		"Set the additive grass impulse flutter frequency from 0.25 to 12 Hz. Args: frequency (number).",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("frequency") || !args["frequency"].is_number())
+				return;
+			auto* wind = static_cast<Wind*>(feature);
+			wind->settings.grassTransientFlutterFrequency = ClampFiniteOrDefault(
+				args["frequency"].get<float>(), kGrassTransientFlutterFrequencyMin,
+				kGrassTransientFlutterFrequencyMax, wind->settings.grassTransientFlutterFrequency);
+		});
 	FEATURE_COMMAND("setUniversalTreeResponse",
 		"Set the runtime-only response used for every tree. All response params and enabled are optional.",
 		[](Feature*, const json& args) {
@@ -488,11 +524,14 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustCrosswindScale = defaults.windFieldGustCrosswindScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
+		settings.windFieldGustAdvectionResponse = defaults.windFieldGustAdvectionResponse;
 		settings.windFieldDirectionTransitionDuration = defaults.windFieldDirectionTransitionDuration;
 		break;
 	case SettingsPage::WindEffects:
 		settings.processMidRangeTransients = defaults.processMidRangeTransients;
 		settings.processFarRangeTransients = defaults.processFarRangeTransients;
+		settings.grassTransientFlutterStrength = defaults.grassTransientFlutterStrength;
+		settings.grassTransientFlutterFrequency = defaults.grassTransientFlutterFrequency;
 		if (uiState.activeWindEffectIndex < windEffects.size())
 			windEffects[uiState.activeWindEffectIndex]->RestoreDefaultSettings();
 		break;
@@ -519,16 +558,19 @@ void Wind::RestoreCurrentPageDefaultSettings()
 
 bool Wind::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 5> windFieldKeys{
+	static constexpr std::array<std::string_view, 6> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustCrosswindScale",
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier",
+		"windFieldGustAdvectionResponse",
 		"windFieldDirectionTransitionDuration"
 	};
-	static constexpr std::array<std::string_view, 3> windEffectKeys{
+	static constexpr std::array<std::string_view, 5> windEffectKeys{
 		"processMidRangeTransients",
 		"processFarRangeTransients",
+		"grassTransientFlutterStrength",
+		"grassTransientFlutterFrequency",
 		"windEffects"
 	};
 	static constexpr std::array<std::string_view, 9> treeKeys{
@@ -542,7 +584,7 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 15> grassKeys{
+	static constexpr std::array<std::string_view, 16> grassKeys{
 		"overrideTrunkWindIntensity",
 		"trunkWindIntensityOverride",
 		"enableAmbientGrassWind",
@@ -557,7 +599,8 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"grassWindSpringDamping",
 		"grassWindSpringQuality",
 		"grassWindFlutterStrength",
-		"grassWindFlutterFrequency"
+		"grassWindFlutterFrequency",
+		"grassWindFlutterAmplitudeResponse"
 	};
 
 	switch (uiState.activeSettingsPage) {

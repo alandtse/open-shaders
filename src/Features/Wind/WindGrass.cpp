@@ -132,6 +132,12 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		GrassWindSpringData data{};
 		data.transientFieldMask = GetTransientFieldMask();
 		data.flutterFrequency = sanitizedSettings.grassWindFlutterFrequency;
+		data.transientFlutterStrength = sanitizedSettings.grassTransientFlutterStrength;
+		data.transientFlutterFrequency = sanitizedSettings.grassTransientFlutterFrequency;
+		data.flutterAmplitudeResponse = float3(
+			sanitizedSettings.grassWindFlutterAmplitudeResponse[0],
+			sanitizedSettings.grassWindFlutterAmplitudeResponse[1],
+			sanitizedSettings.grassWindFlutterAmplitudeResponse[2]);
 		const float fieldHeight = center.z;
 		const float frameTime = std::clamp(windFieldFrameTime, 0.0f, 0.25f);
 		const float responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);

@@ -23,28 +23,32 @@ struct WindSettings
 	float treeWindSpringDamping = 0.7f;
 	float treeTransientSpringFrequency = 2.0f;
 	float treeTransientSpringDamping = 0.7f;
-	float windFieldGustScale = 269.0f;
-	float windFieldGustCrosswindScale = 259.0f;
+	float windFieldGustScale = 409.0f;
+	float windFieldGustCrosswindScale = 491.0f;
 	float windFieldGustAmplitude = 1.0f;
-	float windFieldGustAdvectionMultiplier = 1.01f;
+	float windFieldGustAdvectionMultiplier = 0.93f;
+	std::array<float, 3> windFieldGustAdvectionResponse{ 0.20f, 0.50f, 0.75f };
 	float windFieldDirectionTransitionDuration = 15.0f;
 	bool processMidRangeTransients = true;
-	bool processFarRangeTransients = false;
+	bool processFarRangeTransients = true;
+	float grassTransientFlutterStrength = 1.0f;
+	float grassTransientFlutterFrequency = 6.0f;
 	bool enableAmbientGrassWind = true;
 	bool enableGrassWindSpring = true;
 	bool enableGrassWindSpringBend = true;
-	float grassWindResponse = 22.0f;
-	float grassWindSensitivity = 2.51f;
-	float grassWindMaximumTilt = 63.0f;
-	float grassWindBendProfile = 0.35f;
+	float grassWindResponse = 13.0f;
+	float grassWindSensitivity = 2.50f;
+	float grassWindMaximumTilt = 89.0f;
+	float grassWindBendProfile = 0.50f;
 	float grassWindCompressionToBend = 0.5f;
-	float grassWindSpringFrequency = 4.09f;
-	float grassWindSpringDamping = 0.85f;
+	float grassWindSpringFrequency = 4.01f;
+	float grassWindSpringDamping = 0.82f;
 	std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 1024, 3000.0f },
 		{ 512, 6262.0f },
 		{ 256, 12000.0f } } };
 	float grassWindFlutterStrength = 1.0f;
 	float grassWindFlutterFrequency = 1.0f;
+	std::array<float, 3> grassWindFlutterAmplitudeResponse{ 1.0f, 1.0f, 2.0f };
 };
 
 namespace WindSettingsLimits
@@ -73,6 +77,9 @@ namespace WindSettingsLimits
 	inline constexpr float kWindFieldGustAmplitudeMax = 1.0f;
 	inline constexpr float kWindFieldGustAdvectionMultiplierMin = 0.0f;
 	inline constexpr float kWindFieldGustAdvectionMultiplierMax = 8.0f;
+	inline constexpr float kWindResponseMin = 0.0f;
+	inline constexpr float kWindResponseMax = 2.0f;
+	inline constexpr std::array<float, 3> kWindResponseSpeeds{ 0.1f, 0.5f, 1.0f };
 	inline constexpr float kWindFieldDirectionTransitionDurationMin = 0.0f;
 	inline constexpr float kWindFieldDirectionTransitionDurationMax = 30.0f;
 	inline constexpr float kTrunkWindIntensityMin = 0.0f;
@@ -97,6 +104,10 @@ namespace WindSettingsLimits
 	inline constexpr float kGrassWindFlutterStrengthMax = 2.0f;
 	inline constexpr float kGrassWindFlutterFrequencyMin = 0.0f;
 	inline constexpr float kGrassWindFlutterFrequencyMax = 2.0f;
+	inline constexpr float kGrassTransientFlutterStrengthMin = 0.0f;
+	inline constexpr float kGrassTransientFlutterStrengthMax = 2.0f;
+	inline constexpr float kGrassTransientFlutterFrequencyMin = 0.25f;
+	inline constexpr float kGrassTransientFlutterFrequencyMax = 12.0f;
 	inline constexpr uint32_t kGrassWindSpringQualityRangeCount = 3;
 	inline constexpr std::array<std::string_view, kGrassWindSpringQualityRangeCount> kGrassWindSpringQualityRangeNames{
 		"Near", "Mid", "Far"

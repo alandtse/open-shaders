@@ -15,6 +15,12 @@
 struct LightLimitFix : OverlayFeature
 {
 private:
+	void DrawContactShadowSettings();
+	void DrawParticleLightSettings();
+	void DrawPlacedLightSettings();
+	void DrawLightStatistics();
+	void DrawLightDebugSettings();
+
 	static constexpr uint32_t MAX_LIGHTS = 1024;
 	// Per-cluster visible-light cap; sizes the global lightIndexList pool as
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the

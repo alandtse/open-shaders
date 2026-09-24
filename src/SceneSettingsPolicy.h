@@ -37,7 +37,7 @@ namespace SceneSettingsPolicy
 		{ "PostProcessing", "Motion Blur", "VelocityScale" },
 		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
 		{ "ScreenSpaceGI", "ResourceProfile" },
-		{ "Wind", "Tree Meshes" },
+		{ "VolumetricLighting" },
 	};
 
 	inline const std::vector<SettingPolicyPath> kLocationFeatureWhitelist = {
@@ -67,6 +67,7 @@ namespace SceneSettingsPolicy
 		{ "GrassLighting" },
 		{ "ImageBasedLighting" },
 		{ "PostProcessing" },
+		{ "ProceduralSun" },
 		{ "Skylighting" },
 		{ "SubsurfaceScattering" },
 		{ "WetnessEffects" },

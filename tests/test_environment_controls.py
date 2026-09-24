@@ -254,6 +254,7 @@ RE::Calendar* calendar = nullptr;
 namespace Util {
 int timeJumps = 0;
 void RequestTimeJumpTransition() { ++timeJumps; }
+void ForceWeather(RE::Sky* sky, RE::TESWeather* weather, bool override) { sky->ForceWeather(weather, override); }
 }
 HEADER
 IMPLEMENTATION

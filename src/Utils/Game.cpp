@@ -13,6 +13,23 @@ namespace
 	std::atomic_bool gameLoadTransitionRequested{ false };
 	std::atomic_uint32_t completedCelestialTransitionGeneration{ 0 };
 
+	void ResetModelHandle(RE::ModelDBHandle& a_handle)
+	{
+		if (!a_handle)
+			return;
+
+		if (REL::Module::IsAE()) {
+			auto* entry = a_handle.get();
+			a_handle = {};
+			static REL::Relocation<void (*)(RE::ModelDBHandle::U_Entry*)> release{ REL::ID(15443) };
+			release(entry);
+		} else {
+			using Reset = RE::ModelDBHandle* (*)(RE::ModelDBHandle*, RE::ModelDBHandle::U_Entry*);
+			static REL::Relocation<Reset> reset{ REL::ID(25746) };
+			reset(&a_handle, nullptr);
+		}
+	}
+
 	void MarkCelestialTransitionComplete()
 	{
 		completedCelestialTransitionGeneration.fetch_add(1, std::memory_order_release);
@@ -30,6 +47,30 @@ namespace
 
 namespace Util
 {
+	void ForceWeather(RE::Sky* a_sky, RE::TESWeather* a_weather, bool a_override)
+	{
+		if (!a_sky)
+			return;
+
+		a_sky->ForceWeather(a_weather, a_override);
+		if (a_sky->auroraRoot) {
+			if (a_sky->root)
+				a_sky->root->DetachChild(a_sky->auroraRoot.get());
+			a_sky->auroraRoot.reset();
+		}
+		ResetModelHandle(a_sky->auroraModel);
+
+		// ForceWeather clears blending without invalidating the cached cloud technique.
+		if (a_sky->clouds) {
+			for (const auto& cloud : a_sky->clouds->clouds) {
+				if (cloud) {
+					if (auto* property = skyrim_cast<RE::BSSkyShaderProperty*>(cloud->GetGeometryRuntimeData().shaderProperty.get()))
+						property->DoClearRenderPasses();
+				}
+			}
+		}
+	}
+
 	void SetCelestialTransitionHandlerAvailable(bool a_available)
 	{
 		celestialTransitionHandlerAvailable.store(a_available, std::memory_order_release);
@@ -520,7 +561,7 @@ namespace Util::EnvironmentControls
 				const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
 				if (releasePending || sky->currentWeather != weather || sky->overrideWeather != weather) {
 					sky->flags.reset(RE::Sky::Flags::kReleaseWeatherOverride);
-					sky->ForceWeather(weather, true);
+					Util::ForceWeather(sky, weather, true);
 				}
 			}
 		}
@@ -558,7 +599,7 @@ namespace Util::EnvironmentControls
 			ApplyWeatherLock(weather);
 			MaintainLocks();
 		} else if (instant) {
-			sky->ForceWeather(weather, false);
+			Util::ForceWeather(sky, weather, false);
 		} else {
 			sky->SetWeather(weather, true, false);
 		}
@@ -576,7 +617,7 @@ namespace Util::EnvironmentControls
 	{
 		std::scoped_lock lock(environmentMutex);
 		if (auto* sky = globals::game::sky; sky && weather && sky->currentWeather == weather) {
-			sky->ForceWeather(weather, true);
+			Util::ForceWeather(sky, weather, true);
 			if (!GetLockedWeather())
 				sky->ReleaseWeatherOverride();
 			else

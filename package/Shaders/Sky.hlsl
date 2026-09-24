@@ -380,7 +380,11 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 
+#		if defined(CLOUDS)
+	float skyBrightnessMultiplier = SharedData::csUtilitySettings.cloudBrightness;
+#		else
 	float skyBrightnessMultiplier = SharedData::csUtilitySettings.skyBrightness;
+#		endif
 
 #		if defined(DITHER)
 	float2 noiseGradUv = float2(0.125, 0.125) * input.Position.xy;
@@ -392,7 +396,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 skyVertColor = ENABLE_LL ? (input.Color.xyz + noiseGrad) : input.Color.xyz;
 	float3 sunGlareColor = ComposeSkyColor(skyVertColor, baseColor.xyz, skyScale, composeAuthoredSky);
 	// Dither/noise term is the legacy sky path contribution for gradient smoothing.
-	psout.Color.xyz = (sunGlareColor * skyBrightnessMultiplier) + (ENABLE_LL ? 0.0 : noiseGrad);
+	psout.Color.xyz = ((sunGlareColor * skyBrightnessMultiplier) + (ENABLE_LL ? 0.0 : noiseGrad)) * SharedData::csUtilitySettings.sunGlareIntensity;
 	psout.Color.w = baseColor.w * input.Color.w;
 #			else
 	float3 skyGradientColor = input.Color.xyz;
@@ -468,8 +472,13 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif  // OCCLUSION
 
 #	if !defined(OCCLUSION) && !defined(MOONMASK)
-	if (SharedData::csUtilitySettings.skySaturation != 1.0)
-		psout.Color.xyz = Color::Saturation(psout.Color.xyz, SharedData::csUtilitySettings.skySaturation);
+#		if defined(CLOUDS)
+	float saturation = SharedData::csUtilitySettings.cloudSaturation;
+#		else
+	float saturation = SharedData::csUtilitySettings.skySaturation;
+#		endif
+	if (saturation != 1.0)
+		psout.Color.xyz = Color::Saturation(psout.Color.xyz, saturation);
 #	endif
 
 #	if defined(EXP_HEIGHT_FOG)

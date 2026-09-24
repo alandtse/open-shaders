@@ -11,11 +11,19 @@
 #include "../VR.h"
 #include "I18n/I18n.h"
 #include "ShadowCasterInternal.h"
+#include <imgui_internal.h>
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
 namespace ShadowCasterManager
 {
+	static void SameLineIfFits(float width)
+	{
+		const float right = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+		if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + width <= right)
+			ImGui::SameLine();
+	}
+
 	// =========================================================================
 	// DrawShadowLightTable
 	// =========================================================================
@@ -31,6 +39,9 @@ namespace ShadowCasterManager
 
 	void DrawShadowLightTable(bool compact, bool showColor, bool sceneOnly, bool readOnly)
 	{
+		using C = ThemeManager::Constants;
+		const float uiScale = Util::GetUIScale();
+		const ImVec2 overrideButtonSize(ImGui::GetFrameHeight(), ImGui::GetFrameHeight());
 		// Hover key is set per-row here and consumed (cleared) once per frame
 		// by UpdateLights. Do NOT clear it at function entry -- if both the
 		// settings-menu table and the overlay table render in the same frame,
@@ -246,6 +257,7 @@ namespace ShadowCasterManager
 							s_suppressedLights.insert(r.info.lightKey);
 				}
 			};
+			bool firstGroup = true;
 			auto groupButton = [&](const char* label, const RowPred& pred, const char* tooltip, bool previewOnly = false) {
 				// Counter shows visible/total: how many of the group's lights hold
 				// a shadow slot this frame vs how many exist. Lets the user see a
@@ -259,6 +271,9 @@ namespace ShadowCasterManager
 						++visible;
 				}
 				const std::string btnLabel = std::format("{} {}/{}", label, visible, total);
+				if (!firstGroup)
+					SameLineIfFits(ImGui::CalcTextSize(btnLabel.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.0f);
+				firstGroup = false;
 
 				bool allOff = allSuppressedMatching(pred);
 				ImGui::PushStyleColor(ImGuiCol_Button,
@@ -284,29 +299,23 @@ namespace ShadowCasterManager
 			};
 			groupButton(
 				T(TKEY("group_btn_all"), "All"), [](const SlotRow&) { return true; }, nullptr);
-			ImGui::SameLine();
 			groupButton(T(TKEY("group_btn_spot"), "Spot"), typePred(0), T(TKEY("group_tip_spot"), "Toggle all spot/frustum shadow lights"));
-			ImGui::SameLine();
 			groupButton(T(TKEY("group_btn_hemi"), "Hemi"), typePred(1), T(TKEY("group_tip_hemi"), "Toggle all hemisphere shadow lights"));
-			ImGui::SameLine();
 			groupButton(T(TKEY("group_btn_omni"), "Omni"), typePred(2), T(TKEY("group_tip_omni"), "Toggle all omni shadow lights (dome projection, aka paraboloid)"));
 			// Divider: left of the bar are stable type filters, right of it are
 			// per-frame state filters whose membership changes as you move.
-			ImGui::SameLine();
+			SameLineIfFits(ImGui::CalcTextSize("|").x);
 			ImGui::TextDisabled("|");
-			ImGui::SameLine();
 			groupButton(
 				T(TKEY("group_btn_conv"), "Conv"), [](const SlotRow& r) { return r.converted; },
 				T(TKEY("group_tip_conv"),
 					"Toggle all lights currently demoted from shadow to normal\n"
 					"(ConvertExcessToNormal). Hides their cluster-light contribution."));
-			ImGui::SameLine();
 			groupButton(
 				T(TKEY("group_btn_high"), "High"), [](const SlotRow& r) { return r.inScene && r.highImp; },
 				T(TKEY("group_tip_high"),
 					"High-impact shadow lights (meaningfully light the view).\n"
 					"Hover to tint them; click to toggle their suppression."));
-			ImGui::SameLine();
 			// Preview-only: the floor already culls these lights, so a suppress
 			// click would have no visible effect. Disabled (dimmed) while the
 			// floor is 0, since there's nothing for the group to preview.
@@ -331,7 +340,7 @@ namespace ShadowCasterManager
 			// shown when overrides are active so it doesn't take up space when
 			// there's nothing to reset.
 			if (HasAnyOverrides()) {
-				ImGui::SameLine();
+				SameLineIfFits(ImGui::CalcTextSize(T(TKEY("clear_all_btn"), "Clear All")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
 				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.25f, 0.25f, 1));
 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.35f, 0.35f, 1));
 				if (ImGui::SmallButton(T(TKEY("clear_all_btn"), "Clear All")))
@@ -348,7 +357,7 @@ namespace ShadowCasterManager
 
 			// Help marker: explains the per-row debug controls so users aren't
 			// surprised by states / pulses they didn't know they could trigger.
-			ImGui::SameLine();
+			SameLineIfFits(ImGui::CalcTextSize("(?)").x);
 			Util::HelpMarker(
 				T(TKEY("per_row_controls_help"),
 					"Per-row controls:\n"
@@ -371,14 +380,15 @@ namespace ShadowCasterManager
 		if (!readOnly) {
 			char buf[128] = {};
 			strncpy_s(buf, s_filterText.c_str(), sizeof(buf) - 1);
-			ImGui::SetNextItemWidth(120.0f);
+			ImGui::SetNextItemWidth(std::min(C::SHADOW_LIGHT_FILTER_WIDTH * uiScale, ImGui::GetContentRegionAvail().x));
 			if (ImGui::InputText("##slotfilter", buf, sizeof(buf)))
 				s_filterText = buf;
-			ImGui::SameLine();
-			ImGui::TextDisabled("%s", sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)"));
+			const char* filterHint = sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)");
+			SameLineIfFits(ImGui::CalcTextSize(filterHint).x);
+			ImGui::TextDisabled("%s", filterHint);
 			// Developer capture: same path as devbench capture kind=shadowmaps.
 			if (AtlasActive()) {
-				ImGui::SameLine();
+				SameLineIfFits(ImGui::CalcTextSize(T(TKEY("dump_atlas_btn"), "Dump Atlas")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
 				if (ImGui::SmallButton(T(TKEY("dump_atlas_btn"), "Dump Atlas")))
 					RequestAtlasDump();
 				if (ImGui::IsItemHovered())
@@ -525,7 +535,7 @@ namespace ShadowCasterManager
 		//                  helper) so summary stats above stay visible
 		//                  regardless of how many lights exist or how the
 		//                  user has sized the host window.
-		ImVec2 outerSize = compact ? ImVec2(0, 0) : ImVec2(0, ImGui::GetContentRegionAvail().y);
+		ImVec2 outerSize = compact ? ImVec2(0, 0) : ImVec2(0, std::max(ImGui::GetFrameHeightWithSpacing(), ImGui::GetContentRegionAvail().y));
 
 		Util::ShowSortedStringTableCustom<SlotRow>(
 			"##ShadowLightTbl",
@@ -557,7 +567,7 @@ namespace ShadowCasterManager
 				}
 
 				// === Mode column: state cycle button =======================
-				// Cycle: Auto (·) -> PinShadow (S) -> PinConvert (C) -> Suppress (X) -> Auto
+				// Cycle: Auto -> PinShadow (S) -> PinConvert (C) -> Suppress (X) -> Auto
 				// Mutually exclusive (SetPinned* / suppressed.erase enforce that).
 				// Hidden in readOnly mode (overlay with menu closed).
 				// Focus rows skip Mode/Solo entirely -- engine owns the slot.
@@ -575,7 +585,7 @@ namespace ShadowCasterManager
 					// Full pointer -- truncating to 32 bits let two different
 					// lights collide onto the same ImGui ID.
 					ImGui::PushID(reinterpret_cast<void*>(key));
-					const char* label = "·";
+					const char* label = "##mode";
 					ImVec4 col4 = ImVec4(0.15f, 0.6f, 0.15f, 1);  // green = auto/active
 					ImVec4 colH = ImVec4(0.2f, 0.75f, 0.2f, 1);
 					const char* tip = T(TKEY("mode_tip_auto"), "Auto (scheduler decides)\nClick: pin as shadow caster");
@@ -597,7 +607,7 @@ namespace ShadowCasterManager
 					}
 					ImGui::PushStyleColor(ImGuiCol_Button, col4);
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colH);
-					if (ImGui::SmallButton(label)) {
+					if (ImGui::Button(label, overrideButtonSize)) {
 						// Cycle to next state.
 						if (pinShadow) {
 							SetPinnedShadow(key, false);
@@ -630,7 +640,7 @@ namespace ShadowCasterManager
 					ImVec4 colH = isSolo ? ImVec4(1.0f, 0.85f, 0.25f, 1) : ImVec4(0.45f, 0.45f, 0.45f, 1);
 					ImGui::PushStyleColor(ImGuiCol_Button, col4);
 					ImGui::PushStyleColor(ImGuiCol_ButtonHovered, colH);
-					if (ImGui::SmallButton(isSolo ? "!" : "·"))
+					if (ImGui::Button(isSolo ? "!" : "##solo", overrideButtonSize))
 						SetSoloLight(isSolo ? 0 : key);
 					ImGui::PopStyleColor(2);
 					noteHover();
@@ -695,7 +705,8 @@ namespace ShadowCasterManager
 					auto gi = static_cast<uint8_t>(c.y * 255.0f);
 					auto bi = static_cast<uint8_t>(c.z * 255.0f);
 					ImGui::ColorButton("##col", c,
-						ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder, ImVec2(22, 16));
+						ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoBorder,
+						ImVec2(C::SHADOW_LIGHT_SWATCH_WIDTH * uiScale, C::SHADOW_LIGHT_SWATCH_HEIGHT * uiScale));
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("#%02X%02X%02X", ri, gi, bi);
 				} else if (col == typeColIdx) {
@@ -926,11 +937,13 @@ namespace ShadowCasterManager
 		const float fraction = std::min(usedMs / budgetMs, 1.0f);
 		char overlay[80];
 		snprintf(overlay, sizeof(overlay), "%.2f / %.2f ms  -  %s", usedMs, budgetMs, verdict);
+		ImGui::BeginGroup();
 		ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-		ImGui::Text("%s", T(TKEY("budget_usage_label"), "Budget usage      :"));
-		ImGui::SameLine();
-		ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay);
+		ImGui::ProgressBar(fraction, ImVec2(ImGui::CalcItemWidth(), 0.0f), overlay);
 		ImGui::PopStyleColor();
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::TextUnformatted(T(TKEY("budget_usage_label"), "Budget Usage"));
+		ImGui::EndGroup();
 		if (ImGui::IsItemHovered())
 			ImGui::SetTooltip("%s", tip);
 
@@ -954,11 +967,13 @@ namespace ShadowCasterManager
 			snprintf(overlayText, sizeof(overlayText),
 				T(TKEY("shadow_vram_overlay"), "%.0f / %.0f MB  -  shadows %.0f MB (%u slices)"),
 				usageMB, budgetMBf, arrayMB, vinfo.shadowSlices);
+			ImGui::BeginGroup();
 			ImGui::PushStyleColor(ImGuiCol_PlotHistogram, vramVerdict.colour);
-			ImGui::Text("%s", T(TKEY("shadow_vram_label"), "Shadow VRAM       :"));
-			ImGui::SameLine();
-			ImGui::ProgressBar(fillFraction, ImVec2(-1.0f, 0.0f), overlayText);
+			ImGui::ProgressBar(fillFraction, ImVec2(ImGui::CalcItemWidth(), 0.0f), overlayText);
 			ImGui::PopStyleColor();
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+			ImGui::TextUnformatted(T(TKEY("shadow_vram_label"), "Shadow VRAM"));
+			ImGui::EndGroup();
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(
 					T(TKEY("shadow_vram_tooltip"),
@@ -1128,13 +1143,6 @@ namespace ShadowCasterManager
 
 	void DrawSettings(Settings& settings)
 	{
-		ImGui::SeparatorText(T(TKEY("shadow_limit_fix_header"), "Shadow Limit Fix"));
-		// The Performance hub's "Shadow Limit Fix" subsection link sets this anchor
-		// (Menu::SelectFeatureMenu) so clicking it scrolls here even if the panel was
-		// last left scrolled elsewhere, instead of relying on this being drawn first.
-		if (auto* menu = Menu::GetSingleton(); menu && menu->ConsumeSectionAnchor("ShadowLimitFix"))
-			ImGui::SetScrollHereY(0.0f);
-
 		// ---- External conflict banner --------------------------------------
 		if (s_externalConflict) {
 			const auto& theme = Menu::GetSingleton()->GetTheme();
@@ -1260,36 +1268,32 @@ namespace ShadowCasterManager
 			const float currentShadowMB = static_cast<float>(sliderVram.shadowArrayBytes) / (1024.f * 1024.f) + atlasMB;
 			const float projectedShadowMB = static_cast<float>(projectedBytes) / (1024.f * 1024.f);
 
-			ImGui::Text("%s", T(TKEY("projected_shadow_vram_label"), "Projected shadow VRAM :"));
-			ImGui::SameLine();
-			const ImVec2 cursor = ImGui::GetCursorScreenPos();
-			const float fullWidth = ImGui::GetContentRegionAvail().x;
-			const float barHeight = ImGui::GetFrameHeight();
-			const float scale = fullWidth / budgetMBf;
+			ImGui::BeginGroup();
+			ImGui::ProgressBar(0.0f, ImVec2(ImGui::CalcItemWidth(), 0.0f), "");
+			const auto& style = ImGui::GetStyle();
+			ImRect bar(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+			bar.Expand(-style.FrameBorderSize);
+			const float nonShadowFraction = std::clamp(nonShadowMB / budgetMBf, 0.0f, 1.0f);
+			const float currentFraction = std::clamp((nonShadowMB + currentShadowMB) / budgetMBf, 0.0f, 1.0f);
+			const float projectedFraction = std::clamp((nonShadowMB + projectedShadowMB) / budgetMBf, 0.0f, 1.0f);
 			auto* draw = ImGui::GetWindowDrawList();
-			// Background frame, then non-shadow / current / projected segments.
-			draw->AddRectFilled(cursor, ImVec2(cursor.x + fullWidth, cursor.y + barHeight),
-				ImGui::GetColorU32(ImGuiCol_FrameBg));
-			const float nonShadowEndX = cursor.x + nonShadowMB * scale;
-			draw->AddRectFilled(cursor, ImVec2(nonShadowEndX, cursor.y + barHeight),
-				IM_COL32(120, 120, 120, 200));
-			const float currentEndX = std::min(cursor.x + fullWidth, nonShadowEndX + currentShadowMB * scale);
-			draw->AddRectFilled(ImVec2(nonShadowEndX, cursor.y),
-				ImVec2(currentEndX, cursor.y + barHeight),
-				IM_COL32(80, 130, 200, 220));
-			// Projection outline anchored at the same start as current, so
-			// the visual delta IS the difference. Solid fill for grow, dark
-			// stripe for shrink.
-			const float projectedEndX = std::min(cursor.x + fullWidth, nonShadowEndX + projectedShadowMB * scale);
+			ImGui::RenderRectFilledInRangeH(draw, bar, IM_COL32(120, 120, 120, 200),
+				0.0f, nonShadowFraction, style.FrameRounding);
+			ImGui::RenderRectFilledInRangeH(draw, bar, IM_COL32(80, 130, 200, 220),
+				nonShadowFraction, currentFraction, style.FrameRounding);
 			const ImU32 verdictColU32 = ImGui::GetColorU32(verdict.colour);
-			draw->AddRect(ImVec2(nonShadowEndX, cursor.y), ImVec2(projectedEndX, cursor.y + barHeight),
-				verdictColU32, 0.0f, 0, 2.0f);
 			if (projectedShadowMB > currentShadowMB) {
-				draw->AddRectFilled(ImVec2(currentEndX, cursor.y), ImVec2(projectedEndX, cursor.y + barHeight),
-					(verdictColU32 & 0x00FFFFFFu) | 0xA0000000u);
+				ImGui::RenderRectFilledInRangeH(draw, bar, (verdictColU32 & 0x00FFFFFFu) | 0xA0000000u,
+					currentFraction, projectedFraction, style.FrameRounding);
 			} else if (projectedShadowMB < currentShadowMB) {
-				draw->AddRectFilled(ImVec2(projectedEndX, cursor.y), ImVec2(currentEndX, cursor.y + barHeight),
-					IM_COL32(80, 80, 80, 120));
+				ImGui::RenderRectFilledInRangeH(draw, bar, IM_COL32(80, 80, 80, 120),
+					projectedFraction, currentFraction, style.FrameRounding);
+			}
+			if (projectedFraction > nonShadowFraction) {
+				draw->AddRect(ImVec2(bar.Min.x + bar.GetWidth() * nonShadowFraction, bar.Min.y),
+					ImVec2(bar.Min.x + bar.GetWidth() * projectedFraction, bar.Max.y),
+					verdictColU32, style.FrameRounding, ImDrawFlags_None,
+					ThemeManager::Constants::SHADOW_VRAM_OUTLINE_WIDTH * Util::GetUIScale());
 			}
 
 			char overlay[128];
@@ -1298,11 +1302,10 @@ namespace ShadowCasterManager
 				currentShadowMB, projectedShadowMB,
 				settings.ShadowLightCount,
 				static_cast<float>(projectedFreeBytes) / (1024.f * 1024.f));
-			const ImVec2 textSize = ImGui::CalcTextSize(overlay);
-			const ImVec2 textPos(cursor.x + (fullWidth - textSize.x) * 0.5f,
-				cursor.y + (barHeight - textSize.y) * 0.5f);
-			draw->AddText(textPos, IM_COL32(240, 240, 240, 255), overlay);
-			ImGui::Dummy(ImVec2(fullWidth, barHeight));  // reserve layout space
+			ImGui::RenderTextClipped(bar.Min, bar.Max, overlay, nullptr, nullptr, ImVec2(0.5f, 0.5f), &bar);
+			ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+			ImGui::TextUnformatted(T(TKEY("projected_shadow_vram_label"), "Projected Shadow VRAM"));
+			ImGui::EndGroup();
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(
 					T(TKEY("projected_shadow_vram_tooltip"),
@@ -1897,10 +1900,12 @@ namespace ShadowCasterManager
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {
 				// Build variable reference from the DRY table.
 				if (ImGui::TreeNode(T(TKEY("available_variables"), "Available Variables##FormulaVars"))) {
+					const float rowHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+					const int visibleRows = std::min(IM_ARRAYSIZE(kFormulaVars), ThemeManager::Constants::SHADOW_FORMULA_VISIBLE_ROWS);
 					if (ImGui::BeginTable("##FormulaVarTable", 2,
 							ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
 								ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_ScrollY,
-							ImVec2(0, std::min(static_cast<float>(IM_ARRAYSIZE(kFormulaVars)) * 20.0f + 28.0f, 320.0f)))) {
+							ImVec2(0, rowHeight * (visibleRows + 1)))) {
 						ImGui::TableSetupColumn(T(TKEY("col_variable"), "Variable"));
 						ImGui::TableSetupColumn(T(TKEY("col_description"), "Description"));
 						ImGui::TableHeadersRow();

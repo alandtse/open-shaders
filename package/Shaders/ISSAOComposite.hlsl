@@ -205,15 +205,16 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 	if (isGeometryDepth || exponentialHeightFogEnabled) {
 		float fogFade = exponentialHeightFogEnabled ? ExponentialHeightFog::GetVanillaFogFade(FogNearColor.w) : FogNearColor.w;
-		float fogSourceScale = exponentialHeightFogEnabled && !isGeometryDepth ? 1.0 : fogFade;
+		float linearFogFade = exponentialHeightFogEnabled ? ExponentialHeightFog::GetLinearVanillaFogFade(FogNearColor.w) : fogFade;
+		float fogSourceScale = exponentialHeightFogEnabled && !isGeometryDepth ? 1.0 : linearFogFade;
 		if (exponentialHeightFogEnabled && isGeometryDepth && !ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			// Apply vanilla fog first, then exp fog on top
-			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogSourceScale, fogFade);
-			composedColor.xyz = lerp(composedColor.xyz, fogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
+			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogFade, fogFade);
+			composedColor.xyz = lerp(composedColor.xyz, linearFogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
 		} else if (exponentialHeightFogEnabled) {
 			// Disable vanilla fog, only apply exp height fog
 			float3 fogSource = fogSourceScale * composedColor.xyz;
-			composedColor.xyz = lerp(fogSource, fogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
+			composedColor.xyz = lerp(fogSource, linearFogFade * exponentialHeightFog.xyz, exponentialHeightFog.w);
 		} else {
 			composedColor.xyz = Color::BlendFog(composedColor.xyz, fogColor, fogFactor, fogFade, fogFade);
 		}

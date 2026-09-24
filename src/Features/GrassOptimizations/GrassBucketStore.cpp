@@ -578,11 +578,11 @@ void GrassBucketStore::AppendNewSlices(GrassBucket& bucket, ID3D11DeviceContext*
 	bucket.firstNewSlice = UINT32_MAX;
 }
 
-// kGrassStride bytes per instance; a larger capacity wraps ByteWidth and silently under-allocates.
-// VR's cull-scratch/LOD-bin buffers double this per instance, so halve the bound to match.
+// The largest per-eye instance record bounds every bucket allocation.
 inline uint32_t MaxBucketInstances()
 {
-	return UINT32_MAX / (kGrassStride * (globals::game::isVR ? 2u : 1u));
+	constexpr uint32_t maxStride = std::max(kGrassStride, GrassBucket::kExtrasFloat4Count * 4u * static_cast<uint32_t>(sizeof(float)));
+	return UINT32_MAX / (maxStride * (globals::game::isVR ? 2u : 1u));
 }
 
 bool GrassBucketStore::EnsureBucketCapacity(GrassBucket& b, uint32_t needed, ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t preserveInstances)

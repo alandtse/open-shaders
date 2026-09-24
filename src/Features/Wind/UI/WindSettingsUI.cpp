@@ -213,6 +213,23 @@ void Wind::DrawWindFieldSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("wind_field_gust_advection_multiplier_tooltip"),
 				"Changes only how quickly gust structures move through world space; it does not increase local air velocity."));
+		static constexpr const char* advectionResponseKeys[]{
+			"wind_field_advection_response_low",
+			"wind_field_advection_response_medium",
+			"wind_field_advection_response_high"
+		};
+		static constexpr const char* advectionResponseLabels[]{
+			"Low Wind Travel (0.1)",
+			"Medium Wind Travel (0.5)",
+			"High Wind Travel (1.0)"
+		};
+		for (uint32_t index = 0; index < settings.windFieldGustAdvectionResponse.size(); ++index)
+			ImGui::SliderFloat(T(advectionResponseKeys[index], advectionResponseLabels[index]),
+				&settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
+				"%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_advection_response_tooltip"),
+				"Sets gust travel speed at low, medium, and high wind. Values between these points are interpolated; zero wind remains stationary."));
 		ImGui::SliderFloat(T(TKEY("wind_field_gust_scale"), "Gust Along-Wind Scale"), &settings.windFieldGustScale,
 			kWindFieldGustScaleMin, kWindFieldGustScaleMax, "%.0f units",
 			ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
@@ -326,6 +343,18 @@ void Wind::DrawWindEffectsSettings()
 		ImGui::TextUnformatted(T(TKEY("process_far_range_transients_tooltip"),
 			"Processes transient sources in the Far tree and grass spring tiers. Ambient wind and gusts are unaffected."));
 	if (globals::state->IsDeveloperMode()) {
+		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_strength"), "Grass Impulse Flutter"),
+			&settings.grassTransientFlutterStrength, kGrassTransientFlutterStrengthMin,
+			kGrassTransientFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_strength_tooltip"),
+				"Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending."));
+		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_frequency"), "Grass Impulse Flutter Rate"),
+			&settings.grassTransientFlutterFrequency, kGrassTransientFlutterFrequencyMin,
+			kGrassTransientFlutterFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_frequency_tooltip"),
+				"Sets the rate of the separate impulse flutter oscillation; it does not change ambient gust flutter."));
 		ImGui::SeparatorText(T(TKEY("debug_wind_effects"), "Performance Test"));
 		ImGui::Checkbox(T(TKEY("debug_wind_effect_worst_case"), "Worst-case coverage"),
 			&uiState.debugWindEffectWorstCase);
@@ -830,6 +859,23 @@ void Wind::DrawGrassWindSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
 			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
+	static constexpr const char* flutterAmplitudeResponseKeys[]{
+		"grass_wind_flutter_amplitude_low",
+		"grass_wind_flutter_amplitude_medium",
+		"grass_wind_flutter_amplitude_high"
+	};
+	static constexpr const char* flutterAmplitudeResponseLabels[]{
+		"Low Wind Flutter (0.1)",
+		"Medium Wind Flutter (0.5)",
+		"High Wind Flutter (1.0)"
+	};
+	for (uint32_t index = 0; index < settings.grassWindFlutterAmplitudeResponse.size(); ++index)
+		ImGui::SliderFloat(T(flutterAmplitudeResponseKeys[index], flutterAmplitudeResponseLabels[index]),
+			&settings.grassWindFlutterAmplitudeResponse[index], kWindResponseMin, kWindResponseMax,
+			"%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_amplitude_response_tooltip"),
+			"Multiplies the existing flutter at low, medium, and high local wind without changing its waveform or gust motion."));
 	std::array<double, kGrassWindSpringQualityRangeCount> springMemoryMiB{};
 	double totalSpringMemoryMiB = 0.0;
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {

@@ -42,6 +42,10 @@ void Wind::SanitizeGrassWindSettings(Settings& a_settings)
 	}
 	a_settings.grassWindFlutterStrength = ClampFiniteOrDefault(a_settings.grassWindFlutterStrength, kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, defaults.grassWindFlutterStrength);
 	a_settings.grassWindFlutterFrequency = ClampFiniteOrDefault(a_settings.grassWindFlutterFrequency, kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, defaults.grassWindFlutterFrequency);
+	for (uint32_t index = 0; index < a_settings.grassWindFlutterAmplitudeResponse.size(); ++index)
+		a_settings.grassWindFlutterAmplitudeResponse[index] = ClampFiniteOrDefault(
+			a_settings.grassWindFlutterAmplitudeResponse[index], kWindResponseMin, kWindResponseMax,
+			defaults.grassWindFlutterAmplitudeResponse[index]);
 }
 
 void Wind::ResetGrassWindSettings()
@@ -62,4 +66,5 @@ void Wind::ResetGrassWindSettings()
 	settings.grassWindSpringQuality = defaults.grassWindSpringQuality;
 	settings.grassWindFlutterStrength = defaults.grassWindFlutterStrength;
 	settings.grassWindFlutterFrequency = defaults.grassWindFlutterFrequency;
+	settings.grassWindFlutterAmplitudeResponse = defaults.grassWindFlutterAmplitudeResponse;
 }

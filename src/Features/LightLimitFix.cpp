@@ -203,10 +203,51 @@ bool LightLimitFix::MatchesPerformanceProfile(PerfProfile profile) const
 
 void LightLimitFix::DrawSettings()
 {
-	auto shaderCache = globals::shaderCache;
+	ShadowCasterManager::ClearHighlight();
+	ShadowCasterManager::SetHoveredLight(0);
 
-	ShadowCasterManager::DrawSettings(settings.ShadowSettings);
+	if (!ImGui::BeginTabBar("##LightLimitFixTabs", ImGuiTabBarFlags_FittingPolicyScroll))
+		return;
 
+	const bool selectShadows = globals::menu->ConsumeSectionAnchor("ShadowLimitFix");
+	if (selectShadows)
+		ImGui::SetScrollHereY(0.0f);
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
+			selectShadows ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
+		ShadowCasterManager::DrawSettings(settings.ShadowSettings);
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"))) {
+		DrawContactShadowSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.particle_lights_header", "Particle Lights"))) {
+		DrawParticleLightSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.placed_lights_json_header", "Placed Lights (JSON)"))) {
+		DrawPlacedLightSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.statistics", "Statistics"))) {
+		DrawLightStatistics();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.debug", "Debug"))) {
+		DrawLightDebugSettings();
+		ImGui::EndTabItem();
+	}
+
+	ImGui::EndTabBar();
+}
+
+void LightLimitFix::DrawLightStatistics()
+{
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
@@ -214,12 +255,6 @@ void LightLimitFix::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	// ---- Active Shadow Casters --------------------------------------
-	// One cohesive section: overlay toggle, then ALL the stats grouped
-	// together (summary + scheduler stats + budget verdict), then the
-	// table below. Same layout as the overlay so testers see the same
-	// thing in both views with the stats above the (potentially long)
-	// table -- no scrolling required to find the headline numbers.
 	ImGui::SeparatorText(T("feature.light_limit_fix.shadow_limit_fix_active_casters", "Shadow Limit Fix -- Active Casters"));
 
 	ImGui::Checkbox(T("feature.light_limit_fix.show_shadow_overlay", "Show Shadow Overlay"), &settings.ShowShadowOverlay);
@@ -236,10 +271,10 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::DrawShadowSchedulerStats();
 	ImGui::Separator();
 	ShadowCasterManager::DrawShadowLightTable(true, false);
+}
 
-	///////////////////////////////
-	ImGui::SeparatorText(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"));
-
+void LightLimitFix::DrawContactShadowSettings()
+{
 	ImGui::Checkbox(T("feature.light_limit_fix.enable_contact_shadows", "Enable Contact Shadows"), &settings.EnableContactShadows);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("feature.light_limit_fix.enable_contact_shadows_tooltip", "All point lights (strict and clustered, except simple lights) cast short screen-space shadows. Performance impact."));
@@ -299,9 +334,10 @@ void LightLimitFix::DrawSettings()
 		ImGui::Text("%s", T("feature.light_limit_fix.enable_particle_contact_shadows_tooltip", "Also cast contact shadows from particle lights. Larger performance impact in fire/magic-heavy scenes."));
 	}
 	ImGui::EndDisabled();
+}
 
-	ImGui::SeparatorText(T("feature.light_limit_fix.particle_lights_header", "Particle Lights"));
-
+void LightLimitFix::DrawParticleLightSettings()
+{
 	ImGui::TextWrapped("%s",
 		T("feature.light_limit_fix.particle_lights_intro",
 			"Turns configured particle effects (candles, braziers, torches, magic) into dynamic lights. "
@@ -310,8 +346,8 @@ void LightLimitFix::DrawSettings()
 	ImGui::TextWrapped("%s",
 		T("feature.light_limit_fix.particle_lights_additive_note",
 			"Particle lights are additive emitters and do NOT cast shadow-map shadows, so they never appear "
-			"in the shadow caster table above. Turn on \"Enable Particle Contact Shadows\" in the Contact "
-			"Shadows section for short screen-space contact shadows."));
+			"in the shadow caster table. Turn on \"Enable Particle Contact Shadows\" in the Contact "
+			"Shadows tab for short screen-space contact shadows."));
 	ImGui::Spacing();
 
 	ImGui::Checkbox(T("feature.light_limit_fix.enable_particle_lights", "Enable Particle Lights"), &settings.EnableParticleLights);
@@ -389,9 +425,10 @@ void LightLimitFix::DrawSettings()
 
 		ImGui::TreePop();
 	}
+}
 
-	ImGui::SeparatorText(T("feature.light_limit_fix.placed_lights_json_header", "Placed Lights (JSON)"));
-
+void LightLimitFix::DrawPlacedLightSettings()
+{
 	ImGui::TextWrapped("%s",
 		T("feature.light_limit_fix.placed_lights_json_intro",
 			"Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. "
@@ -417,10 +454,10 @@ void LightLimitFix::DrawSettings()
 		if (!jsonPlacedLightsSupported)
 			ImGui::TextDisabled("%s", T("feature.light_limit_fix.json_requires_isl", "Requires Inverse Square Lighting to identify JSON-placed runtime lights."));
 	}
+}
 
-	///////////////////////////////
-	ImGui::SeparatorText(T("feature.light_limit_fix.debug", "Debug"));
-
+void LightLimitFix::DrawLightDebugSettings()
+{
 	ImGui::Checkbox(T("feature.light_limit_fix.shadow_demand_instrumentation", "Shadow Demand Instrumentation"), &ShadowDemandInstrumentation);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("feature.light_limit_fix.shadow_demand_instrumentation_tooltip",
@@ -471,7 +508,7 @@ void LightLimitFix::DrawSettings()
 		currentEnableLightsVisualisation = EnableLightsVisualisation;
 		if (previousEnableLightsVisualisation != currentEnableLightsVisualisation) {
 			globals::state->SetDefines(EnableLightsVisualisation ? "LLFDEBUG" : "");
-			shaderCache->Clear(RE::BSShader::Type::Lighting);
+			globals::shaderCache->Clear(RE::BSShader::Type::Lighting);
 			previousEnableLightsVisualisation = currentEnableLightsVisualisation;
 		}
 

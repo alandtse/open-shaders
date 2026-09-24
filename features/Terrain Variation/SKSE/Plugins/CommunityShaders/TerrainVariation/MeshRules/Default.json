@@ -9,6 +9,11 @@
     },
     "exclude": {
         "filenames": ["dirtcliffsroots01.dds"],
-        "directories": ["landscape/trees/"]
+        "directories": [
+            "landscape/trees/",
+            "pbr/landscape/trees/",
+            "landscape/mountains/s3drocks/",
+            "pbr/landscape/mountains/s3drocks/"
+        ]
     }
 }
