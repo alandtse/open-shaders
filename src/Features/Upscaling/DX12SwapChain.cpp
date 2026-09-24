@@ -227,6 +227,8 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 	swapChainBufferWrapped = newSwapChainBuffer.release();
 	uiBufferWrapped = newUiBuffer.release();
 
+	globals::features::upscaling.frameGenerationPrepared = false;
+
 	const float clearColor[4]{};
 	d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
 	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
@@ -427,6 +429,11 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
 	if (SyncInterval == 0)
 		upscaling.FrameLimiter();
+
+	// Main_PostProcessing::thunk doesn't run on loading-screen frames, so its own
+	// per-frame reset can't clear a stale true left over from the last gameplay
+	// frame; reset here too so frame-gen doesn't interpolate through a transition.
+	upscaling.frameGenerationPrepared = false;
 
 	return S_OK;
 }

@@ -2,6 +2,7 @@
 
 #include <BS_thread_pool.hpp>
 #include <atomic>
+#include <deque>
 #include <efsw/efsw.hpp>
 #include <functional>
 #include <optional>
@@ -846,8 +847,12 @@ namespace SIE
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
 		/** @brief Updates compilation mode and wakes the dispatcher to recheck its capacity. */
 		void SetBackgroundCompilation(bool value);
-		std::atomic_bool backgroundCompilation{ false };
-		bool menuLoaded = false;
+		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
+		// read on the management/compile and render threads.
+		std::atomic<bool> backgroundCompilation = false;
+		// atomic: written from the SKSE messaging handler (kDataLoaded),
+		// read on the render/UI threads (OverlayRenderer, BackgroundBlur).
+		std::atomic<bool> menuLoaded = false;
 
 		enum class LightingShaderTechniques
 		{
