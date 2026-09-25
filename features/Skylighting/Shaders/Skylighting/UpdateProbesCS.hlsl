@@ -72,14 +72,15 @@ static const float3 noise3D[32] = {
 	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
 	const uint3 arrayDims = Skylighting::GetArrayDims();
-	if (any(dtid >= arrayDims))
+	uint3 probeTexID = uint3(dtid.xy, settings.SliceStart + dtid.z);
+	if (dtid.z >= settings.SliceCount || any(probeTexID >= arrayDims))
 		return;
-	int3 cellID = (int3(dtid) - int3(settings.ArrayOrigin.xyz)) % int3(arrayDims);
+	int3 cellID = (int3(probeTexID) - int3(settings.ArrayOrigin.xyz)) % int3(arrayDims);
 	cellID = (cellID + int3(arrayDims)) % int3(arrayDims);
 	int3 validMin = max(0, settings.ValidMargin.xyz);
 	int3 validMax = int3(arrayDims) - 1 + min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
-	uint probeUpdateState = isValid ? outAccumFramesArray[dtid] : 0;
+	uint probeUpdateState = isValid ? outAccumFramesArray[probeTexID] : 0;
 	uint storedAccumFrames = probeUpdateState & 0xFFu;
 	uint shadowSampleIndex = (probeUpdateState >> 8) & 31u;
 	float3 cellCentreMS = float3(cellID) + 0.5 - float3(arrayDims) * 0.5;
@@ -98,15 +99,15 @@ static const float3 noise3D[32] = {
 			float lerpFactor = rcp(accumFrames);
 			sh2 prevProbeSH = unitSH;
 			if (accumFrames > 1)
-				prevProbeSH += (outProbeArray[dtid] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
+				prevProbeSH += (outProbeArray[probeTexID] - unitSH) * fadeInThreshold / min(fadeInThreshold, accumFrames - 1);  // inverse confidence
 			occlusionSH = lerp(prevProbeSH, occlusionSH, lerpFactor);
 		}
 		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
 
-		outProbeArray[dtid] = occlusionSH;
+		outProbeArray[probeTexID] = occlusionSH;
 		storedAccumFrames = min(accumFrames, 255u);
 	} else if (!isValid) {
-		outProbeArray[dtid] = unitSH;
+		outProbeArray[probeTexID] = unitSH;
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
@@ -143,17 +144,17 @@ static const float3 noise3D[32] = {
 			shadowSample = lerp(1.0, shadowSample, fadeFactor);
 		}
 
-		uint bitmask = isValid ? outShadowBitmask[dtid] : 0;
+		uint bitmask = isValid ? outShadowBitmask[probeTexID] : 0;
 		bitmask = (bitmask << 1) | (shadowSample > 0.5 ? 1u : 0u);
 
-		outShadowBitmask[dtid] = bitmask;
+		outShadowBitmask[probeTexID] = bitmask;
 
 		float shadow = float(countbits(bitmask)) / 32.0;
-		outShadowVisibility[dtid] = shadow;
+		outShadowVisibility[probeTexID] = shadow;
 	} else if (!isValid) {
-		outShadowBitmask[dtid] = 0;
-		outShadowVisibility[dtid] = 1.0;
+		outShadowBitmask[probeTexID] = 0;
+		outShadowVisibility[probeTexID] = 1.0;
 	}
 #endif
-	outAccumFramesArray[dtid] = storedAccumFrames | (shadowSampleIndex << 8);
+	outAccumFramesArray[probeTexID] = storedAccumFrames | (shadowSampleIndex << 8);
 }
