@@ -99,6 +99,16 @@ void SettingManager::RegisterSettingInternal(Setting& setting)
 		} else {
 			logger::warn("[SettingManager] Setting {}:{} re-registered with a different type, resetting to default", setting.category, setting.key);
 			setting.lastSavedValue = setting.currentValue;
+			// Cached weather buckets keep a stale-typed variant at existingID otherwise; safeGet<T>()
+			// would then silently return T{} instead of falling back to the new default.
+			for (auto& [weatherID, data] : weatherData) {
+				if (existingID < data.size())
+					data[existingID] = setting.currentValue;
+			}
+			for (auto& [weatherID, data] : lastSavedWeatherData) {
+				if (existingID < data.size())
+					data[existingID] = setting.currentValue;
+			}
 		}
 		allSettings[existingID] = setting;
 	}
