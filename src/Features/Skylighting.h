@@ -60,6 +60,7 @@ public:
 
 	struct Settings
 	{
+		bool EnableSkylighting = true;
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
@@ -79,7 +80,7 @@ public:
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
 		uint ProbeDataReady;
-		uint _pad2;
+		uint Enabled;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
