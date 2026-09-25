@@ -6,6 +6,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 
 #include <cmath>
 #include <numbers>
@@ -35,7 +36,24 @@ void Skylighting::RestoreDefaultSettings()
 
 void Skylighting::ResetSkylighting()
 {
+	queuedResetSkylighting.store(true);
+}
+
+bool Skylighting::HasProbeResources() const
+{
+	return texOcclusion && texOcclusion->srv && texOcclusion->dsv &&
+	       texProbeArray && texProbeArray->srv && texProbeArray->uav &&
+	       texAccumFramesArray && texAccumFramesArray->uav &&
+	       texShadowBitmask && texShadowBitmask->uav &&
+	       texShadowVisibility && texShadowVisibility->srv && texShadowVisibility->uav;
+}
+
+void Skylighting::ClearProbes()
+{
 	auto context = globals::d3d::context;
+	ID3D11ShaderResourceView* nullProbe = nullptr;
+	context->PSSetShaderResources(50, 1, &nullProbe);
+	context->PSSetShaderResources(53, 1, &nullProbe);
 
 	const float unitSH[4] = { std::sqrt(4.0f * std::numbers::pi_v<float>), 0.0f, 0.0f, 0.0f };
 	context->ClearUnorderedAccessViewFloat(texProbeArray->uav.get(), unitSH);
@@ -47,7 +65,8 @@ void Skylighting::ResetSkylighting()
 	float clrf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 	context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), clrf);
 
-	queuedResetSkylighting = false;
+	probeDataReady = false;
+	lastOcclusionRenderFrame = static_cast<uint>(-1);
 }
 
 void Skylighting::DrawSettings()
@@ -141,7 +160,7 @@ void Skylighting::SetupResources()
 		texShadowVisibility->CreateUAV(uavDesc);
 	}
 
-	ResetSkylighting();
+	ClearProbes();
 
 	{
 		D3D11_SAMPLER_DESC samplerDesc = {};
@@ -164,6 +183,7 @@ void Skylighting::ClearShaderCache()
 	Util::ClearShaders<ID3D11ComputeShader>({ probeUpdateCompute, occlusionOnlyProbeUpdateCompute });
 
 	CompileComputeShaders();
+	ResetSkylighting();
 }
 
 void Skylighting::CompileComputeShaders()
@@ -199,8 +219,6 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 	if (globals::state->isMapMenuOpen)
 		return Skylighting::SkylightingCB{};
 
-	static float3 prevCellID = { 0, 0, 0 };
-
 	auto eyePosNI = Util::GetEyePosition(0);
 	auto eyePos = float3{ eyePosNI.x, eyePosNI.y, eyePosNI.z };
 
@@ -212,8 +230,8 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 	auto cellID = eyePos / cellSize;
 	cellID = float3{ round(cellID.x), round(cellID.y), round(cellID.z) };
 	auto cellOrigin = cellID * cellSize;
-	float3 cellIDDiff = prevCellID - cellID;
-	prevCellID = cellID;
+	float3 cellIDDiff = previousProbeCell - cellID;
+	pendingProbeCell = cellID;
 
 	return {
 		.OcclusionViewProj = OcclusionTransform,
@@ -225,32 +243,38 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
-		.MinSpecularVisibility = settings.MinSpecularVisibility
+		.MinSpecularVisibility = settings.MinSpecularVisibility,
+		.ProbeDataReady = probeDataReady && HasProbeResources() && !queuedResetSkylighting.load()
 	};
 }
 
 void Skylighting::Prepass()
 {
-	if (globals::state->isMapMenuOpen)
+	if (globals::state->isMapMenuOpen || !HasProbeResources())
 		return;
 
 	auto context = globals::d3d::context;
 	const bool interior = Util::IsInterior();
+	if (queuedResetSkylighting.exchange(false))
+		ClearProbes();
 
 	if (!previousInteriorState || *previousInteriorState != interior) {
-		ID3D11ShaderResourceView* nullProbe = nullptr;
-		context->PSSetShaderResources(50, 1, &nullProbe);
-		context->PSSetShaderResources(53, 1, &nullProbe);
-		ResetSkylighting();
+		ClearProbes();
 		previousInteriorState = interior;
-		lastOcclusionRenderFrame = static_cast<uint>(-1);
 	}
 
 	if (interior)
 		RenderOcclusion();
 
+	if (interior || !probeDataReady)
+		globals::state->UpdateFeatureData(true);
+
 	auto* updateShader = interior ? occlusionOnlyProbeUpdateCompute.get() : probeUpdateCompute.get();
-	if (updateShader && (!interior || lastOcclusionRenderFrame == globals::state->frameCount)) {
+	if (!updateShader || !comparisonSampler) {
+		probeDataReady = false;
+		globals::state->UpdateFeatureData(true);
+	}
+	if (updateShader && comparisonSampler && lastOcclusionRenderFrame == globals::state->frameCount) {
 		CS_GPU_PASS_SELECT(interior, "Skylighting::InteriorProbeUpdate", "Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
@@ -274,11 +298,19 @@ void Skylighting::Prepass()
 
 		// Update probe array
 		{
+			ID3D11ShaderResourceView* nullProbe = nullptr;
+			context->PSSetShaderResources(50, 1, &nullProbe);
+			context->PSSetShaderResources(53, 1, &nullProbe);
 			context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
 			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 			context->CSSetShader(updateShader, nullptr, 0);
 			context->Dispatch((probeArrayDims[0] + 7u) >> 3, (probeArrayDims[1] + 7u) >> 3, probeArrayDims[2]);
+			previousProbeCell = pendingProbeCell;
+			if (!probeDataReady) {
+				probeDataReady = true;
+				globals::state->UpdateFeatureData(true);
+			}
 		}
 
 		// Reset
@@ -296,10 +328,10 @@ void Skylighting::Prepass()
 
 	// Set PS shader resources
 	{
-		ID3D11ShaderResourceView* srv = texProbeArray->srv.get();
+		ID3D11ShaderResourceView* srv = probeDataReady ? texProbeArray->srv.get() : nullptr;
 		context->PSSetShaderResources(50, 1, &srv);
 
-		srv = interior ? nullptr : texShadowVisibility->srv.get();
+		srv = !probeDataReady || interior ? nullptr : texShadowVisibility->srv.get();
 		context->PSSetShaderResources(53, 1, &srv);
 	}
 }
@@ -316,15 +348,22 @@ void Skylighting::PostPostLoad()
 		stl::write_thunk_call<SetViewFrustumVR>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D, 0x5DC));
 	else
 		stl::write_thunk_call<SetViewFrustum>(REL::RelocationID(25643, 26185).address() + REL::Relocate(0x5D9, 0x59D, 0x5DC));
-
-	MenuOpenCloseEventHandler::Register();
 }
 
 void Skylighting::GameLoaded()
 {
-	queuedResetSkylighting = true;
-	previousInteriorState.reset();
-	lastOcclusionRenderFrame = static_cast<uint>(-1);
+	ResetSkylighting();
+}
+
+void Skylighting::OnSceneTransitionReset(bool)
+{
+	ResetSkylighting();
+}
+
+void Skylighting::RegisterUxActions()
+{
+	FEATURE_COMMAND("rebuild", "Queue a Skylighting probe rebuild on the render thread.",
+		[](Feature* self, const json&) { static_cast<Skylighting*>(self)->ResetSkylighting(); });
 }
 
 //////////////////////////////////////////////////////////////
@@ -565,12 +604,16 @@ void Skylighting::RenderOcclusion()
 		}
 	}
 
+	if (!HasProbeResources())
+		return;
+
+	if (queuedResetSkylighting.exchange(false))
+		ClearProbes();
+
 	if (lastOcclusionRenderFrame == globals::state->frameCount)
 		return;
 
 	CS_GPU_PASS("Skylighting::SkylightingMask");
-	if (queuedResetSkylighting)
-		ResetSkylighting();
 	++frameCount;
 
 	auto& precipitationTarget = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
@@ -710,14 +753,4 @@ void Skylighting::EndInteriorOcclusionGeometry()
 	}
 }
 
-RE::BSEventNotifyControl Skylighting::MenuOpenCloseEventHandler::ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*)
-{
-	// When entering a new cell through a loadscreen, update every frame until completion
-	if (a_event->menuName == RE::LoadingMenu::MENU_NAME) {
-		if (!a_event->opening)
-			globals::features::skylighting.queuedResetSkylighting = true;
-	}
-
-	return RE::BSEventNotifyControl::kContinue;
-}
 #undef I18N_KEY_PREFIX
