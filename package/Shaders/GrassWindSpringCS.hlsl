@@ -129,7 +129,8 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 				   max(SharedData::WindFieldTuning.gustAmplitude, 0.0f),
 		0.0f);
 	float flutterFrequency = max(GrassWindSpring::FlutterFrequency, 0.0f);
-	float flutterPhase = (components.ambientTurbulence * GrassWindSpring::FlutterTurbulencePhaseScale +
+	float flutterPhase = (SharedData::Timer * Math::TAU +
+							 components.ambientTurbulence * GrassWindSpring::FlutterTurbulencePhaseScale +
 							 (components.ambientGust * 2.0f - 1.0f) * GrassWindSpring::FlutterGustPhaseScale) *
 	                     flutterFrequency;
 	float flutter = flutterFrequency > 0.0f ?

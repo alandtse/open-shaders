@@ -158,7 +158,7 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	}
 	if (Permutation::EnableAmbientGrassWind != 0 && length(bendAxis) > EPSILON_WIND_RESPONSE) {
 		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
-			input.Color.w, bendAxis, WindVector.xyz, flutter);
+			input.Color.w, bendAxis, response.z, response.w, WindVector.xyz, flutter);
 		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
 	}
 	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *

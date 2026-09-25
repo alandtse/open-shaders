@@ -46,7 +46,7 @@ namespace GrassWind
 	}
 
 	float3 CalculateFlutterDisplacement(
-		float tipWeight, float3 bendAxis, float3 windVector, float flutter)
+		float tipWeight, float3 bendAxis, float bendAngle, float compression, float3 windVector, float flutter)
 	{
 		float axisLength = length(bendAxis.xy);
 		if (axisLength <= EPSILON_WIND_RESPONSE)
@@ -54,7 +54,9 @@ namespace GrassWind
 
 		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
 		float weight = saturate(tipWeight);
-		float windPower = length(windVector.xy) * windVector.z * flutter * (0.5f * weight * weight);
+		float windDrive = length(windVector.xy) * max(windVector.z, 0.0f);
+		float springDrive = saturate(length(float2(bendAngle, compression)));
+		float windPower = max(windDrive, springDrive) * flutter * (0.5f * weight * weight);
 		return flutterDirection * windPower;
 	}
 

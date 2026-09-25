@@ -213,18 +213,13 @@ void Wind::DrawWindFieldSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("wind_field_gust_advection_multiplier_tooltip"),
 				"Changes only how quickly gust structures move through world space; it does not increase local air velocity."));
-		static constexpr const char* advectionResponseKeys[]{
-			"wind_field_advection_response_low",
-			"wind_field_advection_response_medium",
-			"wind_field_advection_response_high"
-		};
-		static constexpr const char* advectionResponseLabels[]{
-			"Low Wind Travel (0.1)",
-			"Medium Wind Travel (0.5)",
-			"High Wind Travel (1.0)"
+		const char* advectionResponseLabels[]{
+			T(TKEY("wind_field_advection_response_low"), "Low Wind Travel (0.1)"),
+			T(TKEY("wind_field_advection_response_medium"), "Medium Wind Travel (0.5)"),
+			T(TKEY("wind_field_advection_response_high"), "High Wind Travel (1.0)")
 		};
 		for (uint32_t index = 0; index < settings.windFieldGustAdvectionResponse.size(); ++index)
-			ImGui::SliderFloat(T(advectionResponseKeys[index], advectionResponseLabels[index]),
+			ImGui::SliderFloat(advectionResponseLabels[index],
 				&settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
 				"%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -859,18 +854,13 @@ void Wind::DrawGrassWindSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
 			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
-	static constexpr const char* flutterAmplitudeResponseKeys[]{
-		"grass_wind_flutter_amplitude_low",
-		"grass_wind_flutter_amplitude_medium",
-		"grass_wind_flutter_amplitude_high"
-	};
-	static constexpr const char* flutterAmplitudeResponseLabels[]{
-		"Low Wind Flutter (0.1)",
-		"Medium Wind Flutter (0.5)",
-		"High Wind Flutter (1.0)"
+	const char* flutterAmplitudeResponseLabels[]{
+		T(TKEY("grass_wind_flutter_amplitude_low"), "Low Wind Flutter (0.1)"),
+		T(TKEY("grass_wind_flutter_amplitude_medium"), "Medium Wind Flutter (0.5)"),
+		T(TKEY("grass_wind_flutter_amplitude_high"), "High Wind Flutter (1.0)")
 	};
 	for (uint32_t index = 0; index < settings.grassWindFlutterAmplitudeResponse.size(); ++index)
-		ImGui::SliderFloat(T(flutterAmplitudeResponseKeys[index], flutterAmplitudeResponseLabels[index]),
+		ImGui::SliderFloat(flutterAmplitudeResponseLabels[index],
 			&settings.grassWindFlutterAmplitudeResponse[index], kWindResponseMin, kWindResponseMax,
 			"%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
