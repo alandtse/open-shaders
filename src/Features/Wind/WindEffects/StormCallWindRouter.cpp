@@ -150,7 +150,8 @@ void StormCallWindRouter::Update(float)
 			settings.decayTime);
 		globals::features::wind.QueueTransientWindSource(source,
 			Wind::TransientWindSourceOwner::StormCall,
-			Wind::TransientWindSourcePriority::Impact);
+			Wind::TransientWindSourcePriority::Impact,
+			impact.nativePhysics ? Wind::TransientWindPhysics::Native : Wind::TransientWindPhysics::Wind);
 	}
 }
 
@@ -189,7 +190,10 @@ void StormCallWindRouter::ObserveImpact(RE::Projectile& a_projectile,
 		return;
 	if (pendingImpacts.size() >= kMaximumRecentImpacts)
 		pendingImpacts.erase(pendingImpacts.begin());
-	pendingImpacts.push_back({ a_position, a_velocity, strength });
+	const auto* projectile = a_projectile.GetProjectileBase();
+	const bool nativePhysics = (projectile && std::isfinite(projectile->data.force) && projectile->data.force > 0.0f) ||
+	                           (runtimeData.explosion && std::isfinite(runtimeData.explosion->data.force) && runtimeData.explosion->data.force > 0.0f);
+	pendingImpacts.push_back({ a_position, a_velocity, strength, nativePhysics });
 }
 
 bool StormCallWindRouter::AcceptImpactLocked(const RE::Projectile& a_projectile,

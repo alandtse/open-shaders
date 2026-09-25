@@ -71,6 +71,7 @@ private:
 		bool explosive{};
 		bool concentration{};
 		bool selfDelivery{};
+		bool nativePhysics{};
 	};
 
 	struct RecentImpact

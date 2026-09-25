@@ -6,13 +6,16 @@
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
+#include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "SceneSettingsManager.h"
 #include "Utils/SettingsPatch.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <mutex>
+#include <new>
 #include <optional>
 
 namespace CSPluginAPI
@@ -172,6 +175,8 @@ namespace CSPluginAPI
 		if (revisionNumber != 0 &&
 			revisionNumber != CSInterfaceRevision001 &&
 			revisionNumber != CSInterfaceRevision002 &&
+			revisionNumber != CSInterfaceRevision003 &&
+			revisionNumber != CSInterfaceRevision004 &&
 			revisionNumber != CSInterfaceRevision) {
 			return nullptr;
 		}
@@ -361,6 +366,84 @@ namespace CSPluginAPI
 
 	bool CSInterface001::IsVRUpscalingProfileApplyAllowed()
 	{
+		return true;
+	}
+
+	namespace
+	{
+		bool SampleWindBatch(const WindVector* positions, uint32_t count,
+			std::vector<Wind::PublishedWindSample>& windSamples)
+		{
+			thread_local std::vector<float3> worldPositions;
+			try {
+				worldPositions.resize(count);
+				windSamples.resize(count);
+			} catch (const std::bad_alloc&) {
+				return false;
+			}
+			for (uint32_t index = 0; index < count; ++index) {
+				if (!std::isfinite(positions[index].x) ||
+					!std::isfinite(positions[index].y) ||
+					!std::isfinite(positions[index].z))
+					return false;
+				worldPositions[index] = { positions[index].x, positions[index].y, positions[index].z };
+			}
+			return globals::features::wind.SamplePublishedWind(worldPositions, windSamples);
+		}
+
+		WindVector CopyWindVector(const float3& value)
+		{
+			return { value.x, value.y, value.z };
+		}
+
+		WindSample CopyWindSample(const Wind::PublishedWindSample& source)
+		{
+			return {
+				CopyWindVector(source.baseVelocity),
+				CopyWindVector(source.gustVelocity),
+				CopyWindVector(source.transientVelocity),
+				CopyWindVector(source.finalVelocity),
+				source.ambientGust,
+				source.transientIntensity,
+				source.frameId
+			};
+		}
+	}
+
+	bool CSInterface001::SampleWind(const WindVector* positions, WindSample* samples, uint32_t count)
+	{
+		if (count > CSWindMaximumBatchSize || ((!positions || !samples) && count != 0))
+			return false;
+		if (count == 0)
+			return true;
+
+		thread_local std::vector<Wind::PublishedWindSample> windSamples;
+		if (!SampleWindBatch(positions, count, windSamples))
+			return false;
+
+		for (uint32_t index = 0; index < count; ++index)
+			samples[index] = CopyWindSample(windSamples[index]);
+		return true;
+	}
+
+	bool CSInterface001::SampleWindWithPhysics(const WindVector* positions,
+		WindSampleWithPhysics* samples, uint32_t count)
+	{
+		if (count > CSWindMaximumBatchSize || ((!positions || !samples) && count != 0))
+			return false;
+		if (count == 0)
+			return true;
+
+		thread_local std::vector<Wind::PublishedWindSample> windSamples;
+		if (!SampleWindBatch(positions, count, windSamples))
+			return false;
+
+		for (uint32_t index = 0; index < count; ++index) {
+			samples[index] = {
+				CopyWindSample(windSamples[index]),
+				CopyWindVector(windSamples[index].physicsVelocity)
+			};
+		}
 		return true;
 	}
 }  // namespace CSPluginAPI
