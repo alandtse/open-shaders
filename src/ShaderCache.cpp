@@ -1833,8 +1833,6 @@ namespace SIE
 					std::error_code ec;
 					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
 					if (ec) {
-						// An unreadable timestamp means source-vs-cache freshness can't be verified; treat as a miss.
-						diskCacheOutdated = true;
 						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
 					} else if (std::filesystem::exists(shaderSourcePath)) {
 						const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
