@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 
 /** @brief Simulates realistic ambient lighting by calculating sky occlusion via a 3D probe array. */
@@ -63,6 +64,7 @@ public:
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		uint ProbeGridQuality = 2;
 	} settings;
 
 	struct SkylightingCB
@@ -80,6 +82,8 @@ public:
 		float MinSpecularVisibility;
 		uint ProbeDataReady;
 		uint _pad2;
+		uint ArrayDims[3];
+		uint _pad3;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -167,6 +171,10 @@ private:
 	bool probeDataReady = false;
 	float3 previousProbeCell = {};
 	float3 pendingProbeCell = {};
+	static std::array<uint, 3> GetProbeArrayDims(uint quality);
+	void CreateProbeResources(const std::array<uint, 3>& dimensions);
+	void ApplyProbeGrid();
+	uint activeProbeGridQuality = 2;
 	uint32_t* GetRasterCullMode() const;
 	void BeginInteriorOcclusionGeometry();
 	void EndInteriorOcclusionGeometry();
