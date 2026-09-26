@@ -6,6 +6,7 @@
 #include <wrl\client.h>
 #include <wrl\wrappers\corewrappers.h>
 
+#include <atomic>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <string>
@@ -33,15 +34,37 @@ struct SharedFence
 	static constexpr DWORD kRemovalPollMs = 100;
 	winrt::com_ptr<ID3D12Fence> fence12;
 	winrt::com_ptr<ID3D11Fence> fence11;
-	uint64_t value = 0;
+	/** Atomic because a caller thread reads it for diagnostics while the render thread issues values. */
+	std::atomic<uint64_t> value = 0;
 
 	/** @brief Returns the next value to signal, advancing the monotonic counter. */
-	uint64_t Next() { return ++value; }
+	uint64_t Next() { return value.fetch_add(1, std::memory_order_relaxed) + 1; }
+
+	/** @brief Releases both fence interfaces and returns the counter to zero. */
+	void Reset()
+	{
+		fence12 = nullptr;
+		fence11 = nullptr;
+		value.store(0, std::memory_order_relaxed);
+	}
+
+	/** @brief Outcome of a bounded CPU wait, so a caller can tell a slow GPU from a broken wait. */
+	enum class WaitOutcome : uint8_t
+	{
+		kComplete,  ///< The fence reached the value.
+		kTimeout,   ///< The fence did not reach the value within the bound.
+		kFailed     ///< The wait itself failed: no event, no completion registration, or WAIT_FAILED.
+	};
+
 	/** @brief Creates and names the fence; throws on failure without leaking the NT handle. */
 	void Create(ID3D12Device* a_device12, ID3D11Device5* a_device11, const char* a_name);
 	/** @brief Waits on the CPU up to a_timeoutMs, polling device removal via fence12's own device.
-	 *  Trivially true when the fence is unset or a_value is 0 (nothing to wait for). */
-	bool CpuWait(uint64_t a_value, DWORD a_timeoutMs) const;
+	 *  Trivially kComplete when the fence is unset or a_value is 0 (nothing to wait for).
+	 *  @param a_error Receives the error behind a kFailed outcome: the Win32 error from the wait,
+	 *         or the HRESULT a failed completion registration returned; may be null. */
+	WaitOutcome CpuWaitOutcome(uint64_t a_value, DWORD a_timeoutMs, DWORD* a_error = nullptr) const;
+	/** @brief True only when the fence reached a_value inside the bound. */
+	bool CpuWait(uint64_t a_value, DWORD a_timeoutMs) const { return CpuWaitOutcome(a_value, a_timeoutMs) == WaitOutcome::kComplete; }
 };
 
 struct DXGISwapChainProxy : IDXGISwapChain

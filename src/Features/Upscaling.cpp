@@ -30,6 +30,19 @@
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
+namespace NR
+{
+	// The two developer-only A/B selectors are deliberately absent: runtime switches, not settings.
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+		Tuning,
+		style,
+		intensity,
+		localToneStrength,
+		localStructureStrength,
+		skinStructureStrength,
+		useAutoMask);
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
 	upscaleMethod,
@@ -54,7 +67,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	renderAtUpscaleRes,
 	vrRenderScale,
 	fsr4RuntimeEnable,
-	fsr4RuntimeSelectionSchemaVersion);
+	fsr4RuntimeSelectionSchemaVersion,
+	neuralRenderingEnabled,
+	neuralRenderingTuning);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -551,6 +566,61 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
+
+	FEATURE_COMMAND("nrRuntimeInit",
+		"Initialize the DLSS Neural Rendering (NGX Feature 18) runtime: find nvngx_dlssnr.dll in Data/Shaders/Upscaling/Streamline, require a 310.8.x version, bind its exports, spoof the caller identity it checks, create the NR D3D12 device and run NGX init. One attempt per call, and only from idle: a missing DLL (warn) or a rejected version or a failed load/init (error) latches the layer off with a single log line, so nothing retries per frame and DLSS/FSR/TAA keep working. A rejected DLL is turned away before any D3D12 device is created. Calls made while the layer is latched, initialized or out of retries do nothing -- use nrRuntimeRetry after a failure. Enabling the neuralRenderingEnabled setting queues this same attempt on the first world frame, so this action is only needed to drive the runtime layer on its own. Params: none. This only queues the attempt: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, so read the outcome with the nrRuntimeStatus query a frame later, and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the request never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kInitialize);
+		});
+
+	FEATURE_COMMAND("nrRuntimeRetry",
+		"Re-arm the NR runtime after a recoverable failure and attempt initialization again (a call while the layer is idle is just an attempt). Refused when the failure poisoned the process (a structured exception inside the NGX DLL -- only a game restart clears it) and once maxRetries retries are spent, which blocks every later attempt until the process restarts. A failure that kept the runtime and its resources alive (a drain timeout, a failed fence wait or a removed device) is drained again first, and only a drain that actually retires the GPU work clears the latch. nrRuntimeStatus reports retryCount/maxRetries and the failure kind. Params: none. This only queues the retry: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the retry never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kRetry);
+		});
+
+	FEATURE_COMMAND("nrRuntimeShutdown",
+		"Drain the NR GPU fence, then release the Feature 18 handles, parameter blocks, NGX instance and the NR D3D12 device, returning the layer to idle. When the drain fails (DrainTimeout, WaitFailed or DeviceRemoved) nothing is released, because the GPU may still reference it, and the layer latches that failure with the fence's own message. A shutdown that succeeds returns the layer to idle but keeps the retry budget it has spent, never resets it. Params: none. This only queues the drain: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass -- the drain signals that thread's D3D11 context, so it must not be issued from a caller thread -- and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the drain never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kShutdown);
+		});
+
+	FEATURE_QUERY("nrRuntimeStatus",
+		"DLSS Neural Rendering (NGX Feature 18) runtime status: dllPath/dllDirectory, dllFound, version, versionAccepted (310.8.x required, patch ignored), requiredVersion, state (NotLoaded|Initialized|Failed), failure (the latching category, e.g. DrainTimeout, WaitFailed, SehFault), lastError (the reason the single log line reported), retryCount/maxRetries, pendingRequest (None|Initialize|Retry|Shutdown: a queued request is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, and stays pending while that pass is not hooked, as with the OpenComposite upscaling blocker), runtimeInitialized, runtimePoisoned, interopInitialized and submittedFence/completedFence. The same object is nested as runtime in neuralRenderingStatus, which also reports the frame outcome; use that one unless you only care about the runtime layer. Params: none.",
+		[](const Feature*, const json&) -> json {
+			return neuralRendering.RuntimeStatus();
+		});
+
+	FEATURE_QUERY("neuralRenderingStatus",
+		"DLSS Neural Rendering pass status. Frame: enabled (the neuralRenderingEnabled setting), adapterSupported (the renderer's adapter is an NVIDIA one), outcome (Disabled|NoWorld|UnsupportedAdapter|Initializing|Failed|Applied for the last frame that reached the pass), displayState (Off|Starting|Active|NoGpu|DllMissing|VersionRejected|Failed: the plain-language state the Upscaling menu's Neural Rendering tab shows, so a menu report and this query agree), status (the one-line human-readable summary that menu shows, including the latched failure reason, which is also the single line the log reports), failed (the pass latched a failure and awaits a retry), canRetry (a retry request would be permitted; false means the budget is spent or the failure poisoned the process, so only a restart can try again), width/height (per-eye render size of the last applied frame), eyes, ngxResult ([left, right] NGX result codes of the last applied frame; 0 is success), lastAppliedFrame, appliedFrames (how many frames have composited), exposure (the scalar exposure in use, or -1 when the frame resolved a GPU-side arm, which has no CPU readback), exposureSource (Scene|Local|Scalar: Scene falls back to Local when no loaded feature publishes an exposure), proxyContract (Hdr|Sdr: the creation-flag pairing Feature 18 is driven with), and runtime (the full nrRuntimeStatus object). Enable and tune with openshaders.feature action=set shortName=Upscaling {\"neuralRenderingEnabled\":true,\"neuralRenderingTuning\":{...}}; the enable takes effect on the next world frame, and a tuning commit drains and rebuilds the Feature 18 handles (an exposureSource change only restarts the temporal history). The two A/B selectors reported here are not settings: openshaders.feature set cannot reach them, so set them with the setNeuralRenderingDeveloperKnobs command. Params: none.",
+		[](const Feature*, const json&) -> json {
+			return neuralRendering.Status();
+		});
+
+	FEATURE_COMMAND("retryNeuralRendering",
+		"Retry the Neural Rendering pass after a failure: a pass-level failure (a shader compile, a rejected source geometry or an NGX evaluate failure) is torn down on the render thread, its textures are released once the runtime drains, and the pass rebuilds and re-initializes on the following frames; a runtime-layer failure is re-armed through the layer's retry budget instead, which is refused once maxRetries is spent or the failure poisoned the process (only a restart clears that). A frame that has not failed reports Initializing until the rebuild lands, and the pass keeps rendering nothing until then. Params: none. This only queues the work: neuralRenderingStatus reports outcome/pendingRequest as it lands.",
+		[](Feature*, const json&) {
+			neuralRendering.RequestRetry();
+		});
+
+	FEATURE_COMMAND("resetNeuralRenderingHistory",
+		"Reset both eyes' Neural Rendering temporal histories, so the next applied frame starts a new one: the tone-residual history is dropped, the depth history is dropped, the reset frame's motion field is zeroed, and the local exposure estimate snaps to its measured target instead of adapting from the previous value. Applied on the render thread on the next world frame that reaches the pass. Use it after a tuning change that should not blend with the old history, or to force the pass to converge again. Params: none.",
+		[](Feature*, const json&) {
+			neuralRendering.RequestHistoryReset();
+		});
+
+	FEATURE_COMMAND("setNeuralRenderingDeveloperKnobs",
+		"Set the two Neural Rendering A/B selectors, which are developer-only runtime switches and are never written to SettingsUser.json (they fall back to their defaults on a settings load or the next launch). proxyContract: 0 = HDR proxy contract, the shipped default and PR 723's tested pairing; 1 = SDR proxy contract, the A/B's other arm. exposureSource: 0 = Scene (the exposure a loaded feature publishes this frame, falling back to the local estimate when none does), 1 = Local estimate (the pass's own GPU estimate over both eyes, so left and right share one value), 2 = None (a fixed 1.0, leaving Feature 18's own auto-exposure to normalize the proxy). Both args are optional and out-of-range values are clamped. proxyContract is latched when Feature 18 is created, so changing it drains and rebuilds both eyes' handles over the next frames; an exposureSource change only restarts the temporal history. Read back what the last applied frame used with neuralRenderingStatus (proxyContract, exposureSource). Params: proxyContract (number, optional), exposureSource (number, optional).",
+		[](Feature*, const json& a_args) {
+			auto& tuning = globals::features::upscaling.settings.neuralRenderingTuning;
+			// Clamped as a double so a hand-written arg cannot convert out of range or throw.
+			if (auto it = a_args.find("proxyContract"); it != a_args.end() && it->is_number())
+				tuning.proxyContract = static_cast<uint32_t>(std::clamp(it->get<double>(), 0.0, static_cast<double>(NR::kProxyContractCount) - 1.0));
+			if (auto it = a_args.find("exposureSource"); it != a_args.end() && it->is_number())
+				tuning.exposureSource = static_cast<uint32_t>(std::clamp(it->get<double>(), 0.0, static_cast<double>(NR::ExposureSource::kCount) - 1.0));
+			tuning.Sanitize();
+			globals::features::upscaling.neuralRendering.SetTuning(tuning);
+		});
 }
 
 void Upscaling::DrawSettings()
@@ -577,6 +647,11 @@ void Upscaling::DrawSettings()
 
 	if (globals::game::isVR && ImGui::BeginTabItem(T(TKEY("tab_foveation"), "Foveation"))) {
 		DrawFoveationControls();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T(TKEY("tab_neural_rendering"), "Neural Rendering"))) {
+		DrawNeuralRenderingSettings();
 		ImGui::EndTabItem();
 	}
 
@@ -938,6 +1013,126 @@ void Upscaling::DrawReflexSettings()
 		ImGui::EndDisabled();
 }
 
+void Upscaling::DrawNeuralRenderingSettings()
+{
+	auto& pass = neuralRendering;
+	auto& tuning = settings.neuralRenderingTuning;
+	const bool supported = pass.AdapterSupported();
+
+	ImGui::BeginDisabled(!supported);
+	ImGui::Checkbox(T(TKEY("neural_rendering_enable"), "Enable Neural Rendering"), &settings.neuralRenderingEnabled);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("neural_rendering_enable_tooltip"),
+							  "Off by default. Applies a bounded Neural Rendering (DLSS Feature 18) gain to the\n"
+							  "scene color, evaluated at eye render resolution, before the upscaler. Needs the\n"
+							  "310.8.x Neural Rendering runtime in Data/Shaders/Upscaling/Streamline; without it\n"
+							  "the pass fails once and stays off."));
+	}
+	ImGui::EndDisabled();
+
+	DrawNeuralRenderingStatus(pass);
+
+	ImGui::BeginDisabled(!supported);
+
+	bool tuningCommitted = false;
+	bool tuningChanged = false;
+
+	tuningChanged |= ImGui::SliderFloat(T(TKEY("neural_rendering_intensity"), "Intensity"), &tuning.intensity,
+		NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	tuningCommitted |= ImGui::IsItemDeactivatedAfterEdit();
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("neural_rendering_intensity_tooltip"),
+							  "How strongly the neural result is applied to the image."));
+	}
+
+	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
+	const char* styles[] = { T(TKEY("neural_rendering_style_0"), "Style 0"),
+		T(TKEY("neural_rendering_style_1"), "Style 1"), T(TKEY("neural_rendering_style_2"), "Style 2") };
+	if (ImGui::Combo(T(TKEY("neural_rendering_style"), "Style"), &style, styles, IM_ARRAYSIZE(styles))) {
+		tuning.style = static_cast<uint32_t>(style);
+		tuningChanged = tuningCommitted = true;
+	}
+
+	tuningChanged |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_tone"), "Local Tone Strength"), &tuning.localToneStrength,
+		NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	tuningCommitted |= ImGui::IsItemDeactivatedAfterEdit();
+	tuningChanged |= ImGui::SliderFloat(T(TKEY("neural_rendering_local_structure"), "Local Structure Strength"), &tuning.localStructureStrength,
+		NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	tuningCommitted |= ImGui::IsItemDeactivatedAfterEdit();
+	tuningChanged |= ImGui::SliderFloat(T(TKEY("neural_rendering_skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength,
+		NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
+		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? "Auto" : "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	tuningCommitted |= ImGui::IsItemDeactivatedAfterEdit();
+
+	if (ImGui::Checkbox(T(TKEY("neural_rendering_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask))
+		tuningChanged = tuningCommitted = true;
+
+	if (globals::state->IsDeveloperMode()) {
+		// Developer-only A/B selectors; neither is persisted to SettingsUser.json.
+		const char* contracts[] = { "HDR proxy contract", "SDR proxy contract" };
+		int contract = static_cast<int>(tuning.ProxyContractValue());
+		if (ImGui::Combo("Proxy Contract (A/B)", &contract, contracts, IM_ARRAYSIZE(contracts))) {
+			tuning.proxyContract = static_cast<uint32_t>(contract);
+			tuningChanged = tuningCommitted = true;
+		}
+		const char* sources[] = { "Scene exposure", "Local estimate", "None (1.0)" };
+		int source = static_cast<int>(tuning.ExposureSourceValue());
+		if (ImGui::Combo("Exposure Source (A/B)", &source, sources, IM_ARRAYSIZE(sources))) {
+			tuning.exposureSource = static_cast<uint32_t>(source);
+			tuningChanged = tuningCommitted = true;
+		}
+	}
+
+	if (ImGui::Button(T(TKEY("neural_rendering_restore_defaults"), "Restore NR Defaults"))) {
+		tuning = {};
+		tuningChanged = tuningCommitted = true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(T(TKEY("neural_rendering_reset_history"), "Reset NR History")))
+		pass.RequestHistoryReset();
+
+	ImGui::EndDisabled();
+
+	if (tuningChanged)
+		tuning.Sanitize();
+	if (tuningCommitted)
+		pass.SetTuning(tuning);
+}
+
+void Upscaling::DrawNeuralRenderingStatus(NR::NeuralRendering& a_pass)
+{
+	switch (a_pass.CurrentDisplayState()) {
+	case NR::DisplayState::kOff:
+		Util::Text::WrappedInfo("%s", T(TKEY("neural_rendering_status_off"), "Off"));
+		return;
+	case NR::DisplayState::kStarting:
+		Util::Text::WrappedInfo("%s", T(TKEY("neural_rendering_status_starting"), "Starting..."));
+		return;
+	case NR::DisplayState::kActive:
+		Util::Text::WrappedSuccess(T(TKEY("neural_rendering_status_active"), "Active (runtime %s)"),
+			a_pass.Status().value("runtime", json::object()).value("version", std::string{}).c_str());
+		return;
+	case NR::DisplayState::kNoGpu:
+		Util::Text::WrappedWarning("%s", T(TKEY("neural_rendering_requires_nvidia"), "Requires an NVIDIA RTX GPU."));
+		return;
+	case NR::DisplayState::kDllMissing:
+	case NR::DisplayState::kVersionRejected:
+	case NR::DisplayState::kFailed:
+		break;
+	}
+
+	// The three failure lines carry their own reason, which is the same one the log reports.
+	const auto status = a_pass.Status();
+	Util::Text::WrappedWarning("%s", status.value("status", std::string{}).c_str());
+	if (!a_pass.CanRetry()) {
+		Util::Text::WrappedDisabled("%s", T(TKEY("neural_rendering_retry_exhausted"),
+											  "Every retry has been used. Restart the game to try neural rendering again."));
+		return;
+	}
+	if (ImGui::Button(T(TKEY("neural_rendering_retry"), "Retry Neural Rendering")))
+		a_pass.RequestRetry();
+}
+
 void Upscaling::DrawBackendDiagnostics()
 {
 	// Streamline log level selection
@@ -1097,6 +1292,8 @@ void Upscaling::LoadSettings(json& o_json)
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
+	settings.neuralRenderingTuning.Sanitize();
+	neuralRendering.SetTuning(settings.neuralRenderingTuning);
 
 	// Sanitize loaded settings to ensure enum indices are valid
 	constexpr auto enumCount = static_cast<uint>(magic_enum::enum_count<UpscaleMethod>());
@@ -1165,7 +1362,23 @@ void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
 	foveatedRender.RestoreDefaultSettings();
+	neuralRendering.SetTuning(settings.neuralRenderingTuning);
 	ApplyOpenCompositeUpscalingBlocker(true);
+}
+
+void Upscaling::Reset()
+{
+	neuralRendering.Reset(loaded && settings.neuralRenderingEnabled);
+}
+
+void Upscaling::OnSceneTransitionReset(bool /*a_opening*/)
+{
+	neuralRendering.ResetHistory();
+}
+
+void Upscaling::OnRuntimeDisabled()
+{
+	neuralRendering.OnRuntimeDisabled();
 }
 
 void Upscaling::DataLoaded()
@@ -2062,6 +2275,8 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 void Upscaling::SetupResources()
 {
+	neuralRendering.SetupResources();
+
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
 		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
@@ -2156,6 +2371,7 @@ void Upscaling::SetupResources()
 void Upscaling::ClearShaderCache()
 {
 	foveatedRender.ClearShaderCache();
+	neuralRendering.ClearShaderCache();
 	for (auto& methodSlot : encodeTexturesCS) {
 		for (auto& outputSlot : methodSlot) {
 			outputSlot.Reset();
@@ -2522,6 +2738,7 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	diagnostics["neuralRendering"] = neuralRendering.Status();
 	return diagnostics;
 }
 
@@ -2663,7 +2880,7 @@ void Upscaling::Upscale()
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		uint32_t numEyes = globals::game::isVR ? 2 : 1;
-		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes);
+		uint32_t eyeRenderWidth = NR::EyeRenderWidth(renderSize.x, numEyes);
 		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
@@ -3178,6 +3395,10 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 
 void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32_t a3, RE::RENDER_TARGET a_target, void* a_4, bool a_5)
 {
+	// NR requests are applied here because this thunk runs on the render thread every frame whatever
+	// the upscale method; the layer's drain signals that same D3D11 immediate context.
+	globals::features::upscaling.neuralRendering.ProcessPendingRequest();
+
 	auto& postProcessing = globals::features::postProcessing;
 	if (postProcessing.loaded) {
 		postProcessing.DrawBeforeUpscaling();
@@ -3185,6 +3406,11 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
+
+	// After the pre-upscale post-processing and before any upscaler, the engine TAA and the
+	// tonemapper, so the pass sees the frame's final scene color and is frame-generation-agnostic.
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled,
+		upscaling.settings.neuralRenderingTuning, Util::ConvertToDynamic(globals::state->screenSize));
 
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {

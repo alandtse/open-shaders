@@ -4,6 +4,7 @@
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
+#include "Upscaling/NeuralRendering/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
@@ -120,6 +121,9 @@ public:
 		// Defaults to current so a fresh config needs no migration; LoadSettings resets it to
 		// 0 when absent from JSON so pre-existing configs run the migration once.
 		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
+
+		bool neuralRenderingEnabled = false;
+		NR::Tuning neuralRenderingTuning;
 	};
 
 	static constexpr float kVRRenderScaleMin = 0.33f;
@@ -263,6 +267,12 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void DataLoaded() override;
+	/** @brief Per-frame reset hook; the NR pass drops its history whenever it is off or has no world. */
+	virtual void Reset() override;
+	/** @brief Loading-screen transitions invalidate both eyes' NR histories. */
+	virtual void OnSceneTransitionReset(bool a_opening) override;
+	/** @brief Releasing this feature releases the NR runtime and its GPU memory, on the render thread. */
+	virtual void OnRuntimeDisabled() override;
 
 	/**
 	 * @brief Installs Direct3D-related hooks for device and factory creation.
@@ -415,6 +425,8 @@ public:
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 
+	static inline NR::NeuralRendering neuralRendering;  ///< NGX Feature 18 pass plus its runtime layer
+
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 
 	float projectionPosScaleX = 0.0f;
@@ -512,6 +524,10 @@ private:
 	void DrawFrameGenerationSettings();
 	void DrawReflexSettings();
 	void DrawBackendDiagnostics();
+	/** @brief Neural rendering toggle, tuning and status; always drawn, disabled off an NVIDIA adapter. */
+	void DrawNeuralRenderingSettings();
+	/** @brief Always-visible plain-language neural-rendering status line and its retry affordance. */
+	void DrawNeuralRenderingStatus(NR::NeuralRendering& a_pass);
 
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
