@@ -37,6 +37,8 @@ struct WindSettings
 	float windFieldDirectionTransitionDuration = 15.0f;
 	bool processMidRangeTransients = true;
 	bool processFarRangeTransients = true;
+	float grassTransientBendStrength = 32.5f;
+	float grassTransientFlutterHalfLife = 0.15f;
 	float grassTransientFlutterStrength = 1.0f;
 	float grassTransientFlutterFrequency = 6.0f;
 	bool enableAmbientGrassWind = true;
@@ -128,6 +130,8 @@ namespace WindSettingsLimits
 	inline constexpr float kGrassWindFlutterWaveScaleMax = 4.0f;
 	inline constexpr float kGrassWindFlutterAmplitudeResponseMin = 0.0f;
 	inline constexpr float kGrassWindFlutterAmplitudeResponseMax = 4.0f;
+	inline constexpr float kGrassTransientFlutterHalfLifeMin = 0.01f;
+	inline constexpr float kGrassTransientFlutterHalfLifeMax = 2.0f;
 	inline constexpr float kGrassTransientFlutterStrengthMin = 0.0f;
 	inline constexpr float kGrassTransientFlutterStrengthMax = 2.0f;
 	inline constexpr float kGrassTransientFlutterFrequencyMin = 0.25f;

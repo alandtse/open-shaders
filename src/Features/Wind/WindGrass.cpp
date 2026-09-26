@@ -134,6 +134,8 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		data.flutterFrequency = sanitizedSettings.grassWindFlutterFrequency;
 		data.transientFlutterStrength = sanitizedSettings.grassTransientFlutterStrength;
 		data.transientFlutterFrequency = sanitizedSettings.grassTransientFlutterFrequency;
+		data.transientResponseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassTransientBendStrength);
+		data.transientFlutterHalfLife = sanitizedSettings.grassTransientFlutterHalfLife;
 		data.flutterGustInfluence = sanitizedSettings.grassWindFlutterGustInfluence;
 		data.flutterWaveScale = sanitizedSettings.grassWindFlutterWaveScale;
 		data.flutterAmplitudeResponse = float3(

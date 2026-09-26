@@ -364,18 +364,6 @@ void Wind::DrawWindEffectsSettings()
 		ImGui::TextUnformatted(T(TKEY("process_far_range_transients_tooltip"),
 			"Processes transient sources in the Far tree and grass spring tiers. Ambient wind and gusts are unaffected."));
 	if (globals::state->IsDeveloperMode()) {
-		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_strength"), "Grass Impulse Flutter"),
-			&settings.grassTransientFlutterStrength, kGrassTransientFlutterStrengthMin,
-			kGrassTransientFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_strength_tooltip"),
-				"Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending."));
-		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_frequency"), "Grass Impulse Flutter Rate"),
-			&settings.grassTransientFlutterFrequency, kGrassTransientFlutterFrequencyMin,
-			kGrassTransientFlutterFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_frequency_tooltip"),
-				"Sets the rate of the separate impulse flutter oscillation; it does not change ambient gust flutter."));
 		ImGui::SeparatorText(T(TKEY("debug_wind_effects"), "Performance Test"));
 		ImGui::Checkbox(T(TKEY("debug_wind_effect_worst_case"), "Worst-case coverage"),
 			&uiState.debugWindEffectWorstCase);
@@ -759,6 +747,36 @@ void Wind::DrawTreeMeshRulesTable()
 	}
 }
 
+void Wind::DrawGrassTransientSettings()
+{
+	ImGui::SliderFloat(T(TKEY("grass_transient_bend_strength"), "Transient Bend Strength"),
+		&settings.grassTransientBendStrength, kGrassWindResponseMin, kGrassWindResponseMax,
+		"%.1f deg/unit", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_bend_strength_tooltip"),
+			"Controls bending from dragon wind, shouts, and other wind impulses independently of ambient Bend Strength. Zero disables their bend input without disabling their flutter."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_strength"), "Grass Impulse Flutter"),
+		&settings.grassTransientFlutterStrength, kGrassTransientFlutterStrengthMin,
+		kGrassTransientFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_strength_tooltip"),
+			"Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_frequency"), "Grass Impulse Flutter Rate"),
+		&settings.grassTransientFlutterFrequency, kGrassTransientFlutterFrequencyMin,
+		kGrassTransientFlutterFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_frequency_tooltip"),
+			"Sets the rate of the separate impulse flutter oscillation; it does not change ambient gust flutter."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_half_life"), "Flutter Decay Half-Life"),
+		&settings.grassTransientFlutterHalfLife, kGrassTransientFlutterHalfLifeMin, kGrassTransientFlutterHalfLifeMax,
+		"%.2f s", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_half_life_tooltip"),
+			"Time for the extra flutter amplitude to halve after an impulse stops driving it. This does not change the wind event's own duration."));
+	ImGui::TextWrapped("%s", T(TKEY("grass_transient_shared_settings"),
+								 "Maximum Bend Angle, Tip Flexibility, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
+}
+
 void Wind::DrawGrassWindSettings()
 {
 	if (!ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass")))
@@ -783,6 +801,21 @@ void Wind::DrawGrassWindSettings()
 		ResetGrassWindSettings();
 
 	ImGui::BeginDisabled(!settings.enableAmbientGrassWind);
+	if (!ImGui::BeginTabBar("GrassResponseTabs")) {
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+		return;
+	}
+	if (ImGui::BeginTabItem(T(TKEY("tab_grass_transients"), "Transients"))) {
+		DrawGrassTransientSettings();
+		ImGui::EndTabItem();
+	}
+	if (!ImGui::BeginTabItem(T(TKEY("tab_grass_ambient"), "Ambient and Shared"))) {
+		ImGui::EndTabBar();
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+		return;
+	}
 	ImGui::SliderFloat(T(TKEY("grass_wind_response"), "Bend Strength"), &settings.grassWindResponse,
 		kGrassWindResponseMin, kGrassWindResponseMax, "%.0f deg/unit", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -874,7 +907,7 @@ void Wind::DrawGrassWindSettings()
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
-			"Scales field-driven blade flutter, with stronger motion inside local gust regions."));
+			"Scales both ambient and transient blade flutter. Use Grass Impulse Flutter in Transients to adjust only the transient contribution."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -921,6 +954,8 @@ void Wind::DrawGrassWindSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_memory_tooltip"),
 			"Estimate for four RGBA16F textures per field: two response textures and two velocity textures."));
 
+	ImGui::EndTabItem();
+	ImGui::EndTabBar();
 	ImGui::EndDisabled();
 	ImGui::EndTabItem();
 }

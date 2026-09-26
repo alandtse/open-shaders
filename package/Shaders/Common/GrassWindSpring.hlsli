@@ -42,7 +42,8 @@ namespace GrassWindSpring
 		float TransientFlutterFrequency;
 		float FlutterGustInfluence;
 		float FlutterWaveScale;
-		float2 _GrassWindPadding;
+		float TransientResponseRadians;
+		float TransientFlutterHalfLife;
 	};
 
 	float EvaluateFlutterAmplitudeMultiplier(float windSpeed)
@@ -66,16 +67,18 @@ namespace GrassWindSpring
 	SamplerState ResponseSampler : register(s14);
 #endif
 
-	float3 CalculateTarget(float3 windVelocity, FieldData field)
+	float3 CalculateTarget(float3 windVelocity, float3 transientVelocity, FieldData field)
 	{
+		windVelocity = windVelocity * max(field.ResponseRadians, 0.0f) +
+		               transientVelocity * max(TransientResponseRadians, 0.0f);
 		float lateralSpeed = length(windVelocity.xy);
 		float targetAngle = field.MaximumTiltRadians > EPSILON_WIND_RESPONSE ?
-		                        field.MaximumTiltRadians * tanh(lateralSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians) :
+		                        field.MaximumTiltRadians * tanh(lateralSpeed / field.MaximumTiltRadians) :
 		                        0.0f;
 		float2 targetBend = lateralSpeed > EPSILON_WIND_RESPONSE ? windVelocity.xy * (targetAngle / lateralSpeed) : 0.0f.xx;
 		float downwardSpeed = max(-windVelocity.z, 0.0f);
 		float targetCompression = field.MaximumTiltRadians > EPSILON_WIND_RESPONSE ?
-		                              saturate(tanh(downwardSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians)) :
+		                              saturate(tanh(downwardSpeed / field.MaximumTiltRadians)) :
 		                              0.0f;
 		return float3(targetBend, targetCompression);
 	}

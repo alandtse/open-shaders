@@ -20,6 +20,8 @@ void Wind::SanitizeGrassWindSettings(Settings& a_settings)
 {
 	const Settings defaults{};
 	a_settings.trunkWindIntensityOverride = ClampFiniteOrDefault(a_settings.trunkWindIntensityOverride, kTrunkWindIntensityMin, kTrunkWindIntensityMax, defaults.trunkWindIntensityOverride);
+	a_settings.grassTransientBendStrength = ClampFiniteOrDefault(a_settings.grassTransientBendStrength, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassTransientBendStrength);
+	a_settings.grassTransientFlutterHalfLife = ClampFiniteOrDefault(a_settings.grassTransientFlutterHalfLife, kGrassTransientFlutterHalfLifeMin, kGrassTransientFlutterHalfLifeMax, defaults.grassTransientFlutterHalfLife);
 	a_settings.grassWindResponse = ClampFiniteOrDefault(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
 	a_settings.grassWindSensitivity = ClampFiniteOrDefault(a_settings.grassWindSensitivity, kGrassWindSensitivityMin, kGrassWindSensitivityMax, defaults.grassWindSensitivity);
 	a_settings.grassWindMaximumTilt = ClampFiniteOrDefault(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
@@ -58,6 +60,10 @@ void Wind::ResetGrassWindSettings()
 	settings.enableAmbientGrassWind = defaults.enableAmbientGrassWind;
 	settings.enableGrassWindSpring = defaults.enableGrassWindSpring;
 	settings.enableGrassWindSpringBend = defaults.enableGrassWindSpringBend;
+	settings.grassTransientBendStrength = defaults.grassTransientBendStrength;
+	settings.grassTransientFlutterHalfLife = defaults.grassTransientFlutterHalfLife;
+	settings.grassTransientFlutterStrength = defaults.grassTransientFlutterStrength;
+	settings.grassTransientFlutterFrequency = defaults.grassTransientFlutterFrequency;
 	settings.grassWindResponse = defaults.grassWindResponse;
 	settings.grassWindSensitivity = defaults.grassWindSensitivity;
 	settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;

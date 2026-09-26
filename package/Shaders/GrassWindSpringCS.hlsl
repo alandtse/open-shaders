@@ -14,7 +14,6 @@ groupshared uint RelevantSourceIndices[WindField::TransientImpulseCapacity];
 
 static const float TransientFlutterSpeedScale = 0.35f;
 static const float TransientFlutterMaximum = 1.0f;
-static const float TransientFlutterHalfLife = 0.15f;
 
 float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 {
@@ -89,9 +88,8 @@ float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windFie
 		                     horizontalSpeed;
 	}
 	float3 transientVelocity = SampleRelevantTransientVelocity(samplePosition, relevantSourceCount);
-	float3 windVelocity = ambientVelocity + transientVelocity;
 	float3 target = GrassWindSpring::CalculateTarget(
-		windVelocity, field);
+		ambientVelocity, transientVelocity, field);
 
 	float3 response = target;
 	float3 velocity = 0.0f.xxx;
@@ -103,7 +101,7 @@ float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windFie
 	float transientFlutter = 0.0f;
 	if (historyValid) {
 		float4 previousVelocity = GrassWindSpring::PreviousVelocity.Load(int3(previousCell, 0));
-		transientFlutter = previousVelocity.w * exp2(-field.FrameTime / TransientFlutterHalfLife);
+		transientFlutter = previousVelocity.w * exp2(-field.FrameTime / max(GrassWindSpring::TransientFlutterHalfLife, EPSILON_WIND_RESPONSE));
 		if (field.SpringFrequency > EPSILON_WIND_RESPONSE) {
 			response = GrassWindSpring::PreviousResponse.Load(int3(previousCell, 0)).xyz;
 			velocity = previousVelocity.xyz;
