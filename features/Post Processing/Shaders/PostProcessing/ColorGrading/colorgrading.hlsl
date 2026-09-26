@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/ColorSpaces.hlsli"
 #include "Common/Math.hlsli"
+#include "PostProcessing/ColorGrading/Include/Highlights.hlsli"
 #include "PostProcessing/fullscreen.hlsli"
 
 #define LUT_SIZE 64
@@ -158,14 +159,25 @@ float3 ShadowsMidtonesHighlights(float3 color, float3 shadowsGain, float3 midton
 	float luma = Color::RGBToLuminance(color, workingToXYZ[1].xyz);
 
 	float shadowWeight = 1.0 - smoothstep(shadowBegin, shadowEnd, luma);
-	float highlightWeight = smoothstep(highlightBegin, highlightEnd, luma);
-	float midtoneWeight = 1.0 - shadowWeight - highlightWeight;
+	float3 graded;
+	[branch] if (any(highlightsGain < midtonesGain) || any(highlightsOff < midtonesOff))
+	{
+		graded = Highlights::Apply(color, luma, midtonesGain, highlightsGain,
+			midtonesOff, highlightsOff, highlightBegin, highlightEnd);
+		graded += shadowWeight * (color * (shadowsGain - midtonesGain) + shadowsOff - midtonesOff);
+	}
+	else
+	{
+		float highlightWeight = smoothstep(highlightBegin, highlightEnd, luma);
+		float midtoneWeight = 1.0 - shadowWeight - highlightWeight;
 
-	// Per-zone gain + offset (industry standard: allows both color scaling and color shift)
-	float3 gain = shadowsGain * shadowWeight + midtonesGain * midtoneWeight + highlightsGain * highlightWeight;
-	float3 offset = shadowsOff * shadowWeight + midtonesOff * midtoneWeight + highlightsOff * highlightWeight;
+		// Per-zone gain + offset (industry standard: allows both color scaling and color shift)
+		float3 gain = shadowsGain * shadowWeight + midtonesGain * midtoneWeight + highlightsGain * highlightWeight;
+		float3 offset = shadowsOff * shadowWeight + midtonesOff * midtoneWeight + highlightsOff * highlightWeight;
+		graded = color * gain + offset;
+	}
 
-	return color * gain + offset;
+	return graded;
 }
 
 float2 IlluminantChromaticity(float temp)
