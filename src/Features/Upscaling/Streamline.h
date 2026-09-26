@@ -96,6 +96,17 @@ public:
 
 	Util::FrameChecker frameChecker;
 	sl::FrameToken* frameToken = nullptr;
+	static constexpr uint32_t kProblemLogIntervalFrames = 300;
+	enum class DLSSLogKind : uint8_t
+	{
+		kVramWarning,
+		kEvaluateError,
+		kCount
+	};
+	uint32_t lastDLSSLogFrame[static_cast<size_t>(DLSSLogKind::kCount)][2] = {
+		{ UINT32_MAX, UINT32_MAX },
+		{ UINT32_MAX, UINT32_MAX }
+	};
 
 	struct ReflexOptionsCache
 	{
@@ -107,14 +118,23 @@ public:
 	ReflexOptionsCache reflexOptionsCache{};
 	uint32_t lastReflexSleepFrame = UINT32_MAX;
 
+	/**
+	 * @brief Rate-limits DLSS problem logs to one per kProblemLogIntervalFrames frames, per kind and eye.
+	 * @param a_kind Which problem is being logged.
+	 * @param a_eye Eye index (0 for non-VR, or when the caller does not distinguish eyes).
+	 * @param a_frame The current frame number.
+	 * @return True when the caller should emit its log line.
+	 */
+	bool ShouldLogDLSSProblem(DLSSLogKind a_kind, uint32_t a_eye, uint32_t a_frame);
+
 	// Helper: Execute DLSS for a single viewport with given resources.
 	// outputHeight defaults to 0 -> SetDLSSOptions uses full per-eye DisplayRes height
 	// (matches the standard upscale path where every eval is full eye). FoveatedRender's
 	// subrect path must pass the actual subrect height so DLSS isn't configured for
 	// `subOutW x eyeHeightOut` while extentOut says `subOutW x subOutH` - that mismatch
 	// makes NGX return zeroed output and the subrect region renders black.
-	// Returns false if CheckFrameConstants or slEvaluateFeature failed -- callers
-	// on the foveated route use this to fall back instead of reporting success.
+	// Returns false only on a real failure; eWarnOutOfVRAM counts as success, so the
+	// foveated route must not fall back on it (that would evaluate DLSS twice).
 	bool EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
