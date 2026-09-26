@@ -11,6 +11,7 @@
 #include "Utils/LazyShader.h"
 #include "VR/OpenVRDetection.h"
 #include <algorithm>
+#include <array>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -306,9 +307,28 @@ public:
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 
-	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCS[5];          // One for each UpscaleMethod
-	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
+	/** @brief Encoder outputs a caller binds; selects the permutation. */
+	enum class EncodeOutput : uint8_t
+	{
+		kMasksOnly,
+		kTypedDepth,  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
+		kCount
+	};
+
+	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCS[magic_enum::enum_count<UpscaleMethod>()][static_cast<size_t>(EncodeOutput::kCount)];
+
+	/** @brief EncodeTextures CS for the active method, asking for typed depth when the method needs it. */
 	ID3D11ComputeShader* GetEncodeTexturesCS();
+
+	/** @brief EncodeTextures CS for a method and output set; nullptr on compile failure. */
+	ID3D11ComputeShader* GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output);
+
+	using EncodeInputViews = std::array<ID3D11ShaderResourceView*, 4>;
+
+	/** @brief Current-frame encoder inputs (TAA mask, normals, motion, depth). Returns false if
+	 *         any is missing, naming the first missing one in a_missing: a null view among them
+	 *         silently corrupts the masks the encoder writes. */
+	bool GetEncodeInputs(EncodeInputViews& a_views, const char*& a_missing) const;
 
 	Util::LazyShader<ID3D11PixelShader> depthRefractionUpscalePS;
 	ID3D11PixelShader* GetDepthRefractionUpscalePS();
