@@ -26,6 +26,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 	queueDesc.NodeMask = 0;
 
 	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
+	commandQueue->SetName(L"DX12SwapChain::CommandQueue");
 
 	for (UINT i = 0; i < kMaxBackBuffers; i++) {
 		DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])));
@@ -191,11 +192,7 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 
 void DX12SwapChain::CreateInterop()
 {
-	HANDLE sharedFenceHandle;
-	DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fence)));
-	DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fence.get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
-	DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence)));
-	CloseHandle(sharedFenceHandle);
+	interopFence.Create(d3d12Device.get(), d3d11Device.get(), "DX12SwapChain::InteropFence");
 
 	swapChainProxy = new DXGISwapChainProxy(swapChain);
 
@@ -338,13 +335,13 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	bool isHDR = hdr && hdr->settings.enableHDR;
 
 	// Wait for D3D11 to finish (includes ApplyHDR scene encoding AND UIBrightnessCS)
-	fenceValue++;
-	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), fenceValue));
-	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), fenceValue));
+	const uint64_t d3d11SignalValue = interopFence.Next();
+	DX::ThrowIfFailed(d3d11Context->Signal(interopFence.fence11.get(), d3d11SignalValue));
+	DX::ThrowIfFailed(commandQueue->Wait(interopFence.fence12.get(), d3d11SignalValue));
 
 	// New frame, reset
 	if (frameFenceValues[frameIndex])
-		DX::ThrowIfFailed(d3d12Fence->SetEventOnCompletion(frameFenceValues[frameIndex], nullptr));
+		DX::ThrowIfFailed(interopFence.fence12->SetEventOnCompletion(frameFenceValues[frameIndex], nullptr));
 	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 
@@ -415,10 +412,10 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentEnd);
 
 	// Wait for D3D12 to finish
-	fenceValue++;
-	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));
-	frameFenceValues[frameIndex] = fenceValue;
-	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), fenceValue));
+	const uint64_t d3d12SignalValue = interopFence.Next();
+	DX::ThrowIfFailed(commandQueue->Signal(interopFence.fence12.get(), d3d12SignalValue));
+	frameFenceValues[frameIndex] = d3d12SignalValue;
+	DX::ThrowIfFailed(d3d11Context->Wait(interopFence.fence11.get(), d3d12SignalValue));
 
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
@@ -496,23 +493,26 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		DX::ThrowIfFailed(a_result);
 	};
 
-	throwIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, &resource11), "CreateTexture2D");
+	// The raw members are assigned only at the end: a throw before those detaches would
+	// leak them, since a partially constructed object runs no destructor.
+	winrt::com_ptr<ID3D11Texture2D> texture11;
+	throwIfFailed(a_d3d11Device->CreateTexture2D(&a_texDesc, nullptr, texture11.put()), "CreateTexture2D");
 	if (!a_name.empty())
-		Util::SetResourceName(resource11, "%s", a_name.c_str());
+		Util::SetResourceName(texture11.get(), "%s", a_name.c_str());
 
 	// Get shared handle from D3D11 texture to enable D3D12 access
 	winrt::com_ptr<IDXGIResource1> dxgiResource;
-	throwIfFailed(resource11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())), "QueryInterface(IDXGIResource1)");
-	HANDLE sharedHandle = nullptr;
-	throwIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle), "CreateSharedHandle");
+	throwIfFailed(texture11->QueryInterface(IID_PPV_ARGS(dxgiResource.put())), "QueryInterface(IDXGIResource1)");
+	winrt::handle sharedHandle;
+	throwIfFailed(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, sharedHandle.put()), "CreateSharedHandle");
 
-	// Open the shared D3D11 texture as D3D12 resource. Close the NT handle
-	// unconditionally before checking the result -- a thrown failure must
-	// not leak it.
-	const HRESULT openResult = a_d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(resource.put()));
-	CloseHandle(sharedHandle);
-	throwIfFailed(openResult, "OpenSharedHandle");
+	// Open the shared D3D11 texture as D3D12 resource
+	winrt::com_ptr<ID3D12Resource> resource12;
+	throwIfFailed(a_d3d12Device->OpenSharedHandle(sharedHandle.get(), IID_PPV_ARGS(resource12.put())), "OpenSharedHandle");
+	if (!a_name.empty())
+		resource12->SetName(winrt::to_hstring(a_name).c_str());
 
+	winrt::com_ptr<ID3D11ShaderResourceView> srv11;
 	if (a_texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE) {
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = a_texDesc.Format;
@@ -520,11 +520,12 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 		srvDesc.Texture2D.MostDetailedMip = 0;
 		srvDesc.Texture2D.MipLevels = 1;
 
-		throwIfFailed(a_d3d11Device->CreateShaderResourceView(resource11, &srvDesc, &srv), "CreateShaderResourceView");
+		throwIfFailed(a_d3d11Device->CreateShaderResourceView(texture11.get(), &srvDesc, srv11.put()), "CreateShaderResourceView");
 		if (!a_name.empty())
-			Util::SetResourceName(srv, "%s SRV", a_name.c_str());
+			Util::SetResourceName(srv11.get(), "%s SRV", a_name.c_str());
 	}
 
+	winrt::com_ptr<ID3D11UnorderedAccessView> uav11;
 	if (a_texDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS) {
 		if (a_texDesc.ArraySize > 1) {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
@@ -533,28 +534,35 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 			uavDesc.Texture2DArray.FirstArraySlice = 0;
 			uavDesc.Texture2DArray.ArraySize = a_texDesc.ArraySize;
 
-			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(texture11.get(), &uavDesc, uav11.put()), "CreateUnorderedAccessView");
 		} else {
 			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 			uavDesc.Format = a_texDesc.Format;
 			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
 			uavDesc.Texture2D.MipSlice = 0;
 
-			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(resource11, &uavDesc, &uav), "CreateUnorderedAccessView");
+			throwIfFailed(a_d3d11Device->CreateUnorderedAccessView(texture11.get(), &uavDesc, uav11.put()), "CreateUnorderedAccessView");
 		}
 		if (!a_name.empty())
-			Util::SetResourceName(uav, "%s UAV", a_name.c_str());
+			Util::SetResourceName(uav11.get(), "%s UAV", a_name.c_str());
 	}
 
+	winrt::com_ptr<ID3D11RenderTargetView> rtv11;
 	if (a_texDesc.BindFlags & D3D11_BIND_RENDER_TARGET) {
 		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 		rtvDesc.Format = a_texDesc.Format;
 		rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 		rtvDesc.Texture2D.MipSlice = 0;
-		throwIfFailed(a_d3d11Device->CreateRenderTargetView(resource11, &rtvDesc, &rtv), "CreateRenderTargetView");
+		throwIfFailed(a_d3d11Device->CreateRenderTargetView(texture11.get(), &rtvDesc, rtv11.put()), "CreateRenderTargetView");
 		if (!a_name.empty())
-			Util::SetResourceName(rtv, "%s RTV", a_name.c_str());
+			Util::SetResourceName(rtv11.get(), "%s RTV", a_name.c_str());
 	}
+
+	resource11 = texture11.detach();
+	srv = srv11.detach();
+	uav = uav11.detach();
+	rtv = rtv11.detach();
+	resource = std::move(resource12);
 }
 
 WrappedResource::~WrappedResource()
@@ -576,6 +584,49 @@ WrappedResource::~WrappedResource()
 		rtv = nullptr;
 	}
 	// resource (winrt::com_ptr) will be automatically released
+}
+
+void SharedFence::Create(ID3D12Device* a_device12, ID3D11Device5* a_device11, const char* a_name)
+{
+	DX::ThrowIfFailed(a_device12->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&fence12)));
+	winrt::handle sharedHandle;
+	DX::ThrowIfFailed(a_device12->CreateSharedHandle(fence12.get(), nullptr, GENERIC_ALL, nullptr, sharedHandle.put()));
+	DX::ThrowIfFailed(a_device11->OpenSharedFence(sharedHandle.get(), IID_PPV_ARGS(&fence11)));
+
+	fence12->SetName(winrt::to_hstring(a_name).c_str());
+	Util::SetResourceName(fence11.get(), "%s", a_name);
+}
+
+bool SharedFence::CpuWait(uint64_t a_value, DWORD a_timeoutMs) const
+{
+	if (!fence12 || a_value == 0)
+		return true;
+	if (fence12->GetCompletedValue() >= a_value)
+		return true;
+
+	winrt::handle fenceEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+	if (!fenceEvent)
+		return false;
+	if (FAILED(fence12->SetEventOnCompletion(a_value, fenceEvent.get())))
+		return false;
+
+	winrt::com_ptr<ID3D12Device> device12;
+	DWORD waitedMs = 0;
+	while (waitedMs < a_timeoutMs) {
+		const DWORD sliceMs = std::min<DWORD>(kRemovalPollMs, a_timeoutMs - waitedMs);
+		const DWORD waitResult = WaitForSingleObject(fenceEvent.get(), sliceMs);
+		if (waitResult == WAIT_OBJECT_0)
+			return true;
+		if (waitResult != WAIT_TIMEOUT)
+			return false;
+		waitedMs += sliceMs;
+		if (!device12)
+			fence12->GetDevice(IID_PPV_ARGS(&device12));
+		if (device12 && FAILED(device12->GetDeviceRemovedReason()))
+			return false;
+	}
+
+	return false;
 }
 
 DXGISwapChainProxy::DXGISwapChainProxy(IDXGISwapChain4* a_swapChain)
