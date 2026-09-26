@@ -24,6 +24,7 @@
 #include <cmath>
 #include <directx/d3dx12.h>
 #include <format>
+#include <mutex>
 
 #include "Features/PostProcessing.h"
 
@@ -1098,7 +1099,7 @@ void Upscaling::LoadSettings(json& o_json)
 	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
 
 	// Sanitize loaded settings to ensure enum indices are valid
-	constexpr auto enumCount = 4;  // UpscaleMethod has 4 values: kNONE, kTAA, kFSR, kDLSS
+	constexpr auto enumCount = static_cast<uint>(magic_enum::enum_count<UpscaleMethod>());
 	if (settings.upscaleMethod >= static_cast<uint>(enumCount)) {
 		logger::warn("[Upscaling] Loaded upscaleMethod {} out of range, clamping to {}", settings.upscaleMethod, enumCount ? enumCount - 1 : 0);
 		settings.upscaleMethod = enumCount ? enumCount - 1 : 0;
@@ -1588,21 +1589,18 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 {
 	auto upscaleMethod = GetUpscaleMethod();
-	uint methodIndex = (uint)upscaleMethod;
 
 	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
-	if (upscaleMethod == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture)) {
-		std::vector<std::pair<const char*, const char*>> defines = {
-			{ "FSR", "" },
-			{ "DEPTH_OUTPUT", "" }
-		};
-		return encodeTexturesCSDepthOutput.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
-	}
+	const bool typedDepth = upscaleMethod == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture);
+	return GetEncodeTexturesCS(upscaleMethod, typedDepth ? EncodeOutput::kTypedDepth : EncodeOutput::kMasksOnly);
+}
 
+ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output)
+{
 	std::vector<std::pair<const char*, const char*>> defines;
 
 	// Add upscale method define
-	switch (upscaleMethod) {
+	switch (a_method) {
 	case UpscaleMethod::kDLSS:
 		defines.push_back({ "DLSS", "" });
 		break;
@@ -1614,7 +1612,34 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 		break;
 	}
 
-	return encodeTexturesCS[methodIndex].Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
+	if (a_output == EncodeOutput::kTypedDepth)
+		defines.push_back({ "DEPTH_OUTPUT", "" });
+
+	return encodeTexturesCS[(uint)a_method][(uint)a_output].Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
+}
+
+bool Upscaling::GetEncodeInputs(EncodeInputViews& a_views, const char*& a_missing) const
+{
+	auto renderer = globals::game::renderer;
+	auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
+	auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
+	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	a_missing = nullptr;
+	if (!temporalAAMask.SRV)
+		a_missing = "TAA mask";
+	else if (!normals.SRV)
+		a_missing = "normals";
+	else if (!motionVector.SRV)
+		a_missing = "motion vectors";
+	else if (!depth.depthSRV)
+		a_missing = "depth";
+	if (a_missing)
+		return false;
+
+	a_views = { Util::AsReal(temporalAAMask.SRV), Util::AsReal(normals.SRV), Util::AsReal(motionVector.SRV), Util::AsReal(depth.depthSRV) };
+	return true;
 }
 
 ID3D11PixelShader* Upscaling::GetDepthRefractionUpscalePS()
@@ -2152,10 +2177,11 @@ void Upscaling::SetupResources()
 void Upscaling::ClearShaderCache()
 {
 	foveatedRender.ClearShaderCache();
-	for (int i = 0; i < 5; ++i) {
-		encodeTexturesCS[i].Reset();
+	for (auto& methodSlot : encodeTexturesCS) {
+		for (auto& outputSlot : methodSlot) {
+			outputSlot.Reset();
+		}
 	}
-	encodeTexturesCSDepthOutput.Reset();
 	copyDepthToSharedBufferPS.Reset();
 
 	depthRefractionUpscalePS.Reset();
@@ -2652,10 +2678,6 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::EncodeTextures");
 
-		auto& temporalAAMask = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK];
-		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
 		// VR: ensure per-eye intermediate textures exist before the dispatch writes into them
 		if (globals::game::isVR)
 			EnsureVRIntermediateTextures();
@@ -2667,10 +2689,20 @@ void Upscaling::Upscale()
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
 		// The shader applies EyeOffsetX to sample the correct half.
-		ID3D11ShaderResourceView* views[4] = { Util::AsReal(temporalAAMask.SRV), Util::AsReal(normals.SRV), Util::AsReal(motionVector.SRV), Util::AsReal(depth.depthSRV) };
-		context->CSSetShaderResources(0, ARRAYSIZE(views), views);
+		EncodeInputViews views{};
+		const char* missingInput = nullptr;
+		ID3D11ComputeShader* encodeCS = nullptr;
+		if (GetEncodeInputs(views, missingInput)) {
+			context->CSSetShaderResources(0, (uint)views.size(), views.data());
+			encodeCS = GetEncodeTexturesCS();
+		} else {
+			static std::once_flag loggedMissingInputs;
+			std::call_once(loggedMissingInputs, [missingInput] {
+				logger::error("[Upscaling] Missing encoder input SRV ({}); skipping EncodeTextures dispatch", missingInput);
+			});
+		}
 
-		if (auto* encodeCS = GetEncodeTexturesCS()) {
+		if (encodeCS) {
 			context->CSSetShader(encodeCS, nullptr, 0);
 
 			for (uint32_t i = 0; i < numEyes; ++i) {
