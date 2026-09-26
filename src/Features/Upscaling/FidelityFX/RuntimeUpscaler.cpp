@@ -10,6 +10,7 @@
 #include <directx/d3dx12.h>
 #include <format>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@
 #include "../../../State.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
+#include "Utils/SehGuard.h"
 
 extern ffxFunctions ffxModule;
 
@@ -26,7 +28,6 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource, wchar_t const* ffxResNa
 namespace
 {
 	constexpr uint32_t kAmdVendorId = 0x1002u;
-	constexpr uint32_t kNvidiaVendorId = 0x10DEu;
 
 	enum class D3D11IdleFenceResult : uint8_t
 	{
@@ -415,36 +416,6 @@ namespace
 			resource = nullptr;
 		}
 	}
-
-	bool DispatchHostFsr3UpscaleProtected(FfxFsr3Context& a_context, FfxFsr3DispatchUpscaleDescription& a_dispatchParameters)
-	{
-		bool dispatchOk = true;
-
-		__try {
-			dispatchOk = ffxFsr3ContextDispatchUpscale(&a_context, &a_dispatchParameters) == FFX_OK;
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			dispatchOk = false;
-		}
-
-		return dispatchOk;
-	}
-
-	// A faulting dispatch inside the AMD-provided DLL is not guaranteed to raise a C++
-	// exception the caller's try/catch can observe; wrap it the same way as the host path.
-	bool DispatchRuntimeUpscalerProtected(ffx::Context& a_context, ffx::DispatchDescUpscale& a_dispatchParameters, bool& a_faulted)
-	{
-		a_faulted = false;
-		bool dispatchOk = true;
-
-		__try {
-			dispatchOk = ffx::Dispatch(a_context, a_dispatchParameters) == ffx::ReturnCode::Ok;
-		} __except (EXCEPTION_EXECUTE_HANDLER) {
-			a_faulted = true;
-			dispatchOk = false;
-		}
-
-		return dispatchOk;
-	}
 }
 
 FidelityFX::~FidelityFX()
@@ -690,7 +661,7 @@ bool FidelityFX::IsNvidiaAdapterDetected() const
 {
 	DXGI_ADAPTER_DESC adapterDesc{};
 	if (TryGetCurrentAdapterDesc(adapterDesc))
-		return adapterDesc.VendorId == kNvidiaVendorId;
+		return adapterDesc.VendorId == Streamline::kNvidiaVendorId;
 
 	return false;
 }
@@ -1541,13 +1512,15 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			const bool runtimeFallbackReset = runtimeFallbackResetDispatchesRemaining > 0;
 			dispatchParameters.reset = dispatchParameters.reset || runtimeFallbackReset;
 
-			bool dispatchFaulted = false;
-			dispatchOk = DispatchRuntimeUpscalerProtected(runtimeUpscalerContexts[a_contextIndex], dispatchParameters, dispatchFaulted);
-			if (dispatchFaulted) {
+			DWORD faultCode = 0;
+			const bool dispatchCompleted = Util::SehGuarded(
+				[&] { dispatchOk = ffx::Dispatch(runtimeUpscalerContexts[a_contextIndex], dispatchParameters) == ffx::ReturnCode::Ok; },
+				&faultCode);
+			if (!dispatchCompleted) {
 				commandContext->fenceValue = 0;
 				runtimeFallbackResetDispatchesRemaining = std::max(runtimeFallbackResetDispatchesRemaining, runtimeUpscalerContextCount);
 				QuarantineRuntimeUpscalerForSession("runtime upscaler dispatch fault");
-				logger::critical("[FidelityFX] Runtime upscaler dispatch faulted for eye {}; the provider will not be used again this session", a_contextIndex);
+				logger::critical("[FidelityFX] Runtime upscaler dispatch faulted for eye {} (exception 0x{:08X}); the provider will not be used again this session", a_contextIndex, static_cast<uint32_t>(faultCode));
 				return false;
 			}
 			if (dispatchOk && runtimeFallbackReset)
@@ -1798,7 +1771,16 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.preExposure = 1.0f;
 	dispatchParameters.flags = 0;
 
-	const bool dispatchOK = DispatchHostFsr3UpscaleProtected(fsrContext[a_contextIndex], dispatchParameters);
+	bool hostDispatchOk = false;
+	DWORD faultCode = 0;
+	if (!Util::SehGuarded(
+			[&] { hostDispatchOk = ffxFsr3ContextDispatchUpscale(&fsrContext[a_contextIndex], &dispatchParameters) == FFX_OK; },
+			&faultCode)) {
+		static std::once_flag hostFaultLogged;
+		std::call_once(hostFaultLogged, [&] {
+			logger::error("[FidelityFX] Host FSR3 dispatch faulted for eye {} (exception 0x{:08X})", a_contextIndex, static_cast<uint32_t>(faultCode));
+		});
+	}
 
-	return dispatchOK;
+	return hostDispatchOk;
 }
