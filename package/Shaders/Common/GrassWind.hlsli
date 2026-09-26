@@ -6,6 +6,8 @@
 
 namespace GrassWind
 {
+	static const float FlutterDisplacementRatio = 0.25f;
+
 	float CalculateFlutterWave(float phase)
 	{
 		float windAngle = 0.4 * phase;
@@ -46,17 +48,15 @@ namespace GrassWind
 	}
 
 	float3 CalculateFlutterDisplacement(
-		float tipWeight, float3 bendAxis, float bendAngle, float compression, float3 windVector, float flutter)
+		float tipWeight, float bladeReach, float3 bendAxis, float flutter)
 	{
 		float axisLength = length(bendAxis.xy);
 		if (axisLength <= EPSILON_WIND_RESPONSE)
 			return 0.0f.xxx;
-
 		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
 		float weight = saturate(tipWeight);
-		float windDrive = length(windVector.xy) * max(windVector.z, 0.0f);
-		float springDrive = saturate(length(float2(bendAngle, compression)));
-		float windPower = max(windDrive, springDrive) * flutter * (0.5f * weight * weight);
+		float flutterDrive = flutter * (weight * weight);
+		float windPower = bladeReach * FlutterDisplacementRatio * flutterDrive;
 		return flutterDirection * windPower;
 	}
 

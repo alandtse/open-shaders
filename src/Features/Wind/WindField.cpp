@@ -105,10 +105,27 @@ namespace WindField
 			const Scalar2 crosswind{ a_field.crosswind.x, a_field.crosswind.y };
 			const float gustScale = std::max(std::abs(a_tuning.gustScale), kMinimumDivisor);
 			const float frontAspectRatio = std::max(std::abs(a_tuning.frontAspectRatio), kMinimumDivisor);
-			const Scalar2 frontCoordinate{
+			Scalar2 frontCoordinate{
 				(Dot(worldPosition, direction) - std::max(a_field.travelDistance, 0.0f)) / gustScale,
 				Dot(worldPosition, crosswind) / (gustScale * frontAspectRatio)
 			};
+			const float distortionStrength = std::max(a_tuning.distortionStrength, 0.0f);
+			if (distortionStrength > 0.0f) {
+				const float distortionScale = std::max(std::abs(a_tuning.distortionScale), kMinimumDivisor);
+				const float distortionTime = std::max(a_field.travelDistance, 0.0f) / gustScale *
+				                             std::max(a_tuning.distortionSpeed, 0.0f);
+				const Scalar2 distortionCoordinate{
+					frontCoordinate.x / distortionScale + distortionTime * 0.37f,
+					frontCoordinate.y / distortionScale + distortionTime * -0.23f
+				};
+				const Scalar2 distortion{
+					GradientNoise(distortionCoordinate, a_tuning.broadGustSeed ^ 0x68BC21EBu, a_tuning),
+					GradientNoise({ distortionCoordinate.y + 17.0f, distortionCoordinate.x + 29.0f },
+						a_tuning.turbulentGustSeed ^ 0x02E5BE93u, a_tuning)
+				};
+				frontCoordinate.x += distortion.x * distortionStrength;
+				frontCoordinate.y += distortion.y * distortionStrength;
+			}
 			const float broadGust = GradientNoise(frontCoordinate, a_tuning.broadGustSeed, a_tuning);
 			const float detailScaleRatio = std::max(std::abs(a_tuning.detailScaleRatio), kMinimumDivisor);
 			const float detailCrosswindScaleRatio =

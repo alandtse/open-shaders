@@ -21,6 +21,10 @@ WindField::WindTuning GetDefaultWindTuning()
 	tuning.gradientSeedMix = 0x1E3779B9u;
 	tuning.pcgMultiplier = 1664525u;
 	tuning.pcgIncrement = 1013904223u;
+	tuning.distortionStrength = 0.0f;
+	tuning.distortionScale = 1.0f;
+	tuning.distortionSpeed = 0.0f;
+	tuning._padding = 0.0f;
 	return tuning;
 }
 

@@ -22,6 +22,10 @@ namespace WindField
 		uint gradientSeedMix;
 		uint pcgMultiplier;
 		uint pcgIncrement;
+		float distortionStrength;
+		float distortionScale;
+		float distortionSpeed;
+		float _padding;
 	};
 
 	struct WindSample

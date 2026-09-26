@@ -38,12 +38,16 @@ struct alignas(16) GrassWindSpringData
 	float transientFlutterStrength;
 	float3 flutterAmplitudeResponse;
 	float transientFlutterFrequency;
+	float flutterGustInfluence;
+	float flutterWaveScale;
+	float2 _padding;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
-static_assert(sizeof(GrassWindSpringData) == 224);
+static_assert(sizeof(GrassWindSpringData) == 240);
 static_assert(offsetof(GrassWindSpringData, transientFieldMask) == 196);
 static_assert(offsetof(GrassWindSpringData, flutterAmplitudeResponse) == 208);
+static_assert(offsetof(GrassWindSpringData, flutterGustInfluence) == 224);
 
 struct GrassWindState
 {
