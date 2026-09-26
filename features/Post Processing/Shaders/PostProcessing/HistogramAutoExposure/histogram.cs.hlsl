@@ -6,6 +6,7 @@
 #include "PostProcessing/HistogramAutoExposure/common.hlsli"
 
 #include "Common/Color.hlsli"
+#include "Common/SceneExposure.hlsli"
 
 RWStructuredBuffer<uint> RWBufferHistogram : register(u0);
 RWStructuredBuffer<float> RWBufferAdaptation : register(u1);
@@ -106,7 +107,7 @@ float4 ComputeBoxBounds(float2 dims)
 			totalWeight += (float)RWBufferHistogram[i];
 		}
 
-		float previousLum = AdaptLerp >= 1.0 ? 0.18 : max(1e-5, RWBufferAdaptation[0]);
+		float previousLum = AdaptLerp >= 1.0 ? SceneExposure::kMiddleGrey : max(1e-5, RWBufferAdaptation[0]);
 		float avgLum = previousLum;
 		if (totalWeight > 0.0) {
 			float lowCut = totalWeight * LowPercent;

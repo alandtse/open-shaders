@@ -448,11 +448,12 @@ void Feature::DrainSceneTransitions()
 
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 {
-	for (auto* feature : GetFeatureList()) {
-		if (feature->loaded && feature->GetShortName() == shortName)
-			return feature;
-	}
-	return nullptr;
+	return FindLoadedFeature([&](Feature* f) { return f->GetShortName() == shortName; });
+}
+
+bool Feature::FindSceneExposure(SceneExposure& a_out)
+{
+	return FindLoadedFeature([&](Feature* f) { return f->GetSceneExposure(a_out); }) != nullptr;
 }
 
 std::vector<std::string> Feature::GetLoadedFeatureNames()

@@ -974,6 +974,35 @@ PostProcessing::Settings PostProcessing::GetCommonBufferData() const
 	return data;
 }
 
+bool PostProcessing::GetSceneExposure(SceneExposure& a_out) const
+{
+	if (!loaded || bypass || IsTonemapOwnedByEffects11() || !fullscreenVS || !copyPS)
+		return false;
+
+	const auto* exposure = GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure);
+	if (!exposure || !exposure->HasActiveAdaptation())
+		return false;
+
+	const auto parameters = exposure->GetExposureParameters();
+	a_out.adaptedLuminance = exposure->GetAdaptationSRV();
+	a_out.luminanceRange = parameters.LuminanceRange;
+	a_out.compensationScale = parameters.CompensationScale();
+	return true;
+}
+
+json PostProcessing::GetDiagnostics()
+{
+	SceneExposure exposure;
+	if (!GetSceneExposure(exposure))
+		return json{ { "sceneExposurePublished", false } };
+
+	return json{
+		{ "sceneExposurePublished", true },
+		{ "sceneExposureLuminanceRange", json::array({ exposure.luminanceRange.x, exposure.luminanceRange.y }) },
+		{ "sceneExposureCompensationScale", exposure.compensationScale },
+	};
+}
+
 void PostProcessing::Prepass()
 {
 	if (!pendingSettings.empty())

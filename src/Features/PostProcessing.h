@@ -68,6 +68,9 @@ struct PostProcessing : Feature
 	/** Reapplies overrides for the entire feature or selected subfeature. */
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
 
+	/** @brief Reports whether scene exposure is published and its luminance range and compensation. */
+	virtual json GetDiagnostics() override;
+
 	/**
 	 * @brief Whether Post Processing wants to replace the vanilla tonemap this frame.
 	 *
@@ -93,6 +96,9 @@ struct PostProcessing : Feature
 	 * when another feature produced the image.
 	 */
 	Settings GetCommonBufferData() const;
+
+	/** @brief Publishes Composite's auto exposure whenever the Post Processing pipeline runs. */
+	virtual bool GetSceneExposure(SceneExposure& a_out) const override;
 
 	json pendingSettings = {};
 
@@ -159,6 +165,12 @@ struct PostProcessing : Feature
 	T* GetPipelineFeature(FeaturePipelineIndex idx)
 	{
 		return static_cast<T*>(pipeline[static_cast<size_t>(idx)].get());
+	}
+
+	template <typename T>
+	const T* GetPipelineFeature(FeaturePipelineIndex idx) const
+	{
+		return static_cast<const T*>(pipeline[static_cast<size_t>(idx)].get());
 	}
 
 	virtual void ClearShaderCache() override;

@@ -8,11 +8,6 @@
 #include "State.h"
 #include "Util.h"
 
-namespace
-{
-	constexpr float kMiddleGray = 0.18f;
-}
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HistogramAutoExposure::Settings,
 	ExposureCompensation,
@@ -38,13 +33,13 @@ HistogramAutoExposure::ExposureParameters HistogramAutoExposure::GetExposurePara
 		parameters.ExposureAtISO100 = exp2(cam->ExposureDeltaEV) * 100.0f / cam->ISO;
 		if (cam->Exposure == CinematicCamera::ExposureMode::AutoISO) {
 			parameters.CompensationEV = cam->ExposureCompensationEV;
-			const float targetLuminance = kMiddleGray * exp2(parameters.CompensationEV);
+			const float targetLuminance = Feature::SceneExposure::kMiddleGrey * parameters.CompensationScale();
 			const float minExposure = parameters.ExposureAtISO100 * cam->MinISO / 100.0f;
 			const float maxExposure = parameters.ExposureAtISO100 * cam->MaxISO / 100.0f;
 			parameters.LuminanceRange = float2(targetLuminance / maxExposure, targetLuminance / minExposure);
 		} else {
 			parameters.CompensationEV = cam->ExposureDeltaEV;
-			parameters.LuminanceRange = float2(kMiddleGray, kMiddleGray);
+			parameters.LuminanceRange = float2(Feature::SceneExposure::kMiddleGrey, Feature::SceneExposure::kMiddleGrey);
 		}
 	}
 	return parameters;
@@ -64,7 +59,7 @@ void HistogramAutoExposure::DrawCameraExposureReadout()
 			ImGui::TextDisabled("%s", T("feature.post_processing.cinematic_camera.metering", "Metering..."));
 			return;
 		}
-		const float requestedISO = 100.0f * kMiddleGray * exp2(parameters.CompensationEV) /
+		const float requestedISO = 100.0f * Feature::SceneExposure::kMiddleGrey * parameters.CompensationScale() /
 		                           (std::max(adaptationValue, 1e-5f) * parameters.ExposureAtISO100);
 		iso = std::clamp(requestedISO, cam->MinISO, cam->MaxISO);
 		ImGui::Text(T("feature.post_processing.cinematic_camera.auto_iso_readout", "Metered ISO: %.0f (range %.0f - %.0f)"), iso, cam->MinISO, cam->MaxISO);
@@ -137,11 +132,11 @@ void HistogramAutoExposure::DrawSettings()
 		const float adaptedLum = std::max(adaptationValue, 1e-5f);
 		const float adaptedEV100 = log2(adaptedLum) + 3.0f;
 		const auto parameters = GetExposureParameters();
-		const float compensationScale = exp2(parameters.CompensationEV);
-		const float clampedAdaptedLum = std::clamp(adaptedLum, parameters.LuminanceRange.x, parameters.LuminanceRange.y);
+		const float compensationScale = parameters.CompensationScale();
+		const float clampedAdaptedLum = std::min(std::max(adaptedLum, parameters.LuminanceRange.x), parameters.LuminanceRange.y);
 		const float compensatedTargetLum = clampedAdaptedLum / std::max(compensationScale, 1e-5f);
 		const float compensatedTargetEV100 = log2(compensatedTargetLum) + 3.0f;
-		const float finalExposure = kMiddleGray * compensationScale / clampedAdaptedLum;
+		const float finalExposure = Feature::SceneExposure::Evaluate(adaptedLum, parameters.LuminanceRange, compensationScale);
 		const float finalExposureEV = log2(std::max(finalExposure, 1e-5f));
 
 		ImGui::Text(T("feature.post_processing.histogram_auto_exposure.adapted_luminance_ev", "Adapted Luminance: %.6g (%.2f EV100)"), adaptedLum, adaptedEV100);
@@ -312,7 +307,7 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 		.AdaptArea = settings.AdaptArea,
 		.AdaptationRange = parameters.LuminanceRange,
 		.AdaptLerp = resetAdaptation ? 1.0f : std::clamp(1.f - exp(-RE::BSTimer::GetSingleton()->realTimeDelta * settings.AdaptSpeed), 0.f, 1.f),
-		.ExposureCompensation = exp2(parameters.CompensationEV),
+		.ExposureCompensation = parameters.CompensationScale(),
 		.PurkinjeStartEV = settings.PurkinjeStartEV,
 		.PurkinjeMaxEV = settings.PurkinjeMaxEV,
 		.PurkinjeStrength = settings.PurkinjeStrength,
