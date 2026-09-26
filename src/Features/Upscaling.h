@@ -311,7 +311,7 @@ public:
 	enum class EncodeOutput : uint8_t
 	{
 		kMasksOnly,
-		kTypedDepth,  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
+		kTypedDepth,  // FSR and VR DLSS: converts R24G8_TYPELESS depth to R32_FLOAT
 		kCount
 	};
 
@@ -322,6 +322,9 @@ public:
 
 	/** @brief EncodeTextures CS for a method and output set; nullptr on compile failure. */
 	ID3D11ComputeShader* GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output);
+
+	/** @brief Whether a method needs the typed-depth encoder output on this runtime. */
+	bool NeedsTypedDepth(UpscaleMethod a_method) const;
 
 	using EncodeInputViews = std::array<ID3D11ShaderResourceView*, 4>;
 
@@ -365,8 +368,7 @@ public:
 	// Owned here so both Streamline (DLSS) and FidelityFX (FSR) can use them.
 	eastl::unique_ptr<Texture2D> vrIntermediateColorIn[2];           // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateColorOut[2];          // per-eye output resolution
-	eastl::unique_ptr<Texture2D> vrIntermediateDepth;                // right-eye render resolution (R24G8_TYPELESS, DLSS only)
-	eastl::unique_ptr<Texture2D> vrIntermediateLinearDepth[2];       // per-eye render resolution (R32_FLOAT, for FSR)
+	eastl::unique_ptr<Texture2D> vrIntermediateLinearDepth[2];       // per-eye render resolution (R32_FLOAT, for FSR and VR DLSS)
 	eastl::unique_ptr<Texture2D> vrIntermediateMotionVectors[2];     // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateReactiveMask[2];      // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateTransparencyMask[2];  // per-eye render resolution

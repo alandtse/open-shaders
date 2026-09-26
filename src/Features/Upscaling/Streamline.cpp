@@ -787,14 +787,13 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		bool eye0Ready = upscaling.vrIntermediateColorIn[0] &&
 		                 upscaling.vrIntermediateMotionVectors[0] && upscaling.vrIntermediateReactiveMask[0] && upscaling.vrIntermediateTransparencyMask[0];
 		bool eye1Ready = upscaling.vrIntermediateColorIn[1] && upscaling.vrIntermediateColorOut[1] &&
-		                 upscaling.vrIntermediateDepth && upscaling.vrIntermediateMotionVectors[1] &&
+		                 upscaling.vrIntermediateLinearDepth[1] && upscaling.vrIntermediateMotionVectors[1] &&
 		                 upscaling.vrIntermediateReactiveMask[1] && upscaling.vrIntermediateTransparencyMask[1];
 
 		// Pre-copy eye 1 before eye 0 runs (overlap hazard), then clear HMD mask.
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[1]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &rightIn);
-			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, Util::AsReal(depthTexture.texture), 0, &rightIn);
 			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), Util::AsReal(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
@@ -820,7 +819,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			EvaluateDLSS(viewportRight, 1,
 				upscaling.vrIntermediateColorIn[1]->resource.get(),
 				upscaling.vrIntermediateColorOut[1]->resource.get(),
-				upscaling.vrIntermediateDepth->resource.get(),
+				upscaling.vrIntermediateLinearDepth[1]->resource.get(),
 				upscaling.vrIntermediateMotionVectors[1]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[1]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[1]->resource.get(),
