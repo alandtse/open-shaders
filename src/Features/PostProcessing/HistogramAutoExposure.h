@@ -75,6 +75,9 @@ struct HistogramAutoExposure : public PostProcessFeature
 	/// Used by the Composite pass to apply exposure.
 	ID3D11ShaderResourceView* GetAdaptationSRV() const { return adaptationSB && !resetAdaptation ? adaptationSB->SRV() : nullptr; }
 
+	/// True when this feature is active and has an adaptation value ready to consume.
+	bool HasActiveAdaptation() const { return IsActive() && GetAdaptationSRV(); }
+
 	/// Get the constant buffer containing exposure parameters (for Composite pass).
 	ID3D11Buffer* GetConstantBuffer() const { return autoExposureCB ? autoExposureCB->CB() : nullptr; }
 
@@ -94,6 +97,8 @@ struct HistogramAutoExposure : public PostProcessFeature
 		float2 LuminanceRange;
 		float CompensationEV = 0.0f;
 		float ExposureAtISO100 = 1.0f;
+
+		float CompensationScale() const { return exp2(CompensationEV); }
 	};
 	/** @brief Returns effective camera or saved histogram exposure limits. */
 	ExposureParameters GetExposureParameters() const;

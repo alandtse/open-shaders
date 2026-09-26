@@ -8,6 +8,7 @@
 #include "PostProcessing/fullscreen.hlsli"
 
 #include "Common/Color.hlsli"
+#include "Common/SceneExposure.hlsli"
 
 Texture2D<float4> TexColor : register(t0);
 
@@ -75,7 +76,7 @@ float ComputeLocalExposure(float3 sceneColor, float baseLogLuminance, float glob
 	float exposedLogLuminance = sceneLogLuminance + logGlobalExposure;
 	float exposedBase = baseLogLuminance + logGlobalExposure;
 	float detail = exposedLogLuminance - exposedBase;
-	float middleGrey = log2(0.18 * middleGreyCompensation) + MiddleGreyBias;
+	float middleGrey = log2(SceneExposure::kMiddleGrey * middleGreyCompensation) + MiddleGreyBias;
 	float remappedBase = middleGrey + RemapBaseContrast(exposedBase - middleGrey);
 	float targetLogLuminance = remappedBase + detail * DetailStrength;
 	float logAdjustment = (targetLogLuminance - exposedLogLuminance) * Strength;
@@ -187,7 +188,7 @@ float4 PSComposite(FullscreenTriangleVSOutput input) : SV_Target
 #ifdef HAS_EXPOSURE
 	// Compute global exposure value
 	float avgLuma = TexAdaptation[0];
-	float globalExposure = 0.18 * ExposureCompensation / clamp(avgLuma, AdaptationRange.x, AdaptationRange.y);
+	float globalExposure = SceneExposure::Evaluate(avgLuma, AdaptationRange, ExposureCompensation);
 
 	// Formula: SceneColor * GlobalExposure * LocalExposure + Bloom * GlobalExposure
 	// LocalExposure multiplier derived from the base luminance pass (1.0 if not enabled)

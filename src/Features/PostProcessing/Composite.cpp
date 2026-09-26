@@ -118,7 +118,7 @@ void Composite::Draw(TextureInfo& inout_tex)
 	bool hasBloom = bloom && bloom->enabled && bloom->GetBloomOutput().srv;
 	bool hasFlare = flare && flare->enabled && flare->GetFlareOutput().srv;
 	bool hasGlare = glare && glare->enabled && glare->GetGlareOutput().srv;
-	bool hasExposure = exposure && exposure->IsActive() && exposure->GetAdaptationSRV();
+	bool hasExposure = exposure && exposure->HasActiveAdaptation();
 	bool hasLocalExposure = localExposure && localExposure->enabled && localExposure->GetBaseLuminanceSRV();
 
 	uint flags = (hasBloom ? BLOOM : 0) | (hasFlare ? FLARE : 0) | (hasGlare ? GLARE : 0) | (hasExposure ? EXPOSURE : 0) | (hasLocalExposure ? LOCAL_EXPOSURE : 0);
