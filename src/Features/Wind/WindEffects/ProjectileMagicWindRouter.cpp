@@ -265,7 +265,10 @@ std::optional<ProjectileMagicWindRouter::ProjectileProfile> ProjectileMagicWindR
 	                       a_projectile->data.flags.all(RE::BGSProjectileData::BGSProjectileFlags::kExplosion);
 	return ProjectileProfile{
 		range, radius, strength, speed,
-		std::cos(coneHalfAngle * std::numbers::pi_v<float> / 180.0f), explosive, false, false
+		std::cos(coneHalfAngle * std::numbers::pi_v<float> / 180.0f), explosive, false, false,
+		force > 0.0f || (a_projectile->data.explosionType &&
+							std::isfinite(a_projectile->data.explosionType->data.force) &&
+							a_projectile->data.explosionType->data.force > 0.0f)
 	};
 }
 
@@ -275,8 +278,12 @@ std::optional<ProjectileMagicWindRouter::ProjectileProfile> ProjectileMagicWindR
 	if (!a_effect || !a_effect->data.projectileBase)
 		return std::nullopt;
 	auto profile = ClassifyProjectile(a_effect->data.projectileBase, a_area);
-	if (profile && a_effect->data.explosion)
+	if (profile && a_effect->data.explosion) {
 		profile->explosive = true;
+		profile->nativePhysics = profile->nativePhysics ||
+		                         (std::isfinite(a_effect->data.explosion->data.force) &&
+									 a_effect->data.explosion->data.force > 0.0f);
+	}
 	return profile;
 }
 
@@ -292,8 +299,10 @@ std::optional<ProjectileMagicWindRouter::ProjectileProfile> ProjectileMagicWindR
 		auto profile = ClassifyMagicEffect(effect->baseEffect, static_cast<float>(effect->effectItem.area));
 		if (!profile)
 			continue;
+		const bool nativePhysics = (result && result->nativePhysics) || profile->nativePhysics;
 		if (!result || profile->radius > result->radius)
 			result = profile;
+		result->nativePhysics = nativePhysics;
 	}
 	if (result) {
 		result->range = std::clamp(std::max(result->range, a_magicItem->GetRange()), kMinimumRange, kMaximumRange);
@@ -333,6 +342,15 @@ std::optional<ProjectileMagicWindRouter::ProjectileProfile> ProjectileMagicWindR
 	if (result && (runtimeData.explosion || (base && (base->data.explosionType ||
 														 base->data.flags.all(RE::BGSProjectileData::BGSProjectileFlags::kExplosion)))))
 		result->explosive = true;
+	if (result && base) {
+		const auto* explosion = runtimeData.explosion;
+		if (!explosion && runtimeData.avEffect)
+			explosion = runtimeData.avEffect->data.explosion;
+		if (!explosion)
+			explosion = base->data.explosionType;
+		result->nativePhysics = (std::isfinite(base->data.force) && base->data.force > 0.0f) ||
+		                        (explosion && std::isfinite(explosion->data.force) && explosion->data.force > 0.0f);
+	}
 	return result;
 }
 
@@ -372,7 +390,8 @@ void ProjectileMagicWindRouter::EmitImpact(const PendingImpact& a_impact)
 		std::clamp(a_impact.profile.propagationSpeed, 1400.0f, 4500.0f), settings.decayTime);
 	globals::features::wind.QueueTransientWindSource(source,
 		Wind::TransientWindSourceOwner::ProjectileMagic,
-		Wind::TransientWindSourcePriority::Impact);
+		Wind::TransientWindSourcePriority::Impact,
+		a_impact.profile.nativePhysics ? Wind::TransientWindPhysics::Native : Wind::TransientWindPhysics::Wind);
 }
 
 bool ProjectileMagicWindRouter::AcceptImpactLocked(const RE::Projectile& a_projectile,

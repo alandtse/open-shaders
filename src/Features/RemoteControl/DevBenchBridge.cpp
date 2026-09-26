@@ -1194,6 +1194,25 @@ namespace
 		return static_cast<CSPluginAPI::ICSInterface001*>(CSPluginAPI::GetApi(0));
 	}
 
+	json WindVectorToJson(const CSPluginAPI::WindVector& a_vector)
+	{
+		return json::array({ a_vector.x, a_vector.y, a_vector.z });
+	}
+
+	json WindSampleToJson(const CSPluginAPI::WindSample& a_sample)
+	{
+		return json{
+			{ "available", true },
+			{ "baseVelocity", WindVectorToJson(a_sample.baseVelocity) },
+			{ "gustVelocity", WindVectorToJson(a_sample.gustVelocity) },
+			{ "transientVelocity", WindVectorToJson(a_sample.transientVelocity) },
+			{ "finalVelocity", WindVectorToJson(a_sample.finalVelocity) },
+			{ "ambientGust", a_sample.ambientGust },
+			{ "transientIntensity", a_sample.transientIntensity },
+			{ "frameId", a_sample.frameId }
+		};
+	}
+
 	// Dispatches directly on the devbench listener thread rather than marshaling to
 	// main: API.md documents every method as callable from any thread (setters stage
 	// into CSPluginAPI's queue; ProcessStagedSettings applies on the render thread next
@@ -1240,6 +1259,26 @@ namespace
 				 return json{ { "staged", true } }; } },
 			{ "GetVRUpscalingApplyBlockReasons", [](auto* i, const json&) { return json{ { "result", i->GetVRUpscalingApplyBlockReasons() } }; } },
 			{ "IsVRUpscalingProfileApplyAllowed", [](auto* i, const json&) { return json{ { "result", i->IsVRUpscalingProfileApplyAllowed() } }; } },
+			{ "SampleWind", [](auto* i, const json& p) {
+				 const CSPluginAPI::WindVector position{
+					 p.value("x", 0.0f), p.value("y", 0.0f), p.value("z", 0.0f)
+				 };
+				 CSPluginAPI::WindSample sample;
+				 if (!i->SampleWind(&position, &sample, 1))
+					 return json{ { "available", false } };
+				 return WindSampleToJson(sample);
+			 } },
+			{ "SampleWindWithPhysics", [](auto* i, const json& p) {
+				 const CSPluginAPI::WindVector position{
+					 p.value("x", 0.0f), p.value("y", 0.0f), p.value("z", 0.0f)
+				 };
+				 CSPluginAPI::WindSampleWithPhysics sample;
+				 if (!i->SampleWindWithPhysics(&position, &sample, 1))
+					 return json{ { "available", false } };
+				 json result = WindSampleToJson(sample.wind);
+				 result["physicsVelocity"] = WindVectorToJson(sample.physicsVelocity);
+				 return result;
+			 } },
 		};
 
 		const auto it = kMethods.find(method);
@@ -1310,7 +1349,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
 
 		static constexpr const char* pluginApiDesc =
-			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool) -- omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. A setter call is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
+			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed, SampleWind, SampleWindWithPhysics. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool); wind sampling takes x, y, z world coordinates and returns the decomposed wind sample; SampleWindWithPhysics also returns physicsVelocity, which excludes native physics effects. Omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. Every method is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
 		dvb->RegisterTool("openshaders.pluginapi", pluginApiDesc, &PluginApiHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the

@@ -2,9 +2,8 @@
 
 #include "VRAPI/CSinterface001.h"
 
-// Build compatibility level reported by getBuildNumber(); tracks the sibling
-// fork's revision-3 interface so already-compiled consumers gate correctly.
-inline constexpr unsigned int CSBuildNumber = 8;
+// Build compatibility level reported by getBuildNumber().
+inline constexpr unsigned int CSBuildNumber = 9;
 
 namespace CSPluginAPI
 {
@@ -53,5 +52,8 @@ namespace CSPluginAPI
 
 		virtual uint32_t GetVRUpscalingApplyBlockReasons() override;
 		virtual bool IsVRUpscalingProfileApplyAllowed() override;
+
+		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) override;
+		virtual bool SampleWindWithPhysics(const WindVector* positions, WindSampleWithPhysics* samples, uint32_t count) override;
 	};
 }  // namespace CSPluginAPI

@@ -2,15 +2,16 @@
 
 This document explains how another SKSE plugin can talk to Open Shaders (plugin name
 `CommunityShaders`) at runtime. The interface is binary-compatible with the sibling
-Community Shaders fork's revision-3 API: plugins compiled against that fork's
-`include/VRAPI/CSinterface001.h` work unchanged against this one.
+Community Shaders fork's revision-3 API, extended by Open Shaders revisions 4 and 5.
+Plugins compiled against that fork's `include/VRAPI/CSinterface001.h` work unchanged
+against this one.
 
 ## Handshake Details
 
 -   Target plugin name: `CommunityShaders`
 -   Message type: `0x43534150` (`"CSAP"`, `CSMessage::kMessage_GetInterface`)
--   Supported revisions: `1`, `2`, `3` (and `0` for "latest")
--   Build number: `getBuildNumber()` returns `8`
+-   Supported revisions: `1`, `2`, `3`, `4`, `5` (and `0` for "latest")
+-   Build number: `getBuildNumber()` returns `9`
 
 To acquire the API interface:
 
@@ -28,7 +29,7 @@ The bundled convenience helper does all of this:
 
 ## Threading Model
 
-Getters are safe from any thread. Setters may also be called from any thread: the value is
+Getters and wind sampling are safe from any thread. Setters may also be called from any thread: the value is
 staged atomically and applied on the render thread at the start of the next frame, exactly
 as if it had been edited in the in-game menu. A getter called immediately after its setter
 may still return the previous value until that frame boundary passes.
@@ -37,7 +38,7 @@ may still return the previous value until that frame boundary passes.
 
 ### Global Features
 
--   `unsigned int getBuildNumber()`: Returns the build compatibility level (`8`).
+-   `unsigned int getBuildNumber()`: Returns the build compatibility level (`9`).
 -   `bool GetSSSEnabled()` / `void SetSSSEnabled(bool enabled)`: Screen Space Shadows
     (`SSS` means Screen Space Shadows, not Subsurface Scattering). Takes effect live.
 -   `bool GetSSGIEnabled()` / `void SetSSGIEnabled(bool enabled)`: Screen Space Global
@@ -90,6 +91,45 @@ kept for ABI compatibility and are safe to call with any argument:
 
 The advisory `CSVRRenderScaleTransitionFade*` constants in the header are retained for
 source compatibility only; they have no meaning here.
+
+### Wind Sampling
+
+-   `bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count)`:
+    Samples multiple world positions from one immutable wind simulation snapshot. The
+    call returns `false` until the first snapshot is available or when its arguments are
+    invalid. `baseVelocity` is the weather-driven wind before procedural gusts;
+    `gustVelocity` is the local procedural delta; `transientVelocity` contains impacts,
+    shouts, wingbeats, and other transient forces; `finalVelocity` is their sum.
+    `ambientGust` and `transientIntensity` expose normalized response values, and
+    `frameId` identifies the shared snapshot used for the whole batch. Positions use
+    Skyrim world-space units. Velocity vectors encode wind direction and Open Shaders'
+    normalized response magnitude; they are not calibrated world units per second.
+
+    Batch related objects in one call. Open Shaders briefly locks once to copy the
+    published snapshot, then releases the lock before evaluating the positions. A
+    single batch avoids lock and ABI overhead for every object. The maximum batch size
+    is `CSWindMaximumBatchSize` positions.
+
+-   `SampleWindWithPhysics` (revision 5): Returns `wind`, the full visual sample,
+    and `physicsVelocity` from the same frame. The latter is base wind plus local
+    gusts plus only transients **not** marked as native physics. The velocity
+    vectors encode normalized wind responses, not measured object velocities
+    or forces.
+
+    "Native physics" describes a transient whose triggering game event already
+    applies its own force to Skyrim Havok objects. Open Shaders keeps that
+    transient in `wind.transientVelocity` and `wind.finalVelocity` for grass,
+    trees, and other visuals, but omits its wind proxy from `physicsVelocity` so
+    a Havok consumer does not apply a second push for the same event. This is a
+    source-level tag, not a query of whether a particular object was hit.
+    Consumers whose objects do not receive the native impulse can use the full
+    `wind.finalVelocity` instead.
+
+    The built-in routers mark Unrelenting Force, impacts with positive force in
+    their projectile or explosion records, and VR thrown-weapon impacts as
+    native. Other sources remain eligible for external physics pushes. The
+    sampler does not automatically discover every Havok event. Revision-4
+    callers retain the original `WindSample` layout and behavior.
 
 ## Compatibility Guidance
 

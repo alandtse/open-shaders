@@ -3,6 +3,7 @@
 #include <RE/Skyrim.h>
 #include <SKSE/SKSE.h>
 #include <cstdint>
+#include <type_traits>
 
 namespace CSPluginAPI
 {
@@ -13,7 +14,10 @@ namespace CSPluginAPI
 	inline constexpr unsigned int CSInterfaceRevision001 = 1;
 	inline constexpr unsigned int CSInterfaceRevision002 = 2;
 	inline constexpr unsigned int CSInterfaceRevision003 = 3;
-	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision003;
+	inline constexpr unsigned int CSInterfaceRevision004 = 4;
+	inline constexpr unsigned int CSInterfaceRevision005 = 5;
+	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision005;
+	inline constexpr uint32_t CSWindMaximumBatchSize = 16384;
 	// Guidance for VR transition controllers that hide render-scale relatches
 	// behind a game fade. These constants are advisory only and do not change
 	// the ABI; Community Shaders does not drive Game.FadeOutGame itself.
@@ -78,6 +82,42 @@ namespace CSPluginAPI
 		kTransitionPending = 1u << 4
 	};
 
+	/** @brief ABI-stable three-component vector used for positions and wind responses. */
+	struct WindVector
+	{
+		float x{};
+		float y{};
+		float z{};
+	};
+
+	/** @brief Decomposed wind velocities sampled from one published simulation frame. */
+	struct WindSample
+	{
+		WindVector baseVelocity{};
+		WindVector gustVelocity{};
+		WindVector transientVelocity{};
+		WindVector finalVelocity{};
+		float ambientGust{};
+		float transientIntensity{};
+		uint64_t frameId{};
+	};
+	static_assert(sizeof(WindVector) == 12);
+	static_assert(sizeof(WindSample) == 64);
+	static_assert(std::is_standard_layout_v<WindVector>);
+	static_assert(std::is_standard_layout_v<WindSample>);
+
+	/** @brief Revision-5 visual wind plus wind eligible for an external Havok push.
+	 * Native marks a transient whose triggering game event already applies a force. */
+	struct WindSampleWithPhysics
+	{
+		/** @brief Full visual sample, including native-force transients. */
+		WindSample wind{};
+		/** @brief Base, gust, and non-native transient response; not measured Havok velocity. */
+		WindVector physicsVelocity{};
+	};
+	static_assert(sizeof(WindSampleWithPhysics) == 80);
+	static_assert(std::is_standard_layout_v<WindSampleWithPhysics>);
+
 	// This object provides access to Community Shaders' mod support API.
 	struct ICSInterface001
 	{
@@ -129,6 +169,18 @@ namespace CSPluginAPI
 		// should buffer its latest desired profile and try again later.
 		virtual uint32_t GetVRUpscalingApplyBlockReasons() = 0;
 		virtual bool IsVRUpscalingProfileApplyAllowed() = 0;
+
+		/**
+		 * @brief Samples one immutable render-thread wind snapshot.
+		 *
+		 * Positions use Skyrim world-space units. Velocity vectors encode direction and
+		 * normalized response magnitude rather than calibrated world units per second.
+		 * Safe to call from any thread.
+		 */
+		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) = 0;
+
+		/** @brief Samples full visual wind and wind excluding native-force transients from one frame. */
+		virtual bool SampleWindWithPhysics(const WindVector* positions, WindSampleWithPhysics* samples, uint32_t count) = 0;
 	};
 }  // namespace CSPluginAPI
 
