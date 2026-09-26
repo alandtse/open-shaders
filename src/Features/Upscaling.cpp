@@ -1776,7 +1776,7 @@ void Upscaling::EnsureVRIntermediateTextures()
 	// hook spoofs HMD-recommended size). DLSS output needs to land at real
 	// DisplayRes, so size the OUTPUT intermediates from perfMode's snapshot
 	// of the true HMD resolution. Input intermediates stay at renderSize.
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 	const float2 outputSize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	uint32_t eyeWidthOut = (uint32_t)(outputSize.x / 2);
@@ -2780,7 +2780,7 @@ void Upscaling::Upscale()
 			// routing for DLSS.
 			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : Util::AsReal(depth.texture);
-			ID3D11Resource* fsrColorOut = (perfMode.IsHookActive() && perfMode.GetTestTexture()) ?
+			ID3D11Resource* fsrColorOut = perfMode.IsPresentingTestTexture() ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
 
@@ -3112,7 +3112,7 @@ void Upscaling::ApplySharpening()
 
 	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
 	// sharpening is active, so RCAS reads it directly here -- no CopyResource needed.
-	if (perfMode.IsHookActive() && perfMode.GetTestTexture()) {
+	if (perfMode.IsPresentingTestTexture()) {
 		if (!IsPerfModeSharpenRedirectActive())
 			return;
 
@@ -3208,7 +3208,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		// ApplySharpening can't read sharpenerTexture. Route through
 		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
 		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
-		const bool perfModeActive = upscaling.perfMode.IsHookActive() && upscaling.perfMode.GetTestTexture();
+		const bool perfModeActive = upscaling.perfMode.IsPresentingTestTexture();
 		if (!perfModeActive && FoveatedRenderImpl::Bridge::routeHandledThisFrame) {
 			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {

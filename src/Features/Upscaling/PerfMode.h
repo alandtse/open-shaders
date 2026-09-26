@@ -51,6 +51,8 @@ struct PerfMode
 
 	// Phase 2: resolution hook status
 	bool IsHookActive() const { return hookActive; }
+	/** @brief True while PerfMode presents through its DisplayRes testTexture. */
+	bool IsPresentingTestTexture() const { return IsHookActive() && GetTestTexture(); }
 	bool IsPostInterceptActive() const { return postInterceptActive; }
 	bool IsPostChainDone() const { return postChainDone; }
 	void ClearPostChainDone() { postChainDone = false; }
