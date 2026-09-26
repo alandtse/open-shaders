@@ -468,7 +468,7 @@ public:
 	{
 		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
-		       IsDlssSharpeningEnabled();
+		       IsDlssSharpeningEnabled() && GetUpscaleMethod() == UpscaleMethod::kDLSS;
 	}
 
 	static void TimerSleepQPC(int64_t targetQPC);
