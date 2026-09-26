@@ -77,7 +77,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 #endif
 
 #if defined(DEPTH_OUTPUT)
-	// FSR and the D3D11/D3D12 runtime bridge require a typed depth format.
+	// FSR, the D3D11/D3D12 runtime bridge and VR DLSS's eye-1 depth guide require a typed depth format.
 	DepthOutput[dispatchID.xy] = DepthMask[srcCoord];
 #endif
 

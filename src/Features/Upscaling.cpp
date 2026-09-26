@@ -1567,7 +1567,6 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 						vrIntermediateReactiveMask[i].reset();
 						vrIntermediateTransparencyMask[i].reset();
 					}
-					vrIntermediateDepth.reset();
 				}
 			}
 			if (a_upscalemethod == UpscaleMethod::kFSR)
@@ -1586,13 +1585,19 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 	}
 }
 
+bool Upscaling::NeedsTypedDepth(UpscaleMethod a_method) const
+{
+	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
+	// VR DLSS uses it for eye 1's depth guide: D3D11 cannot copy a region out of a depth-stencil.
+	return (a_method == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture)) ||
+	       (a_method == UpscaleMethod::kDLSS && globals::game::isVR);
+}
+
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
-	// Runtime FSR and VR require typed R32_FLOAT depth instead of the game's R24G8 resource.
-	const bool typedDepth = upscaleMethod == UpscaleMethod::kFSR && (globals::game::isVR || runtimeFsrDepthTexture);
-	return GetEncodeTexturesCS(upscaleMethod, typedDepth ? EncodeOutput::kTypedDepth : EncodeOutput::kMasksOnly);
+	return GetEncodeTexturesCS(upscaleMethod, NeedsTypedDepth(upscaleMethod) ? EncodeOutput::kTypedDepth : EncodeOutput::kMasksOnly);
 }
 
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output)
@@ -1711,31 +1716,6 @@ eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* 
 void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight, uint32_t outWidth, uint32_t outHeight,
 	ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc)
 {
-	// Right-eye-only depth intermediate for DLSS. Streamline.Upscale copies the right-eye depth
-	// slice here before evaluating DLSS eye 1; eye 0 reads the combined stereo depth directly at
-	// zero offset. R24G8_TYPELESS matches the game's D24S8_TYPELESS cast group — R32_TYPELESS is
-	// a different cast group and produces silent zero-copy failures.
-	{
-		D3D11_TEXTURE2D_DESC depthDesc = {};
-		depthDesc.Width = inWidth;
-		depthDesc.Height = inHeight;
-		depthDesc.MipLevels = 1;
-		depthDesc.ArraySize = 1;
-		depthDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
-		depthDesc.SampleDesc.Count = 1;
-		depthDesc.Usage = D3D11_USAGE_DEFAULT;
-		depthDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-		vrIntermediateDepth = eastl::make_unique<Texture2D>(depthDesc);
-
-		Util::SetResourceName(vrIntermediateDepth->resource.get(), "Upscale_Depth_Right");
-
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-		srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
-		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-		srvDesc.Texture2D.MipLevels = 1;
-		vrIntermediateDepth->CreateSRV(srvDesc);
-	}
-
 	// All buffers are per-eye: Streamline validates all extents against the input color texture
 	// dimensions, so every tagged resource must be isolated per-eye at {0,0}.
 	for (int i = 0; i < 2; i++) {
@@ -1745,8 +1725,7 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 		vrIntermediateColorOut[i] = CreateTextureFromSource(colorSrc, outWidth, outHeight, false, true, false, ("Upscale_ColorOut_" + suffix).c_str());
 
 		// Linear depth: R32_FLOAT so FSR's GetFfxResourceDescriptionDX11() returns a valid format.
-		// EncodeTexturesCS writes the non-linear depth as R32_FLOAT for FSR. Kept separate from
-		// vrIntermediateDepth (R24G8_TYPELESS) which Streamline copies into for DLSS right eye.
+		// EncodeTexturesCS writes the non-linear depth as R32_FLOAT for FSR and as VR DLSS's eye-1 depth guide.
 		{
 			D3D11_TEXTURE2D_DESC ldDesc = {};
 			ldDesc.Width = inWidth;
@@ -1759,7 +1738,7 @@ void Upscaling::CreateVRIntermediateTextures(uint32_t inWidth, uint32_t inHeight
 			ldDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 			vrIntermediateLinearDepth[i] = eastl::make_unique<Texture2D>(ldDesc);
 
-			Util::SetResourceName(vrIntermediateLinearDepth[i]->resource.get(), ("Upscale_LinearDepth_" + suffix).c_str());
+			Util::SetResourceName(vrIntermediateLinearDepth[i]->resource.get(), ("Upscale_TypedDepth_" + suffix).c_str());
 
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc2 = {};
 			srvDesc2.Format = DXGI_FORMAT_R32_FLOAT;
@@ -2715,11 +2694,15 @@ void Upscaling::Upscale()
 				auto upscalingBuffer = upscalingDataCB->CB();
 				context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-				// u2 is DLSS-only; u3 provides typed depth for VR FSR and flat runtime FSR.
+				// u2 is DLSS-only; u3 provides typed depth for VR FSR, flat runtime FSR and VR DLSS.
 				ID3D11UnorderedAccessView* depthOutput = nullptr;
-				if (upscaleMethod == UpscaleMethod::kFSR) {
-					depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
-					                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+				if (NeedsTypedDepth(upscaleMethod)) {
+					if (upscaleMethod == UpscaleMethod::kFSR) {
+						depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
+						                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
+					} else if (upscaleMethod == UpscaleMethod::kDLSS) {
+						depthOutput = (i == 1) ? vrIntermediateLinearDepth[i]->uav.get() : nullptr;
+					}
 				}
 				ID3D11UnorderedAccessView* uavs[4] = {
 					globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
