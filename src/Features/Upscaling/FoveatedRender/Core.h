@@ -96,6 +96,7 @@ namespace FoveatedRenderImpl
 		static inline uint32_t vrTemporalHistoryW = 0, vrTemporalHistoryH = 0;
 		static inline uint32_t vrTemporalFrameIdx = 0;
 		static inline bool vrTemporalHistoryValid = false;
+		static inline uint32_t lastRouteFrame = UINT32_MAX;
 
 		// Temporal smooth compute shader resources
 		static inline winrt::com_ptr<ID3D11ComputeShader> vrTemporalSmoothCS;
