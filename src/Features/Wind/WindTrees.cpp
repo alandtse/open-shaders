@@ -358,9 +358,9 @@ void Wind::UpdateTreeWindSpring()
 		data.transientSpringFrequency = settings.treeTransientSpringFrequency;
 		data.transientSpringDamping = settings.treeTransientSpringDamping;
 
-		ID3D11Buffer* constantBuffers[]{ treeState.springConstantBuffer->CB(), globals::state->sharedDataCB->CB() };
+		ID3D11Buffer* constantBuffers[]{ treeState.springConstantBuffer->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
-		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
+		globals::state->BindSharedDataCS(context, false);
 		auto* fieldShader = treeState.springFieldComputeShader.Get(
 			L"Data\\Shaders\\TreeWindSpringCS.hlsl", {}, "cs_5_0", "UpdateField",
 			"Wind::TreeWindSpringCS");

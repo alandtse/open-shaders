@@ -201,8 +201,7 @@ void LinearLighting::OnWorldRenderEnd(RE::RENDER_TARGET a_renderTarget)
 	auto* context = globals::d3d::context;
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 	context->CSSetShader(sceneGammaDecodeCS.get(), nullptr, 0);
-	ID3D11Buffer* constantBuffers[2] = { globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
-	context->CSSetConstantBuffers(5, 2, constantBuffers);
+	globals::state->BindSharedDataCS(context);
 	context->CSSetUnorderedAccessViews(0, 1, &targetUAV, nullptr);
 
 	context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
