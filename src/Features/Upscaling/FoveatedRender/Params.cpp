@@ -41,10 +41,15 @@ namespace FoveatedRenderImpl
 		// Textures. With DLSSperf, DLSS output lands in PerfMode's testTexture
 		// (DisplayRes); the stretched periphery also targets the testTexture's
 		// UAV. Without DLSSperf, both alias kMAIN at full size.
+		// With sharpening, output goes to refraTempTex for ApplySharpening to resolve into testTexture.
+		const bool sharpenRedirect = globals::features::upscaling.IsPerfModeSharpenRedirectActive();
 		p.colorSrc = upscalingTexture;
-		p.colorDst = dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) : upscalingTexture;
-		p.colorDstUAV = dlssperfActive ? perfMode.GetTestTextureUAV() :
-		                                 Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].UAV);
+		p.colorDst = dlssperfActive ?
+		                 static_cast<ID3D11Resource*>(sharpenRedirect ? perfMode.GetRefraTempTex() : perfMode.GetTestTexture()) :
+		                 upscalingTexture;
+		p.colorDstUAV = dlssperfActive ?
+		                    (sharpenRedirect ? perfMode.GetRefraTempUAV() : perfMode.GetTestTextureUAV()) :
+		                    Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].UAV);
 
 		p.depthTexture = depth;
 		// depth is always the engine kMAIN texture on this route; a different
