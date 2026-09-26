@@ -43,6 +43,13 @@ struct FoveatedRender
 		kDither = 2,    // Blue-noise binary threshold in feather band
 	};
 
+	// Composite mask shape only; the upscaler's input and output stay rectangular.
+	enum class SubrectMaskMode : uint
+	{
+		kRectangle = 0,  // Preserve the rectangular edge behavior
+		kOval = 1,       // Distance-corrected elliptical transition
+	};
+
 	// Periphery AA algorithm applied after background stretch
 	enum class PeripheryAAMode : uint
 	{
@@ -64,6 +71,7 @@ struct FoveatedRender
 	static const char* StretchModeName(StretchMode mode);
 	static const char* PeripheryAAModeName(PeripheryAAMode mode);
 	static const char* SubrectBlendModeName(SubrectBlendMode mode);
+	static const char* SubrectMaskModeName(SubrectMaskMode mode);
 
 	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
@@ -85,7 +93,9 @@ struct FoveatedRender
 		uint peripheryAAMode = static_cast<uint>(PeripheryAAMode::kTemporalSmooth);
 		float peripheryTemporalAlpha = 0.16f;
 		uint subrectBlendMode = static_cast<uint>(SubrectBlendMode::kHardCopy);
+		uint subrectMaskMode = static_cast<uint>(SubrectMaskMode::kRectangle);
 		float subrectFeatherWidth = 64.0f;
+		float subrectFalloffCurve = 1.0f;
 		float subrectDitherStrength = 1.0f;
 	};
 
@@ -157,6 +167,7 @@ struct FoveatedRender
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
 	PeripheryAAMode GetPeripheryAAMode() const { return static_cast<PeripheryAAMode>(std::min(settings.peripheryAAMode, 1u)); }
 	SubrectBlendMode GetSubrectBlendMode() const { return static_cast<SubrectBlendMode>(std::min(settings.subrectBlendMode, 2u)); }
+	SubrectMaskMode GetSubrectMaskMode() const { return static_cast<SubrectMaskMode>(std::min(settings.subrectMaskMode, 1u)); }
 
 	// Active getters: clamp + route shared fields through Upscaling::Settings.
 	uint GetActiveQualityMode() const;

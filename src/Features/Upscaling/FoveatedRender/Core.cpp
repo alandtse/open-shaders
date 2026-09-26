@@ -716,7 +716,9 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t FrameIndex;
 		uint32_t SrcOffsetX;
 		float DitherStrength;
-		uint32_t _pad0, _pad1, _pad2;
+		uint32_t MaskMode;
+		float FalloffCurve;
+		uint32_t _pad0;
 	};
 
 	uint64_t ComputeSubrectUVHash(const Util::Subrect::UVRegion& leftUV,
@@ -856,7 +858,8 @@ namespace FoveatedRenderImpl::Ops
 			cb->FrameIndex = globals::state->frameCount;
 			cb->SrcOffsetX = srcOffsetX;
 			cb->DitherStrength = foveated.settings.subrectDitherStrength;
-			cb->_pad0 = cb->_pad1 = cb->_pad2 = 0;
+			cb->MaskMode = static_cast<uint32_t>(foveated.GetSubrectMaskMode());
+			cb->FalloffCurve = foveated.settings.subrectFalloffCurve;
 			context->Unmap(Core::vrSubrectBlendCB.get(), 0);
 		}
 
