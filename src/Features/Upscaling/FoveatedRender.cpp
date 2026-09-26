@@ -51,6 +51,12 @@ void FoveatedRender::PostPostLoad()
 		{ .name = kPresetNasalConvergence50,
 			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
+		{ .name = kPresetNasalConvergence60,
+			.uv = { 0.4f, 0.2f, 0.6f, 0.6f },
+			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.2f, 0.6f, 0.6f } },
+		{ .name = kPresetNasalConvergence70,
+			.uv = { 0.3f, 0.15f, 0.7f, 0.7f },
+			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
 	});
 	// PostPostLoad runs after settings load, so a user with an older, shorter
 	// persisted preset list (from before these names existed) still sees every
