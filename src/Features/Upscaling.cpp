@@ -2749,6 +2749,8 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
 
+		FoveatedRenderImpl::Bridge::routeHandledThisFrame = false;
+
 		// Opt-in FoveatedRender route, shared by kDLSS/kFSR; falls through to the
 		// standard path on failure. Menu-skip is required: in menus the world stops
 		// producing fresh motion vectors/depth while kMAIN keeps changing (UI
@@ -2784,6 +2786,7 @@ void Upscaling::Upscale()
 
 			const bool routeHandled = tryFoveatedRoute(
 				Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture), "DLSS");
+			FoveatedRenderImpl::Bridge::routeHandledThisFrame = routeHandled;
 			if (!routeHandled) {
 				streamline.Upscale(Util::AsReal(main.texture), reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
 			}
@@ -2799,6 +2802,7 @@ void Upscaling::Upscale()
 			                                  nullptr;
 
 			const bool routeHandled = tryFoveatedRoute(fsrDepth, "FSR");
+			FoveatedRenderImpl::Bridge::routeHandledThisFrame = routeHandled;
 			if (!routeHandled) {
 				fidelityFX.Upscale(Util::AsReal(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), Util::AsReal(motionVector.texture), settings.sharpnessFSR, fsrColorOut);
 			}
@@ -3221,7 +3225,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		// ApplySharpening can't read sharpenerTexture. Route through
 		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
 		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
-		if (FoveatedRenderImpl::Bridge::IsRouteActive()) {
+		if (FoveatedRenderImpl::Bridge::routeHandledThisFrame) {
 			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {
 			upscaling.ApplySharpening();
