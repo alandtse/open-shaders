@@ -1,48 +1,69 @@
 #include "D3D12Interop.h"
 
+#include "../Streamline.h"
 #include "Globals.h"
-#include "Utils/D3D.h"
+
+#include <format>
 
 namespace NR
 {
+	void D3D12Interop::Check(HRESULT result)
+	{
+		if (SUCCEEDED(result))
+			return;
+		if (DeviceRemoved())
+			throw std::runtime_error(std::format("NR D3D12 device removed (0x{:08X})", static_cast<uint32_t>(device->GetDeviceRemovedReason())));
+		throw std::runtime_error(std::format("initialization failed: D3D12 call failed (HRESULT 0x{:08X})", static_cast<uint32_t>(result)));
+	}
+
 	void D3D12Interop::Initialize()
 	{
-		winrt::check_hresult(globals::d3d::device->QueryInterface(device11.put()));
-		winrt::check_hresult(globals::d3d::context->QueryInterface(context.put()));
-		winrt::com_ptr<IDXGIDevice> dxgi;
-		winrt::check_hresult(device11->QueryInterface(dxgi.put()));
-		winrt::com_ptr<IDXGIAdapter> adapter;
-		winrt::check_hresult(dxgi->GetAdapter(adapter.put()));
-		DXGI_ADAPTER_DESC desc{};
-		winrt::check_hresult(adapter->GetDesc(&desc));
-		if (desc.VendorId != 0x10DE)
-			throw std::runtime_error("Neural Rendering requires an NVIDIA adapter");
-		// Match the bridge used by OptiScaler: create a D3D12 device on the game's
-		// D3D11 adapter, using the baseline level accepted by the DX11-on-DX12 path.
-		winrt::check_hresult(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.put())));
-		D3D12_COMMAND_QUEUE_DESC queueDesc{};
-		queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-		winrt::check_hresult(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));
-		winrt::check_hresult(queue->SetName(L"NeuralRendering::Queue"));
-		for (auto& slot : commands) {
-			winrt::check_hresult(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(slot.allocator.put())));
-			winrt::check_hresult(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-				slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
-			winrt::check_hresult(slot.allocator->SetName(L"NeuralRendering::Allocator"));
-			winrt::check_hresult(slot.list->SetName(L"NeuralRendering::Commands"));
-			winrt::check_hresult(slot.list->Close());
+		if (device)
+			return;
+		try {
+			Check(globals::d3d::device->QueryInterface(device11.put()));
+			Check(globals::d3d::context->QueryInterface(context.put()));
+			winrt::com_ptr<IDXGIDevice> dxgi;
+			Check(device11->QueryInterface(dxgi.put()));
+			winrt::com_ptr<IDXGIAdapter> adapter;
+			Check(dxgi->GetAdapter(adapter.put()));
+			DXGI_ADAPTER_DESC desc{};
+			Check(adapter->GetDesc(&desc));
+			if (desc.VendorId != Streamline::kNvidiaVendorId)
+				throw std::runtime_error("requires an NVIDIA RTX GPU");
+			// The level is a minimum: the runtime hands back the adapter's existing device.
+			Check(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.put())));
+			D3D12_COMMAND_QUEUE_DESC queueDesc{};
+			queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+			Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));
+			Check(queue->SetName(L"NeuralRendering::Queue"));
+			for (auto& slot : commands) {
+				Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(slot.allocator.put())));
+				Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+					slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
+				Check(slot.allocator->SetName(L"NeuralRendering::Allocator"));
+				Check(slot.list->SetName(L"NeuralRendering::Commands"));
+				Check(slot.list->Close());
+			}
+			fence.Create(device.get(), device11.get(), "NeuralRendering::Fence");
+			adapterLuid = desc.AdapterLuid;
+		} catch (...) {
+			// A half-built interop would make the next attempt reuse a device with no queue behind it.
+			Reset();
+			throw;
 		}
-		winrt::check_hresult(device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(fence.put())));
-		winrt::check_hresult(fence->SetName(L"NeuralRendering::Fence"));
-		winrt::handle shared;
-		winrt::check_hresult(device->CreateSharedHandle(fence.get(), nullptr, GENERIC_ALL, nullptr, shared.put()));
-		winrt::check_hresult(device11->OpenSharedFence(shared.get(), IID_PPV_ARGS(fence11.put())));
-		Util::SetResourceName(fence11.get(), "NeuralRendering::Fence");
-		event.attach(CreateEventW(nullptr, FALSE, FALSE, nullptr));
-		if (!event)
-			winrt::throw_last_error();
-		logger::info("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}",
-			desc.AdapterLuid.HighPart, desc.AdapterLuid.LowPart);
+	}
+
+	void D3D12Interop::Reset()
+	{
+		commands = {};
+		fence.Reset();
+		queue = nullptr;
+		device = nullptr;
+		context = nullptr;
+		device11 = nullptr;
+		adapterLuid = {};
+		cursor = 0;
 	}
 
 	SharedTexture D3D12Interop::CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name)
@@ -72,15 +93,17 @@ namespace NR
 
 	void D3D12Interop::Wait(uint64_t completion)
 	{
-		winrt::check_hresult(device->GetDeviceRemovedReason());
-		if (fence->GetCompletedValue() >= completion)
+		if (!fence.fence12)
 			return;
-		winrt::check_hresult(fence->SetEventOnCompletion(completion, event.get()));
-		while (WaitForSingleObject(event.get(), 100) == WAIT_TIMEOUT)
-			winrt::check_hresult(device->GetDeviceRemovedReason());
-		winrt::check_hresult(device->GetDeviceRemovedReason());
-		if (fence->GetCompletedValue() < completion)
-			winrt::throw_last_error();
+		Check(device->GetDeviceRemovedReason());
+		DWORD waitError = 0;
+		const auto outcome = fence.CpuWaitOutcome(completion, kFenceTimeoutMs, &waitError);
+		if (outcome == SharedFence::WaitOutcome::kComplete)
+			return;
+		Check(device->GetDeviceRemovedReason());
+		if (outcome == SharedFence::WaitOutcome::kFailed)
+			throw std::runtime_error(std::format("NR GPU fence {} wait failed (error 0x{:08X})", completion, waitError));
+		throw std::runtime_error(std::format("NR GPU fence {} did not retire within {} ms", completion, kFenceTimeoutMs));
 	}
 
 	ID3D12GraphicsCommandList* D3D12Interop::Begin()
@@ -89,10 +112,10 @@ namespace NR
 		Wait(slot.completion);
 		winrt::check_hresult(slot.allocator->Reset());
 		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
-		const auto ready = ++value;
-		winrt::check_hresult(context->Signal(fence11.get(), ready));
+		const auto ready = fence.Next();
+		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
-		winrt::check_hresult(queue->Wait(fence.get(), ready));
+		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
 		return slot.list.get();
 	}
 
@@ -102,23 +125,23 @@ namespace NR
 		winrt::check_hresult(slot.list->Close());
 		ID3D12CommandList* lists[]{ slot.list.get() };
 		queue->ExecuteCommandLists(1, lists);
-		const auto complete = ++value;
-		winrt::check_hresult(queue->Signal(fence.get(), complete));
+		const auto complete = fence.Next();
+		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
 		slot.completion = complete;
-		winrt::check_hresult(context->Wait(fence11.get(), complete));
+		winrt::check_hresult(context->Wait(fence.fence11.get(), complete));
 		cursor = (cursor + 1) % static_cast<uint32_t>(commands.size());
 	}
 
 	void D3D12Interop::Drain()
 	{
-		if (!fence || !fence11 || !event)
+		if (!fence.fence12 || !fence.fence11)
 			return;
-		const auto ready = ++value;
-		winrt::check_hresult(context->Signal(fence11.get(), ready));
+		const auto ready = fence.Next();
+		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
-		winrt::check_hresult(queue->Wait(fence.get(), ready));
-		const auto complete = ++value;
-		winrt::check_hresult(queue->Signal(fence.get(), complete));
+		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
+		const auto complete = fence.Next();
+		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
 		Wait(complete);
 	}
 }
