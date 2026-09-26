@@ -147,14 +147,17 @@ namespace Skylighting
 					shWsum += shW;
 
 #	if defined(SKYLIGHTING_SHADOW_VIS)
-					shadowSum += ShadowVisibilityProbeArray[cellTexID] * triW;
-					shadowWsum += triW;
+					if (SharedData::skylightingSettings.ShadowDataAvailable != 0) {
+						shadowSum += ShadowVisibilityProbeArray[cellTexID] * triW;
+						shadowWsum += triW;
+					}
 #	endif
 				}
 
 #	if defined(SKYLIGHTING_SHADOW_VIS)
 		float fadeOut = GetFadeOutFactor(positionMS);
-		shadowVisibility = lerp(1.0, shadowSum / max(shadowWsum, EPSILON_WEIGHT_SUM), fadeOut);
+		if (SharedData::skylightingSettings.ShadowDataAvailable != 0)
+			shadowVisibility = lerp(1.0, shadowSum / max(shadowWsum, EPSILON_WEIGHT_SUM), fadeOut);
 #	endif
 
 		return SphericalHarmonics::Scale(shSum, rcp(shWsum + EPSILON_WEIGHT_SUM));
