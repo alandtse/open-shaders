@@ -3208,7 +3208,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		// ApplySharpening can't read sharpenerTexture. Route through
 		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
 		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
-		if (FoveatedRenderImpl::Bridge::routeHandledThisFrame) {
+		const bool perfModeActive = upscaling.perfMode.IsHookActive() && upscaling.perfMode.GetTestTexture();
+		if (!perfModeActive && FoveatedRenderImpl::Bridge::routeHandledThisFrame) {
 			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {
 			upscaling.ApplySharpening();
