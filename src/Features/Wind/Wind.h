@@ -108,6 +108,7 @@ struct Wind : Feature
 		HeavyImpact
 	};
 
+	/** @brief Marks whether a transient's triggering event already applies native Havok force. */
 	enum class TransientWindPhysics : uint8_t
 	{
 		Wind,

@@ -106,10 +106,13 @@ namespace CSPluginAPI
 	static_assert(std::is_standard_layout_v<WindVector>);
 	static_assert(std::is_standard_layout_v<WindSample>);
 
-	/** @brief Revision-5 wind sample with native physics effects removed from physicsVelocity. */
+	/** @brief Revision-5 visual wind plus wind eligible for an external Havok push.
+	 * Native marks a transient whose triggering game event already applies a force. */
 	struct WindSampleWithPhysics
 	{
+		/** @brief Full visual sample, including native-force transients. */
 		WindSample wind{};
+		/** @brief Base, gust, and non-native transient response; not measured Havok velocity. */
 		WindVector physicsVelocity{};
 	};
 	static_assert(sizeof(WindSampleWithPhysics) == 80);
@@ -176,7 +179,7 @@ namespace CSPluginAPI
 		 */
 		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) = 0;
 
-		/** @brief Samples visual wind and wind eligible for an external physics push from one frame. */
+		/** @brief Samples full visual wind and wind excluding native-force transients from one frame. */
 		virtual bool SampleWindWithPhysics(const WindVector* positions, WindSampleWithPhysics* samples, uint32_t count) = 0;
 	};
 }  // namespace CSPluginAPI

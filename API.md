@@ -110,15 +110,26 @@ source compatibility only; they have no meaning here.
     single batch avoids lock and ABI overhead for every object. The maximum batch size
     is `CSWindMaximumBatchSize` positions.
 
--   `SampleWindWithPhysics` (revision 5): Returns the same visual wind sample
-    plus `physicsVelocity` from the same frame. The
-    physics velocity includes base wind, gusts, and transient wind effects that
-    do not already push objects through Skyrim physics. The visual sample
-    includes both tiers. Unrelenting Force, impacts from records with positive
-    native force, and thrown-weapon impacts are classified as native physics
-    effects. Other currently routed wind effects remain wind-driven. Consumers that apply
-    impulses to Havok objects should use `physicsVelocity`; revision-4 callers
-    retain the original `WindSample` layout and behavior.
+-   `SampleWindWithPhysics` (revision 5): Returns `wind`, the full visual sample,
+    and `physicsVelocity` from the same frame. The latter is base wind plus local
+    gusts plus only transients **not** marked as native physics. The velocity
+    vectors encode normalized wind responses, not measured object velocities
+    or forces.
+
+    "Native physics" describes a transient whose triggering game event already
+    applies its own force to Skyrim Havok objects. Open Shaders keeps that
+    transient in `wind.transientVelocity` and `wind.finalVelocity` for grass,
+    trees, and other visuals, but omits its wind proxy from `physicsVelocity` so
+    a Havok consumer does not apply a second push for the same event. This is a
+    source-level tag, not a query of whether a particular object was hit.
+    Consumers whose objects do not receive the native impulse can use the full
+    `wind.finalVelocity` instead.
+
+    The built-in routers mark Unrelenting Force, impacts with positive force in
+    their projectile or explosion records, and VR thrown-weapon impacts as
+    native. Other sources remain eligible for external physics pushes. The
+    sampler does not automatically discover every Havok event. Revision-4
+    callers retain the original `WindSample` layout and behavior.
 
 ## Compatibility Guidance
 
