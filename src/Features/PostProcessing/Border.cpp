@@ -135,8 +135,7 @@ void Border::ClearMotionVectorsForFrameGen()
 
 	// Bind SharedData (b5) and FrameBuffer (b12) for CS stage — shader needs
 	// BufferDim and DynamicResolutionParams1 to compute dynamic resolution area.
-	auto* sharedDataBuf = globals::state->sharedDataCB->CB();
-	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
+	globals::state->BindSharedDataCS(context, false);
 	ID3D11Buffer* perFrameBuf = *globals::game::perFrame.get();
 	context->CSSetConstantBuffers(12, 1, &perFrameBuf);
 

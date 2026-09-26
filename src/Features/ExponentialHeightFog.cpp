@@ -684,8 +684,7 @@ void ExponentialHeightFog::Prepass()
 	ID3D11Buffer* cbuffers[1]{ volumetricFogCB->CB() };
 	context->CSSetConstantBuffers(0, 1, cbuffers);
 
-	ID3D11Buffer* sharedBuffers[2]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
-	context->CSSetConstantBuffers(5, 2, sharedBuffers);
+	globals::state->BindSharedDataCS(context);
 
 	ID3D11Buffer* frameBuffers[1]{ *globals::game::perFrame.get() };
 	context->CSSetConstantBuffers(12, 1, frameBuffers);
