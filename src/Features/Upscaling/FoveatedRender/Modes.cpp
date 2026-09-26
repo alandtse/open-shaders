@@ -18,6 +18,8 @@
 #include "../FidelityFX.h"
 #include "../Streamline.h"
 
+#include <mutex>
+
 namespace FoveatedRenderImpl
 {
 	using namespace Ops;
@@ -86,7 +88,7 @@ namespace FoveatedRenderImpl
 		if (p.isFullEye) {
 			// Full-eye path: same as standard VR DLSS
 			if (!PreparePerEyeInputs(
-					p.colorSrc, p.depthTexture, p.motionVectors, p.reactiveMask, p.transparencyMask,
+					p.colorSrc, p.depthSRV, p.motionVectors, p.reactiveMask, p.transparencyMask,
 					p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut))
 				return false;
 
@@ -117,6 +119,9 @@ namespace FoveatedRenderImpl
 				p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
 			return false;
 		}
+
+		if (!p.depthSRV)
+			return false;
 
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
@@ -153,7 +158,12 @@ namespace FoveatedRenderImpl
 			D3D11_BOX sbsCrop = { sbsX, cropY, 0, sbsX + subInW, cropY + subInH, 1 };
 
 			context->CopySubresourceRegion(Core::vrSubrectColorIn[i]->resource.get(), 0, 0, 0, 0, Core::vrRenderSBS->resource.get(), 0, &sbsCrop);
-			context->CopySubresourceRegion(Core::vrSubrectDepth[i]->resource.get(), 0, 0, 0, 0, p.depthTexture, 0, &sbsCrop);
+			if (!CopyDepthRegionToTexture(p.depthSRV, Core::vrSubrectDepth[i]->uav.get(),
+					sbsX, cropY, subInW, subInH)) {
+				static std::once_flag loggedFailure;
+				std::call_once(loggedFailure, [] { logger::error("[FOVEATED] Failed to convert native depth for subrect eye"); });
+				return false;
+			}
 			context->CopySubresourceRegion(Core::vrSubrectMotionVectors[i]->resource.get(), 0, 0, 0, 0, p.motionVectors, 0, &sbsCrop);
 			if (p.reactiveMask)
 				context->CopySubresourceRegion(Core::vrSubrectReactiveMask[i]->resource.get(), 0, 0, 0, 0, p.reactiveMask, 0, &sbsCrop);
