@@ -122,7 +122,7 @@ void Skylighting::SetupResources()
 		texProbeArray->CreateSRV(srvDesc);
 		texProbeArray->CreateUAV(uavDesc);
 
-		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UINT;
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_UINT;
 
 		texAccumFramesArray = new Texture3D(texDesc, "Skylighting::AccumFramesArray");
 		texAccumFramesArray->CreateSRV(srvDesc);
