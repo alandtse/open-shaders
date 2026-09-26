@@ -386,7 +386,7 @@ namespace CSPluginAPI
 					!std::isfinite(positions[index].y) ||
 					!std::isfinite(positions[index].z))
 					return false;
-				worldPositions[index] = { positions[index].x, positions[index].y, positions[index].z };
+				worldPositions[index] = float3{ positions[index].x, positions[index].y, positions[index].z };
 			}
 			return globals::features::wind.SamplePublishedWind(worldPositions, windSamples);
 		}
@@ -426,8 +426,8 @@ namespace CSPluginAPI
 		return true;
 	}
 
-	bool CSInterface001::SampleWindWithPhysics(const WindVector* positions,
-		WindSampleWithPhysics* samples, uint32_t count)
+	bool CSInterface001::SampleWindExcludingHavokImpulses(const WindVector* positions,
+		WindSampleWithHavokExclusion* samples, uint32_t count)
 	{
 		if (count > CSWindMaximumBatchSize || ((!positions || !samples) && count != 0))
 			return false;
@@ -441,7 +441,7 @@ namespace CSPluginAPI
 		for (uint32_t index = 0; index < count; ++index) {
 			samples[index] = {
 				CopyWindSample(windSamples[index]),
-				CopyWindVector(windSamples[index].physicsVelocity)
+				CopyWindVector(windSamples[index].windExcludingHavokImpulses)
 			};
 		}
 		return true;

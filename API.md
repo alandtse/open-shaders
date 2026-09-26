@@ -110,8 +110,8 @@ source compatibility only; they have no meaning here.
     single batch avoids lock and ABI overhead for every object. The maximum batch size
     is `CSWindMaximumBatchSize` positions.
 
--   `SampleWindWithPhysics` (revision 5): Returns `wind`, the full visual sample,
-    and `physicsVelocity` from the same frame. The latter is base wind plus local
+-   `SampleWindExcludingHavokImpulses` (revision 5): Returns `wind`, the full visual sample,
+    and `windExcludingHavokImpulses` from the same frame. The latter is base wind plus local
     gusts plus only transients **not** marked as native physics. The velocity
     vectors encode normalized wind responses, not measured object velocities
     or forces.
@@ -119,7 +119,7 @@ source compatibility only; they have no meaning here.
     "Native physics" describes a transient whose triggering game event already
     applies its own force to Skyrim Havok objects. Open Shaders keeps that
     transient in `wind.transientVelocity` and `wind.finalVelocity` for grass,
-    trees, and other visuals, but omits its wind proxy from `physicsVelocity` so
+    trees, and other visuals, but omits its wind proxy from `windExcludingHavokImpulses` so
     a Havok consumer does not apply a second push for the same event. This is a
     source-level tag, not a query of whether a particular object was hit.
     Consumers whose objects do not receive the native impulse can use the full

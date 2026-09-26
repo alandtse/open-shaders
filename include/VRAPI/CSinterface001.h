@@ -108,15 +108,15 @@ namespace CSPluginAPI
 
 	/** @brief Revision-5 visual wind plus wind eligible for an external Havok push.
 	 * Native marks a transient whose triggering game event already applies a force. */
-	struct WindSampleWithPhysics
+	struct WindSampleWithHavokExclusion
 	{
 		/** @brief Full visual sample, including native-force transients. */
 		WindSample wind{};
 		/** @brief Base, gust, and non-native transient response; not measured Havok velocity. */
-		WindVector physicsVelocity{};
+		WindVector windExcludingHavokImpulses{};
 	};
-	static_assert(sizeof(WindSampleWithPhysics) == 80);
-	static_assert(std::is_standard_layout_v<WindSampleWithPhysics>);
+	static_assert(sizeof(WindSampleWithHavokExclusion) == 80);
+	static_assert(std::is_standard_layout_v<WindSampleWithHavokExclusion>);
 
 	// This object provides access to Community Shaders' mod support API.
 	struct ICSInterface001
@@ -180,7 +180,7 @@ namespace CSPluginAPI
 		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) = 0;
 
 		/** @brief Samples full visual wind and wind excluding native-force transients from one frame. */
-		virtual bool SampleWindWithPhysics(const WindVector* positions, WindSampleWithPhysics* samples, uint32_t count) = 0;
+		virtual bool SampleWindExcludingHavokImpulses(const WindVector* positions, WindSampleWithHavokExclusion* samples, uint32_t count) = 0;
 	};
 }  // namespace CSPluginAPI
 

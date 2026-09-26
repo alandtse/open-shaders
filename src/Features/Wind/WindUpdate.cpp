@@ -313,21 +313,21 @@ bool Wind::SamplePublishedWind(std::span<const float3> a_worldPositions,
 			                            (ambientSample.ambientGust - transitionSample.ambientGust) * state.transitionBlend;
 		}
 		WindField::TransientImpulseSample transientSample{};
-		float3 physicsVelocity = ambientSample.velocity;
+		float3 windExcludingHavokImpulses = ambientSample.velocity;
 		for (uint32_t sourceIndex = 0; sourceIndex < state.transientCount; ++sourceIndex) {
 			const auto sourceSample = WindField::SampleTransientImpulse(
 				a_worldPositions[index], state.transients[sourceIndex]);
 			transientSample.velocity += sourceSample.velocity;
 			transientSample.intensity = std::max(transientSample.intensity, sourceSample.intensity);
 			if (state.transientPhysics[sourceIndex] == TransientWindPhysics::Wind)
-				physicsVelocity += sourceSample.velocity;
+				windExcludingHavokImpulses += sourceSample.velocity;
 		}
 		a_samples[index] = {
 			baseVelocity,
 			ambientSample.velocity - baseVelocity,
 			transientSample.velocity,
 			ambientSample.velocity + transientSample.velocity,
-			physicsVelocity,
+			windExcludingHavokImpulses,
 			ambientSample.ambientGust,
 			transientSample.intensity,
 			state.frameId

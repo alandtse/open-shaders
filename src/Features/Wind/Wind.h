@@ -64,7 +64,7 @@ struct Wind : Feature
 		float3 gustVelocity{};
 		float3 transientVelocity{};
 		float3 finalVelocity{};
-		float3 physicsVelocity{};
+		float3 windExcludingHavokImpulses{};
 		float ambientGust{};
 		float transientIntensity{};
 		uint64_t frameId{};
