@@ -4,7 +4,7 @@ The VR settings expose an adaptive near plane for both eyes:
 
 ```json
 {
-    "DynamicNearClip": true,
+    "DynamicNearClip": false,
     "NormalNearClip": 5.0,
     "MinimumNearClip": 0.1,
     "NearDistanceScale": 0.25,
