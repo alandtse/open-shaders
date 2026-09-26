@@ -25,7 +25,7 @@ namespace FoveatedRenderImpl
 		// both stacks: input extents read from kMAIN at RenderRes, output
 		// extents and colorDst point at DisplayRes / testTexture.
 		auto& perfMode = globals::features::upscaling.perfMode;
-		const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+		const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 
 		const auto screenSize = globals::state->screenSize;
 		const auto renderSize = Util::ConvertToDynamic(screenSize);

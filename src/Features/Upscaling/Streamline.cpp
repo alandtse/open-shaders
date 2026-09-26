@@ -571,7 +571,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	// the hook is live so DLSS is created at the right scale. The width arg
 	// is already display-correct (caller computes from displaySize).
 	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 
 	dlssOptions.outputWidth = width;
 	// height==0 → caller is the standard upscale path; use full per-eye DisplayRes height.
@@ -749,7 +749,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	// then either sharpen or copy the result back to kMAIN.
 	auto& upscaling = globals::features::upscaling;
 	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	// Sharpening active -> write to the RCAS read source (sharpenerTexture, or PerfMode's

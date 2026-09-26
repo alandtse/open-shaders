@@ -468,7 +468,7 @@ public:
 
 	bool IsPerfModeSharpenRedirectActive() const
 	{
-		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
+		return perfMode.IsPresentingTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
 		       IsDlssSharpeningEnabled() && GetUpscaleMethod() == UpscaleMethod::kDLSS;
 	}
