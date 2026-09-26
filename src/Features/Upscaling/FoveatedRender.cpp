@@ -280,7 +280,7 @@ void FoveatedRender::DrawEnable()
 		const auto method = globals::features::upscaling.GetUpscaleMethod();
 		const bool methodOk = method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR;
 		if (IsActive())
-			Util::Text::WrappedInfo("%s", T(TKEY("foveated_active"), "Active: foveated subrect upscaling is enabled (skipped in menus / on preflight failure)."));
+			Util::Text::WrappedInfo("%s", T(TKEY("foveated_active"), "Active: foveated subrect upscaling is enabled (skipped in the main and loading menus / on preflight failure)."));
 		else if (!methodOk)
 			Util::Text::Warning("%s", T(TKEY("foveated_standing_by"), "Standing by: only active while the Upscaling Method is DLSS or FSR. Inactive right now."));
 		else

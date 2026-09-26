@@ -2941,7 +2941,7 @@
     "feature.upscaling.fg_warn_windowed": "Warning: Requires windowed mode",
     "feature.upscaling.force_enable_frame_generation": "Force Enable Frame Generation",
     "feature.upscaling.force_enable_frame_generation_tooltip": "Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\ndisplays. Useful for laptops and older monitors at the cost of less headroom for the\ngenerated frames.",
-    "feature.upscaling.foveated_active": "Active: foveated subrect upscaling is enabled (skipped in menus / on preflight failure).",
+    "feature.upscaling.foveated_active": "Active: foveated subrect upscaling is enabled (skipped in the main and loading menus / on preflight failure).",
     "feature.upscaling.foveated_band_width": "Band Width",
     "feature.upscaling.foveated_blend_dither": "Dither",
     "feature.upscaling.foveated_blend_dither_desc": "Noise-dithered fade — more natural-looking than feather at large subrects.",
