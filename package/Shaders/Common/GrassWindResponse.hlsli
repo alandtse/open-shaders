@@ -11,7 +11,7 @@ namespace GrassWindResponse
 		float4x4 worldMatrix, float4x4 previousWorldMatrix, float windTimer, float previousWindTimer,
 		out float4 currentResponse, out float4 previousResponse, out float2 flutter)
 	{
-		currentResponse = previousResponse = 0.0f.xxxx;
+		currentResponse = previousResponse = float4(0.0f, 0.0f, 0.0f, -1.0f);
 		float intensityScale = GrassWind::GetWindIntensityOverrideScale();
 		flutter = float2(
 					  GrassWind::CalculateFlutterWave(instanceCoordinates, windTimer),
@@ -19,9 +19,9 @@ namespace GrassWindResponse
 		          intensityScale;
 		if (Permutation::EnableAmbientGrassWind != 0) {
 			uint currentField = GrassWindSpring::SelectField(rootWorldPosition);
-			uint previousField = GrassWindSpring::SelectField(previousRootWorldPosition);
-			if (currentField == previousField && GrassWindSpring::HasTemporalCoverage(
-													 currentField, previousField, rootWorldPosition, previousRootWorldPosition)) {
+			uint previousField = GrassWindSpring::SelectField(previousRootWorldPosition, true);
+			if (GrassWindSpring::HasTemporalCoverage(
+					currentField, previousField, rootWorldPosition, previousRootWorldPosition)) {
 				float4 currentSample = GrassWindSpring::SampleCurrent(currentField, rootWorldPosition);
 				float4 previousSample = GrassWindSpring::SamplePrevious(previousField, previousRootWorldPosition);
 				float responseScale = lerp(0.9, 1.1, Random::InterleavedGradientNoise(instanceCoordinates));

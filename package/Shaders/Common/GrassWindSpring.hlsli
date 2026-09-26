@@ -7,8 +7,7 @@
 namespace GrassWindSpring
 {
 	static const uint QualityRangeCount = 3u;
-	static const float FlutterTurbulencePhaseScale = 12.0f;
-	static const float FlutterGustPhaseScale = 3.0f;
+	static const float FlutterWorldPhaseScale = -0.0078125f;
 
 	struct FieldData
 	{
@@ -41,6 +40,9 @@ namespace GrassWindSpring
 		float TransientFlutterStrength;
 		float3 FlutterAmplitudeResponse;
 		float TransientFlutterFrequency;
+		float FlutterGustInfluence;
+		float FlutterWaveScale;
+		float2 _GrassWindPadding;
 	};
 
 	float EvaluateFlutterAmplitudeMultiplier(float windSpeed)
@@ -66,7 +68,6 @@ namespace GrassWindSpring
 
 	float3 CalculateTarget(float3 windVelocity, FieldData field)
 	{
-		windVelocity *= max(field.Sensitivity, 0.0f);
 		float lateralSpeed = length(windVelocity.xy);
 		float targetAngle = field.MaximumTiltRadians > EPSILON_WIND_RESPONSE ?
 		                        field.MaximumTiltRadians * tanh(lateralSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians) :
@@ -80,9 +81,9 @@ namespace GrassWindSpring
 	}
 
 #if !defined(GRASS_WIND_SPRING_COMPUTE)
-	uint SelectField(float2 worldPosition)
+	uint SelectField(float2 worldPosition, bool previous = false)
 	{
-		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float2 fieldCenter = (previous ? Fields[0].PreviousFieldMinimum : Fields[0].FieldMinimum) + Fields[0].FieldSize * 0.5f;
 		float distance = length(worldPosition - fieldCenter);
 		if (distance < Fields[0].MaxDistance)
 			return 0u;
@@ -91,9 +92,9 @@ namespace GrassWindSpring
 		return 2u;
 	}
 
-	bool IsInQualityRange(uint fieldIndex, float2 worldPosition)
+	bool IsInQualityRange(uint fieldIndex, float2 worldPosition, bool previous = false)
 	{
-		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float2 fieldCenter = (previous ? Fields[0].PreviousFieldMinimum : Fields[0].FieldMinimum) + Fields[0].FieldSize * 0.5f;
 		float distance = length(worldPosition - fieldCenter);
 		float minimumDistance = fieldIndex == 0u ? 0.0f : Fields[fieldIndex - 1u].MaxDistance;
 		return distance >= minimumDistance && distance < Fields[fieldIndex].MaxDistance;
@@ -148,7 +149,7 @@ namespace GrassWindSpring
 		return Fields[currentFieldIndex].FieldAvailable != 0u &&
 		       Fields[previousFieldIndex].FieldAvailable != 0u &&
 		       IsInQualityRange(currentFieldIndex, worldPosition) &&
-		       IsInQualityRange(previousFieldIndex, previousWorldPosition) &&
+		       IsInQualityRange(previousFieldIndex, previousWorldPosition, true) &&
 		       Contains(worldPosition, Fields[currentFieldIndex]) &&
 		       Contains(previousWorldPosition, Fields[previousFieldIndex].PreviousFieldMinimum,
 				   Fields[previousFieldIndex].FieldSize);

@@ -16,7 +16,7 @@ public:
 	{
 		bool enabled = true;
 		float intensity = 1.0f;
-		float decayTime = 1.49f;
+		float decayTime = 0.62f;
 		float distanceMultiplier = 3.0f;
 		float widthMultiplier = 1.61f;
 		float speedMultiplier = 1.0f;

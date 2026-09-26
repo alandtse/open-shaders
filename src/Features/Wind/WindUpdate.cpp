@@ -77,6 +77,15 @@ void Wind::Reset()
 	windFieldTuning.frontAspectRatio =
 		settings.windFieldGustCrosswindScale / windFieldTuning.gustScale;
 	windFieldTuning.gustAdvectionMultiplier = GetEffectiveWindGustAdvectionMultiplier();
+	const float gustThreshold = 1.0f - settings.windFieldGustCoverage;
+	const float gustHalfSoftness = settings.windFieldGustEdgeSoftness * 0.5f;
+	windFieldTuning.contrastLow = std::clamp(gustThreshold - gustHalfSoftness, 0.0f, 1.0f);
+	windFieldTuning.contrastHigh = std::clamp(gustThreshold + gustHalfSoftness, 0.0f, 1.0f);
+	windFieldTuning.distortionStrength = settings.enableWindFieldGustDistortion ?
+	                                         settings.windFieldGustDistortionStrength :
+	                                         0.0f;
+	windFieldTuning.distortionScale = settings.windFieldGustDistortionScale;
+	windFieldTuning.distortionSpeed = settings.windFieldGustDistortionSpeed;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	UpdateWindEffects(frameTime);

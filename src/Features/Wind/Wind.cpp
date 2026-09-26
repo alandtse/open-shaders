@@ -130,6 +130,16 @@ void Wind::SanitizeSettings(Settings& a_settings)
 		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 	a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier,
 		kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+	a_settings.windFieldGustCoverage = ClampFiniteOrDefault(a_settings.windFieldGustCoverage,
+		kWindFieldGustCoverageMin, kWindFieldGustCoverageMax, defaults.windFieldGustCoverage);
+	a_settings.windFieldGustEdgeSoftness = ClampFiniteOrDefault(a_settings.windFieldGustEdgeSoftness,
+		kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax, defaults.windFieldGustEdgeSoftness);
+	a_settings.windFieldGustDistortionStrength = ClampFiniteOrDefault(a_settings.windFieldGustDistortionStrength,
+		kWindFieldGustDistortionStrengthMin, kWindFieldGustDistortionStrengthMax, defaults.windFieldGustDistortionStrength);
+	a_settings.windFieldGustDistortionScale = ClampFiniteOrDefault(a_settings.windFieldGustDistortionScale,
+		kWindFieldGustDistortionScaleMin, kWindFieldGustDistortionScaleMax, defaults.windFieldGustDistortionScale);
+	a_settings.windFieldGustDistortionSpeed = ClampFiniteOrDefault(a_settings.windFieldGustDistortionSpeed,
+		kWindFieldGustDistortionSpeedMin, kWindFieldGustDistortionSpeedMax, defaults.windFieldGustDistortionSpeed);
 	for (uint32_t index = 0; index < a_settings.windFieldGustAdvectionResponse.size(); ++index)
 		a_settings.windFieldGustAdvectionResponse[index] = ClampFiniteOrDefault(
 			a_settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
@@ -176,6 +186,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
 	windFieldGustAdvectionResponse,
+	windFieldGustCoverage,
+	windFieldGustEdgeSoftness,
+	enableWindFieldGustDistortion,
+	windFieldGustDistortionStrength,
+	windFieldGustDistortionScale,
+	windFieldGustDistortionSpeed,
 	windFieldDirectionTransitionDuration,
 	processMidRangeTransients,
 	processFarRangeTransients,
@@ -194,6 +210,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindSpringQuality,
 	grassWindFlutterStrength,
 	grassWindFlutterFrequency,
+	grassWindFlutterGustInfluence,
+	grassWindFlutterWaveScale,
 	grassWindFlutterAmplitudeResponse)
 
 void Wind::SetTreeWindTestEnabled(bool a_enabled)
@@ -525,6 +543,12 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
 		settings.windFieldGustAdvectionResponse = defaults.windFieldGustAdvectionResponse;
+		settings.windFieldGustCoverage = defaults.windFieldGustCoverage;
+		settings.windFieldGustEdgeSoftness = defaults.windFieldGustEdgeSoftness;
+		settings.enableWindFieldGustDistortion = defaults.enableWindFieldGustDistortion;
+		settings.windFieldGustDistortionStrength = defaults.windFieldGustDistortionStrength;
+		settings.windFieldGustDistortionScale = defaults.windFieldGustDistortionScale;
+		settings.windFieldGustDistortionSpeed = defaults.windFieldGustDistortionSpeed;
 		settings.windFieldDirectionTransitionDuration = defaults.windFieldDirectionTransitionDuration;
 		break;
 	case SettingsPage::WindEffects:
@@ -558,12 +582,18 @@ void Wind::RestoreCurrentPageDefaultSettings()
 
 bool Wind::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 6> windFieldKeys{
+	static constexpr std::array<std::string_view, 12> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustCrosswindScale",
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier",
 		"windFieldGustAdvectionResponse",
+		"windFieldGustCoverage",
+		"windFieldGustEdgeSoftness",
+		"enableWindFieldGustDistortion",
+		"windFieldGustDistortionStrength",
+		"windFieldGustDistortionScale",
+		"windFieldGustDistortionSpeed",
 		"windFieldDirectionTransitionDuration"
 	};
 	static constexpr std::array<std::string_view, 5> windEffectKeys{
@@ -584,7 +614,7 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 16> grassKeys{
+	static constexpr std::array<std::string_view, 18> grassKeys{
 		"overrideTrunkWindIntensity",
 		"trunkWindIntensityOverride",
 		"enableAmbientGrassWind",
@@ -600,6 +630,8 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"grassWindSpringQuality",
 		"grassWindFlutterStrength",
 		"grassWindFlutterFrequency",
+		"grassWindFlutterGustInfluence",
+		"grassWindFlutterWaveScale",
 		"grassWindFlutterAmplitudeResponse"
 	};
 

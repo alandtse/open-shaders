@@ -145,7 +145,7 @@ cbuffer cb8 : register(b8)
 }
 #	endif
 
-float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight,
+float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight, float bladeReach,
 	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
@@ -156,9 +156,9 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	} else {
 		bendAngle = 0.0f;
 	}
-	if (Permutation::EnableAmbientGrassWind != 0 && length(bendAxis) > EPSILON_WIND_RESPONSE) {
+	if (Permutation::EnableAmbientGrassWind != 0 && response.w >= 0.0f) {
 		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
-			input.Color.w, bendAxis, response.z, response.w, WindVector.xyz, flutter);
+			input.Color.w, bladeReach, bendAxis, flutter);
 		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
 	}
 	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
@@ -219,13 +219,14 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	msPosition.xyz += e0.xyz;
 
 	const float3 instanceRoot = input.InstanceData1.xyz + e0.xyz;
+	const float bladeReach = length(msPosition.xyz - instanceRoot);
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
 	float4 previousMsPosition = msPosition;
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z,
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
 		InstanceExtras[extrasSlot * 6 + 2], e1.x, bendAxis, bendAngle);
 #		if !defined(RENDER_DEPTH)
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z,
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
 		InstanceExtras[extrasSlot * 6 + 3], e1.y, previousBendAxis, previousBendAngle);
 #		endif
 
@@ -316,9 +317,10 @@ VS_OUTPUT main(VS_INPUT input)
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
 	float4 previousMsPosition = msPosition;
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z,
+	const float bladeReach = length(msPosition.xyz - input.InstanceData1.xyz);
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z, bladeReach,
 		currentResponse, flutter.x, bendAxis, bendAngle);
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z,
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z, bladeReach,
 		previousResponse, flutter.y, previousBendAxis, previousBendAngle);
 
 #		ifdef GRASS_COLLISION
@@ -391,7 +393,7 @@ struct PS_OUTPUT
 	float4 PS: SV_Target0;
 #	else
 	float4 Diffuse: SV_Target0;
-	float2 MotionVectors: SV_Target1;
+	float4 MotionVectors: SV_Target1;
 	float4 NormalGlossiness: SV_Target2;
 	float4 Albedo: SV_Target3;
 	float4 Specular: SV_Target4;
@@ -409,7 +411,7 @@ struct PS_OUTPUT
 	float4 PS: SV_Target0;
 #	else
 	float4 Diffuse: SV_Target0;
-	float2 MotionVectors: SV_Target1;
+	float4 MotionVectors: SV_Target1;
 	float4 Normal: SV_Target2;
 	float4 Albedo: SV_Target3;
 	float4 Masks: SV_Target6;
@@ -550,7 +552,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 
 	uint eyeIndex = Stereo::GetEyeIndexPS(input.HPosition, VPOSOffset);
-	psout.MotionVectors = MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex);
+	psout.MotionVectors = float4(MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex), 0, 1);
 
 	float3 viewDirection = -normalize(input.WorldPosition.xyz);
 	float3 vertexNormal = normalize(input.VertexNormal.xyz);
@@ -787,7 +789,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 
 	uint eyeIndex = Stereo::GetEyeIndexPS(input.HPosition, VPOSOffset);
-	psout.MotionVectors = MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex);
+	psout.MotionVectors = float4(MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex), 0, 1);
 
 	float3 viewDirection = -normalize(input.WorldPosition.xyz);
 	float3 normal = normalize(input.VertexNormal.xyz);
@@ -1266,7 +1268,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Diffuse.w = 1;
 
-	psout.MotionVectors = MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex);
+	psout.MotionVectors = float4(MotionBlur::GetSSMotionVector(float4(input.WorldPosition, 1), float4(input.PreviousWorldPosition, 1), eyeIndex), 0, 1);
 	psout.Normal.xy = GBuffer::EncodeNormal(normalVS);
 	psout.Normal.zw = 0;
 

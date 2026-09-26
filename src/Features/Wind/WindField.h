@@ -23,8 +23,12 @@ namespace WindField
 		uint32_t gradientSeedMix{ 0x1E3779B9u };
 		uint32_t pcgMultiplier{ 1664525u };
 		uint32_t pcgIncrement{ 1013904223u };
+		float distortionStrength{};
+		float distortionScale{ 1.0f };
+		float distortionSpeed{};
+		float _padding{};
 	};
-	static_assert(sizeof(WindTuning) == 64);
+	static_assert(sizeof(WindTuning) == 80);
 	static_assert(std::is_standard_layout_v<WindTuning>);
 
 	/** @brief One procedural noise-field instance with an orientation fixed for its lifetime. */
