@@ -76,6 +76,7 @@ add_executable(cpp_tests
 	test_presetinclude.cpp
 	test_windfield.cpp
 	test_sehguard.cpp
+	test_nr_runtime.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -109,6 +110,9 @@ set_property(TARGET cpp_tests PROPERTY CXX_STANDARD_REQUIRED ON)
 target_include_directories(cpp_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
     "${CMAKE_SOURCE_DIR}/package/Shaders"
+    # test_nr_runtime.cpp subclasses NVSDK_NGX_Parameter to pin the tag of each parameter write.
+    # The NGX header forward-declares the D3D types, so this pulls in no DirectX SDK.
+    "${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/external/ngx-sdk/include"
 )
 
 target_link_libraries(cpp_tests PRIVATE

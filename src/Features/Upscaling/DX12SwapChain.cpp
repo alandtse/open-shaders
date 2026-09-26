@@ -597,18 +597,24 @@ void SharedFence::Create(ID3D12Device* a_device12, ID3D11Device5* a_device11, co
 	Util::SetResourceName(fence11.get(), "%s", a_name);
 }
 
-bool SharedFence::CpuWait(uint64_t a_value, DWORD a_timeoutMs) const
+SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_timeoutMs, DWORD* a_error) const
 {
+	const auto failed = [a_error](DWORD a_lastError) {
+		if (a_error)
+			*a_error = a_lastError;
+		return WaitOutcome::kFailed;
+	};
 	if (!fence12 || a_value == 0)
-		return true;
+		return WaitOutcome::kComplete;
 	if (fence12->GetCompletedValue() >= a_value)
-		return true;
+		return WaitOutcome::kComplete;
 
 	winrt::handle fenceEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
 	if (!fenceEvent)
-		return false;
-	if (FAILED(fence12->SetEventOnCompletion(a_value, fenceEvent.get())))
-		return false;
+		return failed(GetLastError());
+	// The HRESULT, not the stale last error: this call sets none.
+	if (const HRESULT registration = fence12->SetEventOnCompletion(a_value, fenceEvent.get()); FAILED(registration))
+		return failed(static_cast<DWORD>(registration));
 
 	winrt::com_ptr<ID3D12Device> device12;
 	DWORD waitedMs = 0;
@@ -616,17 +622,17 @@ bool SharedFence::CpuWait(uint64_t a_value, DWORD a_timeoutMs) const
 		const DWORD sliceMs = std::min<DWORD>(kRemovalPollMs, a_timeoutMs - waitedMs);
 		const DWORD waitResult = WaitForSingleObject(fenceEvent.get(), sliceMs);
 		if (waitResult == WAIT_OBJECT_0)
-			return true;
+			return WaitOutcome::kComplete;
 		if (waitResult != WAIT_TIMEOUT)
-			return false;
+			return failed(GetLastError());
 		waitedMs += sliceMs;
 		if (!device12)
 			fence12->GetDevice(IID_PPV_ARGS(&device12));
 		if (device12 && FAILED(device12->GetDeviceRemovedReason()))
-			return false;
+			return WaitOutcome::kFailed;
 	}
 
-	return false;
+	return WaitOutcome::kTimeout;
 }
 
 DXGISwapChainProxy::DXGISwapChainProxy(IDXGISwapChain4* a_swapChain)

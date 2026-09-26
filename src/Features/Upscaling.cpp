@@ -551,6 +551,30 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
+
+	FEATURE_COMMAND("nrRuntimeInit",
+		"Initialize the DLSS Neural Rendering (NGX Feature 18) runtime: find nvngx_dlssnr.dll in Data/Shaders/Upscaling/Streamline, require a 310.8.x version, bind its exports, spoof the caller identity it checks, create the NR D3D12 device and run NGX init. One attempt per call, and only from idle: a missing DLL (warn) or a rejected version or a failed load/init (error) latches the layer off with a single log line, so nothing retries per frame and DLSS/FSR/TAA keep working. A rejected DLL is turned away before any D3D12 device is created. Calls made while the layer is latched, initialized or out of retries do nothing -- use nrRuntimeRetry after a failure. No frame renders through NR yet -- this drives the runtime layer only. Params: none. This only queues the attempt: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, so read the outcome with the nrRuntimeStatus query a frame later, and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the request never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kInitialize);
+		});
+
+	FEATURE_COMMAND("nrRuntimeRetry",
+		"Re-arm the NR runtime after a recoverable failure and attempt initialization again (a call while the layer is idle is just an attempt). Refused when the failure poisoned the process (a structured exception inside the NGX DLL -- only a game restart clears it) and once maxRetries retries are spent, which blocks every later attempt until the process restarts. A failure that kept the runtime and its resources alive (a drain timeout, a failed fence wait or a removed device) is drained again first, and only a drain that actually retires the GPU work clears the latch. nrRuntimeStatus reports retryCount/maxRetries and the failure kind. Params: none. This only queues the retry: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the retry never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kRetry);
+		});
+
+	FEATURE_COMMAND("nrRuntimeShutdown",
+		"Drain the NR GPU fence, then release the Feature 18 handles, parameter blocks, NGX instance and the NR D3D12 device, returning the layer to idle. When the drain fails (DrainTimeout, WaitFailed or DeviceRemoved) nothing is released, because the GPU may still reference it, and the layer latches that failure with the fence's own message. A shutdown that succeeds returns the layer to idle but keeps the retry budget it has spent, never resets it. Params: none. This only queues the drain: it is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass -- the drain signals that thread's D3D11 context, so it must not be issued from a caller thread -- and a later request replaces one that has not been applied yet. While that pass is not hooked (the OpenComposite upscaling blocker) the drain never applies, and nrRuntimeStatus reports it as pendingRequest.",
+		[](Feature*, const json&) {
+			neuralRendering.Post(NR::RequestKind::kShutdown);
+		});
+
+	FEATURE_QUERY("nrRuntimeStatus",
+		"DLSS Neural Rendering (NGX Feature 18) runtime status: dllPath/dllDirectory, dllFound, version, versionAccepted (310.8.x required, patch ignored), requiredVersion, state (NotLoaded|Initialized|Failed), failure (the latching category, e.g. DrainTimeout, WaitFailed, SehFault), lastError (the reason the single log line reported), retryCount/maxRetries, pendingRequest (None|Initialize|Retry|Shutdown: a queued request is applied on the render thread on the next frame that reaches Upscaling's end-of-frame image-space pass, and stays pending while that pass is not hooked, as with the OpenComposite upscaling blocker), runtimeInitialized, runtimePoisoned, interopInitialized and submittedFence/completedFence. Params: none.",
+		[](const Feature*, const json&) -> json {
+			return neuralRendering.Status();
+		});
 }
 
 void Upscaling::DrawSettings()
@@ -2522,6 +2546,7 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	diagnostics["neuralRendering"] = neuralRendering.Status();
 	return diagnostics;
 }
 
@@ -3180,6 +3205,10 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 
 void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32_t a3, RE::RENDER_TARGET a_target, void* a_4, bool a_5)
 {
+	// NR requests are applied here because this thunk runs on the render thread every frame whatever
+	// the upscale method; the layer's drain signals that same D3D11 immediate context.
+	globals::features::upscaling.neuralRendering.ProcessPendingRequest();
+
 	auto& postProcessing = globals::features::postProcessing;
 	if (postProcessing.loaded) {
 		postProcessing.DrawBeforeUpscaling();

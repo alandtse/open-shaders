@@ -4,6 +4,7 @@
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
+#include "Upscaling/NeuralRendering/RuntimeLayer.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
@@ -414,6 +415,8 @@ public:
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
+
+	static inline NR::RuntimeLayer neuralRendering;  ///< NGX Feature 18 runtime, driven by devbench
 
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 
