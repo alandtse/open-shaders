@@ -1,5 +1,6 @@
 #include "Runtime.h"
 
+#include "Utils/SehGuard.h"
 #include "Utils/WinApi.h"
 
 #include <detours/detours.h>
@@ -38,6 +39,78 @@ namespace NR
 		{
 			if (NVSDK_NGX_FAILED(result))
 				throw std::runtime_error(std::format("{} failed: NGX 0x{:08X}", operation, static_cast<uint32_t>(result)));
+		}
+
+		/**
+		 * @brief Runs one NGX call under SEH: /EHsc catch blocks never see a fault inside the
+		 *        DLL, so this is the only thing between it and the game's crash handler.
+		 * @param sentinel Value to keep when the call never returned one.
+		 * @param call Performs the call. It may only reference existing objects, because a fault
+		 *             skips destructors in its frame.
+		 * @return The call's value, or sentinel when it faulted.
+		 */
+		template <class T, class F>
+		T GuardNgxCall(T sentinel, F&& call)
+		{
+			T value = sentinel;
+			DWORD fault = 0;
+			if (!Util::SehGuarded([&] { value = call(); }, &fault))
+				throw std::runtime_error(std::format("initialization failed: an NGX call faulted (exception 0x{:08X})", fault));
+			return value;
+		}
+
+		/** @brief Buffer for GetModuleFileNameW: an extended-length image path can run past MAX_PATH. */
+		constexpr DWORD kModuleImageChars = MAX_PATH * 4;
+
+		/** @brief True when a module's image is under the Windows DriverStore, i.e. NVIDIA's own NGX core. */
+		bool IsDriverStoreModule(HMODULE module)
+		{
+			wchar_t image[kModuleImageChars]{};
+			if (!GetModuleFileNameW(module, image, kModuleImageChars))
+				return false;
+			wchar_t systemDirectory[MAX_PATH]{};
+			if (!GetSystemDirectoryW(systemDirectory, MAX_PATH))
+				return false;
+			const std::wstring prefix = std::wstring(systemDirectory) + L"\\DriverStore\\";
+			const std::wstring_view imageView(image);
+			if (imageView.size() < prefix.size())
+				return false;
+			return CompareStringOrdinal(imageView.data(), static_cast<int>(prefix.size()),
+					   prefix.c_str(), static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
+		}
+
+		struct CoreApi
+		{
+			Module module;
+			Allocate allocate = nullptr;
+			Destroy destroy = nullptr;
+		};
+
+		/**
+		 * @brief Binds the NGX parameter API by name, never by scanning loaded modules.
+		 *        A module that only looks like nvngx.dll (a third-party proxy) must not be bound:
+		 *        its parameter block is a different ABI, and the resulting handle would be garbage.
+		 */
+		CoreApi BindCore()
+		{
+			for (const auto* name : { L"_nvngx.dll", L"nvngx.dll" }) {
+				HMODULE module = GetModuleHandleW(name);
+				if (!module || !IsDriverStoreModule(module))
+					continue;
+				auto allocate = GetProcAddress(module, "NVSDK_NGX_D3D12_AllocateParameters");
+				auto destroy = GetProcAddress(module, "NVSDK_NGX_D3D12_DestroyParameters");
+				if (!allocate || !destroy)
+					continue;
+				CoreApi api;
+				HMODULE retained = nullptr;
+				if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(allocate), &retained))
+					continue;
+				api.module.reset(retained);
+				api.allocate = reinterpret_cast<Allocate>(allocate);
+				api.destroy = reinterpret_cast<Destroy>(destroy);
+				return api;
+			}
+			return {};
 		}
 
 		// Feature 18 uses the driver's private parameter block.  Its resource and
@@ -191,7 +264,13 @@ namespace NR
 			void operator()(NVSDK_NGX_Handle* handle) const
 			{
 				RuntimePath::Scope scope(owner->compatibility);
-				const auto result = owner->release(handle);
+				NVSDK_NGX_Result result = NVSDK_NGX_Result_Fail;
+				try {
+					result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return owner->release(handle); });
+				} catch (const std::exception& error) {
+					logger::error("[NeuralRendering] {}", error.what());
+					return;
+				}
 				if (NVSDK_NGX_FAILED(result))
 					logger::warn("[NeuralRendering] Feature release failed: 0x{:08X}", static_cast<uint32_t>(result));
 			}
@@ -199,7 +278,14 @@ namespace NR
 		struct ParameterDeleter
 		{
 			Impl* owner = nullptr;
-			void operator()(NVSDK_NGX_Parameter* parameters) const { owner->destroy(parameters); }
+			void operator()(NVSDK_NGX_Parameter* parameters) const
+			{
+				try {
+					GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return owner->destroy(parameters); });
+				} catch (const std::exception& error) {
+					logger::error("[NeuralRendering] {}", error.what());
+				}
+			}
 		};
 		struct Eye
 		{
@@ -216,7 +302,11 @@ namespace NR
 			}
 			if (initialized) {
 				RuntimePath::Scope scope(compatibility);
-				shutdown(device.get());
+				try {
+					GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return shutdown(device.get()); });
+				} catch (const std::exception& error) {
+					logger::error("[NeuralRendering] NGX shutdown failed: {}", error.what());
+				}
 			}
 		}
 	};
@@ -243,8 +333,10 @@ namespace NR
 		state.evaluate = Resolve<NR::Evaluate>(state.module.get(), "NVSDK_NGX_D3D12_EvaluateFeature");
 		state.release = Resolve<Release>(state.module.get(), "NVSDK_NGX_D3D12_ReleaseFeature");
 		state.populate = Resolve<Populate>(state.module.get(), "NVSDK_NGX_D3D12_PopulateParameters_Impl");
-		const auto appId = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetApplicationId")();
-		const auto api = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetAPIVersion")();
+		const auto getApplicationId = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetApplicationId");
+		const auto getApiVersion = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetAPIVersion");
+		const auto appId = GuardNgxCall(0u, [&] { return getApplicationId(); });
+		const auto api = GuardNgxCall(0u, [&] { return getApiVersion(); });
 		// This is an NGX caller identity string only; nvngx.dll need not exist on disk.
 		const auto spoofedCallerIdentity = directory / L"nvngx.dll";
 		state.compatibility.Install(state.module.get(), spoofedCallerIdentity);
@@ -253,32 +345,26 @@ namespace NR
 		state.device.copy_from(device);
 		{
 			RuntimePath::Scope scope(state.compatibility);
-			Check(state.initialize(appId, cache.c_str(), device, static_cast<NVSDK_NGX_Version>(api), nullptr), "NR initialization");
+			const auto started = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
+				return state.initialize(appId, cache.c_str(), device, static_cast<NVSDK_NGX_Version>(api), nullptr);
+			});
+			Check(started, "NR initialization");
 			state.initialized = true;
 		}
-		for (HMODULE module = DetourEnumerateModules(nullptr); module; module = DetourEnumerateModules(module)) {
-			auto allocate = GetProcAddress(module, "NVSDK_NGX_D3D12_AllocateParameters");
-			auto destroy = GetProcAddress(module, "NVSDK_NGX_D3D12_DestroyParameters");
-			if (!allocate || !destroy)
-				continue;
-			HMODULE retained = nullptr;
-			if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(allocate), &retained))
-				winrt::throw_last_error();
-			state.core.reset(retained);
-			state.allocate = reinterpret_cast<Allocate>(allocate);
-			state.destroy = reinterpret_cast<Destroy>(destroy);
-			break;
-		}
-		if (!state.core)
-			throw std::runtime_error("NGX parameter API unavailable");
+		auto core = BindCore();
+		if (!core.module)
+			throw std::runtime_error("initialization failed: no DriverStore nvngx.dll is loaded, so the NGX parameter API is unavailable");
+		state.core = std::move(core.module);
+		state.allocate = core.allocate;
+		state.destroy = core.destroy;
 		for (auto& eye : state.eyes) {
 			NVSDK_NGX_Parameter* parameters = nullptr;
-			const auto result = state.allocate(&parameters);
+			const auto allocated = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.allocate(&parameters); });
 			eye.parameters = { parameters, { &state } };
 			eye.feature = { nullptr, { &state } };
-			Check(result, "NR parameter allocation");
+			Check(allocated, "NR parameter allocation");
 			if (!parameters)
-				throw std::runtime_error("NGX returned null parameters");
+				throw std::runtime_error("initialization failed: NGX returned null parameters");
 		}
 		logger::info("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());
 		impl = std::move(pending);
@@ -318,7 +404,7 @@ namespace NR
 		RuntimePath::Scope scope(state.compatibility);
 		if (!eye.feature) {
 			parameters->Reset();
-			Check(state.populate(parameters), "NR parameter population");
+			Check(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.populate(parameters); }), "NR parameter population");
 			writer.DiscoverFloatSlot();
 			for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
 				writer.SetUInt(key, width);
@@ -356,7 +442,9 @@ namespace NR
 			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
 			writer.SetUInt("DLSSNR.UICorrection", 1u);
 			NVSDK_NGX_Handle* handle = nullptr;
-			const auto result = state.create(commands, static_cast<NVSDK_NGX_Feature>(18), parameters, &handle);
+			const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
+				return state.create(commands, NVSDK_NGX_Feature_Reserved18, parameters, &handle);
+			});
 			frame.result = static_cast<uint32_t>(result);
 			eye.feature.reset(handle);
 			if (NVSDK_NGX_FAILED(result) || !handle) {
@@ -408,7 +496,7 @@ namespace NR
 			parameters->Set(NVSDK_NGX_Parameter_DLSS_WORLD_TO_VIEW_MATRIX, static_cast<void*>(&frame.worldToView));
 			parameters->Set(NVSDK_NGX_Parameter_DLSS_VIEW_TO_CLIP_MATRIX, static_cast<void*>(&frame.viewToClip));
 		}
-		const auto result = state.evaluate(commands, eye.feature.get(), parameters, nullptr);
+		const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.evaluate(commands, eye.feature.get(), parameters, nullptr); });
 		frame.result = static_cast<uint32_t>(result);
 		if (NVSDK_NGX_FAILED(result)) {
 			logger::error("[NeuralRendering] Eye {} evaluation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
