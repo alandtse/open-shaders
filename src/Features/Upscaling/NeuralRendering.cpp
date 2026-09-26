@@ -1,7 +1,6 @@
 #include "NeuralRendering.h"
 
 #include "Deferred.h"
-#include "Features/PostProcessing.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -305,23 +304,17 @@ struct NeuralRendering::Impl
 		else if (debugOptions & NR::Diagnostics::BypassMask)
 			data.maskMode = 2;
 		ID3D11ShaderResourceView* exposure = nullptr;
-		auto& post = globals::features::postProcessing;
-		if (prepare && post.loaded && !post.bypass) {
-			auto* adaptation = post.GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure);
-			if (adaptation && adaptation->enabled) {
-				exposure = adaptation->GetAdaptationSRV();
-				if (captureDiagnostics && i == 0)
-					captureDiagnostics->CaptureView("NR_exposure", exposure, captureFrame);
-				data.hasExposure = exposure != nullptr;
-				data.exposureCompensation = std::exp2(std::clamp(adaptation->settings.ExposureCompensation, -16.0f, 16.0f));
-				data.exposureMin = std::exp2(std::clamp(adaptation->settings.AdaptationRange.x - 3.0f, -16.0f, 16.0f));
-				data.exposureMax = std::max(data.exposureMin, std::exp2(std::clamp(adaptation->settings.AdaptationRange.y - 3.0f, -16.0f, 16.0f)));
-				if (!std::isfinite(data.exposureCompensation) || !std::isfinite(data.exposureMin) || !std::isfinite(data.exposureMax))
-					data.hasExposure = 0;
-			}
-			auto* grading = post.GetPipelineFeature<ColorGrading>(PostProcessing::FeaturePipelineIndex::ColorGrading);
-			if (grading && grading->enabled && std::isfinite(grading->settings.exposureTemperatureTint.x))
-				data.manualExposure = std::clamp(grading->settings.exposureTemperatureTint.x, 1e-4f, 1e4f);
+		Feature::SceneExposure sceneExposure;
+		if (prepare && Feature::FindSceneExposure(sceneExposure)) {
+			exposure = sceneExposure.adaptedLuminance;
+			if (captureDiagnostics && i == 0)
+				captureDiagnostics->CaptureView("NR_exposure", exposure, captureFrame);
+			data.hasExposure = exposure != nullptr;
+			data.exposureCompensation = sceneExposure.compensationScale;
+			data.exposureMin = sceneExposure.luminanceRange.x;
+			data.exposureMax = sceneExposure.luminanceRange.y;
+			if (!std::isfinite(data.exposureCompensation) || !std::isfinite(data.exposureMin) || !std::isfinite(data.exposureMax))
+				data.hasExposure = 0;
 		}
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
