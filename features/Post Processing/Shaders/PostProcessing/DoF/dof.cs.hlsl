@@ -181,11 +181,8 @@ cbuffer DoFCB : register(b1)
 	uint BokehBladeCount;
 	float BokehBladeRoundness;
 	float ProceduralBokehAreaScale;
-	uint Padding;
+	float SensorWidthMM;
 };
-
-// Sensor width the FocalLength control is expressed for (35mm full frame).
-#define SENSOR_WIDTH_MM 36.0f
 
 // One CoC tile covers 8x8 half res pixels == 16x16 full res pixels. A packed VR group can straddle
 // the eye seam when the per-eye width is not divisible by 8, so tile lookup uses the output pixel.
@@ -205,6 +202,7 @@ static const float onePixelInCoC = SharedData::BufferDim.z;  // "less than a pix
 
 // Near CoC radius (in pixels) at which the near field layer becomes fully opaque.
 static const float nearFullOpacityPixels = 8.0f;
+static const float3 bokehLuminanceWeights = float3(0.2126f, 0.7152f, 0.0722f);
 // A tile whose CoC spread is below this fraction of its max needs no depth layer resolving, so the
 // compatibility gather can drop a ring.
 static const float fastGatherCoCError = 0.05f;
@@ -249,7 +247,7 @@ float4 GetShapeTap(float angle, float shapeRingDistance)
 	pointOffsetForShape.y *= -1.0f;
 	float2 shapeTapCoords = float2((shapeRingDistance * pointOffsetForShape) + 0.5f);  // shapeRingDistance is [0, 0.5] so no need to multiply with 0.5 again
 	float4 shapeTap = TexBokehShape.SampleLevel(LinearSampler, shapeTapCoords, 0);
-	shapeTap.a = Color::RGBToLuminance(shapeTap.rgb);
+	shapeTap.a = Color::RGBToLuminance(shapeTap.rgb, bokehLuminanceWeights);
 	return shapeTap;
 }
 
@@ -268,7 +266,7 @@ float CalculateBlurDiscSize(FocusInfo focusInfo)
 	                        (abs(pixelDepthInM - focusInfo.focusDepthInM) / max(pixelDepthInM, 1e-6f));
 
 	// sensor-space diameter (mm) -> screen-space radius (fraction of the screen width)
-	float cocRadius = (0.5f * cocDiameterInMM) * (1.0f / SENSOR_WIDTH_MM);
+	float cocRadius = (0.5f * cocDiameterInMM) / max(SensorWidthMM, 1.0f);
 
 	// Clamp the kernel so an extreme focus setup can never blow up the gather.
 	// Apply separate foreground/background safety limits.
@@ -745,7 +743,7 @@ AdaptiveBokehSample GetAdaptiveBokehSample(uint sampleIndex, float2 rotation)
 	[branch] if (BokehMode == 1)
 	{
 		float4 aperture = TexBokehShape.SampleLevel(LinearSampler, data.xy * 0.5f + 0.5f, 0);
-		float luma = max(Color::RGBToLuminance(aperture.rgb), 0.0f);
+		float luma = max(Color::RGBToLuminance(aperture.rgb, bokehLuminanceWeights), 0.0f);
 		sample.coverage = sqrt(saturate(luma * aperture.a));
 		sample.tint = min(aperture.rgb / max(luma, 1e-4f), 4.0f);
 		sample.offset *= CustomShapeRadiusScale;
@@ -782,7 +780,7 @@ void GetAdaptiveBokehCenter(out float coverage, out float3 tint)
 	[branch] if (BokehMode == 1)
 	{
 		float4 aperture = TexBokehShape.SampleLevel(LinearSampler, (0.5f).xx, 0);
-		float luma = max(Color::RGBToLuminance(aperture.rgb), 0.0f);
+		float luma = max(Color::RGBToLuminance(aperture.rgb, bokehLuminanceWeights), 0.0f);
 		coverage = sqrt(saturate(luma * aperture.a));
 		tint = min(aperture.rgb / max(luma, 1e-4f), 4.0f);
 	}
@@ -794,6 +792,16 @@ float SampleNearReachPixels(float2 texcoord, uint eyeIndex, float pixelCoC)
 	float propagated = TexCoCTileDilated.SampleLevel(LinearSampler, tileUV, 0).z / max(BokehMaxRadius, 1.0f);
 	float local = max(-pixelCoC, 0.0f) * NearPlaneMaxBlur * cocToPixels;
 	return max(propagated, local);
+}
+
+float3 ApplyBokehTint(float3 color, float3 tint)
+{
+	float3 tintedColor = color;
+	[branch] if (BokehMode == 1)
+	{
+		tintedColor = Color::ApplyLinearSrgbTint(color, tint);
+	}
+	return tintedColor;
 }
 
 void AccumulateFarGatherSample(
@@ -820,7 +828,7 @@ void AccumulateFarGatherSample(
 	weight *= 1.0f + min(FarPlaneMaxBlur, 3.0f) * saturate((colorRadius - sampleRadius) * cocToPixels);
 	[branch] if (weight > 0.0f)
 	{
-		colorSum += SampleGatherColor(tapCoords, mip) * bokeh.tint * weight;
+		colorSum += ApplyBokehTint(SampleGatherColor(tapCoords, mip), bokeh.tint) * weight;
 		weightSum += weight;
 	}
 }
@@ -841,7 +849,7 @@ void AccumulateNearGatherSample(
 	float2 unitOffset = ApplyPetzvalMorph(bokeh.offset, texcoord);
 	float2 tapCoords = Stereo::ClampToEyeUV(texcoord + unitOffset * kernelRadiusInPixels * SharedData::BufferDim.zw, eyeIndex, gatherDim);
 	float weight = lerp(bokeh.radialWeight, 1.0f, smoothstep(0.0f, 1.0f, centerWeight)) * bokeh.coverage;
-	colorSum += SampleGatherColor(tapCoords, mip) * bokeh.tint * weight;
+	colorSum += ApplyBokehTint(SampleGatherColor(tapCoords, mip), bokeh.tint) * weight;
 	weightSum += weight;
 }
 
@@ -871,7 +879,7 @@ void AccumulateNearGatherSample(
 	float centerCoverage;
 	float3 centerTint;
 	GetAdaptiveBokehCenter(centerCoverage, centerTint);
-	float3 colorSum = color.rgb * centerTint * centerWeight * centerCoverage;
+	float3 colorSum = ApplyBokehTint(color.rgb, centerTint) * centerWeight * centerCoverage;
 	float weightSum = centerWeight * centerCoverage;
 	float rotationAngle = -Math::TAU * HighlightShapeRotationAngle;
 	float2 rotation;
@@ -917,7 +925,7 @@ void AccumulateNearGatherSample(
 	float centerCoverage;
 	float3 centerTint;
 	GetAdaptiveBokehCenter(centerCoverage, centerTint);
-	float3 colorSum = color.rgb * centerTint * centerWeight * centerCoverage;
+	float3 colorSum = ApplyBokehTint(color.rgb, centerTint) * centerWeight * centerCoverage;
 	float weightSum = centerWeight * centerCoverage;
 	float rotationAngle = -Math::TAU * HighlightShapeRotationAngle;
 	float2 rotation;

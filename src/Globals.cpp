@@ -151,6 +151,7 @@ namespace globals
 		RE::BSUtilityShader* utilityShader = nullptr;
 		RE::PlayerCharacter* player = nullptr;
 		RE::PlayerCamera* playerCamera = nullptr;
+		RE::MenuTopicManager* menuTopicManager = nullptr;
 		RE::Sky* sky = nullptr;
 		RE::UI* ui = nullptr;
 		RE::Calendar* calendar = nullptr;
@@ -276,6 +277,7 @@ namespace globals
 		RefreshTES();
 		player = RE::PlayerCharacter::GetSingleton();
 		playerCamera = RE::PlayerCamera::GetSingleton();
+		menuTopicManager = RE::MenuTopicManager::GetSingleton();
 		sky = RE::Sky::GetSingleton();
 		calendar = RE::Calendar::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();

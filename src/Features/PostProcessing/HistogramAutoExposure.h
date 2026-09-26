@@ -14,6 +14,8 @@ struct HistogramAutoExposure : public PostProcessFeature
 			"Auto exposure and eye adaptation method that uses a histogram to calculate average screen brightness. Expects HDR linear RGB inputs.");
 	}
 	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
+	/** @brief Runs metering when enabled or required by Cinematic Camera. */
+	virtual bool IsActive() const override;
 
 	/// This feature no longer writes to the main texture.
 	/// It only computes the adaptation value which is consumed by the Composite pass.
@@ -64,12 +66,17 @@ struct HistogramAutoExposure : public PostProcessFeature
 	virtual void SaveSettings(json&) override;
 
 	virtual void DrawSettings() override;
+	/** @brief Displays the metered ISO and exposure while the camera UI is visible. */
+	void DrawCameraExposureReadout();
 
 	virtual void Draw(TextureInfo&) override;
 
 	/// Get the adaptation structured buffer SRV (contains a single float: adapted luminance).
 	/// Used by the Composite pass to apply exposure.
-	ID3D11ShaderResourceView* GetAdaptationSRV() const { return adaptationSB ? adaptationSB->SRV() : nullptr; }
+	ID3D11ShaderResourceView* GetAdaptationSRV() const { return adaptationSB && !resetAdaptation ? adaptationSB->SRV() : nullptr; }
+
+	/// True when this feature is active and has an adaptation value ready to consume.
+	bool HasActiveAdaptation() const { return IsActive() && GetAdaptationSRV(); }
 
 	/// Get the constant buffer containing exposure parameters (for Composite pass).
 	ID3D11Buffer* GetConstantBuffer() const { return autoExposureCB ? autoExposureCB->CB() : nullptr; }
@@ -79,6 +86,20 @@ struct HistogramAutoExposure : public PostProcessFeature
 	winrt::com_ptr<ID3D11Buffer> adaptationStagingBuffer = nullptr;
 	std::array<uint32_t, 256> histogramData = {};
 	float adaptationValue = 0.f;
+	bool resetAdaptation = true;
 	bool histogramReadbackRequested = false;
 	int histogramReadbackRequestFrame = -1;
+	int exposureReadbackRequestFrame = -1;
+	int adaptationReadbackFrame = -1;
+
+	struct ExposureParameters
+	{
+		float2 LuminanceRange;
+		float CompensationEV = 0.0f;
+		float ExposureAtISO100 = 1.0f;
+
+		float CompensationScale() const { return exp2(CompensationEV); }
+	};
+	/** @brief Returns effective camera or saved histogram exposure limits. */
+	ExposureParameters GetExposureParameters() const;
 };

@@ -185,6 +185,9 @@ void Streamline::LoadInterposer()
 		reflexSupportedOnCurrentAdapter = false;
 		reflexOptionsCache = {};
 		lastReflexSleepFrame = UINT32_MAX;
+		for (auto& kindFrames : lastDLSSLogFrame)
+			for (auto& frame : kindFrames)
+				frame = UINT32_MAX;
 		logger::info("[Streamline {}] Successfully initialized Streamline", instanceTag);
 	}
 }
@@ -697,17 +700,32 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
+	const auto frame = state->frameCount;
+	const uint32_t logEye = globals::game::isVR ? eyeIndex : 0u;
+	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+		if (ShouldLogDLSSProblem(DLSSLogKind::kVramWarning, logEye, frame))
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded{} frame={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame);
+		return true;
+	}
+
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline {}] slEvaluateFeature failed{} result={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
-		}
+		if (ShouldLogDLSSProblem(DLSSLogKind::kEvaluateError, logEye, frame))
+			logger::error("[Streamline {}] slEvaluateFeature failed{} frame={} result={} ({})", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame, static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
 		return false;
 	}
 
 	return true;
+}
+
+bool Streamline::ShouldLogDLSSProblem(DLSSLogKind a_kind, uint32_t a_eye, uint32_t a_frame)
+{
+	const uint32_t eye = std::min(a_eye, 1u);
+	auto& lastFrame = lastDLSSLogFrame[static_cast<size_t>(a_kind)][eye];
+	if (lastFrame == UINT32_MAX || a_frame - lastFrame >= kProblemLogIntervalFrames) {
+		lastFrame = a_frame;
+		return true;
+	}
+	return false;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
@@ -769,14 +787,13 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		bool eye0Ready = upscaling.vrIntermediateColorIn[0] &&
 		                 upscaling.vrIntermediateMotionVectors[0] && upscaling.vrIntermediateReactiveMask[0] && upscaling.vrIntermediateTransparencyMask[0];
 		bool eye1Ready = upscaling.vrIntermediateColorIn[1] && upscaling.vrIntermediateColorOut[1] &&
-		                 upscaling.vrIntermediateDepth && upscaling.vrIntermediateMotionVectors[1] &&
+		                 upscaling.vrIntermediateLinearDepth[1] && upscaling.vrIntermediateMotionVectors[1] &&
 		                 upscaling.vrIntermediateReactiveMask[1] && upscaling.vrIntermediateTransparencyMask[1];
 
 		// Pre-copy eye 1 before eye 0 runs (overlap hazard), then clear HMD mask.
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[1]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &rightIn);
-			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, Util::AsReal(depthTexture.texture), 0, &rightIn);
 			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), Util::AsReal(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
@@ -802,7 +819,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			EvaluateDLSS(viewportRight, 1,
 				upscaling.vrIntermediateColorIn[1]->resource.get(),
 				upscaling.vrIntermediateColorOut[1]->resource.get(),
-				upscaling.vrIntermediateDepth->resource.get(),
+				upscaling.vrIntermediateLinearDepth[1]->resource.get(),
 				upscaling.vrIntermediateMotionVectors[1]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[1]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[1]->resource.get(),

@@ -158,6 +158,7 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
+	data.enabled = data.enabled && !globals::state->isMapMenuOpen;
 	ClampDistanceHazeSettings(data);
 	data.vanillaFogDensity = 0.0f;
 
@@ -563,7 +564,7 @@ ID3D11ComputeShader* ExponentialHeightFog::GetIntegrationCS()
 void ExponentialHeightFog::Prepass()
 {
 	CS_GPU_PASS("ExponentialHeightFog::Prepass");
-	if (!settings.enabled || !settings.volumetricFogEnabled || settings.volumetricFogExtinctionScale <= 0.0f) {
+	if (!settings.enabled || globals::state->isMapMenuOpen || !settings.volumetricFogEnabled || settings.volumetricFogExtinctionScale <= 0.0f) {
 		ReleaseVolumetricResources();
 		return;
 	}

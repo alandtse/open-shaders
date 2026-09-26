@@ -306,7 +306,9 @@ jobs:
                     python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
                       hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3 --timing-report "build/shader-compile-timing-${{ matrix.config.runtime }}.json"
                     cp "$PROFILE_CONFIG" build/ShaderCache/CompileConfig.yaml
-                    python tools/build-shader-cache.py --record-compile build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
+                    if [ "${{ inputs.cache-artifacts }}" = "true" ] || [ "${{ inputs.upload-compiled-shaders }}" = "true" ]; then
+                      python tools/build-shader-cache.py --record-compile build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
+                    fi
                     echo "::endgroup::"
                   fi
 

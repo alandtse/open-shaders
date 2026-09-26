@@ -1,7 +1,9 @@
 #include "Camera.h"
 
+#include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "RasterPass.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -39,7 +41,13 @@ void Camera::DrawSettings()
 		}
 
 		if (settings.UseFE) {
-			ImGui::SliderFloat(T("feature.post_processing.camera.fov", "FOV"), &settings.FEFoV, 20.0f, 180.0f, "%1.0f deg");
+			const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+			float fov = camera ? camera->HorizontalFOVDeg : settings.FEFoV;
+			ImGui::BeginDisabled(camera != nullptr);
+			ImGui::SliderFloat(T("feature.post_processing.camera.fov", "FOV"), &fov, 20.0f, 180.0f, "%1.0f deg");
+			ImGui::EndDisabled();
+			if (!camera)
+				settings.FEFoV = fov;
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip("%s", T("feature.post_processing.camera.fov_in_degrees_set_to_in_game_fov", "FOV in degrees.\n\nSet to in-game FOV."));
 			}
@@ -90,28 +98,29 @@ void Camera::SetupResources()
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
 		};
 
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
 			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 }
 		};
 
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
 		texOutput = eastl::make_unique<Texture2D>(texDesc, "Post Processing Camera Output");
 		texOutput->CreateSRV(srvDesc);
-		texOutput->CreateUAV(uavDesc);
+		texOutput->CreateRTV(rtvDesc);
 	}
 
 	logger::debug("Creating samplers...");
 	{
+		// Linear clamp filtering for the fisheye / chromatic aberration sampling.
 		D3D11_SAMPLER_DESC samplerDesc = {
 			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-			.AddressU = D3D11_TEXTURE_ADDRESS_BORDER,
-			.AddressV = D3D11_TEXTURE_ADDRESS_BORDER,
-			.AddressW = D3D11_TEXTURE_ADDRESS_BORDER,
+			.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
 			.MaxAnisotropy = 1,
 			.MinLOD = 0,
 			.MaxLOD = D3D11_FLOAT32_MAX
@@ -121,9 +130,9 @@ void Camera::SetupResources()
 		Util::SetResourceName(colorSampler.get(), "Post Processing Camera Color Sampler");
 	}
 
-	logger::debug("Creating compute shaders...");
+	logger::debug("Compiling shaders...");
 	{
-		CompileComputeShaders();
+		CompileRasterShaders();
 	}
 }
 
@@ -132,25 +141,27 @@ void Camera::ClearShaderCache()
 	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
-		Util::ClearShaders<ID3D11ComputeShader>({ cameraCS });
+		Util::ClearShaders<ID3D11PixelShader>({ cameraPS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/Camera");
-	CompileComputeShaders();
+	CompileRasterShaders();
 }
 
-void Camera::CompileComputeShaders()
+void Camera::CompileRasterShaders()
 {
-	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &cameraCS, "camera.cs.hlsl", {}, "CS_Camera" }
+	const std::vector<PixelShaderCompileInfo> shaderInfos = {
+		{ &cameraPS, "camera.ps.hlsl" }
 	};
 
-	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\Camera", shaderInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\Camera", {}, shaderInfos);
 }
 
 void Camera::Draw(TextureInfo& inout_tex)
 {
-	if (!AllShadersReady({ &cameraCS }))
+	if (!owner || !owner->GetFullscreenVS())
+		return;
+	if (!AllShadersReady({ &cameraPS }))
 		return;
 
 	CS_GPU_PASS("PostProcessing::Camera");
@@ -159,7 +170,10 @@ void Camera::Draw(TextureInfo& inout_tex)
 	res = Util::ConvertToDynamic(res);
 
 	CameraCB data = {
-		.FEFoV = settings.FEFoV,
+		.FEFoV = [this]() {
+			const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+			return cam ? cam->HorizontalFOVDeg : settings.FEFoV;
+		}(),
 		.FECrop = settings.FECrop,
 		.CAStrength = settings.CAStrength,
 		.NoiseStrength = settings.NoiseStrength,
@@ -170,26 +184,32 @@ void Camera::Draw(TextureInfo& inout_tex)
 
 	cameraCB->Update(data);
 
-	ID3D11ShaderResourceView* srv = inout_tex.srv;
-	ID3D11UnorderedAccessView* uav = texOutput->uav.get();
-	ID3D11Buffer* cb = cameraCB->CB();
+	{
+		PostProcessingRaster::RasterPass pass(context);
 
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+		ID3D11ShaderResourceView* srv = inout_tex.srv;
+		ID3D11Buffer* cb = cameraCB->CB();
+		// Film grain animates off SharedData::FrameCount (b5).
+		ID3D11Buffer* sharedDataBuf = globals::state->sharedDataCB->CB();
+		ID3D11SamplerState* sampler = colorSampler.get();
 
-	context->CSSetShader(cameraCS.get(), nullptr, 0);
-	context->Dispatch(((uint)res.x + 7) >> 3, ((uint)res.y + 7) >> 3, 1);
+		context->PSSetConstantBuffers(1, 1, &cb);
+		context->PSSetConstantBuffers(5, 1, &sharedDataBuf);
+		context->PSSetSamplers(0, 1, &sampler);
+		context->PSSetShaderResources(0, 1, &srv);
+		pass.SetTargets({ texOutput->rtv.get() }, res.x, res.y);
+		pass.SetShaders(owner->GetFullscreenVS(), cameraPS.get());
+		pass.Draw();
 
-	srv = nullptr;
-	uav = nullptr;
-	cb = nullptr;
-
-	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetShader(nullptr, nullptr, 0);
+		srv = nullptr;
+		cb = nullptr;
+		sharedDataBuf = nullptr;
+		sampler = nullptr;
+		context->PSSetShaderResources(0, 1, &srv);
+		context->PSSetConstantBuffers(1, 1, &cb);
+		context->PSSetConstantBuffers(5, 1, &sharedDataBuf);
+		context->PSSetSamplers(0, 1, &sampler);
+	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
 }

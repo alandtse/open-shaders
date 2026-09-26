@@ -1,13 +1,20 @@
 /// By ProfJack/五脚猫, 2024-2-28 UTC
 /// ref:
 /// http://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare
+///
+/// Fullscreen-triangle bloom chain. Each mip pass renders into its target mip
+/// with a viewport sized to that mip. The upsample accumulation is done by
+/// fixed-function blending: the PS emits the upsample contribution scaled by
+/// UpsampleMult and the blend stage adds it to the destination mip
+/// pre-multiplied by CurrentMipMult (SrcBlend = ONE, DestBlend = BLEND_FACTOR,
+/// blend factor = CurrentMipMult).
+
+#include "PostProcessing/fullscreen.hlsli"
 
 #include "PostProcessing/common.hlsli"
 
 Texture2D<float4> TexColor : register(t0);
 Texture2D<float4> TexBloomIn : register(t1);
-
-RWTexture2D<float4> RWTexBloomOut : register(u0);
 
 cbuffer BloomCB : register(b1)
 {
@@ -52,49 +59,50 @@ float4 UpsampleCOD(Texture2D tex, float2 uv, float2 radius)
 	return retval;
 }
 
-[numthreads(32, 32, 1)] void CS_Threshold(uint2 tid : SV_DispatchThreadID) {
+float4 PS_Threshold(FullscreenTriangleVSOutput input) : SV_Target
+{
+	uint2 tid = uint2(input.Position.xy);
+
 	float3 col_input = TexColor[tid].rgb;
 
 	float3 col = col_input;
 	col = Sanitise(col);
 	col = ThresholdColor(col, Threshold.x);
-	RWTexBloomOut[tid] = float4(col, 1);
+	return float4(col, 1);
 };
 
-[numthreads(32, 32, 1)] void CS_Downsample(uint2 tid : SV_DispatchThreadID) {
-	uint2 dims;
-	RWTexBloomOut.GetDimensions(dims.x, dims.y);
-
-	float2 px_size = rcp(dims);
-	float2 uv = (tid + .5) * px_size;
+float4 PS_Downsample(FullscreenTriangleVSOutput input) : SV_Target
+{
+	float2 px_size = fwidth(input.TexCoord);
+	float2 uv = input.TexCoord;
 
 #ifdef FIRST_MIP
 	float3 col = DownsampleCODFirstMip(TexBloomIn, SampColor, uv, px_size).rgb;
 #else
 	float3 col = DownsampleCOD(TexBloomIn, SampColor, uv, px_size).rgb;
 #endif
-	RWTexBloomOut[tid] = float4(col, 1);
+	return float4(col, 1);
 };
 
-[numthreads(32, 32, 1)] void CS_Upsample(uint2 tid : SV_DispatchThreadID) {
-	uint2 dims;
-	RWTexBloomOut.GetDimensions(dims.x, dims.y);
+/// Upsample-accumulate pass:
+///     out = dst * CurrentMipMult + UpsampleCOD(TexBloomIn) * UpsampleMult
+/// The PS returns the scaled upsample contribution; the destination multiply
+/// happens in the blend stage (see file header).
+float4 PS_Upsample(FullscreenTriangleVSOutput input) : SV_Target
+{
+	float2 px_size = fwidth(input.TexCoord);
+	float2 uv = input.TexCoord;
 
-	float2 px_size = rcp(dims);
-	float2 uv = (tid + .5) * px_size;
-
-	float3 col = RWTexBloomOut[tid].rgb * CurrentMipMult + UpsampleCOD(TexBloomIn, uv, px_size * UpsampleRadius).rgb * UpsampleMult;
-	RWTexBloomOut[tid] = float4(col, 1);
+	float3 col = UpsampleCOD(TexBloomIn, uv, px_size * UpsampleRadius).rgb * UpsampleMult;
+	return float4(col, 1);
 };
 
-[numthreads(32, 32, 1)] void CS_Composite(uint2 tid : SV_DispatchThreadID) {
-	uint2 dims;
-	RWTexBloomOut.GetDimensions(dims.x, dims.y);
+float4 PS_Composite(FullscreenTriangleVSOutput input) : SV_Target
+{
+	float2 px_size = fwidth(input.TexCoord);
+	float2 uv = input.TexCoord;
 
-	float2 px_size = rcp(dims);
-	float2 uv = (tid + .5) * px_size;
+	float3 col = TexColor[input.Position.xy].rgb + UpsampleCOD(TexBloomIn, uv, px_size * UpsampleRadius).rgb * UpsampleMult;
 
-	float3 col = TexColor[tid].rgb + UpsampleCOD(TexBloomIn, uv, px_size * UpsampleRadius).rgb * UpsampleMult;
-
-	RWTexBloomOut[tid] = float4(col, 1);
+	return float4(col, 1);
 };

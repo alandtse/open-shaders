@@ -95,6 +95,8 @@ namespace SharedData
 		float3 Scale;
 		float2 ZRange;
 		float2 Offset;
+		float ZBlur;
+		float3 pad0;
 	};
 
 	struct LightLimitFixSettings
@@ -331,7 +333,7 @@ namespace SharedData
 		float fogIntensity;
 		float vlIntensity;
 		float sunGlareIntensity;
-		float skyStaticBrightness;
+		float padding;
 		float skyStaticTransparency;
 	};
 
@@ -529,6 +531,12 @@ namespace SharedData
 		float2 pad0;
 	};
 
+	struct HorizonFixSettings
+	{
+		float farWaterDistance;
+		float3 pad;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -559,6 +567,7 @@ namespace SharedData
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
+		HorizonFixSettings horizonFixSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

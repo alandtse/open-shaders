@@ -26,7 +26,7 @@ struct LUT : PostProcessFeature
 	struct alignas(16) LUTCB
 	{
 		float3 InputMin;
-		float pad;
+		uint InputGamut;
 		float3 InputMax;
 		int LutType;
 	};
@@ -36,11 +36,11 @@ struct LUT : PostProcessFeature
 	eastl::unique_ptr<Texture3D> texLUT3D = nullptr;
 	eastl::unique_ptr<Texture2D> texOutput = nullptr;
 
-	winrt::com_ptr<ID3D11ComputeShader> lutCS = nullptr;
+	winrt::com_ptr<ID3D11PixelShader> lutPS = nullptr;
 
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
-	void CompileComputeShaders();
+	void CompileRasterShaders();
 
 	virtual void RestoreDefaultSettings() override;
 	virtual void LoadSettings(json&) override;

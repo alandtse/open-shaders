@@ -66,6 +66,11 @@ namespace Color
 			dot(v4, kBlueVec4) + dot(v2, kBlueVec2));
 	}
 
+	float RGBToLuminance(float3 color, float3 luminanceWeights)
+	{
+		return dot(color, luminanceWeights);
+	}
+
 #if defined(PSHADER) || defined(CSHADER) || defined(COMPUTESHADER)
 	float RGBToLuminance(float3 color)
 	{

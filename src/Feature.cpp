@@ -216,6 +216,10 @@ bool Feature::ValidateCache(CSimpleIniA& a_ini)
 
 	if (loaded) {
 		auto versionInCache = a_ini.GetValue(ini_name.c_str(), "Version");
+		if (!versionInCache) {
+			logger::info("No cached version found. Installed {}", version);
+			return false;
+		}
 		if (strcmp(versionInCache, version.c_str()) != 0) {
 			logger::info("Change in version detected. Installed {} but {} in Disk Cache", version, versionInCache);
 			return false;
@@ -444,11 +448,12 @@ void Feature::DrainSceneTransitions()
 
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 {
-	for (auto* feature : GetFeatureList()) {
-		if (feature->loaded && feature->GetShortName() == shortName)
-			return feature;
-	}
-	return nullptr;
+	return FindLoadedFeature([&](Feature* f) { return f->GetShortName() == shortName; });
+}
+
+bool Feature::FindSceneExposure(SceneExposure& a_out)
+{
+	return FindLoadedFeature([&](Feature* f) { return f->GetSceneExposure(a_out); }) != nullptr;
 }
 
 std::vector<std::string> Feature::GetLoadedFeatureNames()

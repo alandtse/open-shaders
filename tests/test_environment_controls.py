@@ -227,6 +227,7 @@ struct Sky {
     TESWeather* currentWeather = nullptr;
     TESWeather* lastWeather = nullptr;
     float currentWeatherPct = 1.0f;
+    float lastWeatherUpdate = 0.0f;
     TESWeather* overrideWeather = nullptr;
     TESWeather* defaultWeather = nullptr;
     int forces = 0, sets = 0, releases = 0;
@@ -469,6 +470,26 @@ int main() {
     EndGameHourScrub();
     require(sky.releases == releases, "ending an interaction twice has no effect");
     require(SetGameHour(9.0f) && !GetLockedWeather(), "a direct time command never starts a weather lock");
+
+    hour.value = sky.lastWeatherUpdate = 12.0f;
+    BeginGameHourScrub();
+    const int scrubForces = sky.forces;
+    for (float targetHour : {11.9f, 11.8f, 6.0f, 0.1f, 23.9f, 0.0f, 18.0f}) {
+        require(SetGameHour(targetHour, false), "slider accepts backward, forward and midnight changes");
+        float elapsed = hour.value - sky.lastWeatherUpdate;
+        if (elapsed < 0.0f)
+            elapsed += kHoursPerDay;
+        constexpr float kShortestWeatherLifetime = 1.0f;
+        if (elapsed > kShortestWeatherLifetime)
+            sky.overrideWeather = nullptr;
+        require(sky.overrideWeather == GetLockedWeather(), "time edits cannot expire the held weather before its next update");
+        MaintainLocks();
+        require(sky.forces == scrubForces, "scrubbing never reloads weather to repair an expired override");
+    }
+    EndGameHourScrub();
+    sky.lastWeatherUpdate = 3.0f;
+    require(SetGameHour(9.0f) && sky.lastWeatherUpdate == 3.0f,
+            "unlocked time edits preserve the engine's weather timer");
 
     for (float blend : {0.0f, 0.49f, 0.5f, 0.51f, 1.0f}) {
         sky.lastWeather = &first;

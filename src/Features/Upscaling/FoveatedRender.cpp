@@ -22,7 +22,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	peripheryAAMode,
 	peripheryTemporalAlpha,
 	subrectBlendMode,
+	subrectMaskMode,
 	subrectFeatherWidth,
+	subrectFalloffCurve,
 	subrectDitherStrength);
 
 // ============================================================================
@@ -51,6 +53,12 @@ void FoveatedRender::PostPostLoad()
 		{ .name = kPresetNasalConvergence50,
 			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
+		{ .name = kPresetNasalConvergence60,
+			.uv = { 0.4f, 0.2f, 0.6f, 0.6f },
+			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.2f, 0.6f, 0.6f } },
+		{ .name = kPresetNasalConvergence70,
+			.uv = { 0.3f, 0.15f, 0.7f, 0.7f },
+			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
 	});
 	// PostPostLoad runs after settings load, so a user with an older, shorter
 	// persisted preset list (from before these names existed) still sees every
@@ -98,9 +106,11 @@ void FoveatedRender::ClampSettings()
 	settings.debugVisualize = std::min(settings.debugVisualize, 1u);
 	settings.peripheryAAMode = std::min(settings.peripheryAAMode, 1u);
 	settings.subrectBlendMode = std::min(settings.subrectBlendMode, 2u);
+	settings.subrectMaskMode = std::min(settings.subrectMaskMode, 1u);
 	settings.peripheryBlurRadius = std::clamp(settings.peripheryBlurRadius, 0.5f, 4.0f);
 	settings.peripheryTemporalAlpha = std::clamp(settings.peripheryTemporalAlpha, 0.05f, 0.5f);
 	settings.subrectFeatherWidth = std::clamp(settings.subrectFeatherWidth, 2.0f, 128.0f);
+	settings.subrectFalloffCurve = std::clamp(settings.subrectFalloffCurve, 0.5f, 2.0f);
 	settings.subrectDitherStrength = std::clamp(settings.subrectDitherStrength, 0.0f, 2.0f);
 	// Preset clamping reads from Upscaling::Settings now.
 	auto& sharedPreset = globals::features::upscaling.settings.presetDLSS;
@@ -320,6 +330,13 @@ const char* FoveatedRender::SubrectBlendModeName(SubrectBlendMode mode)
 	}
 }
 
+const char* FoveatedRender::SubrectMaskModeName(SubrectMaskMode mode)
+{
+	return mode == SubrectMaskMode::kOval ?
+	           T(TKEY("foveated_mask_oval"), "Oval") :
+	           T(TKEY("foveated_mask_rectangle"), "Rectangle");
+}
+
 void FoveatedRender::DrawSettings()
 {
 	ClampSettings();
@@ -386,7 +403,8 @@ void FoveatedRender::DrawSettings()
 								  "history blending. Independent of the upscaled subrect.\n"
 								  "\n"
 								  "Edge Blend: controls how the upscaled subrect edge meets the stretched periphery.\n"
-								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Only affects the boundary."));
+								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Edge Shape selects a\n"
+								  "rectangle or oval composite."));
 		}
 
 		ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, StretchModeName((StretchMode)settings.stretchMode));
@@ -418,7 +436,7 @@ void FoveatedRender::DrawSettings()
 			ImGui::TextWrapped("%s", T(TKEY("foveated_blend_hard_copy_desc"), "Sharp seam at the subrect boundary. Lowest cost."));
 			break;
 		case SubrectBlendMode::kFeather:
-			ImGui::TextWrapped("%s", T(TKEY("foveated_blend_feather_desc"), "Smoothstep fade over N pixels at the boundary. Hides the seam."));
+			ImGui::TextWrapped("%s", T(TKEY("foveated_blend_feather_desc"), "Smoothstep fade over N pixels at the boundary. Hides the seam. Falloff Curve reshapes the ramp."));
 			ImGui::SliderFloat(T(TKEY("foveated_feather_width"), "Feather Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
 			break;
 		case SubrectBlendMode::kDither:
@@ -426,6 +444,19 @@ void FoveatedRender::DrawSettings()
 			ImGui::SliderFloat(T(TKEY("foveated_band_width"), "Band Width"), &settings.subrectFeatherWidth, 2.0f, 128.0f, "%.0f px");
 			ImGui::SliderFloat(T(TKEY("foveated_noise_amount"), "Noise Amount"), &settings.subrectDitherStrength, 0.0f, 2.0f, "%.2f");
 			break;
+		}
+
+		if (GetSubrectBlendMode() != SubrectBlendMode::kHardCopy) {
+			ImGui::SliderFloat(T(TKEY("foveated_falloff_curve"), "Falloff Curve"), &settings.subrectFalloffCurve, 0.5f, 2.0f, "%.2f");
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("foveated_falloff_curve_tooltip"), "Controls how the transition distributes the fade. 1.00 is balanced; lower values carry the upscaled result farther into the band, higher values hold the periphery longer."));
+			}
+
+			ImGui::SliderInt(T(TKEY("foveated_mask_shape_label"), "Edge Shape"), reinterpret_cast<int*>(&settings.subrectMaskMode), 0, 1,
+				SubrectMaskModeName(GetSubrectMaskMode()));
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("foveated_mask_shape_tooltip"), "Oval rounds the blended edge, so the subrect corners keep the stretched periphery instead of the upscaled image. The upscaler still processes the full rectangle either way."));
+			}
 		}
 
 		ImGui::Separator();

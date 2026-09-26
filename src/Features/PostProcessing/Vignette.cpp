@@ -1,7 +1,9 @@
 #include "Vignette.h"
 
+#include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "RasterPass.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -13,7 +15,21 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void Vignette::DrawSettings()
 {
-	ImGui::SliderFloat(T("feature.post_processing.vignette.focal_length", "Focal Length"), &settings.FocalLength, 0.1f, 2.f, "%.2f");
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+
+	float focalLength = settings.FocalLength;
+	if (cam) {
+		// Vignette focal length is relative to the image width, i.e. the
+		// horizontal sensor extent.
+		focalLength = std::clamp(cam->FocalLengthMM / std::max(cam->EffectiveSensorWidthMM, 0.1f), 0.1f, 2.0f);
+		ImGui::TextDisabled("%s", T("feature.post_processing.controlled_by_cinematic_camera", "Lens and focus are currently controlled by Cinematic Camera."));
+	}
+
+	ImGui::BeginDisabled(cam != nullptr);
+	ImGui::SliderFloat(T("feature.post_processing.vignette.focal_length", "Focal Length"), &focalLength, 0.1f, 2.f, "%.2f");
+	ImGui::EndDisabled();
+	if (!cam)
+		settings.FocalLength = focalLength;
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.vignette.the_focal_length_of_the_lens_relative_to", "The focal length of the lens, relative to image width."));
 
@@ -66,22 +82,22 @@ void Vignette::SetupResources()
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
 		};
 
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
 			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 }
 		};
 
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
 		texOutput = eastl::make_unique<Texture2D>(texDesc, "Post Processing Vignette Output");
 		texOutput->CreateSRV(srvDesc);
-		texOutput->CreateUAV(uavDesc);
+		texOutput->CreateRTV(rtvDesc);
 	}
 
-	CompileComputeShaders();
+	CompileRasterShaders();
 }
 
 void Vignette::ClearShaderCache()
@@ -89,60 +105,66 @@ void Vignette::ClearShaderCache()
 	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
-		Util::ClearShaders<ID3D11ComputeShader>({ vignetteCS });
+		Util::ClearShaders<ID3D11PixelShader>({ vignettePS });
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/Vignette");
-	CompileComputeShaders();
+	CompileRasterShaders();
 }
 
-void Vignette::CompileComputeShaders()
+void Vignette::CompileRasterShaders()
 {
-	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
-		{ &vignetteCS, "vignette.cs.hlsl", {} },
+	const std::vector<PixelShaderCompileInfo> shaderInfos = {
+		{ &vignettePS, "vignette.ps.hlsl" },
 	};
 
-	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\Vignette", shaderInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\Vignette", {}, shaderInfos);
 }
 
 void Vignette::Draw(TextureInfo& inout_tex)
 {
-	if (!AllShadersReady({ &vignetteCS }))
+	if (!owner || !owner->GetFullscreenVS())
+		return;
+	if (!AllShadersReady({ &vignettePS }))
 		return;
 
 	CS_GPU_PASS("PostProcessing::Vignette");
 	auto context = globals::d3d::context;
+
+	Settings effective = settings;
+	if (const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr) {
+		effective.FocalLength = std::clamp(cam->FocalLengthMM / std::max(cam->EffectiveSensorWidthMM, 0.1f), 0.1f, 2.0f);
+	}
 
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
 	res = Util::ConvertToDynamic(res);
 	// In VR, res.x spans both packed eyes; the ellipse shape must use one eye's width.
 	float eyeWidth = globals::game::isVR ? res.x * 0.5f : res.x;
 	VignetteCB data = {
-		.settings = settings,
-		.AspectRatio = res.y / eyeWidth / settings.Anamorphism,
+		.settings = effective,
+		.AspectRatio = res.y / eyeWidth / effective.Anamorphism,
 		.RcpDynRes = float2(1.f) / res
 	};
 	vignetteCB->Update(data);
 
-	ID3D11ShaderResourceView* srv = inout_tex.srv;
-	ID3D11UnorderedAccessView* uav = texOutput->uav.get();
-	ID3D11Buffer* cb = vignetteCB->CB();
+	{
+		PostProcessingRaster::RasterPass pass(context);
 
-	context->CSSetConstantBuffers(1, 1, &cb);
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetShader(vignetteCS.get(), nullptr, 0);
+		ID3D11ShaderResourceView* srv = inout_tex.srv;
+		ID3D11Buffer* cb = vignetteCB->CB();
 
-	context->Dispatch(((uint)res.x + 7) >> 3, ((uint)res.y + 7) >> 3, 1);
+		context->PSSetConstantBuffers(1, 1, &cb);
+		context->PSSetShaderResources(0, 1, &srv);
+		pass.SetTargets({ texOutput->rtv.get() }, res.x, res.y);
+		pass.SetShaders(owner->GetFullscreenVS(), vignettePS.get());
+		pass.Draw();
 
-	// clean up
-	srv = nullptr;
-	uav = nullptr;
-	cb = nullptr;
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetConstantBuffers(0, 1, &cb);
-	context->CSSetShader(nullptr, nullptr, 0);
+		// clean up
+		srv = nullptr;
+		cb = nullptr;
+		context->PSSetShaderResources(0, 1, &srv);
+		context->PSSetConstantBuffers(1, 1, &cb);
+	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
 }

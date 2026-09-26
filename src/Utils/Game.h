@@ -122,6 +122,8 @@ namespace Util::EnvironmentControls
 
 namespace Util
 {
+	inline constexpr float kFallbackCameraAspect = 16.0f / 9.0f;
+
 	/** @brief Forces weather and refreshes its cloud passes and sky model. */
 	void ForceWeather(RE::Sky* a_sky, RE::TESWeather* a_weather, bool a_override);
 
@@ -155,6 +157,27 @@ namespace Util
 	// Disable vanilla TAA (bUseTAA:Display). CS drives TAA itself.
 	void DisableVanillaTAA();
 	float GetVerticalFOVRad();
+
+	/** @brief Requests the optional True Directional Movement target API. */
+	void RequestTargetLockAPI();
+	/** @brief Returns the current TDM target handle, or an empty handle when unavailable. */
+	RE::ActorHandle GetTargetLockTarget();
+	/** @brief Returns the dialogue speaker handle, falling back to the last speaker. */
+	RE::ObjectRefHandle GetDialogueTarget();
+	/** @brief Returns the reference currently selected in the console. */
+	RE::NiPointer<RE::TESObjectREFR> GetSelectedConsoleReference();
+	/** @brief Returns the per-eye viewport aspect ratio, falling back to 16:9 before initialization. */
+	float GetCameraAspectRatio();
+	/** @brief Returns the flat camera's world FOV in degrees, or null when unavailable or in VR. */
+	float* GetWorldFOV();
+	/** @brief Gets the camera position using runtime-specific camera states. */
+	RE::NiPoint3 GetCameraPosition();
+	/** @brief Returns the head or reference position of a non-null reference. */
+	RE::NiPoint3 GetReferenceFocusPosition(RE::TESObjectREFR* a_ref);
+	/** @brief Returns camera-to-reference focus distance in game units. */
+	float GetCameraDistanceToReference(RE::TESObjectREFR* a_ref);
+	/** @brief Projects a flat-runtime reference into top-left depth texture coordinates. */
+	bool GetReferenceFocusCoord(RE::TESObjectREFR* a_ref, float2& a_focusCoord);
 
 	RE::NiPoint3 GetAverageEyePosition();
 	RE::NiPoint3 GetEyePosition(int eyeIndex);

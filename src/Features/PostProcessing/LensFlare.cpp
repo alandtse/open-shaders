@@ -5,12 +5,22 @@
 #include "I18n/I18n.h"
 #include "PostProcessingUI.h"
 #include "ShaderCache.h"
-#include "State.h"
 #include "Util.h"
 
 namespace
 {
 	using LensFlareSettings = LensFlare::Settings;
+
+	uint NormaliseFFTResolution(int resolution)
+	{
+		const uint clamped = std::clamp(static_cast<uint>(std::max(resolution, 0)), LensFlare::FFT_MIN, LensFlare::FFT_MAX);
+		return std::bit_ceil(clamped);
+	}
+
+	uint GetFFTVariant(uint resolution)
+	{
+		return static_cast<uint>(std::countr_zero(resolution) - std::countr_zero(LensFlare::FFT_MIN));
+	}
 
 	bool IsBokehGhostMode(int mode)
 	{
@@ -116,15 +126,27 @@ void LensFlare::DrawSettings()
 	}
 
 	if (settings.GhostModeInt == static_cast<int>(GhostMode::Quality) || settings.GhostModeInt == static_cast<int>(GhostMode::Ultra)) {
-		// Procedural aperture settings
-		ImGui::SliderInt(T("feature.post_processing.lens_flare.aperture_blades", "Aperture Blades"), &settings.ApertureBlades, 3, 10);
+		const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+		int apertureBlades = camera ? camera->ApertureBladeCount : settings.ApertureBlades;
+		float fStop = camera ? camera->FNumber : settings.FStop;
+		float apertureRotation = camera ? camera->ApertureBladeRotationDeg : settings.ApertureRotation;
+
+		ImGui::BeginDisabled(camera != nullptr);
+		ImGui::SliderInt(T("feature.post_processing.lens_flare.aperture_blades", "Aperture Blades"), &apertureBlades, 3, 10);
 		tooltip("Number of aperture blades for the procedural bokeh shape.");
 
-		ImGui::SliderFloat(T("feature.post_processing.lens_flare.f_stop", "F-Stop"), &settings.FStop, 1.0f, 22.0f, "F%.1f");
+		ImGui::SliderFloat(T("feature.post_processing.lens_flare.f_stop", "F-Stop"), &fStop, 1.0f, 22.0f, "F%.1f");
 		tooltip("Aperture f-number (e.g. F2.8). Smaller = larger aperture.\nControls the bokeh shape characteristics.");
 
-		ImGui::SliderFloat(T("feature.post_processing.lens_flare.aperture_rotation", "Aperture Rotation"), &settings.ApertureRotation, -180.0f, 180.0f, "%.1f deg");
+		ImGui::SliderFloat(T("feature.post_processing.lens_flare.aperture_rotation", "Aperture Rotation"), &apertureRotation, -180.0f, 180.0f, "%.1f deg");
 		tooltip("Rotation of the procedural aperture.");
+		ImGui::EndDisabled();
+
+		if (!camera) {
+			settings.ApertureBlades = apertureBlades;
+			settings.FStop = fStop;
+			settings.ApertureRotation = apertureRotation;
+		}
 
 		PostProcessingUI::FFTResolutionCombo(T("feature.post_processing.lens_flare.fft_resolution", "FFT Resolution"), settings.FFTResolution);
 		tooltip("Resolution of the FFT convolution. Higher = sharper bokeh ghost shapes but more expensive.");
@@ -329,7 +351,7 @@ void LensFlare::SetupResources()
 	CompileComputeShaders();
 
 	// Create initial FFT textures
-	CreateFFTTextures(std::clamp((uint)settings.FFTResolution, FFT_MIN, FFT_MAX));
+	CreateFFTTextures(NormaliseFFTResolution(settings.FFTResolution));
 }
 
 void LensFlare::CreateFFTTextures(uint resolution)
@@ -368,10 +390,10 @@ void LensFlare::CreateFFTTextures(uint resolution)
 		texFFT[pp]->CreateUAV(uavDesc);
 	}
 
-	// Bokeh kernel FFT cache (RG32F)
-	texBokehFFT = eastl::make_unique<Texture2D>(texDesc, "Post Processing Lens Flare Bokeh FFT");
-	texBokehFFT->CreateSRV(srvDesc);
-	texBokehFFT->CreateUAV(uavDesc);
+	for (auto& cache : bokehFFTCache) {
+		cache.texture.reset();
+		cache.valid = false;
+	}
 
 	// Scene FFT cache (RG32F) — reused across kernel groups in Ultra mode
 	texSceneFFT = eastl::make_unique<Texture2D>(texDesc, "Post Processing Lens Flare Scene FFT");
@@ -396,13 +418,17 @@ void LensFlare::CreateFFTTextures(uint resolution)
 
 void LensFlare::ClearShaderCache()
 {
+	outputReady = false;
 	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
 		Util::ClearShaders<ID3D11ComputeShader>({ thresholdCS, ghostHaloCS, blurDownCS, blurUpCS, mixCS,
-			fftRowCS, fftColCS, fftRowInvCS, fftColInvCS, fftMultiplyCS,
-			bokehPrepareCS, fftThresholdCS, fftGhostComposeCS });
+			fftMultiplyCS, bokehPrepareCS, fftThresholdCS, fftGhostComposeCS });
+		for (uint i = 0; i < FFT_VARIANT_COUNT; ++i) {
+			Util::ClearShaders<ID3D11ComputeShader>({ fftRowCS[i], fftColCS[i], fftRowInvCS[i], fftColInvCS[i] });
+		}
 	}
+	bokehFFTDirty = true;
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/LensFlare");
 	CompileComputeShaders();
@@ -410,7 +436,7 @@ void LensFlare::ClearShaderCache()
 
 void LensFlare::CompileComputeShaders()
 {
-	const std::vector<ComputeShaderCompileInfo> shaderInfos = {
+	std::vector<ComputeShaderCompileInfo> shaderInfos = {
 		{ &thresholdCS, "lensflare.cs.hlsl", {}, "CSThreshold" },
 		{ &ghostHaloCS, "lensflare.cs.hlsl", {}, "CSGhostHalo" },
 		{ &blurDownCS, "lensflare.cs.hlsl", {}, "CSFlareDown" },
@@ -420,15 +446,25 @@ void LensFlare::CompileComputeShaders()
 		{ &bokehPrepareCS, "lensflare_fft.cs.hlsl", {}, "CSBokehPrepare" },
 		{ &fftThresholdCS, "lensflare_fft.cs.hlsl", {}, "CSFFTThreshold" },
 		{ &fftGhostComposeCS, "lensflare_fft.cs.hlsl", {}, "CSFFTGhostCompose" },
-		// FFT shaders — self-contained in lensflare_fft.cs.hlsl with LensFlareConstants CB
-		{ &fftRowCS, "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "FORWARD", "" } }, "CS_FFT" },
-		{ &fftColCS, "lensflare_fft.cs.hlsl", { { "COL_PASS", "" }, { "FORWARD", "" } }, "CS_FFT" },
-		{ &fftRowInvCS, "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "INVERSE", "" } }, "CS_FFT" },
-		{ &fftColInvCS, "lensflare_fft.cs.hlsl", { { "COL_PASS", "" }, { "INVERSE", "" } }, "CS_FFT" },
 		{ &fftMultiplyCS, "lensflare_fft.cs.hlsl", {}, "CS_Multiply" },
 	};
 
+	static constexpr std::array<const char*, FFT_VARIANT_COUNT> fftSizes = { "128", "256", "512", "1024" };
+	for (uint i = 0; i < FFT_VARIANT_COUNT; ++i) {
+		shaderInfos.push_back({ &fftRowCS[i], "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "FORWARD", "" }, { "FFT_SIZE", fftSizes[i] } }, "CS_FFT" });
+		shaderInfos.push_back({ &fftColCS[i], "lensflare_fft.cs.hlsl", { { "COL_PASS", "" }, { "FORWARD", "" }, { "FFT_SIZE", fftSizes[i] } }, "CS_FFT" });
+		shaderInfos.push_back({ &fftRowInvCS[i], "lensflare_fft.cs.hlsl", { { "ROW_PASS", "" }, { "INVERSE", "" }, { "FFT_SIZE", fftSizes[i] } }, "CS_FFT" });
+		shaderInfos.push_back({ &fftColInvCS[i], "lensflare_fft.cs.hlsl", { { "COL_PASS", "" }, { "INVERSE", "" }, { "FFT_SIZE", fftSizes[i] } }, "CS_FFT" });
+	}
+
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\LensFlare", shaderInfos);
+}
+
+bool LensFlare::FFTShadersReady(uint resolution) const
+{
+	const uint variant = GetFFTVariant(resolution);
+	return AllShadersReady({ &fftRowCS[variant], &fftColCS[variant], &fftRowInvCS[variant], &fftColInvCS[variant],
+		&bokehPrepareCS, &fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS });
 }
 
 void LensFlare::DispatchFFT(ID3D11ComputeShader* shader, Texture2D* input, Texture2D* output, uint resolution)
@@ -449,9 +485,37 @@ void LensFlare::DispatchFFT(ID3D11ComputeShader* shader, Texture2D* input, Textu
 	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 }
 
-void LensFlare::PrepareBokehFFT()
+void LensFlare::PrepareBokehFFT(BokehFFTCache& cache, const LensFlareCB& data)
 {
+	if (cache.valid && cache.kernelScale == data.KernelScale &&
+		cache.apertureSize == data.ApertureSize && cache.apertureRotation == data.ApertureRotation &&
+		cache.apertureBlades == data.ApertureBlades)
+		return;
+
+	CS_GPU_PASS("PostProcessing::LensFlare::BokehFFT");
+
+	if (!cache.texture) {
+		const auto resourceName = std::format("PostProcessing::LensFlare::BokehFFT{}", &cache - bokehFFTCache.data());
+		cache.texture = eastl::make_unique<Texture2D>(texSceneFFT->desc, resourceName.c_str());
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+			.Format = texSceneFFT->desc.Format,
+			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
+		};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+			.Format = texSceneFFT->desc.Format,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = 0 }
+		};
+		cache.texture->CreateSRV(srvDesc);
+		cache.texture->CreateUAV(uavDesc);
+	}
+
 	auto context = globals::d3d::context;
+	lensFlareCB->Update(data);
+	auto cb = lensFlareCB->CB();
+	context->CSSetConstantBuffers(1, 1, &cb);
+	const uint fftVariant = GetFFTVariant(currentFFTResolution);
 
 	// Step 1: Generate procedural aperture kernel → RG32F (real=aperture, imag=0), centered + zero-padded
 	{
@@ -466,11 +530,15 @@ void LensFlare::PrepareBokehFFT()
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 	}
 
-	// Step 2: Forward FFT bokeh kernel: texFFT[0] → texFFT[1] → texBokehFFT
-	DispatchFFT(fftRowCS.get(), texFFT[0].get(), texFFT[1].get(), currentFFTResolution);
-	DispatchFFT(fftColCS.get(), texFFT[1].get(), texBokehFFT.get(), currentFFTResolution);
+	// Step 2: Forward FFT bokeh kernel: texFFT[0] → texFFT[1] → cached kernel
+	DispatchFFT(fftRowCS[fftVariant].get(), texFFT[0].get(), texFFT[1].get(), currentFFTResolution);
+	DispatchFFT(fftColCS[fftVariant].get(), texFFT[1].get(), cache.texture.get(), currentFFTResolution);
 
-	bokehFFTDirty = false;
+	cache.kernelScale = data.KernelScale;
+	cache.apertureSize = data.ApertureSize;
+	cache.apertureRotation = data.ApertureRotation;
+	cache.apertureBlades = data.ApertureBlades;
+	cache.valid = true;
 }
 
 void LensFlare::DrawFast(TextureInfo& inout_tex, LensFlareCB& data)
@@ -554,21 +622,23 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 	std::ignore = inout_tex;
 	auto context = globals::d3d::context;
 
-	if (!AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS,
-			&fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS }))
+	const uint targetRes = NormaliseFFTResolution(settings.FFTResolution);
+	if (!FFTShadersReady(targetRes))
 		return;
+
+	CS_GPU_PASS("PostProcessing::LensFlare::Convolution");
 
 	uint N = currentFFTResolution;
 	uint halfW = texThreshold->desc.Width;
 	uint halfH = texThreshold->desc.Height;
 
 	// Handle FFT resolution change
-	uint targetRes = std::clamp((uint)settings.FFTResolution, FFT_MIN, FFT_MAX);
 	if (targetRes != currentFFTResolution) {
 		CreateFFTTextures(targetRes);
 		N = targetRes;
 	}
 
+	const uint fftVariant = GetFFTVariant(N);
 	data.FFTResolution = N;
 	GhostMode mode = static_cast<GhostMode>(settings.GhostModeInt);
 
@@ -628,6 +698,14 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 	if (debugsettings.disableGhosts)
 		return;
 
+	for (size_t i = 0; i < bokehFFTCache.size(); ++i) {
+		if (bokehFFTDirty || i >= groups.size())
+			bokehFFTCache[i].valid = false;
+		if (i >= groups.size())
+			bokehFFTCache[i].texture.reset();
+	}
+	bokehFFTDirty = false;
+
 	// === Step 1: Threshold scene → FFT format (RG32F, N×N) ===
 	if (fftThresholdCS) {
 		data.OutputWidth = (float)N;
@@ -653,8 +731,8 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 
 	// === Step 2: Forward FFT scene → cache in texSceneFFT ===
 	{
-		DispatchFFT(fftRowCS.get(), texFFT[0].get(), texFFT[1].get(), N);
-		DispatchFFT(fftColCS.get(), texFFT[1].get(), texSceneFFT.get(), N);
+		DispatchFFT(fftRowCS[fftVariant].get(), texFFT[0].get(), texFFT[1].get(), N);
+		DispatchFFT(fftColCS[fftVariant].get(), texFFT[1].get(), texSceneFFT.get(), N);
 	}
 
 	// === Step 3: Per-group convolution loop ===
@@ -669,22 +747,12 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 		if (gi > 0)
 			data.HaloStrength = 0.f;  // Halo only in first group
 
-		// 3a: Prepare bokeh kernel at this group's scale
-		{
-			bool needBokehRebuild = bokehFFTDirty;
-			// Multi-group Ultra: rebuild bokeh each group (different KernelScale)
-			// Single-group Quality: only rebuild when shape/dirty changes
-			if (needBokehRebuild || groups.size() > 1) {
-				lensFlareCB->Update(data);
-				auto cb = lensFlareCB->CB();
-				context->CSSetConstantBuffers(1, 1, &cb);
-				PrepareBokehFFT();
-			}
-		}
+		auto& cache = bokehFFTCache[gi];
+		PrepareBokehFFT(cache, data);
 
 		// 3b: Frequency-domain multiply (scene × bokeh)
 		if (fftMultiplyCS) {
-			std::array<ID3D11ShaderResourceView*, 2> mulSrvs = { texSceneFFT->srv.get(), texBokehFFT->srv.get() };
+			std::array<ID3D11ShaderResourceView*, 2> mulSrvs = { texSceneFFT->srv.get(), cache.texture->srv.get() };
 			std::array<ID3D11UnorderedAccessView*, 1> mulUavs = { texFFT[1]->uav.get() };
 
 			context->CSSetShaderResources(0, (uint)mulSrvs.size(), mulSrvs.data());
@@ -699,8 +767,8 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 		}
 
 		// 3c: Inverse FFT
-		DispatchFFT(fftRowInvCS.get(), texFFT[1].get(), texFFT[0].get(), N);
-		DispatchFFT(fftColInvCS.get(), texFFT[0].get(), texFFT[1].get(), N);
+		DispatchFFT(fftRowInvCS[fftVariant].get(), texFFT[1].get(), texFFT[0].get(), N);
+		DispatchFFT(fftColInvCS[fftVariant].get(), texFFT[0].get(), texFFT[1].get(), N);
 
 		// 3d: Compose IFFT result → additive into texGhostHalo
 		if (fftGhostComposeCS) {
@@ -734,11 +802,12 @@ void LensFlare::DrawQuality(TextureInfo& inout_tex, LensFlareCB& data)
 
 void LensFlare::Draw(TextureInfo& inout_tex)
 {
-	auto state = globals::state;
+	if (!AllShadersReady({ &thresholdCS, &ghostHaloCS, &blurDownCS, &blurUpCS, &mixCS }))
+		return;
+
 	auto context = globals::d3d::context;
 
 	CS_GPU_PASS("PostProcessing::LensFlare");
-	state->BeginPerfEvent("Lens Flare");
 
 	uint fullW = texFlare->desc.Width;
 	uint fullH = texFlare->desc.Height;
@@ -761,6 +830,11 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	std::memcpy(data.Tint, settings.Tint.data(), sizeof(float) * 3);
 	data.GLocalMask = settings.GLocalMask ? 1 : 0;
 
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	const float fStop = cam ? cam->FNumber : settings.FStop;
+	const int apertureBlades = cam ? cam->ApertureBladeCount : settings.ApertureBlades;
+	const float apertureRotationDeg = cam ? cam->ApertureBladeRotationDeg : settings.ApertureRotation;
+
 	uint enabledMask = 0;
 	for (int i = 0; i < NUM_GHOSTS; i++) {
 		std::memcpy(&data.GhostColors[i * 4], settings.Ghosts[i].Color.data(), sizeof(float) * 4);
@@ -773,9 +847,9 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	data.ActiveGhostMask = enabledMask;
 	data.KernelScale = settings.KernelScale;
 	data.AspectRatio = (float)fullW / (float)fullH;
-	data.ApertureBlades = settings.ApertureBlades;
-	data.ApertureRotation = settings.ApertureRotation * 3.14159265358979323846f / 180.0f;  // degrees → radians
-	data.ApertureSize = 1.0f / std::max(settings.FStop, 1.0f);
+	data.ApertureBlades = apertureBlades;
+	data.ApertureRotation = apertureRotationDeg * 3.14159265358979323846f / 180.0f;  // degrees → radians
+	data.ApertureSize = 1.0f / std::max(fStop, 1.0f);
 
 	// Compute PadScale based on mode
 	GhostMode mode = static_cast<GhostMode>(settings.GhostModeInt);
@@ -826,8 +900,7 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 
 	// === Ghost + Halo generation (mode-dependent) ===
 	if ((mode == GhostMode::Quality || mode == GhostMode::Ultra) &&
-		AllShadersReady({ &fftRowCS, &fftColCS, &fftRowInvCS, &fftColInvCS, &bokehPrepareCS,
-			&fftMultiplyCS, &fftThresholdCS, &fftGhostComposeCS })) {
+		FFTShadersReady(NormaliseFFTResolution(settings.FFTResolution))) {
 		DrawQuality(inout_tex, data);
 	} else {
 		DrawFast(inout_tex, data);
@@ -861,5 +934,5 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texFlare->resource.get(), texFlare->srv.get() };
-	state->EndPerfEvent();
+	outputReady = true;
 }

@@ -14,6 +14,8 @@
 #	include <Tracy/TracyD3D11.hpp>
 #endif
 
+struct ID3D11ShaderResourceView;
+
 struct Feature
 {
 	// For global settings search
@@ -204,6 +206,9 @@ public:
 	/** @brief Releases and recreates transient state (e.g. on resolution change). */
 	virtual void Reset() {}
 
+	/** @brief Releases runtime overrides on the main thread before loaded changes from true to false; default no-op. */
+	virtual void OnRuntimeDisabled() {}
+
 	/**
 	 * @brief Render-thread scene-transition reset (driven by LoadingMenu open/close).
 	 *
@@ -309,6 +314,40 @@ public:
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/**
+	 * @brief Global exposure a feature applies to pre-tonemap scene-linear color this frame.
+	 * @note Members are only meaningful once a feature fills them; consumers use exposure 1 otherwise.
+	 */
+	struct SceneExposure
+	{
+		ID3D11ShaderResourceView* adaptedLuminance = nullptr;  ///< StructuredBuffer<float>, element 0
+		float2 luminanceRange{ 1.0f, 1.0f };                   ///< clamp applied to adaptedLuminance
+		float compensationScale = 1.0f;                        ///< linear, exp2(compensation EV)
+
+		static constexpr float kMiddleGrey = 0.18f;
+
+		/** @brief CPU twin of SceneExposure::Evaluate in SceneExposure.hlsli; keep numerically identical. */
+		static float Evaluate(float a_adapted, float2 a_range, float a_scale)
+		{
+			return kMiddleGrey * a_scale / std::min(std::max(a_adapted, a_range.x), a_range.y);
+		}
+	};
+
+	/**
+	 * @brief Fills @p a_out when this feature applies a scene exposure this frame.
+	 *        Excludes color grading, which applies after composite.
+	 * @param a_out Receives the scene exposure; untouched when false is returned.
+	 * @return true when this feature applies a scene exposure this frame.
+	 */
+	virtual bool GetSceneExposure(SceneExposure& /*a_out*/) const { return false; }
+
+	/**
+	 * @brief First loaded feature's scene exposure; false means consumers use exposure 1.
+	 * @param a_out Receives the scene exposure; untouched when false is returned.
+	 * @return true when a loaded feature applies a scene exposure.
+	 */
+	static bool FindSceneExposure(SceneExposure& a_out);
 
 	/** @brief Called after reflection prepasses; returned cleanup runs after cubemap rendering. */
 	virtual std::function<void()> OnReflectionsRenderBegin() { return nullptr; }
@@ -533,6 +572,19 @@ public:
 	 * @return Pointer to the feature if found and loaded, nullptr otherwise.
 	 */
 	static Feature* FindFeatureByShortName(const std::string& shortName);
+
+	/**
+	 * @brief Finds the first loaded feature satisfying @p a_pred, or nullptr if none does.
+	 */
+	template <class Pred>
+	static Feature* FindLoadedFeature(Pred&& a_pred)
+	{
+		for (auto* feature : GetFeatureList()) {
+			if (feature->loaded && a_pred(feature))
+				return feature;
+		}
+		return nullptr;
+	}
 
 	/**
 	 * @brief Finds any registered feature by short name, ignoring VR filtering and loaded state.

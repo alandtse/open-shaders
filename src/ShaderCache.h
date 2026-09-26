@@ -1,6 +1,7 @@
 #pragma once
 
 #include <BS_thread_pool.hpp>
+#include <atomic>
 #include <deque>
 #include <efsw/efsw.hpp>
 #include <functional>
@@ -13,6 +14,7 @@
 #include "Utils/WinApi.h"
 
 struct ID3D11ComputeShader;
+struct ID3D11DeviceChild;
 
 using namespace std::chrono;
 
@@ -318,6 +320,8 @@ namespace SIE
 
 	class CompilationSet
 	{
+		friend class ShaderCache;
+
 	public:
 		LARGE_INTEGER lastReset;
 		std::atomic<int64_t> lastResetQpc{ 0 };  // Lock-free mirror of lastReset.QuadPart for GetLastResetQpc().
@@ -356,8 +360,8 @@ namespace SIE
 		 *  compile begins, so ETA and the "started" log reflect the actual first compile
 		 *  rather than when it finishes. Logs once per phase. */
 		void MarkPhaseStarted();
-		/** @brief Resets all task queues and counters for a fresh compilation pass. */
-		void Clear();
+		/** @brief Resets matrix work, optionally invalidating standalone jobs when their owners are also cleared. */
+		void Clear(bool a_includeStandalone = false);
 		/** @brief Atomically advances the generation counter without touching queues/counters.
 		 *  Call before ShaderCache::Clear()'s map-wipe locks so a worker's write-site check
 		 *  (see MakeAndAdd*Shader) sees the new value once it can observe the wipe. */
@@ -391,6 +395,7 @@ namespace SIE
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::atomic<uint64_t> generation = 0;               // bumped by Clear(); tags tasks so a post-Clear() Complete() can detect staleness
+		std::atomic<uint64_t> standaloneGeneration = 0;
 		std::mutex compilationMutex;
 
 		/** Per-task timing record stored for post-mortem analysis and developer UI. */
@@ -700,29 +705,42 @@ namespace SIE
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
 			uint32_t descriptor);
 
-		/// Callback fired once a standalone compute shader finishes compiling or
-		/// loads from disk. Runs on a compilation-pool worker thread; the pointer
-		/// is null on failure (never throws). The caller owns thread-safe storage.
-		/// A non-null pointer is one owned reference: the callback must either
-		/// take ownership (e.g. winrt::com_ptr::attach) or Release() it.
+		/** @brief Receives one owned shader reference or null on failure on a worker thread; must not throw.
+		 * The caller provides thread-safe storage and must attach or Release a non-null reference. */
 		using ComputeShaderReadyCallback = std::function<void(ID3D11ComputeShader*)>;
 
-		/// @brief Compile (or load from the disk cache) a standalone compute shader
-		///        on the shared compilation pool, off the calling thread.
-		/// @param sourcePath  HLSL source path under Data/Shaders (e.g.
-		///                    Data\\Shaders\\PostProcessing\\DoF\\dof.cs.hlsl).
-		/// @param entryPoint  HLSL entry function name.
-		/// @param defines     Preprocessor macro name/value pairs; the caller must
-		///                    keep each string alive until the callback fires
-		///                    (string literals satisfy this).
-		/// @param onReady     Invoked exactly once when the shader is ready.
+		/** Selects the stage for a standalone shader compilation. */
+		enum class StandaloneShaderClass
+		{
+			Vertex,
+			Pixel,
+			Compute
+		};
+
+		/** Receives an owned reference of the requested stage; otherwise follows ComputeShaderReadyCallback. */
+		using StandaloneShaderReadyCallback = std::function<void(ID3D11DeviceChild*)>;
+
+		/** @brief Queues a standalone shader on the compilation pool, loading valid disk-cached bytecode when available.
+		 * @param sourcePath HLSL source path under Data/Shaders.
+		 * @param entryPoint HLSL entry function name.
+		 * @param defines Macro name/value pairs copied before this call returns.
+		 * @param shaderClass Shader stage matching the callback's owned reference.
+		 * @param onReady Receives the result before task completion is published; invalidated generations skip delivery. */
+		void EnqueueStandaloneShaderCompile(
+			std::wstring sourcePath,
+			std::string entryPoint,
+			std::vector<std::pair<const char*, const char*>> defines,
+			StandaloneShaderClass shaderClass,
+			StandaloneShaderReadyCallback onReady);
+
+		/** @brief Queues a compute shader with the same path, define ownership and cancellation contract as EnqueueStandaloneShaderCompile. */
 		void EnqueueComputeShaderCompile(
 			std::wstring sourcePath,
 			std::string entryPoint,
 			std::vector<std::pair<const char*, const char*>> defines,
 			ComputeShaderReadyCallback onReady);
 
-		/// @brief Deletes a standalone compute-shader feature's own disk-cache
+		/// @brief Deletes a standalone shader feature's own disk-cache
 		///        subtree and manifest entries (e.g. L"PostProcessing/DoF"),
 		///        without touching any other feature's cache.
 		void ClearStandaloneComputeCache(std::wstring_view relativeDir);
@@ -842,6 +860,8 @@ namespace SIE
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
 		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
+		/** @brief Updates compilation mode and wakes the dispatcher to recheck its capacity. */
+		void SetBackgroundCompilation(bool value);
 		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
 		// read on the management/compile and render threads.
 		std::atomic<bool> backgroundCompilation = false;
@@ -1195,6 +1215,17 @@ namespace SIE
 		static constexpr size_t kMaxRecentCompileFailures = 32;
 		mutable std::mutex compileFailuresMutex;
 		std::deque<CompileFailure> recentCompileFailures;
+		struct StandaloneCompilation
+		{
+			uint64_t request = 0;
+			ShaderCompilationTask::Status status = ShaderCompilationTask::Status::Pending;
+		};
+		std::mutex standaloneMutex;
+		uint64_t standaloneGeneration = 0;
+		uint64_t standaloneTotalTasks = 0;
+		uint64_t standaloneCompletedTasks = 0;
+		uint64_t standaloneFailedTasks = 0;
+		ankerl::unordered_dense::map<std::string, StandaloneCompilation> standaloneCompilations;
 		std::vector<std::string> heldMismatchDefines;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;

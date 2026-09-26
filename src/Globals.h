@@ -296,6 +296,7 @@ namespace globals
 		extern RE::BSUtilityShader* utilityShader;
 		extern RE::PlayerCharacter* player;
 		extern RE::PlayerCamera* playerCamera;
+		extern RE::MenuTopicManager* menuTopicManager;
 		extern RE::Sky* sky;
 		extern RE::UI* ui;
 		extern RE::Calendar* calendar;

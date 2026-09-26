@@ -38,6 +38,76 @@ TEST_CASE("Controller defaults to mono mode", "[subrect]")
 	REQUIRE(UVApprox(c.GetUV(), c.GetRightEyeUV()));
 }
 
+TEST_CASE("MaterializeNewDefaults preserves an explicit crop loaded before seeding", "[subrect][defaults][regression]")
+{
+	// Hosts seed in PostPostLoad, i.e. after LoadSettings already ran on a
+	// hand-edited crop. Seeding must not discard it for a preset's UV.
+	Controller c;
+	json in = {
+		{ "CropX", 0.20f },
+		{ "CropY", 0.10f },
+		{ "CropW", 0.60f },
+		{ "CropH", 0.80f },
+	};
+	c.LoadSettings(in);
+	c.SeedDefaultPresets({
+		Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+	});
+	c.MaterializeNewDefaults();
+
+	REQUIRE(UVApprox(c.GetUV(), { 0.20f, 0.10f, 0.60f, 0.80f }));
+
+	// The explicit crop keeps its placeholder slot and the seeds still materialize after it.
+	json out;
+	c.SaveSettings(out);
+	REQUIRE(out["CropPresets"].size() == 3);
+	REQUIRE(out["CropPresets"][0]["name"].get<std::string>() == "Full Frame");
+	REQUIRE(out["CropPresets"][1]["name"].get<std::string>() == "Full Eye");
+}
+
+TEST_CASE("MaterializeNewDefaults replaces the placeholder an empty load created", "[subrect][defaults][regression]")
+{
+	// Load-before-seed with no persisted presets: the "Full Frame" placeholder would
+	// otherwise hold index 0 and stay selected ahead of the real defaults. The first
+	// seed is not full-frame, or the UV check below could not tell the two apart.
+	Controller c;
+	c.LoadSettings(json::object());
+	c.SeedDefaultPresets({
+		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+		Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+	});
+	c.MaterializeNewDefaults();
+
+	json out;
+	c.SaveSettings(out);
+	REQUIRE(out["CropPresets"].size() == 2);
+	REQUIRE(out["CropPresets"][0]["name"].get<std::string>() == "Center 75%");
+	REQUIRE(out["CropPresets"][1]["name"].get<std::string>() == "Full Eye");
+	REQUIRE(out["SelectedPresetIndex"] == 0);
+	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+}
+
+TEST_CASE("MaterializeNewDefaults drops the placeholder after repeated empty loads", "[subrect][defaults][regression]")
+{
+	Controller c;
+	c.LoadSettings(json::object());
+	c.LoadSettings(json::object());
+	c.SeedDefaultPresets({
+		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+		Preset{ .name = "Full Eye", .uv = { 0.0f, 0.0f, 1.0f, 1.0f } },
+	});
+	c.MaterializeNewDefaults();
+
+	json out;
+	c.SaveSettings(out);
+	REQUIRE(out["CropPresets"].size() == 2);
+	REQUIRE(out["CropPresets"][0]["name"].get<std::string>() == "Center 75%");
+	REQUIRE(out["CropPresets"][1]["name"].get<std::string>() == "Full Eye");
+	REQUIRE(out["SelectedPresetIndex"] == 0);
+	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+}
+
 TEST_CASE("SaveSettings in mono mode emits no right-eye keys", "[subrect][backcompat]")
 {
 	// Pre-stereo screenshot JSON shape must round-trip bit-identically: this is

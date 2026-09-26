@@ -1,13 +1,20 @@
 #include "Game.h"
 
 #include <atomic>
+#include <limits>
 #include <mutex>
 
 #include "Globals.h"
 #include "State.h"
 
+#define TDM_API_COMMONLIB
+#include "TDM/TrueDirectionalMovementAPI.h"
+
 namespace
 {
+	TDM_API::IVTDM2* targetLockAPI = nullptr;
+	constexpr float kScreenProjectionEpsilon = 1e-5f;
+
 	std::atomic_bool celestialTransitionHandlerAvailable{ false };
 	std::atomic_bool timeJumpTransitionRequested{ false };
 	std::atomic_bool gameLoadTransitionRequested{ false };
@@ -60,12 +67,12 @@ namespace Util
 		}
 		ResetModelHandle(a_sky->auroraModel);
 
-		// ForceWeather clears blending without invalidating the cached cloud technique.
+		// Defer cloud-pass rebuilding until accumulation; render queues may still hold the current passes.
 		if (a_sky->clouds) {
 			for (const auto& cloud : a_sky->clouds->clouds) {
 				if (cloud) {
 					if (auto* property = skyrim_cast<RE::BSSkyShaderProperty*>(cloud->GetGeometryRuntimeData().shaderProperty.get()))
-						property->DoClearRenderPasses();
+						property->lastRenderPassState = (std::numeric_limits<std::int32_t>::max)();
 				}
 			}
 		}
@@ -207,6 +214,120 @@ namespace Util
 			}
 		}
 		return float4(1.0f, 1.0f, 1.0f, -FLT_MAX);
+	}
+
+	void RequestTargetLockAPI()
+	{
+		targetLockAPI = reinterpret_cast<TDM_API::IVTDM2*>(TDM_API::RequestPluginAPI(TDM_API::InterfaceVersion::V2));
+	}
+
+	RE::ActorHandle GetTargetLockTarget()
+	{
+		return targetLockAPI ? targetLockAPI->GetCurrentTarget() : RE::ActorHandle{};
+	}
+
+	RE::ObjectRefHandle GetDialogueTarget()
+	{
+		const auto* topicManager = globals::game::menuTopicManager;
+		if (!topicManager)
+			return {};
+		return topicManager->speaker ? topicManager->speaker : topicManager->lastSpeaker;
+	}
+
+	RE::NiPointer<RE::TESObjectREFR> GetSelectedConsoleReference()
+	{
+		return RE::Console::GetSelectedRef();
+	}
+
+	float GetCameraAspectRatio()
+	{
+		const auto* graphicsState = globals::game::graphicsState;
+		if (!graphicsState || graphicsState->screenWidth <= 0 || graphicsState->screenHeight <= 0)
+			return kFallbackCameraAspect;
+		const float eyeScale = globals::game::isVR ? 0.5f : 1.0f;
+		return eyeScale * static_cast<float>(graphicsState->screenWidth) / static_cast<float>(graphicsState->screenHeight);
+	}
+
+	float* GetWorldFOV()
+	{
+		const auto playerCamera = globals::game::playerCamera;
+		return playerCamera && !globals::game::isVR ? &playerCamera->GetRuntimeData2().worldFOV : nullptr;
+	}
+
+	// Thanks Ershin!
+	RE::NiPoint3 GetCameraPosition()
+	{
+		auto player = globals::game::player;
+		auto playerCamera = globals::game::playerCamera;
+		RE::NiPoint3 ret{};
+		if (!playerCamera || !player)
+			return ret;
+
+		// VR changes both the camera-state layout and indices; mixing runtimes reads the wrong camera.
+		const auto isVehicleOrBodyCamera = [&](const auto& runtimeData, RE::CameraState thirdPersonState, RE::CameraState mountState) {
+			return playerCamera->currentState == runtimeData.cameraStates[RE::CameraStates::kFirstPerson] ||
+			       playerCamera->currentState == runtimeData.cameraStates[thirdPersonState] ||
+			       playerCamera->currentState == runtimeData.cameraStates[mountState];
+		};
+		if (globals::game::isVR ?
+				isVehicleOrBodyCamera(*playerCamera->GetVRRuntimeData(), RE::CameraStates::kVRThirdPerson, RE::CameraStates::kVRMount) :
+				isVehicleOrBodyCamera(playerCamera->GetRuntimeData(), RE::CameraStates::kThirdPerson, RE::CameraStates::kMount)) {
+			RE::NiNode* root = playerCamera->cameraRoot.get();
+			if (root) {
+				ret.x = root->world.translate.x;
+				ret.y = root->world.translate.y;
+				ret.z = root->world.translate.z;
+			}
+		} else if (playerCamera->IsInFreeCameraMode()) {
+			auto freeCameraState = static_cast<RE::FreeCameraState*>(playerCamera->currentState.get());
+			ret = freeCameraState->translation;
+		} else {
+			RE::NiPoint3 playerPos = player->GetLookingAtLocation();
+
+			ret.z = playerPos.z;
+			ret.x = player->GetPositionX();
+			ret.y = player->GetPositionY();
+		}
+
+		return ret;
+	}
+
+	RE::NiPoint3 GetReferenceFocusPosition(RE::TESObjectREFR* a_ref)
+	{
+		RE::NiPoint3 targetPosition = a_ref->GetPosition();
+		if (a_ref->GetFormType() == RE::FormType::ActorCharacter) {
+			auto head = a_ref->GetNodeByName("NPC Head [Head]");
+			if (head)
+				targetPosition = head->world.translate;
+		}
+		return targetPosition;
+	}
+
+	float GetCameraDistanceToReference(RE::TESObjectREFR* a_ref)
+	{
+		auto* camera = RE::Main::WorldRootCamera();
+		RE::NiPoint3 cameraPosition = camera ? camera->world.translate : GetCameraPosition();
+		return cameraPosition.GetDistance(GetReferenceFocusPosition(a_ref));
+	}
+
+	bool GetReferenceFocusCoord(RE::TESObjectREFR* a_ref, float2& a_focusCoord)
+	{
+		auto* camera = RE::Main::WorldRootCamera();
+		if (!camera || globals::game::isVR)
+			return false;
+
+		float screenX = 0.0f;
+		float screenY = 0.0f;
+		float screenZ = 0.0f;
+		if (!camera->WorldPtToScreenPt3(GetReferenceFocusPosition(a_ref), screenX, screenY, screenZ, kScreenProjectionEpsilon) ||
+			!std::isfinite(screenX) || !std::isfinite(screenY) || screenZ <= 0.0f ||
+			screenX < 0.0f || screenX > 1.0f || screenY < 0.0f || screenY > 1.0f) {
+			return false;
+		}
+
+		// Engine projection uses bottom-left coordinates; depth sampling uses top-left.
+		a_focusCoord = float2(screenX, 1.0f - screenY);
+		return true;
 	}
 
 	RE::NiPoint3 GetAverageEyePosition()
@@ -664,6 +785,9 @@ namespace Util::EnvironmentControls
 		if (!calendar || !calendar->gameHour || !std::isfinite(hour) || hour < 0.0f || hour >= kHoursPerDay)
 			return false;
 		StopPreview();
+		// Backward clock edits otherwise look like a midnight wrap and expire the weather override.
+		if (auto* sky = globals::game::sky; sky && GetLockedWeather())
+			sky->lastWeatherUpdate = hour;
 		calendar->gameHour->value = hour;
 		if (synchronize)
 			RequestTimeJumpTransition();

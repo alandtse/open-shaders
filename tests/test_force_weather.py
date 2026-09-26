@@ -22,19 +22,21 @@ void require(bool ok, const char* message) {
 namespace RE {
 struct TESWeather {};
 struct Property { virtual ~Property() = default; };
+struct BSRenderPass { bool blendPass = true; };
 struct BSSkyShaderProperty : Property {
     std::int32_t lastRenderPassState = 0;
     float blend = 0.5f;
-    bool blendPass = true;
+    std::shared_ptr<BSRenderPass> cachedPass = std::make_shared<BSRenderPass>();
     void DoClearRenderPasses() {
+        cachedPass.reset();
         lastRenderPassState = (std::numeric_limits<std::int32_t>::max)();
     }
     bool GetRenderPasses() {
         if (lastRenderPassState == (std::numeric_limits<std::int32_t>::max)()) {
-            blendPass = blend > 0;
+            cachedPass = std::make_shared<BSRenderPass>(blend > 0);
             lastRenderPassState = 0;
         }
-        return blendPass;
+        return cachedPass->blendPass;
     }
 };
 struct Geometry {
@@ -111,9 +113,11 @@ int main() {
         RE::TESWeather first, second;
         RE::Clouds clouds;
         sky.clouds = &clouds;
+        std::array<std::weak_ptr<RE::BSRenderPass>, 32> queuedPasses;
         for (int index : {0, 31}) {
             clouds.clouds[index] = std::make_shared<RE::Geometry>();
             clouds.clouds[index]->data.shaderProperty = std::make_shared<RE::BSSkyShaderProperty>();
+            queuedPasses[index] = static_cast<RE::BSSkyShaderProperty*>(clouds.clouds[index]->data.shaderProperty.get())->cachedPass;
         }
         clouds.clouds[1] = std::make_shared<RE::Geometry>();
         clouds.clouds[2] = std::make_shared<RE::Geometry>();
@@ -131,7 +135,10 @@ int main() {
         require(!sky.auroraModel && oldRequest.references == 0, "Release the old model request exactly once");
         for (int index : {0, 31}) {
             auto* p = static_cast<RE::BSSkyShaderProperty*>(clouds.clouds[index]->data.shaderProperty.get());
+            require(!queuedPasses[index].expired(), "Weather changes preserve passes borrowed by the current draw queue");
+            require(queuedPasses[index].lock()->blendPass, "Queued transition passes remain drawable until the next accumulation");
             require(!p->GetRenderPasses(), "Forced clouds rebuild as single-texture passes");
+            require(queuedPasses[index].expired(), "The next accumulation retires the old passes");
         }
         RE::ModelDBHandle::U_Entry pendingRequest;
         sky.auroraModel.entry = &pendingRequest;

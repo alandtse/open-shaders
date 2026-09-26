@@ -28,8 +28,26 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 		std::string entry = "main";
 	};
 
+	/// One vertex-shader entry point to compile via CompileRasterShadersAsync().
+	struct VertexShaderCompileInfo
+	{
+		winrt::com_ptr<ID3D11VertexShader>* programPtr;
+		std::string_view filename;
+		std::vector<std::pair<const char*, const char*>> defines;
+		std::string entry = "main";
+	};
+
+	/// One pixel-shader entry point to compile via CompileRasterShadersAsync().
+	struct PixelShaderCompileInfo
+	{
+		winrt::com_ptr<ID3D11PixelShader>* programPtr;
+		std::string_view filename;
+		std::vector<std::pair<const char*, const char*>> defines;
+		std::string entry = "main";
+	};
+
 	/// Compile callbacks fire on the shader-cache pool while Draw() reads on the
-	/// render thread; guards every compute-shader com_ptr member below.
+	/// render thread; guards every shader com_ptr member below.
 	mutable std::mutex shaderMutex;
 
 	/// Bumped by ClearShaderCache; a compile callback started before the bump
@@ -52,9 +70,27 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 	///        "Data\\Shaders\\PostProcessing\\DoF").
 	void CompileComputeShadersAsync(std::wstring_view sourceDir, std::span<const ComputeShaderCompileInfo> infos);
 
-	/// @brief Thread-safe readiness check for a Draw() dispatch: true only if every
-	///        listed shader has already attached. Takes shaderMutex.
-	bool AllShadersReady(std::initializer_list<const winrt::com_ptr<ID3D11ComputeShader>*> shaders) const;
+	/// @brief Same as CompileComputeShadersAsync(), but for the raster (VS/PS)
+	///        fullscreen passes. Entries compile through
+	///        ShaderCache::EnqueueStandaloneShaderCompile with the matching shader
+	///        class and attach under the same shaderMutex / shaderGeneration contract.
+	void CompileRasterShadersAsync(
+		std::wstring_view sourceDir,
+		std::span<const VertexShaderCompileInfo> vsInfos,
+		std::span<const PixelShaderCompileInfo> psInfos);
+
+	/// @brief Thread-safe readiness check for a Draw() dispatch/draw: true only if
+	///        every listed shader has already attached. Takes shaderMutex.
+	template <typename ShaderT>
+	bool AllShadersReady(std::initializer_list<const winrt::com_ptr<ShaderT>*> shaders) const
+	{
+		std::lock_guard lock(shaderMutex);
+		for (auto* shader : shaders) {
+			if (!*shader)
+				return false;
+		}
+		return true;
+	}
 
 	virtual std::string GetType() const = 0;
 	virtual std::string GetDisplayName() const { return GetType(); }
@@ -63,6 +99,7 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 	virtual bool DrawBeforeUpscaling() const { return false; }
 	virtual bool DrawAfterColorGrading() const { return false; }
 	virtual bool DisableInMainLoadingMenu() const { return false; }
+	virtual bool IsActive() const { return enabled; }
 
 	/// Whether this feature is visible in the menu. Hidden features (e.g. composite passes) return false.
 	virtual bool IsVisible() const { return true; }
@@ -85,10 +122,18 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 	virtual void SaveSettings(json& o_json) = 0;
 	virtual void DrawSettings() = 0;
 
+	enum class Gamut : uint
+	{
+		Rec709,
+		ACEScg,
+		Rec2020
+	};
+
 	struct TextureInfo
 	{
 		ID3D11Texture2D* tex = nullptr;
 		ID3D11ShaderResourceView* srv = nullptr;
+		Gamut gamut = Gamut::Rec709;
 	};
 	virtual void Draw(TextureInfo& inout_tex) = 0;  // read from last pass, do the thing, and replace it with output texture
 

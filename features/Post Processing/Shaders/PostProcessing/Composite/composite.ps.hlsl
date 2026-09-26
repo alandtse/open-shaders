@@ -5,7 +5,10 @@
 /// Purkinje effect is applied after compositing on the final perceived image.
 /// Uses #ifdef HAS_BLOOM / HAS_LENS_FLARE / HAS_GLARE / HAS_EXPOSURE / HAS_LOCAL_EXPOSURE to control behavior.
 
+#include "PostProcessing/fullscreen.hlsli"
+
 #include "Common/Color.hlsli"
+#include "Common/SceneExposure.hlsli"
 
 Texture2D<float4> TexColor : register(t0);
 
@@ -73,7 +76,7 @@ float ComputeLocalExposure(float3 sceneColor, float baseLogLuminance, float glob
 	float exposedLogLuminance = sceneLogLuminance + logGlobalExposure;
 	float exposedBase = baseLogLuminance + logGlobalExposure;
 	float detail = exposedLogLuminance - exposedBase;
-	float middleGrey = log2(0.18 * middleGreyCompensation) + MiddleGreyBias;
+	float middleGrey = log2(SceneExposure::kMiddleGrey * middleGreyCompensation) + MiddleGreyBias;
 	float remappedBase = middleGrey + RemapBaseContrast(exposedBase - middleGrey);
 	float targetLogLuminance = remappedBase + detail * DetailStrength;
 	float logAdjustment = (targetLogLuminance - exposedLogLuminance) * Strength;
@@ -161,14 +164,9 @@ float3 PurkinjeShift(float3 c, float nightAdaptation)
 }
 #endif  // HAS_EXPOSURE
 
-RWTexture2D<float4> RWTexOutput : register(u0);
-
-[numthreads(8, 8, 1)] void CSComposite(uint2 tid : SV_DispatchThreadID) {
-	uint2 dims;
-	RWTexOutput.GetDimensions(dims.x, dims.y);
-
-	if (any(tid >= dims))
-		return;
+float4 PSComposite(FullscreenTriangleVSOutput input) : SV_Target
+{
+	uint2 tid = uint2(input.Position.xy);
 
 	float3 sceneColor = TexColor[tid].rgb;
 
@@ -190,7 +188,7 @@ RWTexture2D<float4> RWTexOutput : register(u0);
 #ifdef HAS_EXPOSURE
 	// Compute global exposure value
 	float avgLuma = TexAdaptation[0];
-	float globalExposure = 0.18 * ExposureCompensation / clamp(avgLuma, AdaptationRange.x, AdaptationRange.y);
+	float globalExposure = SceneExposure::Evaluate(avgLuma, AdaptationRange, ExposureCompensation);
 
 	// Formula: SceneColor * GlobalExposure * LocalExposure + Bloom * GlobalExposure
 	// LocalExposure multiplier derived from the base luminance pass (1.0 if not enabled)
@@ -224,5 +222,5 @@ RWTexture2D<float4> RWTexOutput : register(u0);
 #	endif
 #endif
 
-	RWTexOutput[tid] = float4(result, 1);
+	return float4(result, 1);
 }

@@ -40,16 +40,6 @@ namespace
 		return settings.DALCMode;
 	}
 
-#if defined(ENABLE_EFFECTS11)
-	bool IsENBIBLControlActive()
-	{
-		if (!globals::features::effects11.loaded || !globals::features::effects11.enableEffect)
-			return false;
-
-		return SettingManager::GetSingleton().GetValue<bool>("EnableImageBasedLighting", "EFFECT");
-	}
-#endif
-
 	void DrawEnableCheckbox(const char* label, bool& disableSetting)
 	{
 		bool enableSetting = !disableSetting;
@@ -77,12 +67,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void IBL::DrawSettings()
 {
-#if defined(ENABLE_EFFECTS11)
-	if (IsENBIBLControlActive()) {
+	if (IsManagedByENB()) {
 		ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
 		return;
 	}
-#endif
 
 	Util::CheckboxFlag(T(TKEY("enable_ibl"), "Enable IBL"), settings.EnableIBL);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -219,7 +207,7 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 	};
 
 #if defined(ENABLE_EFFECTS11)
-	if (!sceneDisabled && IsENBIBLControlActive()) {
+	if (!sceneDisabled && IsManagedByENB()) {
 		auto& settingManager = SettingManager::GetSingleton();
 		data.EnableIBL = Util::IsInterior() ? 0u : 1u;
 		data.EnvIBLScale = 0.0f;
@@ -233,6 +221,18 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 #endif
 
 	return data;
+}
+
+bool IBL::IsManagedByENB() const
+{
+#if defined(ENABLE_EFFECTS11)
+	auto& enb = globals::features::effects11;
+	if (!enb.loaded || !enb.enableEffect)
+		return false;
+	return SettingManager::GetSingleton().GetValue<bool>("EnableImageBasedLighting", "EFFECT");
+#else
+	return false;
+#endif
 }
 
 bool IBL::IsDisabledForCurrentScene() const

@@ -142,7 +142,7 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 		bloom = lerp(center, wide, SharedData::bloomSettings.HaloSpread);
 		float luminance = Color::RGBToLuminance(bloom);
 		bloom = lerp(luminance.xxx, bloom, SharedData::bloomSettings.BloomSaturation);
-		bloom *= SharedData::bloomSettings.BloomTint * SharedData::bloomSettings.EnhancementIntensity;
+		bloom = Color::ApplyLinearSrgbTint(bloom, SharedData::bloomSettings.BloomTint) * SharedData::bloomSettings.EnhancementIntensity;
 	}
 
 	return bloom;
@@ -196,7 +196,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #		if defined(POSTPROCESS)
 	if (SharedData::postProcessingSettings.DisableVanillaTonemapping) {
-		if (SharedData::linearLightingSettings.enableLinearLighting && !isHDR) {
+		if (!isHDR && menuSceneEncoding <= MENU_SCENE_ISHDR_BYPASS_THRESHOLD) {
 			inputColor = Color::LinearToSrgb(inputColor);
 		}
 
@@ -205,6 +205,9 @@ PS_OUTPUT main(PS_INPUT input)
 		return psout;
 	}
 #		endif
+
+	if (ENABLE_ACEScg)
+		inputColor = AP1TosRGB(inputColor);
 
 	float3 bloomColor = 0;
 	if (Flags.x > 0.5) {
@@ -234,6 +237,9 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #		endif
 
+	if (ENABLE_ACEScg)
+		bloomColor = AP1TosRGB(bloomColor);
+
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
 
 	float3 outputColor = 0.0;
@@ -250,7 +256,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 	else
 	{
-		float maxCol = Color::RGBToLuminance(inputColor);
+		float maxCol = Color::RGBToLuminance(inputColor, sRGB_2_XYZ_MAT[1]);
 		float mappedMax = GetTonemapFactorReinhard(maxCol, isHDR).x;
 		float3 compressedHuePreserving = inputColor * mappedMax / maxCol;
 		blendedColor = compressedHuePreserving;
@@ -262,7 +268,7 @@ PS_OUTPUT main(PS_INPUT input)
 		blendedColor += bloomContribution;
 	}
 
-	float blendedLuminance = Color::RGBToLuminance(blendedColor);
+	float blendedLuminance = Color::RGBToLuminance(blendedColor, sRGB_2_XYZ_MAT[1]);
 	float3 tintedColor = Cinematic.w * lerp(lerp(blendedLuminance, blendedColor, Cinematic.x), blendedLuminance * Tint.xyz, Tint.w).xyz;
 	float3 contrastedColor = lerp(avgValue.x, tintedColor, Cinematic.z);
 
@@ -284,7 +290,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float peakWhiteRatio = max(hdrShared.z / paperWhiteNits, 1.0);  // peakNits / paperWhite
 
 		// reduce highlights
-		float y_in = Color::RGBToLuminance(outputColor);
+		float y_in = Color::RGBToLuminance(outputColor, sRGB_2_XYZ_MAT[1]);
 		float highlight_start = 1.f;
 		float y_in_normalized = y_in / highlight_start;
 		float y_out = (y_in_normalized > 1.0) ? pow(max(0.0, y_in_normalized), 0.85) : y_in_normalized;
