@@ -449,6 +449,12 @@ namespace
 
 FidelityFX::~FidelityFX()
 {
+	// RR and Radiance Cache use the shared runtime D3D12 bridge.
+	// Destroy their provider contexts/resources while its fences are still alive.
+	ResetRadianceCache();
+	ResetReflectionRayRegeneration();
+	ResetRayRegeneration();
+
 	ReleaseRuntimeUpscalerResourcesForRelatch();
 	ResetFSRIdleFence();
 }

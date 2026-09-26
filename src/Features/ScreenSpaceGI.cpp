@@ -7,6 +7,7 @@
 #include "Deferred.h"
 #include "Features/VR.h"
 #include "State.h"
+#include "Upscaling.h"
 #include "Util.h"
 #include "Utils/Game.h"
 
@@ -17,6 +18,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Enabled,
 	EnableGI,
 	EnableExperimentalSpecularGI,
+	EnableRayRegeneration,
+	EnableRadianceCache,
+	RadianceCacheOutputMode,
+	RadianceCacheContribution,
+	RadianceCacheQuality,
+	EnableRadianceCacheTraining,
+	RadianceCacheLearningRate,
+	RadianceCacheWeightSmoothing,
 	EnableVanillaSSAO,
 	NumSlices,
 	NumSteps,
@@ -81,6 +90,253 @@ bool ScreenSpaceGI::MatchesPerformanceProfile(PerfProfile profile) const
 	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == ProfileEnablesReproject(profile);
 }
 
+void ScreenSpaceGI::DrawRedstoneSettings()
+{
+	auto& upscaling = globals::features::upscaling;
+	const auto& palette = globals::menu->GetTheme().StatusPalette;
+
+	const ImVec4 activeColor = palette.SuccessColor;
+	const ImVec4 inactiveColor = palette.Error;
+	const ImVec4 idleColor = palette.Warning;
+
+	const auto DrawState =
+		[](const char* a_label, const char* a_value, const ImVec4& a_color) {
+			ImGui::TextUnformatted(a_label);
+			ImGui::SameLine();
+			ImGui::TextColored(a_color, "%s", a_value);
+		};
+
+	ImGui::SeparatorText("UPSCALING");
+
+	const auto upscaleMethod = upscaling.GetUpscaleMethod();
+	const bool fsrUpscaling =
+		upscaleMethod == Upscaling::UpscaleMethod::kFSR;
+
+	ImGui::Text("Upscaler");
+	ImGui::SameLine();
+	ImGui::TextUnformatted(
+		fsrUpscaling ? "FSR Super Resolution" : "Not FSR");
+
+	ImGui::Text("Selected Mode");
+	ImGui::SameLine();
+	ImGui::TextUnformatted(
+		upscaling.GetQualityModeName(upscaling.settings.qualityMode));
+
+	ImGui::Text("Render Ratio");
+	ImGui::SameLine();
+	ImGui::Text(
+		"%.1f",
+		Upscaling::GetQualityModeRatio(upscaling.settings.qualityMode));
+
+	const bool fsr4Enabled =
+		upscaling.settings.fsr4RuntimeEnable;
+
+	DrawState(
+		"FSR 4 Upgrade",
+		fsr4Enabled ? "ACTIVE" : "INACTIVE",
+		fsr4Enabled ? activeColor : inactiveColor);
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("FRAME GENERATION");
+
+	const auto fgMethod =
+		upscaling.GetFrameGenMethod();
+
+	const bool fsrFGSelected =
+		fgMethod == Upscaling::FrameGenMethod::kFSR;
+
+	const bool fsrFGActive =
+		fsrFGSelected &&
+		upscaling.IsFrameGenerationActive();
+
+	DrawState(
+		"Frame Generation",
+		fsrFGActive ? "ACTIVE" : "INACTIVE",
+		fsrFGActive ? activeColor : inactiveColor);
+
+	ImGui::Text("FG ratio");
+	ImGui::SameLine();
+
+	if (fsrFGActive) {
+		ImGui::Text(
+			"x%u",
+			upscaling.GetFrameGenerationMultiplier());
+	} else {
+		ImGui::TextUnformatted("noFG");
+	}
+
+	const bool fgFsr4Upgrade =
+		fsrFGActive && fsr4Enabled;
+
+	DrawState(
+		"FSR 4 Upgrade##FG",
+		fgFsr4Upgrade ? "ACTIVE" : "INACTIVE",
+		fgFsr4Upgrade ? activeColor : inactiveColor);
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("RAY REGENERATION");
+
+	ImGui::Checkbox(
+		"Ray Regeneration",
+		&settings.EnableRayRegeneration);
+
+	const bool rrActive =
+		settings.Enabled &&
+		settings.EnableExperimentalSpecularGI &&
+		settings.EnableRayRegeneration;
+
+	DrawState(
+		"Status##RR",
+		rrActive ? "ACTIVE" : "INACTIVE",
+		rrActive ? activeColor : inactiveColor);
+
+	ImGui::Spacing();
+	ImGui::SeparatorText("RADIANCE CACHE");
+
+	ImGui::Checkbox(
+		"Radiance Cache",
+		&settings.EnableRadianceCache);
+
+	{
+		auto rcDisabled =
+			Util::DisableGuard(
+				!settings.EnableRadianceCache);
+
+		if (ImGui::SliderFloat(
+				"NRC Contribution",
+				&settings.RadianceCacheContribution,
+				0.0f,
+				1.0f,
+				"%.2f")) {
+			settings.RadianceCacheContribution =
+				std::clamp(
+					std::round(settings.RadianceCacheContribution / 0.05f) * 0.05f,
+					0.0f,
+					1.0f);
+		}
+
+		static constexpr const char* qualityNames[] = {
+			"Potato",
+			"Performance",
+			"Quality"
+		};
+
+		settings.RadianceCacheQuality =
+			std::clamp(settings.RadianceCacheQuality, 0, 2);
+
+		ImGui::Combo(
+			"Quality Mode",
+			&settings.RadianceCacheQuality,
+			qualityNames,
+			3);
+
+		const int quality =
+			std::clamp(settings.RadianceCacheQuality, 0, 2);
+
+		const uint32_t gridSize =
+			quality == 0 ? 16u :
+			quality == 1 ? 32u :
+						   64u;
+
+		ImGui::Text(
+			"Grid Size                 %u x %u",
+			gridSize,
+			gridSize);
+
+		ImGui::Checkbox(
+			"Learning",
+			&settings.EnableRadianceCacheTraining);
+
+		{
+			auto learningDisabled =
+				Util::DisableGuard(
+					!settings.EnableRadianceCacheTraining);
+
+			if (ImGui::SliderFloat(
+					"Learning Rate",
+					&settings.RadianceCacheLearningRate,
+					0.0f,
+					0.05f,
+					"%.3f")) {
+				settings.RadianceCacheLearningRate =
+					std::clamp(
+						std::round(settings.RadianceCacheLearningRate / 0.002f) * 0.002f,
+						0.0f,
+						0.05f);
+			}
+
+			if (ImGui::SliderFloat(
+					"Weight Smoothing",
+					&settings.RadianceCacheWeightSmoothing,
+					0.90f,
+					1.00f,
+					"%.2f")) {
+				settings.RadianceCacheWeightSmoothing =
+					std::clamp(
+						std::round(settings.RadianceCacheWeightSmoothing / 0.01f) * 0.01f,
+						0.90f,
+						1.00f);
+			}
+		}
+	}
+
+	const bool rcActive =
+		settings.Enabled &&
+		settings.EnableExperimentalSpecularGI &&
+		settings.EnableRadianceCache &&
+		HasGIResources();
+
+	DrawState(
+		"Radiance Cache##Status",
+		rcActive ? "ACTIVE" : "INACTIVE",
+		rcActive ? activeColor : inactiveColor);
+
+	if (!settings.EnableRadianceCacheTraining) {
+		DrawState(
+			"Learning##Status",
+			"PAUSED",
+			idleColor);
+	} else if (rcActive && rcTelemetryTrainingSamples > 0) {
+		DrawState(
+			"Learning##Status",
+			"ACTIVE",
+			activeColor);
+	} else {
+		DrawState(
+			"Learning##Status",
+			"IDLE",
+			idleColor);
+	}
+
+	const auto FormatDomain =
+		[](float a_extent) {
+			const uint32_t value =
+				static_cast<uint32_t>(std::round(a_extent));
+
+			switch (value) {
+			case 4096u:
+				return "4K";
+			case 8192u:
+				return "8K";
+			case 16384u:
+				return "16K";
+			case 32768u:
+				return "32K";
+			case 65536u:
+				return "64K";
+			case 131072u:
+				return "128K";
+			default:
+				return "?";
+			}
+		};
+
+	ImGui::Text(
+		"Active Domain             %s / %s / %s",
+		FormatDomain(rcAdaptiveVolumeExtent.x),
+		FormatDomain(rcAdaptiveVolumeExtent.y),
+		FormatDomain(rcAdaptiveVolumeExtent.z));
+}
 void ScreenSpaceGI::DrawSettings()
 {
 	static bool showAdvanced;
@@ -452,6 +708,11 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	};
 	settings = o_json;
 	settings.ResolutionMode = std::clamp(settings.ResolutionMode, 0, 2);
+	settings.RadianceCacheOutputMode = std::clamp(settings.RadianceCacheOutputMode, 0, 2);
+	settings.RadianceCacheContribution = std::clamp(settings.RadianceCacheContribution, 0.0f, 1.0f);
+	settings.RadianceCacheQuality = std::clamp(settings.RadianceCacheQuality, 0, 2);
+	settings.RadianceCacheLearningRate = std::clamp(settings.RadianceCacheLearningRate, 0.0f, 0.05f);
+	settings.RadianceCacheWeightSmoothing = std::clamp(settings.RadianceCacheWeightSmoothing, 0.90f, 1.0f);
 	if (!o_json.contains("ResourceProfile")) {
 		// Existing VR configs keep full resources if GI was active, else use lean AO-only.
 		settings.ResourceProfile = (REL::Module::IsVR() && !settings.EnableGI) ? kResourceProfileAOOnly : kResourceProfileFullGI;
@@ -632,6 +893,56 @@ void ScreenSpaceGI::SetupResources()
 				texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[1]");
 				texGiSpecular[1]->CreateSRV(srvDesc);
 				texGiSpecular[1]->CreateUAV(uavDesc);
+
+				// Dedicated RR input must remain separate from GiSpecular: GiSpecular.a is
+				// visibility/specular occlusion. RR requires ray hit distance in alpha.
+				texRRSpecularInput = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRSpecularInput");
+				texRRSpecularInput->CreateSRV(srvDesc);
+				texRRSpecularInput->CreateUAV(uavDesc);
+
+				// Separate pre-RR target for base + NRC composition.
+				// Alpha remains the original RR hit distance.
+				texRRCombinedInput = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRCombinedInput");
+				texRRCombinedInput->CreateSRV(srvDesc);
+				texRRCombinedInput->CreateUAV(uavDesc);
+
+				texRRSpecularOutput = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRSpecularOutput");
+				texRRSpecularOutput->CreateSRV(srvDesc);
+				texRRSpecularOutput->CreateUAV(uavDesc);
+
+				texRRNormalRoughness = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRNormalRoughness");
+				texRRNormalRoughness->CreateSRV(srvDesc);
+				texRRNormalRoughness->CreateUAV(uavDesc);
+
+				texRRMotionVectors = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRMotionVectors");
+				texRRMotionVectors->CreateSRV(srvDesc);
+				texRRMotionVectors->CreateUAV(uavDesc);
+
+				texRRSpecularAlbedo = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRSpecularAlbedo");
+				texRRSpecularAlbedo->CreateSRV(srvDesc);
+				texRRSpecularAlbedo->CreateUAV(uavDesc);
+
+				texRRDiffuseAlbedo = eastl::make_unique<Texture2D>(texDesc, "SSGI::RRDiffuseAlbedo");
+				texRRDiffuseAlbedo->CreateSRV(srvDesc);
+				texRRDiffuseAlbedo->CreateUAV(uavDesc);
+
+				D3D11_TEXTURE2D_DESC depthDesc = texDesc;
+				depthDesc.Format = DXGI_FORMAT_R32_FLOAT;
+				D3D11_SHADER_RESOURCE_VIEW_DESC depthSrv = srvDesc;
+				depthSrv.Format = DXGI_FORMAT_R32_FLOAT;
+				D3D11_UNORDERED_ACCESS_VIEW_DESC depthUav = uavDesc;
+				depthUav.Format = DXGI_FORMAT_R32_FLOAT;
+
+				for (uint i = 0; i < 2; ++i) {
+					texRRLinearDepth[i] = eastl::make_unique<Texture2D>(
+						depthDesc,
+						i == 0 ? "SSGI::RRLinearDepth[0]" : "SSGI::RRLinearDepth[1]");
+					texRRLinearDepth[i]->CreateSRV(depthSrv);
+					texRRLinearDepth[i]->CreateUAV(depthUav);
+				}
+
+				rrDepthHistoryIdx = 0;
+				rrDepthHistoryValid = false;
 			}
 			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
 			{
@@ -730,7 +1041,7 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::ClearShaderCache()
 {
-	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
+	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute, rrPrepareInputsCompute, rcCaptureInputCompute, rcComposeRadianceCompute, rrApplyOutputCompute });
 
 	CompileComputeShaders();
 }
@@ -750,6 +1061,10 @@ void ScreenSpaceGI::CompileComputeShaders()
 	shaderInfos.push_back({ &radianceDisoccCompute, "radianceDisocc.cs.hlsl", {} });
 	shaderInfos.push_back({ &giCompute, "gi.cs.hlsl", {} });
 	shaderInfos.push_back({ &upsampleCompute, "upsample.cs.hlsl", {} });
+	shaderInfos.push_back({ &rrPrepareInputsCompute, "rrPrepareInputs.cs.hlsl", {} });
+	shaderInfos.push_back({ &rcCaptureInputCompute, "rcCaptureInput.cs.hlsl", {} });
+	shaderInfos.push_back({ &rcComposeRadianceCompute, "rcComposeRadiance.cs.hlsl", {} });
+	shaderInfos.push_back({ &rrApplyOutputCompute, "rrApplyOutput.cs.hlsl", {} });
 
 	// The GI-only passes (radiance prefilter, IL blur) never dispatch on the AO-only profile.
 	if (HasGIResources()) {
@@ -804,7 +1119,9 @@ bool ScreenSpaceGI::ShadersOK()
 	                           prefilterNormalCompute &&
 	                           radianceDisoccCompute &&
 	                           giCompute &&
-	                           upsampleCompute;
+	                           upsampleCompute &&
+	                           rrPrepareInputsCompute &&
+	                           rrApplyOutputCompute;
 
 	const bool giShadersOK = !HasGIResources() || (prefilterRadianceCompute && blurCompute);
 
@@ -842,6 +1159,7 @@ void ScreenSpaceGI::UpdateSB()
 			}
 
 			data.PrevInvViewMat[eyeIndex] = prevInvView[eyeIndex];
+			data.InvViewMat[eyeIndex] = currentInvView;
 			data.NDCToViewMul[eyeIndex] = float2{ 2.0f / proj11, -2.0f / proj22 };
 			data.NDCToViewAdd[eyeIndex] = float2{ -1.0f / proj11, 1.0f / proj22 };
 			if (globals::game::isVR)
@@ -881,9 +1199,458 @@ void ScreenSpaceGI::UpdateSB()
 		data.DistanceNormalisation = settings.DistanceNormalisation;
 		useModeTextureThisFrame = settings.UseStereoReproject && globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
 		data.UseModeTexture = useModeTextureThisFrame;
+		data.RRHistoryValid = rrDepthHistoryValid ? 1u : 0u;
+
+		// Snap the NRC world-space domain center to a stable spatial grid.
+		// The NRC coordinate system remains fixed while the camera stays
+		// inside the same 2048-unit snap cell.
+		// Control each NRC domain half-extent independently.
+		// Scale center snapping independently for each active domain axis.
+		// At the minimum 4096 extent this remains the original 2048-unit snap.
+		const float3 rcOriginSnap{
+			rcAdaptiveVolumeExtent.x * 0.5f,
+			rcAdaptiveVolumeExtent.y * 0.5f,
+			rcAdaptiveVolumeExtent.z * 0.5f
+		};
+
+		const auto rcEyePosition = Util::GetEyePosition(0);
+
+		const float rcOriginX = std::floor(rcEyePosition.x / rcOriginSnap.x) * rcOriginSnap.x;
+		const float rcOriginY = std::floor(rcEyePosition.y / rcOriginSnap.y) * rcOriginSnap.y;
+		const float rcOriginZ = std::floor(rcEyePosition.z / rcOriginSnap.z) * rcOriginSnap.z;
+
+		data.RadianceCacheVolumeCenter = float4{
+			rcOriginX,
+			rcOriginY,
+			rcOriginZ,
+			0.0f
+		};
+
+		// Use independent per-axis extents for the anisotropic NRC domain.
+		// to the previous uniform 4096-unit NRC domain.
+		data.RadianceCacheVolumeExtent = float4{
+			rcAdaptiveVolumeExtent.x,
+			rcAdaptiveVolumeExtent.y,
+			rcAdaptiveVolumeExtent.z,
+			0.0f
+		};
+
+		data.RadianceCacheOutputMode =
+
+			static_cast<uint>(std::clamp(settings.RadianceCacheOutputMode, 0, 2));
+
+		data.RadianceCacheContribution =
+
+			std::clamp(settings.RadianceCacheContribution, 0.0f, 1.0f);
+
+		const int rcQuality = std::clamp(settings.RadianceCacheQuality, 0, 2);
+		data.RadianceCacheGridSize =
+			(rcQuality == 0) ? 16u :
+			(rcQuality == 1) ? 32u :
+							   64u;
+		data.RadianceCacheResultGridSize =
+			rcResultGridSize != 0u ? rcResultGridSize : data.RadianceCacheGridSize;
+		// Keep the NRC domain valid only while both the snapped center
+		// and anisotropic coordinate extents remain unchanged.
+		static bool rcVolumeDomainInitialized = false;
+		static float3 rcPreviousVolumeOrigin{};
+		static float3 rcPreviousVolumeExtent{};
+
+		const float3 rcCurrentVolumeOrigin{
+			rcOriginX,
+			rcOriginY,
+			rcOriginZ
+		};
+
+		const float3 rcCurrentVolumeExtent = rcAdaptiveVolumeExtent;
+
+		if (!rcVolumeDomainInitialized) {
+			rcPreviousVolumeOrigin = rcCurrentVolumeOrigin;
+			rcPreviousVolumeExtent = rcCurrentVolumeExtent;
+			rcVolumeDomainInitialized = true;
+
+		} else {
+			const bool rcOriginChanged =
+				rcCurrentVolumeOrigin.x != rcPreviousVolumeOrigin.x ||
+				rcCurrentVolumeOrigin.y != rcPreviousVolumeOrigin.y ||
+				rcCurrentVolumeOrigin.z != rcPreviousVolumeOrigin.z;
+
+			const bool rcExtentChanged =
+				rcCurrentVolumeExtent.x != rcPreviousVolumeExtent.x ||
+				rcCurrentVolumeExtent.y != rcPreviousVolumeExtent.y ||
+				rcCurrentVolumeExtent.z != rcPreviousVolumeExtent.z;
+
+			if (rcOriginChanged || rcExtentChanged) {
+				globals::features::upscaling.fidelityFX.RequestRadianceCacheReset();
+				++rcAdaptiveDomainResetCount;
+				rcPreviousVolumeOrigin = rcCurrentVolumeOrigin;
+				rcPreviousVolumeExtent = rcCurrentVolumeExtent;
+			}
+		}
 	}
 
 	ssgiCB->Update(data);
+}
+
+bool ScreenSpaceGI::EnsureRadianceCacheCaptureResources()
+{
+	if (rcCaptureBuffer && rcCaptureUAV &&
+		rcTrainingTargetBuffer && rcTrainingTargetUAV &&
+		rcCaptureReadbacks[0] && rcCaptureReadbacks[1] && rcCaptureReadbacks[2] &&
+		rcTrainingTargetReadbacks[0] && rcTrainingTargetReadbacks[1] && rcTrainingTargetReadbacks[2]) {
+		return true;
+	}
+
+	rcCaptureBuffer = nullptr;
+	rcCaptureUAV = nullptr;
+	rcTrainingTargetBuffer = nullptr;
+	rcTrainingTargetUAV = nullptr;
+
+	for (auto& readback : rcTrainingTargetReadbacks)
+		readback = nullptr;
+
+	for (auto& readback : rcCaptureReadbacks)
+		readback = nullptr;
+
+	for (auto& pending : rcCaptureReadbackPending)
+		pending = false;
+
+	rcCaptureWriteSlot = 0;
+	rcCaptureReadSlot = 0;
+
+	bool resourcesOK = true;
+
+	D3D11_BUFFER_DESC gpuDesc{};
+	gpuDesc.ByteWidth = 44 * 4096;
+	gpuDesc.Usage = D3D11_USAGE_DEFAULT;
+	gpuDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+	gpuDesc.CPUAccessFlags = 0;
+	gpuDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	gpuDesc.StructureByteStride = 44;
+
+	HRESULT hr = globals::d3d::device->CreateBuffer(
+		&gpuDesc, nullptr, rcCaptureBuffer.put());
+
+	if (FAILED(hr)) {
+		logger::error(
+			"[RadianceCache] D3D11 capture buffer creation failed: 0x{:08X}",
+			static_cast<unsigned>(hr));
+		resourcesOK = false;
+	}
+
+	if (resourcesOK) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		uavDesc.Buffer.FirstElement = 0;
+		uavDesc.Buffer.NumElements = 4096;
+
+		hr = globals::d3d::device->CreateUnorderedAccessView(
+			rcCaptureBuffer.get(), &uavDesc, rcCaptureUAV.put());
+
+		if (FAILED(hr)) {
+			logger::error(
+				"[RadianceCache] D3D11 capture UAV creation failed: 0x{:08X}",
+				static_cast<unsigned>(hr));
+			resourcesOK = false;
+		}
+	}
+
+	// Store the SSGI teacher radiance paired with each captured NRC query.
+	// FidelityFX RadianceCacheOutput ABI is exactly float3 / 12 bytes.
+	if (resourcesOK) {
+		D3D11_BUFFER_DESC targetDesc{};
+		targetDesc.ByteWidth = 12 * 4096;
+		targetDesc.Usage = D3D11_USAGE_DEFAULT;
+		targetDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+		targetDesc.CPUAccessFlags = 0;
+		targetDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		targetDesc.StructureByteStride = 12;
+
+		hr = globals::d3d::device->CreateBuffer(
+			&targetDesc, nullptr, rcTrainingTargetBuffer.put());
+
+		if (FAILED(hr)) {
+			logger::error(
+				"[RadianceCache] training target buffer creation failed: 0x{:08X}",
+				static_cast<unsigned>(hr));
+			resourcesOK = false;
+		}
+	}
+
+	if (resourcesOK) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC targetUAVDesc{};
+		targetUAVDesc.Format = DXGI_FORMAT_UNKNOWN;
+		targetUAVDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+		targetUAVDesc.Buffer.FirstElement = 0;
+		targetUAVDesc.Buffer.NumElements = 4096;
+
+		hr = globals::d3d::device->CreateUnorderedAccessView(
+			rcTrainingTargetBuffer.get(),
+			&targetUAVDesc,
+			rcTrainingTargetUAV.put());
+
+		if (FAILED(hr)) {
+			logger::error(
+				"[RadianceCache] training target UAV creation failed: 0x{:08X}",
+				static_cast<unsigned>(hr));
+			resourcesOK = false;
+		}
+	}
+
+	if (resourcesOK) {
+		D3D11_BUFFER_DESC readbackDesc{};
+		readbackDesc.ByteWidth = 44 * 4096;
+		readbackDesc.Usage = D3D11_USAGE_STAGING;
+		readbackDesc.BindFlags = 0;
+		readbackDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		readbackDesc.MiscFlags = 0;
+		readbackDesc.StructureByteStride = 0;
+
+		for (uint32_t slot = 0; slot < kRCCaptureReadbackRingSize; ++slot) {
+			hr = globals::d3d::device->CreateBuffer(
+				&readbackDesc, nullptr, rcCaptureReadbacks[slot].put());
+
+			if (FAILED(hr)) {
+				logger::error(
+					"[RadianceCache] D3D11 readback slot {} creation failed: 0x{:08X}",
+					slot,
+					static_cast<unsigned>(hr));
+				resourcesOK = false;
+				break;
+			}
+		}
+	}
+
+	// Maintain a paired staging ring for 12-byte float3 training targets.
+	if (resourcesOK) {
+		D3D11_BUFFER_DESC targetReadbackDesc{};
+		targetReadbackDesc.ByteWidth = 12 * 4096;
+		targetReadbackDesc.Usage = D3D11_USAGE_STAGING;
+		targetReadbackDesc.BindFlags = 0;
+		targetReadbackDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		targetReadbackDesc.MiscFlags = 0;
+		targetReadbackDesc.StructureByteStride = 0;
+
+		for (uint32_t slot = 0; slot < kRCCaptureReadbackRingSize; ++slot) {
+			hr = globals::d3d::device->CreateBuffer(
+				&targetReadbackDesc,
+				nullptr,
+				rcTrainingTargetReadbacks[slot].put());
+
+			if (FAILED(hr)) {
+				logger::error(
+					"[RadianceCache] training-target readback slot {} creation failed: 0x{:08X}",
+					slot,
+					static_cast<unsigned>(hr));
+				resourcesOK = false;
+				break;
+			}
+		}
+	}
+
+	return resourcesOK;
+}
+
+void ScreenSpaceGI::EnsureRadianceCacheOutputTexture()
+{
+	if (texRCRadiance)
+		return;
+
+	D3D11_TEXTURE2D_DESC rcRadianceDesc{};
+	rcRadianceDesc.Width = 64;
+	rcRadianceDesc.Height = 64;
+	rcRadianceDesc.MipLevels = 1;
+	rcRadianceDesc.ArraySize = 1;
+	rcRadianceDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	rcRadianceDesc.SampleDesc.Count = 1;
+	rcRadianceDesc.SampleDesc.Quality = 0;
+	rcRadianceDesc.Usage = D3D11_USAGE_DEFAULT;
+	rcRadianceDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	rcRadianceDesc.CPUAccessFlags = 0;
+	rcRadianceDesc.MiscFlags = 0;
+
+	texRCRadiance = eastl::make_unique<Texture2D>(
+		rcRadianceDesc,
+		"SSGI::RCRadiance");
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC rcRadianceSRVDesc{};
+	rcRadianceSRVDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+	rcRadianceSRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+	rcRadianceSRVDesc.Texture2D.MostDetailedMip = 0;
+	rcRadianceSRVDesc.Texture2D.MipLevels = 1;
+
+	texRCRadiance->CreateSRV(rcRadianceSRVDesc);
+}
+
+void ScreenSpaceGI::ProcessRadianceCacheInference(
+	uint32_t a_gridSize,
+	uint32_t a_validCount,
+	uint32_t a_trainingCount)
+{
+	auto context = globals::d3d::context;
+
+	constexpr uint32_t kRCMaxCaptureSampleCount = 4096;
+
+	auto& ffx = globals::features::upscaling.fidelityFX;
+	auto& predictedRadiance = rcScratch.predictedRadiance;
+	auto& predictedSourceQueryIndices = rcScratch.predictedSourceQueryIndices;
+	auto& compactedInputs = rcScratch.compactedInputs;
+	auto& compactedTrainingInputs = rcScratch.compactedTrainingInputs;
+	auto& compactedTrainingTargets = rcScratch.compactedTrainingTargets;
+	auto& sourceQueryIndices = rcScratch.sourceQueryIndices;
+
+	uint32_t predictedSampleCount = 0;
+	bool predictedOutputReady = false;
+
+	if (settings.EnableRadianceCacheDiagnostics)
+		rcTelemetryValidQueries = a_validCount;
+
+	// Dispatch may collect the previous inference and submit this
+	// capture in the same call. Snapshot the previous topology first.
+	const uint32_t completedInferenceGridSize =
+		rcPendingInferenceGridSize;
+
+	// Push the live NRC training parameters into the FidelityFX runtime.
+	// Defaults and loaded configuration therefore apply even if
+	// the AMD-Tech menu has never been opened/rendered.
+	ffx.SetRRDiagnosticsEnabled(settings.EnableRadianceCacheDiagnostics);
+	ffx.SetRadianceCacheTrainingParameters(
+		settings.RadianceCacheLearningRate,
+		settings.RadianceCacheWeightSmoothing);
+
+	// Diagnostics only: report the training batch that
+	// will actually be submitted without changing training behavior.
+	rcTelemetryTrainingSamples =
+		settings.EnableRadianceCacheTraining ? a_trainingCount : 0u;
+
+	const bool batchDispatchSucceeded =
+		ffx.DispatchRadianceCacheCapturedInference(
+			compactedInputs,
+			sourceQueryIndices,
+			a_validCount,
+			settings.EnableRadianceCacheTraining ? compactedTrainingInputs : nullptr,
+			settings.EnableRadianceCacheTraining ? compactedTrainingTargets : nullptr,
+			settings.EnableRadianceCacheTraining ? a_trainingCount : 0u,
+			predictedRadiance,
+			predictedSourceQueryIndices,
+			&predictedSampleCount,
+			&predictedOutputReady);
+
+	if (predictedOutputReady)
+		rcPendingInferenceGridSize = 0;
+
+	if (batchDispatchSucceeded && a_validCount > 0)
+		rcPendingInferenceGridSize = a_gridSize;
+
+	if (!batchDispatchSucceeded) {
+		logger::error(
+			"[RadianceCache] NRC inference operation failed: samples={}",
+			a_validCount);
+		return;
+	}
+
+	if (!predictedOutputReady)
+		return;
+
+	const uint32_t completedGridSize =
+		std::clamp(completedInferenceGridSize, 16u, 64u);
+
+	if (!texRCRadiance) {
+		logger::error("[RadianceCache] NRC radiance grid unavailable");
+		return;
+	}
+
+	auto& rcRadiancePixels = rcScratch.radiancePixels;
+	std::fill_n(
+		rcRadiancePixels,
+		kRCMaxCaptureSampleCount * 4,
+		0.0f);
+
+	uint32_t telemetryFiniteCount = 0;
+	uint32_t telemetryValidCells = 0;
+	double telemetryLuminanceSum = 0.0;
+	double telemetryMagnitudeSum = 0.0;
+	float telemetryMaxLuminance = 0.0f;
+
+	for (uint32_t outputIndex = 0;
+		outputIndex < predictedSampleCount;
+		++outputIndex) {
+		const uint32_t sourceIndex =
+			predictedSourceQueryIndices[outputIndex];
+
+		if (sourceIndex >= kRCMaxCaptureSampleCount)
+			continue;
+
+		const float r = predictedRadiance[outputIndex * 3 + 0];
+		const float g = predictedRadiance[outputIndex * 3 + 1];
+		const float b = predictedRadiance[outputIndex * 3 + 2];
+
+		const bool finitePrediction =
+			std::isfinite(r) &&
+			std::isfinite(g) &&
+			std::isfinite(b);
+
+		if (!finitePrediction)
+			continue;
+
+		++telemetryFiniteCount;
+
+		// Source index is already a physical 64x64 backing index.
+		float* dst = rcRadiancePixels + sourceIndex * 4;
+		dst[0] = r;
+		dst[1] = g;
+		dst[2] = b;
+		dst[3] = 1.0f;
+
+		++telemetryValidCells;
+
+		if (settings.EnableRadianceCacheDiagnostics) {
+			const float luminance = std::max(
+				0.0f,
+				0.2126f * r + 0.7152f * g + 0.0722f * b);
+
+			const float magnitude =
+				std::sqrt(r * r + g * g + b * b);
+
+			telemetryLuminanceSum += luminance;
+			telemetryMagnitudeSum += magnitude;
+			telemetryMaxLuminance =
+				std::max(telemetryMaxLuminance, luminance);
+		}
+	}
+
+	if (settings.EnableRadianceCacheDiagnostics) {
+		rcTelemetryPredictionCount = predictedSampleCount;
+		rcTelemetryFinitePredictions = telemetryFiniteCount;
+		rcTelemetryValidOutputCells = telemetryValidCells;
+		rcTelemetryResultAgeFrames = 0;
+
+		if (telemetryFiniteCount > 0) {
+			const double invCount =
+				1.0 / static_cast<double>(telemetryFiniteCount);
+
+			rcTelemetryMeanLuminance =
+				static_cast<float>(telemetryLuminanceSum * invCount);
+			rcTelemetryMeanRGBMagnitude =
+				static_cast<float>(telemetryMagnitudeSum * invCount);
+			rcTelemetryMaxLuminance = telemetryMaxLuminance;
+		} else {
+			rcTelemetryMeanLuminance = 0.0f;
+			rcTelemetryMeanRGBMagnitude = 0.0f;
+			rcTelemetryMaxLuminance = 0.0f;
+		}
+	}
+
+	context->UpdateSubresource(
+		texRCRadiance->resource.get(),
+		0,
+		nullptr,
+		rcRadiancePixels,
+		64 * 4 * sizeof(float),
+		0);
+
+	rcResultGridSize = completedGridSize;
 }
 
 void ScreenSpaceGI::DrawSSGI()
@@ -937,6 +1704,9 @@ void ScreenSpaceGI::DrawSSGI()
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		for (auto& tex : texAccumFrames)
 			context->ClearUnorderedAccessViewFloat(tex->uav.get(), clr);
+
+		// Keep RR's previous-depth contract synchronized with SSGI temporal invalidation.
+		rrDepthHistoryValid = false;
 	}
 
 	//////////////////////////////////////////////////////
@@ -1100,6 +1870,8 @@ void ScreenSpaceGI::DrawSSGI()
 			uavs.at(3) = texGiSpecular[!inputAoTexIdx]->uav.get();
 		}
 		uavs.at(4) = texPrevGeo->uav.get();
+		// gi.cs writes the raw pre-temporal RR signal only for the GI_SPECULAR variant.
+		uavs.at(5) = settings.EnableExperimentalSpecularGI && texRRSpecularInput ? texRRSpecularInput->uav.get() : nullptr;
 
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
@@ -1112,6 +1884,481 @@ void ScreenSpaceGI::DrawSSGI()
 		lastFrameAoTexIdx = inputAoTexIdx;
 	}
 
+	// Capture path: D3D11 UAV -> staging readback -> CPU -> D3D12 NRC upload.
+
+	bool rcAutomaticCaptureRequested = false;
+
+	if (settings.EnableRadianceCache &&
+		settings.Enabled &&
+		HasGIResources()) {
+		auto& rcFFX = globals::features::upscaling.fidelityFX;
+
+		if (rcFFX.EnsureRadianceCacheContext()) {
+			// Capture NRC input every frame; quality controls grid size only.
+			rcAutomaticCaptureRequested = true;
+			++rcAutomaticFrameIndex;
+		}
+	}
+
+	if (rcAutomaticCaptureRequested) {
+		if (!rcCaptureInputCompute) {
+			logger::error("[RadianceCache] capture shader is unavailable");
+		} else {
+			const bool resourcesOK = EnsureRadianceCacheCaptureResources();
+
+			if (resourcesOK)
+				EnsureRadianceCacheOutputTexture();
+
+			if (resourcesOK) {
+				CS_GPU_PASS("ScreenSpaceGI::RCCaptureInput");
+				resetViews();
+
+				srvs.at(0) = texWorkingDepth->srv.get();
+				srvs.at(1) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
+				srvs.at(2) = Util::AsReal(rts[ALBEDO].SRV);
+
+				// Use the raw current-frame SSGI radiance produced before NRC capture as the training target.
+				srvs.at(3) = texRRSpecularInput->srv.get();
+
+				uavs.at(0) = rcCaptureUAV.get();
+				uavs.at(1) = rcTrainingTargetUAV.get();
+
+				context->CSSetShaderResources(0, 4, srvs.data());
+				context->CSSetUnorderedAccessViews(0, 2, uavs.data(), nullptr);
+				context->CSSetShader(rcCaptureInputCompute.get(), nullptr, 0);
+				const int rcQuality = std::clamp(settings.RadianceCacheQuality, 0, 2);
+				const uint32_t rcGridSize =
+					(rcQuality == 0) ? 16u :
+					(rcQuality == 1) ? 32u :
+									   64u;
+				const uint32_t rcDispatchGroups = (rcGridSize + 7u) / 8u;
+
+				context->Dispatch(rcDispatchGroups, rcDispatchGroups, 1);
+				resetViews();
+
+				// Enqueue this capture only if the next write slot is free.
+				// Never overwrite a staging resource that the CPU has not consumed yet.
+				if (!rcCaptureReadbackPending[rcCaptureWriteSlot]) {
+					// Enqueue each captured query and its teacher target into the same ring slot.
+					// The slot is not marked pending until both GPU copies are queued.
+					context->CopyResource(
+						rcCaptureReadbacks[rcCaptureWriteSlot].get(),
+						rcCaptureBuffer.get());
+					context->CopyResource(
+						rcTrainingTargetReadbacks[rcCaptureWriteSlot].get(),
+						rcTrainingTargetBuffer.get());
+
+					rcCaptureReadbackGridSize[rcCaptureWriteSlot] = rcGridSize;
+					rcCaptureReadbackPending[rcCaptureWriteSlot] = true;
+					rcCaptureWriteSlot = (rcCaptureWriteSlot + 1) % kRCCaptureReadbackRingSize;
+				}
+
+				// Poll the oldest paired capture without blocking the D3D11 context.
+				const uint32_t readSlot = rcCaptureReadSlot;
+				D3D11_MAPPED_SUBRESOURCE mapped{};
+				D3D11_MAPPED_SUBRESOURCE mappedTrainingTarget{};
+				HRESULT mapResult = DXGI_ERROR_WAS_STILL_DRAWING;
+				HRESULT targetMapResult = DXGI_ERROR_WAS_STILL_DRAWING;
+
+				if (rcCaptureReadbackPending[readSlot]) {
+					mapResult = context->Map(
+						rcCaptureReadbacks[readSlot].get(),
+						0,
+						D3D11_MAP_READ,
+						D3D11_MAP_FLAG_DO_NOT_WAIT,
+						&mapped);
+
+					if (SUCCEEDED(mapResult) && mapped.pData) {
+						targetMapResult = context->Map(
+							rcTrainingTargetReadbacks[readSlot].get(),
+							0,
+							D3D11_MAP_READ,
+							D3D11_MAP_FLAG_DO_NOT_WAIT,
+							&mappedTrainingTarget);
+
+						if (targetMapResult == DXGI_ERROR_WAS_STILL_DRAWING) {
+							// Input happened to become ready first. Do not consume half a pair.
+							context->Unmap(rcCaptureReadbacks[readSlot].get(), 0);
+							mapped.pData = nullptr;
+							mapResult = DXGI_ERROR_WAS_STILL_DRAWING;
+						} else if (FAILED(targetMapResult) || !mappedTrainingTarget.pData) {
+							context->Unmap(rcCaptureReadbacks[readSlot].get(), 0);
+							mapped.pData = nullptr;
+							logger::error(
+								"[RadianceCache] asynchronous training-target readback Map failed: slot={}, hr=0x{:08X}",
+								readSlot,
+								static_cast<unsigned>(targetMapResult));
+							mapResult = targetMapResult;
+						}
+					}
+				}
+
+				if (mapResult == DXGI_ERROR_WAS_STILL_DRAWING || !rcCaptureReadbackPending[readSlot]) {
+					// Expected asynchronous case: either the input or its paired
+					// training target is not ready yet. Leave the slot pending.
+				} else if (FAILED(mapResult) || !mapped.pData) {
+					logger::error(
+						"[RadianceCache] asynchronous D3D11 readback Map failed: slot={}, hr=0x{:08X}",
+						readSlot,
+						static_cast<unsigned>(mapResult));
+				} else if (FAILED(targetMapResult) || !mappedTrainingTarget.pData) {
+					// A target failure was already reported above. Do not consume this slot.
+				} else {
+					constexpr uint32_t kRCMaxCaptureSampleCount = 4096;
+					// Consume each asynchronous capture using the grid topology that produced it.
+					const uint32_t kRCActiveGridSize =
+						std::clamp(rcCaptureReadbackGridSize[readSlot], 16u, 64u);
+					const uint32_t kRCCaptureSampleCount =
+						kRCActiveGridSize * kRCActiveGridSize;
+					constexpr uint32_t kRCInputFloatCount = 11;
+
+					const auto* capturedValues = static_cast<const float*>(mapped.pData);
+					// Keep float3 teacher targets in the same physical query order as their inputs.
+					const auto* capturedTrainingTargets =
+						static_cast<const float*>(mappedTrainingTarget.pData);
+
+					uint32_t finiteCount = 0;
+					uint32_t validCount = 0;
+					uint32_t outsideCount = 0;
+					uint32_t nonFiniteCount = 0;
+					float maxPositionExtent = 0.0f;
+					static_assert(kRCScratchMaxSampleCount == kRCMaxCaptureSampleCount);
+					static_assert(kRCScratchInputFloatCount == kRCInputFloatCount);
+					auto& positionExtentX = rcScratch.positionExtentX;
+					auto& positionExtentY = rcScratch.positionExtentY;
+					auto& positionExtentZ = rcScratch.positionExtentZ;
+					uint32_t positionExtentCount = 0;
+
+					// Keep the compacted NRC payload contiguous while
+					// preserving the original producer-grid index for the future
+					// GPU scatter into the RRApply input surface.
+					auto& compactedInputs = rcScratch.compactedInputs;
+
+					// Build training as an independently validated subset of inference queries.
+					// A bad teacher must never remove an otherwise valid inference query.
+					auto& compactedTrainingInputs = rcScratch.compactedTrainingInputs;
+					auto& compactedTrainingTargets = rcScratch.compactedTrainingTargets;
+					uint32_t trainingCount = 0;
+
+					auto& sourceQueryIndices = rcScratch.sourceQueryIndices;
+
+					for (uint32_t sampleIndex = 0; sampleIndex < kRCCaptureSampleCount; ++sampleIndex) {
+						const float* values = capturedValues + sampleIndex * kRCInputFloatCount;
+
+						bool finite = true;
+						for (uint32_t valueIndex = 0; valueIndex < kRCInputFloatCount; ++valueIndex)
+							finite = finite && std::isfinite(values[valueIndex]);
+
+						if (!finite) {
+							++nonFiniteCount;
+							continue;
+						}
+
+						++finiteCount;
+
+						if (settings.EnableRadianceCacheDiagnostics) {
+							const float samplePositionExtent = std::max({
+
+								std::abs(values[0] - 0.5f),
+
+								std::abs(values[1] - 0.5f),
+
+								std::abs(values[2] - 0.5f)
+
+							});
+
+							maxPositionExtent = std::max(maxPositionExtent, samplePositionExtent);
+						}
+
+						positionExtentX[positionExtentCount] = std::abs(values[0] - 0.5f);
+						positionExtentY[positionExtentCount] = std::abs(values[1] - 0.5f);
+						positionExtentZ[positionExtentCount] = std::abs(values[2] - 0.5f);
+						++positionExtentCount;
+
+						const bool insideRadianceCacheVolume =
+							values[0] >= 0.0f && values[0] <= 1.0f &&
+							values[1] >= 0.0f && values[1] <= 1.0f &&
+							values[2] >= 0.0f && values[2] <= 1.0f;
+
+						if (!insideRadianceCacheVolume) {
+							++outsideCount;
+							continue;
+						}
+
+						float* compacted = compactedInputs + validCount * kRCInputFloatCount;
+						std::memcpy(
+							compacted,
+							values,
+							sizeof(float) * kRCInputFloatCount);
+
+						// Construct the validated training subset independently from inference.
+						// Black radiance is valid supervision; only non-finite or
+						// negative teacher values are rejected.
+						const float* trainingTarget = capturedTrainingTargets + sampleIndex * 3;
+
+						const bool validTrainingTarget =
+							std::isfinite(trainingTarget[0]) &&
+							std::isfinite(trainingTarget[1]) &&
+							std::isfinite(trainingTarget[2]) &&
+							trainingTarget[0] >= 0.0f &&
+							trainingTarget[1] >= 0.0f &&
+							trainingTarget[2] >= 0.0f;
+
+						if (validTrainingTarget && trainingCount < kRCMaxCaptureSampleCount) {
+							float* compactedTrainingInput =
+								compactedTrainingInputs + trainingCount * kRCInputFloatCount;
+							float* compactedTrainingTarget =
+								compactedTrainingTargets + trainingCount * 3;
+
+							// Training input must describe the exact same query as its teacher.
+							std::memcpy(
+								compactedTrainingInput,
+								values,
+								sizeof(float) * kRCInputFloatCount);
+
+							std::memcpy(
+								compactedTrainingTarget,
+								trainingTarget,
+								sizeof(float) * 3);
+
+							++trainingCount;
+						}
+
+						// Preserve each query's physical grid location across asynchronous inference.
+						const uint32_t sourceX = sampleIndex % kRCActiveGridSize;
+						const uint32_t sourceY = sampleIndex / kRCActiveGridSize;
+						sourceQueryIndices[validCount] = sourceY * 64u + sourceX;
+						++validCount;
+					}
+
+					// Record why captured NRC queries were rejected when diagnostics are enabled.
+					if (settings.EnableRadianceCacheDiagnostics) {
+						rcTelemetryFiniteCaptures = finiteCount;
+						rcTelemetryOutsideVolume = outsideCount;
+						rcTelemetryNonFiniteCaptures = nonFiniteCount;
+						rcTelemetryMaxPositionExtent = maxPositionExtent;
+					}
+
+					// Record per-axis spatial-domain telemetry.
+					// Include every finite capture, including samples outside
+					// the current NRC domain.
+					if (positionExtentCount > 0) {
+						std::sort(positionExtentX, positionExtentX + positionExtentCount);
+						std::sort(positionExtentY, positionExtentY + positionExtentCount);
+						std::sort(positionExtentZ, positionExtentZ + positionExtentCount);
+
+						// Nearest-rank 95th percentile: ceil(0.95 * N) - 1.
+						const uint32_t p95Index = std::min(
+							positionExtentCount - 1,
+							static_cast<uint32_t>(std::ceil(0.95f * static_cast<float>(positionExtentCount))) - 1u);
+
+						rcTelemetryPositionP95X = positionExtentX[p95Index];
+						rcTelemetryPositionP95Y = positionExtentY[p95Index];
+						rcTelemetryPositionP95Z = positionExtentZ[p95Index];
+
+						rcTelemetryPositionMaxX = positionExtentX[positionExtentCount - 1];
+						rcTelemetryPositionMaxY = positionExtentY[positionExtentCount - 1];
+						rcTelemetryPositionMaxZ = positionExtentZ[positionExtentCount - 1];
+					} else {
+						rcTelemetryPositionP95X = 0.0f;
+						rcTelemetryPositionP95Y = 0.0f;
+						rcTelemetryPositionP95Z = 0.0f;
+						rcTelemetryPositionMaxX = 0.0f;
+						rcTelemetryPositionMaxY = 0.0f;
+						rcTelemetryPositionMaxZ = 0.0f;
+					}
+
+					// Adapt the NRC world-space domain from finite captured geometry.
+					// Domain extents are measured from normalized center 0.5.
+					// Convert P95 back into world-space distance using the
+					// domain that produced this capture.
+					if (positionExtentCount > 0) {
+						constexpr float kRCMinExtent = 4096.0f;
+						constexpr float kRCMaxExtent = 131072.0f;
+						constexpr float kRCHeadroom = 1.25f;
+						constexpr uint32_t kRCShrinkObservationCount = 300;
+
+						const float worldP95X =
+							rcTelemetryPositionP95X * 2.0f * rcAdaptiveVolumeExtent.x;
+						const float worldP95Y =
+							rcTelemetryPositionP95Y * 2.0f * rcAdaptiveVolumeExtent.y;
+						const float worldP95Z =
+							rcTelemetryPositionP95Z * 2.0f * rcAdaptiveVolumeExtent.z;
+
+						const auto selectExtentTier = [&](float requiredWorldExtent) {
+							const float required = std::clamp(
+								requiredWorldExtent * kRCHeadroom,
+								kRCMinExtent,
+								kRCMaxExtent);
+
+							float tier = kRCMinExtent;
+							while (tier < required && tier < kRCMaxExtent)
+								tier *= 2.0f;
+
+							return std::min(tier, kRCMaxExtent);
+						};
+
+						const float requestedX = selectExtentTier(worldP95X);
+						const float requestedY = selectExtentTier(worldP95Y);
+						const float requestedZ = selectExtentTier(worldP95Z);
+
+						// Record the raw domain tier requested by the
+						// current capture before grow/shrink hysteresis.
+						rcAdaptiveRequestedExtent = float3{
+							requestedX,
+							requestedY,
+							requestedZ
+						};
+
+						const auto updateAxis = [&](float requested, float& current, uint32_t& shrinkFrames) {
+							if (requested > current) {
+								// Fast grow: distant geometry becomes representable next frame.
+								current = requested;
+								shrinkFrames = 0;
+								return;
+							}
+
+							// Shrink only when the requested tier is at least one full
+							// tier below the current domain for a sustained period.
+							if (requested <= current * 0.5f && current > kRCMinExtent) {
+								++shrinkFrames;
+
+								if (shrinkFrames >= kRCShrinkObservationCount) {
+									current = std::max(kRCMinExtent, current * 0.5f);
+									shrinkFrames = 0;
+								}
+							} else {
+								shrinkFrames = 0;
+							}
+						};
+
+						updateAxis(
+							requestedX,
+							rcAdaptiveVolumeExtent.x,
+							rcAdaptiveShrinkFramesX);
+
+						updateAxis(
+							requestedY,
+							rcAdaptiveVolumeExtent.y,
+							rcAdaptiveShrinkFramesY);
+
+						updateAxis(
+							requestedZ,
+							rcAdaptiveVolumeExtent.z,
+							rcAdaptiveShrinkFramesZ);
+					}
+
+					// The D3D11 staging pointer must not survive into the synchronous
+					// D3D12/NRC dispatch path.
+					// Release the paired target mapping before consuming the capture slot.
+					context->Unmap(rcTrainingTargetReadbacks[readSlot].get(), 0);
+					context->Unmap(rcCaptureReadbacks[readSlot].get(), 0);
+					rcCaptureReadbackPending[readSlot] = false;
+					rcCaptureReadSlot = (readSlot + 1) % kRCCaptureReadbackRingSize;
+
+					ProcessRadianceCacheInference(
+						kRCActiveGridSize,
+						validCount,
+						trainingCount);
+				}
+			}
+		}
+	}
+
+	// Prepare AMD Ray Regeneration feature maps from the same frame that produced the
+	// raw pre-temporal indirect-specular signal. Depth is ping-ponged so motion.z can
+	// carry PreviousLinearDepth - CurrentLinearDepth for RR.
+	if (settings.EnableExperimentalSpecularGI && settings.EnableRayRegeneration &&
+		globals::features::upscaling.fidelityFX.CanDispatchRayRegeneration() &&
+		texRRSpecularInput && texRRSpecularOutput &&
+		texRRLinearDepth[0] && texRRLinearDepth[1] &&
+		texRRMotionVectors && texRRNormalRoughness &&
+		texRRSpecularAlbedo && texRRDiffuseAlbedo) {
+		CS_GPU_PASS("ScreenSpaceGI::RRPrepareInputs");
+
+		resetViews();
+		const uint prevDepthIdx = rrDepthHistoryIdx;
+		const uint currDepthIdx = !rrDepthHistoryIdx;
+
+		srvs.at(0) = texWorkingDepth->srv.get();
+		srvs.at(1) = Util::AsReal(rts[NORMALROUGHNESS].SRV);
+		srvs.at(2) = Util::AsReal(rts[RE::RENDER_TARGET::kMOTION_VECTOR].SRV);
+		srvs.at(3) = Util::AsReal(rts[REFLECTANCE].SRV);
+		srvs.at(4) = Util::AsReal(rts[ALBEDO].SRV);
+		srvs.at(5) = texRRLinearDepth[prevDepthIdx]->srv.get();
+
+		uavs.at(0) = texRRLinearDepth[currDepthIdx]->uav.get();
+		uavs.at(1) = texRRMotionVectors->uav.get();
+		uavs.at(2) = texRRNormalRoughness->uav.get();
+		uavs.at(3) = texRRSpecularAlbedo->uav.get();
+		uavs.at(4) = texRRDiffuseAlbedo->uav.get();
+
+		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+		context->CSSetShader(rrPrepareInputsCompute.get(), nullptr, 0);
+		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+		// Unbind D3D11 views before the FidelityFX D3D11/D3D12 bridge consumes them.
+		resetViews();
+
+		// Compose the existing RR radiance with the reconstructed NRC field before RR dispatch.
+		const bool useRCCombinedSignal =
+			settings.EnableRadianceCache &&
+			settings.RadianceCacheOutputMode != 0 &&
+			texRCRadiance &&
+			texRRCombinedInput &&
+			rcComposeRadianceCompute;
+
+		if (useRCCombinedSignal) {
+			CS_GPU_PASS("ScreenSpaceGI::RCComposeRadiance");
+			resetViews();
+
+			srvs.at(0) = texRRSpecularInput->srv.get();
+			srvs.at(1) = texRCRadiance->srv.get();
+			uavs.at(0) = texRRCombinedInput->uav.get();
+
+			context->CSSetShaderResources(0, 2, srvs.data());
+			context->CSSetUnorderedAccessViews(0, 1, uavs.data(), nullptr);
+			context->CSSetShader(rcComposeRadianceCompute.get(), nullptr, 0);
+			context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+
+			resetViews();
+		}
+
+		auto rr = GetRRInputs();
+		if (useRCCombinedSignal)
+			rr.signal = texRRCombinedInput->resource.get();
+		const bool resetRR = !rrDepthHistoryValid ||
+		                     (globals::state && globals::state->IsMainOrLoadingMenuOpen());
+
+		const bool rrOk = globals::features::upscaling.fidelityFX.DispatchRayRegeneration(
+			rr.signal,
+			rr.linearDepth,
+			rr.motionVectors,
+			rr.normalRoughness,
+			rr.specularAlbedo,
+			rr.diffuseAlbedo,
+			texRRSpecularOutput->resource.get(),
+			internalRes[0],
+			internalRes[1],
+			resetRR);
+
+		if (rrOk) {
+			CS_GPU_PASS("ScreenSpaceGI::RRApplyOutput");
+
+			resetViews();
+			srvs.at(0) = texRRSpecularOutput->srv.get();
+			uavs.at(0) = texGiSpecular[inputAoTexIdx]->uav.get();
+			context->CSSetShaderResources(0, 1, srvs.data());
+			context->CSSetUnorderedAccessViews(0, 1, uavs.data(), nullptr);
+			context->CSSetShader(rrApplyOutputCompute.get(), nullptr, 0);
+			context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
+		}
+
+		// Preparation itself establishes the previous-depth source for the next frame.
+		rrDepthHistoryIdx = currDepthIdx;
+		rrDepthHistoryValid = true;
+	}
 	// View-independent reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
 	// seam taps read across eyes. Replaces the tail bilateral stereo sync below.
 	if (useReproject) {

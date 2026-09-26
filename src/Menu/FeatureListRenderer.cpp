@@ -19,6 +19,8 @@
 #include "Features/CSUtility.h"
 #include "Features/FeatureOverwrites.h"
 #include "Features/SceneManagerUI.h"
+#include "Features/ScreenSpaceGI.h"
+#include "Features/Upscaling.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -594,8 +596,26 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	});
 	menuList.push_back(CategoryHeader{ "Features", static_cast<int>(featureCount) });
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat)) {
 			menuList.push_back(feat);
+		}
+	}
+
+	// FSR REDSTONE is a first-class companion page for Upscaling.
+	// Insert it after the actual Upscaling menu entry regardless of
+	// whether Upscaling is currently emitted under Favorites or Features.
+	const auto upscalingMenu = std::ranges::find_if(menuList, [](const auto& item) {
+		const auto* feature = std::get_if<Feature*>(&item);
+		return feature && *feature == static_cast<Feature*>(&globals::features::upscaling);
+	});
+
+	if (upscalingMenu != menuList.end()) {
+		menuList.insert(std::next(upscalingMenu), BuiltInMenu{
+													  "FSR REDSTONE",
+													  "FSRRedstone",
+													  []() {
+														  globals::features::screenSpaceGI.DrawRedstoneSettings();
+													  } });
 	}
 
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {
