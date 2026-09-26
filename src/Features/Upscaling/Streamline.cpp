@@ -185,6 +185,9 @@ void Streamline::LoadInterposer()
 		reflexSupportedOnCurrentAdapter = false;
 		reflexOptionsCache = {};
 		lastReflexSleepFrame = UINT32_MAX;
+		for (auto& kindFrames : lastDLSSLogFrame)
+			for (auto& frame : kindFrames)
+				frame = UINT32_MAX;
 		logger::info("[Streamline {}] Successfully initialized Streamline", instanceTag);
 	}
 }
@@ -697,17 +700,32 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
+	const auto frame = state->frameCount;
+	const uint32_t logEye = globals::game::isVR ? eyeIndex : 0u;
+	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+		if (ShouldLogDLSSProblem(DLSSLogKind::kVramWarning, logEye, frame))
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded{} frame={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame);
+		return true;
+	}
+
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline {}] slEvaluateFeature failed{} result={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
-		}
+		if (ShouldLogDLSSProblem(DLSSLogKind::kEvaluateError, logEye, frame))
+			logger::error("[Streamline {}] slEvaluateFeature failed{} frame={} result={} ({})", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame, static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
 		return false;
 	}
 
 	return true;
+}
+
+bool Streamline::ShouldLogDLSSProblem(DLSSLogKind a_kind, uint32_t a_eye, uint32_t a_frame)
+{
+	const uint32_t eye = std::min(a_eye, 1u);
+	auto& lastFrame = lastDLSSLogFrame[static_cast<size_t>(a_kind)][eye];
+	if (lastFrame == UINT32_MAX || a_frame - lastFrame >= kProblemLogIntervalFrames) {
+		lastFrame = a_frame;
+		return true;
+	}
+	return false;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
