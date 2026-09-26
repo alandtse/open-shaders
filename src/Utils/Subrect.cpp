@@ -93,6 +93,7 @@ namespace Util::Subrect
 		const bool hasExplicitLeft =
 			a_json.contains("CropX") && a_json.contains("CropY") &&
 			a_json.contains("CropW") && a_json.contains("CropH");
+		explicitCropLoadedFromJson = hasExplicitLeft;
 		const bool hasExplicitRight =
 			a_json.contains("CropRightX") && a_json.contains("CropRightY") &&
 			a_json.contains("CropRightW") && a_json.contains("CropRightH");
@@ -121,6 +122,7 @@ namespace Util::Subrect
 
 		if (a_json.contains("CropPresets") && a_json["CropPresets"].is_array()) {
 			presets.clear();
+			placeholderDefaultPreset = false;
 			for (auto& entry : a_json["CropPresets"]) {
 				Preset preset;
 				preset.name = entry.value("name", "Unknown");
@@ -218,6 +220,10 @@ namespace Util::Subrect
 
 	void Controller::MaterializeNewDefaults()
 	{
+		// LoadSettings runs before the host seeds (FoveatedRender::PostPostLoad), so a JSON
+		// without CropPresets leaves a "Full Frame" placeholder holding index 0.
+		if (placeholderDefaultPreset && !explicitCropLoadedFromJson && !seededDefaults.empty())
+			presets.clear();
 		EnsureDefaultPreset();
 		for (const auto& preset : seededDefaults) {
 			if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), preset.name) != seenDefaultNames.end())
@@ -439,8 +445,10 @@ namespace Util::Subrect
 			// ApplyPreset uses below.
 			currentRightUV = presets[0].rightUV.value_or(MirrorUVHorizontal(currentUV));
 			selectedPresetIndex = 0;
+			placeholderDefaultPreset = false;
 		} else {
 			presets.push_back(Preset{ .name = "Full Frame", .uv = DefaultUV() });
+			placeholderDefaultPreset = true;
 		}
 	}
 
