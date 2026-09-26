@@ -30,9 +30,9 @@ private:
 
 public:
 	/** @brief Shows NR scheduling diagnostics through the existing overlay system. */
-	void DrawOverlay() override { neuralRendering.DrawDiagnosticsOverlay(settings.neuralRenderingEnabled); }
-	/** @brief Enables the NR diagnostics overlay while NR is selected. */
-	bool IsOverlayVisible() const override { return settings.neuralRenderingEnabled; }
+	void DrawOverlay() override { neuralRendering.DrawDiagnosticsOverlay(); }
+	/** @brief Shows the NR diagnostics overlay only while NR's own settings switch it on. */
+	bool IsOverlayVisible() const override { return neuralRendering.DiagnosticsOverlayVisible(); }
 	// Feature interface
 	virtual inline std::string GetName() override { return "Upscaling"; }
 	virtual std::string GetDisplayName() override { return T("feature.upscaling.name", "Upscaling"); }

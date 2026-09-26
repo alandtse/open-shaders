@@ -172,9 +172,13 @@ namespace NR
 			if (!traceFile)
 				throw std::runtime_error("Cannot open diagnostic trace");
 			traceFile << std::setprecision(9);
-			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>256, directionDot<0.5, projectionDelta>0.1.\n"
-						 "Options: 1=ignorePosition,2=ignoreCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,128=bypassEvaluation,256=copyInput,512=interopRoundTrip,2097152=feedCameraData.\n"
-						 "Reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation.\n";
+			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>" << kCameraCutDistance
+					  << ", directionDot<" << kCameraCutDirectionDot << ", projectionDelta>" << kProjectionCutThreshold << ".\n"
+					  << "Options: 1=ignorePosition,2=applyCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,"
+					  << "128=bypassEvaluation,256=copyInput,512=interopRoundTrip,1024=bypassMask,2048=forceMaskZero,4096=forceMaskOne,8192=visualizeMask,"
+					  << "16384=disableTone,32768=disableStructure,65536=disableSkin,131072=disableExposure,262144=disableColorTransform,"
+					  << "524288=visualizeSkinMask,1048576=visualizeAutoMask,2097152=feedCameraData.\n"
+					  << "Reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation.\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
 			tracePath = std::format("Trace file failed: {}", error.what());
@@ -255,7 +259,7 @@ namespace NR
 		}
 		if (enabled && world && !paused && current.options != 0)
 			LogFrame(current);
-		if (enabled && ++framesSinceSummary >= kHistorySize) {
+		if (enabled && showOverlay.load(std::memory_order_relaxed) && ++framesSinceSummary >= kHistorySize) {
 			std::string outcomes;
 			uint32_t resets = 0, recreations = 0, duplicates = 0;
 			for (size_t i = 0; i < count; ++i) {
@@ -321,7 +325,9 @@ namespace NR
 			exposureMode = std::min(exposure, 7u);
 		if (ImGui::SliderFloat("Manual exposure", &exposureValue, 0.01f, 16.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
 			manualExposure = exposureValue;
-		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition), "Production\0Raw replacement\0Masked lerp\050% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
+		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition),
+				"Production\0Raw replacement\0Masked lerp\0"
+				"50% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, 7u);
 		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0"))
 			visualMode = std::min(view, 20u);
@@ -359,13 +365,15 @@ namespace NR
 			if (ImGui::Button("Copy Trace Path"))
 				ImGui::SetClipboardText(tracePath.c_str());
 		}
-		ImGui::Checkbox("Show NR Diagnostics", &showOverlay);
+		bool overlayVisible = showOverlay.load(std::memory_order_relaxed);
+		if (ImGui::Checkbox("Show NR Diagnostics", &overlayVisible))
+			showOverlay.store(overlayVisible, std::memory_order_relaxed);
 		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in CommunityShaders.log.");
 	}
 
-	void Diagnostics::DrawOverlay(bool enabled, const std::string& status)
+	void Diagnostics::DrawOverlay(const std::string& status)
 	{
-		if (!enabled || !showOverlay || !ImGui::GetCurrentContext())
+		if (!OverlayVisible() || !ImGui::GetCurrentContext())
 			return;
 		std::array<Frame, kHistorySize> snapshot;
 		size_t snapshotNext, snapshotCount;
@@ -403,7 +411,7 @@ namespace NR
 			ImGui::TextUnformatted(suiteStatus.c_str());
 			ImGui::Text("Options: %u | bypass frames %u", latest.options, outcomes[size_t(Outcome::Bypassed)]);
 			for (uint32_t i = 0; i < latest.eyeCount; ++i)
-				ImGui::Text("Eye %u: distance %.2f / 256 | dot %.3f | projection %.4f | detected 0x%X", i, latest.camera[i].distance, latest.camera[i].directionDot, latest.camera[i].projectionDelta, latest.camera[i].detected);
+				ImGui::Text("Eye %u: distance %.2f / %.0f | dot %.3f | projection %.4f | detected 0x%X", i, latest.camera[i].distance, kCameraCutDistance, latest.camera[i].directionDot, latest.camera[i].projectionDelta, latest.camera[i].detected);
 			const auto& palette = globals::menu->GetTheme().StatusPalette;
 			ImGui::TextColored(latest.outcome == Outcome::Applied ? palette.SuccessColor : palette.Warning,
 				"Frame %u: %s", latest.number, Name(latest.outcome));

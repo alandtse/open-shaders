@@ -26,7 +26,9 @@ struct NeuralRendering
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
 	void DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
-	void DrawDiagnosticsOverlay(bool enabled);
+	void DrawDiagnosticsOverlay();
+	/** @brief True while the developer has switched the diagnostics overlay on. */
+	bool DiagnosticsOverlayVisible() const { return diagnostics.OverlayVisible(); }
 	/** @brief Records progress through the existing post-processing chain. */
 	void RecordStage(bool finishedPost);
 	/** @brief Captures the scene immediately before the existing upscaler. */

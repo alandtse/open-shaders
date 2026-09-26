@@ -12,6 +12,11 @@ struct ID3D11ShaderResourceView;
 
 namespace NR
 {
+	/** @brief Camera-cut detection thresholds; the detection and the trace legend must agree. */
+	inline constexpr float kCameraCutDistance = 256.0f;
+	inline constexpr float kCameraCutDirectionDot = 0.5f;
+	inline constexpr float kProjectionCutThreshold = 0.1f;
+
 	/** @brief Bounded CPU-side tracing of NR scheduling and command submission. */
 	class Diagnostics
 	{
@@ -174,7 +179,9 @@ namespace NR
 		/** @brief Draws diagnostic settings in Upscaling's existing settings panel. */
 		void DrawSettings();
 		/** @brief Draws the latest completed-frame outcome and recent scheduling history. */
-		void DrawOverlay(bool enabled, const std::string& status);
+		void DrawOverlay(const std::string& status);
+		/** @brief True while the developer has switched the overlay on; off by default. */
+		bool OverlayVisible() const { return showOverlay.load(std::memory_order_relaxed); }
 
 	private:
 		static constexpr size_t kHistorySize = 120;
@@ -199,7 +206,7 @@ namespace NR
 		std::mutex mutex;
 		std::array<Frame, kHistorySize> history{};
 		size_t next = 0, count = 0;
-		bool showOverlay = false;
+		std::atomic_bool showOverlay = false;
 		uint32_t framesSinceSummary = 0;
 		static const char* Name(Outcome outcome);
 		static char Code(Outcome outcome);

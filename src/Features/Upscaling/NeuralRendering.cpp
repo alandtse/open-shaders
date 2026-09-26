@@ -161,9 +161,6 @@ struct NeuralRendering::Impl
 
 	uint32_t UpdateFrame(uint32_t i, uint32_t reset, NR::Diagnostics::Frame& diagnostic)
 	{
-		constexpr float kCameraCutDistance = 256.0f;
-		constexpr float kCameraCutDirectionDot = 0.5f;
-		constexpr float kProjectionCutThreshold = 0.1f;
 		auto& eye = eyes[i];
 		auto& cached = globals::game::frameBufferCached;
 		const auto inverseView = cached.GetCameraViewInverse(i).Transpose();
@@ -181,12 +178,12 @@ struct NeuralRendering::Impl
 		sample.directionDot = forward.Dot(eye.forward);
 		sample.projectionDelta = std::max(std::abs(projection._11 - eye.frame.viewToClip._11), std::abs(projection._22 - eye.frame.viewToClip._22));
 		uint32_t cameraReset = 0;
-		if ((position - eye.position).LengthSquared() > kCameraCutDistance * kCameraCutDistance)
+		if ((position - eye.position).LengthSquared() > NR::kCameraCutDistance * NR::kCameraCutDistance)
 			cameraReset |= NR::Diagnostics::CameraPosition;
-		if (forward.Dot(eye.forward) < kCameraCutDirectionDot)
+		if (forward.Dot(eye.forward) < NR::kCameraCutDirectionDot)
 			cameraReset |= NR::Diagnostics::CameraDirection;
-		if (std::abs(projection._11 - eye.frame.viewToClip._11) > kProjectionCutThreshold ||
-			std::abs(projection._22 - eye.frame.viewToClip._22) > kProjectionCutThreshold)
+		if (std::abs(projection._11 - eye.frame.viewToClip._11) > NR::kProjectionCutThreshold ||
+			std::abs(projection._22 - eye.frame.viewToClip._22) > NR::kProjectionCutThreshold)
 			cameraReset |= NR::Diagnostics::Projection;
 		sample.detected = cameraReset;
 		if (diagnostic.options & NR::Diagnostics::ApplyCameraCuts) {
@@ -549,14 +546,14 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	ImGui::PopID();
 }
 
-void NeuralRendering::DrawDiagnosticsOverlay(bool enabled)
+void NeuralRendering::DrawDiagnosticsOverlay()
 {
 	std::string message;
 	{
 		std::scoped_lock lock(statusMutex);
 		message = status;
 	}
-	diagnostics.DrawOverlay(enabled, message);
+	diagnostics.DrawOverlay(message);
 }
 
 void NeuralRendering::RecordStage(bool finishedPost)
