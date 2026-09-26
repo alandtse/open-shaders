@@ -19,6 +19,15 @@ namespace FoveatedRenderImpl::Ops
 	eastl::unique_ptr<Texture2D> CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
 		bool copyBindFlags = false, bool createSRV = false, bool createUAV = false, const char* name = nullptr);
 
+	/// Converts a region of a typed depth SRV into an R32_FLOAT UAV via DepthToPerEyeCS; returns false when the region, source or shader is unusable.
+	bool CopyDepthRegionToTexture(
+		ID3D11ShaderResourceView* sourceSRV,
+		ID3D11UnorderedAccessView* destinationUAV,
+		uint32_t sourceOffsetX,
+		uint32_t sourceOffsetY,
+		uint32_t width,
+		uint32_t height);
+
 	// Lazy/idempotent resource ensure helpers.
 	void EnsureVRIntermediateTextures(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
 		ID3D11Resource* colorSrc, ID3D11Resource* mvecSrc, ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc);
@@ -31,7 +40,7 @@ namespace FoveatedRenderImpl::Ops
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc);
 
 	// Copy full-eye slices from SBS textures into per-eye intermediates.
-	bool PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11Resource* depthSrc, ID3D11Resource* mvecSrc,
+	bool PreparePerEyeInputs(ID3D11Resource* colorSrc, ID3D11ShaderResourceView* depthSRV, ID3D11Resource* mvecSrc,
 		ID3D11Resource* reactiveSrc, ID3D11Resource* transparencySrc,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t eyeWidthOut, uint32_t eyeHeightOut);
 

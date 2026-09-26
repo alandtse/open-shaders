@@ -47,6 +47,11 @@ namespace FoveatedRenderImpl
 		                                 Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].UAV);
 
 		p.depthTexture = depth;
+		// depth is always the engine kMAIN texture on this route; a different
+		// source would silently keep sampling kMAIN through this SRV.
+		p.depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData()
+				.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN]
+				.depthSRV);
 		p.reactiveMask = reactive;
 		p.transparencyMask = transparency;
 		p.motionVectors = mvec;
