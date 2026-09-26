@@ -531,6 +531,12 @@ namespace SharedData
 		float2 pad0;
 	};
 
+	struct HorizonFixSettings
+	{
+		float farWaterDistance;
+		float3 pad;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -561,6 +567,7 @@ namespace SharedData
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
+		HorizonFixSettings horizonFixSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
