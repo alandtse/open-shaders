@@ -21,15 +21,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#include "Common/SceneExposure.hlsli"
+
 #define FSR_RCAS_LIMIT (0.25 - (1.0 / 16.0))
 
 cbuffer RCASConfig : register(b0)
 {
 	float sharpness;
+	float2 luminanceRange;
+	float compensationScale;
+	uint exposureEnabled;
 	float3 pad;
 };
 
 Texture2D<float4> Source : register(t0);
+StructuredBuffer<float> AdaptedLuminance : register(t1);
 RWTexture2D<float4> Dest : register(u0);
 
 [numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID) {
@@ -39,16 +45,20 @@ RWTexture2D<float4> Dest : register(u0);
 	if (DTid.x >= texDim.x || DTid.y >= texDim.y)
 		return;
 
+	float exposure = 1.0;
+	if (exposureEnabled)
+		exposure = SceneExposure::Evaluate(AdaptedLuminance[0], luminanceRange, compensationScale);
+
 	// Algorithm uses minimal 3x3 pixel neighborhood.
 	//    b
 	//  d e f
 	//    h
 	int2 sp = int2(DTid.xy);
-	float3 b = Source.Load(int3(sp + int2(0, -1), 0)).rgb;
-	float3 d = Source.Load(int3(sp + int2(-1, 0), 0)).rgb;
-	float3 e = Source.Load(int3(sp, 0)).rgb;
-	float3 f = Source.Load(int3(sp + int2(1, 0), 0)).rgb;
-	float3 h = Source.Load(int3(sp + int2(0, 1), 0)).rgb;
+	float3 b = Source.Load(int3(sp + int2(0, -1), 0)).rgb * exposure;
+	float3 d = Source.Load(int3(sp + int2(-1, 0), 0)).rgb * exposure;
+	float3 e = Source.Load(int3(sp, 0)).rgb * exposure;
+	float3 f = Source.Load(int3(sp + int2(1, 0), 0)).rgb * exposure;
+	float3 h = Source.Load(int3(sp + int2(0, 1), 0)).rgb * exposure;
 
 	// Rename (32-bit) or regroup (16-bit).
 	float bR = b.r;
@@ -111,5 +121,5 @@ RWTexture2D<float4> Dest : register(u0);
 	float pixG = (lobe * bG + lobe * dG + lobe * hG + lobe * fG + eG) * rcpL;
 	float pixB = (lobe * bB + lobe * dB + lobe * hB + lobe * fB + eB) * rcpL;
 
-	Dest[DTid.xy] = float4(pixR, pixG, pixB, 1.0);
+	Dest[DTid.xy] = float4(float3(pixR, pixG, pixB) / exposure, 1.0);
 }
