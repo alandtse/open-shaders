@@ -1056,7 +1056,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	[branch] if (isSkyStatic)
 	{
-		lightColor *= SharedData::csUtilitySettings.skyStaticBrightness;
 		if (SharedData::csUtilitySettings.skyStaticTransparency == 1.0)
 			discard;
 #	if !defined(ADDBLEND) && !defined(MULTBLEND)

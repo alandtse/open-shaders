@@ -333,7 +333,7 @@ namespace SharedData
 		float fogIntensity;
 		float vlIntensity;
 		float sunGlareIntensity;
-		float skyStaticBrightness;
+		float padding;
 		float skyStaticTransparency;
 	};
 
