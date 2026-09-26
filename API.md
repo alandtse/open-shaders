@@ -2,7 +2,7 @@
 
 This document explains how another SKSE plugin can talk to Open Shaders (plugin name
 `CommunityShaders`) at runtime. The interface is binary-compatible with the sibling
-Community Shaders fork's revision-3 API, extended by Open Shaders revisions 4 and 5.
+Community Shaders fork's revision-3 API, extended by Open Shaders revision 4.
 Plugins compiled against that fork's `include/VRAPI/CSinterface001.h` work unchanged
 against this one.
 
@@ -10,7 +10,7 @@ against this one.
 
 -   Target plugin name: `CommunityShaders`
 -   Message type: `0x43534150` (`"CSAP"`, `CSMessage::kMessage_GetInterface`)
--   Supported revisions: `1`, `2`, `3`, `4`, `5` (and `0` for "latest")
+-   Supported revisions: `1`, `2`, `3`, `4` (and `0` for "latest")
 -   Build number: `getBuildNumber()` returns `9`
 
 To acquire the API interface:
@@ -110,7 +110,7 @@ source compatibility only; they have no meaning here.
     single batch avoids lock and ABI overhead for every object. The maximum batch size
     is `CSWindMaximumBatchSize` positions.
 
--   `SampleWindExcludingHavokImpulses` (revision 5): Returns `wind`, the full visual sample,
+-   `SampleWindExcludingHavokImpulses` (revision 4): Returns `wind`, the full visual sample,
     and `windExcludingHavokImpulses` from the same frame. The latter is base wind plus local
     gusts plus only transients **not** marked as native physics. The velocity
     vectors encode normalized wind responses, not measured object velocities
@@ -128,8 +128,8 @@ source compatibility only; they have no meaning here.
     The built-in routers mark Unrelenting Force, impacts with positive force in
     their projectile or explosion records, and VR thrown-weapon impacts as
     native. Other sources remain eligible for external physics pushes. The
-    sampler does not automatically discover every Havok event. Revision-4
-    callers retain the original `WindSample` layout and behavior.
+    sampler does not automatically discover every Havok event. Both sampling
+    methods are available in revision 4.
 
 ## Compatibility Guidance
 

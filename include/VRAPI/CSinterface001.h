@@ -15,8 +15,7 @@ namespace CSPluginAPI
 	inline constexpr unsigned int CSInterfaceRevision002 = 2;
 	inline constexpr unsigned int CSInterfaceRevision003 = 3;
 	inline constexpr unsigned int CSInterfaceRevision004 = 4;
-	inline constexpr unsigned int CSInterfaceRevision005 = 5;
-	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision005;
+	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision004;
 	inline constexpr uint32_t CSWindMaximumBatchSize = 16384;
 	// Guidance for VR transition controllers that hide render-scale relatches
 	// behind a game fade. These constants are advisory only and do not change
@@ -106,7 +105,7 @@ namespace CSPluginAPI
 	static_assert(std::is_standard_layout_v<WindVector>);
 	static_assert(std::is_standard_layout_v<WindSample>);
 
-	/** @brief Revision-5 visual wind plus wind eligible for an external Havok push.
+	/** @brief Revision-4 visual wind plus wind eligible for an external Havok push.
 	 * Native marks a transient whose triggering game event already applies a force. */
 	struct WindSampleWithHavokExclusion
 	{

@@ -176,7 +176,6 @@ namespace CSPluginAPI
 			revisionNumber != CSInterfaceRevision001 &&
 			revisionNumber != CSInterfaceRevision002 &&
 			revisionNumber != CSInterfaceRevision003 &&
-			revisionNumber != CSInterfaceRevision004 &&
 			revisionNumber != CSInterfaceRevision) {
 			return nullptr;
 		}
