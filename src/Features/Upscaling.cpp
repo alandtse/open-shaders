@@ -2735,14 +2735,12 @@ void Upscaling::Upscale()
 		FoveatedRenderImpl::Bridge::routeHandledThisFrame = false;
 
 		// Opt-in FoveatedRender route, shared by kDLSS/kFSR; falls through to the
-		// standard path on failure. Menu-skip is required: in menus the world stops
-		// producing fresh motion vectors/depth while kMAIN keeps changing (UI
-		// composites), so the subrect route would accumulate history against stale data.
+		// standard path on failure. Main/loading menus must stay off: their backdrop uses
+		// synthesized camera MVs or a per-frame reset that the subrect history cannot follow.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
-			auto* ui = globals::game::ui;
 			auto* st = globals::state;
-			const bool menuOpen = st && st->IsPausedOrMenuOpen(ui);
-			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
+			const bool menuBackdrop = st && st->IsMainOrLoadingMenuOpen();
+			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuBackdrop))
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
 				return false;
