@@ -5,6 +5,11 @@ add_library(Streamline INTERFACE)
 target_include_directories(
   Streamline INTERFACE ${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/include)
 
+# The NGX SDK headers (nvsdk_ngx.h) live inside the same submodule; SYSTEM keeps their
+# warnings out of the plugin build, which sets /W4 /WX.
+target_include_directories(
+  Streamline SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/extern/Streamline-DX12/external/ngx-sdk/include)
+
 if(MSVC)
   target_compile_options(Streamline INTERFACE /wd5103)
 endif()
