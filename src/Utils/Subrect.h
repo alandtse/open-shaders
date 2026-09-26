@@ -104,8 +104,10 @@ namespace Util::Subrect
 		 * preset name added to SeedDefaultPresets after a user already has a persisted
 		 * (non-empty) preset list still shows up in the DrawEditor dropdown -- not just
 		 * on demand via ApplyPresetByName. Skips names in `seenDefaultNames` (a default
-		 * the user explicitly deleted stays deleted). Does not change the current
-		 * selection. Call after both SeedDefaultPresets and LoadSettings.
+		 * the user explicitly deleted stays deleted). When LoadSettings left only its
+		 * synthetic "Full Frame" placeholder, that placeholder is dropped first so the
+		 * seeds become the list and the selection; otherwise the selection is unchanged.
+		 * Call after both SeedDefaultPresets and LoadSettings.
 		 */
 		void MaterializeNewDefaults();
 
@@ -192,6 +194,9 @@ namespace Util::Subrect
 	private:
 		std::vector<Preset> presets;
 		std::vector<Preset> seededDefaults;
+		bool placeholderDefaultPreset = false;
+		// Set only for a complete CropX/Y/W/H quartet, so a partial config cannot block the placeholder swap.
+		bool explicitCropLoadedFromJson = false;
 		// Names of seeded defaults ever offered via presets/ApplyPresetByName --
 		// lets a later-added seed stay reachable while an explicitly deleted
 		// default is never silently resurrected.
