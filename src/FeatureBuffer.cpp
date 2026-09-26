@@ -52,7 +52,7 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 	return std::make_pair(storage.data(), storage.size());
 }
 
-std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
+std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld, bool a_advanceFrameState)
 {
 	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
 	return _GetFeatureBufferData(
@@ -61,7 +61,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::dynamicCubemaps.settings,
 		globals::features::terrainShadows.GetCommonBufferData(),
 		globals::features::lightLimitFix.GetCommonBufferData(),
-		globals::features::wetnessEffects.GetCommonBufferData(),
+		globals::features::wetnessEffects.GetCommonBufferData(a_advanceFrameState),
 		globals::features::skylighting.GetCommonBufferData(a_inWorld),
 		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::cloudRelight.GetCommonBufferData(),
