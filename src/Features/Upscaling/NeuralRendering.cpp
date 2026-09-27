@@ -52,7 +52,6 @@ struct NeuralRendering::Impl
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
-	winrt::com_ptr<ID3D11Texture2D> source;
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
@@ -118,12 +117,10 @@ struct NeuralRendering::Impl
 	/** @brief True while pass resources for a render size exist and can be released. */
 	bool HasPassResources() const { return eyeCount != 0; }
 
-	void EnsureResources(ID3D11Texture2D* color, uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
 	{
-		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat) {
-			source.copy_from(color);
+		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat)
 			return;
-		}
 		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
 		maskDesc.Width = gw;
@@ -163,7 +160,6 @@ struct NeuralRendering::Impl
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
 			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
 		}
-		source.copy_from(color);
 		width = w;
 		height = h;
 		guideWidth = gw;
@@ -704,7 +700,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			++diagnostic.duplicates;
 			return;
 		}
-		if (!work.ready) {
+		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
+		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
@@ -745,7 +742,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		work.EnsureResources(color, w, h, gw, gh, count, desc.Format, forceRecreate);
+		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate);
 		if (diagnostic.recreated)
 			PublishResources();
 		// The same cached encoder permutations the upscaling path uses: kNONE keeps motion undilated,

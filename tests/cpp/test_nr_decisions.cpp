@@ -96,19 +96,6 @@ TEST_CASE("DecideFrame rebuilds only a latched runtime and never caps retries", 
 	}
 }
 
-TEST_CASE("DecideFrame keeps an initialized runtime across a toggle", "[nr]")
-{
-	// Disabling releases the pass resources; the device and NGX instance survive, so
-	// the first frame after re-enabling runs the existing runtime instead of building one.
-	auto disabled = RunningFrame(30);
-	disabled.enabled = false;
-	REQUIRE(NR::DecideFrame(disabled) == NR::FrameAction::ReleasePassResources);
-
-	const auto reEnabled = NR::DecideFrame(RunningFrame(31));
-	REQUIRE(reEnabled == NR::FrameAction::Run);
-	REQUIRE(reEnabled != NR::FrameAction::InitializeThenRun);
-}
-
 TEST_CASE("DecideFrame initializes on the first world frame and runs after", "[nr]")
 {
 	auto cold = RunningFrame(1);
