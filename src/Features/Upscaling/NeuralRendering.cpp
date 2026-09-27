@@ -3,6 +3,7 @@
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "I18n/I18n.h"
 #include "NeuralRendering/D3D12Interop.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/Runtime.h"
@@ -11,6 +12,8 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/LazyShader.h"
+
+#define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
 
 struct NeuralRendering::Impl
 {
@@ -526,10 +529,17 @@ void NeuralRendering::PublishStatus(Status::State state, std::string text)
 	publishedState.store(state, std::memory_order_relaxed);
 }
 
+void NeuralRendering::PublishFailure(const std::string& detail)
+{
+	PublishStatus(Status::State::kFailed, std::format("{} {}", T(TKEY("status_failed"), "Neural Rendering stopped:"), detail));
+}
+
 NeuralRendering::Status NeuralRendering::GetStatus() const
 {
 	std::scoped_lock lock(statusMutex);
 	auto snapshot = status;
+	if (snapshot.text.empty())
+		snapshot.text = T(TKEY("status_off"), "Off");
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
 	return snapshot;
 }
@@ -537,27 +547,33 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
-	if (ImGui::Checkbox("Enable Neural Rendering", &enabled))
+	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
-	ImGui::TextWrapped("One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Keep Reset NR every frame off for normal use. Requires an NR-capable NVIDIA GPU and the 310.8.x runtime.");
+	ImGui::TextWrapped("%s", T(TKEY("description"),
+								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Keep Reset NR every frame off for normal use. Requires an NR-capable NVIDIA GPU and the 310.8.x runtime."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
-	bool changed = ImGui::Combo("Style", &style, "Style 0\0Style 1\0Style 2\0");
+	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
+		T(TKEY("style_0"), "Style 0"),
+		T(TKEY("style_1"), "Style 1"),
+		T(TKEY("style_2"), "Style 2"),
+	};
+	bool changed = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
 	bool recreateTuning = changed;
 	if (changed)
 		tuning.style = static_cast<uint32_t>(style);
-	changed |= ImGui::SliderFloat("Intensity", &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
-	changed |= ImGui::SliderFloat("Local Tone Strength", &tuning.localToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("local_tone"), "Local Tone Strength"), &tuning.localToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
-	changed |= ImGui::SliderFloat("Local Structure Strength", &tuning.localStructureStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("local_structure"), "Local Structure Strength"), &tuning.localStructureStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
-	changed |= ImGui::SliderFloat("Skin Structure Strength", &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
-		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? "Auto" : "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
+		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
-	const bool autoMaskChanged = ImGui::Checkbox("Use Auto Mask", &tuning.useAutoMask);
+	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
-	if (ImGui::Button("Restore NR Defaults")) {
+	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
 	}
@@ -566,9 +582,9 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (recreateTuning)
 		recreate = resetHistory = true;
 	ImGui::SameLine();
-	if (ImGui::Button("Reset NR History"))
+	if (ImGui::Button(T(TKEY("reset_history"), "Reset NR History")))
 		resetHistory = true;
-	if (enabled && ImGui::Button("Retry NR"))
+	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
 		RequestRetry();
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
@@ -631,7 +647,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			if (!failure.empty()) {
 				diagnostic.outcome = Outcome::Error;
 				LatchFailure();
-				PublishStatus(Status::State::kFailed, failure);
+				PublishFailure(failure);
 				logger::error("[NeuralRendering] {}", failure);
 				retryRequested = resetHistory = true;
 				return;
@@ -639,7 +655,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		}
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kOff) {
 			logger::debug("[NeuralRendering] Disabled");
-			PublishStatus(Status::State::kOff, "Off");
+			PublishStatus(Status::State::kOff, T(TKEY("status_off"), "Off"));
 		}
 		retryRequested = resetHistory = true;
 		return;
@@ -648,7 +664,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 	if (action == NR::FrameAction::SkipNoWorld) {
 		diagnostic.outcome = Outcome::NoWorld;
 		if (publishedState.load(std::memory_order_relaxed) == Status::State::kOff)
-			PublishStatus(Status::State::kStarting, "Starting...");
+			PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
 		resetHistory = true;
 		return;
 	}
@@ -773,7 +789,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {
 			const auto runtime = work.runtime.Version();
 			const auto luid = work.interop.AdapterLuid();
-			PublishStatus(Status::State::kActive, std::format("Active (runtime {})", runtime));
+			PublishStatus(Status::State::kActive, std::vformat(T(TKEY("status_active"), "Active (runtime {})"), std::make_format_args(runtime)));
 			logger::info("[NeuralRendering] active: runtime {} on adapter LUID {:08X}:{:08X}", runtime, luid.HighPart, luid.LowPart);
 		}
 		diagnostic.outcome = (diagnostic.options & NR::Diagnostics::BypassWriteback) ? Outcome::Bypassed : Outcome::Applied;
@@ -781,12 +797,12 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
 		LatchFailure();
-		PublishStatus(Status::State::kFailed, winrt::to_string(error.message()));
+		PublishFailure(winrt::to_string(error.message()));
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
 		LatchFailure();
-		PublishStatus(Status::State::kFailed, error.what());
+		PublishFailure(error.what());
 		logger::error("[NeuralRendering] {}", error.what());
 	}
 }
@@ -799,3 +815,5 @@ void NeuralRendering::LatchFailure()
 	}
 	impl->failed = true;
 }
+
+#undef I18N_KEY_PREFIX

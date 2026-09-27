@@ -24,8 +24,8 @@ struct NeuralRendering
 			kFailed     ///< Latched; text is the failure reason.
 		};
 		State state = State::kOff;
-		/** @brief Plain-language line for the settings panel and the devbench query. */
-		std::string text = "Off";
+		/** @brief Plain-language line for the settings panel and the devbench query; empty until the first publish. */
+		std::string text;
 		/** @brief Accepted nvngx_dlssnr.dll version; empty until the runtime initializes. */
 		std::string runtimeVersion;
 		uint32_t width = 0, height = 0, eyes = 0;
@@ -80,6 +80,8 @@ private:
 	mutable std::mutex statusMutex;
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
+	/** @brief Publishes a failure with the prefix the panel shows for a stopped pass. */
+	void PublishFailure(const std::string& detail);
 	/** @brief Latches a failure, tearing the runtime down first when the device was removed. */
 	void LatchFailure();
 	/** @brief Last member: it must be destroyed before impl's NGX teardown at process exit. */
