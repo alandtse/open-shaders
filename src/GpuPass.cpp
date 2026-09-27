@@ -50,7 +50,7 @@ bool GpuPassCapabilities::Contains(std::string_view featurePrefix)
 }
 
 #ifdef TRACY_ENABLE
-ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name)
+ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name, GpuPassSpan span)
 {
 	auto* profiler = globals::profiler;
 	auto* state = globals::state;
@@ -60,7 +60,9 @@ ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::strin
 	if (profiler)
 		profilerActive = profiler->BeginPass(name, false);
 
-	cpuZone.emplace(srcloc, -1, true);
+	// See GpuPassSpan's comment in GpuPass.h.
+	if (span == GpuPassSpan::Scoped)
+		cpuZone.emplace(srcloc, -1, true);
 
 	if (state && state->tracyCtx) {
 		gpuZone.emplace(state->tracyCtx, srcloc, true);
@@ -75,7 +77,7 @@ ScopedGpuPass::ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::strin
 }
 #endif
 
-ScopedGpuPass::ScopedGpuPass(std::string_view name)
+ScopedGpuPass::ScopedGpuPass(std::string_view name, [[maybe_unused]] GpuPassSpan span)
 {
 	auto* profiler = globals::profiler;
 	auto* state = globals::state;
@@ -88,12 +90,15 @@ ScopedGpuPass::ScopedGpuPass(std::string_view name)
 #ifdef TRACY_ENABLE
 	// Each call allocates its own one-shot srcloc buffer; do not cache and reuse it
 	// across calls, Tracy frees it after this zone is serialized.
-	cpuZone.emplace(
-		uint32_t(0),
-		"GpuPass", sizeof("GpuPass") - 1,
-		"ScopedGpuPass", sizeof("ScopedGpuPass") - 1,
-		name.data(), name.size(),
-		uint32_t(0), -1, true);
+	// See GpuPassSpan's comment in GpuPass.h.
+	if (span == GpuPassSpan::Scoped) {
+		cpuZone.emplace(
+			uint32_t(0),
+			"GpuPass", sizeof("GpuPass") - 1,
+			"ScopedGpuPass", sizeof("ScopedGpuPass") - 1,
+			name.data(), name.size(),
+			uint32_t(0), -1, true);
+	}
 
 	if (state && state->tracyCtx) {
 		gpuZone.emplace(state->tracyCtx,

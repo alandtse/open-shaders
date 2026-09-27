@@ -179,6 +179,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
+	useAmbientEffectLighting,
 	skyBrightness,
 	cloudBrightness,
 	skySaturation,
@@ -217,6 +218,10 @@ void CSUtility::DrawSettings()
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
 		if (ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere"))) {
 			activeSettingsPage = SettingsPage::Atmosphere;
+			ImGui::Checkbox(T(TKEY("ambient_effect_lighting"), "Ambient Lighting for Effects and Sky Statics"), &settings.useAmbientEffectLighting);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::TextWrapped("%s", T(TKEY("ambient_effect_lighting_tooltip"), "Uses ambient lighting, including IBL when enabled, plus shadowed directional light for the color and brightness of effect meshes and sky statics. Separate brightness controls still apply."));
+			}
 			ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("cloud_brightness"), "Cloud Brightness"), &settings.cloudBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T(TKEY("sky_saturation"), "Sky Saturation"), &settings.skySaturation, kSkySaturationMin, kSkySaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -228,11 +233,11 @@ void CSUtility::DrawSettings()
 			DrawGammaOffsetSlider(T(TKEY("cloud_gamma_offset"), "Cloud Gamma Offset"), settings.cloudGammaOffset);
 			ImGui::SliderFloat(T(TKEY("effect_brightness"), "Effect Brightness"), &settings.effectBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("effect_brightness_tooltip"), "Scales the current weather's Effect Lighting color. One preserves your weather edits; lower values darken it and higher values brighten it."));
+				ImGui::TextWrapped("%s", T(TKEY("effect_brightness_tooltip"), "Scales effect lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
 			}
 			ImGui::SliderFloat(T(TKEY("sky_static_brightness"), "Sky Static Brightness"), &settings.skyStaticBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("sky_static_brightness_tooltip"), "Scales the current weather's Sky Statics color. One preserves your weather edits; lower values darken it and higher values brighten it."));
+				ImGui::TextWrapped("%s", T(TKEY("sky_static_brightness_tooltip"), "Scales sky static lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
 			}
 			ImGui::SliderFloat(T(TKEY("sky_static_transparency"), "Sky Static Transparency"), &settings.skyStaticTransparency, kSkyStaticTransparencyMin, kSkyStaticTransparencyMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -396,6 +401,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	const Settings defaults{};
 	switch (activeSettingsPage) {
 	case SettingsPage::Atmosphere:
+		settings.useAmbientEffectLighting = defaults.useAmbientEffectLighting;
 		settings.skyBrightness = defaults.skyBrightness;
 		settings.cloudBrightness = defaults.cloudBrightness;
 		settings.skySaturation = defaults.skySaturation;
@@ -445,7 +451,7 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 15> atmosphereKeys{ "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity" };
+	static constexpr std::array<std::string_view, 16> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity" };
 	static constexpr std::array<std::string_view, 2> waterKeys{ "water", "waterGammaOffset" };
 	static constexpr std::array<std::string_view, 12> multiplierKeys{
 		"ambientLightMult",
@@ -498,6 +504,9 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	};
 
 	PerFrameData data{};
+	data.useAmbientEffectLighting = loaded && sanitizedSettings.useAmbientEffectLighting;
+	data.effectBrightness = sanitizedSettings.effectBrightness;
+	data.skyStaticBrightness = sanitizedSettings.skyStaticBrightness;
 	data.skyBrightness = sanitizedSettings.skyBrightness;
 	data.cloudBrightness = sanitizedSettings.cloudBrightness;
 	data.ambientLightMult = scaleMultiplier(sanitizedSettings.ambientLightMult, kSceneAmbientWeight);

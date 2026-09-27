@@ -87,6 +87,7 @@ struct CSUtility : Feature
 
 	struct Settings
 	{
+		bool useAmbientEffectLighting = false;
 		float skyBrightness = 1.0f;
 		float cloudBrightness = 1.0f;
 		float skySaturation = 1.0f;
@@ -174,11 +175,14 @@ struct CSUtility : Feature
 		float fogIntensity;
 		float vlIntensity;
 		float sunGlareIntensity;
-		float padding;
+		uint32_t useAmbientEffectLighting;
 		float skyStaticTransparency;
+		float effectBrightness;
+		float skyStaticBrightness;
+		float padding[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 160);
+	static_assert(sizeof(PerFrameData) == 176);
 
 	struct alignas(16) VanillaPointLightData
 	{

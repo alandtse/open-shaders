@@ -80,9 +80,20 @@ void OverlayRenderer::RenderOverlay(
 	ApplyVRPanelDisplaySize();
 	processInputEventQueue();
 
+	auto& io = ImGui::GetIO();
+	const bool acceptsInput = !menu.IsPreviewFlying() &&
+	                          (menu.ShouldSwallowInput() || globals::features::vr.HelperRequestsRender());
+	io.SetAppAcceptingEvents(acceptsInput);
+	if (!acceptsInput) {
+		io.ClearEventsQueue();
+		io.ClearInputKeys();
+		io.ClearInputMouse();
+		io.WantSetMousePos = false;
+		ImGui::ClearActiveID();
+	}
+
 	if (ShouldSkipRendering()) {
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
-		auto& io = ImGui::GetIO();
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
 		return;
@@ -103,7 +114,6 @@ void OverlayRenderer::RenderOverlay(
 	editorWindow->UpdateOpenState();
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
-		auto& io = ImGui::GetIO();
 		io.MouseDrawCursor = !flying;
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying

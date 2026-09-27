@@ -78,6 +78,7 @@ public:
 	LARGE_INTEGER frameTimingFrequency;
 	LARGE_INTEGER frameStartTime;
 	bool frameTimingActive = false;
+	// Member-variable lifetime: must open with GpuPassSpan::Spanning, not Scoped.
 	std::optional<ScopedGpuPass> grassGpuPass;
 
 	enum ConfigMode
