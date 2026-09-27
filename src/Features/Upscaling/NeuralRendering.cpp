@@ -335,9 +335,8 @@ struct NeuralRendering::Impl
 		}
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
-		auto shared = globals::state->sharedDataCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
-		context->CSSetConstantBuffers(5, 1, &shared);
+		globals::state->BindSharedDataCS(context.get(), true);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color.texture->srv.get(),
 			prepare ? nullptr : eye.output.texture->srv.get(), exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr };
@@ -392,8 +391,7 @@ struct NeuralRendering::Impl
 		}
 		context->CSSetShader(shader, nullptr, 0);
 		context->CSSetShaderResources(0, 4, inputs);
-		auto shared = globals::state->sharedDataCB->CB();
-		context->CSSetConstantBuffers(5, 1, &shared);
+		globals::state->BindSharedDataCS(context.get(), true);
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			auto& eye = eyes[i];
 			diagnostic.reset[i] = UpdateFrame(i, reset, diagnostic);

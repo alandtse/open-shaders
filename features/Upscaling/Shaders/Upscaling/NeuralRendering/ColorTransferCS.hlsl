@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Upscaling/NeuralRendering/ColorContract.hlsli"
 
 cbuffer ColorTransfer : register(b0)
 {
@@ -259,8 +260,9 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float protectionWeight = (1.0 - DynamicRangeProtect.x * (1.0 - shadowWeight)) *
 	                         (1.0 - DynamicRangeProtect.y * (1.0 - highlightWeight));
 	float3 result = originalLinear * ratio;
-	if (CompositeMode == 0 || CompositeMode == 5 || CompositeMode == 7)
-		result = originalLinear * exp2(tone * saturate(protectionWeight));
+	const bool boundedGain = CompositeMode == 0;
+	if (boundedGain)
+		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
 	if (CompositeMode == 1)
 		result = neuralLinear;
 	else if (CompositeMode == 2)
@@ -320,7 +322,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	}
 	if (!all(isfinite(result)))
 		return;
-	if (VisualMode == 0)
+	if (VisualMode == 0 && !boundedGain)
 		result = FromLinear(result);
 	Output[id.xy] = float4(result, original.a);
 	NeuralReactive[sourcePixel] = mask;
