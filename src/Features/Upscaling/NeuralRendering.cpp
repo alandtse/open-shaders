@@ -1,6 +1,5 @@
 #include "NeuralRendering.h"
 
-#include "Deferred.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -25,7 +24,7 @@ struct NeuralRendering::Impl
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> encode, encodeDilated, prepareColor, prepareToneData, compositeColor;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor;
 	struct alignas(16) ColorTransferData
 	{
 		uint32_t width, height, eyeOffsetX, hasExposure = 0;
@@ -257,7 +256,7 @@ struct NeuralRendering::Impl
 	{
 		if (!NeedsToneData())
 			return;
-		CS_GPU_PASS("NeuralRendering::PrepareToneData");
+		CS_GPU_PASS("Upscaling::NRPrepareTone");
 		auto* shader = prepareToneData.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "PrepareToneData", "NeuralRendering::PrepareToneData CS");
 		if (!shader)
@@ -298,7 +297,7 @@ struct NeuralRendering::Impl
 
 	void TransferColor(uint32_t i, bool prepare)
 	{
-		CS_GPU_PASS_SELECT(prepare, "NeuralRendering::PrepareColor", "NeuralRendering::CompositeHDR");
+		CS_GPU_PASS_SELECT(prepare, "Upscaling::NRPrepare", "Upscaling::NRComposite");
 		context->ClearState();
 		auto& eye = eyes[i];
 		ColorTransferData data{ width, height, i * width };
@@ -353,7 +352,7 @@ struct NeuralRendering::Impl
 
 	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
 	{
-		CS_GPU_PASS("NeuralRendering::Evaluate");
+		CS_GPU_PASS("Upscaling::NeuralRendering");
 		captureDiagnostics = &diagnostics;
 		captureFrame = diagnostic.number;
 		struct ContextScope
@@ -394,21 +393,24 @@ struct NeuralRendering::Impl
 		context->CSSetShader(shader, nullptr, 0);
 		context->CSSetShaderResources(0, 4, inputs);
 		globals::state->BindSharedDataCS(context.get(), true);
-		for (uint32_t i = 0; i < eyeCount; ++i) {
-			auto& eye = eyes[i];
-			diagnostic.reset[i] = UpdateFrame(i, reset, diagnostic);
-			Upscaling::UpscalingDataCB data{ { float(guideWidth), float(guideHeight) }, i * guideWidth, 0 };
-			encodeBuffer->Update(data);
-			auto buffer = encodeBuffer->CB();
-			context->CSSetConstantBuffers(0, 1, &buffer);
-			// The shared encoder writes both masks even though NR only consumes motion and depth.
-			ID3D11UnorderedAccessView* outputs[]{ encodeMasks[0]->uav.get(), encodeMasks[1]->uav.get(),
-				eye.motion.texture->uav.get(), eye.depth.texture->uav.get() };
-			context->CSSetUnorderedAccessViews(0, 4, outputs, nullptr);
-			context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
-			if (eye.frame.reset || (diagnostic.options & NR::Diagnostics::ZeroMotion)) {
-				constexpr float zero[4]{};
-				context->ClearUnorderedAccessViewFloat(eye.motion.texture->uav.get(), zero);
+		{
+			CS_GPU_PASS("Upscaling::NREncodeGuides");
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				auto& eye = eyes[i];
+				diagnostic.reset[i] = UpdateFrame(i, reset, diagnostic);
+				Upscaling::UpscalingDataCB data{ { float(guideWidth), float(guideHeight) }, i * guideWidth, 0 };
+				encodeBuffer->Update(data);
+				auto buffer = encodeBuffer->CB();
+				context->CSSetConstantBuffers(0, 1, &buffer);
+				// The shared encoder writes both masks even though NR only consumes motion and depth.
+				ID3D11UnorderedAccessView* outputs[]{ encodeMasks[0]->uav.get(), encodeMasks[1]->uav.get(),
+					eye.motion.texture->uav.get(), eye.depth.texture->uav.get() };
+				context->CSSetUnorderedAccessViews(0, 4, outputs, nullptr);
+				context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
+				if (eye.frame.reset || (diagnostic.options & NR::Diagnostics::ZeroMotion)) {
+					constexpr float zero[4]{};
+					context->ClearUnorderedAccessViewFloat(eye.motion.texture->uav.get(), zero);
+				}
 			}
 		}
 		context->ClearState();
@@ -419,47 +421,50 @@ struct NeuralRendering::Impl
 				break;
 			}
 		}
-		auto* commands = interop.Begin();
 		bool success = true;
-		for (uint32_t i = 0; i < eyeCount && success; ++i) {
-			auto& eye = eyes[i];
-			Transition(commands, eye, true);
-			if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
-				D3D12_RESOURCE_BARRIER copyBarriers[2]{};
-				copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-				copyBarriers[0].Transition = { eye.color.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-					D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE };
-				copyBarriers[1].Transition = { eye.output.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-					D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST };
-				commands->ResourceBarrier(2, copyBarriers);
-				commands->CopyResource(eye.output.resource.get(), eye.color.resource.get());
-				copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-				copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-				copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-				copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-				commands->ResourceBarrier(2, copyBarriers);
-			} else {
-				// The encoder extracts render-resolution guides into zero-origin per-eye textures.
-				NR::GuideParameters guides;
-				guides.depth = { 0, 0, guideWidth, guideHeight };
-				guides.motion = { 0, 0, guideWidth, guideHeight };
-				// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
-				guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
-				guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
-				success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
-					eye.motion.resource.get(), eye.output.resource.get(), width, height, guides, eye.frame, tuning);
+		{
+			CS_GPU_PASS("Upscaling::NREvaluate");
+			auto* commands = interop.Begin();
+			for (uint32_t i = 0; i < eyeCount && success; ++i) {
+				auto& eye = eyes[i];
+				Transition(commands, eye, true);
+				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
+					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
+					copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+					copyBarriers[0].Transition = { eye.color.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+						D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE };
+					copyBarriers[1].Transition = { eye.output.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+						D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST };
+					commands->ResourceBarrier(2, copyBarriers);
+					commands->CopyResource(eye.output.resource.get(), eye.color.resource.get());
+					copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+					copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+					copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+					copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+					commands->ResourceBarrier(2, copyBarriers);
+				} else {
+					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
+					NR::GuideParameters guides;
+					guides.depth = { 0, 0, guideWidth, guideHeight };
+					guides.motion = { 0, 0, guideWidth, guideHeight };
+					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
+					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+					success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
+						eye.motion.resource.get(), eye.output.resource.get(), width, height, guides, eye.frame, tuning);
+				}
+				diagnostic.result[i] = eye.frame.result;
+				lastNgxResult[i] = eye.frame.result;
+				if (success)
+					diagnostic.evaluated |= 1u << i;
+				if (eye.frame.created) {
+					diagnostic.created |= 1u << i;
+					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
+				}
+				Transition(commands, eye, false);
 			}
-			diagnostic.result[i] = eye.frame.result;
-			lastNgxResult[i] = eye.frame.result;
-			if (success)
-				diagnostic.evaluated |= 1u << i;
-			if (eye.frame.created) {
-				diagnostic.created |= 1u << i;
-				diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
-			}
-			Transition(commands, eye, false);
+			interop.End();
 		}
-		interop.End();
 		if (diagnostic.options & NR::Diagnostics::SerializeGPU)
 			interop.Drain();
 		diagnostic.submittedFence = interop.SubmittedFence();
@@ -688,17 +693,16 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
 		}
 		if (clearShaders.exchange(false)) {
-			work.encode.Reset();
-			work.encodeDilated.Reset();
 			work.prepareColor.Reset();
 			work.prepareToneData.Reset();
 			work.compositeColor.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
-		auto& depth = globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
-		ID3D11ShaderResourceView* inputs[]{ Util::AsReal(targets[RE::RENDER_TARGETS::kTEMPORAL_AA_MASK].SRV),
-			Util::AsReal(targets[globals::deferred->forwardRenderTargets[2]].SRV), Util::AsReal(targets[RE::RENDER_TARGETS::kMOTION_VECTOR].SRV), Util::AsReal(depth.depthSRV) };
+		Upscaling::EncodeInputViews inputs{};
+		const char* missingInput = nullptr;
+		if (!globals::features::upscaling.GetEncodeInputs(inputs, missingInput))
+			throw std::runtime_error(std::format("Missing NR guide input ({})", missingInput));
 		const auto count = globals::game::isVR ? 2u : 1u;
 		const auto gw = static_cast<uint32_t>(renderSize.x) / count;
 		const auto gh = static_cast<uint32_t>(renderSize.y);
@@ -727,12 +731,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		work.EnsureResources(color, w, h, gw, gh, count, desc.Format, forceRecreate);
+		// The same cached encoder permutations the upscaling path uses: kNONE keeps motion undilated,
+		// DLSS dilates it, and kTypedDepth supplies NR's depth guide.
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
-		auto* shader = dilateMotion ?
-		                   work.encodeDilated.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
-							   { { "DLSS", "" }, { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::EncodeDilated CS") :
-		                   work.encode.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
-							   { { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::Encode CS");
+		auto* shader = globals::features::upscaling.GetEncodeTexturesCS(dilateMotion ? Upscaling::UpscaleMethod::kDLSS : Upscaling::UpscaleMethod::kNONE,
+			Upscaling::EncodeOutput::kTypedDepth);
 		auto* prepare = work.prepareColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "Prepare", "NeuralRendering::PrepareColor CS");
 		auto* composite = work.compositeColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
@@ -776,7 +779,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.localTone = boundedTuning.localToneStrength;
 		diagnostic.localStructure = boundedTuning.localStructureStrength;
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
-		if (!work.Draw(color, inputs, shader, reset, boundedTuning, diagnostic, diagnostics))
+		if (!work.Draw(color, inputs.data(), shader, reset, boundedTuning, diagnostic, diagnostics))
 			throw std::runtime_error(std::format("SDR-proxy Feature 18 creation/evaluation failed (NGX L/R: 0x{:08X}/0x{:08X})", diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {
