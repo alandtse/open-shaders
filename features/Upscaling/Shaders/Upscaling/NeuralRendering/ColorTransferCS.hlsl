@@ -205,8 +205,9 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	else if (ExposureMode == NR::kExposureManual)
 		exposure = ManualExposure;
 	exposure = isfinite(exposure) && exposure > 0.0 ? exposure : 1.0;
+	// MakeDisplayProxy's saturate() bounds this to [0, 1] regardless of upstream NaN/Inf.
 	float3 proxy = MakeDisplayProxy(max(ToLinear(source), 0.0) * exposure);
-	Output[id.xy] = float4(all(isfinite(proxy)) ? proxy : 0.0, 1.0);
+	Output[id.xy] = float4(proxy, 1.0);
 }
 
 	[numthreads(8, 8, 1)] void Composite(uint3 id : SV_DispatchThreadID)
