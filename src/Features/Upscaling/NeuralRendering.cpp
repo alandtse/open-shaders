@@ -501,7 +501,9 @@ void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = reset
 
 void NeuralRendering::Reset(bool enabled)
 {
-	diagnostics.EndFrame(globals::state->frameCount, enabled, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
+	diagnostics.SetDeveloperMode(globals::state->IsDeveloperMode());
+	if (enabled)
+		diagnostics.EndFrame(globals::state->frameCount, enabled, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
 	if (!enabled)
 		retryRequested = true;
 	if (!enabled || !globals::state->worldRenderedThisFrame)
@@ -569,11 +571,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		resetHistory = true;
 	if (enabled && ImGui::Button("Retry NR"))
 		RequestRetry();
-	if (globals::state->IsDeveloperMode())
+	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
-	if (globals::state->IsDeveloperMode())
 		diagnostics.DrawSettings();
+	}
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
 	ImGui::PopID();
@@ -657,7 +659,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			resetHistory = true;
 		}
 		auto& work = *impl;
-		diagnostic.options = diagnostics.Options();
+		const auto selected = diagnostics.Selected();
+		diagnostic.options = selected.options;
 		if (diagnostic.options != work.lastDiagnosticOptions) {
 			resetHistory = true;
 			if ((diagnostic.options ^ work.lastDiagnosticOptions) & NR::Diagnostics::FeedCameraData) {
@@ -730,16 +733,16 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		if (!shader || !prepare || !composite)
 			throw std::runtime_error("NR encoder or color-transfer shader unavailable");
 		work.debugOptions = diagnostic.options;
-		work.conversionMode = diagnostics.ConversionMode();
-		work.exposureMode = diagnostics.ExposureSetting();
-		work.compositeMode = diagnostics.CompositionMode();
-		work.visualMode = diagnostics.ViewMode();
-		work.manualExposure = diagnostics.ManualExposure();
-		work.differenceStrength = diagnostics.DifferenceStrength();
-		work.splitPosition = diagnostics.SplitPosition();
-		work.shadowProtect = diagnostics.ShadowProtect();
-		work.highlightProtect = diagnostics.HighlightProtect();
-		work.toneRadius = diagnostics.ToneRadius();
+		work.conversionMode = selected.conversion;
+		work.exposureMode = selected.exposure;
+		work.compositeMode = selected.composite;
+		work.visualMode = selected.visual;
+		work.manualExposure = selected.manualExposure;
+		work.differenceStrength = selected.differenceStrength;
+		work.splitPosition = selected.splitPosition;
+		work.shadowProtect = selected.shadowProtect;
+		work.highlightProtect = selected.highlightProtect;
+		work.toneRadius = selected.toneRadius;
 		uint32_t reset = resetHistory.exchange(false) ? NR::Diagnostics::Requested : 0;
 		if (work.lastFrame == UINT32_MAX)
 			reset |= NR::Diagnostics::FirstFrame;

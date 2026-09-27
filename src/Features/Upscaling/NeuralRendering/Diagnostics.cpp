@@ -210,8 +210,29 @@ namespace NR
 		}
 	}
 
+	Diagnostics::Selection Diagnostics::Selected() const
+	{
+		if (!DeveloperMode())
+			return {};
+		Selection selection;
+		selection.options = options.load();
+		selection.conversion = static_cast<ColorConversion>(conversionMode.load());
+		selection.exposure = static_cast<ExposureMode>(exposureMode.load());
+		selection.composite = static_cast<CompositeMode>(compositeMode.load());
+		selection.visual = static_cast<VisualMode>(visualMode.load());
+		selection.manualExposure = manualExposure.load();
+		selection.differenceStrength = differenceStrength.load();
+		selection.splitPosition = splitPosition.load();
+		selection.shadowProtect = shadowProtect.load();
+		selection.highlightProtect = highlightProtect.load();
+		selection.toneRadius = toneRadius.load();
+		return selection;
+	}
+
 	void Diagnostics::EndFrame(uint32_t frame, bool enabled, bool world, bool paused)
 	{
+		if (!DeveloperMode())
+			return;
 		if (current.number != frame) {
 			current = {};
 			current.number = frame;
@@ -280,6 +301,8 @@ namespace NR
 
 	void Diagnostics::DrawSettings()
 	{
+		if (!DeveloperMode())
+			return;
 		std::scoped_lock lock(mutex);
 		ImGui::Separator();
 		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
@@ -347,12 +370,12 @@ namespace NR
 			exposureMode = static_cast<uint32_t>(ExposureMode::Production);
 			compositeMode = static_cast<uint32_t>(CompositeMode::Production);
 			visualMode = static_cast<uint32_t>(VisualMode::None);
-			manualExposure = 1.0f;
-			differenceStrength = 4.0f;
-			splitPosition = 0.5f;
-			shadowProtect = 0.0f;
-			highlightProtect = 0.0f;
-			toneRadius = 1.0f;
+			manualExposure = kManualExposure;
+			differenceStrength = kDifferenceStrength;
+			splitPosition = kSplitPosition;
+			shadowProtect = kShadowProtect;
+			highlightProtect = kHighlightProtect;
+			toneRadius = kToneRadius;
 		}
 		if (ImGui::Button("Run All NR Tests"))
 			startSuite = true;

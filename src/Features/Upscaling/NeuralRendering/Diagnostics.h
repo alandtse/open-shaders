@@ -128,18 +128,29 @@ namespace NR
 			ToneLowGain,
 			FinalLuminanceRatio
 		};
-		/** @brief Returns the live, session-only isolation options. */
-		uint32_t Options() const { return options.load(); }
-		ColorConversion ConversionMode() const { return static_cast<ColorConversion>(conversionMode.load()); }
-		ExposureMode ExposureSetting() const { return static_cast<ExposureMode>(exposureMode.load()); }
-		CompositeMode CompositionMode() const { return static_cast<CompositeMode>(compositeMode.load()); }
-		VisualMode ViewMode() const { return static_cast<VisualMode>(visualMode.load()); }
-		float ManualExposure() const { return manualExposure.load(); }
-		float DifferenceStrength() const { return differenceStrength.load(); }
-		float SplitPosition() const { return splitPosition.load(); }
-		float ShadowProtect() const { return shadowProtect.load(); }
-		float HighlightProtect() const { return highlightProtect.load(); }
-		float ToneRadius() const { return toneRadius.load(); }
+		/** @brief Production defaults the diagnostic value knobs fall back to. */
+		static constexpr float kManualExposure = 1.0f, kDifferenceStrength = 4.0f, kSplitPosition = 0.5f;
+		static constexpr float kShadowProtect = 0.0f, kHighlightProtect = 0.0f, kToneRadius = 1.0f;
+		/** @brief Enables the diagnostic options, UI, overlay and logging; off outside dev mode. */
+		void SetDeveloperMode(bool enabled) { developerMode.store(enabled, std::memory_order_relaxed); }
+		bool DeveloperMode() const { return developerMode.load(std::memory_order_relaxed); }
+		/** @brief Every diagnostic value a render may use, resolved for the current mode. */
+		struct Selection
+		{
+			ColorConversion conversion = ColorConversion::Production;
+			ExposureMode exposure = ExposureMode::Production;
+			CompositeMode composite = CompositeMode::Production;
+			VisualMode visual = VisualMode::None;
+			uint32_t options = 0;
+			float manualExposure = kManualExposure;
+			float differenceStrength = kDifferenceStrength;
+			float splitPosition = kSplitPosition;
+			float shadowProtect = kShadowProtect;
+			float highlightProtect = kHighlightProtect;
+			float toneRadius = kToneRadius;
+		};
+		/** @brief Resolves every option; outside developer mode a render reads the production defaults. */
+		Selection Selected() const;
 		/** @brief Requests one lossless DDS capture of every stage in the next NR frame. */
 		void RequestCapture() { captureRequested = true; }
 		bool BeginCapture(uint32_t frame) { return captureRequested.exchange(false) ? (captureFrame = frame, true) : false; }
@@ -181,15 +192,16 @@ namespace NR
 		/** @brief Draws the latest completed-frame outcome and recent scheduling history. */
 		void DrawOverlay(const std::string& status);
 		/** @brief True while the developer has switched the overlay on; off by default. */
-		bool OverlayVisible() const { return showOverlay.load(std::memory_order_relaxed); }
+		bool OverlayVisible() const { return DeveloperMode() && showOverlay.load(std::memory_order_relaxed); }
 
 	private:
 		static constexpr size_t kHistorySize = 120;
 		Frame current;
 		std::atomic<uint32_t> options = 0;
+		std::atomic_bool developerMode = false;
 		std::atomic<uint32_t> conversionMode = static_cast<uint32_t>(ColorConversion::Production), exposureMode = 0, compositeMode = 0, visualMode = 0;
-		std::atomic<float> manualExposure = 1.0f, differenceStrength = 4.0f, splitPosition = 0.5f;
-		std::atomic<float> shadowProtect = 0.0f, highlightProtect = 0.0f, toneRadius = 1.0f;
+		std::atomic<float> manualExposure = kManualExposure, differenceStrength = kDifferenceStrength, splitPosition = kSplitPosition;
+		std::atomic<float> shadowProtect = kShadowProtect, highlightProtect = kHighlightProtect, toneRadius = kToneRadius;
 		std::atomic_bool captureRequested = false;
 		std::atomic<uint32_t> captureFrame = UINT32_MAX;
 		std::atomic_bool startSuite = false;
