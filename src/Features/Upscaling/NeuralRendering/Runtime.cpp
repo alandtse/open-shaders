@@ -124,10 +124,18 @@ namespace NR
 			{
 				if (floatSlot >= 0)
 					return;
-				static constexpr int candidates[] = { 1, 2, 5, 6, 7, 4, 3, 0 };
+				// Excludes kResourceSlot and kUIntSlot: their real signatures take a
+				// pointer-sized and a 32-bit argument, so calling through a float-typed
+				// pointer would be undefined behavior, not just a wasted probe.
+				static constexpr int candidates[] = { 1, 2, 5, 6, 7, 4 };
 				constexpr float probeValue = 0.375f;
 				for (const auto slot : candidates) {
-					SetFloatAt(slot, "DLSSNR.OpenShadersFloatProbe", probeValue);
+					try {
+						SetFloatAt(slot, "DLSSNR.OpenShadersFloatProbe", probeValue);
+					} catch (const std::exception& error) {
+						logger::debug("[NeuralRendering] Feature 18 float probe slot {} faulted: {}", slot, error.what());
+						continue;
+					}
 					float readBack = 0.0f;
 					if (parameters->Get("DLSSNR.OpenShadersFloatProbe", &readBack) == NVSDK_NGX_Result_Success && readBack == probeValue) {
 						floatSlot = slot;
@@ -152,7 +160,7 @@ namespace NR
 			void SetResource(const char* name, ID3D12Resource* resource) const
 			{
 				void** table = *reinterpret_cast<void***>(parameters);
-				reinterpret_cast<SetULL>(table[kResourceSlot])(parameters, name, reinterpret_cast<unsigned long long>(resource));
+				CallGuarded("resource", [&] { reinterpret_cast<SetULL>(table[kResourceSlot])(parameters, name, reinterpret_cast<unsigned long long>(resource)); });
 			}
 
 		private:
@@ -162,15 +170,24 @@ namespace NR
 			using SetFloatFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, float);
 			using SetUIntFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned int);
 
+			/** @brief Runs a guessed-slot vtable call under SEH; throws with a_label on a fault. */
+			template <class F>
+			void CallGuarded(const char* a_label, F&& a_call) const
+			{
+				DWORD fault = 0;
+				if (!Util::SehGuarded(std::forward<F>(a_call), &fault))
+					throw std::runtime_error(std::format("NR private {} setter faulted (exception 0x{:08X})", a_label, fault));
+			}
+
 			void SetFloatAt(int slot, const char* name, float value) const
 			{
 				void** table = *reinterpret_cast<void***>(parameters);
-				reinterpret_cast<SetFloatFn>(table[slot])(parameters, name, value);
+				CallGuarded("float", [&] { reinterpret_cast<SetFloatFn>(table[slot])(parameters, name, value); });
 			}
 			void SetUIntAt(const char* name, unsigned int value) const
 			{
 				void** table = *reinterpret_cast<void***>(parameters);
-				reinterpret_cast<SetUIntFn>(table[kUIntSlot])(parameters, name, value);
+				CallGuarded("uint", [&] { reinterpret_cast<SetUIntFn>(table[kUIntSlot])(parameters, name, value); });
 			}
 
 			NVSDK_NGX_Parameter* parameters;
