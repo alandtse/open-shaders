@@ -65,11 +65,17 @@ namespace FoveatedRenderImpl
 			Core::activeSubrectUVHash = uvHash;
 		}
 
+		// UINT32_MAX + 1 wraps to 0, so the sentinel also forces a reseed on first use.
+		if (Core::lastRouteFrame + 1 != globals::state->frameCount)
+			Core::vrTemporalHistoryValid = false;
+
 		Bridge::foveatedEvaluating = true;
 		bool result = (p.mode == FoveatedRender::DlssMode::kFaster) ?
 		                  ExecuteFasterMode(streamline, p) :
 		                  ExecuteDefaultMode(streamline, p);
 		Bridge::foveatedEvaluating = false;
+		if (result)
+			Core::lastRouteFrame = globals::state->frameCount;
 		return result;
 	}
 

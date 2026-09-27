@@ -190,9 +190,9 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 			};
 		}
 
-		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB(), globals::state->sharedDataCB->CB() };
+		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
-		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
+		globals::state->BindSharedDataCS(context, false);
 		auto* shader = sanitizedSettings.enableAmbientGrassWind ?
 		                   grassState.springComputeShader.Get(
 							   L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",

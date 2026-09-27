@@ -28,6 +28,8 @@ namespace Compatibility
 		{ L"Data/SKSE/Plugins/TAASharpen.dll" },
 		{ L"Data/SKSE/Plugins/NVIDIA_Reflex.dll" },
 		{ L"Data/SKSE/Plugins/MARA.dll" },
+		{ L"Data/SKSE/Plugins/NativeMeshLightFlickerFix.dll",
+			"superseded by Light Limit Fix; both replace the same lighting hooks" },
 		{ L"Data/SKSE/Plugins/NativeWaterLightStabilizer.dll",
 			"superseded by Sky Reflection and Light Limit Fix" },
 		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },

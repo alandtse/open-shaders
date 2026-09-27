@@ -1776,7 +1776,7 @@ void Upscaling::EnsureVRIntermediateTextures()
 	// hook spoofs HMD-recommended size). DLSS output needs to land at real
 	// DisplayRes, so size the OUTPUT intermediates from perfMode's snapshot
 	// of the true HMD resolution. Input intermediates stay at renderSize.
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 	const float2 outputSize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	uint32_t eyeWidthOut = (uint32_t)(outputSize.x / 2);
@@ -2735,14 +2735,12 @@ void Upscaling::Upscale()
 		FoveatedRenderImpl::Bridge::routeHandledThisFrame = false;
 
 		// Opt-in FoveatedRender route, shared by kDLSS/kFSR; falls through to the
-		// standard path on failure. Menu-skip is required: in menus the world stops
-		// producing fresh motion vectors/depth while kMAIN keeps changing (UI
-		// composites), so the subrect route would accumulate history against stale data.
+		// standard path on failure. Main/loading menus must stay off: their backdrop uses
+		// synthesized camera MVs or a per-frame reset that the subrect history cannot follow.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
-			auto* ui = globals::game::ui;
 			auto* st = globals::state;
-			const bool menuOpen = st && st->IsPausedOrMenuOpen(ui);
-			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
+			const bool menuBackdrop = st && st->IsMainOrLoadingMenuOpen();
+			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuBackdrop))
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
 				return false;
@@ -2780,7 +2778,7 @@ void Upscaling::Upscale()
 			// routing for DLSS.
 			auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 			ID3D11Resource* fsrDepth = runtimeFsrDepthTexture ? runtimeFsrDepthTexture->resource.get() : Util::AsReal(depth.texture);
-			ID3D11Resource* fsrColorOut = (perfMode.IsHookActive() && perfMode.GetTestTexture()) ?
+			ID3D11Resource* fsrColorOut = perfMode.IsPresentingTestTexture() ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
 
@@ -3112,7 +3110,7 @@ void Upscaling::ApplySharpening()
 
 	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
 	// sharpening is active, so RCAS reads it directly here -- no CopyResource needed.
-	if (perfMode.IsHookActive() && perfMode.GetTestTexture()) {
+	if (perfMode.IsPresentingTestTexture()) {
 		if (!IsPerfModeSharpenRedirectActive())
 			return;
 
@@ -3208,7 +3206,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		// ApplySharpening can't read sharpenerTexture. Route through
 		// Postprocess::ApplyDlssSharpening which does the kMAIN → sharpener →
 		// kMAIN round-trip. Both paths honor sharpnessDLSS=0 to disable RCAS.
-		const bool perfModeActive = upscaling.perfMode.IsHookActive() && upscaling.perfMode.GetTestTexture();
+		const bool perfModeActive = upscaling.perfMode.IsPresentingTestTexture();
 		if (!perfModeActive && FoveatedRenderImpl::Bridge::routeHandledThisFrame) {
 			FoveatedRenderImpl::Postprocess::ApplyDlssSharpening(upscaling);
 		} else {

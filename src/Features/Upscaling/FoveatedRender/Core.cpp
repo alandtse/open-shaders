@@ -949,6 +949,7 @@ namespace FoveatedRenderImpl
 		vrTemporalHistoryW = vrTemporalHistoryH = 0;
 		vrTemporalFrameIdx = 0;
 		vrTemporalHistoryValid = false;
+		lastRouteFrame = UINT32_MAX;
 
 		vrBlendSrcSRV = nullptr;
 		vrBlendSrcSRVOwner = nullptr;
