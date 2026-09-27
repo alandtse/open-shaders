@@ -578,6 +578,16 @@ namespace
 	{
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
 	}
+
+	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
+	void CaptureNeuralRendering(Feature* self, const json&)
+	{
+		if (!globals::state || !globals::state->IsDeveloperMode()) {
+			logger::warn("[NeuralRendering] captureNeuralRendering requires developer mode");
+			return;
+		}
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture();
+	}
 }
 
 void Upscaling::RegisterUxActions()
@@ -595,6 +605,10 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("retryNeuralRendering",
 		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
 		RetryNeuralRendering);
+
+	FEATURE_COMMAND("captureNeuralRendering",
+		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
+		CaptureNeuralRendering);
 }
 
 void Upscaling::DrawSettings()

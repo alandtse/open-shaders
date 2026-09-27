@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include <DirectXTex.h>
 #include <algorithm>
 #include <chrono>
@@ -58,7 +59,7 @@ namespace NR
 			}
 		}
 		std::error_code ec;
-		const auto directory = std::filesystem::path("Data/SKSE/Plugins/CommunityShaders/Captures");
+		const auto directory = Util::PathHelpers::GetCommunityShaderPath() / "Captures";
 		std::filesystem::create_directories(directory, ec);
 		const auto path = directory / std::format("NR_{:02}_{}_f{}.dds", frame % 100, stage, frame);
 		if (FAILED(DirectX::SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::DDS_FLAGS_NONE, path.c_str())))

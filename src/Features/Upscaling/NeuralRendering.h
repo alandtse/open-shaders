@@ -64,6 +64,8 @@ struct NeuralRendering
 	Status GetStatus() const;
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
 	void RequestRetry() { retryRequested = resetHistory = true; }
+	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame. */
+	void RequestCapture() { diagnostics.RequestCapture(); }
 
 private:
 	struct Impl;
