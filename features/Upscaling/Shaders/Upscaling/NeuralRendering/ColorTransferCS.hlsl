@@ -157,8 +157,8 @@ float3 MakeDisplayProxy(float3 linearColor)
 		return;
 	float3 input = ProxySrgbToLinear(NeuralInput[id.xy].rgb);
 	float3 output = ProxySrgbToLinear(NeuralOutput[id.xy].rgb);
-	float inputLuma = max(dot(input, Luma), kLumaEpsilon);
-	float outputLuma = max(dot(output, Luma), kLumaEpsilon);
+	float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);
+	float outputLuma = max(Color::RGBToLuminance(output, Luma), kLumaEpsilon);
 	float logInput = log2(inputLuma);
 	ToneDataOutput[id.xy] = float2(logInput, log2(outputLuma) - logInput);
 }
@@ -230,8 +230,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	if (ExposureMode == NR::kExposureIgnore || ExposureMode == NR::kExposureForceOne || ExposureMode == NR::kExposureDoNotPass)
 		exposure = 1.0;
 	const float ratioFloor = 1.0 / 512.0;
-	float inputLuminance = dot(inputProxy, Luma);
-	float neuralLuminance = dot(neuralProxy, Luma);
+	float inputLuminance = Color::RGBToLuminance(inputProxy, Luma);
+	float neuralLuminance = Color::RGBToLuminance(neuralProxy, Luma);
 	float ratio = (neuralLuminance + ratioFloor) / (inputLuminance + ratioFloor);
 	const float ratioLimit = 2.0;
 	float lift = lerp(1.0, ratioLimit, smoothstep(0.0, 8.0 * ratioFloor, inputLuminance));
@@ -248,7 +248,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float tone = ToneLowStrength == ToneHighStrength ? toneDelta * ToneHighStrength :
 	                                                   toneLow * ToneLowStrength + toneHigh * ToneHighStrength;
 	float toneGain = exp2(tone);
-	float sceneLuminance = dot(originalLinear, Luma);
+	float sceneLuminance = Color::RGBToLuminance(originalLinear, Luma);
 	float logSceneLuminance = log2(max(sceneLuminance, ratioFloor));
 	float shadowWeight = smoothstep(-8.0, -3.0, logSceneLuminance);
 	float highlightWeight = 1.0 - smoothstep(0.0, 2.0, logSceneLuminance);
@@ -265,7 +265,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	else if (CompositeMode == NR::kCompositeHalfMaskedLerp)
 		result = lerp(originalLinear, neuralLinear, mask * 0.5);
 	else if (CompositeMode == NR::kCompositePreserveLuminance)
-		result = neuralLinear * (dot(originalLinear, Luma) / max(dot(neuralLinear, Luma), ratioFloor));
+		result = neuralLinear * (Color::RGBToLuminance(originalLinear, Luma) / max(Color::RGBToLuminance(neuralLinear, Luma), ratioFloor));
 	else if (CompositeMode == NR::kCompositePreserveRatio)
 		result = originalLinear * ratio;
 	else if (CompositeMode == NR::kCompositeResidual)
@@ -285,7 +285,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	else if (VisualMode == NR::kVisualPostComposite)
 		result = result;
 	else if (VisualMode == NR::kVisualLuminanceDifference)
-		result = abs(dot(neuralLinear - inputProxy, Luma)).xxx * DifferenceStrength;
+		result = abs(Color::RGBToLuminance(neuralLinear - inputProxy, Luma)).xxx * DifferenceStrength;
 	else if (VisualMode == NR::kVisualChromaDifference)
 		result = abs(neuralLinear - inputProxy).xxx * DifferenceStrength;
 	else if (VisualMode == NR::kVisualMask)
@@ -303,7 +303,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	else if (VisualMode == NR::kVisualToneLowGain)
 		result = toneGain.xxx;
 	else if (VisualMode == NR::kVisualFinalLuminanceRatio)
-		result = (dot(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
+		result = (Color::RGBToLuminance(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
 	else if (VisualMode >= NR::kVisualSplitOriginalOutput) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
 		if (VisualMode == NR::kVisualSplitOriginalOutput)

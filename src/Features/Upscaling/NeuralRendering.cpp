@@ -8,6 +8,7 @@
 #include "NeuralRendering/Runtime.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/LazyShader.h"
 
@@ -91,7 +92,7 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
-		runtime.Initialize(interop.Device(), std::filesystem::absolute(Upscaling::streamline.pluginDir));
+		runtime.Initialize(interop.Device(), Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir));
 		ready = true;
 	}
 
