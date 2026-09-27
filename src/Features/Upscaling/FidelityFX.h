@@ -193,7 +193,6 @@ private:
 	ffx::Context runtimeUpscalerContexts[2]{};
 
 	SharedFence runtimeFence;
-	static constexpr DWORD kRuntimeFenceTimeoutMs = 5000;
 	ID3D11Query* pendingFSRResourceFreeIdleFence = nullptr;
 	uint64_t pendingRuntimeTeardownD3D11FenceValue = 0;
 	uint64_t pendingRuntimeTeardownD3D12FenceValue = 0;

@@ -27,8 +27,6 @@ namespace NR
 			void operator()(HMODULE module) const { FreeLibrary(module); }
 		};
 		using Module = std::unique_ptr<std::remove_pointer_t<HMODULE>, ModuleDeleter>;
-		/** @brief Prefix that marks a failure as happening while the runtime starts up. */
-		constexpr const char* kInitializationPrefix = "initialization failed: ";
 		/** @brief Leading digest characters echoed back when a runtime build is refused. */
 		constexpr size_t kRuntimeDigestPrefix = 16;
 
@@ -356,8 +354,8 @@ namespace NR
 			throw std::runtime_error(rejected);
 		const auto digest = Util::ContentHash::Sha256FileHex(path);
 		if (!digest || !IsValidatedRuntimeHash(*digest))
-			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific 310.8 builds",
-				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }));
+			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
+				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }, kRequiredRuntimeMajor, kRequiredRuntimeMinor));
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -385,7 +383,7 @@ namespace NR
 		}
 		auto core = BindCore();
 		if (!core.module)
-			throw std::runtime_error("initialization failed: no DriverStore nvngx.dll is loaded, so the NGX parameter API is unavailable");
+			throw std::runtime_error(std::format("{}no DriverStore nvngx.dll is loaded, so the NGX parameter API is unavailable", kInitializationPrefix));
 		state.core = std::move(core.module);
 		state.allocate = core.allocate;
 		state.destroy = core.destroy;
@@ -396,7 +394,7 @@ namespace NR
 			eye.feature = { nullptr, { &state } };
 			Check(allocated, "NR parameter allocation", kInitializationPrefix);
 			if (!parameters)
-				throw std::runtime_error("initialization failed: NGX returned null parameters");
+				throw std::runtime_error(std::format("{}NGX returned null parameters", kInitializationPrefix));
 		}
 		state.version = version->string();
 		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());

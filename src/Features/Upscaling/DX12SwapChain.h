@@ -31,6 +31,8 @@ public:
 struct SharedFence
 {
 	static constexpr DWORD kRemovalPollMs = 100;
+	/** @brief CPU bound for one fence value; a wedged GPU must not hang the render thread. */
+	static constexpr DWORD kFenceTimeoutMs = 5000;
 	winrt::com_ptr<ID3D12Fence> fence12;
 	winrt::com_ptr<ID3D11Fence> fence11;
 	uint64_t value = 0;

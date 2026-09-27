@@ -13,8 +13,6 @@ namespace NR
 	class D3D12Interop
 	{
 	public:
-		/** @brief CPU bound for one fence value; a wedged GPU must not hang the render thread. */
-		static constexpr DWORD kFenceTimeoutMs = 5000;
 		/** @brief Command-allocator ring depth; a slot is reused once its submission retires. */
 		static constexpr uint32_t kFramesInFlight = 3;
 

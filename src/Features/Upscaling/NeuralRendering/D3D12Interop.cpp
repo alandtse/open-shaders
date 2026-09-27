@@ -2,6 +2,7 @@
 
 #include "../Streamline.h"
 #include "Globals.h"
+#include "Runtime.h"
 
 #include <format>
 
@@ -13,7 +14,7 @@ namespace NR
 			return;
 		if (DeviceRemoved())
 			throw std::runtime_error(std::format("NR D3D12 device removed (0x{:08X})", static_cast<uint32_t>(device->GetDeviceRemovedReason())));
-		throw std::runtime_error(std::format("initialization failed: D3D12 call failed (HRESULT 0x{:08X})", static_cast<uint32_t>(result)));
+		throw std::runtime_error(std::format("{}D3D12 call failed (HRESULT 0x{:08X})", kInitializationPrefix, static_cast<uint32_t>(result)));
 	}
 
 	void D3D12Interop::Initialize()
@@ -83,13 +84,13 @@ namespace NR
 			return;
 		Check(device->GetDeviceRemovedReason());
 		DWORD waitError = 0;
-		const auto outcome = fence.CpuWaitOutcome(completion, kFenceTimeoutMs, &waitError);
+		const auto outcome = fence.CpuWaitOutcome(completion, SharedFence::kFenceTimeoutMs, &waitError);
 		if (outcome == SharedFence::WaitOutcome::kComplete)
 			return;
 		Check(device->GetDeviceRemovedReason());
 		if (outcome == SharedFence::WaitOutcome::kFailed)
 			throw std::runtime_error(std::format("NR GPU fence {} wait failed (error 0x{:08X})", completion, waitError));
-		throw std::runtime_error(std::format("NR GPU fence {} did not retire within {} ms", completion, kFenceTimeoutMs));
+		throw std::runtime_error(std::format("NR GPU fence {} did not retire within {} ms", completion, SharedFence::kFenceTimeoutMs));
 	}
 
 	ID3D12GraphicsCommandList* D3D12Interop::Begin()

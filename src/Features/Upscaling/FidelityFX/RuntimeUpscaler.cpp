@@ -865,7 +865,7 @@ void FidelityFX::ResetRuntimeCommandContexts()
 
 bool FidelityFX::WaitForRuntimeD3D12Fence(uint64_t a_value)
 {
-	return runtimeFence.CpuWait(a_value, kRuntimeFenceTimeoutMs);
+	return runtimeFence.CpuWait(a_value, SharedFence::kFenceTimeoutMs);
 }
 
 void FidelityFX::WaitForRuntimeUpscalerIdle()

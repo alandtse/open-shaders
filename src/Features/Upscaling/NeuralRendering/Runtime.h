@@ -19,6 +19,14 @@ namespace NR
 	/** @brief True while the process is exiting: NGX teardown is skipped and nothing may log. */
 	inline std::atomic<bool> processTerminating{ false };
 
+	/** @brief Prefix that marks a failure as happening while the runtime starts up. */
+	inline constexpr const char* kInitializationPrefix = "initialization failed: ";
+
+	/** @brief Major version of the nvngx_dlssnr.dll builds this pass accepts. */
+	inline constexpr uint32_t kRequiredRuntimeMajor = 310;
+	/** @brief Minor version of the nvngx_dlssnr.dll builds this pass accepts. */
+	inline constexpr uint32_t kRequiredRuntimeMinor = 8;
+
 	/**
 	 * @brief Marks process teardown. Declare it as the LAST member of the object that owns the
 	 *        runtime: members are destroyed in reverse order, so it flips before any NGX teardown.
@@ -34,8 +42,8 @@ namespace NR
 	{
 		if (!version)
 			return std::format("nvngx_dlssnr.dll in {} has no version information", directory);
-		if (version->major() != 310 || version->minor() != 8)
-			return std::format("unsupported runtime version {} (needs 310.8)", version->string("."));
+		if (version->major() != kRequiredRuntimeMajor || version->minor() != kRequiredRuntimeMinor)
+			return std::format("unsupported runtime version {} (needs {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor);
 		return {};
 	}
 
