@@ -75,12 +75,7 @@ namespace NR
 			wchar_t systemDirectory[MAX_PATH]{};
 			if (!GetSystemDirectoryW(systemDirectory, MAX_PATH))
 				return false;
-			const std::wstring prefix = std::wstring(systemDirectory) + L"\\DriverStore\\";
-			const std::wstring_view imageView(image);
-			if (imageView.size() < prefix.size())
-				return false;
-			return CompareStringOrdinal(imageView.data(), static_cast<int>(prefix.size()),
-					   prefix.c_str(), static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
+			return IsUnderDriverStore(image, systemDirectory);
 		}
 
 		struct CoreApi
@@ -341,10 +336,9 @@ namespace NR
 		if (!std::filesystem::is_regular_file(path, error))
 			throw std::runtime_error(std::format("nvngx_dlssnr.dll not found in {}", directory.string()));
 		const auto version = Util::GetDllVersion(path.wstring());
-		if (!version)
-			throw std::runtime_error(std::format("nvngx_dlssnr.dll in {} has no version information", directory.string()));
-		if (version->major() != 310 || version->minor() != 8)
-			throw std::runtime_error(std::format("unsupported runtime version {} (needs 310.8)", version->string(".")));
+		const auto rejected = UnsupportedRuntimeReason(version, directory.string());
+		if (!rejected.empty())
+			throw std::runtime_error(rejected);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();

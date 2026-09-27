@@ -43,6 +43,16 @@ namespace NR
 			Projection = 32,
 			FeatureCreated = 64
 		};
+		/** @brief Which history resets a frame needs: the request, the first frame, or a frame gap. */
+		static uint32_t FrameResetReasons(bool requested, uint32_t lastFrame, uint32_t frame)
+		{
+			uint32_t reasons = requested ? Requested : 0;
+			if (lastFrame == UINT32_MAX)
+				reasons |= FirstFrame;
+			else if (lastFrame + 1 != frame)
+				reasons |= FrameGap;
+			return reasons;
+		}
 		enum TestOption : uint32_t
 		{
 			IgnorePosition = 1,

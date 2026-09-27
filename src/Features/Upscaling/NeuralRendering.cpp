@@ -4,6 +4,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "NeuralRendering/D3D12Interop.h"
+#include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/Runtime.h"
 #include "State.h"
 #include "Utils/D3D.h"
@@ -615,7 +616,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 {
 	using Outcome = NR::Diagnostics::Outcome;
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	if (!enabled) {
+	const auto action = NR::DecideFrame({ enabled, globals::state->worldRenderedThisFrame, impl->failed,
+		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
+	if (action == NR::FrameAction::ReleasePassResources) {
 		diagnostic.outcome = Outcome::Disabled;
 		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
 		if (impl->HasPassResources() && !impl->failed) {
@@ -644,7 +647,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		return;
 	}
 	auto* state = globals::state;
-	if (!state->worldRenderedThisFrame) {
+	if (action == NR::FrameAction::SkipNoWorld) {
 		diagnostic.outcome = Outcome::NoWorld;
 		if (publishedState.load(std::memory_order_relaxed) == Status::State::kOff)
 			PublishStatus(Status::State::kStarting, "Starting...");
@@ -652,7 +655,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		return;
 	}
 	try {
-		if (retryRequested.exchange(false) && impl->failed) {
+		// Every enabled world frame consumes a queued retry, whichever action it settled on.
+		retryRequested = false;
+		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
 			impl = std::make_unique<Impl>();
@@ -669,11 +674,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			}
 			work.lastDiagnosticOptions = diagnostic.options;
 		}
-		if (work.failed) {
+		if (action == NR::FrameAction::SkipLatched) {
 			diagnostic.outcome = Outcome::FailedLatch;
 			return;
 		}
-		if (work.lastFrame == state->frameCount) {
+		if (action == NR::FrameAction::SkipDuplicate) {
 			++diagnostic.duplicates;
 			return;
 		}
@@ -694,7 +699,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		if (!globals::features::upscaling.GetEncodeInputs(inputs, missingInput))
 			throw std::runtime_error(std::format("Missing NR guide input ({})", missingInput));
 		const auto count = globals::game::isVR ? 2u : 1u;
-		const auto gw = static_cast<uint32_t>(renderSize.x) / count;
+		const auto gw = NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), count);
 		const auto gh = static_cast<uint32_t>(renderSize.y);
 		D3D11_TEXTURE2D_DESC desc{};
 		if (color)
@@ -707,9 +712,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.format = desc.Format;
 		diagnostic.proxyFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		diagnostic.source = reinterpret_cast<uintptr_t>(color);
-		if (!w || !h || !gw || !gh || desc.Width < w * count || desc.Height < h || desc.ArraySize != 1 || desc.SampleDesc.Count != 1 ||
-			(desc.Format != DXGI_FORMAT_R16G16B16A16_FLOAT && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
-				desc.Format != DXGI_FORMAT_R10G10B10A2_UNORM && desc.Format != DXGI_FORMAT_R11G11B10_FLOAT))
+		if (!NR::IsSupportedOutput(desc, w, h, count))
 			throw std::runtime_error(std::format("Unsupported NR output: {}x{}, DXGI format {}, array {}, samples {}, guides {}x{}",
 				desc.Width, desc.Height, static_cast<uint32_t>(desc.Format), desc.ArraySize, desc.SampleDesc.Count, gw, gh));
 		for (auto* input : inputs) {
@@ -743,11 +746,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.shadowProtect = selected.shadowProtect;
 		work.highlightProtect = selected.highlightProtect;
 		work.toneRadius = selected.toneRadius;
-		uint32_t reset = resetHistory.exchange(false) ? NR::Diagnostics::Requested : 0;
-		if (work.lastFrame == UINT32_MAX)
-			reset |= NR::Diagnostics::FirstFrame;
-		else if (work.lastFrame + 1 != state->frameCount)
-			reset |= NR::Diagnostics::FrameGap;
+		uint32_t reset = NR::Diagnostics::FrameResetReasons(resetHistory.exchange(false), work.lastFrame, state->frameCount);
 		auto boundedTuning = tuning;
 		boundedTuning.Sanitize();
 		if (diagnostic.options & NR::Diagnostics::DisableTone)
@@ -795,7 +794,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 
 void NeuralRendering::LatchFailure()
 {
-	if (impl->interop.DeviceRemoved()) {
+	if (NR::OnFailure(impl->interop.DeviceRemoved()) == NR::FailureAction::TeardownThenLatch) {
 		// A removed device cannot be reused: the replacement starts latched, so only Retry rebuilds it.
 		impl = std::make_unique<Impl>();
 	}

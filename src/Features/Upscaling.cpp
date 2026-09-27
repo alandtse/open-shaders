@@ -2717,7 +2717,7 @@ void Upscaling::Upscale()
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		uint32_t numEyes = globals::game::isVR ? 2 : 1;
-		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes);
+		uint32_t eyeRenderWidth = NR::EyeRenderWidth((uint32_t)renderSize.x, numEyes);
 		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.

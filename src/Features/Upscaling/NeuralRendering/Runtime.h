@@ -2,10 +2,16 @@
 
 #include "Tuning.h"
 
+#include <Windows.h>
 #include <atomic>
+#include <d3d11.h>
 #include <d3d12.h>
 #include <filesystem>
+#include <format>
 #include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 
 namespace NR
 {
@@ -20,6 +26,42 @@ namespace NR
 	{
 		~TerminationSentinel() { processTerminating.store(true, std::memory_order_relaxed); }
 	};
+
+	/** @brief Reason a runtime version cannot be used, or empty when it is the accepted 310.8.x. */
+	template <class V>
+	std::string UnsupportedRuntimeReason(const std::optional<V>& version, std::string_view directory)
+	{
+		if (!version)
+			return std::format("nvngx_dlssnr.dll in {} has no version information", directory);
+		if (version->major() != 310 || version->minor() != 8)
+			return std::format("unsupported runtime version {} (needs 310.8)", version->string("."));
+		return {};
+	}
+
+	/** @brief True when an image path sits under <systemDirectory>\DriverStore\, i.e. NVIDIA's own core. */
+	inline bool IsUnderDriverStore(std::wstring_view image, std::wstring_view systemDirectory)
+	{
+		const std::wstring prefix = std::wstring(systemDirectory) + L"\\DriverStore\\";
+		if (image.size() < prefix.size())
+			return false;
+		return CompareStringOrdinal(image.data(), static_cast<int>(prefix.size()),
+				   prefix.c_str(), static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
+	}
+
+	/** @brief Per-eye render width; the NR pass and Upscale() must derive it identically. */
+	inline uint32_t EyeRenderWidth(uint32_t renderWidth, uint32_t eyes)
+	{
+		return eyes ? renderWidth / eyes : renderWidth;
+	}
+
+	/** @brief True when a colour target can host NR's proxy for this per-eye render size. */
+	inline bool IsSupportedOutput(const D3D11_TEXTURE2D_DESC& desc, uint32_t width, uint32_t height, uint32_t eyes)
+	{
+		const bool formatSupported = desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM ||
+		                             desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format == DXGI_FORMAT_R11G11B10_FLOAT;
+		return width && height && desc.Width >= width * eyes && desc.Height >= height &&
+		       desc.ArraySize == 1 && desc.SampleDesc.Count == 1 && formatSupported;
+	}
 
 	/** @brief Active texel region of a guide resource supplied to Feature 18. */
 	struct GuideRegion
