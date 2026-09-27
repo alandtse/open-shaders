@@ -1,4 +1,4 @@
-# Native Neural Rendering MVP
+# Native Neural Rendering
 
 Upscaling owns `NeuralRendering`, which evaluates NGX Feature 18 once per rendered eye
 inside `Upscaling::Main_PostProcessing`, before DLSS/FSR upscaling, VR submit capture,
@@ -7,7 +7,7 @@ of `kMAIN` and writes them back into the existing pipeline. NR is not evaluated 
 the larger display resolution when render scaling is active.
 
 The implementation owns its render-resolution integration directly and does not
-depend on the VR submit-upscaling implementation from PR #625.
+depend on the VR submit-upscaling implementation.
 
 ## Enable
 
