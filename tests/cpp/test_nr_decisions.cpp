@@ -202,8 +202,10 @@ TEST_CASE("IsSupportedOutput accepts the whitelisted formats and shapes", "[nr]"
 	REQUIRE(NR::IsSupportedOutput(desc, 1920, 2160, 2));
 	REQUIRE(NR::IsSupportedOutput(desc, 3840, 2160, 1));
 
-	for (const auto format : { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R11G11B10_FLOAT })
+	for (const auto format : { DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R11G11B10_FLOAT }) {
+		desc.Format = format;
 		REQUIRE(NR::IsSupportedOutput(desc, 1920, 2160, 2));
+	}
 
 	desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	REQUIRE_FALSE(NR::IsSupportedOutput(desc, 1920, 2160, 2));
