@@ -514,7 +514,7 @@ void NeuralRendering::Reset(bool enabled)
 {
 	diagnostics.SetDeveloperMode(globals::state->IsDeveloperMode());
 	if (enabled)
-		diagnostics.EndFrame(globals::state->frameCount, enabled, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
+		diagnostics.EndFrame(globals::state->frameCount, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
 	if (!enabled)
 		retryRequested = true;
 	if (!enabled || !globals::state->worldRenderedThisFrame)
@@ -686,7 +686,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		return;
 	}
 	try {
-		// Every enabled world frame consumes a queued retry, whichever action it settled on.
 		retryRequested = false;
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
@@ -758,8 +757,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate);
 		if (diagnostic.recreated)
 			PublishResources();
-		// The same cached encoder permutations the upscaling path uses: kNONE keeps motion undilated,
-		// DLSS dilates it, and kTypedDepth supplies NR's depth guide.
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
 		auto* shader = globals::features::upscaling.GetEncodeTexturesCS(dilateMotion ? Upscaling::UpscaleMethod::kDLSS : Upscaling::UpscaleMethod::kNONE,
 			Upscaling::EncodeOutput::kTypedDepth);

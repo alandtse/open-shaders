@@ -202,6 +202,7 @@ namespace NR
 		static constexpr float kShadowProtect = 0.0f, kHighlightProtect = 0.0f, kToneRadius = 1.0f;
 		/** @brief Enables the diagnostic options, UI, overlay and logging; off outside dev mode. */
 		void SetDeveloperMode(bool enabled) { developerMode.store(enabled, std::memory_order_relaxed); }
+		/** @brief True while developer mode has the NR diagnostics switched on. */
 		bool DeveloperMode() const { return developerMode.load(std::memory_order_relaxed); }
 		/** @brief Every diagnostic value a render may use, resolved for the current mode. */
 		struct Selection
@@ -241,7 +242,7 @@ namespace NR
 			std::array<CameraSample, 2> camera{};
 			uint32_t number = UINT32_MAX, calls = 0, duplicates = 0, target = 0;
 			Outcome outcome = Outcome::NoHook;
-			bool enabled = false, world = false, paused = false, recreated = false, afterUpscale = false, afterPost = false, mainChanged = false;
+			bool world = false, paused = false, recreated = false, afterUpscale = false, afterPost = false, mainChanged = false;
 			uint32_t width = 0, height = 0, format = 0, proxyFormat = 0, eyeCount = 0, evaluated = 0, copied = 0, created = 0;
 			std::array<uint32_t, 2> reset{}, result{};
 			uintptr_t source = 0;
@@ -255,7 +256,7 @@ namespace NR
 		/** @brief Records how far the existing post-processing chain reached. */
 		void Stage(uint32_t frame, bool finishedPost, uintptr_t main);
 		/** @brief Publishes one record per engine frame, including frames with no NR hook. */
-		void EndFrame(uint32_t frame, bool enabled, bool world, bool paused);
+		void EndFrame(uint32_t frame, bool world, bool paused);
 		/** @brief Draws diagnostic settings in Upscaling's existing settings panel. */
 		void DrawSettings();
 		/** @brief Draws the latest completed-frame outcome and recent scheduling history. */

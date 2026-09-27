@@ -18,8 +18,6 @@ namespace NR
 
 		/** @brief Creates the device, queue, ring and shared fence on the renderer's adapter. */
 		void Initialize();
-		/** @brief Releases every interop resource; drain first or the GPU may still read them. */
-		void Reset();
 		/** @brief Creates a named, view-bearing D3D11 texture shared with the NR device. */
 		std::unique_ptr<WrappedResource> CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name);
 		/** @brief Acquires a retired allocator and queues the D3D11 input dependency. */
@@ -56,6 +54,8 @@ namespace NR
 		void Check(HRESULT result);
 		/** @brief Blocks the CPU until completion retires; throws on a timeout or a removed device. */
 		void Wait(uint64_t completion);
+		/** @brief Releases every interop resource; drain first or the GPU may still read them. */
+		void Reset();
 
 		winrt::com_ptr<ID3D11Device5> device11;
 		winrt::com_ptr<ID3D11DeviceContext4> context;

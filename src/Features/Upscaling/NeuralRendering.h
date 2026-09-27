@@ -28,8 +28,17 @@ struct NeuralRendering
 		std::string text;
 		/** @brief Accepted nvngx_dlssnr.dll version; empty until the runtime initializes. */
 		std::string runtimeVersion;
-		uint32_t width = 0, height = 0, eyes = 0;
-		uint32_t lastAppliedFrame = UINT32_MAX, appliedFrames = 0;
+		/** @brief Render width NR last created its pass resources for. */
+		uint32_t width = 0;
+		/** @brief Render height NR last created its pass resources for. */
+		uint32_t height = 0;
+		/** @brief Eye count that render width is split across. */
+		uint32_t eyes = 0;
+		/** @brief Engine frame of the last frame NR applied; UINT32_MAX before the first. */
+		uint32_t lastAppliedFrame = UINT32_MAX;
+		/** @brief Frames NR has applied since startup. */
+		uint32_t appliedFrames = 0;
+		/** @brief Per-eye NGX result code of the last applied frame. */
 		std::array<uint32_t, 2> ngxResult{};
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;

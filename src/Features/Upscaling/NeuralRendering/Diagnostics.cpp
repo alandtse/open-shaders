@@ -191,10 +191,10 @@ namespace NR
 	void Diagnostics::LogFrame(const Frame& frame)
 	{
 		logger::info(
-			"[NRDiag/v2] frame={} outcome={} enabled={} world={} paused={} calls={} duplicates={} target={} "
+			"[NRDiag/v2] frame={} outcome={} world={} paused={} calls={} duplicates={} target={} "
 			"size={}x{} sourceFormat={} proxyFormat={} source=0x{:X} eyes={} eval=0x{:X} copyQueued=0x{:X} created=0x{:X} "
 			"resetL=0x{:X} resetR=0x{:X} ngxL=0x{:X} ngxR=0x{:X} recreated={} upscale={} post={} mainChanged={} fence={}/{}",
-			frame.number, Name(frame.outcome), frame.enabled, frame.world, frame.paused, frame.calls, frame.duplicates, frame.target,
+			frame.number, Name(frame.outcome), frame.world, frame.paused, frame.calls, frame.duplicates, frame.target,
 			frame.width, frame.height, frame.format, frame.proxyFormat, frame.source, frame.eyeCount, frame.evaluated, frame.copied, frame.created,
 			frame.reset[0], frame.reset[1], frame.result[0], frame.result[1], frame.recreated, frame.afterUpscale, frame.afterPost, frame.mainChanged,
 			frame.completedFence, frame.submittedFence);
@@ -276,7 +276,7 @@ namespace NR
 		return selection;
 	}
 
-	void Diagnostics::EndFrame(uint32_t frame, bool enabled, bool world, bool paused)
+	void Diagnostics::EndFrame(uint32_t frame, bool world, bool paused)
 	{
 		if (!DeveloperMode())
 			return;
@@ -284,7 +284,6 @@ namespace NR
 			current = {};
 			current.number = frame;
 		}
-		current.enabled = enabled;
 		current.world = world;
 		current.paused = paused;
 		std::scoped_lock lock(mutex);
@@ -307,7 +306,7 @@ namespace NR
 		history[next] = current;
 		next = (next + 1) % kHistorySize;
 		count = std::min(count + 1, kHistorySize);
-		if (suite && enabled && world && !paused && !globals::menu->IsEnabled) {
+		if (suite && world && !paused && !globals::menu->IsEnabled) {
 			WriteCameraTrace(current);
 			if (suiteFrames % kHistorySize == 0)
 				traceFile.flush();
@@ -325,9 +324,9 @@ namespace NR
 				traceFile.flush();
 			}
 		}
-		if (enabled && world && !paused && current.options != 0)
+		if (world && !paused && current.options != 0)
 			LogFrame(current);
-		if (enabled && showOverlay.load(std::memory_order_relaxed) && ++framesSinceSummary >= kHistorySize) {
+		if (showOverlay.load(std::memory_order_relaxed) && ++framesSinceSummary >= kHistorySize) {
 			std::string outcomes;
 			uint32_t resets = 0, recreations = 0, duplicates = 0;
 			for (size_t i = 0; i < count; ++i) {

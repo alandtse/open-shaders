@@ -612,7 +612,6 @@ SharedFence::WaitOutcome SharedFence::CpuWaitOutcome(uint64_t a_value, DWORD a_t
 	winrt::handle fenceEvent(CreateEventW(nullptr, FALSE, FALSE, nullptr));
 	if (!fenceEvent)
 		return failed(GetLastError());
-	// The HRESULT, not the stale last error: this call sets none.
 	if (const HRESULT registration = fence12->SetEventOnCompletion(a_value, fenceEvent.get()); FAILED(registration))
 		return failed(static_cast<DWORD>(registration));
 

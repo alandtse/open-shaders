@@ -1,7 +1,5 @@
-// HLSL unit tests for the NR composite gain (Upscaling/NeuralRendering/ColorContract.hlsli).
-//
-// The pin keeps Common/Color.hlsli from aliasing ENABLE_LL to the bound cbuffer member, which
-// DXC's lib_6_x unit-test target cannot resolve; VSHADER is the guard that suppresses the alias.
+// VSHADER suppresses Color.hlsli's alias of ENABLE_LL to a cbuffer member, which DXC's
+// lib_6_x unit-test target cannot resolve.
 #define ENABLE_LL 1
 #define VSHADER
 

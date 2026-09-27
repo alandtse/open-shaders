@@ -19,12 +19,19 @@ namespace NR
 	/** @brief The hook's scheduling inputs, mirroring the per-runtime state it reads. */
 	struct FrameInputs
 	{
+		/** @brief The user has NR switched on. */
 		bool enabled = false;
+		/** @brief The engine drew a world this frame. */
 		bool worldRendered = false;
+		/** @brief A failure is latched on the current runtime. */
 		bool failed = false;
+		/** @brief A retry was queued while that failure was latched. */
 		bool retryRequested = false;
+		/** @brief The NR runtime is initialized. */
 		bool ready = false;
+		/** @brief Engine frame this hook last handled; UINT32_MAX before the first. */
 		uint32_t lastFrame = UINT32_MAX;
+		/** @brief Engine frame of this call. */
 		uint32_t frameCount = 0;
 	};
 
