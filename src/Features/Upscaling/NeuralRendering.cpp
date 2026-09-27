@@ -305,11 +305,11 @@ struct NeuralRendering::Impl
 		data.toneHighStrength = toneHighStrength;
 		data.hasToneData = !prepare && NeedsToneData();
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
-			data.maskMode = 1;
+			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
-			data.maskMode = 2;
+			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceOne);
 		else if (debugOptions & NR::Diagnostics::BypassMask)
-			data.maskMode = 2;
+			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceOne);
 		ID3D11ShaderResourceView* exposure = nullptr;
 		Feature::SceneExposure sceneExposure;
 		if (prepare && Feature::FindSceneExposure(sceneExposure)) {

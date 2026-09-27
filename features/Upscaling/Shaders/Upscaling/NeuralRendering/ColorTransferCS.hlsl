@@ -1,5 +1,6 @@
 #include "Common/Color.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
+#include "Upscaling/NeuralRendering/ModeValues.hlsli"
 
 cbuffer ColorTransfer : register(b0)
 {
@@ -76,23 +77,23 @@ float3 ProductionFromLinear(float3 linearColor)
 float3 ToLinear(float3 value)
 {
 	switch (ConversionMode) {
-	case 0:
+	case NR::kConversionRaw:
 		return value;
-	case 1:
+	case NR::kConversionLinearToSRGB:
 		return value;
-	case 2:
+	case NR::kConversionSRGBToLinear:
 		return ProxySrgbToLinear(value);
-	case 3:
+	case NR::kConversionLinearToGamma22:
 		return pow(max(value, 0.0), 2.2);
-	case 4:
+	case NR::kConversionGamma22ToLinear:
 		return pow(saturate(value), 1.0 / 2.2);
-	case 5:
+	case NR::kConversionSRGBToGamma22:
 		return ProxySrgbToLinear(value);
-	case 6:
+	case NR::kConversionSkyrimGammaToGamma22:
 		return Color::SkyrimGammaToLinear(value);
-	case 7:
+	case NR::kConversionLinearToSkyrimGamma:
 		return value;
-	case 8:
+	case NR::kConversionLinearToLinear:
 		return value;
 	default:
 		return ProductionToLinear(value);
@@ -102,21 +103,21 @@ float3 ToLinear(float3 value)
 float3 FromLinear(float3 value)
 {
 	switch (ConversionMode) {
-	case 0:
+	case NR::kConversionRaw:
 		return value;
-	case 1:
+	case NR::kConversionLinearToSRGB:
 		return ProxyLinearToSrgb(max(value, 0.0));
-	case 3:
+	case NR::kConversionLinearToGamma22:
 		return pow(max(value, 0.0), 1.0 / 2.2);
-	case 4:
+	case NR::kConversionGamma22ToLinear:
 		return pow(saturate(value), 2.2);
-	case 5:
+	case NR::kConversionSRGBToGamma22:
 		return ProxyLinearToSrgb(max(value, 0.0));
-	case 6:
+	case NR::kConversionSkyrimGammaToGamma22:
 		return pow(max(value, 0.0), 1.0 / 2.2);
-	case 7:
+	case NR::kConversionLinearToSkyrimGamma:
 		return Color::LinearToSkyrimGamma(max(value, 0.0));
-	case 8:
+	case NR::kConversionLinearToLinear:
 		return value;
 	default:
 		return ProductionFromLinear(value);
@@ -126,20 +127,20 @@ float3 FromLinear(float3 value)
 float3 ProxyToLinear(float3 value)
 {
 	switch (ConversionMode) {
-	case 0:
+	case NR::kConversionRaw:
 		return value;
-	case 1:
+	case NR::kConversionLinearToSRGB:
 		return value;
-	case 2:
+	case NR::kConversionSRGBToLinear:
 		return ProxySrgbToLinear(value);
-	case 3:
+	case NR::kConversionLinearToGamma22:
 		return pow(max(value, 0.0), 2.2);
-	case 4:
+	case NR::kConversionGamma22ToLinear:
 		return pow(saturate(value), 1.0 / 2.2);
-	case 5:
-	case 6:
-	case 7:
-	case 8:
+	case NR::kConversionSRGBToGamma22:
+	case NR::kConversionSkyrimGammaToGamma22:
+	case NR::kConversionLinearToSkyrimGamma:
+	case NR::kConversionLinearToLinear:
 		return ProxySrgbToLinear(value);
 	default:
 		return ProxySrgbToLinear(value);
@@ -191,16 +192,16 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	float3 source = Original[id.xy + uint2(EyeOffsetX, 0)].rgb;
 	float exposure = ManualExposure;
-	if (ExposureMode == 1 || ExposureMode == 2 || ExposureMode == 7)
+	if (ExposureMode == NR::kExposureIgnore || ExposureMode == NR::kExposureForceOne || ExposureMode == NR::kExposureDoNotPass)
 		exposure = 1.0;
-	if (HasExposure != 0 && (ExposureMode == 0 || ExposureMode == 3 || ExposureMode == 5 || ExposureMode == 6)) {
+	if (HasExposure != 0 && (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)) {
 		float average = Adaptation[0];
 		if (isfinite(average) && average > 0.0)
 			exposure *= 0.18 * ExposureCompensation / clamp(average, ExposureMin, ExposureMax);
 	}
-	if (ExposureMode == 5)
+	if (ExposureMode == NR::kExposureDeExposeReExpose)
 		exposure = 1.0 / max(exposure, 1.0 / 65536.0);
-	else if (ExposureMode == 4)
+	else if (ExposureMode == NR::kExposureManual)
 		exposure = ManualExposure;
 	exposure = isfinite(exposure) && exposure > 0.0 ? exposure : 1.0;
 	float3 proxy = MakeDisplayProxy(max(ToLinear(source), 0.0) * exposure);
@@ -224,9 +225,9 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float3 inputProxy = ProxyToLinear(NeuralInput[id.xy].rgb);
 	float3 neuralProxy = ProxyToLinear(rawNeural);
 	float exposure = ManualExposure;
-	if (ExposureMode == 0 || ExposureMode == 3 || ExposureMode == 5 || ExposureMode == 6)
+	if (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)
 		exposure = max(exposure, 1.0 / 65536.0);
-	if (ExposureMode == 1 || ExposureMode == 2 || ExposureMode == 7)
+	if (ExposureMode == NR::kExposureIgnore || ExposureMode == NR::kExposureForceOne || ExposureMode == NR::kExposureDoNotPass)
 		exposure = 1.0;
 	const float ratioFloor = 1.0 / 512.0;
 	float inputLuminance = dot(inputProxy, Luma);
@@ -236,7 +237,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float lift = lerp(1.0, ratioLimit, smoothstep(0.0, 8.0 * ratioFloor, inputLuminance));
 	float drop = lerp(1.0 / ratioLimit, 1.0, smoothstep(0.6, 1.0, inputLuminance));
 	ratio = clamp(ratio, drop, lift);
-	float mask = MaskMode == 1 ? 0.0 : (MaskMode == 2 ? 1.0 : saturate(4.0 * abs(ratio - 1.0)));
+	float mask = MaskMode == NR::kMaskForceZero ? 0.0 : (MaskMode == NR::kMaskForceOne ? 1.0 : saturate(4.0 * abs(ratio - 1.0)));
 	float3 originalLinear = max(ToLinear(original.rgb), 0.0);
 	float3 neuralLinear = max(ProxyToLinear(rawNeural), 0.0);
 	float toneDelta = log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor));
@@ -254,69 +255,69 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float protectionWeight = (1.0 - DynamicRangeProtect.x * (1.0 - shadowWeight)) *
 	                         (1.0 - DynamicRangeProtect.y * (1.0 - highlightWeight));
 	float3 result = originalLinear * ratio;
-	const bool boundedGain = CompositeMode == 0;
+	const bool boundedGain = CompositeMode == NR::kCompositeProduction;
 	if (boundedGain)
 		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
-	if (CompositeMode == 1)
+	if (CompositeMode == NR::kCompositeReplacement)
 		result = neuralLinear;
-	else if (CompositeMode == 2)
+	else if (CompositeMode == NR::kCompositeMaskedLerp)
 		result = lerp(originalLinear, neuralLinear, mask);
-	else if (CompositeMode == 3)
+	else if (CompositeMode == NR::kCompositeHalfMaskedLerp)
 		result = lerp(originalLinear, neuralLinear, mask * 0.5);
-	else if (CompositeMode == 4)
+	else if (CompositeMode == NR::kCompositePreserveLuminance)
 		result = neuralLinear * (dot(originalLinear, Luma) / max(dot(neuralLinear, Luma), ratioFloor));
-	else if (CompositeMode == 5)
+	else if (CompositeMode == NR::kCompositePreserveRatio)
 		result = originalLinear * ratio;
-	else if (CompositeMode == 6)
+	else if (CompositeMode == NR::kCompositeResidual)
 		result = originalLinear + (neuralLinear - inputProxy) * mask;
-	else if (CompositeMode == 7)
+	else if (CompositeMode == NR::kCompositeRatio)
 		result = originalLinear * ratio;
-	if (VisualMode == 1)
+	if (VisualMode == NR::kVisualInput)
 		result = inputProxy;
-	else if (VisualMode == 2)
+	else if (VisualMode == NR::kVisualOutput)
 		result = neuralLinear;
-	else if (VisualMode == 3)
+	else if (VisualMode == NR::kVisualDifference)
 		result = abs(neuralLinear - inputProxy) * DifferenceStrength;
-	else if (VisualMode == 4)
+	else if (VisualMode == NR::kVisualRatio)
 		result = ratio.xxx;
-	else if (VisualMode == 5)
+	else if (VisualMode == NR::kVisualOriginal)
 		result = originalLinear;
-	else if (VisualMode == 6)
+	else if (VisualMode == NR::kVisualPostComposite)
 		result = result;
-	else if (VisualMode == 7)
+	else if (VisualMode == NR::kVisualLuminanceDifference)
 		result = abs(dot(neuralLinear - inputProxy, Luma)).xxx * DifferenceStrength;
-	else if (VisualMode == 8)
+	else if (VisualMode == NR::kVisualChromaDifference)
 		result = abs(neuralLinear - inputProxy).xxx * DifferenceStrength;
-	else if (VisualMode == 9)
+	else if (VisualMode == NR::kVisualMask)
 		result = mask.xxx;
-	else if (VisualMode == 10)
+	else if (VisualMode == NR::kVisualExposure)
 		result = exposure.xxx;
-	else if (VisualMode == 15)
+	else if (VisualMode == NR::kVisualLogRatio)
 		result = (log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor))).xxx * DifferenceStrength;
-	else if (VisualMode == 16)
+	else if (VisualMode == NR::kVisualToneDelta)
 		result = toneDelta.xxx * DifferenceStrength;
-	else if (VisualMode == 17)
+	else if (VisualMode == NR::kVisualToneLow)
 		result = toneLow.xxx * DifferenceStrength;
-	else if (VisualMode == 18)
+	else if (VisualMode == NR::kVisualToneHigh)
 		result = toneHigh.xxx * DifferenceStrength;
-	else if (VisualMode == 19)
+	else if (VisualMode == NR::kVisualToneLowGain)
 		result = toneGain.xxx;
-	else if (VisualMode == 20)
+	else if (VisualMode == NR::kVisualFinalLuminanceRatio)
 		result = (dot(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
-	else if (VisualMode >= 11) {
+	else if (VisualMode >= NR::kVisualSplitOriginalOutput) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
-		if (VisualMode == 11)
+		if (VisualMode == NR::kVisualSplitOriginalOutput)
 			result = left ? originalLinear : neuralLinear;
-		else if (VisualMode == 12)
+		else if (VisualMode == NR::kVisualSplitOriginalComposite)
 			result = left ? originalLinear : result;
-		else if (VisualMode == 13)
+		else if (VisualMode == NR::kVisualSplitInputOutput)
 			result = left ? inputProxy : neuralLinear;
 		else
 			result = left ? originalLinear : result;
 	}
 	if (!all(isfinite(result)))
 		return;
-	if (VisualMode == 0 && !boundedGain)
+	if (VisualMode == NR::kVisualNone && !boundedGain)
 		result = FromLinear(result);
 	Output[id.xy] = float4(result, original.a);
 }

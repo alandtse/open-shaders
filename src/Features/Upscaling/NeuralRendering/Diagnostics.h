@@ -138,6 +138,65 @@ namespace NR
 			ToneLowGain,
 			FinalLuminanceRatio
 		};
+		/** @brief Mask mode ColorTransferCS.hlsl reads to substitute a constant mask. */
+		enum class MaskMode : uint32_t
+		{
+			Automatic,
+			ForceZero,
+			ForceOne
+		};
+		// ColorTransferCS.hlsl reads these numbers through ModeValues.hlsli: changing one here
+		// without that file silently renders the wrong mode.
+		static_assert(static_cast<uint32_t>(ColorConversion::Raw) == 0);
+		static_assert(static_cast<uint32_t>(ColorConversion::LinearToSRGB) == 1);
+		static_assert(static_cast<uint32_t>(ColorConversion::SRGBToLinear) == 2);
+		static_assert(static_cast<uint32_t>(ColorConversion::LinearToGamma22) == 3);
+		static_assert(static_cast<uint32_t>(ColorConversion::Gamma22ToLinear) == 4);
+		static_assert(static_cast<uint32_t>(ColorConversion::SRGBToGamma22) == 5);
+		static_assert(static_cast<uint32_t>(ColorConversion::SkyrimGammaToGamma22) == 6);
+		static_assert(static_cast<uint32_t>(ColorConversion::LinearToSkyrimGamma) == 7);
+		static_assert(static_cast<uint32_t>(ColorConversion::LinearToLinear) == 8);
+		static_assert(static_cast<uint32_t>(ColorConversion::Production) == 9);
+		static_assert(static_cast<uint32_t>(ExposureMode::Production) == 0);
+		static_assert(static_cast<uint32_t>(ExposureMode::Ignore) == 1);
+		static_assert(static_cast<uint32_t>(ExposureMode::ForceOne) == 2);
+		static_assert(static_cast<uint32_t>(ExposureMode::Game) == 3);
+		static_assert(static_cast<uint32_t>(ExposureMode::Manual) == 4);
+		static_assert(static_cast<uint32_t>(ExposureMode::DeExposeReExpose) == 5);
+		static_assert(static_cast<uint32_t>(ExposureMode::PassOnly) == 6);
+		static_assert(static_cast<uint32_t>(ExposureMode::DoNotPass) == 7);
+		static_assert(static_cast<uint32_t>(CompositeMode::Production) == 0);
+		static_assert(static_cast<uint32_t>(CompositeMode::Replacement) == 1);
+		static_assert(static_cast<uint32_t>(CompositeMode::MaskedLerp) == 2);
+		static_assert(static_cast<uint32_t>(CompositeMode::HalfMaskedLerp) == 3);
+		static_assert(static_cast<uint32_t>(CompositeMode::PreserveLuminance) == 4);
+		static_assert(static_cast<uint32_t>(CompositeMode::PreserveRatio) == 5);
+		static_assert(static_cast<uint32_t>(CompositeMode::Residual) == 6);
+		static_assert(static_cast<uint32_t>(CompositeMode::Ratio) == 7);
+		static_assert(static_cast<uint32_t>(MaskMode::Automatic) == 0);
+		static_assert(static_cast<uint32_t>(MaskMode::ForceZero) == 1);
+		static_assert(static_cast<uint32_t>(MaskMode::ForceOne) == 2);
+		static_assert(static_cast<uint32_t>(VisualMode::None) == 0);
+		static_assert(static_cast<uint32_t>(VisualMode::Input) == 1);
+		static_assert(static_cast<uint32_t>(VisualMode::Output) == 2);
+		static_assert(static_cast<uint32_t>(VisualMode::Difference) == 3);
+		static_assert(static_cast<uint32_t>(VisualMode::Ratio) == 4);
+		static_assert(static_cast<uint32_t>(VisualMode::Original) == 5);
+		static_assert(static_cast<uint32_t>(VisualMode::PostComposite) == 6);
+		static_assert(static_cast<uint32_t>(VisualMode::LuminanceDifference) == 7);
+		static_assert(static_cast<uint32_t>(VisualMode::ChromaDifference) == 8);
+		static_assert(static_cast<uint32_t>(VisualMode::Mask) == 9);
+		static_assert(static_cast<uint32_t>(VisualMode::Exposure) == 10);
+		static_assert(static_cast<uint32_t>(VisualMode::SplitOriginalOutput) == 11);
+		static_assert(static_cast<uint32_t>(VisualMode::SplitOriginalComposite) == 12);
+		static_assert(static_cast<uint32_t>(VisualMode::SplitInputOutput) == 13);
+		static_assert(static_cast<uint32_t>(VisualMode::SplitPrePost) == 14);
+		static_assert(static_cast<uint32_t>(VisualMode::LogRatio) == 15);
+		static_assert(static_cast<uint32_t>(VisualMode::ToneDelta) == 16);
+		static_assert(static_cast<uint32_t>(VisualMode::ToneLow) == 17);
+		static_assert(static_cast<uint32_t>(VisualMode::ToneHigh) == 18);
+		static_assert(static_cast<uint32_t>(VisualMode::ToneLowGain) == 19);
+		static_assert(static_cast<uint32_t>(VisualMode::FinalLuminanceRatio) == 20);
 		/** @brief Production defaults the diagnostic value knobs fall back to. */
 		static constexpr float kManualExposure = 1.0f, kDifferenceStrength = 4.0f, kSplitPosition = 0.5f;
 		static constexpr float kShadowProtect = 0.0f, kHighlightProtect = 0.0f, kToneRadius = 1.0f;
@@ -222,7 +281,7 @@ namespace NR
 		std::string tracePath;
 		static constexpr uint32_t kSuiteFrames = 600;
 		static constexpr std::array<uint32_t, 8> kSuiteOptions{ 0, ApplyCameraCuts, ApplyCameraCuts | IgnorePosition, ForceReset, ZeroMotion, ZeroJitter, SerializeGPU, BypassWriteback };
-		static constexpr std::array<const char*, 8> kSuiteNames{ "Baseline", "Apply inferred camera cuts", "Apply direction/projection cuts", "Reset every frame", "Zero motion", "Zero NR jitter", "Serialize GPU", "Bypass NR writeback" };
+		static constexpr std::array<const char*, kSuiteOptions.size()> kSuiteNames{ "Baseline", "Apply inferred camera cuts", "Apply direction/projection cuts", "Reset every frame", "Zero motion", "Zero NR jitter", "Serialize GPU", "Bypass NR writeback" };
 		void OpenTrace();
 		void WriteCameraTrace(const Frame& frame);
 		std::mutex mutex;

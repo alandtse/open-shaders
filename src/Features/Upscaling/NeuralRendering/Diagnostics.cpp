@@ -13,6 +13,49 @@
 
 namespace NR
 {
+	namespace
+	{
+		struct BitName
+		{
+			uint32_t bit;
+			const char* name;
+		};
+		/** @brief Trace-legend names, keyed by the enum bits they describe. */
+		constexpr std::array<BitName, 22> kOptionBitNames{
+			BitName{ NR::Diagnostics::IgnorePosition, "ignorePosition" },
+			BitName{ NR::Diagnostics::ApplyCameraCuts, "applyCameraCuts" },
+			BitName{ NR::Diagnostics::ForceReset, "forceReset" },
+			BitName{ NR::Diagnostics::ZeroMotion, "zeroMotion" },
+			BitName{ NR::Diagnostics::ZeroJitter, "zeroJitter" },
+			BitName{ NR::Diagnostics::SerializeGPU, "serializeGPU" },
+			BitName{ NR::Diagnostics::BypassWriteback, "bypassWriteback" },
+			BitName{ NR::Diagnostics::BypassEvaluation, "bypassEvaluation" },
+			BitName{ NR::Diagnostics::CopyInputToOutput, "copyInput" },
+			BitName{ NR::Diagnostics::InteropRoundTrip, "interopRoundTrip" },
+			BitName{ NR::Diagnostics::BypassMask, "bypassMask" },
+			BitName{ NR::Diagnostics::ForceMaskZero, "forceMaskZero" },
+			BitName{ NR::Diagnostics::ForceMaskOne, "forceMaskOne" },
+			BitName{ NR::Diagnostics::VisualizeMask, "visualizeMask" },
+			BitName{ NR::Diagnostics::DisableTone, "disableTone" },
+			BitName{ NR::Diagnostics::DisableStructure, "disableStructure" },
+			BitName{ NR::Diagnostics::DisableSkin, "disableSkin" },
+			BitName{ NR::Diagnostics::DisableExposure, "disableExposure" },
+			BitName{ NR::Diagnostics::DisableColorTransform, "disableColorTransform" },
+			BitName{ NR::Diagnostics::VisualizeSkinMask, "visualizeSkinMask" },
+			BitName{ NR::Diagnostics::VisualizeAutoMask, "visualizeAutoMask" },
+			BitName{ NR::Diagnostics::FeedCameraData, "feedCameraData" },
+		};
+		constexpr std::array<BitName, 7> kResetBitNames{
+			BitName{ NR::Diagnostics::Requested, "request" },
+			BitName{ NR::Diagnostics::FirstFrame, "first" },
+			BitName{ NR::Diagnostics::FrameGap, "gap" },
+			BitName{ NR::Diagnostics::CameraPosition, "position" },
+			BitName{ NR::Diagnostics::CameraDirection, "direction" },
+			BitName{ NR::Diagnostics::Projection, "projection" },
+			BitName{ NR::Diagnostics::FeatureCreated, "creation" },
+		};
+	}
+
 	void Diagnostics::DumpTexture(const char* stage, ID3D11Resource* resource, uint32_t frame)
 	{
 		if (!resource || !stage || !globals::d3d::device || !globals::d3d::context)
@@ -175,11 +218,13 @@ namespace NR
 			traceFile << std::setprecision(9);
 			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>" << kCameraCutDistance
 					  << ", directionDot<" << kCameraCutDirectionDot << ", projectionDelta>" << kProjectionCutThreshold << ".\n"
-					  << "Options: 1=ignorePosition,2=applyCameraCuts,4=forceReset,8=zeroMotion,16=zeroJitter,32=serializeGPU,64=bypassWriteback,"
-					  << "128=bypassEvaluation,256=copyInput,512=interopRoundTrip,1024=bypassMask,2048=forceMaskZero,4096=forceMaskOne,8192=visualizeMask,"
-					  << "16384=disableTone,32768=disableStructure,65536=disableSkin,131072=disableExposure,262144=disableColorTransform,"
-					  << "524288=visualizeSkinMask,1048576=visualizeAutoMask,2097152=feedCameraData.\n"
-					  << "Reset bits: 1=request,2=first,4=gap,8=position,16=direction,32=projection,64=creation.\n";
+					  << "Options: ";
+			for (size_t i = 0; i < kOptionBitNames.size(); ++i)
+				traceFile << (i ? "," : "") << kOptionBitNames[i].bit << '=' << kOptionBitNames[i].name;
+			traceFile << ".\nReset bits: ";
+			for (size_t i = 0; i < kResetBitNames.size(); ++i)
+				traceFile << (i ? "," : "") << kResetBitNames[i].bit << '=' << kResetBitNames[i].name;
+			traceFile << ".\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
 			tracePath = std::format("Trace file failed: {}", error.what());
@@ -343,18 +388,22 @@ namespace NR
 		uint32_t conversion = conversionMode.load(), exposure = exposureMode.load(), composition = compositeMode.load(), view = visualMode.load();
 		float exposureValue = manualExposure.load(), differenceValue = differenceStrength.load(), split = splitPosition.load();
 		float shadowValue = shadowProtect.load(), highlightValue = highlightProtect.load(), toneRadiusValue = toneRadius.load();
+		constexpr auto lastConversion = static_cast<uint32_t>(magic_enum::enum_count<ColorConversion>() - 1);
+		constexpr auto lastExposure = static_cast<uint32_t>(magic_enum::enum_count<ExposureMode>() - 1);
+		constexpr auto lastComposite = static_cast<uint32_t>(magic_enum::enum_count<CompositeMode>() - 1);
+		constexpr auto lastVisual = static_cast<uint32_t>(magic_enum::enum_count<VisualMode>() - 1);
 		if (ImGui::Combo("Color conversion", reinterpret_cast<int*>(&conversion), "Raw / none\0Linear -> sRGB\0sRGB -> Linear\0Linear -> Gamma 2.2\0Gamma 2.2 -> Linear\0sRGB -> Gamma 2.2\0Skyrim Gamma -> Gamma 2.2\0Linear -> Skyrim Gamma\0Linear -> Linear\0Production\0"))
-			conversionMode = std::min(conversion, 9u);
+			conversionMode = std::min(conversion, lastConversion);
 		if (ImGui::Combo("Exposure mode", reinterpret_cast<int*>(&exposure), "Production\0Ignore\0Force 1.0\0Game exposure\0Manual\0De-expose/re-expose\0Pass only\0Do not pass\0"))
-			exposureMode = std::min(exposure, 7u);
+			exposureMode = std::min(exposure, lastExposure);
 		if (ImGui::SliderFloat("Manual exposure", &exposureValue, 0.01f, 16.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
 			manualExposure = exposureValue;
 		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition),
 				"Production\0Raw replacement\0Masked lerp\0"
 				"50% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
-			compositeMode = std::min(composition, 7u);
+			compositeMode = std::min(composition, lastComposite);
 		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0"))
-			visualMode = std::min(view, 20u);
+			visualMode = std::min(view, lastVisual);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
 			differenceStrength = differenceValue;
 		if (ImGui::SliderFloat("Split position", &split, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
@@ -380,7 +429,8 @@ namespace NR
 		}
 		if (ImGui::Button("Run All NR Tests"))
 			startSuite = true;
-		ImGui::TextWrapped("8 tests, 600 world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.");
+		ImGui::TextWrapped("%zu tests, %u world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.",
+			kSuiteOptions.size(), kSuiteFrames);
 		ImGui::EndDisabled();
 		if (suite && ImGui::Button("Stop Tests and Restore"))
 			stopSuite = true;
@@ -404,7 +454,7 @@ namespace NR
 		std::string suiteStatus;
 		{
 			std::scoped_lock lock(mutex);
-			suiteStatus = suite ? std::format("Test {}/8: {} ({}/600)", suiteStep + 1, kSuiteNames[suiteStep], suiteFrames) : "Manual testing / sequence idle";
+			suiteStatus = suite ? std::format("Test {}/{}: {} ({}/{})", suiteStep + 1, kSuiteOptions.size(), kSuiteNames[suiteStep], suiteFrames, kSuiteFrames) : "Manual testing / sequence idle";
 			snapshot = history;
 			snapshotNext = next;
 			snapshotCount = count;
