@@ -9,8 +9,8 @@ target_include_directories(dlssg-repro PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../..
 target_link_libraries(dlssg-repro PRIVATE d3d11 d3d12 dxgi d3dcompiler user32)
 target_compile_definitions(dlssg-repro PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 
-# Stage the Streamline runtime next to the exe (production v2.12.0 set vendored in the repo).
-set(SL_DLL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../features/Upscaling/Shaders/Upscaling/StreamlineDX12)
+set(SL_DLL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../build/ALL/streamline-runtime/payload/Shaders/Upscaling/StreamlineDX12"
+    CACHE PATH "Streamline DX12 runtime DLLs staged next to the exe (the main build's downloaded payload)")
 foreach(dll sl.interposer.dll sl.common.dll sl.dlss_g.dll sl.pcl.dll sl.reflex.dll nvngx_dlssg.dll)
     add_custom_command(TARGET dlssg-repro POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SL_DLL_DIR}/${dll} $<TARGET_FILE_DIR:dlssg-repro>)
