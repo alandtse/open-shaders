@@ -112,10 +112,8 @@ namespace NR
 			return {};
 		}
 
-		// Feature 18 uses the driver's private parameter block.  Its resource and
-		// float setters are not guaranteed to occupy the public SDK vtable slots.
-		// OptiScaler handles this by probing the live block and then using the
-		// discovered slots for every private parameter write.
+		// Feature 18 uses the driver's private parameter block, whose resource and float
+		// setters need not sit in the public SDK vtable slots.
 		class ParameterWriter
 		{
 		public:
@@ -153,10 +151,12 @@ namespace NR
 			void SetResource(const char* name, ID3D12Resource* resource) const
 			{
 				void** table = *reinterpret_cast<void***>(parameters);
-				reinterpret_cast<SetULL>(table[0])(parameters, name, reinterpret_cast<unsigned long long>(resource));
+				reinterpret_cast<SetULL>(table[kResourceSlot])(parameters, name, reinterpret_cast<unsigned long long>(resource));
 			}
 
 		private:
+			/** @brief Slot of the private resource setter and of the unsigned-int setter. */
+			static constexpr size_t kResourceSlot = 0, kUIntSlot = 3;
 			using SetULL = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned long long);
 			using SetFloatFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, float);
 			using SetUIntFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned int);
@@ -169,12 +169,24 @@ namespace NR
 			void SetUIntAt(const char* name, unsigned int value) const
 			{
 				void** table = *reinterpret_cast<void***>(parameters);
-				reinterpret_cast<SetUIntFn>(table[3])(parameters, name, value);
+				reinterpret_cast<SetUIntFn>(table[kUIntSlot])(parameters, name, value);
 			}
 
 			NVSDK_NGX_Parameter* parameters;
 			int& floatSlot;
 		};
+
+		/** @brief Writes the appearance parameters Feature 18 needs at creation and evaluation. */
+		void WriteTuning(ParameterWriter& writer, const Tuning& tuning)
+		{
+			writer.SetUInt("DLSSNR.Style", tuning.style);
+			writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
+			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
+			writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
+			writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+			writer.SetResource("DLSSNR.ControlMask", nullptr);
+			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+		}
 
 		// The NR import checks this synthetic caller identity during scoped NGX calls.
 		class RuntimePath
@@ -452,13 +464,7 @@ namespace NR
 			writer.SetUInt("DLSSNR.AutoExposure", 1u);
 			writer.SetUInt("DLSSNR.Hdr", 1u);
 			writer.SetUInt("DLSSNR.SDR", 0u);
-			writer.SetUInt("DLSSNR.Style", tuning.style);
-			writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
-			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
-			writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
-			writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
-			writer.SetResource("DLSSNR.ControlMask", nullptr);
-			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
+			WriteTuning(writer, tuning);
 			writer.SetUInt("DLSSNR.UICorrection", 1u);
 			NVSDK_NGX_Handle* handle = nullptr;
 			const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
@@ -500,13 +506,7 @@ namespace NR
 		writer.SetUInt("DLSSNR.Upscaling", 0u);
 		writer.SetFloat("DLSSNR.Scale", 1.0f);
 		writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
-		writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
-		writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
-		writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
-		writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
-		writer.SetResource("DLSSNR.ControlMask", nullptr);
-		writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
-		writer.SetUInt("DLSSNR.Style", tuning.style);
+		WriteTuning(writer, tuning);
 		writer.SetFloat("Sharpness", 0.0f);
 		if (frame.feedCameraData) {
 			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, frame.jitterX);
