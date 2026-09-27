@@ -29,4 +29,8 @@ namespace FoveatedRenderImpl::Bridge
 	// mvecScale correction is not applied to the standard full-frame DLSS path
 	// (e.g. menus, frames where foveated is skipped).
 	inline bool foveatedEvaluating = false;
+
+	// Whether Upscale()'s foveated route handled this frame; assigned on every
+	// path so it is never stale (a menu frame must not keep a previous true).
+	inline bool routeHandledThisFrame = false;
 }

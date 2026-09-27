@@ -6,6 +6,8 @@
 #include <cmath>
 
 #include "../../Deferred.h"
+#include "../../EngineFixes/AlphaGeometryGroupCeilingFix.h"
+#include "../../EngineFixes/CullPoolExhaustionFix.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
 #include "../../State.h"
@@ -208,9 +210,44 @@ namespace ShadowCasterManager
 			std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
 	}
 
-	/// Frame + slot of each light's most recent Accumulate (render thread only).
-	/// Prevents duplicate Accumulate registrations per light per frame.
-	std::unordered_map<RE::BSShadowLight*, std::pair<uint32_t, uint32_t>> s_lightAccumFrame;
+	/// Kept across ResetSession on purpose: that reset skips the render, and dropping this record
+	/// brings pass-group rings back. Keys can dangle, so never dereference them.
+	struct AccumulateRecord
+	{
+		uint32_t frame;
+		uint32_t slot;
+		RE::NiLight* niLight;
+	};
+	std::unordered_map<RE::BSShadowLight*, AccumulateRecord> s_lightAccumFrame;
+
+	static void AuditStaleAccumulates()
+	{
+		static std::unordered_map<RE::BSShadowLight*, uint32_t> s_seen;
+		const uint32_t now = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+		for (const auto& [light, accum] : s_lightAccumFrame) {
+			if (accum.frame >= now)
+				continue;
+			const auto rendered = s_lightRenderFrame.find(light);
+			if (rendered != s_lightRenderFrame.end() && rendered->second >= accum.frame)
+				continue;
+			auto& seen = s_seen[light];
+			if (seen == accum.frame)
+				continue;
+			seen = accum.frame;
+			const bool promoted = IsPromotedLight(accum.niLight);
+			const bool demoted = std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
+			if (promoted)
+				s_stalePromotedTotal.fetch_add(1, std::memory_order_relaxed);
+			const bool afterSkippedRender = accum.frame == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
+			if (afterSkippedRender)
+				s_staleAfterRenderSkipTotal.fetch_add(1, std::memory_order_relaxed);
+			if (s_staleAccumulateTotal.fetch_add(1, std::memory_order_relaxed) < 8)
+				logger::warn("[SCM] Light {} (promoted={}, demoted={}) was accumulated in frame {} and not rendered by frame {} (afterSkippedRender={}, skipReason={}, slot={}, sessionReset={}, teardownWaiting={})",
+					(void*)light, promoted, demoted, accum.frame, now, afterSkippedRender, s_lastRenderSkipReason.load(std::memory_order_relaxed), accum.slot, s_pendingSessionReset.load(std::memory_order_relaxed),
+					s_teardownWaiting.load(std::memory_order_relaxed));
+		}
+		PruneIfOversized(s_seen, 512);
+	}
 
 	/// Camera position when the current light's accumulate begins. The contribution
 	/// cull measures caster size from here (viewer footprint), not the light.
@@ -224,6 +261,14 @@ namespace ShadowCasterManager
 	/// Cumulative bakes since load, published in the snapshot so a headless A/B
 	/// can difference it across a run without attaching a profiler.
 	std::atomic<uint64_t> s_staticBakeTotal{ 0 };
+
+	/// Cumulative split-cache accumulates by CasterPass; DynamicOnly over the sum is the cache hit ratio.
+	std::atomic<uint64_t> s_splitAccumByMode[3]{};
+	/// Cumulative permanent split exclusions by trigger: a pose mismatch against the bake, or the rebake window.
+	std::atomic<uint64_t> s_splitLatchMismatchTotal{ 0 };
+	std::atomic<uint64_t> s_splitLatchWindowTotal{ 0 };
+	/// Bakes retired (latched or dropped on slot reassignment) before any DynamicOnly accumulate reused them.
+	std::atomic<uint64_t> s_splitWastedBakeTotal{ 0 };
 
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
 	/// whether Hook_ResetScene fires only on real zone transitions or also
@@ -253,8 +298,18 @@ namespace ShadowCasterManager
 		/// The latest StaticOnly bake appended >= 1 static caster. False for a
 		/// bake taken before any caster settled: its cache tile is blank.
 		bool bakeSawStatic = false;
+		/// Baked, and no DynamicOnly accumulate has reused the cache yet.
+		bool bakeUnproven = false;
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
+
+	static void RetireSplitBake(SplitState& st)
+	{
+		if (st.bakeUnproven) {
+			s_splitWastedBakeTotal.fetch_add(1, std::memory_order_relaxed);
+			st.bakeUnproven = false;
+		}
+	}
 
 	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
 
@@ -807,6 +862,10 @@ namespace ShadowCasterManager
 					// it, so it renders full every redraw (no bake, no copy).
 					st->bakeThisFrame = false;
 					st->fullThisFrame = true;
+					if (!st->splitExcluded) {
+						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
+						RetireSplitBake(*st);
+					}
 					st->splitExcluded = true;
 					split = false;
 				}
@@ -853,12 +912,18 @@ namespace ShadowCasterManager
 						st->poseRebakes = 0;
 					}
 					if (++st->poseRebakes >= 4) {
+						if (!st->splitExcluded) {
+							s_splitLatchWindowTotal.fetch_add(1, std::memory_order_relaxed);
+							RetireSplitBake(*st);
+						}
 						st->splitExcluded = true;
 						st->bakeThisFrame = false;
 						st->fullThisFrame = true;
 						mode = CasterPass::All;
 					} else {
 						s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
+						RetireSplitBake(*st);
+						st->bakeUnproven = true;
 					}
 				}
 				// posStep is coarse (16 units) on purpose: a 1-unit step would
@@ -891,22 +956,27 @@ namespace ShadowCasterManager
 			// the ring-forming double and log which two slots collided.
 			const uint32_t accumFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-			bool duplicateAccum = false;
-			if (auto [it, inserted] = s_lightAccumFrame.try_emplace(light, accumFrame, idx); !inserted) {
-				duplicateAccum = it->second.first == accumFrame;
-				if (duplicateAccum) {
+			bool skipAccumulate = false;
+			if (auto [it, inserted] = s_lightAccumFrame.try_emplace(light, AccumulateRecord{ accumFrame, idx, light->light.get() }); !inserted) {
+				skipAccumulate = it->second.frame == accumFrame;
+				if (skipAccumulate) {
 					static std::atomic<uint32_t> s_dupAccumCount{ 0 };
 					const uint32_t n = s_dupAccumCount.fetch_add(1, std::memory_order_relaxed) + 1;
 					if (n <= 8u || (n % 1000u) == 0u)
 						logger::warn("[SCM] Skipped duplicate same-frame Accumulate (light={}, firstSlot={}, thisSlot={}, frame={}, n={})",
-							(void*)light, it->second.second, idx, accumFrame, n);
+							(void*)light, it->second.slot, idx, accumFrame, n);
 				} else {
-					it->second = { accumFrame, idx };
+					const auto rendered = s_lightRenderFrame.find(light);
+					const bool stale = rendered == s_lightRenderFrame.end() || rendered->second < it->second.frame;
+					if (stale && !ClearStaleAccumulatedPasses(light))
+						skipAccumulate = true;
+					else
+						it->second = { accumFrame, idx, light->light.get() };
 				}
 			}
 			if (s_lightAccumFrame.size() > 512)
-				std::erase_if(s_lightAccumFrame, [&](const auto& kv) { return kv.second.first != accumFrame; });
-			if (!duplicateAccum) {
+				std::erase_if(s_lightAccumFrame, [&](const auto& kv) { return kv.second.frame != accumFrame; });
+			if (!skipAccumulate) {
 				// Rebuild missed attachments: the engine attaches geometry once
 				// per geometry (kRenderUse latch), so a light created after scene
 				// attach otherwise casts nothing forever.
@@ -915,15 +985,18 @@ namespace ShadowCasterManager
 				s_cpuAccumUs.fetch_add(TimeUs([&] { light->Accumulate(idx, idx, nullptr); }), std::memory_order_relaxed);
 				s_accumRebuildAttach.store(false, std::memory_order_relaxed);
 				s_cpuAccumN.fetch_add(1, std::memory_order_relaxed);
+				s_splitAccumByMode[static_cast<int>(mode)].fetch_add(1, std::memory_order_relaxed);
+				if (mode == CasterPass::DynamicOnly)
+					st->bakeUnproven = false;
 				*GetAccumLightSlot() += light->shadowMapCount;
 			}
 
-			if (!duplicateAccum)
+			if (!skipAccumulate)
 				st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 			if (split) {
 				st->pendingHash = s_visitStaticHash;
-				if (mode == CasterPass::StaticOnly)
-					st->bakeSawStatic = !duplicateAccum && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
+				if (mode == CasterPass::StaticOnly && !skipAccumulate)
+					st->bakeSawStatic = s_visitStaticCount.load(std::memory_order_relaxed) != 0;
 				// Queue a rebake only once the hash divergence PERSISTS (3
 				// accumulates), so a flickering hash that oscillates back to the
 				// baked value doesn't rebake, but a genuine set change does.
@@ -1593,7 +1666,10 @@ namespace ShadowCasterManager
 				// erase them explicitly or it inherits the previous occupant's state.
 				s_lastValidFrame.erase(cp->light);
 				s_belowFloorStreak.erase(cp->light);
-				s_splitState.erase(cp->light);
+				if (const auto splitIt = s_splitState.find(cp->light); splitIt != s_splitState.end()) {
+					RetireSplitBake(splitIt->second);
+					s_splitState.erase(splitIt);
+				}
 				if (auto* ni = cp->light->light.get()) {
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
@@ -2757,7 +2833,7 @@ namespace ShadowCasterManager
 			const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
 			if (culledThisFrame)
 				s_casterCullTotal.fetch_add(culledThisFrame, std::memory_order_relaxed);
-			const uint32_t poolDropsThisFrame = s_cullPoolDropCount.exchange(0, std::memory_order_relaxed);
+			const uint32_t poolDropsThisFrame = CullPoolExhaustionFix::dropCount.exchange(0, std::memory_order_relaxed);
 			if (poolDropsThisFrame)
 				s_cullPoolDropTotal.fetch_add(poolDropsThisFrame, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
@@ -2858,13 +2934,34 @@ namespace ShadowCasterManager
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
+				snap.passGuardChecksTotal = s_passGuardChecksTotal.load(std::memory_order_relaxed);
+				snap.passGuardCycleSkipsTotal = s_passGuardCycleSkipsTotal.load(std::memory_order_relaxed);
+				snap.passGuardFaultSkipsTotal = s_passGuardFaultSkipsTotal.load(std::memory_order_relaxed);
+				snap.passGuardCapExceededTotal = s_passGuardCapExceededTotal.load(std::memory_order_relaxed);
+				snap.passGuardCycleRepairsTotal = s_passGuardCycleRepairsTotal.load(std::memory_order_relaxed);
+				snap.staleAccumulatesTotal = s_staleAccumulateTotal.load(std::memory_order_relaxed);
+				snap.staleAfterRenderSkipTotal = s_staleAfterRenderSkipTotal.load(std::memory_order_relaxed);
+				snap.stalePassClearsTotal = s_stalePassClearsTotal.load(std::memory_order_relaxed);
+				static_assert(std::extent_v<decltype(snap.renderSkipsByReason)> == kRenderSkipReasonCount);
+				for (size_t i = 0; i < kRenderSkipReasonCount; ++i)
+					snap.renderSkipsByReason[i] = s_renderSkipByReason[i].load(std::memory_order_relaxed);
+				snap.passRegChecksTotal = s_passRegChecksTotal.load(std::memory_order_relaxed);
+				snap.passRegRingsTotal = s_passRegRingsTotal.load(std::memory_order_relaxed);
+				snap.stalePromotedTotal = s_stalePromotedTotal.load(std::memory_order_relaxed);
+				snap.passGuardRepairsPromotedTotal = s_passGuardRepairsPromotedTotal.load(std::memory_order_relaxed);
+				snap.passRegRingsPromotedTotal = s_passRegRingsPromotedTotal.load(std::memory_order_relaxed);
+				for (size_t i = 0; i < std::size(snap.splitAccumByMode); ++i)
+					snap.splitAccumByMode[i] = s_splitAccumByMode[i].load(std::memory_order_relaxed);
+				snap.splitLatchMismatchTotal = s_splitLatchMismatchTotal.load(std::memory_order_relaxed);
+				snap.splitLatchWindowTotal = s_splitLatchWindowTotal.load(std::memory_order_relaxed);
+				snap.splitWastedBakesTotal = s_splitWastedBakeTotal.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				snap.demandSkips = s_schedDiag.demand_skips;
 				snap.demandSkipsTotal = s_demandSkipTotal.load(std::memory_order_relaxed);
-				snap.alphaGroupPeak = s_alphaGroupPeak.load(std::memory_order_relaxed);
-				snap.alphaGroupDrops = s_alphaGroupDrops.load(std::memory_order_relaxed);
+				snap.alphaGroupPeak = AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed);
+				snap.alphaGroupDrops = AlphaGeometryGroupCeilingFix::drops.load(std::memory_order_relaxed);
 				snap.frustumAuditCandidates = s_schedDiag.frustum_audit_candidates;
 				snap.frustumAuditKeptOut = s_schedDiag.frustum_audit_kept_out;
 				snap.frustumAuditSuspects = s_schedDiag.frustum_audit_suspects;
@@ -2912,7 +3009,7 @@ namespace ShadowCasterManager
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
 			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
 			TracyPlot("scm.demand_skips", (int64_t)s_schedDiag.demand_skips);
-			TracyPlot("scm.alpha_groups", (int64_t)s_alphaGroupPeak.load(std::memory_order_relaxed));
+			TracyPlot("scm.alpha_groups", (int64_t)AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed));
 			TracyPlot("scm.demand.skip_eligible", (int64_t)s_schedDiag.demand_skip_eligible);
 			TracyPlot("scm.demand.swap_in", (int64_t)s_schedDiag.demand_swap_in);
 			TracyPlot("scm.demand.swap_in_above_eps", (int64_t)s_schedDiag.demand_swap_in_above_eps);
@@ -3085,16 +3182,22 @@ namespace ShadowCasterManager
 
 	void RenderScheduledShadowLights()
 	{
+		AuditStaleAccumulates();
+
 		// A teardown landing between schedule and this pass would flush a freed
 		// accumulator -> AV in BSBatchRenderer. Skip while a reset is pending; only
 		// LOAD here, never exchange, or s_lights would never reset (ScheduleShadowCasters owns the drain).
-		if (s_pendingSessionReset.load(std::memory_order_acquire))
+		if (s_pendingSessionReset.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::SessionReset);
 			return;
+		}
 
 		// Pause during portal-graph rebuild: BSShadowLight::Render walks portal
 		// culling that derefs ssn->portalGraph.
-		if (IsPortalGraphTransitioning())
+		if (IsPortalGraphTransitioning()) {
+			NoteRenderSkipped(RenderSkipReason::PortalTransition);
 			return;
+		}
 
 		// Exclusive against ShadowCasterManager::Update's pool resize; see the matching
 		// lock in ScheduleShadowCasters for why it must cover the whole pass.
@@ -3103,15 +3206,19 @@ namespace ShadowCasterManager
 		// Reader side of the teardown serialization: ClearLightArrays must not free
 		// lights/passes while this pass iterates them. Counter (not a shared_mutex)
 		// so nested engine re-entry on this thread stays defined.
-		if (s_teardownWaiting.load(std::memory_order_acquire))
+		if (s_teardownWaiting.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::TeardownWaiting);
 			return;
+		}
 		s_shadowFlushReaders.fetch_add(1, std::memory_order_acq_rel);
 		struct FlushReaderGuard
 		{
 			~FlushReaderGuard() { s_shadowFlushReaders.fetch_sub(1, std::memory_order_acq_rel); }
 		} flushReaderGuard;
-		if (s_teardownWaiting.load(std::memory_order_acquire))
+		if (s_teardownWaiting.load(std::memory_order_acquire)) {
+			NoteRenderSkipped(RenderSkipReason::TeardownRace);
 			return;  // teardown won the race between our check and increment
+		}
 
 		// Atlas resource creation happens here at the pass boundary so
 		// readiness cannot flip between draws of the same frame.
@@ -3186,7 +3293,7 @@ namespace ShadowCasterManager
 			ZoneNamedN(zSun, "SCM::Render::Sun", true);
 			CS_GPU_PASS("SCM::Render::Sun");
 			s_budget.BeginLight(s_lights.Lights[0].Light, 1);
-			s_lights.Lights[0].Light->Render(tmp);
+			RenderLightGuarded(s_lights.Lights[0].Light, tmp);
 			s_budget.EndLight(s_lights.Lights[0].Light, 1);
 		}
 
@@ -3215,7 +3322,7 @@ namespace ShadowCasterManager
 						// group is freed-but-not-unlinked at frame end. The viewport hook
 						// collapses a tile-less raster to zero size, so this draws nothing.
 						s_budget.BeginLight(e.Light, 1);
-						s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+						s_cpuSubmitUs.fetch_add(TimeUs([&] { RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 						s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 						s_budget.EndLight(e.Light, 1);
 						// This frame bailed before running the bake EnableLight already
@@ -3234,11 +3341,21 @@ namespace ShadowCasterManager
 							s_staticPassActive.store(true, std::memory_order_relaxed);
 							ClearStaticSlotTile(i);
 							s_budget.BeginLight(e.Light, 1);
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+							bool rendered = true;
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
-							MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
+							// A skipped bake leaves the static tile blank: drop the slot's static cache and re-arm.
+							if (rendered)
+								MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
+							else
+								InvalidateSlotStaticBake(i);
 							st.bakeThisFrame = false;
+							if (!rendered) {
+								st.bakeQueued = true;
+								s_budget.EndLight(e.Light, 1);
+								continue;
+							}
 							// Keep last frame's complete live content on bake frames -- copying
 							// the fresh static-only bake in flashed a mover-less shadow for one
 							// frame. Only a tile with no valid content takes the copy.
@@ -3281,12 +3398,15 @@ namespace ShadowCasterManager
 									ClearSlotTile(i);
 								st.bakeQueued = true;
 							}
-							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
+							bool rendered = true;
+							s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
+							if (!rendered && !compositeValid && !compositeKeepPrior)
+								InvalidateSlotTileContent(i);
 							// A movers-only frame (invalid seed) must not swap a staged promotion
 							// in: keep sampling the old complete tile until a seeded composite lands.
-							if (!compositeKeepPrior && composedContent) {
+							if (rendered && !compositeKeepPrior && composedContent) {
 								e.renderedScale = e.pendingScale;
 								MarkSlotTileRendered(i, compositeValid);
 							}
@@ -3303,13 +3423,16 @@ namespace ShadowCasterManager
 						ClearSlotTile(i);
 				}
 				s_budget.BeginLight(e.Light, 1);
-				s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
+				bool rendered = true;
+				s_cpuSubmitUs.fetch_add(TimeUs([&] { rendered = RenderLightGuarded(e.Light, tmp); }), std::memory_order_relaxed);
 				s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 				s_budget.EndLight(e.Light, 1);
+				if (!rendered && !keepPriorContent)
+					InvalidateSlotTileContent(i);
 				// Commit the content scale only after the raster actually ran: a skipped
 				// render must keep advertising the slot's held scale, or shaders sample
 				// tile UVs against full-slice content until the geometry hash changes.
-				if (!keepPriorContent) {
+				if (rendered && !keepPriorContent) {
 					e.renderedScale = e.pendingScale;
 					// Never mark an EMPTY render valid: a starved fresh tile stays
 					// contentValid=false, so the sample side reads UNSHADOWED, never a

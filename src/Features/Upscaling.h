@@ -12,6 +12,7 @@
 #include "Utils/LazyShader.h"
 #include "VR/OpenVRDetection.h"
 #include <algorithm>
+#include <array>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -191,6 +192,7 @@ public:
 	bool lowRefreshRate = false;
 	bool fidelityFXMissing = false;
 	bool d3d12SwapChainActive = false;
+	bool frameGenerationPrepared = false;
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
@@ -200,6 +202,9 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
+	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
+	bool ShouldPrepareFrameGeneration() const;
+	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */
 	bool ShouldUseFrameGenerationThisFrame() const;
 	bool IsUpscalingActive() const;
 
@@ -313,9 +318,31 @@ public:
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 
-	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCS[5];          // One for each UpscaleMethod
-	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
+	/** @brief Encoder outputs a caller binds; selects the permutation. */
+	enum class EncodeOutput : uint8_t
+	{
+		kMasksOnly,
+		kTypedDepth,  // FSR and VR DLSS: converts R24G8_TYPELESS depth to R32_FLOAT
+		kCount
+	};
+
+	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCS[magic_enum::enum_count<UpscaleMethod>()][static_cast<size_t>(EncodeOutput::kCount)];
+
+	/** @brief EncodeTextures CS for the active method, asking for typed depth when the method needs it. */
 	ID3D11ComputeShader* GetEncodeTexturesCS();
+
+	/** @brief EncodeTextures CS for a method and output set; nullptr on compile failure. */
+	ID3D11ComputeShader* GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output);
+
+	/** @brief Whether a method needs the typed-depth encoder output on this runtime. */
+	bool NeedsTypedDepth(UpscaleMethod a_method) const;
+
+	using EncodeInputViews = std::array<ID3D11ShaderResourceView*, 4>;
+
+	/** @brief Current-frame encoder inputs (TAA mask, normals, motion, depth). Returns false if
+	 *         any is missing, naming the first missing one in a_missing: a null view among them
+	 *         silently corrupts the masks the encoder writes. */
+	bool GetEncodeInputs(EncodeInputViews& a_views, const char*& a_missing) const;
 
 	Util::LazyShader<ID3D11PixelShader> depthRefractionUpscalePS;
 	ID3D11PixelShader* GetDepthRefractionUpscalePS();
@@ -352,8 +379,7 @@ public:
 	// Owned here so both Streamline (DLSS) and FidelityFX (FSR) can use them.
 	eastl::unique_ptr<Texture2D> vrIntermediateColorIn[2];           // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateColorOut[2];          // per-eye output resolution
-	eastl::unique_ptr<Texture2D> vrIntermediateDepth;                // right-eye render resolution (R24G8_TYPELESS, DLSS only)
-	eastl::unique_ptr<Texture2D> vrIntermediateLinearDepth[2];       // per-eye render resolution (R32_FLOAT, for FSR)
+	eastl::unique_ptr<Texture2D> vrIntermediateLinearDepth[2];       // per-eye render resolution (R32_FLOAT, for FSR and VR DLSS)
 	eastl::unique_ptr<Texture2D> vrIntermediateMotionVectors[2];     // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateReactiveMask[2];      // per-eye render resolution
 	eastl::unique_ptr<Texture2D> vrIntermediateTransparencyMask[2];  // per-eye render resolution
@@ -419,7 +445,8 @@ public:
 	/// only; flat has no repro and per-eye extent asymmetry doesn't apply.
 	std::atomic<bool> pendingDLSSReset{ false };
 
-	void CopySharedD3D12Resources();
+	/** @brief Copies depth and motion inputs, returning false if the required shaders are unavailable. */
+	bool CopySharedD3D12Resources();
 	void PostDisplay();
 	void PerformUpscaling();
 	void UpscaleDepth();
@@ -453,9 +480,9 @@ public:
 
 	bool IsPerfModeSharpenRedirectActive() const
 	{
-		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
+		return perfMode.IsPresentingTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
-		       IsDlssSharpeningEnabled();
+		       IsDlssSharpeningEnabled() && GetUpscaleMethod() == UpscaleMethod::kDLSS;
 	}
 
 	static void TimerSleepQPC(int64_t targetQPC);
@@ -493,6 +520,11 @@ public:
 	BlurResources GetBlurResources() const;
 
 private:
+	void DrawUpscalingSettings();
+	void DrawFrameGenerationSettings();
+	void DrawReflexSettings();
+	void DrawBackendDiagnostics();
+
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
 	// Detection lives in VRDetection; this class owns the force-to-None policy.

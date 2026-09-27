@@ -82,6 +82,7 @@ void State::UpdatePermutationBuffer()
 	const auto windContribution = globals::features::wind.GetPermutationContribution();
 	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
 	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	permutationData.EnableGrassWindSpringBend = windContribution.enableGrassWindSpringBend;
 	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
 	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
 		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
@@ -114,7 +115,7 @@ void State::BindVertexPermutationData(const RE::BSShader* a_shader)
 
 	const auto shaderType = a_shader->shaderType.get();
 	if (shaderType != RE::BSShader::Type::Lighting && shaderType != RE::BSShader::Type::Utility &&
-		shaderType != RE::BSShader::Type::Grass)
+		shaderType != RE::BSShader::Type::Grass && shaderType != RE::BSShader::Type::Sky)
 		return;
 
 	ID3D11Buffer* buffers[] = {
@@ -123,6 +124,13 @@ void State::BindVertexPermutationData(const RE::BSShader* a_shader)
 		featureDataCB->CB(),
 	};
 	globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
+}
+
+void State::BindSharedDataCS(ID3D11DeviceContext* a_context, bool a_withFeatureData) const
+{
+	constexpr UINT kSharedDataRegister = 5;
+	ID3D11Buffer* buffers[]{ sharedDataCB->CB(), featureDataCB->CB() };
+	a_context->CSSetConstantBuffers(kSharedDataRegister, a_withFeatureData ? ARRAYSIZE(buffers) : 1, buffers);
 }
 
 void State::Draw()
@@ -1022,9 +1030,8 @@ std::vector<std::pair<std::string, std::string>>* State::GetDefines()
 
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
-	auto index = magic_enum::enum_integer(a_type) + 1;
-	if (index < static_cast<int>(sizeof(enabledClasses))) {
-		return enabledClasses[index];
+	if (a_type > RE::BSShader::Type::None && a_type < RE::BSShader::Type::Total) {
+		return enabledClasses[magic_enum::enum_integer(a_type) - 1];
 	}
 	return false;
 }

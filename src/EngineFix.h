@@ -13,6 +13,14 @@ struct EngineFix
 	/** @brief Returns the human-readable name of this fix (used in log messages). */
 	virtual std::string GetName() = 0;
 
+	/**
+	 * @brief Name the EngineFixes plugin reports for the same fix, or null when it has none.
+	 *
+	 * Install is skipped when the loaded EngineFixes reports that fix installed, since two plugins
+	 * patching the same site clobber each other.
+	 */
+	virtual const char* GetEngineFixesName() const { return nullptr; }
+
 	/** @brief Applies the engine fix. Override in subclasses to perform patching. */
 	virtual void Install() {}
 

@@ -20,18 +20,13 @@ struct NeuralRendering::Impl
 	{
 		NR::SharedTexture color, depth, motion, output;
 		NR::FrameParameters frame;
-		std::unique_ptr<Texture2D> resolved;
-		std::array<std::unique_ptr<Texture2D>, 2> residualHistory;
-		std::unique_ptr<Texture2D> depthHistory;
-		uint32_t residualIndex = 0;
-		bool residualValid = false;
+		std::unique_ptr<Texture2D> resolved, toneData;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
 	};
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> encode, prepareColor, stabilizeResidual, compositeColor;
-	winrt::com_ptr<ID3D11SamplerState> temporalSampler;
+	Util::LazyShader<ID3D11ComputeShader> encode, encodeDilated, prepareColor, prepareToneData, compositeColor;
 	struct alignas(16) ColorTransferData
 	{
 		uint32_t width, height, eyeOffsetX, hasExposure = 0;
@@ -41,19 +36,15 @@ struct NeuralRendering::Impl
 		float differenceStrength = 1.0f, splitPosition = 0.5f;
 		float dynamicRangePadding = 0.0f;
 		float4 dynamicRangeProtect{};
-		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f, tonePadding = 0.0f;
-		uint32_t historyValid = 0;
-		float temporalAlpha = 0.12f, temporalClamp = 0.05f, depthThreshold = 0.02f;
+		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+		uint32_t hasToneData = 0;
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
 	static_assert(offsetof(ColorTransferData, toneRadius) == 84);
 	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
-	static_assert(offsetof(ColorTransferData, historyValid) == 96);
-	static_assert(offsetof(ColorTransferData, temporalAlpha) == 100);
-	static_assert(offsetof(ColorTransferData, temporalClamp) == 104);
-	static_assert(offsetof(ColorTransferData, depthThreshold) == 108);
-	static_assert(sizeof(ColorTransferData) == 112);
+	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
+	static_assert(sizeof(ColorTransferData) == 96);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
 	uint32_t maskFrame = UINT32_MAX;
@@ -95,11 +86,6 @@ struct NeuralRendering::Impl
 		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
-		D3D11_SAMPLER_DESC samplerDesc{};
-		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
-		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, temporalSampler.put()));
-		Util::SetResourceName(temporalSampler.get(), "NeuralRendering::TemporalResidual Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		runtime.Initialize(interop.Device(), std::filesystem::absolute(Upscaling::streamline.pluginDir));
@@ -160,37 +146,9 @@ struct NeuralRendering::Impl
 			eye.color = interop.CreateTexture(w, h, srv.Format, name + " HDRInput");
 			eye.color.texture->CreateSRV(srv);
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
-			srv.Format = DXGI_FORMAT_R32_FLOAT;
-			eye.depth.texture->CreateSRV(srv);
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
-			srv.Format = DXGI_FORMAT_R16G16_FLOAT;
-			eye.motion.texture->CreateSRV(srv);
-			srv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 			eye.output = interop.CreateTexture(w, h, srv.Format, name + " HDROutput");
 			eye.output.texture->CreateSRV(srv);
-
-			D3D11_TEXTURE2D_DESC historyDesc = colorDesc;
-			historyDesc.Width = w;
-			historyDesc.Format = DXGI_FORMAT_R16_FLOAT;
-			historyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-			D3D11_SHADER_RESOURCE_VIEW_DESC historySRV = srv;
-			historySRV.Format = historyDesc.Format;
-			D3D11_UNORDERED_ACCESS_VIEW_DESC historyUAV = colorUAV;
-			historyUAV.Format = historyDesc.Format;
-			for (uint32_t history = 0; history < eye.residualHistory.size(); ++history) {
-				eye.residualHistory[history] = std::make_unique<Texture2D>(historyDesc,
-					std::format("{} ResidualHistory{}", name, history).c_str());
-				eye.residualHistory[history]->CreateSRV(historySRV);
-				eye.residualHistory[history]->CreateUAV(historyUAV);
-			}
-			D3D11_TEXTURE2D_DESC depthHistoryDesc = historyDesc;
-			depthHistoryDesc.Width = gw;
-			depthHistoryDesc.Height = gh;
-			depthHistoryDesc.Format = DXGI_FORMAT_R32_FLOAT;
-			depthHistoryDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-			historySRV.Format = depthHistoryDesc.Format;
-			eye.depthHistory = std::make_unique<Texture2D>(depthHistoryDesc, (name + " DepthHistory").c_str());
-			eye.depthHistory->CreateSRV(historySRV);
 		}
 		source.copy_from(color);
 		width = w;
@@ -270,6 +228,56 @@ struct NeuralRendering::Impl
 		commands->ResourceBarrier(4, barriers);
 	}
 
+	bool NeedsToneData() const
+	{
+		const bool showBands = visualMode == NR::Diagnostics::VisualMode::ToneLow || visualMode == NR::Diagnostics::VisualMode::ToneHigh;
+		const bool useTone = compositeMode == NR::Diagnostics::CompositeMode::Production || visualMode == NR::Diagnostics::VisualMode::ToneLowGain;
+		return toneRadius > 0.01f && (showBands || (useTone && toneLowStrength != toneHighStrength));
+	}
+
+	void PrepareToneData(uint32_t i)
+	{
+		if (!NeedsToneData())
+			return;
+		CS_GPU_PASS("NeuralRendering::PrepareToneData");
+		auto* shader = prepareToneData.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
+			{}, "cs_5_0", "PrepareToneData", "NeuralRendering::PrepareToneData CS");
+		if (!shader)
+			throw std::runtime_error("NR tone-data shader unavailable");
+		auto& eye = eyes[i];
+		if (!eye.toneData) {
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = width;
+			desc.Height = height;
+			desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+			desc.Format = DXGI_FORMAT_R32G32_FLOAT;
+			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			auto texture = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} ToneData", i).c_str());
+			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+			srv.Format = desc.Format;
+			srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srv.Texture2D.MipLevels = 1;
+			texture->CreateSRV(srv);
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
+			uav.Format = desc.Format;
+			uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			texture->CreateUAV(uav);
+			eye.toneData = std::move(texture);
+		}
+		context->ClearState();
+		ColorTransferData data{ width, height, i * width };
+		colorBuffer->Update(data);
+		auto buffer = colorBuffer->CB();
+		context->CSSetConstantBuffers(0, 1, &buffer);
+		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color.texture->srv.get(), eye.output.texture->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		auto* output = eye.toneData->uav.get();
+		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
 	void TransferColor(uint32_t i, bool prepare)
 	{
 		CS_GPU_PASS_SELECT(prepare, "NeuralRendering::PrepareColor", "NeuralRendering::CompositeHDR");
@@ -289,6 +297,7 @@ struct NeuralRendering::Impl
 		data.toneLowStrength = toneLowStrength;
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
+		data.hasToneData = !prepare && NeedsToneData();
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = 1;
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
@@ -321,7 +330,7 @@ struct NeuralRendering::Impl
 		context->CSSetConstantBuffers(5, 1, &shared);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color.texture->srv.get(),
 			prepare ? nullptr : eye.output.texture->srv.get(), exposure,
-			prepare ? nullptr : eye.residualHistory[eye.residualIndex]->srv.get() };
+			data.hasToneData ? eye.toneData->srv.get() : nullptr };
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color.texture->uav.get() : eye.resolved->uav.get(),
 			prepare ? nullptr : reactive->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
@@ -329,36 +338,6 @@ struct NeuralRendering::Impl
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		context->ClearState();
-	}
-
-	void StabilizeToneResidual(uint32_t i)
-	{
-		CS_GPU_PASS("NeuralRendering::StabilizeToneResidual");
-		context->ClearState();
-		auto& eye = eyes[i];
-		const auto readIndex = eye.residualIndex;
-		const auto writeIndex = readIndex ^ 1u;
-		ColorTransferData data{ width, height, i * width };
-		data.toneRadius = toneRadius;
-		data.historyValid = eye.residualValid && !eye.frame.reset;
-		colorBuffer->Update(data);
-		auto buffer = colorBuffer->CB();
-		auto shared = globals::state->sharedDataCB->CB();
-		context->CSSetConstantBuffers(0, 1, &buffer);
-		context->CSSetConstantBuffers(5, 1, &shared);
-		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color.texture->srv.get(), eye.output.texture->srv.get(), nullptr,
-			eye.residualHistory[readIndex]->srv.get(), eye.motion.texture->srv.get(), eye.depth.texture->srv.get(), eye.depthHistory->srv.get() };
-		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
-		ID3D11SamplerState* samplers[]{ temporalSampler.get() };
-		context->CSSetSamplers(0, 1, samplers);
-		ID3D11UnorderedAccessView* outputs[]{ nullptr, nullptr, eye.residualHistory[writeIndex]->uav.get() };
-		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
-		context->CSSetShader(stabilizeResidual.get(), nullptr, 0);
-		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
-		context->ClearState();
-		context->CopyResource(eye.depthHistory->resource.get(), eye.depth.texture->resource.get());
-		eye.residualIndex = writeIndex;
-		eye.residualValid = true;
 	}
 
 	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
@@ -485,15 +464,12 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
 		}
-		for (uint32_t i = 0; i < eyeCount; ++i)
-			StabilizeToneResidual(i);
-		if (capture)
-			diagnostics.DumpTexture("03_stabilized_tone", eyes[0].residualHistory[eyes[0].residualIndex]->resource.get(), diagnostic.number);
 		for (uint32_t i = 0; i < eyeCount; ++i) {
+			PrepareToneData(i);
 			TransferColor(i, false);
 		}
 		if (capture) {
-			diagnostics.DumpTexture("04_pre_composite", original->resource.get(), diagnostic.number);
+			diagnostics.DumpTexture("03_pre_composite", original->resource.get(), diagnostic.number);
 			diagnostics.DumpTexture("NR_mask", reactive->resource.get(), diagnostic.number);
 		}
 		const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
@@ -502,7 +478,7 @@ struct NeuralRendering::Impl
 			diagnostic.copied |= 1u << i;
 		}
 		if (capture)
-			diagnostics.DumpTexture("05_post_composite", color, diagnostic.number);
+			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
 		maskFrame = globals::state->frameCount;
 		diagnostics.FinishCapture(diagnostic.number);
 		captureDiagnostics = nullptr;
@@ -659,8 +635,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			work.Initialize();
 		if (clearShaders.exchange(false)) {
 			work.encode.Reset();
+			work.encodeDilated.Reset();
 			work.prepareColor.Reset();
-			work.stabilizeResidual.Reset();
+			work.prepareToneData.Reset();
 			work.compositeColor.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
@@ -696,16 +673,17 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		work.EnsureResources(color, w, h, gw, gh, count, desc.Format, forceRecreate);
-		// NR depth and motion must describe the same pixel; the DLSS permutation dilates only motion.
-		auto* shader = work.encode.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
-			{ { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::Encode CS");
+		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
+		auto* shader = dilateMotion ?
+		                   work.encodeDilated.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
+							   { { "DLSS", "" }, { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::EncodeDilated CS") :
+		                   work.encode.Get(L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl",
+							   { { "DEPTH_OUTPUT", "" } }, "cs_5_0", "main", "NeuralRendering::Encode CS");
 		auto* prepare = work.prepareColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "Prepare", "NeuralRendering::PrepareColor CS");
-		auto* stabilize = work.stabilizeResidual.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
-			{}, "cs_5_0", "StabilizeResidual", "NeuralRendering::StabilizeResidual CS");
 		auto* composite = work.compositeColor.Get(L"Data/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl",
 			{}, "cs_5_0", "Composite", "NeuralRendering::CompositeHDR CS");
-		if (!shader || !prepare || !stabilize || !composite)
+		if (!shader || !prepare || !composite)
 			throw std::runtime_error("NR encoder or color-transfer shader unavailable");
 		work.debugOptions = diagnostic.options;
 		work.conversionMode = diagnostics.ConversionMode();

@@ -2,12 +2,16 @@
 #include "../../../GpuPass.h"
 
 #include "../../../Deferred.h"
+#include "../../../Feature.h"
 #include "../../../State.h"
 #include "../../../Util.h"
 
 struct RCASConfig
 {
 	float sharpness;
+	float2 luminanceRange;
+	float compensationScale;
+	uint32_t exposureEnabled;
 	float3 pad;
 };
 
@@ -24,7 +28,7 @@ void RCAS::Initialize()
 
 	logger::info("[RCAS] Creating resources");
 	CreateComputeShader();
-	rcasConfigCB = new ConstantBuffer(ConstantBufferDesc<RCASConfig>());
+	rcasConfigCB = new ConstantBuffer(ConstantBufferDesc<RCASConfig>(), "Upscaling::RCASConfig");
 }
 
 void RCAS::CreateComputeShader()
@@ -57,14 +61,23 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	RCASConfig config{};
 	config.sharpness = sharpness;
 
+	ID3D11ShaderResourceView* adaptedLuminance = nullptr;
+	Feature::SceneExposure exposure;
+	if (Feature::FindSceneExposure(exposure)) {
+		config.luminanceRange = exposure.luminanceRange;
+		config.compensationScale = exposure.compensationScale;
+		config.exposureEnabled = 1u;
+		adaptedLuminance = exposure.adaptedLuminance;
+	}
+
 	rcasConfigCB->Update(config);
 	auto bufferArray = rcasConfigCB->CB();
 
 	context->CSSetShader(rcasComputeShader.get(), nullptr, 0);
 	context->CSSetConstantBuffers(0, 1, &bufferArray);
 
-	ID3D11ShaderResourceView* srvs[] = { inputSRV };
-	context->CSSetShaderResources(0, 1, srvs);
+	ID3D11ShaderResourceView* srvs[] = { inputSRV, adaptedLuminance };
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 	ID3D11UnorderedAccessView* uavs[] = { outputUAV };
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -73,8 +86,8 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	uint32_t dispatchY = (screenHeight + 7) / 8;
 	context->Dispatch(dispatchX, dispatchY, 1);
 
-	ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
-	context->CSSetShaderResources(0, 1, nullSRVs);
+	ID3D11ShaderResourceView* nullSRVs[] = { nullptr, nullptr };
+	context->CSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
 
 	ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);

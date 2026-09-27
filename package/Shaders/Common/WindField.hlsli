@@ -16,6 +16,7 @@ namespace WindField
 		WindSample sample;
 		sample.velocity = ambientVelocity + transientVelocity;
 		sample.ambientGust = components.ambientGust;
+		sample.ambientTurbulence = components.ambientTurbulence;
 		sample.transientImpulse = components.transientImpulse;
 		return sample;
 	}
@@ -67,20 +68,34 @@ namespace WindField
 			return amount * amount * (3.0f - 2.0f * amount);
 		}
 
-		float SampleAmbientGust(float3 worldPosition, Field field, WindTuning tuning)
+		float SampleAmbientGust(float3 worldPosition, Field field, WindTuning tuning,
+			out float turbulentGust)
 		{
 			float gustScale = max(abs(tuning.gustScale), MinimumDivisor);
 			float frontAspectRatio = max(abs(tuning.frontAspectRatio), MinimumDivisor);
 			float2 frontCoordinate = float2(
 				(dot(worldPosition.xy, field.direction.xy) - max(field.travelDistance, 0.0f)) / gustScale,
 				dot(worldPosition.xy, field.crosswind.xy) / (gustScale * frontAspectRatio));
+			float distortionStrength = max(tuning.distortionStrength, 0.0f);
+			if (distortionStrength > 0.0f) {
+				float distortionScale = max(abs(tuning.distortionScale), MinimumDivisor);
+				float distortionTime = max(field.travelDistance, 0.0f) / gustScale *
+				                       max(tuning.distortionSpeed, 0.0f);
+				float2 distortionCoordinate = frontCoordinate / distortionScale +
+				                              float2(distortionTime * 0.37f, distortionTime * -0.23f);
+				float2 distortion = float2(
+					GradientNoise(distortionCoordinate, tuning.broadGustSeed ^ 0x68BC21EBu, tuning),
+					GradientNoise(distortionCoordinate.yx + float2(17.0f, 29.0f),
+						tuning.turbulentGustSeed ^ 0x02E5BE93u, tuning));
+				frontCoordinate += distortion * distortionStrength;
+			}
 			float broadGust = GradientNoise(frontCoordinate, tuning.broadGustSeed, tuning);
 			float detailScaleRatio = max(abs(tuning.detailScaleRatio), MinimumDivisor);
 			float detailCrosswindScaleRatio = max(abs(tuning.detailCrosswindScaleRatio), MinimumDivisor);
 			float2 detailCoordinate = float2(
 				frontCoordinate.x / detailScaleRatio + frontCoordinate.y * tuning.turbulenceSkew,
 				frontCoordinate.y / detailCrosswindScaleRatio);
-			float turbulentGust = GradientNoise(detailCoordinate, tuning.turbulentGustSeed, tuning);
+			turbulentGust = GradientNoise(detailCoordinate, tuning.turbulentGustSeed, tuning);
 			float turbulenceStrength = max(tuning.turbulenceStrength, 0.0f);
 			float normalizedGust =
 				(broadGust + turbulentGust * turbulenceStrength) / (1.0f + turbulenceStrength) * 0.5f + 0.5f;
@@ -92,7 +107,8 @@ namespace WindField
 	WindSample SampleField(float3 worldPosition, Field field, WindTuning tuning)
 	{
 		WindSample sample;
-		sample.ambientGust = Detail::SampleAmbientGust(worldPosition, field, tuning);
+		sample.ambientGust = Detail::SampleAmbientGust(
+			worldPosition, field, tuning, sample.ambientTurbulence);
 		sample.transientImpulse = 0.0f;
 		float gustMultiplier = max(1.0f + (sample.ambientGust * 2.0f - 1.0f) * max(tuning.gustAmplitude, 0.0f), 0.0f);
 		sample.velocity = field.direction * (max(field.speed, 0.0f) * gustMultiplier);
@@ -138,6 +154,7 @@ namespace WindField
 				components.baseAmbientVelocity = currentBaseVelocity;
 				components.gustVelocity = currentSample.velocity - currentBaseVelocity;
 				components.ambientGust = currentSample.ambientGust;
+				components.ambientTurbulence = currentSample.ambientTurbulence;
 			} else {
 				WindSample previousSample = SampleField(worldPosition, previousField, SharedData::WindFieldTuning);
 				float3 previousBaseVelocity = previousField.direction * max(previousField.speed, 0.0f);
@@ -147,6 +164,8 @@ namespace WindField
 				                          components.baseAmbientVelocity;
 				components.ambientGust =
 					lerp(previousSample.ambientGust, currentSample.ambientGust, transition);
+				components.ambientTurbulence = lerp(
+					previousSample.ambientTurbulence, currentSample.ambientTurbulence, transition);
 			}
 			components.transientVelocity = 0.0f;
 			components.transientImpulse = 0.0f;

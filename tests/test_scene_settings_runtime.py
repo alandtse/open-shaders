@@ -19,6 +19,96 @@ def braced(source, declaration):
 
 
 class SceneSettingsRuntimeTests(unittest.TestCase):
+    def test_native_embedded_feature_scene_edit_lock(self):
+        library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
+        if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
+            self.skipTest("Uses the Windows build's ImGui library")
+        hooks = (ROOT / "src/SceneSettingsUIHooks.cpp").read_text(encoding="utf-8")
+        source = r'''
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
+#include <vector>
+#include "GUARD_HEADER"
+struct Feature {};
+struct SceneSettingsManager {
+    static SceneSettingsManager* GetSingleton() { static SceneSettingsManager manager; return &manager; }
+    void CaptureFeatureSceneEditChanges(Feature*) {}
+    void CaptureExternalFeatureChanges(Feature*) {}
+};
+Feature* g_currentFeature = nullptr;
+bool g_sceneSettingsActive = false, g_featureSceneEditing = false, g_featureSettingMutation = false;
+int g_sceneControlledItem = 0, g_cachedBlockedFeatureSceneEditSettings = 0;
+const int* g_blockedFeatureSceneEditSettings = nullptr;
+std::vector<bool> g_sceneControlledGroupStack;
+struct SceneControlFrame {
+    int item;
+    std::vector<bool> groups;
+    const int* blockedEditSettings;
+    bool featureSettingMutation;
+};
+std::vector<SceneControlFrame> g_sceneControlFrames;
+void RefreshBlockedFeatureSceneEditSettings(Feature&) {}
+void ClearControlledItem() { g_sceneControlledItem = 0; }
+namespace SceneSettingsUIHooks {
+CONSTRUCTOR
+DESTRUCTOR
+}
+void check(bool condition, const char* message) {
+    if (!condition) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+bool drawDisabled() {
+    bool value = false;
+    ImGui::Checkbox("Control", &value);
+    return (GImGui->LastItemData.ItemFlags & ImGuiItemFlags_Disabled) != 0;
+}
+int main() {
+    ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(800, 600);
+    unsigned char* pixels; int width, height;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    ImGui::NewFrame();
+    ImGui::Begin("Fixture");
+    Feature parent, child, grandchild;
+    using SceneSettingsUIHooks::FeatureDrawGuard;
+    for (bool editing : {false, true})
+        for (bool disabled : {false, true})
+            for (bool controlled : {false, true}) {
+                ImGui::BeginDisabled(disabled);
+                const int stackDepth = GImGui->DisabledStackSize;
+                {
+                    FeatureDrawGuard parentGuard(&parent, controlled, editing);
+                    check(drawDisabled() == disabled, "Parent availability is preserved");
+                    const auto* parentBlockedSettings = g_blockedFeatureSceneEditSettings;
+                    {
+                        FeatureDrawGuard childGuard(&child, controlled);
+                        check(drawDisabled() == (disabled || editing), "Embedded controls are gray during parent scene editing");
+                        {
+                            FeatureDrawGuard grandchildGuard(&grandchild, controlled);
+                            check(drawDisabled() == (disabled || editing), "Deeper embedded panels inherit the lock");
+                        }
+                        check(g_currentFeature == &child, "Nested guard restores its owning feature");
+                    }
+                    check(g_currentFeature == &parent && g_featureSceneEditing == editing, "Embedded guard restores parent edit state");
+                    check(g_blockedFeatureSceneEditSettings == parentBlockedSettings, "Parent setting locks survive embedded drawing");
+                    check(drawDisabled() == disabled, "Parent controls regain their previous availability");
+                }
+                check(GImGui->DisabledStackSize == stackDepth, "Feature guards balance the ImGui disabled stack");
+                check(!g_currentFeature && !g_featureSceneEditing && !g_sceneSettingsActive, "Feature guards restore outer state");
+                ImGui::EndDisabled();
+            }
+    ImGui::End(); ImGui::Render(); ImGui::DestroyContext();
+}
+'''
+        source = source.replace("GUARD_HEADER", (ROOT / "src/SceneSettingsUIHooks.h").as_posix())
+        source = source.replace("CONSTRUCTOR", braced(hooks, "FeatureDrawGuard::FeatureDrawGuard("))
+        source = source.replace("DESTRUCTOR", braced(hooks, "FeatureDrawGuard::~FeatureDrawGuard("))
+        self.compile_and_run(source, imgui_root=library_root)
+
     def test_native_toolbar_loading_and_overwrite_locks(self):
         manager = MANAGER_PATH.read_text(encoding="utf-8")
         source = r'''
@@ -148,6 +238,7 @@ bool IsSceneControllable(const SettingMetadata&) { return true; }
 }
 struct Feature { std::string_view GetShortName() const { return "Fixture"; } } feature;
 Feature* g_currentFeature = &feature;
+bool g_featureSceneEditing = true;
 bool ShouldBlockSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.blocked; }
 bool ShouldOutlineSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.outlined; }
 namespace Util { float GetUIScale() { return 1.0f; } }
@@ -156,8 +247,8 @@ void ClearControlledItem() {}
 void FinishControlledItem() {}
 bool TrackFeatureSettingMutation(bool changed) { return changed; }
 MATCHING
-const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*) {
-    return FindUniqueBlockedSettingForLabel(label, false);
+const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*, bool choices, bool* metadataMatched) {
+    return FindUniqueBlockedSettingForLabel(label, choices, metadataMatched);
 }
 DRAWING
 void check(bool condition, const char* message) {
@@ -270,7 +361,10 @@ unsigned int g_controlDetourDepth = 0;
 std::unordered_set<const Setting*> g_cachedAlteredFeatureSceneEditSettings;
 const Setting* matched = nullptr;
 bool blocked = false;
-const Setting* FindControlSetting(const char*, const void*) { return matched; }
+const Setting* FindControlSetting(const char*, const void*, bool, bool* metadataMatched) {
+    *metadataMatched = matched != nullptr;
+    return matched;
+}
 bool ShouldBlockSetting(const Setting&) { return blocked; }
 void ClearControlledItem() {}
 void FinishControlledItem() {}

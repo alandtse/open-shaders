@@ -6,9 +6,11 @@
 
 namespace GrassWind
 {
-	float CalculateFlutterWave(float2 instanceCoordinates, float windTimer)
+	static const float FlutterDisplacementRatio = 0.25f;
+
+	float CalculateFlutterWave(float phase)
 	{
-		float windAngle = 0.4 * ((instanceCoordinates.x + instanceCoordinates.y) * -0.0078125 + windTimer);
+		float windAngle = 0.4 * phase;
 		float windAngleSin, windAngleCos;
 		sincos(windAngle, windAngleSin, windAngleCos);
 
@@ -16,6 +18,11 @@ namespace GrassWind
 		float windTmp1 = sin(Math::PI * windAngleSin);
 		float windTmp2 = sin(Math::TAU * windAngleSin);
 		return (windTmp1 + windTmp2) * 0.3 + windTmp3;
+	}
+
+	float CalculateFlutterWave(float2 instanceCoordinates, float windTimer)
+	{
+		return CalculateFlutterWave((instanceCoordinates.x + instanceCoordinates.y) * -0.0078125 + windTimer);
 	}
 
 	float GetWindIntensityOverrideScale()
@@ -38,6 +45,19 @@ namespace GrassWind
 		                  (CalculateFlutterWave(instanceCoordinates, windTimer) * (0.5 * (tipWeight * tipWeight)));
 
 		return float3(windVector.xy, 0) * windPower;
+	}
+
+	float3 CalculateFlutterDisplacement(
+		float tipWeight, float bladeReach, float3 bendAxis, float flutter)
+	{
+		float axisLength = length(bendAxis.xy);
+		if (axisLength <= EPSILON_WIND_RESPONSE)
+			return 0.0f.xxx;
+		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
+		float weight = saturate(tipWeight);
+		float flutterDrive = flutter * (weight * weight);
+		float windPower = bladeReach * FlutterDisplacementRatio * flutterDrive;
+		return flutterDirection * windPower;
 	}
 
 	/** @brief Deforms a grass vertex from an already-resolved rigid bend. */

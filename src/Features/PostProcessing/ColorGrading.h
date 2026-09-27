@@ -10,6 +10,8 @@ struct ColorGrading : public PostProcessFeature
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.color_grading.name", "Color Grading and Tone Mapping"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.color_grading.description", "Color grading operations and multiple tone mapping options."); }
 	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
+	/** @brief Returns the configured display gamut, including while grading is disabled. */
+	Gamut GetDisplayGamut() const;
 
 	template <size_t N, typename T>
 	constexpr auto make_array(T value) -> std::array<T, N>
@@ -103,6 +105,7 @@ struct ColorGrading : public PostProcessFeature
 		float4 asccdl[3];
 		float4 liftgammagain[3];  // lift，gamma，gain
 		float4 inOutGamma;        // .z = input gamma, .w = output gamma
+		float4 inputLuminance;
 		float4 oklchSaturation;
 		float4 oklchColorMixer[7];
 		float4 contrast;
@@ -114,14 +117,14 @@ struct ColorGrading : public PostProcessFeature
 		float4 shadowsHighlightsRange;  // shadowBegin, shadowEnd, highlightBegin, highlightEnd
 
 		float4 tonemapParams[2];
-		float4 inputToWorking[3];    // sRGB → working color space
+		float4 inputToWorking[3];    // scene RGB → working color space
 		float4 workingToTonemap[3];  // working → tonemapper native space
 		float4 tonemapToOutput[3];   // tonemapper native → output space
 
-		float4 workingToXYZ[3];  // working → CIE XYZ (for white balance)
-		float4 xyzToWorking[3];  // CIE XYZ → working (for white balance)
+		float4 workingToXYZ[3];  // working → XYZ D65
+		float4 xyzToWorking[3];  // XYZ D65 → working
 
-		float4 workingWhitePoint;  // .xy = native white chromaticity of working space
+		float4 workingWhitePoint;  // .xy = D65 reference white of the XYZ matrices
 
 		float4 shadowsOffset;  // SMH color offsets
 		float4 midtonesOffset;
@@ -152,14 +155,16 @@ struct ColorGrading : public PostProcessFeature
 
 	bool recompileFlag = true;
 	bool saveImagesFlag = false;
-	winrt::com_ptr<ID3D11ComputeShader> colorgradingCS = nullptr;
+	winrt::com_ptr<ID3D11PixelShader> colorgradingPS = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> lutgenCS = nullptr;
+	/** Returns whether both shader stages are ready for the active display mode. */
+	bool IsReadyForTonemapping() const;
 
 	winrt::com_ptr<ID3D11SamplerState> linearSampler = nullptr;
 
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
-	void CompileComputeShaders();
+	void CompileShaders();
 
 	virtual void RestoreDefaultSettings() override;
 	virtual void LoadSettings(json&) override;
@@ -169,7 +174,7 @@ struct ColorGrading : public PostProcessFeature
 
 	virtual void Draw(TextureInfo&) override;
 	void ResolveTonemapperFromSettings();
-	void UpdateColorSpaceTransforms(bool hdrEnabled = false);
+	void UpdateColorSpaceTransforms(bool hdrEnabled, Gamut inputGamut);
 
 	void OutputTextures();
 

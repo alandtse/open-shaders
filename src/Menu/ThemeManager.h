@@ -190,6 +190,15 @@ public:
 		static constexpr float BUTTON_PADDING = 16.0f;
 		static constexpr float BUTTON_SPACING = 8.0f;
 		static constexpr float OVERLAY_WINDOW_POSITION = 10.0f;
+		static constexpr float LIGHT_LIMIT_OVERLAY_WIDTH = 640.0f;
+		static constexpr float LIGHT_LIMIT_OVERLAY_HEIGHT = 480.0f;
+		static constexpr float LIGHT_LIMIT_OVERLAY_MIN_WIDTH = 440.0f;
+		static constexpr float LIGHT_LIMIT_OVERLAY_MIN_HEIGHT = 320.0f;
+		static constexpr float SHADOW_LIGHT_FILTER_WIDTH = 180.0f;
+		static constexpr float SHADOW_LIGHT_SWATCH_WIDTH = 22.0f;
+		static constexpr float SHADOW_LIGHT_SWATCH_HEIGHT = 16.0f;
+		static constexpr float SHADOW_VRAM_OUTLINE_WIDTH = 2.0f;
+		static constexpr int SHADOW_FORMULA_VISIBLE_ROWS = 12;
 		static constexpr float FONT_CACHE_EPSILON = 0.01f;
 		static constexpr float CURSOR_POSITION_PADDING = 14.0f;
 		static constexpr float SEPARATOR_THICKNESS = 3.0f;

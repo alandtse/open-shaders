@@ -59,7 +59,7 @@ public:
 		float4 inscatteringTint = { 1.0f, 1.0f, 1.0f, 1.0f };
 		float cubemapMipLevel = 8.0f;
 		float sunlightAttenuationAmount = 1.0f;
-		uint respectVanillaFogFade = 0;
+		uint respectVanillaFogFade = 1;
 		uint disableVanillaFog = 1;
 		float4 fogInscatteringColor = { 0.0f, 0.0f, 0.0f, 1.0f };
 		float originalFogColorAmount = 0.0f;
@@ -82,13 +82,36 @@ public:
 		float volumetricSampleJitterMultiplier = 0.0f;
 		float volumetricUpsampleJitterMultiplier = 1.0f;
 		float volumetricLocalLightScatteringIntensity = 1.0f;
-		float2 pad0;
+		uint useVanillaFogSettings = 1;
+		float vanillaFogMaxOpacity = 1.0f;
+		float vanillaFogDensity = 0.0f;
+		float vanillaFogNear = 0.0f;
+		float vanillaFogFar = 40960.0f;
+		float vanillaFogPower = 1.0f;
+		float vanillaFogStrength = 1.25f;
+		float3 pad0 = {};
+		float4 vanillaFogNearColor = {};
+		float4 vanillaFogFarColor = {};
+		float fogLightingInfluence = 0.35f;
+		float distanceHazeMaxOpacity = 0.0f;
+		float distanceHazeStartDistance = 15000.0f;
+		float distanceHazeFadeDistance = 60000.0f;
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
+	static_assert(offsetof(Settings, vanillaFogNearColor) == 224);
+	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
+	static_assert(offsetof(Settings, distanceHazeMaxOpacity) == 260);
+	static_assert(sizeof(Settings) == 272);
 
+	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;
 
 private:
+	void DrawGeneralSettings();
+	void DrawVolumetricSettings();
+
+	Settings previousFogSettings = {};
+
 	struct VolumetricFogCB
 	{
 		DirectX::XMUINT4 gridSizeAndFlags = {};

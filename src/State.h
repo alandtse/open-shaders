@@ -407,6 +407,8 @@ public:
 	 * @param a_shader Shader to bind for; defaults to the currently bound shader.
 	 */
 	void BindVertexPermutationData(const RE::BSShader* a_shader = nullptr);
+	/** @brief Binds sharedDataCB to the compute stage, plus featureDataCB when a_withFeatureData. */
+	void BindSharedDataCS(ID3D11DeviceContext* a_context, bool a_withFeatureData = true) const;
 	/**
 	 * @brief Checks whether directional shadows are available for the current scene.
 	 * @returns true if directional shadows are present, false otherwise.
@@ -423,7 +425,7 @@ public:
 		float EffectRadius;
 		float WindIntensityOverride;
 		uint OverrideWindIntensity;
-		float pad0;
+		uint EnableGrassWindSpringBend;
 
 		float TreeWindUpperBendRange;
 		float TreeWindMaximumDisplacementPercent;
@@ -460,6 +462,7 @@ public:
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
 			       OverrideWindIntensity == other.OverrideWindIntensity &&
+			       EnableGrassWindSpringBend == other.EnableGrassWindSpringBend &&
 			       TreeWindUpperBendRange == other.TreeWindUpperBendRange &&
 			       TreeWindMaximumDisplacementPercent == other.TreeWindMaximumDisplacementPercent &&
 			       TreeBendModelSensitivity == other.TreeBendModelSensitivity &&

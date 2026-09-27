@@ -26,7 +26,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void LocalExposure::DrawSettings()
 {
 	auto* exposure = owner ? owner->GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure) : nullptr;
-	if (!exposure || !exposure->enabled) {
+	if (!exposure || !exposure->IsActive()) {
 		ImGui::SliderFloat(T("feature.post_processing.local_exposure.exposure", "Exposure"), &settings.Exposure, 0.f, 4.f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T("feature.post_processing.local_exposure.manual_brightness_normalization_used_when_histogram_auto_exposure", "Manual brightness normalization used when Histogram Auto Exposure is disabled. Higher values make the scene behave brighter."));
@@ -100,6 +100,7 @@ void LocalExposure::SaveSettings(json& o_json)
 
 void LocalExposure::SetupResources()
 {
+	outputReady = false;
 	auto renderer = globals::game::renderer;
 
 	// Get screen dimensions from game render target
@@ -293,6 +294,7 @@ void LocalExposure::SetupResources()
 
 void LocalExposure::ClearShaderCache()
 {
+	outputReady = false;
 	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
@@ -475,4 +477,5 @@ void LocalExposure::Draw(TextureInfo& inout_tex)
 
 	// NOTE: We do not modify inout_tex. Composite consumes the base luminance map.
 	state->EndPerfEvent();
+	outputReady = true;
 }

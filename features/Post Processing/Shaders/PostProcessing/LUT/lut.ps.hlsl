@@ -1,7 +1,12 @@
+// LUT application: purely per-pixel lookup. SV_Position at pixel centers is
+// tid + 0.5.
+
+#include "PostProcessing/fullscreen.hlsli"
 
 #include "Common/Color.hlsli"
 
-RWTexture2D<float4> RWTexOut : register(u0);
+static const uint GamutACEScg = 1;
+static const uint GamutRec2020 = 2;
 
 Texture2D<float3> TexColor : register(t0);
 Texture2D<float3> TexLut : register(t1);
@@ -10,7 +15,7 @@ Texture3D<float3> TexLut3D : register(t2);
 cbuffer LUTCB : register(b1)
 {
 	float3 InputMin : packoffset(c0.x);
-	float pad : packoffset(c0.w);
+	uint InputGamut : packoffset(c0.w);
 	float3 InputMax : packoffset(c1.x);
 	int LutType : packoffset(c1.w);
 };
@@ -28,7 +33,10 @@ float3 biLerp(in float3 values[8], in float3 lerpFactors)
 	return z;
 }
 
-[numthreads(8, 8, 1)] void main(uint2 tid : SV_DispatchThreadID) {
+float4 main(FullscreenTriangleVSOutput input) : SV_Target
+{
+	uint2 tid = uint2(input.Position.xy);
+
 	uint3 dims = 0;
 	[branch] if (LutType == 3)
 		TexLut3D.GetDimensions(dims.x, dims.y, dims.z);
@@ -37,11 +45,13 @@ float3 biLerp(in float3 values[8], in float3 lerpFactors)
 	float3 color = TexColor[tid].rgb;
 	[branch] if (LutType == 0)
 	{
-		float luma = Color::RGBToLuminance(color);
+		float3 luminanceWeights = InputGamut == GamutACEScg ? AP1_RGB2Y : InputGamut == GamutRec2020 ? Rec2020_2_XYZ_MAT[1] :
+		                                                                                               sRGB_2_XYZ_MAT[1];
+		float luma = Color::RGBToLuminance(color, luminanceWeights);
 		float pxCoord = (luma - InputMin.x) / (InputMax.x - InputMin.x) * (dims.x - 1);
 		int px0 = clamp(int(pxCoord), 0, dims.x - 1);
 		int px1 = min(px0 + 1, dims.x - 1);
-		float targetLuma = lerp(TexLut[int2(px0, 1)].x, TexLut[int2(px1, 1)].x, saturate(pxCoord - px0));
+		float targetLuma = lerp(TexLut[int2(px0, 0)].x, TexLut[int2(px1, 0)].x, saturate(pxCoord - px0));
 
 		color *= targetLuma / (luma + 1e-8);
 	}
@@ -52,9 +62,9 @@ float3 biLerp(in float3 values[8], in float3 lerpFactors)
 		int3 px1 = min(px0 + 1, dims.x - 1);
 		float3 lerpFactors = saturate(pxCoord - px0);
 
-		color.r = lerp(TexLut[int2(px0.x, 1)].x, TexLut[int2(px1.x, 1)].x, lerpFactors.x);
-		color.g = lerp(TexLut[int2(px0.y, 1)].x, TexLut[int2(px1.y, 1)].x, lerpFactors.y);
-		color.b = lerp(TexLut[int2(px0.z, 1)].x, TexLut[int2(px1.z, 1)].x, lerpFactors.z);
+		color.r = lerp(TexLut[int2(px0.x, 0)].x, TexLut[int2(px1.x, 0)].x, lerpFactors.x);
+		color.g = lerp(TexLut[int2(px0.y, 0)].x, TexLut[int2(px1.y, 0)].x, lerpFactors.y);
+		color.b = lerp(TexLut[int2(px0.z, 0)].x, TexLut[int2(px1.z, 0)].x, lerpFactors.z);
 	}
 	else
 	{
@@ -92,5 +102,5 @@ float3 biLerp(in float3 values[8], in float3 lerpFactors)
 		color = biLerp(lutSamples, lerpFactors);
 	}
 
-	RWTexOut[tid] = float4(color, 1);
+	return float4(color, 1);
 }

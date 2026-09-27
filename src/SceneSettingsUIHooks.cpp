@@ -335,8 +335,10 @@ namespace
 	};
 
 	const SceneSettingsCatalog::SettingMetadata* FindUniqueBlockedSettingForLabel(
-		const char* label, bool choiceLabelsOnly)
+		const char* label, bool choiceLabelsOnly, bool* metadataMatched = nullptr)
 	{
+		if (metadataMatched)
+			*metadataMatched = false;
 		if (!label || GetVisibleLabel(label).empty())
 			return nullptr;
 
@@ -376,6 +378,8 @@ namespace
 				match = &candidate;
 			}
 		}
+		if (metadataMatched)
+			*metadataMatched = match && !ambiguous;
 		return match && !ambiguous && (ShouldBlockSetting(*match) || ShouldOutlineSetting(*match)) ? match : nullptr;
 	}
 
@@ -406,6 +410,7 @@ namespace
 	{
 		const SceneSettingsCatalog::SettingMetadata* setting = nullptr;
 		bool metadataMatched = false;
+		bool ambiguous = false;
 	};
 
 	RegisteredVirtualControlMatch FindRegisteredVirtualControlSetting(const char* label)
@@ -427,24 +432,29 @@ namespace
 				ImHashStr(control.itemLabel.data(), control.itemLabel.size(), pushedId) != itemId)
 				continue;
 			if (match)
-				return { nullptr, true };
+				return { nullptr, true, true };
 			match = &control;
 		}
 		return { match ? FindBlockedAggregateSetting(*match) : nullptr, match != nullptr };
 	}
 
 	const SceneSettingsCatalog::SettingMetadata* FindVirtualControlSetting(
-		const char* label, bool choiceLabelsOnly)
+		const char* label, bool choiceLabelsOnly, bool* metadataMatched)
 	{
 		const auto registered = FindRegisteredVirtualControlSetting(label);
-		if (registered.metadataMatched)
+		if (registered.metadataMatched) {
+			if (metadataMatched)
+				*metadataMatched = !registered.ambiguous;
 			return registered.setting;
-		return FindUniqueBlockedSettingForLabel(label, choiceLabelsOnly);
+		}
+		return FindUniqueBlockedSettingForLabel(label, choiceLabelsOnly, metadataMatched);
 	}
 
 	const SceneSettingsCatalog::SettingMetadata* FindControlSetting(
-		const char* label, const void* valueAddress, bool choiceLabelsOnly = false)
+		const char* label, const void* valueAddress, bool choiceLabelsOnly = false, bool* metadataMatched = nullptr)
 	{
+		if (metadataMatched)
+			*metadataMatched = false;
 		if (!IsSceneControlGuardActive() || !g_currentFeature)
 			return nullptr;
 
@@ -453,7 +463,9 @@ namespace
 			settingAddress = valueAddress;
 		auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, settingAddress);
 		if (!setting)
-			return FindVirtualControlSetting(label, choiceLabelsOnly);
+			return FindVirtualControlSetting(label, choiceLabelsOnly, metadataMatched);
+		if (metadataMatched)
+			*metadataMatched = true;
 		if (!SceneSettingsManager::IsSceneSettingAllowed(
 				setting->featureShortName, setting->settingPath, setting->settingKey))
 			return g_featureSceneEditing ? setting : nullptr;
@@ -505,10 +517,13 @@ namespace
 		if (g_controlDetourDepth > 0)
 			return draw();
 		ClearControlledItem();
-		const auto* setting = FindControlSetting(label, valueAddress);
+		bool metadataMatched = false;
+		const auto* setting = FindControlSetting(label, valueAddress, false, &metadataMatched);
 		SettingOutlineGuard outline(setting);
-		if (!setting || !ShouldBlockSetting(*setting))
+		if (setting ? !ShouldBlockSetting(*setting) : !g_featureSceneEditing || metadataMatched) {
+			ControlDetourScope detourScope;
 			return TrackFeatureSettingMutation(draw());
+		}
 
 		ImGui::BeginDisabled();
 		{
@@ -563,6 +578,17 @@ namespace
 
 	bool CheckboxDetour(const char* label, bool* value)
 	{
+		if (g_controlDetourDepth == 0 && g_featureSceneEditing && label) {
+			const auto featureShortName = g_currentFeature->GetShortName();
+			for (const auto& control : SceneSettingsCatalog::GetNavigationControls()) {
+				if (control.featureShortName == featureShortName &&
+					MatchLocalizedLabel(label, control.displayName, control.displayNameKey) >= ControlLabelMatch::ExactText) {
+					ClearControlledItem();
+					ControlDetourScope detourScope;
+					return g_checkbox(label, value);
+				}
+			}
+		}
 		return DrawControl(label, value, [&] { return g_checkbox(label, value); });
 	}
 
@@ -812,9 +838,11 @@ namespace
 		if (g_controlDetourDepth > 0)
 			return g_beginCombo(label, previewValue, flags);
 		ClearControlledItem();
-		const auto* setting = FindControlSetting(label, nullptr);
+		bool metadataMatched = false;
+		const auto* setting = FindControlSetting(label, nullptr, false, &metadataMatched);
 		SettingOutlineGuard outline(setting);
-		if (!setting || !ShouldBlockSetting(*setting))
+		const bool unavailable = g_featureSceneEditing && !metadataMatched && Util::GetActiveControlStorageAddress();
+		if (!unavailable && (!setting || !ShouldBlockSetting(*setting)))
 			return g_beginCombo(label, previewValue, flags);
 
 		ImGui::BeginDisabled();
@@ -846,6 +874,8 @@ namespace SceneSettingsUIHooks
 		g_blockedFeatureSceneEditSettings = nullptr;
 		g_featureSettingMutation = false;
 		g_currentFeature = feature;
+		if (previousSceneEditing && feature != previousFeature)
+			ImGui::BeginDisabled();
 		g_featureSceneEditing = sceneEditing && feature != nullptr;
 		g_sceneSettingsActive = sceneControlled && !g_featureSceneEditing && feature != nullptr;
 		if (g_featureSceneEditing) {
@@ -857,6 +887,8 @@ namespace SceneSettingsUIHooks
 
 	FeatureDrawGuard::~FeatureDrawGuard()
 	{
+		if (previousSceneEditing && g_currentFeature != previousFeature)
+			ImGui::EndDisabled();
 		if (g_currentFeature && g_featureSettingMutation) {
 			if (g_featureSceneEditing)
 				SceneSettingsManager::GetSingleton()->CaptureFeatureSceneEditChanges(g_currentFeature);

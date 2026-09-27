@@ -102,7 +102,7 @@ public:
 
 		float invisibleFadeCull;
 		float simpleShadingPixelSize;
-		float padding;
+		float hiZProjScale;
 		float midLODPixelSize;
 
 		float meshLODBandPx;

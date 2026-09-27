@@ -164,13 +164,16 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 		}
 
 		bool g_hooked = false;
-		RE::FxDelegate::CallbackDefn g_originalOptionChange{};
-		RE::FxDelegate::CallbackDefn g_originalRequestGameplay{};
-		RE::FxDelegate::CallbackDefn g_originalRequestDisplay{};
-		RE::FxDelegate::CallbackDefn g_originalRequestAudio{};
+		RE::FxDelegate* g_hookedDelegate = nullptr;
+		// JournalMenu destroys its embedded handlers on close, so retain only callback functions.
+		RE::FxDelegateHandler::CallbackFn* g_originalOptionChange = nullptr;
+		RE::FxDelegateHandler::CallbackFn* g_originalRequestGameplay = nullptr;
+		RE::FxDelegateHandler::CallbackFn* g_originalRequestDisplay = nullptr;
+		RE::FxDelegateHandler::CallbackFn* g_originalRequestAudio = nullptr;
 		std::string g_currentTab;
 		bool g_haveCurrentTab = false;
 		bool g_settingsListInjected = false;
+		bool g_optionsListTouched = false;
 		// g_currentTab only updates on native-tab selection, so this stops
 		// Tick() re-injecting its rows over the custom tab.
 		bool g_showingCustomTab = false;
@@ -222,8 +225,8 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 				}
 			}
 
-			if (g_originalOptionChange.callback)
-				g_originalOptionChange.callback(a_params);
+			if (g_originalOptionChange)
+				g_originalOptionChange(a_params);
 		}
 
 		// Fires when the player picks a native tab - forwarded to the real
@@ -233,8 +236,9 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			g_currentTab = "Gameplay";
 			g_haveCurrentTab = true;
 			g_showingCustomTab = false;
-			if (g_originalRequestGameplay.callback)
-				g_originalRequestGameplay.callback(a_params);
+			g_optionsListTouched = false;
+			if (g_originalRequestGameplay)
+				g_originalRequestGameplay(a_params);
 		}
 
 		void OnRequestDisplayOptions(const RE::FxDelegateArgs& a_params)
@@ -242,8 +246,9 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			g_currentTab = "Display";
 			g_haveCurrentTab = true;
 			g_showingCustomTab = false;
-			if (g_originalRequestDisplay.callback)
-				g_originalRequestDisplay.callback(a_params);
+			g_optionsListTouched = false;
+			if (g_originalRequestDisplay)
+				g_originalRequestDisplay(a_params);
 		}
 
 		void OnRequestAudioOptions(const RE::FxDelegateArgs& a_params)
@@ -251,23 +256,26 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			g_currentTab = "Audio";
 			g_haveCurrentTab = true;
 			g_showingCustomTab = false;
-			if (g_originalRequestAudio.callback)
-				g_originalRequestAudio.callback(a_params);
+			g_optionsListTouched = false;
+			if (g_originalRequestAudio)
+				g_originalRequestAudio(a_params);
 		}
 
 		void InstallHooks(RE::FxDelegate* a_fxDelegate)
 		{
 			if (!a_fxDelegate)
 				return;
+			if (g_hooked && g_hookedDelegate == a_fxDelegate)
+				return;
 
-			const auto hook = [&](const char* a_name, RE::FxDelegate::CallbackDefn& a_original,
+			const auto hook = [&](const char* a_name, RE::FxDelegateHandler::CallbackFn*& a_original,
 								  RE::FxDelegateHandler::CallbackFn* a_replacement) {
 				RE::GString name(a_name);
-				RE::FxDelegate::CallbackDefn current{};
-				a_fxDelegate->callbacks.Get(name, &current);
-				if (current.callback != a_replacement)
-					a_original = current;
-				a_fxDelegate->callbacks.Set(name, RE::FxDelegate::CallbackDefn{ a_original.handler, a_replacement });
+				auto* current = a_fxDelegate->callbacks.Get(name);
+				if (!current || current->callback == a_replacement)
+					return;
+				a_original = current->callback;
+				current->callback = a_replacement;
 			};
 
 			hook("OptionChange", g_originalOptionChange, &OnOptionChange);
@@ -276,6 +284,7 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			hook("RequestAudioOptions", g_originalRequestAudio, &OnRequestAudioOptions);
 
 			g_hooked = true;
+			g_hookedDelegate = a_fxDelegate;
 			logger::debug("VanillaSettingsEngine: OptionChange/Request*Options hooked");
 		}
 
@@ -833,15 +842,20 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 					continue;
 
 				const auto ours = SettingForClip(clip);
-				if (ours != kNoSetting)
-					SyncRowValue(clip, g_settings[ours]);
-
-				// Vanilla's rows get the arrow pass and the field width too.
-				RefreshDropdownArrows(clip);
-				ApplyTextFieldWidth(clip, ours == kNoSetting ? nullptr : &g_settings[ours]);
-
-				if (ours == kNoSetting)
+				if (ours == kNoSetting) {
+					if (g_textFieldWidth > 0.0) {
+						RE::GFxValue textField, current;
+						if (clip.GetMember("textField", &textField) && textField.IsObject() &&
+							textField.GetMember("_width", &current) && current.IsNumber() &&
+							std::abs(current.GetNumber() - g_textFieldWidth) > 0.5)
+							ApplyTextFieldWidth(clip, nullptr);
+					}
 					continue;
+				}
+
+				SyncRowValue(clip, g_settings[ours]);
+				RefreshDropdownArrows(clip);
+				ApplyTextFieldWidth(clip, &g_settings[ours]);
 				ApplyRowState(clip, g_settings[ours]);
 				RefreshRowText(clip, g_settings[ours]);
 				if (g_settings[ours].commitPending)
@@ -856,8 +870,10 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			RE::GFxValue entryList;
 			if (!a_list.GetMember("EntriesA", &entryList) || !entryList.IsArray())
 				return;
-			if (HasOurEntries(entryList))
+			if (HasOurEntries(entryList)) {
+				g_optionsListTouched = true;
 				return;
+			}
 
 			std::uint32_t added = 0;
 			for (std::size_t i = 0; i < g_settings.size(); ++i) {
@@ -881,6 +897,7 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			// repairing the row here.
 			a_list.Invoke("UpdateList");
 			RefreshRowAppearance(a_list);
+			g_optionsListTouched = true;
 			logger::info("VanillaSettingsEngine: injected {} setting(s) into '{}'", added, a_tab);
 		}
 
@@ -961,6 +978,7 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			RefreshRowAppearance(list);
 
 			g_showingCustomTab = true;
+			g_optionsListTouched = true;
 			logger::info("VanillaSettingsEngine: showing custom tab '{}' ({} setting(s))", a_tab, count);
 		}
 
@@ -1224,12 +1242,11 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 		if (g_settings.empty())
 			return;
 
-		if (!g_hooked && a_this->fxDelegate)
+		if (a_this->fxDelegate)
 			InstallHooks(a_this->fxDelegate.get());
 
 		InjectSettingsList(a_view, a_systemPage);
 
-		// Kept in step with scrolling, which vanilla drives on its own.
 		if (g_settingsListInjected) {
 			RE::GFxValue panel, tabList;
 			if (a_systemPage.GetMember("SettingsPanel", &panel) && panel.IsObject() &&
@@ -1252,15 +1269,12 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			scope.SetMember("onCSOptionPress", fn);
 			scope.SetMember("__cs_page", a_systemPage);
 
-			// Added, not swapped: vanilla's own handler still runs.
 			const RE::GFxValue add[3] = { RE::GFxValue("itemPress"), scope, RE::GFxValue("onCSOptionPress") };
 			list.Invoke("addEventListener", nullptr, add, 3);
 			logger::debug("VanillaSettingsEngine: OptionsList itemPress hooked");
 		}
 
-		// Every tick rather than on change: a freshly duplicated clip can take
-		// more than one frame to finish initializing.
-		if (haveList) {
+		if (haveList && (g_optionsListTouched || g_showingCustomTab)) {
 			RefreshRowAppearance(list);
 			RefreshDescription(list);
 			EnsureScrollbar(list);
@@ -1280,9 +1294,11 @@ namespace NativeMenu::Vendor::VanillaSettingsEngine
 			setting.flashTicks = 0;
 
 		g_hooked = false;
-		g_haveCurrentTab = false;
-		g_settingsListInjected = false;
+		g_hookedDelegate = nullptr;
 		g_optionsPressHooked = false;
+		g_settingsListInjected = false;
+		g_haveCurrentTab = false;
+		g_optionsListTouched = false;
 		g_showingCustomTab = false;
 		g_rowWidth = 0.0;
 		g_textFieldWidth = 0.0;

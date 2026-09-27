@@ -8,10 +8,15 @@ The single most important automated check is the **shader-cache gate**: a build
 that compiles all shaders in-game with zero failures and loads every feature is
 the baseline bar for a release.
 
+For a release shipping a prebuilt cache, also run the
+[prebuilt cache reuse test](prebuilt-cache-validation.md). Zero compile failures
+alone does not prove that the shipped cache was reused.
+
 This runbook covers full release validation, but the same devbench tools are also the
 fastest way to verify a single PR's runtime-affecting change during development —
 launch, call the relevant `openshaders.*` tool(s), and check the log — without waiting
-for a full release pass.
+for a full release pass. For a single PR, verifying on VR plus one flat variant (SE or AE) is
+sufficient; run both editions for a release candidate.
 
 ## Prerequisites
 

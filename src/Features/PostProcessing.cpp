@@ -1,5 +1,9 @@
 #include "PostProcessing.h"
 
+#include "GpuPass.h"
+#include "LinearLighting.h"
+#include "PostProcessing/RasterPass.h"
+
 #include "IconsFontAwesome5.h"
 #include "imgui_stdlib.h"
 
@@ -21,6 +25,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 namespace
 {
+	constexpr float kLegacySceneGamma = 1.6f;
+
 	constexpr bool IsPipelineFeatureEnabledByDefault(PostProcessing::FeaturePipelineIndex a_index)
 	{
 		using Index = PostProcessing::FeaturePipelineIndex;
@@ -114,14 +120,40 @@ void PostProcessing::DrawSettings()
 
 	ImGui::Separator();
 
+	const auto drawEnabled = [this](const char* label, PostProcessFeature& feature) {
+		const bool automatic = feature.IsAutoEnabled() ||
+		                       (&feature == GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure) && GetActivePhysicalCameraState());
+		bool enabled = feature.IsActive();
+		ImGui::BeginDisabled(automatic);
+		if (ImGui::Checkbox(label, &enabled))
+			feature.enabled = enabled;
+		ImGui::EndDisabled();
+		if (automatic) {
+			if (auto tooltip = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T("feature.post_processing.cinematic_camera.exposure_required", "Exposure processing is required by Cinematic Camera. Disable Cinematic Camera to restore the saved enable state."));
+		}
+	};
+
 	if (activeSettingsPage == SettingsPage::Pipeline) {
+		if (ImGui::CollapsingHeader(T("feature.post_processing.cinematic_camera.name", "Cinematic Camera"))) {
+			ImGui::TextWrapped("%s", T("feature.post_processing.cinematic_camera.description", "Controls lens, focus, exposure and FOV. Exposure processing runs automatically while the camera is active; other effects must be enabled separately."));
+			ImGui::PushID("CinematicCamera");
+			ImGui::Checkbox(T("feature.post_processing.enabled", "Enabled"), &cinematicCamera.settings.Enabled);
+			if (cinematicCamera.settings.Enabled) {
+				cinematicCamera.DrawSettings();
+				if (auto* exposure = GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure))
+					exposure->DrawCameraExposureReadout();
+			}
+			ImGui::PopID();
+		}
+		ImGui::Separator();
 		for (size_t i = 0; i < pipeline.size(); ++i) {
 			auto& feat = pipeline[i];
 			if (feat && feat->IsVisible()) {
 				auto displayName = feat->GetDisplayName();
 				auto description = feat->GetDesc();
 				ImGui::PushID(feat->GetType().c_str());
-				ImGui::Checkbox("##Enabled", &feat->enabled);
+				drawEnabled("##Enabled", *feat);
 				ImGui::SameLine();
 				if (PostProcessingUI::IconButton(ICON_FA_BARS)) {
 					activePipelineFeature = i;
@@ -161,8 +193,8 @@ void PostProcessing::DrawSettings()
 					ImGui::Text("%s", T("feature.post_processing.recompile_shaders_for_this_sub_feature_only", "Recompile shaders for this sub-feature only."));
 				ImGui::Separator();
 				ImGui::Spacing();
-				ImGui::Checkbox(T("feature.post_processing.enabled", "Enabled"), &feat->enabled);
-				if (feat->enabled) {
+				drawEnabled(T("feature.post_processing.enabled", "Enabled"), *feat);
+				if (feat->IsActive()) {
 					ImGui::Indent();
 					feat->DrawSettings();
 					ImGui::Unindent();
@@ -256,6 +288,11 @@ void PostProcessing::LoadSettings(json& o_json)
 
 void PostProcessing::ProcessSettings(json& o_json)
 {
+	if (o_json.contains("cinematic_camera")) {
+		json cameraSettings = o_json["cinematic_camera"];
+		cinematicCamera.LoadSettings(cameraSettings);
+	}
+
 	logger::debug("Loading post processing settings...");
 
 	for (auto& feat : pipeline) {
@@ -291,6 +328,9 @@ void PostProcessing::SaveSettings(json& o_json)
 	}
 
 	o_json["ppsettings"] = settings;
+	json cameraSettings;
+	cinematicCamera.SaveSettings(cameraSettings);
+	o_json["cinematic_camera"] = cameraSettings;
 }
 
 std::vector<std::string> PostProcessing::LoadPresets()
@@ -334,6 +374,8 @@ bool PostProcessing::LoadPresetFrom(std::string a_name)
 	json previousSettings;
 	SaveSettings(previousSettings);
 	try {
+		if (!a_presets.contains("cinematic_camera"))
+			cinematicCamera.RestoreDefaultSettings();
 		ProcessSettings(a_presets);
 		return true;
 	} catch (const std::exception& e) {
@@ -383,6 +425,7 @@ void PostProcessing::SavePresetTo(std::string a_name)
 
 void PostProcessing::RestoreDefaultSettings()
 {
+	cinematicCamera.RestoreDefaultSettings();
 	bypass = false;
 
 	// Defer the default preset until SetupResources creates the pipeline.
@@ -577,8 +620,21 @@ void PostProcessing::RestorePipelineDefaultEnablement()
 	}
 }
 
+void PostProcessing::CompileCopyShaders()
+{
+	fullscreenVS = nullptr;
+	copyPS = nullptr;
+	if (auto rawPtr = reinterpret_cast<ID3D11VertexShader*>(Util::CompileShader(L"Data\\Shaders\\PostProcessing\\fullscreen.hlsli", {}, "vs_5_0", "FullscreenTriangleVS")))
+		fullscreenVS.attach(rawPtr);
+	if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\PostProcessing\\copy.ps.hlsl", {}, "ps_5_0")))
+		copyPS.attach(rawPtr);
+	if (!fullscreenVS || !copyPS)
+		logger::error("Post Processing input/output shaders unavailable; using the game pipeline");
+}
+
 void PostProcessing::ClearShaderCache()
 {
+	CompileCopyShaders();
 	for (auto& pipe : pipeline) {
 		if (pipe)
 			pipe->ClearShaderCache();
@@ -599,50 +655,44 @@ void PostProcessing::SetupResources()
 		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texMainCopyDesc));
 		texDesc = texMainDesc;
 
-		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
-			.Format = texDesc.Format,
-			.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
-		};
+		texDesc.MipLevels = 1;
+		texDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
+		texDesc.MiscFlags = 0;
 
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
 			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 }
 		};
 
-		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		texDesc.MiscFlags = 0;
-
-		texCopyMain = eastl::make_unique<Texture2D>(texDesc, "Post Processing Main Copy");
-		texCopyMain->CreateUAV(uavDesc);
+		texCopyMain = eastl::make_unique<Texture2D>(texDesc, "PostProcessing::Copy Target");
+		texCopyMain->CreateRTV(rtvDesc);
 
 		if (texMainCopyDesc.Format != texMainDesc.Format) {
 			texDesc = texMainCopyDesc;
-			srvDesc.Format = texDesc.Format;
-			uavDesc.Format = texDesc.Format;
-			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+			rtvDesc.Format = texDesc.Format;
+			texDesc.MipLevels = 1;
+			texDesc.BindFlags = D3D11_BIND_RENDER_TARGET;
 			texDesc.MiscFlags = 0;
 
-			texCopyMainCopy = eastl::make_unique<Texture2D>(texDesc, "Post Processing Main Copy Conversion");
-			texCopyMainCopy->CreateUAV(uavDesc);
+			texCopyMainCopy = eastl::make_unique<Texture2D>(texDesc, "PostProcessing::Copy Target");
+			texCopyMainCopy->CreateRTV(rtvDesc);
 		} else {
 			texCopyMainCopy = nullptr;
 		}
-
-		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-		srvDesc.Format = texDesc.Format;
-		uavDesc.Format = texDesc.Format;
-
-		texAfterTAA = eastl::make_unique<Texture2D>(texDesc, "Post Processing After TAA");
-		texAfterTAA->CreateSRV(srvDesc);
-		texAfterTAA->CreateUAV(uavDesc);
 	}
 
-	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\PostProcessing\\copy.cs.hlsl", {}, "cs_5_0")))
-		copyCS.attach(rawPtr);
+	{
+		auto desc = texCopyMain->desc;
+		desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+		texInput = std::make_unique<Texture2D>(desc, "PostProcessing::Linear Input");
+		texInput->CreateSRV({ .Format = desc.Format, .ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D, .Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 } });
+		texInput->CreateRTV({ .Format = desc.Format, .ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D, .Texture2D = { .MipSlice = 0 } });
+		copyCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CopyCB>(), "PostProcessing::Copy Constants");
+	}
+
+	CompileCopyShaders();
 
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_shared<LocalExposure>();
 	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = std::make_shared<HistogramAutoExposure>();
@@ -669,6 +719,7 @@ void PostProcessing::SetupResources()
 	}
 
 	bokehResources.Setup();
+	Util::RequestTargetLockAPI();
 
 	ApplyPendingSettings();
 }
@@ -688,11 +739,10 @@ void PostProcessing::CopyToRenderTarget(
 	RE::BSGraphics::RenderTargetData& targetRT,
 	Texture2D* convertTex,
 	ID3D11Texture2D* srcTex,
-	ID3D11ShaderResourceView* srcSRV)
+	ID3D11ShaderResourceView* srcSRV, const CopyCB& conversion)
 {
-	// D3D11 rejects a copy whose source and destination are the same resource, which happens
-	// whenever the pipeline left the image in the buffer we are writing back to.
-	if (Util::AsReal(targetRT.texture) == srcTex)
+	const bool convert = conversion.gamma != 1.f || conversion.inputGamut != conversion.outputGamut;
+	if (!targetRT.texture || !srcTex || (!convert && Util::AsReal(targetRT.texture) == srcTex))
 		return;
 
 	auto context = globals::d3d::context;
@@ -703,36 +753,68 @@ void PostProcessing::CopyToRenderTarget(
 	D3D11_TEXTURE2D_DESC targetDesc;
 	targetRT.texture->GetDesc(Util::AsW32(&targetDesc));
 
-	if (srcDesc.Format == targetDesc.Format) {
+	if (!convert && srcDesc.Format == targetDesc.Format) {
 		context->CopySubresourceRegion(Util::AsReal(targetRT.texture), 0, 0, 0, 0, srcTex, 0, nullptr);
 		return;
 	}
 
-	if (!copyCS || !convertTex || !convertTex->uav || !convertTex->resource)
+	if (!copyPS || !fullscreenVS || !convertTex || !convertTex->rtv || !convertTex->resource)
 		return;
 
-	ID3D11ShaderResourceView* srv = srcSRV;
-	ID3D11UnorderedAccessView* uav = convertTex->uav.get();
+	{
+		PostProcessingRaster::RasterPass pass(context);
 
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetShader(copyCS.get(), nullptr, 0);
-	context->Dispatch((convertTex->desc.Width + 7) >> 3, (convertTex->desc.Height + 7) >> 3, 1);
+		copyCB->Update(conversion);
+		ID3D11Buffer* cb = copyCB->CB();
+		context->PSSetConstantBuffers(1, 1, &cb);
+		ID3D11ShaderResourceView* srv = srcSRV;
+		context->PSSetShaderResources(0, 1, &srv);
+		pass.SetTargets({ convertTex->rtv.get() }, (float)convertTex->desc.Width, (float)convertTex->desc.Height);
+		pass.SetShaders(fullscreenVS.get(), copyPS.get());
+		pass.Draw();
 
-	srv = nullptr;
-	uav = nullptr;
-
-	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
-	context->CSSetShaderResources(0, 1, &srv);
-	context->CSSetShader(nullptr, nullptr, 0);
+		srv = nullptr;
+		context->PSSetShaderResources(0, 1, &srv);
+		cb = nullptr;
+		context->PSSetConstantBuffers(1, 1, &cb);
+	}
 
 	context->CopySubresourceRegion(Util::AsReal(targetRT.texture), 0, 0, 0, 0, convertTex->resource.get(), 0, nullptr);
+}
+
+void PostProcessing::BeginLinearProcessing(PostProcessFeature::TextureInfo& texture)
+{
+	auto& ll = globals::features::linearLighting;
+	if (ll.IsLinearLightingActive()) {
+		texture.gamut = ll.settings.enableACEScg ? Gamut::ACEScg : Gamut::Rec709;
+		return;
+	}
+	CS_GPU_PASS("PostProcessing::DecodeInput");
+	auto* context = globals::d3d::context;
+	PostProcessingRaster::RasterPass pass(context);
+	copyCB->Update(CopyCB{ .gamma = kLegacySceneGamma });
+	ID3D11Buffer* cb = copyCB->CB();
+	context->OMSetRenderTargets(0, nullptr, nullptr);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+	context->PSSetConstantBuffers(1, 1, &cb);
+	context->PSSetShaderResources(0, 1, &texture.srv);
+	pass.SetTargets({ texInput->rtv.get() }, (float)texInput->desc.Width, (float)texInput->desc.Height);
+	pass.SetShaders(fullscreenVS.get(), copyPS.get());
+	pass.Draw();
+	ID3D11ShaderResourceView* srv = nullptr;
+	context->PSSetShaderResources(0, 1, &srv);
+	cb = nullptr;
+	context->PSSetConstantBuffers(1, 1, &cb);
+	texture = { texInput->resource.get(), texInput->srv.get() };
 }
 
 void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor)
 {
 	if (feature.WritesToMainTexture()) {
+		const auto gamut = lastTexColor.gamut;
 		feature.Draw(lastTexColor);
+		if (&feature != pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)].get())
+			lastTexColor.gamut = gamut;
 	} else {
 		PostProcessFeature::TextureInfo inTex = lastTexColor;
 		feature.Draw(inTex);
@@ -741,7 +823,7 @@ void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature
 
 void PostProcessing::DrawBeforeUpscaling()
 {
-	if (bypass || IsTonemapOwnedByEffects11())
+	if (bypass || IsTonemapOwnedByEffects11() || !fullscreenVS || !copyPS)
 		return;
 
 	auto& upscaling = globals::features::upscaling;
@@ -755,7 +837,8 @@ void PostProcessing::DrawBeforeUpscaling()
 	auto gameTexMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	PostProcessFeature::TextureInfo lastTexColor = { Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV) };
 
-	state->BeginPerfEvent("[Post Processing] Pre-Upscale");
+	CS_GPU_PASS("PostProcessing::PreUpscale");
+	bool processing = false;
 
 	// update auto-enabled features
 	for (auto& pipe : pipeline) {
@@ -765,19 +848,27 @@ void PostProcessing::DrawBeforeUpscaling()
 
 	// go through each fx
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->enabled && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && pipe->DrawBeforeUpscaling()) {
+		if (pipe && pipe->IsActive() && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && pipe->DrawBeforeUpscaling()) {
+			if (!processing) {
+				globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
+				globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+				if (!inMainLoadingMenu)
+					BeginLinearProcessing(lastTexColor);
+				processing = true;
+			}
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
 
-	CopyToRenderTarget(gameTexMain, texCopyMain.get(), lastTexColor.tex, lastTexColor.srv);
-
-	state->EndPerfEvent();
+	if (processing)
+		CopyToRenderTarget(gameTexMain, texCopyMain.get(), lastTexColor.tex, lastTexColor.srv,
+			CopyCB{ .inputGamut = lastTexColor.gamut, .outputGamut = lastTexColor.gamut, .gamma = inMainLoadingMenu || globals::features::linearLighting.IsLinearLightingActive() ? 1.0f : 1.0f / kLegacySceneGamma });
 }
 
 void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
-	if (bypass)
+	CS_GPU_PASS("PostProcessing::Pipeline");
+	if (bypass || IsTonemapOwnedByEffects11() || !fullscreenVS || !copyPS)
 		return;
 
 	auto renderer = globals::game::renderer;
@@ -799,6 +890,8 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	auto gameTexMain = useMainCopy ? gameTexMainCopyRT : gameTexMainRT;
 	PostProcessFeature::TextureInfo lastTexColor = { Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV) };
+	if (!inMainLoadingMenu)
+		BeginLinearProcessing(lastTexColor);
 	auto gameTexMainAlt = useMainCopy ? gameTexMainRT : gameTexMainCopyRT;
 
 	// update auto-enabled features
@@ -809,13 +902,13 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	// go through each fx
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->enabled && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
+		if (pipe && pipe->IsActive() && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
 
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->enabled && pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
+		if (pipe && pipe->IsActive() && pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
@@ -823,8 +916,20 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 	Texture2D* mainConvertTex = texCopyMain.get();
 	Texture2D* mainCopyConvertTex = texCopyMainCopy ? texCopyMainCopy.get() : texCopyMain.get();
 
-	CopyToRenderTarget(gameTexMain, useMainCopy ? mainCopyConvertTex : mainConvertTex, lastTexColor.tex, lastTexColor.srv);
-	CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex, lastTexColor.tex, lastTexColor.srv);
+	const bool sceneOutput = globals::state->GetTonemapOwner() != State::TonemapOwner::kPostProcessing;
+	const auto& ll = globals::features::linearLighting;
+	const bool linear = ll.IsLinearLightingActive();
+	const auto sceneGamut = linear && ll.settings.enableACEScg ? Gamut::ACEScg : Gamut::Rec709;
+	const auto* grading = GetPipelineFeature<ColorGrading>(FeaturePipelineIndex::ColorGrading);
+	const auto displayGamut = grading ? grading->GetDisplayGamut() : Gamut::Rec709;
+	const CopyCB conversion{
+		.inputGamut = lastTexColor.gamut,
+		.outputGamut = inMainLoadingMenu ? lastTexColor.gamut : (sceneOutput ? sceneGamut : displayGamut),
+		.gamma = !inMainLoadingMenu && sceneOutput && !linear ? 1.0f / kLegacySceneGamma : 1.0f
+	};
+	CopyToRenderTarget(gameTexMain, useMainCopy ? mainCopyConvertTex : mainConvertTex, lastTexColor.tex, lastTexColor.srv, conversion);
+	CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex,
+		Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV), CopyCB{});
 
 	isrefraction = false;
 
@@ -834,7 +939,7 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()
 {
 	// Effects11 skips the letterbox, so its motion vectors must remain live scene data.
-	if (bypass || IsTonemapOwnedByEffects11())
+	if (bypass || IsTonemapOwnedByEffects11() || !fullscreenVS || !copyPS)
 		return;
 
 	auto borderIdx = static_cast<size_t>(FeaturePipelineIndex::Border);
@@ -847,7 +952,10 @@ void PostProcessing::ClearBorderMotionVectorsForFrameGen()
 
 bool PostProcessing::WantsTonemapOwnership() const
 {
-	return !bypass && settings.DisableVanillaTonemapping != 0;
+	if (bypass || !fullscreenVS || !copyPS || settings.DisableVanillaTonemapping == 0)
+		return false;
+	const auto* colorGrading = static_cast<const ColorGrading*>(pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)].get());
+	return !colorGrading || !colorGrading->enabled || !colorGrading->settings.enableTonemap || colorGrading->IsReadyForTonemapping();
 }
 
 bool PostProcessing::IsTonemapOwnedByEffects11() const
@@ -866,6 +974,35 @@ PostProcessing::Settings PostProcessing::GetCommonBufferData() const
 	return data;
 }
 
+bool PostProcessing::GetSceneExposure(SceneExposure& a_out) const
+{
+	if (!loaded || bypass || IsTonemapOwnedByEffects11() || !fullscreenVS || !copyPS)
+		return false;
+
+	const auto* exposure = GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure);
+	if (!exposure || !exposure->HasActiveAdaptation())
+		return false;
+
+	const auto parameters = exposure->GetExposureParameters();
+	a_out.adaptedLuminance = exposure->GetAdaptationSRV();
+	a_out.luminanceRange = parameters.LuminanceRange;
+	a_out.compensationScale = parameters.CompensationScale();
+	return true;
+}
+
+json PostProcessing::GetDiagnostics()
+{
+	SceneExposure exposure;
+	if (!GetSceneExposure(exposure))
+		return json{ { "sceneExposurePublished", false } };
+
+	return json{
+		{ "sceneExposurePublished", true },
+		{ "sceneExposureLuminanceRange", json::array({ exposure.luminanceRange.x, exposure.luminanceRange.y }) },
+		{ "sceneExposureCompensationScale", exposure.compensationScale },
+	};
+}
+
 void PostProcessing::Prepass()
 {
 	if (!pendingSettings.empty())
@@ -876,6 +1013,10 @@ void PostProcessing::Prepass()
 	if (!globals::game::imageSpaceManager) {
 		return;
 	}
+
+	const float aspect = Util::GetCameraAspectRatio();
+	const bool runnable = !bypass && !IsTonemapOwnedByEffects11() && fullscreenVS && copyPS && !globals::state->IsMainOrLoadingMenuOpen();
+	cinematicCamera.Update(runnable, aspect);
 
 	// Update gameISData. GetRuntimeData() and GetVRRuntimeData() return
 	// differently-laid-out structs (VR_RUNTIME_DATA has two extra leading

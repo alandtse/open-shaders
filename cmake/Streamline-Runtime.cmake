@@ -28,46 +28,48 @@ file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_ROOT}")
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DIRECTORY}")
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DX12_DIRECTORY}")
 
-file(
-    DOWNLOAD "${STREAMLINE_RUNTIME_ARCHIVE_URL}"
-    "${STREAMLINE_RUNTIME_ARCHIVE}"
-    EXPECTED_HASH "SHA256=${STREAMLINE_RUNTIME_ARCHIVE_SHA256}"
-    STATUS _streamline_download_status
-    TLS_VERIFY ON
-    TIMEOUT 600
-    INACTIVITY_TIMEOUT 60
-)
-list(GET _streamline_download_status 0 _streamline_download_code)
-list(GET _streamline_download_status 1 _streamline_download_message)
-if(NOT _streamline_download_code EQUAL 0)
-    file(REMOVE "${STREAMLINE_RUNTIME_ARCHIVE}")
-    message(
-        FATAL_ERROR
-        "Failed to download Streamline ${STREAMLINE_RUNTIME_VERSION}: ${_streamline_download_message}"
+if(NOT SKIP_RUNTIME_DOWNLOADS)
+    file(
+        DOWNLOAD "${STREAMLINE_RUNTIME_ARCHIVE_URL}"
+        "${STREAMLINE_RUNTIME_ARCHIVE}"
+        EXPECTED_HASH "SHA256=${STREAMLINE_RUNTIME_ARCHIVE_SHA256}"
+        STATUS _streamline_download_status
+        TLS_VERIFY ON
+        TIMEOUT 600
+        INACTIVITY_TIMEOUT 60
     )
-endif()
-
-set(_streamline_extract_required ON)
-if(EXISTS "${STREAMLINE_RUNTIME_EXTRACT_STAMP}")
-    file(READ "${STREAMLINE_RUNTIME_EXTRACT_STAMP}" _streamline_extracted_hash)
-    string(STRIP "${_streamline_extracted_hash}" _streamline_extracted_hash)
-    if(_streamline_extracted_hash STREQUAL STREAMLINE_RUNTIME_ARCHIVE_SHA256)
-        set(_streamline_extract_required OFF)
+    list(GET _streamline_download_status 0 _streamline_download_code)
+    list(GET _streamline_download_status 1 _streamline_download_message)
+    if(NOT _streamline_download_code EQUAL 0)
+        file(REMOVE "${STREAMLINE_RUNTIME_ARCHIVE}")
+        message(
+            FATAL_ERROR
+            "Failed to download Streamline ${STREAMLINE_RUNTIME_VERSION}: ${_streamline_download_message}"
+        )
     endif()
-endif()
 
-if(_streamline_extract_required)
-    file(REMOVE_RECURSE "${STREAMLINE_RUNTIME_EXTRACT_ROOT}")
-    file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_EXTRACT_ROOT}")
-    file(
-        ARCHIVE_EXTRACT
-        INPUT "${STREAMLINE_RUNTIME_ARCHIVE}"
-        DESTINATION "${STREAMLINE_RUNTIME_EXTRACT_ROOT}"
-    )
-    file(
-        WRITE "${STREAMLINE_RUNTIME_EXTRACT_STAMP}"
-        "${STREAMLINE_RUNTIME_ARCHIVE_SHA256}\n"
-    )
+    set(_streamline_extract_required ON)
+    if(EXISTS "${STREAMLINE_RUNTIME_EXTRACT_STAMP}")
+        file(READ "${STREAMLINE_RUNTIME_EXTRACT_STAMP}" _streamline_extracted_hash)
+        string(STRIP "${_streamline_extracted_hash}" _streamline_extracted_hash)
+        if(_streamline_extracted_hash STREQUAL STREAMLINE_RUNTIME_ARCHIVE_SHA256)
+            set(_streamline_extract_required OFF)
+        endif()
+    endif()
+
+    if(_streamline_extract_required)
+        file(REMOVE_RECURSE "${STREAMLINE_RUNTIME_EXTRACT_ROOT}")
+        file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_EXTRACT_ROOT}")
+        file(
+            ARCHIVE_EXTRACT
+            INPUT "${STREAMLINE_RUNTIME_ARCHIVE}"
+            DESTINATION "${STREAMLINE_RUNTIME_EXTRACT_ROOT}"
+        )
+        file(
+            WRITE "${STREAMLINE_RUNTIME_EXTRACT_STAMP}"
+            "${STREAMLINE_RUNTIME_ARCHIVE_SHA256}\n"
+        )
+    endif()
 endif()
 
 file(
@@ -77,6 +79,20 @@ file(
 )
 
 function(stage_streamline_runtime _filename _directory _out_var)
+    set(_destination "${_directory}/${_filename}")
+    if(
+        SKIP_RUNTIME_DOWNLOADS
+        AND NOT EXISTS "${STREAMLINE_RUNTIME_EXTRACT_STAMP}"
+    )
+        # The archive was never fetched or extracted, so all that is known is
+        # the expected path; registering it makes a package install fail.
+        set(${_out_var}
+            ${${_out_var}}
+            "${_destination}"
+            PARENT_SCOPE
+        )
+        return()
+    endif()
     set(_production_matches "")
     foreach(_candidate IN LISTS _streamline_archive_files)
         get_filename_component(_candidate_name "${_candidate}" NAME)
@@ -117,7 +133,6 @@ function(stage_streamline_runtime _filename _directory _out_var)
     endif()
 
     list(GET _production_matches 0 _source)
-    set(_destination "${_directory}/${_filename}")
     file(COPY_FILE "${_source}" "${_destination}" ONLY_IF_DIFFERENT)
     set(${_out_var}
         ${${_out_var}}
@@ -126,33 +141,37 @@ function(stage_streamline_runtime _filename _directory _out_var)
     )
 endfunction()
 
-set(STREAMLINE_RUNTIME_FILES "")
-stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
-stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
-stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
-stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
-stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
-stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+set(STREAMLINE_RUNTIME_PAYLOAD_FILES "")
+stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_PAYLOAD_FILES)
+
+split_runtime_payload(STREAMLINE_RUNTIME)
 
 register_feature_payload(
     Upscaling
-    FILES ${STREAMLINE_RUNTIME_FILES}
+    FILES ${STREAMLINE_RUNTIME_PAYLOAD_FILES}
     DESTINATION "${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}"
 )
 
 # streamlineDX12 needs the same core plugins plus DLSS-G (frame generation).
-set(STREAMLINE_RUNTIME_DX12_FILES "")
-stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(nvngx_dlssg.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.dlss_g.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
-stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+set(STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES "")
+stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(nvngx_dlssg.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.dlss_g.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES)
+
+split_runtime_payload(STREAMLINE_RUNTIME_DX12)
 
 register_feature_payload(
     Upscaling
-    FILES ${STREAMLINE_RUNTIME_DX12_FILES}
+    FILES ${STREAMLINE_RUNTIME_DX12_PAYLOAD_FILES}
     DESTINATION "${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}"
 )

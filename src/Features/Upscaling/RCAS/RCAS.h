@@ -28,6 +28,9 @@ public:
 	/**
 	 * @brief Applies RCAS sharpening to the input texture.
 	 *
+	 * Normalizes by the published scene exposure when a feature provides one, so sharpening
+	 * strength does not scale with scene brightness; unnormalized otherwise.
+	 *
 	 * @param inputTexture SRV of the texture to sharpen (typically kMAIN render target).
 	 * @param outputUAV UAV to write sharpened result to.
 	 * @param sharpness Sharpening strength (0.0 = no sharpening, higher = more sharp).

@@ -58,6 +58,9 @@ jobs:
               run: |
                   python tools/build-shader-cache.py --source-root target --runtime ${{ matrix.runtime }} `
                     --out dist/shader-cache --jobs 4
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  python tools/verify_shader_cache.py artifact --source-root target --runtime ${{ matrix.runtime }} `
+                    --cache dist/shader-cache/${{ matrix.runtime }}/ShaderCache --shaders dist/shader-cache/staged-shaders
 
             - name: Upload cache artifact
               uses: actions/upload-artifact@v7

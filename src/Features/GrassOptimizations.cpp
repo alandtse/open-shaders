@@ -369,11 +369,12 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodFadeBand = 0.15f;
 
 		const auto& vf = isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum;
-		// ProjScale must use the dynamic HMD height, not the desktop preview, or DLSS/FSR below
-		// display resolution over-culls grass as occluded in the Hi-Z test.
+		// Hi-Z uses nominal pixels; density and LOD thresholds use render-resolution pixels.
 		const float screenH = Util::ConvertToDynamic(globals::state->screenSize).y;
+		const float frustumHeight = 2.0f * std::abs(vf.fTop);
 		cp.meshCostBias = settings.MeshCostBias;
-		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
+		cp.projScale = screenH / frustumHeight;
+		cp.hiZProjScale = globals::state->screenSize.y / frustumHeight;
 		cp.maxDistSq = maxDistSq;
 		cp.edgeFadeStart = std::clamp(settings.EdgeFadeStart, 0.0f, 1.0f);
 
@@ -649,7 +650,8 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 	ctx->CSSetShaderResources(0, 4, nullSRVs);
 	ID3D11ShaderResourceView* nullDeformationSRVs[11] = {};
 	ctx->CSSetShaderResources(100, ARRAYSIZE(nullDeformationSRVs), nullDeformationSRVs);
-	ID3D11Buffer* nullDeformationBuffers[4] = {};
+	// Shared b5/b6 must stay bound for subsequent compute passes.
+	ID3D11Buffer* nullDeformationBuffers[2] = {};
 	ctx->CSSetConstantBuffers(3, ARRAYSIZE(nullDeformationBuffers), nullDeformationBuffers);
 	ID3D11SamplerState* nullDeformationSamplers[2] = {};
 	ctx->CSSetSamplers(14, ARRAYSIZE(nullDeformationSamplers), nullDeformationSamplers);

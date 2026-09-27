@@ -37,18 +37,9 @@ namespace SIE
 		}
 	}
 
-	void ShaderCache::EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
+	void ShaderCache::EvictShaderResources(RE::BSShader::Type a_type, uint32_t a_descriptor,
 		ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob)
 	{
-		// Remove shader key from shaderMap. Scoped and released before compilationMutex is
-		// taken below - never nest these two mutexes (see CompilationSet::Add, which holds
-		// compilationMutex while calling GetCompletedShader, which takes mapMutex; the reverse
-		// nesting here would be a genuine AB-BA deadlock against a concurrent Add()).
-		{
-			std::unique_lock lockM{ mapMutex };
-			shaderMap.erase(a_key);
-		}
-
 		// Handle vertex, pixel, and compute shaders (each will lock)
 		switch (a_shaderClass) {
 		case SIE::ShaderClass::Vertex:
@@ -76,6 +67,18 @@ namespace SIE
 				logger::debug("Deleted {}", filePathString);
 			}  // If !removed and no error, the file didn't exist, which is fine.
 		}
+	}
+
+	void ShaderCache::EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
+		ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob, bool a_evictSharedBytecode)
+	{
+		// Release mapMutex before taking compilationMutex to avoid deadlocking with Complete().
+		if (a_evictSharedBytecode) {
+			std::unique_lock lockM{ mapMutex };
+			shaderMap.erase(a_key);
+		}
+
+		EvictShaderResources(a_type, a_descriptor, a_shaderClass, a_diskPath, a_deleteDiskBlob);
 
 		logger::debug("Marking recompile for shader: {}", a_key);
 	}
@@ -130,6 +133,7 @@ namespace SIE
 
 		activeShaderCaptureMenuWasVisible = false;
 		clearedThisCaptureCycle.clear();
+		clearedBytecodeThisCaptureCycle.clear();
 		StartActiveShaderCaptureWindow(ActiveShaderCaptureStage::FirstWindow);
 	}
 
@@ -229,20 +233,33 @@ namespace SIE
 		taskIds.reserve(entries.size());
 		size_t evictedCount = 0;
 		for (const auto& entry : entries) {
+			const auto taskId = ShaderCompilationTask::MakeId(entry.shaderClass, entry.shaderType, entry.descriptor);
 			// Already evicted earlier in this same click's capture cycle (e.g. still on
 			// screen across both windows) - clearing it again would just force a second,
 			// pointless recompile of a shader that may have already finished the first one.
-			if (clearedThisCaptureCycle.contains(entry.key))
+			if (clearedThisCaptureCycle.contains(taskId))
 				continue;
 			// A shader still Pending is actively compiling on a pool thread. Evicting it here
 			// would let a subsequent Get*Shader miss enqueue a second, duplicate compile for
 			// the same descriptor while the original is still running - two threads racing to
 			// D3DWriteBlobToFile the same disk path. Leave it; it isn't broken, just in flight.
-			if (GetShaderStatus(entry.key) == ShaderCompilationTask::Status::Pending)
-				continue;
-			EvictShader(entry.key, entry.shaderType, entry.descriptor, entry.shaderClass, entry.diskPath, IsDiskCache());
-			taskIds.insert(ShaderCompilationTask::MakeId(entry.shaderClass, entry.shaderType, entry.descriptor));
-			clearedThisCaptureCycle.insert(entry.key);
+			//
+			// The Pending check and the shaderMap erase happen under one mapMutex
+			// acquisition so a ClaimCompilation racing in between can't have its fresh
+			// Pending claim erased out from under it.
+			bool evictSharedBytecode = false;
+			{
+				std::scoped_lock lockM{ mapMutex };
+				auto it = shaderMap.find(entry.key);
+				if (it != shaderMap.end() && it->second.status == ShaderCompilationTask::Status::Pending)
+					continue;
+				evictSharedBytecode = clearedBytecodeThisCaptureCycle.insert(entry.key).second;
+				if (evictSharedBytecode)
+					shaderMap.erase(entry.key);
+			}
+			EvictShaderResources(entry.shaderType, entry.descriptor, entry.shaderClass, entry.diskPath, IsDiskCache());
+			taskIds.insert(taskId);
+			clearedThisCaptureCycle.insert(taskId);
 			++evictedCount;
 		}
 		// Must run after every EvictShader() above: Add() refuses to re-enqueue a task still

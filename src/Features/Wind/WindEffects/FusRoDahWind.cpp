@@ -315,7 +315,8 @@ void FusRoDahWind::QueueEffect(RE::Actor& a_actor, const Route& a_route) const
 		0.0f };
 	globals::features::wind.QueueTransientWindSource(source,
 		Wind::TransientWindSourceOwner::FusRoDah,
-		Wind::TransientWindSourcePriority::FusRoDah);
+		Wind::TransientWindSourcePriority::FusRoDah,
+		Wind::TransientWindPhysics::Native);
 	logger::info(
 		"Queued Unrelenting Force wind impulse: rank {}, strength {:.3f}, core {:.1f} deg / {:.1f} radius, vertical {:.2f}x, "
 		"origin ({:.1f}, {:.1f}, {:.1f}), direction ({:.3f}, {:.3f}, {:.3f})",

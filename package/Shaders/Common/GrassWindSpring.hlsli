@@ -7,6 +7,7 @@
 namespace GrassWindSpring
 {
 	static const uint QualityRangeCount = 3u;
+	static const float FlutterWorldPhaseScale = -0.0078125f;
 
 	struct FieldData
 	{
@@ -35,8 +36,27 @@ namespace GrassWindSpring
 		FieldData Fields[QualityRangeCount];
 		uint ActiveField;
 		uint TransientFieldMask;
-		float2 SpringPadding;
+		float FlutterFrequency;
+		float TransientFlutterStrength;
+		float3 FlutterAmplitudeResponse;
+		float TransientFlutterFrequency;
+		float FlutterGustInfluence;
+		float FlutterWaveScale;
+		float TransientResponseRadians;
+		float TransientFlutterHalfLife;
 	};
+
+	float EvaluateFlutterAmplitudeMultiplier(float windSpeed)
+	{
+		float speed = max(windSpeed, 0.0f);
+		if (speed <= 0.1f)
+			return lerp(1.0f, FlutterAmplitudeResponse.x, speed / 0.1f);
+		if (speed <= 0.5f)
+			return lerp(FlutterAmplitudeResponse.x, FlutterAmplitudeResponse.y, (speed - 0.1f) / 0.4f);
+		if (speed <= 1.0f)
+			return lerp(FlutterAmplitudeResponse.y, FlutterAmplitudeResponse.z, (speed - 0.5f) / 0.5f);
+		return FlutterAmplitudeResponse.z;
+	}
 
 #if defined(GRASS_WIND_SPRING_COMPUTE)
 	Texture2D<float4> PreviousResponse : register(t0);
@@ -47,25 +67,26 @@ namespace GrassWindSpring
 	SamplerState ResponseSampler : register(s14);
 #endif
 
-	float3 CalculateTarget(float3 windVelocity, FieldData field)
+	float3 CalculateTarget(float3 windVelocity, float3 transientVelocity, FieldData field)
 	{
-		windVelocity *= max(field.Sensitivity, 0.0f);
+		windVelocity = windVelocity * max(field.ResponseRadians, 0.0f) +
+		               transientVelocity * max(TransientResponseRadians, 0.0f);
 		float lateralSpeed = length(windVelocity.xy);
 		float targetAngle = field.MaximumTiltRadians > EPSILON_WIND_RESPONSE ?
-		                        field.MaximumTiltRadians * tanh(lateralSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians) :
+		                        field.MaximumTiltRadians * tanh(lateralSpeed / field.MaximumTiltRadians) :
 		                        0.0f;
 		float2 targetBend = lateralSpeed > EPSILON_WIND_RESPONSE ? windVelocity.xy * (targetAngle / lateralSpeed) : 0.0f.xx;
 		float downwardSpeed = max(-windVelocity.z, 0.0f);
 		float targetCompression = field.MaximumTiltRadians > EPSILON_WIND_RESPONSE ?
-		                              saturate(tanh(downwardSpeed * max(field.ResponseRadians, 0.0f) / field.MaximumTiltRadians)) :
+		                              saturate(tanh(downwardSpeed / field.MaximumTiltRadians)) :
 		                              0.0f;
 		return float3(targetBend, targetCompression);
 	}
 
 #if !defined(GRASS_WIND_SPRING_COMPUTE)
-	uint SelectField(float2 worldPosition)
+	uint SelectField(float2 worldPosition, bool previous = false)
 	{
-		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float2 fieldCenter = (previous ? Fields[0].PreviousFieldMinimum : Fields[0].FieldMinimum) + Fields[0].FieldSize * 0.5f;
 		float distance = length(worldPosition - fieldCenter);
 		if (distance < Fields[0].MaxDistance)
 			return 0u;
@@ -74,9 +95,9 @@ namespace GrassWindSpring
 		return 2u;
 	}
 
-	bool IsInQualityRange(uint fieldIndex, float2 worldPosition)
+	bool IsInQualityRange(uint fieldIndex, float2 worldPosition, bool previous = false)
 	{
-		float2 fieldCenter = Fields[0].FieldMinimum + Fields[0].FieldSize * 0.5f;
+		float2 fieldCenter = (previous ? Fields[0].PreviousFieldMinimum : Fields[0].FieldMinimum) + Fields[0].FieldSize * 0.5f;
 		float distance = length(worldPosition - fieldCenter);
 		float minimumDistance = fieldIndex == 0u ? 0.0f : Fields[fieldIndex - 1u].MaxDistance;
 		return distance >= minimumDistance && distance < Fields[fieldIndex].MaxDistance;
@@ -131,7 +152,7 @@ namespace GrassWindSpring
 		return Fields[currentFieldIndex].FieldAvailable != 0u &&
 		       Fields[previousFieldIndex].FieldAvailable != 0u &&
 		       IsInQualityRange(currentFieldIndex, worldPosition) &&
-		       IsInQualityRange(previousFieldIndex, previousWorldPosition) &&
+		       IsInQualityRange(previousFieldIndex, previousWorldPosition, true) &&
 		       Contains(worldPosition, Fields[currentFieldIndex]) &&
 		       Contains(previousWorldPosition, Fields[previousFieldIndex].PreviousFieldMinimum,
 				   Fields[previousFieldIndex].FieldSize);

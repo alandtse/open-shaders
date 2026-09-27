@@ -61,7 +61,8 @@ namespace NR
 			DisableColorTransform = 262144,
 			VisualizeSkinMask = 524288,
 			VisualizeAutoMask = 1048576,
-			FeedCameraData = 2097152
+			FeedCameraData = 2097152,
+			DilateMotion = 4194304
 		};
 		enum class ColorConversion : uint32_t
 		{

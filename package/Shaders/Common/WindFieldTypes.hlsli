@@ -22,12 +22,17 @@ namespace WindField
 		uint gradientSeedMix;
 		uint pcgMultiplier;
 		uint pcgIncrement;
+		float distortionStrength;
+		float distortionScale;
+		float distortionSpeed;
+		float _padding;
 	};
 
 	struct WindSample
 	{
 		float3 velocity;
 		float ambientGust;
+		float ambientTurbulence;
 		float transientImpulse;
 	};
 
@@ -37,6 +42,7 @@ namespace WindField
 		float3 gustVelocity;
 		float3 transientVelocity;
 		float ambientGust;
+		float ambientTurbulence;
 		float transientImpulse;
 	};
 

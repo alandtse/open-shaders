@@ -232,6 +232,14 @@ before DLSS for performance while preserving the scene's HDR highlight energy.
 
 ## Ownership and synchronization
 
+The host tone filter separates the current NR/input log-luminance difference
+into low and high spatial bands. Equal band strengths use the unfiltered
+difference directly. Unequal strengths, or a band diagnostic view, prepare a
+per-eye `R32G32_FLOAT` texture containing input log luminance and the difference
+once per pixel. The 5-by-5 filter reads that texture instead of decoding both
+proxy images for each neighbor. This scratch texture carries no frame history;
+Feature 18 still evaluates once per eye.
+
 `D3D12Interop` obtains the renderer adapter via `IDXGIDevice::GetAdapter`,
 creates a D3D12 direct queue, and opens D3D11-created NT shared textures.
 It reuses OS `Texture2D`, `ConstantBuffer`, `LazyShader`, resource naming,

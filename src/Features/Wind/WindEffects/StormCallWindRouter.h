@@ -67,6 +67,7 @@ private:
 		RE::NiPoint3 position{};
 		RE::NiPoint3 velocity{};
 		float strength{};
+		bool nativePhysics{};
 	};
 
 	void ObserveImpact(RE::Projectile& a_projectile, const RE::NiPoint3& a_position,

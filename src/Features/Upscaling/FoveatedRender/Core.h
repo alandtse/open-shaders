@@ -12,6 +12,7 @@
 
 #include "Buffer.h"
 #include "Params.h"
+#include "Utils/LazyShader.h"
 #include <d3d11_4.h>
 #include <winrt/base.h>
 
@@ -34,7 +35,7 @@ namespace FoveatedRenderImpl
 		// Shared VR per-eye preprocessing/finalization for non-DLSS callers (e.g. FSR).
 		static bool PrepareVRPerEyeInputs(
 			ID3D11Resource* colorSrc,
-			ID3D11Resource* depthSrc,
+			ID3D11ShaderResourceView* depthSRV,
 			ID3D11Resource* mvecSrc,
 			ID3D11Resource* reactiveSrc,
 			ID3D11Resource* transparencySrc,
@@ -84,6 +85,10 @@ namespace FoveatedRenderImpl
 		static inline winrt::com_ptr<ID3D11Buffer> vrSubrectStretchCB;
 		static inline winrt::com_ptr<ID3D11SamplerState> vrSubrectStretchSampler;
 
+		// Native depth-stencil -> typed per-eye R32_FLOAT conversion
+		static inline Util::LazyShader<ID3D11ComputeShader> vrDepthCopyCS;
+		static inline eastl::unique_ptr<ConstantBuffer> vrDepthCopyCB;
+
 		// Periphery temporal smooth (ping-pong history at render-res SBS)
 		static inline eastl::unique_ptr<Texture2D> vrTemporalHistory[2];   // SRV+UAV ping-pong
 		static inline winrt::com_ptr<ID3D11ShaderResourceView> vrMvecSRV;  // cached SRV on game's mvec resource
@@ -91,6 +96,7 @@ namespace FoveatedRenderImpl
 		static inline uint32_t vrTemporalHistoryW = 0, vrTemporalHistoryH = 0;
 		static inline uint32_t vrTemporalFrameIdx = 0;
 		static inline bool vrTemporalHistoryValid = false;
+		static inline uint32_t lastRouteFrame = UINT32_MAX;
 
 		// Temporal smooth compute shader resources
 		static inline winrt::com_ptr<ID3D11ComputeShader> vrTemporalSmoothCS;

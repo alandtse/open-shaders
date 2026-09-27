@@ -1,6 +1,7 @@
 #include "Streamline.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <dxgi.h>
 #include <dxgi1_3.h>
@@ -11,6 +12,7 @@
 #include "../../Util.h"
 #include "../../Utils/NvApiDrs.h"
 #include "../Upscaling.h"
+#include "CameraReprojection.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
 #include "PerfMode.h"
@@ -183,6 +185,9 @@ void Streamline::LoadInterposer()
 		reflexSupportedOnCurrentAdapter = false;
 		reflexOptionsCache = {};
 		lastReflexSleepFrame = UINT32_MAX;
+		for (auto& kindFrames : lastDLSSLogFrame)
+			for (auto& frame : kindFrames)
+				frame = UINT32_MAX;
 		logger::info("[Streamline {}] Successfully initialized Streamline", instanceTag);
 	}
 }
@@ -446,7 +451,14 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.cameraFar = *globals::game::cameraFar;
 
 	auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse(eyeIndex).Transpose();
-	auto cameraViewToClip = globals::game::frameBufferCached.GetCameraProjUnjittered(eyeIndex).Transpose();
+	const auto& frameBuffer = globals::game::frameBufferCached;
+	const auto& cameraPosition = frameBuffer.GetCameraPosAdjust(eyeIndex);
+	const auto& previousCameraPosition = frameBuffer.GetCameraPreviousPosAdjust(eyeIndex);
+	const auto cameraMatrices = UpscalingCamera::BuildReprojection(
+		viewMatrix,
+		frameBuffer.GetCameraViewProjUnjittered(eyeIndex).Transpose(),
+		frameBuffer.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose(),
+		float3(cameraPosition.x - previousCameraPosition.x, cameraPosition.y - previousCameraPosition.y, cameraPosition.z - previousCameraPosition.z));
 
 	slConstants.cameraMotionIncluded = sl::Boolean::eTrue;
 	slConstants.cameraPinholeOffset = { 0.f, 0.f };
@@ -454,27 +466,11 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.cameraUp = { viewMatrix._21, viewMatrix._22, viewMatrix._23 };
 	slConstants.cameraFwd = { viewMatrix._31, viewMatrix._32, viewMatrix._33 };
 	slConstants.cameraPos = *(sl::float3*)&globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
-	slConstants.cameraViewToClip = *(sl::float4x4*)&cameraViewToClip;
+	slConstants.cameraViewToClip = std::bit_cast<sl::float4x4>(cameraMatrices.cameraViewToClip);
+	slConstants.clipToCameraView = std::bit_cast<sl::float4x4>(cameraMatrices.clipToCameraView);
+	slConstants.clipToPrevClip = std::bit_cast<sl::float4x4>(cameraMatrices.clipToPrevClip);
+	slConstants.prevClipToClip = std::bit_cast<sl::float4x4>(cameraMatrices.prevClipToClip);
 	slConstants.depthInverted = sl::Boolean::eFalse;
-
-	if (globals::game::isVR) {
-		// VR: compute clipToCameraView / clipToPrevClip / prevClipToClip from Skyrim's per-eye matrices.
-		// recalculateCameraMatrices() uses a single static prev-frame slot -- unusable for two viewports.
-		sl::matrixFullInvert(slConstants.clipToCameraView, slConstants.cameraViewToClip);
-
-		auto currViewProj = globals::game::frameBufferCached.GetCameraViewProjUnjittered(eyeIndex).Transpose();
-		auto prevViewProj = globals::game::frameBufferCached.GetCameraPreviousViewProjUnjittered(eyeIndex).Transpose();
-
-		sl::float4x4 currViewProjSL = *(sl::float4x4*)&currViewProj;
-		sl::float4x4 prevViewProjSL = *(sl::float4x4*)&prevViewProj;
-
-		sl::float4x4 invCurrViewProj;
-		sl::matrixFullInvert(invCurrViewProj, currViewProjSL);
-		sl::matrixMul(slConstants.clipToPrevClip, invCurrViewProj, prevViewProjSL);
-		sl::matrixFullInvert(slConstants.prevClipToClip, slConstants.clipToPrevClip);
-	} else {
-		recalculateCameraMatrices(slConstants);
-	}
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
@@ -575,7 +571,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 	// the hook is live so DLSS is created at the right scale. The width arg
 	// is already display-correct (caller computes from displaySize).
 	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 
 	dlssOptions.outputWidth = width;
 	// height==0 → caller is the standard upscale path; use full per-eye DisplayRes height.
@@ -704,17 +700,32 @@ bool Streamline::EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 	if (state->frameAnnotations)
 		state->EndPerfEvent();
 
+	const auto frame = state->frameCount;
+	const uint32_t logEye = globals::game::isVR ? eyeIndex : 0u;
+	if (evalResult == sl::Result::eWarnOutOfVRAM) {
+		if (ShouldLogDLSSProblem(DLSSLogKind::kVramWarning, logEye, frame))
+			logger::warn("[Streamline {}] DLSS output valid but VRAM budget exceeded{} frame={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame);
+		return true;
+	}
+
 	if (evalResult != sl::Result::eOk) {
-		static bool evalErrorLogged[2] = { false, false };
-		uint32_t logIdx = globals::game::isVR ? eyeIndex : 0;
-		if (!evalErrorLogged[logIdx]) {
-			evalErrorLogged[logIdx] = true;
-			logger::error("[Streamline {}] slEvaluateFeature failed{} result={}", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", (int)evalResult);
-		}
+		if (ShouldLogDLSSProblem(DLSSLogKind::kEvaluateError, logEye, frame))
+			logger::error("[Streamline {}] slEvaluateFeature failed{} frame={} result={} ({})", instanceTag, globals::game::isVR ? std::format(" for eye {}", eyeIndex) : "", frame, static_cast<int>(evalResult), magic_enum::enum_name(evalResult));
 		return false;
 	}
 
 	return true;
+}
+
+bool Streamline::ShouldLogDLSSProblem(DLSSLogKind a_kind, uint32_t a_eye, uint32_t a_frame)
+{
+	const uint32_t eye = std::min(a_eye, 1u);
+	auto& lastFrame = lastDLSSLogFrame[static_cast<size_t>(a_kind)][eye];
+	if (lastFrame == UINT32_MAX || a_frame - lastFrame >= kProblemLogIntervalFrames) {
+		lastFrame = a_frame;
+		return true;
+	}
+	return false;
 }
 
 void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors)
@@ -738,7 +749,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	// then either sharpen or copy the result back to kMAIN.
 	auto& upscaling = globals::features::upscaling;
 	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
+	const bool dlssperfActive = perfMode.IsPresentingTestTexture();
 	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
 	// Sharpening active -> write to the RCAS read source (sharpenerTexture, or PerfMode's
@@ -776,14 +787,13 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		bool eye0Ready = upscaling.vrIntermediateColorIn[0] &&
 		                 upscaling.vrIntermediateMotionVectors[0] && upscaling.vrIntermediateReactiveMask[0] && upscaling.vrIntermediateTransparencyMask[0];
 		bool eye1Ready = upscaling.vrIntermediateColorIn[1] && upscaling.vrIntermediateColorOut[1] &&
-		                 upscaling.vrIntermediateDepth && upscaling.vrIntermediateMotionVectors[1] &&
+		                 upscaling.vrIntermediateLinearDepth[1] && upscaling.vrIntermediateMotionVectors[1] &&
 		                 upscaling.vrIntermediateReactiveMask[1] && upscaling.vrIntermediateTransparencyMask[1];
 
 		// Pre-copy eye 1 before eye 0 runs (overlap hazard), then clear HMD mask.
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[1]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &rightIn);
-			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, Util::AsReal(depthTexture.texture), 0, &rightIn);
 			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), Util::AsReal(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
@@ -809,7 +819,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 			EvaluateDLSS(viewportRight, 1,
 				upscaling.vrIntermediateColorIn[1]->resource.get(),
 				upscaling.vrIntermediateColorOut[1]->resource.get(),
-				upscaling.vrIntermediateDepth->resource.get(),
+				upscaling.vrIntermediateLinearDepth[1]->resource.get(),
 				upscaling.vrIntermediateMotionVectors[1]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[1]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[1]->resource.get(),
@@ -872,7 +882,7 @@ void Streamline::UpdateReflex()
 	sl::ReflexOptions options{};
 	if (renderAPI == sl::RenderAPI::eD3D12) {
 		// DX12 Reflex: DLSS-G requires at least eLowLatency when FG is active
-		bool needReflex = upscaling.ShouldUseFrameGenerationThisFrame() || settings.reflexLowLatencyMode;
+		bool needReflex = upscaling.ShouldPrepareFrameGeneration() || settings.reflexLowLatencyMode;
 		if (needReflex)
 			options.mode = settings.reflexLowLatencyBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
 		else

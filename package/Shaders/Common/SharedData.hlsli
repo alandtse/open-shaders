@@ -95,6 +95,8 @@ namespace SharedData
 		float3 Scale;
 		float2 ZRange;
 		float2 Offset;
+		float ZBlur;
+		float3 pad0;
 	};
 
 	struct LightLimitFixSettings
@@ -221,7 +223,8 @@ namespace SharedData
 		float haloFalloff;
 
 		float cloudOcclusionStrength;
-		float3 pad0;
+		float sunQuadModelRadius;
+		float2 pad0;
 	};
 
 	struct LODBlendingSettings
@@ -324,6 +327,14 @@ namespace SharedData
 		float waterParallaxStrength;
 		float skySaturation;
 		uint waterParallaxQuality;
+		float cloudBrightness;
+		float cloudSaturation;
+		float cloudGammaOffset;
+		float fogIntensity;
+		float vlIntensity;
+		float sunGlareIntensity;
+		float padding;
+		float skyStaticTransparency;
 	};
 
 	struct WindSettings
@@ -430,7 +441,20 @@ namespace SharedData
 		float volumetricSampleJitterMultiplier;
 		float volumetricUpsampleJitterMultiplier;
 		float volumetricLocalLightScatteringIntensity;
-		float2 pad0;
+		uint useVanillaFogSettings;
+		float vanillaFogMaxOpacity;
+		float vanillaFogDensity;
+		float vanillaFogNear;
+		float vanillaFogFar;
+		float vanillaFogPower;
+		float vanillaFogStrength;
+		float3 pad0;
+		float4 vanillaFogNearColor;
+		float4 vanillaFogFarColor;
+		float fogLightingInfluence;
+		float distanceHazeMaxOpacity;
+		float distanceHazeStartDistance;
+		float distanceHazeFadeDistance;
 	};
 
 	struct TruePBRSettings
@@ -507,6 +531,12 @@ namespace SharedData
 		float2 pad0;
 	};
 
+	struct HorizonFixSettings
+	{
+		float farWaterDistance;
+		float3 pad;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -537,6 +567,7 @@ namespace SharedData
 		BloomSettings bloomSettings;
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
+		HorizonFixSettings horizonFixSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

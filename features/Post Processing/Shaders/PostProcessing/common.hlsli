@@ -106,14 +106,14 @@ float3 Gamma(float3 col, float3 gamma, float3 black_pivot, float3 white_pivot)
 	float3 sgn = sign(col);
 	float3 range = white_pivot - black_pivot;
 	col = col / range;
-	col = pow(max(0, col), gamma);
+	col = pow(abs(col), gamma);
 	col = col * sgn * range + black_pivot;
 	return col;
 }
 
-float3 Saturation(float3 col, float sat)
+float3 Saturation(float3 col, float sat, float3 luminanceWeights)
 {
-	float luma = Color::RGBToLuminance(col);
+	float luma = Color::RGBToLuminance(col, luminanceWeights);
 	return lerp(luma, col, sat);
 }
 

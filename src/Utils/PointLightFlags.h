@@ -35,7 +35,7 @@ namespace PointLightFlags
 		return (flags & ToMask(Flags::Initialised)) != 0 ? flags : 0;
 	}
 
-	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight) noexcept
+	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight)
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)
 			return 0;
@@ -44,7 +44,7 @@ namespace PointLightFlags
 		return shadowLight && shadowLight->GetIsFrustumLight() ? ToMask(Flags::Spot) : ToMask(Flags::OmniDirectional);
 	}
 
-	inline std::uint32_t GetVanillaPointLightFlags(RE::BSLight* a_bsLight, RE::NiLight* a_niLight) noexcept
+	inline std::uint32_t GetVanillaPointLightFlags(RE::BSLight* a_bsLight, RE::NiLight* a_niLight)
 	{
 		constexpr std::uint32_t typeMask = ToMask(Flags::Spot) | ToMask(Flags::OmniDirectional);
 		std::uint32_t flags = GetRuntimeLightFlags(a_niLight) & (ToMask(Flags::Linear) | typeMask);
@@ -53,7 +53,7 @@ namespace PointLightFlags
 		return flags;
 	}
 
-	inline void SetPointLightTypeFlags(stl::enumeration<Flags>& a_flags, RE::BSLight* a_bsLight) noexcept
+	inline void SetPointLightTypeFlags(stl::enumeration<Flags>& a_flags, RE::BSLight* a_bsLight)
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)
 			return;

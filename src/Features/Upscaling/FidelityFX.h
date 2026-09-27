@@ -22,8 +22,7 @@
 
 #include "../../Buffer.h"
 #include "../../State.h"
-
-class WrappedResource;
+#include "DX12SwapChain.h"
 
 /** @brief Manages AMD FidelityFX upscaling and frame generation, including the host FSR3 SDK and the runtime-loaded FSR4 provider. */
 class FidelityFX
@@ -193,12 +192,11 @@ private:
 	D3D11_TEXTURE2D_DESC runtimeOutputSharedDesc{};
 	ffx::Context runtimeUpscalerContexts[2]{};
 
-	winrt::com_ptr<ID3D11Fence> runtimeD3D11Fence;
-	winrt::com_ptr<ID3D12Fence> runtimeD3D12Fence;
+	SharedFence runtimeFence;
+	static constexpr DWORD kRuntimeFenceTimeoutMs = 5000;
 	ID3D11Query* pendingFSRResourceFreeIdleFence = nullptr;
 	uint64_t pendingRuntimeTeardownD3D11FenceValue = 0;
 	uint64_t pendingRuntimeTeardownD3D12FenceValue = 0;
-	uint64_t runtimeFenceValue = 1;
 
 	static constexpr uint32_t kRuntimeCommandContextCount = 8;
 	struct RuntimeCommandContext

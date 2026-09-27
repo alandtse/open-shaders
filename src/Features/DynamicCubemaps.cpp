@@ -524,8 +524,7 @@ void DynamicCubemaps::UpdateCubemap()
 	CS_GPU_PASS("DynamicCubemaps::UpdateCubemap");
 
 	auto context = globals::d3d::context;
-	ID3D11Buffer* sharedBuffers[2]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
-	context->CSSetConstantBuffers(5, 2, sharedBuffers);
+	globals::state->BindSharedDataCS(context);
 
 	// Reset capture when game time jumps (wait menu, timescale changes, console commands)
 	if (auto calendar = globals::game::calendar) {

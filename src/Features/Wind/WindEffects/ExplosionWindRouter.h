@@ -70,6 +70,7 @@ private:
 		RE::FormID identity{};
 		float radius{};
 		float strength{};
+		bool nativePhysics{};
 	};
 
 	struct RecentExplosion

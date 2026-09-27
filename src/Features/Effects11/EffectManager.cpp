@@ -923,7 +923,7 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
 	// PerfMode's real DLSS/FSR+RCAS output lives only in its testTexture, not kMAIN.
 	auto& perfMode = globals::features::upscaling.perfMode;
-	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
+	const bool usePerfModeSource = perfMode.IsPresentingTestTexture() && perfMode.GetTestTextureSRV();
 
 	ID3D11Texture2D* sourceTexture;
 	ID3D11ShaderResourceView* sourceSRV;

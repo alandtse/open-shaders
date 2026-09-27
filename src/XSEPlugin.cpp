@@ -11,6 +11,7 @@
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/VersionGate.h"
 #include "VRAPI/CSpluginapi.h"
 
 std::list<std::string> errors;
@@ -160,7 +161,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.265.0", true);
+		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.269.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
@@ -208,6 +209,18 @@ bool Load()
 			auto errorMessage = plugin.reason.empty() ?
 			                        std::format("Incompatible DLL {} detected. Remove it to use Open Shaders.", dllName) :
 			                        std::format("Incompatible DLL {} detected ({}). Remove it to use Open Shaders.", dllName, plugin.reason);
+			logger::error("{}", errorMessage);
+			errors.push_back(errorMessage);
+		}
+	}
+
+	for (const auto& plugin : Compatibility::outdatedPlugins) {
+		const auto version = Util::GetDllVersion(plugin.dll);
+		if (Util::IsBelowMinimum(version, plugin.minimumVersion)) {
+			auto dllName = stl::utf16_to_utf8(plugin.dll).value_or("<unicode conversion error>"s);
+			auto errorMessage = plugin.reason.empty() ?
+			                        std::format("Incompatible version {} of {} detected ({} or newer required). Update or remove it to use Open Shaders.", version->string("."), dllName, plugin.minimumVersion.string(".")) :
+			                        std::format("Incompatible version {} of {} detected ({} or newer required; {}). Update or remove it to use Open Shaders.", version->string("."), dllName, plugin.minimumVersion.string("."), plugin.reason);
 			logger::error("{}", errorMessage);
 			errors.push_back(errorMessage);
 		}

@@ -49,6 +49,7 @@ add_executable(cpp_tests
     test_main.cpp
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
+    test_camera_reprojection.cpp
     test_subrect.cpp
     test_perfutils.cpp
     test_restartsettings.cpp
@@ -60,6 +61,7 @@ add_executable(cpp_tests
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_llf_sanitize.cpp
+    test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
     test_contenthash.cpp
@@ -70,7 +72,10 @@ add_executable(cpp_tests
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
 	test_effectsourcecompatibility.cpp
+	test_versiongate.cpp
+	test_presetinclude.cpp
 	test_windfield.cpp
+	test_sehguard.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -79,10 +84,12 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )

@@ -27,6 +27,22 @@ namespace
 		float speed;
 	};
 
+	float EvaluateWindResponse(float a_speed, const std::array<float, 3>& a_response)
+	{
+		const float speed = std::max(a_speed, 0.0f);
+		if (speed <= WindSettingsLimits::kWindResponseSpeeds[0])
+			return std::lerp(0.0f, a_response[0], speed / WindSettingsLimits::kWindResponseSpeeds[0]);
+		if (speed <= WindSettingsLimits::kWindResponseSpeeds[1])
+			return std::lerp(a_response[0], a_response[1],
+				(speed - WindSettingsLimits::kWindResponseSpeeds[0]) /
+					(WindSettingsLimits::kWindResponseSpeeds[1] - WindSettingsLimits::kWindResponseSpeeds[0]));
+		if (speed <= WindSettingsLimits::kWindResponseSpeeds[2])
+			return std::lerp(a_response[1], a_response[2],
+				(speed - WindSettingsLimits::kWindResponseSpeeds[1]) /
+					(WindSettingsLimits::kWindResponseSpeeds[2] - WindSettingsLimits::kWindResponseSpeeds[1]));
+		return a_response[2] * speed;
+	}
+
 	WindSelection SelectWind(const Wind& a_wind, const float3& a_ambientVelocity,
 		const float3& a_fallbackDirection)
 	{
@@ -61,6 +77,15 @@ void Wind::Reset()
 	windFieldTuning.frontAspectRatio =
 		settings.windFieldGustCrosswindScale / windFieldTuning.gustScale;
 	windFieldTuning.gustAdvectionMultiplier = GetEffectiveWindGustAdvectionMultiplier();
+	const float gustThreshold = 1.0f - settings.windFieldGustCoverage;
+	const float gustHalfSoftness = settings.windFieldGustEdgeSoftness * 0.5f;
+	windFieldTuning.contrastLow = std::clamp(gustThreshold - gustHalfSoftness, 0.0f, 1.0f);
+	windFieldTuning.contrastHigh = std::clamp(gustThreshold + gustHalfSoftness, 0.0f, 1.0f);
+	windFieldTuning.distortionStrength = settings.enableWindFieldGustDistortion ?
+	                                         settings.windFieldGustDistortionStrength :
+	                                         0.0f;
+	windFieldTuning.distortionScale = settings.windFieldGustDistortionScale;
+	windFieldTuning.distortionSpeed = settings.windFieldGustDistortionSpeed;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	UpdateWindEffects(frameTime);
@@ -70,6 +95,7 @@ void Wind::Reset()
 		windFieldHasPreviousSample ? windFieldCurrent.direction : float3{ 1.0f, 0.0f, 0.0f };
 	const auto selectedWind = SelectWind(*this, ambientWindVelocity, fallbackDirection);
 	UpdateWindField(selectedWind.direction, selectedWind.speed, frameTime);
+	PublishWindState();
 }
 
 void Wind::AdvanceWindHistory(float a_frameTime)
@@ -104,7 +130,8 @@ void Wind::UpdateWeatherWind()
 
 void Wind::UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime)
 {
-	const float gustAdvectionSpeed = a_speed * windFieldTuning.gustAdvectionBaseSpeed *
+	const float gustAdvectionSpeed = EvaluateWindResponse(a_speed, settings.windFieldGustAdvectionResponse) *
+	                                 windFieldTuning.gustAdvectionBaseSpeed *
 	                                 windFieldTuning.gustAdvectionMultiplier;
 	windFieldAdvectionSpeed = std::isfinite(gustAdvectionSpeed) ? std::max(gustAdvectionSpeed, 0.0f) : 0.0f;
 	windFieldTravelDelta = std::isfinite(a_frameTime) ? windFieldAdvectionSpeed * std::max(a_frameTime, 0.0f) : 0.0f;
@@ -161,6 +188,7 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 	return {
 		settings.trunkWindIntensityOverride,
 		loaded && settings.overrideTrunkWindIntensity,
+		loaded && settings.enableGrassWindSpringBend,
 		treeDefaults.transientWindInfluence,
 		treeDefaults.leafTransientWindInfluence,
 		treeDefaults.leafTransientFlutterMaximum,
@@ -250,6 +278,73 @@ WindField::WindSample Wind::SampleWind(const float3& a_worldPosition,
 	return sample;
 }
 
+void Wind::PublishWindState() noexcept
+{
+	std::scoped_lock lock(transientWindImpulseMutex, publishedWindMutex);
+	publishedWindState.tuning = windFieldTuning;
+	publishedWindState.current = windFieldCurrent;
+	publishedWindState.transition = windFieldTransition;
+	publishedWindState.transitionBlend = windFieldTransitionBlend;
+	publishedWindState.transientCount = activeTransientWindImpulseCount;
+	std::copy_n(transientWindImpulses.begin(), activeTransientWindImpulseCount,
+		publishedWindState.transients.begin());
+	std::copy_n(transientWindImpulsePhysics.begin(), activeTransientWindImpulseCount,
+		publishedWindState.transientPhysics.begin());
+	++publishedWindState.frameId;
+	publishedWindState.valid = windFieldHasPreviousSample;
+}
+
+bool Wind::SamplePublishedWind(std::span<const float3> a_worldPositions,
+	std::span<PublishedWindSample> a_samples) const noexcept
+{
+	if (a_worldPositions.size() != a_samples.size())
+		return false;
+
+	PublishedWindState state;
+	{
+		std::shared_lock lock(publishedWindMutex);
+		if (!publishedWindState.valid)
+			return false;
+		state = publishedWindState;
+	}
+	const float3 transitionVelocity = state.transition.direction * state.transition.speed;
+	const float3 currentVelocity = state.current.direction * state.current.speed;
+	const float3 baseVelocity = transitionVelocity +
+	                            (currentVelocity - transitionVelocity) * state.transitionBlend;
+	for (std::size_t index = 0; index < a_worldPositions.size(); ++index) {
+		auto ambientSample = WindField::SampleField(a_worldPositions[index], state.current, state.tuning);
+		if (state.transitionBlend < 1.0f) {
+			const auto transitionSample = WindField::SampleField(
+				a_worldPositions[index], state.transition, state.tuning);
+			ambientSample.velocity = transitionSample.velocity +
+			                         (ambientSample.velocity - transitionSample.velocity) * state.transitionBlend;
+			ambientSample.ambientGust = transitionSample.ambientGust +
+			                            (ambientSample.ambientGust - transitionSample.ambientGust) * state.transitionBlend;
+		}
+		WindField::TransientImpulseSample transientSample{};
+		float3 windExcludingHavokImpulses = ambientSample.velocity;
+		for (uint32_t sourceIndex = 0; sourceIndex < state.transientCount; ++sourceIndex) {
+			const auto sourceSample = WindField::SampleTransientImpulse(
+				a_worldPositions[index], state.transients[sourceIndex]);
+			transientSample.velocity += sourceSample.velocity;
+			transientSample.intensity = std::max(transientSample.intensity, sourceSample.intensity);
+			if (state.transientPhysics[sourceIndex] == TransientWindPhysics::Wind)
+				windExcludingHavokImpulses += sourceSample.velocity;
+		}
+		a_samples[index] = {
+			baseVelocity,
+			ambientSample.velocity - baseVelocity,
+			transientSample.velocity,
+			ambientSample.velocity + transientSample.velocity,
+			windExcludingHavokImpulses,
+			ambientSample.ambientGust,
+			transientSample.intensity,
+			state.frameId
+		};
+	}
+	return true;
+}
+
 void Wind::QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse)
 {
 	QueueTransientWindSource(a_impulse, TransientWindSourceOwner::Generic,
@@ -257,10 +352,11 @@ void Wind::QueueTransientWindImpulse(const WindField::TransientWindSource& a_imp
 }
 
 void Wind::QueueTransientWindSource(const WindField::TransientWindSource& a_source,
-	TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority)
+	TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority,
+	TransientWindPhysics a_physics)
 {
 	std::lock_guard lock(transientWindImpulseMutex);
-	pendingTransientWindSources.push_back({ a_source, a_owner, a_priority, ++transientWindSourceSequence });
+	pendingTransientWindSources.push_back({ a_source, a_owner, a_priority, ++transientWindSourceSequence, a_physics });
 	if (pendingTransientWindSources.size() > WindField::kTransientImpulseCapacity) {
 		const auto leastImportant = std::ranges::min_element(
 			pendingTransientWindSources, [](const auto& left, const auto& right) {
@@ -280,7 +376,7 @@ void Wind::SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
 		[a_owner](const auto& source) { return source.owner == a_owner; });
 	for (const auto& submission : a_sources) {
 		attachedTransientWindSources.push_back(
-			{ submission.source, a_owner, submission.priority, ++transientWindSourceSequence });
+			{ submission.source, a_owner, submission.priority, ++transientWindSourceSequence, submission.physics });
 	}
 }
 
@@ -294,23 +390,27 @@ void Wind::ClearTransientWindSources(TransientWindSourceOwner a_owner)
 	removeOwned(pendingTransientWindSources);
 	removeOwned(attachedTransientWindSources);
 
-	auto compactSnapshot = [a_owner](auto& sources, auto& owners, uint32_t& count) {
+	auto compactSnapshot = [a_owner](auto& sources, auto& owners, auto& physics, uint32_t& count) {
 		uint32_t outputIndex = 0;
 		for (uint32_t index = 0; index < count; ++index) {
 			if (owners[index] == a_owner)
 				continue;
 			sources[outputIndex] = sources[index];
 			owners[outputIndex] = owners[index];
+			physics[outputIndex] = physics[index];
 			++outputIndex;
 		}
 		for (uint32_t index = outputIndex; index < count; ++index) {
 			sources[index] = {};
 			owners[index] = {};
+			physics[index] = {};
 		}
 		count = outputIndex;
 	};
-	compactSnapshot(transientWindImpulses, transientWindImpulseOwners, activeTransientWindImpulseCount);
+	compactSnapshot(transientWindImpulses, transientWindImpulseOwners, transientWindImpulsePhysics,
+		activeTransientWindImpulseCount);
 	compactSnapshot(previousTransientWindImpulses, previousTransientWindImpulseOwners,
+		previousTransientWindImpulsePhysics,
 		previousActiveTransientWindImpulseCount);
 }
 
@@ -321,6 +421,8 @@ void Wind::ClearTransientWindImpulses()
 	previousTransientWindImpulses = {};
 	transientWindImpulseOwners = {};
 	previousTransientWindImpulseOwners = {};
+	transientWindImpulsePhysics = {};
+	previousTransientWindImpulsePhysics = {};
 	activeTransientWindImpulseCount = 0;
 	previousActiveTransientWindImpulseCount = 0;
 	activeTransientWindSources.clear();
@@ -334,6 +436,7 @@ void Wind::UpdateTransientWindImpulses(float a_frameTime)
 
 	previousTransientWindImpulses = transientWindImpulses;
 	previousTransientWindImpulseOwners = transientWindImpulseOwners;
+	previousTransientWindImpulsePhysics = transientWindImpulsePhysics;
 	previousActiveTransientWindImpulseCount = activeTransientWindImpulseCount;
 
 	const float frameTime = std::isfinite(a_frameTime) ? std::max(a_frameTime, 0.0f) : 0.0f;
@@ -385,9 +488,11 @@ void Wind::UpdateTransientWindImpulses(float a_frameTime)
 
 	transientWindImpulses = {};
 	transientWindImpulseOwners = {};
+	transientWindImpulsePhysics = {};
 	activeTransientWindImpulseCount = static_cast<uint32_t>(composedSources.size());
 	for (uint32_t index = 0; index < activeTransientWindImpulseCount; ++index) {
 		transientWindImpulses[index] = composedSources[index].source;
 		transientWindImpulseOwners[index] = composedSources[index].owner;
+		transientWindImpulsePhysics[index] = composedSources[index].physics;
 	}
 }

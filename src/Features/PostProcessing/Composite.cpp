@@ -8,7 +8,9 @@
 #include "LocalExposure.h"
 #include "PhysicalGlare.h"
 
+#include "RasterPass.h"
 #include "ShaderCache.h"
+
 #include "State.h"
 #include "Util.h"
 
@@ -23,7 +25,7 @@ void Composite::UpdateAutoEnabled()
 	auto* exposure = owner->GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure);
 	auto* localExposure = owner->GetPipelineFeature<LocalExposure>(PostProcessing::FeaturePipelineIndex::LocalExposure);
 
-	enabled = (bloom && bloom->enabled) || (flare && flare->enabled) || (glare && glare->enabled) || (exposure && exposure->enabled) || (localExposure && localExposure->enabled);
+	enabled = (bloom && bloom->enabled) || (flare && flare->enabled) || (glare && glare->enabled) || (exposure && exposure->IsActive()) || (localExposure && localExposure->enabled);
 }
 
 void Composite::SetupResources()
@@ -43,22 +45,22 @@ void Composite::SetupResources()
 			.Texture2D = { .MostDetailedMip = 0, .MipLevels = 1 }
 		};
 
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {
 			.Format = texDesc.Format,
-			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D,
 			.Texture2D = { .MipSlice = 0 }
 		};
 
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags = 0;
 
 		texOutput = eastl::make_unique<Texture2D>(texDesc, "Post Processing Composite Output");
 		texOutput->CreateSRV(srvDesc);
-		texOutput->CreateUAV(uavDesc);
+		texOutput->CreateRTV(rtvDesc);
 	}
 
-	CompileComputeShaders();
+	CompileRasterShaders();
 }
 
 void Composite::ClearShaderCache()
@@ -75,12 +77,12 @@ void Composite::ClearShaderCache()
 	}
 
 	globals::shaderCache->ClearStandaloneComputeCache(L"PostProcessing/Composite");
-	CompileComputeShaders();
+	CompileRasterShaders();
 }
 
-void Composite::CompileComputeShaders()
+void Composite::CompileRasterShaders()
 {
-	std::vector<ComputeShaderCompileInfo> shaderInfos;
+	std::vector<PixelShaderCompileInfo> shaderInfos;
 
 	// Compile all non-empty flag combinations (1..31)
 	for (uint flags = 1; flags < CompositeFlags::FLAG_COUNT; flags++) {
@@ -96,10 +98,10 @@ void Composite::CompileComputeShaders()
 		if (flags & LOCAL_EXPOSURE)
 			defines.push_back({ "HAS_LOCAL_EXPOSURE", "" });
 
-		shaderInfos.push_back({ &compositeShaders[flags], "composite.cs.hlsl", std::move(defines), "CSComposite" });
+		shaderInfos.push_back({ &compositeShaders[flags], "composite.ps.hlsl", std::move(defines), "PSComposite" });
 	}
 
-	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\Composite", shaderInfos);
+	CompileRasterShadersAsync(L"Data\\Shaders\\PostProcessing\\Composite", {}, shaderInfos);
 }
 
 void Composite::Draw(TextureInfo& inout_tex)
@@ -113,26 +115,26 @@ void Composite::Draw(TextureInfo& inout_tex)
 	auto* exposure = owner->GetPipelineFeature<HistogramAutoExposure>(PostProcessing::FeaturePipelineIndex::AutoExposure);
 	auto* localExposure = owner->GetPipelineFeature<LocalExposure>(PostProcessing::FeaturePipelineIndex::LocalExposure);
 
-	bool hasBloom = bloom && bloom->enabled;
-	bool hasFlare = flare && flare->enabled;
-	bool hasGlare = glare && glare->enabled;
-	bool hasExposure = exposure && exposure->enabled;
-	bool hasLocalExposure = localExposure && localExposure->enabled;
+	bool hasBloom = bloom && bloom->enabled && bloom->GetBloomOutput().srv;
+	bool hasFlare = flare && flare->enabled && flare->GetFlareOutput().srv;
+	bool hasGlare = glare && glare->enabled && glare->GetGlareOutput().srv;
+	bool hasExposure = exposure && exposure->HasActiveAdaptation();
+	bool hasLocalExposure = localExposure && localExposure->enabled && localExposure->GetBaseLuminanceSRV();
 
 	uint flags = (hasBloom ? BLOOM : 0) | (hasFlare ? FLARE : 0) | (hasGlare ? GLARE : 0) | (hasExposure ? EXPOSURE : 0) | (hasLocalExposure ? LOCAL_EXPOSURE : 0);
 	if (flags == NONE)
 		return;
 
-	CS_GPU_PASS("PostProcessing::Composite");
-	auto state = globals::state;
-	auto context = globals::d3d::context;
-
 	if (!AllShadersReady({ &compositeShaders[flags] }))
 		return;
 
-	state->BeginPerfEvent("Composite");
+	if (!owner->GetFullscreenVS())
+		return;
 
-	ID3D11ComputeShader* shader = compositeShaders[flags].get();
+	CS_GPU_PASS("PostProcessing::Composite");
+	auto context = globals::d3d::context;
+
+	ID3D11PixelShader* shader = compositeShaders[flags].get();
 
 	// Bind resources:
 	//   t0 = main color (inout_tex)
@@ -141,11 +143,10 @@ void Composite::Draw(TextureInfo& inout_tex)
 	//   t3 = glare texture (if available)
 	//   t4 = adaptation buffer (if exposure enabled)
 	//   t5 = local exposure base luminance (if local exposure enabled)
-	//   u0 = output
+	//   rtv0 = output
 	//   b1 = auto exposure constant buffer (if exposure enabled)
 	//   b2 = local exposure constant buffer (if local exposure enabled)
 	std::array<ID3D11ShaderResourceView*, 6> srvs = { nullptr };
-	std::array<ID3D11UnorderedAccessView*, 1> uavs = { nullptr };
 
 	srvs[0] = inout_tex.srv;
 
@@ -163,45 +164,34 @@ void Composite::Draw(TextureInfo& inout_tex)
 	}
 	if (hasExposure) {
 		srvs[4] = exposure->GetAdaptationSRV();
-
-		// Bind the auto exposure constant buffer at b1
-		ID3D11Buffer* cb = exposure->GetConstantBuffer();
-		context->CSSetConstantBuffers(1, 1, &cb);
 	}
 	if (hasLocalExposure) {
 		srvs[5] = localExposure->GetBaseLuminanceSRV();
-
-		ID3D11Buffer* cb = localExposure->GetConstantBuffer();
-		context->CSSetConstantBuffers(2, 1, &cb);
 	}
-
-	uavs[0] = texOutput->uav.get();
-
-	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-	context->CSSetShader(shader, nullptr, 0);
 
 	uint width = texOutput->desc.Width;
 	uint height = texOutput->desc.Height;
-	context->Dispatch((width + 7) >> 3, (height + 7) >> 3, 1);
 
-	// cleanup
-	srvs.fill(nullptr);
-	uavs.fill(nullptr);
+	{
+		PostProcessingRaster::RasterPass pass(context);
 
-	context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-	context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-	context->CSSetShader(nullptr, nullptr, 0);
+		if (hasExposure) {
+			ID3D11Buffer* cb = exposure->GetConstantBuffer();
+			context->PSSetConstantBuffers(1, 1, &cb);
+		}
+		if (hasLocalExposure) {
+			ID3D11Buffer* cb = localExposure->GetConstantBuffer();
+			context->PSSetConstantBuffers(2, 1, &cb);
+		}
+		context->PSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+		pass.SetTargets({ texOutput->rtv.get() }, (float)width, (float)height);
+		pass.SetShaders(owner->GetFullscreenVS(), shader);
+		pass.Draw();
 
-	if (hasExposure) {
-		ID3D11Buffer* nullCB = nullptr;
-		context->CSSetConstantBuffers(1, 1, &nullCB);
-	}
-	if (hasLocalExposure) {
-		ID3D11Buffer* nullCB = nullptr;
-		context->CSSetConstantBuffers(2, 1, &nullCB);
+		// cleanup
+		srvs.fill(nullptr);
+		context->PSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
-	state->EndPerfEvent();
 }

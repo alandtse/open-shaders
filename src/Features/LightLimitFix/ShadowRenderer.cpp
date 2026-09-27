@@ -319,21 +319,37 @@ void LightLimitFix::DrawOverlay()
 		return;
 
 	// Menu open: draggable/resizable window so the user can reposition/expand it.
-	// Menu closed: compact pinned overlay with no title bar/chrome.
+	// Menu closed: keep the chosen position without title bar/chrome.
 	bool menuOpen = globals::menu->IsEnabled;
-	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * Util::GetUIScale();
+	using C = ThemeManager::Constants;
+	const float uiScale = Util::GetUIScale();
+	const float margin = C::OVERLAY_WINDOW_POSITION * uiScale;
+	const auto* viewport = ImGui::GetMainViewport();
+	const ImVec2 maxSize(
+		std::max(1.0f, viewport->WorkSize.x - margin * 2.0f),
+		std::max(1.0f, viewport->WorkSize.y - margin * 2.0f));
+	const ImVec2 minSize(
+		std::min(C::LIGHT_LIMIT_OVERLAY_MIN_WIDTH * uiScale, maxSize.x),
+		std::min(C::LIGHT_LIMIT_OVERLAY_MIN_HEIGHT * uiScale, maxSize.y));
 
 	// Same ImGui ID across menu open/closed so the user's resize persists;
 	// title bar/move are toggled via flags instead. No NoSavedSettings, so
 	// ImGui retains the picked size across sessions.
 	ImGuiWindowFlags flags = ImGuiWindowFlags_None;
 	if (!menuOpen)
-		flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove;
+		flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
 
-	ImGui::SetNextWindowPos(ImVec2(pos, pos), menuOpen ? ImGuiCond_Appearing : ImGuiCond_Always);
-	ImGui::SetNextWindowSize(ImVec2(340, 480), ImGuiCond_FirstUseEver);
-	ImGui::SetNextWindowSizeConstraints(ImVec2(280, 200), ImVec2(800, 1200));
-	ImGui::Begin("LLF Shadow Slots", nullptr, flags);
+	ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin),
+		ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSize(ImVec2(
+								 std::min(C::LIGHT_LIMIT_OVERLAY_WIDTH * uiScale, maxSize.x),
+								 std::min(C::LIGHT_LIMIT_OVERLAY_HEIGHT * uiScale, maxSize.y)),
+		ImGuiCond_FirstUseEver);
+	ImGui::SetNextWindowSizeConstraints(minSize, maxSize);
+	if (!ImGui::Begin("LLF Shadow Slots", nullptr, flags)) {
+		ImGui::End();
+		return;
+	}
 
 	if (vizOn) {
 		static const char* kVizNames[] = {

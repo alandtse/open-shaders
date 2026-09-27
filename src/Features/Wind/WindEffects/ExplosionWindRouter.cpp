@@ -353,8 +353,10 @@ std::optional<ExplosionWindRouter::ExplosionProfile> ExplosionWindRouter::Classi
 			ClampFiniteOrDefault(static_cast<float>(effect->effectItem.area), 0.0f, kMaximumRadius, 0.0f));
 		profile->strength = std::max(profile->strength,
 			std::clamp(0.65f + profile->radius / 900.0f, 0.65f, 3.0f));
+		const bool nativePhysics = (result && result->nativePhysics) || profile->nativePhysics;
 		if (!result || profile->radius > result->radius)
 			result = profile;
+		result->nativePhysics = nativePhysics;
 	}
 	return result;
 }
@@ -370,7 +372,8 @@ ExplosionWindRouter::ExplosionProfile ExplosionWindRouter::CreateProfile(
 	return {
 		a_identity,
 		radius,
-		std::clamp(0.65f + radiusScale + 0.35f * forceScale, 0.65f, 3.0f)
+		std::clamp(0.65f + radiusScale + 0.35f * forceScale, 0.65f, 3.0f),
+		force > 0.0f
 	};
 }
 
@@ -470,7 +473,8 @@ void ExplosionWindRouter::EmitExplosion(const ExplosionObservation& a_observatio
 		settings.decayTime);
 	globals::features::wind.QueueTransientWindSource(source,
 		Wind::TransientWindSourceOwner::Explosion,
-		Wind::TransientWindSourcePriority::Impact);
+		Wind::TransientWindSourcePriority::Impact,
+		a_observation.profile.nativePhysics ? Wind::TransientWindPhysics::Native : Wind::TransientWindPhysics::Wind);
 }
 
 void ExplosionWindRouter::SanitizeSettings()

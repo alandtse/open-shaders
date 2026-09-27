@@ -237,7 +237,8 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 			std::clamp(settings.radius * 0.5f, 48.0f, 500.0f), 1800.0f, settings.decayTime);
 		globals::features::wind.QueueTransientWindSource(source,
 			Wind::TransientWindSourceOwner::WeaponThrowVR,
-			Wind::TransientWindSourcePriority::Impact);
+			Wind::TransientWindSourcePriority::Impact,
+			Wind::TransientWindPhysics::Native);
 	}
 }
 

@@ -19,10 +19,10 @@ Pipeline per runtime (SE and VR):
      loaded feature set, so the cache is valid only for a default full install;
      any feature uninstall/boot-disable falls back to a one-time recompile.
   4. Write Manifest.json (hlslkit.shader_digest, matching Util::ContentHash's
-     XXH3-128 algorithm byte-for-byte) so the runtime's manifest-first
+     XXH3-128 algorithm and per-permutation keys) so the runtime's manifest-first
      disk-cache check accepts this cache by content, not just Info.ini's
-     coarse feature-set match. Falls back to the runtime's mtime check for
-     any blob it can't compute a digest for -- always safe, just slower.
+     coarse feature-set match. Reject blobs without a matching compile
+     configuration or readable source instead of shipping unverifiable entries.
 
 The game performs no bytecode comparison (loads any valid DXBC with
 SKIP_VALIDATION), so fxc-built blobs are interchangeable with runtime
@@ -42,6 +42,8 @@ visible in CommunityShaders.log as "Saved disk cache info (plugin version: X)").
 
 import argparse
 import configparser
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -77,20 +79,33 @@ RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 DEFAULT_DISABLED_COMPANION_FEATURES = {"HorizonFix"}
 
 
-def feature_define_map(source_root: Path) -> dict:
-    """shortName -> shader define, parsed from src/Features headers (empty define
-    if the feature declares none)."""
-    import re
-
-    out = {}
+def feature_declarations(source_root: Path):
+    """Yield feature short names, shader defines, and their owning header text."""
     for h in sorted((source_root / "src/Features").rglob("*.h")):
         text = h.read_text(encoding="utf-8", errors="replace")
         short = re.search(r'GetShortName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
         if not short:
             continue
         define = re.search(r'GetShaderDefineName\(\)[^{]*\{\s*return\s+"(\w+)"', text)
-        out[short.group(1)] = define.group(1) if define else ""
-    return out
+        yield short.group(1), define.group(1) if define else "", text
+
+
+def feature_define_map(source_root: Path) -> dict:
+    """Map feature short names to their declared shader defines."""
+    return {short: define for short, define, _ in feature_declarations(source_root)}
+
+
+def single_shader_feature_defines(source_root: Path) -> dict:
+    """Discover feature defines with an unconditional single-shader-type declaration."""
+    predicate = re.compile(
+        r'HasShaderDefine\(RE::BSShader::Type\s+(\w+)\)\s+override\s*'
+        r'\{\s*return\s+\1\s*==\s*RE::BSShader::Type::(\w+)\s*;\s*\}')
+    defines = {}
+    for _, define, text in feature_declarations(source_root):
+        match = predicate.search(text)
+        if define and match:
+            defines.setdefault(match.group(2), set()).add(define)
+    return defines
 
 
 def default_disabled_features(source_root: Path) -> set:
@@ -474,8 +489,8 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     return count
 
 
-def filter_profile_defines(config: Path, out: Path, drop: set) -> Path:
-    """Strip the given defines from every define list in the config."""
+def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path = None) -> Path:
+    """Apply disabled features and current static feature declarations to a compile config."""
     import yaml
 
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
@@ -492,6 +507,17 @@ def filter_profile_defines(config: Path, out: Path, drop: set) -> Path:
                 scrub(v)
 
     scrub(cfg)
+    feature_defines = single_shader_feature_defines(source_root or REPO)
+    for shader in cfg["shaders"]:
+        for stage in shader["configs"].values():
+            common = {define.split("=", 1)[0] for define in stage.get("common_defines", [])}
+            for entry in stage["entries"]:
+                shader_type = entry["entry"].split(":", 1)[0]
+                defines = entry.get("defines", [])
+                present = common | {define.split("=", 1)[0] for define in defines}
+                added = feature_defines.get(shader_type, set()) - drop - present
+                if added:
+                    entry["defines"] = defines + sorted(added)
     out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
     return out
 
@@ -503,9 +529,7 @@ def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> dict:
     X2 entries). Move each IS blob to its technique dir; verified byte-identical
     naming against runtime-written caches on both runtimes.
 
-    Returns {technique_dir_name: source_stem} for every dir this actually
-    renamed, so a manifest builder can map a technique dir back to the
-    source file its blobs were really compiled from (see write_shader_cache_manifest)."""
+    Returns {technique_dir_name: source_stem} for every dir this actually renamed."""
     idx = 1 if runtime == "VR" else 0
     by_desc = {k[idx]: v for k, v in IMAGESPACE_DIRS.items()}
     keep = {".pso", ".vso", ".cso"}
@@ -531,23 +555,96 @@ def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> dict:
     return renamed
 
 
-def write_shader_cache_manifest(cache_dir: Path, shader_root: Path, runtime: str, imagespace_remap: dict) -> None:
-    """Write Manifest.json so the runtime's manifest-first disk-cache check
-    (see ShaderCache.cpp's GetShaderContentDigest) validates this prebuilt
-    cache by content instead of falling back to its mtime comparison. Must
-    run after remap_imagespace_dirs, whose imagespace_remap output resolves
-    a technique dir back to the source file it was actually compiled from."""
-    from hlslkit.shader_digest import write_manifest
+_SHADER_STAGES = {"PSHADER": ("Pixel", ".pso"), "VSHADER": ("Vertex", ".vso"), "CSHADER": ("Compute", ".cso")}
+_COMPILE_ONLY_DEFINES = {
+    "PSHADER", "VSHADER", "CSHADER", "VR", "DEBUG", "_DEBUG", "D3D_DEBUG_INFO",
+    "D3DCOMPILE_DEBUG", "D3DCOMPILE_SKIP_OPTIMIZATION", "D3DCOMPILE_AVOID_FLOW_CONTROL",
+}
 
-    global_defines_state = "VR;" if runtime == "VR" else ""
-    count = write_manifest(
-        cache_dir,
-        shader_root,
-        global_defines_state,
-        cache_dir / "Manifest.json",
-        resolve_source_name=lambda name: imagespace_remap.get(name, name),
-    )
-    print(f"{runtime}: wrote {count} entries to cache manifest -> {cache_dir / 'Manifest.json'}")
+
+def cache_shader_permutations(config: Path, runtime: str) -> dict:
+    """Map compiled blobs to their source and ShaderCache.cpp's GetShaderString key."""
+    from hlslkit.compile_shaders import parse_shader_configs
+
+    idx = 1 if runtime == "VR" else 0
+    imagespace_names = {descriptors[idx]: name for descriptors, name in IMAGESPACE_DIRS.items()}
+    permutations = {}
+    for source, stage, entry, defines in parse_shader_configs(str(config)):
+        shader_class, suffix = _SHADER_STAGES[stage]
+        descriptor = int(entry.rsplit(":", 1)[1], 16)
+        shader_name = Path(source).stem
+        if shader_name.startswith("IS"):
+            shader_name = imagespace_names.get(descriptor, shader_name)
+        key_defines = []
+        for define in defines:
+            name, _, value = define.partition("=")
+            if name not in _COMPILE_ONLY_DEFINES:
+                key_defines.append(f"{name}={value}" if value else name)
+        key = f"{shader_name}:{shader_class}:" + "".join(
+            define + " " for define in sorted(key_defines, key=lambda define: define.split("=", 1)[0]))
+        relative_path = f"{shader_name}/{descriptor:X}{suffix}"
+        permutation = (source, key)
+        if relative_path in permutations and permutations[relative_path] != permutation:
+            raise ValueError(f"Conflicting shader permutations for {relative_path}")
+        permutations[relative_path] = permutation
+    return permutations
+
+
+def shader_cache_manifest_entries(cache_dir: Path, shader_root: Path, runtime: str, config: Path) -> dict:
+    """Hash remapped blobs using the release-profile config that compiled them."""
+    from hlslkit.shader_digest import combine_hashes, compute_shader_content_digest, hash_string, to_hex
+
+    if sys.platform != "win32":
+        raise RuntimeError("Shader cache manifests require Windows to match the runtime's include sort order")
+    permutations = cache_shader_permutations(config, runtime)
+    global_digest = hash_string("VR;" if runtime == "VR" else "")
+    source_digests = {}
+    entries = {}
+    for blob in sorted(cache_dir.rglob("*")):
+        if not blob.is_file() or blob.suffix not in (".pso", ".vso", ".cso"):
+            continue
+        relative_path = blob.relative_to(cache_dir).as_posix()
+        if relative_path not in permutations:
+            raise ValueError(f"No compile configuration for cache blob {relative_path}")
+        source, key = permutations[relative_path]
+        if source not in source_digests:
+            digest = compute_shader_content_digest(shader_root / source, shader_root)
+            if digest is None:
+                raise ValueError(f"Cannot hash shader source {source}")
+            source_digests[source] = combine_hashes(digest, global_digest)
+        entries[relative_path] = to_hex(combine_hashes(source_digests[source], hash_string(key)))
+    return entries
+
+
+def write_shader_cache_manifest(cache_dir: Path, shader_root: Path, runtime: str, config: Path) -> None:
+    """Write the runtime manifest for the inputs that produced these blobs."""
+    from hlslkit.shader_digest import SCHEMA_VERSION
+
+    entries = shader_cache_manifest_entries(cache_dir, shader_root, runtime, config)
+    (cache_dir / "Manifest.json").write_text(
+        json.dumps({"schemaVersion": SCHEMA_VERSION, "entries": entries}, sort_keys=True), encoding="utf-8")
+    print(f"{runtime}: wrote {len(entries)} entries to cache manifest -> {cache_dir / 'Manifest.json'}")
+
+
+def compile_input_record(cache_dir: Path, shaders: Path, runtime: str, config: Path) -> dict:
+    """Bind the compiled bytecode to its source, defines, stage, and runtime."""
+    entries = shader_cache_manifest_entries(cache_dir, shaders, runtime, config)
+    if not entries:
+        raise ValueError("Cannot record an empty compiled cache")
+    return {"schemaVersion": 1, "runtime": runtime, "entries": {
+        path: {"digest": digest, "bytecodeSha256": hashlib.sha256((cache_dir / path).read_bytes()).hexdigest()}
+        for path, digest in entries.items()}}
+
+
+def record_compile_inputs(cache_dir: Path, shaders: Path, runtime: str) -> None:
+    """Record compile inputs immediately after the release-parity compiler pass."""
+    config = cache_dir / "CompileConfig.yaml"
+    if not config.is_file():
+        raise ValueError("Compiled cache is missing CompileConfig.yaml")
+    remap_imagespace_dirs(cache_dir, runtime)
+    record = compile_input_record(cache_dir, shaders, runtime, config)
+    (cache_dir / "CompileInputs.json").write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+    print(f"{runtime}: recorded compile inputs for {len(record['entries'])} blobs")
 
 
 def profile_strip_defines(source_root: Path, profile: str) -> tuple:
@@ -575,11 +672,11 @@ def prune_non_cache_files(cache_dir: Path) -> None:
             d.rmdir()
 
 
-def default_plugin_version() -> str:
+def default_plugin_version(source_root: Path = None) -> str:
     """Derive Plugin::VERSION's dash form (X-Y-Z-0) from CMakeLists' project VERSION."""
     import re
 
-    text = (REPO / "CMakeLists.txt").read_text(encoding="utf-8", errors="replace")
+    text = ((source_root or REPO) / "CMakeLists.txt").read_text(encoding="utf-8", errors="replace")
     m = re.search(r"project\s*\([^)]*?VERSION\s+(\d+)\.(\d+)\.(\d+)", text, re.IGNORECASE | re.DOTALL)
     if not m:
         raise SystemExit("cannot derive plugin version from CMakeLists.txt; pass --plugin-version")
@@ -591,10 +688,19 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
     itself must have used the profile config (--emit-profile-config), so this only
     prunes sidecars, remaps ImageSpace dirs, and writes the profile manifest."""
     _, include, disabled = profile_strip_defines(REPO, profile)
-    prune_non_cache_files(cache_dir)
-    imagespace_remap = remap_imagespace_dirs(cache_dir, runtime)
-    write_shader_cache_manifest(cache_dir, shaders, runtime, imagespace_remap)
+    config = cache_dir / "CompileConfig.yaml"
+    if not config.is_file():
+        raise ValueError("Compiled cache is missing CompileConfig.yaml; rebuild it with its compile configuration")
+    record_path = cache_dir / "CompileInputs.json"
+    if not record_path.is_file():
+        raise ValueError("Compiled cache is missing CompileInputs.json; rebuild it with a compile-time input record")
+    remap_imagespace_dirs(cache_dir, runtime)
+    recorded = json.loads(record_path.read_text(encoding="utf-8"))
+    if recorded != compile_input_record(cache_dir, shaders, runtime, config):
+        raise ValueError("Compiled cache inputs or bytecode changed since compilation; rebuild the cache")
+    write_shader_cache_manifest(cache_dir, shaders, runtime, config)
     n = write_info_ini(cache_dir, shaders, plugin_version, runtime, include, disabled)
+    prune_non_cache_files(cache_dir)
     blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
     print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
     return 0
@@ -603,13 +709,15 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plugin-version", help='Plugin::VERSION string, e.g. "1-7-1-0" (default: derived from CMakeLists.txt)')
-    ap.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
-    ap.add_argument("--shader-dir", help="merged shader tree used for --finalize-existing (e.g. build/ALL/aio/Shaders)")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--finalize-existing", help="finalize an already-compiled cache dir (from CI shader validation) instead of compiling")
+    mode.add_argument("--record-compile", help="record inputs immediately after compiling this cache dir for later finalization")
+    ap.add_argument("--shader-dir", help="merged shader tree used for --record-compile/--finalize-existing (e.g. build/ALL/aio/Shaders)")
     ap.add_argument("--runtime", choices=["SE", "VR", "both"], default="both")
     ap.add_argument("--profile", choices=["aio", "full"], default="aio",
         help="feature profile the cache targets; aio = default install (the cache is INVALID once any extra feature is added)")
     ap.add_argument("--emit-profile-config", nargs=2, metavar=("IN", "OUT"),
-        help="write the profile-stripped copy of a validation config and exit (used by CI so one compile serves validation and the cache)")
+        help="write a compile config with the profile's current feature defines and exit")
     ap.add_argument("--source-root", help="repo checkout to take shaders/configs/version from (default: this repo; use a release-tag checkout to seed an old release)")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -648,9 +756,12 @@ def main() -> int:
         print(f"profile config ({args.profile}) -> {args.emit_profile_config[1]}; stripped: {sorted(strip)}")
         return 0
 
-    if args.finalize_existing:
+    if args.finalize_existing or args.record_compile:
         if not args.shader_dir or args.runtime == "both":
-            raise SystemExit("--finalize-existing requires --shader-dir and a single --runtime")
+            raise SystemExit("--finalize-existing/--record-compile requires --shader-dir and a single --runtime")
+        if args.record_compile:
+            record_compile_inputs(Path(args.record_compile), Path(args.shader_dir), args.runtime)
+            return 0
         return finalize_existing(Path(args.finalize_existing), Path(args.shader_dir), plugin_version, args.runtime, args.profile)
 
     out_root = Path(args.out)
@@ -684,8 +795,8 @@ def main() -> int:
                 print(f"hlslkit-compile failed for {rt} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
             prune_non_cache_files(cache_dir)
-            imagespace_remap = remap_imagespace_dirs(cache_dir, rt)
-            write_shader_cache_manifest(cache_dir, stage, rt, imagespace_remap)
+            remap_imagespace_dirs(cache_dir, rt)
+            write_shader_cache_manifest(cache_dir, stage, rt, config)
         _, include, disabled = profile_strip_defines(REPO, args.profile)
         n = write_info_ini(cache_dir, stage, plugin_version, rt, include, disabled)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))

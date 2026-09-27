@@ -53,7 +53,7 @@
 
 # Semantic-release config — fork has independent versioning and may
 # diverge from upstream's release rules.
-.releaserc                                      merge=ours
+.releaserc.js                                   merge=ours
 
 # Branding-owned: rebrand commit established these as fork-specific.
 README.md                                       merge=ours

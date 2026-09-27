@@ -41,6 +41,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ManualFocusPlane,
 	FocalLength,
 	FNumber,
+	SensorWidthMM,
 	FarPlaneMaxBlur,
 	NearPlaneMaxBlur,
 	UseAdaptiveGather,
@@ -64,6 +65,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void DoF::DrawSettings()
 {
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	if (cam)
+		ImGui::TextWrapped("%s", T("feature.post_processing.do_f.cinematic_controlled", "Lens, focus and aperture are controlled by Cinematic Camera. Saved settings apply again when it is disabled."));
+	ImGui::BeginDisabled(cam != nullptr);
 	ImGui::Checkbox(T("feature.post_processing.do_f.auto_focus", "Auto Focus"), &settings.AutoFocus);
 
 	if (settings.AutoFocus) {
@@ -73,6 +78,8 @@ void DoF::DrawSettings()
 	ImGui::SliderFloat(T("feature.post_processing.do_f.manual_focus", "Manual Focus"), &settings.ManualFocusPlane, 0.1f, 150.0f, "%.2f m");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.focal_length", "Focal Length"), &settings.FocalLength, 1.0f, 300.0f, "%.1f mm");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.f_number", "F-Number"), &settings.FNumber, 1.0f, 22.0f, "f/%.1f");
+	ImGui::SliderFloat(T("feature.post_processing.do_f.sensor_width", "Sensor Width"), &settings.SensorWidthMM, 1.0f, 100.0f, "%.2f mm", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::EndDisabled();
 	ImGui::SliderFloat(T("feature.post_processing.do_f.far_plane_max_blur", "Far Plane Max Blur"), &settings.FarPlaneMaxBlur, 0.0f, 8.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.near_plane_max_blur", "Near Plane Max Blur"), &settings.NearPlaneMaxBlur, 0.0f, 4.0f, "%.2f");
 	ImGui::SliderFloat(T("feature.post_processing.do_f.max_far_coc_radius", "Max Far Blur Radius"), &settings.MaxFarCoCRadius, 0.001f, 0.1f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
@@ -95,8 +102,10 @@ void DoF::DrawSettings()
 	ImGui::SliderFloat(T("feature.post_processing.do_f.post_blur_smoothing", "Post Blur Smoothing"), &settings.PostBlurSmoothing, 0.0f, 2.0f, "%.2f");
 	ImGui::Combo(T("feature.post_processing.do_f.bokeh_mode", "Bokeh Mode"), &settings.BokehMode, "Procedural\0Custom Texture (Higher Cost)\0");
 	if (settings.BokehMode == 0) {
+		ImGui::BeginDisabled(cam != nullptr);
 		ImGui::SliderInt(T("feature.post_processing.do_f.bokeh_blade_count", "Aperture Blades"), &settings.BokehBladeCount, 4, 16, "%d", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T("feature.post_processing.do_f.bokeh_blade_roundness", "Blade Roundness"), &settings.BokehBladeRoundness, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
 		if (!settings.UseAdaptiveGather)
 			ImGui::TextDisabled("%s", T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."));
 	} else if (owner) {
@@ -115,9 +124,11 @@ void DoF::DrawSettings()
 		}
 		ImGui::TextDisabled("%s", T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
 	}
+	ImGui::BeginDisabled(cam != nullptr);
 	ImGui::SliderFloat(T("feature.post_processing.do_f.highlight_shape_rotation", "Highlight Shape Rotation"), &settings.HighlightShapeRotationAngle, 0.0f, 1.0f, "%.2f");
 	ImGui::Checkbox(T("feature.post_processing.do_f.target_focus", "Target Focus"), &settings.targetFocus);
 	ImGui::SliderFloat(T("feature.post_processing.do_f.target_focus_focal_length", "Target Focus Focal Length"), &settings.targetFocusFocalLength, 1.0f, 300.0f, "%.1f mm");
+	ImGui::EndDisabled();
 	ImGui::Checkbox(T("feature.post_processing.do_f.console_selection", "Console Selection"), &settings.consoleSelection);
 	if (settings.consoleSelection && currentRef != 0) {
 		ImGui::Text(T("feature.post_processing.do_f.selected_reference", "Selected Reference: %08X"), currentRef);
@@ -171,13 +182,13 @@ void DoF::SaveSettings(json& o_json)
 	o_json = settings;
 }
 
-void DoF::UpdateProceduralBokehSamples(bool force)
+void DoF::UpdateProceduralBokehSamples(int bladeCount, float bladeRoundness, bool force)
 {
 	if (!proceduralBokehSamples)
 		return;
 
-	const int bladeCount = std::clamp(settings.BokehBladeCount, 4, 16);
-	const float roundness = std::clamp(settings.BokehBladeRoundness, 0.0f, 1.0f);
+	bladeCount = std::clamp(bladeCount, 4, 16);
+	const float roundness = std::clamp(bladeRoundness, 0.0f, 1.0f);
 	if (!force && bladeCount == cachedBokehBladeCount && roundness == cachedBokehBladeRoundness)
 		return;
 
@@ -249,7 +260,7 @@ void DoF::SetupResources()
 			BokehResources::GATHER_SAMPLE_COUNT,
 			"DoF::ProceduralBokehSamples");
 		proceduralBokehSamples->CreateSRV();
-		UpdateProceduralBokehSamples(true);
+		UpdateProceduralBokehSamples(settings.BokehBladeCount, settings.BokehBladeRoundness, true);
 	}
 
 	logger::debug("Creating 2D textures...");
@@ -376,8 +387,6 @@ void DoF::SetupResources()
 		texPreFocus = eastl::make_unique<Texture2D>(texDesc, "DoF::PreviousFocus");
 		texPreFocus->CreateSRV(srvDesc);
 		texPreFocus->CreateUAV(uavDesc);
-
-		g_TDM = reinterpret_cast<TDM_API::IVTDM2*>(TDM_API::RequestPluginAPI(TDM_API::InterfaceVersion::V2));
 	}
 
 	// Bokeh shapes are loaded by PostProcessing::bokehResources (shared with LensFlare)
@@ -443,71 +452,8 @@ void DoF::CompileComputeShaders()
 	CompileComputeShadersAsync(L"Data\\Shaders\\PostProcessing\\DoF", shaderInfos);
 }
 
-// Thanks Ershin!
-RE::NiPoint3 DoF::GetCameraPos()
-{
-	auto player = globals::game::player;
-	auto playerCamera = globals::game::playerCamera;
-	RE::NiPoint3 ret;
-
-	// GetRuntimeData() and GetVRRuntimeData() return differently-laid-out structs
-	// (VR_RUNTIME_DATA shifts cameraStates by 8 bytes), and VR's CameraStates enum
-	// inserts kVR before kThirdPerson/kMount, shifting their VR-equivalent values
-	// to kVRThirdPerson/kVRMount -- both the struct and the indices must match runtime.
-	const auto isVehicleOrBodyCamera = [&](const auto& runtimeData, RE::CameraState thirdPersonState, RE::CameraState mountState) {
-		return playerCamera->currentState == runtimeData.cameraStates[RE::CameraStates::kFirstPerson] ||
-		       playerCamera->currentState == runtimeData.cameraStates[thirdPersonState] ||
-		       playerCamera->currentState == runtimeData.cameraStates[mountState];
-	};
-	if (globals::game::isVR ?
-			isVehicleOrBodyCamera(*playerCamera->GetVRRuntimeData(), RE::CameraStates::kVRThirdPerson, RE::CameraStates::kVRMount) :
-			isVehicleOrBodyCamera(playerCamera->GetRuntimeData(), RE::CameraStates::kThirdPerson, RE::CameraStates::kMount)) {
-		RE::NiNode* root = playerCamera->cameraRoot.get();
-		if (root) {
-			ret.x = root->world.translate.x;
-			ret.y = root->world.translate.y;
-			ret.z = root->world.translate.z;
-		}
-	} else if (playerCamera->IsInFreeCameraMode()) {
-		auto freeCameraState = static_cast<RE::FreeCameraState*>(playerCamera->currentState.get());
-		ret = freeCameraState->translation;
-	} else {
-		RE::NiPoint3 playerPos = player->GetLookingAtLocation();
-
-		ret.z = playerPos.z;
-		ret.x = player->GetPositionX();
-		ret.y = player->GetPositionY();
-	}
-
-	return ret;
-}
-
-bool DoF::GetTargetLockEnabled()
-{
-	return g_TDM && g_TDM->GetCurrentTarget();
-}
-
-bool DoF::GetInDialogue()
-{
-	return RE::MenuTopicManager::GetSingleton()->speaker || RE::MenuTopicManager::GetSingleton()->lastSpeaker;
-}
-
-float DoF::GetDistanceToReference(RE::TESObjectREFR* a_ref)
-{
-	RE::NiPoint3 cameraPosition = GetCameraPos();
-	RE::NiPoint3 targetPosition = a_ref->GetPosition();
-	if (a_ref->GetFormType() == RE::FormType::ActorCharacter && !a_ref->IsPlayer()) {
-		auto head = a_ref->GetNodeByName("NPC Head [Head]");
-		if (head) {
-			targetPosition = head->world.translate;
-		}
-	}
-	return cameraPosition.GetDistance(targetPosition);
-}
-
 void DoF::Draw(TextureInfo& inout_tex)
 {
-	auto state = globals::state;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
@@ -518,55 +464,75 @@ void DoF::Draw(TextureInfo& inout_tex)
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
 
 	float focusLen = settings.FocalLength;
+	float fNumber = settings.FNumber;
+	float sensorWidthMM = settings.SensorWidthMM;
+	float transitionSpeed = settings.TransitionSpeed;
 	float nearBlur = settings.NearPlaneMaxBlur;
 	float manualFocus = settings.ManualFocusPlane / 1000.0f;
+	float2 focusCoord = settings.FocusCoord;
 	debugFocusPlane = manualFocus;
 	bool autoFocus = settings.AutoFocus;
+	int bladeCount = settings.BokehBladeCount;
+	float bladeRoundness = settings.BokehBladeRoundness;
 
-	if (settings.targetFocus) {
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	CinematicCamera::FocusResolver* resolver = owner ? &owner->GetCinematicCamera().focusResolver : nullptr;
+	if (cam && resolver) {
+		focusLen = cam->FocalLengthMM;
+		fNumber = cam->FNumber;
+		sensorWidthMM = cam->EffectiveSensorWidthMM;
+		transitionSpeed = cam->TransitionSpeed;
+		manualFocus = cam->ManualDistanceM / 1000.0f;
+		focusCoord = cam->ScreenPointUV;
+		bladeCount = cam->ApertureBladeCount;
+		bladeRoundness = cam->ApertureRoundness;
+		autoFocus = false;
+
+		switch (cam->Mode) {
+		case CinematicCamera::FocusMode::Manual:
+			break;
+		case CinematicCamera::FocusMode::ScreenPoint:
+			autoFocus = true;
+			break;
+		case CinematicCamera::FocusMode::Target:
+			{
+				auto result = resolver->ResolveTarget(settings.consoleSelection, currentRef);
+				if (result.hasTarget) {
+					if (result.projected) {
+						autoFocus = true;
+						focusCoord = result.focusCoord;
+					} else {
+						manualFocus = result.distanceM / 1000.0f;
+					}
+				}
+				break;
+			}
+		default:
+			break;
+		}
+		debugFocusPlane = manualFocus;
+	} else if (settings.targetFocus && resolver) {
 		focusLen = 1.0f;
 		nearBlur = 0.0f;
 		float targetFocusDistanceGame = 0;
-		auto targetFocusEnabled = false;
 		autoFocus = false;
 
-		RE::TESObjectREFR* target = nullptr;
-		const auto consoleRef = RE::Console::GetSelectedRef();
-		if (settings.consoleSelection) {
-			if (consoleRef && !consoleRef->IsDisabled() && !consoleRef->IsDeleted() && consoleRef->Is3DLoaded()) {
-				currentRef = consoleRef->formID;
-				target = consoleRef.get();
-				targetFocusEnabled = true;
-			} else {
-				currentRef = 0;
-			}
-		}
-
-		if (GetTargetLockEnabled()) {
-			target = g_TDM->GetCurrentTarget().get().get();
-			targetFocusEnabled = true;
-		}
-
-		if (GetInDialogue()) {
-			if (RE::MenuTopicManager::GetSingleton()->speaker) {
-				target = RE::MenuTopicManager::GetSingleton()->speaker.get().get();
-			} else {
-				target = RE::MenuTopicManager::GetSingleton()->lastSpeaker.get().get();
-			}
-			targetFocusEnabled = true;
-		}
-		if (target)
-			targetFocusDistanceGame = GetDistanceToReference(target);
-		debugDistance = targetFocusDistanceGame;
-		if (targetFocusEnabled) {
-			nearBlur = settings.NearPlaneMaxBlur;
-			focusLen = settings.targetFocusFocalLength;
-			manualFocus = Util::Units::GameUnitsToMeters(targetFocusDistanceGame) * 0.001f;  // in KM
-		} else {
+		RE::TESObjectREFR* target = resolver->FindTarget(settings.consoleSelection, currentRef);
+		if (!target)
 			return;
+
+		targetFocusDistanceGame = Util::GetCameraDistanceToReference(target);
+		debugDistance = targetFocusDistanceGame;
+		nearBlur = settings.NearPlaneMaxBlur;
+		focusLen = settings.targetFocusFocalLength;
+		if (Util::GetReferenceFocusCoord(target, focusCoord)) {
+			// Visible-surface depth avoids focusing behind the target face.
+			autoFocus = true;
+		} else {
+			manualFocus = Util::Units::GameUnitsToMeters(targetFocusDistanceGame) * 0.001f;  // in KM
 		}
+		debugFocusPlane = manualFocus;
 	}
-	debugFocusPlane = manualFocus;
 	// No-op the whole frame until the core kernels are ready -- a partial
 	// sequential pipeline would write garbage into the scene target.
 	const bool needPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
@@ -575,14 +541,14 @@ void DoF::Draw(TextureInfo& inout_tex)
 		&GatherPostfilterCS, &CombinerCS });
 	if (!coreReady || (needPostSmoothing && !AllShadersReady({ &PostSmoothing1CS, &PostSmoothing2AndFocusingCS })))
 		return;
-	state->BeginPerfEvent("Depth of Field");
+	CS_GPU_PASS("PostProcessing::DoF");
 
 	const uint halfResX = texPreBlurred->desc.Width;
 	const uint halfResY = texPreBlurred->desc.Height;
 	const uint tileDimX = texCoCTile->desc.Width;
 	const uint tileDimY = texCoCTile->desc.Height;
 	const size_t gatherQuality = (size_t)std::clamp(settings.GatherQuality, 0, 1);
-	UpdateProceduralBokehSamples();
+	UpdateProceduralBokehSamples(bladeCount, bladeRoundness);
 
 	const int requestedBokehMode = std::clamp(settings.BokehMode, 0, 1);
 	int customShapeIndex = 0;
@@ -610,11 +576,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const float nearMaxReachPx = tileDilateRadius > 0u ? std::min(wantNearRadiusPx, (float)(tileDilateRadius - 1u) * conservativeTileStepPx) : 0.0f;
 
 	DoFCB dofData = {
-		.TransitionSpeed = settings.TransitionSpeed,
-		.FocusCoord = settings.FocusCoord,
+		.TransitionSpeed = transitionSpeed,
+		.FocusCoord = focusCoord,
 		.ManualFocusPlane = manualFocus,
 		.FocalLength = focusLen,
-		.FNumber = settings.FNumber,
+		.FNumber = fNumber,
 		.FarPlaneMaxBlur = settings.FarPlaneMaxBlur,
 		.NearPlaneMaxBlur = nearBlur,
 		.BlurQuality = settings.BlurQuality,
@@ -623,7 +589,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 		.HighlightBoost = settings.HighlightBoost,
 		.PostBlurSmoothing = settings.PostBlurSmoothing,
 		.HighlightShape = bokehMode == 1 ? (uint)settings.HighlightShape : 0u,
-		.HighlightShapeRotationAngle = settings.HighlightShapeRotationAngle,
+		.HighlightShapeRotationAngle = cam ? std::fmod(cam->ApertureBladeRotationDeg, 360.0f) / 360.0f : settings.HighlightShapeRotationAngle,
 		.PetzvalStrength = settings.PetzvalStrength,
 		.AutoFocus = autoFocus,
 		.MaxNearCoCRadius = std::max(settings.MaxNearCoCRadius, 1e-4f),
@@ -637,10 +603,10 @@ void DoF::Draw(TextureInfo& inout_tex)
 		.CustomShapeRadiusScale = customShapeRadiusScale,
 		.BokehMaxRadius = bokehMaxRadius,
 		.NearMaxReachPx = nearMaxReachPx,
-		.BokehBladeCount = (uint)std::clamp(settings.BokehBladeCount, 4, 16),
-		.BokehBladeRoundness = std::clamp(settings.BokehBladeRoundness, 0.0f, 1.0f),
+		.BokehBladeCount = (uint)std::clamp(bladeCount, 4, 16),
+		.BokehBladeRoundness = std::clamp(bladeRoundness, 0.0f, 1.0f),
 		.ProceduralBokehAreaScale = proceduralBokehAreaScale,
-		.pad = 0
+		.SensorWidthMM = std::isfinite(sensorWidthMM) ? std::max(sensorWidthMM, 1.0f) : 36.0f
 	};
 	dofCB->Update(dofData);
 
@@ -925,5 +891,4 @@ void DoF::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
-	state->EndPerfEvent();
 }

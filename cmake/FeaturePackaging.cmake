@@ -40,6 +40,22 @@ function(feature_payload_dependencies feature out_var)
     set(${out_var} ${_dependencies} PARENT_SCOPE)
 endfunction()
 
+# Derives <prefix>_FILES (the entries that exist) and <prefix>_PAYLOAD_MISSING from
+# <prefix>_PAYLOAD_FILES, which a skipped download may leave off disk entirely.
+function(split_runtime_payload _prefix)
+    set(_existing)
+    set(_missing)
+    foreach(_file IN LISTS ${_prefix}_PAYLOAD_FILES)
+        if(EXISTS "${_file}")
+            list(APPEND _existing "${_file}")
+        else()
+            list(APPEND _missing "${_file}")
+        endif()
+    endforeach()
+    set(${_prefix}_FILES ${_existing} PARENT_SCOPE)
+    set(${_prefix}_PAYLOAD_MISSING ${_missing} PARENT_SCOPE)
+endfunction()
+
 function(
     feature_package_commands
     out_var

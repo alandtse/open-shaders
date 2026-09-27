@@ -124,7 +124,7 @@ void ProceduralSun::RestoreDefaultSettings()
 
 ProceduralSun::PerFrameData ProceduralSun::GetCommonBufferData() const
 {
-	return {
+	PerFrameData data{
 		.enabled = settings.enabled,
 		.sunDiskCos = std::cos(settings.sunDiskAngularRadius),
 		.diskIntensity = settings.diskIntensity,
@@ -135,4 +135,11 @@ ProceduralSun::PerFrameData ProceduralSun::GetCommonBufferData() const
 		.haloFalloff = settings.haloFalloff,
 		.cloudOcclusionStrength = settings.cloudOcclusionStrength
 	};
+	const auto* sky = globals::game::sky;
+	if (settings.enabled && sky && sky->sun && sky->sun->sunBase) {
+		const float radius = sky->sun->sunBase->GetModelData().modelBound.radius;
+		if (std::isfinite(radius) && radius > 0.0f)
+			data.sunQuadModelRadius = radius;
+	}
+	return data;
 }

@@ -15,6 +15,7 @@
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/HairSpecular.h"
+#include "Features/HorizonFix.h"
 #include "Features/IBL.h"
 #include "Features/LODBlending.h"
 #include "Features/LightLimitFix.h"
@@ -89,5 +90,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::vanillaFresnel.settings,
 		Bloom::GetCommonBufferData(bloomSettings),
 		globals::features::postProcessing.GetCommonBufferData(),
-		globals::features::grassCollision.GetCommonBufferData());
+		globals::features::grassCollision.GetCommonBufferData(),
+		globals::features::horizonFix.GetCommonBufferData());
 }

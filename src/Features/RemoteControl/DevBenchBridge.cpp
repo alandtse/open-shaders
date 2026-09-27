@@ -245,6 +245,8 @@ namespace
 				}
 				if (wantsUnsupportedRuntime)
 					logger::warn("DevBenchBridge: enabling '{}' via Developer Mode override despite being unsupported on the current runtime", shortName);
+				if (target->loaded && !applied)
+					target->OnRuntimeDisabled();
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
@@ -700,6 +702,29 @@ namespace
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },
 							{ "estPassMsPerFrame", snap.avgLightCostUs / 1000.0 * snap.avgRedrawsPerFrame },
 							{ "staticBakesTotal", snap.staticBakesTotal },
+							{ "passGuardChecksTotal", snap.passGuardChecksTotal },
+							{ "passGuardCycleSkipsTotal", snap.passGuardCycleSkipsTotal },
+							{ "passGuardFaultSkipsTotal", snap.passGuardFaultSkipsTotal },
+							{ "passGuardCapExceededTotal", snap.passGuardCapExceededTotal },
+							{ "passGuardCycleRepairsTotal", snap.passGuardCycleRepairsTotal },
+							{ "staleAccumulatesTotal", snap.staleAccumulatesTotal },
+							{ "staleAfterRenderSkipTotal", snap.staleAfterRenderSkipTotal },
+							{ "stalePassClearsTotal", snap.stalePassClearsTotal },
+							{ "renderSkipSessionResetTotal", snap.renderSkipsByReason[0] },
+							{ "renderSkipPortalTransitionTotal", snap.renderSkipsByReason[1] },
+							{ "renderSkipTeardownWaitingTotal", snap.renderSkipsByReason[2] },
+							{ "renderSkipTeardownRaceTotal", snap.renderSkipsByReason[3] },
+							{ "passRegChecksTotal", snap.passRegChecksTotal },
+							{ "passRegRingsTotal", snap.passRegRingsTotal },
+							{ "stalePromotedTotal", snap.stalePromotedTotal },
+							{ "passGuardRepairsPromotedTotal", snap.passGuardRepairsPromotedTotal },
+							{ "passRegRingsPromotedTotal", snap.passRegRingsPromotedTotal },
+							{ "splitAccumAllTotal", snap.splitAccumByMode[0] },
+							{ "splitAccumStaticOnlyTotal", snap.splitAccumByMode[1] },
+							{ "splitAccumDynamicOnlyTotal", snap.splitAccumByMode[2] },
+							{ "splitLatchMismatchTotal", snap.splitLatchMismatchTotal },
+							{ "splitLatchWindowTotal", snap.splitLatchWindowTotal },
+							{ "splitWastedBakesTotal", snap.splitWastedBakesTotal },
 							{ "cellResetsTotal", snap.cellResetsTotal },
 							{ "cullPoolDropsTotal", snap.cullPoolDropsTotal },
 							{ "casterCullDropsTotal", snap.casterCullDropsTotal },
@@ -1169,6 +1194,25 @@ namespace
 		return static_cast<CSPluginAPI::ICSInterface001*>(CSPluginAPI::GetApi(0));
 	}
 
+	json WindVectorToJson(const CSPluginAPI::WindVector& a_vector)
+	{
+		return json::array({ a_vector.x, a_vector.y, a_vector.z });
+	}
+
+	json WindSampleToJson(const CSPluginAPI::WindSample& a_sample)
+	{
+		return json{
+			{ "available", true },
+			{ "baseVelocity", WindVectorToJson(a_sample.baseVelocity) },
+			{ "gustVelocity", WindVectorToJson(a_sample.gustVelocity) },
+			{ "transientVelocity", WindVectorToJson(a_sample.transientVelocity) },
+			{ "finalVelocity", WindVectorToJson(a_sample.finalVelocity) },
+			{ "ambientGust", a_sample.ambientGust },
+			{ "transientIntensity", a_sample.transientIntensity },
+			{ "frameId", a_sample.frameId }
+		};
+	}
+
 	// Dispatches directly on the devbench listener thread rather than marshaling to
 	// main: API.md documents every method as callable from any thread (setters stage
 	// into CSPluginAPI's queue; ProcessStagedSettings applies on the render thread next
@@ -1215,6 +1259,26 @@ namespace
 				 return json{ { "staged", true } }; } },
 			{ "GetVRUpscalingApplyBlockReasons", [](auto* i, const json&) { return json{ { "result", i->GetVRUpscalingApplyBlockReasons() } }; } },
 			{ "IsVRUpscalingProfileApplyAllowed", [](auto* i, const json&) { return json{ { "result", i->IsVRUpscalingProfileApplyAllowed() } }; } },
+			{ "SampleWind", [](auto* i, const json& p) {
+				 const CSPluginAPI::WindVector position{
+					 p.value("x", 0.0f), p.value("y", 0.0f), p.value("z", 0.0f)
+				 };
+				 CSPluginAPI::WindSample sample;
+				 if (!i->SampleWind(&position, &sample, 1))
+					 return json{ { "available", false } };
+				 return WindSampleToJson(sample);
+			 } },
+			{ "SampleWindExcludingHavokImpulses", [](auto* i, const json& p) {
+				 const CSPluginAPI::WindVector position{
+					 p.value("x", 0.0f), p.value("y", 0.0f), p.value("z", 0.0f)
+				 };
+				 CSPluginAPI::WindSampleWithHavokExclusion sample;
+				 if (!i->SampleWindExcludingHavokImpulses(&position, &sample, 1))
+					 return json{ { "available", false } };
+				 json result = WindSampleToJson(sample.wind);
+				 result["windExcludingHavokImpulses"] = WindVectorToJson(sample.windExcludingHavokImpulses);
+				 return result;
+			 } },
 		};
 
 		const auto it = kMethods.find(method);
@@ -1257,7 +1321,7 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); automatically saves whether the feature loads next launch, without changing its current loaded state. Both actions persist only the selected preference and preserve unrelated unsaved settings; failures return an error.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}},"oneOf":[{"properties":{"action":{"enum":["favorite","boot"]},"shortName":{"minLength":1}},"required":["action","shortName","enabled"]},{"properties":{"action":{"not":{"enum":["favorite","boot"]}}}}]}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). PostProcessing includes cinematic_camera settings for the optional linked physical camera; use get/set with shortName PostProcessing to inspect or change them without saving. CSUtility atmosphere settings include independent sky/cloud brightness, saturation and gamma, vanilla fog intensity (opacity multiplier), volumetric lighting intensity and sun glare intensity (0 off, 1 unchanged), effect brightness and sky static brightness (0-2, scale only the current weather's Effect Lighting and Sky Statics colors; 1 unchanged at the center) and sky static transparency (0 unchanged, 1 fully transparent). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); automatically saves whether the feature loads next launch, without changing its current loaded state. Both actions persist only the selected preference and preserve unrelated unsaved settings; failures return an error.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]},"shortName":{"type":"string"},"settings":{"type":"object","description":"Partial SaveSettings object from get. PostProcessing exposes cinematic_camera including Enabled, Lens.FocalLengthMM, Lens.FNumber and Exposure.ISO. CSUtility atmosphere keys: skyBrightness, cloudBrightness, skySaturation, cloudSaturation, skyGammaOffset, cloudGammaOffset, effectBrightness, skyStaticBrightness, skyStaticTransparency, fogGammaOffset, fogAlphaGammaOffset, fogIntensity, vlGammaOffset, vlIntensity, sunGlareIntensity."},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}},"oneOf":[{"properties":{"action":{"enum":["favorite","boot"]},"shortName":{"minLength":1}},"required":["action","shortName","enabled"]},{"properties":{"action":{"not":{"enum":["favorite","boot"]}}}}]}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		// One-time: builds Util::DevBenchUx::Registry from every feature's
@@ -1285,7 +1349,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
 
 		static constexpr const char* pluginApiDesc =
-			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool) -- omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. A setter call is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
+			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed, SampleWind, SampleWindExcludingHavokImpulses. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool); wind sampling takes x, y, z world coordinates and returns the decomposed wind sample; SampleWindExcludingHavokImpulses also returns windExcludingHavokImpulses, which excludes native physics effects. Omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. Every method is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
 		dvb->RegisterTool("openshaders.pluginapi", pluginApiDesc, &PluginApiHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the
@@ -1309,7 +1373,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =
-				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,passGuardChecksTotal,passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, *Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
 
 			static constexpr const char* inspectProfilerDesc =

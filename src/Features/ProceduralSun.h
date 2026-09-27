@@ -31,7 +31,8 @@ struct ProceduralSun : Feature
 		float haloFalloff;
 
 		float cloudOcclusionStrength;
-		float pad[3] = {};
+		float sunQuadModelRadius = 0.0f;
+		float pad[2] = {};
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
 	static_assert(sizeof(PerFrameData) == 48);

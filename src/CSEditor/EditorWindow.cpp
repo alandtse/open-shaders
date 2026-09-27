@@ -2089,7 +2089,7 @@ namespace
 	void ReapplyLock(RE::Sky* sky, RE::TESWeather* weather)
 	{
 		if (sky && weather)
-			sky->ForceWeather(weather, true);
+			Util::ForceWeather(sky, weather, true);
 	}
 
 	void SetWeatherThunk(RE::Sky* sky, RE::TESWeather* weather, bool isOverride, bool accelerate)
@@ -2114,7 +2114,7 @@ namespace
 		if (auto* locked = GetActiveLock())
 			ReapplyLock(sky, locked);
 		else
-			sky->ForceWeather(weather, isOverride);
+			Util::ForceWeather(sky, weather, isOverride);
 	}
 
 	/** @brief Scans the game's executable segment for direct call/jump references to a function. */

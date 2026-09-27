@@ -15,6 +15,12 @@
 struct LightLimitFix : OverlayFeature
 {
 private:
+	void DrawContactShadowSettings();
+	void DrawParticleLightSettings();
+	void DrawPlacedLightSettings();
+	void DrawLightStatistics();
+	void DrawLightDebugSettings();
+
 	static constexpr uint32_t MAX_LIGHTS = 1024;
 	// Per-cluster visible-light cap; sizes the global lightIndexList pool as
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the
@@ -339,6 +345,11 @@ public:
 	void CompileComputeShaders();
 	virtual void Reset() override;
 	virtual void OnSceneTransitionReset(bool opening) override;
+	virtual bool WantsRenderPassSkipHook() const override { return true; }
+	/** @copydoc Feature::ShouldSkipRenderPass */
+	virtual bool ShouldSkipRenderPass(const RE::BSRenderPass* a_pass) override;
+	/** @copydoc Feature::RegisterUxActions */
+	virtual void RegisterUxActions() override;
 
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;

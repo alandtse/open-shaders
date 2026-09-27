@@ -1,0 +1,91 @@
+name: "Validate Promotion Target"
+description: "Checks that ff_target can be promoted onto main and identifies its source branch. Caller must have a full-history checkout on main's workflow."
+
+inputs:
+    ff-target:
+        description: "SHA to promote."
+        required: true
+    range-start:
+        description: "Commit the promoted range starts from (main before promotion). Defaults to origin/main."
+        required: false
+        default: ""
+    ref-name:
+        description: "Branch the workflow was dispatched on."
+        required: true
+
+outputs:
+    source:
+        description: "Branch ff_target was promoted from: dev or hotfix/X.Y.x."
+        value: ${{ steps.validate.outputs.source }}
+
+runs:
+    using: "composite"
+    steps:
+        - name: Validate ff_target
+          id: validate
+          shell: bash
+          env:
+              FF_TARGET: ${{ inputs.ff-target }}
+              RANGE_START: ${{ inputs.range-start }}
+              REF_NAME: ${{ inputs.ref-name }}
+          run: |
+              set -euo pipefail
+              if [[ "${REF_NAME}" != 'main' ]]; then
+                echo "::error::ff_target is only valid when this workflow is dispatched on 'main' (got '${REF_NAME}')."
+                exit 1
+              fi
+              # Fetch dev + every hotfix branch so the ancestor checks can
+              # find ff_target regardless of which staging branch it's on.
+              git fetch origin main dev '+refs/heads/hotfix/*:refs/remotes/origin/hotfix/*'
+              if ! git rev-parse --verify "${FF_TARGET}^{commit}" >/dev/null 2>&1; then
+                echo "::error::ff_target SHA ${FF_TARGET} does not exist."
+                exit 1
+              fi
+              if ! git merge-base --is-ancestor origin/main "${FF_TARGET}"; then
+                echo "::error::main is not an ancestor of ff_target ${FF_TARGET} — fast-forward is not possible."
+                exit 1
+              fi
+              # Identify the source branch for the promotion.
+              #   dev source     → FF-reconcile dev afterward (no rewrite).
+              #   hotfix-staging → rebase-reconcile dev afterward so the
+              #                    release commit + tag enter dev's
+              #                    ancestry. Force-with-lease push; `git
+              #                    rebase` drops patch-id duplicates of
+              #                    the cherry-picks already on main.
+              SOURCE=""
+              if git merge-base --is-ancestor "${FF_TARGET}" origin/dev; then
+                SOURCE="dev"
+              else
+                while read -r REF; do
+                  [[ -z "${REF}" ]] && continue
+                  if git merge-base --is-ancestor "${FF_TARGET}" "${REF}"; then
+                    SOURCE="${REF#origin/}"
+                    break
+                  fi
+                done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/hotfix/*')
+              fi
+              if [[ -z "${SOURCE}" ]]; then
+                echo "::error::ff_target ${FF_TARGET} is not an ancestor of dev or any origin/hotfix/* branch — refusing to promote an unreviewed SHA."
+                exit 1
+              fi
+              echo "source=${SOURCE}" >> "$GITHUB_OUTPUT"
+              START="${RANGE_START:-origin/main}"
+              if ! git rev-parse --verify "${START}^{commit}" >/dev/null 2>&1; then
+                echo "::error::range start ${START} does not exist."
+                exit 1
+              fi
+              if ! git merge-base --is-ancestor "${START}" "${FF_TARGET}"; then
+                echo "::error::range start ${START} is not an ancestor of ff_target ${FF_TARGET}."
+                exit 1
+              fi
+              {
+                echo "## Promotion plan"
+                echo "- Source branch: \`${SOURCE}\`"
+                echo "- Target SHA: \`$(git rev-parse --short=9 "${FF_TARGET}")\`"
+                PRERELEASE_TAG=$(git tag --points-at "${FF_TARGET}" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-(rc|pr)[.0-9]+$' | head -n1 || true)
+                echo "- Prerelease tag at target: \`${PRERELEASE_TAG:-<none>}\`"
+                echo "- Commits being promoted ($(git rev-list --count "${START}..${FF_TARGET}")):"
+                echo ""
+                # 4-space indent renders the commits as a code block under the preceding list item in GitHub-flavored markdown.
+                git log --oneline "${START}..${FF_TARGET}" | sed 's/^/    /'
+              } >> "$GITHUB_STEP_SUMMARY"

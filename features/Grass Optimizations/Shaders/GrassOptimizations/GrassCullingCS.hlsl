@@ -32,7 +32,7 @@ cbuffer CullParams : register(b0)
 
 	float InvisibleFadeCull;
 	float SimpleShadingPixelSize;
-	float Padding;
+	float HiZProjScale;
 	float MidLODPixelSize;
 
 	float MeshLODBandPx;
@@ -158,7 +158,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 
 		const float occRadius = instanceRadius + length(BoundCenter) * abs(sizeVariance);
 		const float distC = max(length(dvC), 1e-4);
-		const float projPxOcc = (occRadius / distC) * ProjScale;
+		const float projPxOcc = (occRadius / distC) * HiZProjScale;
 
 		const float4 clipC = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvC, 1.0));
 		if (clipC.w > 0.0) {

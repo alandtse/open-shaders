@@ -58,6 +58,8 @@ cbuffer PerFrame : register(b0)
 
 		if (previewSDR > 0.5) {
 			// Crop preview lives in the SDR menu buffer: emit sRGB instead of PQ.
+			if (postProcessOutput)
+				compositedColorLinear = Color::BT2020ToBT709(compositedColorLinear);
 			finalColor = saturate(Color::LinearToSrgb(max(0.0, compositedColorLinear)));
 		} else {
 			if (!postProcessOutput)

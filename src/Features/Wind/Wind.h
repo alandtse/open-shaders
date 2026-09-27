@@ -14,6 +14,7 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <span>
 #include <vector>
 
@@ -22,6 +23,7 @@ struct WindPermutationContribution
 {
 	float windIntensityOverride;
 	uint32_t overrideWindIntensity;
+	uint32_t enableGrassWindSpringBend;
 	float treeTransientWindInfluenceDefault;
 	float treeLeafTransientWindInfluenceDefault;
 	float treeLeafTransientFlutterMaximumDefault;
@@ -55,6 +57,19 @@ struct WindSharedData
 
 struct Wind : Feature
 {
+	/** @brief Wind components sampled from an immutable published simulation state. */
+	struct PublishedWindSample
+	{
+		float3 baseVelocity{};
+		float3 gustVelocity{};
+		float3 transientVelocity{};
+		float3 finalVelocity{};
+		float3 windExcludingHavokImpulses{};
+		float ambientGust{};
+		float transientIntensity{};
+		uint64_t frameId{};
+	};
+
 	Wind();
 
 	virtual std::string GetName() override { return "Wind"; }
@@ -93,6 +108,13 @@ struct Wind : Feature
 		HeavyImpact
 	};
 
+	/** @brief Marks whether a transient's triggering event already applies native Havok force. */
+	enum class TransientWindPhysics : uint8_t
+	{
+		Wind,
+		Native
+	};
+
 	/** Controls which sources survive when the shared pool reaches capacity. */
 	enum class TransientWindSourcePriority : uint8_t
 	{
@@ -107,6 +129,7 @@ struct Wind : Feature
 	{
 		WindField::TransientWindSource source;
 		TransientWindSourcePriority priority;
+		TransientWindPhysics physics = TransientWindPhysics::Wind;
 	};
 
 	Settings settings;
@@ -169,9 +192,13 @@ struct Wind : Feature
 	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition) const noexcept;
 	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition,
 		const float3& a_windDirection, float a_windSpeed) const noexcept;
+	/** @brief Samples a position batch from one published render-thread state. */
+	[[nodiscard]] bool SamplePublishedWind(std::span<const float3> a_worldPositions,
+		std::span<PublishedWindSample> a_samples) const noexcept;
 	void QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse);
 	void QueueTransientWindSource(const WindField::TransientWindSource& a_source,
-		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority);
+		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority,
+		TransientWindPhysics a_physics = TransientWindPhysics::Wind);
 	void SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
 		std::span<const TransientWindSourceSubmission> a_sources);
 	/** @brief Removes active, pending, and attached sources owned by one producer. */
@@ -203,11 +230,14 @@ private:
 		TransientWindSourceOwner owner;
 		TransientWindSourcePriority priority;
 		uint64_t sequence;
+		TransientWindPhysics physics;
 	};
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
 	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> transientWindImpulseOwners{};
 	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> previousTransientWindImpulseOwners{};
+	std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientWindImpulsePhysics{};
+	std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> previousTransientWindImpulsePhysics{};
 	uint32_t activeTransientWindImpulseCount = 0;
 	uint32_t previousActiveTransientWindImpulseCount = 0;
 	std::vector<ManagedTransientWindSource> activeTransientWindSources;
@@ -215,6 +245,21 @@ private:
 	std::vector<ManagedTransientWindSource> attachedTransientWindSources;
 	uint64_t transientWindSourceSequence = 0;
 	std::mutex transientWindImpulseMutex;
+	struct PublishedWindState
+	{
+		WindField::WindTuning tuning{};
+		WindField::Field current{};
+		WindField::Field transition{};
+		float transitionBlend{ 1.0f };
+		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transients{};
+		std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientPhysics{};
+		uint32_t transientCount{};
+		uint64_t frameId{};
+		bool valid{};
+	};
+	mutable std::shared_mutex publishedWindMutex;
+	PublishedWindState publishedWindState{};
+	void PublishWindState() noexcept;
 	static void SanitizeSettings(Settings& a_settings);
 	static void SanitizeGrassWindSettings(Settings& a_settings);
 	static uint32_t SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize);
@@ -230,6 +275,7 @@ private:
 	void DrawTreeMeshRuleControls();
 	void DrawTreeMeshRulesTable();
 	void ResetGrassWindSettings();
+	void DrawGrassTransientSettings();
 	void DrawGrassWindSettings();
 	void SetupGrassWindResources();
 	void SetupTreeWindResources();

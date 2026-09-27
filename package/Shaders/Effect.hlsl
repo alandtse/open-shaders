@@ -1042,14 +1042,26 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 
 #	if !defined(LIGHTING) && defined(VC) && defined(TEXCOORD) && defined(NORMALS) && defined(TEXTURE) && defined(FALLOFF) && defined(SOFT)
-	if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha && lightingInfluence == 1.0)
+	const bool isSkyStatic = (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) && lightingInfluence == 1.0;
+	if (isSkyStatic)
 		lightColor = GetLightingShadow(lightColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise);
+#	else
+	const bool isSkyStatic = false;
 #	endif
 
 #	if defined(PROJECTED_UV) && !defined(TRUE_PBR)
 	lightColor = Color::EffectLightToGamma(
 		Color::EffectLight(lightColor) * Color::VanillaDiffuseColorMult());
 #	endif
+
+	[branch] if (isSkyStatic)
+	{
+		if (SharedData::csUtilitySettings.skyStaticTransparency == 1.0)
+			discard;
+#	if !defined(ADDBLEND) && !defined(MULTBLEND)
+		alpha *= 1.0 - SharedData::csUtilitySettings.skyStaticTransparency;
+#	endif
+	}
 
 #	if !defined(MOTIONVECTORS_NORMALS)
 	float fogFactor = Color::FogAlpha(input.FogParam.w);
@@ -1067,18 +1079,15 @@ PS_OUTPUT main(PS_INPUT input)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		expFogFactor = exponentialHeightFog.w;
-#			if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 		fogColor = exponentialHeightFog.xyz;
-		fogFactor = exponentialHeightFog.w;
-#			else
-		fogColor = exponentialHeightFog.xyz;
-		fogFactor = exponentialHeightFog.w;
-		alpha *= 1 - exponentialHeightFog.w;
+#			if !defined(ADDBLEND) && !defined(MULTBLEND) && !defined(MULTBLEND_DECAL)
+		// Weather-matched fog changes radiance, not mountain-mist material coverage.
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings == 0)
+			alpha *= 1 - exponentialHeightFog.w;
 #			endif
 		disableVanillaFog = ExponentialHeightFog::ShouldDisableVanillaFog();
 	}
 	vanillaFogColor = Color::EffectLightToGamma(vanillaFogColor);
-	fogColor = Color::EffectLightToGamma(fogColor);
 	if (disableVanillaFog) {
 		vanillaFogColor = lightColor;
 		vanillaFogFactor = 0;
@@ -1110,13 +1119,28 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
-	blendedColor = lerp(blendedColor, fogColor, expFogFactor.xxx);
+	if (SharedData::exponentialHeightFogSettings.enabled) {
+		float fogFade = ExponentialHeightFog::GetLinearVanillaFogFade(input.FogAlpha);
+		blendedColor = Color::EffectLightToGamma(fogFade * lerp(Color::EffectLight(blendedColor), fogColor, expFogFactor.xxx));
+		fogMul.xyz = 1.0.xxx;
+	}
 #			else
 	float3 blendedColor = lerp(lightColor, fogColor, fogFactor.xxx);
 #			endif
 #		endif
 #	else
 	float3 blendedColor = lightColor.xyz;
+#	endif
+
+#	if defined(ADDBLEND) || defined(MULTBLEND)
+	[branch] if (isSkyStatic)
+	{
+#		if defined(ADDBLEND)
+		blendedColor *= 1.0 - SharedData::csUtilitySettings.skyStaticTransparency;
+#		else
+		blendedColor = lerp(blendedColor, 1.0.xxx, SharedData::csUtilitySettings.skyStaticTransparency);
+#		endif
+	}
 #	endif
 
 	float4 finalColor = float4(blendedColor, alpha);

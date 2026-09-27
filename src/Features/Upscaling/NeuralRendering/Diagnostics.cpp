@@ -293,6 +293,7 @@ namespace NR
 			toggle("Ignore inferred camera-position resets", IgnorePosition);
 		toggle("Reset NR every frame", ForceReset);
 		toggle("Zero NR motion vectors (stationary test)", ZeroMotion);
+		toggle("Use DLSS-dilated NR motion vectors", DilateMotion);
 		toggle("Zero NR jitter parameter", ZeroJitter);
 		toggle("Serialize GPU (slow diagnostic)", SerializeGPU);
 		toggle("Bypass NR writeback (keep evaluating)", BypassWriteback);

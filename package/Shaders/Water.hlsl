@@ -1373,13 +1373,14 @@ PS_OUTPUT main(PS_INPUT input)
 #						if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.HPosition.xy * FrameBuffer::DynamicResolutionParams2.xy, input.HPosition.z, 1));
+		float linearFogFade = ExponentialHeightFog::GetLinearVanillaFogFade(PosAdjust[eyeIndex].w);
 		if (ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			fogColor = exponentialHeightFog.xyz;
-			fogColor *= GetWaterFogFade(eyeIndex);
+			fogColor *= linearFogFade;
 			finalColorPreFog = lerp(finalColorPreFog, fogColor, exponentialHeightFog.w);
 		} else {
 			finalColorPreFog = Color::BlendFog(finalColorPreFog, fogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
-			float3 expFogColor = exponentialHeightFog.xyz * GetWaterFogFade(eyeIndex);
+			float3 expFogColor = exponentialHeightFog.xyz * linearFogFade;
 			finalColorPreFog = lerp(finalColorPreFog, expFogColor, exponentialHeightFog.w);
 		}
 	} else {
@@ -1419,13 +1420,14 @@ PS_OUTPUT main(PS_INPUT input)
 #						if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, preFogColor, float4(input.HPosition.xy * FrameBuffer::DynamicResolutionParams2.xy, input.HPosition.z, 1));
+		float linearFogFade = ExponentialHeightFog::GetLinearVanillaFogFade(PosAdjust[eyeIndex].w);
 		if (ExponentialHeightFog::ShouldDisableVanillaFog()) {
 			preFogColor = exponentialHeightFog.xyz;
-			preFogColor *= GetWaterFogFade(eyeIndex);
+			preFogColor *= linearFogFade;
 			finalColorPreFog = lerp(finalColorPreFog, preFogColor, exponentialHeightFog.w);
 		} else {
 			finalColorPreFog = Color::BlendFog(finalColorPreFog, preFogColor, fogDistanceFactor, 1.0, GetWaterFogFade(eyeIndex));
-			float3 expFogColor = exponentialHeightFog.xyz * GetWaterFogFade(eyeIndex);
+			float3 expFogColor = exponentialHeightFog.xyz * linearFogFade;
 			finalColorPreFog = lerp(finalColorPreFog, expFogColor, exponentialHeightFog.w);
 		}
 	} else {
