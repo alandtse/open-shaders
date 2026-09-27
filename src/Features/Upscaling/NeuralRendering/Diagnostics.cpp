@@ -339,7 +339,7 @@ namespace NR
 			}
 			logger::info(
 				"[NRDiag/v2] through={} frames={} resets={} recreations={} duplicateCalls={} "
-				"history={} (A=copyQueued,N=noHook,D=disabled,W=noWorld,P=paused,L=failureLatch,E=error)",
+				"history={} (A=copyQueued,N=noHook,D=disabled,W=noWorld,P=paused,L=failureLatch,E=error,B=bypassed)",
 				frame, count, resets, recreations, duplicates, outcomes);
 			LogFrame(current);
 			framesSinceSummary = 0;
