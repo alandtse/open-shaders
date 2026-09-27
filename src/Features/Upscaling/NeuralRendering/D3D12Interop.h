@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Buffer.h"
-
 #include "../DX12SwapChain.h"
 
 #include <array>
@@ -11,12 +9,6 @@
 
 namespace NR
 {
-	struct SharedTexture
-	{
-		std::unique_ptr<Texture2D> texture;
-		winrt::com_ptr<ID3D12Resource> resource;
-	};
-
 	/** @brief Owns the same-adapter NR queue and D3D11/D3D12 synchronization. */
 	class D3D12Interop
 	{
@@ -30,8 +22,8 @@ namespace NR
 		void Initialize();
 		/** @brief Releases every interop resource; drain first or the GPU may still read them. */
 		void Reset();
-		/** @brief Creates a typed D3D11 texture and opens it on the NR device. */
-		SharedTexture CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name);
+		/** @brief Creates a named, view-bearing D3D11 texture shared with the NR device. */
+		std::unique_ptr<WrappedResource> CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name);
 		/** @brief Acquires a retired allocator and queues the D3D11 input dependency. */
 		ID3D12GraphicsCommandList* Begin();
 		/** @brief Submits NR commands and queues the D3D11 output dependency. */

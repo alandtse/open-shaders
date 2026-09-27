@@ -66,7 +66,7 @@ namespace NR
 		cursor = 0;
 	}
 
-	SharedTexture D3D12Interop::CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name)
+	std::unique_ptr<WrappedResource> D3D12Interop::CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& name)
 	{
 		D3D11_TEXTURE2D_DESC desc{};
 		desc.Width = width;
@@ -74,21 +74,7 @@ namespace NR
 		desc.Format = format;
 		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
 		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-		desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED | D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
-		SharedTexture result;
-		result.texture = std::make_unique<Texture2D>(desc, name.c_str());
-		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
-		uav.Format = format;
-		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-		result.texture->CreateUAV(uav);
-		winrt::com_ptr<IDXGIResource1> sharedResource;
-		winrt::check_hresult(result.texture->resource->QueryInterface(sharedResource.put()));
-		winrt::handle shared;
-		winrt::check_hresult(sharedResource->CreateSharedHandle(nullptr,
-			DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, shared.put()));
-		winrt::check_hresult(device->OpenSharedHandle(shared.get(), IID_PPV_ARGS(result.resource.put())));
-		winrt::check_hresult(result.resource->SetName(winrt::to_hstring(name).c_str()));
-		return result;
+		return std::make_unique<WrappedResource>(desc, device11.get(), device.get(), name);
 	}
 
 	void D3D12Interop::Wait(uint64_t completion)

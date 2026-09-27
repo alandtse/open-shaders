@@ -17,7 +17,7 @@ struct NeuralRendering::Impl
 	NR::Runtime runtime;
 	struct Eye
 	{
-		NR::SharedTexture color, depth, motion, output;
+		std::unique_ptr<WrappedResource> color, depth, motion, output;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
@@ -149,18 +149,15 @@ struct NeuralRendering::Impl
 		colorDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 		D3D11_UNORDERED_ACCESS_VIEW_DESC colorUAV = maskUAV;
 		colorUAV.Format = colorFormat;
-		srv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 		for (uint32_t i = 0; i < count; ++i) {
 			auto& eye = eyes[i];
 			const auto name = std::format("NeuralRendering::Eye{}", i);
 			eye.resolved = std::make_unique<Texture2D>(colorDesc, (name + " ResolvedHDR").c_str());
 			eye.resolved->CreateUAV(colorUAV);
-			eye.color = interop.CreateTexture(w, h, srv.Format, name + " HDRInput");
-			eye.color.texture->CreateSRV(srv);
+			eye.color = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDRInput");
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
-			eye.output = interop.CreateTexture(w, h, srv.Format, name + " HDROutput");
-			eye.output.texture->CreateSRV(srv);
+			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
 		}
 		source.copy_from(color);
 		width = w;
@@ -226,7 +223,7 @@ struct NeuralRendering::Impl
 
 	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter)
 	{
-		ID3D12Resource* resources[]{ eye.color.resource.get(), eye.depth.resource.get(), eye.motion.resource.get(), eye.output.resource.get() };
+		ID3D12Resource* resources[]{ eye.color->resource.get(), eye.depth->resource.get(), eye.motion->resource.get(), eye.output->resource.get() };
 		D3D12_RESOURCE_BARRIER barriers[4]{};
 		for (uint32_t i = 0; i < 4; ++i) {
 			const auto state = i == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -278,7 +275,7 @@ struct NeuralRendering::Impl
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
-		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color.texture->srv.get(), eye.output.texture->srv.get() };
+		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color->srv, eye.output->srv };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		auto* output = eye.toneData->uav.get();
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
@@ -330,10 +327,10 @@ struct NeuralRendering::Impl
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 		globals::state->BindSharedDataCS(context.get(), true);
-		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color.texture->srv.get(),
-			prepare ? nullptr : eye.output.texture->srv.get(), exposure,
+		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color->srv,
+			prepare ? nullptr : eye.output->srv, exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr };
-		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color.texture->uav.get() : eye.resolved->uav.get() };
+		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color->uav : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
@@ -374,7 +371,7 @@ struct NeuralRendering::Impl
 		for (uint32_t i = 0; i < eyeCount; ++i)
 			TransferColor(i, true);
 		if (capture)
-			diagnostics.DumpTexture("01_input", eyes[0].color.texture->resource.get(), diagnostic.number);
+			diagnostics.DumpTexture("01_input", eyes[0].color->resource11, diagnostic.number);
 		if (debugOptions & NR::Diagnostics::BypassEvaluation) {
 			diagnostic.outcome = NR::Diagnostics::Outcome::Bypassed;
 			diagnostics.FinishCapture(diagnostic.number);
@@ -394,12 +391,12 @@ struct NeuralRendering::Impl
 				context->CSSetConstantBuffers(0, 1, &buffer);
 				// The shared encoder writes both masks even though NR only consumes motion and depth.
 				ID3D11UnorderedAccessView* outputs[]{ encodeMasks[0]->uav.get(), encodeMasks[1]->uav.get(),
-					eye.motion.texture->uav.get(), eye.depth.texture->uav.get() };
+					eye.motion->uav, eye.depth->uav };
 				context->CSSetUnorderedAccessViews(0, 4, outputs, nullptr);
 				context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
 				if (eye.frame.reset || (diagnostic.options & NR::Diagnostics::ZeroMotion)) {
 					constexpr float zero[4]{};
-					context->ClearUnorderedAccessViewFloat(eye.motion.texture->uav.get(), zero);
+					context->ClearUnorderedAccessViewFloat(eye.motion->uav, zero);
 				}
 			}
 		}
@@ -421,12 +418,12 @@ struct NeuralRendering::Impl
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
 					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
 					copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-					copyBarriers[0].Transition = { eye.color.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+					copyBarriers[0].Transition = { eye.color->resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
 						D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE };
-					copyBarriers[1].Transition = { eye.output.resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+					copyBarriers[1].Transition = { eye.output->resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
 						D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST };
 					commands->ResourceBarrier(2, copyBarriers);
-					commands->CopyResource(eye.output.resource.get(), eye.color.resource.get());
+					commands->CopyResource(eye.output->resource.get(), eye.color->resource.get());
 					copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
 					copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 					copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
@@ -440,8 +437,8 @@ struct NeuralRendering::Impl
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
 					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
-					success = runtime.Evaluate(commands, i, eye.color.resource.get(), eye.depth.resource.get(),
-						eye.motion.resource.get(), eye.output.resource.get(), width, height, guides, eye.frame, tuning);
+					success = runtime.Evaluate(commands, i, eye.color->resource.get(), eye.depth->resource.get(),
+						eye.motion->resource.get(), eye.output->resource.get(), width, height, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
 				lastNgxResult[i] = eye.frame.result;
@@ -465,7 +462,7 @@ struct NeuralRendering::Impl
 		}
 		if (capture) {
 			interop.Drain();
-			diagnostics.DumpTexture("02_output", eyes[0].output.texture->resource.get(), diagnostic.number);
+			diagnostics.DumpTexture("02_output", eyes[0].output->resource11, diagnostic.number);
 		}
 		if (diagnostic.options & NR::Diagnostics::BypassWriteback) {
 			diagnostics.FinishCapture(diagnostic.number);
