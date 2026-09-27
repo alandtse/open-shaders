@@ -155,10 +155,11 @@ namespace NR
 			frame.completedFence, frame.submittedFence);
 		logger::info(
 			"[NRDiag/v2] parameters frame={} conversion={} exposureMode={} compositeMode={} visualMode={} manualExposure={} diffStrength={} split={} "
-			"intensity={} localTone={} localStructure={} skinStructure={}",
+			"intensity={} localTone={} localStructure={} skinStructure={} shadowProtection={} shadowFloor={} maxShadowRatio={} shadowRange={}/{} minDarkStrength={}",
 			frame.number, frame.conversion, frame.exposureMode,
 			frame.compositeMode, frame.visualMode, frame.manualExposure, frame.differenceStrength, frame.splitPosition, frame.intensity, frame.localTone,
-			frame.localStructure, frame.skinStructure);
+			frame.localStructure, frame.skinStructure, frame.shadowProtection, frame.shadowFloor, frame.maxShadowRatio,
+			frame.shadowStart, frame.shadowEnd, frame.minDarkStrength);
 	}
 
 	void Diagnostics::OpenTrace()
@@ -323,8 +324,8 @@ namespace NR
 			manualExposure = exposureValue;
 		if (ImGui::Combo("Composition mode", reinterpret_cast<int*>(&composition), "Production\0Raw replacement\0Masked lerp\050% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, 7u);
-		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0"))
-			visualMode = std::min(view, 20u);
+		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0Protected NR output\0Original luminance\0Raw NR luminance ratio\0Shadow protection mask\0Suppressed NR delta\0"))
+			visualMode = std::min(view, 25u);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
 			differenceStrength = differenceValue;
 		if (ImGui::SliderFloat("Split position", &split, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))

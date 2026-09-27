@@ -38,13 +38,19 @@ struct NeuralRendering::Impl
 		float4 dynamicRangeProtect{};
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 		uint32_t hasToneData = 0;
+		uint32_t shadowLuminanceProtection = 0;
+		float shadowLuminanceFloor = NR::Tuning::kDefaultShadowLuminanceFloor;
+		float maxShadowLuminanceRatio = 1.5f, shadowProtectionStart = 0.02f, shadowProtectionEnd = 0.18f, minDarkNRStrength = 1.0f;
+		float shadowProtectionPadding[2]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
 	static_assert(offsetof(ColorTransferData, toneRadius) == 84);
 	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
 	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
-	static_assert(sizeof(ColorTransferData) == 96);
+	static_assert(offsetof(ColorTransferData, shadowLuminanceProtection) == 96);
+	static_assert(offsetof(ColorTransferData, minDarkNRStrength) == 116);
+	static_assert(sizeof(ColorTransferData) == 128);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original, reactive;
 	uint32_t maskFrame = UINT32_MAX;
@@ -63,6 +69,9 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	bool shadowLuminanceProtection = false;
+	float shadowLuminanceFloor = NR::Tuning::kDefaultShadowLuminanceFloor;
+	float maxShadowLuminanceRatio = 1.5f, shadowProtectionStart = 0.02f, shadowProtectionEnd = 0.18f, minDarkNRStrength = 1.0f;
 	bool useResolutionMotionScale = true;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
@@ -298,6 +307,12 @@ struct NeuralRendering::Impl
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
 		data.hasToneData = !prepare && NeedsToneData();
+		data.shadowLuminanceProtection = shadowLuminanceProtection;
+		data.shadowLuminanceFloor = shadowLuminanceFloor;
+		data.maxShadowLuminanceRatio = maxShadowLuminanceRatio;
+		data.shadowProtectionStart = shadowProtectionStart;
+		data.shadowProtectionEnd = shadowProtectionEnd;
+		data.minDarkNRStrength = minDarkNRStrength;
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = 1;
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
@@ -531,6 +546,17 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	const bool autoMaskChanged = ImGui::Checkbox("Use Auto Mask", &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
+	changed |= ImGui::Checkbox("Protect Shadow Luminance", &tuning.shadowLuminanceProtection);
+	if (tuning.shadowLuminanceProtection) {
+		ImGui::Indent();
+		changed |= ImGui::SliderFloat("Shadow Luminance Floor", &tuning.shadowLuminanceFloor, 0.0001f, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat("Maximum Shadow Luminance Ratio", &tuning.maxShadowLuminanceRatio, 1.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat("Shadow Protection Start", &tuning.shadowProtectionStart, 0.0f, 0.5f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat("Shadow Protection End", &tuning.shadowProtectionEnd, 0.01f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat("Minimum Dark NR Strength", &tuning.minDarkNRStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::TextWrapped("Limits NR luminance changes in dark pixels. A value of 1.0 for Minimum Dark NR Strength disables additional NR-delta attenuation.");
+		ImGui::Unindent();
+	}
 	if (ImGui::Button("Restore NR Defaults")) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -711,6 +737,12 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.shadowLuminanceProtection = boundedTuning.shadowLuminanceProtection;
+		work.shadowLuminanceFloor = boundedTuning.shadowLuminanceFloor;
+		work.maxShadowLuminanceRatio = boundedTuning.maxShadowLuminanceRatio;
+		work.shadowProtectionStart = boundedTuning.shadowProtectionStart;
+		work.shadowProtectionEnd = boundedTuning.shadowProtectionEnd;
+		work.minDarkNRStrength = boundedTuning.minDarkNRStrength;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
@@ -722,6 +754,12 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.localTone = boundedTuning.localToneStrength;
 		diagnostic.localStructure = boundedTuning.localStructureStrength;
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
+		diagnostic.shadowProtection = boundedTuning.shadowLuminanceProtection;
+		diagnostic.shadowFloor = boundedTuning.shadowLuminanceFloor;
+		diagnostic.maxShadowRatio = boundedTuning.maxShadowLuminanceRatio;
+		diagnostic.shadowStart = boundedTuning.shadowProtectionStart;
+		diagnostic.shadowEnd = boundedTuning.shadowProtectionEnd;
+		diagnostic.minDarkStrength = boundedTuning.minDarkNRStrength;
 		if (!work.Draw(color, inputs, shader, reset, boundedTuning, diagnostic, diagnostics))
 			throw std::runtime_error(std::format("SDR-proxy Feature 18 creation/evaluation failed (NGX L/R: 0x{:08X}/0x{:08X})", diagnostic.result[0], diagnostic.result[1]));
 		if (reset)

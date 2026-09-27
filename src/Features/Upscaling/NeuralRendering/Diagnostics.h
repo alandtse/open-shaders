@@ -121,7 +121,12 @@ namespace NR
 			ToneLow,
 			ToneHigh,
 			ToneLowGain,
-			FinalLuminanceRatio
+			FinalLuminanceRatio,
+			ProtectedOutput,
+			OriginalLuminance,
+			RawLuminanceRatio,
+			ShadowProtectionMask,
+			SuppressedNRDelta
 		};
 		/** @brief Returns the live, session-only isolation options. */
 		uint32_t Options() const { return options.load(); }
@@ -164,6 +169,8 @@ namespace NR
 			uint32_t conversion = 0, exposureMode = 0, compositeMode = 0, visualMode = 0;
 			float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 			float intensity = 0.0f, localTone = 0.0f, localStructure = 0.0f, skinStructure = 0.0f;
+			bool shadowProtection = false;
+			float shadowFloor = 0.0f, maxShadowRatio = 0.0f, shadowStart = 0.0f, shadowEnd = 0.0f, minDarkStrength = 0.0f;
 		};
 		/** @brief Records entry without overwriting a successful result on duplicate calls. */
 		Frame& BeginHook(uint32_t frame, uint32_t target);

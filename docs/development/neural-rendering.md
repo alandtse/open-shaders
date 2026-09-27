@@ -240,6 +240,11 @@ once per pixel. The 5-by-5 filter reads that texture instead of decoding both
 proxy images for each neighbor. This scratch texture carries no frame history;
 Feature 18 still evaluates once per eye.
 
+Shadow luminance protection runs only when enabled or when one of its diagnostic
+views needs the calculation. Turning it off with the normal view selected skips
+that work. These execution changes still need GPU timing and visual comparison
+in game; no measured speedup is implied.
+
 `D3D12Interop` obtains the renderer adapter via `IDXGIDevice::GetAdapter`,
 creates a D3D12 direct queue, and opens D3D11-created NT shared textures.
 It reuses OS `Texture2D`, `ConstantBuffer`, `LazyShader`, resource naming,

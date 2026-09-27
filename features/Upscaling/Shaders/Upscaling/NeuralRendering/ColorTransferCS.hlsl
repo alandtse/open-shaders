@@ -22,6 +22,13 @@ cbuffer ColorTransfer : register(b0)
 	float ToneRadius;
 	float ToneHighStrength;
 	uint HasToneData;
+	uint ShadowLuminanceProtection;
+	float ShadowLuminanceFloor;
+	float MaxShadowLuminanceRatio;
+	float ShadowProtectionStart;
+	float ShadowProtectionEnd;
+	float MinDarkNRStrength;
+	float2 ShadowProtectionPadding;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -275,6 +282,31 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = originalLinear + (neuralLinear - inputProxy) * mask;
 	else if (CompositeMode == 7)
 		result = originalLinear * ratio;
+	float3 unprotectedResult = result;
+	float3 protectedResult = result;
+	float rawLuminanceRatio = 1.0;
+	float darkMask = 0.0;
+	float suppressedDelta = 0.0;
+	[branch] if (ShadowLuminanceProtection != 0 || VisualMode == 21 || (VisualMode >= 23 && VisualMode <= 25))
+	{
+		float resultLuminance = max(dot(unprotectedResult, Luma), 0.0);
+		float luminanceFloor = max(ShadowLuminanceFloor, kLumaEpsilon);
+		rawLuminanceRatio = (resultLuminance + luminanceFloor) / (sceneLuminance + luminanceFloor);
+		float maxLuminanceRatio = max(MaxShadowLuminanceRatio, 1.0);
+		float limitedLuminanceRatio = clamp(rawLuminanceRatio, rcp(maxLuminanceRatio), maxLuminanceRatio);
+		float targetLuminance = sceneLuminance * limitedLuminanceRatio;
+		float3 luminanceCorrected = unprotectedResult * (targetLuminance / max(resultLuminance, kLumaEpsilon));
+		float shadowStart = min(ShadowProtectionStart, ShadowProtectionEnd);
+		float shadowEnd = max(ShadowProtectionStart, ShadowProtectionEnd);
+		darkMask = 1.0 - smoothstep(shadowStart, max(shadowEnd, shadowStart + kLumaEpsilon), sceneLuminance);
+		protectedResult = lerp(unprotectedResult, luminanceCorrected, darkMask);
+		float allowedStrength = lerp(saturate(MinDarkNRStrength), 1.0, 1.0 - darkMask);
+		protectedResult = originalLinear + (protectedResult - originalLinear) * allowedStrength;
+		if (VisualMode == 25)
+			suppressedDelta = length(unprotectedResult - protectedResult);
+		if (ShadowLuminanceProtection != 0)
+			result = protectedResult;
+	}
 	if (VisualMode == 1)
 		result = inputProxy;
 	else if (VisualMode == 2)
@@ -307,6 +339,16 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = toneGain.xxx;
 	else if (VisualMode == 20)
 		result = (dot(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
+	else if (VisualMode == 21)
+		result = protectedResult;
+	else if (VisualMode == 22)
+		result = sceneLuminance.xxx;
+	else if (VisualMode == 23)
+		result = (0.5 + 0.25 * log2(max(rawLuminanceRatio, kLumaEpsilon))).xxx;
+	else if (VisualMode == 24)
+		result = darkMask.xxx;
+	else if (VisualMode == 25)
+		result = (suppressedDelta * DifferenceStrength).xxx;
 	else if (VisualMode >= 11) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
 		if (VisualMode == 11)
