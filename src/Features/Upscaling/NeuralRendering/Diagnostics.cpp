@@ -4,6 +4,7 @@
 #include "Menu.h"
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
+#include "Utils/UI.h"
 #include <DirectXTex.h>
 #include <algorithm>
 #include <chrono>
@@ -345,14 +346,8 @@ namespace NR
 		}
 	}
 
-	void Diagnostics::DrawSettings()
+	void Diagnostics::DrawSuiteOptions()
 	{
-		if (!DeveloperMode())
-			return;
-		std::scoped_lock lock(mutex);
-		ImGui::Separator();
-		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
-		ImGui::BeginDisabled(suite);
 		uint32_t selected = options.load();
 		auto toggle = [&](const char* name, uint32_t bit) {
 			bool value = (selected & bit) != 0;
@@ -431,7 +426,19 @@ namespace NR
 			startSuite = true;
 		ImGui::TextWrapped("%zu tests, %u world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.",
 			kSuiteOptions.size(), kSuiteFrames);
-		ImGui::EndDisabled();
+	}
+
+	void Diagnostics::DrawSettings()
+	{
+		if (!DeveloperMode())
+			return;
+		std::scoped_lock lock(mutex);
+		ImGui::Separator();
+		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
+		{
+			Util::DisableGuard disableSuite(suite);
+			DrawSuiteOptions();
+		}
 		if (suite && ImGui::Button("Stop Tests and Restore"))
 			stopSuite = true;
 		if (!tracePath.empty()) {

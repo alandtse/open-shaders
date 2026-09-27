@@ -284,6 +284,8 @@ namespace NR
 		static constexpr std::array<const char*, kSuiteOptions.size()> kSuiteNames{ "Baseline", "Apply inferred camera cuts", "Apply direction/projection cuts", "Reset every frame", "Zero motion", "Zero NR jitter", "Serialize GPU", "Bypass NR writeback" };
 		void OpenTrace();
 		void WriteCameraTrace(const Frame& frame);
+		/** @brief Draws the isolation-test options, which a running suite disables. */
+		void DrawSuiteOptions();
 		std::mutex mutex;
 		std::array<Frame, kHistorySize> history{};
 		size_t next = 0, count = 0;
