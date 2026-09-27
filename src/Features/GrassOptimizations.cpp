@@ -3,7 +3,6 @@
 #include "GrassCollision.h"
 #include "GrassLighting.h"
 #include "State.h"
-#include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
 #include "Utils/Game.h"
 #include "Wind/Wind.h"
 
