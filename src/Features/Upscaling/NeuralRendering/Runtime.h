@@ -2,12 +2,25 @@
 
 #include "Tuning.h"
 
+#include <atomic>
 #include <d3d12.h>
 #include <filesystem>
 #include <memory>
 
 namespace NR
 {
+	/** @brief True while the process is exiting: NGX teardown is skipped and nothing may log. */
+	inline std::atomic<bool> processTerminating{ false };
+
+	/**
+	 * @brief Marks process teardown. Declare it as the LAST member of the object that owns the
+	 *        runtime: members are destroyed in reverse order, so it flips before any NGX teardown.
+	 */
+	struct TerminationSentinel
+	{
+		~TerminationSentinel() { processTerminating.store(true, std::memory_order_relaxed); }
+	};
+
 	/** @brief Active texel region of a guide resource supplied to Feature 18. */
 	struct GuideRegion
 	{

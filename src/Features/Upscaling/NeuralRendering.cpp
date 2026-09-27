@@ -68,6 +68,9 @@ struct NeuralRendering::Impl
 
 	~Impl()
 	{
+		// Static destruction, where the interop wait can block on a GPU that is already gone.
+		if (NR::processTerminating.load(std::memory_order_relaxed))
+			return;
 		try {
 			interop.Drain();
 		} catch (...) {
@@ -91,16 +94,33 @@ struct NeuralRendering::Impl
 		ready = true;
 	}
 
+	/**
+	 * @brief Releases the per-frame pass resources, keeping the D3D12 device and NGX instance.
+	 *        Rebuilding those costs a driver-level re-init; the textures do not.
+	 */
+	void ReleasePassResources()
+	{
+		interop.Drain();
+		runtime.ResetFeatures();
+		eyes = {};
+		original.reset();
+		reactive.reset();
+		encodeMasks = {};
+		width = height = guideWidth = guideHeight = eyeCount = 0;
+		format = DXGI_FORMAT_UNKNOWN;
+		lastFrame = maskFrame = UINT32_MAX;
+	}
+
+	/** @brief True while pass resources for a render size exist and can be released. */
+	bool HasPassResources() const { return eyeCount != 0; }
+
 	void EnsureResources(ID3D11Texture2D* color, uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
 	{
 		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat) {
 			source.copy_from(color);
 			return;
 		}
-		interop.Drain();
-		runtime.ResetFeatures();
-		eyes = {};
-		lastFrame = maskFrame = UINT32_MAX;
+		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
 		maskDesc.Width = gw;
 		maskDesc.Height = gh;
@@ -339,7 +359,8 @@ struct NeuralRendering::Impl
 		{
 			ID3D11DeviceContext1* context;
 			winrt::com_ptr<ID3DDeviceContextState> previous;
-			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated) : context(ctx)
+			ContextScope(ID3D11DeviceContext1* ctx, ID3DDeviceContextState* isolated) :
+				context(ctx)
 			{
 				context->SwapDeviceContextState(isolated, previous.put());
 				context->ClearState();
@@ -476,7 +497,8 @@ struct NeuralRendering::Impl
 	}
 };
 
-NeuralRendering::NeuralRendering() : impl(std::make_unique<Impl>()) {}
+NeuralRendering::NeuralRendering() :
+	impl(std::make_unique<Impl>()) {}
 NeuralRendering::~NeuralRendering() = default;
 
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
@@ -587,6 +609,24 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
 	if (!enabled) {
 		diagnostic.outcome = Outcome::Disabled;
+		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
+		if (impl->HasPassResources() && !impl->failed) {
+			std::string failure;
+			try {
+				impl->ReleasePassResources();
+			} catch (const winrt::hresult_error& error) {
+				failure = winrt::to_string(error.message());
+			} catch (const std::exception& error) {
+				failure = error.what();
+			}
+			if (!failure.empty()) {
+				diagnostic.outcome = Outcome::Error;
+				LatchFailure();
+				SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", failure));
+				retryRequested = resetHistory = true;
+				return;
+			}
+		}
 		retryRequested = resetHistory = true;
 		return;
 	}
@@ -720,15 +760,24 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.lastFrame = state->frameCount;
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
-		impl->failed = true;
+		LatchFailure();
 		SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", winrt::to_string(error.message())));
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
-		impl->failed = true;
+		LatchFailure();
 		SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", error.what()));
 		logger::error("[NeuralRendering] {}", error.what());
 	}
+}
+
+void NeuralRendering::LatchFailure()
+{
+	if (impl->interop.DeviceRemoved()) {
+		// A removed device cannot be reused: the replacement starts latched, so only Retry rebuilds it.
+		impl = std::make_unique<Impl>();
+	}
+	impl->failed = true;
 }
 
 ID3D11ShaderResourceView* NeuralRendering::GetReactiveMask() const

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NeuralRendering/Diagnostics.h"
+#include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
 #include <atomic>
@@ -47,4 +48,8 @@ private:
 	std::mutex statusMutex;
 	std::string status = "Disabled";
 	void SetStatus(std::string message);
+	/** @brief Latches a failure, tearing the runtime down first when the device was removed. */
+	void LatchFailure();
+	/** @brief Last member: it must be destroyed before impl's NGX teardown at process exit. */
+	NR::TerminationSentinel terminationSentinel;
 };

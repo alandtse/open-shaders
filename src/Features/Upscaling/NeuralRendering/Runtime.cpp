@@ -296,6 +296,17 @@ namespace NR
 
 		~Impl()
 		{
+			if (processTerminating.load(std::memory_order_relaxed)) {
+				// Static destruction: NGX may already be unloaded and logger is gone, so the
+				// handles, blocks and modules are abandoned instead of released.
+				for (auto& eye : eyes) {
+					eye.feature.release();
+					eye.parameters.release();
+				}
+				module.release();
+				core.release();
+				return;
+			}
 			for (auto& eye : eyes) {
 				eye.feature.reset();
 				eye.parameters.reset();
