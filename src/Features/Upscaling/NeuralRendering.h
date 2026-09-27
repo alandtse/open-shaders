@@ -80,6 +80,8 @@ private:
 	mutable std::mutex statusMutex;
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
+	/** @brief Republishes the render size and eye count after the pass resources are recreated. */
+	void PublishResources();
 	/** @brief Publishes a failure with the prefix the panel shows for a stopped pass. */
 	void PublishFailure(const std::string& detail);
 	/** @brief Latches a failure, tearing the runtime down first when the device was removed. */

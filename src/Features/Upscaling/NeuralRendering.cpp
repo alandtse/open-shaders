@@ -56,8 +56,8 @@ struct NeuralRendering::Impl
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
-	uint32_t appliedFrames = 0;
-	std::array<uint32_t, 2> lastNgxResult{};
+	std::atomic<uint32_t> appliedFrames = 0;
+	std::array<std::atomic<uint32_t>, 2> lastNgxResult{};
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -445,7 +445,7 @@ struct NeuralRendering::Impl
 						eye.motion->resource.get(), eye.output->resource.get(), width, height, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
-				lastNgxResult[i] = eye.frame.result;
+				lastNgxResult[i].store(eye.frame.result, std::memory_order_relaxed);
 				if (success)
 					diagnostic.evaluated |= 1u << i;
 				if (eye.frame.created) {
@@ -486,7 +486,7 @@ struct NeuralRendering::Impl
 		}
 		if (capture)
 			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
-		++appliedFrames;
+		appliedFrames.fetch_add(1, std::memory_order_relaxed);
 		diagnostics.FinishCapture(diagnostic.number);
 		captureDiagnostics = nullptr;
 		return true;
@@ -522,8 +522,6 @@ void NeuralRendering::PublishStatus(Status::State state, std::string text)
 	next.width = impl->width;
 	next.height = impl->height;
 	next.eyes = impl->eyeCount;
-	next.appliedFrames = impl->appliedFrames;
-	next.ngxResult = impl->lastNgxResult;
 	std::scoped_lock lock(statusMutex);
 	status = std::move(next);
 	publishedState.store(state, std::memory_order_relaxed);
@@ -534,6 +532,14 @@ void NeuralRendering::PublishFailure(const std::string& detail)
 	PublishStatus(Status::State::kFailed, std::format("{} {}", T(TKEY("status_failed"), "Neural Rendering stopped:"), detail));
 }
 
+void NeuralRendering::PublishResources()
+{
+	std::scoped_lock lock(statusMutex);
+	status.width = impl->width;
+	status.height = impl->height;
+	status.eyes = impl->eyeCount;
+}
+
 NeuralRendering::Status NeuralRendering::GetStatus() const
 {
 	std::scoped_lock lock(statusMutex);
@@ -541,6 +547,8 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	if (snapshot.text.empty())
 		snapshot.text = T(TKEY("status_off"), "Off");
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
+	snapshot.appliedFrames = impl->appliedFrames.load(std::memory_order_relaxed);
+	snapshot.ngxResult = { impl->lastNgxResult[0].load(std::memory_order_relaxed), impl->lastNgxResult[1].load(std::memory_order_relaxed) };
 	return snapshot;
 }
 
@@ -653,7 +661,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 				return;
 			}
 		}
-		if (publishedState.load(std::memory_order_relaxed) != Status::State::kOff) {
+		if (!impl->failed && publishedState.load(std::memory_order_relaxed) != Status::State::kOff) {
 			logger::debug("[NeuralRendering] Disabled");
 			PublishStatus(Status::State::kOff, T(TKEY("status_off"), "Off"));
 		}
@@ -738,6 +746,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		work.EnsureResources(color, w, h, gw, gh, count, desc.Format, forceRecreate);
+		if (diagnostic.recreated)
+			PublishResources();
 		// The same cached encoder permutations the upscaling path uses: kNONE keeps motion undilated,
 		// DLSS dilates it, and kTypedDepth supplies NR's depth guide.
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
