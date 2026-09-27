@@ -26,19 +26,22 @@ namespace NR
 			void operator()(HMODULE module) const { FreeLibrary(module); }
 		};
 		using Module = std::unique_ptr<std::remove_pointer_t<HMODULE>, ModuleDeleter>;
+		/** @brief Prefix that marks a failure as happening while the runtime starts up. */
+		constexpr const char* kInitializationPrefix = "initialization failed: ";
+
 		template <class T>
 		T Resolve(HMODULE module, const char* name)
 		{
 			auto function = GetProcAddress(module, name);
 			if (!function)
-				throw std::runtime_error(std::format("Missing NGX export {}", name));
+				throw std::runtime_error(std::format("{}nvngx_dlssnr.dll is missing the export {}", kInitializationPrefix, name));
 			return reinterpret_cast<T>(function);
 		}
 
-		void Check(NVSDK_NGX_Result result, const char* operation)
+		void Check(NVSDK_NGX_Result result, const char* operation, const char* prefix = "")
 		{
 			if (NVSDK_NGX_FAILED(result))
-				throw std::runtime_error(std::format("{} failed: NGX 0x{:08X}", operation, static_cast<uint32_t>(result)));
+				throw std::runtime_error(std::format("{}{} failed: NGX 0x{:08X}", prefix, operation, static_cast<uint32_t>(result)));
 		}
 
 		/**
@@ -47,15 +50,16 @@ namespace NR
 		 * @param sentinel Value to keep when the call never returned one.
 		 * @param call Performs the call. It may only reference existing objects, because a fault
 		 *             skips destructors in its frame.
+		 * @param prefix Optional context, such as kInitializationPrefix during startup.
 		 * @return The call's value, or sentinel when it faulted.
 		 */
 		template <class T, class F>
-		T GuardNgxCall(T sentinel, F&& call)
+		T GuardNgxCall(T sentinel, F&& call, const char* prefix = "")
 		{
 			T value = sentinel;
 			DWORD fault = 0;
 			if (!Util::SehGuarded([&] { value = call(); }, &fault))
-				throw std::runtime_error(std::format("initialization failed: an NGX call faulted (exception 0x{:08X})", fault));
+				throw std::runtime_error(std::format("{}an NGX call faulted (exception 0x{:08X})", prefix, fault));
 			return value;
 		}
 
@@ -133,7 +137,7 @@ namespace NR
 					float readBack = 0.0f;
 					if (parameters->Get("DLSSNR.OpenShadersFloatProbe", &readBack) == NVSDK_NGX_Result_Success && readBack == probeValue) {
 						floatSlot = slot;
-						logger::info("[NeuralRendering] Feature 18 float parameters use vtable slot {}", slot);
+						logger::debug("[NeuralRendering] Feature 18 float parameters use vtable slot {}", slot);
 						return;
 					}
 				}
@@ -256,6 +260,7 @@ namespace NR
 		Create create = nullptr;
 		NR::Evaluate evaluate = nullptr;
 		Release release = nullptr;
+		std::string version;
 		int floatSlot = -1;
 		bool initialized = false;
 		struct FeatureDeleter
@@ -332,9 +337,14 @@ namespace NR
 		auto pending = std::make_unique<Impl>();
 		auto& state = *pending;
 		const auto path = directory / L"nvngx_dlssnr.dll";
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(path, error))
+			throw std::runtime_error(std::format("nvngx_dlssnr.dll not found in {}", directory.string()));
 		const auto version = Util::GetDllVersion(path.wstring());
-		if (!version || version->major() != 310 || version->minor() != 8)
-			throw std::runtime_error(std::format("Install nvngx_dlssnr.dll 310.8.x in {}", directory.string()));
+		if (!version)
+			throw std::runtime_error(std::format("nvngx_dlssnr.dll in {} has no version information", directory.string()));
+		if (version->major() != 310 || version->minor() != 8)
+			throw std::runtime_error(std::format("unsupported runtime version {} (needs 310.8)", version->string(".")));
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -346,8 +356,8 @@ namespace NR
 		state.populate = Resolve<Populate>(state.module.get(), "NVSDK_NGX_D3D12_PopulateParameters_Impl");
 		const auto getApplicationId = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetApplicationId");
 		const auto getApiVersion = Resolve<Identity>(state.module.get(), "NVSDK_NGX_GetAPIVersion");
-		const auto appId = GuardNgxCall(0u, [&] { return getApplicationId(); });
-		const auto api = GuardNgxCall(0u, [&] { return getApiVersion(); });
+		const auto appId = GuardNgxCall(0u, [&] { return getApplicationId(); }, kInitializationPrefix);
+		const auto api = GuardNgxCall(0u, [&] { return getApiVersion(); }, kInitializationPrefix);
 		// This is an NGX caller identity string only; nvngx.dll need not exist on disk.
 		const auto spoofedCallerIdentity = directory / L"nvngx.dll";
 		state.compatibility.Install(state.module.get(), spoofedCallerIdentity);
@@ -356,10 +366,8 @@ namespace NR
 		state.device.copy_from(device);
 		{
 			RuntimePath::Scope scope(state.compatibility);
-			const auto started = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
-				return state.initialize(appId, cache.c_str(), device, static_cast<NVSDK_NGX_Version>(api), nullptr);
-			});
-			Check(started, "NR initialization");
+			const auto started = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.initialize(appId, cache.c_str(), device, static_cast<NVSDK_NGX_Version>(api), nullptr); }, kInitializationPrefix);
+			Check(started, "NR initialization", kInitializationPrefix);
 			state.initialized = true;
 		}
 		auto core = BindCore();
@@ -370,14 +378,15 @@ namespace NR
 		state.destroy = core.destroy;
 		for (auto& eye : state.eyes) {
 			NVSDK_NGX_Parameter* parameters = nullptr;
-			const auto allocated = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.allocate(&parameters); });
+			const auto allocated = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.allocate(&parameters); }, kInitializationPrefix);
 			eye.parameters = { parameters, { &state } };
 			eye.feature = { nullptr, { &state } };
-			Check(allocated, "NR parameter allocation");
+			Check(allocated, "NR parameter allocation", kInitializationPrefix);
 			if (!parameters)
 				throw std::runtime_error("initialization failed: NGX returned null parameters");
 		}
-		logger::info("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());
+		state.version = version->string();
+		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());
 		impl = std::move(pending);
 	}
 
@@ -385,6 +394,11 @@ namespace NR
 	{
 		for (auto& eye : impl->eyes)
 			eye.feature.reset();
+	}
+
+	std::string Runtime::Version() const
+	{
+		return impl->version;
 	}
 
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
@@ -462,7 +476,7 @@ namespace NR
 				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
 				return false;
 			}
-			logger::info("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
+			logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
 			frame.created = true;
 			frame.reset = true;
 		}
@@ -509,10 +523,6 @@ namespace NR
 		}
 		const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.evaluate(commands, eye.feature.get(), parameters, nullptr); });
 		frame.result = static_cast<uint32_t>(result);
-		if (NVSDK_NGX_FAILED(result)) {
-			logger::error("[NeuralRendering] Eye {} evaluation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
-			return false;
-		}
-		return true;
+		return !NVSDK_NGX_FAILED(result);
 	}
 }

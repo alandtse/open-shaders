@@ -53,6 +53,8 @@ struct NeuralRendering::Impl
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
+	uint32_t appliedFrames = 0;
+	std::array<uint32_t, 2> lastNgxResult{};
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -174,7 +176,7 @@ struct NeuralRendering::Impl
 		height = h;
 		guideWidth = gw;
 		guideHeight = gh;
-		logger::info("[NeuralRendering] Render-resolution NR {}x{}, guides {}x{}, eyes {}", w, h, gw, gh, count);
+		logger::debug("[NeuralRendering] Render-resolution NR {}x{}, guides {}x{}, eyes {}", w, h, gw, gh, count);
 		eyeCount = count;
 		format = colorFormat;
 	}
@@ -448,6 +450,7 @@ struct NeuralRendering::Impl
 					eye.motion.resource.get(), eye.output.resource.get(), width, height, guides, eye.frame, tuning);
 			}
 			diagnostic.result[i] = eye.frame.result;
+			lastNgxResult[i] = eye.frame.result;
 			if (success)
 				diagnostic.evaluated |= 1u << i;
 			if (eye.frame.created) {
@@ -489,6 +492,7 @@ struct NeuralRendering::Impl
 		if (capture)
 			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
 		maskFrame = globals::state->frameCount;
+		++appliedFrames;
 		diagnostics.FinishCapture(diagnostic.number);
 		captureDiagnostics = nullptr;
 		return true;
@@ -512,10 +516,29 @@ void NeuralRendering::Reset(bool enabled)
 		resetHistory = true;
 }
 
-void NeuralRendering::SetStatus(std::string message)
+void NeuralRendering::PublishStatus(Status::State state, std::string text)
+{
+	Status next;
+	next.state = state;
+	next.text = std::move(text);
+	next.failed = state == Status::State::kFailed;
+	next.runtimeVersion = impl->runtime.Version();
+	next.width = impl->width;
+	next.height = impl->height;
+	next.eyes = impl->eyeCount;
+	next.appliedFrames = impl->appliedFrames;
+	next.ngxResult = impl->lastNgxResult;
+	std::scoped_lock lock(statusMutex);
+	status = std::move(next);
+	publishedState.store(state, std::memory_order_relaxed);
+}
+
+NeuralRendering::Status NeuralRendering::GetStatus() const
 {
 	std::scoped_lock lock(statusMutex);
-	status = std::move(message);
+	auto snapshot = status;
+	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
+	return snapshot;
 }
 
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
@@ -552,28 +575,21 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	ImGui::SameLine();
 	if (ImGui::Button("Reset NR History"))
 		resetHistory = true;
-	if (enabled && ImGui::Button("Retry NR")) {
-		retryRequested = resetHistory = true;
-		SetStatus("Retry queued for the next rendered world frame");
-	}
+	if (enabled && ImGui::Button("Retry NR"))
+		RequestRetry();
 	if (globals::state->IsDeveloperMode())
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
 	if (globals::state->IsDeveloperMode())
 		diagnostics.DrawSettings();
-	std::scoped_lock lock(statusMutex);
-	ImGui::TextWrapped("%s", enabled ? status.c_str() : "Disabled");
+	const auto current = GetStatus();
+	ImGui::TextWrapped("%s", current.text.c_str());
 	ImGui::PopID();
 }
 
 void NeuralRendering::DrawDiagnosticsOverlay()
 {
-	std::string message;
-	{
-		std::scoped_lock lock(statusMutex);
-		message = status;
-	}
-	diagnostics.DrawOverlay(message);
+	diagnostics.DrawOverlay(GetStatus().text);
 }
 
 void NeuralRendering::RecordStage(bool finishedPost)
@@ -620,10 +636,15 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			if (!failure.empty()) {
 				diagnostic.outcome = Outcome::Error;
 				LatchFailure();
-				SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", failure));
+				PublishStatus(Status::State::kFailed, failure);
+				logger::error("[NeuralRendering] {}", failure);
 				retryRequested = resetHistory = true;
 				return;
 			}
+		}
+		if (publishedState.load(std::memory_order_relaxed) != Status::State::kOff) {
+			logger::debug("[NeuralRendering] Disabled");
+			PublishStatus(Status::State::kOff, "Off");
 		}
 		retryRequested = resetHistory = true;
 		return;
@@ -631,6 +652,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 	auto* state = globals::state;
 	if (!state->worldRenderedThisFrame) {
 		diagnostic.outcome = Outcome::NoWorld;
+		if (publishedState.load(std::memory_order_relaxed) == Status::State::kOff)
+			PublishStatus(Status::State::kStarting, "Starting...");
 		resetHistory = true;
 		return;
 	}
@@ -659,8 +682,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			++diagnostic.duplicates;
 			return;
 		}
-		if (!work.ready)
+		if (!work.ready) {
 			work.Initialize();
+			const auto luid = work.interop.AdapterLuid();
+			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
+		}
 		if (clearShaders.exchange(false)) {
 			work.encode.Reset();
 			work.encodeDilated.Reset();
@@ -752,19 +778,24 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
 		if (!work.Draw(color, inputs, shader, reset, boundedTuning, diagnostic, diagnostics))
 			throw std::runtime_error(std::format("SDR-proxy Feature 18 creation/evaluation failed (NGX L/R: 0x{:08X}/0x{:08X})", diagnostic.result[0], diagnostic.result[1]));
-		if (reset)
-			SetStatus(std::format("Active: SDR proxy into scene-linear HDR, {} x {}, {} eye(s), before upscaling", w, h, count));
+		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
+		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {
+			const auto runtime = work.runtime.Version();
+			const auto luid = work.interop.AdapterLuid();
+			PublishStatus(Status::State::kActive, std::format("Active (runtime {})", runtime));
+			logger::info("[NeuralRendering] active: runtime {} on adapter LUID {:08X}:{:08X}", runtime, luid.HighPart, luid.LowPart);
+		}
 		diagnostic.outcome = (diagnostic.options & NR::Diagnostics::BypassWriteback) ? Outcome::Bypassed : Outcome::Applied;
 		work.lastFrame = state->frameCount;
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
 		LatchFailure();
-		SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", winrt::to_string(error.message())));
+		PublishStatus(Status::State::kFailed, winrt::to_string(error.message()));
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
 		LatchFailure();
-		SetStatus(std::format("NR paused: {}. Use Retry NR after correcting the error.", error.what()));
+		PublishStatus(Status::State::kFailed, error.what());
 		logger::error("[NeuralRendering] {}", error.what());
 	}
 }

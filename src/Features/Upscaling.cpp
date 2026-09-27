@@ -551,6 +551,35 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
 }
 
+namespace
+{
+	/** @brief Devbench payload for Upscaling's neuralRenderingStatus query. */
+	json NeuralRenderingStatus(const Feature* self, const json&)
+	{
+		const auto* upscaling = static_cast<const Upscaling*>(self);
+		const auto status = upscaling->neuralRendering.GetStatus();
+		return json{
+			{ "enabled", upscaling->settings.neuralRenderingEnabled },
+			{ "state", magic_enum::enum_name(status.state) },
+			{ "status", status.text },
+			{ "failed", status.failed },
+			{ "runtime", status.runtimeVersion },
+			{ "width", status.width },
+			{ "height", status.height },
+			{ "eyes", status.eyes },
+			{ "ngxResult", json::array({ status.ngxResult[0], status.ngxResult[1] }) },
+			{ "lastAppliedFrame", status.lastAppliedFrame },
+			{ "appliedFrames", status.appliedFrames },
+		};
+	}
+
+	/** @brief Devbench handler for Upscaling's retryNeuralRendering command. */
+	void RetryNeuralRendering(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
+	}
+}
+
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("applyFoveationPreset",
@@ -558,6 +587,14 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
+
+	FEATURE_QUERY("neuralRenderingStatus",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Params: none.",
+		NeuralRenderingStatus);
+
+	FEATURE_COMMAND("retryNeuralRendering",
+		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
+		RetryNeuralRendering);
 }
 
 void Upscaling::DrawSettings()

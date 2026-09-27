@@ -4,6 +4,7 @@
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
+#include <array>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -12,6 +13,28 @@
 /** @brief Applies one native-resolution NGX Neural Rendering pass before upscaling. */
 struct NeuralRendering
 {
+	/** @brief What NR is doing, as the settings panel and devbench report it. */
+	struct Status
+	{
+		enum class State : uint8_t
+		{
+			kOff,       ///< Switched off.
+			kStarting,  ///< Enabled; the runtime initializes on the first world frame.
+			kActive,    ///< Running; text names the runtime version.
+			kFailed     ///< Latched; text is the failure reason.
+		};
+		State state = State::kOff;
+		/** @brief Plain-language line for the settings panel and the devbench query. */
+		std::string text = "Off";
+		/** @brief Accepted nvngx_dlssnr.dll version; empty until the runtime initializes. */
+		std::string runtimeVersion;
+		uint32_t width = 0, height = 0, eyes = 0;
+		uint32_t lastAppliedFrame = UINT32_MAX, appliedFrames = 0;
+		std::array<uint32_t, 2> ngxResult{};
+		/** @brief True while a failure is latched; the next successful frame clears it. */
+		bool failed = false;
+	};
+
 	NeuralRendering();
 	~NeuralRendering();
 	/** @brief Schedules recreation on the rendering thread. */
@@ -39,15 +62,24 @@ struct NeuralRendering
 
 	/** @brief Returns only this frame's successfully composited NR reactive mask. */
 	ID3D11ShaderResourceView* GetReactiveMask() const;
+	/** @brief Snapshot of the current status, safe from any thread. */
+	Status GetStatus() const;
+	/** @brief Queues one retry for the next world frame; all the Retry action does. */
+	void RequestRetry() { retryRequested = resetHistory = true; }
 
 private:
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
-	std::mutex statusMutex;
-	std::string status = "Disabled";
-	void SetStatus(std::string message);
+	Status status;
+	/** @brief Mirror of status.state so the per-frame paths can skip a publish without the lock. */
+	std::atomic<Status::State> publishedState{ Status::State::kOff };
+	/** @brief Engine frame of the last frame NR applied; reported live, unlike the status snapshot. */
+	std::atomic<uint32_t> appliedFrame{ UINT32_MAX };
+	mutable std::mutex statusMutex;
+	/** @brief Publishes a status line plus the run state the panel and devbench report. */
+	void PublishStatus(Status::State state, std::string text);
 	/** @brief Latches a failure, tearing the runtime down first when the device was removed. */
 	void LatchFailure();
 	/** @brief Last member: it must be destroyed before impl's NGX teardown at process exit. */
