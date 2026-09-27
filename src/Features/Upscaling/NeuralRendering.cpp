@@ -15,6 +15,19 @@
 
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
 
+namespace
+{
+	/** @brief Active-status line; malformed braces in a translation fall back to the English text. */
+	std::string FormatActiveStatus(const std::string& runtime)
+	{
+		try {
+			return std::vformat(T(TKEY("status_active"), "Active (runtime {})"), std::make_format_args(runtime));
+		} catch (const std::format_error&) {
+			return std::format("Active (runtime {})", runtime);
+		}
+	}
+}
+
 struct NeuralRendering::Impl
 {
 	NR::D3D12Interop interop;
@@ -554,7 +567,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
 	ImGui::TextWrapped("%s", T(TKEY("description"),
-								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Keep Reset NR every frame off for normal use. Requires an NR-capable NVIDIA GPU and the 310.8.x runtime."));
+								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
@@ -790,13 +803,13 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.localStructure = boundedTuning.localStructureStrength;
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
 		if (!work.Draw(color, inputs.data(), shader, reset, boundedTuning, diagnostic, diagnostics))
-			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver or the 310.8 runtime, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
+			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {
 			const auto runtime = work.runtime.Version();
 			const auto luid = work.interop.AdapterLuid();
-			PublishStatus(Status::State::kActive, std::vformat(T(TKEY("status_active"), "Active (runtime {})"), std::make_format_args(runtime)));
+			PublishStatus(Status::State::kActive, FormatActiveStatus(runtime));
 			logger::info("[NeuralRendering] active: runtime {} on adapter LUID {:08X}:{:08X}", runtime, luid.HighPart, luid.LowPart);
 		}
 		diagnostic.outcome = (diagnostic.options & NR::Diagnostics::BypassWriteback) ? Outcome::Bypassed : Outcome::Applied;

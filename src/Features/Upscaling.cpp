@@ -638,7 +638,7 @@ void Upscaling::DrawSettings()
 		ImGui::EndTabItem();
 	}
 
-	if (ImGui::BeginTabItem("Neural Rendering")) {
+	if (ImGui::BeginTabItem(std::format("{}###NeuralRendering", T(TKEY("tab_neural_rendering"), "Neural Rendering")).c_str())) {
 		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingTuning);
 		ImGui::EndTabItem();
 	}
