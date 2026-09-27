@@ -17,6 +17,17 @@ namespace GpuPassCapabilities
 	bool Contains(std::string_view featurePrefix);
 }
 
+/// Tracy CPU zones must nest strictly LIFO per thread. `Scoped` (default) is a
+/// plain stack local, so that's automatic. `Spanning` is for a pass held in a
+/// class member with a lifetime crossing multiple calls (e.g. State::grassGpuPass):
+/// it skips only the Tracy CPU zone, which can't validate a lifetime like that,
+/// and keeps the internal profiler pass, Tracy GPU zone, and PIX annotation.
+enum class GpuPassSpan
+{
+	Scoped,
+	Spanning,
+};
+
 /// RAII scope that fans a single pass name to all three instrumentation sinks:
 ///   1. Internal profiler (GPU timestamp + CPU QPC → Profiling table)
 ///   2. Tracy CPU zone (always-on when TRACY_ENABLE; not gated on frameAnnotations)
@@ -30,10 +41,10 @@ namespace GpuPassCapabilities
 struct ScopedGpuPass
 {
 	/** @brief Opens a pass using Tracy's dynamic source-location path. name is copied, not retained. */
-	explicit ScopedGpuPass(std::string_view name);
+	explicit ScopedGpuPass(std::string_view name, GpuPassSpan span = GpuPassSpan::Scoped);
 #ifdef TRACY_ENABLE
 	/** @brief Opens a pass using a caller-supplied static source location (zero allocation). name is copied, not retained. */
-	ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name);
+	ScopedGpuPass(const tracy::SourceLocationData* srcloc, std::string_view name, GpuPassSpan span = GpuPassSpan::Scoped);
 #endif
 	~ScopedGpuPass();
 

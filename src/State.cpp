@@ -210,7 +210,7 @@ void State::UpdateGrassGpuPass()
 	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
 	if (isGrassDraw) {
 		if (!grassGpuPass)
-			grassGpuPass.emplace("Grass::Draw");
+			grassGpuPass.emplace("Grass::Draw", GpuPassSpan::Spanning);
 	} else {
 		grassGpuPass.reset();
 	}
