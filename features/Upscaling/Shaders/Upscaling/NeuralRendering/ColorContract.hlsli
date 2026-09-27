@@ -13,6 +13,7 @@ namespace NR
 	// gain of 1 is an exact passthrough and the legacy gamma path only re-encodes the gain.
 	float CompositeGain(float tone, float maxToneStops)
 	{
+		tone = isfinite(tone) ? tone : 0.0;
 		float gain = exp2(clamp(tone, -maxToneStops, maxToneStops));
 		return ENABLE_LL ? gain : Color::LinearToSkyrimGamma(gain);
 	}
