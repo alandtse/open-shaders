@@ -31,7 +31,6 @@ Texture2D<float4> NeuralOutput : register(t2);
 StructuredBuffer<float> Adaptation : register(t3);
 Texture2D<float2> ToneData : register(t4);
 RWTexture2D<float4> Output : register(u0);
-RWTexture2D<float> NeuralReactive : register(u1);
 RWTexture2D<float2> ToneDataOutput : register(u2);
 
 static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
@@ -215,7 +214,6 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	uint2 sourcePixel = id.xy + uint2(EyeOffsetX, 0);
 	float4 original = Original[sourcePixel];
 	float3 rawNeural = NeuralOutput[id.xy].rgb;
-	NeuralReactive[sourcePixel] = 0.0;
 	if (!all(isfinite(original))) {
 		Output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
 		return;
@@ -230,10 +228,6 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		exposure = max(exposure, 1.0 / 65536.0);
 	if (ExposureMode == 1 || ExposureMode == 2 || ExposureMode == 7)
 		exposure = 1.0;
-	if (MaskMode == 1)
-		NeuralReactive[sourcePixel] = 0.0;
-	else if (MaskMode == 2)
-		NeuralReactive[sourcePixel] = 1.0;
 	const float ratioFloor = 1.0 / 512.0;
 	float inputLuminance = dot(inputProxy, Luma);
 	float neuralLuminance = dot(neuralProxy, Luma);
@@ -325,5 +319,4 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	if (VisualMode == 0 && !boundedGain)
 		result = FromLinear(result);
 	Output[id.xy] = float4(result, original.a);
-	NeuralReactive[sourcePixel] = mask;
 }

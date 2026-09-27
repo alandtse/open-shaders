@@ -60,8 +60,6 @@ struct NeuralRendering
 	/** @brief Captures the scene immediately after the existing upscaler. */
 	void CaptureAfterUpscaling();
 
-	/** @brief Returns only this frame's successfully composited NR reactive mask. */
-	ID3D11ShaderResourceView* GetReactiveMask() const;
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */

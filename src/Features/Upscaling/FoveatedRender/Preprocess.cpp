@@ -60,8 +60,6 @@ namespace FoveatedRenderImpl
 		context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
 		context->CSSetShaderResources(0, (uint)views.size(), views.data());
-		auto* neuralMask = upscaling.neuralRendering.GetReactiveMask();
-		context->CSSetShaderResources(4, 1, &neuralMask);
 
 		ID3D11UnorderedAccessView* uavs[3] = {
 			upscaling.reactiveMaskTexture->uav.get(),
@@ -73,7 +71,7 @@ namespace FoveatedRenderImpl
 		context->CSSetShader(cs, nullptr, 0);
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
 
-		ID3D11ShaderResourceView* nullViews[5] = {};
+		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
 		ID3D11UnorderedAccessView* nullUavs[3] = { nullptr, nullptr, nullptr };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);

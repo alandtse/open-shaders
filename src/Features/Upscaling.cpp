@@ -2727,8 +2727,6 @@ void Upscaling::Upscale()
 		ID3D11ComputeShader* encodeCS = nullptr;
 		if (GetEncodeInputs(views, missingInput)) {
 			context->CSSetShaderResources(0, (uint)views.size(), views.data());
-			auto* neuralMask = neuralRendering.GetReactiveMask();
-			context->CSSetShaderResources(4, 1, &neuralMask);
 			encodeCS = GetEncodeTexturesCS();
 		} else {
 			static std::once_flag loggedMissingInputs;
@@ -2772,7 +2770,7 @@ void Upscaling::Upscale()
 			}
 		}
 
-		ID3D11ShaderResourceView* nullViews[5] = {};
+		ID3D11ShaderResourceView* nullViews[4] = { nullptr, nullptr, nullptr, nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(nullViews), nullViews);
 
 		ID3D11UnorderedAccessView* nullUAVs[4] = { nullptr, nullptr, nullptr, nullptr };

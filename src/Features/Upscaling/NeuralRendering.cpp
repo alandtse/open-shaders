@@ -44,8 +44,7 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
 	static_assert(sizeof(ColorTransferData) == 96);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
-	std::unique_ptr<Texture2D> original, reactive;
-	uint32_t maskFrame = UINT32_MAX;
+	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
 	winrt::com_ptr<ID3D11Texture2D> source;
@@ -105,11 +104,10 @@ struct NeuralRendering::Impl
 		runtime.ResetFeatures();
 		eyes = {};
 		original.reset();
-		reactive.reset();
 		encodeMasks = {};
 		width = height = guideWidth = guideHeight = eyeCount = 0;
 		format = DXGI_FORMAT_UNKNOWN;
-		lastFrame = maskFrame = UINT32_MAX;
+		lastFrame = UINT32_MAX;
 	}
 
 	/** @brief True while pass resources for a render size exist and can be released. */
@@ -146,13 +144,6 @@ struct NeuralRendering::Impl
 		srv.Texture2D.MipLevels = 1;
 		original = std::make_unique<Texture2D>(colorDesc, "NeuralRendering::OriginalHDR");
 		original->CreateSRV(srv);
-		maskDesc.Width = w * count;
-		maskDesc.Height = h;
-		maskDesc.BindFlags |= D3D11_BIND_SHADER_RESOURCE;
-		reactive = std::make_unique<Texture2D>(maskDesc, "NeuralRendering::ReactiveMask");
-		srv.Format = maskDesc.Format;
-		reactive->CreateSRV(srv);
-		reactive->CreateUAV(maskUAV);
 		colorDesc.Width = w;
 		colorDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
 		D3D11_UNORDERED_ACCESS_VIEW_DESC colorUAV = maskUAV;
@@ -341,8 +332,7 @@ struct NeuralRendering::Impl
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color.texture->srv.get(),
 			prepare ? nullptr : eye.output.texture->srv.get(), exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr };
-		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color.texture->uav.get() : eye.resolved->uav.get(),
-			prepare ? nullptr : reactive->uav.get() };
+		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color.texture->uav.get() : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
@@ -371,7 +361,6 @@ struct NeuralRendering::Impl
 				context->SwapDeviceContextState(previous.get(), nullptr);
 			}
 		} scope(context.get(), isolated.get());
-		maskFrame = UINT32_MAX;
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
 		const bool capture = diagnostics.BeginCapture(diagnostic.number);
@@ -487,7 +476,6 @@ struct NeuralRendering::Impl
 		}
 		if (capture) {
 			diagnostics.DumpTexture("03_pre_composite", original->resource.get(), diagnostic.number);
-			diagnostics.DumpTexture("NR_mask", reactive->resource.get(), diagnostic.number);
 		}
 		const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
 		for (uint32_t i = 0; i < eyeCount; ++i) {
@@ -496,7 +484,6 @@ struct NeuralRendering::Impl
 		}
 		if (capture)
 			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
-		maskFrame = globals::state->frameCount;
 		++appliedFrames;
 		diagnostics.FinishCapture(diagnostic.number);
 		captureDiagnostics = nullptr;
@@ -810,12 +797,4 @@ void NeuralRendering::LatchFailure()
 		impl = std::make_unique<Impl>();
 	}
 	impl->failed = true;
-}
-
-ID3D11ShaderResourceView* NeuralRendering::GetReactiveMask() const
-{
-	return !impl->failed && impl->maskFrame == globals::state->frameCount &&
-	               globals::features::upscaling.settings.neuralRenderingEnabled && impl->reactive ?
-	           impl->reactive->srv.get() :
-	           nullptr;
 }
