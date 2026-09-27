@@ -199,6 +199,14 @@ The test also establishes that the input must remain RGBA. Runtime-specific
 channel selection may be useful for other DLL builds, but it must not be inferred
 from the 310.8 version number alone.
 
+Because the channel order belongs to the build and not the version number,
+`Runtime::Initialize` accepts only the builds listed in
+`NR::kValidatedRuntimeSha256`: the 310.8 DVS Production runtime above and the
+310.8.0.0 test build, SHA-256
+`E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E`, whose
+in-game SE/VR captures showed no channel swap. Any other 310.8.x build is refused
+with a latched failure instead of being rendered through an unverified channel map.
+
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,
 matching the documented float-HDR convention. Applying another paper-white

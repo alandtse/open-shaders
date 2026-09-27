@@ -1,5 +1,6 @@
 #include "Runtime.h"
 
+#include "Utils/ContentHash.h"
 #include "Utils/SehGuard.h"
 #include "Utils/WinApi.h"
 
@@ -28,6 +29,8 @@ namespace NR
 		using Module = std::unique_ptr<std::remove_pointer_t<HMODULE>, ModuleDeleter>;
 		/** @brief Prefix that marks a failure as happening while the runtime starts up. */
 		constexpr const char* kInitializationPrefix = "initialization failed: ";
+		/** @brief Leading digest characters echoed back when a runtime build is refused. */
+		constexpr size_t kRuntimeDigestPrefix = 16;
 
 		template <class T>
 		T Resolve(HMODULE module, const char* name)
@@ -351,6 +354,10 @@ namespace NR
 		const auto rejected = UnsupportedRuntimeReason(version, directory.string());
 		if (!rejected.empty())
 			throw std::runtime_error(rejected);
+		const auto digest = Util::ContentHash::Sha256FileHex(path);
+		if (!digest || !IsValidatedRuntimeHash(*digest))
+			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific 310.8 builds",
+				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }));
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();

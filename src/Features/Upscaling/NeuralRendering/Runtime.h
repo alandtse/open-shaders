@@ -3,6 +3,7 @@
 #include "Tuning.h"
 
 #include <Windows.h>
+#include <array>
 #include <atomic>
 #include <d3d11.h>
 #include <d3d12.h>
@@ -36,6 +37,32 @@ namespace NR
 		if (version->major() != 310 || version->minor() != 8)
 			return std::format("unsupported runtime version {} (needs 310.8)", version->string("."));
 		return {};
+	}
+
+	/**
+	 * @brief SHA-256 digests of the nvngx_dlssnr.dll builds whose Feature 18 output channel
+	 *        order was verified in game: the 310.8 DVS Production build and the 310.8.0.0
+	 *        test build. A build outside this list is refused, not rendered on trust.
+	 */
+	inline constexpr std::array<std::string_view, 2> kValidatedRuntimeSha256{
+		"8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206",
+		"E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E",
+	};
+
+	/** @brief True when a SHA-256 hex digest names a validated build; hex case is ignored. */
+	inline bool IsValidatedRuntimeHash(std::string_view digest)
+	{
+		const auto fold = [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; };
+		for (const auto validated : kValidatedRuntimeSha256) {
+			if (validated.size() != digest.size())
+				continue;
+			size_t i = 0;
+			while (i < validated.size() && fold(validated[i]) == fold(digest[i]))
+				++i;
+			if (i == validated.size())
+				return true;
+		}
+		return false;
 	}
 
 	/** @brief True when an image path sits under <systemDirectory>\DriverStore\, i.e. NVIDIA's own core. */

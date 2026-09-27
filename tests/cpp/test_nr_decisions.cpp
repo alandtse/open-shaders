@@ -10,6 +10,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <format>
 #include <limits>
@@ -148,6 +150,26 @@ TEST_CASE("Only a 310.8 runtime is accepted", "[nr]")
 
 	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{}, "C:\\game") ==
 			"nvngx_dlssnr.dll in C:\\game has no version information");
+}
+
+TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
+{
+	REQUIRE(NR::kValidatedRuntimeSha256.size() == 2);
+	for (const auto validated : NR::kValidatedRuntimeSha256) {
+		REQUIRE(NR::IsValidatedRuntimeHash(validated));
+
+		// Hex carries no case, so a lowercase digest names the same build.
+		std::string lowered(validated);
+		std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+		REQUIRE(NR::IsValidatedRuntimeHash(lowered));
+	}
+
+	// A different 310.8.x build, an empty digest, and one short or long by a single
+	// character are all refused rather than prefix-matched.
+	REQUIRE_FALSE(NR::IsValidatedRuntimeHash("0000000000000000000000000000000000000000000000000000000000000000"));
+	REQUIRE_FALSE(NR::IsValidatedRuntimeHash(""));
+	REQUIRE_FALSE(NR::IsValidatedRuntimeHash("8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC20"));
+	REQUIRE_FALSE(NR::IsValidatedRuntimeHash("8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC2060"));
 }
 
 TEST_CASE("IsUnderDriverStore is case-insensitive and anchored to the prefix", "[nr]")
