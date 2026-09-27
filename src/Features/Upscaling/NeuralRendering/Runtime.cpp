@@ -1,6 +1,6 @@
 #include "Runtime.h"
 
-#include "Utils/ContentHash.h"
+#include "Utils/FileDigest.h"
 #include "Utils/SehGuard.h"
 #include "Utils/WinApi.h"
 
@@ -352,7 +352,7 @@ namespace NR
 		const auto rejected = UnsupportedRuntimeReason(version, directory.string());
 		if (!rejected.empty())
 			throw std::runtime_error(rejected);
-		const auto digest = Util::ContentHash::Sha256FileHex(path);
+		const auto digest = Util::FileDigest::Sha256FileHex(path);
 		if (!digest || !IsValidatedRuntimeHash(*digest))
 			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
 				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }, kRequiredRuntimeMajor, kRequiredRuntimeMinor));
