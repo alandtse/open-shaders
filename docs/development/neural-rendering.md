@@ -279,12 +279,20 @@ successfully initialized NGX session, restores the IAT, and unloads the modules.
 ## Verification boundary
 
 Compile the universal `CommunityShaders` target with shader tests disabled.
-Runtime validation requires the supported NVIDIA hardware/runtime and
+Then compile the NR shaders for the working-tree diff:
+`cmake --build <build-dir> --config Release --target validate_changed` (see
+[Shader Development Workflow](shader-workflow.md#incremental-shader-validation)
+for the target's prerequisites and config override; the target exists only
+when the build is configured with `AUTO_PLUGIN_DEPLOYMENT` or `AIO_ZIP_TO_DIST`,
+for example the `ALL-WITH-AUTO-DEPLOYMENT` preset). That step reaches
+`ColorTransferCS.hlsl`, which the C++ build does not compile.
+
+Runtime validation still requires the supported NVIDIA hardware/runtime and
 manual testing in both VR and SE/AE: native and scaled rendering, eye
 independence, toggling, loading, abrupt camera changes, and resolution
-recreation. A C++ build alone does not establish image quality, runtime
-compatibility, or GPU correctness. No shader tests or validation are
-required by this document.
+recreation. HLSL validation establishes only that the shaders compile: it does
+not establish image quality, runtime compatibility, or GPU correctness, all of
+which require the hardware run.
 
 ## Flicker diagnostics
 
