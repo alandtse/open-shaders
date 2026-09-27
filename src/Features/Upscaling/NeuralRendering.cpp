@@ -552,8 +552,8 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	if (snapshot.text.empty())
 		snapshot.text = T(TKEY("status_off"), "Off");
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
-	snapshot.appliedFrames = impl->appliedFrames.load(std::memory_order_relaxed);
-	snapshot.ngxResult = { impl->lastNgxResult[0].load(std::memory_order_relaxed), impl->lastNgxResult[1].load(std::memory_order_relaxed) };
+	snapshot.appliedFrames = appliedFrames.load(std::memory_order_relaxed);
+	snapshot.ngxResult = { lastNgxResult[0].load(std::memory_order_relaxed), lastNgxResult[1].load(std::memory_order_relaxed) };
 	return snapshot;
 }
 
@@ -799,6 +799,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
+		appliedFrames.fetch_add(1, std::memory_order_relaxed);
+		lastNgxResult[0].store(diagnostic.result[0], std::memory_order_relaxed);
+		lastNgxResult[1].store(diagnostic.result[1], std::memory_order_relaxed);
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {
 			const auto runtime = work.runtime.Version();
 			const auto luid = work.interop.AdapterLuid();
