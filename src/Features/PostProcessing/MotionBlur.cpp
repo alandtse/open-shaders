@@ -14,6 +14,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SampleCount,
 	ScalePreset)
 
+bool MotionBlur::DrawBeforeUpscaling() const
+{
+	// Motion vectors stay at render resolution when the pipeline processes a larger provided scene.
+	return owner && owner->ProcessesProvidedInput();
+}
+
 void MotionBlur::SetupResources()
 {
 	auto device = globals::d3d::device;

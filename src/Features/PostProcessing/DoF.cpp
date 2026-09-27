@@ -247,6 +247,12 @@ void DoF::UpdateProceduralBokehSamples(int bladeCount, float bladeRoundness, boo
 	cachedBokehBladeRoundness = roundness;
 }
 
+bool DoF::DrawBeforeUpscaling() const
+{
+	// Depth stays at render resolution when the pipeline processes a larger provided scene.
+	return owner && owner->ProcessesProvidedInput();
+}
+
 void DoF::SetupResources()
 {
 	auto device = globals::d3d::device;

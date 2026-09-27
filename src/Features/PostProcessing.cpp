@@ -728,6 +728,11 @@ void PostProcessing::SetupResources()
 			SwapPipelineResources();
 			pipelineTextureDesc = engineDesc;
 			CreatePipelineResources(true);
+			// Pre-upscale effects always read the engine-sized scene, so both pipelines use the engine-sized instance.
+			for (size_t i = 0; i < pipeline.size(); ++i) {
+				if (pipeline[i] && pipeline[i]->DrawBeforeUpscaling())
+					alternatePipeline.effects[i] = pipeline[i];
+			}
 			SwapPipelineResources();
 		}
 
@@ -904,12 +909,16 @@ void PostProcessing::BeginLinearProcessing(PostProcessFeature::TextureInfo& text
 		texture.gamut = ll.settings.enableACEScg ? Gamut::ACEScg : Gamut::Rec709;
 	D3D11_TEXTURE2D_DESC desc;
 	texture.tex->GetDesc(&desc);
+	const auto matchesSource = [&](const Texture2D* candidate) {
+		return candidate && candidate->desc.Width == desc.Width && candidate->desc.Height == desc.Height;
+	};
+	auto* input = matchesSource(texInput.get()) || !matchesSource(alternatePipeline.input.get()) ? texInput.get() : alternatePipeline.input.get();
 	const float gamma = scene && !linear ? kLegacySceneGamma : 1.0f;
-	if (gamma == 1.0f && desc.Width == texInput->desc.Width && desc.Height == texInput->desc.Height)
+	if (gamma == 1.0f && matchesSource(input))
 		return;
 
-	DrawCopy(*texInput, texture.tex, texture.srv, CopyCB{ .inputGamut = texture.gamut, .outputGamut = texture.gamut, .gamma = gamma });
-	texture = { texInput->resource.get(), texInput->srv.get(), texture.gamut };
+	DrawCopy(*input, texture.tex, texture.srv, CopyCB{ .inputGamut = texture.gamut, .outputGamut = texture.gamut, .gamma = gamma });
+	texture = { input->resource.get(), input->srv.get(), texture.gamut };
 }
 
 void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor)

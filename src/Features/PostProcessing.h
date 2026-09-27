@@ -153,6 +153,8 @@ struct PostProcessing : Feature
 	ID3D11VertexShader* GetFullscreenVS() const { return fullscreenVS.get(); }
 	/** @brief Texture description shared by effects at the post-processing input resolution. */
 	D3D11_TEXTURE2D_DESC GetPipelineTextureDesc() const { return pipelineTextureDesc; }
+	/** @brief Whether the pipeline processes a scene published by another feature instead of the engine target. */
+	bool ProcessesProvidedInput() const { return inputProvider != nullptr; }
 
 	using Gamut = PostProcessFeature::Gamut;
 	struct alignas(16) CopyCB
