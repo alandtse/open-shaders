@@ -249,7 +249,6 @@ void DoF::UpdateProceduralBokehSamples(int bladeCount, float bladeRoundness, boo
 
 void DoF::SetupResources()
 {
-	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
 
 	logger::debug("Creating buffers...");
@@ -265,10 +264,7 @@ void DoF::SetupResources()
 
 	logger::debug("Creating 2D textures...");
 	{
-		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-
-		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
+		auto texDesc = owner->GetPipelineTextureDesc();
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,
@@ -606,7 +602,8 @@ void DoF::Draw(TextureInfo& inout_tex)
 		.BokehBladeCount = (uint)std::clamp(bladeCount, 4, 16),
 		.BokehBladeRoundness = std::clamp(bladeRoundness, 0.0f, 1.0f),
 		.ProceduralBokehAreaScale = proceduralBokehAreaScale,
-		.SensorWidthMM = std::isfinite(sensorWidthMM) ? std::max(sensorWidthMM, 1.0f) : 36.0f
+		.SensorWidthMM = std::isfinite(sensorWidthMM) ? std::max(sensorWidthMM, 1.0f) : 36.0f,
+		.BufferDim = { res.x, res.y, 1.0f / res.x, 1.0f / res.y }
 	};
 	dofCB->Update(dofData);
 

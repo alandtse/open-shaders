@@ -6,6 +6,123 @@ from test_scene_settings_runtime import ROOT, braced
 
 
 class SceneSettingsControlTests(unittest.TestCase):
+    def test_scene_dropdown_scroll_survives_reopening(self):
+        library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
+        if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
+            self.skipTest("Uses the Windows build's ImGui library")
+        utility = (ROOT / "src/Utils/UI.cpp").read_text(encoding="utf-8")
+        scene_ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
+        source = r'''
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <algorithm>
+#include <array>
+#include <cfloat>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <map>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+const char* T(const char*, const char* fallback) { return fallback; }
+namespace ThemeManager {
+struct Constants {
+    static constexpr float COMBO_SEARCH_ICON_SIZE = 12, COMBO_SEARCH_ICON_OFFSET_X = 4;
+    static constexpr float COMBO_SEARCH_PADDING_LEFT = 20, COMBO_SEARCH_ICON_ALPHA = 1;
+};
+}
+namespace Util {
+using SearchableComboLabelGetter = const char* (*)(const void*, int);
+struct ActiveControlStorageGuard { explicit ActiveControlStorageGuard(const void*) {} };
+float GetSearchUIScale() { return 1; }
+void DrawSearchIcon(ImVec2, float, float) {}
+DETAIL
+BEGIN_COMBO
+END_COMBO
+}
+static std::map<ImGuiID, float> s_pickerScrollPositions;
+RESET_SCROLL
+GET_SCROLL
+void check(bool condition, const char* message) {
+    if (!condition) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+float frame(const char* label, bool open = false, bool close = false, float scrollTo = -1) {
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(700, 500));
+    ImGui::Begin("Scene Manager");
+    auto* savedScroll = GetPickerScrollPosition(label);
+    if (open)
+        ImGui::OpenPopupEx(ImHashStr("##ComboPopup", 0, ImGui::GetID(label)));
+    float scroll = -1;
+    if (Util::BeginSearchableCombo(label, "First", ImGuiComboFlags_None, nullptr, 8, savedScroll)) {
+        scroll = ImGui::GetScrollY();
+        for (int i = 0; i < 100; ++i) {
+            ImGui::PushID(i);
+            ImGui::Selectable("Scene", i == 0);
+            if (i == 0)
+                ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
+        }
+        if (scrollTo >= 0)
+            ImGui::SetScrollY(scrollTo);
+        if (close)
+            ImGui::CloseCurrentPopup();
+        Util::EndSearchableCombo();
+    }
+    ImGui::End();
+    ImGui::Render();
+    return scroll;
+}
+int main() {
+    ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(1000, 800);
+    unsigned char* pixels; int width, height;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    frame("Locations", true);
+    frame("Locations");
+    frame("Locations", false, false, 500);
+    check(frame("Locations") == 500, "Open dropdown can scroll");
+    frame("Locations", false, true);
+    frame("Locations");
+    frame("Other dropdown", true);
+    frame("Other dropdown");
+    frame("Other dropdown", false, false, 120);
+    check(frame("Other dropdown", false, true) == 120, "Each dropdown has its own position");
+    frame("Other dropdown");
+    frame("Locations", true);
+    check(frame("Locations") == 500, "Reopening restores scroll despite ImGui reusing popup windows");
+    check(frame("Locations") == 500, "Search and selected-row focus do not reset restored scroll");
+    frame("Locations", false, false, 700);
+    check(frame("Locations", false, true) == 700, "Restoring does not lock later scrolling");
+    frame("Locations");
+    frame("Locations", true);
+    check(frame("Locations") == 700, "The latest scroll position survives closing");
+    frame("Locations", false, true);
+    frame("Locations");
+    ResetPickerScrollPositions();
+    frame("Locations", true);
+    check(frame("Locations") == 0, "Switching scene type resets remembered positions");
+    check(frame("Locations") == 0, "Scene-type reset survives popup focus initialization");
+    frame("Locations", false, true);
+    ImGui::DestroyContext();
+}
+'''
+        for token, text, declaration in (
+                ("DETAIL", utility, "namespace detail"),
+                ("BEGIN_COMBO", utility, "bool BeginSearchableCombo("),
+                ("END_COMBO", utility, "void EndSearchableCombo("),
+                ("RESET_SCROLL", scene_ui, "void ResetPickerScrollPositions("),
+                ("GET_SCROLL", scene_ui, "static float* GetPickerScrollPosition(")):
+            source = source.replace(token, braced(text, declaration))
+        runtime.SceneSettingsRuntimeTests().compile_and_run(source, imgui_root=library_root)
+
     def test_uncatalogued_controls_preserve_navigation_and_nested_widgets(self):
         library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
         if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():

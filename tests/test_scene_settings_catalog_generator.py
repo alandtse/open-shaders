@@ -633,6 +633,115 @@ struct AliasFeature : Feature
         self.assertEqual(
             GENERATOR.resolve_editor_semantic(binding, "Integer", True), "None")
 
+    def test_dynamic_callback_parameters_keep_stable_serialized_addresses(self):
+        header = r'''
+struct SyntheticFeature : Feature {
+    struct Settings {
+        std::array<float4, 2> parameters;
+        std::array<float4, 2> readonly;
+        std::array<float4, 2> copied;
+        std::array<float4, 2> unused;
+    } settings;
+    std::string GetShortName() { return "Synthetic"; }
+    std::string GetName() { return "Synthetic Feature"; }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+    SyntheticFeature::Settings, parameters, readonly, copied, unused)
+'''
+        source = r'''
+struct DynamicEditor {
+    using Parameters = std::array<float4, 2>;
+    std::function<void(Parameters&)> draw;
+    std::function<void(const Parameters&)> inspect;
+    std::function<void(Parameters)> copy;
+};
+void SyntheticFeature::DrawSettings() {
+    auto& values = settings.parameters;
+    editors[selected].draw(values);
+    editors[selected].inspect(settings.readonly);
+    editors[selected].copy(settings.copied);
+    editors[selected].draw(Clone(settings.unused));
+}
+void SyntheticFeature::Update() {
+    editors[selected].draw(settings.unused);
+}
+void SyntheticFeature::SaveSettings(json& output) { output = settings; }
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/SyntheticFeature.h").write_text(header, encoding="utf-8")
+            (root / "src/SyntheticFeature.cpp").write_text(source, encoding="utf-8")
+            entries = GENERATOR.build_entries(root)
+            GENERATOR.validate_entries(entries, 1)
+            dynamic = [entry for entry in entries if entry["path"].startswith("parameters/")]
+            self.assertEqual(len(dynamic), 8)
+            self.assertEqual(len({(entry["path"], entry["key"]) for entry in dynamic}), 8)
+            for entry in dynamic:
+                with self.subTest(path=entry["path"], key=entry["key"]):
+                    self.assertEqual(entry["editorSemantic"], "Generic")
+                    self.assertIn("SettingFlag::SceneControllable", entry["flags"])
+                    self.assertIn("SettingFlag::Transitionable", entry["flags"])
+                    self.assertEqual(entry["serializedPath"], "parameters")
+                    self.assertEqual(entry["serializedKey"], entry["path"].split("/")[-1])
+                    self.assertEqual(entry["serializedComponent"], "xyzw".index(entry["key"]))
+            for entry in entries:
+                if entry not in dynamic:
+                    self.assertIn("SettingFlag::Hidden", entry["flags"])
+
+    def test_split_struct_serialization_maps_back_to_live_fields(self):
+        header = r'''
+struct Curve { float exposure; int32_t mode; float shoulder; float toe; };
+struct FirstPart { float exposure; int32_t mode; };
+struct SecondPart { float shoulder; float toe; };
+struct WrongPart { float unrelated; };
+struct SyntheticFeature : Feature {
+    struct Settings { bool enabled; Curve curve; } settings;
+    std::string GetShortName() { return "Synthetic"; }
+    std::string GetName() { return "Synthetic Feature"; }
+};
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SyntheticFeature::Settings, enabled)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(FirstPart, exposure, mode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SecondPart, shoulder, toe)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(WrongPart, unrelated)
+'''
+        source = r'''
+void SyntheticFeature::SaveSettings(json& output) {
+    output = settings;
+    FirstPart first;
+    SecondPart second;
+    WrongPart wrong;
+    std::memcpy(&first, &settings.curve, sizeof(first));
+    std::memcpy(&second, reinterpret_cast<const char*>(&settings.curve) + sizeof(first), sizeof(second));
+    std::memcpy(&wrong, &settings.curve, sizeof(WrongPart));
+    output["First"] = first;
+    output["Second"] = second;
+    output["Wrong"] = wrong;
+}
+void DrawCurve(Curve& value) {
+    ImGui::SliderFloat("Shoulder", &value.shoulder, 0.0f, 2.0f);
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "src/SyntheticFeature.h").write_text(header, encoding="utf-8")
+            (root / "src/SyntheticFeature.cpp").write_text(source, encoding="utf-8")
+            entries = GENERATOR.build_entries(root)
+            GENERATOR.validate_entries(entries, 1)
+            by_id = {(entry["path"], entry["key"]): entry for entry in entries}
+            self.assertEqual(set(by_id), {
+                ("", "enabled"), ("First", "exposure"), ("First", "mode"),
+                ("Second", "shoulder"), ("Second", "toe")})
+            for (path, key), entry in by_id.items():
+                if path:
+                    self.assertEqual(entry["access"], f"settings.curve.{key}")
+                    self.assertEqual((entry["serializedPath"], entry["serializedKey"]), (path, key))
+                    self.assertIn("SettingFlag::SceneControllable", entry["flags"])
+            shoulder = by_id[("Second", "shoulder")]
+            self.assertEqual(shoulder["displayName"], "Shoulder")
+            self.assertEqual((shoulder["minimum"], shoulder["maximum"]), (0.0, 2.0))
+
     def test_validation_rejects_inconsistent_input_metadata(self):
         entry = dict(self.entries_by_id[("", "regular")])
         entry["clampNumericInput"] = True

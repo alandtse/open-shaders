@@ -15,6 +15,9 @@ struct Feature;
 /// Shared UI utilities for scene-settings panels.
 namespace SceneSettingsUI
 {
+	/// Forget dropdown scroll positions when switching scene types.
+	void ResetPickerScrollPositions();
+
 	using SceneType = SceneSettingsManager::SceneType;
 	using EntrySource = SceneSettingsManager::EntrySource;
 	using Period = SceneSettingsManager::TimeOfDayPeriod;

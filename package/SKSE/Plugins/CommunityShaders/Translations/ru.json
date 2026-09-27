@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Настройки переопределений",
     "feature.scene_manager.copy.overwrite_to_user_note": "Скопированные значения сохраняются как пользовательские настройки. Файлы переопределений не изменяются.",
     "feature.scene_manager.copy.replace_existing_user": "Заменить существующие пользовательские настройки",
+    "feature.scene_manager.edit.configured_only": "Для этой функции",
+    "feature.scene_manager.edit.configured_only.tooltip": "Показывать только сцены с сохранёнными настройками этой функции.",
     "feature.scene_manager.edit.delete_message": "Удалить пользовательские настройки этой функции из выбранной сцены?",
     "feature.scene_manager.edit.delete_title": "Удалить настройки сцены?",
     "feature.scene_manager.edit.discard_confirm": "Отбросить и открыть",

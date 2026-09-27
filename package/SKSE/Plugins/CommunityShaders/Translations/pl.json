@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Ustawienia nadpisań",
     "feature.scene_manager.copy.overwrite_to_user_note": "Skopiowane wartości są zapisywane jako ustawienia użytkownika. Pliki nadpisań nie są modyfikowane.",
     "feature.scene_manager.copy.replace_existing_user": "Zastąp istniejące ustawienia użytkownika",
+    "feature.scene_manager.edit.configured_only": "Dla tej funkcji",
+    "feature.scene_manager.edit.configured_only.tooltip": "Pokaż tylko sceny z zapisanymi ustawieniami tej funkcji.",
     "feature.scene_manager.edit.delete_message": "Usunąć ustawienia użytkownika tej funkcji z wybranej sceny?",
     "feature.scene_manager.edit.delete_title": "Usunąć ustawienia sceny?",
     "feature.scene_manager.edit.discard_confirm": "Odrzuć i otwórz",

@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Überschreibungseinstellungen",
     "feature.scene_manager.copy.overwrite_to_user_note": "Kopierte Werte werden als Benutzereinstellungen gespeichert. Überschreibungsdateien werden nicht geändert.",
     "feature.scene_manager.copy.replace_existing_user": "Vorhandene Benutzereinstellungen ersetzen",
+    "feature.scene_manager.edit.configured_only": "Funktionsspezifisch",
+    "feature.scene_manager.edit.configured_only.tooltip": "Nur Szenen mit gespeicherten Einstellungen für diese Funktion anzeigen.",
     "feature.scene_manager.edit.delete_message": "Die Benutzereinstellungen dieser Funktion aus der ausgewählten Szene entfernen?",
     "feature.scene_manager.edit.delete_title": "Szeneneinstellungen löschen?",
     "feature.scene_manager.edit.discard_confirm": "Verwerfen und öffnen",

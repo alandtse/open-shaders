@@ -182,6 +182,7 @@ cbuffer DoFCB : register(b1)
 	float BokehBladeRoundness;
 	float ProceduralBokehAreaScale;
 	float SensorWidthMM;
+	float4 BufferDim;
 };
 
 // One CoC tile covers 8x8 half res pixels == 16x16 full res pixels. A packed VR group can straddle
@@ -197,8 +198,8 @@ cbuffer DoFCB : register(b1)
 // Keeping the radius in horizontal viewport units makes every threshold below expressible in
 // pixels, which is what the gather kernel actually operates in.
 // --------------------------------------------------------------------------------------------
-static const float cocToPixels = SharedData::BufferDim.x;    // CoC fraction -> full-res pixels
-static const float onePixelInCoC = SharedData::BufferDim.z;  // "less than a pixel of blur" == in focus
+static const float cocToPixels = BufferDim.x;    // CoC fraction -> full-res pixels
+static const float onePixelInCoC = BufferDim.z;  // "less than a pixel of blur" == in focus
 
 // Near CoC radius (in pixels) at which the near field layer becomes fully opaque.
 static const float nearFullOpacityPixels = 8.0f;
@@ -316,7 +317,7 @@ float CalculateSampleWeight(float sampleRadiusInPixels, float ringDistanceInPixe
 // Clamps a texel coordinate to the source buffer without crossing the VR eye seam.
 int2 ClampToBuffer(int2 coord, uint eyeIndex)
 {
-	return Stereo::ClampToEyeBounds(coord, eyeIndex, SharedData::BufferDim.xy);
+	return Stereo::ClampToEyeBounds(coord, eyeIndex, BufferDim.xy);
 }
 
 int2 ClampToHalfRes(int2 coord, uint eyeIndex)
@@ -349,7 +350,7 @@ int2 GetCoCTileBase(uint2 tileCoord, uint eyeIndex)
 	int2 base = int2(tileCoord) * COC_TILE_SIZE_FULLRES;
 #if defined(VR)
 	const uint tileEyeWidth = CoCTileDim.x / 2u;
-	const uint fullEyeWidth = (uint)SharedData::BufferDim.x / 2u;
+	const uint fullEyeWidth = (uint)BufferDim.x / 2u;
 	base.x = int((tileCoord.x - eyeIndex * tileEyeWidth) * COC_TILE_SIZE_FULLRES + eyeIndex * fullEyeWidth);
 #endif
 	return base;
@@ -400,8 +401,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	for (int i = 1; i < 6; ++i) {
 		float2 coordOffset = factorToUse * offset[i];
 		float weightSample = weight[i];
-		float2 uvPos = Stereo::ClampToEyeUV(texcoord + coordOffset, eyeIndex, uint2(SharedData::BufferDim.xy));
-		float2 uvNeg = Stereo::ClampToEyeUV(texcoord - coordOffset, eyeIndex, uint2(SharedData::BufferDim.xy));
+		float2 uvPos = Stereo::ClampToEyeUV(texcoord + coordOffset, eyeIndex, uint2(BufferDim.xy));
+		float2 uvNeg = Stereo::ClampToEyeUV(texcoord - coordOffset, eyeIndex, uint2(BufferDim.xy));
 		float sampleCoC = TexCoCInput.SampleLevel(LinearSampler, uvPos, 0).r;
 		float maskFactor = abs(sampleCoC) < onePixelInCoC;
 
@@ -425,10 +426,10 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 	[numthreads(8, 8, 1)] void CS_CalculateCoC(uint2 DTid : SV_DispatchThreadID)
 {
-	if (DTid.x >= (uint)SharedData::BufferDim.x || DTid.y >= (uint)SharedData::BufferDim.y)
+	if (DTid.x >= (uint)BufferDim.x || DTid.y >= (uint)BufferDim.y)
 		return;
 
-	float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 
 	FocusInfo focusInfo;
 	focusInfo.texcoord = uv;
@@ -451,8 +452,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	{
 		[loop] for (int x = 0; x < COC_TILE_SIZE_FULLRES; x += 2)
 		{
-			float2 uv = (float2(base + int2(x, y)) + 1.0f) * SharedData::BufferDim.zw;
-			uv = Stereo::ClampToEyeUV(uv, eyeIndex, uint2(SharedData::BufferDim.xy));
+			float2 uv = (float2(base + int2(x, y)) + 1.0f) * BufferDim.zw;
+			uv = Stereo::ClampToEyeUV(uv, eyeIndex, uint2(BufferDim.xy));
 			float4 g = TexCoCInput.GatherRed(LinearSampler, uv);
 			minMax.x = min(minMax.x, min(min(g.x, g.y), min(g.z, g.w)));
 			minMax.y = max(minMax.y, max(max(g.x, g.y), max(g.z, g.w)));
@@ -550,7 +551,7 @@ float3 ReduceColorWithCoC(float3 tapColor[4], float tapCoC[4], float outCoC, flo
 		return;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromPixel(DTid, HalfResDim);
-	int2 base = GetReductionBase(DTid, eyeIndex, uint2(SharedData::BufferDim.xy), HalfResDim);
+	int2 base = GetReductionBase(DTid, eyeIndex, uint2(BufferDim.xy), HalfResDim);
 	float3 tapColor[4];
 	float tapCoC[4];
 	[unroll] for (int i = 0; i < 4; ++i)
@@ -573,7 +574,7 @@ float3 ReduceColorWithCoC(float3 tapColor[4], float tapCoC[4], float outCoC, flo
 		return;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromPixel(DTid, HalfResDim);
-	int2 base = GetReductionBase(DTid, eyeIndex, uint2(SharedData::BufferDim.xy), HalfResDim);
+	int2 base = GetReductionBase(DTid, eyeIndex, uint2(BufferDim.xy), HalfResDim);
 	float3 tapColor[4];
 	float tapCoC[4];
 	[unroll] for (int i = 0; i < 4; ++i)
@@ -620,7 +621,7 @@ float3 ReduceColorWithCoC(float3 tapColor[4], float tapCoC[4], float outCoC, flo
 	}
 
 	float outCoC = SelectReducedCoC(tapCoC);
-	float mipScale = max((float)sourceWidth / max(SharedData::BufferDim.x * 0.5f, 1.0f), 0.125f);
+	float mipScale = max((float)sourceWidth / max(BufferDim.x * 0.5f, 1.0f), 0.125f);
 	// 0.5*mipScale yields 0.25 / 0.125 / 0.0625 at the three reduce stages, keeping
 	// the signed-CoC rejection threshold resolution independent.
 	float3 outColor = ReduceColorWithCoC(tapColor, tapCoC, outCoC, 0.5f * mipScale);
@@ -820,7 +821,7 @@ void AccumulateFarGatherSample(
 	AdaptiveBokehSample bokeh = GetAdaptiveBokehSample(sampleIndex, rotation);
 	float ringDistanceInPixels = bokeh.normalizedDistance * kernelRadiusInPixels;
 	float2 unitOffset = ApplyPetzvalMorph(bokeh.offset, texcoord);
-	float2 tapCoords = Stereo::ClampToEyeUV(texcoord + unitOffset * kernelRadiusInPixels * SharedData::BufferDim.zw, eyeIndex, gatherDim);
+	float2 tapCoords = Stereo::ClampToEyeUV(texcoord + unitOffset * kernelRadiusInPixels * BufferDim.zw, eyeIndex, gatherDim);
 	float sampleRadius = SampleGatherCoC(tapCoords, mip);
 	float ringWeight = lerp(bokeh.radialWeight, 1.0f, centerWeight);
 	float weight = (sampleRadius >= 0.0f) * ringWeight *
@@ -847,7 +848,7 @@ void AccumulateNearGatherSample(
 {
 	AdaptiveBokehSample bokeh = GetAdaptiveBokehSample(sampleIndex, rotation);
 	float2 unitOffset = ApplyPetzvalMorph(bokeh.offset, texcoord);
-	float2 tapCoords = Stereo::ClampToEyeUV(texcoord + unitOffset * kernelRadiusInPixels * SharedData::BufferDim.zw, eyeIndex, gatherDim);
+	float2 tapCoords = Stereo::ClampToEyeUV(texcoord + unitOffset * kernelRadiusInPixels * BufferDim.zw, eyeIndex, gatherDim);
 	float weight = lerp(bokeh.radialWeight, 1.0f, smoothstep(0.0f, 1.0f, centerWeight)) * bokeh.coverage;
 	colorSum += ApplyBokehTint(SampleGatherColor(tapCoords, mip), bokeh.tint) * weight;
 	weightSum += weight;
@@ -870,7 +871,7 @@ void AccumulateNearGatherSample(
 		return;
 	}
 
-	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * BufferDim.zw;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 	float kernelRadiusInPixels = colorRadius * FarPlaneMaxBlur * cocToPixels;
 	float mip = GetGatherMip(kernelRadiusInPixels);
@@ -910,7 +911,7 @@ void AccumulateNearGatherSample(
 	}
 
 	float pixelCoC = TexCoCHalf[DTid];
-	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * BufferDim.zw;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 	float kernelRadiusInPixels = SampleNearReachPixels(texcoord, eyeIndex, pixelCoC);
 	if (kernelRadiusInPixels <= 1.0f) {
@@ -964,7 +965,7 @@ void AccumulateNearGatherSample(
 	if ((tileCoC.y - max(tileCoC.x, 0.0f)) < tileCoC.y * fastGatherCoCError)
 		numberOfRings = max(numberOfRings - 1.0f, 2.0f);
 
-	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * BufferDim.zw;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 
 	const float pointsFirstRing = 7;  // each ring has a multiple of this value of sample points.
@@ -982,7 +983,7 @@ void AccumulateNearGatherSample(
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * bokehBusyFactorToUse, bokehBusyFactorToUse);
 	float2 pointOffset = float2(0, 0);
-	float2 ringRadiusDeltaCoords = (SharedData::BufferDim.zw * kernelRadiusInPixels) / numberOfRings;
+	float2 ringRadiusDeltaCoords = (BufferDim.zw * kernelRadiusInPixels) / numberOfRings;
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
 	float pixelsPerRing = kernelRadiusInPixels / numberOfRings;
 	float ringDistanceInPixels = 0;
@@ -1033,7 +1034,7 @@ void AccumulateNearGatherSample(
 		return;
 	}
 
-	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 texcoord = 2.0f * (DTid.xy + 0.5f) * BufferDim.zw;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 
 	float pixelCoC = TexCoCHalf[DTid];
@@ -1053,7 +1054,7 @@ void AccumulateNearGatherSample(
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * bokehBusyFactorToUse, bokehBusyFactorToUse);
 	float2 pointOffset = float2(0, 0);
-	float2 ringRadiusDeltaCoords = SharedData::BufferDim.zw * (kernelRadiusInPixels / (numberOfRings - 1));
+	float2 ringRadiusDeltaCoords = BufferDim.zw * (kernelRadiusInPixels / (numberOfRings - 1));
 	float pointsOnRing = pointsFirstRing;
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
 	bool useShape = HighlightShape > 0;
@@ -1145,7 +1146,7 @@ float4 GatherMedianAt(Texture2D<float4> inputTexture, uint2 pixel)
 
 	[numthreads(8, 8, 1)] void CS_Combiner(uint2 DTid : SV_DispatchThreadID)
 {
-	float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 	// first blend far plane with original buffer, then near plane on top of that.
 	float4 originalFragment = TexColor[DTid];
 	originalFragment.rgb = AccentuateWhites(originalFragment.rgb);
@@ -1165,16 +1166,16 @@ float4 GatherMedianAt(Texture2D<float4> inputTexture, uint2 pixel)
 }
 
 [numthreads(8, 8, 1)] void CS_PostSmoothing1(uint2 DTid : SV_DispatchThreadID) {
-	float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 
-	RWTexOut[DTid] = PerformFullFragmentGaussianBlur(TexColor, uv, DTid, float2((SharedData::BufferDim.z), 0.0));
+	RWTexOut[DTid] = PerformFullFragmentGaussianBlur(TexColor, uv, DTid, float2((BufferDim.z), 0.0));
 }
 
 	[numthreads(8, 8, 1)] void CS_PostSmoothing2AndFocusing(uint2 DTid : SV_DispatchThreadID)
 {
-	float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
+	float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 
-	float4 color = PerformFullFragmentGaussianBlur(TexPostSmoothInput, uv, DTid, float2(0.0, (SharedData::BufferDim.w)));
+	float4 color = PerformFullFragmentGaussianBlur(TexPostSmoothInput, uv, DTid, float2(0.0, (BufferDim.w)));
 	float4 originalColor = TexColor[DTid];
 
 	// Ramp the smoothed result back in over the first few pixels of blur so in-focus geometry is untouched.

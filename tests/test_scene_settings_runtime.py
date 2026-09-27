@@ -482,10 +482,11 @@ namespace Util {
 GUARD;
 GUARD_BEGIN
 GUARD_END
-bool BeginSearchableCombo(const char* id, const char* preview, ImGuiComboFlags flags, const void*) { return ImGui::BeginCombo(id, preview, flags); }
+bool BeginSearchableCombo(const char* id, const char* preview, ImGuiComboFlags flags, const void*, int, float*) { return ImGui::BeginCombo(id, preview, flags); }
 bool SearchableComboMatches(const std::string&) { return true; }
 void EndSearchableCombo() { ImGui::EndCombo(); }
 }
+float* GetPickerScrollPosition(const char*) { static float scrollY = 0; return &scrollY; }
 EDITOR
 void check(bool condition, const char* message) {
     if (!condition) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
@@ -1269,20 +1270,22 @@ struct SceneSettingsManager {
     }
     bool BeginFeatureSceneEdit(Feature* feature, int) { ++begins; owner = feature->name; return true; }
 };
+struct FeatureSceneTargetState { int type = 0; };
 struct FeaturePageEditorState {
     std::string featureShortName;
     bool toolbarOpen = false;
     std::string pendingFeatureShortName;
     Util::ConfirmationPopup replaceEditor;
     std::vector<int> supportedTypes;
-    int edit = 0;
+    FeatureSceneTargetState edit;
     std::optional<int> activeContext;
 };
 FeaturePageEditorState s_featurePageEditor;
 bool CanEditFeaturePage(Feature* feature) { return feature && feature->supported; }
 std::vector<int> GetFeatureSceneContextTypes(const std::string&) { return {1}; }
-void InitializeFeatureSceneTarget(Feature*, int& edit) { edit = 1; }
-std::optional<int> GetFeatureSceneContext(int edit) { return edit; }
+void InitializeFeatureSceneTarget(Feature*, FeatureSceneTargetState& edit) { edit.type = 1; }
+std::optional<int> GetFeatureSceneContext(const FeatureSceneTargetState& edit) { return edit.type; }
+void ResetPickerScrollPositions() {}
 void InitializeFeatureCopyDestination(FeaturePageEditorState&) {}
 bool environmentPlaying = false;
 bool SetFeaturePagePreviewPlaying(bool playing) { environmentPlaying = playing; return true; }

@@ -15,6 +15,7 @@
 #endif
 
 struct ID3D11ShaderResourceView;
+struct ID3D11Texture2D;
 
 struct Feature
 {
@@ -314,6 +315,21 @@ public:
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Replacement scene in engine color encoding, with borrowed resources valid during the post-processing pass. */
+	struct PostProcessingInput
+	{
+		uint32_t width = 0;
+		uint32_t height = 0;
+		ID3D11Texture2D* texture = nullptr;
+		ID3D11ShaderResourceView* srv = nullptr;
+	};
+
+	/** @brief Publishes the size until resource recreation; zero dimensions opt out and resources are null outside the active pass. */
+	virtual PostProcessingInput GetPostProcessingInput() const { return {}; }
+
+	/** @brief Borrowed scene SRV produced for the current tonemap pass, or null when inactive. */
+	virtual ID3D11ShaderResourceView* GetPostProcessingOutput() const { return nullptr; }
 
 	/**
 	 * @brief Global exposure a feature applies to pre-tonemap scene-linear color this frame.

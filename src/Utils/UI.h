@@ -979,10 +979,10 @@ namespace Util
 	/** @brief Allocation-free label accessor for indexed searchable combos. */
 	using SearchableComboLabelGetter = const char* (*)(const void* userData, int index);
 
-	/** @brief Begins a constrained combo with a focused search field. Call EndSearchableCombo when true. */
+	/** @brief Begins a searchable combo, optionally restoring caller-owned scroll position. Call EndSearchableCombo when true. */
 	bool BeginSearchableCombo(const char* label, const char* previewValue,
 		ImGuiComboFlags flags = ImGuiComboFlags_None, const void* storageAddress = nullptr,
-		int maxVisibleItems = 0);
+		int maxVisibleItems = 0, float* savedScrollY = nullptr);
 
 	/** @brief Ends a combo opened by BeginSearchableCombo. */
 	void EndSearchableCombo();

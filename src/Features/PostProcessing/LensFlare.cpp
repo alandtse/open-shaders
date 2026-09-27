@@ -266,7 +266,6 @@ void LensFlare::SaveSettings(json& o_json)
 
 void LensFlare::SetupResources()
 {
-	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
 
 	logger::debug("LensFlare: Creating buffers...");
@@ -276,10 +275,7 @@ void LensFlare::SetupResources()
 
 	logger::debug("LensFlare: Creating 2D textures...");
 	{
-		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-
-		D3D11_TEXTURE2D_DESC baseDesc;
-		gameTexMainCopy.texture->GetDesc(Util::AsW32(&baseDesc));
+		auto baseDesc = owner->GetPipelineTextureDesc();
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,

@@ -2126,6 +2126,18 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		runtimeData.dynamicResolutionLock = 1;
 }
 
+Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
+{
+	if (!perfMode.IsHookActive())
+		return {};
+	PostProcessingInput input{ perfMode.GetDisplayEyeWidth() * 2, perfMode.GetDisplayEyeHeight() };
+	if (perfMode.IsPostInterceptActive()) {
+		input.texture = perfMode.GetTestTexture();
+		input.srv = perfMode.GetTestTextureSRV();
+	}
+	return input;
+}
+
 void Upscaling::SetupResources()
 {
 	neuralRendering.SetupResources();

@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Paramètres de remplacement",
     "feature.scene_manager.copy.overwrite_to_user_note": "Les valeurs copiées sont enregistrées en tant que paramètres utilisateur. Les fichiers de remplacement ne sont pas modifiés.",
     "feature.scene_manager.copy.replace_existing_user": "Remplacer les paramètres utilisateur existants",
+    "feature.scene_manager.edit.configured_only": "Spécifique à la fonctionnalité",
+    "feature.scene_manager.edit.configured_only.tooltip": "Afficher uniquement les scènes avec des paramètres enregistrés pour cette fonctionnalité.",
     "feature.scene_manager.edit.delete_message": "Supprimer les paramètres utilisateur de cette fonctionnalité de la scène sélectionnée ?",
     "feature.scene_manager.edit.delete_title": "Supprimer les paramètres de scène ?",
     "feature.scene_manager.edit.discard_confirm": "Abandonner et ouvrir",

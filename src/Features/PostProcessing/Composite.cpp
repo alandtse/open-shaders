@@ -30,13 +30,8 @@ void Composite::UpdateAutoEnabled()
 
 void Composite::SetupResources()
 {
-	auto renderer = globals::game::renderer;
-
 	{
-		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-
-		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
+		auto texDesc = owner->GetPipelineTextureDesc();
 		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {

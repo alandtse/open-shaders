@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Ajustes de sobrescritura",
     "feature.scene_manager.copy.overwrite_to_user_note": "Los valores copiados se guardan como ajustes de usuario. Los archivos de sobrescritura no se modifican.",
     "feature.scene_manager.copy.replace_existing_user": "Reemplazar ajustes de usuario existentes",
+    "feature.scene_manager.edit.configured_only": "Específico de la función",
+    "feature.scene_manager.edit.configured_only.tooltip": "Mostrar solo escenas con ajustes guardados para esta función.",
     "feature.scene_manager.edit.delete_message": "¿Quitar los ajustes de usuario de esta función de la escena seleccionada?",
     "feature.scene_manager.edit.delete_title": "¿Eliminar ajustes de escena?",
     "feature.scene_manager.edit.discard_confirm": "Descartar y abrir",

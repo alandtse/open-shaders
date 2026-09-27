@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "上書き設定",
     "feature.scene_manager.copy.overwrite_to_user_note": "コピーした値はユーザー設定として保存されます。上書きファイルは変更されません。",
     "feature.scene_manager.copy.replace_existing_user": "既存のユーザー設定を置き換える",
+    "feature.scene_manager.edit.configured_only": "この機能のみ",
+    "feature.scene_manager.edit.configured_only.tooltip": "この機能の設定が保存されているシーンのみを表示します。",
     "feature.scene_manager.edit.delete_message": "選択したシーンからこの機能のユーザー設定を削除しますか？",
     "feature.scene_manager.edit.delete_title": "シーン設定を削除しますか？",
     "feature.scene_manager.edit.discard_confirm": "破棄して開く",

@@ -610,12 +610,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
-	float dirDetailedShadow = SharedData::InInterior ? 1.0 : shadowColor.x;
+	float dirDetailedShadow = 1.0;
+	if (ShadowSampling::HasDirectionalShadows()) {
+		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x);
+	}
 #				if defined(SCREEN_SPACE_SHADOWS)
 #					ifdef GRASS_OPTIMIZATIONS
-	if (!SharedData::InInterior && dot(normal, SharedData::DirLightDirection.xyz) >= 0 && input.IsFar <= 0.5)
+	if (ShadowSampling::HasDirectionalShadows() && dot(normal, SharedData::DirLightDirection.xyz) >= 0 && input.IsFar <= 0.5)
 #					else
-	if (!SharedData::InInterior && dot(normal, SharedData::DirLightDirection.xyz) >= 0)
+	if (ShadowSampling::HasDirectionalShadows() && dot(normal, SharedData::DirLightDirection.xyz) >= 0)
 #					endif
 		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
 #				endif  // SCREEN_SPACE_SHADOWS

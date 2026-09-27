@@ -59,6 +59,18 @@ namespace SceneSettingsUI
 	static AddSettingState* s_activeAddDialog = nullptr;
 	static std::uint64_t s_transientGeneration = 1;
 	using SettingEntry = SceneSettingsManager::SettingEntry;
+	static std::map<ImGuiID, float> s_pickerScrollPositions;
+
+	void ResetPickerScrollPositions()
+	{
+		for (auto& [_, position] : s_pickerScrollPositions)
+			position = 0.0f;
+	}
+
+	static float* GetPickerScrollPosition(const char* id)
+	{
+		return &s_pickerScrollPositions[ImGui::GetID(id)];
+	}
 
 	static size_t PreviousUtf8CodepointBoundary(std::string_view text, size_t offset)
 	{
@@ -729,7 +741,8 @@ namespace SceneSettingsUI
 				width = std::max(ImGui::GetFrameHeight(), width - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.x);
 			ImGui::SetNextItemWidth(width);
 			ImGui::PushID(static_cast<int>(level));
-			if (Util::BeginSearchableCombo("##SubFeatureSelect", label.c_str())) {
+			if (Util::BeginSearchableCombo("##SubFeatureSelect", label.c_str(), ImGuiComboFlags_None,
+					nullptr, 0, GetPickerScrollPosition("##SubFeatureSelect"))) {
 				int i = 0;
 				for (const auto& [name, _] : node->children) {
 					if (!Util::SearchableComboMatches(name)) {
@@ -950,6 +963,8 @@ namespace SceneSettingsUI
 		for (const auto option : options) {
 			const bool selected = option == state.sourceTypeFilter;
 			if (ImGui::RadioButton(GetCopySourceTypeLabel(option), selected)) {
+				if (!selected)
+					ResetPickerScrollPositions();
 				state.sourceTypeFilter = option;
 				state.sourceContextFilter.reset();
 				ApplyCopySourceFilter(state);
@@ -1362,7 +1377,7 @@ namespace SceneSettingsUI
 
 	static bool DrawCopyWeatherPicker(const char* id,
 		const std::vector<RE::TESWeather*>& weatherTargets, RE::FormID& weatherId, bool manageTargets = false,
-		bool selectDefault = true, std::string_view featureShortName = {})
+		bool selectDefault = true, std::string_view featureShortName = {}, bool* configuredOnly = nullptr)
 	{
 		const auto previousWeatherId = weatherId;
 		auto selectedWeather = std::ranges::find_if(weatherTargets, [&](const auto* weather) {
@@ -1391,7 +1406,7 @@ namespace SceneSettingsUI
 		const auto previewLabel = GetScenePickerLabel(preview, GetFeatureSceneMarker(featureShortName,
 																   { .type = SceneSettingsManager::SceneContextType::Weather, .weatherId = weatherId }, false));
 		if (Util::BeginSearchableCombo(id, previewLabel.c_str(), ImGuiComboFlags_None,
-				nullptr, kSceneTargetComboVisibleItems)) {
+				nullptr, kSceneTargetComboVisibleItems, GetPickerScrollPosition(id))) {
 			auto* manager = SceneSettingsManager::GetSingleton();
 			std::set<RE::FormID> classified;
 			std::vector<RE::TESWeather*> currentGroup;
@@ -1424,6 +1439,15 @@ namespace SceneSettingsUI
 			const bool hasManagementPopup = manageTargets && ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
 			const auto drawGroup = [&](const char* groupLabel,
 									   const std::vector<RE::TESWeather*>& candidates) {
+				const bool showConfiguredFilter = configuredOnly && &candidates == &configuredGroup;
+				if (showConfiguredFilter) {
+					ImGui::SeparatorText(groupLabel);
+					ImGui::Checkbox(T("feature.scene_manager.edit.configured_only", "Feature Specific"), configuredOnly);
+					Util::AddTooltip(T("feature.scene_manager.edit.configured_only.tooltip", "Only show scenes with saved settings for this feature."));
+				}
+				const bool filterConfigured = configuredOnly && *configuredOnly;
+				if (filterConfigured && !showConfiguredFilter)
+					return;
 				std::vector<size_t> visibleIndices;
 				visibleIndices.reserve(candidates.size());
 				int selectedVisibleIndex = -1;
@@ -1435,6 +1459,9 @@ namespace SceneSettingsUI
 																	ImGuiPopupFlags_AnyPopupLevel);
 					if (!managing && filtering && !Util::SearchableComboMatches(GetWeatherPickerLabel(weather)))
 						continue;
+					if (filterConfigured && GetFeatureSceneMarker(featureShortName,
+												{ .type = SceneSettingsManager::SceneContextType::Weather, .weatherId = weather->GetFormID() }, false) == SceneSettingMarker::None)
+						continue;
 					if (weather->GetFormID() == weatherId)
 						selectedVisibleIndex = static_cast<int>(visibleIndices.size());
 					if (managing)
@@ -1443,7 +1470,8 @@ namespace SceneSettingsUI
 				}
 				if (visibleIndices.empty())
 					return;
-				ImGui::SeparatorText(groupLabel);
+				if (!showConfiguredFilter)
+					ImGui::SeparatorText(groupLabel);
 				ImGuiListClipper clipper;
 				clipper.Begin(static_cast<int>(visibleIndices.size()));
 				if (selectedVisibleIndex >= 0)
@@ -1707,6 +1735,7 @@ namespace SceneSettingsUI
 		std::optional<SceneSettingsManager::SceneContextId> copySource;
 		CopySettingState copy;
 		FeatureLocationPickerCache locationPicker;
+		bool configuredOnly = false;
 		Util::ConfirmationPopup deleteSettings;
 		std::optional<SceneSettingsManager::SceneContextId> savedContext;
 		std::uint64_t savedRevision = std::numeric_limits<std::uint64_t>::max();
@@ -1958,7 +1987,7 @@ namespace SceneSettingsUI
 	}
 
 	static bool DrawFeatureLocationPicker(const char* id, FeatureSceneTargetState& target,
-		FeatureLocationPickerCache& cache, std::string_view featureShortName)
+		FeatureLocationPickerCache& cache, std::string_view featureShortName, bool& configuredOnly)
 	{
 		auto* manager = SceneSettingsManager::GetSingleton();
 		const auto& targets = manager->GetLocationManagementTargets();
@@ -1983,7 +2012,7 @@ namespace SceneSettingsUI
 		const auto previewLabel = GetScenePickerLabel(preview, GetFeatureSceneMarker(featureShortName,
 																   { .type = SceneSettingsManager::SceneContextType::Location, .locationType = target.locationType, .locationFormKey = target.locationFormKey }, false));
 		if (Util::BeginSearchableCombo(id, previewLabel.c_str(), ImGuiComboFlags_None,
-				nullptr, kSceneTargetComboVisibleItems)) {
+				nullptr, kSceneTargetComboVisibleItems, GetPickerScrollPosition(id))) {
 			OrderLocationTypePickerEntries(cache, targets);
 			cache.currentIndices.clear();
 			std::fill(cache.currentMembership.begin(), cache.currentMembership.end(), 0);
@@ -2004,15 +2033,24 @@ namespace SceneSettingsUI
 			const auto drawGroup = [&](const char* groupLabel,
 									   const std::vector<size_t>& candidates,
 									   bool excludeCurrent = false) {
+				const bool showConfiguredFilter = &candidates == &cache.configuredIndices;
+				if (showConfiguredFilter) {
+					ImGui::SeparatorText(groupLabel);
+					ImGui::Checkbox(T("feature.scene_manager.edit.configured_only", "Feature Specific"), &configuredOnly);
+					Util::AddTooltip(T("feature.scene_manager.edit.configured_only.tooltip", "Only show scenes with saved settings for this feature."));
+				}
 				cache.visibleIndices.clear();
 				int selectedVisibleIndex = -1;
 				for (const auto cacheIndex : candidates) {
 					if (excludeCurrent && cache.currentMembership[cacheIndex])
 						continue;
 					const auto& entry = cache.entries[cacheIndex];
-					if (!Util::SearchableComboMatches(entry.displayLabel))
+					if ((configuredOnly && !entry.configured) || !Util::SearchableComboMatches(entry.displayLabel))
 						continue;
 					const auto& candidate = targets[entry.targetIndex];
+					if (configuredOnly && GetFeatureSceneMarker(featureShortName,
+											  { .type = SceneSettingsManager::SceneContextType::Location, .locationType = candidate.type, .locationFormKey = candidate.formKey }, false) == SceneSettingMarker::None)
+						continue;
 					if (candidate.type == target.locationType &&
 						candidate.formKey == target.locationFormKey)
 						selectedVisibleIndex = static_cast<int>(cache.visibleIndices.size());
@@ -2020,8 +2058,8 @@ namespace SceneSettingsUI
 				}
 				if (cache.visibleIndices.empty())
 					return;
-				if (!DrawLocationPickerGroupHeader(groupLabel, &candidates == &cache.locationTypeIndices,
-						!Util::GetSearchableComboFilter().empty()))
+				if (!showConfiguredFilter && !DrawLocationPickerGroupHeader(groupLabel, &candidates == &cache.locationTypeIndices,
+												 !Util::GetSearchableComboFilter().empty()))
 					return;
 				ImGuiListClipper clipper;
 				clipper.Begin(static_cast<int>(cache.visibleIndices.size()));
@@ -2084,6 +2122,8 @@ namespace SceneSettingsUI
 				const auto start = ImGui::GetCursorScreenPos();
 				const float right = start.x + ImGui::GetContentRegionAvail().x;
 				if (ImGui::Selectable(std::format("##SceneType{}", static_cast<int>(type)).c_str(), selected)) {
+					if (!selected)
+						ResetPickerScrollPositions();
 					selectedType = type;
 					changed = true;
 				}
@@ -2126,7 +2166,7 @@ namespace SceneSettingsUI
 	}
 
 	static bool DrawFeatureTargetPicker(const char* idPrefix, FeatureSceneTargetState& target,
-		FeatureLocationPickerCache& locationPicker, std::string_view featureShortName)
+		FeatureLocationPickerCache& locationPicker, std::string_view featureShortName, bool& configuredOnly)
 	{
 		auto* manager = SceneSettingsManager::GetSingleton();
 		bool changed = target.type == SceneSettingsManager::SceneContextType::Weather ||
@@ -2152,8 +2192,8 @@ namespace SceneSettingsUI
 				const auto& weatherTargets = GetSceneWeatherTargets();
 				const auto drawWeather = [&]() {
 					const bool selected = target.type == SceneSettingsManager::SceneContextType::Weather ?
-					                          DrawCopyWeatherPicker(std::format("{}Weather", idPrefix).c_str(), weatherTargets, target.weatherId, false, true, featureShortName) :
-					                          DrawFeatureLocationPicker(std::format("{}Location", idPrefix).c_str(), target, locationPicker, featureShortName);
+					                          DrawCopyWeatherPicker(std::format("{}Weather", idPrefix).c_str(), weatherTargets, target.weatherId, false, true, featureShortName, &configuredOnly) :
+					                          DrawFeatureLocationPicker(std::format("{}Location", idPrefix).c_str(), target, locationPicker, featureShortName, configuredOnly);
 					changed |= selected;
 					const bool weatherChanged = selected || target != previousTarget;
 					if (weatherChanged) {
@@ -2749,11 +2789,14 @@ namespace SceneSettingsUI
 		SetFeaturePagePreviewPlaying(false);
 		SceneSettingsManager::GetSingleton()->EndFeatureSceneEdit(false);
 		auto& state = s_featurePageEditor;
+		const auto previousType = state.edit.type;
 		state = {};
 		state.featureShortName = feature->GetShortName();
 		state.toolbarOpen = true;
 		state.supportedTypes = GetFeatureSceneContextTypes(state.featureShortName);
 		InitializeFeatureSceneTarget(feature, state.edit);
+		if (state.edit.type != previousType)
+			ResetPickerScrollPositions();
 		const auto context = GetFeatureSceneContext(state.edit);
 		if (context && SceneSettingsManager::GetSingleton()->BeginFeatureSceneEdit(feature, *context)) {
 			state.activeContext = context;
@@ -2904,7 +2947,7 @@ namespace SceneSettingsUI
 
 			ImGui::TableSetColumnIndex(1);
 			DrawFeatureTargetPicker(
-				"##FeatureSceneEdit", state.edit, state.locationPicker, state.featureShortName);
+				"##FeatureSceneEdit", state.edit, state.locationPicker, state.featureShortName, state.configuredOnly);
 
 			bool canSwitchContext = manager->IsSceneReady();
 			if (canSwitchContext && state.activeContext != GetFeatureSceneContext(state.edit) &&
@@ -3117,7 +3160,8 @@ namespace SceneSettingsUI
 		                       std::string(T("feature.scene_manager.select_feature", "Select Feature..."));
 
 		ImGui::SetNextItemWidth(-FLT_MIN);
-		if (Util::BeginSearchableCombo("##FeatureSelect", displayName.c_str())) {
+		if (Util::BeginSearchableCombo("##FeatureSelect", displayName.c_str(), ImGuiComboFlags_None,
+				nullptr, 0, GetPickerScrollPosition("##FeatureSelect"))) {
 			for (int i = 0; i < static_cast<int>(state.cachedFeatureNames.size()); ++i) {
 				auto itemLabel = SceneSettingsManager::GetFeatureDisplayName(state.cachedFeatureNames[i]);
 				if (!Util::SearchableComboMatches(itemLabel))
@@ -3235,7 +3279,8 @@ namespace SceneSettingsUI
 							const auto preview = state.selectedMembers[i] < 0 ?
 							                         std::string(T("feature.scene_manager.channel.all", "All")) :
 							                         GetDescriptorMemberName(descriptor, state.selectedMembers[i]);
-							if (Util::BeginSearchableCombo("##Channel", preview.c_str())) {
+							if (Util::BeginSearchableCombo("##Channel", preview.c_str(), ImGuiComboFlags_None,
+									nullptr, 0, GetPickerScrollPosition("##Channel"))) {
 								const bool allSelected = state.selectedMembers[i] < 0;
 								if (showSyntheticAll && Util::SearchableComboMatches(
 															T("feature.scene_manager.channel.all", "All"))) {
@@ -3417,7 +3462,7 @@ namespace SceneSettingsUI
 			}
 			ImGui::SetNextItemWidth(inputWidth);
 			const bool comboOpen = Util::BeginSearchableCombo("##val", preview.c_str(),
-				ImGuiComboFlags_None, &entry.value);
+				ImGuiComboFlags_None, &entry.value, 0, GetPickerScrollPosition("##val"));
 			if (comboOpen) {
 				for (size_t choiceIndex = 0; choiceIndex < choiceCount; ++choiceIndex) {
 					std::int64_t choiceValue = 0;
@@ -5640,7 +5685,8 @@ namespace SceneSettingsUI
 													"Select a worldspace, region, location type, location, or cell..."));
 		bool targetSelectionChanged = false;
 		if (Util::BeginSearchableCombo(T("feature.scene_manager.location.target", "Target"),
-				preview.c_str(), ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems)) {
+				preview.c_str(), ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems,
+				GetPickerScrollPosition(T("feature.scene_manager.location.target", "Target")))) {
 			OrderLocationTypePickerEntries(targetPicker, targets);
 			targetPicker.currentIndices.clear();
 			std::fill(targetPicker.currentMembership.begin(), targetPicker.currentMembership.end(), 0);

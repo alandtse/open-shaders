@@ -67,7 +67,6 @@ void CODBloom::SaveSettings(json& o_json)
 
 void CODBloom::SetupResources()
 {
-	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
 
 	logger::debug("Creating buffers...");
@@ -78,10 +77,7 @@ void CODBloom::SetupResources()
 	logger::debug("Creating 2D textures...");
 	{
 		// texBloom for bloom mip chain
-		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-
-		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
+		auto texDesc = owner->GetPipelineTextureDesc();
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,

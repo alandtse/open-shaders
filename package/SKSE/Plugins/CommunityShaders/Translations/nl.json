@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "Overschrijvingsinstellingen",
     "feature.scene_manager.copy.overwrite_to_user_note": "Gekopieerde waarden worden opgeslagen als gebruikersinstellingen. Overschrijvingsbestanden worden niet gewijzigd.",
     "feature.scene_manager.copy.replace_existing_user": "Bestaande gebruikersinstellingen vervangen",
+    "feature.scene_manager.edit.configured_only": "Functiespecifiek",
+    "feature.scene_manager.edit.configured_only.tooltip": "Toon alleen scènes met opgeslagen instellingen voor deze functie.",
     "feature.scene_manager.edit.delete_message": "De gebruikersinstellingen van deze functie uit de geselecteerde scène verwijderen?",
     "feature.scene_manager.edit.delete_title": "Scène-instellingen verwijderen?",
     "feature.scene_manager.edit.discard_confirm": "Verwerpen en openen",

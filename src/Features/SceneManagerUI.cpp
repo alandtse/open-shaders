@@ -30,29 +30,42 @@ namespace SceneManagerUI
 		SceneSettingsUI::HideFeaturePageEditing();
 	}
 
+	static bool BeginSceneTab(const char* label)
+	{
+		static ImGuiID selectedTab = 0;
+		const auto id = ImGui::GetID(label);
+		if (!ImGui::BeginTabItem(label))
+			return false;
+		if (selectedTab != id) {
+			SceneSettingsUI::ResetPickerScrollPositions();
+			selectedTab = id;
+		}
+		return true;
+	}
+
 	void Draw()
 	{
 		SceneSettingsUI::DrawGlobalActions();
 		if (!ImGui::BeginTabBar("##SceneManagerTabs"))
 			return;
 
-		if (ImGui::BeginTabItem(T("feature.scene_manager.tab.interior", "Interior"))) {
+		if (BeginSceneTab(T("feature.scene_manager.tab.interior", "Interior"))) {
 			SceneSettingsUI::DrawInteriorPanel();
 			ImGui::EndTabItem();
 		}
-		if (ImGui::BeginTabItem(T("feature.scene_manager.tab.time_of_day", "Time of Day"))) {
+		if (BeginSceneTab(T("feature.scene_manager.tab.time_of_day", "Time of Day"))) {
 			SceneSettingsUI::DrawTimeOfDayPanel();
 			ImGui::EndTabItem();
 		}
-		if (ImGui::BeginTabItem(T("feature.scene_manager.tab.locations", "Locations"))) {
+		if (BeginSceneTab(T("feature.scene_manager.tab.locations", "Locations"))) {
 			SceneSettingsUI::DrawLocationPanel();
 			ImGui::EndTabItem();
 		}
-		if (ImGui::BeginTabItem(T("feature.scene_manager.tab.weather", "Weather"))) {
+		if (BeginSceneTab(T("feature.scene_manager.tab.weather", "Weather"))) {
 			SceneSettingsUI::DrawWeatherPanel();
 			ImGui::EndTabItem();
 		}
-		if (ImGui::BeginTabItem(T("feature.scene_manager.copy.title", "Copy Scene Settings"))) {
+		if (BeginSceneTab(T("feature.scene_manager.copy.title", "Copy Scene Settings"))) {
 			SceneSettingsUI::DrawCopyPanel();
 			ImGui::EndTabItem();
 		}

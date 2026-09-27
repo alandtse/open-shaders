@@ -100,8 +100,6 @@ void LUT::SaveSettings(json& o_json)
 
 void LUT::SetupResources()
 {
-	auto renderer = globals::game::renderer;
-
 	if (!settings.LutPath.empty())
 		ReadTexture(settings.LutPath);
 
@@ -112,10 +110,7 @@ void LUT::SetupResources()
 
 	logger::debug("Creating 2D textures...");
 	{
-		auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-
-		D3D11_TEXTURE2D_DESC texDesc;
-		gameTexMainCopy.texture->GetDesc(Util::AsW32(&texDesc));
+		auto texDesc = owner->GetPipelineTextureDesc();
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = texDesc.Format,

@@ -283,6 +283,8 @@ public:
 	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled); }
 	/** @brief Resets NR history across loading transitions. */
 	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
+	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
+	PostProcessingInput GetPostProcessingInput() const override;
 
 	UpscaleMethod GetUpscaleMethod() const;
 	FrameGenMethod GetFrameGenMethod() const;

@@ -2454,6 +2454,8 @@
     "feature.scene_manager.copy.to": "Copy to",
     "feature.scene_manager.copy.weather": "Weather",
     "feature.scene_manager.description": "Applies selected Open Shaders settings by interior, time of day, weather, and location.",
+    "feature.scene_manager.edit.configured_only": "Feature Specific",
+    "feature.scene_manager.edit.configured_only.tooltip": "Only show scenes with saved settings for this feature.",
     "feature.scene_manager.edit.delete_message": "Remove this feature's User Settings from the selected scene?",
     "feature.scene_manager.edit.delete_title": "Delete Scene Settings?",
     "feature.scene_manager.edit.discard_confirm": "Discard and Open",

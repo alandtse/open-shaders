@@ -2337,6 +2337,8 @@
     "feature.scene_manager.copy.overwrite_settings": "覆写设置",
     "feature.scene_manager.copy.overwrite_to_user_note": "复制的值将保存为用户设置。覆写文件不会被修改。",
     "feature.scene_manager.copy.replace_existing_user": "替换现有用户设置",
+    "feature.scene_manager.edit.configured_only": "仅此功能",
+    "feature.scene_manager.edit.configured_only.tooltip": "仅显示保存了此功能设置的场景。",
     "feature.scene_manager.edit.delete_message": "从所选场景中删除此功能的用户设置？",
     "feature.scene_manager.edit.delete_title": "删除场景设置？",
     "feature.scene_manager.edit.discard_confirm": "放弃并打开",

@@ -16,7 +16,7 @@
 // 0x1 on vtable[3]) — both share RenderTonemapWithSwap.
 // ============================================================================
 // Installed via stl::write_vfunc<0x1> on vtable[3], chains after FrameAnnotations.
-// Inner layer of two-layer swap: swaps kMAIN SRV → testTextureSRV and
+// Inner layer of two-layer swap: swaps kMAIN SRV to the final scene and
 // kMAIN DS → fakeDS before tonemap Render(), restores after.
 
 template <class Hook>
@@ -45,15 +45,21 @@ void PerfMode::RenderTonemapWithSwap(void* imageSpaceShader, RE::BSTriShape* sha
 	auto& rtData = renderer->GetRuntimeData();
 	auto& dsData = renderer->GetDepthStencilData();
 
-	// --- Swap kMAIN SRV → testTextureSRV (so tonemap reads 3k upscaled color) ---
+	ID3D11ShaderResourceView* processedScene = nullptr;
+	Feature::FindLoadedFeature([&](Feature* feature) {
+		processedScene = feature->GetPostProcessingOutput();
+		return processedScene != nullptr;
+	});
+	auto* tonemapInput = processedScene ? processedScene : perfMode.testTextureSRV.get();
+
 	auto& kmainRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN];
 	perfMode.savedKMainSRV = Util::AsReal(kmainRT.SRV);
-	kmainRT.SRV = Util::AsW32(perfMode.testTextureSRV.get());
+	kmainRT.SRV = Util::AsW32(tonemapInput);
 
 	// --- Also swap kMAIN_COPY SRV (refraction path reads this instead of kMAIN) ---
 	auto& kmainCopyRT = rtData.renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
 	perfMode.savedKMainCopySRV = Util::AsReal(kmainCopyRT.SRV);
-	kmainCopyRT.SRV = Util::AsW32(perfMode.testTextureSRV.get());
+	kmainCopyRT.SRV = Util::AsW32(tonemapInput);
 
 	// --- Swap kMAIN DS views → fakeDS (so 3k RT doesn't mismatch 1k DS) ---
 	auto& kmainDS = dsData.depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];

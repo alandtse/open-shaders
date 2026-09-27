@@ -149,6 +149,7 @@ struct ColorGrading : public PostProcessFeature
 	std::unique_ptr<ConstantBuffer> colorCB = nullptr;
 
 	std::unique_ptr<Texture2D> texColor = nullptr;
+	std::unique_ptr<Texture2D> texColorAlternate;
 	std::unique_ptr<Texture3D> texLUT = nullptr;
 
 	static constexpr int LUTDim = 64;

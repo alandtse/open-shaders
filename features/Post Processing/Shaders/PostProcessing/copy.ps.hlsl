@@ -1,21 +1,31 @@
 #include "Common/Color.hlsli"
+#include "Common/VR.hlsli"
 #include "PostProcessing/fullscreen.hlsli"
 
 static const uint GamutACEScg = 1;
 static const uint GamutRec2020 = 2;
 
 Texture2D<float4> texSrc : register(t0);
+SamplerState linearSampler : register(s0);
 cbuffer CopyConstants : register(b1)
 {
 	uint inputGamut;
 	uint outputGamut;
 	float gamma;
-	float pad;
+	uint resample;
 };
 
 float4 main(FullscreenTriangleVSOutput input) : SV_Target
 {
-	float4 color = texSrc.Load(int3(input.Position.xy, 0));
+	float4 color;
+	if (resample) {
+		uint2 dimensions;
+		texSrc.GetDimensions(dimensions.x, dimensions.y);
+		float2 uv = Stereo::ClampToEyeUV(input.TexCoord, Stereo::GetEyeIndexFromTexCoord(input.TexCoord), dimensions);
+		color = texSrc.SampleLevel(linearSampler, uv, 0);
+	} else {
+		color = texSrc.Load(int3(input.Position.xy, 0));
+	}
 	if (inputGamut != outputGamut) {
 		if (inputGamut == GamutACEScg)
 			color.rgb = AP1TosRGB(color.rgb);

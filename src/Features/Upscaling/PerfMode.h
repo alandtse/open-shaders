@@ -14,10 +14,9 @@
 //   - Game menus are no longer occluded by the upscaler output.
 //
 //  Current limitations:
-//   - Post-processing still runs on renderRes kMAIN via a 3x3-box downscale
-//     of testTexture (see BoxDownscalePS.hlsl). Performance is good and
-//     visual loss is minimal. Once the post chain is rewritten to consume
-//     testTexture natively the downscale can be removed.
+//   - Engine exposure and bloom use renderRes kMAIN via a 3x3-box downscale
+//     of testTexture (see BoxDownscalePS.hlsl). Native post-processing
+//     consumes the display-resolution scene through the feature input contract.
 //   - Main menu / pause backgrounds render through a path that doesn't pass
 //     through Main_PostProcessing. We bridge them via ISCopyRender_Hook +
 //     MaybeBlitMenuBG: ISCopy's destination viewport is stretched to the

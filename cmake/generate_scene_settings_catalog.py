@@ -671,6 +671,46 @@ def collect_direct_persisted_fields(
     return persisted_fields
 
 
+def collect_serialized_struct_parts(paths: list[Path]):
+    parts = {}
+    for function in collect_source_functions(paths):
+        if function.name != "SaveSettings" or not function.owner or len(function.parameters) != 1:
+            continue
+        output = re.escape(function.parameters[0].name)
+        for assignment in re.finditer(
+                rf'\b{output}\s*\[\s*"([^"]+)"\s*\]\s*=\s*(\w+)\s*;', function.body):
+            key, local = assignment.groups()
+            declarations = re.findall(
+                rf"\b(\w+)\s+{re.escape(local)}\s*;", function.masked_body[:assignment.start()])
+            if len(declarations) != 1:
+                continue
+            part_type = declarations[0]
+            copies = []
+            for copy in re.finditer(r"\bstd::memcpy\s*\(", function.masked_body[:assignment.start()]):
+                close = find_matching_paren(function.body, copy.end() - 1)
+                args = split_args(function.body[copy.end():close]) if close >= 0 else []
+                if (len(args) != 3 or not re.fullmatch(rf"\s*&\s*{re.escape(local)}\s*", args[0]) or
+                        not re.fullmatch(rf"\s*sizeof\s*\(\s*(?:{re.escape(part_type)}|{re.escape(local)})\s*\)\s*", args[2])):
+                    continue
+                source = re.fullmatch(r"\s*&\s*(\w+)\.(\w+)\s*", args[1])
+                offset_type = ""
+                if not source:
+                    source = re.fullmatch(
+                        r"\s*reinterpret_cast\s*<\s*const\s+char\s*\*\s*>\s*\(\s*&\s*(\w+)\.(\w+)\s*\)"
+                        r"\s*\+\s*sizeof\s*\(\s*(\w+)\s*\)\s*", args[1])
+                    if source:
+                        offset_type = source.group(3)
+                        offset_declarations = re.findall(
+                            rf"\b(\w+)\s+{re.escape(offset_type)}\s*;", function.masked_body[:copy.start()])
+                        if len(offset_declarations) == 1:
+                            offset_type = offset_declarations[0]
+                if source:
+                    copies.append((source.group(1), source.group(2), offset_type, part_type, key))
+            if len(copies) == 1:
+                parts.setdefault(function.owner, []).append(copies[0])
+    return parts
+
+
 def collect_string_constants(text: str) -> dict[str, str]:
     constants: dict[str, str] = {}
     pattern = re.compile(
@@ -4100,6 +4140,48 @@ def fixed_array_type(type_name: str, constants: dict[str, float] | None = None) 
     return clean_type(arguments[0]), int(count)
 
 
+def collect_callback_setting_roots(paths: list[Path]) -> set[tuple[str, tuple[str, ...]]]:
+    roots = set()
+    for path in paths:
+        text = read_text(path)
+        header = path.with_suffix(".h")
+        if header.exists():
+            text += "\n" + read_text(header)
+        callbacks = {}
+        for declaration in re.finditer(
+                r"\bstd::function\s*<\s*(?:void|bool)\s*\(([^()]*)\)\s*>\s*"
+                r"([A-Za-z_]\w*)\s*;", mask_cpp_source(text)):
+            mutable_parameters = tuple(
+                index for index, parameter in enumerate(split_args(declaration.group(1)))
+                if "&" in parameter and not re.search(r"\bconst\b", parameter))
+            callbacks.setdefault(declaration.group(2), set()).add(mutable_parameters)
+        if not callbacks:
+            continue
+        for function in collect_source_functions([path]):
+            if function.name != "DrawSettings" or not function.owner:
+                continue
+            aliases = collect_local_setting_aliases(function.body)
+            for name, signatures in callbacks.items():
+                if len(signatures) != 1:
+                    continue
+                for invocation in re.finditer(
+                        rf"\b{re.escape(name)}\s*\(", function.masked_body):
+                    close = find_matching_paren(function.body, invocation.end() - 1)
+                    if close < 0:
+                        continue
+                    args = split_args(function.body[invocation.end():close])
+                    for index in next(iter(signatures)):
+                        if index >= len(args) or not re.fullmatch(
+                                r"\s*[A-Za-z_]\w*(?:(?:\.[A-Za-z_]\w*)|(?:\[\s*\d+\s*\]))*\s*",
+                                args[index]):
+                            continue
+                        setting_path = extract_control_setting_path(
+                            "InputFloat", ["", args[index]], aliases)
+                        if setting_path:
+                            roots.add((function.owner, setting_path))
+    return roots
+
+
 def collect_enum_types(paths: list[Path]) -> set[str]:
     enum_types = set()
     for path in paths:
@@ -4221,6 +4303,8 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
     cpp_paths = [p for p in src_paths if p.suffix == ".cpp"]
     control_index = collect_control_index(cpp_paths, src_paths)
     navigation_controls = collect_navigation_controls(cpp_paths)
+    callback_setting_roots = collect_callback_setting_roots(cpp_paths)
+    serialized_struct_parts = collect_serialized_struct_parts(cpp_paths)
 
     entries: list[dict[str, object]] = []
     seen: dict[tuple[str, tuple[str, ...], str], tuple[object, ...]] = {}
@@ -4450,6 +4534,10 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             if not value_type and clean_type(field_type).split("::")[-1] in enum_types:
                 value_type = "Integer"
             field_access = f"{access}.{field}"
+            field_path = tuple(path + [field])
+            callback_controlled = any(
+                owner == context.field_class and field_path[:len(root)] == root
+                for owner, root in callback_setting_roots)
             if value_type:
                 add_entry(
                     context, path, field, value_type, field_access,
@@ -4490,7 +4578,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                         binding and binding.aggregate_all and component_index == aggregate_start),
                     virtual_controls=(binding.virtual_control,)
                     if grouped and binding and binding.virtual_control else (),
-                    force_hidden=binding is None,
+                    force_hidden=binding is None and not callback_controlled,
                     aggregate_semantic=aggregate_semantic,
                     aggregate_start=aggregate_start,
                     aggregate_count=aggregate_count)
@@ -4533,7 +4621,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                             metadata_owners=metadata_owners,
                             metadata_suffix_owners=metadata_suffix_owners,
                             binding_override=binding,
-                            force_hidden=binding is None,
+                            force_hidden=binding is None and not callback_controlled,
                             aggregate_semantic=aggregate_semantic,
                             aggregate_start=aggregate_start,
                             aggregate_count=aggregate_count)
@@ -4562,7 +4650,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                             metadata_owners=metadata_owners,
                             metadata_suffix_owners=metadata_suffix_owners,
                             binding_override=binding,
-                            force_hidden=binding is None,
+                            force_hidden=binding is None and not callback_controlled,
                             aggregate_semantic=aggregate_semantic,
                             aggregate_start=aggregate_start,
                             aggregate_count=aggregate_count)
@@ -4583,6 +4671,27 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                     break
             if not emitted_nested and field_type:
                 continue
+
+        for root, member, offset_type, part_type, key in serialized_struct_parts.get(context.field_class, ()):
+            if root != access or part_type not in macros:
+                continue
+            source_type = clean_type(declared_fields.get(member, ""))
+            source_fields = list(struct_fields.get(source_type, {}).items())
+            part_fields = list(struct_fields.get(part_type, {}).items())
+            offset_fields = list(struct_fields.get(offset_type, {}).items()) if offset_type else []
+            if (not source_fields or not part_fields or (offset_type and not offset_fields) or
+                    source_fields[:len(offset_fields)] != offset_fields or
+                    source_fields[len(offset_fields):len(offset_fields) + len(part_fields)] != part_fields or
+                    any(field_type not in {"float", "int32_t", "uint32_t", "int", "uint"}
+                        for _, field_type in source_fields)):
+                continue
+            for field, field_type in part_fields:
+                if field in macros[part_type]:
+                    add_entry(
+                        context, path + [key], field, type_to_value_type(field_type),
+                        f"{access}.{member}.{field}",
+                        metadata_owners=(source_type, part_type),
+                        metadata_suffix_owners=(source_type, part_type))
 
     for feature_class in sorted(features):
         members = feature_members.get(feature_class, {})

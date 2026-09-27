@@ -101,12 +101,8 @@ void LocalExposure::SaveSettings(json& o_json)
 void LocalExposure::SetupResources()
 {
 	outputReady = false;
-	auto renderer = globals::game::renderer;
 
-	// Get screen dimensions from game render target
-	auto gameTexMainCopy = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN_COPY];
-	D3D11_TEXTURE2D_DESC mainDesc;
-	gameTexMainCopy.texture->GetDesc(Util::AsW32(&mainDesc));
+	auto mainDesc = owner->GetPipelineTextureDesc();
 
 	uint fullW = mainDesc.Width;
 	uint fullH = mainDesc.Height;

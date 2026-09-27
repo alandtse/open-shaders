@@ -14,18 +14,28 @@ cbuffer BorderCB : register(b1)
 };
 
 [numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID) {
-	float depth = DepthTexture[DTid.xy];
+	uint2 dimensions;
+	OutputTexture.GetDimensions(dimensions.x, dimensions.y);
+	if (any(DTid.xy >= dimensions))
+		return;
+	float2 uv = (DTid.xy + 0.5f) / dimensions;
+	uint2 depthDimensions;
+	DepthTexture.GetDimensions(depthDimensions.x, depthDimensions.y);
+	float depth = DepthTexture[uint2(uv * depthDimensions)];
 	float3 borderColor = BorderColor.xyz;
 	float depthThreshold = BorderColor.w;
 	if (depth > depthThreshold || depthThreshold == 0.0f) {
-		float2 uv = (DTid.xy + 0.5f) * SharedData::BufferDim.zw;
 		// Left/right border thresholds are eye-relative; in VR the packed stereo
 		// buffer's raw x spans both eyes, so remap to the eye-local [0,1] range.
 		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 		float2 eyeUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 		if (uv.y < Scale.x || uv.y > (1 - Scale.y) || eyeUV.x < Scale.z || eyeUV.x > (1 - Scale.w)) {
 			OutputTexture[DTid.xy] = float4(borderColor, 1.0);
-			MotionTexture[DTid.xy] = float4(0.0, 0.0, 0.0, 1.0);
+			uint2 motionDimensions;
+			MotionTexture.GetDimensions(motionDimensions.x, motionDimensions.y);
+			// Frame generation clears reduced-resolution motion vectors before upscaling.
+			if (all(motionDimensions == dimensions))
+				MotionTexture[DTid.xy] = float4(0.0, 0.0, 0.0, 1.0);
 		} else {
 			OutputTexture[DTid.xy] = InputTexture[DTid.xy];
 		}

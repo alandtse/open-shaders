@@ -27,7 +27,7 @@ uint2 GetVelocitySamplePosition(uint2 targetPixel, uint2 velocityDimensions)
 	float2 velocityScale = g_VelocityParams.yz;
 	float2 sourceDimensionsF = max(float2(1.0f, 1.0f), g_TargetResolution.xy * velocityScale);
 	uint2 sourceDimensions = min(velocityDimensions, uint2(sourceDimensionsF + 0.5f));
-	uint2 sourcePixel = uint2((float2(targetPixel) + 0.5f) * velocityScale);
+	uint2 sourcePixel = uint2((float2(targetPixel) + 0.5f) * float2(sourceDimensions) / max(g_TargetResolution.xy, float2(1.0f, 1.0f)));
 	return min(sourcePixel, sourceDimensions - 1);
 }
 
