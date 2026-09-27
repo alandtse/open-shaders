@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
 #include "Upscaling/NeuralRendering/ModeValues.hlsli"
 
@@ -197,7 +198,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	if (HasExposure != 0 && (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)) {
 		float average = Adaptation[0];
 		if (isfinite(average) && average > 0.0)
-			exposure *= 0.18 * ExposureCompensation / clamp(average, ExposureMin, ExposureMax);
+			exposure *= SceneExposure::Evaluate(average, float2(ExposureMin, ExposureMax), ExposureCompensation);
 	}
 	if (ExposureMode == NR::kExposureDeExposeReExpose)
 		exposure = 1.0 / max(exposure, 1.0 / 65536.0);
