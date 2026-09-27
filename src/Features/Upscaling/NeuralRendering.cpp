@@ -68,8 +68,6 @@ struct NeuralRendering::Impl
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
-	std::atomic<uint32_t> appliedFrames = 0;
-	std::array<std::atomic<uint32_t>, 2> lastNgxResult{};
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -454,7 +452,6 @@ struct NeuralRendering::Impl
 						eye.motion->resource.get(), eye.output->resource.get(), width, height, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
-				lastNgxResult[i].store(eye.frame.result, std::memory_order_relaxed);
 				if (success)
 					diagnostic.evaluated |= 1u << i;
 				if (eye.frame.created) {
@@ -495,8 +492,7 @@ struct NeuralRendering::Impl
 		}
 		if (capture)
 			diagnostics.DumpTexture("04_post_composite", color, diagnostic.number);
-		appliedFrames.fetch_add(1, std::memory_order_relaxed);
-		diagnostics.FinishCapture(diagnostic.number);
+		// Capture stays open for Main_PostProcessing's pre-SR/post-SR stages; CaptureAfterUpscaling finishes it.
 		captureDiagnostics = nullptr;
 		return true;
 	}

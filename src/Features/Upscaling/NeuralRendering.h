@@ -86,6 +86,10 @@ private:
 	std::atomic<Status::State> publishedState{ Status::State::kOff };
 	/** @brief Engine frame of the last frame NR applied; reported live, unlike the status snapshot. */
 	std::atomic<uint32_t> appliedFrame{ UINT32_MAX };
+	/** @brief Frames NR has applied since startup; survives a rebuild, unlike Impl's own state. */
+	std::atomic<uint32_t> appliedFrames{ 0 };
+	/** @brief Per-eye NGX result of the last applied frame; survives a rebuild. */
+	std::array<std::atomic<uint32_t>, 2> lastNgxResult{};
 	mutable std::mutex statusMutex;
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
