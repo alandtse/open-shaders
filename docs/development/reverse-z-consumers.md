@@ -65,6 +65,8 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
 
 ## Known open items
 
+-   VR engine occlusion culling tests its OBB proxies against `kMAIN_DOWNSAMPLE`, so that target
+    is converted with the others; if culling cost reappears under reverse-Z, check it first.
 -   `EnableReverseZ` ships off and is restart-gated; toggling it rebuilds the shader cache.
 -   `VRStereoOptimizations/DepthScatterCS.hlsl` keeps an `#ifdef` for its `InterlockedMin`/`Max`
     on depth bits (no float helper applies).
