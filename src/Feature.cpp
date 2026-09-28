@@ -32,6 +32,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
@@ -296,6 +297,7 @@ namespace
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
 			&globals::features::skin,
+			&globals::features::reverseZ,
 			&globals::features::postProcessing
 		};
 		return features;
@@ -364,6 +366,12 @@ const std::vector<Feature*>& Feature::GetRenderPassSkipFeatures()
 {
 	static const std::vector<Feature*> skipFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassSkipHook(); });
 	return skipFeatures;
+}
+
+const std::vector<Feature*>& Feature::GetFrameBufferFixupFeatures()
+{
+	static const std::vector<Feature*> fixupFeatures = FilterFeatureList([](Feature* f) { return f->WantsFrameBufferFixup(); });
+	return fixupFeatures;
 }
 
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
