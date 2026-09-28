@@ -76,7 +76,7 @@ static const float3 noise3D[32] = {
 	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
 	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
-	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
+	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::GetArraySize() + settings.PosOffset.xyz;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;
