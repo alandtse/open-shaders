@@ -99,6 +99,12 @@ bool GrassBucketStore::ClaimQueueSlot(RE::BSMultiStreamInstanceTriShape* shape, 
 	return lastQueued.compare_exchange_strong(prev, frame, std::memory_order_relaxed);
 }
 
+bool GrassBucketStore::HasPending()
+{
+	std::scoped_lock lk(pendingMutex);
+	return !pendingCaptures.empty() || !pendingRemoves.empty();
+}
+
 void GrassBucketStore::DiscardPending()
 {
 	std::scoped_lock lk(pendingMutex);

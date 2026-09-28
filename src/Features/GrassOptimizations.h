@@ -70,6 +70,12 @@ public:
 	/** @brief Releases the cached compute shaders so they recompile on next use. */
 	virtual void ClearShaderCache() override;
 
+	/** @brief Restores the vanilla grass engine code and recompiles the grass shaders without GRASS_OPTIMIZATIONS. */
+	virtual void OnRuntimeDisabled() override;
+
+	/** @brief Reapplies the grass engine patches and recompiles the grass shaders with GRASS_OPTIMIZATIONS. */
+	virtual void OnRuntimeEnabled() override;
+
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
 
@@ -297,6 +303,36 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		/** @brief An engine code span whose vanilla and optimized bytes can be swapped at runtime. */
+		struct CodePatch
+		{
+			std::uintptr_t address = 0;
+			std::size_t size = 0;
+			std::array<std::uint8_t, 16> vanillaBytes{};
+			std::array<std::uint8_t, 16> optimizedBytes{};
+
+			void CaptureVanilla(std::uintptr_t a_address, std::size_t a_size)
+			{
+				address = a_address;
+				size = a_size;
+				std::memcpy(vanillaBytes.data(), reinterpret_cast<const void*>(address), size);
+			}
+
+			void CaptureOptimized() { std::memcpy(optimizedBytes.data(), reinterpret_cast<const void*>(address), size); }
+		};
+
+		static inline CodePatch drawLoopPatch;
+		static inline CodePatch fadeBufferPatch;
+
+		/** @brief Swaps the grass draw-loop and fade-buffer engine patches between optimized and vanilla code. */
+		static void SetEnginePatches(bool a_optimized)
+		{
+			for (auto* patch : { &drawLoopPatch, &fadeBufferPatch }) {
+				if (patch->size)
+					REL::safe_write(patch->address, a_optimized ? patch->optimizedBytes.data() : patch->vanillaBytes.data(), patch->size);
+			}
+		}
+
 		static void Install()
 		{
 			auto& trampoline = SKSE::GetTrampoline();
@@ -327,22 +363,29 @@ public:
 			stl::write_thunk_call<LoadGrassType>(REL::RelocationID(15205, 15373).address() + Util::VersionedRelocation::Select(0x62B, 0x597, 0x590));
 			stl::write_thunk_call<LoadGrassType>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x25C, 0x25C));
 
+			// Spans the mov, call and branch patches below.
+			drawLoopPatch.CaptureVanilla(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x660, 0x648), 13);
 			std::uint8_t patch[] = { 0x4C, 0x89, 0xF2 };  // mov rdx, r14
 			REL::safe_write(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x660, 0x648), patch, sizeof(patch));
 			stl::write_thunk_call<DrawInstanceTriShape>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x663, 0x64B));
 			// Branch target is the post-loop register-restore epilogue.
 			trampoline.write_branch<5>(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x668, 0x650), REL::RelocationID(100847, 107637).address() + REL::Relocate(0x759, 0x73A, 0x76F));
 
+			drawLoopPatch.CaptureOptimized();
+
 			// Skip mapping the vanilla dynamic fade buffer.
 			if (REL::Module::IsAE()) {
+				fadeBufferPatch.CaptureVanilla(REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2), 5);
 				// 1.7.99 uploads PS PerGeometry at +0x66C..+0x69C; retain it before bypassing fade work.
 				trampoline.write_branch<5>(
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2),
 					REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x6C6, 0x6C6, 0x7D6));
 			} else {
+				fadeBufferPatch.CaptureVanilla(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), 5);
 				// VR's compiled function has an extra per-frame buffer-cache check SE doesn't have.
 				REL::safe_write(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), REL::NOP5);
 			}
+			fadeBufferPatch.CaptureOptimized();
 
 			logger::info("[GRASS OPTIMIZATIONS] Installed hooks");
 		}

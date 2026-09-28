@@ -245,9 +245,12 @@ namespace
 				}
 				if (wantsUnsupportedRuntime)
 					logger::warn("DevBenchBridge: enabling '{}' via Developer Mode override despite being unsupported on the current runtime", shortName);
-				if (target->loaded && !applied)
+				const bool wasLoaded = target->loaded;
+				if (wasLoaded && !applied)
 					target->OnRuntimeDisabled();
 				target->loaded = applied;
+				if (!wasLoaded && applied)
+					target->OnRuntimeEnabled();
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
 					dvb->EmitEvent("openshaders.feature.changed", payload.c_str());

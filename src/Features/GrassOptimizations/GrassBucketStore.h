@@ -280,6 +280,9 @@ public:
 	/** @brief Drops staged captures and removals without applying them. */
 	void DiscardPending();
 
+	/** @brief Returns true when captures or removals are staged for the next ApplyPending. */
+	bool HasPending();
+
 	/** @brief Recomputes a bucket's padded union AABB over all of its slices. */
 	void UpdateCoarseBounds(GrassBucket& b);
 

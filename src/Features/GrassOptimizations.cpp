@@ -2,6 +2,7 @@
 #include "GpuPass.h"
 #include "GrassCollision.h"
 #include "GrassLighting.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
 #include "Utils/Game.h"
@@ -732,6 +733,18 @@ void GrassOptimizations::SetupResources()
 	}
 }
 
+void GrassOptimizations::OnRuntimeDisabled()
+{
+	Hooks::SetEnginePatches(false);
+	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
+}
+
+void GrassOptimizations::OnRuntimeEnabled()
+{
+	Hooks::SetEnginePatches(true);
+	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
+}
+
 void GrassOptimizations::ClearShaderCache()
 {
 	cullCS.Reset();
@@ -900,7 +913,7 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_dtor::thunk(RE::BS
 void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(RE::BSMultiStreamInstanceTriShape* This, RE::NiCullingProcess* process, std::int32_t alphaGroupIndex)
 {
 	auto prop = This->GetGeometryRuntimeData().shaderProperty;
-	if (prop && prop->GetRTTI() == globals::rtti::BSGrassShaderPropertyRTTI.get()) {
+	if (globals::features::grassOptimizations.loaded && prop && prop->GetRTTI() == globals::rtti::BSGrassShaderPropertyRTTI.get()) {
 		auto& self = globals::features::grassOptimizations;
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
@@ -939,7 +952,14 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 
 	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
-		self.UpdateGrass();
+		if (self.loaded) {
+			self.UpdateGrass();
+		} else if (self.bucketStore.HasPending()) {
+			// Captures keep staging while runtime-disabled so re-enabling needs no cell reload.
+			std::scoped_lock blk(self.bucketStore.bucketMutex);
+			CS_GPU_PASS("GrassOptimizations::ApplyPending");
+			self.bucketStore.ApplyPending(globals::d3d::device, globals::d3d::context);
+		}
 		self.lastFrame = frame;
 	}
 

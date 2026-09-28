@@ -210,6 +210,9 @@ public:
 	/** @brief Releases runtime overrides on the main thread before loaded changes from true to false; default no-op. */
 	virtual void OnRuntimeDisabled() {}
 
+	/** @brief Main-thread callback after loaded changes from false to true at runtime; default no-op. */
+	virtual void OnRuntimeEnabled() {}
+
 	/**
 	 * @brief Render-thread scene-transition reset (driven by LoadingMenu open/close).
 	 *
