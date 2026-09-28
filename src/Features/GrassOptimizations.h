@@ -37,6 +37,7 @@ public:
 
 	struct Settings
 	{
+		bool Enabled = true;
 		float MinPixelSize = 2.0f;
 		float FullDetailPixelSize = 16.0f;
 		float MinDensity = 0.03f;
@@ -70,11 +71,11 @@ public:
 	/** @brief Releases the cached compute shaders so they recompile on next use. */
 	virtual void ClearShaderCache() override;
 
-	/** @brief Restores the vanilla grass engine code and recompiles the grass shaders without GRASS_OPTIMIZATIONS. */
-	virtual bool OnRuntimeDisabled() override;
+	/** @brief Queues a switch between the optimized and vanilla grass paths when Enabled no longer matches the applied state. */
+	virtual void EarlyPrepass() override;
 
-	/** @brief Reapplies the grass engine patches and recompiles the grass shaders with GRASS_OPTIMIZATIONS; rejected when the hooks were never installed at boot. */
-	virtual bool OnRuntimeEnabled() override;
+	/** @brief Reverts to the vanilla grass path before the feature is unloaded at runtime. */
+	virtual void OnRuntimeDisabled() override;
 
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
@@ -178,6 +179,9 @@ public:
 	/** @brief Derives world-space frustum planes from the camera frustum and transform. */
 	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform);
 
+	/** @brief Applies or reverts the optimized grass path: swaps the engine patches and recompiles the grass shaders. */
+	void ApplyActive(bool a_active);
+
 	/** @brief Once-per-frame grass update called in BSGrassShader::SetupGeometry: applies staged captures/removals, uploads dirty buckets, builds the Hi-Z pyramid and issues the culling dispatches. */
 	void UpdateGrass();
 
@@ -200,6 +204,10 @@ public:
 	HiZPyramid hiZ;
 
 	uint32_t lastFrame = UINT32_MAX;
+
+	/** @brief True while the optimized grass path (engine patches + GRASS_OPTIMIZATIONS shaders) is applied. */
+	bool active = false;
+	bool transitionQueued = false;
 
 	ID3D11DeviceContext1* ctx1 = nullptr;
 

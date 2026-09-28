@@ -12,6 +12,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	GrassOptimizations::Settings,
+	Enabled,
 	MinPixelSize,
 	FullDetailPixelSize,
 	MinDensity,
@@ -47,6 +48,12 @@ void GrassOptimizations::RestoreDefaultSettings()
 
 void GrassOptimizations::DrawSettings()
 {
+	ImGui::Checkbox(T(TKEY("enabled"), "Enabled"), &settings.Enabled);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("enabled_tooltip"), "Use GPU-driven grass culling and instanced draws. When disabled, grass renders through the vanilla path and all other settings are ignored."));
+	}
+	auto enabledGuard = Util::DisableGuard(!settings.Enabled);
+
 	ImGui::SeparatorText(T(TKEY("culling"), "Culling & LOD"));
 
 	ImGui::SliderFloat(T(TKEY("full_detail_pixel_size"), "Full-Detail Pixel Size"), &settings.FullDetailPixelSize, 4.0f, 128.0f, "%.1f px");
@@ -169,13 +176,16 @@ void GrassOptimizations::DrawSettings()
 void GrassOptimizations::PostPostLoad()
 {
 	Hooks::Install();
+	active = true;
+	if (!settings.Enabled)
+		ApplyActive(false);
 }
 
 bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 {
 	switch (shaderType) {
 	case RE::BSShader::Type::Grass:
-		return true;
+		return active;
 	default:
 		return false;
 	}
@@ -736,24 +746,31 @@ void GrassOptimizations::SetupResources()
 GrassOptimizations::Hooks::CodePatch GrassOptimizations::Hooks::drawLoopPatch;
 GrassOptimizations::Hooks::CodePatch GrassOptimizations::Hooks::fadeBufferPatch;
 
-bool GrassOptimizations::OnRuntimeDisabled()
+void GrassOptimizations::ApplyActive(bool a_active)
 {
-	if (!Hooks::SetEnginePatches(false))
-		return false;
+	if (a_active == active || !Hooks::SetEnginePatches(a_active))
+		return;
+	active = a_active;
 	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
-	return true;
 }
 
-bool GrassOptimizations::OnRuntimeEnabled()
+void GrassOptimizations::EarlyPrepass()
 {
-	if (!Hooks::drawLoopPatch.size) {
-		logger::warn("[GRASS OPTIMIZATIONS] was not enabled at boot, so its hooks and resources do not exist; enable it and restart");
-		return false;
+	if (settings.Enabled == active || transitionQueued || !Hooks::drawLoopPatch.size)
+		return;
+	if (auto* task = SKSE::GetTaskInterface()) {
+		transitionQueued = true;
+		task->AddTask([this]() {
+			transitionQueued = false;
+			if (loaded)
+				ApplyActive(settings.Enabled);
+		});
 	}
-	if (!Hooks::SetEnginePatches(true))
-		return false;
-	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
-	return true;
+}
+
+void GrassOptimizations::OnRuntimeDisabled()
+{
+	ApplyActive(false);
 }
 
 void GrassOptimizations::ClearShaderCache()
@@ -924,7 +941,7 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_dtor::thunk(RE::BS
 void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(RE::BSMultiStreamInstanceTriShape* This, RE::NiCullingProcess* process, std::int32_t alphaGroupIndex)
 {
 	auto prop = This->GetGeometryRuntimeData().shaderProperty;
-	if (globals::features::grassOptimizations.loaded && prop && prop->GetRTTI() == globals::rtti::BSGrassShaderPropertyRTTI.get()) {
+	if (globals::features::grassOptimizations.active && prop && prop->GetRTTI() == globals::rtti::BSGrassShaderPropertyRTTI.get()) {
 		auto& self = globals::features::grassOptimizations;
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
@@ -963,7 +980,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 
 	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
-		if (self.loaded) {
+		if (self.active) {
 			self.UpdateGrass();
 		} else if (self.bucketStore.HasPending()) {
 			// Captures keep staging while runtime-disabled so re-enabling needs no cell reload.

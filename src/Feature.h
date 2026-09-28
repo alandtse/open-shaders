@@ -207,11 +207,8 @@ public:
 	/** @brief Releases and recreates transient state (e.g. on resolution change). */
 	virtual void Reset() {}
 
-	/** @brief Releases runtime overrides on the main thread before loaded changes from true to false; return false to reject the change. */
-	virtual bool OnRuntimeDisabled() { return true; }
-
-	/** @brief Main-thread callback before loaded changes from false to true at runtime; return false to reject the change. */
-	virtual bool OnRuntimeEnabled() { return true; }
+	/** @brief Releases runtime overrides on the main thread before loaded changes from true to false; default no-op. */
+	virtual void OnRuntimeDisabled() {}
 
 	/**
 	 * @brief Render-thread scene-transition reset (driven by LoadingMenu open/close).
