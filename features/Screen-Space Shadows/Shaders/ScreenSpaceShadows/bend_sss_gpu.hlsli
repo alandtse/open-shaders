@@ -287,10 +287,10 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		depths.x = coord_out_of_eye ? inParameters.FarDepthValue : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
 		depths.y = coord_offset_out_of_eye ? inParameters.FarDepthValue : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
 
-		// HMD mask: depth==0 is outside the visible lens area. Remap to FarDepthValue so
-		// mask pixels do not cast false shadows.
-		depths.x = lerp(depths.x, inParameters.FarDepthValue, (float)(depths.x == 0));  // Stencil area
-		depths.y = lerp(depths.y, inParameters.FarDepthValue, (float)(depths.y == 0));  // Stencil area
+		// HMD mask: the hidden-area mesh sits at NearDepthValue outside the visible lens area. Remap
+		// to FarDepthValue so mask pixels do not cast false shadows.
+		depths.x = lerp(depths.x, inParameters.FarDepthValue, (float)(depths.x == inParameters.NearDepthValue));  // Stencil area
+		depths.y = lerp(depths.y, inParameters.FarDepthValue, (float)(depths.y == inParameters.NearDepthValue));  // Stencil area
 #else
 		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
 		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);

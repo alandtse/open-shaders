@@ -28,11 +28,8 @@ RWTexture2D<float> outDepth4 : register(u4);
 float ClampDepth(float depth)
 {
 #ifdef VR
-	// REVERSE_Z makes 0.0 the depth clear value too, so the mask sentinel would pin the sky to the camera.
-#	ifndef REVERSE_Z
-	if (depth == 0.0)  // VR 0 indicates a mask
+	if (depth == FrameBuffer::NearPlaneDepth())  // VR hidden-area mask
 		return 0.0;
-#	endif
 #endif
 	depth = ScreenToViewDepth(depth);
 	return clamp(depth, 0.0, 3.402823466e+38);
