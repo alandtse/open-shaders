@@ -123,14 +123,6 @@ namespace
 		}
 	}
 
-	// Color for the [ALPHA]/[BETA] stage marker. Alpha (less stable) reads as an error,
-	// Beta as a warning.
-	ImVec4 StageTagColor(Feature::ReleaseStage stage)
-	{
-		const auto& statusPalette = globals::menu->GetTheme().StatusPalette;
-		return stage == Feature::ReleaseStage::Alpha ? statusPalette.Error : statusPalette.Warning;
-	}
-
 	/**
 	 * @brief Determines if the left feature panel should be visible based on auto-hide settings and mouse position
 	 * @return true if panel should be visible, false if it should be hidden
@@ -780,7 +772,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		.icon = feat->GetCategory() != FeatureCategories::kUtility ? Util::GetCategoryIcon(feat->GetCategory()) : nullptr,
 		.category = category,
 		.stageTag = stageTag,
-		.stageColor = StageTagColor(stage),
+		.stageColor = Util::GetReleaseStageColor(stage),
 		.version = version
 	};
 	if (DrawSidebarRow(row, selectedMenuRef == listId, editorLayout))
@@ -933,7 +925,7 @@ FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::
 	                               canApplyOverrides || canEditSceneSettings;
 	const float actionsButtonSize = hasFeatureActions ? ImGui::GetFrameHeight() * FEATURE_ACTION_BUTTON_SCALE : 0.0f;
 	const float titleOnlyHeight = DrawFeatureHeader(
-		feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, StageTagColor(stage), actionsButtonSize);
+		feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, Util::GetReleaseStageColor(stage), actionsButtonSize);
 
 	// Position the action button to the right of the header, middle-aligned with title only
 	const float buttonY = titleStartPos.y + (titleOnlyHeight - actionsButtonSize) * 0.5f;

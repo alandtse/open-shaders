@@ -1586,6 +1586,20 @@ namespace Util
 			baseColor.w);
 	}
 
+	ImVec4 GetReleaseStageColor(Feature::ReleaseStage stage)
+	{
+		auto& statusPalette = globals::menu->GetTheme().StatusPalette;
+		return stage == Feature::ReleaseStage::Alpha ? statusPalette.Error : statusPalette.Warning;
+	}
+
+	std::string AppendReleaseStageTag(std::string_view label, Feature::ReleaseStage stage)
+	{
+		const auto tag = Feature::GetReleaseStageTag(stage);
+		if (tag.empty())
+			return std::string(label);
+		return std::format("{} {}", label, tag);
+	}
+
 	void DrawSearchIcon(const ImVec2& position, float size, float alpha)
 	{
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
