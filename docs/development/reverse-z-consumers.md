@@ -74,3 +74,11 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
 -   `GBufferFillCS`'s epipolar fallback picks the farthest agreeing candidate in the standard
     convention only; it affects the zero-weight fallback path.
 -   `BSImagespaceShaderWorldMapNoSkyBlur` stays on the vanilla shader: there is no replacement.
+-   The VR hidden-area mask is assumed to land at `NearPlaneDepth()` (the engine draws it after the
+    world camera is published, so its viewport is mirrored); `ClearHMDMaskCS`, `bend_sss_gpu.hlsli`
+    and SSGI's `prefilterDepths.cs.hlsl` all test that value. The null HMD driver has no
+    hidden-area mesh, so confirm on a real headset.
+-   Inherited from the flat original: `CanonicalViewport` normalizes a viewport with a non-zero
+    `MinDepth` before mirroring it; `IsReverseDepthView` caches its verdict per DSV pointer until the
+    next reallocation; and if reallocation fails, shaders still compile with `REVERSE_Z` while the
+    targets stay standard.
