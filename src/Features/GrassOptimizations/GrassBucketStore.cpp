@@ -77,6 +77,8 @@ void GrassBucketStore::RefreshComplexGrass(float threshold, ID3D11DeviceContext*
 void GrassBucketStore::StageRemoval(RE::BSMultiStreamInstanceTriShape* shape)
 {
 	std::scoped_lock lk(pendingMutex);
+	// ApplyPending runs removals before captures, so a capture left queued here would re-add the destroyed shape and its freed texture.
+	std::erase_if(pendingCaptures, [shape](const PendingCapture& pc) { return pc.shape == shape; });
 	pendingRemoves.push_back(shape);
 }
 
