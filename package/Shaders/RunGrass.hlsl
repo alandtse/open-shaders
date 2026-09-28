@@ -7,6 +7,7 @@
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 
 #define DEFERRED
@@ -342,7 +343,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(VR)
 	float distanceFade = 1 - saturate((length(mul(World[0], msPosition).xyz) - AlphaParam1) / AlphaParam2);
 #		else
-	float distanceFade = 1 - saturate((length(projSpacePosition.xyz) - AlphaParam1) / AlphaParam2);
+	float distanceFade = 1 - saturate((length(FrameBuffer::ToStandardClip(projSpacePosition)) - AlphaParam1) / AlphaParam2);
 #		endif
 
 #		if defined(RENDER_DEPTH)

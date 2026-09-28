@@ -1,6 +1,7 @@
 #include "D3D.h"
 
 #include "Deferred.h"
+#include "Features/ReverseZ.h"
 #include "Features/TerrainBlending.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -154,6 +155,10 @@ namespace Util
 
 		if (globals::game::isVR)
 			macros.push_back({ "VR", "" });
+
+		if (globals::features::reverseZ.IsActive())
+			macros.push_back({ "REVERSE_Z", "" });
+
 		if (globals::state->IsDeveloperMode()) {
 			macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
 			macros.push_back({ "D3DCOMPILE_DEBUG", "" });

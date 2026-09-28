@@ -54,13 +54,13 @@ float2 PreviousFramePixel(float2 uv, float depth, uint eyeIndex, out bool valid)
 * previous-frame final depth found along the motion segment.
 *
 * The z-prepass omits alpha-tested geometry, leaving a too-far depth there. Every classifier
-* decision is monotone toward native shading in the nearer direction, so the min can only un-cull.
+* decision is monotone toward native shading in the nearer direction, so the nearest can only un-cull.
 *
 * @param px Pixel to classify
 * @param eyeIndex Eye the pixel belongs to (0 or 1)
 * @param[out] prevPx Previous-frame SBS pixel coordinate
 * @param[out] prevValid True when prevPx is a usable on-screen position
-* @return min(prepass depth, reprojected previous-frame final depth)
+* @return Nearest of the prepass depth and the reprojected previous-frame final depth
 */
 float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevValid)
 {
@@ -80,7 +80,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 		int2 tapPx = Stereo::ClampToEyeBounds(int2(round(tap)), eyeIndex, FrameDim);
 		float h = DepthHistory[tapPx];
 		if (h >= EPSILON_DEPTH_SKY && h < DEPTH_UNRENDERED)
-			d = min(d, h);
+			d = FrameBuffer::NearerDepth(d, h);
 	}
 	return d;
 }

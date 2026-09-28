@@ -26,7 +26,8 @@ RWTexture2D<uint> ScatterRW : register(u0);    // asuint(nearest Eye 1 depth) pe
 	if (FrameBuffer::IsOutsideFrame(otherEyeUV.xy, false))
 		return;
 
-	// Raw depth grows with distance, so the uint min of the float bits keeps the nearest surface.
+	// Raw depth grows with distance, so the uint min of the float bits keeps the nearest surface
+	// (uint max once REVERSE_Z makes raw depth shrink with distance).
 	// Both columns around the sub-texel landing point are written so foreshortening leaves no holes.
 	static const int kSplatColumns = 2;
 	float x = otherEyeUV.x * eyeWidth;
@@ -37,6 +38,10 @@ RWTexture2D<uint> ScatterRW : register(u0);    // asuint(nearest Eye 1 depth) pe
 	{
 		int xi = x0 + i;
 		if (xi >= 0 && xi < (int)eyeWidth)
+#ifdef REVERSE_Z
+			InterlockedMax(ScatterRW[uint2(xi, y)], bits);
+#else
 			InterlockedMin(ScatterRW[uint2(xi, y)], bits);
+#endif
 	}
 }

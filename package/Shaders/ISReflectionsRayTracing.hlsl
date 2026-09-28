@@ -3,6 +3,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRReproject.hlsli"
@@ -130,12 +131,12 @@ float4 GetReflectionColor(
 
 		float2 sampleUV;
 		uint sampleEyeIndex;
-		Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
+		Stereo::ResolveMonoUVForEye(float3(raySample.xy, FrameBuffer::ToNativeDepth(raySample.z)), eyeIndex, sampleUV, sampleEyeIndex);
 
 		if (FrameBuffer::IsOutsideFrame(sampleUV))
 			return 0.0;
 
-		float iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
+		float iterationDepth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x);
 
 		if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
 			float3 binaryMinRaySample = prevRaySample;
@@ -152,8 +153,8 @@ float4 GetReflectionColor(
 #	endif
 				binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
 
-				Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
-				iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
+				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, FrameBuffer::ToNativeDepth(binaryRaySample.z)), eyeIndex, sampleUV, hitEyeIndex);
+				iterationDepth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x);
 
 				// Compute expected depth vs actual depth
 				depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
@@ -174,7 +175,9 @@ float4 GetReflectionColor(
 
 			// Make VR fades consistent by taking the closer of the two eyes
 			// Based on concepts from https://cuteloong.github.io/publications/scssr24/
-			float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex).xy - 0.5;
+			// The stereo helpers unproject this depth, so it has to stay in the buffer's own
+			// convention; iterationDepth is standard-space by this point.
+			float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, FrameBuffer::ToNativeDepth(iterationDepth)), eyeIndex).xy - 0.5;
 			centerDistance = min(centerDistance, abs(otherEyeUvResultScreenCenterOffset * 2.0));
 #	else
 			float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
@@ -190,7 +193,7 @@ float4 GetReflectionColor(
 				// Resolve final UV in the eye that owns the hit
 				float2 finalSampleUV;
 				uint finalEyeIndex;
-				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
+				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, FrameBuffer::ToNativeDepth(iterationDepth)), eyeIndex, finalSampleUV, finalEyeIndex);
 
 				uint2 colorTextureDimensions = uint2(1, 1);
 #	if defined(VR)
@@ -202,7 +205,7 @@ float4 GetReflectionColor(
 					color = Color::SceneGammaToLinear(color);
 
 				// Final sample to world-space
-				float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
+				float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, FrameBuffer::ToNativeDepth(iterationDepth), 1.0);
 				positionWS = mul(FrameBuffer::CameraViewProjInverse[finalEyeIndex], positionWS);
 				positionWS.xyz = positionWS.xyz / positionWS.w;
 				positionWS.w = 1.0;
@@ -273,9 +276,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 viewNormal = DefaultNormal;
 
-	float depth = DepthTex.SampleLevel(DepthSampler, depthScreenPosition, 0).x;
+	float nativeDepth = DepthTex.SampleLevel(DepthSampler, depthScreenPosition, 0).x;
+	float depth = FrameBuffer::ToStandardDepth(nativeDepth);
 
-	float4 positionVS = float4(float2(uv.x, 1.0 - uv.y) * 2.0 - 1.0, depth, 1.0);
+	float4 positionVS = float4(float2(uv.x, 1.0 - uv.y) * 2.0 - 1.0, nativeDepth, 1.0);
 	positionVS = mul(FrameBuffer::CameraProjInverse[eyeIndex], positionVS);
 	positionVS.xyz = positionVS.xyz / positionVS.w;
 
@@ -292,6 +296,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 reflectionPosition = float4(viewPosition + reflectionDirection, 1.0);
 	float4 projReflectionPosition = mul(FrameBuffer::CameraProj[eyeIndex], reflectionPosition);
 	projReflectionPosition /= projReflectionPosition.w;
+	projReflectionPosition.z = FrameBuffer::ToStandardDepth(projReflectionPosition.z);
 	projReflectionPosition.xy = projReflectionPosition.xy * float2(0.5, -0.5) + float2(0.5, 0.5);
 
 	float3 projPosition = float3(uv, depth);
