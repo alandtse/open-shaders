@@ -33,6 +33,14 @@ namespace Util
 		return result;
 	}
 
+	/** @brief Case-insensitive equality for two strings. */
+	inline bool IEquals(std::string_view a, std::string_view b)
+	{
+		return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char ca, char cb) {
+			return std::tolower(static_cast<unsigned char>(ca)) == std::tolower(static_cast<unsigned char>(cb));
+		});
+	}
+
 	/**
 	 * @brief Extracts the lowercased filename stem from a path, requiring a given extension.
 	 *

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "Tuning.h"
+#include "Utils/StringUtils.h"
 
 #include <Windows.h>
-#include <algorithm>
 #include <array>
 #include <atomic>
 #include <d3d11.h>
@@ -56,18 +56,10 @@ namespace NR
 	};
 
 	/** @brief True when a SHA-256 hex digest names a validated build; hex case is ignored. */
-	// Not Util::IEquals (Utils/Format.h): that header needs the game PCH's REL::Version and
-	// D3D_SHADER_MACRO to even parse, which the lightweight cpp_tests target this is unit-tested
-	// in does not have.
 	inline bool IsValidatedRuntimeHash(std::string_view digest)
 	{
-		const auto iequals = [](std::string_view a, std::string_view b) {
-			return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char ca, char cb) {
-				return std::tolower(static_cast<unsigned char>(ca)) == std::tolower(static_cast<unsigned char>(cb));
-			});
-		};
 		for (const auto validated : kValidatedRuntimeSha256) {
-			if (iequals(validated, digest))
+			if (Util::IEquals(validated, digest))
 				return true;
 		}
 		return false;

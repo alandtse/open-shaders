@@ -257,14 +257,6 @@ namespace Util
 		return totalFrameTime - measuredSum;
 	}
 
-	bool IEquals(std::string_view a, std::string_view b)
-	{
-		return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(),
-										   [](char ca, char cb) {
-											   return std::tolower(static_cast<unsigned char>(ca)) == std::tolower(static_cast<unsigned char>(cb));
-										   });
-	}
-
 	std::string GetShaderDefinesSuffix(const std::string& definesStr)
 	{
 		if (definesStr.empty())
