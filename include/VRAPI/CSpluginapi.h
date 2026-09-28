@@ -1,3 +1,6 @@
+// Internal to this project; third-party mods should not vendor this file.
+// See CSinterface001.h for the consumer-facing interface contract.
+
 #pragma once
 
 #include "VRAPI/CSinterface001.h"

@@ -27,6 +27,11 @@ The bundled convenience helper does all of this:
 -   `include/VRAPI/CSinterface001.h` (the interface contract; the only file consumers need)
 -   `src/VRAPI/CSinterface001.cpp` (optional `GetCSInterface001()` fetch-and-cache helper)
 
+Both files are LGPL-3.0-or-later, not this project's default GPL-3.0-or-later
+(see the SPDX header in each file and `COPYING.LESSER`). Vendor them into a mod
+of any license with no obligation on your own code; only modifications to
+these two files themselves need to be shared back under the same terms.
+
 ## Threading Model
 
 Getters and wind sampling are safe from any thread. Setters may also be called from any thread: the value is

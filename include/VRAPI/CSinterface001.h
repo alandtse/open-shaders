@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// Unlike the rest of this project (GPL-3.0-or-later), this file and its
+// companion CSinterface001.cpp are LGPL so any mod can vendor them freely;
+// only changes to this file itself must be shared under the same license.
+// Full text: COPYING.LESSER.
+
 #pragma once
 
 #include <RE/Skyrim.h>
