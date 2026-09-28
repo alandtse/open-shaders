@@ -748,8 +748,13 @@ GrassOptimizations::Hooks::CodePatch GrassOptimizations::Hooks::fadeBufferPatch;
 
 void GrassOptimizations::ApplyActive(bool a_active)
 {
-	if (a_active == active || !Hooks::SetEnginePatches(a_active))
+	if (a_active == active)
 		return;
+	if (!Hooks::SetEnginePatches(a_active)) {
+		// Left mismatched, EarlyPrepass would retry and log every frame.
+		settings.Enabled = active;
+		return;
+	}
 	active = a_active;
 	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
 }
@@ -983,7 +988,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 		if (self.active) {
 			self.UpdateGrass();
 		} else if (self.bucketStore.HasPending()) {
-			// Captures keep staging while runtime-disabled so re-enabling needs no cell reload.
+			// Captures keep staging while inactive so re-enabling needs no cell reload.
 			std::scoped_lock blk(self.bucketStore.bucketMutex);
 			CS_GPU_PASS("GrassOptimizations::ApplyPending");
 			self.bucketStore.ApplyPending(globals::d3d::device, globals::d3d::context);
