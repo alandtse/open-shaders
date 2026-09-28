@@ -182,7 +182,11 @@ struct PostProcessing : Feature
 	virtual void SetupResources() override;
 	virtual void Reset() override;
 	/** @brief Restores the camera-owned FOV when post processing is disabled at runtime. */
-	virtual void OnRuntimeDisabled() override { cinematicCamera.Update(false, 1.0f); }
+	virtual bool OnRuntimeDisabled() override
+	{
+		cinematicCamera.Update(false, 1.0f);
+		return true;
+	}
 
 	virtual void PostPostLoad() override;
 	virtual void Prepass() override;

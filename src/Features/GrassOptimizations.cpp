@@ -733,16 +733,27 @@ void GrassOptimizations::SetupResources()
 	}
 }
 
-void GrassOptimizations::OnRuntimeDisabled()
+GrassOptimizations::Hooks::CodePatch GrassOptimizations::Hooks::drawLoopPatch;
+GrassOptimizations::Hooks::CodePatch GrassOptimizations::Hooks::fadeBufferPatch;
+
+bool GrassOptimizations::OnRuntimeDisabled()
 {
-	Hooks::SetEnginePatches(false);
+	if (!Hooks::SetEnginePatches(false))
+		return false;
 	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
+	return true;
 }
 
-void GrassOptimizations::OnRuntimeEnabled()
+bool GrassOptimizations::OnRuntimeEnabled()
 {
-	Hooks::SetEnginePatches(true);
+	if (!Hooks::drawLoopPatch.size) {
+		logger::warn("[GRASS OPTIMIZATIONS] was not enabled at boot, so its hooks and resources do not exist; enable it and restart");
+		return false;
+	}
+	if (!Hooks::SetEnginePatches(true))
+		return false;
 	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
+	return true;
 }
 
 void GrassOptimizations::ClearShaderCache()

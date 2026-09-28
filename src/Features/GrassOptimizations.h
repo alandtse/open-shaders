@@ -71,10 +71,10 @@ public:
 	virtual void ClearShaderCache() override;
 
 	/** @brief Restores the vanilla grass engine code and recompiles the grass shaders without GRASS_OPTIMIZATIONS. */
-	virtual void OnRuntimeDisabled() override;
+	virtual bool OnRuntimeDisabled() override;
 
-	/** @brief Reapplies the grass engine patches and recompiles the grass shaders with GRASS_OPTIMIZATIONS. */
-	virtual void OnRuntimeEnabled() override;
+	/** @brief Reapplies the grass engine patches and recompiles the grass shaders with GRASS_OPTIMIZATIONS; rejected when the hooks were never installed at boot. */
+	virtual bool OnRuntimeEnabled() override;
 
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
@@ -321,20 +321,23 @@ public:
 			void CaptureOptimized() { std::memcpy(optimizedBytes.data(), reinterpret_cast<const void*>(address), size); }
 		};
 
-		static inline CodePatch drawLoopPatch;
-		static inline CodePatch fadeBufferPatch;
+		static CodePatch drawLoopPatch;
+		static CodePatch fadeBufferPatch;
 
-		/** @brief Swaps the grass draw-loop and fade-buffer engine patches between optimized and vanilla code. */
-		static void SetEnginePatches(bool a_optimized)
+		/** @brief Swaps the grass draw-loop and fade-buffer engine patches between optimized and vanilla code. Writes nothing and returns false if either site holds unexpected bytes. */
+		static bool SetEnginePatches(bool a_optimized)
 		{
-			for (auto* patch : { &drawLoopPatch, &fadeBufferPatch }) {
-				if (!patch->size)
-					continue;
-				const auto* target = a_optimized ? patch->optimizedBytes.data() : patch->vanillaBytes.data();
+			const std::array patches{ &drawLoopPatch, &fadeBufferPatch };
+			for (auto* patch : patches) {
 				const auto* expected = a_optimized ? patch->vanillaBytes.data() : patch->optimizedBytes.data();
-				if (!REL::safe_write(patch->address, target, patch->size, expected, patch->size))
-					logger::error("[GRASS OPTIMIZATIONS] engine code at {:X} was modified externally; left unchanged", patch->address);
+				if (!REL::verify_code(patch->address, expected, patch->size)) {
+					logger::error("[GRASS OPTIMIZATIONS] engine code at {:X} was modified externally; toggle rejected", patch->address);
+					return false;
+				}
 			}
+			for (auto* patch : patches)
+				REL::safe_write(patch->address, a_optimized ? patch->optimizedBytes.data() : patch->vanillaBytes.data(), patch->size);
+			return true;
 		}
 
 		static void Install()
