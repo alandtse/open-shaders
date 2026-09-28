@@ -14,6 +14,7 @@
 #include <vector>
 #include <windows.h>  // For WPARAM and virtual key constants
 
+#include "../Feature.h"
 #include "../FeatureConstraints.h"
 #include "../Menu/Fonts.h"
 #include "../Menu/ThemeManager.h"
@@ -27,7 +28,6 @@ struct ID3D11ShaderResourceView;
 struct ImRect;
 struct ImVec2;
 class Menu;
-class Feature;
 
 // Helper macro for displaying texture buffers in ImGui with resolution info
 #define BUFFER_VIEWER_NODE_IMPL(a_value, a_label, a_scale)                                                       \
@@ -1090,6 +1090,22 @@ namespace Util
 	 * @return The color with pulsing brightness applied (alpha unchanged)
 	 */
 	ImVec4 GetPulsingColor(const ImVec4& baseColor, float speed = 4.0f, float minBrightness = 0.7f, float maxBrightness = 1.0f);
+
+	/**
+	 * @brief Color for an [ALPHA]/[BETA] release-stage marker: Alpha (less stable) reads as an
+	 * error, Beta as a warning.
+	 */
+	ImVec4 GetReleaseStageColor(Feature::ReleaseStage stage);
+
+	/**
+	 * @brief Appends the localized release-stage marker ("[ALPHA]"/"[BETA]") to a label for use as
+	 * a single-color widget label (tab item, tree node, collapsing header, selectable...). Returns
+	 * label unchanged for Feature::ReleaseStage::Release. Unlike the sidebar and feature-header tag
+	 * rendering, this does not color the marker separately from the rest of the label: those two
+	 * draw a colored overlay because their layout has room for one, which a tab bar's single-string
+	 * label does not.
+	 */
+	std::string AppendReleaseStageTag(std::string_view label, Feature::ReleaseStage stage);
 
 	/**
 	 * @brief Draws the feature search bar with magnifying glass icon.
