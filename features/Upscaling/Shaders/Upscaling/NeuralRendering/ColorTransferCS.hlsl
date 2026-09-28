@@ -35,7 +35,7 @@ Texture2D<float2> ToneData : register(t4);
 RWTexture2D<float4> Output : register(u0);
 RWTexture2D<float2> ToneDataOutput : register(u2);
 
-static const float3 Luma = float3(0.2126, 0.7152, 0.0722);
+static const float3 Luma = Color::kRec709LuminanceWeights;
 static const float kProxyEpsilon = 1e-8;
 static const float kPeakEpsilon = 1e-6;
 static const float kLumaEpsilon = 1e-5;
@@ -284,8 +284,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = ratio.xxx;
 	else if (VisualMode == NR::kVisualOriginal)
 		result = originalLinear;
-	else if (VisualMode == NR::kVisualPostComposite)
-		result = result;
+	// kVisualPostComposite intentionally has no branch here: result is already the composited value.
 	else if (VisualMode == NR::kVisualLuminanceDifference)
 		result = abs(Color::RGBToLuminance(neuralLinear - inputProxy, Luma)).xxx * DifferenceStrength;
 	else if (VisualMode == NR::kVisualChromaDifference)

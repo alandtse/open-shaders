@@ -45,15 +45,9 @@ namespace NR
 				throw std::runtime_error(std::format("{}{} failed: NGX 0x{:08X}", prefix, operation, static_cast<uint32_t>(result)));
 		}
 
-		/**
-		 * @brief Runs one NGX call under SEH: /EHsc catch blocks never see a fault inside the
-		 *        DLL, so this is the only thing between it and the game's crash handler.
-		 * @param sentinel Value to keep when the call never returned one.
-		 * @param call Performs the call. It may only reference existing objects, because a fault
-		 *             skips destructors in its frame.
-		 * @param prefix Optional context, such as kInitializationPrefix during startup.
-		 * @return The call's value, or sentinel when it faulted.
-		 */
+		// SEH guard: /EHsc catch blocks never see a fault inside the DLL, so this is the only
+		// thing between it and the game's crash handler. call may only touch existing objects,
+		// since a fault skips destructors in its frame.
 		template <class T, class F>
 		T GuardNgxCall(T sentinel, F&& call, const char* prefix = "")
 		{

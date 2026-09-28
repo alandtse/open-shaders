@@ -94,7 +94,8 @@ namespace NR
 			if (pixels && pixelCount) {
 				float minimum = std::numeric_limits<float>::max(), maximum = 0.0f, average = 0.0f;
 				for (size_t i = 0; i < pixelCount; ++i) {
-					const float luminance = std::max(0.0f, pixels[i * 4 + 0] * 0.2126f + pixels[i * 4 + 1] * 0.7152f + pixels[i * 4 + 2] * 0.0722f);
+					// Matches Color::kRec709LuminanceWeights (Color.hlsli) so the log stats agree with the shader's own luminance.
+					const float luminance = std::max(0.0f, pixels[i * 4 + 0] * 0.2125f + pixels[i * 4 + 1] * 0.7154f + pixels[i * 4 + 2] * 0.0721f);
 					minimum = std::min(minimum, luminance);
 					maximum = std::max(maximum, luminance);
 					average += luminance;
@@ -163,6 +164,29 @@ namespace NR
 	{
 		constexpr char codes[] = "NDWPLEAB";
 		return codes[static_cast<size_t>(outcome)];
+	}
+
+	std::string Diagnostics::Legend()
+	{
+		static constexpr std::array<std::pair<Outcome, const char*>, 8> kLabels{ {
+			{ Outcome::Applied, "copyQueued" },
+			{ Outcome::NoHook, "noHook" },
+			{ Outcome::Disabled, "disabled" },
+			{ Outcome::NoWorld, "noWorld" },
+			{ Outcome::Paused, "paused" },
+			{ Outcome::FailedLatch, "failureLatch" },
+			{ Outcome::Error, "error" },
+			{ Outcome::Bypassed, "bypassed" },
+		} };
+		std::string legend;
+		for (const auto& [outcome, label] : kLabels) {
+			if (!legend.empty())
+				legend += ',';
+			legend += Code(outcome);
+			legend += '=';
+			legend += label;
+		}
+		return legend;
 	}
 
 	Diagnostics::Frame& Diagnostics::BeginHook(uint32_t frame, uint32_t target)
@@ -338,8 +362,8 @@ namespace NR
 			}
 			logger::info(
 				"[NRDiag/v2] through={} frames={} resets={} recreations={} duplicateCalls={} "
-				"history={} (A=copyQueued,N=noHook,D=disabled,W=noWorld,P=paused,L=failureLatch,E=error,B=bypassed)",
-				frame, count, resets, recreations, duplicates, outcomes);
+				"history={} ({})",
+				frame, count, resets, recreations, duplicates, outcomes, Legend());
 			LogFrame(current);
 			framesSinceSummary = 0;
 		}
@@ -505,7 +529,7 @@ namespace NR
 			ImGui::Text("Reset L/R 0x%X/0x%X | NGX L/R 0x%X/0x%X", latest.reset[0], latest.reset[1], latest.result[0], latest.result[1]);
 			ImGui::Text("After upscale/post %u/%u | target %u | main changed %u", latest.afterUpscale, latest.afterPost, latest.target, latest.mainChanged);
 			ImGui::TextUnformatted(sequence.c_str());
-			ImGui::TextUnformatted("A=copy queued N=no hook D=disabled W=no world P=paused L=latched E=error B=bypassed");
+			ImGui::TextUnformatted(Legend().c_str());
 		}
 		ImGui::End();
 	}

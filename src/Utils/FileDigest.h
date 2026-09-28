@@ -4,6 +4,10 @@
 #include <optional>
 #include <string>
 
+// Separate from Utils/ContentHash.h: that one is explicitly non-cryptographic (XXH3, "no
+// adversarial threat model applies") and exists for fast shader-cache keys. This file exists to
+// validate a third-party DLL (nvngx_dlssnr.dll) against a pinned allowlist, where a real
+// cryptographic hash is the point.
 namespace Util::FileDigest
 {
 	/**

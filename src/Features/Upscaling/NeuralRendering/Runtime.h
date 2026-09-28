@@ -3,6 +3,7 @@
 #include "Tuning.h"
 
 #include <Windows.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <d3d11.h>
@@ -47,27 +48,26 @@ namespace NR
 		return {};
 	}
 
-	/**
-	 * @brief SHA-256 digests of the nvngx_dlssnr.dll builds whose Feature 18 output channel
-	 *        order was verified in game: the 310.8 DVS Production build and the 310.8.0.0
-	 *        test build. A build outside this list is refused, not rendered on trust.
-	 */
+	// SHA-256 of the nvngx_dlssnr.dll builds (310.8 DVS Production, 310.8.0.0 test) whose channel
+	// order was verified in game. A build outside this list is refused, not rendered on trust.
 	inline constexpr std::array<std::string_view, 2> kValidatedRuntimeSha256{
 		"8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206",
 		"E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E",
 	};
 
 	/** @brief True when a SHA-256 hex digest names a validated build; hex case is ignored. */
+	// Not Util::IEquals (Utils/Format.h): that header needs the game PCH's REL::Version and
+	// D3D_SHADER_MACRO to even parse, which the lightweight cpp_tests target this is unit-tested
+	// in does not have.
 	inline bool IsValidatedRuntimeHash(std::string_view digest)
 	{
-		const auto fold = [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; };
+		const auto iequals = [](std::string_view a, std::string_view b) {
+			return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char ca, char cb) {
+				return std::tolower(static_cast<unsigned char>(ca)) == std::tolower(static_cast<unsigned char>(cb));
+			});
+		};
 		for (const auto validated : kValidatedRuntimeSha256) {
-			if (validated.size() != digest.size())
-				continue;
-			size_t i = 0;
-			while (i < validated.size() && fold(validated[i]) == fold(digest[i]))
-				++i;
-			if (i == validated.size())
+			if (iequals(validated, digest))
 				return true;
 		}
 		return false;

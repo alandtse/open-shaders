@@ -71,11 +71,13 @@ namespace Color
 		return dot(color, luminanceWeights);
 	}
 
+	static const float3 kRec709LuminanceWeights = float3(0.2125, 0.7154, 0.0721);
+
 #if defined(PSHADER) || defined(CSHADER) || defined(COMPUTESHADER)
 	float RGBToLuminance(float3 color)
 	{
 		// AP1 (ACEScg) luminance coefficients from AP1_2_XYZ_MAT Y row
-		return ENABLE_ACEScg ? dot(color, float3(0.2722287168, 0.6740817658, 0.0536895174)) : dot(color, float3(0.2125, 0.7154, 0.0721));
+		return ENABLE_ACEScg ? dot(color, float3(0.2722287168, 0.6740817658, 0.0536895174)) : dot(color, kRec709LuminanceWeights);
 	}
 
 	float RGBToLuminanceAlternative(float3 color)
@@ -92,7 +94,7 @@ namespace Color
 #else
 	float RGBToLuminance(float3 color)
 	{
-		return dot(color, float3(0.2125, 0.7154, 0.0721));
+		return dot(color, kRec709LuminanceWeights);
 	}
 
 	float RGBToLuminanceAlternative(float3 color)

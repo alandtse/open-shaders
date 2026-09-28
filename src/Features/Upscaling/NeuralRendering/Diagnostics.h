@@ -294,6 +294,8 @@ namespace NR
 		uint32_t framesSinceSummary = 0;
 		static const char* Name(Outcome outcome);
 		static char Code(Outcome outcome);
+		/** @brief "A=copyQueued,N=noHook,..." legend for Code(), the single copy both call sites share. */
+		static std::string Legend();
 		static void LogFrame(const Frame& frame);
 	};
 }
