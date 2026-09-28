@@ -415,29 +415,6 @@ void ReverseZ::DrawSettings()
 		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", T(TKEY("status_failed"), "The depth buffer could not be reallocated; see the log."));
 }
 
-bool ReverseZ::ValidateCache(CSimpleIniA& a_ini)
-{
-	if (!Feature::ValidateCache(a_ini))
-		return false;
-
-	LatchBootState();
-	// Feature::ValidateCache only tracks version and load state, so without this key the
-	// boot-latched REVERSE_Z define would reuse shaders compiled for the other convention.
-	const bool cached = a_ini.GetBoolValue(GetShortName().c_str(), "ReverseZActive", false);
-	if (cached != activeThisBoot) {
-		logger::info("Reverse Z state changed; invalidating shader cache");
-		return false;
-	}
-	return true;
-}
-
-void ReverseZ::WriteDiskCacheInfo(CSimpleIniA& a_ini)
-{
-	Feature::WriteDiskCacheInfo(a_ini);
-	LatchBootState();
-	a_ini.SetBoolValue(GetShortName().c_str(), "ReverseZActive", activeThisBoot);
-}
-
 void ReverseZ::LatchBootState()
 {
 	if (bootLatched)

@@ -73,9 +73,6 @@ struct ReverseZ : Feature
 	virtual void DataLoaded() override;
 	virtual void PostPostLoad() override;
 
-	virtual bool ValidateCache(CSimpleIniA& a_ini) override;
-	virtual void WriteDiskCacheInfo(CSimpleIniA& a_ini) override;
-
 	/** @brief Reverses the camera matrices b12 carries before they reach the GPU. */
 	virtual bool WantsFrameBufferFixup() const override { return activeThisBoot; }
 	virtual void FixupMappedFrameBuffer(globals::FrameBuffer& a_frameBuffer) override;
