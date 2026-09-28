@@ -328,8 +328,12 @@ public:
 		static void SetEnginePatches(bool a_optimized)
 		{
 			for (auto* patch : { &drawLoopPatch, &fadeBufferPatch }) {
-				if (patch->size)
-					REL::safe_write(patch->address, a_optimized ? patch->optimizedBytes.data() : patch->vanillaBytes.data(), patch->size);
+				if (!patch->size)
+					continue;
+				const auto* target = a_optimized ? patch->optimizedBytes.data() : patch->vanillaBytes.data();
+				const auto* expected = a_optimized ? patch->vanillaBytes.data() : patch->optimizedBytes.data();
+				if (!REL::safe_write(patch->address, target, patch->size, expected, patch->size))
+					logger::error("[GRASS OPTIMIZATIONS] engine code at {:X} was modified externally; left unchanged", patch->address);
 			}
 		}
 
