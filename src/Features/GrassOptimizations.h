@@ -71,9 +71,6 @@ public:
 	/** @brief Releases the cached compute shaders so they recompile on next use. */
 	virtual void ClearShaderCache() override;
 
-	/** @brief Queues a switch between the optimized and vanilla grass paths when Enabled no longer matches the applied state. */
-	virtual void EarlyPrepass() override;
-
 	/** @brief Reverts to the vanilla grass path before the feature is unloaded at runtime. */
 	virtual void OnRuntimeDisabled() override;
 
@@ -181,6 +178,9 @@ public:
 
 	/** @brief Applies or reverts the optimized grass path: swaps the engine patches and recompiles the grass shaders. */
 	void ApplyActive(bool a_active);
+
+	/** @brief Queues ApplyActive as a main-thread task when Enabled no longer matches the applied state. */
+	void QueueEnabledSync();
 
 	/** @brief Once-per-frame grass update called in BSGrassShader::SetupGeometry: applies staged captures/removals, uploads dirty buckets, builds the Hi-Z pyramid and issues the culling dispatches. */
 	void UpdateGrass();

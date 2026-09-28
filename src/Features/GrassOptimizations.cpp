@@ -751,7 +751,7 @@ void GrassOptimizations::ApplyActive(bool a_active)
 	if (a_active == active)
 		return;
 	if (!Hooks::SetEnginePatches(a_active)) {
-		// Left mismatched, EarlyPrepass would retry and log every frame.
+		// Left mismatched, QueueEnabledSync would retry and log every frame.
 		settings.Enabled = active;
 		return;
 	}
@@ -759,9 +759,9 @@ void GrassOptimizations::ApplyActive(bool a_active)
 	globals::shaderCache->Clear(RE::BSShader::Type::Grass);
 }
 
-void GrassOptimizations::EarlyPrepass()
+void GrassOptimizations::QueueEnabledSync()
 {
-	if (settings.Enabled == active || transitionQueued || !Hooks::drawLoopPatch.size)
+	if (!loaded || settings.Enabled == active || transitionQueued)
 		return;
 	if (auto* task = SKSE::GetTaskInterface()) {
 		transitionQueued = true;
@@ -985,6 +985,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 
 	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
+		self.QueueEnabledSync();
 		if (self.active) {
 			self.UpdateGrass();
 		} else if (self.bucketStore.HasPending()) {
