@@ -652,6 +652,11 @@ void DynamicCubemaps::BuildHiZ()
 	auto device = globals::d3d::device;
 	auto context = globals::d3d::context;
 
+	// Last frame's chain SRVs are still bound on the pixel stage, and the builds below bind the same
+	// textures as compute UAVs.
+	ID3D11ShaderResourceView* staleChains[4]{};
+	context->PSSetShaderResources(kHiZChainRegister, ARRAYSIZE(staleChains), staleChains);
+
 	if (settings.EnabledSSR && settings.EnableSSRHiZ) {
 		// The live depth target, not the finished-opaque copy: water writes it after the copy is
 		// taken, so chains built from the copy can step past a real crossing.
