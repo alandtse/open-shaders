@@ -104,18 +104,20 @@ namespace SharedData
 		uint EnableContactShadows;
 		uint ContactShadowMaxSteps;
 		float ContactShadowMaxDistance;
-		float ContactShadowStride;
-		float ContactShadowThickness;
-		float ContactShadowDepthFade;
+		float ContactShadowLength;
+		float ContactShadowDepthThickness;
 		float ContactShadowMinIntensity;
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
+		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU
+		// reads the cluster config from the wrong offsets. The C++ mirror has the same hole.
+		float pad0;
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad0;
+		uint pad1;
 	};
 
 	struct WetnessEffectsSettings
