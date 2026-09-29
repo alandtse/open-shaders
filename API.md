@@ -27,10 +27,12 @@ The bundled convenience helper does all of this:
 -   `include/VRAPI/CSinterface001.h` (the interface contract; the only file consumers need)
 -   `src/VRAPI/CSinterface001.cpp` (optional `GetCSInterface001()` fetch-and-cache helper)
 
-Both files are LGPL-3.0-or-later, not this project's default GPL-3.0-or-later
-(see the SPDX header in each file and `COPYING.LESSER`). Vendor them into a mod
-of any license with no obligation on your own code; only modifications to
-these two files themselves need to be shared back under the same terms.
+### Consumer licensing
+
+`CSinterface001.h` and `CSinterface001.cpp` are licensed under
+LGPL-3.0-or-later (see `COPYING.LESSER`). All other files remain under
+the project's default license. Consult the license text for the terms
+that apply to your use.
 
 ## Threading Model
 
