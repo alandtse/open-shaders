@@ -2,6 +2,7 @@
 
 #include "Deferred.h"
 #include "ExtendedMaterials.h"
+#include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -796,7 +797,8 @@ void VRStereoOptimizations::DispatchDepthScatter()
 	auto context = globals::d3d::context;
 	RenderTargetUnbindScope rtScope(context);
 
-	const UINT scatterEmpty[4] = { kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty, kScatterDepthEmpty };
+	const UINT empty = globals::features::reverseZ.IsActive() ? kScatterDepthEmptyReverseZ : kScatterDepthEmpty;
+	const UINT scatterEmpty[4] = { empty, empty, empty, empty };
 	context->ClearUnorderedAccessViewUint(texScatterDepth->uav.get(), scatterEmpty);
 
 	auto cbPtr = paramsCB->CB();

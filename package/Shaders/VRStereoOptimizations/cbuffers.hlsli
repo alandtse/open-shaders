@@ -24,8 +24,13 @@ cbuffer VRStereoOptParams : register(b1)
 	float FullBlendDistance;  // Linearized depth below which pixels get MODE_FULL_BLEND (game units)
 };
 
-#define DEPTH_UNRENDERED 1.0             // depth clear value: nothing was rasterised at the pixel
-#define SCATTER_DEPTH_EMPTY 0xFFFFFFFFu  // ScatterDepth texel no Eye 0 texel landed on; must match kScatterDepthEmpty
+#define DEPTH_UNRENDERED 1.0  // depth clear value: nothing was rasterised at the pixel
+// ScatterDepth texel no Eye 0 texel landed on; the reduction's identity, so it must match kScatterDepthEmpty.
+#ifdef REVERSE_Z
+#	define SCATTER_DEPTH_EMPTY 0u
+#else
+#	define SCATTER_DEPTH_EMPTY 0xFFFFFFFFu
+#endif
 
 #define STEREO_MODE_OFF 0
 #define STEREO_MODE_ENABLE 1
