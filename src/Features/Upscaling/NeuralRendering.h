@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NeuralRendering/ActorRegion.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
@@ -28,11 +29,11 @@ struct NeuralRendering
 		std::string text;
 		/** @brief Accepted nvngx_dlssnr.dll version; empty until the runtime initializes. */
 		std::string runtimeVersion;
-		/** @brief Render width NR last created its pass resources for. */
+		/** @brief Per-eye render width NR last created its pass resources for. */
 		uint32_t width = 0;
 		/** @brief Render height NR last created its pass resources for. */
 		uint32_t height = 0;
-		/** @brief Eye count that render width is split across. */
+		/** @brief Eye count: 1 on flat, 2 on VR. */
 		uint32_t eyes = 0;
 		/** @brief Engine frame of the last frame NR applied; UINT32_MAX before the first. */
 		uint32_t lastAppliedFrame = UINT32_MAX;
@@ -46,12 +47,20 @@ struct NeuralRendering
 
 	NeuralRendering();
 	~NeuralRendering();
+	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
+	void InstallHooks();
 	/** @brief Schedules recreation on the rendering thread. */
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive. */
-	void Reset(bool enabled);
+	void Reset(bool enabled, bool regionOfInterest);
+	/**
+	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
+	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
+	 *        until NR is active, so it reads no engine state before the device exists.
+	 */
+	void UpdateRegionOfInterest();
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
@@ -71,6 +80,10 @@ struct NeuralRendering
 
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
+	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
+	Util::Region::StereoRegion GetRegionOfInterest() const;
+	/** @brief Cumulative NR counters since startup, safe from any thread. */
+	NR::Diagnostics::Counters GetDiagnosticCounters() const { return diagnostics.GetCounters(); }
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
 	void RequestRetry() { retryRequested = resetHistory = true; }
 	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame. */
@@ -91,6 +104,19 @@ private:
 	/** @brief Per-eye NGX result of the last applied frame; survives a rebuild. */
 	std::array<std::atomic<uint32_t>, 2> lastNgxResult{};
 	mutable std::mutex statusMutex;
+	/** @brief True while the region-of-interest toggle is on and NR is enabled; the hook's off switch. */
+	std::atomic_bool regionEnabled = false;
+	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
+	Util::Region::StereoRegion region;
+	/** @brief Holds the crop steady across jitter; advanced only on the main thread inside UpdateRegionOfInterest. */
+	Util::Region::RegionStabilizer regionStabilizer{ NR::ActorRegion::kStabilizerPolicy };
+	/**
+	 * @brief Actor the crop followed on the previous frame; candidates score against it for stickiness.
+	 *        Written and read only on the main thread inside UpdateRegionOfInterest, never by the
+	 *        rendering thread, so it needs no lock.
+	 */
+	RE::ActorHandle trackedActor;
+	mutable std::mutex regionMutex;
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
 	/** @brief Republishes the render size and eye count after the pass resources are recreated. */

@@ -446,6 +446,10 @@ namespace NR
 		};
 		const auto depthRegion = clampRegion(depth, guides.depth);
 		const auto motionRegion = clampRegion(motion, guides.motion);
+		// A zero-sized colorOutput evaluates the whole frame.
+		const auto outputRegion = clampRegion(color, guides.colorOutput.width && guides.colorOutput.height ?
+														 guides.colorOutput :
+														 GuideRegion{ 0, 0, width, height });
 		auto* parameters = eye.parameters.get();
 		ParameterWriter writer(parameters, state.floatSlot);
 		RuntimePath::Scope scope(state.compatibility);
@@ -500,12 +504,14 @@ namespace NR
 		writer.SetResource("DLSSNR.Depth", depth);
 		writer.SetResource("DLSSNR.MVec", motion);
 		writer.SetResource("DLSSNR.Output", output);
-		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
-			writer.SetUInt(key, 0u);
+		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.OutputSubrectBaseX" })
+			writer.SetUInt(key, outputRegion.baseX);
+		for (auto key : { "DLSSNR.ColorSubrectBaseY", "DLSSNR.OutputSubrectBaseY" })
+			writer.SetUInt(key, outputRegion.baseY);
 		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.OutputSubrectWidth" })
-			writer.SetUInt(key, width);
+			writer.SetUInt(key, outputRegion.width);
 		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
-			writer.SetUInt(key, height);
+			writer.SetUInt(key, outputRegion.height);
 		writer.SetUInt("DLSSNR.DepthSubrectBaseX", depthRegion.baseX);
 		writer.SetUInt("DLSSNR.DepthSubrectBaseY", depthRegion.baseY);
 		writer.SetUInt("DLSSNR.DepthSubrectWidth", depthRegion.width);

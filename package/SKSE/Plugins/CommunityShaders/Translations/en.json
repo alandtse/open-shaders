@@ -3045,6 +3045,8 @@
     "feature.upscaling.neural_rendering.intensity": "Intensity",
     "feature.upscaling.neural_rendering.local_structure": "Local Structure Strength",
     "feature.upscaling.neural_rendering.local_tone": "Local Tone Strength",
+    "feature.upscaling.neural_rendering.region_of_interest": "Limit to Tracked Actor",
+    "feature.upscaling.neural_rendering.region_of_interest_tooltip": "Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen.",
     "feature.upscaling.neural_rendering.reset_history": "Reset NR History",
     "feature.upscaling.neural_rendering.restore_defaults": "Restore NR Defaults",
     "feature.upscaling.neural_rendering.retry": "Retry NR",

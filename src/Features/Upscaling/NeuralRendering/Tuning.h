@@ -6,7 +6,7 @@
 
 namespace NR
 {
-	/** @brief Appearance controls for the full-resolution Feature 18 pass. */
+	/** @brief Appearance and evaluation-scope controls for the full-resolution Feature 18 pass. */
 	struct Tuning
 	{
 		static constexpr float kMinStrength = 0.0f, kMaxStrength = 2.0f;
@@ -18,6 +18,13 @@ namespace NR
 		float localStructureStrength = kDefaultStrength;
 		float skinStructureStrength = kAutomaticSkinStructure;
 		bool useAutoMask = true;
+		/**
+		 * @brief Restricts NR's evaluation to a crop around the most prominent visible actor.
+		 *        Off by default: it trades full-frame NR quality for GPU time, and the
+		 *        periphery falls back to pre-NR content. The published crop is always
+		 *        stabilised, so a candidate that jitters does not reset the history.
+		 */
+		bool regionOfInterest = false;
 
 		/** @brief Bounds user input to the reference runtime's tuning range. */
 		void Sanitize()

@@ -2,6 +2,7 @@
 
 #include "Tuning.h"
 #include "Utils/StringUtils.h"
+#include "Utils/Subrect.h"
 
 #include <Windows.h>
 #include <array>
@@ -96,10 +97,22 @@ namespace NR
 		uint32_t baseX = 0, baseY = 0, width = 0, height = 0;
 	};
 
-	/** @brief Independent guide regions and motion conversion to NR input pixels. */
+	/** @brief Maps a pixel crop from the shared region helper onto the runtime bridge's guide rect. */
+	inline GuideRegion ToGuideRegion(const Util::Subrect::PixelRegion& a_region)
+	{
+		return { a_region.x, a_region.y, a_region.w, a_region.h };
+	}
+
+	/**
+	 * @brief Independent guide regions and motion conversion to NR input pixels.
+	 *        Depth, motion and colorOutput must name the same region: cropping the colour alone would
+	 *        leave NGX scaling full-size guides into it.
+	 */
 	struct GuideParameters
 	{
 		GuideRegion depth, motion;
+		/** @brief Color and Output crop, which always match; zero-sized means the whole frame. */
+		GuideRegion colorOutput;
 		float motionScaleX = 1.0f, motionScaleY = 1.0f;
 	};
 

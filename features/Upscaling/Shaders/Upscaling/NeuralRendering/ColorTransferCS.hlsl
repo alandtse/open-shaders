@@ -25,6 +25,10 @@ cbuffer ColorTransfer : register(b0)
 	float ToneRadius;
 	float ToneHighStrength;
 	uint HasToneData;
+	uint RegionBaseX;
+	uint RegionBaseY;
+	uint RegionWidth;
+	uint RegionHeight;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -153,11 +157,45 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
+// NGX wrote nothing outside the subrect, so the weight is gated to 0 there and ramps inwards from
+// the edge; an edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
+static const float kRegionFeatherPixels = 8.0;
+
+float RegionWeight(int2 pixel)
+{
+	if (RegionWidth == 0)
+		return 1.0;
+	float2 position = float2(pixel) + 0.5;
+	float2 origin = float2(RegionBaseX, RegionBaseY);
+	float2 extent = float2(RegionWidth, RegionHeight);
+	if (any(position < origin) || any(position > origin + extent))
+		return 0.0;
+	float2 toMinEdge = position - origin;
+	float2 toMaxEdge = origin + extent - position;
+	float2 frame = float2(Width, Height);
+	float2 boundary = float2(
+		min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
+		min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
+	return saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels);
+}
+
+// Outside the crop NGX wrote nothing, so the input stands in for the neural sample there; weight 0
+// must return the input exactly, since lerp would propagate a NaN sample even at t = 0.
+float3 RegionStableNeuralSample(int2 pixel, float3 inputSample, float3 neuralSample)
+{
+	if (RegionWidth == 0)
+		return neuralSample;
+	const float weight = RegionWeight(pixel);
+	return weight <= 0.0 ? inputSample : lerp(inputSample, neuralSample, weight);
+}
+
 [numthreads(8, 8, 1)] void PrepareToneData(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
-	float3 input = ProxySrgbToLinear(NeuralInput[id.xy].rgb);
-	float3 output = ProxySrgbToLinear(NeuralOutput[id.xy].rgb);
+	float3 inputSample = NeuralInput[id.xy].rgb;
+	float3 outputSample = RegionStableNeuralSample(int2(id.xy), inputSample, NeuralOutput[id.xy].rgb);
+	float3 input = ProxySrgbToLinear(inputSample);
+	float3 output = ProxySrgbToLinear(outputSample);
 	float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);
 	float outputLuma = max(Color::RGBToLuminance(output, Luma), kLumaEpsilon);
 	float logInput = log2(inputLuma);
@@ -216,6 +254,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	uint2 sourcePixel = id.xy + uint2(EyeOffsetX, 0);
 	float4 original = Original[sourcePixel];
+	float3 inputSample = NeuralInput[id.xy].rgb;
 	float3 rawNeural = NeuralOutput[id.xy].rgb;
 	if (!all(isfinite(original))) {
 		Output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
@@ -224,7 +263,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	Output[id.xy] = original;
 	if (!all(isfinite(rawNeural)))
 		return;
-	float3 inputProxy = ProxyToLinear(NeuralInput[id.xy].rgb);
+	rawNeural = RegionStableNeuralSample(int2(id.xy), inputSample, rawNeural);
+	float3 inputProxy = ProxyToLinear(inputSample);
 	float3 neuralProxy = ProxyToLinear(rawNeural);
 	float exposure = ManualExposure;
 	if (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)

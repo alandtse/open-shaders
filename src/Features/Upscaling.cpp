@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -1345,6 +1345,8 @@ void Upscaling::PostPostLoad()
 	// Feature subclass so we drive its lifecycle from here).
 	foveatedRender.PostPostLoad();
 
+	neuralRendering.InstallHooks();
+
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
@@ -2602,6 +2604,21 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	const auto crop = neuralRendering.GetRegionOfInterest();
+	diagnostics["neuralRegionActive"] = crop.active;
+	json eyes = json::array();
+	for (const auto& region : crop.eye)
+		eyes.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralRegion"] = std::move(eyes);
+	const auto resources = neuralRendering.GetStatus();
+	diagnostics["neuralRenderSize"] = { { "width", resources.width }, { "height", resources.height }, { "eyes", resources.eyes } };
+	diagnostics["neuralFrames"] = resources.appliedFrames;
+	const auto counters = neuralRendering.GetDiagnosticCounters();
+	json resets = json::object();
+	for (size_t reason = 0; reason < NR::Diagnostics::kResetReasonNames.size(); ++reason)
+		resets[NR::Diagnostics::kResetReasonNames[reason]] = counters.resets[reason];
+	diagnostics["neuralResets"] = std::move(resets);
+	diagnostics["neuralResetDrainMs"] = counters.drainMs;
 	return diagnostics;
 }
 

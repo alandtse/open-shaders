@@ -60,6 +60,56 @@ instances; in flatrim only eye zero is evaluated. Color and depth/motion guides
 use the current render-eye dimensions. Changing dimensions, format, eye count,
 or explicitly recreating resources recreates the NR instances.
 
+### Tracked-actor crop
+
+**Limit to Tracked Actor** (`Upscaling.neuralRenderingTuning.regionOfInterest`,
+default off) restricts evaluation to a crop around the most prominent actor the
+camera can see and leaves the rest of the frame at pre-NR content. It is not an
+NGX parameter: it sets the Color/Output subrects and gates the composite mask in
+`ColorTransferCS.hlsl`, so the periphery never samples the undefined region
+outside the evaluated subrect.
+
+The main thread scores every loaded actor within `kMaxActorDistance` by its
+on-screen coverage, falling off with distance from the frame centre by a
+Gaussian (`kCentralitySigma`), and adds a sticky bonus (`kIncumbentScoreBonus`)
+to the actor the crop already follows, so two similarly sized actors do not
+alternate and reset NR's history. A candidate covering less than
+`kMinVisibleAreaFraction` of an eye is dropped, and a candidate no eye sees is
+not a candidate at all. The candidates are sorted by score and projected per eye
+in that order, so the line-of-sight rays only run on the best few; the winner's
+per-eye pixel crop goes through the stabiliser before publication. The crop
+maths, the stabiliser and the reset rules are shared in `Util::Region`
+(`src/Utils/Region.h`); this actor source's own values (tracking distance,
+minimum visible fraction, centre falloff, incumbent bonus, padding, stabiliser
+thresholds, reset policy and history tolerance) are named constants in
+`src/Features/Upscaling/NeuralRendering/ActorRegion.h`. A second region source,
+such as a gaze-driven one, adds a sibling namespace with its own
+values rather than a new mechanism. With the toggle off, or with no actor
+tracked, the crop is the whole frame and NR evaluates exactly as it does
+without it.
+
+The published crop is always stabilised, which is what keeps a crop that jitters
+by a grid step every frame from resetting NR's temporal history continuously.
+`Util::Region::RegionStabilizer` holds the crop for `kStabilizerPolicy.holdFrames`
+after the candidate goes inactive, keeps it unchanged while the candidate stays
+inside it, grows it only by union, and shrinks it only once a whole
+`kStabilizerPolicy.shrinkWindowFrames` window's envelope is at most
+`kStabilizerPolicy.shrinkAreaFraction` of the held area. A crop change larger
+than one alignment step, or an appearance or disappearance, adds `RegionChanged`
+to the frame's reset reasons; the camera, frame-gap and resource resets are
+unaffected.
+
+`openshaders.feature diagnostics` reports the crop and its cost:
+`neuralRegionActive`, `neuralRegion` (one `{x,y,width,height}` rect per eye, in
+the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralFrames`
+(frames NR has applied), `neuralResets` (a cumulative count per reset reason,
+keyed `request`, `first`, `gap`, `position`, `direction`, `projection`,
+`creation`, `region`) and `neuralResetDrainMs` (cumulative CPU time blocked in
+the history-reset drain). The counters are monotonic since NR started, so a
+caller differences two reads: a `region` count that keeps rising against a
+rising `neuralFrames` means the crop keeps moving, and a large
+`neuralResetDrainMs` per frame means those resets are costing real CPU time.
+
 ## Resource and temporal contract
 
 -   Color: a bounded display-referred proxy in an RGBA16 float carrier at

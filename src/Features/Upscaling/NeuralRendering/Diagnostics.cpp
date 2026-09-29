@@ -46,15 +46,6 @@ namespace NR
 			BitName{ NR::Diagnostics::VisualizeAutoMask, "visualizeAutoMask" },
 			BitName{ NR::Diagnostics::FeedCameraData, "feedCameraData" },
 		};
-		constexpr std::array<BitName, 7> kResetBitNames{
-			BitName{ NR::Diagnostics::Requested, "request" },
-			BitName{ NR::Diagnostics::FirstFrame, "first" },
-			BitName{ NR::Diagnostics::FrameGap, "gap" },
-			BitName{ NR::Diagnostics::CameraPosition, "position" },
-			BitName{ NR::Diagnostics::CameraDirection, "direction" },
-			BitName{ NR::Diagnostics::Projection, "projection" },
-			BitName{ NR::Diagnostics::FeatureCreated, "creation" },
-		};
 	}
 
 	void Diagnostics::DumpTexture(const char* stage, ID3D11Resource* resource, uint32_t frame)
@@ -189,6 +180,25 @@ namespace NR
 		return legend;
 	}
 
+	void Diagnostics::RecordFrame(uint32_t resetReasons, double drainMs)
+	{
+		for (size_t bit = 0; bit < resetCounts.size(); ++bit) {
+			if (resetReasons & (1u << bit))
+				resetCounts[bit].fetch_add(1, std::memory_order_relaxed);
+		}
+		if (drainMs > 0.0)
+			resetDrainMicros.fetch_add(static_cast<uint64_t>(drainMs * 1000.0), std::memory_order_relaxed);
+	}
+
+	Diagnostics::Counters Diagnostics::GetCounters() const
+	{
+		Counters counters;
+		for (size_t bit = 0; bit < resetCounts.size(); ++bit)
+			counters.resets[bit] = resetCounts[bit].load(std::memory_order_relaxed);
+		counters.drainMs = static_cast<double>(resetDrainMicros.load(std::memory_order_relaxed)) / 1000.0;
+		return counters;
+	}
+
 	Diagnostics::Frame& Diagnostics::BeginHook(uint32_t frame, uint32_t target)
 	{
 		if (current.number != frame) {
@@ -247,8 +257,8 @@ namespace NR
 			for (size_t i = 0; i < kOptionBitNames.size(); ++i)
 				traceFile << (i ? "," : "") << kOptionBitNames[i].bit << '=' << kOptionBitNames[i].name;
 			traceFile << ".\nReset bits: ";
-			for (size_t i = 0; i < kResetBitNames.size(); ++i)
-				traceFile << (i ? "," : "") << kResetBitNames[i].bit << '=' << kResetBitNames[i].name;
+			for (size_t i = 0; i < kResetReasonNames.size(); ++i)
+				traceFile << (i ? "," : "") << (1u << i) << '=' << kResetReasonNames[i];
 			traceFile << ".\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
