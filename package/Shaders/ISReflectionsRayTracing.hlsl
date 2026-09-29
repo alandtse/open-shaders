@@ -317,6 +317,7 @@ float4 GetReflectionColor(
 #	endif
 )
 {
+	float4 result = 0.0;
 	float3 prevRaySample = projPosition;
 	float3 raySample = projPosition;
 	uint hitEyeIndex = eyeIndex;
@@ -362,7 +363,7 @@ float4 GetReflectionColor(
 			Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
 
 			if (FrameBuffer::IsOutsideFrame(sampleUV))
-				return 0.0;
+				break;
 
 			iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
 
@@ -374,93 +375,92 @@ float4 GetReflectionColor(
 		}
 	}
 
-	if (!found)
-		return 0.0;
-
-	float3 binaryMinRaySample = prevRaySample;
-	float3 binaryMaxRaySample = raySample;
-	float3 binaryRaySample = raySample;
-	float depthThicknessFactor = 0.0;
+	if (found) {
+		float3 binaryMinRaySample = prevRaySample;
+		float3 binaryMaxRaySample = raySample;
+		float3 binaryRaySample = raySample;
+		float depthThicknessFactor = 0.0;
 
 #	if defined(VR)
-	[loop] for (int k = 0; k < binCount; k++)
-	{
+		[loop] for (int k = 0; k < binCount; k++)
+		{
 #	else
-	for (int k = 0; k < binCount; k++) {
+		for (int k = 0; k < binCount; k++) {
 #	endif
-		binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
+			binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
 
-		Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
-		iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
+			Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
+			iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
 
-		// Compute expected depth vs actual depth
-		depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
+			// Compute expected depth vs actual depth
+			depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
 
-		if (iterationDepth < binaryRaySample.z)
-			binaryMaxRaySample = binaryRaySample;
-		else
-			binaryMinRaySample = binaryRaySample;
-	}
+			if (iterationDepth < binaryRaySample.z)
+				binaryMaxRaySample = binaryRaySample;
+			else
+				binaryMinRaySample = binaryRaySample;
+		}
 
-	// Fade based on ray length
-	float ssrMarchingRadiusFadeFactor = 1.0 - saturate(length(binaryRaySample - projPosition) / rayLength);
+		// Fade based on ray length
+		float ssrMarchingRadiusFadeFactor = 1.0 - saturate(length(binaryRaySample - projPosition) / rayLength);
 
-	float2 uvResultScreenCenterOffset = binaryRaySample.xy - 0.5;
+		float2 uvResultScreenCenterOffset = binaryRaySample.xy - 0.5;
 
 #	ifdef VR
-	float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
+		float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
 
-	// Make VR fades consistent by taking the closer of the two eyes
-	// Based on concepts from https://cuteloong.github.io/publications/scssr24/
-	float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex).xy - 0.5;
-	centerDistance = min(centerDistance, abs(otherEyeUvResultScreenCenterOffset * 2.0));
+		// Make VR fades consistent by taking the closer of the two eyes
+		// Based on concepts from https://cuteloong.github.io/publications/scssr24/
+		float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex).xy - 0.5;
+		centerDistance = min(centerDistance, abs(otherEyeUvResultScreenCenterOffset * 2.0));
 #	else
-	float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
+		float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
 #	endif
 
-	// Fade out around screen edges
-	float centerDistanceFadeFactorX = smoothstep(0.0, 0.1, saturate(1.0 - centerDistance.x));
-	float centerDistanceFadeFactorY = smoothstep(0.0, 0.5, saturate(1.0 - centerDistance.y));
+		// Fade out around screen edges
+		float centerDistanceFadeFactorX = smoothstep(0.0, 0.1, saturate(1.0 - centerDistance.x));
+		float centerDistanceFadeFactorY = smoothstep(0.0, 0.5, saturate(1.0 - centerDistance.y));
 
-	float fadeFactor = depthThicknessFactor * ssrMarchingRadiusFadeFactor * centerDistanceFadeFactorX * centerDistanceFadeFactorY;
+		float fadeFactor = depthThicknessFactor * ssrMarchingRadiusFadeFactor * centerDistanceFadeFactorX * centerDistanceFadeFactorY;
 
-	if (fadeFactor > 0.0) {
-		// Resolve final UV in the eye that owns the hit
-		float2 finalSampleUV;
-		uint finalEyeIndex;
-		Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
+		if (fadeFactor > 0.0) {
+			// Resolve final UV in the eye that owns the hit
+			float2 finalSampleUV;
+			uint finalEyeIndex;
+			Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
 
-		uint2 colorTextureDimensions = uint2(1, 1);
+			uint2 colorTextureDimensions = uint2(1, 1);
 #	if defined(VR)
-		ColorTex.GetDimensions(colorTextureDimensions.x, colorTextureDimensions.y);
+			ColorTex.GetDimensions(colorTextureDimensions.x, colorTextureDimensions.y);
 #	endif
-		float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
-		float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
-		if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
-			color = Color::SceneGammaToLinear(color);
+			float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
+			float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
+			if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+				color = Color::SceneGammaToLinear(color);
 
-		// Final sample to world-space
-		float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
-		positionWS = mul(FrameBuffer::CameraViewProjInverse[finalEyeIndex], positionWS);
-		positionWS.xyz = positionWS.xyz / positionWS.w;
-		positionWS.w = 1.0;
+			// Final sample to world-space
+			float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
+			positionWS = mul(FrameBuffer::CameraViewProjInverse[finalEyeIndex], positionWS);
+			positionWS.xyz = positionWS.xyz / positionWS.w;
+			positionWS.w = 1.0;
 
-		// Compute camera motion vector
-		float2 cameraMotionVector = MotionBlur::GetSSMotionVector(positionWS, positionWS, finalEyeIndex);
+			// Compute camera motion vector
+			float2 cameraMotionVector = MotionBlur::GetSSMotionVector(positionWS, positionWS, finalEyeIndex);
 
-		// Reproject alpha from previous frame
-		float2 reprojectedRaySample = finalSampleUV + cameraMotionVector;
-		float4 alpha = 0.0;
+			// Reproject alpha from previous frame
+			float2 reprojectedRaySample = finalSampleUV + cameraMotionVector;
+			float4 alpha = 0.0;
 
-		// Check that the reprojected data is within the frame
-		if (!FrameBuffer::IsOutsideFrame(reprojectedRaySample.xy))
-			alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
+			// Check that the reprojected data is within the frame
+			if (!FrameBuffer::IsOutsideFrame(reprojectedRaySample.xy))
+				alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
 
-		float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
-		return float4(reflectionColor, fadeFactor * fovWeight);
+			float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
+			result = float4(reflectionColor, fadeFactor * fovWeight);
+		}
 	}
 
-	return 0.0;
+	return result;
 }
 
 PS_OUTPUT main(PS_INPUT input)
