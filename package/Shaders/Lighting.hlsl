@@ -74,9 +74,11 @@ struct VS_OUTPUT
 	float3 InputPosition: TEXCOORD4;
 #endif
 
+#if defined(SKINNED) || !defined(MODELSPACENORMALS)
 	float3 TBN0: TEXCOORD1;
 	float3 TBN1: TEXCOORD2;
 	float3 TBN2: TEXCOORD3;
+#endif  // defined(SKINNED) || !defined(MODELSPACENORMALS)
 #if defined(EYE)
 	float3 EyeNormal: TEXCOORD6;
 #elif defined(LANDSCAPE)
@@ -370,11 +372,8 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TBN0.xyz = worldTbnTr[0];
 	vsout.TBN1.xyz = worldTbnTr[1];
 	vsout.TBN2.xyz = worldTbnTr[2];
-#	else
-	vsout.TBN0.xyz = float3(1.0, 0.0, 0.0);
-	vsout.TBN1.xyz = float3(0.0, 1.0, 0.0);
-	vsout.TBN2.xyz = float3(0.0, 0.0, 1.0);
 #	endif
+#	if defined(SKINNED) || !defined(MODELSPACENORMALS)
 	if (treeBendEnabled) {
 		float3x3 bentTbn = mul(treeBendNormalTransform,
 			float3x3(vsout.TBN0.xyz, vsout.TBN1.xyz, vsout.TBN2.xyz));
@@ -382,6 +381,7 @@ VS_OUTPUT main(VS_INPUT input)
 		vsout.TBN1.xyz = bentTbn[1];
 		vsout.TBN2.xyz = bentTbn[2];
 	}
+#	endif
 
 #	if defined(LANDSCAPE)
 	vsout.LandBlendWeights1 = input.LandBlendWeights1;
@@ -1790,8 +1790,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(MODELSPACENORMALS) && !defined(SKINNED)
 	float3 worldNormal = normal.xyz;
-	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0)
-		worldNormal = normalize(mul(float3x3(input.TBN0, input.TBN1, input.TBN2), worldNormal));
 	float3x3 tbnTr = ReconstructTBN(input.WorldPosition.xyz, worldNormal, screenUV);
 #	else
 	float3 worldNormal = normalize(mul(tbn, normal.xyz));
