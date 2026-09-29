@@ -80,7 +80,6 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
     world camera is published, so its viewport is mirrored); `ClearHMDMaskCS`, `bend_sss_gpu.hlsli`
     and SSGI's `prefilterDepths.cs.hlsl` all test that value. The null HMD driver has no
     hidden-area mesh, so confirm on a real headset.
--   Inherited from the flat original: `CanonicalViewport` normalizes a viewport with a non-zero
-    `MinDepth` before mirroring it; `IsReverseDepthView` caches its verdict per DSV pointer until the
-    next reallocation; and if reallocation fails, shaders still compile with `REVERSE_Z` while the
-    targets stay standard.
+-   Inherited from the flat original: `IsReverseDepthView` caches its verdict per DSV pointer until
+    the next reallocation, and if reallocation fails, shaders still compile with `REVERSE_Z` while
+    the targets stay standard.

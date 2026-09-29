@@ -115,16 +115,6 @@ namespace
 		return g_reverseTargetBound && g_projectionReversed;
 	}
 
-	D3D11_VIEWPORT CanonicalViewport(const D3D11_VIEWPORT& a_viewport)
-	{
-		D3D11_VIEWPORT canonical = a_viewport;
-		if (a_viewport.MinDepth > 0.0f && a_viewport.MinDepth != a_viewport.MaxDepth) {
-			canonical.MinDepth = 0.0f;
-			canonical.MaxDepth = a_viewport.MaxDepth >= 1.0f ? 1.0f - a_viewport.MinDepth : a_viewport.MaxDepth;
-		}
-		return canonical;
-	}
-
 	D3D11_VIEWPORT MirrorViewportDepth(const D3D11_VIEWPORT& a_viewport)
 	{
 		D3D11_VIEWPORT mirrored = a_viewport;
@@ -844,7 +834,7 @@ namespace
 			D3D11_VIEWPORT mapped[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE];
 			const bool flip = ShouldFlip();
 			for (UINT i = 0; i < NumViewports; ++i) {
-				requested[i] = CanonicalViewport(pViewports[i]);
+				requested[i] = pViewports[i];
 				mapped[i] = flip ? MirrorViewportDepth(requested[i]) : requested[i];
 			}
 			std::memcpy(g_requestedViewports, requested, sizeof(D3D11_VIEWPORT) * NumViewports);
@@ -977,8 +967,8 @@ namespace
 			if (This != globals::d3d::context || !pNumViewports || !pViewports)
 				return;
 			const UINT count = std::min<UINT>(*pNumViewports, D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE);
-			for (UINT i = 0; i < count; ++i)
-				pViewports[i] = CanonicalViewport(pViewports[i]);
+			if (count == g_requestedViewportCount && std::memcmp(pViewports, g_mappedViewports, sizeof(D3D11_VIEWPORT) * count) == 0)
+				std::memcpy(pViewports, g_requestedViewports, sizeof(D3D11_VIEWPORT) * count);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
