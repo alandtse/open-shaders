@@ -97,6 +97,16 @@ side whatever the actor's shape, so a standing humanoid got a box as wide as it
 is tall. An unusable authored box (a non-finite component, or an inverted axis)
 falls back to the sphere-cube.
 
+That box is the rest pose, so a swung limb or a ragdoll leaves it. For the actors
+that reach the crop (not for the per-frame ranking of every actor) the bound also
+includes the box around the skeleton's joint positions, grown by `kJointMargin` for
+limb thickness, so the crop follows the pose. A dead or ragdolled actor keeps an upright
+root while its bones lie flat, so its bound is the joint box alone. Camera nodes and any node further than
+the body's own reach from its rest-pose box are ignored, and the walk visits at most
+512 nodes. `Util::GetActorBoundPoints` in `src/Utils/ActorUtils.h` builds the points
+and `Util::IsActorVisibleFromEye` does the line-of-sight test, so the engine access
+lives in one utility and the NR code only projects points.
+
 **Show Region Overlay** (`Upscaling.neuralRenderingTuning.regionOverlay`,
 default off) draws the crop for debugging: a green outline in the game frame,
 through the composite kernel of `ColorTransferCS.hlsl`, and the same per-eye

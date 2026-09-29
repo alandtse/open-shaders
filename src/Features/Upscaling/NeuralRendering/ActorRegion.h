@@ -32,6 +32,12 @@ namespace NR::ActorRegion
 	/** @brief Largest share of an eye a group crop may cover; a bigger union would save NR little. */
 	inline constexpr float kMaxGroupAreaFraction = 0.5f;
 
+	/**
+	 * @brief Distance, in world units, the box around a tracked actor's skeleton joints grows by.
+	 *        Joints are points, so this stands in for limb thickness and the head above its joint.
+	 */
+	inline constexpr float kJointMargin = 14.0f;
+
 	/** @brief Bounds on the group crop area a calibrated cost knee may set. */
 	inline constexpr float kMinCalibratedGroupAreaFraction = 0.1f, kMaxCalibratedGroupAreaFraction = 0.9f;
 

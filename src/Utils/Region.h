@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace Util::Region
 {
@@ -57,12 +58,12 @@ namespace Util::Region
 	}
 
 	/**
-	 * @brief Screen bounds of eight world-space corners, clamped to the eye's view.
-	 * @return kBehindEye when some corners are behind the eye plane and some in front: a clipped box would
-	 *         leave part of the target outside the crop. kOffscreen when every corner is behind it.
+	 * @brief Screen bounds of world-space points such as a box's corners, clamped to the eye's view.
+	 * @return kBehindEye when some points are behind the eye plane and some in front: a clipped box would
+	 *         leave part of the target outside the crop. kOffscreen when every point is behind it, or none given.
 	 */
 	inline ProjectionResult ProjectBounds(const DirectX::SimpleMath::Matrix& a_viewProj,
-		const std::array<float3, 8>& a_corners, ScreenBounds& a_out)
+		std::span<const float3> a_corners, ScreenBounds& a_out)
 	{
 		ScreenBounds bounds{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
 			std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };

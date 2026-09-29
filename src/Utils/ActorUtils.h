@@ -2,6 +2,7 @@
 
 #pragma once
 #include "RE/Skyrim.h"
+#include "Utils/BoundPoints.h"
 #include <functional>
 #include <string>
 #include <vector>
@@ -51,6 +52,26 @@ namespace Util
 	 * @return True when a supported shape was extracted.
 	 */
 	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule);
+
+	/**
+	 * @brief World-space points that bound an actor's current pose.
+	 *
+	 * The corners of the actor's authored local box carried by its root transform, or of its root
+	 * bounding sphere as a cube when that box is unusable. With a_includeSkeleton the corners of the
+	 * box around its skeleton joints, grown by a_jointMargin, are added too, so a swung limb outside
+	 * the rest-pose box stays covered. A dead or ragdolled actor keeps an upright root while its
+	 * bones lie flat, so its bound is the joint box alone. The joints cost a scenegraph walk, so
+	 * callers that only rank many actors should leave it off.
+	 * @param a_jointMargin Distance in world units the joint box grows by, standing in for limb thickness.
+	 * @return An empty set when the actor has no loaded 3D or no usable bound.
+	 */
+	[[nodiscard]] BoundPoints GetActorBoundPoints(RE::Actor& a_actor, bool a_includeSkeleton, float a_jointMargin = 0.0f);
+
+	/**
+	 * @brief True when a_eyePosition has an unobstructed line to any of the actor's eye, head, torso or feet.
+	 *        The player's own collision is ignored, since a first-person ray starts inside it.
+	 */
+	[[nodiscard]] bool IsActorVisibleFromEye(RE::Actor& a_actor, const RE::NiPoint3& a_eyePosition);
 
 	/**
 	 * @brief Visits actors currently resolvable from the player and high-process actor list.

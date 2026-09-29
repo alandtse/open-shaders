@@ -44,119 +44,17 @@ namespace
 	};
 
 	/**
-	 * @brief Ray hit filter for the crop's visibility test.
-	 *        A first-person ray leaves the camera inside the player's own collision, so the player's
-	 *        hit has to be dropped or every actor would read as occluded; anything else is an occluder.
-	 */
-	class OccluderRayCollector : public RE::hkpClosestRayHitCollector
-	{
-	public:
-		void AddRayHit(const RE::hkpCdBody& a_body, const RE::hkpShapeRayCastCollectorOutput& a_hitInfo) override
-		{
-			const RE::hkpCdBody* body = std::addressof(a_body);
-			for (const auto* parent = body->parent; parent; parent = parent->parent)
-				body = parent;
-			if (!body)
-				return;
-			if (RE::TESHavokUtilities::FindCollidableRef(*static_cast<const RE::hkpCollidable*>(body)) == globals::game::player)
-				return;
-			RE::hkpClosestRayHitCollector::AddRayHit(a_body, a_hitInfo);
-		}
-	};
-
-	/**
-	 * @brief World-space corners of an engine-computed bound, expressed relative to the eye.
+	 * @brief Projects an actor's world-space bound points into one eye's screen bounds.
 	 *        The view-projection matrix takes camera-relative input, and the origin is per eye.
 	 */
-	std::array<float3, 8> BoundCorners(const RE::NiBound& a_bound, const RE::NiPoint3& a_origin)
+	Util::Region::ProjectionResult ProjectActorEyeBounds(const Util::BoundPoints& a_worldPoints, uint32_t a_eye, Util::Region::ScreenBounds& a_out)
 	{
-		const float3 center{ a_bound.center.x - a_origin.x, a_bound.center.y - a_origin.y,
-			a_bound.center.z - a_origin.z };
-		const float radius = a_bound.radius;
-		std::array<float3, 8> corners{};
-		size_t index = 0;
-		for (const float x : { -1.0f, 1.0f })
-			for (const float y : { -1.0f, 1.0f })
-				for (const float z : { -1.0f, 1.0f })
-					corners[index++] = center + float3{ x * radius, y * radius, z * radius };
-		return corners;
-	}
-
-	/** @brief True when the given eye has an unobstructed line to any of the actor's body points. */
-	bool IsActorVisibleFromCamera(RE::Actor* a_actor, uint32_t a_eye)
-	{
-		auto* cell = a_actor->GetParentCell();
-		auto* world = cell ? cell->GetbhkWorld() : nullptr;
-		if (!world)
-			return false;
-		const float scale = RE::bhkWorld::GetWorldScale();
-		RE::bhkPickData pickData{};
-		pickData.rayInput.from = Util::GetEyePosition(static_cast<int>(a_eye)) * scale;
-		pickData.rayInput.enableShapeCollectionFilter = false;
-		pickData.rayInput.filterInfo.SetCollisionLayer(RE::COL_LAYER::kLOS);
-		OccluderRayCollector collector;
-		pickData.closestRayHitCollector = &collector;
-		for (const auto location : { RE::ACTOR_LOS_LOCATION::kEye, RE::ACTOR_LOS_LOCATION::kHead,
-				 RE::ACTOR_LOS_LOCATION::kTorso, RE::ACTOR_LOS_LOCATION::kFeet }) {
-			collector.Reset();
-			pickData.rayOutput.Reset();
-			pickData.rayInput.to = a_actor->CalculateLOSLocation(location) * scale;
-			if (!world->PickObject(pickData))
-				return true;
-			const auto* collidable = pickData.rayOutput.rootCollidable;
-			if (!collidable || RE::TESHavokUtilities::FindCollidableRef(*collidable) == a_actor)
-				return true;
-		}
-		return false;
-	}
-
-	/** @brief True when the authored local-space box is usable: finite and open on every axis. */
-	bool HasAuthoredBox(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max)
-	{
-		const auto finite = [](const RE::NiPoint3& a_point) {
-			return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z);
-		};
-		return finite(a_min) && finite(a_max) &&
-		       a_max.x > a_min.x && a_max.y > a_min.y && a_max.z > a_min.z;
-	}
-
-	/**
-	 * @brief World-space corners of an actor's authored local-space box, expressed relative to the eye.
-	 *        The box is carried by the actor's own root transform so its rotation and scale follow the
-	 *        engine's convention, then made camera-relative exactly as BoundCorners does.
-	 */
-	std::array<float3, 8> AuthoredBoundCorners(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max,
-		const RE::NiTransform& a_world, const RE::NiPoint3& a_origin)
-	{
-		std::array<float3, 8> corners{};
-		size_t index = 0;
-		for (const float x : { a_min.x, a_max.x })
-			for (const float y : { a_min.y, a_max.y })
-				for (const float z : { a_min.z, a_max.z }) {
-					const auto world = a_world * RE::NiPoint3{ x, y, z };
-					corners[index++] = float3{ world.x - a_origin.x, world.y - a_origin.y, world.z - a_origin.z };
-				}
-		return corners;
-	}
-
-	/** @brief Projects an actor's bound into one eye's screen bounds; kOffscreen when it has none. */
-	Util::Region::ProjectionResult ProjectActorEyeBounds(RE::Actor* a_actor, uint32_t a_eye, Util::Region::ScreenBounds& a_out)
-	{
-		auto* root = a_actor->Get3D(false);
-		if (!root)
-			return Util::Region::ProjectionResult::kOffscreen;
 		const auto origin = Util::GetEyePosition(static_cast<int>(a_eye));
-		const auto authoredMin = a_actor->GetBoundMin();
-		const auto authoredMax = a_actor->GetBoundMax();
-		std::array<float3, 8> corners;
-		if (HasAuthoredBox(authoredMin, authoredMax)) {
-			corners = AuthoredBoundCorners(authoredMin, authoredMax, root->world, origin);
-		} else if (root->worldBound.radius > 0.0f) {
-			corners = BoundCorners(root->worldBound, origin);
-		} else {
-			return Util::Region::ProjectionResult::kOffscreen;
-		}
-		return Util::Region::ProjectBounds(Util::GetCameraData(static_cast<int>(a_eye)).viewProjMat, corners, a_out);
+		const float3 eyeOrigin{ origin.x, origin.y, origin.z };
+		Util::BoundPoints relative;
+		for (const auto& point : a_worldPoints.View())
+			relative.Add(point - eyeOrigin);
+		return Util::Region::ProjectBounds(Util::GetCameraData(static_cast<int>(a_eye)).viewProjMat, relative.View(), a_out);
 	}
 
 	/**
@@ -166,10 +64,11 @@ namespace
 	 */
 	float ActorProminenceScore(RE::Actor* a_actor, uint32_t a_eyes, bool a_incumbent)
 	{
+		const auto worldPoints = Util::GetActorBoundPoints(*a_actor, false);
 		float best = 0.0f;
 		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
 			Util::Region::ScreenBounds bounds;
-			const auto projection = ProjectActorEyeBounds(a_actor, eye, bounds);
+			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
 			if (projection == Util::Region::ProjectionResult::kOffscreen)
 				continue;
 			// An actor crossing the eye plane fills the view, so it outranks any bounded candidate.
@@ -197,11 +96,13 @@ namespace
 		a_region.eye.fill(frame);
 		a_actorBox.eye.fill(Util::Region::kEmptyRegion);
 		const auto& padding = a_fit == NR::Tuning::kRegionFitTight ? NR::ActorRegion::kTightPadding : NR::ActorRegion::kPadding;
+		const auto worldPoints = Util::GetActorBoundPoints(*a_actor, true, NR::ActorRegion::kJointMargin);
 		bool tracked = false;
 		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
 			Util::Region::ScreenBounds bounds;
-			const auto projection = ProjectActorEyeBounds(a_actor, eye, bounds);
-			if (projection == Util::Region::ProjectionResult::kOffscreen || !IsActorVisibleFromCamera(a_actor, eye))
+			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
+			if (projection == Util::Region::ProjectionResult::kOffscreen ||
+				!Util::IsActorVisibleFromEye(*a_actor, Util::GetEyePosition(static_cast<int>(eye))))
 				continue;
 			tracked = true;
 			if (projection == Util::Region::ProjectionResult::kBehindEye) {
