@@ -77,6 +77,7 @@ add_executable(cpp_tests
 	test_windfield.cpp
 	test_sehguard.cpp
 	test_nr_decisions.cpp
+	test_region.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
