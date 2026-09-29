@@ -103,46 +103,76 @@ void Skylighting::DrawSettings()
 {
 	if (ImGui::Checkbox(T(TKEY("enabled"), "Enable Skylighting"), &settings.EnableSkylighting))
 		queuedResetSkylighting = true;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("enabled_tooltip"), "Enables skylighting captures and probe updates. Turning it back on rebuilds the lighting history."));
 
-	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("diffuse_min_visibility_tooltip"), "Sets the minimum diffuse skylight visibility. Lower values darken surfaces sheltered from the sky."));
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("specular_min_visibility_tooltip"), "Sets the minimum sky contribution to reflections. Lower values darken reflections in sheltered areas."));
 	ImGui::SliderFloat(T(TKEY("probe_field_width"), "Probe Field Width (Cells)"), &settings.ProbeArrayWorldSizeCells, Settings::kMinProbeFieldSizeCells, Settings::kMaxProbeFieldSizeCells, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("probe_field_width_desc"), "Extends skylighting coverage without adding probes. Larger fields reduce spatial detail and rebuild the probe history."));
+		ImGui::Text("%s", T(TKEY("probe_field_width_desc"), "Wider fields cover more ground but reduce spatial detail and increase capture cost. Changes rebuild probe history."));
 
-	const char* gridNames[] = {
-		T(TKEY("probe_grid_low"), "128 x 128 x 64"),
-		T(TKEY("probe_grid_medium"), "192 x 192 x 96"),
-		T(TKEY("probe_grid_high"), "256 x 256 x 128")
-	};
-	int selectedGrid = static_cast<int>(settings.ProbeGridQuality);
-	if (ImGui::Combo(T(TKEY("probe_grid"), "Probe Grid"), &selectedGrid, gridNames, 3))
-		settings.ProbeGridQuality = static_cast<uint>(selectedGrid);
-
-	if (ImGui::Checkbox(T(TKEY("incremental_updates"), "Incremental Probe Updates"), &settings.EnableIncrementalProbeUpdates))
-		ResetSkylighting();
-	int sliceCount = static_cast<int>(settings.StableSliceCount);
-	if (ImGui::SliderInt(T(TKEY("slice_count"), "Probe Slices per Update"), &sliceCount, 1, 128, "%d", ImGuiSliderFlags_AlwaysClamp)) {
-		settings.StableSliceCount = static_cast<uint>(sliceCount);
-		ResetSkylighting();
-	}
+	const bool performanceOptionsOpen = ImGui::TreeNodeEx(T(TKEY("performance_options"), "Performance Options"), ImGuiTreeNodeFlags_None);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("incremental_tooltip"), "Updates a smaller depth range while stationary. Lower counts reduce update work but take longer to refresh the whole field. Movement and rebuilds update the full grid."));
+		ImGui::Text("%s", T(TKEY("performance_options_tooltip"), "Start with update frequency, then slice count and grid size to trade lighting responsiveness and detail for speed."));
+	if (performanceOptionsOpen) {
+		if (ImGui::Checkbox(T(TKEY("reduced_frequency"), "Reduced Update Frequency"), &settings.EnableReducedUpdateFrequency))
+			ResetSkylighting();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("reduced_frequency_tooltip"), "Allows longer capture and probe intervals while stationary. Increase an interval above 1 for savings; movement and rebuilds bypass the delays."));
+		{
+			auto cadenceGuard = Util::DisableGuard(!settings.EnableReducedUpdateFrequency);
+			int captureInterval = static_cast<int>(settings.OcclusionUpdateInterval);
+			int probeInterval = static_cast<int>(settings.ProbeUpdateInterval);
+			bool cadenceChanged = ImGui::SliderInt(T(TKEY("capture_interval"), "Occlusion Capture Interval"), &captureInterval, 1, 32, "%d frames", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("capture_interval_tooltip"), "Minimum frames between captures while stationary. Higher values reduce work but slow lighting refresh. Requires Reduced Update Frequency."));
+			{
+				auto probeIntervalGuard = Util::DisableGuard(settings.EnableIncrementalProbeUpdates);
+				cadenceChanged |= ImGui::SliderInt(T(TKEY("probe_interval"), "Full-grid Probe Interval"), &probeInterval, captureInterval, 32, "%d frames", ImGuiSliderFlags_AlwaysClamp);
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T(TKEY("probe_interval_tooltip"), "Minimum frames between full-grid updates; fresh captures can delay updates further. Requires Reduced Update Frequency with Incremental Probe Updates off."));
+			}
+			if (cadenceChanged) {
+				settings.OcclusionUpdateInterval = static_cast<uint>(captureInterval);
+				settings.ProbeUpdateInterval = static_cast<uint>(std::max(captureInterval, probeInterval));
+				ResetSkylighting();
+			}
+		}
 
-	if (ImGui::Checkbox(T(TKEY("reduced_frequency"), "Reduced Update Frequency"), &settings.EnableReducedUpdateFrequency))
-		ResetSkylighting();
-	int captureInterval = static_cast<int>(settings.OcclusionUpdateInterval);
-	int probeInterval = static_cast<int>(settings.ProbeUpdateInterval);
-	bool cadenceChanged = ImGui::SliderInt(T(TKEY("capture_interval"), "Occlusion Capture Interval"), &captureInterval, 1, 32, "%d frames", ImGuiSliderFlags_AlwaysClamp);
-	cadenceChanged |= ImGui::SliderInt(T(TKEY("probe_interval"), "Full-grid Probe Interval"), &probeInterval, captureInterval, 32, "%d frames", ImGuiSliderFlags_AlwaysClamp);
-	if (cadenceChanged) {
-		settings.OcclusionUpdateInterval = static_cast<uint>(captureInterval);
-		settings.ProbeUpdateInterval = static_cast<uint>(std::max(captureInterval, probeInterval));
-		ResetSkylighting();
+		if (ImGui::Checkbox(T(TKEY("incremental_updates"), "Incremental Probe Updates"), &settings.EnableIncrementalProbeUpdates))
+			ResetSkylighting();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("incremental_updates_tooltip"), "Updates part of the probe grid per capture while stationary. Movement and rebuilds update the full grid."));
+		{
+			auto sliceGuard = Util::DisableGuard(!settings.EnableIncrementalProbeUpdates);
+			const auto maxSliceCount = GetProbeArrayDims(settings.ProbeGridQuality)[2];
+			int sliceCount = static_cast<int>(std::clamp(settings.StableSliceCount, 1u, maxSliceCount));
+			if (ImGui::SliderInt(T(TKEY("slice_count"), "Probe Slices per Update"), &sliceCount, 1, static_cast<int>(maxSliceCount), "%d", ImGuiSliderFlags_AlwaysClamp)) {
+				settings.StableSliceCount = static_cast<uint>(sliceCount);
+				ResetSkylighting();
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("incremental_tooltip"), "Lower counts reduce update work but slow field refresh. Capped at the selected grid depth; requires Incremental Probe Updates."));
+		}
+
+		const char* gridNames[] = {
+			T(TKEY("probe_grid_low"), "128 x 128 x 64"),
+			T(TKEY("probe_grid_medium"), "192 x 192 x 96"),
+			T(TKEY("probe_grid_high"), "256 x 256 x 128")
+		};
+		int selectedGrid = static_cast<int>(settings.ProbeGridQuality);
+		if (ImGui::Combo(T(TKEY("probe_grid"), "Probe Grid"), &selectedGrid, gridNames, 3))
+			settings.ProbeGridQuality = static_cast<uint>(selectedGrid);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("probe_grid_tooltip"), "Smaller grids reduce update work and memory use but lower spatial detail. Changing the grid rebuilds probe history."));
+
+		ImGui::TreePop();
 	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("cadence_tooltip"), "Intervals are minimum frame delays while stationary. Probe updates consume fresh captures; incremental updates consume every captured quadrant. Movement and rebuilds bypass the delays."));
 
 	ImGui::Separator();
 
@@ -150,11 +180,11 @@ void Skylighting::DrawSettings()
 		ResetSkylighting();
 
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("rebuild_tooltip"), "Changes below require rebuilding, a loading screen, or moving away from the current location to apply."));
+		ImGui::Text("%s", T(TKEY("rebuild_tooltip"), "Clears and rebuilds skylighting history. Use after changing Max Zenith Angle to apply it throughout the field."));
 
 	ImGui::SliderAngle(T(TKEY("max_zenith"), "Max Zenith Angle"), &settings.MaxZenith, 0, 90);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T(TKEY("max_zenith_tooltip"), "Smaller angles creates more focused top-down shadow."));
+		ImGui::Text("%s", T(TKEY("max_zenith_tooltip"), "Smaller angles focus shadows more directly overhead. Use Rebuild Skylighting after changing this value."));
 }
 
 void Skylighting::SetupResources()
