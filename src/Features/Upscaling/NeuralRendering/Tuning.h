@@ -25,6 +25,11 @@ namespace NR
 		 *        stabilised, so a candidate that jitters does not reset the history.
 		 */
 		bool regionOfInterest = false;
+		/**
+		 * @brief Draws the evaluated crop as an outline over the frame and a preview in the settings
+		 *        panel. Off by default; a debug view only, and it draws nothing unless a crop is active.
+		 */
+		bool regionOverlay = false;
 
 		/** @brief Bounds user input to the reference runtime's tuning range. */
 		void Sanitize()

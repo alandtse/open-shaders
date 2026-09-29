@@ -88,6 +88,22 @@ values rather than a new mechanism. With the toggle off, or with no actor
 tracked, the crop is the whole frame and NR evaluates exactly as it does
 without it.
 
+**Show Region Overlay** (`Upscaling.neuralRenderingTuning.regionOverlay`,
+default off) draws the crop for debugging: a green outline in the game frame,
+through the composite kernel of `ColorTransferCS.hlsl`, and the same per-eye
+rectangles over an NR-resolution preview at the bottom of the Neural Rendering
+tab. It is meaningful only with **Limit to Tracked Actor** on; it draws nothing
+while no actor is tracked, and an outline along the frame edge when a tracked
+actor's crop fills the whole frame. The per-eye crop is also readable without the
+overlay from `openshaders.feature diagnostics` (`neuralRegionActive` and
+`neuralRegion`), which reports each eye's rect in pixels.
+
+Both drawings come from reusable helpers: `RegionOverlay::Apply` in
+`package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a
+pass's own colour, and `Util::RegionOverlay::Draw` (`src/Utils/RegionOverlay.h`)
+outlines pixel rects over an already-drawn ImGui image, so another feature can
+show a rectangular region with neither a new HLSL helper nor a new rect type.
+
 The published crop is always stabilised, which is what keeps a crop that jitters
 by a grid step every frame from resetting NR's temporal history continuously.
 `Util::Region::RegionStabilizer` holds the crop for `kStabilizerPolicy.holdFrames`

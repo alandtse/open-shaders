@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
 #include "Upscaling/NeuralRendering/ModeValues.hlsli"
@@ -29,6 +30,9 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionBaseY;
 	uint RegionWidth;
 	uint RegionHeight;
+	uint RegionOverlayEnabled;
+	float RegionOutlineThickness;
+	float2 RegionPadding;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -45,6 +49,8 @@ static const float kPeakEpsilon = 1e-6;
 static const float kLumaEpsilon = 1e-5;
 static const float kWeightEpsilon = 1e-5;
 static const float kSpatialEpsilon = 1e-4;
+static const float3 kRegionOutlineColor = float3(0.0, 1.0, 0.0);
+static const float kRegionOutsideDim = 0.35;
 
 float3 ProxyLinearToSrgb(float3 value)
 {
@@ -163,30 +169,36 @@ static const float kRegionFeatherPixels = 8.0;
 
 float RegionWeight(int2 pixel)
 {
-	if (RegionWidth == 0)
-		return 1.0;
-	float2 position = float2(pixel) + 0.5;
-	float2 origin = float2(RegionBaseX, RegionBaseY);
-	float2 extent = float2(RegionWidth, RegionHeight);
-	if (any(position < origin) || any(position > origin + extent))
-		return 0.0;
-	float2 toMinEdge = position - origin;
-	float2 toMaxEdge = origin + extent - position;
-	float2 frame = float2(Width, Height);
-	float2 boundary = float2(
-		min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
-		min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
-	return saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels);
+	float weight = 1.0;
+	if (RegionWidth != 0) {
+		float2 position = float2(pixel) + 0.5;
+		float2 origin = float2(RegionBaseX, RegionBaseY);
+		float2 extent = float2(RegionWidth, RegionHeight);
+		if (any(position < origin) || any(position > origin + extent)) {
+			weight = 0.0;
+		} else {
+			float2 toMinEdge = position - origin;
+			float2 toMaxEdge = origin + extent - position;
+			float2 frame = float2(Width, Height);
+			float2 boundary = float2(
+				min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
+				min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
+			weight = saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels);
+		}
+	}
+	return weight;
 }
 
 // Outside the crop NGX wrote nothing, so the input stands in for the neural sample there; weight 0
 // must return the input exactly, since lerp would propagate a NaN sample even at t = 0.
 float3 RegionStableNeuralSample(int2 pixel, float3 inputSample, float3 neuralSample)
 {
-	if (RegionWidth == 0)
-		return neuralSample;
-	const float weight = RegionWeight(pixel);
-	return weight <= 0.0 ? inputSample : lerp(inputSample, neuralSample, weight);
+	float3 result = neuralSample;
+	if (RegionWidth != 0) {
+		const float weight = RegionWeight(pixel);
+		result = weight <= 0.0 ? inputSample : lerp(inputSample, neuralSample, weight);
+	}
+	return result;
 }
 
 [numthreads(8, 8, 1)] void PrepareToneData(uint3 id : SV_DispatchThreadID) {
@@ -360,5 +372,9 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	if (VisualMode == NR::kVisualNone && !boundedGain)
 		result = FromLinear(result);
+	if (RegionOverlayEnabled != 0)
+		result = RegionOverlay::Apply(result, id.xy,
+			RegionOverlay::ClampToFrame(uint4(RegionBaseX, RegionBaseY, RegionWidth, RegionHeight), uint2(Width, Height)),
+			kRegionOutlineColor, kRegionOutsideDim, RegionOutlineThickness);
 	Output[id.xy] = float4(result, original.a);
 }

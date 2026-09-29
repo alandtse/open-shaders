@@ -117,6 +117,8 @@ private:
 	 */
 	RE::ActorHandle trackedActor;
 	mutable std::mutex regionMutex;
+	/** @brief Draws the settings panel's crop preview: the NR-resolution scene with the per-eye crops. */
+	void DrawRegionPreview();
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
 	/** @brief Republishes the render size and eye count after the pass resources are recreated. */

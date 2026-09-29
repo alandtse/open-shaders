@@ -14,10 +14,12 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/LazyShader.h"
+#include "Utils/RegionOverlay.h"
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 
 #include <chrono>
+#include <span>
 
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
 
@@ -165,6 +167,9 @@ namespace
 		}
 		return tracked;
 	}
+
+	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
+	constexpr float kRegionOutlineThicknessPixels = 3.0f;
 }
 
 struct NeuralRendering::Impl
@@ -194,6 +199,9 @@ struct NeuralRendering::Impl
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 		uint32_t hasToneData = 0;
 		uint32_t regionBaseX = 0, regionBaseY = 0, regionWidth = 0, regionHeight = 0;
+		uint32_t regionOverlayEnabled = 0;
+		float regionOutlineThickness = kRegionOutlineThicknessPixels;
+		float2 regionPadding{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -201,7 +209,10 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
 	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
 	static_assert(offsetof(ColorTransferData, regionBaseX) == 96);
-	static_assert(sizeof(ColorTransferData) == 112);
+	static_assert(offsetof(ColorTransferData, regionOverlayEnabled) == 112);
+	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
+	static_assert(offsetof(ColorTransferData, regionPadding) == 120);
+	static_assert(sizeof(ColorTransferData) == 128);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
@@ -223,6 +234,8 @@ struct NeuralRendering::Impl
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 	bool useResolutionMotionScale = true;
+	/** @brief Draws the evaluated crop outline into the composite; read from the tuning each NR frame. */
+	bool regionOverlay = false;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -474,6 +487,9 @@ struct NeuralRendering::Impl
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
 		data.hasToneData = !prepare && NeedsToneData();
+		// Never on the Prepare dispatch: that writes NGX's input proxy, which the overlay would corrupt.
+		data.regionOverlayEnabled = (!prepare && regionOverlay) ? 1u : 0u;
+		data.regionOutlineThickness = kRegionOutlineThicknessPixels;
 		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
@@ -838,6 +854,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
 			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
+		changed = true;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
+			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -858,7 +879,40 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	}
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (tuning.regionOverlay)
+		DrawRegionPreview();
 	ImGui::PopID();
+}
+
+void NeuralRendering::DrawRegionPreview()
+{
+	ImGui::Separator();
+	// Panels draw on the rendering thread after the NR pass, so impl's preview texture needs no lock.
+	const auto tracked = GetRegionOfInterest();
+	const uint32_t sourceWidth = impl->width * impl->eyeCount;
+	const uint32_t sourceHeight = impl->height;
+	auto* preview = impl->original ? impl->original->srv.get() : nullptr;
+	if (!preview || !sourceWidth || !sourceHeight) {
+		ImGui::TextDisabled("%s", T(TKEY("region_overlay_unavailable"), "Crop preview appears once Neural Rendering runs a frame."));
+		return;
+	}
+	const float maxWidth = std::min(400.0f, ImGui::GetContentRegionAvail().x);
+	const float aspect = static_cast<float>(sourceWidth) / static_cast<float>(sourceHeight);
+	const ImVec2 imageSize(maxWidth, maxWidth / aspect);
+	const ImVec2 imageMin = ImGui::GetCursorScreenPos();
+	Util::Subrect::ImageOpaque(preview, imageSize);
+	std::array<Util::RegionOverlay::Region, 2> rects{};
+	std::span<const Util::RegionOverlay::Region> shown;
+	if (tracked.active) {
+		const uint32_t eyes = std::min<uint32_t>(impl->eyeCount, static_cast<uint32_t>(rects.size()));
+		for (uint32_t eye = 0; eye < eyes; ++eye) {
+			const auto& crop = tracked.eye[eye];
+			rects[eye].rect = Util::Subrect::PixelRegion{ crop.x + eye * impl->width, crop.y, crop.w, crop.h };
+			rects[eye].label = eyes > 1 ? (eye == 0 ? "L" : "R") : nullptr;
+		}
+		shown = std::span(rects.data(), eyes);
+	}
+	Util::RegionOverlay::Draw(imageMin, imageSize, sourceWidth, sourceHeight, shown);
 }
 
 void NeuralRendering::DrawDiagnosticsOverlay()
@@ -1040,6 +1094,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.regionOverlay = boundedTuning.regionOverlay;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
