@@ -5,6 +5,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Upscaling.h"        // the Hi-Z log line reports the upscaler's resolution scale
 #include "Utils/Game.h"
 #include "Wind/Wind.h"
 
@@ -277,6 +278,46 @@ static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& vi
 	setPlane(5, 3, 1.0f, 1, 1.0f);
 }
 
+static ID3D11ShaderResourceView* GetSourceDepthSRV()
+{
+	// Grass runs before the terrain blending pass, so it takes the original prepass copy; the blended
+	// texture would be a frame stale and flicker grass on fast camera movement. Both branches return
+	// that same R24_UNORM_X8_TYPELESS view, so the base pass needs no TERRAIN_BLENDING variant of its
+	// `unorm float` declaration the way Util::GetCurrentSceneDepthSRV's R32_FLOAT consumers do.
+	auto& tb = globals::features::terrainBlending;
+	if (tb.loaded && tb.settings.Enabled && tb.prepassSRVBackup)
+		return tb.prepassSRVBackup;
+	if (auto* renderer = globals::game::renderer)
+		return Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
+	return nullptr;
+}
+
+static ID3D11ShaderResourceView* GetLiveDepthSRV()
+{
+	auto* renderer = globals::game::renderer;
+	if (!renderer)
+		return nullptr;
+	return Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
+}
+
+void GrassOptimizations::LogHiZBuild(bool usingLiveDepth)
+{
+	const auto& stats = hiZ.GetStats();
+	const std::array<uint32_t, 10> logKey{ hiZ.GetWidth(), hiZ.GetHeight(), stats.textureWidth, stats.textureHeight, hiZ.GetMipCount(), stats.sourceWidth, stats.sourceHeight,
+		(uint32_t)globals::state->screenSize.x, (uint32_t)globals::state->screenSize.y, usingLiveDepth ? 1u : 0u };
+	if (logKey == lastHiZLogKey)
+		return;
+	lastHiZLogKey = logKey;
+
+	const auto& rt = globals::game::graphicsState->GetRuntimeData();
+	logger::info("[GRASS OPTIMIZATIONS] HiZ occlusion cull active: {}x{} tiles (1/{}) in a {}x{} texture, {} mips, source={}; screen {}x{}, depth extent {}x{}, dynRes ratio {:.3f}x{:.3f} lock={}, upscale scale {:.3f}x{:.3f}",
+		hiZ.GetWidth(), hiZ.GetHeight(), HiZPyramid::kDownsampleFactor, stats.textureWidth, stats.textureHeight, hiZ.GetMipCount(),
+		usingLiveDepth ? "LIVE kMAIN copy" : "POST_ZPREPASS_COPY (stale fallback)",
+		(uint32_t)globals::state->screenSize.x, (uint32_t)globals::state->screenSize.y, stats.sourceWidth, stats.sourceHeight,
+		rt.dynamicResolutionWidthRatio, rt.dynamicResolutionHeightRatio, (int)rt.dynamicResolutionLock,
+		globals::features::upscaling.resolutionScale.x, globals::features::upscaling.resolutionScale.y);
+}
+
 void GrassOptimizations::UpdateGrass()
 {
 	std::scoped_lock blk(bucketStore.bucketMutex);
@@ -353,10 +394,20 @@ void GrassOptimizations::UpdateGrass()
 	BuildFrustumSoA(frustumSoAs[1], isVR ? frustum1 : frustum);
 	const uint32_t frustumCount = isVR ? 2u : 1u;
 
-	if (settings.EnableOcclusionCulling)
-		hiZ.Build(device, ctx);
-	else
+	if (settings.EnableOcclusionCulling) {
+		// kPOST_ZPREPASS_COPY is written before the opaque prepass, so it holds depth the scene no longer has, biased near enough to over-cull. Prefer the live target, and keep it only as a fallback.
+		ID3D11ShaderResourceView* srcSRV = GetLiveDepthSRV();
+		const bool usingLiveDepth = srcSRV != nullptr;
+		if (!srcSRV)
+			srcSRV = GetSourceDepthSRV();
+
+		// One chain over the whole packed image: the cull is eye-agnostic.
+		hiZ.Build(device, ctx, { srcSRV, HiZPyramid::Reduction::Max, false, true, usingLiveDepth });
+		if (hiZ.IsValid())
+			LogHiZBuild(usingLiveDepth);
+	} else {
 		hiZ.Invalidate();
+	}
 
 	{
 		CullParamsCB cp{};
