@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/FeatherBlend.hlsli"
 #include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
@@ -167,9 +168,10 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
-// NGX wrote nothing outside the subrect, so the weight is gated to 0 there and ramps inwards from
-// the edge; an edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
-static const float kRegionFeatherPixels = 8.0;
+// NGX wrote nothing outside the subrect, so the weight is gated to 0 there and eases in from the
+// edge over a band wide enough that the differing shading inside the crop does not show as a seam;
+// an edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
+static const float kRegionFeatherPixels = 32.0;
 
 float RegionWeight(int2 pixel)
 {
@@ -187,7 +189,7 @@ float RegionWeight(int2 pixel)
 			float2 boundary = float2(
 				min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
 				min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
-			weight = saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels);
+			weight = FeatherBlend::SmoothRamp(saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels));
 		}
 	}
 	return weight;
