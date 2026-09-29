@@ -36,6 +36,11 @@ namespace NR
 		 *        aligned bounds alone. Developer-only; the tight fit is for checking what the crop covers.
 		 */
 		uint32_t regionFit = kRegionFitPadded;
+		/**
+		 * @brief Grows the crop to cover the next most prominent actors as long as it stays small.
+		 *        Developer-only; the default tracks a single actor.
+		 */
+		bool regionGroup = false;
 
 		/** @brief Bounds user input to the reference runtime's tuning range. */
 		void Sanitize()

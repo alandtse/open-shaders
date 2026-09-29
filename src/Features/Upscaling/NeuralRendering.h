@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
@@ -54,13 +55,15 @@ struct NeuralRendering
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit);
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
 	 *        until NR is active, so it reads no engine state before the device exists.
 	 */
 	void UpdateRegionOfInterest();
+	/** @brief Drives one frame of the calibration sweep: forces the current crop and times NR. */
+	void UpdateCalibration();
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
@@ -84,6 +87,10 @@ struct NeuralRendering
 	Util::Region::StereoRegion GetRegionOfInterest() const;
 	/** @brief Snapshot of the tracked actor's projected box with no padding and no stabilising, safe from any thread. */
 	Util::Region::StereoRegion GetActorBox() const;
+	/** @brief Queues a sweep of centred crop sizes that measures how NR's GPU cost falls with crop area. */
+	void RequestCalibration() { calibrationRequested.store(true, std::memory_order_relaxed); }
+	/** @brief Snapshot of the latest calibration; running, done with its measurements, or failed with why. */
+	NR::CropCalibration::Result GetCalibration() const;
 	/** @brief Cumulative NR counters since startup, safe from any thread. */
 	NR::Diagnostics::Counters GetDiagnosticCounters() const { return diagnostics.GetCounters(); }
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
@@ -110,6 +117,8 @@ private:
 	std::atomic_bool regionEnabled = false;
 	/** @brief How the crop is fit to the projected bounds, mirrored from the tuning like regionEnabled. */
 	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
+	/** @brief Whether the crop covers several actors, mirrored from the tuning like regionEnabled. */
+	std::atomic_bool regionGroup = false;
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
 	/**
@@ -126,6 +135,13 @@ private:
 	 */
 	RE::ActorHandle trackedActor;
 	mutable std::mutex regionMutex;
+	/** @brief Set by the settings button or DevBench; the main-thread hook starts the sweep on its next frame. */
+	std::atomic_bool calibrationRequested = false;
+	/** @brief Main-thread sweep state; its published copy is guarded by regionMutex. */
+	NR::CropCalibration calibration;
+	NR::CropCalibration::Result calibrationResult;
+	/** @brief Crop area share the last completed calibration found free, or zero; read by the main-thread tracker only. */
+	float calibratedKneeFraction = 0.0f;
 	/** @brief Draws the settings panel's crop preview: the NR-resolution scene with the per-eye crops. */
 	void DrawRegionPreview();
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */

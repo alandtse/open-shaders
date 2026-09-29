@@ -2,6 +2,7 @@
 
 #include "Utils/Region.h"
 
+#include <algorithm>
 #include <cmath>
 
 /** @brief Crop parameters for the most-prominent-visible-actor source NR tracks. */
@@ -21,6 +22,30 @@ namespace NR::ActorRegion
 	 *        similarly prominent actor and reset NR's temporal history.
 	 */
 	inline constexpr float kIncumbentScoreBonus = 1.2f;
+
+	/** @brief Most actors a group crop may cover, the tracked actor included. */
+	inline constexpr uint32_t kMaxGroupActors = 4;
+
+	/** @brief Most candidates a group crop will test for line of sight each frame, best score first. */
+	inline constexpr uint32_t kMaxGroupCandidatesTested = 6;
+
+	/** @brief Largest share of an eye a group crop may cover; a bigger union would save NR little. */
+	inline constexpr float kMaxGroupAreaFraction = 0.5f;
+
+	/** @brief Bounds on the group crop area a calibrated cost knee may set. */
+	inline constexpr float kMinCalibratedGroupAreaFraction = 0.1f, kMaxCalibratedGroupAreaFraction = 0.9f;
+
+	/**
+	 * @brief Largest share of an eye a group crop may cover: the measured cost knee when a
+	 *        calibration produced one, else the default. Growing past the knee costs GPU time.
+	 * @param a_kneeFraction Calibrated knee, or zero when none has been measured.
+	 */
+	inline float GroupAreaCap(float a_kneeFraction)
+	{
+		return a_kneeFraction > 0.0f ?
+		           std::clamp(a_kneeFraction, kMinCalibratedGroupAreaFraction, kMaxCalibratedGroupAreaFraction) :
+		           kMaxGroupAreaFraction;
+	}
 
 	/** @brief Padding added around the actor's projected bounds to build its crop. */
 	inline constexpr Util::Region::Padding kPadding{ 1.0f / 8.0f, 16.0f, 32.0f, 96.0f };

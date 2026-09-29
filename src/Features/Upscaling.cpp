@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -579,6 +579,12 @@ namespace
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
 	}
 
+	/** @brief Devbench handler for Upscaling's calibrateNeuralCrop command. */
+	void CalibrateNeuralCrop(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCalibration();
+	}
+
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
 	void CaptureNeuralRendering(Feature* self, const json&)
 	{
@@ -609,6 +615,10 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("captureNeuralRendering",
 		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
 		CaptureNeuralRendering);
+
+	FEATURE_COMMAND("calibrateNeuralCrop",
+		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
+		CalibrateNeuralCrop);
 }
 
 void Upscaling::DrawSettings()
@@ -2615,6 +2625,18 @@ json Upscaling::GetDiagnostics()
 	for (const auto& region : actorBox.eye)
 		actorBounds.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
 	diagnostics["neuralActorBounds"] = std::move(actorBounds);
+	const auto calibration = neuralRendering.GetCalibration();
+	diagnostics["neuralCalibration"] = {
+		{ "state", calibration.state == NR::CropCalibration::State::kRunning ? "running" :
+				   calibration.state == NR::CropCalibration::State::kDone    ? "done" :
+				   calibration.state == NR::CropCalibration::State::kFailed  ? "failed" :
+																			   "idle" },
+		{ "fractions", NR::CropCalibration::kFractions },
+		{ "stepMs", calibration.stepMs },
+		{ "stabilityRatio", calibration.stabilityRatio },
+		{ "floorMs", calibration.floorMs },
+		{ "kneeFraction", calibration.kneeFraction }
+	};
 	const auto resources = neuralRendering.GetStatus();
 	diagnostics["neuralRenderSize"] = { { "width", resources.width }, { "height", resources.height }, { "eyes", resources.eyes } };
 	diagnostics["neuralFrames"] = resources.appliedFrames;

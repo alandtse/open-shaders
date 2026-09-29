@@ -8,6 +8,7 @@
 #include "NeuralRendering/D3D12Interop.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/Runtime.h"
+#include "Profiler.h"
 #include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
@@ -216,6 +217,9 @@ namespace
 		a_actorBox.active = tracked;
 		return tracked;
 	}
+
+	/** @brief Pass-to-pass timing ratio above which a calibration result is flagged as unsteady. */
+	constexpr float kCalibrationUnstableRatio = 1.5f;
 
 	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
 	constexpr float kRegionOutlineThicknessPixels = 3.0f;
@@ -771,8 +775,58 @@ void NeuralRendering::InstallHooks()
 	logger::debug("[NeuralRendering] Installed actor-tracking hook");
 }
 
+void NeuralRendering::UpdateCalibration()
+{
+	auto& upscaling = globals::features::upscaling;
+	const auto resources = GetStatus();
+	if (upscaling.IsFrameGenerationActive()) {
+		calibration.Fail(NR::CropCalibration::Failure::kFrameGeneration);
+	} else if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive || !resources.eyes || !resources.width || !resources.height) {
+		calibration.Fail(NR::CropCalibration::Failure::kNotActive);
+	} else {
+		float gpuMs = 0.0f;
+		if (globals::profiler) {
+			globals::profiler->RequestCapture();
+			for (const auto& timer : globals::profiler->GetResults()) {
+				if (timer.valid && timer.activeGpu && timer.name == "Upscaling::NREvaluate")
+					gpuMs = timer.gpuTimeMs;
+			}
+		}
+		calibration.AddFrame(gpuMs);
+	}
+	Util::Region::StereoRegion forced;
+	if (calibration.Running() && calibration.CurrentFraction() < 1.0f) {
+		const auto bounds = NR::CenteredBounds(calibration.CurrentFraction());
+		for (uint32_t eye = 0; eye < resources.eyes; ++eye)
+			forced.eye[eye] = Util::Region::PixelRegionFromBounds(bounds, resources.width, resources.height, NR::ActorRegion::kTightPadding);
+		forced.active = true;
+	}
+	if (calibration.GetResult().state == NR::CropCalibration::State::kDone)
+		calibratedKneeFraction = calibration.GetResult().kneeFraction;
+	std::scoped_lock lock(regionMutex);
+	regionStabilizer.Reset();
+	region = forced;
+	actorBox = {};
+	calibrationResult = calibration.GetResult();
+}
+
+NR::CropCalibration::Result NeuralRendering::GetCalibration() const
+{
+	std::scoped_lock lock(regionMutex);
+	return calibrationResult;
+}
+
 void NeuralRendering::UpdateRegionOfInterest()
 {
+	if (calibrationRequested.exchange(false, std::memory_order_relaxed)) {
+		calibration.Start();
+		std::scoped_lock lock(regionMutex);
+		calibrationResult = calibration.GetResult();
+	}
+	if (calibration.Running()) {
+		UpdateCalibration();
+		return;
+	}
 	Util::Region::StereoRegion next, nextActorBox;
 	uint32_t eyeWidth = 0, eyeHeight = 0;
 	RE::ActorHandle winner;
@@ -783,6 +837,7 @@ void NeuralRendering::UpdateRegionOfInterest()
 		eyeHeight = resources.height;
 		if (eyeWidth && eyeHeight) {
 			const auto fit = regionFit.load(std::memory_order_relaxed);
+			const bool group = regionGroup.load(std::memory_order_relaxed);
 			const auto camera = Util::GetEyePosition(0);
 			constexpr float maxSqDistance = NR::ActorRegion::kMaxActorDistance * NR::ActorRegion::kMaxActorDistance;
 			// In first person and VR the player sits at the camera, so tracking it would crop to the near plane.
@@ -803,13 +858,35 @@ void NeuralRendering::UpdateRegionOfInterest()
 			std::sort(candidates.begin(), candidates.end(), [](const RegionCandidate& a_left, const RegionCandidate& a_right) {
 				return a_left.score > a_right.score;
 			});
+			uint32_t members = 0, tested = 0;
 			for (const auto& candidate : candidates) {
 				auto actor = candidate.handle.get();
-				if (!actor || !ProjectActorRegion(actor.get(), next, nextActorBox, eyeWidth, eyeHeight, eyes, fit))
+				if (!actor)
 					continue;
-				next.active = true;
-				winner = candidate.handle;
-				break;
+				if (!winner) {
+					if (!ProjectActorRegion(actor.get(), next, nextActorBox, eyeWidth, eyeHeight, eyes, fit))
+						continue;
+					next.active = true;
+					winner = candidate.handle;
+					if (!group)
+						break;
+					members = 1;
+					continue;
+				}
+				if (members >= NR::ActorRegion::kMaxGroupActors || tested++ >= NR::ActorRegion::kMaxGroupCandidatesTested)
+					break;
+				Util::Region::StereoRegion memberRegion, memberBox;
+				if (!ProjectActorRegion(actor.get(), memberRegion, memberBox, eyeWidth, eyeHeight, eyes, fit))
+					continue;
+				for (uint32_t eye = 0; eye < eyes; ++eye) {
+					if (!memberBox.eye[eye].w || !memberBox.eye[eye].h)
+						memberRegion.eye[eye] = Util::Region::kEmptyRegion;
+				}
+				if (!Util::Region::TryMergeRegions(next, memberRegion, eyeWidth, eyeHeight, eyes, NR::ActorRegion::GroupAreaCap(calibratedKneeFraction)))
+					continue;
+				for (uint32_t eye = 0; eye < eyes; ++eye)
+					nextActorBox.eye[eye] = Util::Region::UnionNonEmpty(nextActorBox.eye[eye], memberBox.eye[eye]);
+				++members;
 			}
 		}
 	}
@@ -841,10 +918,11 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
 {
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
 	regionFit.store(cropFit, std::memory_order_relaxed);
+	regionGroup.store(cropGroup, std::memory_order_relaxed);
 	diagnostics.SetDeveloperMode(globals::state->IsDeveloperMode());
 	if (enabled)
 		diagnostics.EndFrame(globals::state->frameCount, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
@@ -936,6 +1014,13 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
 	if (globals::state->IsDeveloperMode()) {
+		if (ImGui::Checkbox(T(TKEY("crop_group"), "Track Multiple Characters"), &tuning.regionGroup)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
+				"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
 		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
 		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
 			T(TKEY("crop_fit_padded"), "Padded"),
@@ -949,6 +1034,23 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("crop_fit_tooltip"),
 				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
+		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
+			RequestCalibration();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_tooltip"),
+				"Measures how Neural Rendering's GPU time falls as the crop shrinks, over about half a minute, and finds the largest crop that is still about as cheap as the smallest. Turn frame generation off first; it skews the timing."));
+		const auto calibrationState = GetCalibration();
+		if (calibrationState.state == NR::CropCalibration::State::kRunning) {
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_running"), "Calibrating..."));
+		} else if (calibrationState.state == NR::CropCalibration::State::kFailed) {
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_failed"), "Calibration failed: frame generation on, Neural Rendering not running, or no timing data."));
+		} else if (calibrationState.state == NR::CropCalibration::State::kDone) {
+			for (size_t step = 0; step < NR::CropCalibration::kSteps; ++step)
+				ImGui::Text("%3.0f%%: %.2f ms", NR::CropCalibration::kFractions[step] * 100.0f, calibrationState.stepMs[step]);
+			ImGui::Text(T(TKEY("crop_calibrate_knee"), "Largest crop that is still cheap: %.0f%%"), calibrationState.kneeFraction * 100.0f);
+			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
+				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
+		}
 	}
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};

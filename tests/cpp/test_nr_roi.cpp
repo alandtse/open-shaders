@@ -3,12 +3,15 @@
 // reset-reason names DevBench reads. The region maths itself is covered by test_region.cpp.
 
 #include "Features/Upscaling/NeuralRendering/ActorRegion.h"
+#include "Features/Upscaling/NeuralRendering/CropCalibration.h"
 #include "Features/Upscaling/NeuralRendering/Diagnostics.h"
 #include "Features/Upscaling/NeuralRendering/Runtime.h"
 #include "Features/Upscaling/NeuralRendering/Tuning.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -162,4 +165,94 @@ TEST_CASE("Tuning::Sanitize clamps the crop fit to the supported values", "[nr][
 	tuning.regionFit = NR::Tuning::kRegionFitPadded;
 	tuning.Sanitize();
 	REQUIRE(tuning.regionFit == NR::Tuning::kRegionFitPadded);
+}
+
+namespace
+{
+	using NR::CropCalibration;
+
+	template <typename CostFunction>
+	CropCalibration RunSweep(CostFunction a_cost, float a_settleSpike = 0.0f)
+	{
+		CropCalibration calibration;
+		calibration.Start();
+		uint32_t frameInStep = 0;
+		while (calibration.Running()) {
+			const float fraction = calibration.CurrentFraction();
+			const bool settling = frameInStep < CropCalibration::kSettleFrames;
+			calibration.AddFrame(settling && a_settleSpike > 0.0f ? a_settleSpike : a_cost(fraction));
+			frameInStep = (frameInStep + 1) % (CropCalibration::kSettleFrames + CropCalibration::kSampleFrames);
+		}
+		return calibration;
+	}
+}
+
+TEST_CASE("CropCalibration finds the largest crop that costs no more than the cheapest", "[nr][roi][calibration]")
+{
+	const auto calibration = RunSweep([](float a_fraction) { return std::max(2.5f, 3.6f * a_fraction); });
+	const auto& result = calibration.GetResult();
+	REQUIRE(result.state == CropCalibration::State::kDone);
+	REQUIRE(result.floorMs == Catch::Approx(2.5f));
+	REQUIRE(result.stepMs[0] == Catch::Approx(3.6f));
+	REQUIRE(result.kneeFraction == Catch::Approx(0.6f));
+}
+
+TEST_CASE("CropCalibration discards the settle frames after each crop change", "[nr][roi][calibration]")
+{
+	const auto calibration = RunSweep([](float) { return 2.0f; }, 50.0f);
+	const auto& result = calibration.GetResult();
+	REQUIRE(result.state == CropCalibration::State::kDone);
+	for (const float stepMs : result.stepMs)
+		REQUIRE(stepMs == Catch::Approx(2.0f));
+	REQUIRE(result.kneeFraction == Catch::Approx(CropCalibration::kFractions.front()));
+}
+
+TEST_CASE("CropCalibration keeps each step's fastest pass and reports how unsteady the passes were", "[nr][roi][calibration]")
+{
+	uint32_t framesSeen = 0;
+	const uint32_t framesPerPass = CropCalibration::kSteps * (CropCalibration::kSettleFrames + CropCalibration::kSampleFrames);
+	CropCalibration calibration;
+	calibration.Start();
+	while (calibration.Running()) {
+		const bool slowPass = (framesSeen++ / framesPerPass) % 2 == 0;
+		calibration.AddFrame(slowPass ? 9.0f : 3.0f);
+	}
+	const auto& result = calibration.GetResult();
+	REQUIRE(result.state == CropCalibration::State::kDone);
+	for (const float stepMs : result.stepMs)
+		REQUIRE(stepMs == Catch::Approx(3.0f));
+	REQUIRE(result.stabilityRatio == Catch::Approx(3.0f));
+}
+
+TEST_CASE("CropCalibration fails when a step gets no timed frames and can be restarted", "[nr][roi][calibration]")
+{
+	CropCalibration calibration;
+	calibration.Start();
+	for (uint32_t frame = 0; frame < CropCalibration::kSettleFrames + CropCalibration::kSampleFrames && calibration.Running(); ++frame)
+		calibration.AddFrame(0.0f);
+	REQUIRE(calibration.GetResult().state == CropCalibration::State::kFailed);
+	REQUIRE(calibration.GetResult().failure == CropCalibration::Failure::kNoSamples);
+	REQUIRE_FALSE(calibration.Running());
+
+	calibration.Start();
+	REQUIRE(calibration.Running());
+	REQUIRE(calibration.GetResult().failure == CropCalibration::Failure::kNone);
+	REQUIRE(calibration.CurrentFraction() == Catch::Approx(CropCalibration::kFractions.front()));
+}
+
+TEST_CASE("CenteredBounds covers the requested area around the frame centre", "[nr][roi][calibration]")
+{
+	for (const float fraction : CropCalibration::kFractions) {
+		const auto bounds = NR::CenteredBounds(fraction);
+		REQUIRE(Util::Region::AreaFraction(bounds) == Catch::Approx(fraction));
+		REQUIRE(Util::Region::NormalizedCenterDistance(bounds) == Catch::Approx(0.0f).margin(1e-6));
+	}
+}
+
+TEST_CASE("GroupAreaCap follows the calibrated knee within bounds and defaults without one", "[nr][roi][calibration]")
+{
+	REQUIRE(NR::ActorRegion::GroupAreaCap(0.0f) == Catch::Approx(NR::ActorRegion::kMaxGroupAreaFraction));
+	REQUIRE(NR::ActorRegion::GroupAreaCap(0.4f) == Catch::Approx(0.4f));
+	REQUIRE(NR::ActorRegion::GroupAreaCap(0.01f) == Catch::Approx(NR::ActorRegion::kMinCalibratedGroupAreaFraction));
+	REQUIRE(NR::ActorRegion::GroupAreaCap(1.0f) == Catch::Approx(NR::ActorRegion::kMaxCalibratedGroupAreaFraction));
 }

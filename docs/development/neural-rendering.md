@@ -75,7 +75,9 @@ Gaussian (`kCentralitySigma`), and adds a sticky bonus (`kIncumbentScoreBonus`)
 to the actor the crop already follows, so two similarly sized actors do not
 alternate and reset NR's history. A candidate covering less than
 `kMinVisibleAreaFraction` of an eye is dropped, and a candidate no eye sees is
-not a candidate at all. The candidates are sorted by score and projected per eye
+not a candidate at all. The player is a candidate only in third person on
+non-VR runtimes; in first person and in VR it sits at the camera, and a crop
+around it would be the near plane. The candidates are sorted by score and projected per eye
 in that order, so the line-of-sight rays only run on the best few; the winner's
 per-eye pixel crop goes through the stabiliser before publication. The crop
 maths, the stabiliser and the reset rules are shared in `Util::Region`
@@ -115,6 +117,30 @@ grid-aligned bounds alone with no margin, for checking what the crop covers on i
 own. Both keep the 64 px alignment and the stabiliser, since NGX must not be handed
 an arbitrary subrect.
 
+Also in developer mode, **Track Multiple Characters** (`regionGroup`) grows the crop
+to cover the next most prominent actors, in score order, while the union stays under a
+share of the eye (`GroupAreaCap`: `kMaxGroupAreaFraction` by default, or the
+calibrated cost knee once a calibration has run), with at most `kMaxGroupActors`
+members and `kMaxGroupCandidatesTested` line-of-sight tests per frame. An actor that
+one eye cannot see does not stop the other eye's crop from growing. The yellow box is
+then the union of the members' boxes, and the tracked actor that carries the
+incumbent bonus stays the highest-scoring one.
+
+**Calibrate Crop Cost** (developer mode; DevBench action `calibrateNeuralCrop`)
+forces centred crops of shrinking area (`CropCalibration::kFractions`, the full
+frame first) for about half a minute, times `Upscaling::NREvaluate` from the
+profiler over four passes, and reports the fastest low-percentile GPU time per step
+(NR's timing flips between a fast and a slow state, so a median would be arbitrary),
+`stabilityRatio` between passes, the cheapest step and the
+largest crop within `kKneeTolerance` of it under `neuralCalibration` in the
+diagnostics. It refuses to run with frame generation on, since frame generation
+paces the frame and skews the GPU zones.
+
+Inside the crop the neural result eases in over `kRegionFeatherPixels` from the crop
+edge with the smoothstep ramp in `package/Shaders/Common/FeatherBlend.hlsli`, which
+foveation's subrect blend shares, so the different shading NR gives the crop does not
+end at a hard seam.
+
 Both drawings come from reusable helpers: `RegionOverlay::OutlineOnly` in
 `package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a
 pass's own colour without changing anything else in the frame, and
@@ -137,7 +163,8 @@ unaffected.
 `neuralRegionActive`, `neuralRegion` (one `{x,y,width,height}` rect per eye, in
 the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralActorBounds`
 (the tracked actor's own projected box, unpadded and unstabilised, in the same
-per-eye shape), `neuralFrames`
+per-eye shape), `neuralCalibration` (`state`, `fractions`, `stepMs`, `stabilityRatio`, `floorMs` and
+`kneeFraction` of the last crop cost sweep), `neuralFrames`
 (frames NR has applied), `neuralResets` (a cumulative count per reset reason,
 keyed `request`, `first`, `gap`, `position`, `direction`, `projection`,
 `creation`, `region`) and `neuralResetDrainMs` (cumulative CPU time blocked in

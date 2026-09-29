@@ -527,3 +527,49 @@ TEST_CASE("NormalizedCenterDistance is zero at the frame centre and one at a cor
 	REQUIRE(Util::Region::NormalizedCenterDistance(ScreenBounds{ 0.45f, 0.1f, 0.55f, 0.2f }) ==
 			Catch::Approx(Util::Region::NormalizedCenterDistance(ScreenBounds{ 0.45f, 0.8f, 0.55f, 0.9f })));
 }
+
+TEST_CASE("UnionNonEmpty ignores an empty rect instead of stretching to the origin", "[region][merge]")
+{
+	const Util::Subrect::PixelRegion rect{ 300, 200, 100, 50 };
+	REQUIRE(Util::Region::UnionNonEmpty(Util::Region::kEmptyRegion, rect).x == rect.x);
+	REQUIRE(Util::Region::UnionNonEmpty(rect, Util::Region::kEmptyRegion).w == rect.w);
+	const auto both = Util::Region::UnionNonEmpty(rect, { 500, 100, 100, 100 });
+	REQUIRE(both.x == 300);
+	REQUIRE(both.y == 100);
+	REQUIRE(both.w == 300);
+	REQUIRE(both.h == 150);
+}
+
+TEST_CASE("TryMergeRegions grows a crop only while it stays under the area cap", "[region][merge]")
+{
+	constexpr uint32_t width = 1000, height = 1000;
+	Util::Region::StereoRegion base;
+	base.active = true;
+	base.eye = { Util::Subrect::PixelRegion{ 0, 0, 200, 200 }, Util::Subrect::PixelRegion{ 0, 0, 200, 200 } };
+
+	Util::Region::StereoRegion adjacent;
+	adjacent.eye = { Util::Subrect::PixelRegion{ 200, 0, 200, 200 }, Util::Region::kEmptyRegion };
+	REQUIRE(Util::Region::TryMergeRegions(base, adjacent, width, height, 2, 0.5f));
+	REQUIRE(base.eye[0].w == 400);
+	REQUIRE(base.eye[1].w == 200);
+
+	Util::Region::StereoRegion distant;
+	distant.eye = { Util::Subrect::PixelRegion{ 800, 800, 200, 200 }, Util::Region::kEmptyRegion };
+	const auto before = base.eye[0];
+	REQUIRE_FALSE(Util::Region::TryMergeRegions(base, distant, width, height, 2, 0.5f));
+	REQUIRE(base.eye[0].w == before.w);
+	REQUIRE(base.eye[0].h == before.h);
+}
+
+TEST_CASE("TryMergeRegions leaves an eye the base does not crop uncropped", "[region][merge]")
+{
+	constexpr uint32_t width = 1000, height = 1000;
+	Util::Region::StereoRegion base;
+	base.active = true;
+	base.eye = { Util::Subrect::PixelRegion{ 0, 0, 200, 200 }, Util::Subrect::PixelRegion{ 0, 0, width, height } };
+	Util::Region::StereoRegion addition;
+	addition.eye = { Util::Subrect::PixelRegion{ 200, 0, 100, 100 }, Util::Subrect::PixelRegion{ 500, 500, 100, 100 } };
+	REQUIRE(Util::Region::TryMergeRegions(base, addition, width, height, 2, 0.5f));
+	REQUIRE(base.eye[1].w == width);
+	REQUIRE(base.eye[1].h == height);
+}

@@ -184,6 +184,38 @@ namespace Util::Region
 		return static_cast<float>(a_region.w) * static_cast<float>(a_region.h);
 	}
 
+	/** @brief Smallest rect covering both inputs, where an empty input contributes nothing. */
+	inline Subrect::PixelRegion UnionNonEmpty(const Subrect::PixelRegion& a_left, const Subrect::PixelRegion& a_right)
+	{
+		if (!a_left.w || !a_left.h)
+			return a_right;
+		if (!a_right.w || !a_right.h)
+			return a_left;
+		return UnionRegion(a_left, a_right);
+	}
+
+	/**
+	 * @brief Grows a_base to also cover a_addition, per eye, unless a cropped eye would then exceed
+	 *        a_maxAreaFraction of the frame; a_base is untouched on failure. Eyes a_base leaves
+	 *        uncropped (whole frame) are already as large as they can be and are not checked.
+	 */
+	inline bool TryMergeRegions(StereoRegion& a_base, const StereoRegion& a_addition, uint32_t a_width, uint32_t a_height,
+		uint32_t a_eyes, float a_maxAreaFraction)
+	{
+		const float frameArea = static_cast<float>(a_width) * static_cast<float>(a_height);
+		StereoRegion merged = a_base;
+		for (uint32_t eye = 0; eye < a_eyes && eye < merged.eye.size(); ++eye) {
+			const auto& base = a_base.eye[eye];
+			if (base.w >= a_width && base.h >= a_height)
+				continue;
+			merged.eye[eye] = UnionNonEmpty(base, a_addition.eye[eye]);
+			if (RectArea(merged.eye[eye]) > a_maxAreaFraction * frameArea)
+				return false;
+		}
+		a_base = merged;
+		return true;
+	}
+
 	/** @brief True when the crop moved further than a_tolerancePixels, or appeared or disappeared. */
 	inline bool RegionChanged(const StereoRegion& a_current, const StereoRegion& a_previous, float a_tolerancePixels)
 	{
