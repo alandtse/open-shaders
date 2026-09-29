@@ -18,7 +18,7 @@ RWTexture2D<uint> ScatterRW : register(u0);    // asuint(nearest Eye 1 depth) pe
 		return;
 
 	float depth = DepthTexture[dtid];
-	if (depth < EPSILON_DEPTH_SKY || depth >= DEPTH_UNRENDERED)
+	if (depth < EPSILON_DEPTH_SKY || IS_DEPTH_UNRENDERED(depth))
 		return;
 
 	float2 monoUV = Stereo::ConvertFromStereoUV((float2(dtid) + 0.5) / FrameDim, 0);

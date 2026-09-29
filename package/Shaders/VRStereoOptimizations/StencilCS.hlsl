@@ -67,7 +67,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 	float d = DepthTexture[px];
 	prevPx = 0;
 	prevValid = false;
-	if (DepthHistoryValid == 0 || d < EPSILON_DEPTH_SKY || d >= DEPTH_UNRENDERED)
+	if (DepthHistoryValid == 0 || d < EPSILON_DEPTH_SKY || IS_DEPTH_UNRENDERED(d))
 		return d;
 
 	prevPx = PreviousFramePixel((float2(px) + 0.5) / FrameDim, d, eyeIndex, prevValid);
@@ -79,7 +79,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 		float2 tap = lerp(float2(px), prevPx, k / float(kHistoryTapCount - 1));
 		int2 tapPx = Stereo::ClampToEyeBounds(int2(round(tap)), eyeIndex, FrameDim);
 		float h = DepthHistory[tapPx];
-		if (h >= EPSILON_DEPTH_SKY && h < DEPTH_UNRENDERED)
+		if (h >= EPSILON_DEPTH_SKY && !IS_DEPTH_UNRENDERED(h))
 			d = FrameBuffer::NearerDepth(d, h);
 	}
 	return d;
@@ -119,7 +119,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 	// let edge detection run so geometry-vs-sky boundaries get classified.
 	// HMD mask pixels are in lens corners with no nearby geometry, so they'll
 	// fall through to MODE_DISOCCLUDED at the end.
-	bool isSky = (centerDepth < EPSILON_DEPTH_SKY) || (centerDepth >= 1.0);
+	bool isSky = (centerDepth < EPSILON_DEPTH_SKY) || IS_DEPTH_UNRENDERED(centerDepth);
 	float linCenter = isSky ? DEPTH_SKY_SENTINEL : SharedData::GetScreenDepth(centerDepth);
 
 	// Near-camera supersampling: geometry closer than FullBlendDistance gets full
@@ -190,7 +190,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 			// Directional disocclusion: catches silhouette edges the symmetric rawRelDiff check
 			// above misses -- Eye 0 sees a real occluder meaningfully closer than Eye 1's.
 			if (!isDisoccluded && eyeIndex == 1 && DirectionalOcclusionRatio > 0.0) {
-				bool otherIsSky = (otherDepth < EPSILON_DEPTH_SKY) || (otherDepth >= 1.0);
+				bool otherIsSky = (otherDepth < EPSILON_DEPTH_SKY) || IS_DEPTH_UNRENDERED(otherDepth);
 				if (!otherIsSky) {
 					float linOther = SharedData::GetScreenDepth(otherDepth);
 					float linReproj = SharedData::GetScreenDepth(reprojDepth);
@@ -233,7 +233,7 @@ float ClassifyDepth(uint2 px, uint eyeIndex, out float2 prevPx, out bool prevVal
 				uint2 neighborCoord = Stereo::ClampToEyeBounds(rawNeighbor, eyeIndex, FrameDim);
 
 				float neighborDepth = DepthTexture[neighborCoord];
-				bool neighborIsSky = (neighborDepth < EPSILON_DEPTH_SKY) || (neighborDepth >= 1.0);
+				bool neighborIsSky = (neighborDepth < EPSILON_DEPTH_SKY) || IS_DEPTH_UNRENDERED(neighborDepth);
 				float linNeighbor = neighborIsSky ? DEPTH_SKY_SENTINEL : SharedData::GetScreenDepth(neighborDepth);
 				float maxLin = max(max(linCenter, linNeighbor), EPSILON_DEPTH_SKY);
 				float relDepthDiff = abs(linCenter - linNeighbor) / maxLin;
