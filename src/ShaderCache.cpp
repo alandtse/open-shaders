@@ -3236,7 +3236,7 @@ namespace SIE
 		winrt::com_ptr<ID3DBlob> shaderBlob;
 		winrt::com_ptr<ID3DBlob> shaderErrors;
 		if (FAILED(CompileStandaloneSource(srcPath, key->defines, entryPoint, profile, key->flags, shaderBlob, shaderErrors))) {
-			logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? static_cast<char*>(shaderErrors->GetBufferPointer()) : "Unknown error");
+			logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? std::string_view(static_cast<const char*>(shaderErrors->GetBufferPointer()), shaderErrors->GetBufferSize()) : std::string_view("Unknown error"));
 			return nullptr;
 		}
 		Util::LogShaderCompileWarnings(shaderErrors.get(), srcPathStr);
