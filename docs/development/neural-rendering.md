@@ -88,21 +88,39 @@ values rather than a new mechanism. With the toggle off, or with no actor
 tracked, the crop is the whole frame and NR evaluates exactly as it does
 without it.
 
+The bound the crop projects is the actor's authored local-space box
+(`GetBoundMin`/`GetBoundMax`) carried into world space by its own root transform,
+not the engine's world-bound sphere: a sphere's cube is about its radius on every
+side whatever the actor's shape, so a standing humanoid got a box as wide as it
+is tall. An unusable authored box (a non-finite component, or an inverted axis)
+falls back to the sphere-cube.
+
 **Show Region Overlay** (`Upscaling.neuralRenderingTuning.regionOverlay`,
 default off) draws the crop for debugging: a green outline in the game frame,
 through the composite kernel of `ColorTransferCS.hlsl`, and the same per-eye
 rectangles over an NR-resolution preview at the bottom of the Neural Rendering
-tab. It is meaningful only with **Limit to Tracked Actor** on; it draws nothing
-while no actor is tracked, and an outline along the frame edge when a tracked
-actor's crop fills the whole frame. The per-eye crop is also readable without the
-overlay from `openshaders.feature diagnostics` (`neuralRegionActive` and
-`neuralRegion`), which reports each eye's rect in pixels.
+tab. Inside the green outline it draws the tracked actor's own projected box as
+a second, thinner yellow outline, so the margin the crop adds around the
+character is visible; that box is the raw pick and is not stabilised, so a box
+that flaps is shown flapping. It is meaningful only with **Limit to Tracked
+Actor** on; it draws nothing while no actor is tracked, and an outline along the
+frame edge when a tracked actor's crop fills the whole frame. The per-eye crop is
+also readable without the overlay from `openshaders.feature diagnostics`
+(`neuralRegionActive` and `neuralRegion`), which reports each eye's rect in
+pixels.
 
-Both drawings come from reusable helpers: `RegionOverlay::Apply` in
+In developer mode only, a **Crop Fit** control selects how the crop is fit to the
+projected bound: **Padded** is the normal padded crop, and **Tight** evaluates the
+grid-aligned bounds alone with no margin, for checking what the crop covers on its
+own. Both keep the 64 px alignment and the stabiliser, since NGX must not be handed
+an arbitrary subrect.
+
+Both drawings come from reusable helpers: `RegionOverlay::OutlineOnly` in
 `package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a
-pass's own colour, and `Util::RegionOverlay::Draw` (`src/Utils/RegionOverlay.h`)
-outlines pixel rects over an already-drawn ImGui image, so another feature can
-show a rectangular region with neither a new HLSL helper nor a new rect type.
+pass's own colour without changing anything else in the frame, and
+`Util::RegionOverlay::Draw` (`src/Utils/RegionOverlay.h`) outlines pixel rects over
+an already-drawn ImGui image, so another feature can show a rectangular region
+with neither a new HLSL helper nor a new rect type.
 
 The published crop is always stabilised, which is what keeps a crop that jitters
 by a grid step every frame from resetting NR's temporal history continuously.
@@ -117,7 +135,9 @@ unaffected.
 
 `openshaders.feature diagnostics` reports the crop and its cost:
 `neuralRegionActive`, `neuralRegion` (one `{x,y,width,height}` rect per eye, in
-the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralFrames`
+the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralActorBounds`
+(the tracked actor's own projected box, unpadded and unstabilised, in the same
+per-eye shape), `neuralFrames`
 (frames NR has applied), `neuralResets` (a cumulative count per reset reason,
 keyed `request`, `first`, `gap`, `position`, `direction`, `projection`,
 `creation`, `region`) and `neuralResetDrainMs` (cumulative CPU time blocked in

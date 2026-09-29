@@ -25,6 +25,9 @@ namespace NR::ActorRegion
 	/** @brief Padding added around the actor's projected bounds to build its crop. */
 	inline constexpr Util::Region::Padding kPadding{ 1.0f / 8.0f, 16.0f, 32.0f, 96.0f };
 
+	/** @brief Padding that adds no margin: the crop is the grid-aligned projected bounds alone. */
+	inline constexpr Util::Region::Padding kTightPadding{ 0.0f, 0.0f, 0.0f, 0.0f };
+
 	/** @brief Hold, shrink-window and shrink-threshold values the crop stabiliser runs with. */
 	inline constexpr Util::Region::StabilizerPolicy kStabilizerPolicy{ 30, 60, 0.75f };
 

@@ -32,7 +32,10 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionHeight;
 	uint RegionOverlayEnabled;
 	float RegionOutlineThickness;
-	float2 RegionPadding;
+	uint RegionActorBaseX;
+	uint RegionActorBaseY;
+	uint RegionActorWidth;
+	uint RegionActorHeight;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -50,7 +53,8 @@ static const float kLumaEpsilon = 1e-5;
 static const float kWeightEpsilon = 1e-5;
 static const float kSpatialEpsilon = 1e-4;
 static const float3 kRegionOutlineColor = float3(0.0, 1.0, 0.0);
-static const float kRegionOutsideDim = 0.35;
+static const float3 kActorBoxOutlineColor = float3(1.0, 1.0, 0.0);
+static const float kActorBoxOutlineThickness = 2.0f;
 
 float3 ProxyLinearToSrgb(float3 value)
 {
@@ -372,9 +376,13 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	if (VisualMode == NR::kVisualNone && !boundedGain)
 		result = FromLinear(result);
-	if (RegionOverlayEnabled != 0)
-		result = RegionOverlay::Apply(result, id.xy,
+	if (RegionOverlayEnabled != 0) {
+		result = RegionOverlay::OutlineOnly(result, id.xy,
 			RegionOverlay::ClampToFrame(uint4(RegionBaseX, RegionBaseY, RegionWidth, RegionHeight), uint2(Width, Height)),
-			kRegionOutlineColor, kRegionOutsideDim, RegionOutlineThickness);
+			kRegionOutlineColor, RegionOutlineThickness);
+		result = RegionOverlay::OutlineOnly(result, id.xy,
+			RegionOverlay::ClampToFrame(uint4(RegionActorBaseX, RegionActorBaseY, RegionActorWidth, RegionActorHeight), uint2(Width, Height)),
+			kActorBoxOutlineColor, kActorBoxOutlineThickness);
+	}
 	Output[id.xy] = float4(result, original.a);
 }

@@ -13,17 +13,6 @@ namespace RegionOverlay
 		return clamped;
 	}
 
-	float InsideCoverage(uint2 pixel, uint4 rect)
-	{
-		float coverage = 0.0;
-		if (rect.z != 0 && rect.w != 0) {
-			const bool inside = pixel.x >= rect.x && pixel.x < rect.x + rect.z &&
-			                    pixel.y >= rect.y && pixel.y < rect.y + rect.w;
-			coverage = inside ? 1.0 : 0.0;
-		}
-		return coverage;
-	}
-
 	float OutlineCoverage(uint2 pixel, uint4 rect, float thickness)
 	{
 		float coverage = 0.0;
@@ -37,13 +26,11 @@ namespace RegionOverlay
 		return coverage;
 	}
 
-	float3 Apply(float3 color, uint2 pixel, uint4 rect, float3 outlineColor, float outsideDim, float thickness)
+	float3 OutlineOnly(float3 color, uint2 pixel, uint4 rect, float3 outlineColor, float thickness)
 	{
 		float3 result = color;
-		if (rect.z != 0 && rect.w != 0) {
-			const float3 dimmed = color * lerp(1.0, saturate(outsideDim), 1.0 - InsideCoverage(pixel, rect));
-			result = lerp(dimmed, outlineColor, OutlineCoverage(pixel, rect, thickness));
-		}
+		if (rect.z != 0 && rect.w != 0)
+			result = lerp(color, outlineColor, OutlineCoverage(pixel, rect, thickness));
 		return result;
 	}
 }

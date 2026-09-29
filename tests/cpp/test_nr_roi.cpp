@@ -5,6 +5,7 @@
 #include "Features/Upscaling/NeuralRendering/ActorRegion.h"
 #include "Features/Upscaling/NeuralRendering/Diagnostics.h"
 #include "Features/Upscaling/NeuralRendering/Runtime.h"
+#include "Features/Upscaling/NeuralRendering/Tuning.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -117,4 +118,48 @@ TEST_CASE("A box below the minimum visible fraction falls under the tracking thr
 {
 	const float side = std::sqrt(NR::ActorRegion::kMinVisibleAreaFraction) * 0.99f;
 	REQUIRE(Util::Region::AreaFraction(Box(0.5f, 0.5f, side * 0.5f, side * 0.5f)) < NR::ActorRegion::kMinVisibleAreaFraction);
+}
+
+TEST_CASE("The tight crop fit aligns the bounds without padding them", "[nr][roi]")
+{
+	constexpr uint32_t width = 1920, height = 1080;
+	const Util::Region::ScreenBounds bounds{ 0.35f, 0.35f, 0.65f, 0.65f };
+
+	// 672..1248 x 378..702 raw, no padding, rounded out to the 64 px grid.
+	const auto tight = Util::Region::PixelRegionFromBounds(bounds, width, height, NR::ActorRegion::kTightPadding);
+	REQUIRE(tight.x == 640u);
+	REQUIRE(tight.y == 320u);
+	REQUIRE(tight.w == 640u);
+	REQUIRE(tight.h == 384u);
+}
+
+TEST_CASE("The padded crop fit is strictly larger than the tight one for the same bounds", "[nr][roi]")
+{
+	constexpr uint32_t width = 1920, height = 1080;
+	const Util::Region::ScreenBounds bounds{ 0.35f, 0.35f, 0.65f, 0.65f };
+
+	const auto tight = Util::Region::PixelRegionFromBounds(bounds, width, height, NR::ActorRegion::kTightPadding);
+	const auto padded = Util::Region::PixelRegionFromBounds(bounds, width, height, NR::ActorRegion::kPadding);
+	REQUIRE(padded.w > tight.w);
+	REQUIRE(padded.h > tight.h);
+	REQUIRE(padded.x <= tight.x);
+	REQUIRE(padded.y <= tight.y);
+	REQUIRE(padded.x + padded.w >= tight.x + tight.w);
+	REQUIRE(padded.y + padded.h >= tight.y + tight.h);
+}
+
+TEST_CASE("Tuning::Sanitize clamps the crop fit to the supported values", "[nr][roi]")
+{
+	NR::Tuning tuning;
+	tuning.regionFit = NR::Tuning::kMaxRegionFit + 5;
+	tuning.Sanitize();
+	REQUIRE(tuning.regionFit == NR::Tuning::kMaxRegionFit);
+
+	tuning.regionFit = NR::Tuning::kRegionFitTight;
+	tuning.Sanitize();
+	REQUIRE(tuning.regionFit == NR::Tuning::kRegionFitTight);
+
+	tuning.regionFit = NR::Tuning::kRegionFitPadded;
+	tuning.Sanitize();
+	REQUIRE(tuning.regionFit == NR::Tuning::kRegionFitPadded);
 }

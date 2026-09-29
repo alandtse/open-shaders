@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -2610,6 +2610,11 @@ json Upscaling::GetDiagnostics()
 	for (const auto& region : crop.eye)
 		eyes.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
 	diagnostics["neuralRegion"] = std::move(eyes);
+	const auto actorBox = neuralRendering.GetActorBox();
+	json actorBounds = json::array();
+	for (const auto& region : actorBox.eye)
+		actorBounds.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralActorBounds"] = std::move(actorBounds);
 	const auto resources = neuralRendering.GetStatus();
 	diagnostics["neuralRenderSize"] = { { "width", resources.width }, { "height", resources.height }, { "eyes", resources.eyes } };
 	diagnostics["neuralFrames"] = resources.appliedFrames;

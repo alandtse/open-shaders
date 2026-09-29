@@ -109,13 +109,52 @@ namespace
 		return false;
 	}
 
-	/** @brief Projects an actor's world bound into one eye's screen bounds; kOffscreen when it has none. */
+	/** @brief True when the authored local-space box is usable: finite and open on every axis. */
+	bool HasAuthoredBox(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max)
+	{
+		const auto finite = [](const RE::NiPoint3& a_point) {
+			return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z);
+		};
+		return finite(a_min) && finite(a_max) &&
+		       a_max.x > a_min.x && a_max.y > a_min.y && a_max.z > a_min.z;
+	}
+
+	/**
+	 * @brief World-space corners of an actor's authored local-space box, expressed relative to the eye.
+	 *        The box is carried by the actor's own root transform so its rotation and scale follow the
+	 *        engine's convention, then made camera-relative exactly as BoundCorners does.
+	 */
+	std::array<float3, 8> AuthoredBoundCorners(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max,
+		const RE::NiTransform& a_world, const RE::NiPoint3& a_origin)
+	{
+		std::array<float3, 8> corners{};
+		size_t index = 0;
+		for (const float x : { a_min.x, a_max.x })
+			for (const float y : { a_min.y, a_max.y })
+				for (const float z : { a_min.z, a_max.z }) {
+					const auto world = a_world * RE::NiPoint3{ x, y, z };
+					corners[index++] = float3{ world.x - a_origin.x, world.y - a_origin.y, world.z - a_origin.z };
+				}
+		return corners;
+	}
+
+	/** @brief Projects an actor's bound into one eye's screen bounds; kOffscreen when it has none. */
 	Util::Region::ProjectionResult ProjectActorEyeBounds(RE::Actor* a_actor, uint32_t a_eye, Util::Region::ScreenBounds& a_out)
 	{
 		auto* root = a_actor->Get3D(false);
-		if (!root || !(root->worldBound.radius > 0.0f))
+		if (!root)
 			return Util::Region::ProjectionResult::kOffscreen;
-		const auto corners = BoundCorners(root->worldBound, Util::GetEyePosition(static_cast<int>(a_eye)));
+		const auto origin = Util::GetEyePosition(static_cast<int>(a_eye));
+		const auto authoredMin = a_actor->GetBoundMin();
+		const auto authoredMax = a_actor->GetBoundMax();
+		std::array<float3, 8> corners;
+		if (HasAuthoredBox(authoredMin, authoredMax)) {
+			corners = AuthoredBoundCorners(authoredMin, authoredMax, root->world, origin);
+		} else if (root->worldBound.radius > 0.0f) {
+			corners = BoundCorners(root->worldBound, origin);
+		} else {
+			return Util::Region::ProjectionResult::kOffscreen;
+		}
 		return Util::Region::ProjectBounds(Util::GetCameraData(static_cast<int>(a_eye)).viewProjMat, corners, a_out);
 	}
 
@@ -147,11 +186,16 @@ namespace
 	/**
 	 * @brief Projects an actor's bound into per-eye crops, leaving the full frame where an eye
 	 *        cannot be cropped; false when no eye sees it, so it cannot be tracked.
+	 * @param a_actorBox Receives the same bound with no padding and no grid alignment: empty per eye
+	 *        the projection missed, and the whole frame where the bound is behind the eye.
 	 */
-	bool ProjectActorRegion(RE::Actor* a_actor, Util::Region::StereoRegion& a_region, uint32_t a_eyeWidth, uint32_t a_eyeHeight, uint32_t a_eyes)
+	bool ProjectActorRegion(RE::Actor* a_actor, Util::Region::StereoRegion& a_region, Util::Region::StereoRegion& a_actorBox,
+		uint32_t a_eyeWidth, uint32_t a_eyeHeight, uint32_t a_eyes, uint32_t a_fit)
 	{
 		const Util::Subrect::PixelRegion frame{ 0, 0, a_eyeWidth, a_eyeHeight };
 		a_region.eye.fill(frame);
+		a_actorBox.eye.fill(Util::Region::kEmptyRegion);
+		const auto& padding = a_fit == NR::Tuning::kRegionFitTight ? NR::ActorRegion::kTightPadding : NR::ActorRegion::kPadding;
 		bool tracked = false;
 		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
 			Util::Region::ScreenBounds bounds;
@@ -159,17 +203,25 @@ namespace
 			if (projection == Util::Region::ProjectionResult::kOffscreen || !IsActorVisibleFromCamera(a_actor, eye))
 				continue;
 			tracked = true;
-			if (projection == Util::Region::ProjectionResult::kVisible) {
-				const auto crop = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight, NR::ActorRegion::kPadding);
-				if (crop.w && crop.h)
-					a_region.eye[eye] = crop;
+			if (projection == Util::Region::ProjectionResult::kBehindEye) {
+				a_actorBox.eye[eye] = frame;
+				continue;
 			}
+			const auto crop = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight, padding);
+			if (crop.w && crop.h)
+				a_region.eye[eye] = crop;
+			a_actorBox.eye[eye] = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight,
+				NR::ActorRegion::kTightPadding, Util::Region::kNoPixelAlignment);
 		}
+		a_actorBox.active = tracked;
 		return tracked;
 	}
 
 	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
 	constexpr float kRegionOutlineThicknessPixels = 3.0f;
+
+	/** @brief Colour the preview draws the tracked actor's projected box in; the shader outline uses the same yellow. */
+	constexpr ImU32 kActorBoxPreviewColor = IM_COL32(255, 255, 0, 255);
 }
 
 struct NeuralRendering::Impl
@@ -201,7 +253,8 @@ struct NeuralRendering::Impl
 		uint32_t regionBaseX = 0, regionBaseY = 0, regionWidth = 0, regionHeight = 0;
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
-		float2 regionPadding{};
+		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
+		float2 pad{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -211,8 +264,10 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionBaseX) == 96);
 	static_assert(offsetof(ColorTransferData, regionOverlayEnabled) == 112);
 	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
-	static_assert(offsetof(ColorTransferData, regionPadding) == 120);
-	static_assert(sizeof(ColorTransferData) == 128);
+	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
+	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
+	static_assert(offsetof(ColorTransferData, pad) == 136);
+	static_assert(sizeof(ColorTransferData) == 144);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
@@ -222,6 +277,8 @@ struct NeuralRendering::Impl
 	Util::Region::StereoRegion lastRegion;
 	/** @brief Crop this frame's evaluation uses, published by the main thread and read by TransferColor. */
 	Util::Region::StereoRegion region;
+	/** @brief The tracked actor's unpadded projected box, published alongside the crop and drawn by the overlay. */
+	Util::Region::StereoRegion actorBox;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
 	uint32_t lastDiagnosticOptions = 0;
@@ -290,13 +347,20 @@ struct NeuralRendering::Impl
 	/** @brief Publishes this frame's crop for one eye; every kernel that reads a neural sample needs it. */
 	void SetRegion(ColorTransferData& a_data, uint32_t a_eye) const
 	{
-		if (!region.active)
-			return;
-		const auto& crop = region.eye[a_eye];
-		a_data.regionBaseX = crop.x;
-		a_data.regionBaseY = crop.y;
-		a_data.regionWidth = crop.w;
-		a_data.regionHeight = crop.h;
+		if (region.active) {
+			const auto& crop = region.eye[a_eye];
+			a_data.regionBaseX = crop.x;
+			a_data.regionBaseY = crop.y;
+			a_data.regionWidth = crop.w;
+			a_data.regionHeight = crop.h;
+		}
+		if (actorBox.active) {
+			const auto& box = actorBox.eye[a_eye];
+			a_data.regionActorBaseX = box.x;
+			a_data.regionActorBaseY = box.y;
+			a_data.regionActorWidth = box.w;
+			a_data.regionActorHeight = box.h;
+		}
 	}
 
 	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
@@ -709,7 +773,7 @@ void NeuralRendering::InstallHooks()
 
 void NeuralRendering::UpdateRegionOfInterest()
 {
-	Util::Region::StereoRegion next;
+	Util::Region::StereoRegion next, nextActorBox;
 	uint32_t eyeWidth = 0, eyeHeight = 0;
 	RE::ActorHandle winner;
 	if (regionEnabled.load(std::memory_order_relaxed) && publishedState.load(std::memory_order_relaxed) == Status::State::kActive) {
@@ -718,12 +782,15 @@ void NeuralRendering::UpdateRegionOfInterest()
 		eyeWidth = eyes ? resources.width : 0u;
 		eyeHeight = resources.height;
 		if (eyeWidth && eyeHeight) {
+			const auto fit = regionFit.load(std::memory_order_relaxed);
 			const auto camera = Util::GetEyePosition(0);
 			constexpr float maxSqDistance = NR::ActorRegion::kMaxActorDistance * NR::ActorRegion::kMaxActorDistance;
+			// In first person and VR the player sits at the camera, so tracking it would crop to the near plane.
+			const auto* playerCamera = RE::PlayerCamera::GetSingleton();
+			const bool playerVisible = !globals::game::isVR && playerCamera && playerCamera->IsInThirdPerson();
 			std::vector<RegionCandidate> candidates;
 			Util::ForEachLoadedActor([&](RE::Actor* a_actor) {
-				// The player sits at the camera, so tracking it would crop to the near plane rather than a character.
-				if (!a_actor || a_actor == globals::game::player || !a_actor->Is3DLoaded())
+				if (!a_actor || !a_actor->Is3DLoaded() || (a_actor == globals::game::player && !playerVisible))
 					return;
 				if (camera.GetSquaredDistance(a_actor->GetPosition()) > maxSqDistance)
 					return;
@@ -738,7 +805,7 @@ void NeuralRendering::UpdateRegionOfInterest()
 			});
 			for (const auto& candidate : candidates) {
 				auto actor = candidate.handle.get();
-				if (!actor || !ProjectActorRegion(actor.get(), next, eyeWidth, eyeHeight, eyes))
+				if (!actor || !ProjectActorRegion(actor.get(), next, nextActorBox, eyeWidth, eyeHeight, eyes, fit))
 					continue;
 				next.active = true;
 				winner = candidate.handle;
@@ -750,9 +817,11 @@ void NeuralRendering::UpdateRegionOfInterest()
 	std::scoped_lock lock(regionMutex);
 	if (eyeWidth && eyeHeight) {
 		region = regionStabilizer.Update(next, eyeWidth, eyeHeight);
+		actorBox = nextActorBox;
 	} else {
 		regionStabilizer.Reset();
 		region = {};
+		actorBox = {};
 	}
 }
 
@@ -762,13 +831,20 @@ Util::Region::StereoRegion NeuralRendering::GetRegionOfInterest() const
 	return region;
 }
 
+Util::Region::StereoRegion NeuralRendering::GetActorBox() const
+{
+	std::scoped_lock lock(regionMutex);
+	return actorBox;
+}
+
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit)
 {
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
+	regionFit.store(cropFit, std::memory_order_relaxed);
 	diagnostics.SetDeveloperMode(globals::state->IsDeveloperMode());
 	if (enabled)
 		diagnostics.EndFrame(globals::state->frameCount, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
@@ -859,6 +935,21 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
+	if (globals::state->IsDeveloperMode()) {
+		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
+		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
+			T(TKEY("crop_fit_padded"), "Padded"),
+			T(TKEY("crop_fit_tight"), "Tight"),
+		};
+		if (ImGui::Combo(T(TKEY("crop_fit"), "Crop Fit"), &fit, fitLabels.data(), static_cast<int>(fitLabels.size()))) {
+			tuning.regionFit = static_cast<uint32_t>(fit);
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_fit_tooltip"),
+				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
+	}
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -889,6 +980,7 @@ void NeuralRendering::DrawRegionPreview()
 	ImGui::Separator();
 	// Panels draw on the rendering thread after the NR pass, so impl's preview texture needs no lock.
 	const auto tracked = GetRegionOfInterest();
+	const auto trackedBox = GetActorBox();
 	const uint32_t sourceWidth = impl->width * impl->eyeCount;
 	const uint32_t sourceHeight = impl->height;
 	auto* preview = impl->original ? impl->original->srv.get() : nullptr;
@@ -901,18 +993,27 @@ void NeuralRendering::DrawRegionPreview()
 	const ImVec2 imageSize(maxWidth, maxWidth / aspect);
 	const ImVec2 imageMin = ImGui::GetCursorScreenPos();
 	Util::Subrect::ImageOpaque(preview, imageSize);
-	std::array<Util::RegionOverlay::Region, 2> rects{};
-	std::span<const Util::RegionOverlay::Region> shown;
+	std::array<Util::RegionOverlay::Region, 4> rects{};
+	size_t count = 0;
+	const uint32_t eyes = std::min<uint32_t>(impl->eyeCount, 2);
 	if (tracked.active) {
-		const uint32_t eyes = std::min<uint32_t>(impl->eyeCount, static_cast<uint32_t>(rects.size()));
 		for (uint32_t eye = 0; eye < eyes; ++eye) {
 			const auto& crop = tracked.eye[eye];
-			rects[eye].rect = Util::Subrect::PixelRegion{ crop.x + eye * impl->width, crop.y, crop.w, crop.h };
-			rects[eye].label = eyes > 1 ? (eye == 0 ? "L" : "R") : nullptr;
+			rects[count].rect = Util::Subrect::PixelRegion{ crop.x + eye * impl->width, crop.y, crop.w, crop.h };
+			rects[count].label = eyes > 1 ? (eye == 0 ? "L" : "R") : nullptr;
+			++count;
 		}
-		shown = std::span(rects.data(), eyes);
 	}
-	Util::RegionOverlay::Draw(imageMin, imageSize, sourceWidth, sourceHeight, shown);
+	if (trackedBox.active) {
+		for (uint32_t eye = 0; eye < eyes; ++eye) {
+			const auto& box = trackedBox.eye[eye];
+			rects[count].rect = Util::Subrect::PixelRegion{ box.x + eye * impl->width, box.y, box.w, box.h };
+			rects[count].color = kActorBoxPreviewColor;
+			rects[count].label = "actor";
+			++count;
+		}
+	}
+	Util::RegionOverlay::Draw(imageMin, imageSize, sourceWidth, sourceHeight, std::span(rects.data(), count));
 }
 
 void NeuralRendering::DrawDiagnosticsOverlay()
@@ -1083,6 +1184,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		auto boundedTuning = tuning;
 		boundedTuning.Sanitize();
 		work.region = GetRegionOfInterest();
+		work.actorBox = GetActorBox();
 		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;

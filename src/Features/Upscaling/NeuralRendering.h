@@ -53,8 +53,8 @@ struct NeuralRendering
 	void SetupResources();
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
-	/** @brief Discards history when NR or the world is inactive. */
-	void Reset(bool enabled, bool regionOfInterest);
+	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -82,6 +82,8 @@ struct NeuralRendering
 	Status GetStatus() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
 	Util::Region::StereoRegion GetRegionOfInterest() const;
+	/** @brief Snapshot of the tracked actor's projected box with no padding and no stabilising, safe from any thread. */
+	Util::Region::StereoRegion GetActorBox() const;
 	/** @brief Cumulative NR counters since startup, safe from any thread. */
 	NR::Diagnostics::Counters GetDiagnosticCounters() const { return diagnostics.GetCounters(); }
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
@@ -106,8 +108,15 @@ private:
 	mutable std::mutex statusMutex;
 	/** @brief True while the region-of-interest toggle is on and NR is enabled; the hook's off switch. */
 	std::atomic_bool regionEnabled = false;
+	/** @brief How the crop is fit to the projected bounds, mirrored from the tuning like regionEnabled. */
+	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
+	/**
+	 * @brief The tracked actor's own projected box, written with region but never stabilised: it is the
+	 *        raw pick, so a crop that flaps around the actor stays visible instead of being smoothed away.
+	 */
+	Util::Region::StereoRegion actorBox;
 	/** @brief Holds the crop steady across jitter; advanced only on the main thread inside UpdateRegionOfInterest. */
 	Util::Region::RegionStabilizer regionStabilizer{ NR::ActorRegion::kStabilizerPolicy };
 	/**
