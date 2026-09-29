@@ -162,6 +162,9 @@ public:
 	/** @brief Rebuilds both chains from the live depth target and binds them with hiZCB for the SSR draw. */
 	void BuildHiZ();
 
+	/** @brief Exposes the current HiZBufferData via devbench's openshaders.feature action=diagnostics. */
+	virtual json GetDiagnostics() override;
+
 	// Editor window
 
 	struct Settings

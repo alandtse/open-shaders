@@ -694,6 +694,16 @@ void DynamicCubemaps::BuildHiZ()
 	}
 }
 
+json DynamicCubemaps::GetDiagnostics()
+{
+	return json{
+		{ "ssrHiZAvailable", hiZBuffer.Available != 0 },
+		{ "ssrHiZMaxLevel", hiZBuffer.MaxLevel },
+		{ "ssrHiZSizeX", hiZBuffer.SizeX },
+		{ "ssrHiZSizeY", hiZBuffer.SizeY },
+	};
+}
+
 void DynamicCubemaps::SetupResources()
 {
 	GetComputeShaderUpdate();
