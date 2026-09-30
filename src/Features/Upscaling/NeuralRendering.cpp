@@ -83,8 +83,9 @@ namespace
 	}
 
 	/**
-	 * @brief Projects an actor's bound into per-eye crops, leaving the full frame where an eye
-	 *        cannot be cropped; false when no eye sees it, so it cannot be tracked.
+	 * @brief Projects an actor's bound into per-eye crops; false when no eye has a clear view of it,
+	 *        so it cannot be tracked. An eye whose view is blocked keeps its own crop, and an eye the
+	 *        bound misses takes the other eye's crop, so both eyes enhance the same scene area.
 	 * @param a_actorBox Receives the same bound with no padding and no grid alignment: empty per eye
 	 *        the projection missed, and the whole frame where the bound is behind the eye.
 	 */
@@ -97,13 +98,14 @@ namespace
 		const auto& padding = a_fit == NR::Tuning::kRegionFitTight ? NR::ActorRegion::kTightPadding : NR::ActorRegion::kPadding;
 		const auto worldPoints = Util::GetActorBoundPoints(*a_actor, true, NR::ActorRegion::kJointMargin);
 		bool tracked = false;
+		std::array<bool, 2> projected{};
 		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
 			Util::Region::ScreenBounds bounds;
 			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
-			if (projection == Util::Region::ProjectionResult::kOffscreen ||
-				!Util::IsActorVisibleFromEye(*a_actor, Util::GetEyePosition(static_cast<int>(eye))))
+			if (projection == Util::Region::ProjectionResult::kOffscreen)
 				continue;
-			tracked = true;
+			projected[eye] = true;
+			tracked |= Util::IsActorVisibleFromEye(*a_actor, Util::GetEyePosition(static_cast<int>(eye)));
 			if (projection == Util::Region::ProjectionResult::kBehindEye) {
 				a_actorBox.eye[eye] = frame;
 				continue;
@@ -114,6 +116,7 @@ namespace
 			a_actorBox.eye[eye] = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight,
 				NR::ActorRegion::kTightPadding, Util::Region::kNoPixelAlignment);
 		}
+		Util::Region::CopyCropToUnprojectedEyes(a_region, projected, a_eyeWidth, a_eyeHeight);
 		a_actorBox.active = tracked;
 		return tracked;
 	}

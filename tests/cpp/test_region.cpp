@@ -615,3 +615,25 @@ TEST_CASE("MatchEyeSizes does not enlarge a crop to match a whole-frame eye", "[
 	REQUIRE(region.eye[0].w == 192u);
 	REQUIRE(region.eye[1].w == kWidth);
 }
+
+TEST_CASE("CopyCropToUnprojectedEyes gives a missed eye the projecting eye's crop", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ 128, 64, 192, 576 }, PixelRegion{ 0, 0, kWidth, kHeight } };
+	Util::Region::CopyCropToUnprojectedEyes(region, { true, false }, kWidth, kHeight);
+	REQUIRE(region.eye[1].x == 128u);
+	REQUIRE(region.eye[1].w == 192u);
+	REQUIRE(region.eye[0].w == 192u);
+}
+
+TEST_CASE("CopyCropToUnprojectedEyes does not copy a whole-frame donor", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ 0, 0, kWidth, kHeight }, PixelRegion{ 0, 0, kWidth, kHeight } };
+	Util::Region::CopyCropToUnprojectedEyes(region, { true, false }, kWidth, kHeight);
+	REQUIRE(region.eye[1].w == kWidth);
+	Util::Region::CopyCropToUnprojectedEyes(region, { false, false }, kWidth, kHeight);
+	REQUIRE(region.eye[0].w == kWidth);
+}

@@ -183,6 +183,25 @@ namespace Util::Region
 			eye = { std::min(eye.x, a_width - width), std::min(eye.y, a_height - height), width, height };
 	}
 
+	/**
+	 * @brief Gives every eye the subject missed the crop of an eye that projected it, so both eyes
+	 *        enhance the same part of the scene. A donor that fell back to the whole frame is not copied.
+	 */
+	inline void CopyCropToUnprojectedEyes(StereoRegion& a_region, const std::array<bool, 2>& a_projected, uint32_t a_width, uint32_t a_height)
+	{
+		for (size_t eye = 0; eye < a_region.eye.size(); ++eye) {
+			if (a_projected[eye])
+				continue;
+			for (size_t donor = 0; donor < a_region.eye.size(); ++donor) {
+				const auto& crop = a_region.eye[donor];
+				if (a_projected[donor] && (crop.w < a_width || crop.h < a_height)) {
+					a_region.eye[eye] = crop;
+					break;
+				}
+			}
+		}
+	}
+
 	/** @brief True when a_inner lies entirely inside a_outer. */
 	inline bool Contains(const Subrect::PixelRegion& a_outer, const Subrect::PixelRegion& a_inner)
 	{
