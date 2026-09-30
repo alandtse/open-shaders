@@ -570,3 +570,48 @@ TEST_CASE("TryMergeRegions leaves an eye the base does not crop uncropped", "[re
 	REQUIRE(base.eye[1].w == width);
 	REQUIRE(base.eye[1].h == height);
 }
+
+TEST_CASE("MatchEyeSizes gives both eyes the larger size and keeps each position", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ 128, 64, 192, 576 }, PixelRegion{ 64, 128, 256, 512 } };
+	Util::Region::MatchEyeSizes(region, kWidth, kHeight);
+	for (const auto& eye : region.eye) {
+		REQUIRE(eye.w == 256u);
+		REQUIRE(eye.h == 576u);
+	}
+	REQUIRE(region.eye[0].x == 128u);
+	REQUIRE(region.eye[1].y == 128u);
+}
+
+TEST_CASE("MatchEyeSizes slides a crop back inside the frame instead of shrinking it", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ kWidth - 128, 0, 128, 256 }, PixelRegion{ 64, 0, 256, 256 } };
+	Util::Region::MatchEyeSizes(region, kWidth, kHeight);
+	REQUIRE(region.eye[0].w == 256u);
+	REQUIRE(region.eye[0].x == kWidth - 256u);
+	REQUIRE(region.eye[1].x == 64u);
+}
+
+TEST_CASE("MatchEyeSizes leaves a region with an empty eye untouched", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ 128, 64, 192, 576 }, Util::Region::kEmptyRegion };
+	Util::Region::MatchEyeSizes(region, kWidth, kHeight);
+	REQUIRE(region.eye[0].w == 192u);
+	REQUIRE(region.eye[1].w == 0u);
+}
+
+TEST_CASE("MatchEyeSizes does not enlarge a crop to match a whole-frame eye", "[region][stereo]")
+{
+	StereoRegion region;
+	region.active = true;
+	region.eye = { PixelRegion{ 128, 64, 192, 576 }, PixelRegion{ 0, 0, kWidth, kHeight } };
+	Util::Region::MatchEyeSizes(region, kWidth, kHeight);
+	REQUIRE(region.eye[0].w == 192u);
+	REQUIRE(region.eye[1].w == kWidth);
+}

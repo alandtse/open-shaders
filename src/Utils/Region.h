@@ -161,6 +161,28 @@ namespace Util::Region
 			std::min(a_region.h, a_height - a_region.y) };
 	}
 
+	/**
+	 * @brief Gives both eyes the larger crop size, sliding a crop inward when it would leave the frame.
+	 *        The eyes then share one seam geometry; an eye with no crop, or one that covers the whole
+	 *        frame, leaves the region untouched so a fallback eye does not enlarge the other.
+	 */
+	inline void MatchEyeSizes(StereoRegion& a_region, uint32_t a_width, uint32_t a_height)
+	{
+		if (!a_region.active)
+			return;
+		const auto& left = a_region.eye[0];
+		const auto& right = a_region.eye[1];
+		if (!left.w || !left.h || !right.w || !right.h)
+			return;
+		const auto coversFrame = [&](const Subrect::PixelRegion& a_eye) { return a_eye.w >= a_width && a_eye.h >= a_height; };
+		if (coversFrame(left) || coversFrame(right))
+			return;
+		const uint32_t width = std::min(std::max(left.w, right.w), a_width);
+		const uint32_t height = std::min(std::max(left.h, right.h), a_height);
+		for (auto& eye : a_region.eye)
+			eye = { std::min(eye.x, a_width - width), std::min(eye.y, a_height - height), width, height };
+	}
+
 	/** @brief True when a_inner lies entirely inside a_outer. */
 	inline bool Contains(const Subrect::PixelRegion& a_outer, const Subrect::PixelRegion& a_inner)
 	{

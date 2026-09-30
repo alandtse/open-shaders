@@ -797,6 +797,7 @@ void NeuralRendering::UpdateRegionOfInterest()
 	std::scoped_lock lock(regionMutex);
 	if (eyeWidth && eyeHeight) {
 		region = regionStabilizer.Update(next, eyeWidth, eyeHeight);
+		Util::Region::MatchEyeSizes(region, eyeWidth, eyeHeight);
 		actorBox = nextActorBox;
 	} else {
 		regionStabilizer.Reset();
