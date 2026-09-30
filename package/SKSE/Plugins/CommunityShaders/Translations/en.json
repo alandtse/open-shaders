@@ -841,6 +841,8 @@
     "feature.grass_optimizations.enable_mesh_lod_tooltip": "Improves performance by swapping distant grass instances for a simpler LOD mesh, in two bands. Requires an LOD .nif per grass type at meshes\\LOD\\Grass\\<source-mesh-name>_LOD0.nif, plus an optional _LOD1.nif for the far band. Grass with no LOD mesh keeps its full mesh.",
     "feature.grass_optimizations.enable_mid_lod": "Enable Middle LOD",
     "feature.grass_optimizations.enable_mid_lod_tooltip": "Swaps mid-distance grass to the _LOD0.nif mesh. With this off, grass stays on its full mesh until the far band takes over.",
+    "feature.grass_optimizations.enabled": "Enabled",
+    "feature.grass_optimizations.enabled_tooltip": "Use GPU-driven grass culling and instanced draws. When disabled, grass renders through the vanilla path and all other settings are ignored.",
     "feature.grass_optimizations.far_lod_pixel_size": "Far LOD Pixel Size",
     "feature.grass_optimizations.far_lod_pixel_size_tooltip": "Instances whose on-screen radius is below this but above Min Pixel Size swap to the _LOD1.nif mesh. Values above the Middle LOD Pixel Size are clamped to it, since the far band is always the more distant of the two.",
     "feature.grass_optimizations.full_detail_pixel_size": "Full-Detail Pixel Size",

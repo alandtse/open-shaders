@@ -239,6 +239,17 @@ std::optional<float3> SkySync::GetCelestialLightWeights() const
 	return shadowFader.lightWeights;
 }
 
+std::optional<RE::NiPoint3> SkySync::GetCelestialLightDirection() const
+{
+	const auto sky = globals::game::sky;
+	if (!loaded || !settings.Enabled || !celestialLightingValid || !sky || !sky->root)
+		return std::nullopt;
+
+	auto direction = sky->root->world.rotate * shadowFader.celestialDir;
+	direction.Unitize();
+	return direction;
+}
+
 void SkySync::Sky_Update::thunk(RE::Sky* sky)
 {
 	func(sky);
@@ -589,6 +600,7 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 		best = Caster::Sun;
 	}
 
+	const RE::NiPoint3 celestialTargetDir = best == Caster::None ? RE::NiPoint3{ 0.0f, 0.0f, 1.0f } : dirs[static_cast<int>(best)];
 	LockSunElevation(dirs);
 
 	// No valid caster points straight up so shadows fall directly down.
@@ -601,6 +613,7 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 		previousTarget = target;
 		target = best;
 		startDir = currentDir;
+		startCelestialDir = celestialDir;
 		startLightWeights = lightWeights;
 		fadeTimer = 0.0f;
 		transitioning = true;
@@ -615,6 +628,7 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 
 	if (!transitioning) {
 		currentDir = targetDir;
+		celestialDir = celestialTargetDir;
 		lightWeights = targetLightWeights;
 		vlIntensityFactor = target == Caster::None ? 0.0f : 1.0f;
 		if (target != Caster::None)
@@ -638,9 +652,16 @@ void SkySync::ShadowFader::Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float
 		std::lerp(startDir.z, targetDir.z, t)
 	};
 	currentDir.Unitize();
+	celestialDir = {
+		std::lerp(startCelestialDir.x, celestialTargetDir.x, t),
+		std::lerp(startCelestialDir.y, celestialTargetDir.y, t),
+		std::lerp(startCelestialDir.z, celestialTargetDir.z, t)
+	};
+	celestialDir.Unitize();
 
 	if (t >= 1.0f) {
 		currentDir = targetDir;
+		celestialDir = celestialTargetDir;
 		transitioning = false;
 	}
 
