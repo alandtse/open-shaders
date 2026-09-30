@@ -43,6 +43,7 @@ public:
 
 	bool featureDLSS = false;
 	bool featureDLSSG = false;
+	bool dlssgResourcesRetained = false;
 	// Upper bound for DLSSGOptions::numFramesToGenerate, queried once via slDLSSGGetState
 	// after PostDevice binds the DLSS-G functions (DX12 instance only). 1 = 2x-only.
 	uint32_t dlssgMaxFramesToGenerate = 1;
@@ -178,6 +179,7 @@ public:
 	void BindReflexAndPCL();
 
 	// DLSS-G frame generation methods (DX12 instance only)
+	/** @brief Configures DLSS-G and retains its resources across temporary pauses. */
 	void ConfigureDLSSG(bool enabled);
 	/**
 	 * @brief Emits a PCL latency marker for the current frame token. The marker's frame
