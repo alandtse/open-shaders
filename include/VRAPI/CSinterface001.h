@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// See COPYING.LESSER and API.md ("Consumer licensing").
+
 #pragma once
 
 #include <RE/Skyrim.h>
