@@ -6,6 +6,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/MathUtils.h"
 #include "Utils/SphericalHarmonics.h"
 
 #include <cmath>
@@ -22,6 +23,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void Skylighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	settings.MaxZenith = Util::ClampFinite(settings.MaxZenith, 0.0f, std::numbers::pi_v<float> / 2.0f, Settings{}.MaxZenith);
 }
 
 void Skylighting::SaveSettings(json& o_json)
@@ -41,9 +43,10 @@ void Skylighting::ResetSkylighting()
 	const float unitSH[4] = { std::sqrt(4.0f * std::numbers::pi_v<float>), 0.0f, 0.0f, 0.0f };
 	context->ClearUnorderedAccessViewFloat(texProbeArray->uav.get(), unitSH);
 
-	UINT clr[1] = { 0 };
+	UINT clr[4] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
-	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), clr);
+	const UINT litHistory[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), litHistory);
 
 	float clrf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 	context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), clrf);
@@ -453,7 +456,6 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 					auto value = static_cast<int32_t>(bsxFlags->value);
 
 					if (value & (static_cast<int32_t>(RE::BSXFlags::Flag::kRagdoll) |
-									static_cast<int32_t>(RE::BSXFlags::Flag::kEditorMarker) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kDynamic) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kAddon) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kNeedsTransformUpdate) |
@@ -641,7 +643,7 @@ void Skylighting::RenderOcclusion()
 	}
 
 	const auto basis = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(-direction), 4.0f * std::numbers::pi_v<float>);
-	OcclusionSHBasis4Pi = { basis.c0, basis.c1[0], basis.c1[1], basis.c1[2] };
+	OcclusionSHBasis4Pi = float4{ basis.c0, basis.c1[0], basis.c1[1], basis.c1[2] };
 	OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain)->occlusionProjection;
 	lastOcclusionRenderFrame = globals::state->frameCount;
 }

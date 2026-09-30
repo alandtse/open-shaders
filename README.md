@@ -239,6 +239,12 @@ The Modding Libraries include:
 -   [SKSE](https://skse.silverlock.org/)
 -   Commonlib (and variants).
 
+### SKSE Plugin API
+
+[LGPL-3.0-or-later](COPYING.LESSER): `include/VRAPI/CSinterface001.h` and
+`src/VRAPI/CSinterface001.cpp` only (see [API.md](API.md)). Everything else
+under `VRAPI/` remains [Default](#default).
+
 ### Shaders
 
 See LICENSE within each directory; if none, it's [Default](#default)
