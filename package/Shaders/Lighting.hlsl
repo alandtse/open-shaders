@@ -280,11 +280,22 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 worldPosition = float4(mul(World[eyeIndex], inputPosition), 1);
 #	endif  // SKINNED
 
+	float3x3 treeBendNormalTransform = (float3x3)Math::IdentityMatrix;
 	if (treeBendEnabled) {
-		worldPosition.xy +=
-			TreeWind::GetWorldDisplacement(input.Position.z, treeWindSample.trunkVelocity.xy);
-		previousWorldPosition.xy +=
-			TreeWind::GetWorldDisplacement(input.Position.z, previousTreeWindSample.trunkVelocity.xy);
+#	if defined(SKINNED)
+		float3 restWorldPosition = mul(float4(input.Position.xyz, 1.0), transpose(worldMatrix));
+		float3 previousRestWorldPosition = mul(float4(input.Position.xyz, 1.0), transpose(previousWorldMatrix));
+#	else
+		float3 restWorldPosition = mul(World[eyeIndex], float4(input.Position.xyz, 1.0)).xyz;
+		float3 previousRestWorldPosition = mul(PreviousWorld[eyeIndex], float4(input.Position.xyz, 1.0)).xyz;
+#	endif
+		float3x3 previousTreeBendNormalTransform;
+		worldPosition.xyz += TreeWind::GetWorldDisplacement(
+			restWorldPosition, worldPosition.xyz, (float3x4)World[eyeIndex],
+			treeWindSample.trunkVelocity.xy, treeBendNormalTransform);
+		previousWorldPosition.xyz += TreeWind::GetWorldDisplacement(
+			previousRestWorldPosition, previousWorldPosition.xyz, (float3x4)PreviousWorld[eyeIndex],
+			previousTreeWindSample.trunkVelocity.xy, previousTreeBendNormalTransform);
 	}
 
 	float4 viewPos;
@@ -361,6 +372,15 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TBN0.xyz = worldTbnTr[0];
 	vsout.TBN1.xyz = worldTbnTr[1];
 	vsout.TBN2.xyz = worldTbnTr[2];
+#	endif
+#	if defined(SKINNED) || !defined(MODELSPACENORMALS)
+	if (treeBendEnabled) {
+		float3x3 bentTbn = mul(treeBendNormalTransform,
+			float3x3(vsout.TBN0.xyz, vsout.TBN1.xyz, vsout.TBN2.xyz));
+		vsout.TBN0.xyz = bentTbn[0];
+		vsout.TBN1.xyz = bentTbn[1];
+		vsout.TBN2.xyz = bentTbn[2];
+	}
 #	endif
 
 #	if defined(LANDSCAPE)
@@ -1679,13 +1699,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!SharedData::linearLightingSettings.enableLinearLighting) {
 		baseColor.xyz = GetFacegenBaseColor(baseColor.xyz, uv);
 	} else {
-		baseColor.xyz = Color::SkyrimGammaToLinear(GetFacegenBaseColor(Color::LinearToSkyrimGamma(baseColor.xyz), uv));
+		float3 linearSrgbBaseColor = ENABLE_ACEScg ? AP1TosRGB(baseColor.xyz) : baseColor.xyz;
+		baseColor.xyz = Color::GamutTransform(Color::SkyrimGammaToLinear(GetFacegenBaseColor(Color::LinearToSkyrimGamma(linearSrgbBaseColor), uv)));
 	}
 #	elif defined(FACEGEN_RGB_TINT)
 	if (!SharedData::linearLightingSettings.enableLinearLighting) {
 		baseColor.xyz = GetFacegenRGBTintBaseColor(baseColor.xyz, uv);
 	} else {
-		baseColor.xyz = Color::SkyrimGammaToLinear(GetFacegenRGBTintBaseColor(Color::LinearToSkyrimGamma(baseColor.xyz), uv));
+		float3 linearSrgbBaseColor = ENABLE_ACEScg ? AP1TosRGB(baseColor.xyz) : baseColor.xyz;
+		baseColor.xyz = Color::GamutTransform(Color::SkyrimGammaToLinear(GetFacegenRGBTintBaseColor(Color::LinearToSkyrimGamma(linearSrgbBaseColor), uv)));
 	}
 #	endif  // FACEGEN
 

@@ -783,6 +783,34 @@ def collect_features(paths: list[Path]) -> dict[str, dict[str, str]]:
     return features
 
 
+def collect_indexed_factory_assignments(text: str) -> list[tuple[str, str]]:
+    assignments = []
+    masked = mask_cpp_source(text)
+    factory_pattern = re.compile(
+        r"\bstd::make_(?:unique|shared)\s*<\s*([A-Za-z_]\w*(?:::\w+)*)\s*>\s*\(")
+    for indexed in re.finditer(r"\b([A-Za-z_]\w*)\s*\[", masked):
+        depth = 1
+        index_end = indexed.end()
+        while index_end < len(masked) and depth:
+            if masked[index_end] == "[":
+                depth += 1
+            elif masked[index_end] == "]":
+                depth -= 1
+            index_end += 1
+        assignment = re.match(r"\s*=(?!=)\s*([^;]+);", masked[index_end:])
+        if not assignment:
+            continue
+        expression = assignment.group(1)
+        position = 0
+        while factory := factory_pattern.search(expression, position):
+            end = find_matching_paren(expression, factory.end() - 1)
+            if end < 0:
+                break
+            assignments.append((indexed.group(1), factory.group(1)))
+            position = end + 1
+    return assignments
+
+
 def collect_settings_components(
         features: dict[str, dict[str, str]], paths: list[Path]) -> dict[
             str, list[tuple[str, str, str, str, str]]]:
@@ -798,7 +826,7 @@ def collect_settings_components(
         if len(candidates) == 1
     }
 
-    components: dict[str, list[tuple[str, str, str]]] = {}
+    components: dict[str, list[tuple[str, str, str, str, str]]] = {}
     for feature_class, feature in features.items():
         source_path = Path(feature["source"]).with_suffix(".cpp")
         if not source_path.exists():
@@ -806,9 +834,7 @@ def collect_settings_components(
         text = read_text(source_path)
         feature_components = []
         seen_classes = set()
-        for container_name, child_type in re.findall(
-                r"\b([A-Za-z_]\w*)\s*\[[^\]]+\]\s*=\s*"
-                r"std::make_(?:unique|shared)\s*<\s*([A-Za-z_]\w*(?:::\w+)*)\s*>", text):
+        for container_name, child_type in collect_indexed_factory_assignments(text):
             child_name = child_type.split("::")[-1]
             if child_name in seen_classes:
                 continue

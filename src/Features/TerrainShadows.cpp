@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "SkySync.h"
 #include "State.h"
 #include "Util.h"
 
@@ -515,7 +516,9 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 		shadowUpdateIdx = 0;
 	if (shadowUpdateIdx == 0) {
 		float3 dirLightDir = currentSunDirection;
-		if (dirLightDir.z > 0)
+		if (const auto celestialDirection = globals::features::skySync.GetCelestialLightDirection())
+			dirLightDir = float3{ -celestialDirection->x, -celestialDirection->y, -celestialDirection->z };
+		else if (dirLightDir.z > 0)
 			dirLightDir = -dirLightDir;
 
 		// in UV
