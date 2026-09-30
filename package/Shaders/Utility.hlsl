@@ -196,19 +196,24 @@ VS_OUTPUT main(VS_INPUT input)
 	positionMS = LodLandscape::AdjustLodLandscapeVertexPositionMS(positionMS, World[eyeIndex], HighDetailRange[eyeIndex]);
 #		endif
 
+	float3x3 treeBendNormalTransform = (float3x3)Math::IdentityMatrix;
 #		if defined(SKINNED)
 	precise float4 positionWS = float4(mul(positionMS, transpose(worldMatrix)), 1);
 	if (treeBendEnabled) {
-		positionWS.xy += TreeWind::GetWorldDisplacement(
-			input.PositionMS.z, treeWindSample.trunkVelocity.xy);
+		float3 restWorldPosition = mul(float4(input.PositionMS.xyz, 1.0), transpose(worldMatrix));
+		positionWS.xyz += TreeWind::GetWorldDisplacement(
+			restWorldPosition, positionWS.xyz, (float3x4)World[eyeIndex],
+			treeWindSample.trunkVelocity.xy, treeBendNormalTransform);
 	}
 
 	positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 #		else
 	if (treeBendEnabled) {
 		precise float4 positionWS = mul(World[eyeIndex], positionMS);
-		positionWS.xy += TreeWind::GetWorldDisplacement(
-			input.PositionMS.z, treeWindSample.trunkVelocity.xy);
+		float3 restWorldPosition = mul(World[eyeIndex], float4(input.PositionMS.xyz, 1.0)).xyz;
+		positionWS.xyz += TreeWind::GetWorldDisplacement(
+			restWorldPosition, positionWS.xyz, (float3x4)World[eyeIndex],
+			treeWindSample.trunkVelocity.xy, treeBendNormalTransform);
 		positionCS = mul(FrameBuffer::CameraViewProj[eyeIndex], positionWS);
 	} else {
 		precise float4x4 modelViewProj = mul(FrameBuffer::CameraViewProj[eyeIndex], World[eyeIndex]);
@@ -237,9 +242,17 @@ VS_OUTPUT main(VS_INPUT input)
 #			if defined(SKINNED)
 	float3x3 boneRSMatrix = Skinned::GetBoneRSMatrix(Bones, boneIndices, input.BoneWeights);
 	normalMS = normalize(mul(normalMS, transpose(boneRSMatrix)));
+	if (treeBendEnabled)
+		normalMS = normalize(mul(treeBendNormalTransform, normalMS));
 	normalVS = mul(FrameBuffer::CameraView[eyeIndex], float4(normalMS, 0)).xyz;
 #			else
 	normalVS = mul(mul(FrameBuffer::CameraView[eyeIndex], World[eyeIndex]), float4(normalMS, 0)).xyz;
+	if (treeBendEnabled) {
+		float3 normalWS = mul(World[eyeIndex], float4(normalMS, 0.0)).xyz;
+		normalVS = mul(FrameBuffer::CameraView[eyeIndex],
+			float4(normalize(mul(treeBendNormalTransform, normalWS)), 0.0))
+		               .xyz;
+	}
 #			endif
 #			if defined(RENDER_NORMAL_CLAMP)
 	normalVS = max(min(normalVS, 0.1), -0.1);

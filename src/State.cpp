@@ -75,6 +75,10 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 		skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
 	}
+	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
+		auto* depthSRV = Util::GetCurrentSceneDepthSRV(true);
+		globals::d3d::context->VSSetShaderResources(17, 1, &depthSRV);
+	}
 }
 
 void State::UpdatePermutationBuffer()

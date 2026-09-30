@@ -733,6 +733,15 @@ namespace SIE
 			StandaloneShaderClass shaderClass,
 			StandaloneShaderReadyCallback onReady);
 
+		/** @brief Compiles a standalone shader on the calling thread, reusing valid disk-cached bytecode.
+		 * Shares its cache key with EnqueueStandaloneShaderCompile and compiles uncached when the disk cache is inactive.
+		 * @return The bytecode blob, or nullptr on an unsupported profile, missing source or compile failure. */
+		winrt::com_ptr<ID3DBlob> CompileStandaloneBlobCached(
+			const wchar_t* filePath,
+			const std::vector<std::pair<const char*, const char*>>& defines,
+			const char* profile,
+			const char* entryPoint);
+
 		/** @brief Queues a compute shader with the same path, define ownership and cancellation contract as EnqueueStandaloneShaderCompile. */
 		void EnqueueComputeShaderCompile(
 			std::wstring sourcePath,

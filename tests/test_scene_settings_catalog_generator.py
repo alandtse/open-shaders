@@ -315,45 +315,85 @@ class SceneSettingsCatalogGeneratorTests(unittest.TestCase):
         self.assertEqual((guarded["minimum"], guarded["maximum"]), (0.0, 2.0))
         self.assertEqual(sentinel["selectorPath"], "")
 
-    def test_component_discovery_accepts_unique_and_shared_factories(self):
+    def test_component_discovery_tracks_factories_in_assigned_expressions(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory) / "src"
+            root.mkdir()
             header = root / "FactoryFeature.h"
             source = root / "FactoryFeature.cpp"
             header.write_text(r'''
-struct UniqueComponent
-{
-    std::string GetType() { return "Unique"; }
-    std::string GetDisplayName() { return "Unique Component"; }
-};
-
-struct SharedComponent
-{
-    std::string GetType() { return "Shared"; }
-    std::string GetDisplayName() { return "Shared Component"; }
-};
-
 struct FactoryFeature : Feature
 {
     std::string GetShortName() { return "Factory"; }
     std::string GetName() { return "Factory Feature"; }
 };
 ''', encoding="utf-8")
-            source.write_text(r'''
-void FactoryFeature::Setup()
-{
-    pipeline[0] = std::make_unique<UniqueComponent>();
-    pipeline[1] = std::make_shared<SharedComponent>();
-}
-''', encoding="utf-8")
-
             paths = [header, source]
+            for name in ("Unique", "Shared"):
+                component_header = root / f"{name}Component.h"
+                component_header.write_text(f'''
+struct {name}Component
+{{
+    struct Settings {{ float amount = 1.0f; }} settings;
+    std::string GetType() {{ return "{name}"; }}
+    std::string GetDisplayName() {{ return "{name} Component"; }}
+}};
+''', encoding="utf-8")
+                paths.append(component_header)
             features = GENERATOR.collect_features([header])
-            components = GENERATOR.collect_settings_components(features, paths)
+            cases = {
+                "direct": (r'''
+pipeline[0] = std::make_unique<UniqueComponent>();
+pipeline[1] = std::make_shared<SharedComponent>();
+''', {"UniqueComponent", "SharedComponent"}),
+                "conditional_reuse": (r'''
+pipeline[indices[0]] = reuse ? previous.effects[indices[0]] :
+    std::make_shared<SharedComponent>();
+pipeline[1] = reuse ? std::make_unique<UniqueComponent>() : nullptr;
+''', {"UniqueComponent", "SharedComponent"}),
+                "conditional_factories": (r'''
+pipeline[0] = (useUnique ? std::make_unique<UniqueComponent>() :
+    (useShared ? std::make_shared<SharedComponent>() : nullptr));
+''', {"UniqueComponent", "SharedComponent"}),
+                "nested_factory_argument": (r'''
+pipeline[0] = std::make_shared<SharedComponent>(
+    std::make_unique<UniqueComponent>());
+''', {"SharedComponent"}),
+                "indexed_read_before_assignment": (r'''
+Inspect(previous[0], pipeline[indices[1]] = std::make_shared<SharedComponent>());
+''', {"SharedComponent"}),
+                "comments_and_statement_boundaries": (r'''
+// pipeline[0] = std::make_unique<UniqueComponent>();
+/* pipeline[0] = std::make_unique<UniqueComponent>(); */
+const char* example = "pipeline[0] = std::make_unique<UniqueComponent>();";
+pipeline[0] = nullptr;
+auto unrelated = std::make_unique<UniqueComponent>();
+if (pipeline[0] == std::make_unique<UniqueComponent>()) {}
+pipeline[1] = /* std::make_unique<UniqueComponent>(); */
+    std::make_shared<SharedComponent>();
+''', {"SharedComponent"}),
+            }
+            for name, (assignments, expected) in cases.items():
+                with self.subTest(name=name):
+                    source.write_text('''
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(UniqueComponent::Settings, amount)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(SharedComponent::Settings, amount)
+void FactoryFeature::Setup() {
+''' + assignments + "\n}", encoding="utf-8")
+                    components = GENERATOR.collect_settings_components(features, paths)
+                    self.assertEqual(
+                        {component[0] for component in components["FactoryFeature"]},
+                        expected)
+                    self.assertTrue(all(component[2] == "pipeline"
+                                        for component in components["FactoryFeature"]))
 
-            self.assertEqual(
-                {component[0] for component in components["FactoryFeature"]},
-                {"UniqueComponent", "SharedComponent"})
+                    entries = GENERATOR.build_entries(root.parent)
+                    GENERATOR.validate_entries(entries, 1)
+                    self.assertEqual({entry["componentClass"] for entry in entries}, expected)
+                    for entry in entries:
+                        self.assertEqual(entry["key"], "amount")
+                        self.assertEqual(entry["path"], f'{entry["componentType"]}/settings')
+                        self.assertIn("SettingFlag::SceneControllable", entry["flags"])
 
     def test_member_tab_helpers_preserve_controls_with_name_collisions(self):
         with tempfile.TemporaryDirectory() as directory:

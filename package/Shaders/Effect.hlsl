@@ -551,6 +551,12 @@ float3 GetEffectDirectionalLighting()
 	       intensity * SharedData::csUtilitySettings.directionalLightMult;
 }
 
+float3 GetWeatherEffectLighting(bool isSkyObject)
+{
+	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
+	return ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
+}
+
 void ExtractEffectLightingReference(
 	float3 inputReference,
 	float3 ambientReference,
@@ -595,8 +601,7 @@ float3 GetLightingColor(
 	inout float shadowVariance)
 {
 	const bool isSkyObject = Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject;
-	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
-	float3 color = ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
+	float3 color = GetWeatherEffectLighting(isSkyObject);
 	bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
 	shadowedWeatherReference = 0.0;
 	shadowedInfluencedWeatherReference = 0.0;
@@ -748,7 +753,7 @@ float3 GetLightingColor(
 	return color;
 }
 #	else
-float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise)
+float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise, bool isSkyObject)
 {
 	color = Color::EffectLight(color);
 
@@ -764,7 +769,7 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 		dirColor = GetEffectDirectionalLighting() * EffectDirectionalLightScale;
 		ambientColor = ambientLighting;
 	} else {
-		ExtractEffectLighting(color, ambientLighting, dirColor, ambientColor);
+		ExtractEffectLighting(isSkyObject ? color : GetWeatherEffectLighting(false), ambientLighting, dirColor, ambientColor);
 	}
 
 	static const uint sampleCount = 8;
@@ -782,13 +787,17 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 
 	if (inWorld && !SharedData::InInterior) {
-		shadow = 0.0;
-		for (uint i = 0; i < sampleCount; i++) {
-			float t = (float(i) + noise) * rcpSampleCount;
-			float3 samplePositionWS = lerp(startPosition, endPosition, t);
-			shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		if (isSkyObject) {
+			shadow = 0.0;
+			for (uint i = 0; i < sampleCount; i++) {
+				float t = (float(i) + noise) * rcpSampleCount;
+				float3 samplePositionWS = lerp(startPosition, endPosition, t);
+				shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+			}
+			shadow *= rcpSampleCount;
+		} else {
+			shadow = ShadowSampling::GetWorldShadow(worldPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 		}
-		shadow *= rcpSampleCount;
 	}
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(shadow)));
@@ -801,8 +810,12 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 	}
 #		endif
 
-	if (useAmbientEffectLighting)
-		return materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * SharedData::csUtilitySettings.skyStaticBrightness;
+	if (useAmbientEffectLighting) {
+		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness * Color::EffectLightingMultiplier();
+		return materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * brightness;
+	}
+	if (!isSkyObject)
+		return materialColor * (dirColor + ambientColor) * Color::EffectLightingMultiplier();
 	return dirColor + ambientColor;
 }
 #	endif
@@ -1069,9 +1082,14 @@ PS_OUTPUT main(PS_INPUT input)
 	const bool isSkyStatic = false;
 #	endif
 #	if !defined(LIGHTING) && !defined(MEMBRANE)
-	if (isSkyStatic || (UseAmbientEffectLighting() && (Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject))) {
-		float3 unlitColor = UseAmbientEffectLighting() ? baseColor.xyz : lightColor;
-		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, baseColor.xyz, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise), lightingInfluence);
+	const bool isSkyObject = isSkyStatic || (Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject);
+	const bool useAmbientLighting = UseAmbientEffectLighting();
+	const bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
+	const bool useWeatherLighting = !isSkyObject && !suppressExternalEmittance && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	if (isSkyStatic || (lightingInfluence > 0.0 && (useAmbientLighting || useWeatherLighting))) {
+		float3 unlitColor = useAmbientLighting || !isSkyObject ? baseColor.xyz : lightColor;
+		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
+		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject), lightingInfluence);
 	}
 #	endif
 
