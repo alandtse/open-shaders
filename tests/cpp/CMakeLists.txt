@@ -47,6 +47,8 @@ find_package(Threads REQUIRED)
 
 add_executable(cpp_tests
     test_main.cpp
+    test_screenshot_sequence.cpp
+    test_screenshot_png.cpp
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
@@ -83,6 +85,9 @@ add_executable(cpp_tests
     # Compile the unit-under-test directly into the test binary so we don't
     # depend on the plugin DLL build (which pulls in FFX/Streamline/etc.).
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
@@ -117,10 +122,12 @@ target_link_libraries(cpp_tests PRIVATE
     nlohmann_json::nlohmann_json
     imgui::imgui
     Microsoft::DirectXTK
+    Microsoft::DirectXTex
     magic_enum::magic_enum
     xxHash::xxhash
     spdlog::spdlog
     d3dcompiler
+    bcrypt
     Threads::Threads
 )
 

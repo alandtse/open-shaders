@@ -1,4 +1,5 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
+#include "Features/Screenshot/SequenceContract.h"
 
 #include <algorithm>
 
@@ -1026,6 +1027,43 @@ namespace
 		RunHandler(&BuildCaptureResult, a_argsJson, a_sink, a_write);
 	}
 
+	void ScreenshotReferenceHandler(void* context, const char* args, void* sink, DevBenchAPI::WriteFn write) noexcept
+	{
+		json result;
+		try {
+			const auto request = json::parse(args ? args : "{}");
+			auto* host = static_cast<DevBenchAPI::IDevBenchInterface001*>(context);
+			result = RunOnMainThread([request, host] {
+				return globals::features::screenshotFeature.HandleReferenceCapture(request, [host](const json& completion) {
+					const auto text = completion.dump();
+					host->EmitEvent("capture.ready", text.c_str());
+				});
+			});
+			if (!result.value("ok", false))
+				result = { { "error", result.at("error").is_string() ? result.at("error").get<std::string>() : result.at("error").value("message", "Reference capture failed") } };
+		} catch (const std::exception& error) {
+			result = { { "error", error.what() } };
+		} catch (...) {
+			result = { { "error", "Reference capture failed" } };
+		}
+		try {
+			const auto text = result.dump();
+			write(sink, text.c_str());
+		} catch (...) {
+			write(sink, R"({"error":"Reference result serialization failed"})");
+		}
+	}
+
+	json BuildScreenshotSequenceResult(const json& args)
+	{
+		return RunOnMainThread([args] { return globals::features::screenshotFeature.HandleSequenceRequest(args); });
+	}
+
+	void ScreenshotSequenceToolHandler(void*, const char* args, void* sink, DevBenchAPI::WriteFn write)
+	{
+		RunHandler(&BuildScreenshotSequenceResult, args, sink, write);
+	}
+
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
 
 	json BuildSettingsResult(const json& a_args)
@@ -1344,6 +1382,8 @@ namespace DevBenchBridge
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
+		dvb->RegisterTool("openshaders.screenshot", OS::Capture::SequenceToolDescription, &ScreenshotSequenceToolHandler, nullptr);
+
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL Open Shaders user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
@@ -1360,6 +1400,8 @@ namespace DevBenchBridge
 		// "CommunityShaders" matches the ImGui window id after `###`, so the menu name lines
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
+			static constexpr const char* referenceDesc = R"({"description":"Native SDR reference PNG from Screenshot: same-cycle side-by-side eyes in VR, desktop in SE/AE. Honors the host's absolute outputPath and requestId, never replaces files, and emits capture.ready after verified publication. UI exclusion is not guaranteed. Use the base capture tool's golden/threshold/regions or replay goldens for scoring; temporal sequences use openshaders.screenshot.","inputSchema":{"type":"object","required":["outputPath","requestId"],"properties":{"outputPath":{"type":"string"},"requestId":{"type":"string","minLength":1,"maxLength":128}}}})";
+			dvb->RegisterToolExtension("capture", "openshaders", referenceDesc, &ScreenshotReferenceHandler, dvb);
 			static constexpr const char* menuDesc =
 				R"({"description":"Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
 			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);

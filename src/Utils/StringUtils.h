@@ -14,6 +14,13 @@
 
 namespace Util
 {
+	/** Encodes a filesystem path as UTF-8 without narrowing Unicode filenames. */
+	inline std::string PathToUtf8(const std::filesystem::path& path)
+	{
+		const auto text = path.u8string();
+		return { reinterpret_cast<const char*>(text.data()), text.size() };
+	}
+
 	/**
 	 * @brief Lowercases the ASCII letters in @p a_str, returning a new string.
 	 *
