@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/RegionFeather.hlsli"
 #include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
@@ -167,27 +168,18 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
-// An edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
-static const float kRegionFeatherPixels = 32.0;
+static const float kRegionFeatherDefault = 32.0;
+static const float kRegionFeatherMin = 16.0;
+static const float kRegionFeatherMax = 96.0;
 
 float RegionWeight(int2 pixel)
 {
 	float weight = 1.0;
 	if (RegionWidth != 0) {
-		float2 position = float2(pixel) + 0.5;
-		float2 origin = float2(RegionBaseX, RegionBaseY);
-		float2 extent = float2(RegionWidth, RegionHeight);
-		if (any(position < origin) || any(position > origin + extent)) {
-			weight = 0.0;
-		} else {
-			float2 toMinEdge = position - origin;
-			float2 toMaxEdge = origin + extent - position;
-			float2 frame = float2(Width, Height);
-			float2 boundary = float2(
-				min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
-				min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
-			weight = smoothstep(0.0, 1.0, min(boundary.x, boundary.y) / kRegionFeatherPixels);
-		}
+		const float4 crop = float4(RegionBaseX, RegionBaseY, RegionBaseX + RegionWidth, RegionBaseY + RegionHeight);
+		const float4 subject = float4(RegionActorBaseX, RegionActorBaseY, RegionActorBaseX + RegionActorWidth, RegionActorBaseY + RegionActorHeight);
+		weight = RegionFeather::Weight(float2(pixel) + 0.5, crop, subject, float2(Width, Height),
+			kRegionFeatherDefault, kRegionFeatherMin, kRegionFeatherMax);
 	}
 	return weight;
 }

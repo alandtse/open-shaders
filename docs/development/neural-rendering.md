@@ -146,9 +146,13 @@ largest crop within `kKneeTolerance` of it under `neuralCalibration` in the
 diagnostics. It refuses to run with frame generation on, since frame generation
 paces the frame and skews the GPU zones.
 
-Inside the crop the neural result eases in over `kRegionFeatherPixels` from the crop
-edge with a smoothstep ramp, so the different shading NR gives the crop does not end at
-a hard seam.
+Inside the crop the neural result eases in with a smoothstep ramp, so the different
+shading NR gives the crop does not end at a hard seam. The band on each side spans the
+margin between the tracked actor's box and the crop edge, kept between 16 and 96 px
+(`RegionFeather` in `package/Shaders/Common/RegionFeather.hlsli`), so the weight reaches
+1 by the actor's outline and the whole margin is used for the transition. With no actor
+box, as in the calibration sweep, the band is 32 px, and an edge on the frame edge has no
+band. The crop's minimum padding (`kPadding`) is what leaves that margin.
 
 Both drawings come from reusable helpers: `RegionOverlay::OutlineOnly` in
 `package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a

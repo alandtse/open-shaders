@@ -56,8 +56,12 @@ namespace NR::ActorRegion
 	/** @brief Score of an actor whose bound crosses the eye plane: it fills the view, so it outranks any bounded candidate. */
 	inline constexpr float kEyePlaneCrossingScore = 1.0f;
 
-	/** @brief Padding added around the actor's projected bounds to build its crop. */
-	inline constexpr Util::Region::Padding kPadding{ 1.0f / 8.0f, 16.0f, 32.0f, 96.0f };
+	/**
+	 * @brief Padding added around the actor's projected bounds to build its crop. Its floor gives the
+	 *        composite's ease-in room to finish outside the actor's box; the pass costs the same at any
+	 *        crop size that matters, so the room is free.
+	 */
+	inline constexpr Util::Region::Padding kPadding{ 1.0f / 8.0f, 16.0f, 64.0f, 128.0f };
 
 	/** @brief Padding that adds no margin: the crop is the grid-aligned projected bounds alone. */
 	inline constexpr Util::Region::Padding kTightPadding{ 0.0f, 0.0f, 0.0f, 0.0f };
