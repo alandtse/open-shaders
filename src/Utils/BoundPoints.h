@@ -14,10 +14,11 @@ namespace Util
 		float3 min{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
 		float3 max{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
 
+		/** @brief Grows the box to contain a_point. */
 		void Include(const float3& a_point)
 		{
-			min = { std::min(min.x, a_point.x), std::min(min.y, a_point.y), std::min(min.z, a_point.z) };
-			max = { std::max(max.x, a_point.x), std::max(max.y, a_point.y), std::max(max.z, a_point.z) };
+			min = float3(std::min(min.x, a_point.x), std::min(min.y, a_point.y), std::min(min.z, a_point.z));
+			max = float3(std::max(max.x, a_point.x), std::max(max.y, a_point.y), std::max(max.z, a_point.z));
 		}
 
 		/** @brief True once at least one point has been included. */
@@ -38,6 +39,7 @@ namespace Util
 	 */
 	struct BoundPoints
 	{
+		/** @brief Most points a set holds: an authored box and a skeleton box. */
 		static constexpr size_t kCapacity = 16;
 		std::array<float3, kCapacity> points{};
 		size_t count = 0;
@@ -58,6 +60,7 @@ namespace Util
 						Add({ x, y, z });
 		}
 
+		/** @brief The points added so far. */
 		[[nodiscard]] std::span<const float3> View() const { return { points.data(), count }; }
 	};
 }

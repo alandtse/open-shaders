@@ -24,6 +24,7 @@ namespace NR
 	class CropCalibration
 	{
 	public:
+		/** @brief Number of crop sizes the sweep evaluates. */
 		static constexpr size_t kSteps = 7;
 		/** @brief Times the whole sweep repeats; a step keeps its best pass. */
 		static constexpr uint32_t kPasses = 4;
@@ -40,6 +41,7 @@ namespace NR
 		/** @brief How far above the cheapest step a crop's cost may sit and still count as free. */
 		static constexpr float kKneeTolerance = 0.05f;
 
+		/** @brief Where a sweep stands. */
 		enum class State : uint8_t
 		{
 			kIdle,
@@ -48,6 +50,7 @@ namespace NR
 			kFailed
 		};
 
+		/** @brief Why a sweep failed. */
 		enum class Failure : uint8_t
 		{
 			kNone,
@@ -56,6 +59,7 @@ namespace NR
 			kNoSamples         ///< A step never produced enough timed frames.
 		};
 
+		/** @brief The sweep's state and, once done, its measurements. */
 		struct Result
 		{
 			State state = State::kIdle;
@@ -88,6 +92,7 @@ namespace NR
 			result.failure = a_failure;
 		}
 
+		/** @brief True while a sweep is in progress. */
 		[[nodiscard]] bool Running() const { return result.state == State::kRunning; }
 
 		/** @brief Crop area, as a share of the frame, the caller must force this frame. */
@@ -122,6 +127,7 @@ namespace NR
 				Finish();
 		}
 
+		/** @brief The current state and measurements. */
 		[[nodiscard]] const Result& GetResult() const { return result; }
 
 	private:

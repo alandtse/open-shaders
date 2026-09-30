@@ -53,6 +53,9 @@ namespace NR::ActorRegion
 		           kMaxGroupAreaFraction;
 	}
 
+	/** @brief Score of an actor whose bound crosses the eye plane: it fills the view, so it outranks any bounded candidate. */
+	inline constexpr float kEyePlaneCrossingScore = 1.0f;
+
 	/** @brief Padding added around the actor's projected bounds to build its crop. */
 	inline constexpr Util::Region::Padding kPadding{ 1.0f / 8.0f, 16.0f, 32.0f, 96.0f };
 

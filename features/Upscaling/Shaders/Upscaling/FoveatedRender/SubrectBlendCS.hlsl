@@ -4,8 +4,6 @@
 //   0 = Feather  – smoothstep alpha ramp over FeatherWidth pixels
 //   1 = Dither   – noise-perturbed gradient in feather band (DitherStrength controls noise)
 
-#include "Common/FeatherBlend.hlsli"
-
 cbuffer BlendCB : register(b0)
 {
 	uint DstOffsetX;       // SBS destination X for this eye (0 or eyeWidthOut)
@@ -49,6 +47,11 @@ float EllipseEdgeDistance(float2 offset, float2 radii)
 
 	float distance = ellipseValue / gradientLength;
 	return clamp(distance, -max(safeRadii.x, safeRadii.y), min(safeRadii.x, safeRadii.y));
+}
+
+float ShapeRamp(float normalizedDistance, float curve)
+{
+	return pow(saturate(normalizedDistance), curve);
 }
 
 [numthreads(8, 8, 1)] void main(uint3 tid : SV_DispatchThreadID) {
@@ -102,11 +105,12 @@ float EllipseEdgeDistance(float2 offset, float2 radii)
 		// Noise shifts the blend threshold per-pixel → natural irregular boundary
 		float t = edgeDist / FeatherWidth;  // 0 at edge, 1 at band end
 		float noise = BlueNoise(srcPos, FrameIndex);
-		float alpha = saturate(FeatherBlend::ShapeRamp(t, FalloffCurve) + (noise - 0.5) * DitherStrength);
+		float alpha = saturate(ShapeRamp(t, FalloffCurve) + (noise - 0.5) * DitherStrength);
 		DstTex[dstPos] = lerp(bg, dlss, alpha);
 	} else {
 		// Feather (default): tunable smooth alpha ramp
-		float alpha = FeatherBlend::SmoothRamp(FeatherBlend::ShapeRamp(edgeDist / FeatherWidth, FalloffCurve));
+		float ramp = ShapeRamp(edgeDist / FeatherWidth, FalloffCurve);
+		float alpha = ramp * ramp * (3.0 - 2.0 * ramp);
 		DstTex[dstPos] = lerp(bg, dlss, alpha);
 	}
 }

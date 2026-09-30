@@ -13,8 +13,7 @@ namespace Util::RegionOverlay
 			return result;
 		const float inverseWidth = 1.0f / static_cast<float>(a_sourceWidth);
 		const float inverseHeight = 1.0f / static_cast<float>(a_sourceHeight);
-		// Summed as floats: a uint32 x + w would wrap for a rect declared past the frame, which is
-		// exactly the input the clamp below exists to absorb.
+		// Summed as floats: a uint32 x + w wraps for a rect declared past the frame.
 		const float left = std::clamp(static_cast<float>(a_rect.x) * inverseWidth, 0.0f, 1.0f);
 		const float top = std::clamp(static_cast<float>(a_rect.y) * inverseHeight, 0.0f, 1.0f);
 		const float right = std::clamp((static_cast<float>(a_rect.x) + static_cast<float>(a_rect.w)) * inverseWidth, 0.0f, 1.0f);

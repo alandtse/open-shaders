@@ -128,7 +128,6 @@ TEST_CASE("The tight crop fit aligns the bounds without padding them", "[nr][roi
 	constexpr uint32_t width = 1920, height = 1080;
 	const Util::Region::ScreenBounds bounds{ 0.35f, 0.35f, 0.65f, 0.65f };
 
-	// 672..1248 x 378..702 raw, no padding, rounded out to the 64 px grid.
 	const auto tight = Util::Region::PixelRegionFromBounds(bounds, width, height, NR::ActorRegion::kTightPadding);
 	REQUIRE(tight.x == 640u);
 	REQUIRE(tight.y == 320u);

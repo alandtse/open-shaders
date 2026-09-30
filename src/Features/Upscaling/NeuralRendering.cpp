@@ -71,9 +71,8 @@ namespace
 			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
 			if (projection == Util::Region::ProjectionResult::kOffscreen)
 				continue;
-			// An actor crossing the eye plane fills the view, so it outranks any bounded candidate.
 			if (projection == Util::Region::ProjectionResult::kBehindEye) {
-				best = std::max(best, a_incumbent ? NR::ActorRegion::kIncumbentScoreBonus : 1.0f);
+				best = std::max(best, NR::ActorRegion::kEyePlaneCrossingScore * (a_incumbent ? NR::ActorRegion::kIncumbentScoreBonus : 1.0f));
 				continue;
 			}
 			if (Util::Region::AreaFraction(bounds) < NR::ActorRegion::kMinVisibleAreaFraction)
@@ -121,6 +120,12 @@ namespace
 
 	/** @brief Pass-to-pass timing ratio above which a calibration result is flagged as unsteady. */
 	constexpr float kCalibrationUnstableRatio = 1.5f;
+
+	/** @brief Widest the settings-panel region preview is drawn, in ImGui pixels. */
+	constexpr float kRegionPreviewMaxWidth = 400.0f;
+
+	/** @brief Rectangles the preview can draw: a crop and an actor box per eye. */
+	constexpr size_t kMaxPreviewRegions = 4;
 
 	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
 	constexpr float kRegionOutlineThicknessPixels = 3.0f;
@@ -670,9 +675,7 @@ NeuralRendering::~NeuralRendering() = default;
 
 void NeuralRendering::InstallHooks()
 {
-	const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
-	stl::write_thunk_call<MainUpdate_UpdateRegionOfInterest>(
-		REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE));
+	stl::write_thunk_call<MainUpdate_UpdateRegionOfInterest>(Util::MainUpdateCallSite());
 	logger::debug("[NeuralRendering] Installed actor-tracking hook");
 }
 
@@ -741,12 +744,11 @@ void NeuralRendering::UpdateRegionOfInterest()
 			const bool group = regionGroup.load(std::memory_order_relaxed);
 			const auto camera = Util::GetEyePosition(0);
 			constexpr float maxSqDistance = NR::ActorRegion::kMaxActorDistance * NR::ActorRegion::kMaxActorDistance;
-			// In first person and VR the player sits at the camera, so tracking it would crop to the near plane.
 			const auto* playerCamera = RE::PlayerCamera::GetSingleton();
-			const bool playerVisible = !globals::game::isVR && playerCamera && playerCamera->IsInThirdPerson();
+			const bool playerIsSeparateFromCamera = !globals::game::isVR && playerCamera && playerCamera->IsInThirdPerson();
 			std::vector<RegionCandidate> candidates;
 			Util::ForEachLoadedActor([&](RE::Actor* a_actor) {
-				if (!a_actor || !a_actor->Is3DLoaded() || (a_actor == globals::game::player && !playerVisible))
+				if (!a_actor || !a_actor->Is3DLoaded() || (a_actor == globals::game::player && !playerIsSeparateFromCamera))
 					return;
 				if (camera.GetSquaredDistance(a_actor->GetPosition()) > maxSqDistance)
 					return;
@@ -991,12 +993,12 @@ void NeuralRendering::DrawRegionPreview()
 		ImGui::TextDisabled("%s", T(TKEY("region_overlay_unavailable"), "Crop preview appears once Neural Rendering runs a frame."));
 		return;
 	}
-	const float maxWidth = std::min(400.0f, ImGui::GetContentRegionAvail().x);
+	const float maxWidth = std::min(kRegionPreviewMaxWidth, ImGui::GetContentRegionAvail().x);
 	const float aspect = static_cast<float>(sourceWidth) / static_cast<float>(sourceHeight);
 	const ImVec2 imageSize(maxWidth, maxWidth / aspect);
 	const ImVec2 imageMin = ImGui::GetCursorScreenPos();
 	Util::Subrect::ImageOpaque(preview, imageSize);
-	std::array<Util::RegionOverlay::Region, 4> rects{};
+	std::array<Util::RegionOverlay::Region, kMaxPreviewRegions> rects{};
 	size_t count = 0;
 	const uint32_t eyes = std::min<uint32_t>(impl->eyeCount, 2);
 	if (tracked.active) {

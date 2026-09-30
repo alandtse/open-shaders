@@ -3,8 +3,7 @@
 
 namespace RegionOverlay
 {
-	// A region measured for one frame size can be composited into another after a render-size change,
-	// which would draw it off-frame.
+	// A region measured for another frame size draws off-frame after a render-size change.
 	uint4 ClampToFrame(uint4 rect, uint2 frame)
 	{
 		uint4 clamped = uint4(0, 0, 0, 0);

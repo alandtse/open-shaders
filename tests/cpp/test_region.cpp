@@ -142,10 +142,8 @@ TEST_CASE("ProjectBounds reports a box straddling the eye plane as behind the ey
 
 TEST_CASE("ProjectBounds takes corners relative to the eye, not to the world origin", "[region]")
 {
-	// The engine's view-projection expects camera-relative input, which is why the caller subtracts
-	// the eye position from a target's world bound before projecting. Composing that subtraction into
-	// the matrix has to give the same bounds as pre-subtracting the corners, even when the eye sits
-	// at a world coordinate far from the origin.
+	// The engine's view-projection takes camera-relative input; composing the eye subtraction into
+	// the matrix must match pre-subtracting the corners, even far from the origin.
 	const float3 eye{ -79872.5f, 41216.25f, 1234.0f };
 	const auto relative = BoxCorners({ -2.0f, -1.0f, 10.0f }, { 2.0f, 1.0f, 20.0f });
 	std::array<float3, 8> world{};
@@ -223,7 +221,6 @@ TEST_CASE("PixelRegionFromBounds pads, aligns and clamps the crop", "[region]")
 {
 	const auto region = Crop(ScreenBounds{ 0.35f, 0.35f, 0.65f, 0.65f });
 
-	// 672..1248 x 378..702 raw, padded by clamp(extent/8 + 16, 32, 96) and rounded out to 64.
 	REQUIRE(region.x == 576u);
 	REQUIRE(region.y == 320u);
 	REQUIRE(region.w == 768u);
@@ -424,8 +421,8 @@ TEST_CASE("RegionStabilizer keeps the eyes independent", "[region][stabilize]")
 
 	StereoRegion candidate;
 	candidate.active = true;
-	candidate.eye[0] = PixelRegion{ 64, 64, 256, 256 };    // inside: the left eye anchors
-	candidate.eye[1] = PixelRegion{ 384, 384, 512, 512 };  // outside: the right eye grows
+	candidate.eye[0] = PixelRegion{ 64, 64, 256, 256 };
+	candidate.eye[1] = PixelRegion{ 384, 384, 512, 512 };
 	const auto out = stabilizer.Update(candidate, kWidth, kHeight);
 	REQUIRE(out.eye[0].x == 0u);
 	REQUIRE(out.eye[0].w == 512u);

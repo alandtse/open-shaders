@@ -1,5 +1,4 @@
 #include "Common/Color.hlsli"
-#include "Common/FeatherBlend.hlsli"
 #include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
@@ -168,9 +167,7 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
-// NGX wrote nothing outside the subrect, so the weight is gated to 0 there and eases in from the
-// edge over a band wide enough that the differing shading inside the crop does not show as a seam;
-// an edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
+// An edge on the frame edge must not feather, or NR is suppressed over a band of the frame.
 static const float kRegionFeatherPixels = 32.0;
 
 float RegionWeight(int2 pixel)
@@ -189,14 +186,13 @@ float RegionWeight(int2 pixel)
 			float2 boundary = float2(
 				min(origin.x > 0.0 ? toMinEdge.x : kRegionFeatherPixels, origin.x + extent.x < frame.x ? toMaxEdge.x : kRegionFeatherPixels),
 				min(origin.y > 0.0 ? toMinEdge.y : kRegionFeatherPixels, origin.y + extent.y < frame.y ? toMaxEdge.y : kRegionFeatherPixels));
-			weight = FeatherBlend::SmoothRamp(saturate(min(boundary.x, boundary.y) / kRegionFeatherPixels));
+			weight = smoothstep(0.0, 1.0, min(boundary.x, boundary.y) / kRegionFeatherPixels);
 		}
 	}
 	return weight;
 }
 
-// Outside the crop NGX wrote nothing, so the input stands in for the neural sample there; weight 0
-// must return the input exactly, since lerp would propagate a NaN sample even at t = 0.
+// Weight 0 must return the input exactly: lerp propagates a NaN neural sample even at t = 0.
 float3 RegionStableNeuralSample(int2 pixel, float3 inputSample, float3 neuralSample)
 {
 	float3 result = neuralSample;

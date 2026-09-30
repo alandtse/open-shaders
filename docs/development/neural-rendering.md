@@ -147,9 +147,8 @@ diagnostics. It refuses to run with frame generation on, since frame generation
 paces the frame and skews the GPU zones.
 
 Inside the crop the neural result eases in over `kRegionFeatherPixels` from the crop
-edge with the smoothstep ramp in `package/Shaders/Common/FeatherBlend.hlsli`, which
-foveation's subrect blend shares, so the different shading NR gives the crop does not
-end at a hard seam.
+edge with a smoothstep ramp, so the different shading NR gives the crop does not end at
+a hard seam.
 
 Both drawings come from reusable helpers: `RegionOverlay::OutlineOnly` in
 `package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a

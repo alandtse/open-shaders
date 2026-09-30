@@ -140,8 +140,6 @@ namespace Util
 		}
 		if (!a_includeSkeleton)
 			return restPose;
-		// A corpse or knocked-down actor keeps an upright root while its bones lie flat, so the
-		// rest-pose box would span a volume the body is not in.
 		const bool poseFollowsRoot = !a_actor.IsDead() && !a_actor.IsInRagdollState();
 		BoundPoints result;
 		if (poseFollowsRoot)
