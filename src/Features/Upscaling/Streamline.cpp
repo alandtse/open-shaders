@@ -955,6 +955,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 
 	sl::DLSSGOptions options{};
 	options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
+	options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 	options.numFramesToGenerate = std::clamp<uint32_t>(
 		globals::features::upscaling.settings.dlssgFramesToGenerate, 1, dlssgMaxFramesToGenerate);
 
@@ -964,6 +965,21 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			errorLogged = true;
 			logger::error("[Streamline DX12] slDLSSGSetOptions failed: {}", magic_enum::enum_name(result));
 		}
+		return;
+	}
+
+	if (enabled) {
+		dlssgResourcesRetained = true;
+	} else if (!globals::features::upscaling.settings.frameGenerationMode && dlssgResourcesRetained) {
+		if (SL_FAILED(result, slFreeResources(sl::kFeatureDLSS_G, viewport))) {
+			static bool errorLogged = false;
+			if (!errorLogged) {
+				errorLogged = true;
+				logger::error("[Streamline DX12] Failed to free DLSS-G resources: {}", magic_enum::enum_name(result));
+			}
+			return;
+		}
+		dlssgResourcesRetained = false;
 	}
 
 	if (slDLSSGGetState && enabled) {
