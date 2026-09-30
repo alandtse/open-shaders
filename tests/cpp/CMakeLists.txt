@@ -45,8 +45,18 @@ find_package(spdlog CONFIG REQUIRED)
 # implicitly, but Threads::Threads keeps the target portable to other toolchains.
 find_package(Threads REQUIRED)
 
+set(screenshot_test_sources
+    test_screenshot_sequence.cpp
+    test_screenshot_png.cpp
+    test_screenshot_worker.cpp
+    "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
+)
+
 add_executable(cpp_tests
     test_main.cpp
+    ${screenshot_test_sources}
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
@@ -107,42 +117,51 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
 
-# The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
-# test target does not use. Force-include a tiny prelude so SphericalHarmonics
-# (and its .cpp) see those aliases without the heavy RE/SKSE PCH.
-if(MSVC)
-    target_compile_options(cpp_tests PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
-else()
-    target_compile_options(cpp_tests PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
-endif()
+# Exercise capture policy in both production and DevBench configurations.
+add_executable(screenshot_tests_devbench test_main.cpp ${screenshot_test_sources})
+target_compile_definitions(screenshot_tests_devbench PRIVATE DEVBENCH_BRIDGE_ENABLED=1)
 
-set_property(TARGET cpp_tests PROPERTY CXX_STANDARD 23)
-set_property(TARGET cpp_tests PROPERTY CXX_STANDARD_REQUIRED ON)
+foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
+    # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
+    # test target does not use. Force-include a tiny prelude so SphericalHarmonics
+    # (and its .cpp) see those aliases without the heavy RE/SKSE PCH.
+    if(MSVC)
+        target_compile_options(${cpp_test_target} PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+    else()
+        target_compile_options(${cpp_test_target} PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+    endif()
 
-target_include_directories(cpp_tests PRIVATE
-    "${CMAKE_SOURCE_DIR}/src"
-    "${CMAKE_SOURCE_DIR}/package/Shaders"
-)
+    set_property(TARGET ${cpp_test_target} PROPERTY CXX_STANDARD 23)
+    set_property(TARGET ${cpp_test_target} PROPERTY CXX_STANDARD_REQUIRED ON)
 
-target_link_libraries(cpp_tests PRIVATE
-    Catch2::Catch2
-    nlohmann_json::nlohmann_json
-    imgui::imgui
-    Microsoft::DirectXTK
-    magic_enum::magic_enum
-    xxHash::xxhash
-    spdlog::spdlog
-    d3dcompiler
-    Threads::Threads
-)
+    target_include_directories(${cpp_test_target} PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/package/Shaders"
+    )
 
-# windows.h (pulled in via d3d11.h) defines min/max macros that break the
-# std::min<T>/std::max<T> calls in Subrect.cpp. The plugin's PCH suppresses
-# this implicitly; the test target needs it explicitly.
-target_compile_definitions(cpp_tests PRIVATE
-    NOMINMAX
-    WIN32_LEAN_AND_MEAN
-)
+    target_link_libraries(${cpp_test_target} PRIVATE
+        Catch2::Catch2
+        nlohmann_json::nlohmann_json
+        imgui::imgui
+        Microsoft::DirectXTK
+        Microsoft::DirectXTex
+        magic_enum::magic_enum
+        xxHash::xxhash
+        spdlog::spdlog
+        d3dcompiler
+        bcrypt
+        Threads::Threads
+    )
+
+    # windows.h (pulled in via d3d11.h) defines min/max macros that break the
+    # std::min<T>/std::max<T> calls in Subrect.cpp. The plugin's PCH suppresses
+    # this implicitly; the test target needs it explicitly.
+    target_compile_definitions(${cpp_test_target} PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+
+endforeach()
 
 enable_testing()
 add_test(
@@ -153,6 +172,16 @@ add_test(
 set_tests_properties(CppUtilTests PROPERTIES
     TIMEOUT 60
     LABELS "Cpp;UnitTests"
+)
+
+add_test(
+    NAME ScreenshotDevBenchTests
+    COMMAND screenshot_tests_devbench --reporter compact
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:screenshot_tests_devbench>
+)
+set_tests_properties(ScreenshotDevBenchTests PROPERTIES
+    TIMEOUT 60
+    LABELS "Cpp;UnitTests;Screenshot"
 )
 
 message(STATUS "C++ unit tests configured successfully")

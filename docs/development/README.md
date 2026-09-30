@@ -7,6 +7,7 @@
 -   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
 -   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
 -   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
+-   **[Native Frame Sequences](./screenshot-frame-sequences.md)** - DevBench capture for temporal and stereo image comparisons
 
 ## Quick Links
 
