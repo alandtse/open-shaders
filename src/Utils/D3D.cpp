@@ -1,7 +1,6 @@
 #include "D3D.h"
 
 #include "Deferred.h"
-#include "Features/ReverseZ.h"
 #include "Features/TerrainBlending.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -139,79 +138,11 @@ namespace Util
 
 	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
 	{
-		CustomInclude include(FilePath);
-
-		// Build defines (aka convert vector->D3DCONSTANT array)
-		std::vector<D3D_SHADER_MACRO> macros;
-		std::string str = Util::WStringToString(FilePath);
-
 		for (auto& i : Defines) {
-			if (i.first && _stricmp(i.first, "") != 0) {
-				macros.push_back({ i.first, i.second });
-			} else {
-				logger::error("Failed to process shader defines for {}", str);
-			}
+			if (!i.first || _stricmp(i.first, "") == 0)
+				logger::error("Failed to process shader defines for {}", Util::WStringToString(FilePath));
 		}
-
-		if (globals::game::isVR)
-			macros.push_back({ "VR", "" });
-
-		if (globals::features::reverseZ.IsActive())
-			macros.push_back({ "REVERSE_Z", "" });
-
-		if (globals::state->IsDeveloperMode()) {
-			macros.push_back({ "D3DCOMPILE_SKIP_OPTIMIZATION", "" });
-			macros.push_back({ "D3DCOMPILE_DEBUG", "" });
-		}
-		auto shaderDefines = globals::state->GetDefines();
-		if (!shaderDefines->empty()) {
-			for (unsigned int i = 0; i < shaderDefines->size(); i++)
-				macros.push_back({ shaderDefines->at(i).first.c_str(), shaderDefines->at(i).second.c_str() });
-		}
-		if (!_stricmp(ProgramType, "ps_5_0") || !_stricmp(ProgramType, "ps_4_0"))
-			macros.push_back({ "PSHADER", "" });
-		else if (!_stricmp(ProgramType, "vs_5_0") || !_stricmp(ProgramType, "vs_4_0"))
-			macros.push_back({ "VSHADER", "" });
-		else if (!_stricmp(ProgramType, "hs_5_0"))
-			macros.push_back({ "HULLSHADER", "" });
-		else if (!_stricmp(ProgramType, "ds_5_0"))
-			macros.push_back({ "DOMAINSHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_5_0") || !_stricmp(ProgramType, "cs_4_0"))
-			macros.push_back({ "COMPUTESHADER", "" });
-		else
-			return nullptr;
-
-		// Add null terminating entry
-		macros.push_back({ "WINPC", "" });
-		macros.push_back({ "DX11", "" });
-		macros.push_back({ nullptr, nullptr });
-
-		// Compiler setup
-		uint32_t flags = !globals::state->IsDeveloperMode() ? (D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3) : D3DCOMPILE_DEBUG;
-		if (globals::state->enablePartialPrecision.load(std::memory_order_relaxed))
-			flags |= D3DCOMPILE_PARTIAL_PRECISION;
-		if (globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed))
-			flags |= D3DCOMPILE_AVOID_FLOW_CONTROL;
-		// Disk cache on = user is running shipped, known-good shaders — skip the fxc
-		// validation pass to trim compile time. Disk cache off = dev workflow, keep
-		// validation so malformed source produces a clean error instead of UB.
-		if (globals::shaderCache->IsDiskCache())
-			flags |= D3DCOMPILE_SKIP_VALIDATION;
-
-		winrt::com_ptr<ID3DBlob> shaderBlob;
-		winrt::com_ptr<ID3DBlob> shaderErrors;
-
-		if (!std::filesystem::exists(FilePath)) {
-			logger::error("Failed to compile shader; {} does not exist", str);
-			return nullptr;
-		}
-		logger::debug("Compiling {} with {}", str, DefinesToString(macros));
-		if (FAILED(D3DCompileFromFile(FilePath, macros.data(), &include, Program, ProgramType, flags, 0, shaderBlob.put(), shaderErrors.put()))) {
-			logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? static_cast<char*>(shaderErrors->GetBufferPointer()) : "Unknown error");
-			return nullptr;
-		}
-		LogShaderCompileWarnings(shaderErrors.get(), str);
-		return shaderBlob;
+		return globals::shaderCache->CompileStandaloneBlobCached(FilePath, Defines, ProgramType, Program);
 	}
 
 	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)

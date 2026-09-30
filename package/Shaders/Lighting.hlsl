@@ -1684,13 +1684,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (!SharedData::linearLightingSettings.enableLinearLighting) {
 		baseColor.xyz = GetFacegenBaseColor(baseColor.xyz, uv);
 	} else {
-		baseColor.xyz = Color::SkyrimGammaToLinear(GetFacegenBaseColor(Color::LinearToSkyrimGamma(baseColor.xyz), uv));
+		float3 linearSrgbBaseColor = ENABLE_ACEScg ? AP1TosRGB(baseColor.xyz) : baseColor.xyz;
+		baseColor.xyz = Color::GamutTransform(Color::SkyrimGammaToLinear(GetFacegenBaseColor(Color::LinearToSkyrimGamma(linearSrgbBaseColor), uv)));
 	}
 #	elif defined(FACEGEN_RGB_TINT)
 	if (!SharedData::linearLightingSettings.enableLinearLighting) {
 		baseColor.xyz = GetFacegenRGBTintBaseColor(baseColor.xyz, uv);
 	} else {
-		baseColor.xyz = Color::SkyrimGammaToLinear(GetFacegenRGBTintBaseColor(Color::LinearToSkyrimGamma(baseColor.xyz), uv));
+		float3 linearSrgbBaseColor = ENABLE_ACEScg ? AP1TosRGB(baseColor.xyz) : baseColor.xyz;
+		baseColor.xyz = Color::GamutTransform(Color::SkyrimGammaToLinear(GetFacegenRGBTintBaseColor(Color::LinearToSkyrimGamma(linearSrgbBaseColor), uv)));
 	}
 #	endif  // FACEGEN
 
