@@ -66,7 +66,15 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
 ## Known open items
 
 -   VR engine occlusion culling tests its OBB proxies against `kMAIN_DOWNSAMPLE`, so that target
-    is converted with the others; if culling cost reappears under reverse-Z, check it first.
+    is converted with the others. Three engine pieces assume standard depth and are replaced while
+    reverse-Z is active: the downscale pixel shader keeps `max` (the nearest sample under reverse-Z),
+    so `OccluderDepthDownscalePS.hlsl` keeps `min`; the proxy vertex shader gives boxes reaching
+    behind the camera a fixed clip depth of 0.0001 (the far plane under reverse-Z, which culled the
+    near water cells), so `OccluderBoxVS.hlsl` uses 1.0. If culling misbehaves under reverse-Z, check
+    these first.
+-   The VR hidden-area mask mesh writes a fixed clip depth of 0 that bypasses the camera matrix, so it
+    landed on the far plane and masked nothing. `HiddenAreaMeshVS.hlsl` writes 1.0 for it, applied to
+    the only small non-indexed draw with no pixel shader bound.
 -   `EnableReverseZ` ships off and is restart-gated; toggling it rebuilds the shader cache.
 -   `VRStereoOptimizations/DepthScatterCS.hlsl` keeps an `#ifdef` for its `InterlockedMin`/`Max`
     on depth bits (no float helper applies).
@@ -76,10 +84,8 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
 -   `GBufferFillCS`'s epipolar fallback picks the farthest agreeing candidate in the standard
     convention only; it affects the zero-weight fallback path.
 -   `BSImagespaceShaderWorldMapNoSkyBlur` stays on the vanilla shader: there is no replacement.
--   The VR hidden-area mask is assumed to land at `NearPlaneDepth()` (the engine draws it after the
-    world camera is published, so its viewport is mirrored); `ClearHMDMaskCS`, `bend_sss_gpu.hlsli`
-    and SSGI's `prefilterDepths.cs.hlsl` all test that value. The null HMD driver has no
-    hidden-area mesh, so confirm on a real headset.
+-   The VR hidden-area mask lands at `NearPlaneDepth()`; `ClearHMDMaskCS`, `bend_sss_gpu.hlsli` and
+    SSGI's `prefilterDepths.cs.hlsl` all test that value.
 -   Inherited from the flat original: `IsReverseDepthView` caches its verdict per DSV pointer until
     the next reallocation, and if reallocation fails, shaders still compile with `REVERSE_Z` while
     the targets stay standard.

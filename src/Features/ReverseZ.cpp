@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/LazyShader.h"
 #include "Utils/UI.h"
 
 #include <array>
@@ -972,6 +973,100 @@ namespace
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	thread_local bool t_inOccluderDownscale = false;
+	bool g_pixelShaderBound = false;
+	ID3D11VertexShader* g_boundVertexShader = nullptr;
+	Util::LazyShader<ID3D11VertexShader> g_hiddenAreaMeshVS;
+	Util::LazyShader<ID3D11PixelShader> g_occluderDownscalePS;
+
+	/// Tracks whether a pixel shader is bound and swaps the depth-copy pixel shader during the VR occluder downscale.
+	struct ID3D11DeviceContext_PSSetShader
+	{
+		static void thunk(ID3D11DeviceContext* This, ID3D11PixelShader* pPixelShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances)
+		{
+			if (This == globals::d3d::context)
+				g_pixelShaderBound = pPixelShader != nullptr;
+			if (t_inOccluderDownscale && pPixelShader && This == globals::d3d::context) {
+				if (auto* replacement = g_occluderDownscalePS.Get(L"Data/Shaders/ReverseZ/OccluderDepthDownscalePS.hlsl", {}, "ps_5_0", "main", "ReverseZ::OccluderDepthDownscalePS"))
+					pPixelShader = replacement;
+			}
+			func(This, pPixelShader, ppClassInstances, NumClassInstances);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSImagespaceShaderDepthBuffer4xDownscale_Render
+	{
+		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+		{
+			t_inOccluderDownscale = true;
+			func(imageSpaceShader, shape, param);
+			t_inOccluderDownscale = false;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	constexpr std::array<uint32_t, 4> kOccluderBoxVSChecksum{ 0x1cdddbca, 0xd69271b6, 0xcfcb199a, 0xcc9674f9 };
+	std::atomic<ID3D11VertexShader*> g_occluderBoxVSOriginal{ nullptr };
+	winrt::com_ptr<ID3D11VertexShader> g_occluderBoxVSKeepAlive;
+	Util::LazyShader<ID3D11VertexShader> g_occluderBoxVS;
+
+	/// Records the engine's occlusion box vertex shader by its DXBC checksum so VSSetShader can swap it.
+	struct ID3D11Device_CreateVertexShader
+	{
+		static HRESULT STDMETHODCALLTYPE thunk(ID3D11Device* This, const void* pShaderBytecode, SIZE_T BytecodeLength, ID3D11ClassLinkage* pClassLinkage, ID3D11VertexShader** ppVertexShader)
+		{
+			const HRESULT hr = func(This, pShaderBytecode, BytecodeLength, pClassLinkage, ppVertexShader);
+			constexpr size_t kChecksumOffset = 4;
+			if (SUCCEEDED(hr) && ppVertexShader && *ppVertexShader && pShaderBytecode && BytecodeLength >= kChecksumOffset + sizeof(kOccluderBoxVSChecksum)) {
+				std::array<uint32_t, 4> checksum;
+				std::memcpy(checksum.data(), static_cast<const uint8_t*>(pShaderBytecode) + kChecksumOffset, sizeof(checksum));
+				if (checksum == kOccluderBoxVSChecksum) {
+					g_occluderBoxVSKeepAlive.copy_from(*ppVertexShader);
+					g_occluderBoxVSOriginal.store(*ppVertexShader, std::memory_order_release);
+				}
+			}
+			return hr;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct ID3D11DeviceContext_VSSetShader
+	{
+		static void thunk(ID3D11DeviceContext* This, ID3D11VertexShader* pVertexShader, ID3D11ClassInstance* const* ppClassInstances, UINT NumClassInstances)
+		{
+			if (This == globals::d3d::context)
+				g_boundVertexShader = pVertexShader;
+			if (pVertexShader && pVertexShader == g_occluderBoxVSOriginal.load(std::memory_order_acquire) && This == globals::d3d::context) {
+				if (auto* replacement = g_occluderBoxVS.Get(L"Data/Shaders/ReverseZ/OccluderBoxVS.hlsl", {}, "vs_5_0", "main", "ReverseZ::OccluderBoxVS"))
+					pVertexShader = replacement;
+			}
+			func(This, pVertexShader, ppClassInstances, NumClassInstances);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	/// The VR hidden-area mesh is the only small non-indexed depth-only draw the engine issues; its vertex
+	/// shader writes a fixed depth of 0, which is the far plane under reverse-Z, so the mask needs its own.
+	struct ID3D11DeviceContext_Draw
+	{
+		static void thunk(ID3D11DeviceContext* This, UINT VertexCount, UINT StartVertexLocation)
+		{
+			constexpr UINT kMaxHiddenAreaVertices = 2048;
+			if (This == globals::d3d::context && !g_pixelShaderBound && g_boundVertexShader && VertexCount < kMaxHiddenAreaVertices) {
+				if (auto* replacement = g_hiddenAreaMeshVS.Get(L"Data/Shaders/ReverseZ/HiddenAreaMeshVS.hlsl", {}, "vs_5_0", "main", "ReverseZ::HiddenAreaMeshVS")) {
+					auto* original = g_boundVertexShader;
+					ID3D11DeviceContext_VSSetShader::func(This, replacement, nullptr, 0);
+					func(This, VertexCount, StartVertexLocation);
+					ID3D11DeviceContext_VSSetShader::func(This, original, nullptr, 0);
+					return;
+				}
+			}
+			func(This, VertexCount, StartVertexLocation);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 }
 
 void ReverseZ::InstallRuntimeHooks()
@@ -994,8 +1089,22 @@ void ReverseZ::InstallRuntimeHooks()
 	stl::detour_vfunc<92, ID3D11DeviceContext_OMGetDepthStencilState>(context);
 	stl::detour_vfunc<94, ID3D11DeviceContext_RSGetState>(context);
 	stl::detour_vfunc<95, ID3D11DeviceContext_RSGetViewports>(context);
+	if (globals::game::isVR) {
+		stl::detour_vfunc<9, ID3D11DeviceContext_PSSetShader>(context);
+		stl::detour_vfunc<11, ID3D11DeviceContext_VSSetShader>(context);
+		stl::detour_vfunc<13, ID3D11DeviceContext_Draw>(context);
+		stl::detour_vfunc<12, ID3D11Device_CreateVertexShader>(globals::d3d::device);
+		stl::write_vfunc<0x1, BSImagespaceShaderDepthBuffer4xDownscale_Render>(RE::VTABLE_BSImagespaceShaderDepthBuffer4xDownscale[3]);
+	}
 
 	logger::info("ReverseZ: installed depth-state, depth-clear and state read-back hooks");
+}
+
+void ReverseZ::ClearShaderCache()
+{
+	g_occluderDownscalePS.Reset();
+	g_occluderBoxVS.Reset();
+	g_hiddenAreaMeshVS.Reset();
 }
 
 void ReverseZ::PostPostLoad()

@@ -72,6 +72,8 @@ struct ReverseZ : Feature
 	virtual void SetupResources() override;
 	virtual void DataLoaded() override;
 	virtual void PostPostLoad() override;
+	/** @brief Drops the VR occluder depth downscale shader so a hot reload recompiles it. */
+	virtual void ClearShaderCache() override;
 
 	/** @brief Reverses the camera matrices b12 carries before they reach the GPU. */
 	virtual bool WantsFrameBufferFixup() const override { return activeThisBoot; }
