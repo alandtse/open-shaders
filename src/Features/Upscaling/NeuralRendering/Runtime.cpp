@@ -27,8 +27,17 @@ namespace NR
 			void operator()(HMODULE module) const { FreeLibrary(module); }
 		};
 		using Module = std::unique_ptr<std::remove_pointer_t<HMODULE>, ModuleDeleter>;
-		/** @brief Leading digest characters echoed back when a runtime build is refused. */
-		constexpr size_t kRuntimeDigestPrefix = 16;
+
+		/** @brief Applies the runtime gates to the file on disk; the load path refuses whatever this rejects. */
+		RuntimeAvailability InspectRuntimeFile(const std::filesystem::path& directory)
+		{
+			const auto path = directory / kRuntimeFileName;
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(path, error))
+				return ClassifyRuntime(false, std::optional<REL::Version>{}, {}, directory.string());
+			const auto digest = Util::FileDigest::Sha256FileHex(path);
+			return ClassifyRuntime(true, Util::GetDllVersion(path.wstring()), digest ? std::string_view(*digest) : std::string_view{}, directory.string());
+		}
 
 		template <class T>
 		T Resolve(HMODULE module, const char* name)
@@ -355,18 +364,10 @@ namespace NR
 			return;
 		auto pending = std::make_unique<Impl>();
 		auto& state = *pending;
-		const auto path = directory / L"nvngx_dlssnr.dll";
-		std::error_code error;
-		if (!std::filesystem::is_regular_file(path, error))
-			throw std::runtime_error(std::format("nvngx_dlssnr.dll not found in {}", directory.string()));
-		const auto version = Util::GetDllVersion(path.wstring());
-		const auto rejected = UnsupportedRuntimeReason(version, directory.string());
-		if (!rejected.empty())
-			throw std::runtime_error(rejected);
-		const auto digest = Util::FileDigest::Sha256FileHex(path);
-		if (!digest || !IsValidatedRuntimeHash(*digest))
-			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
-				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }, kRequiredRuntimeMajor, kRequiredRuntimeMinor));
+		const auto path = directory / kRuntimeFileName;
+		const auto availability = InspectRuntimeFile(directory);
+		if (!availability.Ready())
+			throw std::runtime_error(availability.reason);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -407,8 +408,8 @@ namespace NR
 			if (!parameters)
 				throw std::runtime_error(std::format("{}NGX returned null parameters", kInitializationPrefix));
 		}
-		state.version = version->string();
-		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());
+		state.version = availability.version;
+		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", availability.version);
 		impl = std::move(pending);
 	}
 

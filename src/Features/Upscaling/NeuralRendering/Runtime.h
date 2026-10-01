@@ -7,6 +7,7 @@
 #include <Windows.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <filesystem>
@@ -28,6 +29,10 @@ namespace NR
 	inline constexpr uint32_t kRequiredRuntimeMajor = 310;
 	/** @brief Minor version of the nvngx_dlssnr.dll builds this pass accepts. */
 	inline constexpr uint32_t kRequiredRuntimeMinor = 8;
+	/** @brief Name of the runtime file, resolved inside Streamline's plugin directory. */
+	inline constexpr const char* kRuntimeFileName = "nvngx_dlssnr.dll";
+	/** @brief Leading digest characters echoed back when a runtime build is refused. */
+	inline constexpr size_t kRuntimeDigestPrefix = 16;
 
 	/**
 	 * @brief Marks process teardown. Declare it as the LAST member of the object that owns the
@@ -64,6 +69,53 @@ namespace NR
 				return true;
 		}
 		return false;
+	}
+
+	/** @brief Whether the runtime on disk can be loaded, and why not when it cannot. */
+	struct RuntimeAvailability
+	{
+		enum class State : uint8_t
+		{
+			kReady,               ///< The validated 310.8.x runtime is on disk.
+			kMissing,             ///< No runtime file in the plugin directory.
+			kUnsupportedVersion,  ///< Present, but not a 310.8.x build.
+			kUnvalidatedBuild     ///< Present and 310.8.x, but not one of the pinned SHA-256 builds.
+		};
+
+		State state = State::kMissing;
+		/** @brief File version, empty when the file is missing or carries no version information. */
+		std::string version;
+		/** @brief Plain-language reason it cannot be used; empty when it is ready. */
+		std::string reason;
+
+		/** @brief True when the runtime is the validated build the pass accepts. */
+		[[nodiscard]] bool Ready() const { return state == State::kReady; }
+	};
+
+	/**
+	 * @brief Verdict for the runtime from facts already read off the file.
+	 *        Runtime::Initialize refuses exactly these, so the panel's verdict and the load agree;
+	 *        a divergence would offer an Enable that fails on the next world frame.
+	 * @param present True when the runtime file exists.
+	 * @param version File version, or nullopt when it carries none.
+	 * @param digest SHA-256 of the file, empty when it could not be computed.
+	 * @param directory Directory the file was read from, named in the reasons.
+	 */
+	template <class V>
+	RuntimeAvailability ClassifyRuntime(bool present, const std::optional<V>& version, std::string_view digest, std::string_view directory)
+	{
+		if (!present)
+			return { RuntimeAvailability::State::kMissing, {}, std::format("{} not found in {}", kRuntimeFileName, directory) };
+		const auto rejected = UnsupportedRuntimeReason(version, directory);
+		if (!rejected.empty())
+			return { RuntimeAvailability::State::kUnsupportedVersion, version ? version->string() : std::string{}, rejected };
+		if (!IsValidatedRuntimeHash(digest)) {
+			return { RuntimeAvailability::State::kUnvalidatedBuild, version->string(),
+				std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
+					digest.empty() ? std::string_view{ "unavailable" } : digest.substr(0, kRuntimeDigestPrefix),
+					kRequiredRuntimeMajor, kRequiredRuntimeMinor) };
+		}
+		return { RuntimeAvailability::State::kReady, version->string(), {} };
 	}
 
 	/** @brief True when an image path sits under <systemDirectory>\DriverStore\, i.e. NVIDIA's own core. */
