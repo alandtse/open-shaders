@@ -352,6 +352,11 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
+	// caster to the front list, bit 1 accumulates it into the back hemisphere.
+	constexpr std::uint32_t kHemisphereFrontBit = 1u;
+	constexpr std::uint32_t kHemisphereBackOnly = 2u;
+
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
 	/// threshold, or when it does not belong to the active split-cache pass.
@@ -397,6 +402,26 @@ namespace ShadowCasterManager
 			// cascade cull (see CurrentCullLight).
 			if (light && CasterFilteredByPass(a_visible))
 				return;
+			if (light && a_alphaGroupIndex == -1 && !a_this->isGroupingAlphas &&
+				(a_this->alphaGroupStopIndex & kHemisphereFrontBit) != 0) {
+				auto* pcp = static_cast<RE::BSParabolicCullingProcess*>(a_this);
+				const auto& wb = a_visible.worldBound;
+				const float planeDistance = pcp->equatorialPlane.normal.Dot(wb.center) -
+				                            pcp->equatorialPlane.constant;
+				if (SphereWhollyBehindPlane(planeDistance, wb.radius, HemisphereSeamMargin(pcp->lightRadius))) {
+					if (!pcp->backHemisphereAccumulator) {
+						s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
+						return;  // skip append -- outside every hemisphere this light draws
+					}
+					// The engine reports "both hemispheres" for a sphere wholly behind the
+					// plane; override to back-only so the front pass skips it.
+					const std::uint32_t engineMask = pcp->alphaGroupStopIndex;
+					pcp->alphaGroupStopIndex = kHemisphereBackOnly;
+					func(a_this, a_visible, a_alphaGroupIndex);
+					pcp->alphaGroupStopIndex = engineMask;
+					return;
+				}
+			}
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
