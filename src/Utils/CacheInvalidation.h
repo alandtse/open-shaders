@@ -17,10 +17,42 @@
 #include <regex>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Util::CacheInvalidation
 {
+	/// Subdirectory of the active disk cache holding the content-addressed blob store.
+	/// Blobs are keyed by their own inputs, so the store stays valid across every
+	/// invalidation, wipe and rotation below and is excluded from all of them.
+	inline constexpr std::wstring_view kContentStoreDirName = L"ContentStore";
+
+	/// Move the content store from one cache slot to another; a no-op when the source
+	/// has none or the destination already does. Best effort: a failed move only costs reuse.
+	inline void MoveContentStore(const std::filesystem::path& from, const std::filesystem::path& to)
+	{
+		std::error_code ec;
+		const auto source = from / kContentStoreDirName;
+		const auto target = to / kContentStoreDirName;
+		if (!std::filesystem::exists(source, ec) || std::filesystem::exists(target, ec))
+			return;
+		std::filesystem::create_directories(to, ec);
+		std::filesystem::rename(source, target, ec);
+	}
+
+	/// Remove everything under `root` except the content store. Stops at the first failure.
+	inline bool RemoveAllExceptContentStore(const std::filesystem::path& root, std::error_code& ec)
+	{
+		for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+			if (entry.path().filename() == kContentStoreDirName)
+				continue;
+			std::filesystem::remove_all(entry.path(), ec);
+			if (ec)
+				return false;
+		}
+		return !ec;
+	}
+
 	/// One disk-cache/runtime state divergence.
 	struct CacheMismatch
 	{
@@ -236,6 +268,7 @@ namespace Util::CacheInvalidation
 			return fail(std::format("could not create the new active cache folder: {}", ec.message()));
 		}
 
+		MoveContentStore(previous, active);
 		if (hadPrevious)
 			std::filesystem::remove_all(swap, ec);  // best effort; a stale swap is cleared next rotation
 		return true;
@@ -275,6 +308,7 @@ namespace Util::CacheInvalidation
 		}
 
 		if (activeExists) {
+			MoveContentStore(swap, active);
 			std::filesystem::rename(swap, previous, ec);
 			if (ec) {
 				if (outWarning)
@@ -324,6 +358,8 @@ namespace Util::CacheInvalidation
 				if (!entry.is_directory())
 					continue;
 				const auto dirName = entry.path().filename().wstring();
+				if (dirName == kContentStoreDirName)
+					continue;
 				auto root = shadersRoot / (dirName + L".hlsl");
 				bool affected = false;
 				const bool isImageSpace = dirName.starts_with(L"IS") || dirName == L"ReflectionsRayTracing";
