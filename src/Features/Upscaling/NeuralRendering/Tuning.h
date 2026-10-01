@@ -42,7 +42,7 @@ namespace NR
 		 */
 		bool regionGroup = false;
 
-		/** @brief Bounds user input to the reference runtime's tuning range. */
+		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */
 		void Sanitize()
 		{
 			style = std::min(style, kMaxStyle);
@@ -52,6 +52,14 @@ namespace NR
 			skinStructureStrength = std::isfinite(skinStructureStrength) ?
 			                            std::clamp(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength) :
 			                            kAutomaticSkinStructure;
+			// The crop controls act only through a tracked crop, so none of them can stay set without
+			// it: a retained value reads as active while the pass ignores it, whether it came from a
+			// config file or from switching the crop off in the panel.
+			if (!regionOfInterest) {
+				regionOverlay = false;
+				regionGroup = false;
+				regionFit = kRegionFitPadded;
+			}
 		}
 	};
 }

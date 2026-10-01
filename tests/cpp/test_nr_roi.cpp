@@ -153,6 +153,7 @@ TEST_CASE("The padded crop fit is strictly larger than the tight one for the sam
 TEST_CASE("Tuning::Sanitize clamps the crop fit to the supported values", "[nr][roi]")
 {
 	NR::Tuning tuning;
+	tuning.regionOfInterest = true;
 	tuning.regionFit = NR::Tuning::kMaxRegionFit + 5;
 	tuning.Sanitize();
 	REQUIRE(tuning.regionFit == NR::Tuning::kMaxRegionFit);
@@ -164,6 +165,25 @@ TEST_CASE("Tuning::Sanitize clamps the crop fit to the supported values", "[nr][
 	tuning.regionFit = NR::Tuning::kRegionFitPadded;
 	tuning.Sanitize();
 	REQUIRE(tuning.regionFit == NR::Tuning::kRegionFitPadded);
+}
+
+TEST_CASE("Tuning::Sanitize clears the crop controls with the tracked actor", "[nr][roi]")
+{
+	NR::Tuning tracking{ .regionOfInterest = true, .regionOverlay = true, .regionFit = NR::Tuning::kRegionFitTight, .regionGroup = true };
+
+	// Set with a tracked actor, every crop control survives sanitizing.
+	tracking.Sanitize();
+	REQUIRE(tracking.regionOverlay);
+	REQUIRE(tracking.regionFit == NR::Tuning::kRegionFitTight);
+	REQUIRE(tracking.regionGroup);
+
+	// Without one they cannot stay set: the pass ignores them, so a retained value would read
+	// as active while nothing reads it.
+	tracking.regionOfInterest = false;
+	tracking.Sanitize();
+	REQUIRE_FALSE(tracking.regionOverlay);
+	REQUIRE(tracking.regionFit == NR::Tuning::kRegionFitPadded);
+	REQUIRE_FALSE(tracking.regionGroup);
 }
 
 namespace

@@ -915,6 +915,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
 			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
+	// out without it instead of accepting edits that the pass ignores.
+	const bool cropDisabled = !tuning.regionOfInterest;
+	ImGui::BeginDisabled(cropDisabled);
 	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
 		changed = true;
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -941,6 +945,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("crop_fit_tooltip"),
 				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
+	}
+	ImGui::EndDisabled();
+	if (globals::state->IsDeveloperMode()) {
+		// The sweep forces its own centred crops, so it stays usable without a tracked actor.
 		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
 			RequestCalibration();
 		if (auto _tt = Util::HoverTooltipWrapper())
