@@ -24,6 +24,7 @@
 #include "Utils/D3D.h"
 #include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
+#include "Utils/ShaderContentStore.h"
 
 #include "Features/DynamicCubemaps.h"
 
@@ -424,6 +425,24 @@ namespace SIE
 			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
 			manifest.Save();
 		}
+	}
+
+	/// Content-addressed compiled-shader store, enabled by OPENSHADERS_CONTENT_STORE=1.
+	/// Sits outside Data/ShaderCache so cache invalidation never deletes it.
+	static Util::ShaderContentStore::Store* GetContentStore()
+	{
+		static const auto store = []() -> std::unique_ptr<Util::ShaderContentStore::Store> {
+			char buffer[16] = {};
+			const DWORD len = GetEnvironmentVariableA("OPENSHADERS_CONTENT_STORE", buffer, sizeof(buffer));
+			if (len == 0 || len >= sizeof(buffer) || (std::string_view(buffer, len) != "1" && std::string_view(buffer, len) != "true"))
+				return nullptr;
+			auto s = std::make_unique<Util::ShaderContentStore::Store>("Data/ShaderContentStore");
+			constexpr uint64_t kMaxStoreBytes = 8ull << 30;
+			const auto removed = s->Trim(kMaxStoreBytes);
+			logger::info("Shader content store enabled; trimmed {} entries", removed);
+			return s;
+		}();
+		return store.get();
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1976,8 +1995,41 @@ namespace SIE
 
 			// Track includes
 			TrackingIncludeHandler includeHandler(path);
-			const HRESULT compileResult = D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
-				GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
+
+			// Content-addressed lookup: identical preprocessed source + flags reuses a prior blob.
+			// Developer-mode blobs carry debug info, so they bypass the store.
+			Util::ShaderContentStore::Store* contentStore = globals::state->IsDeveloperMode() ? nullptr : GetContentStore();
+			std::optional<Util::ContentHash::Hash128> contentKey;
+			bool contentStoreHit = false;
+			if (contentStore) {
+				std::ifstream sourceFile(path, std::ios::binary);
+				const std::string source((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
+				ID3DBlob* preprocessed = nullptr;
+				ID3DBlob* preprocessErrors = nullptr;
+				if (sourceFile.good() || sourceFile.eof()) {
+					const HRESULT ppResult = D3DPreprocess(source.data(), source.size(), pathString.c_str(), defines.data(), &includeHandler, &preprocessed, &preprocessErrors);
+					if (SUCCEEDED(ppResult) && preprocessed) {
+						const auto text = Util::ShaderContentStore::StripLineDirectives(
+							std::string_view(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize()));
+						const auto compilerId = std::format("d3dcompiler_{}", D3D_COMPILER_VERSION);
+						contentKey = Util::ShaderContentStore::MakeKey({ text, "main", GetShaderProfile(shaderClass), flags, compilerId });
+						const auto stored = contentStore->Get(*contentKey);
+						if (!stored.empty() && SUCCEEDED(D3DCreateBlob(stored.size(), &shaderBlob))) {
+							std::memcpy(shaderBlob->GetBufferPointer(), stored.data(), stored.size());
+							contentStoreHit = true;
+							logger::debug("Content store hit for {}:{}:{:X}", magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
+						}
+					}
+				}
+				if (preprocessed)
+					preprocessed->Release();
+				if (preprocessErrors)
+					preprocessErrors->Release();
+			}
+
+			const HRESULT compileResult = contentStoreHit ? S_OK :
+			                                                D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
+																GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
 			// If the include handler captured any includes, register them so the watcher
 			// can invalidate dependents even if this compilation fails. Do NOT clear
 			// mappings when there are no captured includes to avoid removing prior
@@ -2036,7 +2088,7 @@ namespace SIE
 #endif
 
 			// strip debug info
-			if (!globals::state->IsDeveloperMode()) {
+			if (!globals::state->IsDeveloperMode() && !contentStoreHit) {
 				ID3DBlob* strippedShaderBlob = nullptr;
 
 				const uint32_t stripFlags = D3DCOMPILER_STRIP_DEBUG_INFO |
@@ -2047,6 +2099,9 @@ namespace SIE
 				std::swap(shaderBlob, strippedShaderBlob);
 				strippedShaderBlob->Release();
 			}
+
+			if (contentStore && contentKey && !contentStoreHit)
+				contentStore->Put(*contentKey, shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
 			// Relinquish this task's Pending claim before skipping a stale disk-cache write.
 			if (cache.IsGenerationStale(a_taskGeneration)) {
