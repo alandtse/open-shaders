@@ -3,11 +3,13 @@
 #include "Utils/ContentHash.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -60,8 +62,9 @@ namespace Util::ShaderContentStore
 	class Store
 	{
 	public:
-		explicit Store(std::filesystem::path a_root) :
-			root(std::move(a_root)) {}
+		/// @param a_maxBytes Size cap enforced by Put once a sixteenth of it has been written since the last trim; 0 disables.
+		explicit Store(std::filesystem::path a_root, uint64_t a_maxBytes = 0) :
+			root(std::move(a_root)), maxBytes(a_maxBytes) {}
 
 		std::filesystem::path PathFor(const ContentHash::Hash128& a_key) const
 		{
@@ -111,6 +114,11 @@ namespace Util::ShaderContentStore
 				std::filesystem::remove(tmp, ec);
 				return false;
 			}
+			if (maxBytes && (bytesSinceTrim += a_size) >= maxBytes / 16 && trimMutex.try_lock()) {
+				std::scoped_lock lock(std::adopt_lock, trimMutex);
+				bytesSinceTrim = 0;
+				Trim(maxBytes);
+			}
 			return true;
 		}
 
@@ -155,5 +163,8 @@ namespace Util::ShaderContentStore
 
 	private:
 		std::filesystem::path root;
+		uint64_t maxBytes;
+		mutable std::atomic<uint64_t> bytesSinceTrim{ 0 };
+		mutable std::mutex trimMutex;
 	};
 }

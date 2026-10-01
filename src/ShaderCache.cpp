@@ -433,9 +433,10 @@ namespace SIE
 	{
 		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
 			return nullptr;
-		static Util::ShaderContentStore::Store store = []() {
-			Util::ShaderContentStore::Store created(std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName);
+		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
 			constexpr uint64_t kMaxStoreBytes = 8ull << 30;
+			static Util::ShaderContentStore::Store created(
+				std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName, kMaxStoreBytes);
 			logger::info("Shader content store: trimmed {} entries", created.Trim(kMaxStoreBytes));
 			return created;
 		}();
@@ -2007,13 +2008,18 @@ namespace SIE
 					if (SUCCEEDED(ppResult) && preprocessed) {
 						const auto text = Util::ShaderContentStore::StripLineDirectives(
 							std::string_view(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize()));
-						const auto compilerId = std::format("d3dcompiler_{}", D3D_COMPILER_VERSION);
+						const auto compilerId = std::format("d3dcompiler_{}:{}", D3D_COMPILER_VERSION, GetCompilerIdentity());
 						contentKey = Util::ShaderContentStore::MakeKey({ text, "main", GetShaderProfile(shaderClass), flags, compilerId });
 						const auto stored = contentStore->Get(*contentKey);
 						if (!stored.empty() && SUCCEEDED(D3DCreateBlob(stored.size(), &shaderBlob))) {
 							std::memcpy(shaderBlob->GetBufferPointer(), stored.data(), stored.size());
-							contentStoreHit = true;
-							cache.IncContentStoreHitTasks();
+							if (IsIntactDxbc(shaderBlob)) {
+								contentStoreHit = true;
+								cache.IncContentStoreHitTasks();
+							} else {
+								shaderBlob->Release();
+								shaderBlob = nullptr;
+							}
 						}
 					}
 				}

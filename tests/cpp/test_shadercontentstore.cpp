@@ -128,3 +128,20 @@ TEST_CASE("StripLineDirectives drops only #line lines", "[ShaderContentStore]")
 	CHECK(StripLineDirectives(in) == "float x;\nfloat y;");
 	CHECK(StripLineDirectives("") == "");
 }
+
+TEST_CASE("Put trims the store once it exceeds its cap", "[ShaderContentStore]")
+{
+	TempDir dir;
+	Store store(dir.path, 100);
+	auto k1 = MakeKey(Base());
+	auto in2 = Base();
+	in2.flags = 1;
+	auto k2 = MakeKey(in2);
+	const std::string blob(60, 'x');
+	REQUIRE(store.Put(k1, blob.data(), blob.size()));
+	fs::last_write_time(store.PathFor(k1), fs::file_time_type::clock::now() - std::chrono::hours(1));
+	REQUIRE(store.Put(k2, blob.data(), blob.size()));
+
+	CHECK(store.Get(k1).empty());
+	CHECK_FALSE(store.Get(k2).empty());
+}
