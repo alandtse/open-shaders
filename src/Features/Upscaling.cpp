@@ -561,6 +561,7 @@ namespace
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
 		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
+		const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 		return json{
 			{ "enabled", upscaling->settings.neuralRenderingEnabled },
 			{ "state", magic_enum::enum_name(status.state) },
@@ -576,6 +577,7 @@ namespace
 			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
 			{ "runtimeVersion", availability.version },
 			{ "runtimeDetail", availability.reason },
+			{ "runtimeLoadable", availability.AllowsLoad(developerMode) },
 		};
 	}
 
@@ -611,7 +613,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, and why it was refused in runtimeDetail -- the same gates that lock the Enable switch. Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",

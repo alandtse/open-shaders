@@ -250,7 +250,7 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
-		runtime.Initialize(interop.Device(), RuntimeDirectory());
+		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
 		ready = true;
 	}
 
@@ -911,18 +911,22 @@ void NeuralRendering::DrawRuntimeDiagnostics() const
 		return;
 	}
 	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
-	Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode()))
+		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+	else
+		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 }
 
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
 	const auto availability = GetRuntimeAvailability();
+	const bool developerMode = globals::state->IsDeveloperMode();
 	// An unavailable runtime must not strand a feature that is already on, so only the switch
 	// from off is locked. The verdict is re-read when the file changes, so installing a build
 	// mid-session unblocks the toggle without a restart.
-	const bool runtimeUnavailable = !availability.Ready();
-	const bool lockEnable = runtimeUnavailable && !enabled;
+	const bool loadable = availability.AllowsLoad(developerMode);
+	const bool lockEnable = !loadable && !enabled;
 	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
@@ -932,6 +936,12 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 			ImGui::TextUnformatted(availability.reason.c_str());
 			ImGui::TextUnformatted(RuntimeFixHint(availability.state));
 		}
+	}
+	if (!availability.Ready()) {
+		if (loadable)
+			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+		else
+			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));

@@ -175,6 +175,29 @@ TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
 	REQUIRE(ready.reason.empty());
 }
 
+TEST_CASE("Only a validated runtime loads unless developer mode forces one", "[nr]")
+{
+	using NR::RuntimeAvailability;
+	const auto verdict = [](RuntimeAvailability::State state) {
+		RuntimeAvailability availability;
+		availability.state = state;
+		return availability;
+	};
+
+	REQUIRE(verdict(RuntimeAvailability::State::kReady).AllowsLoad(false));
+	REQUIRE(verdict(RuntimeAvailability::State::kReady).AllowsLoad(true));
+
+	// A build the pass refuses is a developer's to force, and nobody else's.
+	for (const auto refused : { RuntimeAvailability::State::kUnsupportedVersion, RuntimeAvailability::State::kUnvalidatedBuild }) {
+		REQUIRE_FALSE(verdict(refused).AllowsLoad(false));
+		REQUIRE(verdict(refused).AllowsLoad(true));
+	}
+
+	// There is nothing to load without the file, whatever developer mode says.
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(false));
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(true));
+}
+
 TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
 {
 	REQUIRE(NR::kValidatedRuntimeSha256.size() == 2);

@@ -90,6 +90,16 @@ namespace NR
 
 		/** @brief True when the runtime is the validated build the pass accepts. */
 		[[nodiscard]] bool Ready() const { return state == State::kReady; }
+
+		/**
+		 * @brief True when the pass may load this runtime: the validated build, or in developer mode
+		 *        one it would refuse. A missing file can never load, and the pinned digests guard the
+		 *        output's channel order, so a forced build is loaded unverified rather than validated.
+		 */
+		[[nodiscard]] bool AllowsLoad(bool developerMode) const
+		{
+			return Ready() || (developerMode && state != State::kMissing);
+		}
 	};
 
 	/**
@@ -193,8 +203,12 @@ namespace NR
 		~Runtime();
 		Runtime(const Runtime&) = delete;
 		Runtime& operator=(const Runtime&) = delete;
-		/** @brief Loads the supported NR runtime and resolves its function table once. */
-		void Initialize(ID3D12Device* device, const std::filesystem::path& directory);
+		/**
+		 * @brief Loads the NR runtime and resolves its function table once.
+		 * @param developerMode True to load a build the pass would otherwise refuse, which leaves the
+		 *        runtime's output unverified; see RuntimeAvailability::AllowsLoad.
+		 */
+		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */

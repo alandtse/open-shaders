@@ -360,7 +360,7 @@ namespace NR
 	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
-	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory)
+	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode)
 	{
 		if (impl->initialized)
 			return;
@@ -368,8 +368,10 @@ namespace NR
 		auto& state = *pending;
 		const auto path = directory / kRuntimeFileName;
 		const auto availability = InspectRuntimeFile(directory);
-		if (!availability.Ready())
+		if (!availability.AllowsLoad(developerMode))
 			throw std::runtime_error(availability.reason);
+		if (!availability.Ready())
+			logger::warn("[NeuralRendering] Developer mode loaded a runtime the pass refuses: {}", availability.reason);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -410,8 +412,9 @@ namespace NR
 			if (!parameters)
 				throw std::runtime_error(std::format("{}NGX returned null parameters", kInitializationPrefix));
 		}
-		state.version = availability.version;
-		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", availability.version);
+		// A forced build may carry no version resource, which would otherwise read as an empty runtime.
+		state.version = availability.version.empty() ? std::string{ "unknown" } : availability.version;
+		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", state.version);
 		impl = std::move(pending);
 	}
 

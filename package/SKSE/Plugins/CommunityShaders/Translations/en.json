@@ -3066,6 +3066,7 @@
     "feature.upscaling.neural_rendering.restore_defaults": "Restore NR Defaults",
     "feature.upscaling.neural_rendering.retry": "Retry NR",
     "feature.upscaling.neural_rendering.runtime_build_fix": "Replace it with one of the validated 310.8 builds listed in docs/development/neural-rendering.md.",
+    "feature.upscaling.neural_rendering.runtime_developer_load": "Loading this build because developer mode is on; its output is unverified.",
     "feature.upscaling.neural_rendering.runtime_missing_fix": "Install nvngx_dlssnr.dll under Data\\Shaders\\Upscaling\\Streamline\\.",
     "feature.upscaling.neural_rendering.runtime_unavailable": "Neural Rendering runtime: %s",
     "feature.upscaling.neural_rendering.runtime_validated": "Neural Rendering runtime: %s %s is a validated build.",

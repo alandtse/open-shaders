@@ -31,8 +31,16 @@ verdict is re-read when the file changes, so installing a runtime mid-session
 unblocks the switch without a restart; an already-enabled feature is never locked
 out. The same verdict is drawn under the Streamline DLL table in Backend
 Diagnostics, next to the version that table already lists, and DevBench's
-`neuralRenderingStatus` reports it as `runtimeAvailability`, `runtimeVersion`
-and `runtimeDetail`.
+`neuralRenderingStatus` reports it as `runtimeAvailability`, `runtimeVersion`,
+`runtimeDetail` and `runtimeLoadable`.
+
+Developer mode loads a build the pass would otherwise refuse, so a runtime under
+test can be evaluated before it is pinned. It changes nothing about what is
+trusted: the version and digest gates still classify the file, the panel shows
+`runtime_developer_load` wherever the refusal would be explained, `Runtime::Initialize`
+logs the refusal it loaded through, and `RuntimeAvailability::AllowsLoad` is the
+one place the exception lives. A missing file is never loadable, and an unverified
+build's output is not evidence that a build is correct, only that it ran.
 
 The controls persist under `Upscaling.neuralRenderingTuning`:
 
@@ -347,7 +355,9 @@ Because the channel order belongs to the build and not the version number,
 310.8.0.0 test build, SHA-256
 `E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E`, whose
 in-game SE/VR captures showed no channel swap. Any other 310.8.x build is refused
-with a latched failure instead of being rendered through an unverified channel map.
+with a latched failure instead of being rendered through an unverified channel map,
+unless developer mode forces it through for evaluation as described under
+[Enable](#enable).
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,
