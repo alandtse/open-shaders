@@ -231,7 +231,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 	const float edgeFade = saturate((maxDist - dist) / max(maxDist - edgeStart, 1e-4));
 
 	const float4 clip = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dv, 1.0));
-	const float distFade = 1.0 - saturate((length(clip.xyz) - AlphaParam1) / AlphaParam2);
+	const float distFade = 1.0 - saturate((length(FrameBuffer::ToStandardClip(clip, FrameBuffer::IsReverseProjection(eyeIndex))) - AlphaParam1) / AlphaParam2);
 	const float spawnFade = saturate((FadeNow - og.w) * FadeInTimeRcp);
 
 	fade = distFade * spawnFade * lodFade * edgeFade;

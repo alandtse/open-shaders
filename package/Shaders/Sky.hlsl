@@ -104,6 +104,7 @@ cbuffer PerGeometry : register(b2)
 #	if defined(DITHER) && defined(TEX)
 static const uint SunGlareOcclusionSampleCount = 16;
 static const float SunGlareOcclusionRadius = 0.02;
+static const float SunOcclusionDepthRatio = 0.99;
 
 float GetSunGlareVisibility(uint eyeIndex)
 {
@@ -549,7 +550,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// Keep sun behind scene depth to prevent halo leaks through geometry.
 	float depth = TexDepthSampler.Load(int3(input.Position.xy, 0));
 #		ifdef REVERSE_Z
-	if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * 0.99)
+	if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * SunOcclusionDepthRatio)
 #		else
 	if (depth < input.Position.z)
 #		endif
@@ -560,7 +561,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
 		float depth = TexDepthSampler.Load(int3(input.Position.xy, 0));
 #		ifdef REVERSE_Z
-		if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * 0.99)
+		if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * SunOcclusionDepthRatio)
 #		else
 		if (depth < input.Position.z)
 #		endif
