@@ -84,24 +84,47 @@ namespace NR
 		 * @brief Binds the NGX parameter API by name, never by scanning loaded modules.
 		 *        A module that only looks like nvngx.dll (a third-party proxy) must not be bound:
 		 *        its parameter block is a different ABI, and the resulting handle would be garbage.
+		 *
+		 *        Two tiers: strict DriverStore first (Windows behavior unchanged), then a logged
+		 *        Wine/Proton fallback that accepts the already-loaded nvngx.dll from System32
+		 *        (Wine ships its own there, so the DriverStore prefix check always fails under
+		 *        Wine/Proton). Both tiers still require the real NGX parameter exports.
 		 */
 		CoreApi BindCore()
 		{
+			auto BindModule = [](HMODULE module) -> CoreApi {
+				auto allocate = GetProcAddress(module, "NVSDK_NGX_D3D12_AllocateParameters");
+				auto destroy = GetProcAddress(module, "NVSDK_NGX_D3D12_DestroyParameters");
+				if (!allocate || !destroy)
+					return {};
+				CoreApi api;
+				HMODULE retained = nullptr;
+				if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(allocate), &retained))
+					return {};
+				api.module.reset(retained);
+				api.allocate = reinterpret_cast<Allocate>(allocate);
+				api.destroy = reinterpret_cast<Destroy>(destroy);
+				return api;
+			};
+
+			// Tier 1: strict DriverStore (Windows behavior unchanged).
 			for (const auto* name : { L"_nvngx.dll", L"nvngx.dll" }) {
 				HMODULE module = GetModuleHandleW(name);
 				if (!module || !IsDriverStoreModule(module))
 					continue;
-				auto allocate = GetProcAddress(module, "NVSDK_NGX_D3D12_AllocateParameters");
-				auto destroy = GetProcAddress(module, "NVSDK_NGX_D3D12_DestroyParameters");
-				if (!allocate || !destroy)
+				if (auto api = BindModule(module); api.module)
+					return api;
+			}
+
+			// Tier 2: Wine/Proton fallback for the System32 nvngx.dll.
+			for (const auto* name : { L"_nvngx.dll", L"nvngx.dll" }) {
+				HMODULE module = GetModuleHandleW(name);
+				if (!module || IsDriverStoreModule(module))
+					continue;  // already tried above
+				auto api = BindModule(module);
+				if (!api.module)
 					continue;
-				CoreApi api;
-				HMODULE retained = nullptr;
-				if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, reinterpret_cast<LPCWSTR>(allocate), &retained))
-					continue;
-				api.module.reset(retained);
-				api.allocate = reinterpret_cast<Allocate>(allocate);
-				api.destroy = reinterpret_cast<Destroy>(destroy);
+				logger::info("[NeuralRendering] using non-DriverStore NGX core module {:p} (Wine/Proton fallback)", reinterpret_cast<void*>(module));
 				return api;
 			}
 			return {};
