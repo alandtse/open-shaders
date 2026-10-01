@@ -17,7 +17,7 @@
 
 /// Content-addressed store of compiled shader blobs, keyed by a hash of the
 /// preprocessed source plus everything else that changes the bytecode.
-/// Lives outside Data/ShaderCache so cache invalidation never wipes it.
+/// Lives in Data/ShaderCache/ContentStore, which cache invalidation leaves in place.
 namespace Util::ShaderContentStore
 {
 	/// Everything besides the preprocessed text that changes the compiled bytecode.
@@ -30,6 +30,7 @@ namespace Util::ShaderContentStore
 		std::string_view compilerId;
 	};
 
+	/// Hashes every bytecode-affecting input into the store key.
 	inline ContentHash::Hash128 MakeKey(const KeyInputs& a_in)
 	{
 		auto h = ContentHash::HashString(a_in.preprocessed);
@@ -59,6 +60,7 @@ namespace Util::ShaderContentStore
 		return out;
 	}
 
+	/// Sharded on-disk blob store addressed by MakeKey(); safe for concurrent use by compile threads.
 	class Store
 	{
 	public:
@@ -66,6 +68,7 @@ namespace Util::ShaderContentStore
 		explicit Store(std::filesystem::path a_root, uint64_t a_maxBytes = 0) :
 			root(std::move(a_root)), maxBytes(a_maxBytes) {}
 
+		/// On-disk location of the blob for a key.
 		std::filesystem::path PathFor(const ContentHash::Hash128& a_key) const
 		{
 			const auto hex = a_key.ToHex();
