@@ -43,6 +43,23 @@ namespace
 		float score;
 	};
 
+	/** @brief Absolute plugin directory the runtime loads from; the load and the panel's verdict must resolve it alike. */
+	std::filesystem::path RuntimeDirectory()
+	{
+		return Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir);
+	}
+
+	/**
+	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
+	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
+	 */
+	const char* RuntimeFixHint(NR::RuntimeAvailability::State state)
+	{
+		if (state == NR::RuntimeAvailability::State::kMissing)
+			return T(TKEY("runtime_missing_fix"), "Install nvngx_dlssnr.dll under Data\\Shaders\\Upscaling\\Streamline\\.");
+		return T(TKEY("runtime_build_fix"), "Replace it with one of the validated 310.8 builds listed in docs/development/neural-rendering.md.");
+	}
+
 	/**
 	 * @brief Projects an actor's world-space bound points into one eye's screen bounds.
 	 *        The view-projection matrix takes camera-relative input, and the origin is per eye.
@@ -233,7 +250,7 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
-		runtime.Initialize(interop.Device(), Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir));
+		runtime.Initialize(interop.Device(), RuntimeDirectory());
 		ready = true;
 	}
 
@@ -879,11 +896,43 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	return snapshot;
 }
 
+NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
+{
+	return NR::InspectRuntime(RuntimeDirectory());
+}
+
+void NeuralRendering::DrawRuntimeDiagnostics() const
+{
+	// The Streamline table lists this file's version like any other DLL in that folder; the
+	// verdict is what says whether that version is one the pass will actually load.
+	const auto availability = GetRuntimeAvailability();
+	if (availability.Ready()) {
+		Util::Text::Success(T(TKEY("runtime_validated"), "Neural Rendering runtime: %s %s is a validated build."), NR::kRuntimeFileName, availability.version.c_str());
+		return;
+	}
+	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
+	Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+}
+
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
+	const auto availability = GetRuntimeAvailability();
+	// An unavailable runtime must not strand a feature that is already on, so only the switch
+	// from off is locked. The verdict is re-read when the file changes, so installing a build
+	// mid-session unblocks the toggle without a restart.
+	const bool runtimeUnavailable = !availability.Ready();
+	const bool lockEnable = runtimeUnavailable && !enabled;
+	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
+	ImGui::EndDisabled();
+	if (lockEnable) {
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(availability.reason.c_str());
+			ImGui::TextUnformatted(RuntimeFixHint(availability.state));
+		}
+	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));

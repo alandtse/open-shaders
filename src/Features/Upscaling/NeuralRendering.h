@@ -68,6 +68,8 @@ struct NeuralRendering
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
 	void DrawSettings(bool& enabled, NR::Tuning& tuning);
+	/** @brief Draws the runtime DLL's verdict and how to fix it, under Upscaling's DLL tables. */
+	void DrawRuntimeDiagnostics() const;
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
 	void DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
@@ -83,6 +85,8 @@ struct NeuralRendering
 
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
+	/** @brief Cached verdict for the runtime on disk: whether NR can start, and why not when it cannot. */
+	NR::RuntimeAvailability GetRuntimeAvailability() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
 	Util::Region::StereoRegion GetRegionOfInterest() const;
 	/** @brief Snapshot of the tracked actor's projected box with no padding and no stabilising, safe from any thread. */

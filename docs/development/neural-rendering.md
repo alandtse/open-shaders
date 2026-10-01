@@ -24,6 +24,16 @@ toggle NR off/on, or clear the shader cache to retry on the next rendered world
 frame. Resource setup also permits a retry. Failed GPU work is retired before
 releasing the failed runtime. There is no per-frame automatic retry.
 
+The Enable switch is disabled while the runtime on disk is one the pass would
+refuse, and its tooltip names the reason and the fix, so a missing file or a
+build outside the validated set is never offered only to latch a failure. The
+verdict is re-read when the file changes, so installing a runtime mid-session
+unblocks the switch without a restart; an already-enabled feature is never locked
+out. The same verdict is drawn under the Streamline DLL table in Backend
+Diagnostics, next to the version that table already lists, and DevBench's
+`neuralRenderingStatus` reports it as `runtimeAvailability`, `runtimeVersion`
+and `runtimeDetail`.
+
 The controls persist under `Upscaling.neuralRenderingTuning`:
 
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
@@ -89,6 +99,12 @@ such as a gaze-driven one, adds a sibling namespace with its own
 values rather than a new mechanism. With the toggle off, or with no actor
 tracked, the crop is the whole frame and NR evaluates exactly as it does
 without it.
+
+The crop controls below only act through a tracked crop, so they follow that
+toggle: **Show Region Overlay**, **Crop Fit** and **Track Multiple Characters**
+are greyed out while it is off, and `NR::Tuning::Sanitize()` clears all three
+(`regionFit` back to Padded) whenever `regionOfInterest` is off, so a value
+loaded from a config file cannot read as active while the pass ignores it.
 
 The bound the crop projects is the actor's authored local-space box
 (`GetBoundMin`/`GetBoundMax`) carried into world space by its own root transform,

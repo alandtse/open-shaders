@@ -560,6 +560,7 @@ namespace
 	{
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
+		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
 		return json{
 			{ "enabled", upscaling->settings.neuralRenderingEnabled },
 			{ "state", magic_enum::enum_name(status.state) },
@@ -572,6 +573,9 @@ namespace
 			{ "ngxResult", json::array({ status.ngxResult[0], status.ngxResult[1] }) },
 			{ "lastAppliedFrame", status.lastAppliedFrame },
 			{ "appliedFrames", status.appliedFrames },
+			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
+			{ "runtimeVersion", availability.version },
+			{ "runtimeDetail", availability.reason },
 		};
 	}
 
@@ -607,7 +611,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, and why it was refused in runtimeDetail -- the same gates that lock the Enable switch. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -1097,6 +1101,7 @@ void Upscaling::DrawBackendDiagnostics()
 	ImGui::Separator();
 	Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
 	Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), streamline.pluginDir.c_str(), Streamline::dllVersions, "sl_dll_versions");
+	neuralRendering.DrawRuntimeDiagnostics();
 }
 
 const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const

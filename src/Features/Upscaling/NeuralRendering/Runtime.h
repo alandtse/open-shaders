@@ -108,15 +108,22 @@ namespace NR
 			return { RuntimeAvailability::State::kMissing, {}, std::format("{} not found in {}", kRuntimeFileName, directory) };
 		const auto rejected = UnsupportedRuntimeReason(version, directory);
 		if (!rejected.empty())
-			return { RuntimeAvailability::State::kUnsupportedVersion, version ? version->string() : std::string{}, rejected };
+			return { RuntimeAvailability::State::kUnsupportedVersion, version ? version->string(".") : std::string{}, rejected };
 		if (!IsValidatedRuntimeHash(digest)) {
-			return { RuntimeAvailability::State::kUnvalidatedBuild, version->string(),
+			return { RuntimeAvailability::State::kUnvalidatedBuild, version->string("."),
 				std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
 					digest.empty() ? std::string_view{ "unavailable" } : digest.substr(0, kRuntimeDigestPrefix),
 					kRequiredRuntimeMajor, kRequiredRuntimeMinor) };
 		}
-		return { RuntimeAvailability::State::kReady, version->string(), {} };
+		return { RuntimeAvailability::State::kReady, version->string("."), {} };
 	}
+
+	/**
+	 * @brief Verdict for the runtime in a plugin directory.
+	 *        SHA-256 of the 165 MB runtime costs about a fifth of a second, so an unchanged file
+	 *        answers from the last verdict instead of hashing again on every settings frame.
+	 */
+	RuntimeAvailability InspectRuntime(const std::filesystem::path& directory);
 
 	/** @brief True when an image path sits under <systemDirectory>\DriverStore\, i.e. NVIDIA's own core. */
 	inline bool IsUnderDriverStore(std::wstring_view image, std::wstring_view systemDirectory)

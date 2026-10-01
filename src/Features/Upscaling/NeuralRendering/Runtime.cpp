@@ -8,6 +8,8 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs_dlssd.h>
 
+#include <mutex>
+
 namespace NR
 {
 	namespace
@@ -411,6 +413,34 @@ namespace NR
 		state.version = availability.version;
 		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", availability.version);
 		impl = std::move(pending);
+	}
+
+	RuntimeAvailability InspectRuntime(const std::filesystem::path& directory)
+	{
+		const auto path = directory / kRuntimeFileName;
+		std::error_code error;
+		const auto size = std::filesystem::file_size(path, error);
+		// A runtime that is simply absent is rechecked every call: it costs one stat, and the
+		// cache would otherwise hide the file that appears when the user installs it.
+		if (error)
+			return InspectRuntimeFile(directory);
+		const auto written = std::filesystem::last_write_time(path, error);
+		if (error)
+			return InspectRuntimeFile(directory);
+
+		static std::mutex mutex;
+		static std::filesystem::path cachedPath;
+		static std::uintmax_t cachedSize = 0;
+		static std::filesystem::file_time_type cachedWritten;
+		static RuntimeAvailability cached;
+		std::scoped_lock lock(mutex);
+		if (cachedPath != path || cachedSize != size || cachedWritten != written) {
+			cachedPath = path;
+			cachedSize = size;
+			cachedWritten = written;
+			cached = InspectRuntimeFile(directory);
+		}
+		return cached;
 	}
 
 	void Runtime::ResetFeatures()

@@ -139,6 +139,42 @@ TEST_CASE("Only a 310.8 runtime is accepted", "[nr]")
 			"nvngx_dlssnr.dll in C:\\game has no version information");
 }
 
+TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
+{
+	using NR::RuntimeAvailability;
+
+	const auto accepted = std::optional<FakeVersion>{ FakeVersion{ 310, 8 } };
+	const auto validated = NR::kValidatedRuntimeSha256[0];
+
+	// No file is refused before anything can be read from it, whatever digest was passed.
+	const auto missing = NR::ClassifyRuntime(false, std::optional<FakeVersion>{}, validated, "C:\\game");
+	REQUIRE(missing.state == RuntimeAvailability::State::kMissing);
+	REQUIRE(missing.version.empty());
+	REQUIRE(missing.reason == "nvngx_dlssnr.dll not found in C:\\game");
+
+	// A version the pass does not accept is refused by version, even for a pinned build.
+	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, validated, "C:\\game");
+	REQUIRE(versioned.state == RuntimeAvailability::State::kUnsupportedVersion);
+	REQUIRE(versioned.version == "310.9.0");
+	REQUIRE(versioned.reason == "unsupported runtime version 310.9.0 (needs 310.8)");
+
+	// An unpinned build of the accepted version is refused by digest, and an unreadable
+	// digest is refused too rather than being treated as unchanged.
+	for (const std::string refused : { std::string{}, std::string(64, '0') }) {
+		const auto build = NR::ClassifyRuntime(true, accepted, refused, "C:\\game");
+		REQUIRE(build.state == RuntimeAvailability::State::kUnvalidatedBuild);
+		REQUIRE(build.version == "310.8.0");
+		REQUIRE_FALSE(build.Ready());
+	}
+
+	// The pinned build of the accepted version is the only combination that is ready.
+	const auto ready = NR::ClassifyRuntime(true, accepted, validated, "C:\\game");
+	REQUIRE(ready.state == RuntimeAvailability::State::kReady);
+	REQUIRE(ready.Ready());
+	REQUIRE(ready.version == "310.8.0");
+	REQUIRE(ready.reason.empty());
+}
+
 TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
 {
 	REQUIRE(NR::kValidatedRuntimeSha256.size() == 2);
