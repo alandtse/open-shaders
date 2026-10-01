@@ -41,6 +41,19 @@ namespace NR
 		/** @brief How far above the cheapest step a crop's cost may sit and still count as free. */
 		static constexpr float kKneeTolerance = 0.05f;
 
+		/**
+		 * @brief True when a resolved capture is newer than the last one sampled, marking it consumed.
+		 *        GetResults() keeps the previous frame's timings until the next capture resolves, so
+		 *        sampling every main-thread frame would count one GPU frame many times, across steps.
+		 */
+		static bool ConsumeCapture(uint32_t a_capturedGpuFrame, uint32_t& a_lastConsumed)
+		{
+			if (a_capturedGpuFrame == a_lastConsumed)
+				return false;
+			a_lastConsumed = a_capturedGpuFrame;
+			return true;
+		}
+
 		/** @brief Where a sweep stands. */
 		enum class State : uint8_t
 		{

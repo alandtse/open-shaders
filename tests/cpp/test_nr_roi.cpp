@@ -259,6 +259,26 @@ TEST_CASE("CropCalibration fails when a step gets no timed frames and can be res
 	REQUIRE(calibration.CurrentFraction() == Catch::Approx(CropCalibration::kFractions.front()));
 }
 
+TEST_CASE("ConsumeCapture accepts each resolved profiler capture once", "[nr][roi][calibration]")
+{
+	uint32_t lastConsumed = 0;
+
+	// Nothing has resolved yet, so the first frame the sweep sees is already the one it marks.
+	REQUIRE_FALSE(CropCalibration::ConsumeCapture(0, lastConsumed));
+
+	// A resolved capture is sampled once, and the repeated reads before the next one resolves
+	// are refused rather than counted as fresh frames.
+	REQUIRE(CropCalibration::ConsumeCapture(7, lastConsumed));
+	REQUIRE(lastConsumed == 7);
+	REQUIRE_FALSE(CropCalibration::ConsumeCapture(7, lastConsumed));
+	REQUIRE_FALSE(CropCalibration::ConsumeCapture(7, lastConsumed));
+	REQUIRE(lastConsumed == 7);
+
+	// The next capture is accepted, whatever moved its frame count.
+	REQUIRE(CropCalibration::ConsumeCapture(9, lastConsumed));
+	REQUIRE(lastConsumed == 9);
+}
+
 TEST_CASE("CenteredBounds covers the requested area around the frame centre", "[nr][roi][calibration]")
 {
 	for (const float fraction : CropCalibration::kFractions) {

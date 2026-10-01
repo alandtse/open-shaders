@@ -711,9 +711,11 @@ void NeuralRendering::UpdateCalibration()
 		float gpuMs = 0.0f;
 		if (globals::profiler) {
 			globals::profiler->RequestCapture();
-			for (const auto& timer : globals::profiler->GetResults()) {
-				if (timer.valid && timer.activeGpu && timer.name == "Upscaling::NREvaluate")
-					gpuMs = timer.gpuTimeMs;
+			if (NR::CropCalibration::ConsumeCapture(globals::profiler->GetCapturedGpuFrameCount(), lastCalibrationGpuFrame)) {
+				for (const auto& timer : globals::profiler->GetResults()) {
+					if (timer.valid && timer.activeGpu && timer.name == "Upscaling::NREvaluate")
+						gpuMs = timer.gpuTimeMs;
+				}
 			}
 		}
 		calibration.AddFrame(gpuMs);

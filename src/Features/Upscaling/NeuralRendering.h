@@ -143,6 +143,8 @@ private:
 	std::atomic_bool calibrationRequested = false;
 	/** @brief Main-thread sweep state; its published copy is guarded by regionMutex. */
 	NR::CropCalibration calibration;
+	/** @brief Captured GPU frame the sweep last sampled, so one capture is never counted twice. */
+	uint32_t lastCalibrationGpuFrame = 0;
 	NR::CropCalibration::Result calibrationResult;
 	/** @brief Crop area share the last completed calibration found free, or zero; read by the main-thread tracker only. */
 	float calibratedKneeFraction = 0.0f;
