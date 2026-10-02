@@ -353,8 +353,11 @@ namespace ShadowCasterManager
 
 		auto* nilight = light->light.get();
 		if (nilight) {
+			// Anchored: an ISL light's radius tracks its live fade every frame, which
+			// would otherwise churn this light's rank.
+			const float lightRadius = AnchoredRadius(nilight, nilight->GetLightRuntimeData().radius.x);
 			FormulaHelper::SetParam(kFormulaParam_LightIntensity, nilight->GetLightRuntimeData().fade);
-			FormulaHelper::SetParam(kFormulaParam_LightRadius, nilight->GetLightRuntimeData().radius.x);
+			FormulaHelper::SetParam(kFormulaParam_LightRadius, lightRadius);
 			FormulaHelper::SetParam(kFormulaParam_LightR, nilight->GetLightRuntimeData().diffuse.red);
 			FormulaHelper::SetParam(kFormulaParam_LightG, nilight->GetLightRuntimeData().diffuse.green);
 			FormulaHelper::SetParam(kFormulaParam_LightB, nilight->GetLightRuntimeData().diffuse.blue);
@@ -368,7 +371,7 @@ namespace ShadowCasterManager
 			if (s_settings.PromoteNormalToShadow)
 				FormulaHelper::SetParam(kFormulaParam_LightNS, IsPromotedLight(nilight) ? 1.0 : 0.0);
 
-			const auto geom = ComputeLightGeometry(light, camera, nilight->GetLightRuntimeData().radius.x);
+			const auto geom = ComputeLightGeometry(light, camera, lightRadius);
 			FormulaHelper::SetParam(kFormulaParam_LightCoverage, geom.coverage);
 			FormulaHelper::SetParam(kFormulaParam_LightScreenArea, geom.screenArea);
 			FormulaHelper::SetParam(kFormulaParam_LightLum, geom.lum);
