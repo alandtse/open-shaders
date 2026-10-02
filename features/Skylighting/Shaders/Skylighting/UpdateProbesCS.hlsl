@@ -86,7 +86,7 @@ static const float3 noise3D[32] = {
 		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
-		sh2 occlusionSH = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(settings.OcclusionDir.xyz), visibility * 4.0 * Math::PI);  // 4 pi from monte carlo
+		sh2 occlusionSH = settings.OcclusionSHBasis4Pi * visibility;
 		if (isValid) {
 			float lerpFactor = rcp(accumFrames);
 			sh2 prevProbeSH = unitSH;
