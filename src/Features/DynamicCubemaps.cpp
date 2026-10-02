@@ -15,10 +15,19 @@
 
 constexpr auto MIPLEVELS = 9;
 
+// Pixel-shader SRVs the image-space SSR pass reads its Hi-Z chains from. The engine's own shader
+// setup binds t0-t3 for that shader and nothing else in the tree declares these four.
+constexpr UINT kHiZChainRegister = 115;
+
+// Pixel-shader constant buffer slot the SSR Hi-Z walk reads its settings from: the only b9
+// declarations in the shader tree are Skinned.hlsli's bone buffers, bound in the vertex stage.
+constexpr UINT kHiZSettingsRegister = 9;
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	DynamicCubemaps::Settings,
 	EnabledSSR,
-	EnabledCreator);
+	EnabledCreator,
+	EnableSSRHiZ);
 
 std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
 {
@@ -38,6 +47,16 @@ void DynamicCubemaps::DrawSettings()
 	}
 	if (globals::game::isVR)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
+
+	if (settings.EnabledSSR) {
+		// Runtime-gated, not a shader define: the shader tests the per-frame availability flag, so
+		// toggling this is a frame-rate A/B with no recompile and no restart.
+		Util::CheckboxFlag(T(TKEY("enable_ssr_hiz"), "Hi-Z raymarch (experimental)"), settings.EnableSSRHiZ);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_ssr_hiz_tooltip"),
+								  "Walks a min/max depth pyramid instead of the fixed-step linear raymarch. Falls back to the linear raymarch whenever the pyramid is unavailable."));
+		}
+	}
 
 	if (ImGui::TreeNode(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"))) {
 		ImGui::Text("%s", T(TKEY("creator_info"), "You must enable creator mode by adding the shader define CREATOR"));
@@ -162,6 +181,20 @@ void DynamicCubemaps::DataLoaded()
 	}
 }
 
+// PreRender (0x0A) is called at the top of the SSR draw's Render: after every depth writer in the
+// frame and before the draw reads the chains.
+struct SSRHiZPreRenderHook
+{
+	static void thunk(void* a_this)
+	{
+		// Built before chaining, so the pyramid stays outside the Tracy GPU zone Upscaling opens on this
+		// same vfunc, whichever of the two hooks was installed first.
+		globals::features::dynamicCubemaps.BuildHiZ();
+		func(a_this);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
 void DynamicCubemaps::PostPostLoad()
 {
 	bootSnapshot.LatchIfNeeded(settings);
@@ -179,6 +212,9 @@ void DynamicCubemaps::PostPostLoad()
 			}
 		}
 	}
+
+	stl::write_vfunc<0x0A, SSRHiZPreRenderHook>(RE::VTABLE_BSImagespaceShaderReflectionsRayTracing[0]);
+	logger::info("[DynamicCubemaps] Installed SSR Hi-Z build hook (ReflectionsRayTracing PreRender 0x0A)");
 }
 
 void DynamicCubemaps::OnSceneTransitionReset(bool opening)
@@ -201,6 +237,8 @@ void DynamicCubemaps::ClearShaderCache()
 	inferCubemapFakeReflectionsCS.Reset();
 	specularIrradianceCS.Reset();
 	bc6hEncodeCS.Reset();
+	hiZMin.ClearShaderCache();
+	hiZMax.ClearShaderCache();
 }
 
 ID3D11ComputeShader* DynamicCubemaps::GetComputeShaderUpdate()
@@ -601,6 +639,76 @@ void DynamicCubemaps::PostDeferred()
 	context->PSSetShaderResources(30, 2, views);
 }
 
+// Called from the SSR raymarch draw's PreRender vfunc, where the chains are built from the depth that
+// draw tests and bound in time for it to read them.
+void DynamicCubemaps::BuildHiZ()
+{
+	// Cleared first so a skipped or failed build leaves the shader on its linear raymarch rather
+	// than on a chain and settings that describe an earlier frame.
+	hiZBuffer = {};
+	hiZMin.Invalidate();
+	hiZMax.Invalidate();
+
+	auto device = globals::d3d::device;
+	auto context = globals::d3d::context;
+
+	// Last frame's chain SRVs are still bound on the pixel stage, and the builds below bind the same
+	// textures as compute UAVs.
+	ID3D11ShaderResourceView* staleChains[4]{};
+	context->PSSetShaderResources(kHiZChainRegister, ARRAYSIZE(staleChains), staleChains);
+
+	if (settings.EnabledSSR && settings.EnableSSRHiZ) {
+		// The live depth target, not the finished-opaque copy: water writes it after the copy is
+		// taken, so chains built from the copy can step past a real crossing.
+		auto renderer = globals::game::renderer;
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+		if (auto* source = Util::AsReal(depth.depthSRV)) {
+			// The view decides, not the call site: the depth target's own format differs by runtime and the
+			// reduction shader's declaration has to match the class of whichever view is bound.
+			D3D11_SHADER_RESOURCE_VIEW_DESC sourceDesc{};
+			source->GetDesc(&sourceDesc);
+			const bool unormTyped = sourceDesc.Format == DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+
+			// Still bound as a depth target on the frames the engine has not released it, so the base
+			// dispatch has to unbind the output-merger targets before reading the same resource as an SRV.
+			HiZPyramid::BuildDesc desc{ source, HiZPyramid::Reduction::Min, globals::game::isVR, unormTyped, true };
+
+			if (hiZMin.Build(device, context, desc)) {
+				desc.reduction = HiZPyramid::Reduction::Max;
+				if (hiZMax.Build(device, context, desc))
+					hiZBuffer = HiZBufferData{ 1u, hiZMin.GetMipCount() - 1, hiZMin.GetWidth(), hiZMin.GetHeight() };
+			}
+		}
+	}
+
+	// Eye 0's chains first, then eye 1's; flat builds only eye 0. An unavailable walk binds all four
+	// null and zeroed settings, so nothing stale outlives the frame that built it.
+	ID3D11ShaderResourceView* chains[4]{};
+	if (hiZBuffer.Available) {
+		chains[0] = hiZMin.GetSRV(0);
+		chains[1] = hiZMax.GetSRV(0);
+		chains[2] = hiZMin.GetSRV(1);
+		chains[3] = hiZMax.GetSRV(1);
+	}
+	context->PSSetShaderResources(kHiZChainRegister, ARRAYSIZE(chains), chains);
+
+	if (hiZCB) {
+		hiZCB->Update(hiZBuffer);
+		ID3D11Buffer* buffer = hiZCB->CB();
+		context->PSSetConstantBuffers(kHiZSettingsRegister, 1, &buffer);
+	}
+}
+
+json DynamicCubemaps::GetDiagnostics()
+{
+	return json{
+		{ "ssrHiZAvailable", hiZBuffer.Available != 0 },
+		{ "ssrHiZMaxLevel", hiZBuffer.MaxLevel },
+		{ "ssrHiZSizeX", hiZBuffer.SizeX },
+		{ "ssrHiZSizeY", hiZBuffer.SizeY },
+	};
+}
+
 void DynamicCubemaps::SetupResources()
 {
 	GetComputeShaderUpdate();
@@ -609,6 +717,8 @@ void DynamicCubemaps::SetupResources()
 	GetComputeShaderInferrenceReflections();
 	GetComputeShaderSpecularIrradiance();
 	GetComputeShaderBC6HEncode();
+	hiZMin.SetupResources();
+	hiZMax.SetupResources();
 
 	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
@@ -777,6 +887,10 @@ void DynamicCubemaps::SetupResources()
 
 	{
 		spmapCB = new ConstantBuffer(ConstantBufferDesc<SpecularMapFilterSettingsCB>(), "DynamicCubemaps::SpmapCB");
+	}
+
+	{
+		hiZCB = new ConstantBuffer(ConstantBufferDesc<HiZBufferData>(), "DynamicCubemaps::SSRHiZCB");
 	}
 
 	{

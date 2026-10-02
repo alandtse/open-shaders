@@ -21,7 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// Grass uses six SPD output mips. The upstream tail is retained but excluded because its additional UAV bindings exceed D3D11's eight-slot limit.
+// The shared Hi-Z mip chain: reduces one pyramid's mip 0 into its levels 1..6. Every read and write
+// stays inside the texture it is bound with, so a chain per stereo eye cannot blend the two eyes' depth.
+#include "Common/HiZReduction.hlsli"
+
+// Six SPD output mips. The upstream tail is retained but excluded because its additional UAV bindings exceed D3D11's eight-slot limit.
 #ifndef SPD_MAX_MIPS
 #	define SPD_MAX_MIPS 6
 #endif
@@ -113,7 +117,7 @@ void SpdStore(int2 pix, float value, uint index)
 
 float SpdReduce4(float a, float b, float c, float d)
 {
-	return max(max(a, b), max(c, d));
+	return HIZ_REDUCE4(a, b, c, d);
 }
 
 void SpdStoreIntermediate(uint x, uint y, float value)

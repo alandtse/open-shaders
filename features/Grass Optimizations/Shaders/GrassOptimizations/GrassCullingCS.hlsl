@@ -70,7 +70,7 @@ cbuffer CullBucket : register(b1)
 
 ByteAddressBuffer Instances : register(t0);
 StructuredBuffer<float4> Origins : register(t1);
-// Max-depth reduction of the scene depth copy (see GrassHiZCS.hlsl).
+// Max-depth reduction of the scene depth copy (see Common/HiZBaseCS.hlsl).
 Texture2D<float> HiZ : register(t2);
 // Maps a compacted thread index back to a real instance: .x = the slice's first instance, .y = the instance total of every visible slice before it.
 StructuredBuffer<uint2> SliceTable : register(t3);

@@ -594,6 +594,8 @@
     "feature.dynamic_cubemaps.dynamic_cubemap_creator": "Dynamic Cubemap Creator",
     "feature.dynamic_cubemaps.enable_creator": "Enable Creator",
     "feature.dynamic_cubemaps.enable_ssr": "Enable Screen Space Reflections",
+    "feature.dynamic_cubemaps.enable_ssr_hiz": "Hi-Z raymarch (experimental)",
+    "feature.dynamic_cubemaps.enable_ssr_hiz_tooltip": "Walks a min/max depth pyramid instead of the fixed-step linear raymarch. Falls back to the linear raymarch whenever the pyramid is unavailable.",
     "feature.dynamic_cubemaps.enable_ssr_tooltip": "Enable Screen Space Reflections on Water",
     "feature.dynamic_cubemaps.export": "Export",
     "feature.dynamic_cubemaps.key_feature_1": "Real-time environment capture for realistic reflections",

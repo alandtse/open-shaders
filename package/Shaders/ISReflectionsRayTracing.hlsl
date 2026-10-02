@@ -26,6 +26,22 @@ Texture2D<float4> ColorTex : register(t1);
 Texture2D<float4> DepthTex : register(t2);
 Texture2D<float4> AlphaTex : register(t3);
 
+// Shared Hi-Z chains bound by DynamicCubemaps::BuildHiZ. All four are unbound while the setting
+// is off, and eye 1's pair on flat; SSRHiZAvailable keeps unbound chains out of the walk.
+Texture2D<float> HiZMinEye0 : register(t115);
+Texture2D<float> HiZMaxEye0 : register(t116);
+Texture2D<float> HiZMinEye1 : register(t117);
+Texture2D<float> HiZMaxEye1 : register(t118);
+
+// Per-frame walk settings, bound with the chains so both always describe the same build.
+cbuffer SSRHiZ : register(b9)
+{
+	uint SSRHiZAvailable;  // 1 once both chains were built and bound for this frame; 0 keeps the linear march
+	uint SSRHiZMaxLevel;   // coarsest built mip level
+	uint SSRHiZSizeX;      // valid base-level extent of one chain, in texels
+	uint SSRHiZSizeY;
+};
+
 cbuffer PerGeometry : register(b2)
 {
 	float4 SSRParams : packoffset(c0);  // fReflectionRayThickness in x, fReflectionMarchingRadius in y, fAlphaWeight in z, 1 / fReflectionMarchingRadius in w
@@ -69,6 +85,16 @@ int GetSSRBinaryIterations(int raymarchIterations)
 	int iterationCount = (int)ceil(log2((float)raymarchIterations));
 	return min(max(iterationCount, 1), binaryIterations);
 }
+
+// Finest level the Hi-Z walk may stop at: coarser in the periphery to match its shorter step
+// budget, the base level in the center.
+static const int peripheralHiZLevel = 2;
+
+int GetSSRHiZFinestLevel(float foveationWeight)
+{
+	int level = (int)round((1.0 - saturate(foveationWeight)) * (float)peripheralHiZLevel);
+	return min(level, (int)SSRHiZMaxLevel);
+}
 #	endif
 
 /** Maps an eye-local ray sample to current-frame dynamic-resolution SBS coordinates. */
@@ -95,6 +121,189 @@ float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 	return screenPosition;
 }
 
+/** Tile of one chain at `level` that holds `uv`, and the ray parameter at which a ray through `uv`
+ *  along the mono-UV slope `dir` leaves it. A still axis is clamped so it cannot divide by zero. */
+void HiZTile(float2 uv, float2 dir, float2 size, int level, out int3 coord, out float tExit)
+{
+	float scale = exp2((float)level);
+	// Mip-L texel i reduces mip-0 texels [i * 2^L, (i + 1) * 2^L), so the texel holding uv is the
+	// exact ratio; the valid count only bounds the clamp and rounds up.
+	int2 validSize = max(int2(ceil(size / scale)), int2(1, 1));
+	int2 cell = clamp(int2(floor(uv * size / scale)), int2(0, 0), validSize - 1);
+	coord = int3(cell, level);
+
+	float2 uvSpan = scale / size;
+	float2 dirSign = step(float2(0.0, 0.0), dir);
+	float2 exitUV = lerp(float2(cell) * uvSpan, float2(cell + 1) * uvSpan, dirSign);
+	float2 safeDir = max(abs(dir), float2(1e-6, 1e-6)) * (dirSign * 2.0 - 1.0);
+	tExit = min((exitUV.x - uv.x) / safeDir.x, (exitUV.y - uv.y) / safeDir.y);
+}
+
+float HiZMinAt(uint eye, int3 coord) { return eye == 0 ? HiZMinEye0.Load(coord) : HiZMinEye1.Load(coord); }
+float HiZMaxAt(uint eye, int3 coord) { return eye == 0 ? HiZMaxEye0.Load(coord) : HiZMaxEye1.Load(coord); }
+
+/**
+ * @brief Coarse walk over the shared Hi-Z min/max chains, from the ray origin to its first crossing.
+ *
+ * Ascends one level per tile proved empty and descends when a tile might hold the crossing. Uses
+ * the same ray-versus-depth test as the linear march; the tiles only decide where it is asked.
+ *
+ * @return false when the ray left the frame or ended without a crossing.
+ */
+bool HiZCoarseMarch(
+	float3 projReflectionDirection,
+	float3 projPosition,
+	uint eyeIndex,
+	uint2 depthTextureDimensions,
+	int stepBudget,
+	int finestLevel,
+	out float3 outPrevRaySample,
+	out float3 outRaySample,
+	out uint outHitEyeIndex)
+{
+	outPrevRaySample = projPosition;
+	outRaySample = projPosition;
+	outHitEyeIndex = eyeIndex;
+
+	const float2 chainSize = float2(SSRHiZSizeX, SSRHiZSizeY);
+	const int coarsestLevel = (int)SSRHiZMaxLevel;
+	// Every advance has a floor of one linear step, so the walk always moves and always finishes
+	// inside stepBudget, even when a sample lands exactly on a tile boundary.
+	const float tStep = 1.0 / float(stepBudget);
+
+	float t = 0.0;
+	float tPrev = 0.0;
+	int level = finestLevel;
+
+	// Which eye's chain the tiles are read from. It follows the viewport-exit switch for free and
+	// moves to the other eye once the max chain has shown the ray passed through its own occluder.
+#	if defined(VR)
+	bool useOtherEyeChain = false;
+#	endif
+
+	// The first crossing the max chain called a pass-through, kept so a walk that finds nothing
+	// better still returns the hit the linear march would have returned.
+	bool haveFallback = false;
+	float fallbackT = 0.0;
+	float fallbackPrevT = 0.0;
+	uint fallbackEyeIndex = eyeIndex;
+
+	[loop] for (int step = 0; step < stepBudget; ++step)
+	{
+		if (t >= 1.0)
+			break;
+
+		float3 raySample = projPosition + t * projReflectionDirection;
+
+		float2 sampleUV;
+		uint sampleEyeIndex;
+		Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
+
+		if (FrameBuffer::IsOutsideFrame(sampleUV))
+			return false;
+
+		uint chainEye = sampleEyeIndex;
+		float2 chainUV = sampleUV;
+#	if defined(VR)
+		if (useOtherEyeChain && sampleEyeIndex == eyeIndex) {
+			float3 otherEyeSample = Stereo::ConvertMonoUVToOtherEye(raySample, eyeIndex);
+			if (!FrameBuffer::IsOutsideFrame(otherEyeSample.xy)) {
+				chainEye = 1 - eyeIndex;
+				chainUV = otherEyeSample.xy;
+			}
+		}
+#	endif
+
+		// The tile's exit parameter is a slope, so it must be the ray's slope in the eye that owns
+		// chainUV: the two eyes' slopes differ by parallax (the paper's rayDirEye2XY).
+		float2 tileDirXY = projReflectionDirection.xy;
+#	if defined(VR)
+		if (chainEye != eyeIndex) {
+			float3 aheadSample = Stereo::ConvertMonoUVToOtherEye(raySample + tStep * projReflectionDirection, eyeIndex);
+			float2 otherEyeDir = (aheadSample.xy - chainUV) / tStep;
+			// A degenerate or folded-back reprojection keeps this eye's slope, which still bounds the
+			// tile where a NaN exit would not.
+			if (all(isfinite(otherEyeDir)) && dot(otherEyeDir, otherEyeDir) > 1e-12)
+				tileDirXY = otherEyeDir;
+		}
+#	endif
+
+		int3 coord;
+		float tCellExit;
+		HiZTile(chainUV, tileDirXY, chainSize, level, coord, tCellExit);
+		// A tile cannot extend the march past the end of the ray. Clamping here also keeps a still
+		// screen axis, whose exit parameter is enormous, from scaling a zero depth slope into a NaN.
+		tCellExit = clamp(tCellExit, 0.0, 1.0 - t);
+
+		float tileMin = HiZMinAt(chainEye, coord);
+		float tileMax = HiZMaxAt(chainEye, coord);
+
+		// The ray's depth span over that tile.
+		float zExit = raySample.z + tCellExit * projReflectionDirection.z;
+		float rayMinZ = min(raySample.z, zExit);
+		float rayMaxZ = max(raySample.z, zExit);
+
+		float iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
+
+		if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
+			// Behind every surface in this tile as well: the ray is inside or past the occluder
+			// rather than landing on it, so this is not the crossing.
+			if (rayMinZ > tileMax) {
+				if (!haveFallback) {
+					haveFallback = true;
+					fallbackT = t;
+					fallbackPrevT = tPrev;
+					fallbackEyeIndex = sampleEyeIndex;
+				}
+#	if defined(VR)
+				useOtherEyeChain = true;
+#	endif
+				tPrev = t;
+				t += (level > finestLevel) ? max(tCellExit, tStep) : tStep;
+				level = min(level + 1, coarsestLevel);
+				continue;
+			}
+
+			// Descend first: a crossing is only handed on once the tile holding it is one base-level
+			// block, so the interval the binary search refines starts from the last advance.
+			if (level > finestLevel) {
+				level -= 1;
+				continue;
+			}
+
+			outPrevRaySample = projPosition + tPrev * projReflectionDirection;
+			outRaySample = raySample;
+			outHitEyeIndex = sampleEyeIndex;
+			return true;
+		}
+
+		if (rayMaxZ < tileMin) {
+			// The span is wholly in front of every surface here: nothing to cross inside, so step
+			// over the tile and look wider next time.
+			tPrev = t;
+			t += (level > finestLevel) ? max(tCellExit, tStep) : tStep;
+			level = min(level + 1, coarsestLevel);
+			continue;
+		}
+
+		if (level > finestLevel) {
+			level -= 1;
+			continue;
+		}
+
+		tPrev = t;
+		t += tStep;
+	}
+
+	if (!haveFallback)
+		return false;
+
+	outPrevRaySample = projPosition + fallbackPrevT * projReflectionDirection;
+	outRaySample = projPosition + fallbackT * projReflectionDirection;
+	outHitEyeIndex = fallbackEyeIndex;
+	return true;
+}
+
 float4 GetReflectionColor(
 	float3 projReflectionDirection,
 	float3 projPosition,
@@ -108,8 +317,13 @@ float4 GetReflectionColor(
 #	endif
 )
 {
-	float3 prevRaySample;
+	float4 result = 0.0;
+	float3 prevRaySample = projPosition;
 	float3 raySample = projPosition;
+	uint hitEyeIndex = eyeIndex;
+	float2 sampleUV;
+	float iterationDepth = 0.0;
+	bool found = false;
 
 	// VR scales the raymarch/binary counts by the foveation weight and fades the result; non-VR uses
 	// full counts. Bounds are runtime in VR, so [loop] is required (cannot unroll).
@@ -117,116 +331,136 @@ float4 GetReflectionColor(
 	int rayCount = raymarchIterations;
 	int binCount = binaryIterationsCount;
 	float fovWeight = foveationWeight;
-	[loop] for (int i = 0; i < rayCount; i++)
-	{
 #	else
 	int rayCount = iterations;
 	int binCount = binaryIterations;
 	float fovWeight = 1.0;
-	for (int i = 0; i < rayCount; i++) {
 #	endif
-		prevRaySample = raySample;
-		raySample = projPosition + (float(i) / float(rayCount)) * projReflectionDirection;
 
-		float2 sampleUV;
-		uint sampleEyeIndex;
-		Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
-
-		if (FrameBuffer::IsOutsideFrame(sampleUV))
-			return 0.0;
-
-		float iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
-
-		if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
-			float3 binaryMinRaySample = prevRaySample;
-			float3 binaryMaxRaySample = raySample;
-			float3 binaryRaySample = raySample;
-			float depthThicknessFactor;
-			uint hitEyeIndex = sampleEyeIndex;
-
+	// Hi-Z chains when built for this frame, the original fixed-step linear march otherwise.
+	[branch] if (SSRHiZAvailable != 0)
+	{
 #	if defined(VR)
-			[loop] for (int k = 0; k < binCount; k++)
-			{
+		found = HiZCoarseMarch(projReflectionDirection, projPosition, eyeIndex, depthTextureDimensions,
+			rayCount, GetSSRHiZFinestLevel(foveationWeight), prevRaySample, raySample, hitEyeIndex);
 #	else
-			for (int k = 0; k < binCount; k++) {
+		found = HiZCoarseMarch(projReflectionDirection, projPosition, eyeIndex, depthTextureDimensions,
+			rayCount, 0, prevRaySample, raySample, hitEyeIndex);
 #	endif
-				binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
-
-				Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
-				iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
-
-				// Compute expected depth vs actual depth
-				depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
-
-				if (iterationDepth < binaryRaySample.z)
-					binaryMaxRaySample = binaryRaySample;
-				else
-					binaryMinRaySample = binaryRaySample;
-			}
-
-			// Fade based on ray length
-			float ssrMarchingRadiusFadeFactor = 1.0 - saturate(length(binaryRaySample - projPosition) / rayLength);
-
-			float2 uvResultScreenCenterOffset = binaryRaySample.xy - 0.5;
-
-#	ifdef VR
-			float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
-
-			// Make VR fades consistent by taking the closer of the two eyes
-			// Based on concepts from https://cuteloong.github.io/publications/scssr24/
-			float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex).xy - 0.5;
-			centerDistance = min(centerDistance, abs(otherEyeUvResultScreenCenterOffset * 2.0));
-#	else
-			float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
-#	endif
-
-			// Fade out around screen edges
-			float centerDistanceFadeFactorX = smoothstep(0.0, 0.1, saturate(1.0 - centerDistance.x));
-			float centerDistanceFadeFactorY = smoothstep(0.0, 0.5, saturate(1.0 - centerDistance.y));
-
-			float fadeFactor = depthThicknessFactor * ssrMarchingRadiusFadeFactor * centerDistanceFadeFactorX * centerDistanceFadeFactorY;
-
-			if (fadeFactor > 0.0) {
-				// Resolve final UV in the eye that owns the hit
-				float2 finalSampleUV;
-				uint finalEyeIndex;
-				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
-
-				uint2 colorTextureDimensions = uint2(1, 1);
+	}
+	else
+	{
 #	if defined(VR)
-				ColorTex.GetDimensions(colorTextureDimensions.x, colorTextureDimensions.y);
+		[loop] for (int i = 0; i < rayCount; i++)
+		{
+#	else
+		for (int i = 0; i < rayCount; i++) {
 #	endif
-				float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
-				float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
-				if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
-					color = Color::SceneGammaToLinear(color);
+			prevRaySample = raySample;
+			raySample = projPosition + (float(i) / float(rayCount)) * projReflectionDirection;
 
-				// Final sample to world-space
-				float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
-				positionWS = mul(FrameBuffer::CameraViewProjInverse[finalEyeIndex], positionWS);
-				positionWS.xyz = positionWS.xyz / positionWS.w;
-				positionWS.w = 1.0;
+			uint sampleEyeIndex;
+			Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
 
-				// Compute camera motion vector
-				float2 cameraMotionVector = MotionBlur::GetSSMotionVector(positionWS, positionWS, finalEyeIndex);
+			if (FrameBuffer::IsOutsideFrame(sampleUV))
+				break;
 
-				// Reproject alpha from previous frame
-				float2 reprojectedRaySample = finalSampleUV + cameraMotionVector;
-				float4 alpha = 0.0;
+			iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x;
 
-				// Check that the reprojected data is within the frame
-				if (!FrameBuffer::IsOutsideFrame(reprojectedRaySample.xy))
-					alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
-
-				float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
-				return float4(reflectionColor, fadeFactor * fovWeight);
+			if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
+				hitEyeIndex = sampleEyeIndex;
+				found = true;
+				break;
 			}
-
-			return 0.0;
 		}
 	}
 
-	return 0.0;
+	if (found) {
+		float3 binaryMinRaySample = prevRaySample;
+		float3 binaryMaxRaySample = raySample;
+		float3 binaryRaySample = raySample;
+		float depthThicknessFactor = 0.0;
+
+#	if defined(VR)
+		[loop] for (int k = 0; k < binCount; k++)
+		{
+#	else
+		for (int k = 0; k < binCount; k++) {
+#	endif
+			binaryRaySample = lerp(binaryMinRaySample, binaryMaxRaySample, 0.5);
+
+			Stereo::ResolveMonoUVForEye(binaryRaySample, eyeIndex, sampleUV, hitEyeIndex);
+			iterationDepth = DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x;
+
+			// Compute expected depth vs actual depth
+			depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
+
+			if (iterationDepth < binaryRaySample.z)
+				binaryMaxRaySample = binaryRaySample;
+			else
+				binaryMinRaySample = binaryRaySample;
+		}
+
+		// Fade based on ray length
+		float ssrMarchingRadiusFadeFactor = 1.0 - saturate(length(binaryRaySample - projPosition) / rayLength);
+
+		float2 uvResultScreenCenterOffset = binaryRaySample.xy - 0.5;
+
+#	ifdef VR
+		float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
+
+		// Make VR fades consistent by taking the closer of the two eyes
+		// Based on concepts from https://cuteloong.github.io/publications/scssr24/
+		float2 otherEyeUvResultScreenCenterOffset = Stereo::ConvertMonoUVToOtherEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex).xy - 0.5;
+		centerDistance = min(centerDistance, abs(otherEyeUvResultScreenCenterOffset * 2.0));
+#	else
+		float2 centerDistance = abs(uvResultScreenCenterOffset.xy * 2.0);
+#	endif
+
+		// Fade out around screen edges
+		float centerDistanceFadeFactorX = smoothstep(0.0, 0.1, saturate(1.0 - centerDistance.x));
+		float centerDistanceFadeFactorY = smoothstep(0.0, 0.5, saturate(1.0 - centerDistance.y));
+
+		float fadeFactor = depthThicknessFactor * ssrMarchingRadiusFadeFactor * centerDistanceFadeFactorX * centerDistanceFadeFactorY;
+
+		if (fadeFactor > 0.0) {
+			// Resolve final UV in the eye that owns the hit
+			float2 finalSampleUV;
+			uint finalEyeIndex;
+			Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, iterationDepth), eyeIndex, finalSampleUV, finalEyeIndex);
+
+			uint2 colorTextureDimensions = uint2(1, 1);
+#	if defined(VR)
+			ColorTex.GetDimensions(colorTextureDimensions.x, colorTextureDimensions.y);
+#	endif
+			float2 colorScreenPosition = ConvertRaySample(finalSampleUV, finalEyeIndex, colorTextureDimensions);
+			float3 color = ColorTex.SampleLevel(ColorSampler, colorScreenPosition, 0).xyz;
+			if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
+				color = Color::SceneGammaToLinear(color);
+
+			// Final sample to world-space
+			float4 positionWS = float4(float2(finalSampleUV.x, 1.0 - finalSampleUV.y) * 2.0 - 1.0, iterationDepth, 1.0);
+			positionWS = mul(FrameBuffer::CameraViewProjInverse[finalEyeIndex], positionWS);
+			positionWS.xyz = positionWS.xyz / positionWS.w;
+			positionWS.w = 1.0;
+
+			// Compute camera motion vector
+			float2 cameraMotionVector = MotionBlur::GetSSMotionVector(positionWS, positionWS, finalEyeIndex);
+
+			// Reproject alpha from previous frame
+			float2 reprojectedRaySample = finalSampleUV + cameraMotionVector;
+			float4 alpha = 0.0;
+
+			// Check that the reprojected data is within the frame
+			if (!FrameBuffer::IsOutsideFrame(reprojectedRaySample.xy))
+				alpha = float4(AlphaTex.SampleLevel(AlphaSampler, ConvertRaySamplePrevious(reprojectedRaySample.xy, finalEyeIndex), 0).xyz, 1.0);
+
+			float3 reflectionColor = color + SSRParams.z * alpha.xyz * alpha.w;
+			result = float4(reflectionColor, fadeFactor * fovWeight);
+		}
+	}
+
+	return result;
 }
 
 PS_OUTPUT main(PS_INPUT input)

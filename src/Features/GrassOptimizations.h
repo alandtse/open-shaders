@@ -6,7 +6,7 @@
 
 #include "Buffer.h"
 #include "GrassOptimizations/GrassBucketStore.h"
-#include "GrassOptimizations/HiZPyramid.h"
+#include "HiZPyramid.h"
 #include "Utils/LazyShader.h"
 #include "Utils/VersionedRelocation.h"
 
@@ -194,6 +194,9 @@ public:
 	/** @brief Fills the per-bucket cull constant buffer, uploads the slice table and issues the cull dispatches. */
 	void UploadCullState(ID3D11Device* device, ID3D11DeviceContext* ctx, uint32_t visibleBuckets);
 
+	/** @brief Logs the Hi-Z pyramid's parameters, once per distinct set of them. */
+	void LogHiZBuild(bool usingLiveDepth);
+
 	/** @brief Binds a bucket's resources and dispatches the instance culling compute shader. */
 	void CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx);
 
@@ -202,6 +205,7 @@ public:
 
 	GrassBucketStore bucketStore;
 	HiZPyramid hiZ;
+	std::array<uint32_t, 10> lastHiZLogKey{};
 
 	uint32_t lastFrame = UINT32_MAX;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "HiZPyramid.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/LazyShader.h"
 
@@ -128,13 +129,50 @@ public:
 
 	ID3D11UnorderedAccessView* bc6hScratchUAVs[9] = {};
 
+	// SSR Hi-Z raymarch
+
+	/**
+	 * @brief Per-frame Hi-Z state the SSR raymarch reads, mirrored by ISReflectionsRayTracing.hlsl's
+	 *        cbuffer SSRHiZ.
+	 *
+	 * Available is the fallback gate: 0 leaves the shader on its fixed-step linear raymarch, which is
+	 * also what a null chain SRV reads as, so a failed or skipped build can never half-enable the walk.
+	 */
+	// Not alignas(16): it is uploaded through ConstantBuffer::Update, so only its size (already a
+	// clean 16 bytes) needs to match the shader's cbuffer, not its own alignment as a class member.
+	struct HiZBufferData
+	{
+		uint32_t Available = 0;  ///< 1 once both chains were built and bound
+		uint32_t MaxLevel = 0;   ///< Coarsest mip level the walk may use
+		uint32_t SizeX = 0;      ///< Valid base-level extent of one chain, in texels
+		uint32_t SizeY = 0;
+	};
+	STATIC_ASSERT_ALIGNAS_16(HiZBufferData);
+
+	/** @brief Two chains, so the walk can skip empty space by the nearest depth and bound occlusion by the farthest. */
+	HiZPyramid hiZMin;
+	HiZPyramid hiZMax;
+
+	/** @brief This frame's state, uploaded and bound by BuildHiZ together with the chains it describes. */
+	HiZBufferData hiZBuffer;
+
+	/** @brief Uploaded beside the chains in BuildHiZ, so the shader cannot read one without the other. */
+	ConstantBuffer* hiZCB = nullptr;
+
+	/** @brief Rebuilds both chains from the live depth target and binds them with hiZCB for the SSR draw. */
+	void BuildHiZ();
+
+	/** @brief Exposes the current HiZBufferData via devbench's openshaders.feature action=diagnostics. */
+	virtual json GetDiagnostics() override;
+
 	// Editor window
 
 	struct Settings
 	{
 		uint EnabledCreator = false;
 		uint EnabledSSR = true;
-		uint pad0[2];
+		uint EnableSSRHiZ = 0;  ///< Experimental: raymarch the Hi-Z chains instead of the fixed linear steps
+		uint pad0 = 0;
 		float4 CubemapColor{ 1.0f, 1.0f, 1.0f, 0.0f };
 	};
 
