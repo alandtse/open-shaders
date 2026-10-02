@@ -295,6 +295,7 @@ public:
 	// shaders or chasing a precision bug.
 	// Atomic: written from the UI thread, read from compilation pool workers.
 	std::atomic_bool enablePartialPrecision{ false };
+	std::atomic_bool enableContentStore{ false };
 
 	// Pass D3DCOMPILE_AVOID_FLOW_CONTROL to fxc. Forces the compiler to flatten branches
 	// into predicated ops instead of using dynamic flow control. Can win on uniform-branch

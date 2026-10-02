@@ -694,6 +694,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
+	advanced["Content Store"] = enableContentStore.load(std::memory_order_relaxed);
 	advanced["Refraction Scale"] = refractionScale;
 	settings["Advanced"] = advanced;
 
@@ -797,6 +798,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Content Store") && advanced["Content Store"].is_boolean())
+			enableContentStore.store(advanced["Content Store"].get<bool>(), std::memory_order_relaxed);
 		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
 			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 	}

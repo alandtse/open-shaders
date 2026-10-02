@@ -20,10 +20,12 @@
 #include "Deferred.h"
 #include "Feature.h"
 #include "State.h"
+#include "Utils/CacheInvalidation.h"
 #include "Utils/ContentHash.h"
 #include "Utils/D3D.h"
 #include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
+#include "Utils/ShaderContentStore.h"
 
 #include "Features/DynamicCubemaps.h"
 
@@ -424,6 +426,21 @@ namespace SIE
 			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
 			manifest.Save();
 		}
+	}
+
+	/// Content-addressed blob store inside the disk cache; null while the setting is off.
+	static Util::ShaderContentStore::Store* GetContentStore()
+	{
+		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
+			return nullptr;
+		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
+			constexpr uint64_t kMaxStoreBytes = 8ull << 30;
+			static Util::ShaderContentStore::Store created(
+				std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName, kMaxStoreBytes);
+			logger::info("Shader content store: trimmed {} entries", created.Trim(kMaxStoreBytes));
+			return created;
+		}();
+		return &store;
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1976,8 +1993,45 @@ namespace SIE
 
 			// Track includes
 			TrackingIncludeHandler includeHandler(path);
-			const HRESULT compileResult = D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
-				GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
+
+			// Developer-mode blobs keep debug info, so they bypass the store.
+			Util::ShaderContentStore::Store* contentStore = globals::state->IsDeveloperMode() ? nullptr : GetContentStore();
+			std::optional<Util::ContentHash::Hash128> contentKey;
+			bool contentStoreHit = false;
+			if (contentStore) {
+				std::ifstream sourceFile(path, std::ios::binary);
+				const std::string source((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
+				ID3DBlob* preprocessed = nullptr;
+				ID3DBlob* preprocessErrors = nullptr;
+				if (sourceFile.good() || sourceFile.eof()) {
+					const HRESULT ppResult = D3DPreprocess(source.data(), source.size(), pathString.c_str(), defines.data(), &includeHandler, &preprocessed, &preprocessErrors);
+					if (SUCCEEDED(ppResult) && preprocessed) {
+						const auto text = Util::ShaderContentStore::StripLineDirectives(
+							std::string_view(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize()));
+						const auto compilerId = std::format("d3dcompiler_{}:{}", D3D_COMPILER_VERSION, GetCompilerIdentity());
+						contentKey = Util::ShaderContentStore::MakeKey({ text, "main", GetShaderProfile(shaderClass), flags, compilerId });
+						const auto stored = contentStore->Get(*contentKey);
+						if (!stored.empty() && SUCCEEDED(D3DCreateBlob(stored.size(), &shaderBlob))) {
+							std::memcpy(shaderBlob->GetBufferPointer(), stored.data(), stored.size());
+							if (IsIntactDxbc(shaderBlob)) {
+								contentStoreHit = true;
+								cache.IncContentStoreHitTasks();
+							} else {
+								shaderBlob->Release();
+								shaderBlob = nullptr;
+							}
+						}
+					}
+				}
+				if (preprocessed)
+					preprocessed->Release();
+				if (preprocessErrors)
+					preprocessErrors->Release();
+			}
+
+			const HRESULT compileResult = contentStoreHit ? S_OK :
+			                                                D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
+																GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
 			// If the include handler captured any includes, register them so the watcher
 			// can invalidate dependents even if this compilation fails. Do NOT clear
 			// mappings when there are no captured includes to avoid removing prior
@@ -2036,7 +2090,7 @@ namespace SIE
 #endif
 
 			// strip debug info
-			if (!globals::state->IsDeveloperMode()) {
+			if (!globals::state->IsDeveloperMode() && !contentStoreHit) {
 				ID3DBlob* strippedShaderBlob = nullptr;
 
 				const uint32_t stripFlags = D3DCOMPILER_STRIP_DEBUG_INFO |
@@ -2047,6 +2101,9 @@ namespace SIE
 				std::swap(shaderBlob, strippedShaderBlob);
 				strippedShaderBlob->Release();
 			}
+
+			if (contentStore && contentKey && !contentStoreHit)
+				contentStore->Put(*contentKey, shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
 			// Relinquish this task's Pending claim before skipping a stale disk-cache write.
 			if (cache.IsGenerationStale(a_taskGeneration)) {
@@ -3512,17 +3569,31 @@ namespace SIE
 		return ok;
 	}
 
+	static bool RemoveActiveCachePath(bool a_keepContentStore)
+	{
+		if (!a_keepContentStore)
+			return RemoveCachePath(DiskCachePath(), "active");
+		std::error_code ec;
+		if (!std::filesystem::exists(DiskCachePath(), ec))
+			return true;
+		if (!Util::CacheInvalidation::RemoveAllExceptContentStore(DiskCachePath(), ec)) {
+			logger::error("Failed to remove active shader cache contents: {}", ec.message());
+			return false;
+		}
+		return true;
+	}
+
 	void ShaderCache::DeleteActiveDiskCache()
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
-		if (RemoveCachePath(DiskCachePath(), "active"))
+		if (RemoveActiveCachePath(true))
 			logger::info("Deleted active disk cache");
 	}
 
-	void ShaderCache::DeleteDiskCacheFiles()
+	void ShaderCache::DeleteDiskCacheFiles(bool a_keepContentStore)
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
-		const bool removedActive = RemoveCachePath(DiskCachePath(), "active");
+		const bool removedActive = RemoveActiveCachePath(a_keepContentStore);
 		const bool removedPrevious = RemoveCachePath(PreviousDiskCachePath(), "previous");
 		const bool removedSwap = RemoveCachePath(SwapDiskCachePath(), "temporary");
 		if (removedActive && removedPrevious && removedSwap)
@@ -3533,7 +3604,7 @@ namespace SIE
 	// menu reads unsynchronized (the file-watcher thread calls DeleteDiskCacheFiles()).
 	void ShaderCache::DeleteDiskCache()
 	{
-		DeleteDiskCacheFiles();
+		DeleteDiskCacheFiles(false);
 
 		diskCacheHeld = false;
 		featureSetChanged = false;
@@ -4319,6 +4390,14 @@ namespace SIE
 	void ShaderCache::IncDigestMissTasks()
 	{
 		compilationSet.digestMissTasks++;
+	}
+	void ShaderCache::IncContentStoreHitTasks()
+	{
+		compilationSet.contentStoreHitTasks++;
+	}
+	uint64_t ShaderCache::GetContentStoreHitTasks()
+	{
+		return compilationSet.contentStoreHitTasks;
 	}
 
 	bool ShaderCache::IsHideErrors()
@@ -5205,6 +5284,7 @@ namespace SIE
 		digestComputeTimeUs = 0;
 		digestHitTasks = 0;
 		digestMissTasks = 0;
+		contentStoreHitTasks = 0;
 		compilationPhaseStarted = false;
 		compilationPhaseStart = {};
 		generation.fetch_add(1, std::memory_order_relaxed);
@@ -5419,7 +5499,7 @@ namespace SIE
 					// DeleteDiskCache() also resets boot-mismatch/rollback UI state that
 					// the menu reads unsynchronized on the main thread; this watcher
 					// thread only needs the on-disk directories gone.
-					cache->DeleteDiskCacheFiles();
+					cache->DeleteDiskCacheFiles(true);
 					// Clear() resets every feature's LazyShader instances without
 					// synchronizing with the render thread's concurrent use of the raw
 					// pointer -- defer it to the render thread instead of calling it

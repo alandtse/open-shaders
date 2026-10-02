@@ -387,6 +387,7 @@ namespace SIE
 		std::atomic<int64_t> digestComputeTimeUs = 0;       // cumulative microseconds spent computing content digests
 		std::atomic<uint64_t> digestHitTasks = 0;           // disk-cache validity checks where the manifest digest confirmed the cached blob is still valid
 		std::atomic<uint64_t> digestMissTasks = 0;          // disk-cache validity checks where the manifest digest marked the cached blob stale (recompile)
+		std::atomic<uint64_t> contentStoreHitTasks = 0;     // compiles skipped because the content store already held an identical blob
 		LARGE_INTEGER compilationPhaseStart{};              // time of first non-disk-hit task dispatch
 		std::atomic<bool> compilationPhaseStarted = false;  // set when first actual compilation begins
 		std::atomic<uint64_t> slowTasks = 0;                // shaders taking >= 2s
@@ -542,10 +543,10 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
+		/** @brief Deletes the on-disk shader cache directory (including the content store) plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
 		void DeleteDiskCache();
-		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. */
-		void DeleteDiskCacheFiles();
+		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. @param a_keepContentStore Preserve the content store so a rebuild can reuse its blobs. */
+		void DeleteDiskCacheFiles(bool a_keepContentStore = false);
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
 		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
@@ -808,6 +809,9 @@ namespace SIE
 		void RecordDigestComputeTime(int64_t a_elapsedUs);
 		void IncDigestHitTasks();
 		void IncDigestMissTasks();
+		/** @brief Counts a compile satisfied by the content-addressed store. */
+		void IncContentStoreHitTasks();
+		uint64_t GetContentStoreHitTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();
 		void IterateShaderBlock(bool a_forward = true);

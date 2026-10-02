@@ -3904,6 +3904,8 @@
     "menu.advanced.compiler_threads_tooltip": "Number of threads used to compile shaders at startup. Defaults to all logical cores minus one for OS headroom (E-cores included). Higher values finish compilation faster but may make the system less responsive.",
     "menu.advanced.compute": "Compute",
     "menu.advanced.compute_tooltip": "Replace Compute Shaders. When false, will disable the custom Compute Shaders for the types above. For developers to test whether custom shaders match vanilla behavior. ",
+    "menu.advanced.content_store": "Reuse Identical Compiled Shaders",
+    "menu.advanced.content_store_tooltip": "Keeps compiled shaders keyed by their preprocessed source and compiler flags, so variants that differ only in defines the shader never reads, and shaders invalidated by an unrelated change, reuse an existing result instead of recompiling.\nCosts one preprocess per shader (tens of milliseconds) and up to 8 GB of disk inside Data/ShaderCache. Takes effect for shaders compiled from now on.",
     "menu.advanced.copy_info": "Copy Info",
     "menu.advanced.copy_info_tooltip": "Copy complete shader information including cache path to clipboard",
     "menu.advanced.copy_key": "Copy key",
