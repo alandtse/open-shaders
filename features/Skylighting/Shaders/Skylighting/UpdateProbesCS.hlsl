@@ -108,35 +108,50 @@ static const float3 noise3D[32] = {
 	// Mono dispatch shared by both eyes (see Skylighting::Prepass); eye index is
 	// arbitrary but harmless for this coarse world-space visibility test.
 	float4 cellCentreCS = mul(FrameBuffer::CameraViewProj[0], float4(cellCentreMS, 1));
-	float2 screenUV = (cellCentreCS.xy / cellCentreCS.w) * float2(0.5, -0.5) + 0.5;
-	bool onScreen = cellCentreCS.w > 0 && all(screenUV > 0) && all(screenUV < 1);
+	bool onScreen = false;
+	if (cellCentreCS.w > 0) {
+		float2 screenUV = (cellCentreCS.xy / cellCentreCS.w) * float2(0.5, -0.5) + 0.5;
+		onScreen = all(screenUV > 0) && all(screenUV < 1);
+	}
 
+	bool advanceShadowHistory = false;
+	float shadowSample = 1.0;
 	if (onScreen) {
-		float shadowSample = 1.0;
 		DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
 		uint bitIndex = SharedData::FrameCountAlwaysActive % 32;
 		float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
+		float4 jitteredCS = mul(FrameBuffer::CameraViewProj[0], float4(jitteredMS, 1));
 
-		float ndcDepth = FrameBuffer::GetShadowDepth(jitteredMS, 0);
-		float linearDepth = SharedData::GetScreenDepth(ndcDepth);
+		if (jitteredCS.w > 0) {
+			float ndcDepth = jitteredCS.z / jitteredCS.w;
+			float linearDepth = SharedData::GetScreenDepth(ndcDepth);
 
-		if (linearDepth > 0 && linearDepth < shadowData.EndSplitDistances.y) {
-			float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust[0].xyz;
+			if (ndcDepth > 0 && ndcDepth < 1 && linearDepth > 0) {
+				if (linearDepth >= shadowData.EndSplitDistances.y) {
+					advanceShadowHistory = true;
+				} else {
+					float3 positionWS = jitteredMS + FrameBuffer::CameraPosAdjust[0].xyz;
 
-			uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
+					uint cascadeIndex = (linearDepth > shadowData.EndSplitDistances.x) ? 1u : 0u;
 
-			float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
+					float3 positionLS = mul(shadowData.ShadowProj[cascadeIndex], float4(positionWS, 1)).xyz;
 
-			positionLS.xy = saturate(positionLS.xy);
+					if (all(positionLS.xy > 0) && all(positionLS.xy < 1) && positionLS.z > 0 && positionLS.z < 1) {
+						shadowSample = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
 
-			shadowSample = ESRAMShadow.SampleCmpLevelZero(comparisonSampler, float3(positionLS.xy, cascadeIndex), positionLS.z);
-
-			float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
-			float fadeFactor = 1.0 - pow(fade * fade, 8);
-			shadowSample = lerp(1.0, shadowSample, fadeFactor);
+						float fade = saturate(linearDepth / shadowData.EndSplitDistances.y);
+						float fadeFactor = 1.0 - pow(fade * fade, 8);
+						shadowSample = lerp(1.0, shadowSample, fadeFactor);
+						advanceShadowHistory = true;
+					}
+				}
+			}
 		}
+	}
 
+	if (advanceShadowHistory) {
+		uint bitIndex = SharedData::FrameCountAlwaysActive % 32;
 		uint bitmask = isValid ? outShadowBitmask[dtid] : 0xFFFFFFFFu;
 		bitmask &= ~(1u << bitIndex);
 		if (shadowSample > 0.5)
