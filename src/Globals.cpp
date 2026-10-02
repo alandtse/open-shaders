@@ -3,6 +3,7 @@
 #include "Utils/D3D.h"
 
 #include "Deferred.h"
+#include "Feature.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
@@ -31,6 +32,7 @@
 #include "Features/ProceduralSun.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
@@ -123,6 +125,7 @@ namespace globals
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		Skin skin{};
+		ReverseZ reverseZ{};
 		PostProcessing postProcessing{};
 		SceneManager sceneManager{};
 
@@ -305,12 +308,19 @@ namespace globals
 	void CacheFramebuffer()
 	{
 		using namespace game;
+		// Fix up the mapping itself: it is what the GPU reads, so a fixup applied only to the copy
+		// below would never reach the shaders.
+		const auto& fixupFeatures = Feature::GetFrameBufferFixupFeatures();
 		if (globals::game::isVR) {
-			auto frameBufferVR = (FrameBufferVR*)mappedFrameBuffer->pData;
-			frameBufferCached.vr = *frameBufferVR;
+			auto& frameBufferVR = *reinterpret_cast<FrameBufferVR*>(mappedFrameBuffer->pData);
+			for (auto* feature : fixupFeatures)
+				feature->FixupMappedFrameBufferVR(frameBufferVR);
+			frameBufferCached.vr = frameBufferVR;
 		} else {
-			auto frameBuffer = (FrameBuffer*)mappedFrameBuffer->pData;
-			frameBufferCached.nonVR = *frameBuffer;
+			auto& frameBuffer = *reinterpret_cast<FrameBuffer*>(mappedFrameBuffer->pData);
+			for (auto* feature : fixupFeatures)
+				feature->FixupMappedFrameBuffer(frameBuffer);
+			frameBufferCached.nonVR = frameBuffer;
 		}
 		mappedFrameBuffer = nullptr;
 	}

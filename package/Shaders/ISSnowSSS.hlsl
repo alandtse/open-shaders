@@ -1,6 +1,7 @@
 #include "Common/Color.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
 
@@ -49,7 +50,7 @@ PS_OUTPUT main(PS_INPUT input)
 		return psout;
 	}
 
-	float depth = depthTex.SampleLevel(depthSampler, screenPosition, 0).x;
+	float depth = FrameBuffer::ToStandardDepth(depthTex.SampleLevel(depthSampler, screenPosition, 0).x);
 
 	float3 sssColor = float3(0.784727991, 0.669085979, 0.560478985) * sourceColor;
 	float2 texCoordStep = float2(0.078125, 0.13889) * g_SSSParameters.x / depth;
@@ -58,7 +59,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float2 iterationTexCoord = iterationParameters[iterationIndex].w * texCoordStep + input.TexCoord;
 		float2 adjustedIterationTexCoord = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(iterationTexCoord);
 		float3 iterationSourceColor = snowDiffuseTex.SampleLevel(snowDiffuseSampler, adjustedIterationTexCoord, 0).xyz;
-		float iterationDepth = depthTex.SampleLevel(depthSampler, adjustedIterationTexCoord, 0).x;
+		float iterationDepth = FrameBuffer::ToStandardDepth(depthTex.SampleLevel(depthSampler, adjustedIterationTexCoord, 0).x);
 		float iterationDiffuseFactor = min(1, depthDiffFactor * abs(depth - iterationDepth));
 
 		sssColor += iterationParameters[iterationIndex].xyz * lerp(iterationSourceColor, sourceColor, iterationDiffuseFactor);

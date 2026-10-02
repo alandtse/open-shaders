@@ -26,6 +26,7 @@
 #include "Utils/ShaderCacheManifest.h"
 
 #include "Features/DynamicCubemaps.h"
+#include "Features/ReverseZ.h"
 
 #include "Plugin.h"
 
@@ -1081,6 +1082,11 @@ namespace SIE
 			}
 
 			defines[lastIndex++] = { "SHADOWSPLITCOUNT", "3" };
+
+			auto& reverseZ = globals::features::reverseZ;
+			if (reverseZ.loaded && reverseZ.HasShaderDefine(RE::BSShader::Type::Utility)) {
+				defines[lastIndex++] = { reverseZ.GetShaderDefineName().data(), nullptr };
+			}
 
 			if ((descriptor & 0x14000) != 0x14000 &&
 				((descriptor & 0x20004000) == 0x4000 || (descriptor & 0x1E02000) == 0x2000) &&
@@ -2317,7 +2323,7 @@ namespace SIE
 				// { "BSISWaterWadingHeightmap", RE::ImageSpaceManager::GetCurrentIndex(ISWaterWadingHeightmap) },
 				// { "BSImagespaceShaderMap", RE::ImageSpaceManager::GetCurrentIndex(ISMap) },
 				// { "BSImagespaceShaderMap", RE::ImageSpaceManager::GetCurrentIndex(ISMap) },
-				// { "BSImagespaceShaderWorldMap", RE::ImageSpaceManager::GetCurrentIndex(ISWorldMap) },
+				{ "BSImagespaceShaderWorldMap", RE::ImageSpaceManager::GetCurrentIndex(ISWorldMap) },
 				// { "BSImagespaceShaderWorldMapNoSkyBlur",
 				// 	RE::ImageSpaceManager::GetCurrentIndex(ISWorldMapNoSkyBlur) },
 				{ "BSImagespaceShaderISMinify", RE::ImageSpaceManager::GetCurrentIndex(ISMinify) },
@@ -2332,9 +2338,9 @@ namespace SIE
 				{ "BSImagespaceShaderISSAOCompositeSAO", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCompositeSAO) },
 				{ "BSImagespaceShaderISSAOCompositeFog", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCompositeFog) },
 				{ "BSImagespaceShaderISSAOCompositeSAOFog", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCompositeSAOFog) },
-				// { "BSImagespaceShaderISSAOCameraZ", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCameraZ) },
+				{ "BSImagespaceShaderISSAOCameraZ", RE::ImageSpaceManager::GetCurrentIndex(ISSAOCameraZ) },
 				// { "BSImagespaceShaderISSILComposite", RE::ImageSpaceManager::GetCurrentIndex(ISSILComposite) },
-				// { "BSImagespaceShaderISSnowSSS", RE::ImageSpaceManager::GetCurrentIndex(ISSnowSSS) },
+				{ "BSImagespaceShaderISSnowSSS", RE::ImageSpaceManager::GetCurrentIndex(ISSnowSSS) },
 				// { "BSImagespaceShaderISSAOBlurH", RE::ImageSpaceManager::GetCurrentIndex(ISSAOBlurH) },
 				// { "BSImagespaceShaderISSAOBlurV", RE::ImageSpaceManager::GetCurrentIndex(ISSAOBlurV) },
 				// { "BSImagespaceShaderISUnderwaterMask", RE::ImageSpaceManager::GetCurrentIndex(ISUnderwaterMask) },
@@ -2370,6 +2376,11 @@ namespace SIE
 
 			auto it = descriptors.find(imagespaceShader.name);
 			if (it == descriptors.cend()) {
+				return false;
+			}
+			static constexpr std::string_view reverseZOnly[] = { "BSImagespaceShaderWorldMap", "BSImagespaceShaderISSAOCameraZ", "BSImagespaceShaderISSnowSSS" };
+			auto& reverseZ = globals::features::reverseZ;
+			if (!(reverseZ.loaded && reverseZ.HasShaderDefine(RE::BSShader::Type::ImageSpace)) && std::ranges::find(reverseZOnly, it->first) != std::end(reverseZOnly)) {
 				return false;
 			}
 			descriptor = it->second;
@@ -3041,6 +3052,8 @@ namespace SIE
 			uint32_t flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 			if (globals::game::isVR)
 				ownedDefines.emplace_back("VR", "");
+			if (globals::features::reverseZ.IsActive())
+				ownedDefines.emplace_back("REVERSE_Z", "");
 			if (auto* state = globals::state) {
 				if (state->IsDeveloperMode()) {
 					ownedDefines.emplace_back("D3DCOMPILE_SKIP_OPTIMIZATION", "");

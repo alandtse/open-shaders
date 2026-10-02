@@ -607,6 +607,7 @@ struct BSShaderRenderTargets_Create
 		perfMode.EndCreateRTEnlarge();
 
 		globals::ReInit();
+		Feature::ForEachLoadedFeature("OnRenderTargetsCreated", [](Feature* feature) { feature->OnRenderTargetsCreated(); });
 
 		// Must precede Setup()'s SetupResources dispatch -- Upscaling::SetupResources()
 		// allocates FSR's foveation-dependent texture only on its first (and typically
