@@ -71,12 +71,16 @@ static const float3 noise3D[32] = {
 	const float fadeInThreshold = 15;
 	const static sh2 unitSH = Skylighting::UNIT_SH;
 	const SharedData::SkylightingSettings settings = SharedData::skylightingSettings;
-	uint3 cellID = ((uint3)dtid - settings.ArrayOrigin.xyz) % Skylighting::ARRAY_DIM;
-	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
-	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
+	const uint3 arrayDims = Skylighting::GetArrayDims();
+	if (any(dtid >= arrayDims))
+		return;
+	int3 cellID = (int3(dtid) - int3(settings.ArrayOrigin.xyz)) % int3(arrayDims);
+	cellID = (cellID + int3(arrayDims)) % int3(arrayDims);
+	int3 validMin = max(0, settings.ValidMargin.xyz);
+	int3 validMax = int3(arrayDims) - 1 + min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
-	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
-	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
+	float3 cellCentreMS = float3(cellID) + 0.5 - float3(arrayDims) * 0.5;
+	cellCentreMS = cellCentreMS / float3(arrayDims) * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
 
 	float3 cellCentreOS = mul(settings.OcclusionViewProj, float4(cellCentreMS, 1)).xyz;
 	cellCentreOS.y = -cellCentreOS.y;
