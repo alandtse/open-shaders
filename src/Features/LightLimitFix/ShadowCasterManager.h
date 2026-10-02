@@ -727,6 +727,14 @@ namespace ShadowCasterManager
 		/// contribution cull instead of pool exhaustion (see s_casterCullTotal).
 		uint64_t casterCullDropsTotal = 0;
 
+		/// Front-hemisphere reassignments (s_hemisphereReassignTotal).
+		uint64_t hemisphereReassignTotal = 0;
+
+		/// Caster appends by destination list; frontAppendTotal is the front pass's
+		/// caster count, so the fix's effect is readable without RenderDoc.
+		uint64_t frontAppendTotal = 0;
+		uint64_t backOnlyAppendTotal = 0;
+
 		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose
 		/// valid static bake saw no movers) -- this pass and cumulative, the direct measure of the early-out's savings.
 		int sleepSkips = 0;

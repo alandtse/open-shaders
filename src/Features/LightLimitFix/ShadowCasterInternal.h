@@ -326,6 +326,13 @@ namespace ShadowCasterManager
 	extern std::atomic<uint32_t> s_casterCullCount;
 	extern std::atomic<uint64_t> s_cullPoolDropTotal;
 	extern std::atomic<uint64_t> s_casterCullTotal;
+	extern std::atomic<uint32_t> s_hemisphereReassignCount;
+	extern std::atomic<uint64_t> s_hemisphereReassignTotal;
+	extern std::atomic<uint32_t> s_frontAppendCount;
+	extern std::atomic<uint32_t> s_backOnlyAppendCount;
+	extern std::atomic<uint64_t> s_frontAppendTotal;
+	extern std::atomic<uint64_t> s_backOnlyAppendTotal;
+	extern std::atomic<bool> s_casterCountersEnabled;
 
 	// Accumulate-scoped handoff between EnableLight (writer) and the
 	// AppendVirtual cull hooks (reader), set around each light's Accumulate call.
