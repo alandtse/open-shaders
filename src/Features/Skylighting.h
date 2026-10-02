@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 /** @brief Simulates realistic ambient lighting by calculating sky occlusion via a 3D probe array. */
 struct Skylighting : Feature
 {
@@ -49,6 +51,10 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Invalidates probe state when a save finishes loading. */
 	virtual void GameLoaded() override;
+	/** @brief Queues probe invalidation for loading-screen transitions. */
+	virtual void OnSceneTransitionReset(bool opening) override;
+	/** @brief Exposes the probe rebuild command through DevBench. */
+	virtual void RegisterUxActions() override;
 
 	//////////////////////////////////////////////////////////////////////////////////
 
@@ -72,7 +78,8 @@ public:
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint _pad2[2];
+		uint ProbeDataReady;
+		uint _pad2;
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -99,13 +106,13 @@ public:
 	float occlusionDistance = 10000.f;
 
 	// cached variables
-	bool queuedResetSkylighting = true;
+	std::atomic_bool queuedResetSkylighting{ true };
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
 	float4 OcclusionDir;
 	uint frameCount = 0;
 
-	/** @brief Clears the accumulation frames array to force a full rebuild of skylighting probes. */
+	/** @brief Requests a probe rebuild on the render thread. */
 	void ResetSkylighting();
 
 	std::chrono::time_point<std::chrono::system_clock> lastUpdateTimer = std::chrono::system_clock::now();
@@ -154,31 +161,12 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Event handler
-	class MenuOpenCloseEventHandler : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
-	{
-	public:
-		virtual RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event, RE::BSTEventSource<RE::MenuOpenCloseEvent>*);
-
-		static bool Register()
-		{
-			static MenuOpenCloseEventHandler singleton;
-			auto ui = globals::game::ui;
-
-			if (!ui) {
-				logger::error("UI event source not found");
-				return false;
-			}
-
-			ui->GetEventSource<RE::MenuOpenCloseEvent>()->AddEventSink(&singleton);
-
-			logger::info("Registered {}", typeid(singleton).name());
-
-			return true;
-		}
-	};
-
 private:
+	bool HasProbeResources() const;
+	void ClearProbes();
+	bool probeDataReady = false;
+	float3 previousProbeCell = {};
+	float3 pendingProbeCell = {};
 	uint32_t* GetRasterCullMode() const;
 	void BeginInteriorOcclusionGeometry();
 	void EndInteriorOcclusionGeometry();
