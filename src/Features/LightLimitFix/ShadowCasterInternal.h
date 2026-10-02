@@ -328,6 +328,8 @@ namespace ShadowCasterManager
 	extern std::atomic<uint64_t> s_casterCullTotal;
 	extern std::atomic<uint32_t> s_hemisphereReassignCount;
 	extern std::atomic<uint64_t> s_hemisphereReassignTotal;
+	extern std::atomic<uint32_t> s_hemisphereDropCount;
+	extern std::atomic<uint64_t> s_hemisphereDropTotal;
 	extern std::atomic<uint32_t> s_frontAppendCount;
 	extern std::atomic<uint32_t> s_backOnlyAppendCount;
 	extern std::atomic<uint64_t> s_frontAppendTotal;

@@ -2845,6 +2845,9 @@ namespace ShadowCasterManager
 			const uint32_t backOnlyAppendsThisFrame = s_backOnlyAppendCount.exchange(0, std::memory_order_relaxed);
 			if (backOnlyAppendsThisFrame)
 				s_backOnlyAppendTotal.fetch_add(backOnlyAppendsThisFrame, std::memory_order_relaxed);
+			const uint32_t hemisphereDropsThisFrame = s_hemisphereDropCount.exchange(0, std::memory_order_relaxed);
+			if (hemisphereDropsThisFrame)
+				s_hemisphereDropTotal.fetch_add(hemisphereDropsThisFrame, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
 			// Accumulated, not just plotted: publishes a running total for headless A/B diffing.
@@ -2937,6 +2940,7 @@ namespace ShadowCasterManager
 				snap.hemisphereReassignTotal = s_hemisphereReassignTotal.load(std::memory_order_relaxed);
 				snap.frontAppendTotal = s_frontAppendTotal.load(std::memory_order_relaxed);
 				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
+				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))

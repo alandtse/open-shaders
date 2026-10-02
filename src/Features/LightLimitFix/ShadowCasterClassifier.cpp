@@ -29,6 +29,11 @@ namespace ShadowCasterManager
 	std::atomic<uint32_t> s_hemisphereReassignCount{ 0 };
 	std::atomic<uint64_t> s_hemisphereReassignTotal{ 0 };
 
+	/// Wholly-behind casters dropped outright because the light draws no back
+	/// hemisphere; kept out of s_casterCullCount so that total stays angular-only.
+	std::atomic<uint32_t> s_hemisphereDropCount{ 0 };
+	std::atomic<uint64_t> s_hemisphereDropTotal{ 0 };
+
 	/// Appends by destination list, so the front pass's caster count is readable
 	/// without RenderDoc: front-list appends vs back-only appends.
 	std::atomic<uint32_t> s_frontAppendCount{ 0 };
@@ -426,7 +431,8 @@ namespace ShadowCasterManager
 				                            pcp->equatorialPlane.constant;
 				if (SphereWhollyBehindPlane(planeDistance, wb.radius, HemisphereSeamMargin(pcp->lightRadius))) {
 					if (!pcp->backHemisphereAccumulator) {
-						s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
+						if (s_casterCountersEnabled.load(std::memory_order_relaxed))
+							s_hemisphereDropCount.fetch_add(1, std::memory_order_relaxed);
 						return;  // skip append -- outside every hemisphere this light draws
 					}
 					// The engine reports "both hemispheres" for a sphere wholly behind the
