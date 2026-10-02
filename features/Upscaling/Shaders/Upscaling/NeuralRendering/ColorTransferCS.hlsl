@@ -25,7 +25,14 @@ cbuffer ColorTransfer : register(b0)
 	float ToneRadius;
 	float ToneHighStrength;
 	uint HasToneData;
-};
+	// Model-pass extent: Feature 18 evaluates at ModelWidth x ModelHeight while this
+	// kernel dispatches the full Width x Height frame. Equal at workingScale 1.0.
+	// OriginalWidth spans every eye in the multi-eye Original copy.
+	uint ModelWidth;
+	uint ModelHeight;
+	uint OriginalWidth;
+	uint PadModel;
+	};
 
 Texture2D<float4> Original : register(t0);
 Texture2D<float4> NeuralInput : register(t1);
@@ -34,6 +41,7 @@ StructuredBuffer<float> Adaptation : register(t3);
 Texture2D<float2> ToneData : register(t4);
 RWTexture2D<float4> Output : register(u0);
 RWTexture2D<float2> ToneDataOutput : register(u2);
+SamplerState LinearClamp : register(s0);
 
 static const float3 Luma = Color::kRec709LuminanceWeights;
 static const float kProxyEpsilon = 1e-8;
@@ -150,12 +158,38 @@ float3 ProxyToLinear(float3 value)
 
 float3 MakeDisplayProxy(float3 linearColor)
 {
-	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
+return ProxyLinearToSrgb(NeutwoEncode(linearColor));
+}
+
+bool IsModelScaled()
+{
+return ModelWidth != Width || ModelHeight != Height;
+}
+
+// Frame-pixel to normalized model-texture UV; exact texel centers at scale 1.0.
+float2 ModelUV(uint2 framePixel)
+{
+return (float2(framePixel) + 0.5) / float2(max(Width, 1u), max(Height, 1u));
+}
+
+// Frame-pixel to nearest model texel, for the integer-indexed ToneData lookups.
+int2 ModelPixel(uint2 framePixel)
+{
+if (!IsModelScaled())
+	return int2(framePixel);
+return int2(ModelUV(framePixel) * float2(max(ModelWidth, 1u), max(ModelHeight, 1u)));
+}
+
+float3 SampleModelLinear(Texture2D<float4> tex, uint2 framePixel)
+{
+if (!IsModelScaled())
+	return tex[framePixel].rgb;
+return tex.SampleLevel(LinearClamp, ModelUV(framePixel), 0).rgb;
 }
 
 [numthreads(8, 8, 1)] void PrepareToneData(uint3 id : SV_DispatchThreadID) {
-	if (id.x >= Width || id.y >= Height)
-		return;
+if (id.x >= ModelWidth || id.y >= ModelHeight)
+	return;
 	float3 input = ProxySrgbToLinear(NeuralInput[id.xy].rgb);
 	float3 output = ProxySrgbToLinear(NeuralOutput[id.xy].rgb);
 	float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);
@@ -166,10 +200,10 @@ float3 MakeDisplayProxy(float3 linearColor)
 
 float ToneLowAt(int2 pixel, float centerDelta)
 {
-	float radius = ToneRadius;
-	if (radius <= 0.01)
-		return centerDelta;
-	int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+float radius = ToneRadius;
+if (radius <= 0.01)
+	return centerDelta;
+int2 limit = int2(max(ModelWidth, 1u) - 1, max(ModelHeight, 1u) - 1);
 	float centerLogLuma = ToneData[pixel].x;
 	float weighted = 0.0;
 	float weightSum = 0.0;
@@ -189,9 +223,20 @@ float ToneLowAt(int2 pixel, float centerDelta)
 }
 
 [numthreads(8, 8, 1)] void Prepare(uint3 id : SV_DispatchThreadID) {
-	if (id.x >= Width || id.y >= Height)
-		return;
-	float3 source = Original[id.xy + uint2(EyeOffsetX, 0)].rgb;
+if (id.x >= ModelWidth || id.y >= ModelHeight)
+	return;
+// Hardware-bilinear downsample of the full-frame source into the model proxy.
+// At scale 1.0 this is the same texel the point load read, bit for bit.
+float3 source;
+if (!IsModelScaled())
+	source = Original[id.xy + uint2(EyeOffsetX, 0)].rgb;
+else {
+	float2 frameXY = (float2(id.xy) + 0.5) / float2(max(ModelWidth, 1u), max(ModelHeight, 1u)) *
+	                 float2(max(Width, 1u), max(Height, 1u));
+	float2 uv = float2((float(EyeOffsetX) + frameXY.x) / float(max(OriginalWidth, 1u)),
+	                   frameXY.y / float(max(Height, 1u)));
+	source = Original.SampleLevel(LinearClamp, uv, 0).rgb;
+}
 	float exposure = ManualExposure;
 	if (ExposureMode == NR::kExposureIgnore || ExposureMode == NR::kExposureForceOne || ExposureMode == NR::kExposureDoNotPass)
 		exposure = 1.0;
@@ -216,7 +261,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	uint2 sourcePixel = id.xy + uint2(EyeOffsetX, 0);
 	float4 original = Original[sourcePixel];
-	float3 rawNeural = NeuralOutput[id.xy].rgb;
+	// Upsampled model tie: at scale 1.0 these are the same texels the point loads read.
+	float3 rawNeural = SampleModelLinear(NeuralOutput, id.xy);
 	if (!all(isfinite(original))) {
 		Output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
 		return;
@@ -224,7 +270,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	Output[id.xy] = original;
 	if (!all(isfinite(rawNeural)))
 		return;
-	float3 inputProxy = ProxyToLinear(NeuralInput[id.xy].rgb);
+	float3 inputProxy = ProxyToLinear(SampleModelLinear(NeuralInput, id.xy));
 	float3 neuralProxy = ProxyToLinear(rawNeural);
 	float exposure = ManualExposure;
 	if (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)
@@ -245,7 +291,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float toneDelta = log2(max(neuralLuminance, ratioFloor)) - log2(max(inputLuminance, ratioFloor));
 	float toneLow = toneDelta;
 	[branch] if (HasToneData != 0)
-		toneLow = ToneLowAt(int2(id.xy), toneDelta);
+		toneLow = ToneLowAt(ModelPixel(id.xy), toneDelta);
 	float toneHigh = toneDelta - toneLow;
 	float tone = ToneLowStrength == ToneHighStrength ? toneDelta * ToneHighStrength :
 	                                                   toneLow * ToneLowStrength + toneHigh * ToneHighStrength;

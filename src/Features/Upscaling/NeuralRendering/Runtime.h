@@ -127,7 +127,7 @@ namespace NR
 		void ResetFeatures();
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
-		/** @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye. */
+		/** @brief Creates or evaluates a model-resolution display-referred proxy for one OS eye. */
 		bool Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eye,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
 			uint32_t width, uint32_t height, const GuideParameters& guides,

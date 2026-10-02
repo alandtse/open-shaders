@@ -13,6 +13,8 @@
 #include "Utils/Game.h"
 #include "Utils/LazyShader.h"
 
+#include <cmath>
+
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
 
 namespace
@@ -54,18 +56,28 @@ struct NeuralRendering::Impl
 		float4 dynamicRangeProtect{};
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 		uint32_t hasToneData = 0;
+		/**
+		 * @brief Model-pass dimensions: Feature 18 evaluates at modelWidth x modelHeight
+		 *        while the composite writes the full Width x Height frame. Equal when
+		 *        workingScale is 1.0. OriginalWidth spans every eye in the source copy.
+		 */
+		uint32_t modelWidth = 0, modelHeight = 0, originalWidth = 0, padModel = 0;
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
 	static_assert(offsetof(ColorTransferData, toneRadius) == 84);
 	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
 	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
-	static_assert(sizeof(ColorTransferData) == 96);
+	static_assert(offsetof(ColorTransferData, modelWidth) == 96);
+	static_assert(sizeof(ColorTransferData) == 112);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
-	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
+	/** @brief Full-frame dimensions the composite writes back; the model pass may be smaller. */
+	uint32_t width = 0, height = 0, modelWidth = 0, modelHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
+	/** @brief Hardware-bilinear sampler for the model downsample and delta upsample. */
+	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
 	uint32_t lastDiagnosticOptions = 0;
@@ -105,6 +117,12 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
+		D3D11_SAMPLER_DESC samplerDesc{};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.MaxLOD = 0.0f;
+		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "NeuralRendering::LinearClamp");
 		runtime.Initialize(interop.Device(), Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir));
 		ready = true;
 	}
@@ -120,7 +138,7 @@ struct NeuralRendering::Impl
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
-		width = height = guideWidth = guideHeight = eyeCount = 0;
+		width = height = modelWidth = modelHeight = eyeCount = 0;
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 	}
@@ -128,14 +146,19 @@ struct NeuralRendering::Impl
 	/** @brief True while pass resources for a render size exist and can be released. */
 	bool HasPassResources() const { return eyeCount != 0; }
 
-	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
+	/**
+	 * @brief Sizes the pass: the frame stays at w x h while color, depth, motion and
+	 *        output all evaluate at the smaller mw x mh, so temporal history sees
+	 *        consistent extents. The composite later adds only the neural delta back.
+	 */
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t mw, uint32_t mh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
 	{
-		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat)
+		if (!force && width == w && height == h && modelWidth == mw && modelHeight == mh && eyeCount == count && format == colorFormat)
 			return;
 		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
-		maskDesc.Width = gw;
-		maskDesc.Height = gh;
+		maskDesc.Width = mw;
+		maskDesc.Height = mh;
 		maskDesc.Format = DXGI_FORMAT_R8_UNORM;
 		maskDesc.MipLevels = maskDesc.ArraySize = maskDesc.SampleDesc.Count = 1;
 		maskDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
@@ -166,16 +189,16 @@ struct NeuralRendering::Impl
 			const auto name = std::format("NeuralRendering::Eye{}", i);
 			eye.resolved = std::make_unique<Texture2D>(colorDesc, (name + " ResolvedHDR").c_str());
 			eye.resolved->CreateUAV(colorUAV);
-			eye.color = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDRInput");
-			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
-			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
-			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
+			eye.color = interop.CreateTexture(mw, mh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDRInput");
+			eye.depth = interop.CreateTexture(mw, mh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
+			eye.motion = interop.CreateTexture(mw, mh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
+			eye.output = interop.CreateTexture(mw, mh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
 		}
 		width = w;
 		height = h;
-		guideWidth = gw;
-		guideHeight = gh;
-		logger::debug("[NeuralRendering] Render-resolution NR {}x{}, guides {}x{}, eyes {}", w, h, gw, gh, count);
+		modelWidth = mw;
+		modelHeight = mh;
+		logger::debug("[NeuralRendering] Frame {}x{}, model {}x{}, eyes {}", w, h, mw, mh, count);
 		eyeCount = count;
 		format = colorFormat;
 	}
@@ -264,8 +287,8 @@ struct NeuralRendering::Impl
 		auto& eye = eyes[i];
 		if (!eye.toneData) {
 			D3D11_TEXTURE2D_DESC desc{};
-			desc.Width = width;
-			desc.Height = height;
+			desc.Width = modelWidth;
+			desc.Height = modelHeight;
 			desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
 			desc.Format = DXGI_FORMAT_R32G32_FLOAT;
 			desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
@@ -283,6 +306,9 @@ struct NeuralRendering::Impl
 		}
 		context->ClearState();
 		ColorTransferData data{ width, height, i * width };
+		data.modelWidth = modelWidth;
+		data.modelHeight = modelHeight;
+		data.originalWidth = width * eyeCount;
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
@@ -291,7 +317,7 @@ struct NeuralRendering::Impl
 		auto* output = eye.toneData->uav.get();
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
-		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->Dispatch((modelWidth + 7) / 8, (modelHeight + 7) / 8, 1);
 		context->ClearState();
 	}
 
@@ -301,6 +327,9 @@ struct NeuralRendering::Impl
 		context->ClearState();
 		auto& eye = eyes[i];
 		ColorTransferData data{ width, height, i * width };
+		data.modelWidth = modelWidth;
+		data.modelHeight = modelHeight;
+		data.originalWidth = width * eyeCount;
 		data.conversionMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableColorTransform) ? NR::Diagnostics::ColorConversion::Raw : conversionMode);
 		data.exposureMode = static_cast<uint32_t>((debugOptions & NR::Diagnostics::DisableExposure) ? NR::Diagnostics::ExposureMode::Ignore : exposureMode);
 		data.compositeMode = static_cast<uint32_t>(compositeMode);
@@ -344,8 +373,11 @@ struct NeuralRendering::Impl
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color->uav : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+		ID3D11SamplerState* samplers[]{ linearSampler.get() };
+		context->CSSetSamplers(0, ARRAYSIZE(samplers), samplers);
 		context->CSSetShader(prepare ? prepareColor.get() : compositeColor.get(), nullptr, 0);
-		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		const uint32_t dispatchW = prepare ? modelWidth : width, dispatchH = prepare ? modelHeight : height;
+		context->Dispatch((dispatchW + 7) / 8, (dispatchH + 7) / 8, 1);
 		context->ClearState();
 	}
 
@@ -396,7 +428,7 @@ struct NeuralRendering::Impl
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				auto& eye = eyes[i];
 				diagnostic.reset[i] = UpdateFrame(i, reset, diagnostic);
-				Upscaling::UpscalingDataCB data{ { float(guideWidth), float(guideHeight) }, i * guideWidth, 0 };
+				Upscaling::UpscalingDataCB data{ { float(modelWidth), float(modelHeight) }, i * modelWidth, 0 };
 				encodeBuffer->Update(data);
 				auto buffer = encodeBuffer->CB();
 				context->CSSetConstantBuffers(0, 1, &buffer);
@@ -404,7 +436,7 @@ struct NeuralRendering::Impl
 				ID3D11UnorderedAccessView* outputs[]{ encodeMasks[0]->uav.get(), encodeMasks[1]->uav.get(),
 					eye.motion->uav, eye.depth->uav };
 				context->CSSetUnorderedAccessViews(0, 4, outputs, nullptr);
-				context->Dispatch((guideWidth + 7) / 8, (guideHeight + 7) / 8, 1);
+				context->Dispatch((modelWidth + 7) / 8, (modelHeight + 7) / 8, 1);
 				if (eye.frame.reset || (diagnostic.options & NR::Diagnostics::ZeroMotion)) {
 					constexpr float zero[4]{};
 					context->ClearUnorderedAccessViewFloat(eye.motion->uav, zero);
@@ -442,14 +474,16 @@ struct NeuralRendering::Impl
 					commands->ResourceBarrier(2, copyBarriers);
 				} else {
 					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
+					// Guides share the model extent with color: mixing extents desynchronizes
+					// temporal history and shows up as flicker plus endless post-stop settling.
 					NR::GuideParameters guides;
-					guides.depth = { 0, 0, guideWidth, guideHeight };
-					guides.motion = { 0, 0, guideWidth, guideHeight };
+					guides.depth = { 0, 0, modelWidth, modelHeight };
+					guides.motion = { 0, 0, modelWidth, modelHeight };
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
-					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
-					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(modelWidth) : 1.0f;
+					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(modelHeight) : 1.0f;
 					success = runtime.Evaluate(commands, i, eye.color->resource.get(), eye.depth->resource.get(),
-						eye.motion->resource.get(), eye.output->resource.get(), width, height, guides, eye.frame, tuning);
+						eye.motion->resource.get(), eye.output->resource.get(), modelWidth, modelHeight, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
 				if (success)
@@ -563,7 +597,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
 	ImGui::TextWrapped("%s", T(TKEY("description"),
-								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
+						 "One display-referred NR proxy pass per eye, evaluated at the Model Resolution Scale and composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
@@ -586,6 +620,20 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
+	float workingPercent = tuning.workingScale * 100.0f;
+	changed |= ImGui::SliderFloat(T(TKEY("working_scale"), "Model Resolution Scale"), &workingPercent,
+		100.0f * NR::Tuning::kMinWorkingScale, 100.0f * NR::Tuning::kMaxWorkingScale, workingPercent >= 99.95f ? "100%% (full)" : "%.0f%%",
+		ImGuiSliderFlags_AlwaysClamp);
+	if (ImGui::IsItemDeactivatedAfterEdit()) {
+		tuning.workingScale = workingPercent / 100.0f;
+		// Model dimensions feed resource sizing and Feature 18 creation: a committed scale
+		// change rebuilds both and invalidates history once.
+		recreateTuning = true;
+	}
+	if (impl->modelWidth && impl->modelHeight)
+		ImGui::Text("Model: %ux%u (%.0f%% of %ux%u)", impl->modelWidth, impl->modelHeight,
+			100.0f * static_cast<float>(impl->modelWidth) / static_cast<float>(std::max(impl->width, 1u)),
+			impl->width, impl->height);
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -733,6 +781,13 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			color->GetDesc(&desc);
 		const auto w = gw;
 		const auto h = gh;
+		// Model extent follows the sanitized scale; the frame stays full size and only the
+		// neural delta is composited back. A scale change rebuilds resources and features.
+		const auto modelScale = std::isfinite(tuning.workingScale) ?
+		                            std::clamp(tuning.workingScale, NR::Tuning::kMinWorkingScale, NR::Tuning::kMaxWorkingScale) :
+		                            NR::Tuning::kDefaultWorkingScale;
+		const auto mw = std::max<uint32_t>(8u, static_cast<uint32_t>(std::lround(static_cast<float>(w) * modelScale)));
+		const auto mh = std::max<uint32_t>(8u, static_cast<uint32_t>(std::lround(static_cast<float>(h) * modelScale)));
 		diagnostic.width = w;
 		diagnostic.height = h;
 		diagnostic.eyeCount = count;
@@ -749,8 +804,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
 		const bool forceRecreate = recreate.exchange(false);
-		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate);
+		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.modelWidth != mw || work.modelHeight != mh || work.eyeCount != count || work.format != desc.Format;
+		work.EnsureResources(w, h, mw, mh, count, desc.Format, forceRecreate);
 		if (diagnostic.recreated)
 			PublishResources();
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;

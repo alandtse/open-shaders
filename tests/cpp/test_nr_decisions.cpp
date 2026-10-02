@@ -268,3 +268,25 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	REQUIRE(tuning.localToneStrength == Catch::Approx(0.25f));
 	REQUIRE(tuning.style == 1);
 }
+
+TEST_CASE("Tuning::Sanitize bounds the model resolution scale", "[nr]")
+{
+	NR::Tuning tuning;
+	REQUIRE(tuning.workingScale == Catch::Approx(NR::Tuning::kDefaultWorkingScale));
+
+	tuning.workingScale = 2.0f;
+	tuning.Sanitize();
+	REQUIRE(tuning.workingScale == Catch::Approx(NR::Tuning::kMaxWorkingScale));
+
+	tuning.workingScale = 0.1f;
+	tuning.Sanitize();
+	REQUIRE(tuning.workingScale == Catch::Approx(NR::Tuning::kMinWorkingScale));
+
+	tuning.workingScale = std::numeric_limits<float>::quiet_NaN();
+	tuning.Sanitize();
+	REQUIRE(tuning.workingScale == Catch::Approx(NR::Tuning::kDefaultWorkingScale));
+
+	tuning.workingScale = 0.75f;
+	tuning.Sanitize();
+	REQUIRE(tuning.workingScale == Catch::Approx(0.75f));
+}

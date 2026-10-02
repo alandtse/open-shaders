@@ -34,13 +34,43 @@ The controls persist under `Upscaling.neuralRenderingTuning`:
 | Local Structure Strength | `localStructureStrength` | 0–2                         | 1.0        | `DLSSNR.LocalStructureStrength` |
 | Skin Structure Strength  | `skinStructureStrength`  | -1–2 (-1 displays Auto)     | -1         | `DLSSNR.SkinStructureStrength`  |
 | Use Auto Mask            | `useAutoMask`            | Off / On                    | On         | `DLSSNR.UseAutoMask`            |
+| Model Resolution Scale   | `workingScale`           | 50–100%                     | 75%        | Model extent, not an NGX value  |
 
-All six values are written in `NR::Runtime::Evaluate()`. Committing a tuning edit
+All six appearance values are written in `NR::Runtime::Evaluate()`. `workingScale`
+is not an NGX parameter: it sizes the Feature 18 allocations and guides at
+`round(renderSize * workingScale)` while the frame and the writeback stay full
+size, so only the neural delta is composited back onto the untouched native
+frame. Committing a tuning edit
 recreates the Feature 18 handles because the runtime can latch appearance tuning
-during creation. Existing config values are preserved when present. Missing or
+during creation. A committed scale change additionally rebuilds the pass
+resources and invalidates history once, since the model dimensions feed both.
+Existing config values are preserved when present. Missing or
 invalid values use the defaults above and are bounded to the documented ranges.
-**Restore NR Defaults** resets all six controls; **Reset NR History** invalidates
+**Restore NR Defaults** resets all seven controls; **Reset NR History** invalidates
 both eye histories without changing tuning.
+
+### Model resolution scale
+
+The model pass dominates NR cost, which tracks pixel count roughly
+quadratically: 75% per axis costs about half, 50% about a quarter. The frame
+stays full size throughout; the `Prepare` kernel downsamples the scene into the
+model proxy with a hardware-bilinear tap, Feature 18 evaluates small, and the
+`Composite` kernel upsamples only the neural delta back onto the native frame.
+Text, edges and high-frequency texture survive because they are never
+downsampled, only the edit is.
+
+Color, depth and motion guides are all scaled together. Scaling color alone
+while depth and motion stay full desynchronizes temporal history and shows up
+as flicker plus endless settling after the camera stops, so the encoder, the
+guide subrects and `DLSSNR.MVecScaleX/Y` all use the model extent. History
+therefore behaves exactly as at full scale: it resets on real cuts, resolution
+or resource changes, and tuning commits, never on a moving region boundary,
+because there is none — evaluation stays full-frame.
+
+75% is the recommended default: near-identical image for about half the cost.
+50% buys large gains but smears fine detail such as hair. 100% keeps the
+previous full-resolution behavior bit for bit: the sampler reads exact texel
+centers and every kernel takes its original point-load path.
 
 Developer mode also exposes **Use resolution-scaled NR motion**. It is a
 session-only A/B switch and defaults on. The enabled path supplies the NR input
