@@ -28,17 +28,40 @@ namespace ShadowCasterManager
 {
 	// Shadow map content hash for cached-shadow-map detection.
 
-	/// EMA-anchored per-light radius, shared by the redraw and static-cache
-	/// hashes so flicker-jitter alone can't defeat either.
-	static std::unordered_map<const RE::NiLight*, float> s_hashRadiusAnchor;
-
-	static float AnchoredRadiusForHash(const RE::NiLight* ni, float liveRadius)
+	/// EMA-anchored per-light radius, advanced once per light per frame. ISL
+	/// rewrites the live radius from flicker fade every frame, so every decision
+	/// consumer reads this instead.
+	struct RadiusAnchor
 	{
+		float radius;
+		int32_t frame;
+	};
+
+	static std::unordered_map<const RE::NiLight*, RadiusAnchor> s_hashRadiusAnchor;
+
+	/// Frame-scoped: a second call for the same light in one frame is a read, so
+	/// the EMA no longer depends on how many consumers ran first.
+	static void AdvanceRadiusAnchor(const RE::NiLight* ni, float liveRadius)
+	{
+		if (!ni)
+			return;
 		PruneIfOversized(s_hashRadiusAnchor, 1024);
-		auto [it, isNew] = s_hashRadiusAnchor.try_emplace(ni, liveRadius);
-		if (!isNew)
-			it->second += 0.15f * (liveRadius - it->second);
-		return it->second;
+		const int32_t now = *globals::game::frameCounter;
+		auto [it, isNew] = s_hashRadiusAnchor.try_emplace(ni, RadiusAnchor{ liveRadius, now });
+		if (isNew || it->second.frame == now)
+			return;
+		it->second.frame = now;
+		it->second.radius += 0.15f * (liveRadius - it->second.radius);
+	}
+
+	/// Read-only; falls back to the live value for a light not yet anchored, so a
+	/// first sighting is never read as a stalled radius.
+	float AnchoredRadius(const RE::NiLight* ni, float liveRadius)
+	{
+		if (!ni)
+			return liveRadius;
+		const auto it = s_hashRadiusAnchor.find(ni);
+		return it == s_hashRadiusAnchor.end() ? liveRadius : it->second.radius;
 	}
 
 	/// Shared by the redraw hash and static-cache hash so both agree on what
@@ -60,9 +83,9 @@ namespace ShadowCasterManager
 			for (int j = 0; j < 3; ++j)
 				h = HashCombineFloat(h, QuantizeFloat(r.entry[i][j], kRotStep));
 		// NiPointLight uses .x. Hashed on the EMA anchor, not the live flicker-
-		// jittered value -- see AnchoredRadiusForHash above.
+		// jittered value -- see AnchoredRadius above.
 		h = HashCombineFloat(h,
-			QuantizeFloat(AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x), kRadiusStep));
+			QuantizeFloat(AnchoredRadius(ni, ni->GetLightRuntimeData().radius.x), kRadiusStep));
 		return h;
 	}
 
@@ -83,7 +106,7 @@ namespace ShadowCasterManager
 		// depth + snapshot. Truncated (not quantized-with-hysteresis) and anchored
 		// like FoldLightPose's radius fold, so flicker alone can't flip it.
 		h = h * 31 + static_cast<std::uint64_t>(
-						 AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x) / 64.0f);
+						 AnchoredRadius(ni, ni->GetLightRuntimeData().radius.x) / 64.0f);
 
 		h = FoldLightPose(h, ni, posStep);
 
@@ -119,7 +142,7 @@ namespace ShadowCasterManager
 		auto* plr = globals::game::player;
 		if (!plr || !ni)
 			return false;
-		const float r = ni->GetLightRuntimeData().radius.x;
+		const float r = AnchoredRadius(ni, ni->GetLightRuntimeData().radius.x);
 		return ni->world.translate.GetSquaredDistance(plr->GetPosition()) < r * r;
 	}
 
@@ -589,6 +612,7 @@ namespace ShadowCasterManager
 	}
 
 	/// Tests whether a cached bake uses this light's current transform and radius.
+	/// Radius stays live: an anchor would certify a bake the dynamic pass cannot match.
 	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
 	{
 		const auto* ni = light->light.get();
@@ -1291,6 +1315,9 @@ namespace ShadowCasterManager
 				auto* l = sp.get();
 				if (!l || l == sunLight)
 					continue;
+				// One advance per frame; the consumers below only read it.
+				if (auto* ni = l->light.get())
+					AdvanceRadiusAnchor(ni, ni->GetLightRuntimeData().radius.x);
 				// Promoted lights are allocated non-zeroed; their descriptor pool-slots stay
 				// garbage until init. EnableLight only inits lights that win a render slot, so
 				// init here (once) -- this is the type-safe BSShadowLight source -- to cover a
@@ -1940,7 +1967,7 @@ namespace ShadowCasterManager
 
 				// Deadzone sub-texel motion: idle-jitter wobble under a texel previously
 				// read as "displacement" every frame, showing as flicker on torches/braziers.
-				const float radius = nilight->GetLightRuntimeData().radius.x;
+				const float radius = AnchoredRadius(nilight, nilight->GetLightRuntimeData().radius.x);
 				if (radius > 0.0f) {
 					const float approxPosStep = radius /
 					                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
@@ -2057,7 +2084,7 @@ namespace ShadowCasterManager
 			float posStep = 1.0f;
 			if (auto* ni2 = e->Light->light.get()) {
 				const float texels = baseTileTexels * std::max(e->pendingScale, kTileScaleFloor);
-				posStep = ni2->GetLightRuntimeData().radius.x / std::max(texels, 1.0f);
+				posStep = AnchoredRadius(ni2, ni2->GetLightRuntimeData().radius.x) / std::max(texels, 1.0f);
 			}
 			// ComputeShadowGeomHash's full geomList walk measured ~17us/light; reuse
 			// the cached hash until the caster count changes or this many frames pass.
