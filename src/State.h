@@ -583,6 +583,8 @@ public:
 
 	// Skyrim constants
 	float2 screenSize = {};
+	/** @brief The engine's own kPOST_ZPREPASS_COPY depth SRV (R24_UNORM_X8_TYPELESS), captured before any feature can redirect that slot. */
+	ID3D11ShaderResourceView* enginePrepassDepthSRV = nullptr;
 	D3D_FEATURE_LEVEL featureLevel;
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context

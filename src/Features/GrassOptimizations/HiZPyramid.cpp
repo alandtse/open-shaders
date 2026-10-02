@@ -1,6 +1,5 @@
 #include "HiZPyramid.h"
 
-#include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "GpuPass.h"
 #include "Profiler.h"
@@ -23,16 +22,9 @@ void HiZPyramid::ClearShaderCache()
 
 ID3D11ShaderResourceView* HiZPyramid::GetSourceDepthSRV()
 {
-	// Grass runs before the terrain blending pass, so it takes the original prepass copy; the blended
-	// texture would be a frame stale and flicker grass on fast camera movement. Both branches return
-	// that same R24_UNORM_X8_TYPELESS view, so GrassHiZCS needs no TERRAIN_BLENDING variant of its
-	// `unorm float` declaration the way Util::GetCurrentSceneDepthSRV's R32_FLOAT consumers do.
-	auto& tb = globals::features::terrainBlending;
-	if (tb.loaded && tb.settings.Enabled && tb.prepassSRVBackup)
-		return tb.prepassSRVBackup;
-	if (auto* renderer = globals::game::renderer)
-		return Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
-	return nullptr;
+	// The engine's own view, not a feature's redirect of that slot, is always R24_UNORM_X8_TYPELESS, so GrassHiZCS
+	// needs no TERRAIN_BLENDING variant of its `unorm float` declaration the way Util::GetCurrentSceneDepthSRV's consumers do.
+	return globals::state->enginePrepassDepthSRV;
 }
 
 ID3D11ShaderResourceView* HiZPyramid::GetLiveDepthSRV()
