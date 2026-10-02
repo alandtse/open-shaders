@@ -1326,7 +1326,7 @@ PS_OUTPUT main(PS_INPUT input)
 #					endif
 				if (canContactShadow && passesContactIntensityGate) {
 					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
-					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
+					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), lightDist, contactShadowSteps, eyeIndex);
 				}
 			}
 

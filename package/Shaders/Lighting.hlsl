@@ -2930,7 +2930,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				// is added to the struct + populated CPU-side.
 				float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
 				float3 normalizedLightDirectionVS = normalize(lightPositionVS - viewPosition.xyz);
-				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, contactShadowSteps, eyeIndex);
+				contactShadow = LightLimitFix::ContactShadows(viewPosition, contactShadowNoise, normalizedLightDirectionVS, lightDist, contactShadowSteps, eyeIndex);
 			}
 		}
 #			endif

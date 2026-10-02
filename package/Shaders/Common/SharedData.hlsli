@@ -104,18 +104,20 @@ namespace SharedData
 		uint EnableContactShadows;
 		uint ContactShadowMaxSteps;
 		float ContactShadowMaxDistance;
-		float ContactShadowStride;
-		float ContactShadowThickness;
-		float ContactShadowDepthFade;
+		float ContactShadowLength;
+		float ContactShadowDepthThickness;
 		float ContactShadowMinIntensity;
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
+		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU
+		// reads the cluster config from the wrong offsets. The C++ mirror has the same hole.
+		float pad0;
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad0;
+		uint pad1;
 	};
 
 	struct WetnessEffectsSettings
@@ -575,12 +577,20 @@ namespace SharedData
 
 	Texture2D<float4> DepthTexture : register(t17);
 
+	/**
+	 * @brief Dynamic-resolution adjusted UV for a per-eye mono UV, for callers that need the texel
+	 * grid (Gather footprints, bilinear weights). Point loads use ConvertUVToSampleCoord.
+	 */
+	float2 ConvertUVToSampleUV(float2 uv, uint a_eyeIndex)
+	{
+		uv = Stereo::ConvertToStereoUV(uv, a_eyeIndex);
+		return FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
+	}
+
 	// Get a int3 to be used as texture sample coord. [0,1] in uv space
 	int3 ConvertUVToSampleCoord(float2 uv, uint a_eyeIndex)
 	{
-		uv = Stereo::ConvertToStereoUV(uv, a_eyeIndex);
-		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
-		return int3(uv * BufferDim.xy, 0);
+		return int3(ConvertUVToSampleUV(uv, a_eyeIndex) * BufferDim.xy, 0);
 	}
 
 	// Get a raw depth from the depth buffer. [0,1] in uv space
