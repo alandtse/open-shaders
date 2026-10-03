@@ -16,7 +16,8 @@
 constexpr auto MIPLEVELS = 9;
 
 // Pixel-shader SRVs the image-space SSR pass reads its Hi-Z chains from. The engine's own shader
-// setup binds t0-t3 for that shader and nothing else in the tree declares these four.
+// setup binds t0-t3 for that shader. TreeWindSpring.hlsli declares t111-t124 too, but only for vertex and
+// compute stages, which have their own slot tables.
 constexpr UINT kHiZChainRegister = 115;
 
 // Pixel-shader constant buffer slot the SSR Hi-Z walk reads its settings from: the only b9
@@ -651,16 +652,16 @@ void DynamicCubemaps::BuildHiZ()
 
 	auto device = globals::d3d::device;
 	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
 
 	// Last frame's chain SRVs are still bound on the pixel stage, and the builds below bind the same
 	// textures as compute UAVs.
 	ID3D11ShaderResourceView* staleChains[4]{};
 	context->PSSetShaderResources(kHiZChainRegister, ARRAYSIZE(staleChains), staleChains);
 
-	if (settings.EnabledSSR && settings.EnableSSRHiZ) {
+	if (renderer && settings.EnabledSSR && settings.EnableSSRHiZ) {
 		// The live depth target, not the finished-opaque copy: water writes it after the copy is
 		// taken, so chains built from the copy can step past a real crossing.
-		auto renderer = globals::game::renderer;
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 		if (auto* source = Util::AsReal(depth.depthSRV)) {
 			// The view decides, not the call site: the depth target's own format differs by runtime and the
@@ -676,7 +677,7 @@ void DynamicCubemaps::BuildHiZ()
 			if (hiZMin.Build(device, context, desc)) {
 				desc.reduction = HiZPyramid::Reduction::Max;
 				if (hiZMax.Build(device, context, desc))
-					hiZBuffer = HiZBufferData{ 1u, hiZMin.GetMipCount() - 1, hiZMin.GetWidth(), hiZMin.GetHeight() };
+					hiZBuffer = HiZBufferData{ 1u, std::min(hiZMin.GetMipCount(), hiZMax.GetMipCount()) - 1, hiZMin.GetWidth(), hiZMin.GetHeight() };
 			}
 		}
 	}
