@@ -199,8 +199,9 @@ bool HiZCoarseMarch(
 		uint sampleEyeIndex;
 		Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex);
 
+		// Breaking keeps the fallback crossing; returning false here drops hits the linear march finds.
 		if (FrameBuffer::IsOutsideFrame(sampleUV))
-			return false;
+			break;
 
 		uint chainEye = sampleEyeIndex;
 		float2 chainUV = sampleUV;
