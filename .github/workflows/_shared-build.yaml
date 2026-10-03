@@ -87,16 +87,25 @@ jobs:
         name: Build plugin and addons (${{ matrix.compiler.name }})
         if: inputs.run-cpp
         runs-on: windows-2025-vs2026
+        # Only the primary compiler can fail the workflow; the others are advisory.
+        continue-on-error: ${{ !matrix.compiler.primary }}
         permissions:
             contents: read
         outputs:
             version: ${{ steps.get_version.outputs.version }}
         strategy:
             matrix:
+                # `primary` selects the compiler that gates the workflow and uploads
+                # dist-artifacts; to ship clang-cl, swap it between the two entries.
                 compiler:
                     - name: vs2026
+                      primary: true
                       cmake-preset: ${{ inputs.cmake-preset }}
                       build-dir: build/${{ inputs.cmake-preset }}
+                    - name: clang-cl
+                      primary: false
+                      cmake-preset: ${{ inputs.cmake-preset }}-ClangCL
+                      build-dir: build/${{ inputs.cmake-preset }}-ClangCL
             fail-fast: false
         steps:
             - name: Checkout code
@@ -115,6 +124,13 @@ jobs:
                   cache-key-suffix: "cpp-${{ matrix.compiler.name }}${{ inputs.cache-key-suffix }}"
                   cmake-preset: ${{ matrix.compiler.cmake-preset }}
                   build-dir: ${{ matrix.compiler.build-dir }}
+
+            - name: Show clang-cl toolchain
+              if: matrix.compiler.name == 'clang-cl'
+              shell: pwsh
+              run: |
+                  clang-cl --version
+                  lld-link --version
 
             - name: Build using run-cmake
               uses: lukka/run-cmake@v10
@@ -156,12 +172,21 @@ jobs:
                   }
 
             - name: Upload dist artifacts
-              if: success() && matrix.compiler.name == 'vs2026'
+              if: success() && matrix.compiler.primary
               uses: actions/upload-artifact@v7
               with:
                   name: dist-artifacts
                   path: dist/
                   retention-days: 30
+
+            - name: Upload advisory dist artifacts
+              if: success() && !matrix.compiler.primary
+              uses: actions/upload-artifact@v7
+              with:
+                  name: dist-artifacts-${{ matrix.compiler.name }}
+                  path: dist/
+                  retention-days: 7
+                  if-no-files-found: warn
 
     shader-validation:
         # Full-config and release-parity are independent fxc invocations against
