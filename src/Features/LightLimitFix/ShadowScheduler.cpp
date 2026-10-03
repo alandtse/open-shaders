@@ -841,7 +841,7 @@ namespace ShadowCasterManager
 			}
 
 			ShadowField(light, projectedBoundingBox) =
-				RE::NiRect<uint32_t>((uint32_t)left, (uint32_t)right, (uint32_t)top, (uint32_t)bottom);
+				RE::NiRect<uint32_t>((uint32_t)(int32_t)left, (uint32_t)(int32_t)right, (uint32_t)(int32_t)top, (uint32_t)(int32_t)bottom);
 		}
 
 		// Publish the light so the AppendVirtual hook can contribution-cull its
