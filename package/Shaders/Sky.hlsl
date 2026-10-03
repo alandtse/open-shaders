@@ -104,7 +104,6 @@ cbuffer PerGeometry : register(b2)
 #	if defined(DITHER) && defined(TEX)
 static const uint SunGlareOcclusionSampleCount = 16;
 static const float SunGlareOcclusionRadius = 0.02;
-static const float SunOcclusionDepthRatio = 0.99;
 
 float GetSunGlareVisibility(uint eyeIndex)
 {
@@ -246,6 +245,8 @@ struct PS_OUTPUT
 };
 
 #ifdef PSHADER
+static const float SunOcclusionDepthRatio = 0.99;
+
 SamplerState SampBaseSampler : register(s0);
 SamplerState SampBlendSampler : register(s1);
 SamplerState SampNoiseGradSampler : register(s2);
