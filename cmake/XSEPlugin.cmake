@@ -95,6 +95,10 @@ if(MSVC)
 		set(SC_RELEASE_OPTS "/fp:fast;/Gy-;/Gm-;/Gw;/sdl-;/GS-;/guard:cf-;/O2;/Oi;/Ot;/Oy;/fp:except-")
 	endif()
 
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+		string(REPLACE "/fp:fast" "/fp:precise" SC_RELEASE_OPTS "${SC_RELEASE_OPTS}")
+	endif()
+
 	# Shipping: /Zi + /GL. Dev: /Z7 (no mspdbsrv PDB-lock contention across
 	# parallel compiles). PR/CI: no compile-time debug info; the linker's
 	# /DEBUG below still emits a public-symbols-only PDB.
@@ -167,10 +171,6 @@ if(MSVC)
 
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:${SC_DEBUG_OPTS}>")
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
-
-	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-		target_compile_options("${PROJECT_NAME}" PRIVATE "$<$<CONFIG:RELEASE>:/clang:-fno-finite-math-only>")
-	endif()
 
 	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 		target_link_options(
