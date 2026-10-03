@@ -112,7 +112,7 @@ Each rule is stated once, in the section named in brackets.
 
 ## Environment & Build Reference
 
--   **Build:** `./BuildRelease.bat [PRESET_NAME]` (from WSL: `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`). Configure presets in `CMakePresets.json`: `ALL` (default, universal SE/AE/VR), `ALL-VS2022`, `ALL-DEBUG`, `Dev-Fast`, `PR`, `Linux-ClangCL` (plus build presets `Dev`, `Debug`, `Package`, `Shaders`).
+-   **Build:** `./BuildRelease.bat [PRESET_NAME]` (from WSL: `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`). Configure presets in `CMakePresets.json`: `ALL` (default, universal SE/AE/VR), `ALL-VS2022`, `ALL-DEBUG`, `Dev-Fast`, `PR`, `Linux-ClangCL`, `Windows-ClangCL` (plus build presets `Dev`, `Debug`, `Package`, `Shaders`).
 -   **Local presets:** many devs keep a gitignored `CMakeUserPresets.json` (from `CMakeUserPresets.json.template`) with deploy-enabled variants such as `ALL-WITH-AUTO-DEPLOYMENT` (`AUTO_PLUGIN_DEPLOYMENT=ON`, deploys to the local SE/VR `Data` dirs via `CommunityShadersOutputDir`), the preferred preset for a local test deploy. Check for the file before assuming a preset doesn't exist; it isn't in `git grep`.
 -   **Linux/macOS-host cross-compile** (build-only): `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`; see [Linux/macOS Cross-Compile](docs/development/linux-macos-cross-compile.md).
 -   **clangd:** after configuring `ALL`, `pwsh tools/gen-clangd-db.ps1`.

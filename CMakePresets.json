@@ -192,6 +192,26 @@
                 "CMAKE_CXX_FLAGS": "/arch:AVX"
             },
             "inherits": "skyrim-linux-clangcl"
+        },
+        {
+            "name": "Windows-ClangCL",
+            "description": "Native Windows clang-cl + lld-link (ThinLTO) with Ninja. Run from a VS x64 environment so the Windows SDK is found; LLVM must be on PATH.",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl",
+                "CMAKE_LINKER": "lld-link",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob3 /DNDEBUG",
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF",
+                "BUILD_SHADER_TESTS": "OFF",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
+            },
+            "inherits": "skyrim-ninja"
         }
     ],
     "buildPresets": [
@@ -254,6 +274,13 @@
             "name": "Linux-ClangCL",
             "description": "Build-only cross-compile proving the toolchain compiles clean; produces a Windows PE DLL, not a runnable package",
             "configurePreset": "Linux-ClangCL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders"]
+        },
+        {
+            "name": "Windows-ClangCL",
+            "description": "Native Windows clang-cl build of the plugin DLL only",
+            "configurePreset": "Windows-ClangCL",
             "configuration": "Release",
             "targets": ["CommunityShaders"]
         }

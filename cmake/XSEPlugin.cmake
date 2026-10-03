@@ -133,9 +133,9 @@ if(MSVC)
 		/wd4200 # nonstandard extension used : zero-sized array in struct/union
 	)
 
-	if(CMAKE_HOST_UNIX)
-		# This LLVM's clang-cl rejects some /Zc: flags above; /WX would
-		# otherwise hard-error on them. Native Windows presets are unaffected.
+	if(CMAKE_HOST_UNIX OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+		# clang-cl rejects some /Zc: flags above; /WX would otherwise
+		# hard-error on them.
 		target_compile_options("${PROJECT_NAME}" PRIVATE -Wno-unused-command-line-argument)
 
 		# cxx_std_23 doesn't reach _MSVC_LANG under this clang-cl, so MSVC
@@ -149,6 +149,15 @@ if(MSVC)
 		# /WX off: this preset proves the toolchain compiles, not that every
 		# warning matches native CI's compiler. /W4 keeps warnings visible.
 		target_compile_options("${PROJECT_NAME}" PRIVATE /WX-)
+	endif()
+
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT CMAKE_HOST_UNIX)
+		target_compile_options(
+			"${PROJECT_NAME}"
+			PRIVATE
+			-msse4.1
+			$<$<COMPILE_LANGUAGE:CXX>:-clang:-std=c++2c>
+		)
 	endif()
 
 	# /MP (multi-process compilation) only for MSBuild; Ninja handles parallelism itself
