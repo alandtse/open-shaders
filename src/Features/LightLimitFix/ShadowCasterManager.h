@@ -227,7 +227,7 @@ namespace ShadowCasterManager
 		BudgetModeEnum BudgetMode = BudgetModeEnum::Manual;
 
 		/// Per-frame time budget for shadow re-renders in milliseconds (Manual mode).
-		float RedrawBudgetMs = 12.0f;
+		float RedrawBudgetMs = 7.0f;
 
 		/// Demotes shadow lights exceeding caster limit to normal non-shadow lights.
 		bool ConvertExcessToNormal = true;
