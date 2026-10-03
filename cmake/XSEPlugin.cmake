@@ -168,6 +168,10 @@ if(MSVC)
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:DEBUG>:${SC_DEBUG_OPTS}>")
 	target_compile_options(${PROJECT_NAME} PRIVATE "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
 
+	if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+		target_compile_options("${PROJECT_NAME}" PRIVATE "$<$<CONFIG:RELEASE>:/clang:-fno-finite-math-only>")
+	endif()
+
 	if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
 		target_link_options(
 			${PROJECT_NAME}
