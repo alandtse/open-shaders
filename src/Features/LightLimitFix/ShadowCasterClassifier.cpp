@@ -448,7 +448,7 @@ namespace ShadowCasterManager
 					return;
 				}
 			}
-			if (s_casterCountersEnabled.load(std::memory_order_relaxed) &&
+			if (light && s_casterCountersEnabled.load(std::memory_order_relaxed) &&
 				(a_this->alphaGroupStopIndex & kHemisphereFrontBit))
 				s_frontAppendCount.fetch_add(1, std::memory_order_relaxed);
 			func(a_this, a_visible, a_alphaGroupIndex);
