@@ -268,7 +268,7 @@ void State::Debug()
 		drawCalls[magic_enum::enum_integer(RE::BSShader::Type::Total)]++;
 	}
 
-	if (currentShader && updateShader && frameAnnotations) {
+	if (currentShader && updateShader && drawAnnotationsActive) {
 		// Per-draw (thousands/frame): D3D-capture marker only, never a Tracy zone --
 		// a per-draw dynamic Tracy zone allocs a source location per call and OOMs
 		// Tracy. Matches BeginDrawEvent's rationale.
@@ -1282,6 +1282,14 @@ static const wchar_t* WidenAnnotation(std::wstring& buffer, std::string_view tit
 	buffer.resize(title.size());
 	std::copy(title.begin(), title.end(), buffer.begin());
 	return buffer.c_str();
+}
+
+void State::RefreshDrawAnnotations()
+{
+	drawAnnotationsActive = frameAnnotations &&
+	                        ((pPerf && pPerf->GetStatus()) ||
+								GetModuleHandleW(L"renderdoc.dll") ||
+								GetModuleHandleW(L"WinPixGpuCapturer.dll"));
 }
 
 void State::BeginDrawEvent(std::string_view title)
