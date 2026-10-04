@@ -56,7 +56,7 @@ cache cannot silently become the baseline:
 
 ```powershell
 $testMod = "$env:LOCALAPPDATA\ModOrganizer\Skyrim Special Edition\mods\Open Shaders"
-$testLog = "$env:USERPROFILE\Documents\My Games\Skyrim Special Edition\SKSE\CommunityShaders.log"
+$testLog = "$env:USERPROFILE\Documents\My Games\Skyrim Special Edition\SKSE\OpenShaders.log"
 py -3.10 tools/verify_shader_cache.py snapshot --runtime SE --data "$testMod" `
   --reference-cache build/ShaderCache --log "$testLog" --out build/cache-before-SE.json
 ```

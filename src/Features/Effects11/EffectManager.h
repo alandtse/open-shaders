@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Buffer.h"
 #include "Effects/ENBAdaptation.h"
 #include "Effects/ENBBloom.h"
 #include "Effects/ENBEffect.h"
@@ -82,10 +83,18 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> colorCorrectionComputeShader;
 	winrt::com_ptr<ID3D11Buffer> colorCorrectionConstantBuffer;
 
+	winrt::com_ptr<ID3D11ComputeShader> standardDepthComputeShader;
+	std::unique_ptr<Texture2D> standardDepthTexture;
+	uint32_t standardDepthFrame = 0xFFFFFFFF;
+
 	void CreateQuadGeometry();
 	void CreateRenderStates();
 	void CreateCopyShaders();
 	void CreateColorCorrectionShader();
+	void CreateStandardDepthShader();
+
+	/** @brief Depth SRV for .fx files: the scene depth, or a standard-Z (1 - z) copy of it when Reverse Z is active. */
+	ID3D11ShaderResourceView* GetEffectDepthSRV();
 
 	void RenderEffectsList();
 

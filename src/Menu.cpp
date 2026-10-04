@@ -785,7 +785,7 @@ void Menu::DrawSettings()
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Open Shaders {}", versionStr) : std::format("Open Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) : std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
 	// Use ### to keep a stable window ID regardless of build suffix or display
 	// branding, preserving docking state. The literal "CommunityShaders" ID is
 	// load-bearing: changing it would discard users' existing docking layouts.

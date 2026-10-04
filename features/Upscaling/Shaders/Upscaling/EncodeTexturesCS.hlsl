@@ -55,7 +55,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 			float neighborDepth = DepthMask[srcPos];
 
 			// Take neighbor if it's longer AND closer
-			if (neighborDepth < depth) {
+			if (FrameBuffer::IsNearerDepth(neighborDepth, depth)) {
 				float2 neighborMotionVector = MotionVectorMask[srcPos];
 
 				// Square motion vector for length

@@ -2,6 +2,7 @@
 #define __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_CS_COMMON_HLSLI__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/VR.hlsli"
 
 cbuffer VolumetricFogCB : register(b0)
@@ -49,7 +50,7 @@ namespace ExponentialHeightFog
 		viewDepth = ComputeVolumetricSliceDepth(max(float(coord.z) + cellOffset.z, 0.0f));
 
 		float2 ndc = eyeUV * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f);
-		float deviceZ = (SharedData::CameraData.x - SharedData::CameraData.w / viewDepth) / SharedData::CameraData.z;
+		float deviceZ = FrameBuffer::ToNativeDepth((SharedData::CameraData.x - SharedData::CameraData.w / viewDepth) / SharedData::CameraData.z);
 		float4 worldPosition = mul(VolumetricFogClipToWorld[eyeIndex], float4(ndc, deviceZ, 1.0f));
 		return worldPosition.xyz / worldPosition.w;
 	}

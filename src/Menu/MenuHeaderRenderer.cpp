@@ -26,7 +26,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	auto title = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Open Shaders {}", versionStr) : std::format("Open Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	auto title = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) : std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
 	auto actionIcons = BuildActionIcons(canShowIcons, uiIcons);
 	const char* sidebarTooltip = sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar");
 	const float sidebarIconSize = ImGui::GetFontSize() * ThemeManager::Constants::SIDEBAR_ICON_SIZE_MULTIPLIER * uiScale;
@@ -222,7 +222,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 										  "Hide or show the shader failure message. "
 										  "Your installation is broken and will likely see errors in game. "
 										  "Please double check you have updated all features and that your load order is correct. "
-										  "See CommunityShaders.log for details and check the Nexus Mods page or Discord server."));
+										  "See OpenShaders.log for details and check the Nexus Mods page or Discord server."));
 				}
 			}
 
@@ -246,7 +246,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 								  "Hide or show the shader failure message. "
 								  "Your installation is broken and will likely see errors in game. "
 								  "Please double check you have updated all features and that your load order is correct. "
-								  "See CommunityShaders.log for details and check the Nexus Mods page or Discord server."));
+								  "See OpenShaders.log for details and check the Nexus Mods page or Discord server."));
 		}
 
 		// Add second separator when showing error button

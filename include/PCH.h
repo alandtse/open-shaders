@@ -147,7 +147,6 @@ namespace util
 
 #include "Plugin.h"
 #include <wrl/client.h>
-#include <wrl/event.h>
 
 #include <DirectXColors.h>
 #include <DirectXMath.h>

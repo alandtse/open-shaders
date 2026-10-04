@@ -43,16 +43,6 @@ namespace LightLimitFix
 		return true;
 	}
 
-	bool IsSaturated(float value)
-	{
-		return value == saturate(value);
-	}
-
-	bool IsSaturated(float2 value)
-	{
-		return IsSaturated(value.x) && IsSaturated(value.y);
-	}
-
 	// Per-eye stereo-stable IGN coord. In VR we use screenUV (per-eye via
 	// CameraProj[eye]) instead of SV_Position so both eyes hash the same
 	// value at the same world pixel — SV_Position differs between eyes in
@@ -77,52 +67,168 @@ namespace LightLimitFix
 	// linearized value; reject occluders there since the viewmodel isn't in the world.
 	static const float CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH = 16.5;
 
-	// Reference view-space depth for perspective-correct stride. At/below this depth,
-	// stride matches its prior view-space meaning; beyond it, stride and the depth-delta
-	// band scale linearly with depth so each step covers ~constant screen-space distance
-	// and the shadow-thickness band tracks the same screen-space extent.
 	static const float CONTACT_SHADOW_REFERENCE_DEPTH = 100.0;
 
-	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, uint contactShadowSteps, uint a_eyeIndex = 0)
+	static const uint CONTACT_SHADOW_COARSE_STEPS = 4;
+
+	static const float CONTACT_SHADOW_MIN_PIXELS_PER_STEP = 1.0;
+
+	static const float CONTACT_SHADOW_MIN_RAY_DEPTH = 1.0;
+
+	static const float CONTACT_SHADOW_MARCH_EXPONENT = 2.0;
+
+	static const float CONTACT_SHADOW_RAY_END_FADE = 4.0;
+
+	static const float CONTACT_SHADOW_DEPTH_BIAS = 2.0 / 65536.0;
+
+	// Depth buffer raymarching for contact shadows, after Tomasz Stachowiak's (h3r2tic) gist
+	// https://gist.github.com/h3r2tic/9c8356bdaefbe80b1a22ae0aaee192db (Apache-2.0 / MIT).
+	struct ContactShadowRay
+	{
+		float2 uvOrigin;
+		float2 uvDelta;
+		float2 inverseDepth;
+		float tMax;
+	};
+
+	// Ray bounds in per-eye mono UV, where [0,1] spans this eye's half of a packed stereo buffer.
+	ContactShadowRay GetContactShadowRay(float3 viewPosition, float3 endPosition, uint a_eyeIndex)
+	{
+		ContactShadowRay ray;
+		ray.uvOrigin = FrameBuffer::ViewToUV(viewPosition, true, a_eyeIndex);
+		ray.uvDelta = FrameBuffer::ViewToUV(endPosition, true, a_eyeIndex) - ray.uvOrigin;
+		ray.inverseDepth.x = rcp(viewPosition.z);
+		ray.inverseDepth.y = rcp(endPosition.z) - ray.inverseDepth.x;
+
+		const float2 room = saturate(ray.uvDelta >= 0.0 ? 1.0 - ray.uvOrigin : ray.uvOrigin);
+		const float2 axisT = room / max(abs(ray.uvDelta), 1e-7);
+		ray.tMax = min(1.0, min(axisT.x, axisT.y));
+		return ray;
+	}
+
+	float GetContactShadowRayT(ContactShadowRay ray, float u)
+	{
+		return ray.tMax * pow(u, CONTACT_SHADOW_MARCH_EXPONENT);
+	}
+
+	float GetContactShadowRayDepth(ContactShadowRay ray, float t)
+	{
+		return rcp(ray.inverseDepth.x + ray.inverseDepth.y * t);
+	}
+
+	uint GetContactShadowPixelLimitedSteps(ContactShadowRay ray, uint requestedSteps)
+	{
+		// BufferDim.x spans both eyes in VR, so a per-eye UV delta covers only half that width:
+		// without the 0.5 every step covers twice the intended screen distance.
+#if defined(VR)
+		const float2 pixelScale = float2(FrameBuffer::DynamicResolutionParams1.x * SharedData::BufferDim.x * 0.5,
+			FrameBuffer::DynamicResolutionParams1.y * SharedData::BufferDim.y);
+#else
+		const float2 pixelScale = FrameBuffer::DynamicResolutionParams1.xy * SharedData::BufferDim.xy;
+#endif
+		const float rayPixels = length(ray.uvDelta * ray.tMax * pixelScale);
+		return min(requestedSteps, (uint)max(2.0, floor(rayPixels / CONTACT_SHADOW_MIN_PIXELS_PER_STEP)));
+	}
+
+	float2 GetContactShadowSceneDepths(float2 uv, uint a_eyeIndex)
+	{
+		const float2 coord = SharedData::ConvertUVToSampleUV(uv, a_eyeIndex);
+
+		const float2 texel = coord * SharedData::BufferDim.xy - 0.5;
+		const float2 maxBase = floor(FrameBuffer::DynamicResolutionParams1.xy * SharedData::BufferDim.xy) - 2.0;
+#if defined(VR)
+		// Keep the 2x2 block inside this eye's half: a straddling block reads the other eye's
+		// depth (phantom occluder at the seam). Widths are dynamic-resolution scaled.
+		const float eyeWidth = FrameBuffer::DynamicResolutionParams1.x * SharedData::BufferDim.x * 0.5;
+		const float minBaseX = a_eyeIndex ? ceil(eyeWidth) : 0.0;
+		const float maxBaseX = floor(a_eyeIndex ? 2.0 * eyeWidth : eyeWidth) - 2.0;
+#else
+		const float minBaseX = 0.0;
+		const float maxBaseX = maxBase.x;
+#endif
+		const float2 base = clamp(floor(texel), float2(minBaseX, 0.0), float2(maxBaseX, maxBase.y));
+		const float2 weight = saturate(texel - base);
+
+		const float4 depths = SharedData::DepthTexture.GatherRed(LinearSampler, (base + 1.0) * SharedData::BufferDim.zw);
+		const float filtered = lerp(lerp(depths.w, depths.z, weight.x), lerp(depths.x, depths.y, weight.x), weight.y);
+		const float nearest = weight.x < 0.5 ? (weight.y < 0.5 ? depths.w : depths.x) : (weight.y < 0.5 ? depths.z : depths.y);
+
+		const float2 linearDepths = SharedData::GetScreenDepths(float4(filtered, nearest, 0, 0)).xy;
+		return float2(max(linearDepths.x, linearDepths.y), min(linearDepths.x, linearDepths.y));
+	}
+
+	bool MayBeOccluded(ContactShadowRay ray, float thickness, uint a_eyeIndex)
+	{
+		float previousRayDepth = rcp(ray.inverseDepth.x);
+		float previousDelta = 0.0;
+		bool havePrevious = false;
+
+		[unroll] for (uint i = 0; i < CONTACT_SHADOW_COARSE_STEPS; i++)
+		{
+			const float t = GetContactShadowRayT(ray, float(i + 1) / float(CONTACT_SHADOW_COARSE_STEPS));
+			const float rayDepth = GetContactShadowRayDepth(ray, t);
+			const float slack = abs(rayDepth - previousRayDepth);
+			previousRayDepth = rayDepth;
+
+			const float sceneDepth = SharedData::GetScreenDepth(ray.uvOrigin + ray.uvDelta * t, a_eyeIndex);
+			if (sceneDepth <= CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH)
+				return true;
+
+			const float delta = rayDepth - sceneDepth;
+			if (delta > -slack && delta < thickness + slack)
+				return true;
+
+			if (havePrevious && min(previousDelta, delta) < thickness && max(previousDelta, delta) > 0.0)
+				return true;
+			previousDelta = delta;
+			havePrevious = true;
+		}
+		return false;
+	}
+
+	float ContactShadows(float3 viewPosition, float noise2D, float3 lightDirectionVS, float lightDistance, uint contactShadowSteps, uint a_eyeIndex = 0)
 	{
 		if (contactShadowSteps == 0)
 			return 1.0;
 
-		// Perspective-correct stride: scale view-space step length with depth so each step
-		// covers ~constant screen-space distance. Inverse-scale the thickness/fade band so
-		// the depth-delta window tracks the same screen-space extent across depths.
-		float perspectiveScale = max(viewPosition.z, CONTACT_SHADOW_REFERENCE_DEPTH) / CONTACT_SHADOW_REFERENCE_DEPTH;
-		float depthDeltaThickness = SharedData::lightLimitFixSettings.ContactShadowThickness / perspectiveScale;
-		float depthDeltaFade = SharedData::lightLimitFixSettings.ContactShadowDepthFade / perspectiveScale;
-		lightDirectionVS *= SharedData::lightLimitFixSettings.ContactShadowStride * perspectiveScale;
+		const float perspectiveScale = max(viewPosition.z, CONTACT_SHADOW_REFERENCE_DEPTH) / CONTACT_SHADOW_REFERENCE_DEPTH;
+		const float thickness = SharedData::lightLimitFixSettings.ContactShadowDepthThickness * perspectiveScale;
+		const float depthBias = CONTACT_SHADOW_DEPTH_BIAS * SharedData::CameraData.z / SharedData::CameraData.w;
 
-		// Offset starting position with interleaved gradient noise
-		viewPosition += lightDirectionVS * noise2D;
+		float rayLength = min(SharedData::lightLimitFixSettings.ContactShadowLength * perspectiveScale, lightDistance);
+		rayLength = min(rayLength, (viewPosition.z - CONTACT_SHADOW_MIN_RAY_DEPTH) / max(-lightDirectionVS.z, 1e-6));
 
-		// Accumulate samples
-		float contactShadow = 0.0;
-		for (uint i = 0; i < contactShadowSteps; i++) {
-			// Step the ray
-			viewPosition += lightDirectionVS;
+		const ContactShadowRay ray = GetContactShadowRay(viewPosition, viewPosition + lightDirectionVS * max(rayLength, 0.0), a_eyeIndex);
+		const uint marchSteps = GetContactShadowPixelLimitedSteps(ray, contactShadowSteps);
 
-			float2 rayUV = FrameBuffer::ViewToUV(viewPosition, true, a_eyeIndex);
+		bool march = true;
+		[branch] if (marchSteps > CONTACT_SHADOW_COARSE_STEPS)
+			march = MayBeOccluded(ray, thickness, a_eyeIndex);
 
-			// Ensure the UV coordinates are inside the screen
-			if (!IsSaturated(rayUV))
-				break;
+		float occlusion = 0.0;
+		[branch] if (march)
+		{
+			const float jitter = 1.0 - noise2D;
+			const float stepScale = rcp(float(marchSteps));
+			[loop] for (uint i = 0; i < marchSteps; i++)
+			{
+				const float t = GetContactShadowRayT(ray, (float(i) + jitter) * stepScale);
+				const float rayDepth = GetContactShadowRayDepth(ray, t);
 
-			// Compute the difference between the ray's and the camera's depth
-			float rayDepth = SharedData::GetScreenDepth(rayUV, a_eyeIndex);
+				const float2 sceneDepths = GetContactShadowSceneDepths(ray.uvOrigin + ray.uvDelta * t, a_eyeIndex);
 
-			// Difference between the current ray distance and the marched light
-			float depthDelta = viewPosition.z - rayDepth;
-			if (rayDepth > CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH)
-				contactShadow = max(contactShadow, saturate(depthDelta * depthDeltaThickness) - saturate(depthDelta * depthDeltaFade));
-			if (contactShadow == 1.0)
-				break;
+				const bool behindSurface = rayDepth > sceneDepths.x * (1.0 + sceneDepths.x * depthBias);
+
+				const bool withinThickness = rayDepth - sceneDepths.y < thickness;
+
+				if (sceneDepths.y > CONTACT_SHADOW_FIRST_PERSON_MAX_DEPTH && behindSurface && withinThickness) {
+					occlusion = saturate((1.0 - t) * CONTACT_SHADOW_RAY_END_FADE);
+					break;
+				}
+			}
 		}
 
-		return 1.0 - saturate(contactShadow);
+		return 1.0 - occlusion;
 	}
 
 	bool IsLightIgnored(Light light)
