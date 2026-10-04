@@ -17,6 +17,12 @@ namespace Plugin
 
 	inline constexpr auto NAME = "@PROJECT_NAME@"sv;
 
+	/// Public brand shown in UI, messages and logs; never use it for file or plugin identity.
+	inline constexpr auto DISPLAY_NAME = "@PLUGIN_DISPLAY_NAME@"sv;
+
+	/// Log file base name; differs from NAME, which must stay the SKSE plugin identity.
+	inline constexpr auto LOG_NAME = "@PLUGIN_LOG_NAME@"sv;
+
 	/// Full git describe string, e.g. "v1.4.11", "v1.4.11-3-gabcdef1", "v1.4.11-3-gabcdef1-dirty".
 	/// Matches "v{VERSION}" exactly on a clean tagged release build.
 	inline constexpr auto BUILD_DESCRIBE = "@GIT_DESCRIBE@"sv;

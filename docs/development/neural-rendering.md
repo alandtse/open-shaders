@@ -486,7 +486,7 @@ change, NR jitter and frame time per eye. The cut thresholds are distance >256,
 direction dot <0.5 and projection change >0.1. Reset bits are 1=requested,
 2=first frame, 4=frame gap, 8=camera position, 16=camera direction, 32=projection,
 and 64=feature creation. Periodic summaries also use `[NRDiag/v2]` in
-`CommunityShaders.log`.
+`OpenShaders.log`.
 
 The overlay shows the last 120 engine frames, including missing hooks, and is
 controlled by **Show NR Diagnostics** and the global overlay setting.

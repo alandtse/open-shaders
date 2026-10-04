@@ -215,6 +215,7 @@ struct I18n {
     std::unordered_map<std::string, std::string> strings_, fallback_;
     mutable std::deque<std::string> defaultStorage_;
     mutable std::unordered_map<std::string, const char*> defaultCache_;
+    static std::string ExpandBrand(std::string text) { return text; }
     const char* Get(std::string_view key, const char* defaultText = nullptr) const;
 } translations;
 TRANSLATE
