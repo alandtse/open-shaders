@@ -991,8 +991,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
 			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
-	// Independent of the tracked crop: the foveation region alone is a valid crop, so this stays
-	// reachable without the actor toggle above.
 	if (globals::game::isVR) {
 		if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
 			changed = true;
@@ -1289,12 +1287,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		boundedTuning.Sanitize();
 		work.region = GetRegionOfInterest();
 		work.actorBox = GetActorBox();
-		// The sweep forces its own centred crops, and the foveated route is skipped in the main and
-		// loading menus: NR has to agree with that route, or the two sharpen different frame regions.
 		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
 		const bool actorCrop = work.region.active && !calibrationRunning;
+		const bool foveatedRouteSuspended = state->IsMainOrLoadingMenuOpen();
 		bool foveaClip = false;
-		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !state->IsMainOrLoadingMenuOpen()) {
+		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
 			const auto& foveated = globals::features::upscaling.foveatedRender;
 			Util::Subrect::UVRegion leftUV, rightUV;
 			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {
