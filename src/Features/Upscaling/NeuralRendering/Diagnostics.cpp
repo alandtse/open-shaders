@@ -482,7 +482,7 @@ namespace NR
 		bool overlayVisible = showOverlay.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox("Show NR Diagnostics", &overlayVisible))
 			showOverlay.store(overlayVisible, std::memory_order_relaxed);
-		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in CommunityShaders.log.");
+		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in OpenShaders.log.");
 	}
 
 	void Diagnostics::DrawOverlay(const std::string& status)

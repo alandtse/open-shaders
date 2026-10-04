@@ -36,7 +36,7 @@ namespace
 	{
 		if (failed) {
 			ImGui::TextColored(themeSettings.StatusPalette.Error,
-				T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log"),
+				T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and OpenShaders.log"),
 				static_cast<unsigned long long>(failed));
 
 			if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {

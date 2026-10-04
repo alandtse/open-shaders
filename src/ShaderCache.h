@@ -386,6 +386,9 @@ namespace SIE
 		std::atomic<uint64_t> digestComputeCount = 0;       // content-digest computations performed (disk-cache checks + post-compile manifest writes)
 		std::atomic<int64_t> digestComputeTimeUs = 0;       // cumulative microseconds spent computing content digests
 		std::atomic<uint64_t> digestHitTasks = 0;           // disk-cache validity checks where the manifest digest confirmed the cached blob is still valid
+		std::atomic<uint64_t> contentDedupeTasks = 0;       // compiles skipped because an identical-bytecode task had already compiled the blob this session
+		std::atomic<uint64_t> activeReuseTasks = 0;         // outdated active-cache blobs kept because their recorded content key still matches
+		std::atomic<uint64_t> previousReuseTasks = 0;       // blobs copied from the previous cache because their recorded content key matches
 		std::atomic<uint64_t> digestMissTasks = 0;          // disk-cache validity checks where the manifest digest marked the cached blob stale (recompile)
 		LARGE_INTEGER compilationPhaseStart{};              // time of first non-disk-hit task dispatch
 		std::atomic<bool> compilationPhaseStarted = false;  // set when first actual compilation begins
@@ -801,12 +804,18 @@ namespace SIE
 		uint64_t GetDigestComputeCount();
 		int64_t GetDigestComputeTimeUs();
 		uint64_t GetDigestHitTasks();
+		uint64_t GetContentDedupeTasks();
+		uint64_t GetActiveReuseTasks();
+		uint64_t GetPreviousReuseTasks();
 		uint64_t GetDigestMissTasks();
 		void IncCacheHitTasks();
 		/** @brief Forwards to CompilationSet::MarkPhaseStarted(); call right before a real compile begins. */
 		void MarkCompilationPhaseStarted();
 		void RecordDigestComputeTime(int64_t a_elapsedUs);
 		void IncDigestHitTasks();
+		void IncContentDedupeTasks();
+		void IncActiveReuseTasks();
+		void IncPreviousReuseTasks();
 		void IncDigestMissTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();

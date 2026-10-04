@@ -41,6 +41,8 @@ namespace NR
 		 *        Developer-only; the default tracks a single actor.
 		 */
 		bool regionGroup = false;
+		/** @brief On VR with foveation active, evaluates only the foveated region, intersected with the tracked crop when one is set. */
+		bool regionFollowFoveation = true;
 
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */
 		void Sanitize()

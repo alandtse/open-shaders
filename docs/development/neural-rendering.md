@@ -200,7 +200,8 @@ unaffected.
 `neuralRegionActive`, `neuralRegion` (one `{x,y,width,height}` rect per eye, in
 the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralActorBounds`
 (the tracked actor's own projected box, unpadded and unstabilised, in the same
-per-eye shape), `neuralCalibration` (`state`, `fractions`, `stepMs`, `stabilityRatio`, `floorMs` and
+per-eye shape), `neuralRegionSource` (which sources chose the crop:
+`none`, `actor`, `fovea` or `both`), `neuralCalibration` (`state`, `fractions`, `stepMs`, `stabilityRatio`, `floorMs` and
 `kneeFraction` of the last crop cost sweep), `neuralFrames`
 (frames NR has applied), `neuralResets` (a cumulative count per reset reason,
 keyed `request`, `first`, `gap`, `position`, `direction`, `projection`,
@@ -209,6 +210,36 @@ the history-reset drain). The counters are monotonic since NR started, so a
 caller differences two reads: a `region` count that keeps rising against a
 rising `neuralFrames` means the crop keeps moving, and a large
 `neuralResetDrainMs` per frame means those resets are costing real CPU time.
+
+### Fovea crop
+
+**Follow Foveation** (`Upscaling.neuralRenderingTuning.regionFollowFoveation`,
+default on) is the second region source. On VR, while FoveatedRender is active
+(DLSS or FSR selected and the region narrower than Full Eye), NR evaluates only
+the foveated region, so the periphery keeps its pre-NR content, which the
+foveated route replaces with its cheap stretched view anyway. It does not act
+through the tracked actor: the foveation region alone is a valid crop, so the
+control stays set and usable with **Limit to Tracked Actor** off, and
+`NR::Tuning::Sanitize()` does not clear it. With a tracked crop the two are
+intersected per eye (`Util::Region::ClipRegion`), so the clip never leaves NR
+evaluating outside the region the upscaler sharpens.
+
+The per-eye UVs come from `FoveatedRender::GetClipUV`, which reports nothing
+while foveation is inactive or the user is dragging the region; skipping the
+clip for those frames costs at most the resets of leaving and re-entering it,
+not one per drag frame. `NR::FoveaClip::BuildClip` (`NeuralRendering/
+FoveaClip.h`) turns the two UVs into a per-eye pixel clip, padded by the
+shader's 32 px default feather band and aligned to the usual 64 px grid, so the
+composite's fade to pre-NR content lands in the stretched periphery instead of
+the sharp region; it is inactive unless both eyes resolve.
+`NR::FoveaClip::ClipSubject` narrows the yellow actor box the same way, dropping
+an eye whose box falls outside the clip, so the overlay and the feather subject
+never extend past the evaluated crop and an out-of-region actor leaves the
+feather band at its 32 px default. The clip is skipped while the crop cost
+calibration forces its own centred crops and in the main and loading menus, the
+same gate the foveated route uses. `neuralRegion` and `neuralActorBounds`
+describe the tracked-actor source alone; `neuralRegionSource` reports whether
+the fovea clip also narrowed the crop the last frame evaluated.
 
 ## Resource and temporal contract
 
@@ -486,7 +517,7 @@ change, NR jitter and frame time per eye. The cut thresholds are distance >256,
 direction dot <0.5 and projection change >0.1. Reset bits are 1=requested,
 2=first frame, 4=frame gap, 8=camera position, 16=camera direction, 32=projection,
 and 64=feature creation. Periodic summaries also use `[NRDiag/v2]` in
-`CommunityShaders.log`.
+`OpenShaders.log`.
 
 The overlay shows the last 120 engine frames, including missing hooks, and is
 controlled by **Show NR Diagnostics** and the global overlay setting.
