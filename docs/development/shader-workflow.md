@@ -246,7 +246,7 @@ file (`tools/feature-flip-impact.py`, weighted by the run's own compile timings)
 and ships it in the package; it is not checked in. A build without the file shows
 no tiers.
 
-For local testing, download the `FeatureFlipImpact-SE` / `FeatureFlipImpact-VR`
+For local testing, download the `FeatureFlipImpact` (holds the SE and VR tables)
 artifacts from a release-build run and join them, or generate your own on Windows
 from the validation configs and a `--timing-report` JSON:
 
