@@ -153,6 +153,19 @@ namespace Util::Region
 	}
 
 	/**
+	 * @brief Truncates a UV rect to a pixel region for the given extent, the sizing the foveated
+	 *        route's Streamline and D3D copies use. No padding, alignment or frame clamping, and
+	 *        w and h floor at 1 so a crop never has a zero extent.
+	 */
+	inline Subrect::PixelRegion SubrectFromUV(const Subrect::UVRegion& a_uv, uint32_t a_width, uint32_t a_height)
+	{
+		return { static_cast<uint32_t>(a_uv.x * a_width),
+			static_cast<uint32_t>(a_uv.y * a_height),
+			std::max<uint32_t>(1, static_cast<uint32_t>(a_width * a_uv.w)),
+			std::max<uint32_t>(1, static_cast<uint32_t>(a_height * a_uv.h)) };
+	}
+
+	/**
 	 * @brief Clamps a crop to a frame's pixel extent; empty when no part of it fits.
 	 *        A crop measured for a different frame can land outside it, and an empty subrect would
 	 *        latch the pass off.

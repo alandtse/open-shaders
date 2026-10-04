@@ -7,6 +7,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -79,6 +80,17 @@ namespace
 	{
 		for (uint32_t frame = 0; frame < kPolicy.shrinkWindowFrames; ++frame)
 			a_stabilizer.Update(a_candidate, kWidth, kHeight);
+	}
+
+	/** @brief The inline UV-to-pixel arithmetic SubrectFromUV replaced, kept as an oracle. */
+	PixelRegion LegacySubrectFromUV(const UVRegion& a_uv, uint32_t a_width, uint32_t a_height)
+	{
+		PixelRegion region;
+		region.w = std::max<uint32_t>(1, (uint32_t)(a_width * a_uv.w));
+		region.h = std::max<uint32_t>(1, (uint32_t)(a_height * a_uv.h));
+		region.x = (uint32_t)(a_uv.x * a_width);
+		region.y = (uint32_t)(a_uv.y * a_height);
+		return region;
 	}
 }
 
@@ -664,6 +676,42 @@ TEST_CASE("BoundsFromUV feeds PixelRegionFromBounds the same rect in pixels", "[
 	REQUIRE(fullFrame.y == 0u);
 	REQUIRE(fullFrame.w == kWidth);
 	REQUIRE(fullFrame.h == kHeight);
+}
+
+TEST_CASE("SubrectFromUV truncates a UV rect exactly as the inline arithmetic did", "[region][uv]")
+{
+	const std::array<UVRegion, 9> uvs{
+		UVRegion{ 0.0f, 0.0f, 0.0f, 0.0f },
+		UVRegion{ 0.0f, 0.0f, 1.0f, 1.0f },
+		UVRegion{ 0.25f, 0.25f, 0.25f, 0.25f },
+		UVRegion{ 0.0f, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f },
+		UVRegion{ 0.499f, 0.499f, 0.499f, 0.499f },
+		UVRegion{ 0.999f, 0.999f, 0.999f, 0.999f },
+		UVRegion{ 0.0005f, 0.0005f, 0.0005f, 0.0005f },
+		UVRegion{ 0.0f, 0.0f, 0.5f, 1.0f },
+		UVRegion{ 0.5f, 0.0f, 0.5f, 1.0f },
+	};
+	const std::array<std::array<uint32_t, 2>, 4> sizes{ { { 1080, 1200 }, { 1512, 1680 }, { 2064, 2208 }, { 1, 1 } } };
+
+	for (const auto& uv : uvs) {
+		for (const auto& size : sizes) {
+			const auto actual = Util::Region::SubrectFromUV(uv, size[0], size[1]);
+			const auto expected = LegacySubrectFromUV(uv, size[0], size[1]);
+			REQUIRE(actual.x == expected.x);
+			REQUIRE(actual.y == expected.y);
+			REQUIRE(actual.w == expected.w);
+			REQUIRE(actual.h == expected.h);
+		}
+	}
+}
+
+TEST_CASE("SubrectFromUV returns the whole eye extent for a full-frame UV", "[region][uv]")
+{
+	const auto region = Util::Region::SubrectFromUV(UVRegion{}, 2064, 2208);
+	REQUIRE(region.x == 0u);
+	REQUIRE(region.y == 0u);
+	REQUIRE(region.w == 2064u);
+	REQUIRE(region.h == 2208u);
 }
 
 TEST_CASE("Intersect is the overlap of two crops", "[region][clip]")
