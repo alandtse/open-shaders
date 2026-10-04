@@ -1,5 +1,6 @@
 #include "Upscaling.h"
 #include "GpuPass.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
@@ -1426,6 +1427,9 @@ Upscaling::UpscaleMethod Upscaling::GetUpscaleMethod() const
 		           static_cast<UpscaleMethod>(bootSnapshot.Boot(&Settings::upscaleMethod)) :
 		           UpscaleMethod::kFSR;
 
+	if (!IsEnabled())
+		return UpscaleMethod::kTAA;
+
 	// No PerfMode: the DLSS-capable preference, or the no-DLSS preference when DLSS is unavailable —
 	// coerced off DLSS so an out-of-range config can't re-select an unresolved DLSS path.
 	if (!streamline.featureDLSS) {
@@ -1638,8 +1642,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		if (upscaleModeChanged) {
 			DestroyUpscalingTextureResources(a_upscalemethod);
 
-			// Only destroy SDK resources if the previous method was actually performing upscaling
-			if (previousUpscalingWasActive) {
+			if (previousUpscaleMode == UpscaleMethod::kDLSS || previousUpscaleMode == UpscaleMethod::kFSR) {
 				if (previousUpscaleMode == UpscaleMethod::kDLSS)
 					streamline.DestroyDLSSResources();
 				else if (previousUpscaleMode == UpscaleMethod::kFSR)
@@ -2491,7 +2494,7 @@ bool Upscaling::ShouldPrepareFrameGeneration() const
 {
 	auto* state = globals::state;
 	const bool menuOpen = state && state->IsPausedOrMenuOpen(globals::game::ui);
-	return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && (settings.frameGenerationAllowInMenus || !menuOpen);
+	return IsEnabled() && IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && (settings.frameGenerationAllowInMenus || !menuOpen);
 }
 
 bool Upscaling::ShouldUseFrameGenerationThisFrame() const
@@ -3304,7 +3307,7 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 	// When FG is active, its SetUIBuffer redirects to uiBufferWrapped instead
 	// When HDR Display is not loaded, skip entirely so vanilla UI renders to kFRAMEBUFFER
 	auto& upscaling = globals::features::upscaling;
-	if (!upscaling.d3d12SwapChainActive && globals::features::hdrDisplay.loaded) {
+	if (!upscaling.d3d12SwapChainActive && globals::features::hdrDisplay.IsEnabled()) {
 		globals::features::hdrDisplay.SetUIBuffer();
 	}
 
@@ -3314,19 +3317,19 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32_t a3, RE::RENDER_TARGET a_target, void* a_4, bool a_5)
 {
 	auto& postProcessing = globals::features::postProcessing;
-	if (postProcessing.loaded) {
+	if (postProcessing.IsEnabled()) {
 		postProcessing.DrawBeforeUpscaling();
 	}
 
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.IsEnabled() && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
-		if (postProcessing.loaded)
+		if (postProcessing.IsEnabled())
 			postProcessing.ClearBorderMotionVectorsForFrameGen();
 		upscaling.frameGenerationPrepared = upscaling.CopySharedD3D12Resources();
 	}
@@ -3358,7 +3361,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
 	// When HDR Display is not loaded, ISHDR writes to vanilla kFRAMEBUFFER (SDR path)
-	bool hdrLoaded = globals::features::hdrDisplay.loaded;
+	bool hdrLoaded = globals::features::hdrDisplay.IsEnabled();
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RedirectFramebuffer();
 
@@ -3407,4 +3410,24 @@ void Upscaling::BSFaceGenManager_UpdatePendingCustomizationTextures::thunk()
 	runtimeData.dynamicResolutionLock = 1;
 	func();
 	runtimeData.dynamicResolutionLock = 0;
+}
+
+bool Upscaling::HasReleasableResources() const
+{
+	return !perfMode.IsHookActive() && !d3d12SwapChainActive;
+}
+
+void Upscaling::OnRuntimeDisabled()
+{
+	CheckResources(GetUpscaleMethod());
+}
+
+void Upscaling::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(jitterCB, upscalingDataCB, cameraMotionVectorsCB, vrClearHMDMaskCB,
+		reactiveMaskTexture, transparencyCompositionMaskTexture, motionVectorCopyTexture, sharpenerTexture, runtimeFsrDepthTexture,
+		vrIntermediateColorIn, vrIntermediateColorOut, vrIntermediateLinearDepth, vrIntermediateMotionVectors,
+		vrIntermediateReactiveMask, vrIntermediateTransparencyMask,
+		upscaleDepthStencilState, upscaleBlendState, upscaleRasterizerState);
+	rcas.ReleaseResources();
 }

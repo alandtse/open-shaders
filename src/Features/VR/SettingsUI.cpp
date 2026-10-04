@@ -145,7 +145,7 @@ namespace
 			auto& upscaling = globals::features::upscaling;
 			auto& dynamicCubemaps = globals::features::dynamicCubemaps;
 			const bool foveatedDLSSActive = upscaling.foveatedRender.IsActive();
-			const bool ssrEnabled = dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
+			const bool ssrEnabled = dynamicCubemaps.IsEnabled() && dynamicCubemaps.settings.EnabledSSR;
 
 			if (!foveatedDLSSActive) {
 				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_dlss"), "Requires Foveated DLSS to be active:"));

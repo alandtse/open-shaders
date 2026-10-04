@@ -376,6 +376,9 @@ void TruePBR::RestoreDefaultSettings()
 
 void TruePBR::SetupResources()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	SetupTextureSetData();
 	SetupMaterialObjectData();
 }
@@ -635,13 +638,13 @@ void TruePBR::GenerateShaderPermutations(RE::BSShader* shader)
 {
 	auto state = globals::state;
 	auto shaderCache = globals::shaderCache;
-	if (shader->shaderType == RE::BSShader::Type::Lighting) {
+	if (!shaderCache->backgroundCompilation && shader->shaderType == RE::BSShader::Type::Lighting) {
 		const auto pixelPermutations = Permutations::GeneratePBRLightingPixelPermutations();
 		for (auto descriptor : pixelPermutations) {
 			auto vertexShaderDesriptor = descriptor;
 			auto pixelShaderDescriptor = descriptor;
 			state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-			std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
+			std::ignore = shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 		}
 	}
 }
@@ -779,7 +782,7 @@ struct BSLightingShaderProperty_GetRenderPasses
 			return renderPasses;
 		}
 
-		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.loaded && globals::features::interiorSun.isInteriorWithSun;
+		const auto issEnabledAndInteriorWithSun = globals::features::interiorSun.IsEnabled() && globals::features::interiorSun.isInteriorWithSun;
 
 		bool isPbr = false;
 
@@ -1322,7 +1325,7 @@ bool TruePBR::TESObjectLAND_SetupMaterial(RE::TESObjectLAND* land)
 
 void TruePBR::SetupGrassMaterial(RE::BSLightingShaderProperty* sourceProperty, RE::BSLightingShaderProperty* grassProperty)
 {
-	if (!loaded || sourceProperty == nullptr || grassProperty == nullptr ||
+	if (!loaded || !IsRuntimeAvailable() || sourceProperty == nullptr || grassProperty == nullptr ||
 		!sourceProperty->flags.any(RE::BSShaderProperty::EShaderPropertyFlag::kVertexLighting)) {
 		return;
 	}
@@ -1723,6 +1726,10 @@ struct PBR_BSLightingShader_SetupMaterial
 
 void TruePBR::PostPostLoad()
 {
+	logger::info("[TruePBR] Startup enabled={}; shader support remains compiled", IsRuntimeAvailable());
+	if (!IsRuntimeAvailable())
+		return;
+
 	logger::info("[TruePBR] Hooking BGSTextureSet");
 	stl::detour_thunk<BGSTextureSet_ToShaderTextureSet>(REL::RelocationID(20905, 21361));
 
@@ -1772,6 +1779,9 @@ void TruePBR::PostPostLoad()
 
 void TruePBR::DataLoaded()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	defaultPbrLandTextureSet = RE::TESForm::LookupByEditorID<RE::BGSTextureSet>("DefaultPBRLand");
 	SetupDefaultPBRLandTextureSet();
 }

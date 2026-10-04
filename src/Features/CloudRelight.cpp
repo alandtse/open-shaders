@@ -53,7 +53,7 @@ void CloudRelight::DrawSettings()
 							  "Positive: silver lining spreads into thicker cloud areas.\n"
 							  "Negative: silver lining is confined to thinner cloud edges."));
 
-	if (!globals::features::cloudShadows.loaded) {
+	if (!globals::features::cloudShadows.IsEnabled()) {
 		ImGui::Spacing();
 		ImGui::TextWrapped("%s", T(TKEY("cloud_shadows_required"), "Cloud self-shadowing requires Cloud Shadows to be installed and enabled."));
 	}

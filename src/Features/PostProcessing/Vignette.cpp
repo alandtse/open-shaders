@@ -1,4 +1,5 @@
 #include "Vignette.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -92,7 +93,10 @@ void Vignette::SetupResources()
 		texOutput->CreateRTV(rtvDesc);
 	}
 
-	CompileRasterShaders();
+	if (!shadersRequested) {
+		CompileRasterShaders();
+		shadersRequested = true;
+	}
 }
 
 void Vignette::ClearShaderCache()
@@ -162,4 +166,9 @@ void Vignette::Draw(TextureInfo& inout_tex)
 	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void Vignette::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(vignetteCB, texOutput);
 }

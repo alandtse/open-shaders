@@ -34,11 +34,15 @@ namespace Skylighting
 
 	float MixDiffuse(float visibility)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature))
+			return 1.0;
 		return lerp(SharedData::skylightingSettings.MinDiffuseVisibility, 1.0, visibility);
 	}
 
 	float MixSpecular(float visibility)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature))
+			return 1.0;
 		return lerp(SharedData::skylightingSettings.MinSpecularVisibility, 1.0, visibility);
 	}
 
@@ -68,6 +72,9 @@ namespace Skylighting
 #if defined(PSHADER)
 	void ApplySkylighting(inout float3 diffuseColor, inout float3 directionalAmbientColor, float3 albedo, float skylightingDiffuse)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature))
+			return;
+
 		float maxScale = 1.0;
 		if (directionalAmbientColor.x > 0.0)
 			maxScale = min(maxScale, diffuseColor.x / directionalAmbientColor.x);
@@ -102,7 +109,7 @@ namespace Skylighting
 		shadowVisibility = 1.0;
 #	endif
 
-		if (SharedData::InInterior)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature) || SharedData::InInterior)
 			return scaledUnitSH;
 
 		positionMS.xyz += normalWS * CELL_SIZE * 0.5;  // Receiver normal bias
@@ -166,7 +173,7 @@ namespace Skylighting
 
 	float GetSkylightingDiffuse(sh2 skylightingSH, float3 positionMS, float3 evalNormal, float vertexAO = 1.0)
 	{
-		if (SharedData::InInterior)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature) || SharedData::InInterior)
 			return 1.0;
 
 		float3 candidateNormal = float3(evalNormal.xy, max(0.0, evalNormal.z));
@@ -181,7 +188,7 @@ namespace Skylighting
 	{
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
-		if (SharedData::InInterior)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkylightingFeature) || SharedData::InInterior)
 			return scaledUnitSH;
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;

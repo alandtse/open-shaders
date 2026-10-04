@@ -237,10 +237,8 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 	psout.Color = 0;
 
-#	ifndef ENABLESSR
-	// Disable SSR raymarch
-	return psout;
-#	endif
+	if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) || !SharedData::cubemapCreatorSettings.EnabledSSR)
+		return psout;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord);
 	float2 uv = input.TexCoord;

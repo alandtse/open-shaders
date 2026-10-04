@@ -113,7 +113,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(RAIN)
 	float3 rainVelocity = Velocity.xyz;
 #			if defined(EFFECTS11)
-	if (SharedData::enbSettings.EnableRain) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.EnableRain)) {
 		float velLen = length(rainVelocity);
 		if (velLen > 0) {
 			float3 normVel = rainVelocity / velLen;
@@ -311,7 +311,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(ENVCUBE) && defined(RAIN) && defined(DYNAMIC_CUBEMAPS) && defined(EFFECTS11)
-	if (SharedData::enbSettings.EnableRain) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.EnableRain)) {
 		float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, input.RaindropData.xy);
 		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
 		clip(alpha - (4.0 / 255.0));
@@ -394,15 +394,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Use the cheaper VSM shadows if available; otherwise route through the
 		// shared SLF-vs-vanilla helper (LLF cascades under SLF, else lit).
 #	if defined(VOLUMETRIC_SHADOWS)
-		dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS.xyz, worldPositionWS, eyeIndex, dirDetailedShadow);
-#	else
-		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise, 1.0);
+		if (RuntimeFeatures::IsEnabled(RuntimeFeatures::VolumetricShadowsFeature))
+			dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS.xyz, worldPositionWS, eyeIndex, dirDetailedShadow);
+		else
 #	endif
+			dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise, 1.0);
 	}
 
 	float3 ambientColor = Color::Ambient(max(0, SharedData::GetAmbient(float3(0, 0, 1))));
 #	if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL)) {
 		ambientColor = ImageBasedLighting::GetDiffuseIBL(ambientColor, float3(0, 0, -1));
 	}
 #	endif
@@ -414,6 +415,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(LIGHT_LIMIT_FIX)
 	uint lightCount = 0;
+	[branch] if (RuntimeFeatures::IsEnabled(RuntimeFeatures::LightLimitFixFeature))
 	{
 		float3 viewPosition = FrameBuffer::WorldToView(positionWS.xyz, true, eyeIndex);
 		float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);

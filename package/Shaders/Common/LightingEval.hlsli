@@ -120,15 +120,20 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 	PBR::GetDirectLightInput(lightingOutput, context, material, tbnTr, uv);
 #else
 #	if defined(CS_HAIR_SHADING)
-	if (SharedData::hairSpecularSettings.Enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.Enabled)) {
 		Hair::GetHairDirectLight(lightingOutput, context, material, tbnTr, uv);
 		return;
 	}
 #	endif
 #	if defined(CS_SKIN_SHADING)
-	if (SharedData::skinData.skinParams.w > 0.0f) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::SkinFeature) && SharedData::skinData.skinParams.w > 0.0f) {
 		Skin::SkinDirectLightInput(lightingOutput, context, material);
 		float3 softLightColor = context.lightColor * context.softShadow;
+
+#		if defined(DEFERRED)
+		if (HasSoftLighting())
+			lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(dot(context.worldNormal, context.lightDir)) * material.rimSoftLightColor;
+#		endif
 
 		// SSS fallback for forward skin rendering
 #		if !defined(DEFERRED)
@@ -150,7 +155,7 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 	float3 softLightColor = context.lightColor * context.softShadow;
 	lightingOutput.diffuse = saturate(NdotL) * diffuseLightColor * Color::VanillaNormalization();
 #	if defined(TREE_ANIM)
-	[branch] if (SharedData::foliageLightingSettings.EnableFoliageScattering != 0)
+	[branch] if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::FoliageLightingFeature) && SharedData::foliageLightingSettings.EnableFoliageScattering) != 0)
 	{
 		lightingOutput.transmission += material.BaseColor * GetFoliageTransmission(NdotL, dot(context.viewDir, context.lightDir)) * diffuseLightColor * Color::VanillaNormalization();
 	}
@@ -165,7 +170,7 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 		lightingOutput.diffuse += softLightColor * saturate(-NdotL) * material.backLightColor * Color::VanillaNormalization();
 
 #	if defined(VANILLA_FRESNEL)
-	if (SharedData::vanillaFresnelSettings.Enable && SharedData::vanillaFresnelSettings.EnableGGX) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::VanillaFresnelFeature) && SharedData::vanillaFresnelSettings.Enable) && (RuntimeFeatures::IsEnabled(RuntimeFeatures::VanillaFresnelFeature) && SharedData::vanillaFresnelSettings.EnableGGX)) {
 		lightingOutput.specular = diffuseLightColor * MicrofacetSpecular(context, material.F0, material.Roughness) * Color::PBRLightingCompensation * Color::PBRLightingScale;
 
 		float2 specularBRDF = BRDF::EnvBRDF(material.Roughness, saturate(dot(context.worldNormal, context.viewDir)));
@@ -185,20 +190,20 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 	PBR::GetIndirectLobeWeights(lobeWeights, context, material);
 #else
 #	if defined(CS_HAIR_SHADING)
-	if (SharedData::hairSpecularSettings.Enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.Enabled)) {
 		Hair::GetHairIndirectLobeWeights(lobeWeights, context, material, uv);
 		return;
 	}
 #	endif
 #	if defined(CS_SKIN_SHADING)
-	if (SharedData::skinData.skinParams.w > 0.0f) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::SkinFeature) && SharedData::skinData.skinParams.w > 0.0f) {
 		Skin::SkinIndirectLobeWeights(lobeWeights, material, context);
 		return;
 	}
 #	endif
 	lobeWeights.diffuse = material.BaseColor;
 #	if defined(DYNAMIC_CUBEMAPS)
-	if (any(material.F0 > 0.0)) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && any(material.F0 > 0.0)) {
 		const float3 N = context.worldNormal;
 		const float3 V = context.viewDir;
 		const float3 VN = context.vertexNormal;

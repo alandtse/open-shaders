@@ -22,7 +22,7 @@ namespace TerrainShadows
 
 	float GetTerrainShadow(const float3 worldPos, SamplerState samp)
 	{
-		if (!SharedData::terraOccSettings.EnableTerrainShadow)
+		if (!(RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainShadowsFeature) && SharedData::terraOccSettings.EnableTerrainShadow))
 			return 1.0;
 		float2 uv = GetTerrainShadowUV(worldPos.xy);
 		if (any(uv < 0.0) || any(uv > 1.0))

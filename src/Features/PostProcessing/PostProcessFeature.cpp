@@ -1,4 +1,5 @@
 #include "PostProcessFeature.h"
+#include "Utils/RuntimeResources.h"
 
 #include "ShaderCache.h"
 
@@ -56,5 +57,28 @@ void PostProcessFeature::CompileRasterShadersAsync(
 		auto path = std::filesystem::path(sourceDir) / info.filename;
 		EnqueueStandaloneCompile(*this, path, info.entry, info.defines,
 			SIE::ShaderCache::StandaloneShaderClass::Pixel, info.programPtr);
+	}
+}
+
+void PostProcessFeature::UpdateResources()
+{
+	if (!IsActive()) {
+		if (runtimeResourcesReady) {
+			Util::RuntimeResourceDiagnostics diagnostics("PostProcessing/" + GetType(), "disable");
+			ReleaseResources();
+			runtimeResourcesReady = false;
+		}
+		return;
+	}
+	if (runtimeResourcesReady)
+		return;
+	Util::RuntimeResourceDiagnostics diagnostics("PostProcessing/" + GetType(), "enable");
+	try {
+		SetupResources();
+		runtimeResourcesReady = true;
+	} catch (const std::exception& e) {
+		ReleaseResources();
+		enabled = false;
+		logger::error("Post Processing {} resource setup failed: {}", GetType(), e.what());
 	}
 }

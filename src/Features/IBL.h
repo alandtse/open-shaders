@@ -49,6 +49,8 @@ public:
 	virtual void Prepass() override;
 	/** @brief Creates IBL textures, compiles the diffuse IBL compute shader, and loads static fallback cubemaps. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Releases the cached diffuse IBL compute shader so it can be recompiled. */
 	virtual void ClearShaderCache() override;
 

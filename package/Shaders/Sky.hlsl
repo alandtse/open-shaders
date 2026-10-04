@@ -14,9 +14,9 @@ bool IsProceduralSunActive()
 {
 	bool effects11OwnsSun = false;
 #	if defined(EFFECTS11)
-	effects11OwnsSun = SharedData::enbSettings.EnableProceduralSun != 0;
+	effects11OwnsSun = (RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.EnableProceduralSun) != 0;
 #	endif
-	return SharedData::proceduralSunSettings.enabled && !effects11OwnsSun &&
+	return (RuntimeFeatures::IsEnabled(RuntimeFeatures::ProceduralSunFeature) && SharedData::proceduralSunSettings.enabled) && !effects11OwnsSun &&
 	       (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun) &&
 	       (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld) &&
 	       !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection);
@@ -342,7 +342,7 @@ PS_OUTPUT main(PS_INPUT input)
 	baseColor = PParams.xxxx * (-baseColor + blendColor) + baseColor;
 #		endif
 #		if defined(CR_CLOUDS)
-	if (SharedData::cloudRelightSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::CloudRelightFeature) && SharedData::cloudRelightSettings.enabled)) {
 		if (composeAuthoredSky)
 			baseColor.xyz = Color::DecodeAuthoredColor(baseColor.xyz);
 		float3 viewDir = normalize(input.WorldPosition.xyz);
@@ -389,7 +389,7 @@ PS_OUTPUT main(PS_INPUT input)
 		composeAuthoredSky = false;
 		baseColor.w = sunCoverage;
 #			if defined(CLOUD_SHADOWS)
-		if (sunCoverage > 0.0f && SharedData::proceduralSunSettings.cloudOcclusionStrength > 0.0f) {
+		if (RuntimeFeatures::IsEnabled(RuntimeFeatures::CloudShadowsFeature) && sunCoverage > 0.0f && SharedData::proceduralSunSettings.cloudOcclusionStrength > 0.0f) {
 			float cloudOpacity = CloudShadows::CloudShadowsTexture.SampleLevel(SampBaseSampler, viewDirection, 0).x;
 			baseColor.w *= ProceduralSun::GetCloudTransmission(cloudOpacity, SharedData::proceduralSunSettings.cloudOcclusionStrength);
 		}
@@ -414,7 +414,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if defined(TEX) && defined(EFFECTS11)
-	if (SharedData::enbSettings.EnableProceduralSun && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.EnableProceduralSun) && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
 		baseColor.xyz = ComputeProceduralSun(input.TexCoord0.xy);
 		composeAuthoredSky = false;
 		baseColor.w = input.Color.w;
@@ -471,7 +471,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 
 #			if defined(CLOUDS) && defined(EFFECTS11)
-	if (SharedData::enbSettings.Enable)
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable))
 		baseColor.xyz = pow(abs(baseColor.xyz), SharedData::enbSettings.CloudsCurve);
 #			endif
 
@@ -479,7 +479,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Color.xyz = ComposeSkyColor(input.Color.xyz, baseColor.xyz, skyScale, composeAuthoredSky) * skyBrightnessMultiplier;
 
 #			if defined(CLOUDS) && defined(EFFECTS11)
-	if (SharedData::enbSettings.Enable) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable)) {
 		float3 cloudColor = psout.Color.xyz;
 		float3 viewDirection = normalize(input.WorldPosition.xyz);
 
@@ -525,7 +525,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(EXP_HEIGHT_FOG)
 	const bool inReflection = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection) != 0;
-	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
+	if (inReflection && (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		float skyFogDistance = SharedData::CameraData.x;
 #		if defined(HORIZON_FIX)
 		// Match the main view (ISSAOComposite.hlsl): fog the sky out to the HorizonFix far water's horizon

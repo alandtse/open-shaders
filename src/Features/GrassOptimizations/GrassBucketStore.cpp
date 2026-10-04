@@ -1,4 +1,5 @@
 #include "GrassBucketStore.h"
+#include "Utils/RuntimeResources.h"
 
 void GrassBucketStore::SetupResources()
 {
@@ -1029,4 +1030,30 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 
 	bin.capacityInstances = cap;
 	return true;
+}
+
+void GrassBucketStore::ReleaseResources()
+{
+	std::scoped_lock lock(bucketMutex);
+	for (auto& [key, bucket] : buckets) {
+		Util::UnbindRuntimeObject(bucket.instanceBuf);
+		Util::UnbindRuntimeObject(bucket.originBuf);
+		Util::UnbindRuntimeObject(bucket.compactedBuf);
+		Util::UnbindRuntimeObject(bucket.extrasBuf);
+		Util::UnbindRuntimeObject(bucket.argsBuf);
+		Util::UnbindRuntimeObject(bucket.lodCounterBuf);
+		for (auto& bin : bucket.lodBins) {
+			Util::UnbindRuntimeObject(bin.compactedBuf);
+			Util::UnbindRuntimeObject(bin.extrasBuf);
+			Util::UnbindRuntimeObject(bin.argsBuf);
+		}
+		bucket.ReleaseResources();
+		bucket.ResetCullState();
+		bucket.dirty = true;
+		bucket.rebuildFromSlice = 0;
+	}
+	meshLibrary.ReleaseResources();
+	complexCache.clear();
+	cachedComplexThreshold = -1.0f;
+	Util::ReleaseRuntimeResources(detectResult, detectStaging);
 }

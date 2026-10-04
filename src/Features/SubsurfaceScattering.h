@@ -100,6 +100,8 @@ public:
 
 	/** @brief Creates GPU resources including constant buffers and temporary render textures. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Resets per-frame state including character lighting and kernel recalculation. */
 	virtual void Reset() override;
 	virtual void RestoreDefaultSettings() override;

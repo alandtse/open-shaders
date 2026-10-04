@@ -369,7 +369,7 @@ namespace BackgroundBlur
 		std::lock_guard<std::mutex> lock(resourceMutex);
 		auto& hdr = globals::features::hdrDisplay;
 		auto& upscaling = globals::features::upscaling;
-		const bool hdrActive = hdr.loaded && hdr.settings.enableHDR && hdr.hdrTexture;
+		const bool hdrActive = hdr.IsEnabled() && hdr.settings.enableHDR && hdr.hdrTexture;
 		RestoreBuffer(retainedScene, hdrActive ? hdr.hdrTexture->resource.get() : nullptr, hdr.sceneGeneration);
 		retainedScene = {};
 		if (retainedUI.source) {
@@ -724,7 +724,7 @@ namespace BackgroundBlur
 	bool ImageHDRScene(const ImVec2& size)
 	{
 		auto& hdr = globals::features::hdrDisplay;
-		if (!hdr.loaded || !hdr.settings.enableHDR || !hdr.hdrTexture || !hdr.hdrTexture->rtv ||
+		if (!hdr.IsEnabled() || !hdr.settings.enableHDR || !hdr.hdrTexture || !hdr.hdrTexture->rtv ||
 			!hdr.hdrOutputCS || !hdr.IsCleanSceneCaptureFresh() || (!initialized && !Initialize()) || initializationFailed ||
 			size.x <= 0.0f || size.y <= 0.0f)
 			return false;
@@ -799,7 +799,7 @@ namespace BackgroundBlur
 		auto& upscaling = globals::features::upscaling;
 		bool useUpscalingBackbuffer = upscaling.d3d12SwapChainActive;
 
-		auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+		auto* hdr = globals::features::hdrDisplay.IsEnabled() ? &globals::features::hdrDisplay : nullptr;
 		bool hdrActive = hdr &&
 		                 hdr->settings.enableHDR && hdr->hdrDataCB && hdr->outputTexture &&
 		                 hdr->hdrTexture && hdr->hdrTexture->resource && hdr->hdrTexture->srv && hdr->hdrTexture->rtv;

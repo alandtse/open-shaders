@@ -52,6 +52,16 @@ public:
 
 	bool HasShaderDefine(RE::BSShader::Type) override { return true; };
 
+	/** @brief Maintains shadow data because the installed scheduler replaces engine shadow masks. */
+	bool RequiresRenderMaintenance() const override { return IsRuntimeAvailable(); }
+	/** @brief LLF installs its complete light and shadow backend only at startup. */
+	bool RequiresRestartForToggle() const override { return true; }
+	/** @copydoc Feature::GetRuntimeToggleNote */
+	std::string_view GetRuntimeToggleNote() const override
+	{
+		return "Enabling or disabling LLF requires a restart. Off skips its light and shadow backend, hooks and resources. Shader cache is unchanged.";
+	}
+
 	using LightFlags = PointLightFlags::Flags;
 
 	struct PositionOpt
@@ -145,7 +155,7 @@ public:
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad1;
+		uint BackendEnabled;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -343,6 +353,9 @@ public:
 
 	/** @brief Creates GPU buffers, compute shaders, and constant buffers for clustered lighting. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
+	void SetupPersistentResources() override;
 	/** @brief Compiles (or re-lazily-compiles) the clustering and shadow-demand compute shaders. */
 	void CompileComputeShaders();
 	virtual void Reset() override;
@@ -389,8 +402,8 @@ public:
 	/** @brief Returns whether the debug overlay should be displayed. */
 	virtual bool IsOverlayVisible() const override
 	{
-		return EnableLightsVisualisation || settings.ShowShadowOverlay ||
-		       ShadowCasterManager::HasSuppressedLights() || ShadowCasterManager::HasAnyOverrides();
+		return IsRuntimeAvailable() && (EnableLightsVisualisation || settings.ShowShadowOverlay ||
+										   ShadowCasterManager::HasSuppressedLights() || ShadowCasterManager::HasAnyOverrides());
 	}
 
 	/** @brief Installs shader setup geometry hooks for lighting, effect, and water shaders. */

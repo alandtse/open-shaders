@@ -1,4 +1,5 @@
 #include "D3D.h"
+#include "RuntimeResources.h"
 
 #include "Deferred.h"
 #include "Features/TerrainBlending.h"
@@ -24,7 +25,7 @@ namespace Util
 			return Util::AsReal(zPrepassCopy.depthSRV);
 
 		auto& tb = globals::features::terrainBlending;
-		if (tb.loaded && tb.settings.Enabled) {
+		if (tb.IsEnabled() && tb.settings.Enabled) {
 			auto* srv = prefer16bit ? (tb.blendedDepthTexture16 ? tb.blendedDepthTexture16->srv.get() : nullptr) : (tb.blendedDepthTexture ? tb.blendedDepthTexture->srv.get() : nullptr);
 			if (srv)
 				return srv;
@@ -110,6 +111,7 @@ namespace Util
 		va_end(va);
 
 		Resource->SetPrivateData(WKPDID_D3DDebugObjectNameT, len, buffer);
+		TrackRuntimeResourceAllocation(Resource);
 	}
 
 	bool GetTexture2DDesc(ID3D11View* View, D3D11_TEXTURE2D_DESC& OutDesc)
@@ -547,3 +549,110 @@ namespace Util
 		SafeRelease(savedIB);
 	}
 }  // namespace Util
+
+void Util::UnbindRuntimeResource(ID3D11Resource* resource)
+{
+	TrackRuntimeResourceRelease(resource);
+	if (!resource || !globals::d3d::context)
+		return;
+	auto* context = globals::d3d::context;
+	const auto matches = [resource](ID3D11View* view) {
+		if (!view)
+			return false;
+		winrt::com_ptr<ID3D11Resource> bound;
+		view->GetResource(bound.put());
+		return bound.get() == resource;
+	};
+	const auto unbindStage = [&](auto getSRVs, auto setSRVs, auto getCBs, auto setCBs) {
+		ID3D11ShaderResourceView* views[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
+		(context->*getSRVs)(0, static_cast<UINT>(std::size(views)), views);
+		for (UINT slot = 0; slot < std::size(views); ++slot) {
+			if (matches(views[slot])) {
+				ID3D11ShaderResourceView* empty = nullptr;
+				(context->*setSRVs)(slot, 1, &empty);
+			}
+			if (views[slot])
+				views[slot]->Release();
+		}
+		ID3D11Buffer* buffers[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
+		(context->*getCBs)(0, static_cast<UINT>(std::size(buffers)), buffers);
+		for (UINT slot = 0; slot < std::size(buffers); ++slot) {
+			if (buffers[slot] == resource) {
+				ID3D11Buffer* empty = nullptr;
+				(context->*setCBs)(slot, 1, &empty);
+			}
+			if (buffers[slot])
+				buffers[slot]->Release();
+		}
+	};
+	unbindStage(&ID3D11DeviceContext::VSGetShaderResources, &ID3D11DeviceContext::VSSetShaderResources, &ID3D11DeviceContext::VSGetConstantBuffers, &ID3D11DeviceContext::VSSetConstantBuffers);
+	unbindStage(&ID3D11DeviceContext::HSGetShaderResources, &ID3D11DeviceContext::HSSetShaderResources, &ID3D11DeviceContext::HSGetConstantBuffers, &ID3D11DeviceContext::HSSetConstantBuffers);
+	unbindStage(&ID3D11DeviceContext::DSGetShaderResources, &ID3D11DeviceContext::DSSetShaderResources, &ID3D11DeviceContext::DSGetConstantBuffers, &ID3D11DeviceContext::DSSetConstantBuffers);
+	unbindStage(&ID3D11DeviceContext::GSGetShaderResources, &ID3D11DeviceContext::GSSetShaderResources, &ID3D11DeviceContext::GSGetConstantBuffers, &ID3D11DeviceContext::GSSetConstantBuffers);
+	unbindStage(&ID3D11DeviceContext::PSGetShaderResources, &ID3D11DeviceContext::PSSetShaderResources, &ID3D11DeviceContext::PSGetConstantBuffers, &ID3D11DeviceContext::PSSetConstantBuffers);
+	unbindStage(&ID3D11DeviceContext::CSGetShaderResources, &ID3D11DeviceContext::CSSetShaderResources, &ID3D11DeviceContext::CSGetConstantBuffers, &ID3D11DeviceContext::CSSetConstantBuffers);
+	ID3D11UnorderedAccessView* uavs[D3D11_PS_CS_UAV_REGISTER_COUNT] = {};
+	context->CSGetUnorderedAccessViews(0, static_cast<UINT>(std::size(uavs)), uavs);
+	for (UINT slot = 0; slot < std::size(uavs); ++slot) {
+		if (matches(uavs[slot])) {
+			ID3D11UnorderedAccessView* empty = nullptr;
+			context->CSSetUnorderedAccessViews(slot, 1, &empty, nullptr);
+		}
+		if (uavs[slot])
+			uavs[slot]->Release();
+	}
+	ID3D11RenderTargetView* targets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ID3D11DepthStencilView* depth = nullptr;
+	context->OMGetRenderTargets(static_cast<UINT>(std::size(targets)), targets, &depth);
+	bool changed = false;
+	for (auto& target : targets) {
+		if (matches(target)) {
+			target->Release();
+			target = nullptr;
+			changed = true;
+		}
+	}
+	if (matches(depth)) {
+		depth->Release();
+		depth = nullptr;
+		changed = true;
+	}
+	if (changed) {
+		UINT count = static_cast<UINT>(std::size(targets));
+		while (count && !targets[count - 1])
+			--count;
+		context->OMSetRenderTargetsAndUnorderedAccessViews(count, targets, depth, 0, D3D11_KEEP_UNORDERED_ACCESS_VIEWS, nullptr, nullptr);
+	}
+	for (auto* target : targets)
+		if (target)
+			target->Release();
+	if (depth)
+		depth->Release();
+	context->OMGetRenderTargetsAndUnorderedAccessViews(0, nullptr, nullptr, 0, static_cast<UINT>(std::size(uavs)), uavs);
+	for (UINT slot = 0; slot < std::size(uavs); ++slot) {
+		if (matches(uavs[slot])) {
+			ID3D11UnorderedAccessView* empty = nullptr;
+			context->OMSetRenderTargetsAndUnorderedAccessViews(D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL, nullptr, nullptr, slot, 1, &empty, nullptr);
+		}
+		if (uavs[slot])
+			uavs[slot]->Release();
+	}
+	ID3D11Buffer* vertices[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT strides[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	UINT offsets[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT] = {};
+	context->IAGetVertexBuffers(0, static_cast<UINT>(std::size(vertices)), vertices, strides, offsets);
+	for (UINT slot = 0; slot < std::size(vertices); ++slot) {
+		if (vertices[slot] == resource) {
+			ID3D11Buffer* empty = nullptr;
+			context->IASetVertexBuffers(slot, 1, &empty, &strides[slot], &offsets[slot]);
+		}
+		if (vertices[slot])
+			vertices[slot]->Release();
+	}
+	winrt::com_ptr<ID3D11Buffer> index;
+	DXGI_FORMAT format;
+	UINT offset;
+	context->IAGetIndexBuffer(index.put(), &format, &offset);
+	if (index.get() == resource)
+		context->IASetIndexBuffer(nullptr, format, offset);
+}

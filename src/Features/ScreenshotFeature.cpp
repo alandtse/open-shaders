@@ -1,4 +1,5 @@
 // Screenshot Feature
+#include "Utils/RuntimeResources.h"
 // Non-blocking screenshot tool. GPU copy runs on the
 // render thread; encoding and disk I/O run on a dedicated worker thread so
 // capture does not stall the frame.
@@ -349,7 +350,7 @@ namespace
 	bool IsFlatHdrScreenshotCapture()
 	{
 		return !globals::game::isVR &&
-		       globals::features::hdrDisplay.loaded &&
+		       globals::features::hdrDisplay.IsEnabled() &&
 		       globals::features::hdrDisplay.settings.enableHDR;
 	}
 
@@ -1038,3 +1039,8 @@ void ScreenshotFeature::Capture()
 	EnqueueScreenshot(std::move(screenshot));
 }
 #undef I18N_KEY_PREFIX
+
+void ScreenshotFeature::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(previewCacheTexture, previewCacheSRV);
+}

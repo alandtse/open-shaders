@@ -281,7 +281,7 @@ void Wind::SetupTreeWindResources()
 
 void Wind::UpdateTreeWindSpring()
 {
-	if (!treeState.springConstantBuffer || !treeState.springSampler.get() || !globals::state)
+	if (!IsEnabled() || !treeState.springConstantBuffer || !treeState.springSampler.get() || !globals::state)
 		return;
 	for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex) {
 		if (!treeState.springResponseTextures[qualityIndex][0] ||

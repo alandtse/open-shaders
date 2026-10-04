@@ -24,6 +24,8 @@ public:
 	 * Safe to call multiple times - will early-out if already initialized.
 	 */
 	void Initialize();
+	/** @brief Releases the sharpening constants while retaining the compiled shader. */
+	void ReleaseResources();
 
 	/**
 	 * @brief Applies RCAS sharpening to the input texture.

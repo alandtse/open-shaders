@@ -1,5 +1,6 @@
 #include "ScreenSpaceGI.h"
 #include "GpuPass.h"
+#include "Utils/RuntimeResources.h"
 
 #include <DirectXTex.h>
 
@@ -96,35 +97,35 @@ void ScreenSpaceGI::DrawSettings()
 
 	ImGui::SeparatorText(T(TKEY("effects_resources"), "Effects & Resources"));
 
+	settings.ResourceProfile = settings.EnableGI ? kResourceProfileFullGI : kResourceProfileAOOnly;
 	const int previousResourceProfile = settings.ResourceProfile;
 	if (ImGui::BeginTable("ResourcesTable", 2)) {
 		ImGui::TableNextColumn();
-		if (ImGui::RadioButton(T(TKEY("profile_ao_only"), "AO-only Resources"), settings.ResourceProfile == kResourceProfileAOOnly)) {
+		if (ImGui::RadioButton(T(TKEY("profile_ao_only_live"), "AO Only"), settings.ResourceProfile == kResourceProfileAOOnly)) {
 			settings.ResourceProfile = kResourceProfileAOOnly;
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("profile_ao_only_tooltip"), "Uses less video memory but disables indirect lighting. Requires a game restart to change."));
+			ImGui::Text("%s", T(TKEY("profile_ao_only_live_tooltip"), "Disables indirect lighting and releases GI-only textures immediately. No restart required."));
 		}
 
 		ImGui::TableNextColumn();
-		if (ImGui::RadioButton(T(TKEY("profile_ao_gi"), "AO + GI Resources"), settings.ResourceProfile == kResourceProfileFullGI)) {
+		if (ImGui::RadioButton(T(TKEY("profile_ao_gi_live"), "AO + GI"), settings.ResourceProfile == kResourceProfileFullGI)) {
 			settings.ResourceProfile = kResourceProfileFullGI;
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("profile_ao_gi_tooltip"), "Enables full indirect lighting at the cost of more video memory. Requires a game restart to change."));
+			ImGui::Text("%s", T(TKEY("profile_ao_gi_live_tooltip"), "Enables indirect lighting and allocates its textures immediately. No restart required."));
 		}
 		ImGui::EndTable();
 	}
 
 	if (settings.ResourceProfile != previousResourceProfile) {
+		settings.EnableGI = settings.ResourceProfile == kResourceProfileFullGI;
 		if (settings.ResourceProfile == kResourceProfileAOOnly) {
 			settings.EnableGI = false;
 			settings.EnableExperimentalSpecularGI = false;
 		}
 		recompileFlag = true;
 	}
-
-	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::ResourceProfile);
 
 	if (ImGui::BeginTable("Toggles", 4)) {
 		ImGui::TableNextColumn();
@@ -137,10 +138,6 @@ void ScreenSpaceGI::DrawSettings()
 		{
 			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled);
 			recompileFlag |= ImGui::Checkbox(T(TKEY("indirect_lighting"), "Indirect Lighting (IL)"), &settings.EnableGI);
-			// GI resources are boot-latched to the profile, so checking IL before a
-			// restart is a no-op until the profile below is picked up.
-			if (settings.EnableGI && !HasGIResources())
-				Util::Text::RestartNeeded("%s", T(TKEY("indirect_lighting_pending"), "Pending restart: needs AO + GI Resources."));
 		}
 		ImGui::TableNextColumn();
 		{
@@ -453,10 +450,8 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 	};
 	settings = o_json;
 	settings.ResolutionMode = std::clamp(settings.ResolutionMode, 0, 2);
-	if (!o_json.contains("ResourceProfile")) {
-		// Existing VR configs keep full resources if GI was active, else use lean AO-only.
-		settings.ResourceProfile = (REL::Module::IsVR() && !settings.EnableGI) ? kResourceProfileAOOnly : kResourceProfileFullGI;
-	}
+	settings.ResourceProfile = settings.EnableGI ? kResourceProfileFullGI : kResourceProfileAOOnly;
+
 	recompileFlag |= previousShaderConfiguration != std::tuple{
 		settings.EnableGI, settings.EnableExperimentalSpecularGI,
 		settings.ResolutionMode, settings.EnableTemporalDenoiser, settings.EnableAdaptiveSampling
@@ -465,6 +460,7 @@ void ScreenSpaceGI::LoadSettings(json& o_json)
 
 void ScreenSpaceGI::SaveSettings(json& o_json)
 {
+	settings.ResourceProfile = settings.EnableGI ? kResourceProfileFullGI : kResourceProfileAOOnly;
 	o_json = settings;
 }
 
@@ -495,16 +491,137 @@ void ScreenSpaceGI::PostPostLoad()
 	MenuOpenCloseEventHandler::Register();
 }
 
+void ScreenSpaceGI::SetupGIResources()
+{
+	auto device = globals::d3d::device;
+	auto texDesc = texWorkingDepth->desc;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
+		.Format = texDesc.Format,
+		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MostDetailedMip = 0, .MipLevels = texDesc.MipLevels }
+	};
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {
+		.Format = texDesc.Format,
+		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MipSlice = 0 }
+	};
+
+	srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+	texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
+
+	texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
+	texRadiance->CreateSRV(srvDesc);
+	// No default UAV needed: prefilterRadiance binds per-mip UAVs via uavRadiance[].
+
+	// Create individual UAVs for each mip level for prefiltering
+	for (uint i = 0; i < 5; ++i) {
+		D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
+			.Format = DXGI_FORMAT_R11G11B10_FLOAT,
+			.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+			.Texture2D = { .MipSlice = i }
+		};
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
+		Util::SetResourceName(uavRadiance[i].get(), "SSGI::Radiance UAV mip%u", i);
+	}
+
+	// Staging texture for mip 0 radiance. radianceDisocc writes it directly,
+	// prefilterRadiance reads it as SRV and writes the mip chain back to texRadiance.
+	// Avoids a full-texture CopySubresourceRegion each frame.
+	D3D11_TEXTURE2D_DESC tempTexDesc = texDesc;
+	tempTexDesc.MipLevels = 1;
+	tempTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+	D3D11_SHADER_RESOURCE_VIEW_DESC tempSrvDesc = {
+		.Format = DXGI_FORMAT_R11G11B10_FLOAT,
+		.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
+		.Texture2D = {
+			.MostDetailedMip = 0,
+			.MipLevels = 1 }
+	};
+
+	D3D11_UNORDERED_ACCESS_VIEW_DESC tempUavDesc = {
+		.Format = DXGI_FORMAT_R11G11B10_FLOAT,
+		.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
+		.Texture2D = { .MipSlice = 0 }
+	};
+
+	texRadianceTemp = eastl::make_unique<Texture2D>(tempTexDesc, "SSGI::RadianceTemp");
+	texRadianceTemp->CreateSRV(tempSrvDesc);
+	texRadianceTemp->CreateUAV(tempUavDesc);
+
+	texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+	{
+		texIlY[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[0]");
+		texIlY[0]->CreateSRV(srvDesc);
+		texIlY[0]->CreateUAV(uavDesc);
+
+		texIlY[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[1]");
+		texIlY[1]->CreateSRV(srvDesc);
+		texIlY[1]->CreateUAV(uavDesc);
+
+		texGiSpecular[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[0]");
+		texGiSpecular[0]->CreateSRV(srvDesc);
+		texGiSpecular[0]->CreateUAV(uavDesc);
+
+		texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[1]");
+		texGiSpecular[1]->CreateSRV(srvDesc);
+		texGiSpecular[1]->CreateUAV(uavDesc);
+	}
+	srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+	{
+		texIlCoCg[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[0]");
+		texIlCoCg[0]->CreateSRV(srvDesc);
+		texIlCoCg[0]->CreateUAV(uavDesc);
+
+		texIlCoCg[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[1]");
+		texIlCoCg[1]->CreateSRV(srvDesc);
+		texIlCoCg[1]->CreateUAV(uavDesc);
+	}
+
+	const FLOAT clear[4] = {};
+	for (uint i = 0; i < 2; ++i) {
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texIlY[i]->uav.get(), clear);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texIlCoCg[i]->uav.get(), clear);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texGiSpecular[i]->uav.get(), clear);
+	}
+}
+
+void ScreenSpaceGI::ReleaseGIResources()
+{
+	Util::RuntimeResourceDiagnostics diagnostics("ScreenSpaceGI/GI", "disable");
+	Util::ReleaseRuntimeResources(texRadiance, texRadianceTemp, uavRadiance, texIlY, texIlCoCg, texGiSpecular);
+	activeResourceProfile = kResourceProfileAOOnly;
+	QueueHistoryReset();
+}
+
+void ScreenSpaceGI::UpdateGIResources()
+{
+	const bool allocateGIResources = settings.Enabled && settings.EnableGI;
+	if (allocateGIResources == HasGIResources())
+		return;
+
+	if (allocateGIResources) {
+		try {
+			Util::RuntimeResourceDiagnostics diagnostics("ScreenSpaceGI/GI", "enable");
+			SetupGIResources();
+			activeResourceProfile = kResourceProfileFullGI;
+		} catch (const std::exception& e) {
+			logger::error("SSGI GI resource allocation failed; falling back to AO: {}", e.what());
+			ReleaseGIResources();
+			settings.EnableGI = false;
+			settings.ResourceProfile = kResourceProfileAOOnly;
+		}
+	} else {
+		ReleaseGIResources();
+	}
+	QueueHistoryReset();
+}
+
 void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = globals::game::renderer;
 	auto device = globals::d3d::device;
-
-	bootSnapshot.LatchIfNeeded(settings);
-
-	activeResourceProfile = std::clamp(settings.ResourceProfile, kResourceProfileFullGI, kResourceProfileAOOnly);
-	const bool allocateGIResources = HasGIResources();
-	logger::info("SSGI resource profile: {}", allocateGIResources ? "Full GI resources" : "AO-only resources");
 
 	logger::debug("Creating buffers...");
 	{
@@ -542,51 +659,6 @@ void ScreenSpaceGI::SetupResources()
 		mainTex.texture->GetDesc(Util::AsW32(&texDesc));
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
-		if (allocateGIResources) {
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-			texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
-
-			texRadiance = eastl::make_unique<Texture2D>(texDesc, "SSGI::Radiance");
-			texRadiance->CreateSRV(srvDesc);
-			// No default UAV needed: prefilterRadiance binds per-mip UAVs via uavRadiance[].
-
-			// Create individual UAVs for each mip level for prefiltering
-			for (uint i = 0; i < 5; ++i) {
-				D3D11_UNORDERED_ACCESS_VIEW_DESC mipUavDesc = {
-					.Format = DXGI_FORMAT_R11G11B10_FLOAT,
-					.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-					.Texture2D = { .MipSlice = i }
-				};
-				DX::ThrowIfFailed(device->CreateUnorderedAccessView(texRadiance->resource.get(), &mipUavDesc, uavRadiance[i].put()));
-				Util::SetResourceName(uavRadiance[i].get(), "SSGI::Radiance UAV mip%u", i);
-			}
-
-			// Staging texture for mip 0 radiance. radianceDisocc writes it directly,
-			// prefilterRadiance reads it as SRV and writes the mip chain back to texRadiance.
-			// Avoids a full-texture CopySubresourceRegion each frame.
-			D3D11_TEXTURE2D_DESC tempTexDesc = texDesc;
-			tempTexDesc.MipLevels = 1;
-			tempTexDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-
-			D3D11_SHADER_RESOURCE_VIEW_DESC tempSrvDesc = {
-				.Format = DXGI_FORMAT_R11G11B10_FLOAT,
-				.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D,
-				.Texture2D = {
-					.MostDetailedMip = 0,
-					.MipLevels = 1 }
-			};
-
-			D3D11_UNORDERED_ACCESS_VIEW_DESC tempUavDesc = {
-				.Format = DXGI_FORMAT_R11G11B10_FLOAT,
-				.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D,
-				.Texture2D = { .MipSlice = 0 }
-			};
-
-			texRadianceTemp = eastl::make_unique<Texture2D>(tempTexDesc, "SSGI::RadianceTemp");
-			texRadianceTemp->CreateSRV(tempSrvDesc);
-			texRadianceTemp->CreateUAV(tempUavDesc);
-		}
-
 		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
 		// gi.cs.hlsl's depth-edge offset assumes FP32 working depth whenever reverse-Z is active.
@@ -616,37 +688,6 @@ void ScreenSpaceGI::SetupResources()
 
 		uavDesc.Texture2D.MipSlice = 0;
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 1;
-		if (allocateGIResources) {
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-			{
-				texIlY[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[0]");
-				texIlY[0]->CreateSRV(srvDesc);
-				texIlY[0]->CreateUAV(uavDesc);
-
-				texIlY[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlY[1]");
-				texIlY[1]->CreateSRV(srvDesc);
-				texIlY[1]->CreateUAV(uavDesc);
-
-				texGiSpecular[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[0]");
-				texGiSpecular[0]->CreateSRV(srvDesc);
-				texGiSpecular[0]->CreateUAV(uavDesc);
-
-				texGiSpecular[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::GiSpecular[1]");
-				texGiSpecular[1]->CreateSRV(srvDesc);
-				texGiSpecular[1]->CreateUAV(uavDesc);
-			}
-			srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
-			{
-				texIlCoCg[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[0]");
-				texIlCoCg[0]->CreateSRV(srvDesc);
-				texIlCoCg[0]->CreateUAV(uavDesc);
-
-				texIlCoCg[1] = eastl::make_unique<Texture2D>(texDesc, "SSGI::IlCoCg[1]");
-				texIlCoCg[1]->CreateSRV(srvDesc);
-				texIlCoCg[1]->CreateUAV(uavDesc);
-			}
-		}
-
 		srvDesc.Format = uavDesc.Format = texDesc.Format = DXGI_FORMAT_R8_UNORM;
 		{
 			texAo[0] = eastl::make_unique<Texture2D>(texDesc, "SSGI::AO[0]");
@@ -683,7 +724,7 @@ void ScreenSpaceGI::SetupResources()
 			DX::ThrowIfFailed(LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image));
 		} catch (const DX::com_exception& e) {
 			logger::error("{}", e.what());
-			return;
+			throw;
 		}
 
 		ID3D11Resource* pResource = nullptr;
@@ -693,7 +734,7 @@ void ScreenSpaceGI::SetupResources()
 				image.GetMetadata(), &pResource));
 		} catch (const DX::com_exception& e) {
 			logger::error("{}", e.what());
-			return;
+			throw;
 		}
 
 		texNoise = eastl::make_unique<Texture2D>(reinterpret_cast<ID3D11Texture2D*>(pResource), "SSGI::Noise");
@@ -727,7 +768,10 @@ void ScreenSpaceGI::SetupResources()
 		Util::SetResourceName(pointClampSampler.get(), "SSGI::PointClampSampler");
 	}
 
-	CompileComputeShaders();
+	UpdateGIResources();
+
+	if (!prefilterDepthsCompute)
+		CompileComputeShaders();
 }
 
 void ScreenSpaceGI::ClearShaderCache()
@@ -753,41 +797,18 @@ void ScreenSpaceGI::CompileComputeShaders()
 	shaderInfos.push_back({ &giCompute, "gi.cs.hlsl", {} });
 	shaderInfos.push_back({ &upsampleCompute, "upsample.cs.hlsl", {} });
 
-	// The GI-only passes (radiance prefilter, IL blur) never dispatch on the AO-only profile.
-	if (HasGIResources()) {
-		shaderInfos.push_back({ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} });
-		shaderInfos.push_back({ &blurCompute, "blur.cs.hlsl", {} });
-	}
+	shaderInfos.push_back({ &prefilterRadianceCompute, "prefilterRadiance.cs.hlsl", {} });
+	shaderInfos.push_back({ &blurCompute, "blur.cs.hlsl", {} });
 
 	if (globals::game::isVR) {
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 		shaderInfos.push_back({ &reprojectDebugCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" }, { "DEBUG_DISOCCLUSION", "" } } });
-		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
-		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
-		// meaningful with specular off (the reproject transfers diffuse GI); skip the
-		// unused specular combination.
-		if (!settings.EnableExperimentalSpecularGI)
-			shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" }, { "FRAMEBUFFER", "" } } });
+		shaderInfos.push_back({ &giEye0OnlyCompute, "gi.cs.hlsl", { { "STEREO_EYE0_ONLY", "" }, { "FRAMEBUFFER", "" } } });
 	}
 	for (auto& info : shaderInfos) {
 		if (globals::game::isVR)
 			info.defines.push_back({ "VR", "" });
-		if (settings.ResolutionMode == 1)
-			info.defines.push_back({ "HALF_RES", "" });
-		if (settings.ResolutionMode == 2)
-			info.defines.push_back({ "QUARTER_RES", "" });
-		if (settings.EnableTemporalDenoiser)
-			info.defines.push_back({ "TEMPORAL_DENOISER", "" });
-		// Key on the active profile, not the raw toggles: a hand-edited config can
-		// pair GI-on with AO-only resources, and compiling GI paths would pay the
-		// full march against null views for silently discarded output.
-		if (IsGIActive())
-			info.defines.push_back({ "GI", "" });
-		if (IsSpecularGIActive())
-			info.defines.push_back({ "GI_SPECULAR", "" });
-		if (settings.EnableAdaptiveSampling && info.filename == "gi.cs.hlsl")
-			info.defines.push_back({ "ADAPTIVE_SAMPLING", "" });
 	}
 
 	for (auto& info : shaderInfos) {
@@ -825,7 +846,7 @@ void ScreenSpaceGI::UpdateSB()
 
 	static float4x4 prevInvView[2] = {};
 
-	SSGICB data;
+	SSGICB data{};
 	{
 		// The game's jittered TAA matrices make the depth reconstruction swim in VR.
 		const bool useUnjitteredCamera = globals::game::isVR && settings.DebugUseUnjitteredCameraReconstruction;
@@ -883,6 +904,9 @@ void ScreenSpaceGI::UpdateSB()
 		data.DistanceNormalisation = settings.DistanceNormalisation;
 		useModeTextureThisFrame = settings.UseStereoReproject && globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
 		data.UseModeTexture = useModeTextureThisFrame;
+		data.RuntimeOptions = (IsGIActive() ? 1u : 0u) | (IsSpecularGIActive() ? 2u : 0u) |
+		                      (settings.EnableTemporalDenoiser ? 4u : 0u) | (settings.EnableAdaptiveSampling ? 8u : 0u);
+		data.ResolutionMode = static_cast<uint>(std::clamp(settings.ResolutionMode, 0, 2));
 	}
 
 	ssgiCB->Update(data);
@@ -902,6 +926,8 @@ void ScreenSpaceGI::DrawSSGI()
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 
+	UpdateGIResources();
+
 	if (!(settings.Enabled && ShadersOK())) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		if (texAo[outputAoIdx])
@@ -913,17 +939,12 @@ void ScreenSpaceGI::DrawSSGI()
 		return;
 	}
 
-	const bool runILPath = IsGIActive();
-
-	// Full-profile resources stay allocated with GI off, so the composite keeps
-	// sampling these UAVs even though DrawSSGI no longer writes them -- without
-	// this they freeze on the last lit frame instead of reading as AO-only.
-	if (HasGIResources() && !runILPath) {
-		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
-		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
-		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
-		context->ClearUnorderedAccessViewFloat(texGiSpecular[outputAoIdx]->uav.get(), clr);
+	if (recompileFlag) {
+		QueueHistoryReset();
+		recompileFlag = false;
 	}
+
+	const bool runILPath = IsGIActive();
 
 	CS_GPU_PASS("ScreenSpaceGI::SSGI");
 
@@ -942,9 +963,6 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	//////////////////////////////////////////////////////
-
-	if (recompileFlag)
-		ClearShaderCache();
 
 	UpdateSB();
 
@@ -1244,3 +1262,10 @@ void ScreenSpaceGI::DrawSSGI()
 }
 
 #undef I18N_KEY_PREFIX
+
+void ScreenSpaceGI::ReleaseResources()
+{
+	ReleaseGIResources();
+	Util::ReleaseRuntimeResources(ssgiCB, texNoise, texWorkingDepth, texPrevGeo, texNormal, texAccumFrames, texAo, uavWorkingDepth, uavNormal, linearClampSampler, pointClampSampler);
+	QueueHistoryReset();
+}

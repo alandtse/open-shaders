@@ -1,4 +1,5 @@
 #include "LocalExposure.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -285,7 +286,10 @@ void LocalExposure::SetupResources()
 	// Create constant buffer
 	localExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LocalExposureCB>(), "PostProcessing::LocalExposure::Constants");
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 }
 
 void LocalExposure::ClearShaderCache()
@@ -474,4 +478,10 @@ void LocalExposure::Draw(TextureInfo& inout_tex)
 	// NOTE: We do not modify inout_tex. Composite consumes the base luminance map.
 	state->EndPerfEvent();
 	outputReady = true;
+}
+
+void LocalExposure::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(localExposureCB, texLogLuminance, texLuminanceGrid, texBlurTemp, texBlurredLuminance, texBaseLuminance, logLuminanceMipSRVs, logLuminanceMipUAVs, linearSampler, mirrorSampler);
+	outputReady = false;
 }

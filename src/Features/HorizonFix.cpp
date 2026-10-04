@@ -22,9 +22,10 @@ void HorizonFix::PostPostLoad()
 		loaded = false;
 		logger::info("[Horizon Fix] HorizonFix plugin not detected, compatibility disabled");
 	} else {
-		logger::info("[Horizon Fix] HorizonFix plugin detected, compatibility enabled");
+		logger::info("[Horizon Fix] HorizonFix plugin detected");
 	}
-	if (loaded) {
+	logger::info("[Horizon Fix] Startup integration enabled={}; companion plugin enablement is unchanged", loaded && IsRuntimeAvailable());
+	if (loaded && IsRuntimeAvailable()) {
 		// Exponential Height Fog fogs the sky out to the far water's horizon (ISSAOComposite.hlsl,
 		// Sky.hlsl); the plugin reports how far that is, and 0 wherever it draws no far water.
 		farWaterDistanceFn = reinterpret_cast<FarWaterDistanceFn>(GetProcAddress(companionModule, "HorizonFix_GetFarWaterDistance"));
@@ -36,7 +37,7 @@ void HorizonFix::PostPostLoad()
 HorizonFix::Settings HorizonFix::GetCommonBufferData() const
 {
 	Settings data;
-	if (loaded && farWaterDistanceFn)
+	if (IsEnabled() && farWaterDistanceFn)
 		data.farWaterDistance = std::max(farWaterDistanceFn(), 0.0f);
 	return data;
 }

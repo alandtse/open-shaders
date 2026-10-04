@@ -42,7 +42,7 @@ public:
 				T("feature.screen_space_gi.key_feature_5", "Configurable quality and performance settings") });
 	}
 
-	/** @brief Resets all settings to their default values and flags shaders for recompilation. */
+	/** @brief Resets settings and requests a temporal history reset. */
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings UI with quality presets, visual parameters, and denoising options. */
 	virtual void DrawSettings() override;
@@ -64,9 +64,17 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Creates GPU textures, samplers, constant buffers, and compiles compute shaders. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
+	/** @brief Creates GI-only textures and history without replacing shared AO resources. */
+	void SetupGIResources();
+	/** @brief Releases GI-only textures and their views. */
+	void ReleaseGIResources();
+	/** @brief Applies the selected AO/GI resource allocation on the render thread. */
+	void UpdateGIResources();
 	/** @brief Releases and recompiles all SSGI compute shaders. */
 	virtual void ClearShaderCache() override;
-	/** @brief Compiles all SSGI compute shaders with current resolution and feature defines. */
+	/** @brief Compiles SSGI compute shaders with fixed runtime and stereo permutations. */
 	void CompileComputeShaders();
 	/** @brief Checks whether all required compute shaders and the noise texture loaded successfully. */
 	bool ShadersOK();
@@ -75,7 +83,10 @@ public:
 	void DrawSSGI();
 	/** @brief Updates the SSGI constant buffer with current camera, resolution, and settings data. */
 	void UpdateSB();
-	/** @brief Discard temporal accumulation before the next SSGI dispatch. */
+	/** @brief Discards temporal history before resuming GI. */
+	void OnRuntimeEnabled() override { QueueHistoryReset(); }
+
+	/** @brief Discards temporal accumulation before the next SSGI dispatch. */
 	void QueueHistoryReset() { queuedResetHistory.store(true, std::memory_order_release); }
 
 	//////////////////////////////////////////////////////////////////////////////////
@@ -111,7 +122,6 @@ public:
 		uint NumSteps = REL::Module::IsVR() ? 6u : 8u;
 		bool EnableAdaptiveSampling = false;
 		int ResolutionMode = 1;  // 0-full, 1-half, 2-quarter - DBF default
-		// Restart-gated: default resource allocation follows the platform's default effect mode.
 		int ResourceProfile = EnableGI ? kResourceProfileFullGI : kResourceProfileAOOnly;
 		// visual
 		float MinScreenRadius = 0.01f;
@@ -140,23 +150,12 @@ public:
 		bool DebugUseUnjitteredCameraReconstruction = false;
 	} settings;
 
-	// Resource profile active since resource creation; a differing settings value is restart-pending.
-	int activeResourceProfile = kResourceProfileFullGI;
+	int activeResourceProfile = kResourceProfileAOOnly;
 
 	bool HasGIResources() const { return activeResourceProfile == kResourceProfileFullGI; }
 	bool IsGIActive() const { return settings.EnableGI && HasGIResources(); }
 	bool IsSpecularGIActive() const { return IsGIActive() && settings.EnableExperimentalSpecularGI; }
 
-	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, ResourceProfile, "SSGI Resource Profile"),
-	} };
-	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
-
-	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
-	{
-		return { kRestartFields.data(), kRestartFields.size() };
-	}
-	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
@@ -186,7 +185,7 @@ public:
 		float GISaturation;  //
 		float GIDistanceCompensation;
 		float GICompensationMaxDist;
-		float pad1;
+		uint RuntimeOptions;
 
 		float AOPower;  //
 		float GIStrength;
@@ -199,7 +198,7 @@ public:
 		float DistanceNormalisation;
 
 		uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
-		float pad;
+		uint ResolutionMode;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
@@ -226,7 +225,7 @@ public:
 	/** @brief Returns the current output SRVs for AO, indirect lighting Y/CoCg, and specular GI (or nullptrs if disabled). */
 	inline std::tuple<ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*, ID3D11ShaderResourceView*> GetOutputTextures()
 	{
-		if (!(loaded && settings.Enabled) || outputAoIdx >= 2 || outputIlIdx >= 2 || !texAo[outputAoIdx])
+		if (!(IsEnabled() && settings.Enabled) || outputAoIdx >= 2 || outputIlIdx >= 2 || !texAo[outputAoIdx])
 			return { nullptr, nullptr, nullptr, nullptr };
 
 		return {

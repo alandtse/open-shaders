@@ -1,4 +1,5 @@
 #include "HairSpecular.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../I18n/I18n.h"
 #include "../Utils/UI.h"
@@ -142,3 +143,7 @@ void HairSpecular::Prepass()
 }
 
 #undef I18N_KEY_PREFIX
+void HairSpecular::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(texTangentShift);
+}

@@ -548,7 +548,7 @@ static const float EffectDirectionalLightScale = 0.5;
 
 bool UseAmbientEffectLighting()
 {
-	return SharedData::csUtilitySettings.useAmbientEffectLighting &&
+	return (RuntimeFeatures::IsEnabled(RuntimeFeatures::CSUtilityFeature) && SharedData::csUtilitySettings.useAmbientEffectLighting) &&
 	       (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 }
 
@@ -660,7 +660,7 @@ float3 GetLightingColor(
 	}
 
 #		if defined(EFFECTS11)
-	if (SharedData::enbSettings.Enable && !useAmbientEffectLighting) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable) && !useAmbientEffectLighting) {
 		useWeatherEffectLighting = false;
 		applyWeatherInfluenceToShadows = false;
 		dirColor = ShadowSampling::GetDirectionalLighting();
@@ -675,32 +675,35 @@ float3 GetLightingColor(
 #		endif
 
 	float dirShadow = 1.0;
-#		if !defined(SOFT) || !defined(LIGHT_LIMIT_FIX)
 	float3 viewDirection = normalize(worldPosition.xyz);
 	float unusedSurfaceShadow;
-#		endif
 
 	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 
 	if (inWorld && ShadowSampling::HasDirectionalShadows()) {
 #		if defined(SOFT) && defined(LIGHT_LIMIT_FIX)
-		float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(screenPosition, SharedData::BufferDim.xy), SharedData::FrameCount);
-		float2 rotation;
-		sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
-		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
-		float3 worldPositionWS = worldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		dirShadow = LightLimitFix::GetDirectionalShadow(worldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
-		dirShadow *= ShadowSampling::GetWorldShadow(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
-#		else
-		dirShadow = ShadowSampling::Get3DFilteredShadow(worldPosition.xyz, viewDirection, screenPosition, eyeIndex, unusedSurfaceShadow);
+		[branch] if (SharedData::lightLimitFixSettings.BackendEnabled)
+		{
+			float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(screenPosition, SharedData::BufferDim.xy), SharedData::FrameCount);
+			float2 rotation;
+			sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
+			float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+			float3 worldPositionWS = worldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+			dirShadow = LightLimitFix::GetDirectionalShadow(worldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
+			dirShadow *= ShadowSampling::GetWorldShadow(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		}
+		else
 #		endif
+		{
+			dirShadow = ShadowSampling::Get3DFilteredShadow(worldPosition.xyz, viewDirection, screenPosition, eyeIndex, unusedSurfaceShadow);
+		}
 	}
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(dirShadow)));
 
 	float sunlightFogAttenuation = 1.0;
 #		if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled)
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled))
 		sunlightFogAttenuation = ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 #		endif
 	dirColor *= dirShadow * sunlightFogAttenuation;
@@ -709,7 +712,7 @@ float3 GetLightingColor(
 
 #		if defined(SKYLIGHTING)
 #			if defined(IBL)
-	if (!SharedData::iblSettings.EnableIBL)
+	if (!(RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL))
 #			endif
 	{
 		if (useWeatherEffectLighting)
@@ -743,13 +746,13 @@ float3 GetLightingColor(
 	}
 
 #		if defined(LIGHT_LIMIT_FIX)
-	if (!(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
+	if (!SharedData::lightLimitFixSettings.BackendEnabled || !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld))
 #		endif
 	{
 		float4 lightDistanceSquared = (PLightPositionX[eyeIndex] - msPosition.xxxx) * (PLightPositionX[eyeIndex] - msPosition.xxxx) + (PLightPositionY[eyeIndex] - msPosition.yyyy) * (PLightPositionY[eyeIndex] - msPosition.yyyy) + (PLightPositionZ[eyeIndex] - msPosition.zzzz) * (PLightPositionZ[eyeIndex] - msPosition.zzzz);
 		float4 lightFadeMul = 1.0.xxxx - saturate(PLightingRadiusInverseSquared * lightDistanceSquared);
 #		if defined(EFFECTS11)
-		float pointScale = SharedData::enbSettings.Enable ? SharedData::enbSettings.ParticlePointLightingInfluence : 1.0;
+		float pointScale = (RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable) ? SharedData::enbSettings.ParticlePointLightingInfluence : 1.0;
 #		else
 		float pointScale = 1.0;
 #		endif
@@ -813,7 +816,7 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 	dirColor *= shadow;
 
 #		if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		dirColor *= ExponentialHeightFog::GetSunlightFogAttenuation(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #		endif
@@ -911,7 +914,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 #		if !defined(IS_VOLUMETRIC_FOG) && !defined(MULTBLEND) && !defined(MULTBLEND_DECAL)
-	if (SharedData::enbSettings.Enable && !(Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject) && !isFire)
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable) && !(Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject) && !isFire)
 		propertyColor *= SharedData::enbSettings.ParticleIntensity;
 #		endif
 #	endif
@@ -929,68 +932,71 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowVariance);
 
 #		if defined(LIGHT_LIMIT_FIX)
-	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
-	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
-	bool inWorld = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld;
-
 	uint numClusteredLights = 0;
-	uint lightOffset = 0;
-	uint clusterIndex = 0;
-	uint numStrictLights = 0;
-	if (inWorld) {
-		// Gate strict lights behind inWorld too -- they live in
-		// LightLimitFix::StrictLights which is populated from world-space
-		// CB data. Including them on non-world passes (UI overlays, blood
-		// splatter on screen-space surfaces, etc.) leaks world lighting
-		// into effects that shouldn't be lit by point/spot lights at all.
-		// Clustered lights are already inWorld-gated below; strict needs
-		// the same treatment for symmetry.
-		numStrictLights = LightLimitFix::NumStrictLights;
-		if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
-			numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
-			lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
-		}
-	}
-	uint totalLightCount = numStrictLights + numClusteredLights;
-
-	[loop] for (uint i = 0; i < totalLightCount; i++)
+	[branch] if (SharedData::lightLimitFixSettings.BackendEnabled)
 	{
-		LightLimitFix::Light light;
-		if (i < numStrictLights) {
-			light = LightLimitFix::StrictLights[i];
-		} else {
-			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + (i - numStrictLights)];
-			light = LightLimitFix::lights[clusteredLightIndex];
-			if (LightLimitFix::IsLightIgnored(light))
-				continue;
+		float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
+		float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
+		bool inWorld = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld;
+
+		uint lightOffset = 0;
+		uint clusterIndex = 0;
+		uint numStrictLights = 0;
+		if (inWorld) {
+			// Gate strict lights behind inWorld too -- they live in
+			// LightLimitFix::StrictLights which is populated from world-space
+			// CB data. Including them on non-world passes (UI overlays, blood
+			// splatter on screen-space surfaces, etc.) leaks world lighting
+			// into effects that shouldn't be lit by point/spot lights at all.
+			// Clustered lights are already inWorld-gated below; strict needs
+			// the same treatment for symmetry.
+			numStrictLights = LightLimitFix::NumStrictLights;
+			if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
+				numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
+				lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+			}
 		}
+		uint totalLightCount = numStrictLights + numClusteredLights;
 
-		// Effect meshes are alpha-blended and lack reliable occluder depth
-		// at their visible surface, so sampling LLF's shadow atlas with the
-		// effect's world position produces incorrect dark imprints from
-		// nearby shadow-casting bulbs. Shadow-flagged lights still contribute
-		// lighting through the other passes; only the effect-mesh shadow
-		// attenuation is skipped here.
-		if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
-			continue;
+		[loop] for (uint i = 0; i < totalLightCount; i++)
+		{
+			LightLimitFix::Light light;
+			if (i < numStrictLights) {
+				light = LightLimitFix::StrictLights[i];
+			} else {
+				uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + (i - numStrictLights)];
+				light = LightLimitFix::lights[clusteredLightIndex];
+				if (LightLimitFix::IsLightIgnored(light))
+					continue;
+			}
 
-		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
-		float lightDist = length(lightDirection);
+			// Effect meshes are alpha-blended and lack reliable occluder depth
+			// at their visible surface, so sampling LLF's shadow atlas with the
+			// effect's world position produces incorrect dark imprints from
+			// nearby shadow-casting bulbs. Shadow-flagged lights still contribute
+			// lighting through the other passes; only the effect-mesh shadow
+			// attenuation is skipped here.
+			if (light.lightFlags & LightLimitFix::LightFlags::Shadow)
+				continue;
+
+			float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
+			float lightDist = length(lightDirection);
 
 #			if defined(ISL)
-		float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
-		if (intensityMultiplier < 1e-5)
-			continue;
+			float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
+			if (intensityMultiplier < 1e-5)
+				continue;
 #			else
-		float intensityFactor = saturate(lightDist / light.radius);
-		if (intensityFactor == 1)
-			continue;
-		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
+			float intensityFactor = saturate(lightDist / light.radius);
+			if (intensityFactor == 1)
+				continue;
+			float intensityMultiplier = 1 - intensityFactor * intensityFactor;
 #			endif
 
-		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-		float3 lightColor = Color::EffectPointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade;
-		propertyColor += lightColor;
+			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+			float3 lightColor = Color::EffectPointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade;
+			propertyColor += lightColor;
+		}
 	}
 
 #		endif
@@ -1123,7 +1129,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float fogFactor = Color::FogAlpha(input.FogParam.w);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 #		if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL)) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif
@@ -1132,7 +1138,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 vanillaFogColor = fogColor;
 	float expFogFactor = 0;
 	bool disableVanillaFog = false;
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		float4 exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, float4(input.Position.xy * FrameBuffer::DynamicResolutionParams2.xy, input.Position.z, 1));
 		expFogFactor = exponentialHeightFog.w;
 		fogColor = exponentialHeightFog.xyz;
@@ -1158,7 +1164,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 blendedColor = lightColor * (1 - fogFactor);
 #			endif
 #			if defined(EFFECTS11)
-	if (SharedData::enbSettings.Enable) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable)) {
 		if (isFire)
 			blendedColor = pow(abs(blendedColor), SharedData::enbSettings.FireCurve) * SharedData::enbSettings.FireIntensity;
 		else
@@ -1175,7 +1181,7 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, vanillaFogColor, vanillaFogFactor.xxx);
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		float fogFade = ExponentialHeightFog::GetLinearVanillaFogFade(input.FogAlpha);
 		blendedColor = Color::EffectLightToGamma(fogFade * lerp(Color::EffectLight(blendedColor), fogColor, expFogFactor.xxx));
 		fogMul.xyz = 1.0.xxx;
@@ -1223,7 +1229,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 	psout.Diffuse = finalColor;
 #	if defined(LIGHTING) && defined(LIGHT_LIMIT_FIX) && defined(LLFDEBUG)
-	if (SharedData::lightLimitFixSettings.EnableLightsVisualisation) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::LightLimitFixFeature) && SharedData::lightLimitFixSettings.EnableLightsVisualisation)) {
 		if (SharedData::lightLimitFixSettings.LightsVisualisationMode == 0) {
 			psout.Diffuse.xyz = Color::TurboColormap(0.0);
 		} else if (SharedData::lightLimitFixSettings.LightsVisualisationMode == 1) {

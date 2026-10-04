@@ -5,35 +5,23 @@
 #include "Common/VR.hlsli"
 #include "ScreenSpaceGI/common.hlsli"
 
-#ifdef GI
 Texture2D<half4> srcDiffuse : register(t0);
-#endif
 Texture2D<half> srcCurrDepth : register(t1);
 Texture2D<half4> srcCurrNormal : register(t2);
 Texture2D<half3> srcPrevGeo : register(t3);  // maybe half-res
 Texture2D<float4> srcMotionVec : register(t4);
 Texture2D<unorm float> srcAccumFrames : register(t5);  // maybe half-res
 Texture2D<half> srcPrevAo : register(t6);              // maybe half-res
-#ifdef GI
-Texture2D<half4> srcPrevIlY : register(t7);         // maybe half-res
-Texture2D<half2> srcPrevIlCoCg : register(t8);      // maybe half-res
-Texture2D<half4> srcPrevGISpecular : register(t9);  // maybe half-res
-#endif
+Texture2D<half4> srcPrevIlY : register(t7);            // maybe half-res
+Texture2D<half2> srcPrevIlCoCg : register(t8);         // maybe half-res
+Texture2D<half4> srcPrevGISpecular : register(t9);     // maybe half-res
 
-#ifdef GI
 RWTexture2D<float3> outRadianceDisocc : register(u0);
-#endif
 RWTexture2D<unorm float> outAccumFrames : register(u1);
 RWTexture2D<float> outRemappedAo : register(u2);
-#ifdef GI
 RWTexture2D<float4> outRemappedIlY : register(u3);
 RWTexture2D<float2> outRemappedIlCoCg : register(u4);
 RWTexture2D<float4> outRemappedPrevGISpecular : register(u5);
-#endif
-
-#if defined(TEMPORAL_DENOISER) || defined(HALF_RATE)
-#	define REPROJECTION
-#endif
 
 void readHistory(
 	uint eyeIndex, float curr_depth, float3 curr_pos, int2 pixCoord, float bilinear_weight,
@@ -66,17 +54,13 @@ void readHistory(
 	bool depth_pass = dot(delta_pos, delta_pos) < movement_thres * movement_thres;
 	// bool normal_pass = normal_prod * normal_prod > NormalDisocclusion;
 	if (depth_pass) {
-#ifdef TEMPORAL_DENOISER
-		prev_ao += srcPrevAo[pixCoord] * bilinear_weight;
-#	ifdef GI
-		prev_y += srcPrevIlY[pixCoord] * bilinear_weight;
-		prev_co_cg += srcPrevIlCoCg[pixCoord] * bilinear_weight;
-#	endif
-		accum_frames += srcAccumFrames[pixCoord] * bilinear_weight;
-#	if defined(GI) && defined(GI_SPECULAR)
-		prev_gi_specular += srcPrevGISpecular[pixCoord] * bilinear_weight;
-#	endif
-#endif
+		if (EnableTemporalDenoiser()) {
+			prev_ao += srcPrevAo[pixCoord] * bilinear_weight;
+			prev_y += srcPrevIlY[pixCoord] * bilinear_weight;
+			prev_co_cg += srcPrevIlCoCg[pixCoord] * bilinear_weight;
+			accum_frames += srcAccumFrames[pixCoord] * bilinear_weight;
+			prev_gi_specular += srcPrevGISpecular[pixCoord] * bilinear_weight;
+		}
 		wsum += bilinear_weight;
 	}
 };
@@ -89,9 +73,9 @@ void readHistory(
 	const float2 screen_pos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	float2 prev_screen_pos = screen_pos;
-#ifdef REPROJECTION
-	prev_screen_pos += FULLRES_LOAD(srcMotionVec, pixCoord, uv * frameScale, samplerLinearClamp).xy;
-#endif
+	if (EnableTemporalDenoiser()) {
+		prev_screen_pos += FULLRES_LOAD(srcMotionVec, pixCoord, uv * frameScale, samplerLinearClamp).xy;
+	}
 	float2 prev_uv = Stereo::ConvertToStereoUV(prev_screen_pos, eyeIndex);
 
 	half3 prev_ambient = 0;
@@ -105,86 +89,78 @@ void readHistory(
 	const float curr_depth = READ_DEPTH(srcCurrDepth, pixCoord);
 
 	if (curr_depth < FP_Z) {
-#ifdef GI
 		outRadianceDisocc[pixCoord] = half3(0, 0, 0);
-#endif
 		outAccumFrames[pixCoord] = 1.0 / 255.0;
-#ifdef GI
 		outRemappedIlY[pixCoord] = half4(0, 0, 0, 0);
 		outRemappedIlCoCg[pixCoord] = half2(0, 0);
-#endif
 		return;
 	}
 
-#ifdef REPROJECTION
-	if ((curr_depth <= DepthFadeRange.y) && !(any(prev_screen_pos < 0) || any(prev_screen_pos > 1))) {
-		// float3 curr_normal = GBuffer::DecodeNormal(srcCurrNormal[pixCoord]);
-		// curr_normal = ViewToWorldVector(curr_normal, FrameBuffer::CameraViewInverse[eyeIndex]);
-		float3 curr_pos = ScreenToViewPosition(screen_pos, curr_depth, eyeIndex);
-		curr_pos = ViewToWorldPosition(curr_pos, FrameBuffer::CameraViewInverse[eyeIndex]) + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	if (EnableTemporalDenoiser()) {
+		if ((curr_depth <= DepthFadeRange.y) && !(any(prev_screen_pos < 0) || any(prev_screen_pos > 1))) {
+			// float3 curr_normal = GBuffer::DecodeNormal(srcCurrNormal[pixCoord]);
+			// curr_normal = ViewToWorldVector(curr_normal, FrameBuffer::CameraViewInverse[eyeIndex]);
+			float3 curr_pos = ScreenToViewPosition(screen_pos, curr_depth, eyeIndex);
+			curr_pos = ViewToWorldPosition(curr_pos, FrameBuffer::CameraViewInverse[eyeIndex]) + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 
-		float2 prev_px_coord = prev_uv * OUT_FRAME_DIM;
-		int2 prev_px_lu = floor(prev_px_coord - 0.5);
-		float2 bilinear_weights = prev_px_coord - 0.5 - prev_px_lu;
+			float2 prev_px_coord = prev_uv * OUT_FRAME_DIM;
+			int2 prev_px_lu = floor(prev_px_coord - 0.5);
+			float2 bilinear_weights = prev_px_coord - 0.5 - prev_px_lu;
 
-		readHistory(eyeIndex, curr_depth, curr_pos,
-			prev_px_lu, (1 - bilinear_weights.x) * (1 - bilinear_weights.y),
-			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(eyeIndex, curr_depth, curr_pos,
-			prev_px_lu + int2(1, 0), bilinear_weights.x * (1 - bilinear_weights.y),
-			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(eyeIndex, curr_depth, curr_pos,
-			prev_px_lu + int2(0, 1), (1 - bilinear_weights.x) * bilinear_weights.y,
-			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
-		readHistory(eyeIndex, curr_depth, curr_pos,
-			prev_px_lu + int2(1, 1), bilinear_weights.x * bilinear_weights.y,
-			prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
+			readHistory(eyeIndex, curr_depth, curr_pos,
+				prev_px_lu, (1 - bilinear_weights.x) * (1 - bilinear_weights.y),
+				prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
+			readHistory(eyeIndex, curr_depth, curr_pos,
+				prev_px_lu + int2(1, 0), bilinear_weights.x * (1 - bilinear_weights.y),
+				prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
+			readHistory(eyeIndex, curr_depth, curr_pos,
+				prev_px_lu + int2(0, 1), (1 - bilinear_weights.x) * bilinear_weights.y,
+				prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
+			readHistory(eyeIndex, curr_depth, curr_pos,
+				prev_px_lu + int2(1, 1), bilinear_weights.x * bilinear_weights.y,
+				prev_ao, prev_y, prev_co_cg, prev_ambient, accum_frames, prev_gi_specular, wsum);
 
-		if (wsum > 1e-2) {
-			float rcpWsum = rcp(wsum + EPSILON_WEIGHT_SUM);
-#	ifdef TEMPORAL_DENOISER
-			prev_ao *= rcpWsum;
-			prev_y *= rcpWsum;
-			prev_co_cg *= rcpWsum;
-			accum_frames *= rcpWsum;
-#		ifdef GI_SPECULAR
-			prev_gi_specular *= rcpWsum;
-#		endif
-#	endif
+			if (wsum > 1e-2) {
+				float rcpWsum = rcp(wsum + EPSILON_WEIGHT_SUM);
+				if (EnableTemporalDenoiser()) {
+					prev_ao *= rcpWsum;
+					prev_y *= rcpWsum;
+					prev_co_cg *= rcpWsum;
+					accum_frames *= rcpWsum;
+					prev_gi_specular *= rcpWsum;
+				}
+			}
 		}
 	}
-#endif
 
 	half3 radiance = 0;
-#ifdef GI
-	float3 sourceRadiance = FULLRES_LOAD(srcDiffuse, pixCoord, uv * frameScale, samplerLinearClamp).rgb;
-	radiance = ENABLE_LL ? Color::SceneGammaToLinear(sourceRadiance) * GIStrength : Color::RadianceToLinear(sourceRadiance * GIStrength);
-	radiance = filterNaN(radiance);
-	radiance = filterInf(radiance);
+	if (EnableGI()) {
+		float3 sourceRadiance = FULLRES_LOAD(srcDiffuse, pixCoord, uv * frameScale, samplerLinearClamp).rgb;
+		radiance = ENABLE_LL ? Color::SceneGammaToLinear(sourceRadiance) * GIStrength : Color::RadianceToLinear(sourceRadiance * GIStrength);
+		radiance = filterNaN(radiance);
+		radiance = filterInf(radiance);
+	}
 	outRadianceDisocc[pixCoord] = radiance;
-#endif
 
-#ifdef TEMPORAL_DENOISER
-	// On disocclusion (wsum near zero), halve the accumulation instead of
-	// resetting to 1.  This softens the flash from a sudden 100% new-frame
-	// blend while still adapting quickly to disoccluded regions.
-	float prevAccum = accum_frames * 255;
-	if (wsum < 1e-2)
-		prevAccum = prevAccum * 0.5;
+	if (EnableTemporalDenoiser()) {
+		// On disocclusion (wsum near zero), halve the accumulation instead of
+		// resetting to 1.  This softens the flash from a sudden 100% new-frame
+		// blend while still adapting quickly to disoccluded regions.
+		float prevAccum = accum_frames * 255;
+		if (wsum < 1e-2)
+			prevAccum = prevAccum * 0.5;
 
-	// Reduce max accumulation proportionally to motion vector length.
-	// Fast camera/head movement means history is less trustworthy.
-	float2 motionVec = prev_screen_pos - screen_pos;
-	float motionLen = length(motionVec);
-	float motionMaxAccum = lerp(MaxAccumFrames, max(MaxAccumFrames * 0.25, 4), saturate(motionLen * 20));
+		// Reduce max accumulation proportionally to motion vector length.
+		// Fast camera/head movement means history is less trustworthy.
+		float2 motionVec = prev_screen_pos - screen_pos;
+		float motionLen = length(motionVec);
+		float motionMaxAccum = lerp(MaxAccumFrames, max(MaxAccumFrames * 0.25, 4), saturate(motionLen * 20));
 
-	accum_frames = max(1, min(prevAccum + 1, motionMaxAccum));
-	outAccumFrames[pixCoord] = accum_frames / 255.0;
-	outRemappedAo[pixCoord] = prev_ao;
-#	ifdef GI
-	outRemappedIlY[pixCoord] = prev_y;
-	outRemappedIlCoCg[pixCoord] = prev_co_cg;
-	outRemappedPrevGISpecular[pixCoord] = prev_gi_specular;
-#	endif
-#endif
+		accum_frames = max(1, min(prevAccum + 1, motionMaxAccum));
+		outAccumFrames[pixCoord] = accum_frames / 255.0;
+		outRemappedAo[pixCoord] = prev_ao;
+		outRemappedIlY[pixCoord] = prev_y;
+		outRemappedIlCoCg[pixCoord] = prev_co_cg;
+		outRemappedPrevGISpecular[pixCoord] = prev_gi_specular;
+	}
 }

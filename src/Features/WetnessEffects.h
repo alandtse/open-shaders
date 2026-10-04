@@ -212,7 +212,7 @@ public:
 	{
 		const bool characterEffectsEnabled = settings.EnableWetnessEffects && settings.EnableCharacterRainSpots;
 		const bool characterWaterVisible = characterSurfaceWetness > 0.0f || settings.CharacterSpotDebug != 0u;
-		return loaded && characterEffectsEnabled && characterWaterVisible;
+		return IsEnabled() && characterEffectsEnabled && characterWaterVisible;
 	}
 
 private:

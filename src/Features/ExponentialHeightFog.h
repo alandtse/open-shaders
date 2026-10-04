@@ -31,6 +31,16 @@ public:
 	virtual void DrawSettings() override;
 	/** @brief Creates samplers and the volumetric fog constant buffer. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
+
+	/** @brief Discards temporal fog history when rendering resumes. */
+	void OnRuntimeEnabled() override
+	{
+		hasLightScatteringHistory = false;
+		hasConservativeDepthHistory = false;
+		lastPrepassFrame = UINT32_MAX;
+	}
 	/** @brief Releases all cached volumetric fog compute shaders so they can be recompiled. */
 	virtual void ClearShaderCache() override;
 	/**

@@ -1152,7 +1152,7 @@ void EditorWindow::ShowViewportWindow()
 	const ImVec2 imageSize = imageRect.GetSize();
 
 	const auto& hdr = globals::features::hdrDisplay;
-	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	const bool hdrActive = hdr.IsEnabled() && hdr.settings.enableHDR;
 	if (!hdrActive && tempTexture && tempTexture->srv) {
 		// Opaque draw: the preview SRV is a render target with non-1 alpha, which a plain
 		// ImGui::Image would show as a transparency mask (a cutout through the HMD in VR).
@@ -1728,7 +1728,7 @@ void EditorWindow::Draw()
 		lightEditor.GatherLights();
 
 	auto& hdr = globals::features::hdrDisplay;
-	const bool hdrActive = hdr.loaded && hdr.settings.enableHDR;
+	const bool hdrActive = hdr.IsEnabled() && hdr.settings.enableHDR;
 	if (!IsViewportActive() || hdrActive) {
 		delete tempTexture;
 		tempTexture = nullptr;

@@ -1,4 +1,5 @@
 #include "CODBloom.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -150,7 +151,10 @@ void CODBloom::SetupResources()
 		Util::SetResourceName(upsampleBlendState.get(), "PostProcessing::CODBloom Upsample Blend");
 	}
 
-	CompileRasterShaders();
+	if (!shadersRequested) {
+		CompileRasterShaders();
+		shadersRequested = true;
+	}
 }
 
 void CODBloom::ClearShaderCache()
@@ -294,4 +298,10 @@ void CODBloom::Draw(TextureInfo& inout_tex)
 	inout_tex = { texBloom->resource.get(), texBloomMipSRVs[0].get() };
 
 	outputReady = true;
+}
+
+void CODBloom::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(bloomCB, colorSampler, texBloom, texBloomMipSRVs, texBloomMipRTVs, upsampleBlendState);
+	outputReady = false;
 }

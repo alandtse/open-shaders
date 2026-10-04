@@ -4,6 +4,7 @@
 #include "RE/P/PlayerCharacter.h"
 #include "ScreenSpaceGI.h"
 #include "Upscaling.h"
+#include "Utils/RuntimeResources.h"
 #include "VR/OpenVRDetection.h"
 
 #include "State.h"
@@ -103,7 +104,8 @@ std::vector<FeatureConstraints::Constraint> VR::GetActiveConstraints() const
 void VR::SetupResources()
 {
 	dynamicNearClip.SetupResources();
-	CompileStereoBlendShaders();
+	if (!stereoBlendCS)
+		CompileStereoBlendShaders();
 
 	auto renderer = globals::game::renderer;
 	auto mainTex = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
@@ -289,4 +291,11 @@ float VR::GetHMDRefreshRate() const
 		vr::Prop_DisplayFrequency_Float,
 		&err);
 	return (err == vr::TrackedProp_Success && hz > 1.0f) ? hz : 0.0f;
+}
+
+void VR::ReleaseResources()
+{
+	stereoOpt.ReleaseResources();
+	dynamicNearClip.ReleaseResources();
+	Util::ReleaseRuntimeResources(stereoBlendCopyTex, stereoBlendCB);
 }

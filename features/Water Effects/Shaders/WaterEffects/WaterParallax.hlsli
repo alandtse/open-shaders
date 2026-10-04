@@ -62,7 +62,7 @@ namespace WaterEffects
 
 	float2 GetParallaxOffset(PS_INPUT input, float3 normalScalesRcp)
 	{
-		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::WaterEffectsFeature) || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
 			return 0.0.xx;
 
 		float3 viewDirection = normalize(input.WPosition.xyz);
@@ -126,7 +126,7 @@ namespace WaterEffects
 	{
 		float viewDotUp = -viewDirection.z;
 
-		if (viewDotUp < FlowmapParallaxMinViewDotUp || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+		if (viewDotUp < FlowmapParallaxMinViewDotUp || !RuntimeFeatures::IsEnabled(RuntimeFeatures::WaterEffectsFeature) || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
 			return 0.0.xx;
 
 		float2 parallaxDir = viewDirection.xy / -viewDirection.z;
@@ -139,7 +139,7 @@ namespace WaterEffects
 	float GetFlowmapParallaxAmount(PS_INPUT input, float2 flowmapDims, float3 viewDirection)
 	{
 		float viewDotUp = -viewDirection.z;
-		if (viewDotUp < FlowmapParallaxMinViewDotUp || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+		if (viewDotUp < FlowmapParallaxMinViewDotUp || !RuntimeFeatures::IsEnabled(RuntimeFeatures::WaterEffectsFeature) || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
 			return 0.0;
 
 		float2 parallaxDir = GetFlowmapParallaxDirection(viewDirection);
@@ -184,7 +184,7 @@ namespace WaterEffects
 
 	float2 GetFlowmapParallaxUVOffset(PS_INPUT input, float3 viewDirection, float3 normalScalesRcp)
 	{
-		if (SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::WaterEffectsFeature) || SharedData::csUtilitySettings.waterParallaxStrength == 0.0)
 			return 0.0.xx;
 
 		float2 parallaxOffsetTS = viewDirection.xy / -viewDirection.z;

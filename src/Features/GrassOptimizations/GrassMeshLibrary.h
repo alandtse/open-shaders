@@ -40,6 +40,8 @@ public:
 
 	/** @brief Loads both LOD .nifs for this mesh id. */
 	void EnsureLODMeshes(uint32_t meshId);
+	/** @brief Drops optional LOD models while preserving model paths for recreation. */
+	void ReleaseResources();
 
 	/** @brief Returns the cached LOD mesh for a tier, or nullptr when none is loaded or it is unusable. The far tier falls back to the middle mesh. */
 	const LODMesh* GetLODMesh(uint32_t meshId, LODTier tier) const;

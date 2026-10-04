@@ -1,4 +1,5 @@
 #include "ENBAdaptation.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../SettingManager.h"
 #include "../TextureManager.h"
@@ -70,4 +71,9 @@ void ENBAdaptation::UpdateEffectVariables()
 void ENBAdaptation::CreateEffectTextures()
 {
 	textureCurrent = CreateTexture(16, 16, DXGI_FORMAT_R32_FLOAT, "ENBAdaptation::TextureCurrent");
+}
+void ENBAdaptation::ReleaseResources()
+{
+	Effect::ReleaseResources();
+	Util::ReleaseRuntimeResources(textureCurrent.texture, textureCurrent.rtv, textureCurrent.srv);
 }

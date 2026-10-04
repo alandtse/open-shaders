@@ -59,6 +59,12 @@ public:
 
 	/** @brief Creates cubemap textures, SRVs, RTVs, and blend state for cloud shadow rendering. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
+	/** @brief Clears retained cloud captures before live rendering resumes. */
+	void OnRuntimeEnabled() override;
+	/** @brief Drops any pending cloud render-target override. */
+	void OnRuntimeDisabled() override { overrideSky = false; }
 
 	/** @brief Draws the ImGui settings UI for cloud shadow opacity. */
 	virtual void DrawSettings() override;

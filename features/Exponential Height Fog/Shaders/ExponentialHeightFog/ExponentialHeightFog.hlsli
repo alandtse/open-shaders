@@ -50,7 +50,7 @@ namespace ExponentialHeightFog
 
 	bool ShouldDisableVanillaFog()
 	{
-		return SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.disableVanillaFog != 0;
+		return (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled) && SharedData::exponentialHeightFogSettings.disableVanillaFog != 0;
 	}
 
 	uint GetEyeIndexFromCameraWS(float3 cameraWS)
@@ -66,7 +66,7 @@ namespace ExponentialHeightFog
 	{
 		volumeSize = 0u.xxx;
 		bool applyVolumetricFog = false;
-		[branch] if (SharedData::exponentialHeightFogSettings.enabled != 0 &&
+		[branch] if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled) != 0 &&
 					 SharedData::exponentialHeightFogSettings.volumetricFogEnabled != 0 &&
 					 SharedData::exponentialHeightFogSettings.volumetricFogDistance > GetVolumetricStartDistance() + 1.0f)
 		{
@@ -202,7 +202,7 @@ namespace ExponentialHeightFog
 			if (!SharedData::InInterior) {
 				fogColor = Color::Fog(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb);
 #if defined(IBL)
-				if (SharedData::iblSettings.EnableIBL)
+				if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL))
 					fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 #endif
 			}

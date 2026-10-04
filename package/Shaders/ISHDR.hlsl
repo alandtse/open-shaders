@@ -102,7 +102,7 @@ float3 SampleVanillaBloomEnhanced(float2 uv)
 	float3 center = ImageTex.Sample(ImageSampler, uv).xyz;
 	float3 bloom = center;
 
-	if (SharedData::bloomSettings.Enabled) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::CSUtilityFeature) && SharedData::bloomSettings.Enabled) {
 		uint bloomWidth = 1;
 		uint bloomHeight = 1;
 		ImageTex.GetDimensions(bloomWidth, bloomHeight);
@@ -195,7 +195,7 @@ PS_OUTPUT main(PS_INPUT input)
 		isHDR = false;
 
 #		if defined(POSTPROCESS)
-	if (SharedData::postProcessingSettings.DisableVanillaTonemapping) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::PostProcessingFeature) && SharedData::postProcessingSettings.DisableVanillaTonemapping) {
 		if (!isHDR && menuSceneEncoding <= MENU_SCENE_ISHDR_BYPASS_THRESHOLD) {
 			inputColor = Color::LinearToSrgb(inputColor);
 		}
@@ -225,7 +225,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 
 #		if defined(CS_UTILITY)
-	if (SharedData::bloomSettings.Enabled) {
+	if (RuntimeFeatures::IsEnabled(RuntimeFeatures::CSUtilityFeature) && SharedData::bloomSettings.Enabled) {
 		float bloomLuminance = Color::RGBToLuminance(bloomColor);
 		float glowThreshold = min(SharedData::bloomSettings.CompressionThreshold, SharedData::bloomSettings.CompressionCeiling);
 		float glowCeiling = SharedData::bloomSettings.CompressionCeiling;

@@ -1,4 +1,5 @@
 #include "Camera.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -128,7 +129,10 @@ void Camera::SetupResources()
 
 	logger::debug("Compiling shaders...");
 	{
-		CompileRasterShaders();
+		if (!shadersRequested) {
+			CompileRasterShaders();
+			shadersRequested = true;
+		}
 	}
 }
 
@@ -208,4 +212,9 @@ void Camera::Draw(TextureInfo& inout_tex)
 	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void Camera::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(cameraCB, texOutput, colorSampler);
 }

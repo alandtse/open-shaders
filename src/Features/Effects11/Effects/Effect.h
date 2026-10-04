@@ -28,6 +28,11 @@ public:
 	virtual bool Apply();   // Clear resources, load settings, recompile, create resources
 	virtual void Unload();  // Clear all resources
 
+	/** @brief Drops texture bindings while retaining the compiled effect and UI values. */
+	virtual void ReleaseResources();
+	/** @brief Restores textures without recompiling or reloading settings. */
+	void RestoreResources();
+
 	bool IsCompiled() const { return filePresent && errors.empty(); }
 	bool IsFilePresent() const { return filePresent; }
 	const std::vector<std::string>& GetErrors() const { return errors; }

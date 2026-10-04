@@ -1,5 +1,6 @@
 #include "ScreenSpaceShadows.h"
 #include "Features/ReverseZ.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/TerrainBlending.h"
 #include "Features/VR.h"
@@ -669,3 +670,8 @@ void ScreenSpaceShadows::SetupResources()
 	}
 }
 #undef I18N_KEY_PREFIX
+
+void ScreenSpaceShadows::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(pointBorderSampler, raymarchCB, screenSpaceShadowsTexture, stereoSyncCopyTex, stereoSyncCB);
+}

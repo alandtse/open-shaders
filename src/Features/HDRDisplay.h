@@ -70,6 +70,8 @@ public:
 	virtual void DataLoaded() override;
 	/** @brief Creates HDR, output, and UI textures, constant buffer, and upgrades LDR render targets. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Releases cached HDR output and UI brightness compute shaders. */
 	virtual void ClearShaderCache() override;
 	/** @brief Installs HDR pipeline hooks when the Upscaling feature is not loaded. */
@@ -81,6 +83,19 @@ public:
 	void UpdateHDRData() const;
 	/** @brief Sets the swap chain color space to HDR10 (PQ/BT.2020) or SDR (sRGB) based on settings. */
 	void UpdateSwapChainColorSpace() const;
+
+	/** @brief Applies the live HDR switch to its output buffer and swapchain. */
+	void OnRuntimeEnabled() override
+	{
+		UpdateHDRData();
+		UpdateSwapChainColorSpace();
+	}
+	/** @brief Restores SDR output before the resource teardown. */
+	void OnRuntimeDisabled() override
+	{
+		UpdateHDRData();
+		UpdateSwapChainColorSpace();
+	}
 
 	/** @brief Redirects UI rendering to the separate UI texture for HDR compositing. */
 	void BeginUIRendering();

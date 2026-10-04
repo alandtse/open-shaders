@@ -171,7 +171,7 @@ namespace PBR
 			}
 
 #	if defined(TREE_ANIM)
-			[branch] if (SharedData::foliageLightingSettings.EnableFoliageScattering != 0)
+			[branch] if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::FoliageLightingFeature) && SharedData::foliageLightingSettings.EnableFoliageScattering) != 0)
 			{
 				// Deliberately do not use material thickness here. Foliage geometry is
 				// commonly flagged as subsurface with a baked thickness of 1, and wind
@@ -288,7 +288,7 @@ namespace PBR
 #if defined(TREE_ANIM)
 		// This is intentionally additive and AO-independent: it restores a small
 		// amount of indirect ambient response for foliage after the AO adjustment.
-		[branch] if (SharedData::foliageLightingSettings.EnableFoliageAmbientBoost != 0)
+		[branch] if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::FoliageLightingFeature) && SharedData::foliageLightingSettings.EnableFoliageAmbientBoost) != 0)
 			lobeWeights.diffuse += material.BaseColor * SharedData::foliageLightingSettings.FoliageAmbientAmount;
 #endif
 		float alpha = material.Roughness * material.Roughness;

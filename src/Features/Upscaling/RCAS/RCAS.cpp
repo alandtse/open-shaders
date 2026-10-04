@@ -1,5 +1,6 @@
 #include "RCAS.h"
 #include "../../../GpuPass.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../../../Deferred.h"
 #include "../../../Feature.h"
@@ -27,7 +28,8 @@ void RCAS::Initialize()
 		return;
 
 	logger::info("[RCAS] Creating resources");
-	CreateComputeShader();
+	if (!rcasComputeShader)
+		CreateComputeShader();
 	rcasConfigCB = new ConstantBuffer(ConstantBufferDesc<RCASConfig>(), "Upscaling::RCASConfig");
 }
 
@@ -93,4 +95,9 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 	context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 
 	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void RCAS::ReleaseResources()
+{
+	Util::ReleaseRuntimeResource(rcasConfigCB);
 }

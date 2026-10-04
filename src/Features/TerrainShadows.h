@@ -91,6 +91,8 @@ public:
 
 	/** @brief Scans for heightmap DDS files and creates constant buffers and compute shaders. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 
 	/**
 	 * @brief Parses a heightmap DDS filename to extract worldspace metadata.

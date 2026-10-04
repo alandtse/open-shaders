@@ -30,6 +30,8 @@ struct ScreenshotFeature : public Feature
 	virtual void SaveSettings(json& a_json) override;
 	/** @brief Resets transient state (no-op for this feature). */
 	virtual void Reset() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
 	virtual void PostPostLoad() override;
 

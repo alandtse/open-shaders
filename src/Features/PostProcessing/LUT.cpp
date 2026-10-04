@@ -1,4 +1,5 @@
 #include "LUT.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -36,8 +37,12 @@ void LUT::DrawSettings()
 
 	ImGui::InputText(T("feature.post_processing.lut.lut_texture_path", "LUT Texture Path"), &tempPath);
 
-	if (ImGui::Button(T("feature.post_processing.lut.load", "Load")))
-		ReadTexture(tempPath);
+	if (ImGui::Button(T("feature.post_processing.lut.load", "Load"))) {
+		if (runtimeResourcesReady)
+			ReadTexture(tempPath);
+		else
+			settings.LutPath = tempPath;
+	}
 	ImGui::SameLine();
 	if (ImGui::Button(T("feature.post_processing.lut.clear", "Clear"))) {
 		Clear();
@@ -80,6 +85,8 @@ void LUT::LoadSettings(json& o_json)
 	settings = o_json;
 
 	tempPath = settings.LutPath;
+	if (!runtimeResourcesReady)
+		return;
 
 	try {
 		if (tempPath.empty()) {
@@ -133,7 +140,10 @@ void LUT::SetupResources()
 		texOutput->CreateRTV(rtvDesc);
 	}
 
-	CompileRasterShaders();
+	if (!shadersRequested) {
+		CompileRasterShaders();
+		shadersRequested = true;
+	}
 }
 
 void LUT::ReadTexture(std::filesystem::path path)
@@ -290,4 +300,9 @@ void LUT::Draw(TextureInfo& inout_tex)
 	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void LUT::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(lutCB, texLUT2D, texLUT3D, texOutput);
 }

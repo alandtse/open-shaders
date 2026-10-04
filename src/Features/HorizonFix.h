@@ -28,6 +28,13 @@ struct HorizonFix : Feature
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kWater; }
 	virtual inline bool SupportsVR() override { return true; }
 	virtual bool IsInMenu() const override { return false; }
+	/** @brief Keeps shader compatibility fixed for the companion plugin's session. */
+	bool RequiresRestartForToggle() const override { return true; }
+	/** @copydoc Feature::GetRuntimeToggleNote */
+	std::string_view GetRuntimeToggleNote() const override
+	{
+		return "Enabling or disabling Horizon Fix integration requires a restart. This controls Open Shaders compatibility only; HorizonFix.dll remains loaded and its own work is not disabled. Shader cache is unchanged while the plugin remains installed.";
+	}
 
 	/** @brief Returns a summary description for the UI. */
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override

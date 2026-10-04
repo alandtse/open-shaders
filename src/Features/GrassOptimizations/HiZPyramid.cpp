@@ -1,4 +1,5 @@
 #include "HiZPyramid.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
@@ -28,7 +29,7 @@ ID3D11ShaderResourceView* HiZPyramid::GetSourceDepthSRV()
 	// that same R24_UNORM_X8_TYPELESS view, so GrassHiZCS needs no TERRAIN_BLENDING variant of its
 	// `unorm float` declaration the way Util::GetCurrentSceneDepthSRV's R32_FLOAT consumers do.
 	auto& tb = globals::features::terrainBlending;
-	if (tb.loaded && tb.settings.Enabled && tb.prepassSRVBackup)
+	if (tb.IsEnabled() && tb.settings.Enabled && tb.prepassSRVBackup)
 		return tb.prepassSRVBackup;
 	if (auto* renderer = globals::game::renderer)
 		return Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV);
@@ -252,4 +253,12 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 
 	valid = true;
 	return true;
+}
+
+void HiZPyramid::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(texture, mipUAVs, mip0SRV, paramsCB);
+	mipUAVs.clear();
+	width = height = paddedWidth = paddedHeight = 0;
+	valid = false;
 }

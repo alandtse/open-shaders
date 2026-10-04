@@ -214,7 +214,7 @@ void MenuManager::RenderSettingsPanel()
 	ImGui::Separator();
 
 	if (globals::state->GetTonemapOwner() == State::TonemapOwner::kEffects11 &&
-		globals::features::postProcessing.loaded &&
+		globals::features::postProcessing.IsEnabled() &&
 		globals::features::postProcessing.WantsTonemapOwnership()) {
 		ImGui::TextColored(
 			Menu::GetSingleton()->GetTheme().StatusPalette.Warning,

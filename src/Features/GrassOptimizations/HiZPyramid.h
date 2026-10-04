@@ -32,6 +32,8 @@ public:
 
 	/** @brief Creates the parameter constant buffer. Called from the feature's SetupResources. */
 	void SetupResources();
+	/** @brief Releases owned GPU allocations, retaining CPU state and shader programs. */
+	void ReleaseResources();
 	/** @brief Releases the cached compute shaders so they recompile on next use. */
 	void ClearShaderCache();
 

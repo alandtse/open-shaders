@@ -1,4 +1,5 @@
 #include "TerrainShadows.h"
+#include "Utils/RuntimeResources.h"
 
 #include <bit>
 #include <cctype>
@@ -635,4 +636,12 @@ void TerrainShadows::EarlyPrepass()
 		context->PSSetShaderResources(60, (uint)srvs.size(), srvs.data());
 		context->CSSetShaderResources(60, (uint)srvs.size(), srvs.data());
 	}
+}
+
+void TerrainShadows::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(shadowUpdateCB, texHeightMap, texShadowHeight);
+	shadowHeightValid = false;
+	needPrecompute = true;
+	cachedHeightmap = nullptr;
 }

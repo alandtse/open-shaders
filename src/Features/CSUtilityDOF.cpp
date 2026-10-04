@@ -566,7 +566,7 @@ namespace
 	public:
 		explicit DepthOfFieldOverrideScope(CSUtility& a_csUtility)
 		{
-			if (!a_csUtility.loaded)
+			if (!a_csUtility.IsEnabled())
 				return;
 
 			auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton();

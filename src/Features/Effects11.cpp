@@ -1,4 +1,5 @@
 #include "Effects11.h"
+#include "Utils/RuntimeResources.h"
 
 #include <DirectXTex.h>
 
@@ -721,7 +722,7 @@ void Effects11::CheckCommonData()
 		auto& settingManager = SettingManager::GetSingleton();
 		auto& effectManager = EffectManager::GetSingleton();
 
-		enableEffect = !globals::state->IsFullScreenMenuOpen() && globals::shaderCache->IsEnabled() && settingManager.GetValue<bool>("UseEffect", "GLOBAL") && effectManager.IsPresetLoaded();
+		enableEffect = IsEnabled() && !globals::state->IsFullScreenMenuOpen() && globals::shaderCache->IsEnabled() && settingManager.GetValue<bool>("UseEffect", "GLOBAL") && effectManager.IsPresetLoaded();
 
 		auto& weatherManager = WeatherManager::GetSingleton();
 
@@ -1139,7 +1140,7 @@ void Effects11::DrawVolumetricRays()
 		ID3D11ShaderResourceView* srvs[16]{};
 		srvs[0] = vlTexA->srv.get();
 		srvs[1] = vlDepthHalf->srv.get();
-		if (ibl.loaded) {
+		if (ibl.IsEnabled()) {
 			srvs[14] = ibl.envIBLTexture->srv.get();
 			srvs[15] = ibl.skyIBLTexture->srv.get();
 		}
@@ -1156,4 +1157,11 @@ void Effects11::DrawVolumetricRays()
 
 	stateBackup.Restore(context);
 	stateBackup.Release();
+}
+
+void Effects11::ReleaseResources()
+{
+	enableEffect = false;
+	EffectManager::GetSingleton().ReleaseResources();
+	Util::ReleaseRuntimeResources(vlTexA, vlTexB, vlDepthHalf, vlBlurCB, raindropTexture, raindropSRV, additiveBlendState, alphaBlendState);
 }

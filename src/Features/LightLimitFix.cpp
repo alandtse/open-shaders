@@ -1,4 +1,5 @@
 #include "LightLimitFix.h"
+#include "Utils/RuntimeResources.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
 #endif
@@ -430,7 +431,7 @@ void LightLimitFix::DrawPlacedLightSettings()
 	ImGui::Spacing();
 
 	{
-		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
+		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.IsEnabled();
 		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
 		ImGui::SliderFloat(T("feature.light_limit_fix.json_intensity_scale", "Intensity Scale"), &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -512,6 +513,9 @@ void LightLimitFix::DrawLightDebugSettings()
 
 LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 {
+	if (!IsRuntimeAvailable())
+		return {};
+
 	// Defensive sanitization before the values hit the constant buffer. The
 	// sliders enforce ImGuiSliderFlags_AlwaysClamp at the UI, but Settings
 	// can be mutated through other paths (JSON persistence, mod overrides,
@@ -528,6 +532,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	};
 
 	PerFrame perFrame{};
+	perFrame.BackendEnabled = 1;
 	perFrame.EnableContactShadows = settings.EnableContactShadows;
 	perFrame.ContactShadowMaxSteps = std::clamp<uint32_t>(settings.ContactShadowMaxSteps, 1u, 16u);
 	perFrame.ContactShadowMaxDistance = sanitizeFloat(settings.ContactShadowMaxDistance, 64.0f, 4096.0f);
@@ -687,10 +692,6 @@ void LightLimitFix::SetupResources()
 		srvDesc.Buffer.NumElements = MAX_LIGHTS;
 		lights->CreateSRV(srvDesc);
 	}
-
-	{
-		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>());
-	}
 }
 
 void LightLimitFix::Reset()
@@ -721,6 +722,9 @@ void LightLimitFix::Reset()
 
 void LightLimitFix::OnSceneTransitionReset(bool opening)
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	// LoadingMenu open: drop the shadow-caster session caches before the engine tears down the old
 	// cell. Dispatched on the render thread (Feature::DrainSceneTransitions), so it serializes with
 	// the settings-menu table iteration that reads the same caches instead of racing it.
@@ -773,6 +777,9 @@ void LightLimitFix::RestoreDefaultSettings()
 json LightLimitFix::GetDiagnostics()
 {
 	return json{
+		{ "backendEnabled", IsRuntimeAvailable() },
+		{ "requestedEnabled", requestedEnabled.load(std::memory_order_relaxed) },
+		{ "restartPending", HasAnyPendingRestart() },
 		{ "particleLightCount", particleLightCount.load(std::memory_order_relaxed) },
 		{ "lightCount", clusteredLightCount.load(std::memory_order_relaxed) },
 		{ "maxLights", MAX_LIGHTS },
@@ -861,7 +868,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
-	const uint32_t requestedStrictLights = (inWorld && !firstPerson) ? 0u : availableSceneLights;
+	const uint32_t requestedStrictLights = (IsEnabled() && inWorld && !firstPerson) ? 0u : availableSceneLights;
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
 	const uint32_t strictShadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 	RefreshJsonPlacedLightCacheFrame();
@@ -900,7 +907,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 			light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
-			if (isl.loaded) {
+			if (isl.IsEnabled()) {
 				isl.ProcessLight(light, bsLight, niLight);
 			} else {
 				light.radius = runtimeData.radius.x;
@@ -1013,7 +1020,7 @@ bool LightLimitFix::IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niL
 {
 	if (!a_bsLight || !a_niLight || !a_bsLight->pointLight)
 		return false;
-	if (!globals::features::inverseSquareLighting.loaded)
+	if (!globals::features::inverseSquareLighting.IsEnabled())
 		return false;
 	if (const auto it = jsonPlacedLightCache.find(a_niLight); it != jsonPlacedLightCache.end())
 		return it->second;
@@ -1056,14 +1063,20 @@ void LightLimitFix::Prepass()
 {
 	CS_GPU_PASS("LightLimitFix::Prepass");
 
+	// Cache data since cameraData can become invalid in first-person
+	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
+		auto eyePosition = globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
+		eyePositionCached[eyeIndex] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	}
+
 	auto context = globals::d3d::context;
 
 	ShadowCasterManager::ShadowDemandSample demandSample;
 	demandSample.ema = shadowDemandEMA;
 	demandSample.maxLatest = shadowDemandMaxLatest;
-	demandSample.initialized = shadowDemandEMAInitialized;
+	demandSample.initialized = IsEnabled() && shadowDemandEMAInitialized;
 	demandSample.clusterSaturated = shadowDemandClusterSaturated;
-	demandSample.instrumentation = ShadowDemandInstrumentation;
+	demandSample.instrumentation = IsEnabled() && ShadowDemandInstrumentation;
 	demandSample.redrawDueGate = settings.ShadowSettings.RedrawDueGateEnabled;
 	demandSample.sampleSerial = shadowDemandSampleSerial;
 	demandSample.lastDrainFrame = shadowDemandLastDrainFrame;
@@ -1071,6 +1084,14 @@ void LightLimitFix::Prepass()
 	demandSample.tileCount = clusterSize[0] * clusterSize[1];
 	ShadowCasterManager::SetShadowDemand(demandSample);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
+	if (!IsEnabled()) {
+		lightCount = 0;
+		clusteredLightCount.store(0, std::memory_order_relaxed);
+		UpdateShadowDemand();
+		std::lock_guard<std::shared_mutex> lk{ cachedParticleLightsMutex };
+		cachedParticleLights.clear();
+		return;
+	}
 	UpdateLights();
 
 	ID3D11ShaderResourceView* views[3]{};
@@ -1092,6 +1113,10 @@ bool LightLimitFix::IsGlobalLight(RE::BSLight* a_light)
 
 void LightLimitFix::PostPostLoad()
 {
+	logger::info("[LLF] Startup backend enabled={}; shader support remains compiled", IsRuntimeAvailable());
+	if (!IsRuntimeAvailable())
+		return;
+
 	particleLights.GetConfigs();
 	Hooks::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
@@ -1100,6 +1125,9 @@ void LightLimitFix::PostPostLoad()
 
 void LightLimitFix::DataLoaded()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	if (auto gameSettings = globals::game::gameSettingCollection) {
 		if (auto iMagicLightMaxCount = gameSettings->GetSetting("iMagicLightMaxCount")) {
 			iMagicLightMaxCount->data.i = MAXINT32;
@@ -1128,6 +1156,9 @@ void LightLimitFix::RegisterUxActions()
 
 void LightLimitFix::ClearShaderCache()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	ShadowCasterManager::ClearAtlasShaders();
 	clusterBuildingCS.Reset();
 	clusterCullingCS.Reset();
@@ -1187,12 +1218,6 @@ void LightLimitFix::UpdateLights()
 		return;
 	}
 
-	// Cache data since cameraData can become invalid in first-person
-	for (int eyeIndex = 0; eyeIndex < eyeCount; eyeIndex++) {
-		auto eyePosition = globals::game::frameBufferCached.GetCameraPosAdjust(eyeIndex);
-		eyePositionCached[eyeIndex] = { eyePosition.x, eyePosition.y, eyePosition.z };
-	}
-
 	eastl::vector<LightData> lightsData{};
 	lightsData.reserve(MAX_LIGHTS);
 	const bool isInterior = Util::IsInterior();
@@ -1237,7 +1262,7 @@ void LightLimitFix::UpdateLights()
 						light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 						light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
-						if (isl.loaded) {
+						if (isl.IsEnabled()) {
 							isl.ProcessLight(light, bsLight, niLight);
 						} else {
 							light.radius = runtimeData.radius.x;
@@ -1288,7 +1313,7 @@ void LightLimitFix::UpdateLights()
 					light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
 					light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
 
-					if (isl.loaded) {
+					if (isl.IsEnabled()) {
 						isl.ProcessLight(light, shadowLight, niLight);
 					} else {
 						light.radius = runtimeData.radius.x;
@@ -1495,6 +1520,9 @@ void LightLimitFix::UpdateStructure()
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
 
 	UpdateShadowDemand();
+	wasEmpty = false;
+	previousRoomIndex = -1;
+	frameChecker = {};
 }
 
 static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMaxShadowDemandSlots,
@@ -1506,7 +1534,7 @@ void LightLimitFix::UpdateShadowDemand()
 	// No-op if either compute shader failed to build. Clear the demand sample so
 	// SetShadowDemand's consumer can't reuse a stale reading from before the
 	// cluster layout changed or the shader cache failed.
-	if (!shadowDemandCS || !shadowDepthPyramidCS) {
+	if (!IsEnabled() || !shadowDemandCS || !shadowDepthPyramidCS) {
 		shadowDemandEMA.fill(0.0f);
 		shadowDemandEMAInitialized = false;
 		shadowDemandMaxLatest.fill(0);
@@ -1917,4 +1945,21 @@ void LightLimitFix::Hooks::BSWaterShader_SetupGeometry::thunk(RE::BSShader* This
 	auto& singleton = globals::features::lightLimitFix;
 	singleton.BSLightingShader_SetupGeometry_Before(Pass);
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
+}
+
+void LightLimitFix::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(lightBuildingCB, lightCullingCB, shadowDemandCB, shadowDepthPyramidCB,
+		lights, clusters, lightIndexCounter, lightIndexList, lightGrid, tileDepthRange,
+		shadowDemand, shadowDemandOverflow, shadowDemandMax, shadowDemandStaging, shadowDemandMaxStaging);
+	UpdateShadowDemand();
+	wasEmpty = false;
+	previousRoomIndex = -1;
+	frameChecker = {};
+}
+
+void LightLimitFix::SetupPersistentResources()
+{
+	if (!strictLightDataCB)
+		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>(), "LLF::StrictLightData");
 }

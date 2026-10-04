@@ -108,9 +108,10 @@ struct BSShader_LoadShaders
 
 		auto state = globals::state;
 		auto shaderCache = globals::shaderCache;
-		if (shaderCache->IsDiskCache() || shaderCache->IsDump()) {
-			if (shaderCache->IsDiskCache()) {
-				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
+		const bool precompile = shaderCache->IsDiskCache() && !shaderCache->backgroundCompilation;
+		if (precompile || shaderCache->IsDump()) {
+			if (precompile) {
+				Feature::ForEachAvailableFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
 				});
 			}
@@ -123,11 +124,13 @@ struct BSShader_LoadShaders
 						logger::warn("No captured bytecode for vertex shader {} descriptor {:X}", shader->fxpFilename ? shader->fxpFilename : "Unknown", entry->id);
 					}
 				}
+				if (!precompile)
+					continue;
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
 				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-				shaderCache->GetVertexShader(*shader, vertexShaderDesriptor);
+				shaderCache->GetVertexShader(*shader, vertexShaderDesriptor, true);
 			}
 			for (const auto& entry : shader->pixelShaders) {
 				if (entry->shader && shaderCache->IsDump()) {
@@ -137,23 +140,26 @@ struct BSShader_LoadShaders
 						logger::warn("No captured bytecode for pixel shader {} descriptor {:X}", shader->fxpFilename ? shader->fxpFilename : "Unknown", entry->id);
 					}
 				}
+				if (!precompile)
+					continue;
 				auto vertexShaderDesriptor = entry->id;
 				auto pixelShaderDescriptor = entry->id;
 				NormalizeLegacyUtilityDescriptors(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
-				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
+				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
-				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
+				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor, true);
 			}
 
-			if (shaderCache->IsDiskCache() && shader->shaderType.get() == RE::BSShader::Type::Effect) {
+			if (precompile && shader->shaderType.get() == RE::BSShader::Type::Effect) {
 				constexpr auto sharedRuntimeUnionDescriptor =
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MultBlend) |
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MotionVectorsNormals);
-				shaderCache->GetPixelShader(*shader, sharedRuntimeUnionDescriptor);
+				shaderCache->GetPixelShader(*shader, sharedRuntimeUnionDescriptor, true);
 				shaderCache->GetPixelShader(*shader,
 					sharedRuntimeUnionDescriptor |
-						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred));
+						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred),
+					true);
 			}
 		}
 		BSShaderHooks::hk_LoadShaders(shader, stream);
@@ -248,7 +254,7 @@ namespace SkyExtensions
 		{
 			globals::state->UpdateSkyShaderPermutation(pass);
 #if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded)
+			if (globals::features::effects11.IsEnabled())
 				globals::features::effects11.ModifySky(pass);
 #endif
 			func(shader, pass, renderFlags);
@@ -285,7 +291,7 @@ namespace GrassExtensions
 		{
 			func(shader, pass, renderFlags);
 			LegacyGraphicsCompatibility::BindLegacyGrassPerGeometryToPixelShader();
-			if (globals::features::wind.loaded)
+			if (globals::features::wind.IsEnabled())
 				globals::features::wind.UpdateGrassWindSpring();
 
 			auto state = globals::state;
@@ -332,7 +338,7 @@ namespace WeatherExtensions
 		{
 			func(sky, a_delta);
 #if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded)
+			if (globals::features::effects11.IsEnabled())
 				globals::features::effects11.OnSkyUpdateColors(sky);
 #endif
 			globals::features::skySync.OnSkyUpdateColors(sky);
@@ -347,7 +353,7 @@ namespace WeatherExtensions
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (effects11.loaded) {
+			if (effects11.IsEnabled()) {
 				effects11.CheckCommonData();
 				if (effects11.enableEffect) {
 					// The engine passes Sky's own cube by reference, so overriding in place would
@@ -379,7 +385,7 @@ namespace WeatherExtensions
 		{
 #if defined(ENABLE_EFFECTS11)
 			auto& effects11 = globals::features::effects11;
-			if (shaderAccumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass && effects11.loaded && effects11.enableEffect && effects11.ambientGradeCacheValid) {
+			if (shaderAccumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kVRWorldSpaceUIPass && effects11.IsEnabled() && effects11.enableEffect && effects11.ambientGradeCacheValid) {
 				const bool savedEnableEffect = effects11.enableEffect;
 				RE::NiColor* const specularTint = effects11.ambientSpecularTintCacheValid ? &effects11.ambientSpecularTintCache : nullptr;
 				effects11.enableEffect = false;
@@ -416,7 +422,7 @@ namespace PostProcessingExtensions
 				return;
 
 			auto& postProcessing = globals::features::postProcessing;
-			if (postProcessing.loaded)
+			if (postProcessing.IsEnabled())
 				postProcessing.PreProcess(input, output);
 
 			func(a1, a2, a3, a4, a5, a6);
@@ -430,7 +436,7 @@ namespace PostProcessingExtensions
 		{
 			func(This, Pass, RenderFlags);
 #if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded)
+			if (globals::features::effects11.IsEnabled())
 				globals::features::effects11.ModifyParticle(Pass);
 #endif
 		}
@@ -1041,7 +1047,7 @@ namespace Hooks
 				if (state->ShaderEnabled(RE::BSShader::Type::ImageSpace)) {
 					RE::BSImagespaceShader* isShader = CurrentlyDispatchedShader;
 					uint32_t techniqueId = CurrentComputeShaderTechniqueId;
-					if (vl.loaded) {
+					if (vl.IsEnabled()) {
 						if (CurrentlyDispatchedShader == nullptr) {
 							techniqueId = 0;
 							if (CurrentlyDispatchedComputeShader->name == "ISVolumetricLightingGenerateCS"sv) {
@@ -1095,11 +1101,11 @@ namespace Hooks
 	{
 		static void thunk(RE::BSGraphics::PixelShader* PixelShader, RE::BSRenderPass* Pass, DirectX::XMMATRIX& Transform, uint32_t LightCount, uint32_t ShadowLightCount, float WorldScale, uint32_t)
 		{
-			if (globals::features::lightLimitFix.loaded) {
+			if (globals::features::lightLimitFix.loaded && globals::features::lightLimitFix.IsRuntimeAvailable()) {
 				globals::features::lightLimitFix.BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(Pass);
 			} else {
 				func(PixelShader, Pass, Transform, LightCount, ShadowLightCount, WorldScale, 0);
-				if (globals::features::csUtility.loaded)
+				if (globals::features::csUtility.IsEnabled())
 					globals::features::csUtility.UpdateVanillaPointLightData(Pass, LightCount);
 			}
 		}
@@ -1133,7 +1139,7 @@ namespace Hooks
 		__try
 #endif
 		{
-			return globals::features::lightLimitFix.loaded &&
+			return globals::features::lightLimitFix.IsEnabled() &&
 			       !globals::features::lightLimitFix.CheckParticleLights(a_pass, a_technique);
 		}
 #if defined(_MSC_VER)

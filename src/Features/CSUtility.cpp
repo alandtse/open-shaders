@@ -1,4 +1,5 @@
 #include "CSUtility.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Bloom.h"
 #include "Globals.h"
@@ -58,7 +59,7 @@ namespace
 	constexpr int kWaterParallaxQualityMin = 4;
 	constexpr int kWaterParallaxQualityMax = 64;
 	constexpr uint32_t kMaxVanillaPointLights = 7;
-	constexpr uint32_t kVanillaPointLightCBRegister = 3;
+	constexpr uint32_t kVanillaPointLightCBRegister = 9;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
 
 	void SanitizeSettings(CSUtility::Settings& a_settings)
@@ -294,7 +295,7 @@ void CSUtility::DrawSettings()
 		DrawVanillaBloomSettings();
 
 		auto& volumetricLighting = globals::features::volumetricLighting;
-		if (volumetricLighting.loaded && ImGui::BeginTabItem(volumetricLighting.GetDisplayName().c_str())) {
+		if (volumetricLighting.IsEnabled() && ImGui::BeginTabItem(volumetricLighting.GetDisplayName().c_str())) {
 			activeSettingsPage = SettingsPage::VolumetricLighting;
 			Util::DrawEmbeddedFeatureSettings(volumetricLighting);
 			ImGui::EndTabItem();
@@ -494,7 +495,7 @@ void CSUtility::SetupResources()
 
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 {
-	Settings sanitizedSettings = settings;
+	Settings sanitizedSettings = IsEnabled() ? settings : Settings{};
 	SanitizeSettings(sanitizedSettings);
 
 	const float brightnessDelta = sanitizedSettings.sceneBrightness - 1.0f;
@@ -504,7 +505,7 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	};
 
 	PerFrameData data{};
-	data.useAmbientEffectLighting = loaded && sanitizedSettings.useAmbientEffectLighting;
+	data.useAmbientEffectLighting = IsEnabled() && sanitizedSettings.useAmbientEffectLighting;
 	data.effectBrightness = sanitizedSettings.effectBrightness;
 	data.skyStaticBrightness = sanitizedSettings.skyStaticBrightness;
 	data.skyBrightness = sanitizedSettings.skyBrightness;
@@ -605,7 +606,7 @@ struct CSUtility::Hooks
 			func(a_shader, a_pass, a_renderFlags);
 
 			auto& csUtility = globals::features::csUtility;
-			if (!csUtility.loaded || globals::features::lightLimitFix.loaded)
+			if (!csUtility.IsEnabled() || (globals::features::lightLimitFix.loaded && globals::features::lightLimitFix.IsRuntimeAvailable()))
 				return;
 
 			const uint32_t lightCount = a_pass && a_pass->numLights > 0 ? a_pass->numLights - kFirstPointLightSceneIndex : 0;
@@ -633,3 +634,8 @@ void CSUtility::DataLoaded()
 }
 
 #undef I18N_KEY_PREFIX
+
+void CSUtility::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(vanillaPointLightCB);
+}

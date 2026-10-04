@@ -1,4 +1,5 @@
 #include "LinearLighting.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../I18n/I18n.h"
 #include "Features/PostProcessing.h"
@@ -53,7 +54,7 @@ namespace
 void LinearLighting::DrawSettings()
 {
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
+	if (globals::features::effects11.IsEnabled()) {
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
@@ -97,7 +98,8 @@ void LinearLighting::RestoreDefaultSettings()
 void LinearLighting::SetupResources()
 {
 	PerGeometryCB = new ConstantBuffer(ConstantBufferDesc<PerGeometryData>(), "LinearLighting::PerGeometryCB");
-	CompileSceneGammaDecodeShader();
+	if (!sceneGammaDecodeCS)
+		CompileSceneGammaDecodeShader();
 	sceneGammaActive = false;
 	weatherLightingColorsInitialized = false;
 }
@@ -236,7 +238,7 @@ void LinearLighting::Prepass()
 		return;
 
 	lodProjectedMaterialColorScales.fill(kNoProjectedMaterialColorScale);
-	if (auto* defaultObjects = RE::BGSDefaultObjectManager::GetSingleton(); defaultObjects && globals::features::truePBR.loaded) {
+	if (auto* defaultObjects = RE::BGSDefaultObjectManager::GetSingleton(); defaultObjects && globals::features::truePBR.IsEnabled()) {
 		constexpr std::array materialObjects{ RE::DefaultObjectID::kSnowLODMaterial, RE::DefaultObjectID::kSnowLODMaterialHD };
 		for (size_t index = 0; index < materialObjects.size(); ++index) {
 			auto** materialObject = defaultObjects->GetObject<RE::BGSMaterialObject>(materialObjects[index]);
@@ -280,14 +282,14 @@ void LinearLighting::PostPostLoad()
 
 LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 {
-	if (!loaded) {
+	if (!IsEnabled()) {
 		auto data = PerFrameData{};
 		data.enableLinearLighting = false;
 		return data;
 	}
 	auto data = PerFrameData{};
 	data.enableLinearLighting = IsLinearLightingActive();
-	data.enableACEScg = settings.enableACEScg && data.enableLinearLighting && globals::features::postProcessing.loaded;
+	data.enableACEScg = settings.enableACEScg && data.enableLinearLighting && globals::features::postProcessing.IsEnabled();
 	data.isDirLightLinear = isDirLightLinear;
 	data.dirLightMult = dirLightMult;
 	data.authoredColorGamma = kAuthoredColorGamma;
@@ -303,7 +305,7 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 
 	// Override multipliers to neutral values when ENB PP is active
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
+	if (globals::features::effects11.IsEnabled()) {
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			data.ambientMult = 1.0f;
@@ -317,12 +319,12 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 
 bool LinearLighting::IsLinearLightingActive() const
 {
-	if (!loaded || !settings.enableLinearLighting || !sceneGammaDecodeCS || !globals::state || !globals::shaderCache ||
+	if (!IsEnabled() || !settings.enableLinearLighting || !sceneGammaDecodeCS || !globals::state || !globals::shaderCache ||
 		!globals::shaderCache->IsEnabled() || globals::state->IsMainOrLoadingMenuOpen())
 		return false;
 
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded && globals::features::effects11.enableEffect)
+	if (globals::features::effects11.IsEnabled() && globals::features::effects11.enableEffect)
 		return false;
 #endif
 
@@ -388,3 +390,10 @@ void LinearLighting::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 }
 
 #undef I18N_KEY_PREFIX
+
+void LinearLighting::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(PerGeometryCB);
+	sceneGammaActive = false;
+	weatherLightingColorsInitialized = false;
+}

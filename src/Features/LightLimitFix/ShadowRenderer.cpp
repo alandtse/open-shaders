@@ -309,9 +309,12 @@ std::string LightLimitFix::BuildShadowSlotColorLegend() const
 
 void LightLimitFix::DrawOverlay()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	// Auto-shown for viz modes, suppressed lights, or debug overrides (so users
 	// can find what they pinned); Show Shadow Overlay lets the user opt in directly.
-	bool vizOn = EnableLightsVisualisation;
+	bool vizOn = IsEnabled() && EnableLightsVisualisation;
 	bool hasSuppressed = ShadowCasterManager::HasSuppressedLights();
 	bool hasOverrides = ShadowCasterManager::HasAnyOverrides();
 	bool showOverlay = settings.ShowShadowOverlay;

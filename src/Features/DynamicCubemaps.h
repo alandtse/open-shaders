@@ -89,7 +89,7 @@ public:
 	bool fakeReflections = false;
 
 	bool resetCapture[2] = { true, true };
-	bool recompileFlag = false;
+	bool cubemapReady[2] = {};
 	float previousHoursPassed = 0.0f;
 
 	enum class NextTask
@@ -140,17 +140,6 @@ public:
 
 	Settings settings;
 
-	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, EnabledSSR, "Screen Space Reflections"),
-	} };
-	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
-
-	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
-	{
-		// VR-only: enabling SSR needs game-setting initialization at startup.
-		return globals::game::isVR ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
-	}
-	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
@@ -174,8 +163,6 @@ public:
 				T("feature.dynamic_cubemaps.key_feature_5", "Optimized cubemap inference and irradiance calculation") } };
 	};
 
-	virtual std::vector<std::pair<std::string_view, std::string_view>> GetShaderDefineOptions() override;
-
 	/**
  * Indicates whether the feature applies shader defines to the given shader type.
  * @returns Always `true`.
@@ -186,6 +173,8 @@ public:
 	 * Initialize Direct3D resources required for dynamic cubemap generation.
 	 */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void Reset() override;
 	virtual void OnSceneTransitionReset(bool opening) override;
 

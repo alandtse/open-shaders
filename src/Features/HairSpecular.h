@@ -30,6 +30,8 @@ public:
 
 	/** @brief Loads the tangent shift DDS texture from disk and creates its SRV. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 
 	struct alignas(16) Settings
 	{

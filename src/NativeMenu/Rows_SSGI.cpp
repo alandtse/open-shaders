@@ -88,7 +88,7 @@ namespace NativeMenu
 {
 	std::vector<Row> SSGIRows()
 	{
-		if (!globals::features::screenSpaceGI.loaded)
+		if (!globals::features::screenSpaceGI.IsEnabled())
 			return {};
 
 		using Enabled = Bind<SSGIRoot, &Settings::Enabled>;

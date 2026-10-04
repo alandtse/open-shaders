@@ -1,4 +1,5 @@
 #include "PostProcessing.h"
+#include "Utils/RuntimeResources.h"
 
 #include "GpuPass.h"
 #include "LinearLighting.h"
@@ -656,7 +657,6 @@ void PostProcessing::SetupResources()
 	postProcessingOutput = nullptr;
 	json activeSettings;
 	SaveActiveSettings(activeSettings);
-	alternatePipeline = {};
 	D3D11_TEXTURE2D_DESC engineDesc{};
 
 	try {
@@ -721,7 +721,8 @@ void PostProcessing::SetupResources()
 			Util::SetResourceName(copySampler.get(), "PostProcessing::Copy Sampler");
 		}
 
-		CompileCopyShaders();
+		if (!fullscreenVS || !copyPS)
+			CompileCopyShaders();
 
 		CreatePipelineResources(false);
 		if (pipelineTextureDesc.Width != engineDesc.Width || pipelineTextureDesc.Height != engineDesc.Height) {
@@ -736,12 +737,12 @@ void PostProcessing::SetupResources()
 			SwapPipelineResources();
 		}
 
-		bokehResources.Setup();
 		Util::RequestTargetLockAPI();
 
 		ProcessSettings(activeSettings);
 		resourcesReady = true;
 		ApplyPendingSettings();
+		UpdatePipelineResources();
 	} catch (const DX::com_exception& e) {
 		resourcesReady = false;
 		if (pendingSettings.empty())
@@ -750,17 +751,9 @@ void PostProcessing::SetupResources()
 			activeSettings.update(pendingSettings);
 			pendingSettings = std::move(activeSettings);
 		}
-		pipeline.fill(nullptr);
-		alternatePipeline = {};
-		texCopyMain = nullptr;
-		texCopyMainCopy = nullptr;
-		texInput = nullptr;
-		texOutput = nullptr;
-		copyCB = nullptr;
-		copySampler = nullptr;
-		fullscreenVS = nullptr;
-		copyPS = nullptr;
+		ReleaseResources();
 		logger::error("Post Processing resource setup failed; using the game pipeline: {}", e.what());
+		throw;
 	}
 }
 
@@ -781,20 +774,33 @@ void PostProcessing::CreatePipelineResources(bool fallback)
 		texOutput->CreateRTV({ .Format = desc.Format, .ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D, .Texture2D = { .MipSlice = 0 } });
 	}
 
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_shared<LocalExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = fallback ? alternatePipeline.effects[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] : std::make_shared<HistogramAutoExposure>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] = fallback ? alternatePipeline.effects[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] : std::make_shared<ColorGrading>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)] = std::make_shared<LUT>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::LocalExposure)] = std::make_shared<LocalExposure>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] = fallback ? alternatePipeline.effects[static_cast<size_t>(FeaturePipelineIndex::AutoExposure)] : std::make_shared<HistogramAutoExposure>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] = fallback ? alternatePipeline.effects[static_cast<size_t>(FeaturePipelineIndex::ColorGrading)] : std::make_shared<ColorGrading>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::LUT)] = std::make_shared<LUT>();
 
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)] = std::make_shared<MotionBlur>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)] = std::make_shared<DoF>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)] = std::make_shared<PhysicalGlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)] = std::make_shared<CODBloom>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)] = std::make_shared<LensFlare>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)] = std::make_shared<Composite>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)] = std::make_shared<Vignette>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)] = std::make_shared<Camera>();
-	pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)] = std::make_shared<Border>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::MotionBlur)] = std::make_shared<MotionBlur>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::DoF)] = std::make_shared<DoF>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::PhysicalGlare)] = std::make_shared<PhysicalGlare>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::CODBloom)] = std::make_shared<CODBloom>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::LensFlare)] = std::make_shared<LensFlare>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::Composite)] = std::make_shared<Composite>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::Vignette)] = std::make_shared<Vignette>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::Camera)] = std::make_shared<Camera>();
+	if (!pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)])
+		pipeline[static_cast<size_t>(FeaturePipelineIndex::Border)] = std::make_shared<Border>();
 
 	RestorePipelineDefaultEnablement();
 
@@ -802,7 +808,6 @@ void PostProcessing::CreatePipelineResources(bool fallback)
 		auto& pipe = pipeline[i];
 		if (pipe && (!fallback || pipe != alternatePipeline.effects[i])) {
 			pipe->owner = this;
-			pipe->SetupResources();
 		}
 	}
 }
@@ -845,6 +850,9 @@ void PostProcessing::Reset()
 	// PreProcess may not run while bypassed or owned by Effects11, so clear refraction each frame.
 	isrefraction = false;
 
+	if (resourcesReady) {
+		UpdatePipelineResources();
+	}
 	for (auto& pipe : pipeline) {
 		if (pipe)
 			pipe->Reset();
@@ -923,6 +931,9 @@ void PostProcessing::BeginLinearProcessing(PostProcessFeature::TextureInfo& text
 
 void PostProcessing::DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor)
 {
+	feature.UpdateResources();
+	if (!feature.runtimeResourcesReady)
+		return;
 	if (feature.WritesToMainTexture()) {
 		const auto gamut = lastTexColor.gamut;
 		feature.Draw(lastTexColor);
@@ -940,7 +951,7 @@ void PostProcessing::DrawBeforeUpscaling()
 		return;
 
 	auto& upscaling = globals::features::upscaling;
-	if (!upscaling.loaded)
+	if (!upscaling.IsEnabled())
 		return;
 
 	auto renderer = globals::game::renderer;
@@ -953,11 +964,7 @@ void PostProcessing::DrawBeforeUpscaling()
 	CS_GPU_PASS("PostProcessing::PreUpscale");
 	bool processing = false;
 
-	// update auto-enabled features
-	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsAutoEnabled())
-			pipe->UpdateAutoEnabled();
-	}
+	UpdatePipelineResources();
 
 	// go through each fx
 	for (auto& pipe : pipeline) {
@@ -1004,7 +1011,7 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	auto gameTexMain = useMainCopy ? gameTexMainCopyRT : gameTexMainRT;
 	PostProcessFeature::TextureInfo lastTexColor = { Util::AsReal(gameTexMain.texture), Util::AsReal(gameTexMain.SRV) };
-	const auto input = inputProvider && inputProvider->loaded ? inputProvider->GetPostProcessingInput() : PostProcessingInput{};
+	const auto input = inputProvider && inputProvider->IsEnabled() ? inputProvider->GetPostProcessingInput() : PostProcessingInput{};
 	const bool hasInput = input.texture && input.srv;
 	if (hasInput)
 		lastTexColor = { input.texture, input.srv };
@@ -1013,21 +1020,17 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 	BeginLinearProcessing(lastTexColor, !inMainLoadingMenu);
 	auto gameTexMainAlt = useMainCopy ? gameTexMainRT : gameTexMainCopyRT;
 
-	// update auto-enabled features
-	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsAutoEnabled())
-			pipe->UpdateAutoEnabled();
-	}
+	UpdatePipelineResources();
 
 	// go through each fx
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsActive() && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
+		if (pipe && pipe->IsActive() && !pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.IsEnabled())) {
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
 
 	for (auto& pipe : pipeline) {
-		if (pipe && pipe->IsActive() && pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.loaded)) {
+		if (pipe && pipe->IsActive() && pipe->DrawAfterColorGrading() && !(inMainLoadingMenu && pipe->DisableInMainLoadingMenu()) && (!pipe->DrawBeforeUpscaling() || !upscaling.IsEnabled())) {
 			DrawFeature(*pipe, lastTexColor);
 		}
 	}
@@ -1104,7 +1107,7 @@ PostProcessing::Settings PostProcessing::GetCommonBufferData() const
 
 bool PostProcessing::GetSceneExposure(SceneExposure& a_out) const
 {
-	if (!loaded || bypass || IsTonemapOwnedByEffects11() || !IsPipelineReady())
+	if (!IsEnabled() || bypass || IsTonemapOwnedByEffects11() || !IsPipelineReady())
 		return false;
 
 	const auto* exposure = GetPipelineFeature<HistogramAutoExposure>(FeaturePipelineIndex::AutoExposure);
@@ -1171,4 +1174,62 @@ void PostProcessing::PostPostLoad()
 {
 	logger::info("Hooking preprocess passes");
 	stl::write_vfunc<0x2, BSImagespaceShaderRefraction_SetupTechnique>(RE::VTABLE_BSImagespaceShaderRefraction[0]);
+}
+
+void PostProcessing::ReleaseResources()
+{
+	resourcesReady = false;
+	postProcessingOutput = nullptr;
+	for (auto& effect : pipeline)
+		if (effect) {
+			effect->ReleaseResources();
+			effect->runtimeResourcesReady = false;
+		}
+	for (auto& effect : alternatePipeline.effects)
+		if (effect) {
+			effect->ReleaseResources();
+			effect->runtimeResourcesReady = false;
+		}
+	Util::ReleaseRuntimeResources(texCopyMain, texCopyMainCopy, texInput, texOutput, copyCB, copySampler,
+		alternatePipeline.input, alternatePipeline.output,
+		bokehResources.texBokehShapes, bokehResources.shapeSampleBuffers, bokehResources.bokehSampler);
+}
+
+void PostProcessing::UpdatePipelineResources()
+{
+	for (auto& effect : pipeline)
+		if (effect && effect->IsAutoEnabled())
+			effect->UpdateAutoEnabled();
+
+	const auto active = [&](FeaturePipelineIndex index) {
+		const auto& effect = pipeline[static_cast<size_t>(index)];
+		return effect && effect->IsActive();
+	};
+	if (active(FeaturePipelineIndex::DoF) || active(FeaturePipelineIndex::LensFlare) || active(FeaturePipelineIndex::PhysicalGlare)) {
+		if (!bokehResources.bokehSampler) {
+			try {
+				bokehResources.Setup();
+			} catch (const std::exception& e) {
+				Util::ReleaseRuntimeResources(bokehResources.texBokehShapes, bokehResources.shapeSampleBuffers, bokehResources.bokehSampler);
+				for (auto index : { FeaturePipelineIndex::DoF, FeaturePipelineIndex::LensFlare, FeaturePipelineIndex::PhysicalGlare })
+					if (auto& effect = pipeline[static_cast<size_t>(index)])
+						effect->enabled = false;
+				logger::error("Post Processing aperture resource setup failed: {}", e.what());
+			}
+		}
+	} else {
+		Util::ReleaseRuntimeResources(bokehResources.texBokehShapes, bokehResources.shapeSampleBuffers, bokehResources.bokehSampler);
+	}
+	for (size_t i = 0; i < pipeline.size(); ++i) {
+		auto& effect = pipeline[i];
+		if (!effect)
+			continue;
+		effect->UpdateResources();
+		auto& alternate = alternatePipeline.effects[i];
+		if (!effect->IsActive() && alternate && alternate != effect && alternate->runtimeResourcesReady) {
+			Util::RuntimeResourceDiagnostics diagnostics("PostProcessing/" + alternate->GetType(), "disable-alternate");
+			alternate->ReleaseResources();
+			alternate->runtimeResourcesReady = false;
+		}
+	}
 }

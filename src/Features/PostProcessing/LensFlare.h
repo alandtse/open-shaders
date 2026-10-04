@@ -157,6 +157,7 @@ struct LensFlare : public PostProcessFeature
 	bool bokehFFTDirty = true;
 
 	virtual void SetupResources() override;
+	void ReleaseResources() override;
 	virtual void ClearShaderCache() override;
 	void CompileComputeShaders();
 	void CreateFFTTextures(uint resolution);

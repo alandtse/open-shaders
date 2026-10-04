@@ -1,4 +1,5 @@
 #include "VRStereoOptimizations.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Deferred.h"
 #include "ExtendedMaterials.h"
@@ -287,7 +288,8 @@ void VRStereoOptimizations::SetupResources()
 	if (!gBufferFillSupported)
 		logger::warn("[VRStereoOptimizations] GPU lacks typed-UAV-load support for G-buffer formats; stereo reprojection disabled.");
 
-	CompileShaders();
+	if (!stencilCS)
+		CompileShaders();
 
 	logger::info("[VRStereoOptimizations] Resources created: mode tex {}x{} (full SBS)", mainDesc.Width, mainDesc.Height);
 }
@@ -583,7 +585,7 @@ void VRStereoOptimizations::ReclassifyFromFinalDepth()
 		return;
 
 	const auto& ssgi = globals::features::screenSpaceGI;
-	const bool lateConsumerActive = ssgi.loaded && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
+	const bool lateConsumerActive = ssgi.IsEnabled() && ssgi.settings.Enabled && ssgi.settings.UseStereoReproject;
 	if (!lateConsumerActive)
 		return;
 
@@ -901,4 +903,15 @@ void VRStereoOptimizations::DispatchUnrepairableMask()
 	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
 	context->CSSetConstantBuffers(1, 1, &nullCB);
 	context->CSSetShader(nullptr, nullptr, 0);
+}
+
+void VRStereoOptimizations::ReleaseResources()
+{
+	DeactivateStencil();
+	loaded = false;
+	classifiedThisFrame = depthHistoryValid = unrepairableMaskValid = false;
+	Util::ReleaseRuntimeResources(paramsCB, texPerPixelMode, texScatterDepth, texFinalDepthHistory, texUnrepairableMask,
+		stencilWriteDSS, depthFillDSS, stencilWriteRS);
+	mainDepthSRV = nullptr;
+	dssCache.clear();
 }

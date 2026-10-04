@@ -279,8 +279,11 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override;
+	void ReleaseResources() override;
+	void OnRuntimeDisabled() override;
 	/** @brief Propagates frame inactivity to NR temporal history. */
-	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup); }
+	void Reset() override { neuralRendering.Reset(IsEnabled() && settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup); }
 	/** @brief Resets NR history across loading transitions. */
 	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
@@ -446,6 +449,12 @@ public:
 	/// loads that otherwise only clears when the user manually toggles DLSS/preset. VR+DLSS
 	/// only; flat has no repro and per-eye extent asymmetry doesn't apply.
 	std::atomic<bool> pendingDLSSReset{ false };
+
+	/** @copydoc Feature::GetRuntimeToggleNote */
+	std::string_view GetRuntimeToggleNote() const override
+	{
+		return "The configured graphics backend remains initialized. Performance mode retains the upscaler required by its render-target sizes.";
+	}
 
 	/** @brief Copies depth and motion inputs, returning false if the required shaders are unavailable. */
 	bool CopySharedD3D12Resources();

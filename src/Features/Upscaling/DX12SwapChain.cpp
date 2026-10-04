@@ -102,7 +102,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	// Set color space based on HDR Display feature state and negotiated format
-	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	auto* hdr = globals::features::hdrDisplay.IsEnabled() ? &globals::features::hdrDisplay : nullptr;
 	bool enableHDR = hdr && hdr->settings.enableHDR;
 	// Only set HDR color space if not falling back to SDR format
 	SetColorSpace(enableHDR && !fallbackUsed);
@@ -182,7 +182,7 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	auto* hdr = globals::features::hdrDisplay.IsEnabled() ? &globals::features::hdrDisplay : nullptr;
 	bool enableHDR = hdr && hdr->settings.enableHDR;
 	SetColorSpace(enableHDR && !fallbackUsed);
 
@@ -328,7 +328,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// is covered by the D3D11→D3D12 fence. Without this, FidelityFX may read
 	// uiBufferWrapped on D3D12 before the PQ encoding completes on D3D11.
 	// Only runs when HDR Display feature is loaded (UIBrightnessCS may not exist otherwise)
-	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	auto* hdr = globals::features::hdrDisplay.IsEnabled() ? &globals::features::hdrDisplay : nullptr;
 	if (hdr)
 		hdr->ScaleUIBrightnessForFG();
 

@@ -1,4 +1,5 @@
 #include "DynamicCubemaps.h"
+#include "Utils/RuntimeResources.h"
 
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
@@ -20,24 +21,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnabledSSR,
 	EnabledCreator);
 
-std::vector<std::pair<std::string_view, std::string_view>> DynamicCubemaps::GetShaderDefineOptions()
-{
-	std::vector<std::pair<std::string_view, std::string_view>> result;
-	if (settings.EnabledSSR) {
-		result.push_back({ "ENABLESSR", "" });
-	}
-
-	return result;
-}
-
 void DynamicCubemaps::DrawSettings()
 {
-	recompileFlag |= Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
+	Util::CheckboxFlag(T(TKEY("enable_ssr"), "Enable Screen Space Reflections"), settings.EnabledSSR);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_ssr_tooltip"), "Enable Screen Space Reflections on Water"));
 	}
-	if (globals::game::isVR)
-		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnabledSSR);
 
 	if (ImGui::TreeNode(T(TKEY("dynamic_cubemap_creator"), "Dynamic Cubemap Creator"))) {
 		ImGui::Text("%s", T(TKEY("creator_info"), "You must enable creator mode by adding the shader define CREATOR"));
@@ -132,7 +121,6 @@ void DynamicCubemaps::LoadSettings(json& o_json)
 	if (globals::game::isVR) {
 		Util::LoadGameSettings(iniVRCubeMapSettings);
 	}
-	recompileFlag = true;
 }
 
 void DynamicCubemaps::SaveSettings(json& o_json)
@@ -150,7 +138,6 @@ void DynamicCubemaps::RestoreDefaultSettings()
 		Util::ResetGameSettingsToDefaults(iniVRCubeMapSettings);
 		Util::ResetGameSettingsToDefaults(hiddenVRCubeMapSettings);
 	}
-	recompileFlag = true;
 }
 
 void DynamicCubemaps::DataLoaded()
@@ -164,8 +151,7 @@ void DynamicCubemaps::DataLoaded()
 
 void DynamicCubemaps::PostPostLoad()
 {
-	bootSnapshot.LatchIfNeeded(settings);
-	if (globals::game::isVR && settings.EnabledSSR) {
+	if (globals::game::isVR) {
 		std::map<std::string, uintptr_t> earlyhiddenVRCubeMapSettings{
 			{ "bScreenSpaceReflectionEnabled:Display", 0x1ED5BC0 },
 		};
@@ -506,6 +492,7 @@ bool DynamicCubemaps::CompressToBC6H(bool a_reflections)
 
 	auto dst = a_reflections ? envReflectionsTextureBC6H : envTextureBC6H;
 	context->CopyResource(dst->resource.get(), bc6hScratchTexture->resource.get());
+	cubemapReady[a_reflections ? 1 : 0] = true;
 
 	return true;
 }
@@ -539,15 +526,6 @@ void DynamicCubemaps::UpdateCubemap()
 			// from the pre-jump capture aren't compressed before the recapture.
 			nextTask = NextTask::kCaptureInferAndIrradianceA;
 		}
-	}
-
-	if (recompileFlag) {
-		logger::debug("Recompiling for Dynamic Cubemaps");
-		auto shaderCache = globals::shaderCache;
-		if (!shaderCache->Clear("Data//Shaders//ISReflectionsRayTracing.hlsl"))
-			// if can't find specific hlsl file cache, clear all image space files
-			shaderCache->Clear(RE::BSShader::Types::ImageSpace);
-		recompileFlag = false;
 	}
 
 	static constexpr uint32_t kIrradianceSplit = 2;
@@ -595,8 +573,8 @@ void DynamicCubemaps::PostDeferred()
 	auto context = globals::d3d::context;
 
 	ID3D11ShaderResourceView* views[2] = {
-		(activeReflections ? envReflectionsTextureBC6H : envTextureBC6H)->srv.get(),
-		envTextureBC6H->srv.get()
+		(activeReflections && cubemapReady[1]) ? envReflectionsTextureBC6H->srv.get() : (cubemapReady[0] ? envTextureBC6H->srv.get() : defaultCubemap),
+		cubemapReady[0] ? envTextureBC6H->srv.get() : defaultCubemap
 	};
 	context->PSSetShaderResources(30, 2, views);
 }
@@ -803,6 +781,13 @@ void DynamicCubemaps::SetupResources()
 	{
 		DirectX::CreateDDSTextureFromFile(device, L"Data\\Shaders\\DynamicCubemaps\\defaultcubemap.dds", nullptr, &defaultCubemap);
 	}
+	const float clearColor[4] = {};
+	for (auto* uav : uavArray)
+		if (uav)
+			globals::d3d::context->ClearUnorderedAccessViewFloat(uav, clearColor);
+	for (auto* uav : uavReflectionsArray)
+		if (uav)
+			globals::d3d::context->ClearUnorderedAccessViewFloat(uav, clearColor);
 }
 
 void DynamicCubemaps::Reset()
@@ -820,3 +805,11 @@ void DynamicCubemaps::Reset()
 	}
 }
 #undef I18N_KEY_PREFIX
+
+void DynamicCubemaps::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(computeSampler, spmapCB, updateCubemapCB, bc6hEncodeCB, uavArray, uavReflectionsArray, bc6hScratchUAVs, envTextureArraySRV, envReflectionsTextureArraySRV, defaultCubemap, envTexture, envReflectionsTexture, envCaptureTexture, envCaptureRawTexture, envCapturePositionTexture, envCaptureReflectionsTexture, envCaptureRawReflectionsTexture, envCapturePositionReflectionsTexture, envInferredTexture, envTextureBC6H, envReflectionsTextureBC6H, bc6hScratchTexture);
+	resetCapture[0] = resetCapture[1] = true;
+	cubemapReady[0] = cubemapReady[1] = false;
+	nextTask = NextTask::kCaptureInferAndIrradianceA;
+}

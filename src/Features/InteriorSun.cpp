@@ -90,7 +90,7 @@ bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)
 RE::TESWorldSpace* InteriorSun::GetWorldSpace::thunk(RE::TES* tes)
 {
 	if (const auto cell = tes->interiorCell)
-		return IsInteriorWithSun(cell) ? enableInteriorSun : disableInteriorSun;
+		return globals::features::interiorSun.IsEnabled() && IsInteriorWithSun(cell) ? enableInteriorSun : disableInteriorSun;
 	return func(tes);
 }
 
@@ -112,7 +112,7 @@ void InteriorSun::DirShadowLightCulling::thunk(RE::BSShadowDirectionalLight* dir
 	const auto cell = RE::TES::GetSingleton()->interiorCell;
 	auto* passedJobArrays = &jobArrays;
 
-	if (cell && singleton.isInteriorWithSun) {
+	if (cell && singleton.IsActiveInteriorSun()) {
 		const auto* loadedData = cell->GetRuntimeData().loadedData;
 		const auto portalGraph = loadedData ? loadedData->portalGraph : nullptr;
 		if (portalGraph) {

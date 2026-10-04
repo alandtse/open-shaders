@@ -1,4 +1,5 @@
 #include "Wind.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/WindEffects/DragonWind.h"
@@ -684,7 +685,7 @@ void Wind::SetupResources()
 
 bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const
 {
-	if (!loaded || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
+	if (!IsEnabled() || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
 		!SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
 		return false;
 
@@ -776,6 +777,18 @@ void Wind::UpdateWindEffects(float a_frameTime)
 
 void Wind::OnSceneTransitionReset(bool)
 {
+	grassState.springInitialized.fill(false);
+	grassState.springFieldAvailable.fill(false);
+	treeState.springInitialized.fill(false);
+	treeState.springFieldAvailable.fill(false);
+	treeState.hasUpdated = false;
 	for (auto& effect : windEffects)
 		effect->Reset();
+}
+
+void Wind::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(grassState.springConstantBuffer, grassState.springResponseTextures, grassState.springVelocityTextures, grassState.springSampler, treeState.springConstantBuffer, treeState.springResponseTextures, treeState.springVelocityTextures, treeState.transientTextures, treeState.transientVelocityTextures, treeState.springSampler);
+	grassState.springTextureSizes = {};
+	OnSceneTransitionReset(false);
 }

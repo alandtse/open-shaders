@@ -141,7 +141,7 @@ void State::Draw()
 {
 	ZoneScoped;
 	UpdateGrassGpuPass();
-	if (globals::features::sceneManager.loaded)
+	if (globals::features::sceneManager.IsEnabled())
 		globals::features::sceneManager.Update();
 
 	auto shaderCache = globals::shaderCache;
@@ -154,39 +154,39 @@ void State::Draw()
 	auto& volumetricShadows = globals::features::volumetricShadows;
 
 	if (shaderCache->IsEnabled()) {
-		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
+		if (terrainBlending.IsEnabled() && terrainBlending.settings.Enabled) {
 			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
 		}
 
-		if (cloudShadows.loaded) {
+		if (cloudShadows.IsEnabled()) {
 			ZoneScopedN("CloudShadows::SkyShaderHacks");
 			cloudShadows.SkyShaderHacks();
 		}
 
 #if defined(ENABLE_EFFECTS11)
-		if (globals::features::effects11.loaded) {
+		if (globals::features::effects11.IsEnabled()) {
 			ZoneScopedN("Effects11::ParticleShaderHacks");
 			globals::features::effects11.ParticleShaderHacks();
 		}
 #endif
 
-		if (terrainHelper.loaded) {
+		if (terrainHelper.IsEnabled()) {
 			ZoneScopedN("TerrainHelper::SetShaderResources");
 			terrainHelper.SetShaderResources(context);
 		}
 
-		if (skin.loaded) {
+		if (skin.IsEnabled()) {
 			ZoneScopedN("Skin::SetShaderResources");
 			skin.SetShaderResources(context);
 		}
 
-		if (truePBR.loaded) {
+		if (truePBR.IsEnabled()) {
 			ZoneScopedN("TruePBR::SetShaderResources");
 			truePBR.SetShaderResources(context);
 		}
 
-		if (volumetricShadows.loaded) {
+		if (volumetricShadows.IsEnabled()) {
 			ZoneScopedN("VolumetricShadows::SetShaderResources");
 			volumetricShadows.SetShaderResources(context);
 		}
@@ -196,13 +196,13 @@ void State::Draw()
 		if (currentShader && updateShader) {
 			if (currentShader->shaderType.get() == RE::BSShader::Type::Utility) {
 				if (currentPixelDescriptor & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmask)) {
-					if (globals::features::exponentialHeightFog.loaded)
+					if (globals::features::exponentialHeightFog.IsEnabled())
 						globals::features::exponentialHeightFog.CaptureDirectionalShadowMap();
 				}
 			}
 		}
 
-		if (globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible())
+		if (globals::menu->overlayVisible && globals::features::performanceOverlay.IsEnabled() && globals::features::performanceOverlay.IsOverlayVisible())
 			Debug();
 
 		updateShader = false;
@@ -290,11 +290,11 @@ State::TonemapOwner State::GetTonemapOwner()
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11 = globals::features::effects11;
-	if (effects11.loaded && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
+	if (effects11.IsEnabled() && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kEffects11;
 	else
 #endif
-		if (postProcessing.loaded && postProcessing.WantsTonemapOwnership())
+		if (postProcessing.IsEnabled() && postProcessing.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kPostProcessing;
 	else
 		cachedOwner = TonemapOwner::kVanilla;
@@ -430,7 +430,7 @@ void State::Setup()
 	// gating logic that wants to read the log can run during feature SetupResources.
 	CheckTypedUAVLoadSupport();
 
-	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
+	Feature::ForEachAvailableFeature("SetupResources", [](Feature* feature) { feature->InitializeRuntimeResources(); });
 	globals::deferred->SetupResources();
 }
 
@@ -593,8 +593,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		for (auto* feature : Feature::GetFeatureList()) {
 			try {
 				const std::string featureName = feature->GetShortName();
-				// Resolved here rather than in Feature::Load so features disabled at boot,
-				// which never reach Load, still report their install state to the UI.
+				// Probe before loading so initialization failures remain visible in the feature list.
 				std::error_code ec;
 				const bool iniExists = std::filesystem::exists(Util::PathHelpers::GetFeatureIniPath(featureName), ec);
 				// exists() reports false on error, so treat an unreadable path as installed rather than letting a probe failure hide the feature.
@@ -602,7 +601,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
 				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
-				if (!isDisabled) {
+				feature->SetEnabled(!isDisabled);
+				{
 					logger::info("Loading Feature: '{}'", featureName);
 
 					// Load base feature settings from merged config (default + user)
@@ -631,9 +631,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 							logger::warn("Invalid override settings for {}, keeping original settings.", feature->GetName());
 						}
 					}
-
-				} else {
-					logger::info("Feature '{}' is disabled at boot.", featureName);
 				}
 			} catch (const std::exception& e) {
 				feature->failedLoadedMessage = feature->failedLoadedMessage.empty() ?
@@ -952,7 +949,8 @@ bool State::SetFeatureBootEnabled(const std::string& featureName, bool enabled)
 	if (!SaveFeaturePreference(json{ { "Disable at Boot", { { featureName, !enabled } } } }))
 		return false;
 	SetFeatureDisabled(featureName, !enabled);
-	globals::shaderCache->MarkExpectedFeatureFlip();
+	if (auto* feature = Feature::FindRegisteredFeatureByShortName(featureName))
+		feature->SetEnabled(enabled);
 	return true;
 }
 
@@ -1553,8 +1551,8 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		if (globals::game::isVR) {
 			const auto& vr = globals::features::vr;
 			const auto& dynamicCubemaps = globals::features::dynamicCubemaps;
-			const bool ssrFoveationEnabled = vr.loaded && vr.settings.EnableSSRFoveation &&
-			                                 dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
+			const bool ssrFoveationEnabled = vr.IsEnabled() && vr.settings.EnableSSRFoveation &&
+			                                 dynamicCubemaps.IsEnabled() && dynamicCubemaps.settings.EnabledSSR;
 			if (ssrFoveationEnabled) {
 				const auto profile = upscaling.foveatedRender.GetFoveationProfile();
 				if (profile.available) {  // available already implies an active (non-full) coverage scale
