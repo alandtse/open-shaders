@@ -167,15 +167,26 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	}
 
 	bool contentStore = globals::state->enableContentStore.load(std::memory_order_relaxed);
-	if (ImGui::Checkbox(T("menu.advanced.content_store", "Reuse Identical Compiled Shaders"), &contentStore))
+	if (ImGui::Checkbox(T("menu.advanced.content_store", "Persistent Shader Store (Developers/Testers)"), &contentStore))
 		globals::state->enableContentStore.store(contentStore, std::memory_order_relaxed);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.content_store_tooltip",
-							  "Keeps compiled shaders keyed by their preprocessed source and compiler flags, "
-							  "so variants that differ only in defines the shader never reads, and shaders "
-							  "invalidated by an unrelated change, reuse an existing result instead of recompiling.\n"
-							  "Costs one preprocess per shader (tens of milliseconds) and up to 8 GB of disk "
-							  "inside Data/ShaderCache. Takes effect for shaders compiled from now on."));
+							  "Keeps every compiled shader keyed by its preprocessed source and compiler flags. "
+							  "After a cache wipe, a branch or build switch, or a rollback, shaders already compiled "
+							  "for the same code are restored instead of recompiled.\n"
+							  "Costs one preprocess per shader (tens of milliseconds) and disk space in "
+							  "Data/ShaderCache/ContentStore, trimmed to the least recently used. "
+							  "Takes effect for shaders compiled from now on."));
+	}
+	if (contentStore) {
+		ImGui::SameLine();
+		if (ImGui::Button(T("menu.advanced.content_store_clear", "Clear Store")))
+			shaderCache->ClearContentStore();
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits",
+														  { { "count", std::to_string(shaderCache->GetContentStoreHitTasks()) } },
+														  "Restored this session: {count}")
+									  .c_str());
 	}
 
 	// Avoid flow control compiler flag (transient — not saved to config because the

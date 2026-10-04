@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -15,52 +16,12 @@
 #include <system_error>
 #include <vector>
 
-/// Content-addressed store of compiled shader blobs, keyed by a hash of the
-/// preprocessed source plus everything else that changes the bytecode.
+/// Persistent store of compiled shader blobs, addressed by Util::CompileDedupe::MakeKey (a hash of the
+/// preprocessed source plus everything else that changes the bytecode).
 /// Lives in Data/ShaderCache/ContentStore, which cache invalidation leaves in place.
 namespace Util::ShaderContentStore
 {
-	/// Everything besides the preprocessed text that changes the compiled bytecode.
-	struct KeyInputs
-	{
-		std::string_view preprocessed;
-		std::string_view entryPoint;
-		std::string_view profile;
-		uint32_t flags = 0;
-		std::string_view compilerId;
-	};
-
-	/// Hashes every bytecode-affecting input into the store key.
-	inline ContentHash::Hash128 MakeKey(const KeyInputs& a_in)
-	{
-		auto h = ContentHash::HashString(a_in.preprocessed);
-		h = ContentHash::CombineHashes(h, ContentHash::HashString(a_in.entryPoint));
-		h = ContentHash::CombineHashes(h, ContentHash::HashString(a_in.profile));
-		const uint64_t flags = a_in.flags;
-		h = ContentHash::CombineHashes(h, ContentHash::HashBytes(&flags, sizeof(flags)));
-		return ContentHash::CombineHashes(h, ContentHash::HashString(a_in.compilerId));
-	}
-
-	/// Removes `#line` directives from preprocessed HLSL. They carry absolute paths and
-	/// line numbers that only affect debug info, so keeping them would make the same
-	/// code hash differently per install directory or after a comment-only edit.
-	inline std::string StripLineDirectives(std::string_view a_text)
-	{
-		std::string out;
-		out.reserve(a_text.size());
-		size_t pos = 0;
-		while (pos < a_text.size()) {
-			size_t end = a_text.find('\n', pos);
-			const size_t next = end == std::string_view::npos ? a_text.size() : end + 1;
-			const auto line = a_text.substr(pos, next - pos);
-			if (!line.starts_with("#line"))
-				out.append(line);
-			pos = next;
-		}
-		return out;
-	}
-
-	/// Sharded on-disk blob store addressed by MakeKey(); safe for concurrent use by compile threads.
+	/// Sharded on-disk blob store addressed by a CompileDedupe key; safe for concurrent use by compile threads.
 	class Store
 	{
 	public:
@@ -102,8 +63,10 @@ namespace Util::ShaderContentStore
 			std::filesystem::create_directories(path.parent_path(), ec);
 			if (ec)
 				return false;
+			// Concurrent compile threads can finish identical shaders, so each write needs its own temp name.
+			static std::atomic<uint64_t> tempCounter{ 0 };
 			auto tmp = path;
-			tmp += ".tmp";
+			tmp += std::format(".{}.tmp", tempCounter.fetch_add(1, std::memory_order_relaxed));
 			{
 				std::ofstream ofs(tmp, std::ios::binary | std::ios::trunc);
 				if (!ofs.is_open())
@@ -123,6 +86,13 @@ namespace Util::ShaderContentStore
 				Trim(maxBytes);
 			}
 			return true;
+		}
+
+		/// Deletes every stored blob; later Put calls recreate the directories.
+		void Clear() const
+		{
+			std::error_code ec;
+			std::filesystem::remove_all(root, ec);
 		}
 
 		/// Evicts least-recently-used entries until the store is at most a_maxBytes.

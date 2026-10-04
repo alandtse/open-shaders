@@ -820,6 +820,8 @@ namespace SIE
 		void IncDigestMissTasks();
 		/** @brief Counts a compile satisfied by the content-addressed store. */
 		void IncContentStoreHitTasks();
+		/** @brief Deletes every blob in the persistent store (no-op while it is disabled). */
+		void ClearContentStore();
 		uint64_t GetContentStoreHitTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();
