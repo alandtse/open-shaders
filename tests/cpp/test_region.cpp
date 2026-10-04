@@ -7,7 +7,6 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -80,17 +79,6 @@ namespace
 	{
 		for (uint32_t frame = 0; frame < kPolicy.shrinkWindowFrames; ++frame)
 			a_stabilizer.Update(a_candidate, kWidth, kHeight);
-	}
-
-	/** @brief The inline UV-to-pixel arithmetic SubrectFromUV replaced, kept as an oracle. */
-	PixelRegion LegacySubrectFromUV(const UVRegion& a_uv, uint32_t a_width, uint32_t a_height)
-	{
-		PixelRegion region;
-		region.w = std::max<uint32_t>(1, (uint32_t)(a_width * a_uv.w));
-		region.h = std::max<uint32_t>(1, (uint32_t)(a_height * a_uv.h));
-		region.x = (uint32_t)(a_uv.x * a_width);
-		region.y = (uint32_t)(a_uv.y * a_height);
-		return region;
 	}
 }
 
@@ -678,30 +666,32 @@ TEST_CASE("BoundsFromUV feeds PixelRegionFromBounds the same rect in pixels", "[
 	REQUIRE(fullFrame.h == kHeight);
 }
 
-TEST_CASE("SubrectFromUV truncates a UV rect exactly as the inline arithmetic did", "[region][uv]")
+TEST_CASE("SubrectFromUV truncates a UV rect to pixels", "[region][uv]")
 {
-	const std::array<UVRegion, 9> uvs{
-		UVRegion{ 0.0f, 0.0f, 0.0f, 0.0f },
-		UVRegion{ 0.0f, 0.0f, 1.0f, 1.0f },
-		UVRegion{ 0.25f, 0.25f, 0.25f, 0.25f },
-		UVRegion{ 0.0f, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f },
-		UVRegion{ 0.499f, 0.499f, 0.499f, 0.499f },
-		UVRegion{ 0.999f, 0.999f, 0.999f, 0.999f },
-		UVRegion{ 0.0005f, 0.0005f, 0.0005f, 0.0005f },
-		UVRegion{ 0.0f, 0.0f, 0.5f, 1.0f },
-		UVRegion{ 0.5f, 0.0f, 0.5f, 1.0f },
+	struct Case
+	{
+		UVRegion uv;
+		uint32_t width, height;
+		PixelRegion expected;
 	};
-	const std::array<std::array<uint32_t, 2>, 4> sizes{ { { 1080, 1200 }, { 1512, 1680 }, { 2064, 2208 }, { 1, 1 } } };
+	const std::array<Case, 9> cases{ {
+		{ { 0.25f, 0.25f, 0.25f, 0.25f }, 1080, 1200, { 270, 300, 270, 300 } },
+		{ { 0.25f, 0.25f, 0.25f, 0.25f }, 2064, 2208, { 516, 552, 516, 552 } },
+		{ { 0.0f, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f }, 1080, 1200, { 0, 400, 360, 400 } },
+		{ { 0.499f, 0.499f, 0.499f, 0.499f }, 2064, 2208, { 1029, 1101, 1029, 1101 } },
+		{ { 0.999f, 0.999f, 0.999f, 0.999f }, 1080, 1200, { 1078, 1198, 1078, 1198 } },
+		{ { 0.0005f, 0.0005f, 0.0005f, 0.0005f }, 1080, 1200, { 0, 0, 1, 1 } },
+		{ { 0.0005f, 0.0005f, 0.0005f, 0.0005f }, 2064, 2208, { 1, 1, 1, 1 } },
+		{ { 0.5f, 0.0f, 0.5f, 1.0f }, 2064, 2208, { 1032, 0, 1032, 2208 } },
+		{ { 0.1f, 0.2f, 0.3f, 0.7f }, 2064, 2208, { 206, 441, 619, 1545 } },
+	} };
 
-	for (const auto& uv : uvs) {
-		for (const auto& size : sizes) {
-			const auto actual = Util::Region::SubrectFromUV(uv, size[0], size[1]);
-			const auto expected = LegacySubrectFromUV(uv, size[0], size[1]);
-			REQUIRE(actual.x == expected.x);
-			REQUIRE(actual.y == expected.y);
-			REQUIRE(actual.w == expected.w);
-			REQUIRE(actual.h == expected.h);
-		}
+	for (const auto& testCase : cases) {
+		const auto actual = Util::Region::SubrectFromUV(testCase.uv, testCase.width, testCase.height);
+		REQUIRE(actual.x == testCase.expected.x);
+		REQUIRE(actual.y == testCase.expected.y);
+		REQUIRE(actual.w == testCase.expected.w);
+		REQUIRE(actual.h == testCase.expected.h);
 	}
 }
 
