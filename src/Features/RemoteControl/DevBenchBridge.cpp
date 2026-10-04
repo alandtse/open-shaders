@@ -1012,6 +1012,8 @@ namespace
 			// (per-slot numeric state per frame; slot>=0 adds that light's
 			// caster set per pass mode, and frames<=16 adds per-frame tile DDS).
 			const uint32_t frames = a_args.value("frames", 0u);
+			if (a_args.contains("slot") && !a_args["slot"].is_number_integer())
+				return json{ { "error", "slot must be an integer" } };
 			const int32_t slot = a_args.value("slot", -1);
 			if (frames > 0) {
 				ShadowCasterManager::RequestShadowFrameRecord(frames, slot);
@@ -1347,7 +1349,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.profiler", profilerDesc, &ProfilerToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
-			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. With kind=shadowmaps and frames=N it records N shadow frames, and slot (a light index, default -1 for none) adds that light's caster set. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"},"slot":{"type":"number"}},"required":["kind"]}})";
+			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. With kind=shadowmaps and frames=N it records N shadow frames, and slot (an integer light index, default -1 for none) adds that light's caster set. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"},"slot":{"type":"integer"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =

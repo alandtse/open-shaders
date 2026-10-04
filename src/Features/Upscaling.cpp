@@ -611,7 +611,7 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			const std::string name = args.value("name", std::string{});
 			if (!foveatedRender.subrectController.ApplyPresetByName(name))
-				logger::warn("[FOVEATED] applyFoveationPreset preset '{}' not found; not applied", name);
+				logger::warn("[FOVEATED] applyFoveationPreset preset {} not found; not applied", json(name).dump());
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
