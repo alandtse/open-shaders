@@ -781,6 +781,21 @@ TEST_CASE("ClipRegion changes nothing for an inactive clip", "[region][clip]")
 	REQUIRE(focus.eye[1].w == before.eye[1].w);
 }
 
+TEST_CASE("ClipRegion ignores the retained eyes of an inactive focus", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 0, 0, 100, 100 });
+	focus.active = false;
+	StereoRegion clip;
+	clip.active = true;
+	clip.eye.fill(PixelRegion{ 50, 50, 100, 100 });
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.active);
+	REQUIRE(focus.eye[0].x == 50u);
+	REQUIRE(focus.eye[0].w == 100u);
+	REQUIRE(focus.eye[1].h == 100u);
+}
+
 TEST_CASE("ClipRegion makes the result active when the clip is active", "[region][clip]")
 {
 	StereoRegion focus;
