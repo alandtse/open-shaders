@@ -67,6 +67,7 @@ add_executable(cpp_tests
     test_compilededupe.cpp
     test_contenthash.cpp
     test_shadercachemanifest.cpp
+    test_featureflipimpact.cpp
     test_shadercacheclear.cpp
 	test_generationclaim.cpp
 	test_shaderinclude.cpp
