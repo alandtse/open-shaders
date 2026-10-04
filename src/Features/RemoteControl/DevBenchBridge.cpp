@@ -447,6 +447,8 @@ namespace
 		}
 
 		const std::string name = a_args.value("name", std::string{});
+		if ((action == "invokeCommand" || action == "invokeQuery") && a_args.contains("params") && !a_args.contains("args"))
+			return json{ { "error", "arguments go in 'args'; 'params' is not accepted" }, { "action", action } };
 		const json actionArgs = a_args.value("args", json::object());
 
 		if (action == "invokeCommand") {
@@ -464,7 +466,7 @@ namespace
 			task->AddTask([target, fn, actionArgs, shortName, name]() {
 				try {
 					fn(target, actionArgs);
-					logger::info("DevBenchBridge: menu(invokeCommand, {}.{}) applied", shortName, name);
+					logger::info("DevBenchBridge: menu(invokeCommand, {}.{}) ran", shortName, name);
 				} catch (const std::exception& e) {
 					logger::error("DevBenchBridge: menu(invokeCommand, {}.{}) threw: {}", shortName, name, e.what());
 				} catch (...) {
@@ -1333,7 +1335,7 @@ namespace DevBenchBridge
 		RegisterDevBenchUx();
 
 		static constexpr const char* actionsDesc =
-			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
+			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Arguments go in args; a request that sends params without args is rejected. Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
 		dvb->RegisterTool("openshaders.actions", actionsDesc, &ActionsToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
@@ -1345,7 +1347,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.profiler", profilerDesc, &ProfilerToolHandler, nullptr);
 
 		static constexpr const char* captureDesc =
-			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"}},"required":["kind"]}})";
+			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. With kind=shadowmaps and frames=N it records N shadow frames, and slot (a light index, default -1 for none) adds that light's caster set. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"},"slot":{"type":"number"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
 
 		static constexpr const char* settingsDesc =
