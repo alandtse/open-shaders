@@ -29,4 +29,21 @@ bool FoveatedIsShaderDetailActive(float detailWeight)
 	return detailWeight > 0.0001f;
 }
 
+/**
+* @brief Combines one eye's foveation detail weight with the other eye's.
+*
+* Keeps both eyes on one decision for the same surface: the result is the lower of
+* the two weights, so neither eye can run the detailed path where the other falls
+* back. An invalid reprojection keeps this eye's own weight.
+*
+* @param[in] ownWeight   Detail weight of the current eye, [0,1].
+* @param[in] otherWeight Detail weight of the other eye at the reprojected position, [0,1].
+* @param[in] otherValid  True when otherWeight was reprojected validly.
+* @return Combined detail weight, [0,1].
+*/
+float FoveatedCombineEyeWeights(float ownWeight, float otherWeight, bool otherValid)
+{
+	return otherValid ? min(ownWeight, otherWeight) : ownWeight;
+}
+
 #endif
