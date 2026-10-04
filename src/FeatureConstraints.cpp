@@ -14,7 +14,7 @@ namespace FeatureConstraints
 		ConstraintResult result;
 
 		for (auto* feature : Feature::GetFeatureList()) {
-			if (!feature->loaded)
+			if (!feature->IsEnabled())
 				continue;
 
 			auto constraints = feature->GetActiveConstraints();
@@ -50,7 +50,7 @@ namespace FeatureConstraints
 		std::unordered_set<std::string> processedKeys;  // featureShortName|settingPath for O(1) lookup
 
 		for (auto* feature : Feature::GetFeatureList()) {
-			if (!feature->loaded)
+			if (!feature->IsEnabled())
 				continue;
 
 			auto constraints = feature->GetActiveConstraints();

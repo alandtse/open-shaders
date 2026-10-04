@@ -1,4 +1,5 @@
 ﻿#include "DoF.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -389,6 +390,9 @@ void DoF::SetupResources()
 		texPreFocus = eastl::make_unique<Texture2D>(texDesc, "DoF::PreviousFocus");
 		texPreFocus->CreateSRV(srvDesc);
 		texPreFocus->CreateUAV(uavDesc);
+		const float initialFocus[4] = { settings.ManualFocusPlane, 0.0f, 0.0f, 0.0f };
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texPreFocus->uav.get(), initialFocus);
+		globals::d3d::context->ClearUnorderedAccessViewFloat(texFocus->uav.get(), initialFocus);
 	}
 
 	// Bokeh shapes are loaded by PostProcessing::bokehResources (shared with LensFlare)
@@ -408,7 +412,10 @@ void DoF::SetupResources()
 		Util::SetResourceName(linearSampler.get(), "DoF::LinearSampler");
 	}
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 }
 
 void DoF::ClearShaderCache()
@@ -894,4 +901,9 @@ void DoF::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void DoF::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(dofCB, proceduralBokehSamples, texOutput, texPreBlurred, texFarBlurred, texNearBlurred, texBlurredFiltered, texPostSmooth, texPostSmooth2, texFocus, texPreFocus, texCoC, texCoCHalf, texCoCTile, texCoCTileTmp, texCoCTileDilated, texGatherColor, texGatherCoC, linearSampler);
 }

@@ -1,4 +1,5 @@
 #include "ColorGrading.h"
+#include "Utils/RuntimeResources.h"
 
 #include "GpuPass.h"
 #include "ShaderCache.h"
@@ -308,7 +309,7 @@ bool exposureSlider(float* val)
 void drawHDRStatus()
 {
 	auto& hdr = globals::features::hdrDisplay;
-	if (hdr.loaded && hdr.settings.enableHDR) {
+	if (hdr.IsEnabled() && hdr.settings.enableHDR) {
 		auto hdrOutputActive = std::format("{} {}", ICON_FA_CHECK, T("feature.post_processing.color_grading.hdr_output_active", "HDR Output Active"));
 		ImGui::TextColored(Util::Colors::GetSuccess(), "%s", hdrOutputActive.c_str());
 		ImGui::Text(T("feature.post_processing.color_grading.paper_white_nits_from_hdr_settings", "Paper White: %.0f nits (from HDR settings)"), static_cast<float>(hdr.settings.hdrPaperWhite));
@@ -609,7 +610,7 @@ void ColorGrading::DrawSettings()
 	ImGui::Checkbox(T(TKEY("enable_tonemapping"), "Enable Tonemapping"), &settings.enableTonemap);
 	if (settings.enableTonemap) {
 		auto& hdrRef = globals::features::hdrDisplay;
-		const bool hdrActive = hdrRef.loaded && hdrRef.settings.enableHDR;
+		const bool hdrActive = hdrRef.IsEnabled() && hdrRef.settings.enableHDR;
 
 		if (ImGui::Checkbox(T(TKEY("use_open_drt"), "Use OpenDRT"), &settings.useOpenDrt))
 			recompileFlag = true;
@@ -776,7 +777,7 @@ void ColorGrading::DrawSettings()
 	{
 		auto& spaces = getAvailableColorSpaces();
 		auto& hdr = globals::features::hdrDisplay;
-		const bool hdrEnabled = hdr.loaded && hdr.settings.enableHDR;
+		const bool hdrEnabled = hdr.IsEnabled() && hdr.settings.enableHDR;
 
 		constexpr int kHDRColorSpace = 2;  // BT2020
 		constexpr int kSDRColorSpace = 0;  // sRGB / BT709 gamut
@@ -1061,7 +1062,10 @@ void ColorGrading::SetupResources()
 		Util::SetResourceName(curveStaging.get(), "Post Processing Color Grading Curve Staging");
 	}
 
-	CompileShaders();
+	if (!shadersRequested) {
+		CompileShaders();
+		shadersRequested = true;
+	}
 }
 
 void ColorGrading::ClearShaderCache()
@@ -1100,7 +1104,7 @@ void ColorGrading::CompileShaders()
 bool ColorGrading::IsReadyForTonemapping() const
 {
 	const auto& hdr = globals::features::hdrDisplay;
-	if (hdr.loaded && hdr.settings.enableHDR && !TonemapperInfo::GetTonemappers()[tonemapperType].supportsHDR)
+	if (hdr.IsEnabled() && hdr.settings.enableHDR && !TonemapperInfo::GetTonemappers()[tonemapperType].supportsHDR)
 		return false;
 	std::lock_guard lock(shaderMutex);
 	return !recompileFlag && colorgradingPS && lutgenCS;
@@ -1109,7 +1113,7 @@ bool ColorGrading::IsReadyForTonemapping() const
 PostProcessFeature::Gamut ColorGrading::GetDisplayGamut() const
 {
 	const auto& hdr = globals::features::hdrDisplay;
-	return hdr.loaded && hdr.settings.enableHDR ? Gamut::Rec2020 : Gamut::Rec709;
+	return hdr.IsEnabled() && hdr.settings.enableHDR ? Gamut::Rec2020 : Gamut::Rec709;
 }
 
 void ColorGrading::Draw(TextureInfo& inout_tex)
@@ -1124,7 +1128,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 	// regardless of which settings page the user is viewing.
 	{
 		auto& hdrRef = globals::features::hdrDisplay;
-		const bool hdrActive = hdrRef.loaded && hdrRef.settings.enableHDR;
+		const bool hdrActive = hdrRef.IsEnabled() && hdrRef.settings.enableHDR;
 		auto& tonemappers = TonemapperInfo::GetTonemappers();
 
 		if (hdrActive && !tonemappers[tonemapperType].supportsHDR) {
@@ -1156,7 +1160,7 @@ void ColorGrading::Draw(TextureInfo& inout_tex)
 
 		RE::ImageSpaceData imageSpaceData = pp.imageSpaceManager->gameISData;
 		auto& hdr = globals::features::hdrDisplay;
-		const bool hdrEnabled = hdr.loaded && hdr.settings.enableHDR;
+		const bool hdrEnabled = hdr.IsEnabled() && hdr.settings.enableHDR;
 		UpdateColorSpaceTransforms(hdrEnabled, inout_tex.gamut);
 
 		// Always compute XYZ matrices for white balance
@@ -1355,3 +1359,10 @@ void ColorGrading::OutputTextures()
 }
 
 #undef I18N_KEY_PREFIX
+
+void ColorGrading::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(colorCB, texColor, texColorAlternate, texLUT, linearSampler, texCurveInput, texCurveOutput, curveStaging);
+	curveNeedsUpdate = true;
+	curveReadbackRequested = false;
+}

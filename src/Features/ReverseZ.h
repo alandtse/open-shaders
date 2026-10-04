@@ -31,6 +31,8 @@ struct ReverseZ : Feature
 	virtual std::string GetShortName() override { return "ReverseZ"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kDisplay; }
 	virtual bool IsCore() const override { return true; }
+	/** @brief Keeps depth maintenance active; EnableReverseZ is the restart-gated control. */
+	bool IsAlwaysEnabled() const override { return true; }
 	virtual bool SupportsVR() override { return true; }
 	virtual std::string_view GetShaderDefineName() override { return "REVERSE_Z"; }
 

@@ -733,7 +733,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 
 	const auto featureName = feat->GetShortName();
-	bool isDisabled = !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
+	bool isDisabled = feat->loaded ? !feat->IsEnabled() : !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
 	auto& themeSettings = globals::menu->GetSettings().Theme;
@@ -741,7 +741,9 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	ImVec4 textColor;
 
 	// Determine the text color based on the state
-	if (isDisabled) {
+	if (feat->HasAnyPendingRestart()) {
+		textColor = themeSettings.StatusPalette.RestartNeeded;
+	} else if (isDisabled) {
 		textColor = themeSettings.StatusPalette.Disable;
 	} else if (isLoaded) {
 		// Loaded feature with staged but-not-yet-applied restart-gated
@@ -814,7 +816,7 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	}
 
 	const auto featureName = feat->GetShortName();
-	bool isDisabled = !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
+	bool isDisabled = feat->loaded ? !feat->IsEnabled() : !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
 	const bool featureProfilingAvailable =
@@ -981,7 +983,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		return;
 	}
 
-	bool bootEnabled = !isDisabled;
+	bool bootEnabled = feat->RequiresRestartForToggle() ? feat->requestedEnabled.load(std::memory_order_relaxed) : !isDisabled;
 	if (g_featureActionsFlyoutFeature != featureName) {
 		Util::CloseFlyout(g_featureActionsFlyout);
 		g_featureActionsFlyoutFeature = featureName;
@@ -1018,23 +1020,25 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 				});
 
 				if (Util::FlyoutMenuItem(
-						T("menu.features.enable_at_boot", "Enable at Boot"),
+						feat->RequiresRestartForToggle() ? T("menu.features.enable_restart", "Enabled (restart required)") : T("menu.features.enable_live", "Enabled"),
 						bootEnabled,
-						true,
+						isLoaded,
 						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
 					const bool nowDisabled = feat->ToggleAtBootSetting();
-					g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
+					g_featurePreferenceSaveFailed = nowDisabled == !bootEnabled;
 					bootEnabled = !nowDisabled;
 				}
 
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text(
-						T("menu.features.boot_toggle_tooltip",
-							"Toggle feature loading at boot.\n"
-							"Current state: %s\n"
-							"Restart required for changes to take effect.\n"
-							"Disabling removes performance impact."),
-						bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
+					if (!feat->RequiresRestartForToggle())
+						ImGui::Text(
+							T("menu.features.runtime_toggle_tooltip",
+								"Toggle this feature's runtime effects.\n"
+								"Current state: %s\n"
+								"Compiled feature support is retained."),
+							bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
+					if (const auto note = feat->GetRuntimeToggleNote(); !note.empty())
+						ImGui::TextUnformatted(note.data(), note.data() + note.size());
 				}
 			}
 
@@ -1146,11 +1150,16 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 	bool sceneEditing)
 {
 	auto& themeSettings = globals::menu->GetSettings().Theme;
+	if (feat->RequiresRestartForToggle()) {
+		ImGui::TextWrapped("%s", feat->GetRuntimeToggleNote().data());
+		if (feat->HasAnyPendingRestart())
+			Util::Text::RestartNeeded("Restart to apply the selected feature state.");
+	}
 
 	if (isDisabled) {
-		ImGui::TextColored(themeSettings.StatusPalette.Disable, "%s", T("menu.features.settings_hidden_disabled", "Feature settings are hidden because this feature is disabled at boot."));
+		ImGui::TextColored(themeSettings.StatusPalette.Disable, "%s", T("menu.features.settings_hidden_inactive", "Feature settings are hidden while this feature is disabled."));
 		ImGui::Spacing();
-		ImGui::Text("%s", T("menu.features.enable_to_access_config", "Enable the feature above to access its configuration options."));
+		ImGui::Text("%s", feat->RequiresRestartForToggle() ? "Enable the feature above and restart to access its configuration options." : T("menu.features.enable_to_access_config", "Enable the feature above to access its configuration options."));
 	} else {
 		if (isLoaded) {
 			if (!sceneEditing) {

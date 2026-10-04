@@ -82,7 +82,7 @@ namespace Hair
 		float3 TshiftPrimary;
 		float3 TshiftSecondary;
 
-		if (SharedData::hairSpecularSettings.EnableTangentShift) {
+		if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.EnableTangentShift)) {
 			const float shift = TexTangentShift.SampleLevel(SampColorSampler, uv, 0).x - 0.5;
 			TshiftPrimary = ShiftTangent(T, N, shift + SharedData::hairSpecularSettings.PrimaryTangentShift);
 			TshiftSecondary = ShiftTangent(T, N, shift + SharedData::hairSpecularSettings.SecondaryTangentShift);
@@ -202,7 +202,7 @@ namespace Hair
 		dirTransmission = 0;
 		const float roughness = 1 - saturate(shininess * 0.01);
 
-		if (SharedData::hairSpecularSettings.EnableTangentShift) {
+		if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.EnableTangentShift)) {
 			const float shift = TexTangentShift.SampleLevel(SampColorSampler, uv, 0).x - 0.5;
 			T = ShiftTangent(T, N, shift);
 		}
@@ -237,7 +237,7 @@ namespace Hair
 		const float3 N = normalize(context.vertexNormal);
 
 		if (SharedData::hairSpecularSettings.HairMode == 1) {
-			if (SharedData::hairSpecularSettings.EnableTangentShift) {
+			if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.EnableTangentShift)) {
 				const float shift = TexTangentShift.SampleLevel(SampColorSampler, uv, 0).x - 0.5;
 				T = ShiftTangent(T, N, shift);
 			}
@@ -263,7 +263,7 @@ namespace Hair
 
 	float HairSelfShadow(float3 positionWS, float3 lightDirWS, float noise, uint eyeIndex)
 	{
-		if (!SharedData::hairSpecularSettings.EnableSelfShadow) {
+		if (!(RuntimeFeatures::IsEnabled(RuntimeFeatures::HairSpecularFeature) && SharedData::hairSpecularSettings.EnableSelfShadow)) {
 			return 1.0;
 		}
 

@@ -25,6 +25,9 @@ namespace CloudShadows
 
 	float GetCloudShadowMult(float3 worldPosition, SamplerState textureSampler)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::CloudShadowsFeature))
+			return 1.0;
+
 		float3 cloudSampleDir = GetCloudShadowSampleDir(worldPosition, SharedData::DirLightDirection.xyz).xyz;
 		float cloudCubeSample = CloudShadowsTexture.SampleLevel(textureSampler, cloudSampleDir, 0).x;
 		return saturate(1.0 - cloudCubeSample * SharedData::cloudShadowsSettings.Opacity);

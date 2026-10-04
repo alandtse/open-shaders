@@ -257,6 +257,8 @@ public:
 
 	/** @brief Creates the complex-grass detection buffers. */
 	void SetupResources();
+	/** @brief Releases owned GPU allocations, retaining CPU state and shader programs. */
+	void ReleaseResources();
 
 	/** @brief Releases the cached detection shader so it recompiles on next use. */
 	void ClearShaderCache();

@@ -687,7 +687,7 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	ImGui::Spacing();
 	ImGui::Spacing();
 	auto& sceneSelector = globals::features::sceneSelector;
-	if (sceneSelector.loaded) {
+	if (sceneSelector.IsEnabled()) {
 		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Scene Selector"))) {
 			Menu::GetSingleton()->SelectFeatureMenu(sceneSelector.GetShortName());
 		}
@@ -1119,6 +1119,16 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrame
 	data.settings.RaindropInterval = 1.0f / settings.RaindropInterval;
 	data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
 	UpdateCharacterRainData(data, a_advanceFrameState);
+	if (!IsEnabled()) {
+		data.Raining = 0.0f;
+		data.Wetness = 0.0f;
+		data.PuddleWetness = 0.0f;
+		data.CharacterImpactIntensity = 0.0f;
+		data.CharacterRetainedWetness = 0.0f;
+		data.settings.EnableWetnessEffects = false;
+		data.settings.MaxShoreWetness = 0.0f;
+		data.settings.CharacterSpotDebug = 0;
+	}
 
 	return data;
 }

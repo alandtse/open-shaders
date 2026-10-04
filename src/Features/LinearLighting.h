@@ -89,6 +89,8 @@ struct LinearLighting : Feature
 
 	/** @brief Creates the emissive data buffer and compiles the scene gamma decode shader. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Recompiles the scene gamma decode shader after a shader-cache clear. */
 	virtual void ClearShaderCache() override;
 	/** @brief Marks kMAIN as gamma-domain storage for the main world-rendering interval. */

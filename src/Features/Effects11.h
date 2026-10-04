@@ -101,6 +101,8 @@ public:
 
 	virtual void DrawSettings() override;
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void Prepass() override;
 	virtual void ClearShaderCache() override;
 

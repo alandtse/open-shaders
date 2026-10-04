@@ -25,6 +25,9 @@ namespace LightLimitFix
 
 	bool GetClusterIndex(in float2 uv, in float z, inout uint clusterIndex)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::LightLimitFixFeature))
+			return false;
+
 		const uint3 clusterSize = SharedData::lightLimitFixSettings.ClusterSize.xyz;
 
 		if (!FrameBuffer::FrameParams.y)  // Fix first person lights
@@ -277,6 +280,11 @@ namespace LightLimitFix
 	// stale or zeroed under LLF, so pixels past cascade 1 must fade to lit.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow, out float llfCoverage)
 	{
+		[branch] if (!SharedData::lightLimitFixSettings.BackendEnabled)
+		{
+			llfCoverage = 1.0;
+			return engineMaskShadow;
+		}
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));

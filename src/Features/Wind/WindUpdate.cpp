@@ -50,10 +50,10 @@ namespace
 			a_ambientVelocity.x * a_ambientVelocity.x +
 			a_ambientVelocity.y * a_ambientVelocity.y +
 			a_ambientVelocity.z * a_ambientVelocity.z);
-		const float speed = !a_wind.loaded || a_wind.ShouldUseRealWindSpeed() ?
+		const float speed = !a_wind.IsEnabled() || a_wind.ShouldUseRealWindSpeed() ?
 		                        (std::isfinite(ambientSpeed) ? std::max(ambientSpeed, 0.0f) : 0.0f) :
 		                        std::max(a_wind.GetEffectiveWindOverrideSpeed(), 0.0f);
-		const bool useRealDirection = !a_wind.loaded || a_wind.runtimeState.windFieldUseRealDirection;
+		const bool useRealDirection = !a_wind.IsEnabled() || a_wind.runtimeState.windFieldUseRealDirection;
 		const float directionLength = std::hypot(a_ambientVelocity.x, a_ambientVelocity.y);
 		float3 direction = a_fallbackDirection;
 		if (useRealDirection && std::isfinite(directionLength) && directionLength > 0.0001f) {
@@ -187,15 +187,15 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 	const TreeWindPatcher::Sensitivities treeDefaults{};
 	return {
 		settings.trunkWindIntensityOverride,
-		loaded && settings.overrideTrunkWindIntensity,
-		loaded && settings.enableGrassWindSpringBend,
+		IsEnabled() && settings.overrideTrunkWindIntensity,
+		IsEnabled() && settings.enableGrassWindSpringBend,
 		treeDefaults.transientWindInfluence,
 		treeDefaults.leafTransientWindInfluence,
 		treeDefaults.leafTransientFlutterMaximum,
 		treeDefaults.transientMaximumBendMultiplier,
 		settings.trunkWindBendSensitivity,
 		settings.treeLeafBaseWindFlutterGain,
-		static_cast<uint32_t>(loaded && settings.enableAmbientGrassWind),
+		static_cast<uint32_t>(IsEnabled() && settings.enableAmbientGrassWind),
 		settings.grassWindSensitivity,
 		settings.grassWindBendProfile,
 		settings.grassWindCompressionToBend,

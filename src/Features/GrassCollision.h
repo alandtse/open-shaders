@@ -126,6 +126,8 @@ public:
 	Texture2D* deformationTextures[2] = {};
 	Texture2D* velocityTextures[2] = {};
 	uint currentTextureIndex = 0;
+	bool fieldInitialized = false;
+	std::atomic<bool> collisionHistoryResetPending{ false };
 	winrt::com_ptr<ID3D11SamplerState> deformationSampler;
 
 	struct CapsuleHistory
@@ -137,6 +139,11 @@ public:
 
 	/** @brief Creates the collision texture, structured buffers for bounding boxes and collision instances. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
+
+	/** @brief Clears deformation history before resuming collision updates. */
+	void OnRuntimeEnabled() override;
 
 	/** @brief Draws the ImGui settings UI for grass collision options. */
 	virtual void DrawSettings() override;

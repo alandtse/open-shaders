@@ -59,6 +59,11 @@ namespace VolumetricShadows
 
 	float GetVSMShadow3D(float3 startPosition, float3 endPosition, float noise, uint baseSampleCount, uint eyeIndex, out float surfaceShadow)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::VolumetricShadowsFeature)) {
+			surfaceShadow = 1.0;
+			return 1.0;
+		}
+
 		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 
 		// View-space z — matches the linear cascade split distances from BSShadowDirectionalLight.
@@ -133,6 +138,11 @@ namespace VolumetricShadows
 
 	float GetVSMShadow2D(float3 position, float3 positionWS, uint eyeIndex, out float detailedShadow)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::VolumetricShadowsFeature)) {
+			detailedShadow = 1.0;
+			return 1.0;
+		}
+
 		DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(position, eyeIndex));

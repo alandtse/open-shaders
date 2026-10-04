@@ -46,7 +46,7 @@ namespace WetnessEffects
 		float wetness = 0.0;
 
 		// Early exit if no effects enabled
-		bool hasEffects = SharedData::wetnessEffectsSettings.EnableSplashes || SharedData::wetnessEffectsSettings.EnableRipples;
+		bool hasEffects = (RuntimeFeatures::IsEnabled(RuntimeFeatures::WetnessEffectsFeature) && SharedData::wetnessEffectsSettings.EnableSplashes) || (RuntimeFeatures::IsEnabled(RuntimeFeatures::WetnessEffectsFeature) && SharedData::wetnessEffectsSettings.EnableRipples);
 		if (!hasEffects) {
 			return float4(rippleNormal, wetness * SharedData::wetnessEffectsSettings.SplashesStrength);
 		}
@@ -58,7 +58,7 @@ namespace WetnessEffects
 				float tOffset = float(Random::iqint3(gridCurr)) * uintToFloat;
 
 				// Calculate splashes
-				if (SharedData::wetnessEffectsSettings.EnableSplashes) {
+				if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::WetnessEffectsFeature) && SharedData::wetnessEffectsSettings.EnableSplashes)) {
 					float residual = t * intervalRcp / SharedData::wetnessEffectsSettings.SplashesLifetime + tOffset + worldPos.z * 0.001;
 					uint timestep = uint(residual);
 					residual -= timestep;
@@ -79,7 +79,7 @@ namespace WetnessEffects
 				}
 
 				// Calculate ripples
-				if (SharedData::wetnessEffectsSettings.EnableRipples) {
+				if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::WetnessEffectsFeature) && SharedData::wetnessEffectsSettings.EnableRipples)) {
 					float residual = t * intervalRcp + tOffset + worldPos.z * 0.001;
 					uint timestep = uint(residual);
 					residual -= timestep;

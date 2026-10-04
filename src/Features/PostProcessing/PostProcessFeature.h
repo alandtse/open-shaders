@@ -115,6 +115,12 @@ struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeatu
 	virtual bool WritesToMainTexture() const { return true; }
 
 	virtual inline void SetupResources() = 0;
+	/** @brief Releases owned textures and buffers while retaining settings and shader programs. */
+	virtual void ReleaseResources() {}
+	bool shadersRequested = false;
+	bool runtimeResourcesReady = false;
+	/** @brief Applies the sub-effect toggle to its GPU resource lifetime. */
+	void UpdateResources();
 	virtual void ClearShaderCache() = 0;
 	virtual void RestoreDefaultSettings() = 0;
 

@@ -85,7 +85,8 @@ namespace SharedData
 	struct CubemapCreatorSettings
 	{
 		uint Enabled;
-		float3 pad0;
+		uint EnabledSSR;
+		float2 pad0;
 
 		float4 CubemapColor;
 	};
@@ -118,7 +119,7 @@ namespace SharedData
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad1;
+		uint BackendEnabled;
 	};
 
 	struct WetnessEffectsSettings
@@ -574,6 +575,7 @@ namespace SharedData
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
+		uint4 RuntimeFeatureFlags;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
@@ -668,4 +670,6 @@ namespace SharedData
 		return SphericalHarmonics::Unproject(AmbientSHR, AmbientSHG, AmbientSHB, normal);
 	}
 }
+#include "Common/RuntimeFeatures.hlsli"
+
 #endif  // __SHARED_DATA_DEPENDENCY_HLSL__

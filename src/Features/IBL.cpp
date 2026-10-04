@@ -1,4 +1,5 @@
 #include "IBL.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Deferred.h"
 #include "DynamicCubemaps.h"
@@ -227,7 +228,7 @@ bool IBL::IsManagedByENB() const
 {
 #if defined(ENABLE_EFFECTS11)
 	auto& enb = globals::features::effects11;
-	if (!enb.loaded || !enb.enableEffect)
+	if (!enb.IsEnabled() || !enb.enableEffect)
 		return false;
 	return SettingManager::GetSingleton().GetValue<bool>("EnableImageBasedLighting", "EFFECT");
 #else
@@ -290,7 +291,7 @@ void IBL::Prepass()
 		context->PSSetShaderResources(76, 2, views);
 	}
 
-	std::array<ID3D11ShaderResourceView*, 1> srvs = { (dynamicCubemaps.loaded && envTexture) ? envTexture->srv.get() : nullptr };
+	std::array<ID3D11ShaderResourceView*, 1> srvs = { (dynamicCubemaps.IsEnabled() && envTexture) ? envTexture->srv.get() : nullptr };
 	std::array<ID3D11UnorderedAccessView*, 1> uavs = { envIBLTexture->uav.get() };
 	std::array<ID3D11SamplerState*, 1> samplers = { Deferred::GetSingleton()->linearSampler };
 
@@ -476,4 +477,10 @@ ID3D11ComputeShader* IBL::GetDiffuseIBLCS()
 	if (globals::features::dynamicCubemaps.loaded)
 		defines.push_back({ "DYNAMIC_CUBEMAPS", nullptr });
 	return diffuseIBLCS.Get(L"Data\\Shaders\\IBL\\DiffuseIBLCS.hlsl", defines, "cs_5_0");
+}
+
+void IBL::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(envIBLTexture, skyIBLTexture, staticDiffuseIBLTexture, staticSpecularIBLTexture);
+	dynamicIBLValid = false;
 }

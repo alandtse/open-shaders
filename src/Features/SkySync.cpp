@@ -233,7 +233,7 @@ void SkySync::OnSkyUpdateColors(RE::Sky* sky)
 
 std::optional<float3> SkySync::GetCelestialLightWeights() const
 {
-	if (!loaded || !settings.Enabled || !celestialLightingValid)
+	if (!IsEnabled() || !settings.Enabled || !celestialLightingValid)
 		return std::nullopt;
 
 	return shadowFader.lightWeights;

@@ -244,11 +244,11 @@ PS_OUTPUT main(PS_INPUT input)
 	if (dirShadow != 0.0)
 		dirShadow *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
-	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+	float llDirLightMult = ((RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableLinearLighting) && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
 
 #			if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		diffuseColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #			endif
@@ -259,7 +259,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
 #			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL)) {
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
 	}
 #			endif
@@ -269,7 +269,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Diffuse.w = 1;
 
 #			if defined(EXP_HEIGHT_FOG)
-	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
+	if (inReflection && (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		ApplyReflectionExponentialHeightFog(psout.Diffuse.xyz, input.WorldPosition.xyz, input.Position, eyeIndex);
 	}
 #			endif
@@ -284,11 +284,11 @@ PS_OUTPUT main(PS_INPUT input)
 #		else
 	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
-	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+	float llDirLightMult = ((RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableLinearLighting) && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
 
 #			if defined(EXP_HEIGHT_FOG)
-	if (SharedData::exponentialHeightFogSettings.enabled) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		diffuseColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 	}
 #			endif
@@ -299,7 +299,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 directionalAmbientColor = Color::Ambient(SharedData::GetAmbient(normal));
 #			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL)) {
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
 	}
 #			endif
@@ -307,7 +307,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 color = diffuseColor * baseColor.xyz;
 #			if defined(EXP_HEIGHT_FOG)
-	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
+	if (inReflection && (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled)) {
 		ApplyReflectionExponentialHeightFog(color, input.WorldPosition.xyz, input.Position, eyeIndex);
 	}
 #			endif

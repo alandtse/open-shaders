@@ -262,6 +262,7 @@ struct PhysicalGlare : public PostProcessFeature
 	uint currentFFTResolution = 256;
 
 	virtual void SetupResources() override;
+	void ReleaseResources() override;
 	virtual void ClearShaderCache() override;
 	void CompileComputeShaders();
 	void CreateFFTTextures(uint resolution);

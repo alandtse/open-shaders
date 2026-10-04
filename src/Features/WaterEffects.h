@@ -30,6 +30,8 @@ public:
 
 	/** @brief Loads the water caustics DDS texture from disk. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 
 	/** @brief Binds the caustics texture SRV to the pixel shader for the current frame. */
 	virtual void Prepass() override;

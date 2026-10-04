@@ -8,6 +8,7 @@ public:
 	virtual std::string GetName() const override { return "enbadaptation.fx"; }
 
 	virtual void Execute() override;
+	void ReleaseResources() override;
 	virtual void UpdateEffectVariables() override;
 
 	TextureManager::Texture textureCurrent;

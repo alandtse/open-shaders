@@ -223,7 +223,7 @@ struct TH_BSLightingShader_SetupMaterial
 		func(shader, material);
 
 		auto& terrainHelper = globals::features::terrainHelper;
-		if (terrainHelper.loaded) {
+		if (terrainHelper.IsEnabled()) {
 			terrainHelper.BSLightingShader_SetupMaterial(material);
 		}
 	}

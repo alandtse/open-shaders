@@ -1,4 +1,5 @@
 #include "SubsurfaceScattering.h"
+#include "Utils/RuntimeResources.h"
 
 #include "../I18n/I18n.h"
 #include "../Utils/UI.h"
@@ -508,3 +509,14 @@ void SubsurfaceScattering::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSSh
 }
 
 #undef I18N_KEY_PREFIX
+
+void SubsurfaceScattering::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(blurCB, blurHorizontalTemp, diffuseNoAlbedoTex);
+	validMaterials = false;
+	updateKernels = true;
+	auto* state = globals::game::smState;
+	state->characterLightEnabled = true;
+	if (CharacterLightingStrengthOriginal != -1.0f)
+		state->characterLightParams[2] = CharacterLightingStrengthOriginal;
+}

@@ -1,4 +1,5 @@
 #include "Composite.h"
+#include "Utils/RuntimeResources.h"
 
 #include "CODBloom.h"
 #include "Features/PostProcessing.h"
@@ -55,7 +56,10 @@ void Composite::SetupResources()
 		texOutput->CreateRTV(rtvDesc);
 	}
 
-	CompileRasterShaders();
+	if (!shadersRequested) {
+		CompileRasterShaders();
+		shadersRequested = true;
+	}
 }
 
 void Composite::ClearShaderCache()
@@ -189,4 +193,9 @@ void Composite::Draw(TextureInfo& inout_tex)
 	}
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void Composite::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(texOutput);
 }

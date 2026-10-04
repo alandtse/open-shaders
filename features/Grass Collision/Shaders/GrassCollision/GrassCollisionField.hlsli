@@ -24,6 +24,9 @@ namespace GrassCollision
 
 	float4 SampleCurrentDeformation(float2 worldPosition)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::GrassCollisionFeature))
+			return 0.0;
+
 		bool isValid;
 		float2 uv = GetFieldUV(
 			worldPosition, SharedData::grassCollisionData.PosOffset,
@@ -33,6 +36,9 @@ namespace GrassCollision
 
 	float4 SamplePreviousDeformation(float2 worldPosition)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::GrassCollisionFeature))
+			return 0.0;
+
 		bool isValid;
 		float2 uv = GetFieldUV(
 			worldPosition, SharedData::grassCollisionData.PreviousPosOffset,

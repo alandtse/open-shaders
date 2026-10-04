@@ -223,7 +223,7 @@ namespace Skin
 
 	float2 GetWetness(float z, float3 modelNormal)
 	{
-		if (skinPerGeometry.x == 0.f && skinPerGeometry.y == 0.f)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::SkinFeature) || !RuntimeFeatures::IsEnabled(RuntimeFeatures::WetnessEffectsFeature) || (skinPerGeometry.x == 0.f && skinPerGeometry.y == 0.f))
 			return 0.f;
 
 		float waterWet = 0.0f;

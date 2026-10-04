@@ -32,7 +32,7 @@ float4 PS_HDRDownsample(VS_OUTPUT input) : SV_TARGET
 	            0.25f;
 	bool isMainLoading = SharedData::HDRData.w > kMainLoadingSceneThreshold;
 	bool postProcessOutput = SharedData::postProcessingSettings.DisableVanillaTonemapping != 0 && !isMainLoading;
-	bool sceneIsLinear = SharedData::linearLightingSettings.enableLinearLighting || postProcessOutput;
+	bool sceneIsLinear = (RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableLinearLighting) || postProcessOutput;
 	scene.rgb = UIComposition::CompositeSDR(scene.rgb, ui, sceneIsLinear, postProcessOutput, isMainLoading ? 1.0 : UIParams.x);
 	return scene;
 }

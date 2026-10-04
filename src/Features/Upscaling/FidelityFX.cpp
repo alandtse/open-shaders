@@ -193,7 +193,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
 
 	// Cache peak nits first since we need HDR feature access
-	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
+	auto* hdr = globals::features::hdrDisplay.IsEnabled() ? &globals::features::hdrDisplay : nullptr;
 	float peakNits = hdr ? static_cast<float>(hdr->settings.hdrPeakNits) : 1000.0f;
 
 	// Clamp peak nits to safe range [1.0f, 10000.0f] to prevent invalid values
@@ -420,7 +420,7 @@ void FidelityFX::CreateFSRResources()
 		contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
 		if (globals::features::reverseZ.IsActive())
 			contextDescription.flags |= FFX_FSR3_ENABLE_DEPTH_INVERTED;
-		if (globals::features::hdrDisplay.loaded) {
+		if (globals::features::hdrDisplay.IsEnabled()) {
 			contextDescription.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
 			contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;
 		} else {

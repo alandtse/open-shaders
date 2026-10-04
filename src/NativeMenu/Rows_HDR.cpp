@@ -40,7 +40,7 @@ namespace NativeMenu
 {
 	std::vector<Row> HDRRows()
 	{
-		if (!globals::features::hdrDisplay.loaded)
+		if (!globals::features::hdrDisplay.IsEnabled())
 			return {};
 
 		return {

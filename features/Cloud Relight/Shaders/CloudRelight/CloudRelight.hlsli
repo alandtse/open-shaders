@@ -104,6 +104,8 @@ namespace CloudRelight
 #if defined(CLOUD_SHADOWS)
 	float GetInnerShadow(float3 viewDir, float3 dirLightDir, float cloudDensity, SamplerState textureSampler)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::CloudShadowsFeature))
+			return 1.0;
 		static const float kRayStep = 1.0 / 32.0;
 		float rayPos = kRayStep * 0.5;
 		float4 raySelfShadow = 0.0;
@@ -193,7 +195,7 @@ namespace CloudRelight
 
 		float3 dirLightDir = normalize(SharedData::DirLightDirection.xyz);
 		float linearLightingDirLightMultiplier =
-			(SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0;
+			((RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableLinearLighting) && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0;
 		float3 dirLightColor =
 			Color::DirectionalLight(SharedData::DirLightColor.rgb / max(linearLightingDirLightMultiplier, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * linearLightingDirLightMultiplier * Color::VanillaNormalization();
 		float isotropicPhase = 0.25 * Math::INV_PI;

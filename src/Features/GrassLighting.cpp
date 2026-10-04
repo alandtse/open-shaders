@@ -86,7 +86,7 @@ void GrassLighting::DrawSettings()
 			ImGui::Text("%s", T(TKEY("brightness_tooltip"), "Darkens the grass textures to look better with the new lighting"));
 		}
 
-		if (globals::features::grassOptimizations.loaded) {
+		if (globals::features::grassOptimizations.IsEnabled()) {
 			ImGui::Spacing();
 			ImGui::TextWrapped("%s", T(TKEY("mid_lod_grass"), "Middle LOD Grass"));
 			ImGui::PushID("midlod");

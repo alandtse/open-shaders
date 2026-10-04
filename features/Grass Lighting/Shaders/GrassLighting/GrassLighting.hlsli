@@ -16,7 +16,7 @@ namespace GrassLighting
 	{
 		float3 H = normalize(V + L);
 #if defined(VANILLA_FRESNEL)
-		if (SharedData::vanillaFresnelSettings.Enable && SharedData::vanillaFresnelSettings.EnableGGXOnGrass) {
+		if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::VanillaFresnelFeature) && SharedData::vanillaFresnelSettings.Enable) && (RuntimeFeatures::IsEnabled(RuntimeFeatures::VanillaFresnelFeature) && SharedData::vanillaFresnelSettings.EnableGGXOnGrass)) {
 			float NdotL = saturate(dot(N, L));
 			float NdotV = saturate(dot(N, V));
 			float NdotH = saturate(dot(N, H));

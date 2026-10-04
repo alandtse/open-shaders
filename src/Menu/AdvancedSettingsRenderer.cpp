@@ -42,7 +42,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 			ImGui::EndTabItem();
 		}
 
-		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_disable_at_boot", "Disable at Boot"), Menu::FontRole::Subheading)) {
+		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_feature_toggles", "Feature Toggles"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##DisableAtBootContent", ImVec2(0, 0), false)) {
 				RenderDisableAtBootSection(drawDisableAtBootSettings);
 			}
@@ -227,9 +227,9 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	ImGui::Checkbox("Background Compile on Boot", &menuSettings.BackgroundShaderCompilationOnBoot);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted(
-			"Load the menu immediately and compile shaders in the background on boot "
-			"(same as the Skip Compilation key). Shaders still compile - only the startup wait "
-			"is skipped. Takes effect on the next launch. Default off.");
+			"Load the menu immediately and request shader variations as rendering needs them "
+			"(same as the Skip Compilation key). Bulk precompilation is skipped. "
+			"Takes effect on the next launch. Default off.");
 	}
 
 	if (globals::game::isVR) {

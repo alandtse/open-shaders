@@ -1,4 +1,5 @@
 #include "WaterEffects.h"
+#include "Utils/RuntimeResources.h"
 
 #include <DDSTextureLoader.h>
 
@@ -20,4 +21,9 @@ void WaterEffects::Prepass()
 bool WaterEffects::HasShaderDefine(RE::BSShader::Type)
 {
 	return true;
+}
+
+void WaterEffects::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(causticsView);
 }

@@ -37,6 +37,8 @@ public:
 
 	/** @brief Creates GPU resources including occlusion textures, probe arrays, and samplers. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Releases cached compute shaders and recompiles them. */
 	virtual void ClearShaderCache() override;
 	/** @brief Compiles the probe update compute shader from HLSL source. */
@@ -99,6 +101,9 @@ public:
 	float occlusionDistance = 10000.f;
 
 	// cached variables
+	/** @brief Rebuilds probes after live enabling. */
+	void OnRuntimeEnabled() override { queuedResetSkylighting = true; }
+
 	bool queuedResetSkylighting = true;
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;

@@ -1,4 +1,5 @@
 #include "Effect.h"
+#include "Utils/RuntimeResources.h"
 #include <d3dcompiler.h>
 #include <fstream>
 #include <iterator>
@@ -1223,4 +1224,36 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 		if (profiler)
 			profiler->EndPass();
 	}
+}
+
+void Effect::ReleaseResources()
+{
+	for (auto& [name, variable] : variables) {
+		auto* resource = variable->AsShaderResource();
+		if (resource && resource->IsValid()) {
+			D3DX11_EFFECT_TYPE_DESC desc{};
+			variable->GetType()->GetDesc(&desc);
+			std::vector<ID3D11ShaderResourceView*> empty(std::max(1u, desc.Elements), nullptr);
+			if (desc.Elements)
+				resource->SetResourceArray(empty.data(), 0, static_cast<UINT>(empty.size()));
+			else
+				resource->SetResource(nullptr);
+		}
+	}
+	for (auto& [name, texture] : effectTextureCache)
+		Util::ReleaseRuntimeResources(texture.texture, texture.rtv, texture.srv);
+	for (auto& [name, texture] : customTextureCache)
+		Util::ReleaseRuntimeResource(texture);
+	effectTextureCache.clear();
+	customTextureCache.clear();
+	rtvDimensionCache.clear();
+	commonTexturePointerCache.clear();
+}
+
+void Effect::RestoreResources()
+{
+	if (!effect)
+		return;
+	SetupCustomTextures();
+	CreateEffectTextures();
 }

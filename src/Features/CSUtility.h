@@ -206,6 +206,8 @@ struct CSUtility : Feature
 	/** Reapplies override-controlled settings for the active OS Utility tab. */
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 	/** Scales the current weather's effect and sky static colors. */

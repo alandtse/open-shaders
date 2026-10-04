@@ -31,6 +31,15 @@ public:
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kMaterials; }
 	/** @brief Indicates this is a core feature bundled with the main mod. */
 	virtual bool IsCore() const override { return true; }
+	/** @brief Keeps resources bound for materials already converted to the PBR format. */
+	bool RequiresRenderMaintenance() const override { return IsRuntimeAvailable(); }
+	/** @brief Material conversion hooks are selected once at startup. */
+	bool RequiresRestartForToggle() const override { return true; }
+	/** @copydoc Feature::GetRuntimeToggleNote */
+	std::string_view GetRuntimeToggleNote() const override
+	{
+		return "Enabling or disabling True PBR requires a restart. Off skips material conversion, hooks and resources. Shader cache is unchanged.";
+	}
 	virtual bool SupportsVR() override { return true; }
 	/** @brief Indicates this feature appears in the in-game settings menu. */
 	virtual bool IsInMenu() const override { return true; }

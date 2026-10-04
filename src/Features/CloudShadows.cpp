@@ -1,4 +1,5 @@
 #include "CloudShadows.h"
+#include "Utils/RuntimeResources.h"
 
 #if defined(ENABLE_EFFECTS11)
 #	include "Effects11.h"
@@ -6,6 +7,7 @@
 #endif
 #include "../I18n/I18n.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "State.h"
 #include "Utils/D3D.h"
 
@@ -18,7 +20,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void CloudShadows::DrawSettings()
 {
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
+	if (globals::features::effects11.IsEnabled()) {
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
@@ -53,13 +55,13 @@ void CloudShadows::RestoreDefaultSettings()
 
 CloudShadows::Settings CloudShadows::GetCommonBufferData()
 {
-	if (!loaded)
+	if (!IsEnabled())
 		return settings;
 
 	auto data = settings;
 
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
+	if (globals::features::effects11.IsEnabled()) {
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			auto& settingManager = SettingManager::GetSingleton();
@@ -226,6 +228,8 @@ int CloudShadows::FindCloudLayer(RE::BSRenderPass* Pass)
 
 void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 {
+	if (!IsEnabled())
+		return;
 	auto shadowState = globals::game::shadowState;
 
 	GET_INSTANCE_MEMBER(cubeMapRenderTarget, shadowState);
@@ -337,9 +341,37 @@ void CloudShadows::SetupResources()
 	}
 }
 
+void CloudShadows::OnRuntimeEnabled()
+{
+	CS_GPU_PASS("CloudShadows::ResetCaptures");
+	auto* context = globals::d3d::context;
+	const float clearColor[4] = {};
+	for (auto& layerViews : cloudShadowLayerRTVs) {
+		for (auto* view : layerViews) {
+			if (view)
+				context->ClearRenderTargetView(view, clearColor);
+		}
+	}
+	if (texCloudShadowLayers[0]) {
+		if (texCubemapCloudOccCopy)
+			context->CopyResource(texCubemapCloudOccCopy->resource.get(), texCloudShadowLayers[0]->resource.get());
+		if (texSelfShadowCopy)
+			context->CopyResource(texSelfShadowCopy->resource.get(), texCloudShadowLayers[0]->resource.get());
+	}
+	std::fill(std::begin(renderedLayersMask), std::end(renderedLayersMask), 0u);
+	globalRenderedMask = 0;
+	previouslyRenderedSide = -1;
+	overrideSky = false;
+}
+
 void CloudShadows::Hooks::BSSkyShader_SetupMaterial::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
 	globals::state->UpdateSkyShaderPermutation(Pass);
 	globals::features::cloudShadows.ModifySky(Pass);
 	func(This, Pass, RenderFlags);
+}
+
+void CloudShadows::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(cloudShadowLayerRTVs, texCloudShadowLayers, texCubemapCloudOccCopy, texSelfShadowCopy, cloudShadowBlendState);
 }

@@ -1,4 +1,5 @@
 #include "PhysicalGlare.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/LinearLighting.h"
 #include "Features/PostProcessing.h"
@@ -470,7 +471,10 @@ void PhysicalGlare::SetupResources()
 		Util::SetResourceName(wrapSampler.get(), "PostProcessing::PhysicalGlare::WrapSampler");
 	}
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 }
 
 void PhysicalGlare::ClearShaderCache()
@@ -1055,4 +1059,11 @@ void PhysicalGlare::Draw(TextureInfo& inout_tex)
 	context->CSSetConstantBuffers(1, 1, &cb);
 	context->CSSetShader(nullptr, nullptr, 0);
 	outputReady = true;
+}
+
+void PhysicalGlare::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(glareCB, texFFT, texPSF_FFT, texApertureBase, texGlarePacked, texOutput, linearSampler, wrapSampler);
+	outputReady = false;
+	psfDirty = apertureDirty = true;
 }

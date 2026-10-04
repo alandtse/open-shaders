@@ -54,6 +54,17 @@ std::pair<unsigned char*, size_t> _GetFeatureBufferData(Ts... feat_datas)
 
 std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 {
+	std::array<uint32_t, 4> runtimeFeatureFlags{};
+	static const auto runtimeFeatures = std::to_array<std::pair<Feature*, uint32_t>>({
+#define RUNTIME_FEATURE(name, index) { Feature::FindRegisteredFeatureByShortName(#name), index },
+#include "../package/Shaders/Common/RuntimeFeatureList.hlsli"
+#undef RUNTIME_FEATURE
+	});
+	static_assert(runtimeFeatures.size() <= sizeof(runtimeFeatureFlags) * 8);
+	for (const auto& [feature, index] : runtimeFeatures) {
+		if (feature && feature->IsEnabled())
+			runtimeFeatureFlags[index >> 5] |= 1u << (index & 31u);
+	}
 	const auto& bloomSettings = globals::features::csUtility.settings.bloomEnhancement;
 	return _GetFeatureBufferData(
 		globals::features::grassLighting.settings,
@@ -66,7 +77,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::cloudShadows.GetCommonBufferData(),
 		globals::features::cloudRelight.GetCommonBufferData(),
 		globals::features::proceduralSun.GetCommonBufferData(),
-		globals::features::lodBlending.settings,
+		globals::features::lodBlending.IsEnabled() ? globals::features::lodBlending.settings : LODBlending::Settings{},
 		globals::features::hairSpecular.settings,
 		globals::features::terrainVariation.settings,
 		globals::features::ibl.GetCommonBufferData(),
@@ -91,5 +102,6 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		Bloom::GetCommonBufferData(bloomSettings),
 		globals::features::postProcessing.GetCommonBufferData(),
 		globals::features::grassCollision.GetCommonBufferData(),
-		globals::features::horizonFix.GetCommonBufferData());
+		globals::features::horizonFix.GetCommonBufferData(),
+		runtimeFeatureFlags);
 }

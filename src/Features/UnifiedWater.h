@@ -111,6 +111,13 @@ struct UnifiedWater : OverlayFeature
 	/** @brief Handles post-data-load initialization including flowmap and cache setup. */
 	virtual void DataLoaded() override;
 
+	/** @brief Native water patches and replacement meshes are selected at startup. */
+	bool RequiresRestartForToggle() const override { return true; }
+	/** @copydoc Feature::GetRuntimeToggleNote */
+	std::string_view GetRuntimeToggleNote() const override
+	{
+		return "Enabling or disabling Unified Water requires a restart. Off keeps native water rendering and skips replacement meshes, flowmaps and hooks. Shader cache is unchanged.";
+	}
 	virtual bool IsCore() const override { return true; }
 	virtual bool SupportsVR() override { return true; }
 

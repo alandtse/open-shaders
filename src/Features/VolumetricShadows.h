@@ -60,6 +60,8 @@ public:
 	virtual void DrawSettings() override;
 	/** @brief Creates GPU resources including samplers, compute shaders, and shadow textures. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Releases and recompiles all compute shaders. */
 	virtual void ClearShaderCache() override;
 	/** @brief Compiles (or re-lazily-compiles) the downsample and blur compute shaders. */

@@ -1,4 +1,5 @@
 #include "Skylighting.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Deferred.h"
 #include "GpuPass.h"
@@ -159,7 +160,8 @@ void Skylighting::SetupResources()
 		Util::SetResourceName(comparisonSampler.get(), "Skylighting::ComparisonSampler");
 	}
 
-	CompileComputeShaders();
+	if (!probeUpdateCompute)
+		CompileComputeShaders();
 }
 
 void Skylighting::ClearShaderCache()
@@ -542,7 +544,7 @@ void Skylighting::RenderOcclusion()
 	auto sky = globals::game::sky;
 	const bool interior = Util::IsInterior();
 
-	if (!shaderCache->IsEnabled()) {
+	if (!IsEnabled() || !shaderCache->IsEnabled()) {
 		if (!interior) {
 			CS_GPU_PASS("Skylighting::PrecipitationMask");
 			Main_Precipitation_RenderOcclusion::func();
@@ -723,3 +725,9 @@ RE::BSEventNotifyControl Skylighting::MenuOpenCloseEventHandler::ProcessEvent(co
 	return RE::BSEventNotifyControl::kContinue;
 }
 #undef I18N_KEY_PREFIX
+
+void Skylighting::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(texOcclusion, texProbeArray, texAccumFramesArray, texShadowBitmask, texShadowVisibility, comparisonSampler);
+	queuedResetSkylighting = true;
+}

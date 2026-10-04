@@ -1,6 +1,5 @@
 #pragma once
 
-#include "Utils/BootSnapshot.h"
 /** @brief Adds configurable volumetric lighting with god rays and atmospheric scattering effects. */
 struct VolumetricLighting : Feature
 {
@@ -24,21 +23,6 @@ public:
 	};
 
 	Settings settings;
-
-	inline static constexpr Util::Settings::RestartTable<Settings, 2> kRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, ExteriorEnabled, "Volumetric Lighting (Exterior)"),
-		UTIL_RESTART_FIELD(Settings, InteriorEnabled, "Volumetric Lighting (Interior)"),
-	} };
-	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
-
-	std::span<const Util::Settings::RestartFieldInfo> GetRestartRequiredFields() const override
-	{
-		// VR-only: enabling VL relies on startup-only game setting initialization.
-		return globals::game::isVR ? std::span<const Util::Settings::RestartFieldInfo>{ kRestartFields.data(), kRestartFields.size() } : std::span<const Util::Settings::RestartFieldInfo>{};
-	}
-	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
-	const void* GetSettingsBlob() const override { return &settings; }
-	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
 
 	virtual inline std::string GetName() override { return "Volumetric Lighting"; }
 	virtual std::string GetDisplayName() override { return T("feature.volumetric_lighting.name", "Volumetric Lighting"); }
@@ -67,8 +51,14 @@ public:
 	virtual void PostPostLoad() override;
 	/** @brief Creates the volumetric lighting constant buffer. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	/** @brief Updates screen dimensions, detects interior/exterior transitions, and configures VL quality. */
 	virtual void EarlyPrepass() override;
+	/** @brief Reapplies the current cell settings when volumetric rendering resumes. */
+	void OnRuntimeEnabled() override { initialised = false; }
+	/** @brief Stops native volumetric passes while retaining their startup resources. */
+	void OnRuntimeDisabled() override { SetupVL(); }
 
 	std::map<std::string, Util::GameSetting> hiddenVRSettings{
 		{ "bEnableVolumetricLighting:Display", { "Enable VL Shaders (INI) ",

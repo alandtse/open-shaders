@@ -1,4 +1,5 @@
 #include "TextureManager.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Globals.h"
 #include "State.h"
@@ -14,6 +15,12 @@ void TextureManager::Initialize()
 {
 	CreateCommonTextures();
 	CreateDownsampleResources();
+	for (auto& [name, texture] : commonTextureCache) {
+		const float luminance = name.starts_with("TextureAdaptation") ? 1.0f : 0.0f;
+		const float clearColor[4] = { luminance, luminance, luminance, luminance };
+		if (texture.rtv)
+			globals::d3d::context->ClearRenderTargetView(texture.rtv.get(), clearColor);
+	}
 }
 
 TextureManager::Texture* TextureManager::GetCommonTexture(const std::string& name)
@@ -42,12 +49,12 @@ void TextureManager::CreateCommonTextures()
 	UINT screenHeight = static_cast<UINT>(globals::state->screenSize.y);
 	CreateResizableTextures(screenWidth, screenHeight);
 
-	commonTextureCache.insert({ "TextureBloom", CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloom") });
+	commonTextureCache["TextureBloom"] = CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloom");
 
-	commonTextureCache.insert({ "TextureBloomTemp", CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloomLensTemp") });
+	commonTextureCache["TextureBloomTemp"] = CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloomLensTemp");
 
-	commonTextureCache.insert({ "TextureAdaptation", CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptation") });
-	commonTextureCache.insert({ "TextureAdaptationSwap", CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptationSwap") });
+	commonTextureCache["TextureAdaptation"] = CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptation");
+	commonTextureCache["TextureAdaptationSwap"] = CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptationSwap");
 
 	// Create fixed-size render targets for bloom/lens
 	std::vector<std::pair<std::string, UINT>> fixedSizes = {
@@ -153,16 +160,18 @@ void TextureManager::CreateDownsampleResources()
 	DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, linearSampler.put()));
 
 	// Create downsample vertex shader
-	downsampleVS.attach(static_cast<ID3D11VertexShader*>(
-		Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
+	if (!downsampleVS)
+		downsampleVS.attach(static_cast<ID3D11VertexShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
 	if (!downsampleVS) {
 		logger::error("[TextureManager] Downsample vertex shader compilation failed");
 		return;
 	}
 
 	// Create downsample pixel shader
-	downsamplePS.attach(static_cast<ID3D11PixelShader*>(
-		Util::CompileShader(L"Data\\Shaders\\Effects11\\DownsamplePS.hlsl", {}, "ps_5_0")));
+	if (!downsamplePS)
+		downsamplePS.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\DownsamplePS.hlsl", {}, "ps_5_0")));
 	if (!downsamplePS) {
 		logger::error("[TextureManager] Downsample pixel shader compilation failed");
 		return;
@@ -269,4 +278,12 @@ ID3D11ShaderResourceView* TextureManager::GetDownsampleTexture() const
 ID3D11ShaderResourceView* TextureManager::GetDownsampleTextureBlurry() const
 {
 	return sharedDownsampleTexture.srvBlurry.get();
+}
+void TextureManager::ReleaseResources()
+{
+	for (auto& [name, texture] : commonTextureCache)
+		Util::ReleaseRuntimeResources(texture.texture, texture.rtv, texture.srv);
+	Util::ReleaseRuntimeResources(sharedDownsampleTexture.texture, sharedDownsampleTexture.srvChain,
+		sharedDownsampleTexture.srv, sharedDownsampleTexture.srvBlurry, sharedDownsampleTexture.rtv, linearSampler);
+	currentWidth = currentHeight = textureSwap = 0;
 }

@@ -180,6 +180,8 @@ struct PostProcessing : Feature
 	virtual void ClearShaderCache() override;
 
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void Reset() override;
 	/** @brief Restores the camera-owned FOV when post processing is disabled at runtime. */
 	virtual void OnRuntimeDisabled() override { cinematicCamera.Update(false, 1.0f); }
@@ -247,6 +249,7 @@ private:
 		D3D11_TEXTURE2D_DESC desc{};
 	} alternatePipeline;
 	void CreatePipelineResources(bool fallback);
+	void UpdatePipelineResources();
 	void SwapPipelineResources();
 	bool SelectPipelineResources(ID3D11Texture2D* texture);
 	bool resourcesReady = false;

@@ -1,4 +1,5 @@
 #include "EffectManager.h"
+#include "Utils/RuntimeResources.h"
 
 #include "D3D11StateBackup.h"
 #include "Features/Effects11.h"
@@ -54,10 +55,18 @@ std::vector<std::string> EffectManager::GetAllErrors() const
 void EffectManager::Initialize()
 {
 	TextureManager::GetSingleton().Initialize();
-	RegisterSettings();
-	SettingManager::GetSingleton().Load();
 	CreateCommonResources();
-	Apply();
+	if (!settingsInitialized) {
+		RegisterSettings();
+		SettingManager::GetSingleton().Load();
+		Apply();
+		settingsInitialized = true;
+	} else {
+		globals::features::effects11.LoadRaindropTexture();
+		Effect* effects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
+		for (auto* effect : effects)
+			effect->RestoreResources();
+	}
 
 	// Verify all critical common resources are initialized correctly
 	struct ResourceCheck
@@ -87,8 +96,8 @@ void EffectManager::Initialize()
 	}
 
 	if (!resourcesValid) {
-		logger::error("[EffectManager] Initialization failed due to missing resources");
 		initialized = false;
+		throw std::runtime_error("Effects11 common resource initialization failed");
 	} else {
 		initialized = true;
 	}
@@ -459,6 +468,8 @@ void EffectManager::CreateCommonResources()
 
 void EffectManager::CreateStandardDepthShader()
 {
+	if (standardDepthComputeShader)
+		return;
 	standardDepthComputeShader.attach(static_cast<ID3D11ComputeShader*>(
 		Util::CompileShader(L"Data\\Shaders\\Effects11\\StandardDepthCS.hlsl", {}, "cs_5_0")));
 	if (!standardDepthComputeShader)
@@ -556,6 +567,9 @@ void EffectManager::CreateQuadGeometry()
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&bufferDesc, &initData, quadVertexBuffer.put()));
 
+	if (inputLayout)
+		return;
+
 	// Create input layout for ENB post-processing
 	D3D11_INPUT_ELEMENT_DESC inputElementDescs[] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
@@ -606,15 +620,17 @@ void EffectManager::CreateRenderStates()
 
 void EffectManager::CreateCopyShaders()
 {
-	copyVertexShader.attach(static_cast<ID3D11VertexShader*>(
-		Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
+	if (!copyVertexShader)
+		copyVertexShader.attach(static_cast<ID3D11VertexShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\QuadVS.hlsl", {}, "vs_5_0")));
 	if (!copyVertexShader) {
 		logger::error("[EFFECTS11] Failed to compile copy vertex shader");
 		return;
 	}
 
-	copyPixelShader.attach(static_cast<ID3D11PixelShader*>(
-		Util::CompileShader(L"Data\\Shaders\\Effects11\\CopyPS.hlsl", {}, "ps_5_0")));
+	if (!copyPixelShader)
+		copyPixelShader.attach(static_cast<ID3D11PixelShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\CopyPS.hlsl", {}, "ps_5_0")));
 	if (!copyPixelShader) {
 		logger::error("[EFFECTS11] Failed to compile copy pixel shader");
 		return;
@@ -632,8 +648,9 @@ void EffectManager::CreateCopyShaders()
 
 void EffectManager::CreateColorCorrectionShader()
 {
-	colorCorrectionComputeShader.attach(static_cast<ID3D11ComputeShader*>(
-		Util::CompileShader(L"Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl", {}, "cs_5_0")));
+	if (!colorCorrectionComputeShader)
+		colorCorrectionComputeShader.attach(static_cast<ID3D11ComputeShader*>(
+			Util::CompileShader(L"Data\\Shaders\\Effects11\\ColorCorrectionCS.hlsl", {}, "cs_5_0")));
 	if (!colorCorrectionComputeShader) {
 		logger::error("[EFFECTS11] Failed to compile color correction compute shader");
 		return;
@@ -1238,4 +1255,23 @@ void EffectManager::RenderEffectsList()
 				ImGui::TextWrapped("%s", err.c_str());
 		}
 	}
+}
+
+void EffectManager::ReleaseResources()
+{
+	initialized = false;
+	Effect* effects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
+	for (auto* effect : effects)
+		effect->ReleaseResources();
+	TextureManager::GetSingleton().ReleaseResources();
+	Util::ReleaseRuntimeResources(quadVertexBuffer, ditherConstantBuffer, colorCorrectionConstantBuffer,
+		eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, eyeSourceUAV, eyeCropCB, depthCropTexture, depthCropRTV, depthCropSRV,
+		rasterizerState, blendState, standardDepthTexture);
+	standardDepthFrame = 0xFFFFFFFF;
+	for (auto& [source, target] : inputCropTargets)
+		Util::ReleaseRuntimeResources(target.texture, target.rtv, target.srv);
+	inputCropTargets.clear();
+	eyeSourceData = {};
+	currentEyeIndex = -1;
+	currentMainWidth = currentMainHeight = inputCropTargetsWidth = inputCropTargetsHeight = 0;
 }

@@ -50,7 +50,7 @@ cbuffer SSGICB : register(b1)
 	float GISaturation;
 	float GIDistanceCompensation;
 	float GICompensationMaxDist;
-	float pad1;
+	uint RuntimeOptions;
 
 	float AOPower;
 	float GIStrength;
@@ -63,7 +63,7 @@ cbuffer SSGICB : register(b1)
 	float DistanceNormalisation;
 
 	uint UseModeTexture;  // VRStereoOptimizations' classification available this boot
-	float pad;
+	uint ResolutionMode;
 };
 
 SamplerState samplerPointClamp : register(s0);
@@ -92,28 +92,17 @@ float4 filterInf(float4 v) { return float4(filterInf(v.x), filterInf(v.y), filte
 // uv - normalised position in FrameDim, both eye
 // texCoord - texture coordinate
 
-#ifdef HALF_RES
-#	define RES_MIP 1
-#	define READ_DEPTH(tex, px) tex.Load(int3(px, RES_MIP))
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex.SampleLevel(samp, texCoord, 0)
-#	define OUT_FRAME_DIM (FrameDim * 0.5)
-#	define RCP_OUT_FRAME_DIM (RcpFrameDim * 2)
-#	define OUT_FRAME_SCALE (frameScale * 0.5)
-#elif defined(QUARTER_RES)
-#	define RES_MIP 2
-#	define READ_DEPTH(tex, px) tex.Load(int3(px, RES_MIP))
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex.SampleLevel(samp, texCoord, 0)
-#	define OUT_FRAME_DIM (FrameDim * 0.25)
-#	define RCP_OUT_FRAME_DIM (RcpFrameDim * 4)
-#	define OUT_FRAME_SCALE (frameScale * 0.25)
-#else
-#	define RES_MIP 0
-#	define READ_DEPTH(tex, px) tex[px]
-#	define FULLRES_LOAD(tex, px, texCoord, samp) tex[px]
-#	define OUT_FRAME_DIM FrameDim
-#	define RCP_OUT_FRAME_DIM RcpFrameDim
-#	define OUT_FRAME_SCALE frameScale
-#endif
+#define RES_MIP ResolutionMode
+#define READ_DEPTH(tex, px) tex.Load(int3(px, RES_MIP))
+#define FULLRES_LOAD(tex, px, texCoord, samp) (ResolutionMode != 0 ? tex.SampleLevel(samp, texCoord, 0) : tex[px])
+#define OUT_FRAME_DIM (FrameDim / float(1u << ResolutionMode))
+#define RCP_OUT_FRAME_DIM (RcpFrameDim * float(1u << ResolutionMode))
+#define OUT_FRAME_SCALE (frameScale / float(1u << ResolutionMode))
+
+bool EnableGI() { return (RuntimeOptions & 1u) != 0; }
+bool EnableSpecularGI() { return (RuntimeOptions & 2u) != 0; }
+bool EnableTemporalDenoiser() { return (RuntimeOptions & 4u) != 0; }
+bool EnableAdaptiveSampling() { return (RuntimeOptions & 8u) != 0; }
 
 ///////////////////////////////////////////////////////////////////////////////
 

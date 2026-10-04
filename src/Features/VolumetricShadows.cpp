@@ -1,4 +1,5 @@
 #include "VolumetricShadows.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Globals.h"
 #include "GpuPass.h"
@@ -384,3 +385,8 @@ bool VolumetricShadows::HasShaderDefine(RE::BSShader::Type)
 }
 
 #undef I18N_KEY_PREFIX
+
+void VolumetricShadows::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(shadowCopyTexture, shadowCopySRV, shadowCopyMip0SRV, shadowCopyMip1SRV, shadowCopyMip0UAV, shadowCopyMip1UAV, shadowBlurTempTexture, shadowBlurTempMip0SRV, shadowBlurTempMip1SRV, shadowBlurTempMip0UAV, shadowBlurTempMip1UAV, linearSampler);
+}

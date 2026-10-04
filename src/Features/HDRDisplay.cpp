@@ -1,5 +1,6 @@
 #include "HDRDisplay.h"
 #include "GpuPass.h"
+#include "Utils/RuntimeResources.h"
 
 #include "PCH.h"
 
@@ -307,7 +308,7 @@ void HDRDisplay::DrawSettings()
 		Util::Text::Warning("%s", T(TKEY("sdr_display_not_detected"), "SDR Display (HDR not detected)"));
 	}
 
-	const bool isExclusiveFullscreen = globals::features::upscaling.loaded ? !globals::features::upscaling.isWindowed : wasExclusiveFullscreen;
+	const bool isExclusiveFullscreen = globals::features::upscaling.IsEnabled() ? !globals::features::upscaling.isWindowed : wasExclusiveFullscreen;
 
 	if (isExclusiveFullscreen) {
 		ImGui::Spacing();
@@ -785,7 +786,7 @@ void HDRDisplay::EndUIRendering()
 
 void HDRDisplay::RedirectFramebuffer()
 {
-	if (!settings.enableHDR || !hdrTexture || !hdrTexture->rtv)
+	if (!IsEnabled() || !settings.enableHDR || !hdrTexture || !hdrTexture->rtv)
 		return;
 
 	if (!GetHDROutputCS())
@@ -840,7 +841,7 @@ HDRDisplay::D3D12UIBufferMode HDRDisplay::GetD3D12UIBufferMode()
 	if (!globals::features::upscaling.d3d12SwapChainActive)
 		return mode;
 
-	const bool hdrReady = loaded && settings.enableHDR && hdrDataCB && outputTexture;
+	const bool hdrReady = IsEnabled() && settings.enableHDR && hdrDataCB && outputTexture;
 	const bool hdrShaderAvailable = hdrReady && GetHDROutputCS() != nullptr;
 
 	mode.useUIBuffer = hdrShaderAvailable || IsFGCompositingThisFrame();
@@ -897,7 +898,7 @@ void HDRDisplay::SetUIBuffer()
 	}
 
 	// SDR mode: vanilla UI composites directly to kFRAMEBUFFER, no redirect needed
-	if (!settings.enableHDR)
+	if (!IsEnabled() || !settings.enableHDR)
 		return;
 
 	// Don't redirect if the HDR compute shader isn't available - vanilla UI path works without it
@@ -922,7 +923,7 @@ void HDRDisplay::SetUIBuffer()
 
 bool HDRDisplay::UsesDeferredPresentComposite() const
 {
-	return loaded && settings.enableHDR && !globals::game::isVR &&
+	return IsEnabled() && settings.enableHDR && !globals::game::isVR &&
 	       !globals::features::upscaling.d3d12SwapChainActive && uiTexture && uiTexture->rtv && hdrOutputCS;
 }
 
@@ -966,7 +967,7 @@ namespace
 		{
 			if (pBlendState && !globals::game::isVR) {
 				auto& hdr = globals::features::hdrDisplay;
-				const bool d3d11HdrCapture = hdr.loaded && hdr.settings.enableHDR && hdr.uiTexture;
+				const bool d3d11HdrCapture = hdr.IsEnabled() && hdr.settings.enableHDR && hdr.uiTexture;
 				const bool fgCapture = globals::features::upscaling.d3d12SwapChainActive;
 				if (d3d11HdrCapture || fgCapture)
 					pBlendState = hdr.GetPatchedAlphaBlendState(pBlendState);
@@ -1123,7 +1124,7 @@ HRESULT HDRDisplay::HandleSwapChainPresent(
 	const std::function<HRESULT(IDXGISwapChain*, UINT, UINT)>& presentChain)
 {
 	const bool frameGenActive = globals::features::upscaling.d3d12SwapChainActive;
-	const bool hdrReady = loaded && hdrDataCB && outputTexture && settings.enableHDR;
+	const bool hdrReady = IsEnabled() && hdrDataCB && outputTexture && settings.enableHDR;
 
 	D3D11_VIEWPORT savedViewport{};
 	UINT viewportCount = 1;
@@ -1183,9 +1184,9 @@ void HDRDisplay::ApplyHDR()
 		// - Non-VR HDR: hdrTexture has float16 scene values >1.0 preserved from ISHDR.
 		// - Non-VR SDR: kFRAMEBUFFER has the tonemapped 0-1 ISHDR output.
 		ID3D11ShaderResourceView* sceneSRV =
-			globals::game::isVR                                   ? Util::AsReal(framebufferRT.SRV) :
-			(settings.enableHDR && hdrTexture && hdrTexture->srv) ? hdrTexture->srv.get() :
-																	Util::AsReal(framebufferRT.SRV);
+			globals::game::isVR                                                  ? Util::AsReal(framebufferRT.SRV) :
+			(IsEnabled() && settings.enableHDR && hdrTexture && hdrTexture->srv) ? hdrTexture->srv.get() :
+																				   Util::AsReal(framebufferRT.SRV);
 
 		// Choose the correct UI buffer based on which path is active.
 		// VR uses the framebuffer directly, which already contains vanilla UI/ImGui.
@@ -1336,7 +1337,7 @@ ID3D11Texture2D* HDRDisplay::ComposeCleanCapture(ID3D11ShaderResourceView* scene
 {
 	std::lock_guard<std::mutex> lock(settingsMutex);
 
-	if (!settings.enableHDR || !sceneSRV || !hdrDataCB || !outputTexture || !outputTexture->uav || !outputTexture->resource)
+	if (!IsEnabled() || !settings.enableHDR || !sceneSRV || !hdrDataCB || !outputTexture || !outputTexture->uav || !outputTexture->resource)
 		return nullptr;
 
 	if (!GetHDROutputCS())
@@ -1496,6 +1497,7 @@ void HDRDisplay::RestoreLDRRenderTargets()
 	for (auto& [targetId, saved] : savedLDRTargets) {
 		auto& rt = renderer->GetRuntimeData().renderTargets[targetId];
 
+		Util::UnbindRuntimeObject(Util::AsReal(rt.texture));
 		if (rt.texture)
 			rt.texture->Release();
 		if (rt.RTV)
@@ -1556,7 +1558,7 @@ void HDRDisplay::ScaleUIBrightnessForFG()
 	if (!IsFGCompositingThisFrame())
 		return;
 
-	if (!settings.enableHDR)
+	if (!IsEnabled() || !settings.enableHDR)
 		return;
 
 	if (!hdrDataCB || !upscaling.dx12SwapChain.uiBufferWrapped || !upscaling.dx12SwapChain.uiBufferWrapped->uav)
@@ -1611,7 +1613,7 @@ float HDRDisplay::GetDisplayMaxLuminance() const
 
 float4 HDRDisplay::GetSharedDataHDR() const
 {
-	if (!loaded)
+	if (!IsEnabled())
 		return { 0.0f, 0.0f, 0.0f, 0.0f };
 
 	auto* state = globals::state;
@@ -1648,7 +1650,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	float effectivePeakNits = static_cast<float>(settings.hdrPeakNits);
 
 	HDRDataCB data{};
-	data.enableHDR = settings.enableHDR ? 1.f : 0.f;
+	data.enableHDR = IsEnabled() && settings.enableHDR ? 1.f : 0.f;
 	data.paperWhite = static_cast<float>(settings.hdrPaperWhite);
 	data.peakNits = effectivePeakNits;
 	data.skipUIComposite = skipUIComposite ? 1.f : 0.f;
@@ -1680,7 +1682,7 @@ void HDRDisplay::UpdateSwapChainColorSpace() const
 
 	// For Frame Gen, update the D3D12 swap chain color space
 	if (upscaling.d3d12SwapChainActive) {
-		upscaling.dx12SwapChain.SetColorSpace(settings.enableHDR);
+		upscaling.dx12SwapChain.SetColorSpace(IsEnabled() && settings.enableHDR);
 		// HDR metadata is not set - some monitors have issues with HDR10 static metadata.
 		// DX12SwapChain handles color space only; metadata control is centralized here.
 		if (upscaling.dx12SwapChain.swapChain) {
@@ -1698,7 +1700,7 @@ void HDRDisplay::UpdateSwapChainColorSpace() const
 	if (!swapChain4)
 		return;
 
-	if (settings.enableHDR) {
+	if (IsEnabled() && settings.enableHDR) {
 		HRESULT hr = swapChain4->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020);
 		if (SUCCEEDED(hr)) {
 			logger::info("[HDR] Set swap chain color space to HDR10 (PQ/BT.2020)");
@@ -1719,4 +1721,14 @@ void HDRDisplay::UpdateSwapChainColorSpace() const
 	}
 
 	swapChain4->Release();
+}
+
+void HDRDisplay::ReleaseResources()
+{
+	EndUIRendering();
+	RestoreFramebuffer();
+	ClearUIBuffer();
+	Util::ReleaseRuntimeResources(hdrTexture, outputTexture, uiTexture, cleanSceneCapture, hdrDataCB);
+	cleanSceneCaptureFrame = UINT32_MAX;
+	RestoreLDRRenderTargets();
 }

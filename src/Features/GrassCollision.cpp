@@ -1,4 +1,5 @@
 #include "GrassCollision.h"
+#include "Utils/RuntimeResources.h"
 
 #include "FeatureBuffer.h"
 #include "Globals.h"
@@ -113,8 +114,13 @@ GrassCollision::ShaderData GrassCollision::GetCommonBufferData() const noexcept
 
 void GrassCollision::QueueCollisions()
 {
-	if (!settings.EnableGrassCollision)
+	if (collisionHistoryResetPending.exchange(false, std::memory_order_acq_rel) || !IsEnabled())
+		actorCollisionHistory.clear();
+	if (!IsEnabled() || !settings.EnableGrassCollision) {
+		queuedBoundingBoxes.clear();
+		queuedCollisions.clear();
 		return;
+	}
 	const float collisionRadiusScale = std::clamp(settings.CollisionRadiusScale,
 		MIN_COLLISION_RADIUS_SCALE, MAX_COLLISION_RADIUS_SCALE);
 	const float grassInteractionRadius = std::clamp(settings.GrassInteractionRadius,
@@ -256,11 +262,12 @@ void GrassCollision::QueueCollisions()
 
 void GrassCollision::Update()
 {
+	if (!IsEnabled() || !perFrame || !deformationTextures[0] || !deformationTextures[1])
+		return;
 	static Util::FrameChecker frameChecker;
 	if (frameChecker.IsNewFrame()) {
 		PerFrame perFrameData{};
 		static float2 prevCellID = { 0, 0 };
-		static bool fieldInitialized = false;
 		auto eyePosNI = Util::GetEyePosition(0);
 		auto eyePos = float2{ eyePosNI.x, eyePosNI.y };
 
@@ -510,6 +517,20 @@ void GrassCollision::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader* Thi
 	func(This, Pass, RenderFlags);
 }
 
+void GrassCollision::OnRuntimeEnabled()
+{
+	CS_GPU_PASS("GrassCollision::ResetHistory");
+	fieldInitialized = false;
+	collisionHistoryResetPending.store(true, std::memory_order_release);
+	const float clearColor[4] = {};
+	for (uint textureIndex = 0; textureIndex < 2; ++textureIndex) {
+		if (deformationTextures[textureIndex])
+			globals::d3d::context->ClearUnorderedAccessViewFloat(deformationTextures[textureIndex]->uav.get(), clearColor);
+		if (velocityTextures[textureIndex])
+			globals::d3d::context->ClearUnorderedAccessViewFloat(velocityTextures[textureIndex]->uav.get(), clearColor);
+	}
+}
+
 void GrassCollision::ClearShaderCache()
 {
 	collisionUpdateCS.Reset();
@@ -580,3 +601,10 @@ void GrassCollision::UpdateCollisionTexture()
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(nullUavs), nullUavs, nullptr);
 }
 #undef I18N_KEY_PREFIX
+
+void GrassCollision::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(perFrame, collisionBoundingBoxes, collisionInstances, deformationTextures, velocityTextures, deformationSampler);
+	fieldInitialized = false;
+	collisionHistoryResetPending.store(true, std::memory_order_release);
+}

@@ -1,4 +1,5 @@
 #include "Border.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Deferred.h"
 #include "Features/PostProcessing.h"
@@ -76,7 +77,10 @@ void Border::SetupResources()
 		texOutput->CreateUAV(uavDesc);
 	}
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 }
 
 void Border::ClearShaderCache()
@@ -198,4 +202,9 @@ void Border::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
+}
+
+void Border::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(borderCB, texOutput);
 }

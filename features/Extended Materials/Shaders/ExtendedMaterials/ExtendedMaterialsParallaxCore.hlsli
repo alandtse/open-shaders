@@ -24,7 +24,7 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 #if defined(LANDSCAPE)
 	float distSq = dot(distance, distance);
 	float nearBlendToFar = smoothstep(1024.0 * 1024.0, 2048.0 * 2048.0, distSq);
-	float blendFactor = SharedData::extendedMaterialSettings.EnableHeightBlending ? sqrt(saturate(1 - nearBlendToFar)) : 0;
+	float blendFactor = (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExtendedMaterialsFeature) && SharedData::extendedMaterialSettings.EnableHeightBlending) ? sqrt(saturate(1 - nearBlendToFar)) : 0;
 	float4 w1 = lerp(input.LandBlendWeights1, smoothstep(0, 1, input.LandBlendWeights1), blendFactor);
 	float2 w2 = lerp(input.LandBlendWeights2.xy, smoothstep(0, 1, input.LandBlendWeights2.xy), blendFactor);
 #	if defined(TRUE_PBR)

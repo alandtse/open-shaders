@@ -4,6 +4,7 @@
 #include "GpuPass.h"
 #include "ShaderCache.h"
 #include "Util.h"
+#include "Utils/RuntimeResources.h"
 
 #pragma warning(disable: 4324)
 
@@ -43,7 +44,10 @@ void MotionBlur::SetupResources()
 	Util::SetResourceName(pointSampler.get(), "Post Processing Motion Blur Point Sampler");
 
 	// Compile shaders
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 
 	// Initialize constant buffer structs
 	motionBlurCB = {
@@ -377,7 +381,7 @@ bool MotionBlur::UpdateConstantBuffers()
 	float2 targetResolution = { static_cast<float>(lastWidth), static_cast<float>(lastHeight) };
 
 	auto& upscaling = globals::features::upscaling;
-	if (upscaling.loaded && upscaling.IsUpscalingActive()) {
+	if (upscaling.IsEnabled() && upscaling.IsUpscalingActive()) {
 		velocityTextureScale.x = std::clamp(upscaling.resolutionScale.x, 0.0f, 1.0f);
 		velocityTextureScale.y = std::clamp(upscaling.resolutionScale.y, 0.0f, 1.0f);
 	}
@@ -562,4 +566,9 @@ void MotionBlur::ExecuteBlurPass(TextureInfo& inout_tex)
 	if (blurOutputTexture && blurOutputTexture->resource && blurOutputTexture->srv) {
 		inout_tex = { blurOutputTexture->resource.get(), blurOutputTexture->srv.get() };
 	}
+}
+
+void MotionBlur::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(linearSampler, pointSampler, blurConstantBufferObj, reductionPassConstantBufferObj, horizontalPassTexture, verticalPassTexture, neighborMaxTexture, blurOutputTexture);
 }

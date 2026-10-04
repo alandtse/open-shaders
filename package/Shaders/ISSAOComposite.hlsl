@@ -189,12 +189,12 @@ PS_OUTPUT main(PS_INPUT input)
 	float fogFactor = min(FogParam.w, pow(saturate(fogDistanceFactor * FogParam.y - FogParam.x), FogParam.z));
 	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogFactor));
 #		if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
+	if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ImageBasedLightingFeature) && RuntimeFeatures::IsEnabled(RuntimeFeatures::DynamicCubemapsFeature) && SharedData::iblSettings.EnableIBL)) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
 	}
 #		endif
 #		if defined(EXP_HEIGHT_FOG)
-	bool exponentialHeightFogEnabled = SharedData::exponentialHeightFogSettings.enabled && !SharedData::InMapMenu;
+	bool exponentialHeightFogEnabled = (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled) && !SharedData::InMapMenu;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord.xy);
 	float2 monoUV = Stereo::ConvertFromStereoUV(input.TexCoord.xy, eyeIndex);
 	float4 positionWS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, nativeDepth, 1);

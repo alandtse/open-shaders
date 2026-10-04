@@ -198,11 +198,14 @@ void UnifiedWater::DrawOverlay()
 
 bool UnifiedWater::IsOverlayVisible() const
 {
-	return true;
+	return IsRuntimeAvailable();
 }
 
 void UnifiedWater::DataLoaded()
 {
+	if (!IsRuntimeAvailable())
+		return;
+
 	auto args = RE::BSModelDB::DBTraits::ArgsType();
 	args.unk8 = false;
 	args.unkA = false;
@@ -444,6 +447,10 @@ void UnifiedWater::SetFlowmapTex() const
 
 void UnifiedWater::PostPostLoad()
 {
+	logger::info("[Unified Water] Startup enabled={}; shader support remains compiled", IsRuntimeAvailable());
+	if (!IsRuntimeAvailable())
+		return;
+
 	stl::detour_thunk<TES_SetWorldSpace>(REL::RelocationID(13170, 13315));
 	stl::detour_thunk<TES_DestroySkyCell>(REL::RelocationID(20029, 20463));
 

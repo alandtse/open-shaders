@@ -243,7 +243,7 @@ float LightLimitFix::CalculateLuminance(CachedParticleLight& light, RE::NiPoint3
 void LightLimitFix::AddParticleLightLuminance(RE::NiPoint3& targetPosition, int& numHits, float& lightLevel)
 {
 	auto shaderCache = globals::shaderCache;
-	if (!shaderCache->IsEnabled())
+	if (!IsEnabled() || !shaderCache->IsEnabled())
 		return;
 
 	std::shared_lock<std::shared_mutex> lk{ cachedParticleLightsMutex };
@@ -274,7 +274,7 @@ LightLimitFix::ParticleLightReference LightLimitFix::GetParticleLightConfigs(RE:
 	};
 
 	// see https://www.nexusmods.com/skyrimspecialedition/articles/1391
-	if (!settings.EnableParticleLights)
+	if (!IsEnabled() || !settings.EnableParticleLights)
 		return {};
 
 	auto shaderProperty = a_pass->shaderProperty->GetRTTI() == globals::rtti::BSEffectShaderPropertyRTTI.get() ?
@@ -414,7 +414,7 @@ bool LightLimitFix::CheckParticleLights(RE::BSRenderPass* a_pass, uint32_t)
 		return true;
 
 	auto shaderCache = globals::shaderCache;
-	if (!shaderCache->IsEnabled())
+	if (!IsEnabled() || !shaderCache->IsEnabled())
 		return true;
 
 	auto reference = GetParticleLightConfigs(a_pass);

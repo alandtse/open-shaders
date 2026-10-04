@@ -1,4 +1,5 @@
 #include "Skin.h"
+#include "Utils/RuntimeResources.h"
 #include <DirectXTex.h>
 
 #include "Deferred.h"
@@ -252,7 +253,7 @@ struct SKIN_BSLightingShader_SetupMaterial
 		func(shader, material);
 
 		auto& skin = globals::features::skin;
-		if (skin.loaded) {
+		if (skin.IsEnabled()) {
 			skin.BSLightingShader_SetupMaterial(material);
 		}
 	}
@@ -570,7 +571,7 @@ void Skin::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 {
 	auto context = globals::d3d::context;
 
-	if (settings.EnableSkin) {
+	if (IsEnabled() && settings.EnableSkin) {
 		auto geometry = a_pass->geometry;
 		float4 wetness = GetWetness(geometry);
 
@@ -600,4 +601,14 @@ void Skin::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* This, RE::
 	auto& skin = globals::features::skin;
 	skin.BSLightingShader_SetupGeometry(Pass);
 	return func(This, Pass, RenderFlags);
+}
+
+void Skin::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(PerGeometryCB, texSkinDetail);
+	for (auto* view : skinExtendedRendererState.PSTexture)
+		Util::UnbindRuntimeObject(view);
+	skinExtendedRendererState.PSTexture.fill(nullptr);
+	skinExtendedRendererState.PSResourceModifiedBits = 1;
+	skinExtraTextures.clear();
 }

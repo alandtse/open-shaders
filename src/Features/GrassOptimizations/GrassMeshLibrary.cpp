@@ -1,4 +1,5 @@
 #include "GrassMeshLibrary.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Utils/D3D.h"
 
@@ -139,4 +140,15 @@ void GrassMeshLibrary::ForgetShape(RE::BSMultiStreamInstanceTriShape* shape)
 	idByShape.erase(shape);
 	std::scoped_lock lk(stemMutex);
 	stemByShape.erase(shape);
+}
+
+void GrassMeshLibrary::ReleaseResources()
+{
+	for (auto& tiers : lodMeshes) {
+		for (auto& mesh : tiers) {
+			Util::UnbindRuntimeObject(mesh.vertexBuffer);
+			Util::UnbindRuntimeObject(mesh.indexBuffer);
+			mesh = {};
+		}
+	}
 }

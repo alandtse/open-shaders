@@ -7,8 +7,8 @@
 #include "Common/SharedData.hlsli"
 
 #ifndef VSHADER
-#	define ENABLE_LL SharedData::linearLightingSettings.enableLinearLighting
-#	define ENABLE_ACEScg SharedData::linearLightingSettings.enableACEScg
+#	define ENABLE_LL (RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableLinearLighting)
+#	define ENABLE_ACEScg (RuntimeFeatures::IsEnabled(RuntimeFeatures::LinearLightingFeature) && SharedData::linearLightingSettings.enableACEScg)
 #endif
 
 #if defined(PSHADER) && defined(LIGHTING)
@@ -19,8 +19,8 @@ cbuffer LLPerGeometry : register(b8)
 };
 #endif
 
-#if defined(PSHADER) && defined(CS_UTILITY) && !defined(LIGHT_LIMIT_FIX)
-cbuffer CSUtilityPerGeometry : register(b3)
+#if defined(PSHADER) && defined(CS_UTILITY)
+cbuffer CSUtilityPerGeometry : register(b9)
 {
 	uint4 CSUtilityPointLightFlags0;
 	uint4 CSUtilityPointLightFlags1;
@@ -287,7 +287,7 @@ namespace Color
 	float3 Diffuse(float3 color)
 	{
 #	if defined(EFFECTS11)
-		if (SharedData::enbSettings.Enable)
+		if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::Effects11Feature) && SharedData::enbSettings.Enable))
 			color = pow(abs(color), SharedData::enbSettings.ColorPow);
 #	endif
 #	if defined(TRUE_PBR)
@@ -383,8 +383,8 @@ namespace Color
 
 	uint GetVanillaPointLightFlags(uint lightIndex)
 	{
-#	if defined(PSHADER) && defined(CS_UTILITY) && !defined(LIGHT_LIMIT_FIX)
-		if (lightIndex >= MaxVanillaPointLightFlags)
+#	if defined(PSHADER) && defined(CS_UTILITY)
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::CSUtilityFeature) || lightIndex >= MaxVanillaPointLightFlags)
 			return 0;
 		return lightIndex < PackedPointLightFlagVectorSize ? CSUtilityPointLightFlags0[lightIndex] : CSUtilityPointLightFlags1[lightIndex - PackedPointLightFlagVectorSize];
 #	else
@@ -426,7 +426,7 @@ namespace Color
 	{
 		float gammaOffset = SharedData::csUtilitySettings.fogGammaOffset;
 #	if defined(EXP_HEIGHT_FOG)
-		if (SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.disableVanillaFog)
+		if ((RuntimeFeatures::IsEnabled(RuntimeFeatures::ExponentialHeightFogFeature) && SharedData::exponentialHeightFogSettings.enabled) && SharedData::exponentialHeightFogSettings.disableVanillaFog)
 			gammaOffset = 0.0;
 #	endif
 		return AdjustedAuthoredColor(color, gammaOffset);

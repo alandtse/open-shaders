@@ -71,7 +71,7 @@ public:
 	 */
 	void UpdateRasterStateCullMode(const RE::BSRenderPass* pass, const uint32_t technique) const
 	{
-		if (isInteriorWithSun && settings.ForceDoubleSidedRendering && technique & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap)) {
+		if (IsActiveInteriorSun() && settings.ForceDoubleSidedRendering && technique & static_cast<uint32_t>(SIE::ShaderCache::UtilityShaderFlags::RenderShadowmap)) {
 			const auto flags = pass->shaderProperty->flags;
 			const auto renderTwoSided = flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kTwoSided) || flags.none(RE::BSShaderProperty::EShaderPropertyFlag::kAssumeShadowmask, RE::BSShaderProperty::EShaderPropertyFlag::kSkinned);
 			if (renderTwoSided && *rasterStateCullMode != 0) {
@@ -114,7 +114,7 @@ public:
 	 */
 	static bool IsInteriorWithSun(const RE::TESObjectCELL* cell);
 	/** @brief Returns whether this feature is loaded and the current cell has interior sun enabled. */
-	bool IsActiveInteriorSun() const { return loaded && isInteriorWithSun.load(); }
+	bool IsActiveInteriorSun() const { return IsEnabled() && isInteriorWithSun.load(); }
 	virtual bool IsCore() const override { return true; };
 
 private:

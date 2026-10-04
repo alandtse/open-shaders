@@ -46,6 +46,8 @@ public:
 
 	/** @brief Creates GPU resources including depth textures, blended depth buffers, and stencil states. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 
 	/** @brief Returns the terrain depth-offset vertex shader, compiling on first use, or nullptr if compilation failed. */
 	ID3D11VertexShader* GetTerrainOffsetVertexShader();
@@ -101,6 +103,14 @@ public:
 	RE::BSGraphics::DepthStencilData terrainDepth;
 
 	ID3D11DepthStencilState* terrainDepthStencilState = nullptr;
+
+	/** @brief Restores the engine's terrain fade preference while blending is disabled. */
+	void OnRuntimeDisabled() override;
+	/** @brief Applies the terrain fade override when blending resumes. */
+	void OnRuntimeEnabled() override;
+
+	RE::Setting* landFadeSetting = nullptr;
+	bool originalLandFade = true;
 
 	ID3D11ShaderResourceView* depthSRVBackup = nullptr;
 	ID3D11ShaderResourceView* prepassSRVBackup = nullptr;

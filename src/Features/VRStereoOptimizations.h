@@ -61,6 +61,8 @@ struct VRStereoOptimizations
 	//=============================================================================
 
 	void SetupResources();
+	/** @brief Releases owned GPU allocations while retaining shader programs. */
+	void ReleaseResources();
 	void Reset();
 	void DrawSettings();
 	void SaveSettings(json& o_json);

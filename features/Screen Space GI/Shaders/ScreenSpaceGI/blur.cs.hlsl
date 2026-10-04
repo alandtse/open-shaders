@@ -91,10 +91,9 @@ float2x2 getRotationMatrix(float noise)
 	const float2 frameScale = FrameDim * RcpTexDim;
 
 	float radius = BlurRadius;
-#ifdef TEMPORAL_DENOISER
-	float accumFrames = srcAccumFrames[dtid];
-	radius = lerp(radius, 2, 1 / (1 + accumFrames * 255));
-#endif
+	float accumFrames = EnableTemporalDenoiser() ? srcAccumFrames[dtid] : 0;
+	if (EnableTemporalDenoiser())
+		radius = lerp(radius, 2, 1 / (1 + accumFrames * 255));
 	const uint numSamples = 8;
 
 	const float2 uv = (dtid + .5) * RCP_OUT_FRAME_DIM;
@@ -112,18 +111,15 @@ float2x2 getRotationMatrix(float noise)
 
 	TvBv[0] *= worldRadius;
 	TvBv[1] *= worldRadius;
-#ifdef TEMPORAL_DENOISER
-	halfAngle *= 1 - lerp(0, 0.8, sqrt(accumFrames / (float)MaxAccumFrames));
-#endif
+	if (EnableTemporalDenoiser())
+		halfAngle *= 1 - lerp(0, 0.8, sqrt(accumFrames / (float)MaxAccumFrames));
 
 	const float4 ilY = srcIlY[dtid];
 	const float2 ilCoCg = srcIlCoCg[dtid];
 
 	float4 ySum = ilY;
 	float2 coCgSum = ilCoCg;
-#if defined(TEMPORAL_DENOISER)
 	float fSum = accumFrames;
-#endif
 	float wSum = 1;
 	for (uint i = 0; i < numSamples; i++) {
 		float w = GaussianWeight(g_Poisson8[i].z);
@@ -168,16 +164,14 @@ float2x2 getRotationMatrix(float noise)
 		if (w > 1e-8) {
 			ySum += srcIlY.SampleLevel(samplerPointClamp, uvSample * OUT_FRAME_SCALE, 0) * w;
 			coCgSum += srcIlCoCg.SampleLevel(samplerPointClamp, uvSample * OUT_FRAME_SCALE, 0) * w;
-#if defined(TEMPORAL_DENOISER)
-			fSum += srcAccumFrames.SampleLevel(samplerPointClamp, uvSample * OUT_FRAME_SCALE, 0) * w;
-#endif
+			if (EnableTemporalDenoiser())
+				fSum += srcAccumFrames.SampleLevel(samplerPointClamp, uvSample * OUT_FRAME_SCALE, 0) * w;
 			wSum += w;
 		}
 	}
 
 	outIlY[dtid] = ySum / wSum;
 	outIlCoCg[dtid] = coCgSum / wSum;
-#if defined(TEMPORAL_DENOISER)
-	outAccumFrames[dtid] = fSum / wSum;
-#endif
+	if (EnableTemporalDenoiser())
+		outAccumFrames[dtid] = fSum / wSum;
 }

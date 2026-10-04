@@ -1,4 +1,5 @@
 #include "TerrainBlending.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Deferred.h"
 #include "Globals.h"
@@ -232,7 +233,7 @@ namespace
 
 	bool IsEngineHookFeatureGateSatisfied(const TerrainBlending& a_singleton)
 	{
-		if (!globals::game::isVR || !a_singleton.loaded || !a_singleton.settings.Enabled) {
+		if (!globals::game::isVR || !a_singleton.IsEnabled() || !a_singleton.settings.Enabled) {
 			return false;
 		}
 
@@ -725,8 +726,25 @@ void TerrainBlending::PostPostLoad()
 
 void TerrainBlending::DataLoaded()
 {
-	auto bEnableLandFade = RE::GetINISetting("bEnableLandFade:Display");
-	bEnableLandFade->data.b = false;
+	if (!landFadeSetting) {
+		landFadeSetting = RE::GetINISetting("bEnableLandFade:Display");
+		if (landFadeSetting)
+			originalLandFade = landFadeSetting->data.b;
+	}
+	if (landFadeSetting)
+		landFadeSetting->data.b = IsEnabled() ? false : originalLandFade;
+}
+
+void TerrainBlending::OnRuntimeEnabled()
+{
+	if (landFadeSetting)
+		landFadeSetting->data.b = false;
+}
+
+void TerrainBlending::OnRuntimeDisabled()
+{
+	if (landFadeSetting)
+		landFadeSetting->data.b = originalLandFade;
 }
 
 void TerrainBlending::TerrainShaderHacks()
@@ -836,7 +854,7 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
-	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
+	const bool tbActive = shaderCache->IsEnabled() && singleton.IsEnabled() && singleton.settings.Enabled;
 	// GetDepthBlendShader() must succeed too: this redirects the ENGINE'S main
 	// scene depth SRV to blendedDepthTexture below, before BlendPrepassDepths()
 	// (which writes it) ever runs. If the shader is unavailable that dispatch
@@ -886,7 +904,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 	auto& singleton = globals::features::terrainBlending;
 	auto shaderCache = globals::shaderCache;
 
-	if (shaderCache->IsEnabled() && singleton.settings.Enabled) {
+	if (shaderCache->IsEnabled() && singleton.IsEnabled() && singleton.settings.Enabled) {
 		if (singleton.renderDepth) {
 			// Entering or exiting terrain depth section
 			bool inTerrain = a_pass->shaderProperty && a_pass->shaderProperty->flags.all(RE::BSShaderProperty::EShaderPropertyFlag::kMultiTextureLandscape);
@@ -971,7 +989,7 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 {
 	ZoneScoped;
 
-	if (!settings.Enabled) {
+	if (!IsEnabled() || !settings.Enabled) {
 		renderDepth = false;
 		renderTerrainDepth = false;
 		renderAltTerrain = false;
@@ -1038,3 +1056,19 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 	zPrepassCopy.depthSRV = Util::AsW32(prepassSRVBackup);
 }
 #undef I18N_KEY_PREFIX
+
+void TerrainBlending::ReleaseResources()
+{
+	auto& depths = globals::game::renderer->GetDepthStencilData().depthStencils;
+	if (depthSRVBackup)
+		depths[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV = Util::AsW32(depthSRVBackup);
+	if (prepassSRVBackup)
+		depths[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY].depthSRV = Util::AsW32(prepassSRVBackup);
+	auto* texture = Util::AsReal(terrainDepth.texture);
+	auto* srv = Util::AsReal(terrainDepth.depthSRV);
+	auto* dsv = Util::AsReal(terrainDepth.views[0]);
+	Util::ReleaseRuntimeResources(texture, srv, dsv, blendedDepthTexture, blendedDepthTexture16, mainDepthCopy, terrainDepthStencilState);
+	terrainDepth = {};
+	depthSRVBackup = nullptr;
+	prepassSRVBackup = nullptr;
+}

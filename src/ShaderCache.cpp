@@ -2437,8 +2437,11 @@ namespace SIE
 	}
 
 	RE::BSGraphics::VertexShader* ShaderCache::GetVertexShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, bool a_precompile)
 	{
+		if (a_precompile && backgroundCompilation)
+			return nullptr;
+
 		if (!SShaderCache::ResolveImageSpaceDescriptor(shader, descriptor)) {
 			return nullptr;
 		}
@@ -2476,8 +2479,8 @@ namespace SIE
 			}
 		}
 
-		if (IsAsync()) {
-			compilationSet.Add({ ShaderClass::Vertex, shader, descriptor });
+		if (IsAsync() || backgroundCompilation) {
+			compilationSet.Add({ ShaderClass::Vertex, shader, descriptor, a_precompile });
 		} else {
 			return MakeAndAddVertexShader(shader, descriptor);
 		}
@@ -2486,8 +2489,11 @@ namespace SIE
 	}
 
 	RE::BSGraphics::PixelShader* ShaderCache::GetPixelShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, bool a_precompile)
 	{
+		if (a_precompile && backgroundCompilation)
+			return nullptr;
+
 		auto state = globals::state;
 		if (globals::game::isVR && strcmp(shader.fxpFilename, "OBBOcclusionTesting") == 0)
 			// use vanilla shader
@@ -2525,8 +2531,8 @@ namespace SIE
 			}
 		}
 
-		if (IsAsync()) {
-			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor });
+		if (IsAsync() || backgroundCompilation) {
+			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor, a_precompile });
 		} else {
 			return MakeAndAddPixelShader(shader, descriptor);
 		}
@@ -2570,7 +2576,7 @@ namespace SIE
 			}
 		}
 
-		if (IsAsync()) {
+		if (IsAsync() || backgroundCompilation) {
 			compilationSet.Add({ ShaderClass::Compute, shader, descriptor });
 		} else {
 			return MakeAndAddComputeShader(shader, descriptor);
@@ -3384,12 +3390,29 @@ namespace SIE
 
 	void ShaderCache::SetBackgroundCompilation(bool value)
 	{
+		uint64_t discardedTasks = 0;
+		uint64_t discardedWeight = 0;
 		{
 			// Serialize with WaitTake's predicate check and transition into wait.
 			std::scoped_lock lock{ compilationSet.compilationMutex };
 			backgroundCompilation = value;
+			if (value) {
+				for (auto it = compilationSet.availableTasks.begin(); it != compilationSet.availableTasks.end();) {
+					if (it->IsPrecompile()) {
+						++discardedTasks;
+						discardedWeight += static_cast<uint64_t>(it->GetPriority()) + 1;
+						it = compilationSet.availableTasks.erase(it);
+					} else {
+						++it;
+					}
+				}
+				compilationSet.totalTasks -= discardedTasks;
+				compilationSet.totalPriorityWeight -= discardedWeight;
+			}
 		}
 		compilationSet.conditionVariable.notify_one();
+		if (discardedTasks != 0)
+			logger::info("Background compilation: discarded {} queued bulk shader permutations", discardedTasks);
 	}
 
 	static const std::filesystem::path& DiskCachePath()
@@ -4817,10 +4840,11 @@ namespace SIE
 
 	ShaderCompilationTask::ShaderCompilationTask(ShaderClass aShaderClass,
 		const RE::BSShader& aShader,
-		uint32_t aDescriptor) :
+		uint32_t aDescriptor, bool a_precompile) :
 		shaderClass(aShaderClass),
 		shader(aShader), descriptor(aDescriptor),
-		cachedPriority(ComputePriority(aShaderClass, aShader, aDescriptor))
+		cachedPriority(ComputePriority(aShaderClass, aShader, aDescriptor)),
+		precompile(a_precompile)
 	{}
 
 	void ShaderCompilationTask::Perform() const
@@ -5002,6 +5026,16 @@ namespace SIE
 	void CompilationSet::Add(const ShaderCompilationTask& task)
 	{
 		std::unique_lock lock(compilationMutex);
+		if (task.IsPrecompile() && globals::shaderCache->backgroundCompilation)
+			return;
+		if (!task.IsPrecompile()) {
+			const auto queued = availableTasks.find(task);
+			if (queued != availableTasks.end() && queued->IsPrecompile()) {
+				auto requested = availableTasks.extract(queued);
+				requested.value().MarkRequiredForRendering();
+				availableTasks.insert(std::move(requested));
+			}
+		}
 		auto inProgressIt = tasksInProgress.find(task);
 		auto processedIt = processedTasks.find(task);
 		// Shared bytecode still needs a runtime shader object for each descriptor.

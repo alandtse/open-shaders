@@ -1,4 +1,5 @@
 #include "HistogramAutoExposure.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -268,7 +269,10 @@ void HistogramAutoExposure::SetupResources()
 		Util::SetResourceName(adaptationStagingBuffer.get(), "Post Processing Auto Exposure Adaptation Staging");
 	}
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 }
 
 void HistogramAutoExposure::ClearShaderCache()
@@ -426,4 +430,11 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 			context->Unmap(adaptationStagingBuffer.get(), 0);
 		}
 	}
+}
+
+void HistogramAutoExposure::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(autoExposureCB, histogramSB, adaptationSB, histogramStagingBuffer, adaptationStagingBuffer);
+	resetAdaptation = true;
+	histogramReadbackRequested = false;
 }

@@ -221,6 +221,7 @@ void Deferred::ReflectionsPrepasses()
 
 	auto state = globals::state;
 
+	Feature::DrainSceneTransitions();
 	state->activeReflections = true;
 	state->UpdateSharedData(false, false);
 
@@ -246,6 +247,7 @@ void Deferred::EarlyPrepasses()
 	if (!shaderCache->IsEnabled())
 		return;
 
+	Feature::DrainSceneTransitions();
 	globals::state->UpdateSharedData(false, true);
 
 	auto context = globals::d3d::context;
@@ -404,7 +406,7 @@ void Deferred::DeferredPasses()
 	auto& skylighting = globals::features::skylighting;
 
 	auto& ssgi = globals::features::screenSpaceGI;
-	if (ssgi.loaded)
+	if (ssgi.IsEnabled())
 		ssgi.DrawSSGI();
 	auto [ssgi_ao, ssgi_y, ssgi_cocg, ssgi_gi_spec] = ssgi.GetOutputTextures();
 	bool ssgi_hq_spec = ssgi.IsSpecularGIActive();
@@ -412,11 +414,11 @@ void Deferred::DeferredPasses()
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 	auto& sss = globals::features::subsurfaceScattering;
-	if (sss.loaded)
+	if (sss.IsEnabled())
 		sss.DrawSSS();
 
 	auto& dynamicCubemaps = globals::features::dynamicCubemaps;
-	if (dynamicCubemaps.loaded)
+	if (dynamicCubemaps.IsEnabled())
 		dynamicCubemaps.UpdateCubemap();
 
 	auto& ibl = globals::features::ibl;
@@ -426,25 +428,25 @@ void Deferred::DeferredPasses()
 		CS_GPU_PASS("Deferred::DeferredComposite");
 
 		ID3D11ShaderResourceView* srvs[16]{
-			Util::AsReal(specular.SRV),                                                                      // t0  SpecularTexture
-			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
-			Util::AsReal(normalRoughness.SRV),                                                               // t2  NormalRoughnessTexture
-			Util::AsReal(masks.SRV),                                                                         // t3  MasksTexture
-			dynamicCubemaps.loaded || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,  // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
-			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                                // t5  ReflectanceTexture
-			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
-			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
-			dynamicCubemaps.loaded && skylighting.loaded ? skylighting.texProbeArray->srv.get() : nullptr,   // t8  SkylightingProbeArray
-			Util::AsReal(masks2.SRV),                                                                        // t9  Masks2Texture (vertexAO in .x)
-			ssgi_ao,                                                                                         // t10 SsgiAoTexture
-			ssgi_hq_spec ? nullptr : ssgi_y,                                                                 // t11 SsgiYTexture
-			ssgi_hq_spec ? nullptr : ssgi_cocg,                                                              // t12 SsgiCoCgTexture
-			ssgi_hq_spec ? ssgi_gi_spec : nullptr,                                                           // t13 SsgiSpecularTexture
-			ibl.loaded ? ibl.envIBLTexture->srv.get() : nullptr,                                             // t14 EnvIBLTexture
-			ibl.loaded ? ibl.skyIBLTexture->srv.get() : nullptr,                                             // t15 SkyIBLTexture
+			Util::AsReal(specular.SRV),                                                                               // t0  SpecularTexture
+			Util::AsReal(albedo.SRV),                                                                                 // t1  AlbedoTexture
+			Util::AsReal(normalRoughness.SRV),                                                                        // t2  NormalRoughnessTexture
+			Util::AsReal(masks.SRV),                                                                                  // t3  MasksTexture
+			dynamicCubemaps.IsEnabled() || globals::game::isVR ? Util::GetCurrentSceneDepthSRV(false) : nullptr,      // t4  DepthTexture (24/32-bit; HLSL type baked at compile via TERRAIN_BLENDING)
+			dynamicCubemaps.IsEnabled() ? Util::AsReal(reflectance.SRV) : nullptr,                                    // t5  ReflectanceTexture
+			dynamicCubemaps.IsEnabled() ? dynamicCubemaps.envTexture->srv.get() : nullptr,                            // t6  EnvTexture
+			dynamicCubemaps.IsEnabled() ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,                 // t7  EnvReflectionsTexture
+			dynamicCubemaps.IsEnabled() && skylighting.IsEnabled() ? skylighting.texProbeArray->srv.get() : nullptr,  // t8  SkylightingProbeArray
+			Util::AsReal(masks2.SRV),                                                                                 // t9  Masks2Texture (vertexAO in .x)
+			ssgi_ao,                                                                                                  // t10 SsgiAoTexture
+			ssgi_hq_spec ? nullptr : ssgi_y,                                                                          // t11 SsgiYTexture
+			ssgi_hq_spec ? nullptr : ssgi_cocg,                                                                       // t12 SsgiCoCgTexture
+			ssgi_hq_spec ? ssgi_gi_spec : nullptr,                                                                    // t13 SsgiSpecularTexture
+			ibl.IsEnabled() ? ibl.envIBLTexture->srv.get() : nullptr,                                                 // t14 EnvIBLTexture
+			ibl.IsEnabled() ? ibl.skyIBLTexture->srv.get() : nullptr,                                                 // t15 SkyIBLTexture
 		};
 
-		if (dynamicCubemaps.loaded)
+		if (dynamicCubemaps.IsEnabled())
 			context->CSSetSamplers(0, 1, &linearSampler);
 
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
@@ -492,11 +494,11 @@ void Deferred::DeferredPasses()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	if (dynamicCubemaps.loaded)
+	if (dynamicCubemaps.IsEnabled())
 		dynamicCubemaps.PostDeferred();
 
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded)
+	if (globals::features::effects11.IsEnabled())
 		globals::features::effects11.DrawVolumetricRays();
 #endif
 }
@@ -722,8 +724,6 @@ ID3D11ComputeShader* Deferred::GetComputeMainComposite()
 
 	if (globals::features::screenSpaceGI.loaded) {
 		defines.push_back({ "SSGI", nullptr });
-		if (!globals::features::screenSpaceGI.HasGIResources())
-			defines.push_back({ "SSGI_AO_ONLY", nullptr });
 	}
 
 	if (globals::features::ibl.loaded)
@@ -750,8 +750,6 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 	if (globals::features::screenSpaceGI.loaded) {
 		defines.push_back({ "SSGI", nullptr });
-		if (!globals::features::screenSpaceGI.HasGIResources())
-			defines.push_back({ "SSGI_AO_ONLY", nullptr });
 	}
 
 	if (globals::features::ibl.loaded)
@@ -806,7 +804,7 @@ void Deferred::Hooks::Main_RenderWorld_BlendedDecals::thunk(RE::BSShaderAccumula
 	if (globals::shaderCache->IsEnabled() && globals::state->inWorld) {
 		auto& terrainBlending = globals::features::terrainBlending;
 		// Defer terrain rendering until after everything else
-		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
+		if (terrainBlending.IsEnabled() && terrainBlending.settings.Enabled) {
 			terrainBlending.RenderTerrainBlendingPasses();
 		}
 	}

@@ -9,6 +9,11 @@ namespace InverseSquareLighting
 
 	float GetAttenuation(float distance, LightLimitFix::Light light)
 	{
+		if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::InverseSquareLightingFeature)) {
+			float attenuation = saturate(distance / light.radius);
+			return 1.0 - attenuation * attenuation;
+		}
+
 		float isEnabled = 1.0f - float((light.lightFlags & LightLimitFix::LightFlags::Disabled) != 0);
 		float isInvSq = float((light.lightFlags & LightLimitFix::LightFlags::InverseSquare) != 0);
 

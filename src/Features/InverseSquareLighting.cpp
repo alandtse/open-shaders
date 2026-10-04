@@ -99,6 +99,8 @@ float InverseSquareLighting::GetAttenuation(const float distance, const float ra
 
 float InverseSquareLighting::BSLight_GetLuminance::thunk(RE::BSLight* bsLight, RE::NiPoint3* targetPosition, RE::NiLight* refLight)
 {
+	if (!globals::features::inverseSquareLighting.IsEnabled())
+		return func(bsLight, targetPosition, refLight);
 	auto* niLight = bsLight->light.get();
 	const auto runtimeData = ISLCommon::RuntimeLightDataExt::Get(niLight);
 

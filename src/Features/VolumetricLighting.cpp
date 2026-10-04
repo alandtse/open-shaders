@@ -1,4 +1,5 @@
 #include "VolumetricLighting.h"
+#include "Utils/RuntimeResources.h"
 
 #include "I18n/I18n.h"
 #include "InteriorSun.h"
@@ -26,22 +27,14 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void VolumetricLighting::DrawSettings()
 {
-	// VR pre-allocates VL render targets at boot, so a runtime toggle can't
-	// resize them -- gate only in VR. Non-VR resizes live.
 	if (ImGui::Checkbox(T(TKEY("enable_exteriors"), "Enable Volumetric Lighting in Exteriors"), &settings.ExteriorEnabled))
 		SetupVL();
-	if (globals::game::isVR)
-		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::ExteriorEnabled,
-			T(TKEY("enable_exteriors_tooltip"), "Volumetric god-rays / fog scattering in exterior cells."));
 
 	if (settings.ExteriorEnabled)
 		DrawVolumetricLightingSettings(settings.ExteriorQuality, settings.ExteriorCustomSize, false, !inInterior);
 
 	if (ImGui::Checkbox(T(TKEY("enable_interiors"), "Enable Volumetric Lighting in Interiors"), &settings.InteriorEnabled))
 		SetupVL();
-	if (globals::game::isVR)
-		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::InteriorEnabled,
-			T(TKEY("enable_interiors_tooltip"), "Volumetric god-rays / fog scattering in interior cells."));
 
 	if (settings.InteriorEnabled)
 		DrawVolumetricLightingSettings(settings.InteriorQuality, settings.InteriorCustomSize, true, inInterior);
@@ -171,10 +164,8 @@ void VolumetricLighting::RestoreDefaultSettings()
 
 void VolumetricLighting::PostPostLoad()
 {
-	bootSnapshot.LatchIfNeeded(settings);
 	if (globals::game::isVR) {
-		if (settings.ExteriorEnabled || settings.InteriorEnabled)
-			EnableBooleanSettings(hiddenVRSettings, GetName());
+		EnableBooleanSettings(hiddenVRSettings, GetName());
 		auto address = REL::RelocationID(100475, 0).address() + 0x45b;  // AE not needed, VR only hook
 		logger::info("[{}] Hooking CopyResource at {:x}", GetName(), address);
 		REL::safe_fill(address, REL::NOP, 7);
@@ -249,6 +240,15 @@ void VolumetricLighting::EarlyPrepass()
 
 void VolumetricLighting::SetupVL()
 {
+	if (!gVolumetricLightingSizeHigh || !globals::game::bEnableVolumetricLighting)
+		return;
+	if (!IsEnabled()) {
+		if (globals::game::isVR)
+			SetBooleanSettings(hiddenVRSettings, GetName(), false);
+		else
+			*globals::game::bEnableVolumetricLighting = false;
+		return;
+	}
 	if (inInterior) {
 		if (globals::game::isVR)
 			SetBooleanSettings(hiddenVRSettings, GetName(), settings.InteriorEnabled && inInteriorWithSun);
@@ -290,7 +290,7 @@ void VolumetricLighting::RenderVolumetricLighting(VolumetricLightingDescriptor* 
 void VolumetricLighting::RenderDepth::thunk()
 {
 	func();
-	if (globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)
+	if (globals::features::volumetricLighting.IsEnabled() && globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)
 		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
@@ -369,4 +369,9 @@ void VolumetricLighting::CopyResource::thunk(ID3D11DeviceContext* a_this, ID3D11
 	if (!(Util::IsDynamicResolution() && globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)) {
 		a_this->CopyResource(a_renderTarget, a_renderTargetSource);
 	}
+}
+
+void VolumetricLighting::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(vlDataCB);
 }

@@ -80,6 +80,8 @@ public:
 
 	virtual void Reset() override;
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void ClearShaderCache() override;
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }

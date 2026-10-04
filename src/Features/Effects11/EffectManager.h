@@ -48,6 +48,8 @@ public:
 
 	// Lifecycle
 	void Initialize();
+	/** @brief Releases textures and buffers while keeping compiled programs and settings. */
+	void ReleaseResources();
 
 	void Apply();
 	void Load();
@@ -189,6 +191,7 @@ private:
 	void LogPresetStatus() const;
 
 	bool initialized = false;
+	bool settingsInitialized = false;
 
 	// GetTextureOriginal()'s VR backing texture; eyeSourceData mirrors these raw
 	// pointers into the RenderTargetData shape kMAIN itself uses.

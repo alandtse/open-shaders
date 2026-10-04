@@ -27,6 +27,8 @@ public:
 	static TextureManager& GetSingleton();
 
 	void Initialize();
+	/** @brief Releases textures and buffers while keeping compiled programs and settings. */
+	void ReleaseResources();
 	Texture* GetCommonTexture(const std::string& name);
 
 	// (Re)creates the canvas-sized textures at this size if it differs from the last call.

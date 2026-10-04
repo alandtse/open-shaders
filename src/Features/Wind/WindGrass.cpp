@@ -106,7 +106,7 @@ void Wind::ClearShaderCache()
 
 void Wind::UpdateGrassWindSpring(bool a_compute)
 {
-	if (!grassState.springConstantBuffer)
+	if (!IsEnabled() || !grassState.springConstantBuffer)
 		return;
 	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
 		if (!grassState.springResponseTextures[qualityIndex][0] || !grassState.springResponseTextures[qualityIndex][1] ||

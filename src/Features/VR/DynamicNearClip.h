@@ -18,6 +18,8 @@ public:
 	void Install();
 	/** @brief Allocate the tiny probe/readback resources; failure leaves the engine camera intact. */
 	void SetupResources();
+	/** @brief Releases owned GPU allocations while retaining shader programs. */
+	void ReleaseResources();
 	/** @brief Recreate the standalone probe shader after a cache clear. */
 	void ClearShaderCache();
 	/** @brief Set the source frustums before Skyrim rebuilds projections and culling data. */

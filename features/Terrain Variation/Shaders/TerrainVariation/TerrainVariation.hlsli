@@ -156,6 +156,9 @@ inline float4 StochasticBlendTwoSamples(float4 s1, float4 s2, float tap1Weight, 
 // Stochastic sampling function for Terrain LOD & LOD Mask.
 inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, float2 uv)
 {
+	if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainVariationFeature))
+		return tex.SampleBias(samp, uv, SharedData::MipBias);
+
 	float2 cellID = floor(uv * 255437.0);
 	float2 offset1 = hashLOD(cellID) * 0.08;
 	float2 offset2 = hashLOD(cellID + 127.0) * 0.08;
@@ -174,6 +177,9 @@ inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, f
 // Main stochastic sampling function
 inline float4 StochasticEffect(Texture2D tex, SamplerState samp, float2 uv, StochasticOffsets offsets)
 {
+	if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainVariationFeature))
+		return tex.SampleBias(samp, uv, SharedData::MipBias);
+
 	// Calculate custom mip level from original UVs.
 	float mipLevel = TerrainStochasticMipLevel(tex);
 
@@ -189,6 +195,9 @@ inline float4 StochasticEffect(Texture2D tex, SamplerState samp, float2 uv, Stoc
 // Stochastic sampling for parallax/height; same offsets as albedo so height stays aligned.
 inline float4 StochasticEffectParallax(Texture2D tex, SamplerState samp, float2 uv, float mipLevel, StochasticOffsets offsets)
 {
+	if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainVariationFeature))
+		return tex.SampleLevel(samp, uv, mipLevel);
+
 	float4 s1 = tex.SampleLevel(samp, uv + offsets.offset1, mipLevel);
 	float4 s2 = tex.SampleLevel(samp, uv + offsets.offset2, mipLevel);
 	return StochasticBlendTwoSamples(s1, s2, offsets.tap1Weight, s1.a, s2.a);
@@ -197,6 +206,9 @@ inline float4 StochasticEffectParallax(Texture2D tex, SamplerState samp, float2 
 // Height fetch for the mesh ray-march. Blends on the channel the march reads so relief tracks albedo.
 inline float StochasticHeightChannel(Texture2D<float4> tex, SamplerState samp, float2 uv, float mipLevel, uint channel, StochasticOffsets offsets)
 {
+	if (!RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainVariationFeature))
+		return tex.SampleLevel(samp, uv, mipLevel)[channel];
+
 	float4 s1 = tex.SampleLevel(samp, uv + offsets.offset1, mipLevel);
 	float4 s2 = tex.SampleLevel(samp, uv + offsets.offset2, mipLevel);
 	float4 blended = StochasticBlendTwoSamples(s1, s2, offsets.tap1Weight, s1[channel], s2[channel]);

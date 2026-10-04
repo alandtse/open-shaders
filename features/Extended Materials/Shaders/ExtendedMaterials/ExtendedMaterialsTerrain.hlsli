@@ -291,8 +291,9 @@ inline bool TerrainHasAnyDisplacement()
 #if defined(TRUE_PBR)
 	return (PBRFlags & TERRAIN_DISPLACEMENT_MASK) != 0;
 #else
-	return SharedData::extendedMaterialSettings.EnableTerrainParallax ||
-	       (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::THLandHasDisplacement) != 0;
+	return (RuntimeFeatures::IsEnabled(RuntimeFeatures::ExtendedMaterialsFeature) && SharedData::extendedMaterialSettings.EnableTerrainParallax) ||
+	       (RuntimeFeatures::IsEnabled(RuntimeFeatures::TerrainHelperFeature) &&
+			   (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::THLandHasDisplacement) != 0);
 #endif
 }
 

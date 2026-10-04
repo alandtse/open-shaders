@@ -177,6 +177,8 @@ struct Wind : Feature
 	virtual bool HasScopedOverrideSettings() const override { return true; }
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;

@@ -1,4 +1,5 @@
 #include "DynamicNearClip.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/ScreenSpaceGI.h"
 #include "Features/VR.h"
@@ -165,7 +166,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 	settings.ClampNearClipSettings();
 	UpdateVanillaFogOverride();
 	const bool menuScene = globals::state->IsFullScreenMenuOpen() || globals::state->IsMainOrLoadingMenuOpen(globals::game::ui);
-	if (!hookReady || !resourcesReady || failed || !globals::features::vr.loaded || !settings.DynamicNearClip || menuScene) {
+	if (!hookReady || !resourcesReady || failed || !globals::features::vr.IsEnabled() || !settings.DynamicNearClip || menuScene) {
 		RestoreCamera();
 		if (!failed)
 			status = menuScene ? "Menu: engine near plane" : "Inactive";
@@ -257,7 +258,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 			resetSSGIHistory = true;
 			ssgiReleaseResetPending = false;
 		}
-		if (resetSSGIHistory && globals::features::screenSpaceGI.loaded)
+		if (resetSSGIHistory && globals::features::screenSpaceGI.IsEnabled())
 			globals::features::screenSpaceGI.QueueHistoryReset();
 		lastUpdate = now;
 		updateFrame = globals::state->frameCount;
@@ -342,8 +343,8 @@ void VRDynamicNearClip::SetupResources()
 	if (!globals::game::isVR || !hookReady)
 		return;
 	try {
-		probeShader = nullptr;
-		probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
+		if (!probeShader)
+			probeShader.attach(reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\DynamicNearClipCS.hlsl", {}, "cs_5_0")));
 		if (!probeShader) {
 			Fail("Depth probe shader unavailable; using the engine near plane");
 			return;
@@ -383,7 +384,9 @@ void VRDynamicNearClip::SetupResources()
 
 void VRDynamicNearClip::ClearShaderCache()
 {
-	SetupResources();
+	probeShader = nullptr;
+	if (resourcesReady)
+		SetupResources();
 }
 
 void VRDynamicNearClip::BeginWorldDepth()
@@ -540,4 +543,17 @@ void VRDynamicNearClip::DrawReadout()
 	if (ImGui::Begin("Dynamic near clip###VRNearClipReadout", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings))
 		DrawValues();
 	ImGui::End();
+}
+
+void VRDynamicNearClip::ReleaseResources()
+{
+	RestoreCamera();
+	resourcesReady = false;
+	collectingWorldDepth = false;
+	Util::ReleaseRuntimeResources(probeResult, probeUAV, probeConstants);
+	for (auto& readback : readbacks) {
+		Util::ReleaseRuntimeResource(readback.buffer);
+		readback.pending = false;
+	}
+	updateFrame = captureFrame = UINT32_MAX;
 }

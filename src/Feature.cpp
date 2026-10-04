@@ -1,4 +1,5 @@
 #include "Feature.h"
+#include "Utils/RuntimeResources.h"
 
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
@@ -436,6 +437,13 @@ namespace
 
 void Feature::DrainSceneTransitions()
 {
+	Util::PollRuntimeResourceDiagnostics();
+	for (auto* feature : GetFeatureList()) {
+		if (feature->loaded && feature->runtimeLifecycleStarted.load(std::memory_order_acquire) &&
+			feature->runtimeResetPending.exchange(false, std::memory_order_acq_rel))
+			feature->ApplyRuntimeState();
+	}
+
 	static std::atomic<bool> registered{ false };
 	if (!registered.load(std::memory_order_acquire)) {
 		if (auto* ui = globals::game::ui) {
@@ -449,9 +457,9 @@ void Feature::DrainSceneTransitions()
 	}
 
 	if (g_loadingMenuOpenPending.exchange(false, std::memory_order_acq_rel))
-		ForEachLoadedFeature("OnSceneTransitionReset(open)", [](Feature* f) { f->OnSceneTransitionReset(true); });
+		ForEachAvailableFeature("OnSceneTransitionReset(open)", [](Feature* f) { f->OnSceneTransitionReset(true); });
 	if (g_loadingMenuClosePending.exchange(false, std::memory_order_acq_rel))
-		ForEachLoadedFeature("OnSceneTransitionReset(close)", [](Feature* f) { f->OnSceneTransitionReset(false); });
+		ForEachAvailableFeature("OnSceneTransitionReset(close)", [](Feature* f) { f->OnSceneTransitionReset(false); });
 }
 
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
@@ -475,13 +483,25 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 	return names;
 }
 
+void Feature::SetEnabled(bool value)
+{
+	value = IsAlwaysEnabled() || value;
+	const bool previous = requestedEnabled.exchange(value, std::memory_order_acq_rel);
+	if (RequiresRestartForToggle() && runtimeBootSnapshot.IsLatched())
+		return;
+	if (!runtimeLifecycleStarted.load(std::memory_order_acquire))
+		runtimeEnabled.store(value, std::memory_order_release);
+	if (previous != value)
+		runtimeResetPending.store(true, std::memory_order_release);
+}
+
 bool Feature::ToggleAtBootSetting()
 {
 	if (IsAlwaysEnabled())
 		return false;
 	auto state = globals::state;
 	const std::string featureName = GetShortName();
-	auto disabled = state->IsFeatureDisabled(featureName);
+	auto disabled = !requestedEnabled.load(std::memory_order_acquire);
 	state->SetFeatureBootEnabled(featureName, disabled);
 
 	return state->IsFeatureDisabled(featureName);  // Return the new state
@@ -691,4 +711,61 @@ bool Feature::IsFeatureKnown(const std::string& shortName, REL::Version* outVers
 	}
 
 	return false;
+}
+
+void Feature::InitializeRuntimeResources()
+{
+	if (!IsRuntimeAvailable()) {
+		logger::info("[ResourceLifetime] feature={} startup_disabled=true resource_initialization=skipped", GetShortName());
+		runtimeLifecycleStarted.store(true, std::memory_order_release);
+		runtimeEnabled.store(false, std::memory_order_release);
+		return;
+	}
+	{
+		Util::RuntimeResourceDiagnostics diagnostics(GetShortName(), "initialize-persistent");
+		SetupPersistentResources();
+	}
+	runtimeLifecycleStarted.store(true, std::memory_order_release);
+	if (!HasReleasableResources()) {
+		Util::RuntimeResourceDiagnostics diagnostics(GetShortName(), "initialize-retained");
+		SetupResources();
+		runtimeResourcesReady = true;
+	}
+	ApplyRuntimeState();
+}
+
+void Feature::ApplyRuntimeState()
+{
+	const bool enable = RequiresRestartForToggle() && runtimeBootSnapshot.IsLatched() ?
+	                        runtimeBootSnapshot.Boot(&RuntimeToggleSettings::enabled) :
+	                        requestedEnabled.load(std::memory_order_acquire);
+	Util::RuntimeResourceDiagnostics diagnostics(GetShortName(), enable ? "enable" : "disable");
+	logger::info("[ResourceLifetime] feature={} requested={} resources_ready={} releasable={} retained_support={}",
+		GetShortName(), enable, runtimeResourcesReady, HasReleasableResources(), GetRuntimeToggleNote());
+	try {
+		if (!enable) {
+			runtimeEnabled.store(false, std::memory_order_release);
+			OnRuntimeDisabled();
+			if (HasReleasableResources() && runtimeResourcesReady) {
+				ReleaseResources();
+				runtimeResourcesReady = false;
+			}
+			return;
+		}
+		runtimeEnabled.store(true, std::memory_order_release);
+		if (!runtimeResourcesReady) {
+			SetupResources();
+			runtimeResourcesReady = true;
+		}
+		OnRuntimeEnabled();
+	} catch (const std::exception& e) {
+		runtimeEnabled.store(false, std::memory_order_release);
+		requestedEnabled.store(false, std::memory_order_release);
+		logger::error("{} runtime resources failed: {}", GetShortName(), e.what());
+		OnRuntimeDisabled();
+		if (HasReleasableResources()) {
+			ReleaseResources();
+			runtimeResourcesReady = false;
+		}
+	}
 }

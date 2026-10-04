@@ -1,4 +1,5 @@
 #include "LensFlare.h"
+#include "Utils/RuntimeResources.h"
 
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
@@ -344,7 +345,10 @@ void LensFlare::SetupResources()
 		Util::SetResourceName(borderSampler.get(), "Post Processing Lens Flare Border Sampler");
 	}
 
-	CompileComputeShaders();
+	if (!shadersRequested) {
+		CompileComputeShaders();
+		shadersRequested = true;
+	}
 
 	// Create initial FFT textures
 	CreateFFTTextures(NormaliseFFTResolution(settings.FFTResolution));
@@ -931,4 +935,15 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 
 	inout_tex = { texFlare->resource.get(), texFlare->srv.get() };
 	outputReady = true;
+}
+
+void LensFlare::ReleaseResources()
+{
+	Util::ReleaseRuntimeResources(lensFlareCB, texFlare, texThreshold, texGhostHalo, texBlurTemp, texFFT, texSceneFFT, texFFTResult, colorSampler, borderSampler);
+	outputReady = false;
+	for (auto& cache : bokehFFTCache) {
+		Util::ReleaseRuntimeResource(cache.texture);
+		cache.valid = false;
+	}
+	bokehFFTDirty = true;
 }

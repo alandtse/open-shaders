@@ -43,16 +43,27 @@ cbuffer PerGeometry : register(b2)
 #	define cmp -
 
 #	ifdef HDR_OUTPUT
+bool IsHDREnabled()
+{
+	return RuntimeFeatures::IsEnabled(RuntimeFeatures::HDRDisplayFeature) && SharedData::HDRData.x > 0.5;
+}
+
 // Internal working space for TAA is PQ/BT2020.
 // PQ maps [0, 10000 nits] to [0, 1], so the vanilla 1.001 bracket ceiling is correct —
 // nothing in the scene legitimately exceeds 1.0 PQ. This is why PQ avoids the bracket
 // collapse that caused halos with the linear BT2020 working space.
 float3 ConvertRenderInput(float3 gammaColor)
 {
+	if (!IsHDREnabled())
+		return gammaColor;
+
 	return DisplayMapping::LinearToPQ(Color::BT709ToBT2020(Color::GammaToLinearSafe(gammaColor)), 10000.0);
 }
 float3 ConvertRenderOutput(float3 pqColor)
 {
+	if (!IsHDREnabled())
+		return pqColor;
+
 	return Color::LinearToGammaSafe(Color::BT2020ToBT709(DisplayMapping::PQtoLinear(pqColor, 10000.0)));
 }
 // Feedback luma round-trip: feedbackOut.x is read back as history.x next frame.
@@ -62,12 +73,18 @@ float3 ConvertRenderOutput(float3 pqColor)
 // and round-trips cleanly through whatever precision the feedback RT uses.
 float EncodeFeedbackLuma(float pqLuma)
 {
+	if (!IsHDREnabled())
+		return pqLuma;
+
 	// PQ → linear (single channel: luma only, no colour transform needed)
 	float linearLuma = DisplayMapping::PQtoLinear(pqLuma.xxx, 10000.0).x;
 	return Color::LinearToGammaSafe(linearLuma.xxx).x;
 }
 float DecodeFeedbackLuma(float gammaLuma)
 {
+	if (!IsHDREnabled())
+		return gammaLuma;
+
 	float linearLuma = Color::GammaToLinearSafe(gammaLuma.xxx).x;
 	return DisplayMapping::LinearToPQ(linearLuma.xxx, 10000.0).x;
 }
@@ -472,7 +489,7 @@ PS_OUTPUT main(PS_INPUT input)
 	// Only the diff term differs by permutation: HDR keys off the luma diff (scaled to PQ), SDR off
 	// the motion-vs-history delta.
 #	ifdef HDR_OUTPUT
-	float similarityDiff = abs(lumaDiff) * 0.05;
+	float similarityDiff = IsHDREnabled() ? abs(lumaDiff) * 0.05 : abs(motionVsHistory);
 #	else
 	float similarityDiff = abs(motionVsHistory);
 #	endif
@@ -489,20 +506,23 @@ PS_OUTPUT main(PS_INPUT input)
 	// outPacked.yzw = resolved colour; .x = feedback luma (set just below).
 	float4 outPacked;
 #	ifdef HDR_OUTPUT
-	targetColor = max(targetColor, 0);
-	workColor = saturate(blendWeight.xxx * workColor + targetColor);
-	// Skip vanilla BlendParams.z/w detail recovery — neighbourhood delta blows up in linear HDR
-	// and causes dark bezels / halos on the alpha-aware outPacked.yzw output path.
-	outPacked.yzw = workColor;
-#	else
-	workColor = saturate(blendWeight.xxx * workColor + targetColor);
-
-	float3 detailDelta = workColor + -neighborBlend;
-	workColor = saturate(detailDelta * BlendParams.zzz + workColor);
-
-	outPacked.xyz = neighborBlend + -workColor;
-	outPacked.yzw = saturate(BlendParams.www * outPacked.xyz + workColor);
+	if (IsHDREnabled()) {
+		targetColor = max(targetColor, 0);
+		workColor = saturate(blendWeight.xxx * workColor + targetColor);
+		// Skip vanilla BlendParams.z/w detail recovery — neighbourhood delta blows up in linear HDR
+		// and causes dark bezels / halos on the alpha-aware outPacked.yzw output path.
+		outPacked.yzw = workColor;
+	} else
 #	endif
+	{
+		workColor = saturate(blendWeight.xxx * workColor + targetColor);
+
+		float3 detailDelta = workColor + -neighborBlend;
+		workColor = saturate(detailDelta * BlendParams.zzz + workColor);
+
+		outPacked.xyz = neighborBlend + -workColor;
+		outPacked.yzw = saturate(BlendParams.www * outPacked.xyz + workColor);
+	}
 
 	// Feedback luma: nudge centre luma by the blend-weighted luma diff, unless that nudge is negligible.
 	float feedbackLuma = blendWeight * lumaDiff + centerLuma;

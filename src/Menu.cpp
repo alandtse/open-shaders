@@ -505,7 +505,7 @@ void Menu::Load(json& o_json)
 	// the first-load compile. OR in (never clear) so an env-var force or a manual
 	// Skip Compilation press during a runtime settings reload is preserved.
 	if (settings.BackgroundShaderCompilationOnBoot)
-		globals::shaderCache->backgroundCompilation = true;
+		globals::shaderCache->SetBackgroundCompilation(true);
 }
 
 void Menu::Save(json& o_json)
@@ -911,10 +911,9 @@ void Menu::DrawDisableAtBootSettings()
 	static int lastVisibleFrame = -1;
 
 	ImGui::Text("%s",
-		T("menu.disable_at_boot_desc",
-			"Select features to disable at boot. "
-			"This is the same as deleting a feature.ini file. "
-			"Restart will be required to reenable."));
+		T("menu.feature_toggles_desc",
+			"Select features to disable. Changes are saved for the next launch and apply live unless marked restart required. "
+			"Toggles do not rebuild the shader cache."));
 
 	ImGui::Spacing();
 
@@ -936,7 +935,8 @@ void Menu::DrawDisableAtBootSettings()
 				continue;
 
 			const std::string featureName = feature->GetShortName();
-			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
+			const auto checkboxLabel = std::format("{}{}##DisableAtBoot{}", feature->GetDisplayName(),
+				feature->RequiresRestartForToggle() ? " (restart required)" : "", featureName);
 			bool isDisabled = state->IsFeatureDisabled(featureName);
 
 			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
@@ -945,8 +945,14 @@ void Menu::DrawDisableAtBootSettings()
 				else
 					preferenceSaveFailures.insert(featureName);
 			}
+			if (const auto note = feature->GetRuntimeToggleNote(); !note.empty()) {
+				if (auto tooltip = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(note.data(), note.data() + note.size());
+			}
 			if (preferenceSaveFailures.contains(featureName))
 				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
+			if (feature->RequiresRestartForToggle() && feature->HasAnyPendingRestart())
+				Util::Text::RestartNeeded("Restart to apply the selected feature state.");
 		}
 	}
 }
@@ -1219,12 +1225,12 @@ void Menu::ProcessInputEventQueue()
 					{ settings.ShaderBlockNextKey, [this, shaderCache]() { if (settings.EnableShaderBlocking) shaderCache->IterateShaderBlock(false); } },
 					{ settings.OverlayToggleKey, []() { Menu::GetSingleton()->overlayVisible = !Menu::GetSingleton()->overlayVisible; } },
 					{ settings.ScreenshotKey, []() {
-						 if (globals::features::screenshotFeature.loaded)
+						 if (globals::features::screenshotFeature.IsEnabled())
 							 globals::features::screenshotFeature.captureRequested = true;
 					 } },
 					{ settings.Effects11ToggleKey, []() {
 #if defined(ENABLE_EFFECTS11)
-						 if (globals::features::effects11.loaded)
+						 if (globals::features::effects11.IsEnabled())
 							 globals::features::effects11.ToggleEnabled();
 #endif
 					 } },
@@ -1478,7 +1484,7 @@ void Menu::DrawWeatherDetailsWindow()
 	if (!globals::features::sceneSelector.WeatherDetailsWindow.Enabled) {
 		return;
 	}
-	if (!globals::features::sceneSelector.loaded) {
+	if (!globals::features::sceneSelector.IsEnabled()) {
 		return;
 	}
 

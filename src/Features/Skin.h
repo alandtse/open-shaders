@@ -48,6 +48,8 @@ struct Skin : Feature
 
 	/** @brief Creates GPU resources including the skin detail texture and per-geometry constant buffer. */
 	virtual void SetupResources() override;
+	bool HasReleasableResources() const override { return true; }
+	void ReleaseResources() override;
 
 	/** @brief Reloads the skin detail normal map texture from disk. */
 	void ReloadSkinDetail();
