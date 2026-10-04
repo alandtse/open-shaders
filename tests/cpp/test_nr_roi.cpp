@@ -5,6 +5,7 @@
 #include "Features/Upscaling/NeuralRendering/ActorRegion.h"
 #include "Features/Upscaling/NeuralRendering/CropCalibration.h"
 #include "Features/Upscaling/NeuralRendering/Diagnostics.h"
+#include "Features/Upscaling/NeuralRendering/FoveaClip.h"
 #include "Features/Upscaling/NeuralRendering/Runtime.h"
 #include "Features/Upscaling/NeuralRendering/Tuning.h"
 
@@ -150,6 +151,79 @@ TEST_CASE("The padded crop fit is strictly larger than the tight one for the sam
 	REQUIRE(padded.y + padded.h >= tight.y + tight.h);
 }
 
+TEST_CASE("The fovea clip pads and aligns each eye's region outward", "[nr][roi][fovea]")
+{
+	constexpr uint32_t width = 1920, height = 1080;
+	const std::array<Util::Subrect::UVRegion, 2> uv{
+		Util::Subrect::UVRegion{ 0.25f, 0.25f, 0.5f, 0.5f },
+		Util::Subrect::UVRegion{ 0.5f, 0.25f, 0.25f, 0.5f },
+	};
+	const auto clip = NR::FoveaClip::BuildClip(uv, width, height);
+	REQUIRE(clip.active);
+	REQUIRE(clip.eye[0].x == 448u);
+	REQUIRE(clip.eye[0].y == 192u);
+	REQUIRE(clip.eye[0].w == 1024u);
+	REQUIRE(clip.eye[0].h == 704u);
+	REQUIRE(clip.eye[1].x == 896u);
+	REQUIRE(clip.eye[1].w == 576u);
+
+	// The crop edge sits a full feather band outside the foveated region, so the composite's
+	// fade to pre-NR content lands in the stretched periphery rather than in the sharp region.
+	REQUIRE(clip.eye[0].x + NR::FoveaClip::kFeatherBandPixels <= 480.0f);
+	REQUIRE(clip.eye[0].y + NR::FoveaClip::kFeatherBandPixels <= 270.0f);
+	REQUIRE(clip.eye[0].x + clip.eye[0].w - NR::FoveaClip::kFeatherBandPixels >= 1440.0f);
+	REQUIRE(clip.eye[0].y + clip.eye[0].h - NR::FoveaClip::kFeatherBandPixels >= 810.0f);
+}
+
+TEST_CASE("The fovea clip is inactive when an eye's region does not resolve", "[nr][roi][fovea]")
+{
+	constexpr uint32_t width = 1920, height = 1080;
+	const std::array<Util::Subrect::UVRegion, 2> resolved{
+		Util::Subrect::UVRegion{ 0.25f, 0.25f, 0.5f, 0.5f },
+		Util::Subrect::UVRegion{ 0.25f, 0.25f, 0.5f, 0.5f },
+	};
+	REQUIRE(NR::FoveaClip::BuildClip(resolved, width, height).active);
+
+	std::array<Util::Subrect::UVRegion, 2> offscreen = resolved;
+	offscreen[1] = Util::Subrect::UVRegion{ 1.5f, 0.0f, 0.25f, 0.25f };
+	REQUIRE_FALSE(NR::FoveaClip::BuildClip(offscreen, width, height).active);
+
+	REQUIRE_FALSE(NR::FoveaClip::BuildClip(resolved, 0, 0).active);
+}
+
+TEST_CASE("The fovea clip narrows the feather subject and drops boxes outside it", "[nr][roi][fovea]")
+{
+	Util::Region::StereoRegion subject;
+	subject.active = true;
+	subject.eye.fill(Util::Subrect::PixelRegion{ 0, 0, 100, 100 });
+	Util::Region::StereoRegion clip;
+	clip.active = true;
+	clip.eye[0] = Util::Subrect::PixelRegion{ 50, 50, 100, 100 };
+	clip.eye[1] = Util::Subrect::PixelRegion{ 200, 200, 100, 100 };
+
+	NR::FoveaClip::ClipSubject(subject, clip);
+	REQUIRE(subject.active);
+	REQUIRE(subject.eye[0].x == 50u);
+	REQUIRE(subject.eye[0].w == 50u);
+	REQUIRE(subject.eye[1].w == 0u);
+
+	NR::FoveaClip::ClipSubject(subject, clip);
+	REQUIRE(subject.eye[0].w == 50u);
+
+	Util::Region::StereoRegion outside;
+	outside.active = true;
+	outside.eye.fill(Util::Subrect::PixelRegion{ 0, 0, 20, 20 });
+	NR::FoveaClip::ClipSubject(outside, clip);
+	REQUIRE_FALSE(outside.active);
+
+	Util::Region::StereoRegion unchanged;
+	unchanged.active = true;
+	unchanged.eye.fill(Util::Subrect::PixelRegion{ 0, 0, 20, 20 });
+	NR::FoveaClip::ClipSubject(unchanged, Util::Region::StereoRegion{});
+	REQUIRE(unchanged.active);
+	REQUIRE(unchanged.eye[0].w == 20u);
+}
+
 TEST_CASE("Tuning::Sanitize clamps the crop fit to the supported values", "[nr][roi]")
 {
 	NR::Tuning tuning;
@@ -184,6 +258,21 @@ TEST_CASE("Tuning::Sanitize clears the crop controls with the tracked actor", "[
 	REQUIRE_FALSE(tracking.regionOverlay);
 	REQUIRE(tracking.regionFit == NR::Tuning::kRegionFitPadded);
 	REQUIRE_FALSE(tracking.regionGroup);
+}
+
+TEST_CASE("Tuning::Sanitize keeps the fovea crop without a tracked actor", "[nr][roi][fovea]")
+{
+	// The foveation region is a crop of its own rather than one of the controls that act through
+	// the tracked crop, so sanitizing with no actor to track leaves it set.
+	NR::Tuning tuning;
+	REQUIRE(tuning.regionFollowFoveation);
+	REQUIRE_FALSE(tuning.regionOfInterest);
+	tuning.Sanitize();
+	REQUIRE(tuning.regionFollowFoveation);
+
+	tuning.regionFollowFoveation = false;
+	tuning.Sanitize();
+	REQUIRE_FALSE(tuning.regionFollowFoveation);
 }
 
 namespace

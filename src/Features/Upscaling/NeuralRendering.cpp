@@ -6,6 +6,7 @@
 #include "I18n/I18n.h"
 #include "NeuralRendering/ActorRegion.h"
 #include "NeuralRendering/D3D12Interop.h"
+#include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/Runtime.h"
 #include "Profiler.h"
@@ -840,6 +841,20 @@ Util::Region::StereoRegion NeuralRendering::GetActorBox() const
 	return actorBox;
 }
 
+const char* NeuralRendering::RegionSourceName(RegionSource a_source)
+{
+	switch (a_source) {
+	case RegionSource::kActor:
+		return "actor";
+	case RegionSource::kFovea:
+		return "fovea";
+	case RegionSource::kBoth:
+		return "both";
+	default:
+		return "none";
+	}
+}
+
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
@@ -976,6 +991,17 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
 			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+	// Independent of the tracked crop: the foveation region alone is a valid crop, so this stays
+	// reachable without the actor toggle above.
+	if (globals::game::isVR) {
+		if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
+				"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+	}
 	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
 	// out without it instead of accepting edits that the pass ignores.
 	const bool cropDisabled = !tuning.regionOfInterest;
@@ -1263,6 +1289,29 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		boundedTuning.Sanitize();
 		work.region = GetRegionOfInterest();
 		work.actorBox = GetActorBox();
+		// The sweep forces its own centred crops, and the foveated route is skipped in the main and
+		// loading menus: NR has to agree with that route, or the two sharpen different frame regions.
+		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
+		const bool actorCrop = work.region.active && !calibrationRunning;
+		bool foveaClip = false;
+		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !state->IsMainOrLoadingMenuOpen()) {
+			const auto& foveated = globals::features::upscaling.foveatedRender;
+			Util::Subrect::UVRegion leftUV, rightUV;
+			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {
+				const auto clip = NR::FoveaClip::BuildClip(std::array<Util::Subrect::UVRegion, 2>{ leftUV, rightUV }, w, h);
+				if (clip.active) {
+					Util::Region::ClipRegion(work.region, clip);
+					NR::FoveaClip::ClipSubject(work.actorBox, clip);
+					foveaClip = true;
+				}
+			}
+		}
+		auto source = RegionSource::kNone;
+		if (actorCrop)
+			source = foveaClip ? RegionSource::kBoth : RegionSource::kActor;
+		else if (foveaClip)
+			source = RegionSource::kFovea;
+		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
 		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;

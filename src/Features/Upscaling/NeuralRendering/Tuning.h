@@ -41,6 +41,13 @@ namespace NR
 		 *        Developer-only; the default tracks a single actor.
 		 */
 		bool regionGroup = false;
+		/**
+		 * @brief On VR with foveation active, evaluates only the foveated region, intersected with
+		 *        the tracked character's crop when one is set. The periphery keeps its pre-NR
+		 *        content, which the upscaler replaces with the cheap stretched view, so the crop
+		 *        stays off the part of the frame foveation does not sharpen. On by default.
+		 */
+		bool regionFollowFoveation = true;
 
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */
 		void Sanitize()

@@ -3064,6 +3064,8 @@
     "feature.upscaling.neural_rendering.intensity": "Intensity",
     "feature.upscaling.neural_rendering.local_structure": "Local Structure Strength",
     "feature.upscaling.neural_rendering.local_tone": "Local Tone Strength",
+    "feature.upscaling.neural_rendering.region_follow_foveation": "Follow Foveation",
+    "feature.upscaling.neural_rendering.region_follow_foveation_tooltip": "With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view.",
     "feature.upscaling.neural_rendering.region_of_interest": "Limit to Tracked Actor",
     "feature.upscaling.neural_rendering.region_of_interest_tooltip": "Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen.",
     "feature.upscaling.neural_rendering.region_overlay": "Show Region Overlay",

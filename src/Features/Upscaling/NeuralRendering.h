@@ -46,6 +46,18 @@ struct NeuralRendering
 		bool failed = false;
 	};
 
+	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
+	enum class RegionSource : uint8_t
+	{
+		kNone,   ///< The whole frame: no tracked actor and no fovea clip.
+		kActor,  ///< The tracked actor's crop alone.
+		kFovea,  ///< The fovea clip alone.
+		kBoth    ///< The fovea clip intersected with the tracked actor's crop.
+	};
+
+	/** @brief Stable name for the region-source diagnostic. */
+	static const char* RegionSourceName(RegionSource a_source);
+
 	NeuralRendering();
 	~NeuralRendering();
 	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
@@ -89,6 +101,8 @@ struct NeuralRendering
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
 	Util::Region::StereoRegion GetRegionOfInterest() const;
+	/** @brief Which sources chose the crop of the last applied frame, safe from any thread. */
+	RegionSource GetRegionSource() const { return static_cast<RegionSource>(regionSource.load(std::memory_order_relaxed)); }
 	/** @brief Snapshot of the tracked actor's projected box with no padding and no stabilising, safe from any thread. */
 	Util::Region::StereoRegion GetActorBox() const;
 	/** @brief Queues a sweep of centred crop sizes that measures how NR's GPU cost falls with crop area. */
@@ -123,6 +137,8 @@ private:
 	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
 	/** @brief Whether the crop covers several actors, mirrored from the tuning like regionEnabled. */
 	std::atomic_bool regionGroup = false;
+	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
+	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
 	/**
