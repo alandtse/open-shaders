@@ -16,16 +16,15 @@ namespace
 		static const std::regex pattern(R"(^[a-zA-Z]{2,3}(_[a-zA-Z]{2,4})?$)");
 		return std::regex_match(locale, pattern);
 	}
+}
 
-	/** Replaces the {brand} placeholder so translations never hardcode the product name. */
-	std::string ExpandBrand(std::string text)
-	{
-		constexpr std::string_view token = "{brand}";
-		for (size_t pos = text.find(token); pos != std::string::npos; pos = text.find(token, pos + Plugin::DISPLAY_NAME.size())) {
-			text.replace(pos, token.size(), Plugin::DISPLAY_NAME);
-		}
-		return text;
+std::string I18n::ExpandBrand(std::string text)
+{
+	constexpr std::string_view token = "{brand}";
+	for (size_t pos = text.find(token); pos != std::string::npos; pos = text.find(token, pos + Plugin::DISPLAY_NAME.size())) {
+		text.replace(pos, token.size(), Plugin::DISPLAY_NAME);
 	}
+	return text;
 }
 
 void I18n::Init()

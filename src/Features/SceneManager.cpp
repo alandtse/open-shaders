@@ -123,7 +123,7 @@ void SceneManager::RegisterUxActions()
 				{ "previewHasOverwrites", manager->IsFeatureSceneEditing(feature) && manager->HasFeatureSceneEditOverwrites() } };
 		}));
 	FEATURE_COMMAND("openFeatureSceneEditor",
-		"Open or reopen a feature's Scene Manager toolbar without saving. Args: feature=shortName. Reopening the same feature resumes its retained draft preview; closing the toolbar suspends it without saving or discarding changes. Requesting another feature shows a discard confirmation on that feature page only if the existing draft has unsaved edits; otherwise it switches immediately. Navigate to the target feature page with the Open Shaders menu action to see the toolbar or confirmation. Verify with featureScenePauseState previewEditing, previewPendingEdits and toolbarOpen.",
+		"Open or reopen a feature's Scene Manager toolbar without saving. Args: feature=shortName. Reopening the same feature resumes its retained draft preview; closing the toolbar suspends it without saving or discarding changes. Requesting another feature shows a discard confirmation on that feature page only if the existing draft has unsaved edits; otherwise it switches immediately. Navigate to the target feature page with the {brand} menu action to see the toolbar or confirmation. Verify with featureScenePauseState previewEditing, previewPendingEdits and toolbarOpen.",
 		([](Feature*, const json& args) {
 			if (!SceneSettingsManager::GetSingleton()->IsSceneReady())
 				throw std::invalid_argument("Wait until a player cell is loaded before opening the scene editor");
