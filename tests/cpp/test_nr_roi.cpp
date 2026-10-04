@@ -167,8 +167,6 @@ TEST_CASE("The fovea clip pads and aligns each eye's region outward", "[nr][roi]
 	REQUIRE(clip.eye[1].x == 896u);
 	REQUIRE(clip.eye[1].w == 576u);
 
-	// The crop edge sits a full feather band outside the foveated region, so the composite's
-	// fade to pre-NR content lands in the stretched periphery rather than in the sharp region.
 	REQUIRE(clip.eye[0].x + NR::FoveaClip::kFeatherBandPixels <= 480.0f);
 	REQUIRE(clip.eye[0].y + NR::FoveaClip::kFeatherBandPixels <= 270.0f);
 	REQUIRE(clip.eye[0].x + clip.eye[0].w - NR::FoveaClip::kFeatherBandPixels >= 1440.0f);
@@ -262,8 +260,6 @@ TEST_CASE("Tuning::Sanitize clears the crop controls with the tracked actor", "[
 
 TEST_CASE("Tuning::Sanitize keeps the fovea crop without a tracked actor", "[nr][roi][fovea]")
 {
-	// The foveation region is a crop of its own rather than one of the controls that act through
-	// the tracked crop, so sanitizing with no actor to track leaves it set.
 	NR::Tuning tuning;
 	REQUIRE(tuning.regionFollowFoveation);
 	REQUIRE_FALSE(tuning.regionOfInterest);
