@@ -1820,32 +1820,39 @@ namespace SIE
 			return type;
 		}
 
-		/// Returns a finished blob for identical code, or nullptr with `a_ticket` set when this task must compile.
-		static ID3DBlob* AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
-			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes,
-			std::optional<Util::CompileDedupe::Ticket>& a_ticket)
+		/// What preprocessing a task and joining any identical compile produced.
+		struct SharedCompile
 		{
+			ID3DBlob* blob = nullptr;                           ///< A finished blob for identical code.
+			std::optional<Util::CompileDedupe::Ticket> ticket;  ///< Set when this task must compile.
+			std::string source;                                 ///< The preprocessed code the key was built from; empty if preprocessing failed.
+		};
+
+		static SharedCompile AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
+			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes)
+		{
+			SharedCompile result;
 			std::ifstream sourceFile(a_path, std::ios::binary);
 			const std::string source((std::istreambuf_iterator<char>(sourceFile)), std::istreambuf_iterator<char>());
 			if (source.empty())
-				return nullptr;
+				return result;
 			winrt::com_ptr<ID3DBlob> preprocessed;
 			winrt::com_ptr<ID3DBlob> errors;
 			if (FAILED(D3DPreprocess(source.data(), source.size(), a_pathString.c_str(), a_defines, &a_includes, preprocessed.put(), errors.put())) || !preprocessed)
-				return nullptr;
-			const std::string_view text(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize());
+				return result;
+			result.source.assign(static_cast<const char*>(preprocessed->GetBufferPointer()), preprocessed->GetBufferSize());
+			if (!result.source.empty() && result.source.back() == '\0')
+				result.source.pop_back();
 			// Developer Mode keeps #line in the key: stripping it would share debug info with another variant's source lines.
-			const auto keyText = globals::state->IsDeveloperMode() ? std::string(text) : Util::CompileDedupe::StripLineDirectives(text);
+			const auto keyText = globals::state->IsDeveloperMode() ? result.source : Util::CompileDedupe::StripLineDirectives(result.source);
 			auto acquired = GetCompileDedupe().Acquire(Util::CompileDedupe::MakeKey({ keyText, "main", GetShaderProfile(a_class), a_flags, GetCompilerIdentity() }));
 			if (!acquired.blob) {
-				a_ticket.emplace(std::move(*acquired.ticket));
-				return nullptr;
+				result.ticket.emplace(std::move(*acquired.ticket));
+				return result;
 			}
-			ID3DBlob* blob = nullptr;
-			if (FAILED(D3DCreateBlob(acquired.blob->size(), &blob)))
-				return nullptr;
-			std::memcpy(blob->GetBufferPointer(), acquired.blob->data(), acquired.blob->size());
-			return blob;
+			if (SUCCEEDED(D3DCreateBlob(acquired.blob->size(), &result.blob)))
+				std::memcpy(result.blob->GetBufferPointer(), acquired.blob->data(), acquired.blob->size());
+			return result;
 		}
 
 		/**
@@ -2020,16 +2027,21 @@ namespace SIE
 			TrackingIncludeHandler includeHandler(path);
 
 			TrackingIncludeHandler preprocessHandler(path);
-			std::optional<Util::CompileDedupe::Ticket> dedupeTicket;
-			shaderBlob = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler, dedupeTicket);
+			auto shared = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler);
+			shaderBlob = shared.blob;
+			auto& dedupeTicket = shared.ticket;
 			const bool dedupeHit = shaderBlob != nullptr;
 			if (dedupeHit)
 				cache.IncContentDedupeTasks();
 
-			const HRESULT compileResult = dedupeHit ? S_OK :
-			                                          D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
-														  GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
-			const auto& capturedIncludes = dedupeHit ? preprocessHandler.includes : includeHandler.includes;
+			// Compiling the preprocessed snapshot keeps the published bytecode matched to the key if the files change meanwhile.
+			const bool fromSnapshot = !shared.source.empty();
+			const HRESULT compileResult = dedupeHit    ? S_OK :
+			                              fromSnapshot ? D3DCompile(shared.source.data(), shared.source.size(), pathString.c_str(), nullptr, nullptr, "main",
+															 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob) :
+			                                             D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
+															 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
+			const auto& capturedIncludes = fromSnapshot ? preprocessHandler.includes : includeHandler.includes;
 			// If the include handler captured any includes, register them so the watcher
 			// can invalidate dependents even if this compilation fails. Do NOT clear
 			// mappings when there are no captured includes to avoid removing prior
