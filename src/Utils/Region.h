@@ -232,6 +232,8 @@ namespace Util::Region
 	{
 		if (!a_clip.active)
 			return;
+		if (!a_focus.active)
+			a_focus.eye.fill(kEmptyRegion);
 		a_focus.active = true;
 		for (size_t eye = 0; eye < a_focus.eye.size(); ++eye) {
 			const auto& clip = a_clip.eye[eye];
