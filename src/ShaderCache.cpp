@@ -392,6 +392,70 @@ namespace SIE
 		return registry;
 	}
 
+	static const std::filesystem::path& DiskCachePath();
+	static const std::filesystem::path& PreviousDiskCachePath();
+	static Util::ShaderCacheManifest::Manifest& GetShaderCacheManifest();
+
+	static std::mutex g_previousManifestMutex;
+	static std::shared_ptr<Util::ShaderCacheManifest::Manifest> g_previousManifest;
+
+	/// The rollback slot's manifest, loaded on first use.
+	static std::shared_ptr<Util::ShaderCacheManifest::Manifest> GetPreviousManifest()
+	{
+		std::scoped_lock lock(g_previousManifestMutex);
+		if (!g_previousManifest) {
+			g_previousManifest = std::make_shared<Util::ShaderCacheManifest::Manifest>();
+			g_previousManifest->Load(PreviousDiskCachePath() / L"Manifest.json");
+		}
+		return g_previousManifest;
+	}
+
+	/// Drops the loaded rollback manifest; call whenever the cache slots change.
+	static void ResetPreviousManifest()
+	{
+		std::scoped_lock lock(g_previousManifestMutex);
+		g_previousManifest.reset();
+	}
+
+	enum class SharedCompileSource
+	{
+		None,
+		Dedupe,
+		ActiveCache,
+		PreviousCache
+	};
+
+	/// A blob written after its manifest was last saved may have replaced the one a recorded key describes.
+	static bool IsSavedBeforeManifest(const std::filesystem::path& a_blob, const std::filesystem::path& a_manifest)
+	{
+		std::error_code blobEc;
+		std::error_code manifestEc;
+		const auto blobTime = std::filesystem::last_write_time(a_blob, blobEc);
+		const auto manifestTime = std::filesystem::last_write_time(a_manifest, manifestEc);
+		return !blobEc && !manifestEc && blobTime <= manifestTime;
+	}
+
+	/// Finds an intact blob compiled from exactly this code in the active cache or the rollback slot.
+	static winrt::com_ptr<ID3DBlob> FindReusableBlob(const Util::ContentHash::Hash128& a_key, const std::wstring& a_diskPath, SharedCompileSource& a_source)
+	{
+		const auto relative = GetManifestKey(a_diskPath);
+		const auto keyHex = a_key.ToHex();
+		if (GetShaderCacheManifest().GetContentKey(relative) == keyHex && IsSavedBeforeManifest(a_diskPath, DiskCachePath() / L"Manifest.json")) {
+			if (auto blob = ReadIntactBlob(a_diskPath)) {
+				a_source = SharedCompileSource::ActiveCache;
+				return blob;
+			}
+		}
+		const auto previousBlob = (PreviousDiskCachePath() / relative).wstring();
+		if (GetPreviousManifest()->GetContentKey(relative) == keyHex && IsSavedBeforeManifest(previousBlob, PreviousDiskCachePath() / L"Manifest.json")) {
+			if (auto blob = ReadIntactBlob(previousBlob)) {
+				a_source = SharedCompileSource::PreviousCache;
+				return blob;
+			}
+		}
+		return nullptr;
+	}
+
 	static Util::ShaderCacheManifest::Manifest& GetShaderCacheManifest()
 	{
 		static Util::ShaderCacheManifest::Manifest manifest;
@@ -1820,16 +1884,18 @@ namespace SIE
 			return type;
 		}
 
-		/// What preprocessing a task and joining any identical compile produced.
+		/// What preprocessing a task and joining an identical compile produced.
 		struct SharedCompile
 		{
-			ID3DBlob* blob = nullptr;                           ///< A finished blob for identical code.
-			std::optional<Util::CompileDedupe::Ticket> ticket;  ///< Set when this task must compile.
-			std::string source;                                 ///< The preprocessed code the key was built from; empty if preprocessing failed.
+			ID3DBlob* blob = nullptr;                                ///< An existing blob for identical code.
+			SharedCompileSource origin = SharedCompileSource::None;  ///< Where blob came from.
+			std::optional<Util::CompileDedupe::Ticket> ticket;       ///< Set when this task must compile.
+			std::optional<Util::ContentHash::Hash128> key;           ///< Content key of the preprocessed code.
+			std::string source;                                      ///< The preprocessed code the key was built from; empty if preprocessing failed.
 		};
 
 		static SharedCompile AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
-			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes)
+			const D3D_SHADER_MACRO* a_defines, uint32_t a_flags, TrackingIncludeHandler& a_includes, const std::wstring* a_reusableFrom)
 		{
 			SharedCompile result;
 			std::ifstream sourceFile(a_path, std::ios::binary);
@@ -1845,13 +1911,23 @@ namespace SIE
 				result.source.pop_back();
 			// Developer Mode keeps #line in the key: stripping it would share debug info with another variant's source lines.
 			const auto keyText = globals::state->IsDeveloperMode() ? result.source : Util::CompileDedupe::StripLineDirectives(result.source);
-			auto acquired = GetCompileDedupe().Acquire(Util::CompileDedupe::MakeKey({ keyText, "main", GetShaderProfile(a_class), a_flags, GetCompilerIdentity() }));
+			result.key = Util::CompileDedupe::MakeKey({ keyText, "main", GetShaderProfile(a_class), a_flags, GetCompilerIdentity() });
+			auto acquired = GetCompileDedupe().Acquire(*result.key);
 			if (!acquired.blob) {
+				if (a_reusableFrom) {
+					if (auto reused = FindReusableBlob(*result.key, *a_reusableFrom, result.origin)) {
+						acquired.ticket->Publish(reused->GetBufferPointer(), reused->GetBufferSize());
+						result.blob = reused.detach();
+						return result;
+					}
+				}
 				result.ticket.emplace(std::move(*acquired.ticket));
 				return result;
 			}
-			if (SUCCEEDED(D3DCreateBlob(acquired.blob->size(), &result.blob)))
+			if (SUCCEEDED(D3DCreateBlob(acquired.blob->size(), &result.blob))) {
 				std::memcpy(result.blob->GetBufferPointer(), acquired.blob->data(), acquired.blob->size());
+				result.origin = SharedCompileSource::Dedupe;
+			}
 			return result;
 		}
 
@@ -2027,12 +2103,25 @@ namespace SIE
 			TrackingIncludeHandler includeHandler(path);
 
 			TrackingIncludeHandler preprocessHandler(path);
-			auto shared = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler);
+			auto shared = AcquireSharedCompile(shaderClass, path, pathString, defines.data(), flags, preprocessHandler,
+				useDiskCache ? &diskPath : nullptr);
 			shaderBlob = shared.blob;
 			auto& dedupeTicket = shared.ticket;
+			const auto& contentKey = shared.key;
 			const bool dedupeHit = shaderBlob != nullptr;
-			if (dedupeHit)
+			switch (shared.origin) {
+			case SharedCompileSource::Dedupe:
 				cache.IncContentDedupeTasks();
+				break;
+			case SharedCompileSource::ActiveCache:
+				cache.IncActiveReuseTasks();
+				break;
+			case SharedCompileSource::PreviousCache:
+				cache.IncPreviousReuseTasks();
+				break;
+			default:
+				break;
+			}
 
 			// Compiling the preprocessed snapshot keeps the published bytecode matched to the key if the files change meanwhile.
 			const bool fromSnapshot = !shared.source.empty();
@@ -2143,6 +2232,8 @@ namespace SIE
 						const auto combined = Util::ContentHash::CombineHashes(Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest()), GetPerShaderDefinesDigest(key));
 						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
 					}
+					if (contentKey)
+						GetShaderCacheManifest().SetContentKey(GetManifestKey(diskPath), contentKey->ToHex());
 				}
 			}
 			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration)) {
@@ -3643,6 +3734,7 @@ namespace SIE
 
 	void ShaderCache::RefreshPreviousDiskCacheInfo()
 	{
+		ResetPreviousManifest();
 		previousDiskCacheAvailable = false;
 		{
 			std::lock_guard lock{ mismatchesMutex };
@@ -4372,6 +4464,22 @@ namespace SIE
 	void ShaderCache::IncContentDedupeTasks()
 	{
 		compilationSet.contentDedupeTasks++;
+	}
+	uint64_t ShaderCache::GetActiveReuseTasks()
+	{
+		return compilationSet.activeReuseTasks;
+	}
+	void ShaderCache::IncActiveReuseTasks()
+	{
+		compilationSet.activeReuseTasks++;
+	}
+	uint64_t ShaderCache::GetPreviousReuseTasks()
+	{
+		return compilationSet.previousReuseTasks;
+	}
+	void ShaderCache::IncPreviousReuseTasks()
+	{
+		compilationSet.previousReuseTasks++;
 	}
 	uint64_t ShaderCache::GetDigestHitTasks()
 	{
@@ -5209,6 +5317,8 @@ namespace SIE
 				completedSnapshot, totalSnapshot, failedSnapshot, GetHumanTime(completionTimeMs));
 			logger::info("Compile dedupe: {} compiles shared, {} MiB retained, {} blobs over the retention cap",
 				contentDedupeTasks.load(), GetCompileDedupe().RetainedBytes() >> 20, GetCompileDedupe().DroppedBlobs());
+			logger::info("Cache reuse: {} blobs kept from the active cache and {} from the previous cache because their code is unchanged",
+				activeReuseTasks.load(), previousReuseTasks.load());
 			GetCompileDedupe().Clear();
 
 			// Unconditional final flush: the per-shader writes during the batch were
@@ -5291,6 +5401,8 @@ namespace SIE
 		digestHitTasks = 0;
 		digestMissTasks = 0;
 		contentDedupeTasks = 0;
+		activeReuseTasks = 0;
+		previousReuseTasks = 0;
 		GetCompileDedupe().Clear();
 		compilationPhaseStarted = false;
 		compilationPhaseStart = {};
