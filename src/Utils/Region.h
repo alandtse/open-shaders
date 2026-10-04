@@ -208,11 +208,7 @@ namespace Util::Region
 		}
 	}
 
-	/**
-	 * @brief Geometric overlap of two crops.
-	 * @return kEmptyRegion when either input is empty or they share no pixel; edges that only touch
-	 *         do not overlap. Edge sums widen to 64 bits so crops near UINT32_MAX cannot wrap.
-	 */
+	/** @brief Geometric overlap of two crops; kEmptyRegion when either is empty or they share no pixel. */
 	inline Subrect::PixelRegion Intersect(const Subrect::PixelRegion& a_left, const Subrect::PixelRegion& a_right)
 	{
 		if (!a_left.w || !a_left.h || !a_right.w || !a_right.h)
@@ -228,10 +224,9 @@ namespace Util::Region
 	}
 
 	/**
-	 * @brief Narrows each eye of a_focus to its overlap with the matching a_clip eye, so a pass crops
-	 *        no wider than the clip rect it must stay inside. An inactive clip changes nothing; an
-	 *        empty clip eye leaves that focus eye as it was, and a focus eye with no crop, or one the
-	 *        clip does not overlap, takes the clip eye.
+	 * @brief Narrows each eye of a_focus to its overlap with the matching a_clip eye.
+	 *        An inactive clip changes nothing and an empty clip eye leaves that focus eye as it was.
+	 *        A focus eye with no crop, or one the clip misses, takes the clip eye.
 	 */
 	inline void ClipRegion(StereoRegion& a_focus, const StereoRegion& a_clip)
 	{
