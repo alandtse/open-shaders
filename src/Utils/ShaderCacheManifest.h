@@ -32,6 +32,7 @@ namespace Util::ShaderCacheManifest
 			std::lock_guard lock(mutex);
 			path = manifestPath;
 			entries.clear();
+			contentKeys.clear();
 			std::ifstream ifs(manifestPath, std::ios::binary);
 			if (!ifs.is_open())
 				return;
@@ -46,6 +47,12 @@ namespace Util::ShaderCacheManifest
 			for (const auto& [key, value] : j["entries"].items()) {
 				if (value.is_string())
 					entries[key] = value.get<std::string>();
+			}
+			if (j.contains("contentKeys") && j["contentKeys"].is_object()) {
+				for (const auto& [key, value] : j["contentKeys"].items()) {
+					if (value.is_string())
+						contentKeys[key] = value.get<std::string>();
+				}
 			}
 		}
 
@@ -68,6 +75,24 @@ namespace Util::ShaderCacheManifest
 			dirty = true;
 		}
 
+		/// Content key of the code this blob was compiled from, if one was recorded.
+		std::optional<std::string> GetContentKey(const std::string& relativePath) const
+		{
+			std::lock_guard lock(mutex);
+			const auto it = contentKeys.find(relativePath);
+			if (it == contentKeys.end())
+				return std::nullopt;
+			return it->second;
+		}
+
+		/// Record/overwrite a blob's content key. Persist with Save().
+		void SetContentKey(const std::string& relativePath, const std::string& keyHex)
+		{
+			std::lock_guard lock(mutex);
+			contentKeys[relativePath] = keyHex;
+			dirty = true;
+		}
+
 		/// Removes every entry for which shouldRemove(relativePath) returns true.
 		/// The predicate carries any filesystem side effect (deleting the blob
 		/// this entry described) — this class stays free of Data/ShaderCache path
@@ -80,6 +105,7 @@ namespace Util::ShaderCacheManifest
 			size_t removed = 0;
 			for (auto it = entries.begin(); it != entries.end();) {
 				if (shouldRemove(it->first)) {
+					contentKeys.erase(it->first);
 					it = entries.erase(it);
 					++removed;
 					dirty = true;
@@ -103,6 +129,8 @@ namespace Util::ShaderCacheManifest
 			nlohmann::json j;
 			j["schemaVersion"] = 1;
 			j["entries"] = entries;
+			if (!contentKeys.empty())
+				j["contentKeys"] = contentKeys;
 			std::error_code ec;
 			std::filesystem::create_directories(path.parent_path(), ec);
 			const auto tempPath = path.parent_path() / std::format("{}.{}.tmp", path.filename().string(), std::random_device{}());
@@ -127,6 +155,7 @@ namespace Util::ShaderCacheManifest
 		mutable std::mutex mutex;
 		std::filesystem::path path;
 		std::unordered_map<std::string, std::string> entries;
+		std::unordered_map<std::string, std::string> contentKeys;
 		bool dirty = false;
 	};
 }
