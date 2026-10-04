@@ -29,6 +29,8 @@ project(
     LANGUAGES CXX
 )
 
+set(PLUGIN_LOG_NAME "OpenShaders")
+
 # default install path
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set_property(

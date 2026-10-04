@@ -348,7 +348,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			ImGui::TextDisabled("%s", shaderCache->GetShaderStatsString().c_str());
 		} else if (s_restoreFailed) {
 			ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.Error : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
-				"%s", T("menu.home.cache_mismatch_restore_failed", "Restore failed. Check CommunityShaders.log for details."));
+				"%s", T("menu.home.cache_mismatch_restore_failed", "Restore failed. Check OpenShaders.log for details."));
 		}
 
 		if (s_showCancelConfirm) {

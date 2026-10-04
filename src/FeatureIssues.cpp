@@ -496,7 +496,7 @@ namespace FeatureIssues
 				ShellExecuteA(NULL, "open", logPath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.issues.open_logs_tooltip", "Opens the CommunityShaders.log file for manual review."));
+				ImGui::Text("%s", T("menu.issues.open_logs_tooltip", "Opens the OpenShaders.log file for manual review."));
 			}
 		}
 

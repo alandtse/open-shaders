@@ -11,6 +11,7 @@
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/FileSystem.h"
 #include "Utils/VersionGate.h"
 #include "VRAPI/CSpluginapi.h"
 
@@ -23,13 +24,12 @@ void InitializeLog([[maybe_unused]] spdlog::level::level_enum a_level = spdlog::
 #ifndef NDEBUG
 	auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
 #else
-	auto path = logger::log_directory();
-	if (!path) {
+	const auto path = Util::PathHelpers::GetLogPath();
+	if (path.empty()) {
 		util::report_and_fail("Failed to find standard logging directory"sv);
 	}
 
-	*path /= std::format("{}.log"sv, Plugin::NAME);
-	auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
+	auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path.string(), true);
 #endif
 
 #ifndef NDEBUG

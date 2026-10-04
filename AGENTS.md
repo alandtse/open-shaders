@@ -25,7 +25,7 @@ Each rule is stated once, in the section named in brackets.
 
 ## Fork Identity & Logo Policy
 
--   **Keep as `CommunityShaders` (do not rename the C++ runtime identity, so users can switch to or from upstream without losing settings):** CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/`, `CommunityShaders.log`, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
+-   **Keep as `CommunityShaders` (do not rename the C++ runtime identity, so users can switch to or from upstream without losing settings):** CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/`, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
 -   **Use "Open Shaders" for public identity:** in-game menu titles, READMEs/instructions, Nexus filenames, GitHub release names, Welcome/FAQ/About text.
 -   **Link upstream explicitly** to `community-shaders/skyrim-community-shaders` (Nexus 86492); never to dead `doodlum` paths. Open Shaders' own Nexus is 180419.
 -   **AIO bundling:**
@@ -33,6 +33,7 @@ Each rule is stated once, in the section named in brackets.
     -   Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission.
     -   A runtime-core feature (`IsCore()` is `true`) must also carry a `CORE` marker file, or its shaders are left out of the AIO bundle and it ships broken.
     -   Partition logic is `feature_in_aio` in `CMakeLists.txt`; for local development set `AIO_INCLUDE_NON_AUTOUPLOAD=ON`.
+-   **Log file:** `OpenShaders.log`, named by `PLUGIN_LOG_NAME` in `CMakeLists.txt` (surfaced as `Plugin::LOG_NAME`); the DLL and SKSE plugin name stay `CommunityShaders`.
 -   **No logo:** `cs-logo.png` is intentionally absent (non-GPL); do not restore upstream assets. Logo draws are null-safe (`IconLoader.cpp`, `Menu.cpp`, `MenuHeaderRenderer`, `HomePageRenderer`).
 
 ---
