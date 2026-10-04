@@ -163,6 +163,21 @@ namespace Util::CompileDedupe
 				map.erase(it);
 		}
 
+		/// Charges a_size against the cap if the entry is still registered; an over-cap entry is unregistered and counted as dropped.
+		void Retain(const ContentHash::Hash128& a_key, const std::shared_ptr<Entry>& a_entry, uint64_t a_size)
+		{
+			std::scoped_lock lock(mapMutex);
+			const auto it = map.find(a_key);
+			if (it == map.end() || it->second != a_entry)
+				return;
+			if (retainedBytes.load(std::memory_order_relaxed) + a_size > maxRetainedBytes) {
+				droppedBlobs.fetch_add(1, std::memory_order_relaxed);
+				map.erase(it);
+				return;
+			}
+			retainedBytes.fetch_add(a_size, std::memory_order_relaxed);
+		}
+
 		uint64_t maxRetainedBytes;
 		std::atomic<uint64_t> retainedBytes{ 0 };
 		std::atomic<uint64_t> droppedBlobs{ 0 };
@@ -175,19 +190,13 @@ namespace Util::CompileDedupe
 		if (!entry)
 			return;
 		auto blob = std::make_shared<const std::vector<char>>(static_cast<const char*>(a_data), static_cast<const char*>(a_data) + a_size);
-		const bool retain = registry->retainedBytes.load(std::memory_order_relaxed) + a_size <= registry->maxRetainedBytes;
-		if (retain)
-			registry->retainedBytes.fetch_add(a_size, std::memory_order_relaxed);
+		registry->Retain(key, entry, a_size);
 		{
 			std::scoped_lock lock(entry->mutex);
 			entry->blob = std::move(blob);
 			entry->state = Entry::State::Done;
 		}
 		entry->ready.notify_all();
-		if (!retain) {
-			registry->droppedBlobs.fetch_add(1, std::memory_order_relaxed);
-			registry->Forget(key, entry);
-		}
 		entry.reset();
 	}
 

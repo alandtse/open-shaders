@@ -229,6 +229,23 @@ TEST_CASE("Clear while a claim is pending does not strand its owner or waiters",
 	CHECK(gotBlob);
 }
 
+TEST_CASE("A publish whose claim was cleared reaches its waiters without being charged", "[CompileDedupe][concurrency]")
+{
+	Registry registry(100);
+	auto owner = registry.Acquire(KeyN(5));
+	REQUIRE(owner.ticket.has_value());
+	std::atomic<bool> gotBlob{ false };
+	std::thread waiter([&] { gotBlob = registry.Acquire(KeyN(5)).blob != nullptr; });
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	registry.Clear();
+	const auto blob = Blob(500, 3);
+	owner.ticket->Publish(blob.data(), blob.size());
+	waiter.join();
+	CHECK(gotBlob);
+	CHECK(registry.RetainedBytes() == 0);
+	CHECK(registry.DroppedBlobs() == 0);
+}
+
 TEST_CASE("Binary blobs with embedded NULs round-trip exactly", "[CompileDedupe]")
 {
 	Registry registry;
