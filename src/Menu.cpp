@@ -30,6 +30,7 @@
 #include "Menu/BackgroundBlur.h"
 #include "Menu/CursorLoader.h"
 #include "Menu/FeatureListRenderer.h"
+#include "Menu/FlipImpactDisplay.h"
 #include "Menu/Fonts.h"
 #include "Menu/HomePageRenderer.h"
 #include "Menu/IconLoader.h"
@@ -939,11 +940,21 @@ void Menu::DrawDisableAtBootSettings()
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
 			bool isDisabled = state->IsFeatureDisabled(featureName);
 
-			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
+			const auto impact = FlipImpactDisplay::Of(*feature);
+			if (impact)
+				ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(impact->tier));
+			const bool toggled = ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled);
+			if (impact)
+				ImGui::PopStyleColor();
+			if (toggled) {
 				if (state->SetFeatureBootEnabled(featureName, !isDisabled))
 					preferenceSaveFailures.erase(featureName);
 				else
 					preferenceSaveFailures.insert(featureName);
+			}
+			if (impact) {
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(FlipImpactDisplay::Tooltip(*impact).c_str());
 			}
 			if (preferenceSaveFailures.contains(featureName))
 				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
