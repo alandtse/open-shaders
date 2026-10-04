@@ -3846,35 +3846,24 @@ namespace SIE
 				return;
 			}
 
-			// No genuine failure here, so recompile just the flipped features'
-			// shaders instead of rotating the whole cache below.
-			bool partialInvalidationDestructive = false;
-			if (PartialInvalidation(heldMismatchDefines, partialInvalidationDestructive)) {
-				const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
-					auto it = expectedEnabledMatches.find(m.shortName);
-					return it != expectedEnabledMatches.end() && it->second;
-				});
+			// Blobs revalidate against their recorded content key when their task runs, so a flip
+			// deletes nothing: a confirmed flip stays in place, any other rotates and keeps the rollback slot.
+			const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
+				auto it = expectedEnabledMatches.find(m.shortName);
+				return it != expectedEnabledMatches.end() && it->second;
+			});
+			if (allExpected) {
 				WriteDiskCacheInfo();  // also drops any now-consumed ExpectedEnabled markers
 				heldMismatchDefines.clear();
 				{
 					std::lock_guard lock{ mismatchesMutex };
 					cacheMismatches.clear();
 				}
-				if (allExpected)
-					logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
-				else
-					logger::info("Disk cache mismatch resolved: recompiling only the affected features");
+				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
 				return;
 			}
 
-			// A partially-deleted active cache is unsafe to keep as a rollback
-			// candidate -- wipe it outright instead of rotating it into Previous.
-			if (partialInvalidationDestructive) {
-				DeleteActiveDiskCache();
-				featureSetChanged = true;
-				WriteDiskCacheInfo();
-				logger::info("Feature set changed: compiling a new active disk cache; the inconsistent one was discarded, no restore available");
-			} else if (BackupActiveDiskCache()) {
+			if (BackupActiveDiskCache()) {
 				featureSetChanged = true;
 				featureSetCacheBackedUp = true;
 				bool previousRestoreAvailable;
