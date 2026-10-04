@@ -70,8 +70,8 @@ void HomePageRenderer::RenderWelcomeSection()
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
 	std::string titleWithVersion = Plugin::BUILD_DESCRIBE == expectedTag ?
-	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to Open Shaders {version}") :
-	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) } }, "Welcome to Open Shaders {version}");
+	                                   I18n::GetSingleton()->Format("menu.home.welcome", { { "version", std::string(versionStr) } }, "Welcome to {brand} {version}") :
+	                                   I18n::GetSingleton()->Format("menu.home.welcome_dev", { { "version", std::string(versionStr) } }, "Welcome to {brand} {version}");
 	ImVec2 titleSize = ImGui::CalcTextSize(titleWithVersion.c_str());
 	ImGui::SetCursorPosX((windowSize.x - titleSize.x) * 0.5f);
 	ImGui::Text("%s", titleWithVersion.c_str());
@@ -88,7 +88,7 @@ void HomePageRenderer::RenderWelcomeSection()
 
 	// Intro text - centered
 	const char* introText = T("menu.home.intro",
-		"Open Shaders is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
+		"{brand} is a fork of Community Shaders providing advanced graphics enhancements for Skyrim.\n"
 		"This comprehensive collection of features brings modern rendering techniques\n"
 		"to enhance your visual experience.");
 	ImVec2 introSize = ImGui::CalcTextSize(introText);
@@ -159,9 +159,9 @@ void HomePageRenderer::RenderFAQSection()
 	ImGui::Separator();
 
 	// FAQ items with collapsible headers
-	if (ImGui::CollapsingHeader(T("menu.faq.q1", "What is Open Shaders?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q1", "What is {brand}?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a1",
-									 "Open Shaders is a fork of Community Shaders that ships features the upstream project "
+									 "{brand} is a fork of Community Shaders that ships features the upstream project "
 									 "has not yet released. Both projects are comprehensive graphics enhancement frameworks "
 									 "for Skyrim that provide advanced lighting, materials, and visual effects. They're "
 									 "designed to be modular, letting you enable only the features you want while "
@@ -197,31 +197,31 @@ void HomePageRenderer::RenderFAQSection()
 									 "tab also includes upscaling options that can improve performance."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q6", "Is Open Shaders compatible with ENB?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q6", "Is {brand} compatible with ENB?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a6",
-									 "No, Open Shaders (like upstream Community Shaders) is not compatible with ENB. The "
+									 "No, {brand} (like upstream Community Shaders) is not compatible with ENB. The "
 									 "plugin will automatically disable itself if ENB is detected."));
 	}
 
 	if (ImGui::CollapsingHeader(T("menu.faq.q7", "The menu hotkey isn't working!"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a7",
-									 "By default, Open Shaders uses the END key to open this menu. If your keyboard "
+									 "By default, {brand} uses the END key to open this menu. If your keyboard "
 									 "doesn't have an END key or it's not working, you can change it in the General > Keybindings tab. "
 									 "You can also edit the hotkey in the JSON configuration files."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q8", "I would like to help develop Open Shaders."))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q8", "I would like to help develop {brand}."))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a8",
-									 "Open Shaders is open source. Check out the upstream GitHub wiki for contribution "
+									 "{brand} is open source. Check out the upstream GitHub wiki for contribution "
 									 "guidelines on the shared architecture; open issues and PRs against this repository for "
 									 "fork-specific work, or against upstream Community Shaders for changes that benefit both "
 									 "projects. Whether you're interested in shader programming, C++ development, or "
 									 "documentation, there's always something to contribute."));
 	}
 
-	if (ImGui::CollapsingHeader(T("menu.faq.q9", "Is Open Shaders open source?"))) {
+	if (ImGui::CollapsingHeader(T("menu.faq.q9", "Is {brand} open source?"))) {
 		ImGui::TextWrapped("%s", T("menu.faq.a9",
-									 "Yes! Open Shaders is completely open source and available on GitHub, as is upstream "
+									 "Yes! {brand} is completely open source and available on GitHub, as is upstream "
 									 "Community Shaders. You can view the source code, report issues, suggest features, and "
 									 "contribute to either project. Both are licensed under GPL, ensuring they remain free and "
 									 "open for everyone. Branding materials and assets (icons, Nexus branding, typography, etc.) "
@@ -614,7 +614,7 @@ void HomePageRenderer::RenderFirstTimeSetupDialog()
 
 	// Version text - two lines, both centered (reduced spacing between lines)
 	const char* versionLine1 = T("menu.setup.new_install_line1", "This appears to be a new install, update, or");
-	const char* versionLine2 = T("menu.setup.new_install_line2", "reinstallation of Open Shaders.");
+	const char* versionLine2 = T("menu.setup.new_install_line2", "reinstallation of {brand}.");
 
 	centerText(versionLine1);
 	ImGui::Text("%s", versionLine1);

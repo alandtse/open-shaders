@@ -33,7 +33,7 @@ Each rule is stated once, in the section named in brackets.
     -   Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission.
     -   A runtime-core feature (`IsCore()` is `true`) must also carry a `CORE` marker file, or its shaders are left out of the AIO bundle and it ships broken.
     -   Partition logic is `feature_in_aio` in `CMakeLists.txt`; for local development set `AIO_INCLUDE_NON_AUTOUPLOAD=ON`.
--   **Log file:** `OpenShaders.log`, named by `PLUGIN_LOG_NAME` in `CMakeLists.txt` (surfaced as `Plugin::LOG_NAME`); the DLL and SKSE plugin name stay `CommunityShaders`.
+-   **Brand and log names:** `PLUGIN_DISPLAY_NAME` and `PLUGIN_LOG_NAME` in `CMakeLists.txt` surface as `Plugin::DISPLAY_NAME` and `Plugin::LOG_NAME` (log file `OpenShaders.log`); the DLL and SKSE plugin name stay `CommunityShaders`. Use `Plugin::DISPLAY_NAME` in C++ strings and `{brand}` in `T()` defaults and translation values, never a literal "Open Shaders".
 -   **No logo:** `cs-logo.png` is intentionally absent (non-GPL); do not restore upstream assets. Logo draws are null-safe (`IconLoader.cpp`, `Menu.cpp`, `MenuHeaderRenderer`, `HomePageRenderer`).
 
 ---

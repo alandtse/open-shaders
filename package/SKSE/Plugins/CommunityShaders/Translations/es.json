@@ -3542,7 +3542,7 @@
     "menu.home.performance_tip": "",
     "menu.home.quick_links": "",
     "menu.home.welcome": "",
-    "menu.home.welcome_dev": "Bienvenido a Open Shaders {version}",
+    "menu.home.welcome_dev": "Bienvenido a {brand} {version}",
     "menu.issues.all_ini_loading": "",
     "menu.issues.cancel": "",
     "menu.issues.cannot_be_undone": "",

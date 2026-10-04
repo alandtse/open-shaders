@@ -29,6 +29,7 @@ project(
     LANGUAGES CXX
 )
 
+set(PLUGIN_DISPLAY_NAME "Open Shaders")
 set(PLUGIN_LOG_NAME "OpenShaders")
 
 # default install path

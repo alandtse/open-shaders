@@ -17,6 +17,9 @@ namespace Plugin
 
 	inline constexpr auto NAME = "@PROJECT_NAME@"sv;
 
+	/// Public brand shown in UI, messages and logs; never use it for file or plugin identity.
+	inline constexpr auto DISPLAY_NAME = "@PLUGIN_DISPLAY_NAME@"sv;
+
 	/// Log file base name; differs from NAME, which must stay the SKSE plugin identity.
 	inline constexpr auto LOG_NAME = "@PLUGIN_LOG_NAME@"sv;
 
