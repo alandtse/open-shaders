@@ -1,6 +1,7 @@
 #pragma once
 
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/Runtime.h"
@@ -91,11 +92,11 @@ struct NeuralRendering
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
-	void DrawSettings(bool& enabled, bool& dialogueOnly, NR::Tuning& tuning);
+	void DrawSettings(bool& enabled, NR::Context::DialogueProfile& dialogue, NR::Tuning& tuning);
 	/** @brief Draws the runtime DLL's verdict and how to fix it, under Upscaling's DLL tables. */
 	void DrawRuntimeDiagnostics() const;
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
-	void DrawBeforeUpscaling(bool enabled, bool dialogueOnly, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
+	void DrawBeforeUpscaling(bool enabled, const NR::Context::DialogueProfile& dialogue, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
 	void DrawDiagnosticsOverlay();
 	/** @brief True while the developer has switched the diagnostics overlay on. */
@@ -135,6 +136,8 @@ private:
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	/** @brief Previous hook call left the pass suspended; NR::ResumesFromSuspend updates it and flags the one resume frame. */
 	bool wasSuspended = false;
+	/** @brief Context of the previous hook call; a profile override that changes the crop or strengths resets history when this changes. */
+	NR::Context::Kind lastContext = NR::Context::Kind::kDefault;
 	Status status;
 	/** @brief Mirror of status.state so the per-frame paths can skip a publish without the lock. */
 	std::atomic<Status::State> publishedState{ Status::State::kOff };

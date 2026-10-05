@@ -101,9 +101,9 @@ public:
 		float sharpnessDLSS = 0.8f;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
 		bool neuralRenderingEnabled = false;
-		// Evaluate NR only while the dialogue menu is open; otherwise the pass is suspended
-		// with its resources and runtime kept alive, and the frame renders as if NR were off.
-		bool neuralRenderingDialogueOnly = false;
+		// What Neural Rendering does while the dialogue menu is open, versus normally. The default
+		// profile is inert: it changes neither the normal frame nor a dialogue frame.
+		NR::Context::DialogueProfile neuralRenderingDialogue;
 		NR::Tuning neuralRenderingTuning;
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;

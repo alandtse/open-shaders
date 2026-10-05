@@ -66,15 +66,6 @@ namespace NR
 	};
 
 	/**
-	 * @brief Whether dialogue-only gating holds the pass this frame: with it on, NR evaluates only
-	 *        while dialogue is open, so a closed menu suspends the pass without tearing it down.
-	 */
-	inline bool DialogueGate(bool dialogueOnly, bool dialogueOpen)
-	{
-		return dialogueOnly && !dialogueOpen;
-	}
-
-	/**
 	 * @brief Whether this frame leaves a suspension, the one transition that must invalidate history;
 	 *        the caller keeps the previous frame's suspended state in the reference, which is updated here.
 	 */

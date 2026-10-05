@@ -82,6 +82,7 @@ add_executable(cpp_tests
 	test_sehguard.cpp
 	test_nr_decisions.cpp
 	test_nr_material_strength.cpp
+	test_nr_context_profile.cpp
 	test_nr_roi.cpp
 	test_region.cpp
 	test_bound_points.cpp

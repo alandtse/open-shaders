@@ -1,7 +1,6 @@
 // Unit tests for the extracted NR decisions: the hook's per-frame action, the
-// failure outcome, history-reset reasons, the dialogue-only gate, the
-// runtime/version gates, the shared eye width and the output check. These
-// exercise the production helpers only.
+// failure outcome, history-reset reasons, the runtime/version gates, the shared
+// eye width and the output check. These exercise the production helpers only.
 
 #include "Features/Upscaling/NeuralRendering/Diagnostics.h"
 #include "Features/Upscaling/NeuralRendering/Lifecycle.h"
@@ -118,14 +117,6 @@ TEST_CASE("DecideFrame suspends without freeing pass resources while dialogue-on
 	// Switching the feature off still frees the pass resources, suspension or not.
 	suspended.enabled = false;
 	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::ReleasePassResources);
-}
-
-TEST_CASE("DialogueGate holds the pass only while dialogue-only is on with the menu closed", "[nr]")
-{
-	REQUIRE_FALSE(NR::DialogueGate(false, false));
-	REQUIRE_FALSE(NR::DialogueGate(false, true));
-	REQUIRE_FALSE(NR::DialogueGate(true, true));
-	REQUIRE(NR::DialogueGate(true, false));
 }
 
 TEST_CASE("ResumesFromSuspend flags exactly the first frame after a suspension", "[nr]")
