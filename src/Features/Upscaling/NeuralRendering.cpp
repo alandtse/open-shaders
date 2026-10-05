@@ -1238,9 +1238,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.landscapeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::PopID();
 	}
-	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
-	changed |= autoMaskChanged;
-	recreateTuning |= autoMaskChanged;
 	changed |= DrawMaterialControls(tuning, materialStrengthAvailable.load(std::memory_order_relaxed));
 	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 		changed = true;
@@ -1262,6 +1259,13 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	// out without it instead of accepting edits that the pass ignores.
 	const bool cropDisabled = !tuning.regionOfInterest;
 	ImGui::BeginDisabled(cropDisabled);
+	if (ImGui::Checkbox(T(TKEY("crop_group"), "Include Nearby Characters"), &tuning.regionGroup)) {
+		changed = true;
+		resetHistory = true;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
+			"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
 	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
 		changed = true;
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -1278,15 +1282,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
 		RequestRetry();
 	if (globals::state->IsDeveloperMode() && ImGui::TreeNodeEx(T(TKEY("developer"), "Developer"), ImGuiTreeNodeFlags_None)) {
+		ImGui::SeparatorText(T(TKEY("developer_model"), "Model input"));
+		const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use NGX Automatic Mask"), &tuning.useAutoMask);
+		changed |= autoMaskChanged;
+		recreateTuning |= autoMaskChanged;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("use_auto_mask_tooltip"),
+				"NVIDIA's built-in automatic mask. On is the normal setting; turning it off with no mask supplied is an untested configuration."));
 		ImGui::SeparatorText(T(TKEY("developer_crop"), "Crop"));
 		ImGui::BeginDisabled(cropDisabled);
-		if (ImGui::Checkbox(T(TKEY("crop_group"), "Track Multiple Characters"), &tuning.regionGroup)) {
-			changed = true;
-			resetHistory = true;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
-				"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
 		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
 		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
 			T(TKEY("crop_fit_padded"), "Padded"),
