@@ -214,7 +214,7 @@ namespace Util
 		if (auto _tt = HoverTooltipWrapper()) {
 			std::string hover = "";
 			if (settingData.offset != 0)
-				hover = std::format("{}\n\nNOTE: Open Shaders cannot save this game setting directly. Setting {} '{}' might be able to be saved manually in the ini. Use the Copy button to export to clipboard.", settingData.description, collectionName, settingName);
+				hover = std::format("{}\n\nNOTE: {} cannot save this game setting directly. Setting {} '{}' might be able to be saved manually in the ini. Use the Copy button to export to clipboard.", settingData.description, Plugin::DISPLAY_NAME, collectionName, settingName);
 			else
 				hover = settingData.description;
 			ImGui::TextUnformatted(hover.c_str());

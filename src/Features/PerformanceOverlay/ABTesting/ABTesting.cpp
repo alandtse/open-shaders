@@ -38,8 +38,8 @@ std::string ABTestingManager::GetSettingsPathDisplayName(std::string path)
 
 	ReplaceAll(path, "CSEditorToggleKey", "OS Editor Toggle Key");
 	ReplaceAll(path, "ShowCSPasses", "Show OS Passes");
-	ReplaceAll(path, "Community Shaders", "Open Shaders");
-	ReplaceAll(path, "CommunityShaders", "Open Shaders");
+	ReplaceAll(path, "Community Shaders", Plugin::DISPLAY_NAME);
+	ReplaceAll(path, "CommunityShaders", Plugin::DISPLAY_NAME);
 	ReplaceAll(path, "CS Editor", "OS Editor");
 	ReplaceAll(path, "CS Utility", "OS Utility");
 	ReplaceAll(path, "CSEditor", "OS Editor");

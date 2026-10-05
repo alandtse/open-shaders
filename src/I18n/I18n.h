@@ -89,6 +89,9 @@ public:
 		const std::unordered_map<std::string, std::string>& args,
 		const char* defaultText = nullptr) const;
 
+	/** Replaces every {brand} placeholder in @p text with Plugin::DISPLAY_NAME. */
+	static std::string ExpandBrand(std::string text);
+
 	/** @return Current locale code, e.g. "en", "zh_CN" */
 	std::string GetCurrentLocale() const;
 

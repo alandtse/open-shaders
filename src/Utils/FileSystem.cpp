@@ -210,7 +210,7 @@ namespace Util
 			if (!path) {
 				return {};
 			}
-			*path /= std::format("{}.log", std::string(Plugin::NAME));
+			*path /= std::format("{}.log", Plugin::LOG_NAME);
 			return *path;
 		}
 

@@ -198,6 +198,14 @@ FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
 	return profile;
 }
 
+bool FoveatedRender::GetClipUV(uint32_t eye, Util::Subrect::UVRegion& out) const
+{
+	if (eye > 1 || !IsActive() || subrectController.IsDragging())
+		return false;
+	out = eye == 1 ? subrectController.GetRightEyeUV() : subrectController.GetUV();
+	return true;
+}
+
 void FoveatedRender::LatchQualityMode()
 {
 	qualityModeAtBoot = std::clamp(globals::features::upscaling.settings.qualityMode, 1u, 4u);
