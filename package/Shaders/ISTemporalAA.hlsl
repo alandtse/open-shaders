@@ -2,6 +2,7 @@
 #include "Common/DisplayMapping.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/VR.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
@@ -223,16 +224,16 @@ float2 SelectDepthGuidedUV(
 	float2 uvMax = TexelOffset.xy + texCoord;
 
 	drUVMax = ClampScreenUV(uvMax, drMax);
-	float depthMaxCorner = depthTex.Sample(depthSampler, drUVMax).x;
+	float depthMaxCorner = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drUVMax).x);
 	cornerColorGRB = LoadNeighborGRB(drUVMax);
 
 	float4 neighborsA = TexelOffset.xyxy * float4(1, -1, 1, 0) + texCoord.xyxy;
 	drNeighborsA = ClampScreenUV4(neighborsA, drMax);
-	float depthA0 = depthTex.Sample(depthSampler, drNeighborsA.xy).x;
+	float depthA0 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsA.xy).x);
 	float shallowestDepth = min(depthA0, depthMaxCorner);
 
 	drUVMin = ClampScreenUV(uvMin, drMax);
-	float depthMinCorner = depthTex.Sample(depthSampler, drUVMin).x;
+	float depthMinCorner = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drUVMin).x);
 	shallowestDepth = min(depthMinCorner, shallowestDepth);
 
 	float2 selectedUV = PickIfShallowestUV(uvMax, shallowestDepth, depthMinCorner, uvMin);
@@ -240,9 +241,9 @@ float2 SelectDepthGuidedUV(
 
 	float4 neighborsB = TexelOffset.xyxy * float4(0, -1, -1, 1) + texCoord.xyxy;
 	drNeighborsB = ClampScreenUV4(neighborsB, drMax);
-	float depthB0 = depthTex.Sample(depthSampler, drNeighborsB.xy).x;
+	float depthB0 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsB.xy).x);
 	shallowestDepth = min(depthB0, shallowestDepth);
-	float depthA1 = depthTex.Sample(depthSampler, drNeighborsA.zw).x;
+	float depthA1 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsA.zw).x);
 	shallowestDepth = min(depthA1, shallowestDepth);
 
 	selectedUV = PickIfShallowestUV(selectedUV, shallowestDepth, depthA1, neighborsA.zw);
@@ -250,18 +251,18 @@ float2 SelectDepthGuidedUV(
 
 	float4 neighborsC = TexelOffset.xyxy * float4(-1, 0, 0, 1) + texCoord.xyxy;
 	drNeighborsC = ClampScreenUV4(neighborsC, drMax);
-	float depthC0 = depthTex.Sample(depthSampler, drNeighborsC.xy).x;
+	float depthC0 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsC.xy).x);
 	shallowestDepth = min(depthC0, shallowestDepth);
-	float depthB1 = depthTex.Sample(depthSampler, drNeighborsB.zw).x;
+	float depthB1 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsB.zw).x);
 	shallowestDepth = min(depthB1, shallowestDepth);
 
 	selectedUV = PickIfShallowestUV(selectedUV, shallowestDepth, depthB1, neighborsB.zw);
 	selectedUV = PickIfShallowestUV(selectedUV, shallowestDepth, depthC0, neighborsC.xy);
 
 	drCenter = ClampScreenUV(texCoord, drMax);
-	float depthCenter = depthTex.Sample(depthSampler, drCenter).x;
+	float depthCenter = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drCenter).x);
 	shallowestDepth = min(depthCenter, shallowestDepth);
-	float depthC1 = depthTex.Sample(depthSampler, drNeighborsC.zw).x;
+	float depthC1 = FrameBuffer::ToStandardDepth(depthTex.Sample(depthSampler, drNeighborsC.zw).x);
 	shallowestDepth = min(depthC1, shallowestDepth);
 
 	selectedUV = PickIfShallowestUV(selectedUV, shallowestDepth, depthC1, neighborsC.zw);

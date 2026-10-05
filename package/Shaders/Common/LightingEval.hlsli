@@ -49,7 +49,7 @@ IndirectContext CreateIndirectLightingContext(float3 worldNormal, float3 vertexN
 	return context;
 }
 
-float3 VanillaSpecular(DirectContext context, float shininess, float2 uv, float2 uv_ddx, float2 uv_ddy)
+float3 VanillaSpecular(DirectContext context, float shininess, bool specular, float2 uv, float2 uv_ddx, float2 uv_ddy)
 {
 	const float3 N = context.worldNormal;
 	const float3 G = context.vertexNormal;
@@ -66,14 +66,13 @@ float3 VanillaSpecular(DirectContext context, float shininess, float2 uv, float2
 	HdotN = saturate(dot(H, N));
 #endif
 
-#if defined(SPECULAR)
-	float lightColorMultiplier = exp2(shininess * log2(HdotN));
-
-#elif defined(SPARKLE)
+#if defined(SPARKLE)
 	float lightColorMultiplier = 0;
 #else
 	float lightColorMultiplier = HdotN;
 #endif
+	if (specular)
+		lightColorMultiplier = exp2(shininess * log2(HdotN));
 
 #if defined(ANISO_LIGHTING)
 	lightColorMultiplier *= 0.7 * max(0, L.z);
@@ -134,17 +133,14 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 		// SSS fallback for forward skin rendering
 #		if !defined(DEFERRED)
 		const float NdotL = dot(context.worldNormal, context.lightDir);
-#			if defined(SOFT_LIGHTING)
-		lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(NdotL) * material.rimSoftLightColor;
-#			endif
+		if (HasSoftLighting())
+			lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(NdotL) * material.rimSoftLightColor;
 
-#			if defined(RIM_LIGHTING)
-		lightingOutput.diffuse += softLightColor * GetRimLightMultiplier(context.lightDir, context.viewDir, context.worldNormal) * material.rimSoftLightColor;
-#			endif
+		if (HasRimLighting())
+			lightingOutput.diffuse += softLightColor * GetRimLightMultiplier(context.lightDir, context.viewDir, context.worldNormal) * material.rimSoftLightColor;
 
-#			if defined(BACK_LIGHTING)
-		lightingOutput.diffuse += softLightColor * saturate(-NdotL) * material.backLightColor;
-#			endif
+		if (HasBackLighting())
+			lightingOutput.diffuse += softLightColor * saturate(-NdotL) * material.backLightColor;
 #		endif
 		return;
 	}
@@ -159,17 +155,14 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 		lightingOutput.transmission += material.BaseColor * GetFoliageTransmission(NdotL, dot(context.viewDir, context.lightDir)) * diffuseLightColor * Color::VanillaNormalization();
 	}
 #	endif
-#	if defined(SOFT_LIGHTING)
-	lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(NdotL) * material.rimSoftLightColor * Color::VanillaNormalization();
-#	endif
+	if (HasSoftLighting())
+		lightingOutput.diffuse += softLightColor * GetSoftLightMultiplier(NdotL) * material.rimSoftLightColor * Color::VanillaNormalization();
 
-#	if defined(RIM_LIGHTING)
-	lightingOutput.diffuse += softLightColor * GetRimLightMultiplier(context.lightDir, context.viewDir, context.worldNormal) * material.rimSoftLightColor * Color::VanillaNormalization();
-#	endif
+	if (HasRimLighting())
+		lightingOutput.diffuse += softLightColor * GetRimLightMultiplier(context.lightDir, context.viewDir, context.worldNormal) * material.rimSoftLightColor * Color::VanillaNormalization();
 
-#	if defined(BACK_LIGHTING)
-	lightingOutput.diffuse += softLightColor * saturate(-NdotL) * material.backLightColor * Color::VanillaNormalization();
-#	endif
+	if (HasBackLighting())
+		lightingOutput.diffuse += softLightColor * saturate(-NdotL) * material.backLightColor * Color::VanillaNormalization();
 
 #	if defined(VANILLA_FRESNEL)
 	if (SharedData::vanillaFresnelSettings.Enable && SharedData::vanillaFresnelSettings.EnableGGX) {
@@ -181,7 +174,7 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 	}
 #	endif
 
-	lightingOutput.specular = VanillaSpecular(context, material.Shininess, uv, uv_ddx, uv_ddy) * material.SpecularColor * material.Glossiness * diffuseLightColor * Color::VanillaNormalization();
+	lightingOutput.specular = VanillaSpecular(context, material.Shininess, HasSpecular(), uv, uv_ddx, uv_ddy) * material.SpecularColor * material.Glossiness * diffuseLightColor * Color::VanillaNormalization();
 #endif
 }
 

@@ -27,11 +27,19 @@ concurrency:
 
 jobs:
     warm-pr-preset:
-        name: Warm PR-preset build cache (vs2026)
+        name: Warm PR-preset build cache (${{ matrix.compiler.name }})
         runs-on: windows-2025-vs2026
         permissions:
             contents: read
             actions: write
+        strategy:
+            matrix:
+                compiler:
+                    - name: vs2026
+                      cmake-preset: PR
+                    - name: clang-cl
+                      cmake-preset: PR-ClangCL
+            fail-fast: false
         steps:
             - name: Checkout code
               uses: actions/checkout@v6
@@ -44,13 +52,13 @@ jobs:
             - name: Setup Build Environment
               uses: ./.github/actions/setup-build-environment
               with:
-                  cache-key-suffix: "cpp-vs2026"
-                  cmake-preset: PR
-                  build-dir: build/PR
+                  cache-key-suffix: "cpp-${{ matrix.compiler.name }}"
+                  cmake-preset: ${{ matrix.compiler.cmake-preset }}
+                  build-dir: build/${{ matrix.compiler.cmake-preset }}
 
             - name: Build using run-cmake
               uses: lukka/run-cmake@v10
               with:
-                  configurePreset: PR
+                  configurePreset: ${{ matrix.compiler.cmake-preset }}
                   configurePresetAdditionalArgs: "['-DBUILD_SHADER_TESTS=OFF']"
-                  buildPreset: PR
+                  buildPreset: ${{ matrix.compiler.cmake-preset }}

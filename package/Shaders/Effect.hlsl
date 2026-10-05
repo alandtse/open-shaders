@@ -5,6 +5,7 @@
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
 #include "Common/VR.hlsli"
@@ -106,6 +107,7 @@ cbuffer VS_PerFrame : register(b12)
 {
 #	if !defined(VR)
 	row_major float4x4 ScreenProj[1] : packoffset(c0);
+	row_major float4x4 Proj[1] : packoffset(c4);
 	row_major float4x4 ViewProj[1] : packoffset(c8);
 #		if defined(SKINNED)
 	float3 BonesPivot[1] : packoffset(c40);
@@ -115,6 +117,7 @@ cbuffer VS_PerFrame : register(b12)
 #		endif      // SKINNED
 #	else
 	row_major float4x4 ScreenProj[2] : packoffset(c0);
+	row_major float4x4 Proj[2] : packoffset(c8);
 	row_major float4x4 ViewProj[2] : packoffset(c16);
 #		if defined(SKINNED)
 	float3 BonesPivot[2] : packoffset(c80);
@@ -218,7 +221,12 @@ VS_OUTPUT main(VS_INPUT input)
 		transpose(float3x3(transpose(World[eyeIndex])[0], transpose(World[eyeIndex])[1], transpose(World[eyeIndex])[2]));
 
 #	if defined(SKY_OBJECT)
-	float4x4 viewProj = float4x4(ViewProj[eyeIndex][0], ViewProj[eyeIndex][1], ViewProj[eyeIndex][3], ViewProj[eyeIndex][3]);
+#		ifdef REVERSE_Z
+	float4 skyObjectDepthRow = FrameBuffer::IsReverseProjection(Proj[eyeIndex]) ? 0.0.xxxx : ViewProj[eyeIndex][3];
+#		else
+	float4 skyObjectDepthRow = ViewProj[eyeIndex][3];
+#		endif
+	float4x4 viewProj = float4x4(ViewProj[eyeIndex][0], ViewProj[eyeIndex][1], skyObjectDepthRow, ViewProj[eyeIndex][3]);
 #	else
 	row_major float4x4 viewProj = ViewProj[eyeIndex];
 #	endif
@@ -265,7 +273,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	if !defined(MOTIONVECTORS_NORMALS)
 	float fogColorParam = min(FogParam.w,
-		exp2(FogParam.z * log2(saturate(length(viewPos.xyz) * FogParam.y - FogParam.x))));
+		exp2(FogParam.z * log2(saturate(length(FrameBuffer::ToStandardClip(viewPos, FrameBuffer::IsReverseProjection(Proj[eyeIndex]))) * FogParam.y - FogParam.x))));
 
 	vsout.FogParam.xyz = lerp(FogNearColor.xyz, FogFarColor.xyz, fogColorParam);
 	vsout.FogParam.w = fogColorParam;
@@ -551,6 +559,16 @@ float3 GetEffectDirectionalLighting()
 	       intensity * SharedData::csUtilitySettings.directionalLightMult;
 }
 
+float3 GetWeatherEffectLighting(bool isSkyObject)
+{
+	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
+#	if defined(LIGHTING)
+	return ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
+#	else
+	return Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult;
+#	endif
+}
+
 void ExtractEffectLightingReference(
 	float3 inputReference,
 	float3 ambientReference,
@@ -595,8 +613,7 @@ float3 GetLightingColor(
 	inout float shadowVariance)
 {
 	const bool isSkyObject = Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject;
-	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
-	float3 color = ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
+	float3 color = GetWeatherEffectLighting(isSkyObject);
 	bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
 	shadowedWeatherReference = 0.0;
 	shadowedInfluencedWeatherReference = 0.0;
@@ -748,7 +765,7 @@ float3 GetLightingColor(
 	return color;
 }
 #	else
-float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise)
+float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise, bool isSkyObject)
 {
 	color = Color::EffectLight(color);
 
@@ -764,7 +781,7 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 		dirColor = GetEffectDirectionalLighting() * EffectDirectionalLightScale;
 		ambientColor = ambientLighting;
 	} else {
-		ExtractEffectLighting(color, ambientLighting, dirColor, ambientColor);
+		ExtractEffectLighting(isSkyObject ? color : GetWeatherEffectLighting(false), ambientLighting, dirColor, ambientColor);
 	}
 
 	static const uint sampleCount = 8;
@@ -782,13 +799,17 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 	const bool inWorld = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 
 	if (inWorld && !SharedData::InInterior) {
-		shadow = 0.0;
-		for (uint i = 0; i < sampleCount; i++) {
-			float t = (float(i) + noise) * rcpSampleCount;
-			float3 samplePositionWS = lerp(startPosition, endPosition, t);
-			shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		if (isSkyObject) {
+			shadow = 0.0;
+			for (uint i = 0; i < sampleCount; i++) {
+				float t = (float(i) + noise) * rcpSampleCount;
+				float3 samplePositionWS = lerp(startPosition, endPosition, t);
+				shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+			}
+			shadow *= rcpSampleCount;
+		} else {
+			shadow = ShadowSampling::GetWorldShadow(worldPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 		}
-		shadow *= rcpSampleCount;
 	}
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(shadow)));
@@ -801,8 +822,12 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 	}
 #		endif
 
-	if (useAmbientEffectLighting)
-		return materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * SharedData::csUtilitySettings.skyStaticBrightness;
+	if (useAmbientEffectLighting) {
+		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness * Color::EffectLightingMultiplier();
+		return materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * brightness;
+	}
+	if (!isSkyObject)
+		return materialColor * (dirColor + ambientColor) * Color::EffectLightingMultiplier();
 	return dirColor + ambientColor;
 }
 #	endif
@@ -858,6 +883,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float depth = 1;
 #	if defined(SOFT)
 	depth = TexDepthSamplerEffect.Load(int3(input.Position.xy, 0)).x;
+#		ifdef REVERSE_Z
+	if (FrameBuffer::IsReverseProjection())
+		depth = 1 - depth;
+#		endif
 	softMul = saturate(-input.TexCoord0.w + LightingInfluence.y / ((1 - depth) * CameraDataEffect.z + CameraDataEffect.y));
 #	endif
 
@@ -1069,9 +1098,18 @@ PS_OUTPUT main(PS_INPUT input)
 	const bool isSkyStatic = false;
 #	endif
 #	if !defined(LIGHTING) && !defined(MEMBRANE)
-	if (isSkyStatic || (UseAmbientEffectLighting() && (Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject))) {
-		float3 unlitColor = UseAmbientEffectLighting() ? baseColor.xyz : lightColor;
-		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, baseColor.xyz, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise), lightingInfluence);
+	const bool isSkyObject = isSkyStatic || (Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject);
+#		if defined(ADDBLEND) || defined(MULTBLEND) || defined(MULTBLEND_DECAL)
+	const bool useAmbientLighting = UseAmbientEffectLighting() && isSkyObject;
+	const bool useWeatherLighting = false;
+#		else
+	const bool useAmbientLighting = UseAmbientEffectLighting();
+	const bool useWeatherLighting = ENABLE_LL && !SharedData::InInterior && !isSkyObject && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+#		endif
+	if (isSkyStatic || (lightingInfluence > 0.0 && (useAmbientLighting || useWeatherLighting))) {
+		float3 unlitColor = useAmbientLighting || !isSkyObject ? baseColor.xyz : lightColor;
+		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
+		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject), lightingInfluence);
 	}
 #	endif
 

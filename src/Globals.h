@@ -57,6 +57,7 @@ struct PostProcessing;
 struct ScreenshotFeature;
 struct Skin;
 struct SceneManager;
+struct ReverseZ;
 
 class State;
 class Deferred;
@@ -159,6 +160,7 @@ namespace globals
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern Skin skin;
+		extern ReverseZ reverseZ;
 		extern PostProcessing postProcessing;
 		extern SceneManager sceneManager;
 

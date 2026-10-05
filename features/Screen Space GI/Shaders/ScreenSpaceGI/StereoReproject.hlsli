@@ -13,14 +13,15 @@
 #include "ScreenSpaceGI/common.hlsli"
 #include "VRStereoOptimizations/modes.hlsli"
 
-// Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth.
+// Inverse of ScreenToViewDepth: linear view-space Z back to raw NDC depth. Stereo reprojection
+// unprojects this depth, so it must stay in the buffer's own convention.
 float LinearToRawDepth(float d)
 {
-	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+	return FrameBuffer::ToNativeDepth((SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z);
 }
 float4 LinearToRawDepth(float4 d)
 {
-	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+	return FrameBuffer::ToNativeDepth((SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z);
 }
 
 // FRAMEBUFFER (not just VR) because ReprojectToOtherEye lives in the FrameBuffer-gated

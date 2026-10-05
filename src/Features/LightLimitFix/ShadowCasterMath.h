@@ -62,6 +62,26 @@ namespace ShadowCasterManager
 		return raw >= 0x10000ull && raw < 0x0000800000000000ull && (raw & 0x7) == 0;
 	}
 
+	// Casters reaching the equatorial plane keep the engine's hemisphere choice;
+	// the margin floor keeps a zero-radius light from collapsing the seam.
+	inline constexpr float kHemisphereSeamMarginMin = 1.0f;
+	inline constexpr float kHemisphereSeamMarginRadius = 0.005f;
+
+	/// Seam margin for SphereWhollyBehindPlane at a light of this radius.
+	inline float HemisphereSeamMargin(float a_lightRadius) noexcept
+	{
+		return std::max(kHemisphereSeamMarginMin, kHemisphereSeamMarginRadius * a_lightRadius);
+	}
+
+	/// True when a bound sphere lies wholly behind the light's equatorial plane by
+	/// more than `a_margin`; `a_planeDistance` is the sphere centre's signed
+	/// distance along the front-hemisphere axis (positive in front), so a true
+	/// result means no part of the sphere falls in the front paraboloid map.
+	inline bool SphereWhollyBehindPlane(float a_planeDistance, float a_radius, float a_margin) noexcept
+	{
+		return a_planeDistance + a_radius <= -a_margin;
+	}
+
 	// The tile class ladder, shared by the coverage classifier below and the
 	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;

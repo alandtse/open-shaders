@@ -7,6 +7,8 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
+#include "Utils/MathUtils.h"
+#include "Utils/SphericalHarmonics.h"
 
 #include <cmath>
 #include <numbers>
@@ -18,7 +20,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableSkylighting,
 	MaxZenith,
 	MinDiffuseVisibility,
-	MinSpecularVisibility)
+	MinSpecularVisibility,
+	ProbeGridQuality,
+	ProbeArrayWorldSizeCells)
 
 void Skylighting::LoadSettings(json& o_json)
 {
@@ -26,6 +30,9 @@ void Skylighting::LoadSettings(json& o_json)
 	settings = o_json;
 	if (settings.EnableSkylighting != wasEnabled)
 		queuedResetSkylighting = true;
+	settings.MaxZenith = Util::ClampFinite(settings.MaxZenith, 0.0f, std::numbers::pi_v<float> / 2.0f, Settings{}.MaxZenith);
+	settings.ProbeGridQuality = std::min(settings.ProbeGridQuality, 2u);
+	settings.ProbeArrayWorldSizeCells = Util::ClampFinite(settings.ProbeArrayWorldSizeCells, Settings::kMinProbeFieldSizeCells, Settings::kMaxProbeFieldSizeCells, Settings{}.ProbeArrayWorldSizeCells);
 }
 
 void Skylighting::SaveSettings(json& o_json)
@@ -64,9 +71,10 @@ void Skylighting::ClearProbes()
 	const float unitSH[4] = { std::sqrt(4.0f * std::numbers::pi_v<float>), 0.0f, 0.0f, 0.0f };
 	context->ClearUnorderedAccessViewFloat(texProbeArray->uav.get(), unitSH);
 
-	UINT clr[1] = { 0 };
+	UINT clr[4] = { 0 };
 	context->ClearUnorderedAccessViewUint(texAccumFramesArray->uav.get(), clr);
-	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), clr);
+	const UINT litHistory[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+	context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), litHistory);
 
 	float clrf[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 	context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), clrf);
@@ -83,6 +91,18 @@ void Skylighting::DrawSettings()
 	ImGui::Text("%s", T(TKEY("min_visibility_desc"), "Minimum visibility values. Diffuse darkens objects. Specular removes the sky from reflections."));
 	ImGui::SliderFloat(T(TKEY("diffuse_min_visibility"), "Diffuse Min Visibility"), &settings.MinDiffuseVisibility, 0.01f, 1.f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_min_visibility"), "Specular Min Visibility"), &settings.MinSpecularVisibility, 0.01f, 1.f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("probe_field_width"), "Probe Field Width (Cells)"), &settings.ProbeArrayWorldSizeCells, Settings::kMinProbeFieldSizeCells, Settings::kMaxProbeFieldSizeCells, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("probe_field_width_desc"), "Extends skylighting coverage without adding probes. Larger fields reduce spatial detail and rebuild the probe history."));
+
+	const char* gridNames[] = {
+		T(TKEY("probe_grid_low"), "128 x 128 x 64"),
+		T(TKEY("probe_grid_medium"), "192 x 192 x 96"),
+		T(TKEY("probe_grid_high"), "256 x 256 x 128")
+	};
+	int selectedGrid = static_cast<int>(settings.ProbeGridQuality);
+	if (ImGui::Combo(T(TKEY("probe_grid"), "Probe Grid"), &selectedGrid, gridNames, 3))
+		settings.ProbeGridQuality = static_cast<uint>(selectedGrid);
 
 	ImGui::Separator();
 
@@ -118,11 +138,40 @@ void Skylighting::SetupResources()
 		texOcclusion->CreateDSV(dsvDesc);
 	}
 
+	CreateProbeResources(GetProbeArrayDims(settings.ProbeGridQuality));
+	activeProbeGridQuality = settings.ProbeGridQuality;
+
+	ClearProbes();
+
+	{
+		D3D11_SAMPLER_DESC samplerDesc = {};
+		samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;  // Use comparison filtering
+		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;               // Address mode (Clamp for shadow maps)
+		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;  // Comparison function
+		samplerDesc.MinLOD = 0;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, comparisonSampler.put()));
+		Util::SetResourceName(comparisonSampler.get(), "Skylighting::ComparisonSampler");
+	}
+
+	CompileComputeShaders();
+}
+
+std::array<uint, 3> Skylighting::GetProbeArrayDims(uint quality)
+{
+	static constexpr std::array<std::array<uint, 3>, 3> dimensions{ { { 128, 128, 64 }, { 192, 192, 96 }, { 256, 256, 128 } } };
+	return dimensions[std::min(quality, 2u)];
+}
+
+void Skylighting::CreateProbeResources(const std::array<uint, 3>& dimensions)
+{
 	{
 		D3D11_TEXTURE3D_DESC texDesc{
-			.Width = probeArrayDims[0],
-			.Height = probeArrayDims[1],
-			.Depth = probeArrayDims[2],
+			.Width = dimensions[0],
+			.Height = dimensions[1],
+			.Depth = dimensions[2],
 			.MipLevels = 1,
 			.Format = DXGI_FORMAT_R16G16B16A16_FLOAT,
 			.Usage = D3D11_USAGE_DEFAULT,
@@ -146,45 +195,49 @@ void Skylighting::SetupResources()
 				.WSize = texDesc.Depth }
 		};
 
-		texProbeArray = new Texture3D(texDesc, "Skylighting::ProbeArray");
-		texProbeArray->CreateSRV(srvDesc);
-		texProbeArray->CreateUAV(uavDesc);
+		auto newProbeArray = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ProbeArray");
+		newProbeArray->CreateSRV(srvDesc);
+		newProbeArray->CreateUAV(uavDesc);
 
-		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UINT;
+		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_UINT;
 
-		texAccumFramesArray = new Texture3D(texDesc, "Skylighting::AccumFramesArray");
-		texAccumFramesArray->CreateSRV(srvDesc);
-		texAccumFramesArray->CreateUAV(uavDesc);
+		auto newAccumFramesArray = eastl::make_unique<Texture3D>(texDesc, "Skylighting::AccumFramesArray");
+		newAccumFramesArray->CreateSRV(srvDesc);
+		newAccumFramesArray->CreateUAV(uavDesc);
 
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32_UINT;
 
-		texShadowBitmask = new Texture3D(texDesc, "Skylighting::ShadowBitmask");
-		texShadowBitmask->CreateSRV(srvDesc);
-		texShadowBitmask->CreateUAV(uavDesc);
+		auto newShadowBitmask = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ShadowBitmask");
+		newShadowBitmask->CreateSRV(srvDesc);
+		newShadowBitmask->CreateUAV(uavDesc);
 
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UNORM;
 
-		texShadowVisibility = new Texture3D(texDesc, "Skylighting::ShadowVisibility");
-		texShadowVisibility->CreateSRV(srvDesc);
-		texShadowVisibility->CreateUAV(uavDesc);
+		auto newShadowVisibility = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ShadowVisibility");
+		newShadowVisibility->CreateSRV(srvDesc);
+		newShadowVisibility->CreateUAV(uavDesc);
+
+		texProbeArray = std::move(newProbeArray);
+		texAccumFramesArray = std::move(newAccumFramesArray);
+		texShadowBitmask = std::move(newShadowBitmask);
+		texShadowVisibility = std::move(newShadowVisibility);
+		std::copy(dimensions.begin(), dimensions.end(), probeArrayDims);
 	}
+}
 
-	ClearProbes();
+void Skylighting::ApplyProbeGrid()
+{
+	if (!texProbeArray || settings.ProbeGridQuality == activeProbeGridQuality)
+		return;
 
-	{
-		D3D11_SAMPLER_DESC samplerDesc = {};
-		samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_MIP_LINEAR;  // Use comparison filtering
-		samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;               // Address mode (Clamp for shadow maps)
-		samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
-		samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;  // Comparison function
-		samplerDesc.MinLOD = 0;
-		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		DX::ThrowIfFailed(device->CreateSamplerState(&samplerDesc, comparisonSampler.put()));
-		Util::SetResourceName(comparisonSampler.get(), "Skylighting::ComparisonSampler");
+	try {
+		CreateProbeResources(GetProbeArrayDims(settings.ProbeGridQuality));
+		activeProbeGridQuality = settings.ProbeGridQuality;
+		ResetSkylighting();
+	} catch (const std::exception& error) {
+		logger::error("Skylighting probe grid allocation failed; retaining the active grid: {}", error.what());
+		settings.ProbeGridQuality = activeProbeGridQuality;
 	}
-
-	CompileComputeShaders();
 }
 
 void Skylighting::ClearShaderCache()
@@ -220,8 +273,20 @@ void Skylighting::CompileComputeShaders()
 	}
 }
 
+namespace
+{
+	/** @brief Maps a camera cell to its wrapped, non-negative slot along one probe axis. */
+	uint WrapProbeOrigin(float a_cell, uint a_dim)
+	{
+		const int dim = static_cast<int>(a_dim);
+		return static_cast<uint>(((static_cast<int>(a_cell) - dim / 2) % dim + dim) % dim);
+	}
+}
+
 Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 {
+	ApplyProbeGrid();
+
 	if (!a_inWorld)
 		return Skylighting::SkylightingCB{};
 
@@ -244,18 +309,42 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 
 	return {
 		.OcclusionViewProj = OcclusionTransform,
-		.OcclusionDir = OcclusionDir,
+		.OcclusionSHBasis4Pi = OcclusionSHBasis4Pi,
 		.PosOffset = cellOrigin - eyePos,
 		.ArrayOrigin = {
-			((int)cellID.x - probeArrayDims[0] / 2) % probeArrayDims[0],
-			((int)cellID.y - probeArrayDims[1] / 2) % probeArrayDims[1],
-			((int)cellID.z - probeArrayDims[2] / 2) % probeArrayDims[2] },
+			WrapProbeOrigin(cellID.x, probeArrayDims[0]),
+			WrapProbeOrigin(cellID.y, probeArrayDims[1]),
+			WrapProbeOrigin(cellID.z, probeArrayDims[2]) },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
 		.MinSpecularVisibility = settings.MinSpecularVisibility,
 		.ProbeDataReady = probeDataReady && HasProbeResources() && !queuedResetSkylighting.load(),
+		.ShadowDataAvailable = HasShadowData(),
+		.ArrayDims = { probeArrayDims[0], probeArrayDims[1], probeArrayDims[2] },
+		.ProbeArrayWorldSize = occlusionDistance,
 		.Enabled = settings.EnableSkylighting
 	};
+}
+
+bool Skylighting::HasShadowData() const
+{
+	auto* renderer = globals::game::renderer;
+	auto* deferred = globals::deferred;
+	auto* shaderManager = globals::game::smState;
+	if (!renderer || !deferred || !shaderManager || !globals::state->HasDirectionalShadows() ||
+		!deferred->directionalShadowLights || !deferred->directionalShadowLights->srv)
+		return false;
+
+	auto shadowScene = shaderManager->shadowSceneNode[0];
+	if (!shadowScene || !shadowScene->GetRuntimeData().sunShadowDirLight)
+		return false;
+
+	auto* shadowDepth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV;
+	if (!shadowDepth)
+		return false;
+	D3D11_SHADER_RESOURCE_VIEW_DESC desc{};
+	Util::AsReal(shadowDepth)->GetDesc(&desc);
+	return desc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2DARRAY && desc.Texture2DArray.ArraySize >= 2;
 }
 
 void Skylighting::Prepass()
@@ -281,6 +370,18 @@ void Skylighting::Prepass()
 		previousInteriorState = interior;
 	}
 
+	const bool shadowDataAvailable = !interior && HasShadowData();
+	if (shadowDataAvailable && !previousShadowDataAvailable) {
+		// A resource outage must not expose shadow history from before the outage.
+		ID3D11ShaderResourceView* nullShadow = nullptr;
+		context->PSSetShaderResources(53, 1, &nullShadow);
+		const UINT litHistory[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+		context->ClearUnorderedAccessViewUint(texShadowBitmask->uav.get(), litHistory);
+		const float litVisibility[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		context->ClearUnorderedAccessViewFloat(texShadowVisibility->uav.get(), litVisibility);
+	}
+	previousShadowDataAvailable = shadowDataAvailable;
+
 	if (interior)
 		RenderOcclusion();
 
@@ -296,13 +397,12 @@ void Skylighting::Prepass()
 		CS_GPU_PASS_SELECT(interior, "Skylighting::InteriorProbeUpdate", "Skylighting::ProbeUpdate");
 
 		auto renderer = globals::game::renderer;
-		auto& cascadeDepthStencil = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM];
 
 		std::array<ID3D11ShaderResourceView*, 4> srvs = {
 			texOcclusion->srv.get(),
 			nullptr,
-			interior ? nullptr : globals::deferred->directionalShadowLights->srv.get(),
-			interior ? nullptr : Util::AsReal(cascadeDepthStencil.depthSRV)
+			shadowDataAvailable ? globals::deferred->directionalShadowLights->srv.get() : nullptr,
+			shadowDataAvailable ? Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM].depthSRV) : nullptr
 		};
 		std::array<ID3D11UnorderedAccessView*, 4> uavs = {
 			texProbeArray->uav.get(),
@@ -511,7 +611,6 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 					auto value = static_cast<int32_t>(bsxFlags->value);
 
 					if (value & (static_cast<int32_t>(RE::BSXFlags::Flag::kRagdoll) |
-									static_cast<int32_t>(RE::BSXFlags::Flag::kEditorMarker) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kDynamic) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kAddon) |
 									static_cast<int32_t>(RE::BSXFlags::Flag::kNeedsTransformUpdate) |
@@ -633,6 +732,12 @@ void Skylighting::RenderOcclusion()
 	if (lastOcclusionRenderFrame == globals::state->frameCount)
 		return;
 
+	const float requestedDistance = settings.ProbeArrayWorldSizeCells * Settings::kWorldCellSize;
+	if (requestedDistance != occlusionDistance) {
+		occlusionDistance = requestedDistance;
+		ClearProbes();
+	}
+
 	CS_GPU_PASS("Skylighting::SkylightingMask");
 	++frameCount;
 
@@ -702,7 +807,8 @@ void Skylighting::RenderOcclusion()
 		precipitation->RenderMask(reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain));
 	}
 
-	OcclusionDir = -float4{ direction.x, direction.y, direction.z, 0.0f };
+	const auto basis = SphericalHarmonics::Scale(SphericalHarmonics::Evaluate(-direction), 4.0f * std::numbers::pi_v<float>);
+	OcclusionSHBasis4Pi = float4{ basis.c0, basis.c1[0], basis.c1[1], basis.c1[2] };
 	OcclusionTransform = reinterpret_cast<RE::BSParticleShaderRainEmitter*>(&syntheticRain)->occlusionProjection;
 	lastOcclusionRenderFrame = globals::state->frameCount;
 }

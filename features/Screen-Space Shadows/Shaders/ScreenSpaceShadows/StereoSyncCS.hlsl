@@ -17,11 +17,11 @@
 #ifdef VR
 
 // Match the C++ depth binding format for strict typing.
-// TERRAIN_BLENDING ON  -> R32_FLOAT (no unorm). OFF -> R24_UNORM_X8_TYPELESS (unorm).
+// TERRAIN_BLENDING ON  -> R32_FLOAT (no unorm). OFF -> R24_UNORM_X8_TYPELESS, R32_FLOAT under REVERSE_Z.
 #	if defined(TERRAIN_BLENDING)
 Texture2D<float> SrcDepthTexture : register(t0);
 #	else
-Texture2D<unorm float> SrcDepthTexture : register(t0);
+Texture2D<SCENE_DEPTH_FORMAT> SrcDepthTexture : register(t0);
 #	endif
 Texture2D<unorm float> SrcShadowTexture : register(t1);
 

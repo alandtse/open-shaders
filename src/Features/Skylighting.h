@@ -1,5 +1,8 @@
 #pragma once
 
+#include "Buffer.h"
+
+#include <array>
 #include <atomic>
 
 /** @brief Simulates realistic ambient lighting by calculating sky occlusion via a 3D probe array. */
@@ -61,15 +64,20 @@ public:
 	struct Settings
 	{
 		bool EnableSkylighting = true;
+		static constexpr float kWorldCellSize = 4096.0f;
+		static constexpr float kMinProbeFieldSizeCells = 10000.0f / kWorldCellSize;
+		static constexpr float kMaxProbeFieldSizeCells = 8.0f;
 		float MaxZenith = 3.1415926f / 2.f;  // 90 deg
 		float MinDiffuseVisibility = 0.1f;
 		float MinSpecularVisibility = 0.1f;
+		uint ProbeGridQuality = 2;
+		float ProbeArrayWorldSizeCells = kMinProbeFieldSizeCells;
 	} settings;
 
 	struct SkylightingCB
 	{
 		REX::W32::XMFLOAT4X4 OcclusionViewProj;
-		float4 OcclusionDir;
+		float4 OcclusionSHBasis4Pi;
 
 		float3 PosOffset;  // cell origin in camera model space
 		uint _pad0;
@@ -80,7 +88,12 @@ public:
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
 		uint ProbeDataReady;
+		uint ShadowDataAvailable;
+		uint ArrayDims[3];
+		float ProbeArrayWorldSize;
+
 		uint Enabled;
+		uint _pad4[3];
 	};
 	static_assert(sizeof(SkylightingCB) % 16 == 0);
 
@@ -94,10 +107,10 @@ public:
 	winrt::com_ptr<ID3D11SamplerState> comparisonSampler = nullptr;
 
 	Texture2D* texOcclusion = nullptr;
-	Texture3D* texProbeArray = nullptr;
-	Texture3D* texAccumFramesArray = nullptr;
-	Texture3D* texShadowBitmask = nullptr;
-	Texture3D* texShadowVisibility = nullptr;
+	eastl::unique_ptr<Texture3D> texProbeArray;
+	eastl::unique_ptr<Texture3D> texAccumFramesArray;
+	eastl::unique_ptr<Texture3D> texShadowBitmask;
+	eastl::unique_ptr<Texture3D> texShadowVisibility;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> occlusionOnlyProbeUpdateCompute = nullptr;
@@ -110,7 +123,7 @@ public:
 	std::atomic_bool queuedResetSkylighting{ true };
 	bool inOcclusion = false;
 	REX::W32::XMFLOAT4X4 OcclusionTransform;
-	float4 OcclusionDir;
+	float4 OcclusionSHBasis4Pi;
 	uint frameCount = 0;
 
 	/** @brief Requests a probe rebuild on the render thread. */
@@ -163,17 +176,23 @@ public:
 	};
 
 private:
+	bool HasShadowData() const;
 	bool HasProbeResources() const;
 	void ClearProbes();
 	bool probeDataReady = false;
 	float3 previousProbeCell = {};
 	float3 pendingProbeCell = {};
+	static std::array<uint, 3> GetProbeArrayDims(uint quality);
+	void CreateProbeResources(const std::array<uint, 3>& dimensions);
+	void ApplyProbeGrid();
+	uint activeProbeGridQuality = 2;
 	uint32_t* GetRasterCullMode() const;
 	void BeginInteriorOcclusionGeometry();
 	void EndInteriorOcclusionGeometry();
 
 	uint lastOcclusionRenderFrame = static_cast<uint>(-1);
 	std::optional<bool> previousInteriorState;
+	bool previousShadowDataAvailable = true;
 	bool forceInteriorOcclusionTwoSided = false;
 	uint32_t savedRasterCullMode = 0;
 	uint32_t rasterCullOverrideDepth = 0;

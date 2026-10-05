@@ -215,8 +215,8 @@ namespace Util
 		std::filesystem::path GetRealPathFromDataRelative(const std::filesystem::path& dataRelativePath);
 
 		/**
-		 * Returns the path to the Community Shaders log file in the default SKSE logging folder.
-		 * @return Documents / "My Games" / "Skyrim..." / "SKSE" / "CommunityShaders.log"
+		 * Returns the path to the plugin log file in the default SKSE logging folder.
+		 * @return Documents / "My Games" / "Skyrim..." / "SKSE" / "OpenShaders.log"
 		 */
 		std::filesystem::path GetLogPath();
 

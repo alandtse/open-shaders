@@ -238,6 +238,25 @@ find in the shader tree falls back to full validation. Preprocessor guards are
 ignored when scanning `#include`s, so the affected set is always a conservative
 superset — over-validating costs time, never correctness.
 
+## Compile-impact tiers in the Disable at Boot list
+
+The list colors each feature by how much shader compiling a flip causes, from
+`SKSE/Plugins/CommunityShaders/FeatureFlipImpact.json`. Release CI generates that
+file (`tools/feature-flip-impact.py`, weighted by the run's own compile timings)
+and ships it in the package; it is not checked in. A build without the file shows
+no tiers.
+
+For local testing, download the `FeatureFlipImpact` (holds the SE and VR tables)
+artifacts from a release-build run and join them, or generate your own on Windows
+from the validation configs and a `--timing-report` JSON:
+
+```
+python tools/feature-flip-impact.py --runtime SE --config .github/configs/shader-validation.yaml --timing shader-compile-timing-SE.json --output package/SKSE/Plugins/CommunityShaders/FeatureFlipImpact.json
+python tools/feature-flip-impact.py --merge FeatureFlipImpact-SE.json FeatureFlipImpact-VR.json --output package/SKSE/Plugins/CommunityShaders/FeatureFlipImpact.json
+```
+
+The output path is git-ignored.
+
 ## Manual Shader Validation Commands
 
 To validate shaders locally using `hlslkit` (external dependency):
@@ -268,8 +287,8 @@ hlslkit-compile --shader-dir build/ALL/aio/Shaders/ScreenSpaceGI/ --output-dir b
 # Test feature-specific compute shader
 hlslkit-compile --shader-dir build/ALL/aio/Shaders/LightLimitFix/ClusterBuildingCS.hlsl --output-dir build/ShaderCache --config .github/configs/shader-validation.yaml
 
-# Generate shader defines from game log (requires CommunityShaders.log from game)
-hlslkit-generate-defines --log CommunityShaders.log
+# Generate shader defines from game log (requires OpenShaders.log from game)
+hlslkit-generate-defines --log OpenShaders.log
 
 # Scan for buffer conflicts across features
 hlslkit-buffer-scan --features-dir features/

@@ -1,3 +1,5 @@
+#include "Common/ReverseZ.hlsli"
+
 #if defined(DISPLAY_DEPTH)
 #	include "Common/DummyVSTexCoord.hlsl"
 #else
@@ -36,7 +38,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 location = float3(input.TexCoord * dimensions, 0);
 		depth = uintStencilTex.Load(location).x;
 	} else {
-		depth = DepthTex.SampleLevel(DepthSampler, input.TexCoord, 0).x;
+		depth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(DepthSampler, input.TexCoord, 0).x);
 	}
 	float screenDepth = saturate((-Color.x + depth) / (Color.y - Color.x));
 	psout.Color.xyz = (screenDepth * -2 + 3) * (screenDepth * screenDepth);

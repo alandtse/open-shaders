@@ -49,7 +49,7 @@ PBR equivalents. It blacklists tree textures and dirt-cliff root textures,
 including opaque root geometry. Remove an entry from every file that supplies
 it to remove that whitelist or blacklist rule.
 
-Invalid files are logged in `CommunityShaders.log` and skipped in full; other
+Invalid files are logged in `OpenShaders.log` and skipped in full; other
 valid files still load. With no valid rules, only the automatic eligibility checks
 apply. The previous parent folder is not scanned. Matching results are cached
 for the game session and cleared whenever startup data is loaded again. No
