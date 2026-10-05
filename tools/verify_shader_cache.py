@@ -76,6 +76,18 @@ def check_dxbc(path):
     require(shader_found, f"Missing shader program: {path}")
 
 
+def verify_structure(cache):
+    """Check a cache on its own, without the source tree: a readable Info.ini, a valid manifest matching the blobs one to one, and intact DXBC in every blob."""
+    require((cache / "Info.ini").is_file(), f"Missing Info.ini in {cache}")
+    read_info(cache / "Info.ini")
+    blobs = blob_paths(cache)
+    entries = read_manifest(cache)
+    compare("Manifest coverage", dict.fromkeys(blobs, True), dict.fromkeys(entries, True))
+    for path in blobs.values():
+        check_dxbc(path)
+    return {"entries": len(entries)}
+
+
 def verify_artifact(cache, shaders, source_root, runtime, plugin_version=None):
     """Validate every captured permutation against the current default AIO profile."""
     from hlslkit.shader_digest import combine_hashes, compute_shader_content_digest, hash_string, to_hex
@@ -241,6 +253,8 @@ def main():
     artifact.add_argument("--source-root", type=Path, default=ROOT)
     artifact.add_argument("--runtime", choices=["SE", "VR"], required=True)
     artifact.add_argument("--plugin-version")
+    structure = commands.add_parser("structure", help="Validate an extracted cache's own consistency (no source tree needed)")
+    structure.add_argument("--cache", type=Path, required=True)
     snapshot = commands.add_parser("snapshot", help="Before launch: snapshot a fresh installed build")
     snapshot.add_argument("--data", type=Path, required=True)
     snapshot.add_argument("--reference-cache", type=Path, required=True)
@@ -254,6 +268,8 @@ def main():
     try:
         if args.command == "artifact":
             result = verify_artifact(args.cache, args.shaders, args.source_root, args.runtime, args.plugin_version)
+        elif args.command == "structure":
+            result = verify_structure(args.cache)
         elif args.command == "snapshot":
             result = take_snapshot(args.data, args.reference_cache, args.log, args.runtime)
             args.out.parent.mkdir(parents=True, exist_ok=True)

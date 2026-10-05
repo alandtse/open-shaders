@@ -309,5 +309,48 @@ class RuntimeTests(unittest.TestCase):
                     verifier.verify_session(snapshot, "http://localhost:8920")
 
 
+class StructureTests(unittest.TestCase):
+    DIGEST = "0123456789abcdef0123456789abcdef"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.cache = Path(temporary.name) / "ShaderCache"
+        (self.cache / "Sky").mkdir(parents=True)
+        (self.cache / "Info.ini").write_text("[Cache]\nPluginVersion = 1-0-0\n", encoding="utf-8")
+        (self.cache / "Sky/1.pso").write_bytes(dxbc())
+        self.write_manifest({"Sky/1.pso": self.DIGEST})
+
+    def write_manifest(self, entries):
+        (self.cache / "Manifest.json").write_text(json.dumps({"schemaVersion": 1, "entries": entries}), encoding="utf-8")
+
+    def test_consistent_cache_passes(self):
+        self.assertEqual(verifier.verify_structure(self.cache), {"entries": 1})
+
+    def test_missing_info_ini_fails(self):
+        (self.cache / "Info.ini").unlink()
+        with self.assertRaises(ValueError):
+            verifier.verify_structure(self.cache)
+
+    def test_manifest_and_blobs_must_match_one_to_one(self):
+        self.write_manifest({"Sky/1.pso": self.DIGEST, "Sky/2.pso": self.DIGEST})
+        with self.assertRaises(ValueError):
+            verifier.verify_structure(self.cache)
+        self.write_manifest({})
+        with self.assertRaises(ValueError):
+            verifier.verify_structure(self.cache)
+
+    def test_truncated_blob_fails(self):
+        blob = self.cache / "Sky/1.pso"
+        blob.write_bytes(blob.read_bytes()[:20])
+        with self.assertRaises(ValueError):
+            verifier.verify_structure(self.cache)
+
+    def test_cache_without_blobs_fails(self):
+        (self.cache / "Sky/1.pso").unlink()
+        with self.assertRaises(ValueError):
+            verifier.verify_structure(self.cache)
+
+
 if __name__ == "__main__":
     unittest.main()
