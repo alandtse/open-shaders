@@ -61,7 +61,8 @@ runs:
                     - 'CMakePresets.json'
                     - 'cmake/**'
                   build_ci:
-                    - '.github/configs/**'
+                    - '.github/configs/shader-validation*.yaml'
+                    - '.github/configs/generate-shader-configs.ps1'
                   hlsl:
                     - '**.hlsl'
                     - '**.hlsli'
