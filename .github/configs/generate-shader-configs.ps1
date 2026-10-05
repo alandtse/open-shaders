@@ -28,7 +28,7 @@
     .\generate-shader-configs.ps1 -OutputDir "custom/path" -Force
 
 .EXAMPLE
-    .\generate-shader-configs.ps1 -LogFile "C:\Path\To\CommunityShaders.log" -OutputName "my-validation.yaml"
+    .\generate-shader-configs.ps1 -LogFile "C:\Path\To\OpenShaders.log" -OutputName "my-validation.yaml"
 
 .NOTES
     Prerequisites:
@@ -82,7 +82,7 @@ function Find-SkyrimPaths {
         $paths += @{
             Name = "Skyrim Special Edition"
             Path = $sePath
-            LogPath = Join-Path $sePath "SKSE\CommunityShaders.log"
+            LogPath = Resolve-LogPath (Join-Path $sePath "SKSE")
             ConfigName = "shader-validation.yaml"
             Type = "SE"
         }
@@ -94,7 +94,7 @@ function Find-SkyrimPaths {
         $paths += @{
             Name = "Skyrim VR"
             Path = $vrPath
-            LogPath = Join-Path $vrPath "SKSE\CommunityShaders.log"
+            LogPath = Resolve-LogPath (Join-Path $vrPath "SKSE")
             ConfigName = "shader-validation-vr.yaml"
             Type = "VR"
         }
@@ -118,6 +118,15 @@ function Find-SkyrimPaths {
     }
 
     return $paths
+}
+
+# Prefers OpenShaders.log, falling back to the CommunityShaders.log written by older builds
+function Resolve-LogPath {
+    param([string]$SkseDir)
+    $current = Join-Path $SkseDir "OpenShaders.log"
+    $legacy = Join-Path $SkseDir "CommunityShaders.log"
+    if (-not (Test-Path $current) -and (Test-Path $legacy)) { return $legacy }
+    return $current
 }
 
 # Function to check if log file is recent and valid

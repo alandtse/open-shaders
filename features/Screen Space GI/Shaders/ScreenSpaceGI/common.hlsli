@@ -131,7 +131,8 @@ float3 ScreenToViewPosition(const float2 screenPos, const float viewspaceDepth, 
 
 float ScreenToViewDepth(const float screenDepth)
 {
-	return (SharedData::CameraData.w / (-screenDepth * SharedData::CameraData.z + SharedData::CameraData.x));
+	const float standardDepth = FrameBuffer::ToStandardDepth(screenDepth);
+	return (SharedData::CameraData.w / (-standardDepth * SharedData::CameraData.z + SharedData::CameraData.x));
 }
 
 float3 ViewToWorldPosition(const float3 pos, const float4x4 invView)

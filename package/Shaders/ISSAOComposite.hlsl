@@ -2,6 +2,7 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Permutation.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 
 typedef VS_OUTPUT PS_INPUT;
@@ -178,7 +179,8 @@ PS_OUTPUT main(PS_INPUT input)
 	composedColor.xyz = Color::IrradianceToGamma(composedColor.xyz);
 #	endif
 
-	float depth = depthTex.SampleLevel(depthSampler, screenPosition, 0).x;
+	float nativeDepth = depthTex.SampleLevel(depthSampler, screenPosition, 0).x;
+	float depth = FrameBuffer::ToStandardDepth(nativeDepth);
 	static const float GeometryDepthMax = 1.0f - EPSILON_DIVISION;
 	bool isGeometryDepth = depth < GeometryDepthMax;
 
@@ -195,7 +197,7 @@ PS_OUTPUT main(PS_INPUT input)
 	bool exponentialHeightFogEnabled = SharedData::exponentialHeightFogSettings.enabled && !SharedData::InMapMenu;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(input.TexCoord.xy);
 	float2 monoUV = Stereo::ConvertFromStereoUV(input.TexCoord.xy, eyeIndex);
-	float4 positionWS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
+	float4 positionWS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, nativeDepth, 1);
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 	float4 exponentialHeightFog = (float4)0;
@@ -208,7 +210,7 @@ PS_OUTPUT main(PS_INPUT input)
 			positionWS.xyz *= max(skyRayLength, SharedData::horizonFixSettings.farWaterDistance) / max(skyRayLength, 1e-4);
 		}
 #			endif
-		float4 fogScreenPosition = float4(Stereo::ConvertToStereoUV(monoUV, eyeIndex) * SharedData::BufferDim.xy, depth, 1.0f);
+		float4 fogScreenPosition = float4(Stereo::ConvertToStereoUV(monoUV, eyeIndex) * SharedData::BufferDim.xy, nativeDepth, 1.0f);
 		exponentialHeightFog = ExponentialHeightFog::GetExponentialHeightFog(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, fogColor, fogScreenPosition);
 	}
 	if (isGeometryDepth || exponentialHeightFogEnabled) {
@@ -239,7 +241,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if (EyePosition.w != 0 && snowMask != 0 && 1e-5 < SparklesParameters2.z) {
 		float shadowMask = shadowMaskTex.SampleLevel(shadowMaskSampler, screenPosition, 0).x;
 
-		float4 vsPosition = float4(2 * input.TexCoord.x - 1, 1 - 2 * input.TexCoord.y, depth, 1);
+		float4 vsPosition = float4(2 * input.TexCoord.x - 1, 1 - 2 * input.TexCoord.y, nativeDepth, 1);
 
 		float4 csPosition = mul(FrameBuffer::CameraViewProjInverse[0], vsPosition);
 		csPosition.xyz /= csPosition.w;

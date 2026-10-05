@@ -68,7 +68,7 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			T("feature.vr.description", "Provides VR-specific optimizations and enhancements for Open Shaders, improving performance and visual quality in virtual reality environments."),
+			T("feature.vr.description", "Provides VR-specific optimizations and enhancements for {brand}, improving performance and visual quality in virtual reality environments."),
 			{ T("feature.vr.key_feature_1", "Depth buffer culling optimization for VR performance"),
 				T("feature.vr.key_feature_2", "ImGuiVRHelper-driven in-headset menu, overlay, and controller input"),
 				T("feature.vr.key_feature_3", "Customizable controller button mappings via the helper bindings table"),

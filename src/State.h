@@ -285,6 +285,11 @@ public:
 
 	bool frameAnnotations = false;
 
+	/// frameAnnotations while a capture tool is attached; refreshed once per frame
+	/// so per-draw Begin/End events stay paired.
+	bool drawAnnotationsActive = false;
+	void RefreshDrawAnnotations();
+
 	// Multiplies ISRefraction.hlsl's heat-shimmer strength. 1.0 preserves current/vanilla
 	// behavior; lower values reduce warping, 0 disables it.
 	float refractionScale = 1.0f;
@@ -396,6 +401,8 @@ public:
 	 * @param a_prepass Whether this is a prepass rendering phase.
 	 */
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
+	/** @brief Publishes feature constants after render-thread resource or readiness changes. */
+	void UpdateFeatureData(bool a_inWorld, bool a_advanceFrameState = false);
 	/**
 	 * @brief Updates sky shader permutation based on the current render pass.
 	 * @param a_pass The render pass to inspect.

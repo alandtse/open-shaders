@@ -99,7 +99,7 @@ generated from the game log, so refresh it whenever shader permutations change.
 -   **Requires Debug logging** (CS menu → Advanced → Log Level). The log uses single-letter
     levels — the define dumps are `[D] Compiling <shader> with <DEFINES> …` lines (thousands
     of them on a full compile).
--   Log path: `<MyDocuments>/My Games/<Skyrim edition>/SKSE/CommunityShaders.log` (note
+-   Log path: `<MyDocuments>/My Games/<Skyrim edition>/SKSE/OpenShaders.log` (note
     `MyDocuments` may be redirected, e.g. to `E:\Documents`).
 
 ```bash
@@ -108,7 +108,7 @@ cmake --build ./build/ALL --target generate_shader_configs
 
 # Or one edition from a specific log:
 pwsh .github/configs/generate-shader-configs.ps1 \
-  -LogFile "<…>/CommunityShaders.log" -OutputName shader-validation.yaml      # SE
+  -LogFile "<…>/OpenShaders.log" -OutputName shader-validation.yaml      # SE
   # -OutputName shader-validation-vr.yaml for VR
 ```
 

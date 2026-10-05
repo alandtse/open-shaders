@@ -129,3 +129,75 @@ TEST_CASE("PruneIf with nothing matching removes nothing and leaves entries inta
 	CHECK(removed == 0);
 	REQUIRE(m.Get("Sky/01.pso").has_value());
 }
+
+TEST_CASE("Content keys round-trip alongside digests", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto file = dir.path / "Manifest.json";
+	{
+		Manifest m;
+		m.Load(file);
+		m.Set("Lighting/10.pso", "digest");
+		m.SetContentKey("Lighting/10.pso", "key");
+		REQUIRE(m.Save());
+	}
+	Manifest loaded;
+	loaded.Load(file);
+	CHECK(loaded.Get("Lighting/10.pso") == "digest");
+	CHECK(loaded.GetContentKey("Lighting/10.pso") == "key");
+	CHECK_FALSE(loaded.GetContentKey("Lighting/11.pso").has_value());
+}
+
+TEST_CASE("A manifest written before content keys existed loads with none", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto file = dir.path / "Manifest.json";
+	std::ofstream(file) << R"({"schemaVersion":1,"entries":{"a.pso":"d"}})";
+	Manifest m;
+	m.Load(file);
+	CHECK(m.Get("a.pso") == "d");
+	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+}
+
+TEST_CASE("Malformed content keys are ignored without dropping digests", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto file = dir.path / "Manifest.json";
+	std::ofstream(file) << R"({"entries":{"a.pso":"d"},"contentKeys":{"a.pso":7,"b.pso":"k"}})";
+	Manifest m;
+	m.Load(file);
+	CHECK(m.Get("a.pso") == "d");
+	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+	CHECK(m.GetContentKey("b.pso") == "k");
+}
+
+TEST_CASE("SetContentKey alone is persisted by Save and Load of a missing file clears keys", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	const auto file = dir.path / "Manifest.json";
+	Manifest m;
+	m.Load(file);
+	m.SetContentKey("a.pso", "k");
+	REQUIRE(m.Save());
+	CHECK(fs::exists(file));
+
+	Manifest other;
+	other.Load(dir.path / "missing.json");
+	CHECK_FALSE(other.GetContentKey("a.pso").has_value());
+	m.Load(dir.path / "missing.json");
+	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+}
+
+TEST_CASE("PruneIf removes a pruned entry's content key too", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	Manifest m;
+	m.Load(dir.path / "Manifest.json");
+	m.Set("a.pso", "d");
+	m.SetContentKey("a.pso", "k");
+	m.Set("b.pso", "d2");
+	m.SetContentKey("b.pso", "k2");
+	CHECK(m.PruneIf([](const std::string& p) { return p == "a.pso"; }) == 1);
+	CHECK_FALSE(m.GetContentKey("a.pso").has_value());
+	CHECK(m.GetContentKey("b.pso") == "k2");
+}

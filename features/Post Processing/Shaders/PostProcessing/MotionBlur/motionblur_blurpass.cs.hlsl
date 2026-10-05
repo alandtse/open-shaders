@@ -7,6 +7,7 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/MotionBlur.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/VR.hlsli"
 #include "PostProcessing/common.hlsli"
 
@@ -115,7 +116,7 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 	// Sample center pixel data
 	float2 texCoord = (pixelPos + 0.5f) / float2(dimensions);
 	float4 centerColor = TexColor.SampleLevel(LinearSampler, texCoord, 0);
-	float centerDepth = TexDepth.SampleLevel(PointSampler, texCoord, 0);
+	float centerDepth = FrameBuffer::ToStandardDepth(TexDepth.SampleLevel(PointSampler, texCoord, 0));
 	float2 centerVelocity = TexVelocity.SampleLevel(PointSampler, GetVelocityTexCoord(texCoord), 0).xy;
 
 	centerVelocity *= g_VelocityParams.x;
@@ -172,8 +173,8 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 		sampleTexCoordsBck = Stereo::ClampToEyeUV(sampleTexCoordsBck, eyeIndex);
 
 		// Sample depth and velocity
-		float sampleDepthFwd = TexDepth.SampleLevel(PointSampler, sampleTexCoordsFwd, 0);
-		float sampleDepthBck = TexDepth.SampleLevel(PointSampler, sampleTexCoordsBck, 0);
+		float sampleDepthFwd = FrameBuffer::ToStandardDepth(TexDepth.SampleLevel(PointSampler, sampleTexCoordsFwd, 0));
+		float sampleDepthBck = FrameBuffer::ToStandardDepth(TexDepth.SampleLevel(PointSampler, sampleTexCoordsBck, 0));
 
 		float4 rawVelocityDepthFwd = TexVelocity.SampleLevel(PointSampler, GetVelocityTexCoord(sampleTexCoordsFwd), 0);
 		float4 rawVelocityDepthBck = TexVelocity.SampleLevel(PointSampler, GetVelocityTexCoord(sampleTexCoordsBck), 0);

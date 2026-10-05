@@ -124,6 +124,12 @@ namespace Util
 {
 	inline constexpr float kFallbackCameraAspect = 16.0f / 9.0f;
 
+	/**
+	 * @brief Address of the per-frame call inside the engine's main update that main-thread hooks wrap.
+	 *        Several features chain a thunk here, so the address is resolved in one place.
+	 */
+	[[nodiscard]] std::uintptr_t MainUpdateCallSite();
+
 	/** @brief Forces weather and refreshes its cloud passes and sky model. */
 	void ForceWeather(RE::Sky* a_sky, RE::TESWeather* a_weather, bool a_override);
 
@@ -223,8 +229,12 @@ namespace Util
 		{
 			if (!std::isfinite(degrees))
 				return 0.0f;
-			while (degrees < 0.0f) degrees += 360.0f;
-			while (degrees >= 360.0f) degrees -= 360.0f;
+			degrees = std::fmod(degrees, 360.0f);
+			if (degrees < 0.0f)
+				degrees += 360.0f;
+			// A tiny negative value plus 360.0f rounds to exactly 360.0f.
+			if (degrees >= 360.0f)
+				degrees -= 360.0f;
 			return degrees;
 		}
 
@@ -232,8 +242,11 @@ namespace Util
 		{
 			if (!std::isfinite(degrees))
 				return 0.0f;
-			while (degrees > 180.0f) degrees -= 360.0f;
-			while (degrees < -180.0f) degrees += 360.0f;
+			degrees = std::fmod(degrees, 360.0f);
+			if (degrees > 180.0f)
+				degrees -= 360.0f;
+			if (degrees < -180.0f)
+				degrees += 360.0f;
 			return degrees;
 		}
 
