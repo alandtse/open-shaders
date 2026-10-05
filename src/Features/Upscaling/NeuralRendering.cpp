@@ -1081,6 +1081,90 @@ void NeuralRendering::DrawRuntimeDiagnostics() const
 		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 }
 
+namespace
+{
+	constexpr uint32_t kMaterialMapFilterColumns = 3;
+
+	/** @brief Draws the by-material strength and material-map controls; returns true when any value changed. */
+	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
+	{
+		bool changed = false;
+		if (ImGui::Checkbox(T(TKEY("material_strength"), "Apply Neural Rendering by Material"), &tuning.materialStrength))
+			changed = true;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("material_strength_tooltip"),
+				"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. A material set to 0 keeps its unprocessed image, so the defaults leave only skin, hair and eyes processed. Needs the deferred pass; without its material lane the whole frame is processed."));
+		ImGui::BeginDisabled(!tuning.materialStrength);
+		ImGui::PushID("materialStrength");
+		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
+		if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
+			tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
+			changed = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("edge_softness_tooltip"),
+				"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
+		ImGui::PopID();
+		ImGui::EndDisabled();
+		if (tuning.materialStrength && !materialStrengthAvailable)
+			Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
+		if (ImGui::Checkbox(T(TKEY("material_map"), "Show Material Map"), &tuning.showMaterialMap))
+			changed = true;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("material_map_tooltip"),
+				"Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a grayscale ramp of the strength Apply Neural Rendering by Material gives that pixel, read at the pixel without Edge Softness and 1.0 while that setting is off. Needs the deferred pass; unlabelled pixels follow Everything Else."));
+		ImGui::BeginDisabled(!tuning.showMaterialMap);
+		ImGui::PushID("materialMap");
+		int materialMapMode = static_cast<int>(std::min(tuning.materialMapMode, NR::MaterialMap::kMaxMode));
+		const std::array<const char*, NR::MaterialMap::kMaxMode + 1> materialMapModeLabels{
+			T(TKEY("material_map_category"), "Category colours"),
+			T(TKEY("material_map_strength"), "Strength"),
+		};
+		if (ImGui::Combo(T(TKEY("material_map_mode"), "Map Mode"), &materialMapMode, materialMapModeLabels.data(), static_cast<int>(materialMapModeLabels.size()))) {
+			tuning.materialMapMode = static_cast<uint32_t>(materialMapMode);
+			changed = true;
+		}
+		const auto materialMapFilter = [&tuning, &changed](const char* label, uint32_t category) {
+			bool enabled = NR::MaterialMap::Contains(tuning.materialMapFilter, category);
+			if (ImGui::Checkbox(label, &enabled)) {
+				tuning.materialMapFilter = NR::MaterialMap::Set(tuning.materialMapFilter, category, enabled);
+				changed = true;
+			}
+		};
+		const std::array<const char*, NR::MaterialMap::kBits> materialMapFilterLabels{
+			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
+			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("material_other"), "Everything Else")
+		};
+		const std::array<uint32_t, NR::MaterialMap::kBits> materialMapFilterCategories{
+			NR::MaterialStrength::kSkin, NR::MaterialStrength::kHair, NR::MaterialStrength::kEyes,
+			NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kNone
+		};
+		ImGui::TextUnformatted(T(TKEY("material_map_filter"), "Show"));
+		for (uint32_t i = 0; i < NR::MaterialMap::kBits; ++i) {
+			const auto& color = NR::MaterialMap::kColors[materialMapFilterCategories[i]];
+			if (i % kMaterialMapFilterColumns != 0)
+				ImGui::SameLine();
+			ImGui::ColorButton(std::format("##materialMapColor{}", i).c_str(), ImVec4(color.r, color.g, color.b, 1.0f),
+				ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoDragDrop,
+				ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
+			ImGui::SameLine();
+			materialMapFilter(materialMapFilterLabels[i], materialMapFilterCategories[i]);
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("material_map_filter_tooltip"),
+				"Each swatch is the colour that material is drawn in. A material that is off keeps its normal pixels."));
+		ImGui::PopID();
+		ImGui::EndDisabled();
+		return changed;
+	}
+}
+
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
@@ -1129,6 +1213,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	if (ImGui::CollapsingHeader(T(TKEY("category_tone"), "Category Tone Strengths"))) {
+		ImGui::PushID("categoryTone");
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("category_tone_tooltip"),
 				"Scales Neural Rendering's tone edit per material: 0 leaves a material's brightness untouched, 1 is the normal edit, and 2 doubles it. Materials the deferred buffer does not label are unaffected."));
@@ -1137,77 +1222,12 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.eyeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.foliageToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.landscapeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::PopID();
 	}
 	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
-	if (ImGui::Checkbox(T(TKEY("material_strength"), "Apply Neural Rendering by Material"), &tuning.materialStrength))
-		changed = true;
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("material_strength_tooltip"),
-			"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. Needs the deferred pass; without its material lane the whole frame is processed."));
-	ImGui::BeginDisabled(!tuning.materialStrength);
-	changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	changed |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
-	if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
-		tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
-		changed = true;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("edge_softness_tooltip"),
-			"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
-	ImGui::EndDisabled();
-	if (tuning.materialStrength && !materialStrengthAvailable.load(std::memory_order_relaxed))
-		Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
-	if (ImGui::Checkbox(T(TKEY("material_map"), "Show Material Map"), &tuning.showMaterialMap))
-		changed = true;
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("material_map_tooltip"),
-			"Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a grayscale ramp of the strength Apply Neural Rendering by Material gives that pixel, read at the pixel without Edge Softness and 1.0 while that setting is off. Needs the deferred pass; unlabelled pixels follow Everything Else."));
-	ImGui::BeginDisabled(!tuning.showMaterialMap);
-	int materialMapMode = static_cast<int>(std::min(tuning.materialMapMode, NR::MaterialMap::kMaxMode));
-	const std::array<const char*, NR::MaterialMap::kMaxMode + 1> materialMapModeLabels{
-		T(TKEY("material_map_category"), "Category colours"),
-		T(TKEY("material_map_strength"), "Strength"),
-	};
-	if (ImGui::Combo(T(TKEY("material_map_mode"), "Map Mode"), &materialMapMode, materialMapModeLabels.data(), static_cast<int>(materialMapModeLabels.size()))) {
-		tuning.materialMapMode = static_cast<uint32_t>(materialMapMode);
-		changed = true;
-	}
-	const auto materialMapFilter = [&tuning, &changed](const char* label, uint32_t category) {
-		bool enabled = NR::MaterialMap::Contains(tuning.materialMapFilter, category);
-		if (ImGui::Checkbox(label, &enabled)) {
-			tuning.materialMapFilter = NR::MaterialMap::Set(tuning.materialMapFilter, category, enabled);
-			changed = true;
-		}
-	};
-	const std::array<const char*, NR::MaterialMap::kBits> materialMapFilterLabels{
-		T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
-		T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("material_other"), "Everything Else")
-	};
-	const std::array<uint32_t, NR::MaterialMap::kBits> materialMapFilterCategories{
-		NR::MaterialStrength::kSkin, NR::MaterialStrength::kHair, NR::MaterialStrength::kEyes,
-		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kNone
-	};
-	ImGui::TextUnformatted(T(TKEY("material_map_filter"), "Show"));
-	for (uint32_t i = 0; i < NR::MaterialMap::kBits; ++i) {
-		const auto& color = NR::MaterialMap::kColors[materialMapFilterCategories[i]];
-		ImGui::SameLine();
-		ImGui::ColorButton(std::format("##materialMapColor{}", i).c_str(), ImVec4(color.r, color.g, color.b, 1.0f),
-			ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoDragDrop,
-			ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
-		ImGui::SameLine();
-		materialMapFilter(materialMapFilterLabels[i], materialMapFilterCategories[i]);
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("material_map_filter_tooltip"),
-			"Each swatch is the colour that material is drawn in. A material that is off keeps its normal pixels."));
-	ImGui::EndDisabled();
+	changed |= DrawMaterialControls(tuning, materialStrengthAvailable.load(std::memory_order_relaxed));
 	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 		changed = true;
 		resetHistory = true;

@@ -68,3 +68,14 @@
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Landscape, low, high), 0.75);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(200u, low, high), 0.125);
 }
+
+/// @tags neural-rendering
+/// DebugColor keeps the colours the Neural Rendering settings legend draws for each category
+[numthreads(1, 1, 1)] void TestDebugColorMatchesTheLegend() {
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::None) == float3(0.05, 0.05, 0.05)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Skin) == float3(1.0, 0.0, 0.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Hair) == float3(1.0, 0.5, 0.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Eyes) == float3(1.0, 1.0, 0.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Foliage) == float3(0.0, 1.0, 0.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Landscape) == float3(0.0, 1.0, 1.0)));
+}

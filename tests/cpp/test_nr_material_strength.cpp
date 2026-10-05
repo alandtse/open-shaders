@@ -136,3 +136,16 @@ TEST_CASE("Tuning Sanitize bounds the material map mode and filter", "[nr]")
 	REQUIRE(tuning.materialMapMode == NR::MaterialMap::kMaxMode);
 	REQUIRE(tuning.materialMapFilter == NR::MaterialMap::kAllCategories);
 }
+
+TEST_CASE("MaterialMap legend colours match the shader's DebugColor", "[nr]")
+{
+	constexpr float expected[NR::MaterialMap::kBits][3]{
+		{ 0.05f, 0.05f, 0.05f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.5f, 0.0f },
+		{ 1.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 1.0f }
+	};
+	for (uint32_t i = 0; i < NR::MaterialMap::kBits; ++i) {
+		REQUIRE(NR::MaterialMap::kColors[i].r == expected[i][0]);
+		REQUIRE(NR::MaterialMap::kColors[i].g == expected[i][1]);
+		REQUIRE(NR::MaterialMap::kColors[i].b == expected[i][2]);
+	}
+}
