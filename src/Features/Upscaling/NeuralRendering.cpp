@@ -58,7 +58,7 @@ namespace
 	{
 		if (state == NR::RuntimeAvailability::State::kMissing)
 			return T(TKEY("runtime_missing_fix"), "Install nvngx_dlssnr.dll under Data\\Shaders\\Upscaling\\Streamline\\.");
-		return T(TKEY("runtime_build_fix"), "Replace it with one of the validated 310.8 builds listed in docs/development/neural-rendering.md.");
+		return T(TKEY("runtime_build_fix"), "Replace it with a validated 310.8 build of that file.");
 	}
 
 	/**
@@ -1272,7 +1272,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
-								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
+								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
