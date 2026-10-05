@@ -505,15 +505,30 @@ namespace SIE
 	/// Least recently used blobs beyond this are evicted; a full cold build stores about 120 MB.
 	static constexpr uint64_t kContentStoreMaxBytes = 4ull << 30;
 
+	static std::filesystem::path ContentStorePath()
+	{
+		return std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName;
+	}
+
+	/// Stored blobs outlive plugin builds, so a change to how a blob is produced (strip flags, post-processing) must bump this to orphan the old ones.
+	static constexpr std::string_view kContentStoreSchema = "store-v1";
+
+	static Util::ContentHash::Hash128 StoreKey(const Util::ContentHash::Hash128& a_key)
+	{
+		return Util::ContentHash::CombineHashes(a_key, Util::ContentHash::HashString(kContentStoreSchema));
+	}
+
 	/// Content-addressed blob store inside the disk cache; null while the setting is off.
 	static Util::ShaderContentStore::Store* GetContentStore()
 	{
 		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
 			return nullptr;
 		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
-			static Util::ShaderContentStore::Store created(
-				std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName, kContentStoreMaxBytes);
-			logger::info("Shader content store: trimmed {} entries", created.Trim(kContentStoreMaxBytes));
+			static Util::ShaderContentStore::Store created(ContentStorePath(), kContentStoreMaxBytes);
+			const auto trimmed = created.Trim(kContentStoreMaxBytes);
+			const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
+			logger::info("Shader content store: {} blobs, {} MB at {}, trimmed {} entries", usage.blobs, usage.bytes >> 20,
+				std::filesystem::absolute(ContentStorePath()).string(), trimmed);
 			return created;
 		}();
 		return &store;
@@ -522,7 +537,7 @@ namespace SIE
 	/// An intact stored blob for this key, or null on a miss or corrupt entry.
 	static winrt::com_ptr<ID3DBlob> ReadStoredBlob(const Util::ShaderContentStore::Store& a_store, const Util::ContentHash::Hash128& a_key)
 	{
-		const auto stored = a_store.Get(a_key);
+		const auto stored = a_store.Get(StoreKey(a_key));
 		winrt::com_ptr<ID3DBlob> blob;
 		if (stored.empty() || FAILED(D3DCreateBlob(stored.size(), blob.put())))
 			return nullptr;
@@ -2250,7 +2265,7 @@ namespace SIE
 			                      shared.origin == SharedCompileSource::PreviousCache;
 			if (storable && contentKey)
 				if (const auto* contentStore = GetContentStore())
-					contentStore->Put(*contentKey, shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
+					contentStore->Put(StoreKey(*contentKey), shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
 			// Relinquish this task's Pending claim before skipping a stale disk-cache write.
 			if (cache.IsGenerationStale(a_taskGeneration)) {
@@ -4561,10 +4576,18 @@ namespace SIE
 	{
 		compilationSet.digestMissTasks++;
 	}
+	ShaderCache::ContentStoreUsage ShaderCache::GetContentStoreUsage()
+	{
+		const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
+		return { std::filesystem::absolute(ContentStorePath()), usage.blobs, usage.bytes, kContentStoreMaxBytes };
+	}
+
 	void ShaderCache::ClearContentStore()
 	{
-		if (const auto* store = GetContentStore())
-			store->Clear();
+		std::error_code ec;
+		std::filesystem::remove_all(ContentStorePath(), ec);
+		if (ec)
+			logger::warn("Failed to clear the persistent shader store: {}", ec.message());
 	}
 
 	void ShaderCache::IncContentStoreHitTasks()

@@ -820,8 +820,17 @@ namespace SIE
 		void IncDigestMissTasks();
 		/** @brief Counts a compile satisfied by the content-addressed store. */
 		void IncContentStoreHitTasks();
-		/** @brief Deletes every blob in the persistent store (no-op while it is disabled). */
+		/** @brief Deletes every blob in the persistent store, whether or not the setting is on. */
 		void ClearContentStore();
+		/** @brief Where the persistent store lives and how much it holds; usable while the setting is off. */
+		struct ContentStoreUsage
+		{
+			std::filesystem::path path;
+			uint64_t blobs = 0;
+			uint64_t bytes = 0;
+			uint64_t maxBytes = 0;
+		};
+		ContentStoreUsage GetContentStoreUsage();
 		uint64_t GetContentStoreHitTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();

@@ -21,6 +21,30 @@
 /// Lives in Data/ShaderCache/ContentStore, which cache invalidation leaves in place.
 namespace Util::ShaderContentStore
 {
+	/// How many blobs a store holds and how much disk they use.
+	struct Usage
+	{
+		uint64_t blobs = 0;
+		uint64_t bytes = 0;
+	};
+
+	/// Totals the blobs under a store root without opening the store.
+	inline Usage MeasureUsage(const std::filesystem::path& a_root)
+	{
+		Usage usage;
+		std::error_code ec;
+		for (std::filesystem::recursive_directory_iterator it(a_root, ec), end; !ec && it != end; it.increment(ec)) {
+			if (!it->is_regular_file(ec) || it->path().extension() != ".bin")
+				continue;
+			const auto size = it->file_size(ec);
+			if (ec)
+				continue;
+			++usage.blobs;
+			usage.bytes += size;
+		}
+		return usage;
+	}
+
 	/// Sharded on-disk blob store addressed by a CompileDedupe key; safe for concurrent use by compile threads.
 	class Store
 	{

@@ -23,6 +23,52 @@
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 
+namespace
+{
+	constexpr double kStoreUsageRefreshSeconds = 5.0;
+	constexpr double kBytesPerMB = 1024.0 * 1024.0;
+
+	/// Location, size and restore count of the persistent shader store, with a button to empty it.
+	void DrawContentStoreDetails(SIE::ShaderCache* a_cache, bool a_enabled)
+	{
+		static SIE::ShaderCache::ContentStoreUsage usage;
+		static double lastRefresh = -kStoreUsageRefreshSeconds;
+		const double now = ImGui::GetTime();
+		if (now - lastRefresh >= kStoreUsageRefreshSeconds) {
+			usage = a_cache->GetContentStoreUsage();
+			lastRefresh = now;
+		}
+		if (!a_enabled && usage.blobs == 0)
+			return;
+
+		ImGui::Indent();
+		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_location",
+														  { { "path", usage.path.string() } }, "Location: {path}")
+									  .c_str());
+		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_usage",
+														  { { "count", std::to_string(usage.blobs) },
+															  { "size", std::format("{:.0f}", static_cast<double>(usage.bytes) / kBytesPerMB) },
+															  { "cap", std::format("{:.0f}", static_cast<double>(usage.maxBytes) / kBytesPerMB) } },
+														  "Stored: {count} shaders, {size} MB (limit {cap} MB)")
+									  .c_str());
+		if (a_enabled)
+			ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits",
+															  { { "count", std::to_string(a_cache->GetContentStoreHitTasks()) } },
+															  "Restored this session: {count}")
+										  .c_str());
+		if (ImGui::Button(T("menu.advanced.content_store_clear", "Clear Store"))) {
+			a_cache->ClearContentStore();
+			lastRefresh = -kStoreUsageRefreshSeconds;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.advanced.content_store_clear_tooltip",
+								  "Deletes every stored shader. Use this if a shader looks wrong after being restored; "
+								  "the next compile rebuilds the store from scratch. Shaders already in the shader cache are kept."));
+		}
+		ImGui::Unindent();
+	}
+}
+
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
@@ -178,16 +224,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 							  "Data/ShaderCache/ContentStore, trimmed to the least recently used. "
 							  "Takes effect for shaders compiled from now on."));
 	}
-	if (contentStore) {
-		ImGui::SameLine();
-		if (ImGui::Button(T("menu.advanced.content_store_clear", "Clear Store")))
-			shaderCache->ClearContentStore();
-		ImGui::SameLine();
-		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits",
-														  { { "count", std::to_string(shaderCache->GetContentStoreHitTasks()) } },
-														  "Restored this session: {count}")
-									  .c_str());
-	}
+	DrawContentStoreDetails(shaderCache, contentStore);
 
 	// Avoid flow control compiler flag (transient — not saved to config because the
 	// right setting depends on the current scene, not the user).

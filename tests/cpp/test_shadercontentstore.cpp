@@ -308,3 +308,18 @@ TEST_CASE("Clear removes every blob and later Puts recreate the store", "[Shader
 	REQUIRE(store.Put(key, blob.data(), blob.size()));
 	CHECK(store.Get(key) == blob);
 }
+
+TEST_CASE("MeasureUsage totals blobs and ignores other files", "[ShaderContentStore]")
+{
+	TempDir dir;
+	const auto root = dir.path / "store";
+	Store store(root);
+	const std::vector<char> blob(100, 'x');
+	REQUIRE(store.Put(MakeKey(Base()), blob.data(), blob.size()));
+	std::ofstream(root / "stray.txt") << "not a blob";
+
+	const auto usage = MeasureUsage(root);
+	CHECK(usage.blobs == 1);
+	CHECK(usage.bytes == blob.size());
+	CHECK(MeasureUsage(dir.path / "missing").blobs == 0);
+}
