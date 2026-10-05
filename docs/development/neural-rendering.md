@@ -435,7 +435,7 @@ so it shows full strength (red) everywhere.
 
 DevBench sets the three keys under `settings.neuralRenderingTuning` and reads
 `showMaterialMap` back from `neuralRenderingStatus`.
-`showMaterialMap` is not carried across launches: loading the settings resets it to off, so
+`showMaterialMap` is not carried across launches: the launch resets it to off, so
 a saved debug tint cannot colour characters later. **Include Nearby Characters** sits beside
 **Limit to Tracked Actor**, since both set how much of the frame Neural Rendering evaluates. The
 developer-mode controls (the NGX automatic-mask toggle, crop fit, the crop-cost sweep, and the

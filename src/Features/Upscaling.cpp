@@ -1176,8 +1176,6 @@ void Upscaling::LoadSettings(json& o_json)
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
-	// A debug tint saved as on would colour characters on every later launch.
-	settings.neuralRenderingTuning.showMaterialMap = false;
 	neuralRendering.ResetHistory();
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
@@ -1256,6 +1254,9 @@ void Upscaling::RestoreDefaultSettings()
 
 void Upscaling::DataLoaded()
 {
+	// A debug tint saved as on would colour characters on every later launch; only the launch resets it,
+	// so a settings write while the game runs can still turn it on.
+	settings.neuralRenderingTuning.showMaterialMap = false;
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
 		logger::warn("[Upscaling] Skipping data-loaded upscaling adjustments because OpenComposite has {}=true.", blocker.settingName);
