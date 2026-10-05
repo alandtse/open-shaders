@@ -197,7 +197,9 @@ def main():
             print(f"  {error}", file=sys.stderr)
         return 1
 
-    pyfomod.write(root, str(args.output))
+    fomod_dir = args.output / "fomod"
+    fomod_dir.mkdir(parents=True, exist_ok=True)
+    pyfomod.write(root, (fomod_dir / "info.xml", fomod_dir / "ModuleConfig.xml"))
 
     header_image = config["mod"].get("header_image")
     if header_image:

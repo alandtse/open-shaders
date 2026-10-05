@@ -61,6 +61,10 @@ class BuildFomodPackageTests(unittest.TestCase):
         self.assertTrue((self.out / "ShaderCache-SE-AE/ShaderCache/Info.ini").is_file())
         self.assertTrue((self.out / "ShaderCache-VR/ShaderCache/Info.ini").is_file())
 
+    def test_module_config_has_the_exact_filename(self):
+        self.assertEqual(self.run_builder().returncode, 0)
+        self.assertIn("ModuleConfig.xml", [entry.name for entry in (self.out / "fomod").iterdir()])
+
     def test_missing_cache_is_dropped_not_fatal(self):
         write_cache(self.root / "vr")
         result = self.run_builder(self.root / "no-such-se", self.root / "vr")
