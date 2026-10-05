@@ -1,5 +1,6 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRStereoEffects.hlsli"
 
@@ -44,7 +45,7 @@ PS_OUTPUT main(PS_INPUT input)
 	depthScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
 		screenPosition, eyeIndex, DepthTex, FrameBuffer::DynamicResolutionParams1.xy);
 #	endif
-	float depth = DepthTex.Sample(DepthSampler, depthScreenPosition).x;
+	float depth = FrameBuffer::ToStandardDepth(DepthTex.Sample(DepthSampler, depthScreenPosition).x);
 
 #	ifdef VR
 	if (depth < 0.0001) {  // not a valid location
@@ -87,17 +88,17 @@ PS_OUTPUT main(PS_INPUT input)
 		previousDepthPosition = VRStereoEffects::ClampStereoUVToEyeTexel(previousDepthPosition, eyeIndex, PreviousDepthTex);
 #	endif
 		float previousVl = PreviousFrameTex.Sample(PreviousFrameSampler, previousScreenPosition).x;
-		float previousDepth = PreviousDepthTex.Sample(PreviousDepthSampler,
+		float previousDepth = FrameBuffer::ToStandardDepth(PreviousDepthTex.Sample(PreviousDepthSampler,
 #	ifndef VR
-												  previousScreenPosition
+																			   previousScreenPosition
 #	else
-												  // In VR with dynamic resolution enabled, there's a bug with the depth stencil.
-												  // The depth stencil from ISDepthBufferCopy is actually full size and not scaled.
-												  // Thus there's never a need to scale it down.
-												  previousDepthPosition
+																			   // In VR with dynamic resolution enabled, there's a bug with the depth stencil.
+																			   // The depth stencil from ISDepthBufferCopy is actually full size and not scaled.
+																			   // Thus there's never a need to scale it down.
+																			   previousDepthPosition
 #	endif
-												  )
-		                          .x;
+																			   )
+				.x);
 
 #	ifdef VR
 		isValid = isValid && abs(previousDepth) > 0.0001;

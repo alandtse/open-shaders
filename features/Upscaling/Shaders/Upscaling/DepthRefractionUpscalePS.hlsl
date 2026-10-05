@@ -32,12 +32,12 @@ cbuffer JitterCB : register(b0)
 float SampleMinDepth2x2(float2 uv)
 {
 	float4 depthQuad = DepthTex.GatherRed(LinearSampler, uv);
-	return min(min(depthQuad.x, depthQuad.y), min(depthQuad.z, depthQuad.w));
+	return FrameBuffer::NearestDepth(depthQuad);
 }
 
 float Min4(float4 v)
 {
-	return min(min(v.x, v.y), min(v.z, v.w));
+	return FrameBuffer::NearestDepth(v);
 }
 
 float SampleMinDepthWideGather(float2 uv)
@@ -47,7 +47,7 @@ float SampleMinDepthWideGather(float2 uv)
 	float d1 = Min4(DepthTex.GatherRed(LinearSampler, uv, int2(1, -1)));
 	float d2 = Min4(DepthTex.GatherRed(LinearSampler, uv, int2(-1, 1)));
 	float d3 = Min4(DepthTex.GatherRed(LinearSampler, uv, int2(1, 1)));
-	return min(min(d0, d1), min(d2, d3));
+	return FrameBuffer::NearestDepth(float4(d0, d1, d2, d3));
 }
 
 PS_OUTPUT main(PS_INPUT input)

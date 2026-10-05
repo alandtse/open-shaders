@@ -37,7 +37,7 @@ Usage:
       [--out dist/shader-cache] [--jobs N] [--skip-compile]
 
 The plugin version must byte-match Plugin::VERSION.string() ("1-7-1-0" form,
-visible in CommunityShaders.log as "Saved disk cache info (plugin version: X)").
+visible in OpenShaders.log as "Saved disk cache info (plugin version: X)").
 """
 
 import argparse

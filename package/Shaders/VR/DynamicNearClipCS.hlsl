@@ -1,3 +1,5 @@
+#include "Common/ReverseZ.hlsli"
+
 Texture2D<float> SceneDepth : register(t0);
 Texture2D<float> TerrainDepth : register(t1);
 RWStructuredBuffer<uint4> EyeResults : register(u0);
@@ -51,9 +53,9 @@ void InsertClosest(inout float4 values, float candidate)
 	{
 		[unroll] for (uint x = 0; x < 2; ++x)
 		{
-			float depth = SceneDepth.Load(int3(pixel + uint2(x, y), 0));
+			float depth = FrameBuffer::ToStandardDepth(SceneDepth.Load(int3(pixel + uint2(x, y), 0)));
 			if (HasTerrainDepth)
-				depth = min(depth, TerrainDepth.Load(int3(pixel + uint2(x, y), 0)));
+				depth = min(depth, FrameBuffer::ToStandardDepth(TerrainDepth.Load(int3(pixel + uint2(x, y), 0))));
 			if (isfinite(depth) && depth > 0.0 && depth < 1.0) {
 				float distance = CameraData.w / (CameraData.x - depth * CameraData.z);
 				if (isfinite(distance) && distance > 0.0 && distance < CameraData.x) {

@@ -18,6 +18,15 @@ namespace
 	}
 }
 
+std::string I18n::ExpandBrand(std::string text)
+{
+	constexpr std::string_view token = "{brand}";
+	for (size_t pos = text.find(token); pos != std::string::npos; pos = text.find(token, pos + Plugin::DISPLAY_NAME.size())) {
+		text.replace(pos, token.size(), Plugin::DISPLAY_NAME);
+	}
+	return text;
+}
+
 void I18n::Init()
 {
 	std::unique_lock lock(mutex_);
@@ -95,7 +104,7 @@ const char* I18n::Get(std::string_view key, const char* defaultText) const
 		}
 
 		// Store string in deque (pointer-stable: deque never invalidates on push_back)
-		defaultStorage_.emplace_back(defaultText ? std::string(defaultText) : keyStr);
+		defaultStorage_.emplace_back(defaultText ? ExpandBrand(defaultText) : keyStr);
 		const char* ptr = defaultStorage_.back().c_str();
 		defaultCache_.emplace(keyStr, ptr);
 		return ptr;
@@ -277,7 +286,7 @@ bool I18n::LoadLocaleInto(const std::string& locale,
 				continue;
 
 			if (value.is_string()) {
-				target[key] = value.get<std::string>();
+				target[key] = ExpandBrand(value.get<std::string>());
 				++count;
 			}
 		}

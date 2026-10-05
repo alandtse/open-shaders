@@ -19,7 +19,7 @@
 namespace
 {
 	namespace API = ImGuiVRHelperPluginAPI;
-	constexpr auto kClientName = "Open Shaders";
+	constexpr auto kClientName = Plugin::DISPLAY_NAME;
 
 	// One VR feature singleton, so a single client of each kind is file-local.
 	API::Client g_client;  // focus-driven menu client

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/Game.h"
 #include "Utils/LazyShader.h"
 
 struct GrassCollision : Feature
@@ -181,8 +182,7 @@ public:
 		static void Install()
 		{
 			stl::write_vfunc<0x6, BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
-			const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
-			stl::write_thunk_call<MainUpdate_QueueCollisions>(REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE));
+			stl::write_thunk_call<MainUpdate_QueueCollisions>(Util::MainUpdateCallSite());
 			logger::info("[GRASS COLLISION] Installed hooks");
 		}
 	};

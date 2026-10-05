@@ -1,4 +1,5 @@
 #include "Streamline.h"
+#include "Features/ReverseZ.h"
 
 #include <algorithm>
 #include <bit>
@@ -470,7 +471,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.clipToCameraView = std::bit_cast<sl::float4x4>(cameraMatrices.clipToCameraView);
 	slConstants.clipToPrevClip = std::bit_cast<sl::float4x4>(cameraMatrices.clipToPrevClip);
 	slConstants.prevClipToClip = std::bit_cast<sl::float4x4>(cameraMatrices.prevClipToClip);
-	slConstants.depthInverted = sl::Boolean::eFalse;
+	slConstants.depthInverted = globals::features::reverseZ.IsActive() ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;

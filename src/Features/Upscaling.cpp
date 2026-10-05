@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -560,6 +560,8 @@ namespace
 	{
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
+		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
+		const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 		return json{
 			{ "enabled", upscaling->settings.neuralRenderingEnabled },
 			{ "state", magic_enum::enum_name(status.state) },
@@ -572,6 +574,10 @@ namespace
 			{ "ngxResult", json::array({ status.ngxResult[0], status.ngxResult[1] }) },
 			{ "lastAppliedFrame", status.lastAppliedFrame },
 			{ "appliedFrames", status.appliedFrames },
+			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
+			{ "runtimeVersion", availability.version },
+			{ "runtimeDetail", availability.reason },
+			{ "runtimeLoadable", availability.AllowsLoad(developerMode) },
 		};
 	}
 
@@ -579,6 +585,12 @@ namespace
 	void RetryNeuralRendering(Feature* self, const json&)
 	{
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
+	}
+
+	/** @brief Devbench handler for Upscaling's calibrateNeuralCrop command. */
+	void CalibrateNeuralCrop(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCalibration();
 	}
 
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
@@ -597,11 +609,13 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
-			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
+			const std::string name = args.value("name", std::string{});
+			if (!foveatedRender.subrectController.ApplyPresetByName(name))
+				logger::warn("[FOVEATED] applyFoveationPreset preset {} not found; not applied", json(name).dump());
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -611,6 +625,10 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("captureNeuralRendering",
 		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
 		CaptureNeuralRendering);
+
+	FEATURE_COMMAND("calibrateNeuralCrop",
+		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
+		CalibrateNeuralCrop);
 }
 
 void Upscaling::DrawSettings()
@@ -1087,6 +1105,7 @@ void Upscaling::DrawBackendDiagnostics()
 	ImGui::Separator();
 	Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
 	Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), streamline.pluginDir.c_str(), Streamline::dllVersions, "sl_dll_versions");
+	neuralRendering.DrawRuntimeDiagnostics();
 }
 
 const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const
@@ -1346,6 +1365,8 @@ void Upscaling::PostPostLoad()
 	// Subrect controller defaults + stereo flag (FoveatedRender is no longer a
 	// Feature subclass so we drive its lifecycle from here).
 	foveatedRender.PostPostLoad();
+
+	neuralRendering.InstallHooks();
 
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
@@ -2367,7 +2388,9 @@ void Upscaling::FrameLimiter()
 		HANDLE waitableObject = GetFrameLatencyWaitableObject();
 
 		// Wait for the next frame presentation slot
-		WaitForSingleObject(waitableObject, INFINITE);
+		// (bounded so a lost swapchain cannot block the render thread forever)
+		static constexpr DWORD kFrameLatencyWaitTimeoutMs = 1000;
+		WaitForSingleObject(waitableObject, kFrameLatencyWaitTimeoutMs);
 
 		if (settings.frameLimitMode) {
 			static constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
@@ -2604,6 +2627,39 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	const auto crop = neuralRendering.GetRegionOfInterest();
+	diagnostics["neuralRegionActive"] = crop.active;
+	json eyes = json::array();
+	for (const auto& region : crop.eye)
+		eyes.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralRegion"] = std::move(eyes);
+	const auto actorBox = neuralRendering.GetActorBox();
+	json actorBounds = json::array();
+	for (const auto& region : actorBox.eye)
+		actorBounds.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralActorBounds"] = std::move(actorBounds);
+	diagnostics["neuralRegionSource"] = NeuralRendering::RegionSourceName(neuralRendering.GetRegionSource());
+	const auto calibration = neuralRendering.GetCalibration();
+	diagnostics["neuralCalibration"] = {
+		{ "state", calibration.state == NR::CropCalibration::State::kRunning ? "running" :
+				   calibration.state == NR::CropCalibration::State::kDone    ? "done" :
+				   calibration.state == NR::CropCalibration::State::kFailed  ? "failed" :
+																			   "idle" },
+		{ "fractions", NR::CropCalibration::kFractions },
+		{ "stepMs", calibration.stepMs },
+		{ "stabilityRatio", calibration.stabilityRatio },
+		{ "floorMs", calibration.floorMs },
+		{ "kneeFraction", calibration.kneeFraction }
+	};
+	const auto resources = neuralRendering.GetStatus();
+	diagnostics["neuralRenderSize"] = { { "width", resources.width }, { "height", resources.height }, { "eyes", resources.eyes } };
+	diagnostics["neuralFrames"] = resources.appliedFrames;
+	const auto counters = neuralRendering.GetDiagnosticCounters();
+	json resets = json::object();
+	for (size_t reason = 0; reason < NR::Diagnostics::kResetReasonNames.size(); ++reason)
+		resets[NR::Diagnostics::kResetReasonNames[reason]] = counters.resets[reason];
+	diagnostics["neuralResets"] = std::move(resets);
+	diagnostics["neuralResetDrainMs"] = counters.drainMs;
 	return diagnostics;
 }
 

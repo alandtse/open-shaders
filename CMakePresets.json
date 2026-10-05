@@ -192,6 +192,49 @@
                 "CMAKE_CXX_FLAGS": "/arch:AVX"
             },
             "inherits": "skyrim-linux-clangcl"
+        },
+        {
+            "name": "windows-clangcl",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl",
+                "CMAKE_LINKER": "lld-link",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob3 /DNDEBUG",
+                "ENABLE_SKYRIM_AE": "ON",
+                "ENABLE_SKYRIM_SE": "ON",
+                "ENABLE_SKYRIM_VR": "ON",
+                "AUTO_PLUGIN_DEPLOYMENT": "OFF",
+                "VCPKG_APPLOCAL_DEPS": "OFF",
+                "COMMONLIB_PREBUILT_MULTICONFIG": "ON"
+            },
+            "inherits": "skyrim-ninja"
+        },
+        {
+            "name": "Windows-ClangCL",
+            "description": "Native Windows clang-cl + lld-link (ThinLTO) with Ninja. Run from a VS x64 environment so the Windows SDK is found; LLVM must be on PATH.",
+            "cacheVariables": {
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF",
+                "BUILD_SHADER_TESTS": "OFF"
+            },
+            "inherits": "windows-clangcl"
+        },
+        {
+            "name": "ALL-ClangCL",
+            "description": "clang-cl twin of ALL: full ThinLTO shipping flags, packaged like ALL. Candidate release compiler; CI builds it alongside ALL.",
+            "inherits": "windows-clangcl"
+        },
+        {
+            "name": "PR-ClangCL",
+            "description": "clang-cl twin of PR: mild optimization without LTO or full debug info, for CI pull-request builds.",
+            "cacheVariables": {
+                "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "OFF",
+                "SC_COMPILE_PDB": "OFF",
+                "ZIP_TO_DIST": "OFF",
+                "AIO_ZIP_TO_DIST": "OFF"
+            },
+            "inherits": "windows-clangcl"
         }
     ],
     "buildPresets": [
@@ -256,6 +299,27 @@
             "configurePreset": "Linux-ClangCL",
             "configuration": "Release",
             "targets": ["CommunityShaders"]
+        },
+        {
+            "name": "Windows-ClangCL",
+            "description": "Native Windows clang-cl build of the plugin DLL only",
+            "configurePreset": "Windows-ClangCL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders"]
+        },
+        {
+            "name": "ALL-ClangCL",
+            "description": "clang-cl build of the DLL plus the AIO package, like ALL",
+            "configurePreset": "ALL-ClangCL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders", "Package-AIO-Manual"]
+        },
+        {
+            "name": "PR-ClangCL",
+            "description": "clang-cl CI build of the DLL plus the AIO package, like PR",
+            "configurePreset": "PR-ClangCL",
+            "configuration": "Release",
+            "targets": ["CommunityShaders", "Package-AIO-Manual"]
         }
     ]
 }

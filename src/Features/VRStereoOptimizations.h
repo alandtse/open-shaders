@@ -52,8 +52,9 @@ struct VRStereoOptimizations
 	// CONSTANTS
 	//=============================================================================
 
-	/// ScatterDepth clear value; must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
+	/// ScatterDepth clear values (min reduction, and max reduction under reverse-Z); must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
 	static constexpr uint32_t kScatterDepthEmpty = 0xFFFFFFFFu;
+	static constexpr uint32_t kScatterDepthEmptyReverseZ = 0u;
 
 	//=============================================================================
 	// PUBLIC METHODS
