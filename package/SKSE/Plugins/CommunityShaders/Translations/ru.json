@@ -2613,7 +2613,6 @@
     "feature.skylighting.key_feature_5": "Интеграция с существующими системами освещения",
     "feature.skylighting.max_zenith": "Максимальный зенитный угол",
     "feature.skylighting.max_zenith_tooltip": "Меньшие углы создают более сфокусированную тень сверху вниз.",
-    "feature.skylighting.min_visibility_desc": "Минимальные значения видимости. Диффузный затемняет объекты. Зеркальный убирает небо из отражений.",
     "feature.skylighting.name": "Skylighting",
     "feature.skylighting.rebuild": "Пересобрать Skylighting",
     "feature.skylighting.rebuild_tooltip": "Изменения ниже требуют пересборки, экрана загрузки или отдаления от текущего местоположения для применения.",

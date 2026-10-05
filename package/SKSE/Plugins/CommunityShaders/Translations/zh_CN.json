@@ -2613,7 +2613,6 @@
     "feature.skylighting.key_feature_5": "与现有光照系统集成",
     "feature.skylighting.max_zenith": "最大天顶角",
     "feature.skylighting.max_zenith_tooltip": "较小的角度产生更集中的自上而下阴影。",
-    "feature.skylighting.min_visibility_desc": "最小可见度值。漫反射使物体变暗。镜面反射从反射中移除天空。",
     "feature.skylighting.name": "天空光照",
     "feature.skylighting.rebuild": "重建天光",
     "feature.skylighting.rebuild_tooltip": "以下更改需要重建、加载屏幕或离开当前位置才能应用。",
