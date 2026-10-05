@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -609,11 +609,13 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
-			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
+			const std::string name = args.value("name", std::string{});
+			if (!foveatedRender.subrectController.ApplyPresetByName(name))
+				logger::warn("[FOVEATED] applyFoveationPreset preset {} not found; not applied", json(name).dump());
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -2636,6 +2638,7 @@ json Upscaling::GetDiagnostics()
 	for (const auto& region : actorBox.eye)
 		actorBounds.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
 	diagnostics["neuralActorBounds"] = std::move(actorBounds);
+	diagnostics["neuralRegionSource"] = NeuralRendering::RegionSourceName(neuralRendering.GetRegionSource());
 	const auto calibration = neuralRendering.GetCalibration();
 	diagnostics["neuralCalibration"] = {
 		{ "state", calibration.state == NR::CropCalibration::State::kRunning ? "running" :

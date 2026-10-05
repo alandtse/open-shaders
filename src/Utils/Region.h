@@ -115,6 +115,12 @@ namespace Util::Region
 		float maxPixels;
 	};
 
+	/** @brief Maps a normalised UV rect to the screen bounds PixelRegionFromBounds consumes. */
+	inline ScreenBounds BoundsFromUV(const Subrect::UVRegion& a_uv)
+	{
+		return { a_uv.x, a_uv.y, a_uv.x + a_uv.w, a_uv.y + a_uv.h };
+	}
+
 	/**
 	 * @brief Pads, aligns and clamps normalised bounds into a pixel crop.
 	 * @return kEmptyRegion when the crop rounds away to nothing, so the caller widens to the whole frame.
@@ -144,6 +150,19 @@ namespace Util::Region
 			return kEmptyRegion;
 		return { static_cast<uint32_t>(left), static_cast<uint32_t>(top),
 			static_cast<uint32_t>(right - left), static_cast<uint32_t>(bottom - top) };
+	}
+
+	/**
+	 * @brief Truncates a UV rect to a pixel region for the given extent, the sizing the foveated
+	 *        route's Streamline and D3D copies use. No padding, alignment or frame clamping, and
+	 *        w and h floor at 1 so a crop never has a zero extent.
+	 */
+	inline Subrect::PixelRegion SubrectFromUV(const Subrect::UVRegion& a_uv, uint32_t a_width, uint32_t a_height)
+	{
+		return { static_cast<uint32_t>(a_uv.x * a_width),
+			static_cast<uint32_t>(a_uv.y * a_height),
+			std::max<uint32_t>(1, static_cast<uint32_t>(a_width * a_uv.w)),
+			std::max<uint32_t>(1, static_cast<uint32_t>(a_height * a_uv.h)) };
 	}
 
 	/**
@@ -199,6 +218,47 @@ namespace Util::Region
 					break;
 				}
 			}
+		}
+	}
+
+	/** @brief Geometric overlap of two crops; kEmptyRegion when either is empty or they share no pixel. */
+	inline Subrect::PixelRegion Intersect(const Subrect::PixelRegion& a_left, const Subrect::PixelRegion& a_right)
+	{
+		if (!a_left.w || !a_left.h || !a_right.w || !a_right.h)
+			return kEmptyRegion;
+		const uint64_t left = std::max(a_left.x, a_right.x);
+		const uint64_t top = std::max(a_left.y, a_right.y);
+		const uint64_t right = std::min(static_cast<uint64_t>(a_left.x) + a_left.w, static_cast<uint64_t>(a_right.x) + a_right.w);
+		const uint64_t bottom = std::min(static_cast<uint64_t>(a_left.y) + a_left.h, static_cast<uint64_t>(a_right.y) + a_right.h);
+		if (right <= left || bottom <= top)
+			return kEmptyRegion;
+		return { static_cast<uint32_t>(left), static_cast<uint32_t>(top),
+			static_cast<uint32_t>(right - left), static_cast<uint32_t>(bottom - top) };
+	}
+
+	/**
+	 * @brief Narrows each eye of a_focus to its overlap with the matching a_clip eye.
+	 *        An inactive clip changes nothing and an empty clip eye leaves that focus eye as it was.
+	 *        A focus eye with no crop, or one the clip misses, takes the clip eye.
+	 */
+	inline void ClipRegion(StereoRegion& a_focus, const StereoRegion& a_clip)
+	{
+		if (!a_clip.active)
+			return;
+		if (!a_focus.active)
+			a_focus.eye.fill(kEmptyRegion);
+		a_focus.active = true;
+		for (size_t eye = 0; eye < a_focus.eye.size(); ++eye) {
+			const auto& clip = a_clip.eye[eye];
+			if (!clip.w || !clip.h)
+				continue;
+			const auto& focus = a_focus.eye[eye];
+			if (!focus.w || !focus.h) {
+				a_focus.eye[eye] = clip;
+				continue;
+			}
+			const auto overlap = Intersect(focus, clip);
+			a_focus.eye[eye] = overlap.w && overlap.h ? overlap : clip;
 		}
 	}
 

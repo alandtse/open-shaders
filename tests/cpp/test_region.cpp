@@ -17,6 +17,7 @@ using Util::Region::ResetPolicy;
 using Util::Region::ScreenBounds;
 using Util::Region::StereoRegion;
 using Util::Subrect::PixelRegion;
+using Util::Subrect::UVRegion;
 
 namespace
 {
@@ -25,6 +26,7 @@ namespace
 	constexpr uint32_t kAlignmentPixels = Util::Region::kDefaultPixelAlignment;
 	constexpr float kTolerancePixels = static_cast<float>(kAlignmentPixels);
 	constexpr Util::Region::Padding kPadding{ 0.125f, 16.0f, 32.0f, 96.0f };
+	constexpr Util::Region::Padding kNoPadding{ 0.0f, 0.0f, 0.0f, 0.0f };
 	constexpr Util::Region::StabilizerPolicy kPolicy{ 3, 5, 0.75f };
 
 	/** @brief The eight corners of a world-space axis-aligned box. */
@@ -636,4 +638,213 @@ TEST_CASE("CopyCropToUnprojectedEyes does not copy a whole-frame donor", "[regio
 	REQUIRE(region.eye[1].w == kWidth);
 	Util::Region::CopyCropToUnprojectedEyes(region, { false, false }, kWidth, kHeight);
 	REQUIRE(region.eye[0].w == kWidth);
+}
+
+TEST_CASE("BoundsFromUV maps a full-frame UV rect to the whole screen", "[region][uv]")
+{
+	const auto bounds = Util::Region::BoundsFromUV(UVRegion{});
+	REQUIRE(bounds.minX == Catch::Approx(0.0f));
+	REQUIRE(bounds.minY == Catch::Approx(0.0f));
+	REQUIRE(bounds.maxX == Catch::Approx(1.0f));
+	REQUIRE(bounds.maxY == Catch::Approx(1.0f));
+}
+
+TEST_CASE("BoundsFromUV feeds PixelRegionFromBounds the same rect in pixels", "[region][uv]")
+{
+	const auto region = Util::Region::PixelRegionFromBounds(
+		Util::Region::BoundsFromUV(UVRegion{ 0.25f, 0.5f, 0.5f, 0.25f }), kWidth, kHeight, kNoPadding, Util::Region::kNoPixelAlignment);
+	REQUIRE(region.x == 480u);
+	REQUIRE(region.y == 540u);
+	REQUIRE(region.w == 960u);
+	REQUIRE(region.h == 270u);
+
+	const auto fullFrame = Util::Region::PixelRegionFromBounds(
+		Util::Region::BoundsFromUV(UVRegion{}), kWidth, kHeight, kNoPadding, Util::Region::kNoPixelAlignment);
+	REQUIRE(fullFrame.x == 0u);
+	REQUIRE(fullFrame.y == 0u);
+	REQUIRE(fullFrame.w == kWidth);
+	REQUIRE(fullFrame.h == kHeight);
+}
+
+TEST_CASE("SubrectFromUV truncates a UV rect to pixels", "[region][uv]")
+{
+	struct Case
+	{
+		UVRegion uv;
+		uint32_t width, height;
+		PixelRegion expected;
+	};
+	const std::array<Case, 9> cases{ {
+		{ { 0.25f, 0.25f, 0.25f, 0.25f }, 1080, 1200, { 270, 300, 270, 300 } },
+		{ { 0.25f, 0.25f, 0.25f, 0.25f }, 2064, 2208, { 516, 552, 516, 552 } },
+		{ { 0.0f, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f }, 1080, 1200, { 0, 400, 360, 400 } },
+		{ { 0.499f, 0.499f, 0.499f, 0.499f }, 2064, 2208, { 1029, 1101, 1029, 1101 } },
+		{ { 0.999f, 0.999f, 0.999f, 0.999f }, 1080, 1200, { 1078, 1198, 1078, 1198 } },
+		{ { 0.0005f, 0.0005f, 0.0005f, 0.0005f }, 1080, 1200, { 0, 0, 1, 1 } },
+		{ { 0.0005f, 0.0005f, 0.0005f, 0.0005f }, 2064, 2208, { 1, 1, 1, 1 } },
+		{ { 0.5f, 0.0f, 0.5f, 1.0f }, 2064, 2208, { 1032, 0, 1032, 2208 } },
+		{ { 0.1f, 0.2f, 0.3f, 0.7f }, 2064, 2208, { 206, 441, 619, 1545 } },
+	} };
+
+	for (const auto& testCase : cases) {
+		const auto actual = Util::Region::SubrectFromUV(testCase.uv, testCase.width, testCase.height);
+		REQUIRE(actual.x == testCase.expected.x);
+		REQUIRE(actual.y == testCase.expected.y);
+		REQUIRE(actual.w == testCase.expected.w);
+		REQUIRE(actual.h == testCase.expected.h);
+	}
+}
+
+TEST_CASE("SubrectFromUV returns the whole eye extent for a full-frame UV", "[region][uv]")
+{
+	const auto region = Util::Region::SubrectFromUV(UVRegion{}, 2064, 2208);
+	REQUIRE(region.x == 0u);
+	REQUIRE(region.y == 0u);
+	REQUIRE(region.w == 2064u);
+	REQUIRE(region.h == 2208u);
+}
+
+TEST_CASE("Intersect is the overlap of two crops", "[region][clip]")
+{
+	const auto overlap = Util::Region::Intersect(PixelRegion{ 0, 0, 100, 100 }, PixelRegion{ 50, 50, 100, 100 });
+	REQUIRE(overlap.x == 50u);
+	REQUIRE(overlap.y == 50u);
+	REQUIRE(overlap.w == 50u);
+	REQUIRE(overlap.h == 50u);
+
+	const auto inner = Util::Region::Intersect(PixelRegion{ 0, 0, 100, 100 }, PixelRegion{ 20, 20, 10, 10 });
+	REQUIRE(inner.x == 20u);
+	REQUIRE(inner.y == 20u);
+	REQUIRE(inner.w == 10u);
+	REQUIRE(inner.h == 10u);
+}
+
+TEST_CASE("Intersect is empty for disjoint crops and edges that only touch", "[region][clip]")
+{
+	REQUIRE(Util::Region::Intersect(PixelRegion{ 0, 0, 10, 10 }, PixelRegion{ 50, 50, 10, 10 }).w == 0u);
+	REQUIRE(Util::Region::Intersect(PixelRegion{ 0, 0, 10, 10 }, PixelRegion{ 10, 0, 10, 10 }).w == 0u);
+	REQUIRE(Util::Region::Intersect(PixelRegion{ 0, 10, 10, 10 }, PixelRegion{ 0, 0, 10, 10 }).w == 0u);
+}
+
+TEST_CASE("Intersect is empty when either input is empty", "[region][clip]")
+{
+	REQUIRE(Util::Region::Intersect(Util::Region::kEmptyRegion, PixelRegion{ 0, 0, 100, 100 }).w == 0u);
+	REQUIRE(Util::Region::Intersect(PixelRegion{ 0, 0, 100, 100 }, Util::Region::kEmptyRegion).w == 0u);
+	REQUIRE(Util::Region::Intersect(Util::Region::kEmptyRegion, Util::Region::kEmptyRegion).w == 0u);
+}
+
+TEST_CASE("Intersect does not wrap the right and bottom edges near UINT32_MAX", "[region][clip]")
+{
+	constexpr uint32_t max = std::numeric_limits<uint32_t>::max();
+	const auto region = Util::Region::Intersect(PixelRegion{ max - 10, 0, 100, 100 }, PixelRegion{ max - 20, 0, 100, 100 });
+	REQUIRE(region.x == max - 10);
+	REQUIRE(region.w == 90u);
+	REQUIRE(region.h == 100u);
+}
+
+TEST_CASE("ClipRegion clips each eye independently", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 0, 0, 100, 100 });
+	focus.eye[1] = PixelRegion{ 200, 0, 100, 100 };
+	StereoRegion clip;
+	clip.active = true;
+	clip.eye[0] = PixelRegion{ 50, 50, 100, 100 };
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.eye[0].x == 50u);
+	REQUIRE(focus.eye[0].y == 50u);
+	REQUIRE(focus.eye[0].w == 50u);
+	REQUIRE(focus.eye[0].h == 50u);
+	REQUIRE(focus.eye[1].x == 200u);
+	REQUIRE(focus.eye[1].w == 100u);
+}
+
+TEST_CASE("ClipRegion falls back to the clip eye when the focus misses it", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 500, 500, 100, 100 });
+	StereoRegion clip;
+	clip.active = true;
+	clip.eye.fill(PixelRegion{ 0, 0, 100, 100 });
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.eye[0].x == 0u);
+	REQUIRE(focus.eye[0].w == 100u);
+	REQUIRE(focus.eye[1].x == 0u);
+	REQUIRE(focus.eye[1].w == 100u);
+}
+
+TEST_CASE("ClipRegion gives an uncropped focus eye the clip eye", "[region][clip]")
+{
+	StereoRegion focus;
+	focus.active = true;
+	StereoRegion clip;
+	clip.active = true;
+	clip.eye.fill(PixelRegion{ 10, 20, 30, 40 });
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.eye[0].x == 10u);
+	REQUIRE(focus.eye[0].y == 20u);
+	REQUIRE(focus.eye[0].w == 30u);
+	REQUIRE(focus.eye[0].h == 40u);
+	REQUIRE(focus.eye[1].x == 10u);
+	REQUIRE(focus.eye[1].w == 30u);
+}
+
+TEST_CASE("ClipRegion leaves a focus eye whose clip eye is empty", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 100, 100, 50, 50 });
+	StereoRegion clip;
+	clip.active = true;
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.eye[0].x == 100u);
+	REQUIRE(focus.eye[0].y == 100u);
+	REQUIRE(focus.eye[0].w == 50u);
+	REQUIRE(focus.eye[1].x == 100u);
+	REQUIRE(focus.eye[1].w == 50u);
+}
+
+TEST_CASE("ClipRegion changes nothing for an inactive clip", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 100, 100, 50, 50 });
+	const auto before = focus;
+	StereoRegion clip;
+	clip.active = false;
+	clip.eye.fill(PixelRegion{ 0, 0, 200, 200 });
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.active == before.active);
+	REQUIRE(focus.eye[0].x == before.eye[0].x);
+	REQUIRE(focus.eye[0].w == before.eye[0].w);
+	REQUIRE(focus.eye[1].w == before.eye[1].w);
+}
+
+TEST_CASE("ClipRegion ignores the retained eyes of an inactive focus", "[region][clip]")
+{
+	StereoRegion focus = ActiveRegion(PixelRegion{ 0, 0, 100, 100 });
+	focus.active = false;
+	StereoRegion clip;
+	clip.active = true;
+	clip.eye.fill(PixelRegion{ 50, 50, 100, 100 });
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.active);
+	REQUIRE(focus.eye[0].x == 50u);
+	REQUIRE(focus.eye[0].w == 100u);
+	REQUIRE(focus.eye[1].h == 100u);
+}
+
+TEST_CASE("ClipRegion makes the result active when the clip is active", "[region][clip]")
+{
+	StereoRegion focus;
+	StereoRegion clip;
+	clip.active = true;
+
+	Util::Region::ClipRegion(focus, clip);
+	REQUIRE(focus.active);
+
+	const StereoRegion inactiveClip;
+	StereoRegion untouched;
+	Util::Region::ClipRegion(untouched, inactiveClip);
+	REQUIRE_FALSE(untouched.active);
 }
