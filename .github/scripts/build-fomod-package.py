@@ -26,11 +26,18 @@ Usage:
 
 DIR arguments are extracted trees (not archives); --output is a staging
 directory this script creates fresh -- the caller 7z's it afterward.
+
+A cache that is missing or fails `verify_shader_cache.py structure` is dropped
+with a warning, never offered; if every cache is dropped the package is just the
+AIO. A staged tree missing a file that ModuleConfig.xml names is an error.
 """
 
 import argparse
+import configparser
+import importlib.util
 import shutil
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pyfomod
@@ -40,6 +47,43 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CONFIGS_DIR = REPO_ROOT / ".github" / "configs"
 DEFAULT_CONFIG = CONFIGS_DIR / "fomod-metadata.yaml"
 DEFAULT_PROJECT_CONFIG = CONFIGS_DIR / "project.yaml"
+PLUGIN_DLL = Path("SKSE/Plugins/CommunityShaders.dll")
+
+
+def load_cache_verifier():
+    spec = importlib.util.spec_from_file_location("verify_shader_cache", REPO_ROOT / "tools" / "verify_shader_cache.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def cache_problem(verifier, cache_dir):
+    """Why a cache must not be offered, or None when it is structurally sound."""
+    if cache_dir is None or not cache_dir.is_dir():
+        return "not a directory"
+    try:
+        verifier.verify_structure(cache_dir)
+    except (OSError, ValueError, KeyError, configparser.Error) as error:
+        return str(error)
+    return None
+
+
+def missing_staged_files(output):
+    """Sources named by ModuleConfig.xml that are absent or empty in the staged tree."""
+    config = ET.parse(output / "fomod" / "ModuleConfig.xml").getroot()
+    missing = []
+    for element in config.iter():
+        source = element.get("source")
+        if not source:
+            continue
+        path = output / source.replace("\\", "/")
+        if path.is_dir():
+            present = any(path.iterdir())
+        else:
+            present = path.is_file() and path.stat().st_size > 0
+        if not present:
+            missing.append(source)
+    return missing
 
 
 def parse_args():
@@ -119,6 +163,9 @@ def main():
     if not args.core.is_dir():
         print(f"error: --core {args.core} is not a directory", file=sys.stderr)
         return 1
+    if not (args.core / PLUGIN_DLL).is_file():
+        print(f"error: --core {args.core} has no {PLUGIN_DLL.as_posix()}", file=sys.stderr)
+        return 1
 
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     project = yaml.safe_load(args.project_config.read_text(encoding="utf-8"))
@@ -129,15 +176,16 @@ def main():
 
     shutil.copytree(args.core, args.output / "Core")
 
+    verifier = load_cache_verifier()
     available_variants = []
     for variant in config["cache_variants"]:
         cache_dir = getattr(args, variant["cli_arg"])
         if cache_dir is None:
             continue
-        if not cache_dir.is_dir():
-            arg_flag = "--" + variant["cli_arg"].replace("_", "-")
-            print(f"error: {arg_flag} {cache_dir} is not a directory", file=sys.stderr)
-            return 1
+        problem = cache_problem(verifier, cache_dir)
+        if problem:
+            print(f"::warning::Dropping the {variant['name']} shader cache option: {problem}", file=sys.stderr)
+            continue
         shutil.copytree(cache_dir, args.output / variant["staging_subdir"] / "ShaderCache")
         available_variants.append(variant)
 
@@ -160,6 +208,11 @@ def main():
         images_dir = args.output / "fomod" / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, images_dir / src.name)
+
+    missing = missing_staged_files(args.output)
+    if missing:
+        print(f"error: ModuleConfig.xml references files that are missing or empty: {', '.join(missing)}", file=sys.stderr)
+        return 1
 
     print(f"Staged FOMOD package at {args.output} ({len(available_variants)} shader-cache option(s))")
     return 0

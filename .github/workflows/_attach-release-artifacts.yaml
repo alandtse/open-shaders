@@ -43,6 +43,8 @@ jobs:
                       .github/configs
                       .github/assets/logo
                       tools/feature-flip-impact.py
+                      tools/verify_shader_cache.py
+                      tools/build-shader-cache.py
 
             - name: Set up Python for FOMOD packaging
               uses: actions/setup-python@v6
@@ -106,18 +108,34 @@ jobs:
                   RELEASE_TAG: ${{ inputs.tag }}
               run: |
                   set -euo pipefail
+                  cache_is_sound() {
+                    python3 tools/verify_shader_cache.py structure --cache "$1" >/dev/null
+                  }
                   for runtime in SE VR; do
                     target="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
                     src="shader-caches/ShaderCache-${runtime}"
                     rm -f "$target"
                     if [ -d "$src" ]; then
-                      if rm -rf ShaderCache && mv "$src" ShaderCache && bash .github/scripts/package-shader-cache.sh "$target" >/dev/null; then
-                        echo "Staged fresh $target"
-                      else
+                      rm -rf ShaderCache
+                      if ! mv "$src" ShaderCache; then
+                        echo "::warning::Could not stage fresh ShaderCache-${runtime}; release ships without it."
+                      elif ! cache_is_sound ShaderCache; then
+                        echo "::warning::Fresh ShaderCache-${runtime} failed the structure check; release ships without it."
+                      elif ! bash .github/scripts/package-shader-cache.sh "$target" >/dev/null || ! 7z t "$target" >/dev/null; then
+                        rm -f "$target"
                         echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
+                      else
+                        echo "Staged fresh $target"
                       fi
                     elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
-                      echo "Preserved existing $target"
+                      rm -rf cache-check && mkdir cache-check
+                      if 7z x -y -ocache-check "$target" >/dev/null && cache_is_sound cache-check/ShaderCache; then
+                        echo "Preserved existing $target"
+                      else
+                        rm -f "$target"
+                        echo "::warning::Existing ShaderCache-${runtime} failed the structure check; release ships without it."
+                      fi
+                      rm -rf cache-check
                     else
                       echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
                     fi
@@ -153,35 +171,41 @@ jobs:
 
                   args=(--core fomod-work/core --version "$RELEASE_TAG" --output fomod-work/staged)
 
-                  se_7z="dist/ShaderCache-SE-${RELEASE_TAG}.7z"
-                  if [ -f "$se_7z" ]; then
-                    mkdir -p fomod-work/se
-                    7z x -y -ofomod-work/se "$se_7z" >/dev/null
-                    args+=(--se-cache fomod-work/se/ShaderCache)
-                  fi
-
-                  vr_7z="dist/ShaderCache-VR-${RELEASE_TAG}.7z"
-                  if [ -f "$vr_7z" ]; then
-                    mkdir -p fomod-work/vr
-                    7z x -y -ofomod-work/vr "$vr_7z" >/dev/null
-                    args+=(--vr-cache fomod-work/vr/ShaderCache)
-                  fi
+                  for pair in "se:SE" "vr:VR"; do
+                    key="${pair%%:*}"; runtime="${pair##*:}"
+                    cache_7z="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
+                    [ -f "$cache_7z" ] || continue
+                    mkdir -p "fomod-work/${key}"
+                    if 7z x -y -o"fomod-work/${key}" "$cache_7z" >/dev/null && [ -d "fomod-work/${key}/ShaderCache" ]; then
+                      args+=("--${key}-cache" "fomod-work/${key}/ShaderCache")
+                    else
+                      echo "::warning::Could not extract ${cache_7z}; the FOMOD omits the ${runtime} cache option."
+                    fi
+                  done
 
                   # pyfomod imports distutils, removed from the stdlib in
                   # Python 3.12; setuptools>=60 vendors a distutils shim,
                   # and <80 keeps it (60 requires an explicit lower bound
                   # so pip upgrades an already-present older setuptools).
                   pip install --quiet "setuptools>=60,<80" pyfomod pyyaml
-                  python3 .github/scripts/build-fomod-package.py "${args[@]}"
+                  if ! python3 .github/scripts/build-fomod-package.py "${args[@]}"; then
+                    echo "::warning::FOMOD package build failed; the release ships the plain AIO."
+                    exit 0
+                  fi
 
                   # Build into a temp name and verify it before touching the original --
                   # never delete $aio_7z until its replacement is confirmed non-empty.
                   tmp_7z="${aio_7z}.fomod-tmp"
                   rm -f "$tmp_7z"
-                  (cd fomod-work/staged && 7z a -t7z -mx=7 "${GITHUB_WORKSPACE}/${tmp_7z}" . >/dev/null)
-                  if [ ! -s "$tmp_7z" ]; then
-                    echo "::error::FOMOD package build produced an empty or missing archive; leaving original $aio_7z untouched."
-                    exit 1
+                  (cd fomod-work/staged && 7z a -t7z -mx=7 "${GITHUB_WORKSPACE}/${tmp_7z}" . >/dev/null) || true
+                  listing=""
+                  if [ -s "$tmp_7z" ] && 7z t "$tmp_7z" >/dev/null; then
+                    listing=$(7z l -ba "$tmp_7z")
+                  fi
+                  if ! grep -Eq 'fomod[/\]ModuleConfig\.xml' <<<"$listing" || ! grep -Eq 'Core[/\]SKSE[/\]Plugins[/\]CommunityShaders\.dll' <<<"$listing"; then
+                    rm -f "$tmp_7z"
+                    echo "::warning::FOMOD archive is missing, corrupt or incomplete; the release ships the plain AIO."
+                    exit 0
                   fi
                   mv "$tmp_7z" "$aio_7z"
                   echo "Replaced $aio_7z with the FOMOD-wrapped package"

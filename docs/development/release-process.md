@@ -122,6 +122,16 @@ The shared C++ build (`_shared-build.yaml`) builds each preset with two compiler
 
 To ship clang-cl, swap `primary` between the two matrix entries, after the SE and VR runtime gate has passed on clang binaries. A release dispatch loads the workflow from the dispatched ref, so the swap reaches RC cuts from `dev` at once and stable cuts through the two-phase promotion above; check the "Show clang-cl toolchain" step or the build log to confirm which compiler produced a release.
 
+## FOMOD and Prebuilt Cache Assets
+
+The release attach job (`_attach-release-artifacts.yaml`) wraps the AIO in a FOMOD whose installer offers the prebuilt shader caches as optional downloads. Every optional piece is dropped, never shipped broken:
+
+-   A fresh cache must pass `tools/verify_shader_cache.py structure` (readable `Info.ini`, a valid manifest that matches the blobs one to one, intact DXBC in every blob) before it is packaged. An existing cache asset reused from the release is checked the same way, and a cache archive that fails `7z t` is discarded.
+-   `build-fomod-package.py` re-checks each cache and omits any option whose cache is missing or fails the check, with a `::warning::` in the log. If every cache is dropped the FOMOD is just the AIO. It also fails if the plugin DLL is absent from the AIO, and if `ModuleConfig.xml` names a file that is not in the staged tree.
+-   If the FOMOD cannot be built or its archive fails `7z t` or lacks `ModuleConfig.xml` or the plugin DLL, the release ships the plain AIO instead of failing.
+
+A release with a dropped cache is still valid; look for these warnings in the attach job when a cache option is unexpectedly missing.
+
 ## Manual Packaging Targets
 
 These targets are defined in `CMakeLists.txt` and are useful when you want precise control over packaging (CI artifacts, local QA, or manual deployment):

@@ -356,6 +356,8 @@ jobs:
               run: |
                   python -m unittest discover -s tests -p test_build_shader_cache.py
                   python -m unittest discover -s tests -p test_verify_shader_cache.py
+                  python -m pip install --quiet "setuptools>=60,<80" pyfomod pyyaml
+                  python -m unittest discover -s tests -p test_build_fomod_package.py
                   python tools/build-shader-cache.py --finalize-existing build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
                   python tools/verify_shader_cache.py artifact --cache build/ShaderCache --shaders build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
 
