@@ -149,3 +149,30 @@ TEST_CASE("MaterialMap legend colours match the shader's DebugColor", "[nr]")
 		REQUIRE(NR::MaterialMap::kColors[i].b == expected[i][2]);
 	}
 }
+
+TEST_CASE("Material scopes round trip through the tuning", "[nr]")
+{
+	using Scope = NR::MaterialStrength::Scope;
+	NR::Tuning tuning;
+	REQUIRE(tuning.MaterialScope() == Scope::kEverything);
+	tuning.SetMaterialScope(Scope::kSkinHairEyes);
+	REQUIRE(tuning.materialStrength);
+	REQUIRE(tuning.MaterialScope() == Scope::kSkinHairEyes);
+	tuning.SetMaterialScope(Scope::kSkinHairEyesFoliage);
+	REQUIRE(tuning.strengthFoliage == 1.0f);
+	REQUIRE(tuning.MaterialScope() == Scope::kSkinHairEyesFoliage);
+	tuning.strengthLandscape = 0.5f;
+	REQUIRE(tuning.MaterialScope() == Scope::kCustom);
+	tuning.SetMaterialScope(Scope::kCustom);
+	REQUIRE(tuning.strengthLandscape == 0.5f);
+	tuning.SetMaterialScope(Scope::kEverything);
+	REQUIRE_FALSE(tuning.materialStrength);
+	REQUIRE(tuning.MaterialScope() == Scope::kEverything);
+}
+
+TEST_CASE("The default tuning keeps the by-material path off and its strengths on the character scope", "[nr]")
+{
+	NR::Tuning tuning;
+	tuning.materialStrength = true;
+	REQUIRE(tuning.MaterialScope() == NR::MaterialStrength::Scope::kSkinHairEyes);
+}

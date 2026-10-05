@@ -1089,29 +1089,42 @@ namespace
 	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
 	{
 		bool changed = false;
-		if (ImGui::Checkbox(T(TKEY("material_strength"), "Apply Neural Rendering by Material"), &tuning.materialStrength))
-			changed = true;
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("material_strength_tooltip"),
-				"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. A material set to 0 keeps its unprocessed image, so the defaults leave only skin, hair and eyes processed. Needs the deferred pass; without its material lane the whole frame is processed."));
-		ImGui::BeginDisabled(!tuning.materialStrength);
-		ImGui::PushID("materialStrength");
-		ImGui::TextUnformatted(T(TKEY("material_strengths"), "Strength by Material"));
-		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		changed |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
-		if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
-			tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
+		const auto scope = tuning.MaterialScope();
+		int scopeItem = static_cast<int>(scope);
+		const std::array<const char*, 4> scopeLabels{
+			T(TKEY("material_scope_everything"), "Everything"),
+			T(TKEY("material_scope_characters"), "Skin, hair and eyes"),
+			T(TKEY("material_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
+			T(TKEY("material_scope_custom"), "Custom"),
+		};
+		const int scopeCount = scope == NR::MaterialStrength::Scope::kCustom ? 4 : 3;
+		if (ImGui::Combo(T(TKEY("material_scope"), "Apply Neural Rendering To"), &scopeItem, scopeLabels.data(), scopeCount)) {
+			tuning.SetMaterialScope(static_cast<NR::MaterialStrength::Scope>(scopeItem));
 			changed = true;
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("edge_softness_tooltip"),
-				"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
-		ImGui::PopID();
+			ImGui::TextUnformatted(T(TKEY("material_scope_tooltip"),
+				"Limits Neural Rendering to the chosen materials, using the labels the deferred pass writes. Everything is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Open Strength by Material for a custom mix."));
+		ImGui::BeginDisabled(!tuning.materialStrength);
+		if (ImGui::TreeNodeEx(T(TKEY("material_strengths"), "Strength by Material"), ImGuiTreeNodeFlags_None)) {
+			ImGui::PushID("materialStrength");
+			changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			changed |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
+			if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
+				tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("edge_softness_tooltip"),
+					"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
+			ImGui::PopID();
+			ImGui::TreePop();
+		}
 		ImGui::EndDisabled();
 		if (tuning.materialStrength && !materialStrengthAvailable)
 			Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
@@ -1254,7 +1267,19 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
-	if (globals::state->IsDeveloperMode()) {
+	ImGui::EndDisabled();
+	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
+		tuning = {};
+		changed = recreateTuning = true;
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(T(TKEY("reset_history"), "Reset NR History")))
+		resetHistory = true;
+	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
+		RequestRetry();
+	if (globals::state->IsDeveloperMode() && ImGui::TreeNodeEx(T(TKEY("developer"), "Developer"), ImGuiTreeNodeFlags_None)) {
+		ImGui::SeparatorText(T(TKEY("developer_crop"), "Crop"));
+		ImGui::BeginDisabled(cropDisabled);
 		if (ImGui::Checkbox(T(TKEY("crop_group"), "Track Multiple Characters"), &tuning.regionGroup)) {
 			changed = true;
 			resetHistory = true;
@@ -1275,9 +1300,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("crop_fit_tooltip"),
 				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
-	}
-	ImGui::EndDisabled();
-	if (globals::state->IsDeveloperMode()) {
+		ImGui::EndDisabled();
 		// The sweep forces its own centred crops, so it stays usable without a tracked actor.
 		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
 			RequestCalibration();
@@ -1296,25 +1319,16 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
 				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
 		}
-	}
-	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
-		tuning = {};
-		changed = recreateTuning = true;
+		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
+		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
+			resetHistory = true;
+		diagnostics.DrawSettings();
+		ImGui::TreePop();
 	}
 	if (changed)
 		tuning.Sanitize();
 	if (recreateTuning)
 		recreate = resetHistory = true;
-	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("reset_history"), "Reset NR History")))
-		resetHistory = true;
-	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
-		RequestRetry();
-	if (globals::state->IsDeveloperMode()) {
-		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
-			resetHistory = true;
-		diagnostics.DrawSettings();
-	}
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
 	if (tuning.regionOverlay)

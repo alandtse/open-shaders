@@ -358,7 +358,10 @@ image quality, or temporal stability in this D3D12 path.
 
 ## Applying Neural Rendering by material
 
-The **Apply Neural Rendering by Material** setting, backed by
+The **Apply Neural Rendering To** combo offers named scopes: **Everything** (the
+by-material path off), **Skin, hair and eyes** and **Skin, hair, eyes and foliage**.
+Strengths that match none of them show as **Custom**, and the **Strength by Material**
+node edits them. The by-material path is backed by
 `neuralRenderingTuning.materialStrength`, the six strengths (`strengthSkin`,
 `strengthHair`, `strengthEyes`, `strengthFoliage`, `strengthLandscape` and
 `strengthOther`, each 0 to 1 where 1 applies NR fully and 0 bypasses it) and `strengthEdgeSoftness` (0 to 4 pixels), binds
@@ -422,14 +425,18 @@ category that does not exist.
 fixed `DebugColor` over the composited image at 0.65 opacity; these are the colours the
 developer **Debug view** combo's Category entry draws, and the panel shows them as legend
 swatches beside the filter. **Strength** replaces the pixel with a grayscale ramp of the
-strength **Apply Neural Rendering by Material** gives it (0 black, 1 white), so a material
+strength the by-material path gives it (0 black, 1 white), so a material
 the classification mislabels reads as the wrong strength. The strength view samples the
 pixel's own label and skips the `strengthEdgeSoftness` box average, which approximates the
-alpha `CategoryAlphaCS.hlsl` builds; with **Apply Neural Rendering by Material** off nothing
+alpha `CategoryAlphaCS.hlsl` builds; with the scope on **Everything** nothing
 is protected, so it shows 1.0 everywhere.
 
 DevBench sets the three keys under `settings.neuralRenderingTuning` and reads
 `showMaterialMap` back from `neuralRenderingStatus`.
+`showMaterialMap` is not carried across launches: loading the settings resets it to off, so
+a saved debug tint cannot colour characters later. The developer-mode controls (crop options,
+the crop-cost sweep, and the isolation tests, guide-mask toggles and debug views) sit under the
+panel's **Developer** node.
 
 ## Feature 18 output channel-order test
 

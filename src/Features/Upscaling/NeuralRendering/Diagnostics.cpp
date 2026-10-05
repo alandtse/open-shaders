@@ -389,30 +389,35 @@ namespace NR
 				options = selected;
 			}
 		};
+		ImGui::SeparatorText("History and motion");
 		toggle("Apply inferred camera-cut resets", ApplyCameraCuts);
 		if (selected & ApplyCameraCuts)
 			toggle("Ignore inferred camera-position resets", IgnorePosition);
-		toggle("Reset NR every frame", ForceReset);
-		toggle("Zero NR motion vectors (stationary test)", ZeroMotion);
-		toggle("Use DLSS-dilated NR motion vectors", DilateMotion);
-		toggle("Zero NR jitter parameter", ZeroJitter);
+		toggle("Reset history every frame", ForceReset);
+		toggle("Send zero motion vectors (stationary test)", ZeroMotion);
+		toggle("Send DLSS-dilated motion vectors", DilateMotion);
+		toggle("Send zero jitter", ZeroJitter);
+		toggle("Send historical camera parameters", FeedCameraData);
 		toggle("Serialize GPU (slow diagnostic)", SerializeGPU);
-		toggle("Bypass NR writeback (keep evaluating)", BypassWriteback);
-		toggle("Bypass NR evaluation entirely", BypassEvaluation);
-		toggle("Copy NR input directly to output", CopyInputToOutput);
+		ImGui::SeparatorText("Skip stages");
+		toggle("Skip writeback (still evaluates)", BypassWriteback);
+		toggle("Skip evaluation entirely", BypassEvaluation);
+		toggle("Output the NR input unchanged", CopyInputToOutput);
 		toggle("DX11 -> DX12 -> DX11 round trip only", InteropRoundTrip);
-		toggle("Bypass NR mask", BypassMask);
-		toggle("Force NR mask = 0", ForceMaskZero);
-		toggle("Force NR mask = 1", ForceMaskOne);
-		toggle("Visualize NR mask", VisualizeMask);
-		toggle("Visualize skin mask (if supplied)", VisualizeSkinMask);
-		toggle("Visualize auto mask (if supplied)", VisualizeAutoMask);
-		toggle("Feed historical camera parameters", FeedCameraData);
+		ImGui::SeparatorText("Guide mask (the NGX mask input)");
+		toggle("Do not send the guide mask", BypassMask);
+		toggle("Guide mask all 0", ForceMaskZero);
+		toggle("Guide mask all 1", ForceMaskOne);
+		toggle("Show the guide mask", VisualizeMask);
+		toggle("Show the skin mask input", VisualizeSkinMask);
+		toggle("Show the auto mask input", VisualizeAutoMask);
+		ImGui::SeparatorText("Disable stages");
 		toggle("Disable local tone", DisableTone);
 		toggle("Disable local structure", DisableStructure);
 		toggle("Disable skin processing", DisableSkin);
 		toggle("Disable exposure adaptation", DisableExposure);
 		toggle("Disable color transform", DisableColorTransform);
+		ImGui::SeparatorText("Colour and composition");
 		uint32_t conversion = conversionMode.load(), exposure = exposureMode.load(), composition = compositeMode.load(), view = visualMode.load();
 		float exposureValue = manualExposure.load(), differenceValue = differenceStrength.load(), split = splitPosition.load();
 		float shadowValue = shadowProtect.load(), highlightValue = highlightProtect.load(), toneRadiusValue = toneRadius.load();
@@ -430,7 +435,8 @@ namespace NR
 				"Production\0Raw replacement\0Masked lerp\0"
 				"50% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, lastComposite);
-		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0Category\0"))
+		ImGui::SeparatorText("Debug views");
+		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Guide mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0Material category\0"))
 			visualMode = std::min(view, lastVisual);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
 			differenceStrength = differenceValue;
@@ -466,7 +472,6 @@ namespace NR
 		if (!DeveloperMode())
 			return;
 		std::scoped_lock lock(mutex);
-		ImGui::Separator();
 		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
 		{
 			Util::DisableGuard disableSuite(suite);

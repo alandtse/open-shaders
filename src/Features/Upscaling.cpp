@@ -1176,6 +1176,8 @@ void Upscaling::LoadSettings(json& o_json)
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
+	// A debug tint saved as on would colour characters on every later launch.
+	settings.neuralRenderingTuning.showMaterialMap = false;
 	neuralRendering.ResetHistory();
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;

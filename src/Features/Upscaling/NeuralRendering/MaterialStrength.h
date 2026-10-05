@@ -41,4 +41,37 @@ namespace NR::MaterialStrength
 		values.edgeSoftness = std::min(values.edgeSoftness, kMaxEdgeSoftness);
 		return values;
 	}
+
+	/** @brief Named material scopes the settings panel offers in place of six sliders. */
+	enum class Scope : uint32_t
+	{
+		kEverything,           ///< Neural Rendering on every material; the by-material path is off.
+		kSkinHairEyes,         ///< Characters' skin, hair and eyes only.
+		kSkinHairEyesFoliage,  ///< Skin, hair, eyes and foliage.
+		kCustom                ///< Strengths that match no named scope.
+	};
+
+	/** @brief Strengths a named scope applies, in category id order; the other scopes have none and return all ones. */
+	inline constexpr std::array<float, kCount> ScopeStrengths(Scope scope)
+	{
+		switch (scope) {
+		case Scope::kSkinHairEyes:
+			return { 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f };
+		case Scope::kSkinHairEyesFoliage:
+			return { 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f };
+		default:
+			return { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
+		}
+	}
+
+	/** @brief The named scope the switch and strengths amount to, or kCustom when none matches. */
+	inline constexpr Scope MatchScope(bool enabled, const std::array<float, kCount>& strengths)
+	{
+		if (!enabled)
+			return Scope::kEverything;
+		for (const auto scope : { Scope::kSkinHairEyes, Scope::kSkinHairEyesFoliage })
+			if (strengths == ScopeStrengths(scope))
+				return scope;
+		return Scope::kCustom;
+	}
 }

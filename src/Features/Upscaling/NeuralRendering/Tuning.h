@@ -81,6 +81,29 @@ namespace NR
 			return MaterialStrength::Sanitize({ { strengthOther, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape }, strengthEdgeSoftness });
 		}
 
+		/** @brief The named material scope the switch and strengths amount to, or kCustom when none matches. */
+		[[nodiscard]] MaterialStrength::Scope MaterialScope() const
+		{
+			return MaterialStrength::MatchScope(materialStrength, MaterialStrengths().strength);
+		}
+
+		/** @brief Applies a named scope: kEverything turns by-material off and the others set the switch and strengths. */
+		void SetMaterialScope(MaterialStrength::Scope scope)
+		{
+			if (scope == MaterialStrength::Scope::kCustom)
+				return;
+			materialStrength = scope != MaterialStrength::Scope::kEverything;
+			if (!materialStrength)
+				return;
+			const auto strengths = MaterialStrength::ScopeStrengths(scope);
+			strengthOther = strengths[MaterialStrength::kNone];
+			strengthSkin = strengths[MaterialStrength::kSkin];
+			strengthHair = strengths[MaterialStrength::kHair];
+			strengthEyes = strengths[MaterialStrength::kEyes];
+			strengthFoliage = strengths[MaterialStrength::kFoliage];
+			strengthLandscape = strengths[MaterialStrength::kLandscape];
+		}
+
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */
 		void Sanitize()
 		{
