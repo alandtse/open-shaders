@@ -1096,6 +1096,7 @@ namespace
 				"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. A material set to 0 keeps its unprocessed image, so the defaults leave only skin, hair and eyes processed. Needs the deferred pass; without its material lane the whole frame is processed."));
 		ImGui::BeginDisabled(!tuning.materialStrength);
 		ImGui::PushID("materialStrength");
+		ImGui::TextUnformatted(T(TKEY("material_strengths"), "Strength by Material"));
 		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);

@@ -3098,6 +3098,7 @@
     "feature.upscaling.neural_rendering.material_other": "Everything Else",
     "feature.upscaling.neural_rendering.material_strength": "Apply Neural Rendering by Material",
     "feature.upscaling.neural_rendering.material_strength_tooltip": "Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. A material set to 0 keeps its unprocessed image, so the defaults leave only skin, hair and eyes processed. Needs the deferred pass; without its material lane the whole frame is processed.",
+    "feature.upscaling.neural_rendering.material_strengths": "Strength by Material",
     "feature.upscaling.neural_rendering.material_unavailable": "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries.",
     "feature.upscaling.neural_rendering.region_follow_foveation": "Follow Foveation",
     "feature.upscaling.neural_rendering.region_follow_foveation_tooltip": "With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view.",
