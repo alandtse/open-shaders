@@ -194,7 +194,7 @@ namespace SharedData
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
 		uint ProbeDataReady;
-		uint pad0;
+		uint ShadowDataAvailable;
 		uint4 ArrayDims;
 	};
 

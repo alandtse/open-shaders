@@ -23,6 +23,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Menu/FlipImpactDisplay.h"
 #include "Menu/HomePageRenderer.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Menu/ProfilingRenderer.h"
@@ -1017,11 +1018,17 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 						ImGui::PopStyleColor();
 				});
 
-				if (Util::FlyoutMenuItem(
-						T("menu.features.enable_at_boot", "Enable at Boot"),
-						bootEnabled,
-						true,
-						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
+				const auto flipImpact = FlipImpactDisplay::Of(*feat);
+				if (flipImpact && !failedToLoad)
+					ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(flipImpact->tier));
+				const bool bootToggled = Util::FlyoutMenuItem(
+					T("menu.features.enable_at_boot", "Enable at Boot"),
+					bootEnabled,
+					true,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale());
+				if (flipImpact && !failedToLoad)
+					ImGui::PopStyleColor();
+				if (bootToggled) {
 					const bool nowDisabled = feat->ToggleAtBootSetting();
 					g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
 					bootEnabled = !nowDisabled;
@@ -1035,6 +1042,10 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 							"Restart required for changes to take effect.\n"
 							"Disabling removes performance impact."),
 						bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
+					if (flipImpact) {
+						ImGui::Separator();
+						ImGui::TextColored(FlipImpactDisplay::Color(flipImpact->tier), "%s", FlipImpactDisplay::Tooltip(*flipImpact).c_str());
+					}
 				}
 			}
 
