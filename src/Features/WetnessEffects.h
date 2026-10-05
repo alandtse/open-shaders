@@ -143,9 +143,9 @@ public:
 
 	/**
 	 * @brief Builds the per-frame constant buffer data including weather state and settings.
-	 * @param a_advanceFrameState Whether this call advances animation and retained-wetness state.
+	 * Animation and retained-wetness state advance at most once per rendered frame, however often this is called.
 	 */
-	PerFrame GetCommonBufferData(bool a_advanceFrameState = true) const;
+	PerFrame GetCommonBufferData() const;
 
 	/** @brief Updates wetness state and binds the per-frame constant buffer. */
 	virtual void Prepass() override;
@@ -219,11 +219,12 @@ private:
 	void DrawEnvironmentWetnessSettings();
 	void DrawCharacterRainSettings();
 	void RestoreCharacterRainDefaults();
-	void UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const;
+	void UpdateCharacterRainData(PerFrame& a_data) const;
 	void DrawWeatherAnalysis() const;
 
 	mutable float characterSurfaceWetness = 0.0f;
 	mutable std::uint32_t lastCharacterWetnessUpdateFrame = UINT32_MAX;
+	mutable std::uint32_t lastRainTimerFrame = UINT32_MAX;
 	bool splashesOfStormsLoaded = false;
 
 	// Weather wetness calculation result for debug display

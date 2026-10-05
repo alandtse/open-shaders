@@ -402,7 +402,7 @@ public:
 	 */
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
 	/** @brief Publishes feature constants after render-thread resource or readiness changes. */
-	void UpdateFeatureData(bool a_inWorld, bool a_advanceFrameState = false);
+	void UpdateFeatureData(bool a_inWorld);
 	/**
 	 * @brief Updates sky shader permutation based on the current render pass.
 	 * @param a_pass The render pass to inspect.
