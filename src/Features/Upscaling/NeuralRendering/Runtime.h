@@ -195,6 +195,13 @@ namespace NR
 		uint32_t result = 0;
 	};
 
+	/** @brief Graded protection Feature 18 binds alongside its shipped inputs; a null alpha is the shipped path. */
+	struct ProtectionResources
+	{
+		ID3D12Resource* alpha = nullptr;       ///< DLSSNR.UIAlpha: per-pixel protection, 0 applies NR, 1 bypasses it.
+		ID3D12Resource* backbuffer = nullptr;  ///< DLSSNR.Backbuffer: the pixels a protected region restores.
+	};
+
 	/** @brief Owns the cached NGX ABI and one persistent Feature 18 handle per eye. */
 	class Runtime
 	{
@@ -213,10 +220,15 @@ namespace NR
 		void ResetFeatures();
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
-		/** @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye. */
+		/**
+		 * @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye.
+		 * @param protection Optional graded protection resources; a null alpha leaves DLSSNR.UIAlpha
+		 *        and DLSSNR.Backbuffer unbound. A bound alpha writes its four UIAlphaSubrect and four
+		 *        BackbufferSubrect keys equal to the output subrect.
+		 */
 		bool Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eye,
 			ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
-			uint32_t width, uint32_t height, const GuideParameters& guides,
+			const ProtectionResources& protection, uint32_t width, uint32_t height, const GuideParameters& guides,
 			FrameParameters& frame, const Tuning& tuning);
 
 	private:

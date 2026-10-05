@@ -52,6 +52,31 @@ namespace NeuralRenderingCategory
 	}
 
 	/**
+	 * @brief NR strength for a category, in NeuralRenderingCategory id order.
+	 * @param category A decoded category id (None..Landscape).
+	 * @param low Strengths for None, Skin, Hair and Eyes in .x, .y, .z and .w.
+	 * @param high Strengths for Foliage and Landscape in .x and .y.
+	 * @return The category's strength; an unknown id returns the None strength.
+	 */
+	float CategoryStrength(uint category, float4 low, float2 high)
+	{
+		switch (category) {
+		case Skin:
+			return low.y;
+		case Hair:
+			return low.z;
+		case Eyes:
+			return low.w;
+		case Foliage:
+			return high.x;
+		case Landscape:
+			return high.y;
+		default:
+			return low.x;
+		}
+	}
+
+	/**
 	 * @brief Fixed debug colour for a category, used by the Neural Rendering category visualisation.
 	 * @param category A decoded category id; an unknown id renders as None.
 	 * @return The debug colour.

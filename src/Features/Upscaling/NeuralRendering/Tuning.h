@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MaterialStrength.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -49,6 +51,24 @@ namespace NR
 		bool regionGroup = false;
 		/** @brief On VR with foveation active, evaluates only the foveated region, intersected with the tracked crop when one is set. */
 		bool regionFollowFoveation = true;
+		/**
+		 * @brief Applies NR by material through the graded protection lane, so a material's
+		 *        strength decides how strongly NR shows there. Off by default; it needs the deferred
+		 *        pass's material lane, and without it the whole frame is processed. It changes where
+		 *        the effect appears, not how much GPU time it costs.
+		 */
+		bool materialStrength = false;
+		/** @brief NR strength per material, 1 applies it fully and 0 bypasses it there. Unlabelled pixels use strengthOther. */
+		float strengthSkin = 1.0f, strengthHair = 1.0f, strengthEyes = 1.0f;
+		float strengthFoliage = 0.0f, strengthLandscape = 0.0f, strengthOther = 0.0f;
+		/** @brief Box-filter radius, in pixels, that blends each material's strength into its neighbours. */
+		uint32_t strengthEdgeSoftness = 2;
+
+		/** @brief Bounds and orders the material strengths for the shader's cbuffer and NeuralRenderingCategory ids. */
+		[[nodiscard]] MaterialStrength::Values MaterialStrengths() const
+		{
+			return MaterialStrength::Sanitize({ { strengthOther, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape }, strengthEdgeSoftness });
+		}
 
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */
 		void Sanitize()
@@ -61,6 +81,14 @@ namespace NR
 			skinStructureStrength = std::isfinite(skinStructureStrength) ?
 			                            std::clamp(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength) :
 			                            kAutomaticSkinStructure;
+			const auto materialStrengths = MaterialStrengths();
+			strengthOther = materialStrengths.strength[MaterialStrength::kNone];
+			strengthSkin = materialStrengths.strength[MaterialStrength::kSkin];
+			strengthHair = materialStrengths.strength[MaterialStrength::kHair];
+			strengthEyes = materialStrengths.strength[MaterialStrength::kEyes];
+			strengthFoliage = materialStrengths.strength[MaterialStrength::kFoliage];
+			strengthLandscape = materialStrengths.strength[MaterialStrength::kLandscape];
+			strengthEdgeSoftness = materialStrengths.edgeSoftness;
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

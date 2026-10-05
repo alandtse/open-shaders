@@ -44,6 +44,14 @@ struct NeuralRendering
 		std::array<uint32_t, 2> ngxResult{};
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
+		/** @brief True when the material lane is present and the graded protection has not been rejected or degraded. */
+		bool materialStrengthAvailable = true;
+		/** @brief True when the last evaluate bound the graded material protection. */
+		bool materialStrengthActive = false;
+		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape. */
+		std::array<float, 6> materialStrength{};
+		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
+		uint32_t materialEdgeSoftness = 0;
 	};
 
 	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
@@ -139,6 +147,15 @@ private:
 	std::atomic_bool regionGroup = false;
 	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
 	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
+	/**
+	 * @brief Set when an NGX or SEH fault with the graded material protection bound turns that path
+	 *        off for this session; the user's saved value is untouched, and only a relaunch clears it.
+	 */
+	std::atomic_bool materialStrengthRejected = false;
+	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
+	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
+	std::array<std::atomic<float>, 6> materialStrengthValues{};
+	std::atomic<uint32_t> materialEdgeSoftness = 0;
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
 	/**
@@ -174,6 +191,14 @@ private:
 	void PublishFailure(const std::string& detail);
 	/** @brief Latches a failure, tearing the runtime down first when the device was removed. */
 	void LatchFailure();
+	/**
+	 * @brief Handles an NGX or SEH failure raised while the graded material protection was bound:
+	 *        turns the setting off for this session without touching the saved setting, so the next
+	 *        frame evaluates unprotected instead of latching the whole pass. A removed device is not
+	 *        the protection's fault and is left to the normal latch.
+	 * @return True when the failure was the protection's and has been handled.
+	 */
+	bool RevertMaterialStrengthOnFailure(const char* detail);
 	/** @brief Last member: it must be destroyed before impl's NGX teardown at process exit. */
 	NR::TerminationSentinel terminationSentinel;
 };

@@ -162,6 +162,8 @@ struct NeuralRendering::Impl
 	struct Eye
 	{
 		std::unique_ptr<WrappedResource> color, depth, motion, output;
+		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
+		std::unique_ptr<WrappedResource> materialAlpha;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
@@ -169,7 +171,18 @@ struct NeuralRendering::Impl
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader;
+	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the six strengths. */
+	struct alignas(16) CategoryAlphaData
+	{
+		uint32_t width, height, eyeOffsetX, edgeSoftness;
+		float4 strengthsA;
+		float2 strengthsB;
+		float2 pad{};
+	};
+	static_assert(offsetof(CategoryAlphaData, strengthsA) == 16);
+	static_assert(offsetof(CategoryAlphaData, strengthsB) == 32);
+	static_assert(sizeof(CategoryAlphaData) == 48);
 	struct alignas(16) ColorTransferData
 	{
 		uint32_t width, height, eyeOffsetX, hasExposure = 0;
@@ -204,6 +217,15 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(sizeof(ColorTransferData) == 224);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
+	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
+	/** @brief Material-strength switch the persistent eye features were last created with; drives recreation. */
+	bool materialStrengthOn = false;
+	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
+	bool materialStrengthInFlight = false;
+	/** @brief Last evaluate bound the graded protection; reported by the status readout. */
+	bool materialStrengthBound = false;
+	/** @brief Latched setup failure: the material lane or the alpha texture is unusable for this session. */
+	bool materialStrengthDegraded = false;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
@@ -257,6 +279,7 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
+		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
 		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
 		ready = true;
 	}
@@ -272,6 +295,7 @@ struct NeuralRendering::Impl
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
+		materialStrengthInFlight = materialStrengthBound = false;
 		width = height = guideWidth = guideHeight = eyeCount = 0;
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
@@ -406,15 +430,24 @@ struct NeuralRendering::Impl
 
 	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter)
 	{
-		ID3D12Resource* resources[]{ eye.color->resource.get(), eye.depth->resource.get(), eye.motion->resource.get(), eye.output->resource.get() };
-		D3D12_RESOURCE_BARRIER barriers[4]{};
-		for (uint32_t i = 0; i < 4; ++i) {
-			const auto state = i == 3 ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-			barriers[i].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-			barriers[i].Transition = { resources[i], D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
-				enter ? D3D12_RESOURCE_STATE_COMMON : state, enter ? state : D3D12_RESOURCE_STATE_COMMON };
+		ID3D12Resource* resources[5]{ eye.color->resource.get(), eye.depth->resource.get(), eye.motion->resource.get(),
+			eye.output->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr };
+		const D3D12_RESOURCE_STATES states[5]{
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+		};
+		D3D12_RESOURCE_BARRIER barriers[5]{};
+		uint32_t count = 0;
+		for (uint32_t i = 0; i < 5; ++i) {
+			if (!resources[i])
+				continue;
+			barriers[count].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+			barriers[count].Transition = { resources[i], D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+				enter ? D3D12_RESOURCE_STATE_COMMON : states[i], enter ? states[i] : D3D12_RESOURCE_STATE_COMMON };
+			++count;
 		}
-		commands->ResourceBarrier(4, barriers);
+		commands->ResourceBarrier(count, barriers);
 	}
 
 	bool NeedsToneData() const
@@ -529,7 +562,64 @@ struct NeuralRendering::Impl
 		context->ClearState();
 	}
 
-	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
+	/**
+	 * @brief Returns the Masks2 SRV only when it carries the R16G16 material category lane this
+	 *        alpha decodes. Any other target would read as None everywhere and protect everything.
+	 */
+	ID3D11ShaderResourceView* MaterialLane()
+	{
+		const auto& target = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED];
+		if (!target.SRV)
+			return nullptr;
+		auto* srv = Util::AsReal(target.SRV);
+		D3D11_TEXTURE2D_DESC desc{};
+		return Util::GetTexture2DDesc(srv, desc) && desc.Format == DXGI_FORMAT_R16G16_UNORM ? srv : nullptr;
+	}
+
+	/**
+	 * @brief Builds each eye's DLSSNR.UIAlpha from the Masks2 category lane for this frame.
+	 * @param masks2 The deferred Masks2 SRV the categories are decoded from.
+	 * @param strengths The per-category protection and edge softness CategoryAlphaCS.hlsl applies.
+	 * @return False on a shader or texture failure; the caller then binds no protection.
+	 */
+	bool BuildMaterialAlpha(ID3D11ShaderResourceView* masks2, const NR::MaterialStrength::Values& strengths)
+	{
+		CS_GPU_PASS("Upscaling::NRMaterialAlpha");
+		auto* shader = materialAlphaShader.Get(L"Data/Shaders/Upscaling/NeuralRendering/CategoryAlphaCS.hlsl",
+			{}, "cs_5_0", "main", "NeuralRendering::CategoryAlpha CS");
+		if (!shader)
+			return false;
+		try {
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				auto& eye = eyes[i];
+				if (!eye.materialAlpha) {
+					const auto name = eyeCount > 1 ? std::format("NeuralRendering::MaterialAlpha{}", i) : std::string("NeuralRendering::MaterialAlpha");
+					eye.materialAlpha = interop.CreateTexture(width, height, DXGI_FORMAT_R8_UNORM, name);
+				}
+				context->ClearState();
+				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
+					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
+						strengths.strength[NR::MaterialStrength::kHair], strengths.strength[NR::MaterialStrength::kEyes] },
+					{ strengths.strength[NR::MaterialStrength::kFoliage], strengths.strength[NR::MaterialStrength::kLandscape] } });
+				auto buffer = categoryAlphaBuffer->CB();
+				context->CSSetConstantBuffers(0, 1, &buffer);
+				context->CSSetShaderResources(0, 1, &masks2);
+				auto* output = eye.materialAlpha->uav;
+				context->CSSetUnorderedAccessViews(0, 1, &output, nullptr);
+				context->CSSetShader(shader, nullptr, 0);
+				context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+				context->ClearState();
+			}
+		} catch (...) {
+			// A removed device is not an alpha failure; leave it to the normal latch.
+			if (interop.DeviceRemoved())
+				throw;
+			return false;
+		}
+		return true;
+	}
+
+	bool Draw(ID3D11Texture2D* color, ID3D11ShaderResourceView* const* inputs, ID3D11ComputeShader* shader, uint32_t reset, bool materialStrengthWanted, const NR::MaterialStrength::Values& materialStrengths, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic, NR::Diagnostics& diagnostics)
 	{
 		CS_GPU_PASS("Upscaling::NeuralRendering");
 		captureDiagnostics = &diagnostics;
@@ -567,6 +657,19 @@ struct NeuralRendering::Impl
 			diagnostic.outcome = NR::Diagnostics::Outcome::Bypassed;
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
+		}
+		materialStrengthInFlight = materialStrengthBound = false;
+		if (materialStrengthWanted && !materialStrengthDegraded) {
+			auto* lane = MaterialLane();
+			if (!lane) {
+				materialStrengthDegraded = true;
+				logger::warn("[NeuralRendering] material strength unavailable: the deferred material lane is not present, so the whole frame is processed");
+			} else if (BuildMaterialAlpha(lane, materialStrengths)) {
+				materialStrengthInFlight = materialStrengthBound = true;
+			} else {
+				materialStrengthDegraded = true;
+				logger::warn("[NeuralRendering] material strength unavailable: its shader or texture could not be created, so the whole frame is processed");
+			}
 		}
 		context->CSSetShader(shader, nullptr, 0);
 		context->CSSetShaderResources(0, 4, inputs);
@@ -633,8 +736,15 @@ struct NeuralRendering::Impl
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
 					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+					const NR::ProtectionResources protection{
+						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
+						// A protected pixel is restored from the NR input itself, so the alpha and the
+						// backbuffer share the proxy colour domain the model works in.
+						materialStrengthInFlight ? eye.color->resource.get() : nullptr
+					};
 					success = runtime.Evaluate(commands, i, eye.color->resource.get(), eye.depth->resource.get(),
-						eye.motion->resource.get(), eye.output->resource.get(), width, height, guides, eye.frame, tuning);
+						eye.motion->resource.get(), eye.output->resource.get(), protection,
+						width, height, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
 				if (success)
@@ -647,6 +757,8 @@ struct NeuralRendering::Impl
 			}
 			interop.End();
 		}
+		if (success)
+			materialStrengthInFlight = false;
 		if (diagnostic.options & NR::Diagnostics::SerializeGPU)
 			interop.Drain();
 		diagnostic.submittedFence = interop.SubmittedFence();
@@ -919,6 +1031,11 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
 	snapshot.appliedFrames = appliedFrames.load(std::memory_order_relaxed);
 	snapshot.ngxResult = { lastNgxResult[0].load(std::memory_order_relaxed), lastNgxResult[1].load(std::memory_order_relaxed) };
+	snapshot.materialStrengthActive = materialStrengthActive.load(std::memory_order_relaxed);
+	snapshot.materialStrengthAvailable = materialStrengthAvailable.load(std::memory_order_relaxed);
+	for (size_t i = 0; i < snapshot.materialStrength.size(); ++i)
+		snapshot.materialStrength[i] = materialStrengthValues[i].load(std::memory_order_relaxed);
+	snapshot.materialEdgeSoftness = materialEdgeSoftness.load(std::memory_order_relaxed);
 	return snapshot;
 }
 
@@ -1003,6 +1120,30 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
+	if (ImGui::Checkbox(T(TKEY("material_strength"), "Apply Neural Rendering by Material"), &tuning.materialStrength))
+		changed = true;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("material_strength_tooltip"),
+			"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. Needs the deferred pass; without its material lane the whole frame is processed."));
+	// The strengths and the softness only rewrite the per-frame alpha, so they never rebuild the pass.
+	ImGui::BeginDisabled(!tuning.materialStrength);
+	changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	changed |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
+	if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
+		tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
+		changed = true;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("edge_softness_tooltip"),
+			"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
+	ImGui::EndDisabled();
+	if (tuning.materialStrength && !materialStrengthAvailable.load(std::memory_order_relaxed))
+		Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
 	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 		changed = true;
 		resetHistory = true;
@@ -1209,6 +1350,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		resetHistory = true;
 		return;
 	}
+	const auto materialStrengths = tuning.MaterialStrengths();
+	const auto publishMaterialStrength = [this, &materialStrengths] {
+		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
+		materialStrengthAvailable.store(!impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
+			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
+		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
+	};
 	try {
 		retryRequested = false;
 		if (action == NR::FrameAction::RebuildThenRun) {
@@ -1246,6 +1395,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			work.prepareColor.Reset();
 			work.prepareToneData.Reset();
 			work.compositeColor.Reset();
+			work.materialAlphaShader.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
@@ -1275,6 +1425,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			if (!input || !Util::GetTexture2DDesc(input, guide) || guide.Width < gw * count || guide.Height < gh ||
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
+		}
+		const bool materialStrengthWanted = tuning.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
+		// Feature 18 latches the UIAlpha binding at creation, so switching the setting on or off
+		// rebuilds the persistent eye features here, in one place; a strength or softness change
+		// only rewrites the per-frame alpha, with no rebuild and no history reset.
+		if (materialStrengthWanted != work.materialStrengthOn) {
+			recreate = resetHistory = true;
+			work.materialStrengthOn = materialStrengthWanted;
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
@@ -1353,7 +1511,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		diagnostic.localTone = boundedTuning.localToneStrength;
 		diagnostic.localStructure = boundedTuning.localStructureStrength;
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
-		if (!work.Draw(color, inputs.data(), shader, reset, boundedTuning, diagnostic, diagnostics))
+		const bool processed = work.Draw(color, inputs.data(), shader, reset, materialStrengthWanted, materialStrengths, boundedTuning, diagnostic, diagnostics);
+		publishMaterialStrength();
+		if (!processed)
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
@@ -1372,15 +1532,34 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.lastFrame = state->frameCount;
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
+		const bool strengthHandled = RevertMaterialStrengthOnFailure(winrt::to_string(error.message()).c_str());
+		publishMaterialStrength();
+		if (strengthHandled)
+			return;
 		LatchFailure();
 		PublishFailure(winrt::to_string(error.message()));
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
+		const bool strengthHandled = RevertMaterialStrengthOnFailure(error.what());
+		publishMaterialStrength();
+		if (strengthHandled)
+			return;
 		LatchFailure();
 		PublishFailure(error.what());
 		logger::error("[NeuralRendering] {}", error.what());
 	}
+}
+
+bool NeuralRendering::RevertMaterialStrengthOnFailure(const char* detail)
+{
+	if (!impl->materialStrengthInFlight || impl->interop.DeviceRemoved())
+		return false;
+	impl->materialStrengthInFlight = false;
+	impl->materialStrengthBound = false;
+	materialStrengthRejected.store(true, std::memory_order_relaxed);
+	logger::warn("[NeuralRendering] material strength rejected ({}); Neural Rendering by material is off for this session", detail);
+	return true;
 }
 
 void NeuralRendering::LatchFailure()

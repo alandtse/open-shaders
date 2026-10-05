@@ -356,6 +356,52 @@ Runtime validation still requires the supported hardware and in-game comparison 
 SE/AE and VR. A C++ build and deployment do not establish native HDR model support,
 image quality, or temporal stability in this D3D12 path.
 
+## Applying Neural Rendering by material
+
+The **Apply Neural Rendering by Material** setting, backed by
+`neuralRenderingTuning.materialStrength`, the six strengths (`strengthSkin`,
+`strengthHair`, `strengthEyes`, `strengthFoliage`, `strengthLandscape` and
+`strengthOther`, each 0 to 1 where 1 applies NR fully and 0 bypasses it) and `strengthEdgeSoftness` (0 to 4 pixels), binds
+Feature 18's `DLSSNR.UIAlpha` lane. That lane is a graded protection value, not a
+binary mask: alpha 0 applies NR fully, alpha 1 restores the pixel from
+`DLSSNR.Backbuffer`, and a value between the two blends. `strengthEdgeSoftness`
+averages the per-pixel value over a `(2r+1)`-square box, clamped at the eye bounds,
+so a material boundary is soft rather than hard. With the setting off, nothing is
+bound and the shipped null-mask path is emitted exactly as before.
+
+`CategoryAlphaCS.hlsl` rebuilds one `R8_UNORM` alpha per eye every frame, sized to
+the Feature 18 **output** extent, from the `Masks2` SRV at the same per-eye pixel
+offset `ColorTransferCS.hlsl` uses (`id.xy + EyeOffsetX`). `DLSSNR.Backbuffer` is
+the NR input texture itself (`eye.color`, the R16G16B16A16_FLOAT proxy domain the
+model works in, bound as Color too); a raw scene copy is the wrong colour domain and
+darkens the frame. `DLSSNR.ControlMask` stays null and `UseAutoMask` keeps its
+tuning value, because binding a control mask and `UIAlpha` together can collapse the
+network contribution. The eight `DLSSNR.UIAlphaSubrect*` and
+`DLSSNR.BackbufferSubrect*` keys are written equal to the output subrect at both
+creation and evaluation, so an active crop does not move the alpha: the alpha is
+indexed by the same absolute eye pixel as the NR input, and only the subrect the
+runtime reads it through changes.
+
+This is a quality control, not a performance one: `NREvaluate` still runs over the
+whole frame at a fixed cost, so masking a material does not save GPU time.
+
+Feature 18 latches the `UIAlpha` binding at creation, so switching `materialStrength`
+on or off recreates the persistent eye features at the single per-frame detection
+point in `DrawBeforeUpscaling`, which also covers a devbench change; a strength or
+softness change only rewrites the per-frame alpha, with no rebuild and no history
+reset. If the deferred material lane is absent or the alpha shader or texture cannot
+be created, the pass logs once and falls back to the shipped unprotected path for the
+session; an NGX or SEH fault with the alpha bound turns the setting off for the
+session without changing the saved value. Both are reported by
+`materialStrengthAvailable` on the `neuralRenderingStatus` query.
+
+Test it through devbench: `openshaders.feature set shortName=Upscaling
+settings={"neuralRenderingTuning":{"materialStrength":true,"strengthSkin":0,...}}`,
+then read `materialStrengthAvailable`, `materialStrengthActive`,
+`materialStrengthValues` (None, Skin, Hair, Eyes, Foliage, Landscape) and
+`materialEdgeSoftness` from `neuralRenderingStatus`, and capture a frame with
+`captureNeuralRendering`.
+
 ## Feature 18 output channel-order test
 
 Feature 18 runtime builds do not consistently expose the channels of an

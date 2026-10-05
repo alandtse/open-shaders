@@ -41,3 +41,17 @@
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(26.0 / 255.0), NeuralRenderingCategory::None);
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(1.0), NeuralRenderingCategory::None);
 }
+
+/// @tags neural-rendering
+/// CategoryStrength reads the strength of one category out of the packed float4 + float2 pair
+[numthreads(1, 1, 1)] void TestCategoryStrengthSelectsTheCategory() {
+	const float4 low = float4(0.125, 0.25, 0.375, 0.5);
+	const float2 high = float2(0.625, 0.75);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::None, low, high), 0.125);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Skin, low, high), 0.25);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Hair, low, high), 0.375);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Eyes, low, high), 0.5);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Foliage, low, high), 0.625);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Landscape, low, high), 0.75);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(200u, low, high), 0.125);
+}

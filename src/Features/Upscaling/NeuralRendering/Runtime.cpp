@@ -200,14 +200,20 @@ namespace NR
 		};
 
 		/** @brief Writes the appearance parameters Feature 18 needs at creation and evaluation. */
-		void WriteTuning(ParameterWriter& writer, const Tuning& tuning)
+		void WriteTuning(ParameterWriter& writer, const Tuning& tuning, const ProtectionResources& protection)
 		{
 			writer.SetUInt("DLSSNR.Style", tuning.style);
 			writer.SetFloat("DLSSNR.Intensity", tuning.intensity);
 			writer.SetFloat("DLSSNR.LocalToneStrength", tuning.localToneStrength);
 			writer.SetFloat("DLSSNR.LocalStructureStrength", tuning.localStructureStrength);
 			writer.SetFloat("DLSSNR.SkinStructureStrength", tuning.skinStructureStrength);
+			// UIAlpha is the graded lane; ControlMask stays on the shipped null path so the two are
+			// never bound together, which can collapse the network contribution.
 			writer.SetResource("DLSSNR.ControlMask", nullptr);
+			if (protection.alpha) {
+				writer.SetResource("DLSSNR.UIAlpha", protection.alpha);
+				writer.SetResource("DLSSNR.Backbuffer", protection.backbuffer);
+			}
 			writer.SetUInt("DLSSNR.UseAutoMask", tuning.useAutoMask ? 1u : 0u);
 		}
 
@@ -459,7 +465,7 @@ namespace NR
 
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
-		uint32_t width, uint32_t height, const GuideParameters& guides,
+		const ProtectionResources& protection, uint32_t width, uint32_t height, const GuideParameters& guides,
 		FrameParameters& frame, const Tuning& tuning)
 	{
 		auto& state = *impl;
@@ -518,7 +524,7 @@ namespace NR
 			writer.SetUInt("DLSSNR.AutoExposure", 1u);
 			writer.SetUInt("DLSSNR.Hdr", 1u);
 			writer.SetUInt("DLSSNR.SDR", 0u);
-			WriteTuning(writer, tuning);
+			WriteTuning(writer, tuning, protection);
 			writer.SetUInt("DLSSNR.UICorrection", 1u);
 			NVSDK_NGX_Handle* handle = nullptr;
 			const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
@@ -546,6 +552,18 @@ namespace NR
 			writer.SetUInt(key, outputRegion.width);
 		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
 			writer.SetUInt(key, outputRegion.height);
+		// The runtime restores a protected pixel from DLSSNR.Backbuffer, so the alpha and backbuffer
+		// subrects must both name the output subrect that alpha was built at, crop included.
+		if (protection.alpha) {
+			writer.SetUInt("DLSSNR.UIAlphaSubrectBaseX", outputRegion.baseX);
+			writer.SetUInt("DLSSNR.UIAlphaSubrectBaseY", outputRegion.baseY);
+			writer.SetUInt("DLSSNR.UIAlphaSubrectWidth", outputRegion.width);
+			writer.SetUInt("DLSSNR.UIAlphaSubrectHeight", outputRegion.height);
+			writer.SetUInt("DLSSNR.BackbufferSubrectBaseX", outputRegion.baseX);
+			writer.SetUInt("DLSSNR.BackbufferSubrectBaseY", outputRegion.baseY);
+			writer.SetUInt("DLSSNR.BackbufferSubrectWidth", outputRegion.width);
+			writer.SetUInt("DLSSNR.BackbufferSubrectHeight", outputRegion.height);
+		}
 		writer.SetUInt("DLSSNR.DepthSubrectBaseX", depthRegion.baseX);
 		writer.SetUInt("DLSSNR.DepthSubrectBaseY", depthRegion.baseY);
 		writer.SetUInt("DLSSNR.DepthSubrectWidth", depthRegion.width);
@@ -562,7 +580,7 @@ namespace NR
 		writer.SetUInt("DLSSNR.Upscaling", 0u);
 		writer.SetFloat("DLSSNR.Scale", 1.0f);
 		writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
-		WriteTuning(writer, tuning);
+		WriteTuning(writer, tuning, protection);
 		writer.SetFloat("Sharpness", 0.0f);
 		if (frame.feedCameraData) {
 			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, frame.jitterX);
