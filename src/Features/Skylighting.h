@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Buffer.h"
+
 #include <array>
 #include <atomic>
 
@@ -97,10 +99,10 @@ public:
 	winrt::com_ptr<ID3D11SamplerState> comparisonSampler = nullptr;
 
 	Texture2D* texOcclusion = nullptr;
-	Texture3D* texProbeArray = nullptr;
-	Texture3D* texAccumFramesArray = nullptr;
-	Texture3D* texShadowBitmask = nullptr;
-	Texture3D* texShadowVisibility = nullptr;
+	eastl::unique_ptr<Texture3D> texProbeArray;
+	eastl::unique_ptr<Texture3D> texAccumFramesArray;
+	eastl::unique_ptr<Texture3D> texShadowBitmask;
+	eastl::unique_ptr<Texture3D> texShadowVisibility;
 
 	winrt::com_ptr<ID3D11ComputeShader> probeUpdateCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> occlusionOnlyProbeUpdateCompute = nullptr;

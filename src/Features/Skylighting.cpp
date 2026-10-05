@@ -11,7 +11,6 @@
 #include "Utils/SphericalHarmonics.h"
 
 #include <cmath>
-#include <memory>
 #include <numbers>
 
 #define I18N_KEY_PREFIX "feature.skylighting."
@@ -182,36 +181,32 @@ void Skylighting::CreateProbeResources(const std::array<uint, 3>& dimensions)
 				.WSize = texDesc.Depth }
 		};
 
-		auto newProbeArray = std::make_unique<Texture3D>(texDesc, "Skylighting::ProbeArray");
+		auto newProbeArray = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ProbeArray");
 		newProbeArray->CreateSRV(srvDesc);
 		newProbeArray->CreateUAV(uavDesc);
 
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UINT;
 
-		auto newAccumFramesArray = std::make_unique<Texture3D>(texDesc, "Skylighting::AccumFramesArray");
+		auto newAccumFramesArray = eastl::make_unique<Texture3D>(texDesc, "Skylighting::AccumFramesArray");
 		newAccumFramesArray->CreateSRV(srvDesc);
 		newAccumFramesArray->CreateUAV(uavDesc);
 
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R32_UINT;
 
-		auto newShadowBitmask = std::make_unique<Texture3D>(texDesc, "Skylighting::ShadowBitmask");
+		auto newShadowBitmask = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ShadowBitmask");
 		newShadowBitmask->CreateSRV(srvDesc);
 		newShadowBitmask->CreateUAV(uavDesc);
 
 		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R8_UNORM;
 
-		auto newShadowVisibility = std::make_unique<Texture3D>(texDesc, "Skylighting::ShadowVisibility");
+		auto newShadowVisibility = eastl::make_unique<Texture3D>(texDesc, "Skylighting::ShadowVisibility");
 		newShadowVisibility->CreateSRV(srvDesc);
 		newShadowVisibility->CreateUAV(uavDesc);
 
-		delete texProbeArray;
-		texProbeArray = newProbeArray.release();
-		delete texAccumFramesArray;
-		texAccumFramesArray = newAccumFramesArray.release();
-		delete texShadowBitmask;
-		texShadowBitmask = newShadowBitmask.release();
-		delete texShadowVisibility;
-		texShadowVisibility = newShadowVisibility.release();
+		texProbeArray = std::move(newProbeArray);
+		texAccumFramesArray = std::move(newAccumFramesArray);
+		texShadowBitmask = std::move(newShadowBitmask);
+		texShadowVisibility = std::move(newShadowVisibility);
 		std::copy(dimensions.begin(), dimensions.end(), probeArrayDims);
 	}
 }
@@ -264,6 +259,16 @@ void Skylighting::CompileComputeShaders()
 	}
 }
 
+namespace
+{
+	/** @brief Maps a camera cell to its wrapped, non-negative slot along one probe axis. */
+	uint WrapProbeOrigin(float a_cell, uint a_dim)
+	{
+		const int dim = static_cast<int>(a_dim);
+		return static_cast<uint>(((static_cast<int>(a_cell) - dim / 2) % dim + dim) % dim);
+	}
+}
+
 Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 {
 	ApplyProbeGrid();
@@ -293,9 +298,9 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		.OcclusionSHBasis4Pi = OcclusionSHBasis4Pi,
 		.PosOffset = cellOrigin - eyePos,
 		.ArrayOrigin = {
-			static_cast<uint>((static_cast<int>(cellID.x) - static_cast<int>(probeArrayDims[0] / 2)) % static_cast<int>(probeArrayDims[0]) + static_cast<int>(probeArrayDims[0])) % probeArrayDims[0],
-			static_cast<uint>((static_cast<int>(cellID.y) - static_cast<int>(probeArrayDims[1] / 2)) % static_cast<int>(probeArrayDims[1]) + static_cast<int>(probeArrayDims[1])) % probeArrayDims[1],
-			static_cast<uint>((static_cast<int>(cellID.z) - static_cast<int>(probeArrayDims[2] / 2)) % static_cast<int>(probeArrayDims[2]) + static_cast<int>(probeArrayDims[2])) % probeArrayDims[2] },
+			WrapProbeOrigin(cellID.x, probeArrayDims[0]),
+			WrapProbeOrigin(cellID.y, probeArrayDims[1]),
+			WrapProbeOrigin(cellID.z, probeArrayDims[2]) },
 		.ValidMargin = { (int)cellIDDiff.x, (int)cellIDDiff.y, (int)cellIDDiff.z },
 		.MinDiffuseVisibility = settings.MinDiffuseVisibility,
 		.MinSpecularVisibility = settings.MinSpecularVisibility,
