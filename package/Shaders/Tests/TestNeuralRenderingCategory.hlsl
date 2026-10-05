@@ -43,8 +43,21 @@
 }
 
 /// @tags neural-rendering
-/// CategoryStrength reads the strength of one category out of the packed float4 + float2 pair
-[numthreads(1, 1, 1)] void TestCategoryStrengthSelectsTheCategory() {
+/// The material map filter enables exactly the categories whose bit is set
+[numthreads(1, 1, 1)] void TestCategoryInFilterSelectsBits() {
+	const uint skinAndEyes = (1u << NeuralRenderingCategory::Skin) | (1u << NeuralRenderingCategory::Eyes);
+	ASSERT(IsTrue, NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Skin, skinAndEyes));
+	ASSERT(IsTrue, NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Eyes, skinAndEyes));
+	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Hair, skinAndEyes));
+	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::None, skinAndEyes));
+	ASSERT(IsTrue, NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Landscape, 0x3Fu));
+	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::None, 0u));
+}
+
+	/// @tags neural-rendering
+	/// CategoryStrength reads the strength of one category out of the packed float4 + float2 pair
+	[numthreads(1, 1, 1)] void TestCategoryStrengthSelectsTheCategory()
+{
 	const float4 low = float4(0.125, 0.25, 0.375, 0.5);
 	const float2 high = float2(0.625, 0.75);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::None, low, high), 0.125);

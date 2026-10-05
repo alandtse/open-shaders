@@ -40,6 +40,16 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorHeight;
 	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
 	float4 CategoryStrength[5];
+	// Material map: the switch, the MaterialMap::Mode and the per-category filter bitmask, plus
+	// whether the by-material protection is bound this frame, which the strength view reports as 1.0
+	// when it is not.
+	uint MaterialMapEnabled;
+	uint MaterialMapMode;
+	uint MaterialMapFilter;
+	uint MaterialMapStrengthBound;
+	float4 MaterialStrengthsA;  // None, Skin, Hair, Eyes
+	float2 MaterialStrengthsB;  // Foliage, Landscape
+	float2 MaterialStrengthsPad;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -60,11 +70,21 @@ static const float kSpatialEpsilon = 1e-4;
 static const float3 kRegionOutlineColor = float3(0.0, 1.0, 0.0);
 static const float3 kActorBoxOutlineColor = float3(1.0, 1.0, 0.0);
 static const float kActorBoxOutlineThickness = 2.0f;
+static const float kMaterialMapOpacity = 0.65;
 
 float CategoryStrengthAt(uint category)
 {
 	return category >= NeuralRenderingCategory::Skin && category <= NeuralRenderingCategory::Landscape ?
 	           CategoryStrength[category - NeuralRenderingCategory::Skin].x :
+	           1.0;
+}
+
+// The strength the by-material setting gives a pixel: its own label's strength, without the box blur
+// CategoryAlphaCS.hlsl averages, and 1.0 while the protection is not bound so the view still reads.
+float MaterialStrengthAt(uint category)
+{
+	return MaterialMapStrengthBound != 0 ?
+	           NeuralRenderingCategory::CategoryStrength(category, MaterialStrengthsA, MaterialStrengthsB) :
 	           1.0;
 }
 
@@ -400,6 +420,17 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	if (VisualMode == NR::kVisualNone && !boundedGain)
 		result = FromLinear(result);
+	// After the conversion so the debug colour is not re-encoded, and on the composite only: the
+	// Prepare dispatch writes NGX's input proxy, which a tint would corrupt.
+	if (MaterialMapEnabled != 0) {
+		const uint category = NeuralRenderingCategory::Decode(Masks2Texture[int2(id.xy) + int2(int(EyeOffsetX), 0)].y);
+		if (NeuralRenderingCategory::CategoryInFilter(category, MaterialMapFilter)) {
+			if (MaterialMapMode == NR::kMaterialMapStrength)
+				result = MaterialStrengthAt(category).xxx;
+			else
+				result = lerp(result, NeuralRenderingCategory::DebugColor(category), kMaterialMapOpacity);
+		}
+	}
 	if (RegionOverlayEnabled != 0) {
 		result = RegionOverlay::OutlineOnly(result, id.xy,
 			RegionOverlay::ClampToFrame(uint4(RegionBaseX, RegionBaseY, RegionWidth, RegionHeight), uint2(Width, Height)),

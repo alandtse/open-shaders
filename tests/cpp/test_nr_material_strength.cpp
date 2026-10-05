@@ -1,8 +1,9 @@
-// Unit tests for the NR material-strength helper and the Tuning values it builds:
-// the NeuralRenderingCategory id order, the bounds, and the product defaults.
-// CategoryAlphaCS.hlsl reads the same order; TestNeuralRenderingCategory.hlsl
-// covers the shader-side lookup.
+// Unit tests for the NR material-strength helper, the material-map filter and the Tuning values
+// they build: the NeuralRenderingCategory id order, the bounds, and the product defaults.
+// CategoryAlphaCS.hlsl reads the same order and ColorTransferCS.hlsl the same filter bits;
+// TestNeuralRenderingCategory.hlsl covers both shader-side lookups.
 
+#include "Features/Upscaling/NeuralRendering/MaterialMap.h"
 #include "Features/Upscaling/NeuralRendering/MaterialStrength.h"
 #include "Features/Upscaling/NeuralRendering/Tuning.h"
 
@@ -81,4 +82,60 @@ TEST_CASE("Tuning Sanitize writes the bounded material strengths back", "[nr]")
 TEST_CASE("Material strength is off by default", "[nr]")
 {
 	REQUIRE_FALSE(NR::Tuning{}.materialStrength);
+}
+
+TEST_CASE("MaterialMap filter bits follow the NeuralRenderingCategory ids", "[nr]")
+{
+	REQUIRE(NR::MaterialMap::kBits == 6u);
+	REQUIRE(NR::MaterialMap::kBits == NR::MaterialStrength::kCount);
+	REQUIRE(NR::MaterialMap::kAllCategories == 0x3Fu);
+	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kNone) == 0x01u);
+	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kSkin) == 0x02u);
+	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kLandscape) == 0x20u);
+	REQUIRE(NR::MaterialMap::Bit(NR::MaterialMap::kBits) == 0u);
+}
+
+TEST_CASE("MaterialMap Sanitize keeps only the six category bits", "[nr]")
+{
+	REQUIRE(NR::MaterialMap::Sanitize(0xFFFFFFFFu) == NR::MaterialMap::kAllCategories);
+	REQUIRE(NR::MaterialMap::Sanitize(0u) == 0u);
+	const uint32_t skinOnly = NR::MaterialMap::Bit(NR::MaterialStrength::kSkin);
+	REQUIRE(NR::MaterialMap::Sanitize(skinOnly | 0xFFFFFFC0u) == skinOnly);
+}
+
+TEST_CASE("MaterialMap Contains follows one category's bit", "[nr]")
+{
+	const uint32_t skinAndEyes = NR::MaterialMap::Bit(NR::MaterialStrength::kSkin) | NR::MaterialMap::Bit(NR::MaterialStrength::kEyes);
+	REQUIRE(NR::MaterialMap::Contains(skinAndEyes, NR::MaterialStrength::kSkin));
+	REQUIRE(NR::MaterialMap::Contains(skinAndEyes, NR::MaterialStrength::kEyes));
+	REQUIRE_FALSE(NR::MaterialMap::Contains(skinAndEyes, NR::MaterialStrength::kHair));
+	REQUIRE_FALSE(NR::MaterialMap::Contains(0u, NR::MaterialStrength::kNone));
+	REQUIRE(NR::MaterialMap::Contains(NR::MaterialMap::kAllCategories, NR::MaterialStrength::kLandscape));
+	REQUIRE_FALSE(NR::MaterialMap::Contains(NR::MaterialMap::kAllCategories, NR::MaterialMap::kBits));
+}
+
+TEST_CASE("MaterialMap Set toggles one category and leaves the others", "[nr]")
+{
+	uint32_t filter = NR::MaterialMap::kAllCategories;
+	filter = NR::MaterialMap::Set(filter, NR::MaterialStrength::kEyes, false);
+	REQUIRE(filter == (NR::MaterialMap::kAllCategories & ~NR::MaterialMap::Bit(NR::MaterialStrength::kEyes)));
+	REQUIRE_FALSE(NR::MaterialMap::Contains(filter, NR::MaterialStrength::kEyes));
+	REQUIRE(NR::MaterialMap::Contains(filter, NR::MaterialStrength::kSkin));
+	filter = NR::MaterialMap::Set(filter, NR::MaterialStrength::kEyes, true);
+	REQUIRE(filter == NR::MaterialMap::kAllCategories);
+	REQUIRE(NR::MaterialMap::Set(0u, NR::MaterialStrength::kNone, true) == NR::MaterialMap::Bit(NR::MaterialStrength::kNone));
+}
+
+TEST_CASE("Tuning Sanitize bounds the material map mode and filter", "[nr]")
+{
+	NR::Tuning tuning;
+	REQUIRE_FALSE(tuning.showMaterialMap);
+	REQUIRE(tuning.materialMapMode == static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory));
+	REQUIRE(tuning.materialMapFilter == NR::MaterialMap::kAllCategories);
+
+	tuning.materialMapMode = 9;
+	tuning.materialMapFilter = 0xFFFFFFFFu;
+	tuning.Sanitize();
+	REQUIRE(tuning.materialMapMode == NR::MaterialMap::kMaxMode);
+	REQUIRE(tuning.materialMapFilter == NR::MaterialMap::kAllCategories);
 }

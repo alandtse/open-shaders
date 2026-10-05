@@ -1,7 +1,7 @@
 #ifndef __NR_MODE_VALUES_HLSLI__
 #define __NR_MODE_VALUES_HLSLI__
 
-// The numbers Diagnostics.h's enums declare, which its static_asserts pin.
+// The numbers Diagnostics.h's enums and MaterialMap.h's Mode declare, which their static_asserts pin.
 namespace NR
 {
 	static const uint kConversionRaw = 0;
@@ -59,6 +59,9 @@ namespace NR
 	static const uint kVisualToneLowGain = 19;
 	static const uint kVisualFinalLuminanceRatio = 20;
 	static const uint kVisualCategory = 21;
+
+	static const uint kMaterialMapCategory = 0;
+	static const uint kMaterialMapStrength = 1;
 }
 
 #endif  // __NR_MODE_VALUES_HLSLI__

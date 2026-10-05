@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MaterialMap.h"
 #include "MaterialStrength.h"
 
 #include <algorithm>
@@ -63,6 +64,16 @@ namespace NR
 		float strengthFoliage = 0.0f, strengthLandscape = 0.0f, strengthOther = 0.0f;
 		/** @brief Box-filter radius, in pixels, that blends each material's strength into its neighbours. */
 		uint32_t strengthEdgeSoftness = 2;
+		/**
+		 * @brief Draws the deferred material lane instead of the composited image, so the pixels each
+		 *        material covers can be checked on a real character. A debug view; off by default and
+		 *        needing the deferred pass, and it costs no GPU time beyond the existing composite.
+		 */
+		bool showMaterialMap = false;
+		/** @brief MaterialMap::Mode the map draws: the category's debug colour, or its by-material strength. */
+		uint32_t materialMapMode = static_cast<uint32_t>(MaterialMap::Mode::kCategory);
+		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all six by default. */
+		uint32_t materialMapFilter = MaterialMap::kAllCategories;
 
 		/** @brief Bounds and orders the material strengths for the shader's cbuffer and NeuralRenderingCategory ids. */
 		[[nodiscard]] MaterialStrength::Values MaterialStrengths() const
@@ -89,6 +100,8 @@ namespace NR
 			strengthFoliage = materialStrengths.strength[MaterialStrength::kFoliage];
 			strengthLandscape = materialStrengths.strength[MaterialStrength::kLandscape];
 			strengthEdgeSoftness = materialStrengths.edgeSoftness;
+			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
+			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

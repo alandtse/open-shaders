@@ -77,6 +77,17 @@ namespace NeuralRenderingCategory
 	}
 
 	/**
+	 * @brief True when a category is enabled in a material-map filter bitmask.
+	 * @param category A decoded category id; an id outside the range is never enabled.
+	 * @param filter One bit per category id, bit 0 = None.
+	 * @return True when the category's bit is set.
+	 */
+	bool CategoryInFilter(uint category, uint filter)
+	{
+		return category < Count && (filter & (1u << category)) != 0;
+	}
+
+	/**
 	 * @brief Fixed debug colour for a category, used by the Neural Rendering category visualisation.
 	 * @param category A decoded category id; an unknown id renders as None.
 	 * @return The debug colour.

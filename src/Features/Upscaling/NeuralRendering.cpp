@@ -202,6 +202,11 @@ struct NeuralRendering::Impl
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
+		// Material map: the switch, the mode, the category filter and whether the by-material
+		// protection is bound, then the six by-material strengths in NeuralRenderingCategory id order.
+		uint32_t materialMapEnabled = 0, materialMapMode = 0, materialMapFilter = 0, materialMapStrengthBound = 0;
+		float4 materialStrengthsA{};
+		float4 materialStrengthsB{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -215,7 +220,14 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
 	static_assert(offsetof(ColorTransferData, pad) == 136);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
-	static_assert(sizeof(ColorTransferData) == 224);
+	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
+	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
+	static_assert(offsetof(ColorTransferData, materialStrengthsA) == 240);
+	static_assert(offsetof(ColorTransferData, materialStrengthsB) == 256);
+	static_assert(sizeof(ColorTransferData) == 272);
+	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
+	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
+	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
 	/** @brief Material-strength switch the persistent eye features were last created with; drives recreation. */
@@ -252,6 +264,11 @@ struct NeuralRendering::Impl
 	bool useResolutionMotionScale = true;
 	/** @brief Draws the evaluated crop outline into the composite; read from the tuning each NR frame. */
 	bool regionOverlay = false;
+	/** @brief Material-map tint of the last frame, read from the tuning: the switch, the mode and the category filter. */
+	bool materialMapEnabled = false;
+	uint32_t materialMapMode = 0, materialMapFilter = NR::MaterialMap::kAllCategories;
+	/** @brief Per-category by-material strengths of the last frame, in NeuralRenderingCategory id order. */
+	std::array<float, NR::MaterialStrength::kCount> materialMapStrength{};
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -526,6 +543,15 @@ struct NeuralRendering::Impl
 		// Never on the Prepare dispatch: that writes NGX's input proxy, which the overlay would corrupt.
 		data.regionOverlayEnabled = (!prepare && regionOverlay) ? 1u : 0u;
 		data.regionOutlineThickness = kRegionOutlineThicknessPixels;
+		data.materialMapEnabled = (!prepare && materialMapEnabled) ? 1u : 0u;
+		data.materialMapMode = materialMapMode;
+		data.materialMapFilter = materialMapFilter;
+		// The strength view reports the protection the evaluate actually bound, so a degraded
+		// material lane reads as 1.0 everywhere instead of the strengths it never applied.
+		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
+		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
+			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
+		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape], 0.0f, 0.0f };
 		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
@@ -1144,6 +1170,50 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	ImGui::EndDisabled();
 	if (tuning.materialStrength && !materialStrengthAvailable.load(std::memory_order_relaxed))
 		Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
+	if (ImGui::Checkbox(T(TKEY("material_map"), "Show Material Map"), &tuning.showMaterialMap))
+		changed = true;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("material_map_tooltip"),
+			"Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a grayscale ramp of the strength Apply Neural Rendering by Material gives that pixel, read at the pixel without Edge Softness and 1.0 while that setting is off. Needs the deferred pass; unlabelled pixels follow Everything Else."));
+	ImGui::BeginDisabled(!tuning.showMaterialMap);
+	int materialMapMode = static_cast<int>(std::min(tuning.materialMapMode, NR::MaterialMap::kMaxMode));
+	const std::array<const char*, NR::MaterialMap::kMaxMode + 1> materialMapModeLabels{
+		T(TKEY("material_map_category"), "Category colours"),
+		T(TKEY("material_map_strength"), "Strength"),
+	};
+	if (ImGui::Combo(T(TKEY("material_map_mode"), "Map Mode"), &materialMapMode, materialMapModeLabels.data(), static_cast<int>(materialMapModeLabels.size()))) {
+		tuning.materialMapMode = static_cast<uint32_t>(materialMapMode);
+		changed = true;
+	}
+	const auto materialMapFilter = [&tuning, &changed](const char* label, uint32_t category) {
+		bool enabled = NR::MaterialMap::Contains(tuning.materialMapFilter, category);
+		if (ImGui::Checkbox(label, &enabled)) {
+			tuning.materialMapFilter = NR::MaterialMap::Set(tuning.materialMapFilter, category, enabled);
+			changed = true;
+		}
+	};
+	const std::array<const char*, NR::MaterialMap::kBits> materialMapFilterLabels{
+		T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
+		T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("material_other"), "Everything Else")
+	};
+	const std::array<uint32_t, NR::MaterialMap::kBits> materialMapFilterCategories{
+		NR::MaterialStrength::kSkin, NR::MaterialStrength::kHair, NR::MaterialStrength::kEyes,
+		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kNone
+	};
+	ImGui::TextUnformatted(T(TKEY("material_map_filter"), "Show"));
+	for (uint32_t i = 0; i < NR::MaterialMap::kBits; ++i) {
+		const auto& color = NR::MaterialMap::kColors[materialMapFilterCategories[i]];
+		ImGui::SameLine();
+		ImGui::ColorButton(std::format("##materialMapColor{}", i).c_str(), ImVec4(color.r, color.g, color.b, 1.0f),
+			ImGuiColorEditFlags_NoAlpha | ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoDragDrop,
+			ImVec2(ImGui::GetTextLineHeight(), ImGui::GetTextLineHeight()));
+		ImGui::SameLine();
+		materialMapFilter(materialMapFilterLabels[i], materialMapFilterCategories[i]);
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("material_map_filter_tooltip"),
+			"Each swatch is the colour that material is drawn in. A material that is off keeps its normal pixels."));
+	ImGui::EndDisabled();
 	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
 		changed = true;
 		resetHistory = true;
@@ -1500,6 +1570,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		work.categoryToneStrength = { boundedTuning.skinToneStrength, boundedTuning.hairToneStrength,
 			boundedTuning.eyeToneStrength, boundedTuning.foliageToneStrength, boundedTuning.landscapeToneStrength };
 		work.regionOverlay = boundedTuning.regionOverlay;
+		work.materialMapEnabled = boundedTuning.showMaterialMap;
+		work.materialMapMode = boundedTuning.materialMapMode;
+		work.materialMapFilter = boundedTuning.materialMapFilter;
+		work.materialMapStrength = materialStrengths.strength;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);

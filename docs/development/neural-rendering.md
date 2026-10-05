@@ -402,6 +402,35 @@ then read `materialStrengthAvailable`, `materialStrengthActive`,
 `materialEdgeSoftness` from `neuralRenderingStatus`, and capture a frame with
 `captureNeuralRendering`.
 
+### Show material map
+
+**Show Material Map** (`Upscaling.neuralRenderingTuning.showMaterialMap`, default off) is a
+debug view that draws the deferred material lane instead of the composited image, so the
+pixels each material covers can be checked on a real character. It adds no pass: the
+existing composite kernel of `ColorTransferCS.hlsl` decodes the same `Masks2` SRV
+`CategoryAlphaCS.hlsl` does and reads a few more cbuffer values, so the setting costs no GPU
+time.
+
+Every pixel whose decoded category is enabled in `materialMapFilter` is drawn; a pixel of a
+disabled category keeps the normal image. The filter is a bitmask with one bit per
+`NeuralRenderingCategory` id (bit 0 None, shown in the panel as **Everything Else**, then bit
+1 Skin, 2 Hair, 3 Eyes, 4 Foliage and 5 Landscape), all six on by default.
+`NR::Tuning::Sanitize()` keeps only the low six bits, so a hand-edited config cannot select a
+category that does not exist.
+
+`materialMapMode` picks what a drawn pixel shows. **Category colours** blends the pixel's
+fixed `DebugColor` over the composited image at 0.65 opacity; these are the colours the
+developer **Debug view** combo's Category entry draws, and the panel shows them as legend
+swatches beside the filter. **Strength** replaces the pixel with a grayscale ramp of the
+strength **Apply Neural Rendering by Material** gives it (0 black, 1 white), so a material
+the classification mislabels reads as the wrong strength. The strength view samples the
+pixel's own label and skips the `strengthEdgeSoftness` box average, which approximates the
+alpha `CategoryAlphaCS.hlsl` builds; with **Apply Neural Rendering by Material** off nothing
+is protected, so it shows 1.0 everywhere.
+
+DevBench sets the three keys under `settings.neuralRenderingTuning` and reads
+`showMaterialMap` back from `neuralRenderingStatus`.
+
 ## Feature 18 output channel-order test
 
 Feature 18 runtime builds do not consistently expose the channels of an
