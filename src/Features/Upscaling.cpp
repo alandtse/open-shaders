@@ -48,7 +48,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
-	preferFSRFrameGen,
+	enableDLSSFrameGen,
 	dlssgFramesToGenerate,
 	streamlineLogLevel,
 	sharpnessFSR,
@@ -191,9 +191,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
 			upscaling.streamlineDX12.PostDevice();
 
-			// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
-			const bool userPrefersReachableFsr = upscaling.settings.preferFSRFrameGen && upscaling.fidelityFX.featureFSR3FG;
-			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !userPrefersReachableFsr;
+			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && upscaling.settings.enableDLSSFrameGen;
 
 			// Gating on dlssgAvailable (any cause, not just preference) keeps the FSR
 			// path on a clean device -- upgrading unconditionally corrupted FSR3's
@@ -862,97 +860,85 @@ void Upscaling::DrawUpscalingSettings()
 
 void Upscaling::DrawFrameGenerationSettings()
 {
-	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
-
-	ImGui::Text("%s", T(TKEY("frame_generation_desc"),
-						  "Frame Generation interpolates real frames with generated ones for a smoother experience"));
+	ImGui::PushTextWrapPos(0.0f);
 
 	bool fgEnabled = settings.frameGenerationMode != 0;
 	if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
 		settings.frameGenerationMode = fgEnabled ? 1 : 0;
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
 		T(TKEY("frame_generation_tooltip"),
-			"Interpolate real frames with generated ones for a smoother experience. Uses NVIDIA\n"
-			"DLSS-G or AMD FSR Frame Generation depending on the adapter and preference below.\n"
-			"Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility issues;\n"
-			"in particular, frame generation works only in windowed mode."));
+			"Enable frame generation for smoother motion. Uses AMD FSR unless NVIDIA DLSS-G is selected and available.\n"
+			"Requires windowed mode."));
 
-	auto fgMethod = GetFrameGenMethod();
-	if (fgMethod == FrameGenMethod::kDLSSG) {
-		ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation (Auto)"));
-	} else if (fgMethod == FrameGenMethod::kFSR) {
-		if (streamlineDX12.featureDLSSG)
-			ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active_preferred"), "Using AMD FSR Frame Generation (Preferred)"));
-		else
-			ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation (Auto)"));
-	} else {
-		if (streamlineDX12.featureDLSSG)
-			ImGui::Text("%s", T(TKEY("frame_generation_dlssg_available"),
-								  "NVIDIA DLSS Frame Generation is available."));
-		else if (fidelityFX.featureFSR3FG)
-			ImGui::Text("%s", T(TKEY("frame_generation_fsr_available"),
-								  "AMD FSR Frame Generation is available."));
-	}
-
-	if (streamlineDX12.featureDLSSG) {
-		ImGui::Checkbox(T(TKEY("prefer_fsr_frame_gen"), "Prefer AMD FSR Frame Generation"), &settings.preferFSRFrameGen);
-		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::preferFSRFrameGen,
+	ImGui::Indent();
+	{
+		Util::DisableGuard disabled(!fgEnabled);
+		ImGui::Checkbox(T(TKEY("prefer_fsr_frame_gen"), "Use NVIDIA DLSS-G"), &settings.enableDLSSFrameGen);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableDLSSFrameGen,
 			T(TKEY("prefer_fsr_frame_gen_tooltip"),
-				"Uses AMD FSR3 Frame Generation instead of NVIDIA DLSS-G. This is a workaround for\n"
-				"cases where DLSS-G initializes successfully but produces no interpolated frames.\n"
-				"Restart required to apply."));
+				"Selects NVIDIA DLSS-G instead of AMD FSR on supported hardware.\n"
+				"Leave off to use AMD FSR."));
+
+		bool fgForce = settings.frameGenerationForceEnable != 0;
+		if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Allow frame generation below 120 Hz"), &fgForce))
+			settings.frameGenerationForceEnable = fgForce ? 1 : 0;
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
+			T(TKEY("force_enable_frame_generation_tooltip"),
+				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
+				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
+				"generated frames."));
+		ImGui::Text(T(TKEY("frame_limit_refresh_rate"), "Detected refresh rate: %.2f Hz"), refreshRate);
+		if (fgEnabled && lowRefreshRate && !settings.frameGenerationForceEnable)
+			Util::Text::WrappedWarning("%s", T(TKEY("fg_warn_refresh_rate"), "Enable the option above to use frame generation on displays below 120 Hz."));
 	}
+	ImGui::Unindent();
+
+	ImGui::SeparatorText(T(TKEY("fg_current_session"), "Current session"));
+	const auto fgMethod = GetFrameGenMethod();
+	if (!fgEnabled)
+		ImGui::TextDisabled("%s", T(TKEY("fg_disabled"), "Frame generation is off."));
+	else if (fgMethod == FrameGenMethod::kNone)
+		Util::Text::WrappedWarning("%s", T(TKEY("fg_not_loaded"), "Frame generation is not loaded. Check the setup above and restart."));
+
+	if (fgEnabled && !isWindowed)
+		Util::Text::Warning("%s", T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
+	if (fgEnabled && fidelityFXMissing)
+		Util::Text::Warning("%s", T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
 
 	if (fgMethod == FrameGenMethod::kDLSSG) {
+		ImGui::TextUnformatted(T(TKEY("frame_generation_dlssg_active"), "Method: NVIDIA DLSS-G"));
+		Util::DisableGuard disabled(!fgEnabled);
 		int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
 		int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
-		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier))
+		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
 			settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
 	} else if (fgMethod == FrameGenMethod::kFSR) {
+		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
+		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
+			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
+
+		bool flEnabled = settings.frameLimitMode != 0;
+		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Limit FPS to display refresh rate"), &flEnabled))
+			settings.frameLimitMode = flEnabled ? 1 : 0;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("fg_fsr_frame_limit_tooltip"),
+				"Caps FSR's total FPS to the display refresh rate.\n"
+				"When generation pauses, caps rendered FPS instead."));
 	}
 
-	ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
-
-	if (!isWindowed) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
+	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
+	{
+		Util::DisableGuard disabled(!fgEnabled);
+		ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
+			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
+		}
 	}
-
-	if (lowRefreshRate && !settings.frameGenerationForceEnable) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_refresh_rate"), "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation"));
-	}
-
-	if (fidelityFXMissing) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
-	}
-
-	if (!frameGenerationDx12PathActive)
-		ImGui::BeginDisabled();
-
-	bool flEnabled = settings.frameLimitMode != 0;
-	if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Frame Limit (Variable Refresh Rate)"), &flEnabled))
-		settings.frameLimitMode = flEnabled ? 1 : 0;
-
-	if (!frameGenerationDx12PathActive)
-		ImGui::EndDisabled();
-
-	ImGui::TextWrapped(T(TKEY("frame_limit_refresh_rate"), "Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz"), refreshRate);
-	bool fgForce = settings.frameGenerationForceEnable != 0;
-	if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
-		settings.frameGenerationForceEnable = fgForce ? 1 : 0;
-	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
-		T(TKEY("force_enable_frame_generation_tooltip"),
-			"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
-			"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
-			"generated frames."));
-
-	ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
-		ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
-	}
+	ImGui::PopTextWrapPos();
 }
 
 void Upscaling::DrawReflexSettings()
@@ -2596,9 +2582,7 @@ void Upscaling::PostBackendDevice()
 // Module availability methods
 bool Upscaling::HasFrameGenModule() const
 {
-	// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
-	const bool userPrefersReachableFsr = settings.preferFSRFrameGen && fidelityFX.featureFSR3FG;
-	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && !userPrefersReachableFsr);
+	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && settings.enableDLSSFrameGen);
 }
 
 Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const

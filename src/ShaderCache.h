@@ -390,6 +390,7 @@ namespace SIE
 		std::atomic<uint64_t> activeReuseTasks = 0;         // outdated active-cache blobs kept because their recorded content key still matches
 		std::atomic<uint64_t> previousReuseTasks = 0;       // blobs copied from the previous cache because their recorded content key matches
 		std::atomic<uint64_t> digestMissTasks = 0;          // disk-cache validity checks where the manifest digest marked the cached blob stale (recompile)
+		std::atomic<uint64_t> contentStoreHitTasks = 0;     // compiles skipped because the content store already held an identical blob
 		LARGE_INTEGER compilationPhaseStart{};              // time of first non-disk-hit task dispatch
 		std::atomic<bool> compilationPhaseStarted = false;  // set when first actual compilation begins
 		std::atomic<uint64_t> slowTasks = 0;                // shaders taking >= 2s
@@ -545,10 +546,10 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
+		/** @brief Deletes the on-disk shader cache directory (including the content store) plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
 		void DeleteDiskCache();
-		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. */
-		void DeleteDiskCacheFiles();
+		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. @param a_keepContentStore Preserve the content store so a rebuild can reuse its blobs. */
+		void DeleteDiskCacheFiles(bool a_keepContentStore = false);
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
 		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
@@ -817,6 +818,22 @@ namespace SIE
 		void IncActiveReuseTasks();
 		void IncPreviousReuseTasks();
 		void IncDigestMissTasks();
+		/** @brief Counts a compile satisfied by the content-addressed store. */
+		void IncContentStoreHitTasks();
+		/** @brief Deletes every blob in the persistent store, whether or not the setting is on. */
+		void ClearContentStore();
+		/** @brief Applies the store size limit setting now, evicting least recently used shaders if it was lowered. */
+		void ApplyContentStoreLimit();
+		/** @brief Where the persistent store lives and how much it holds; usable while the setting is off. */
+		struct ContentStoreUsage
+		{
+			std::filesystem::path path;
+			uint64_t blobs = 0;
+			uint64_t bytes = 0;
+			uint64_t maxBytes = 0;
+		};
+		ContentStoreUsage GetContentStoreUsage();
+		uint64_t GetContentStoreHitTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();
 		void IterateShaderBlock(bool a_forward = true);

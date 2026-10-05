@@ -20,11 +20,13 @@
 #include "Deferred.h"
 #include "Feature.h"
 #include "State.h"
+#include "Utils/CacheInvalidation.h"
 #include "Utils/CompileDedupe.h"
 #include "Utils/ContentHash.h"
 #include "Utils/D3D.h"
 #include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
+#include "Utils/ShaderContentStore.h"
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/ReverseZ.h"
@@ -422,7 +424,8 @@ namespace SIE
 		None,
 		Dedupe,
 		ActiveCache,
-		PreviousCache
+		PreviousCache,
+		ContentStore
 	};
 
 	/// A blob written after its manifest was last saved may have replaced the one a recorded key describes.
@@ -497,6 +500,52 @@ namespace SIE
 			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
 			manifest.Save();
 		}
+	}
+
+	/// Least recently used blobs beyond the user's limit are evicted; a cold build stores about 120 MB, 1.1 GB in Developer Mode.
+	static uint64_t ContentStoreMaxBytes()
+	{
+		return static_cast<uint64_t>(globals::state->contentStoreMaxMB.load(std::memory_order_relaxed)) << 20;
+	}
+
+	static std::filesystem::path ContentStorePath()
+	{
+		return std::filesystem::path(L"Data/ShaderCache") / Util::CacheInvalidation::kContentStoreDirName;
+	}
+
+	/// Stored blobs outlive plugin builds, so a change to how a blob is produced (strip flags, post-processing) must bump this to orphan the old ones.
+	static constexpr std::string_view kContentStoreSchema = "store-v1";
+
+	static Util::ContentHash::Hash128 StoreKey(const Util::ContentHash::Hash128& a_key)
+	{
+		return Util::ContentHash::CombineHashes(a_key, Util::ContentHash::HashString(kContentStoreSchema));
+	}
+
+	/// Content-addressed blob store inside the disk cache; null while the setting is off.
+	static Util::ShaderContentStore::Store* GetContentStore()
+	{
+		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
+			return nullptr;
+		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
+			static Util::ShaderContentStore::Store created(ContentStorePath(), ContentStoreMaxBytes());
+			const auto trimmed = created.Trim(ContentStoreMaxBytes());
+			const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
+			logger::info("Shader content store: {} blobs, {} MB at {}, trimmed {} entries", usage.blobs, usage.bytes >> 20,
+				std::filesystem::absolute(ContentStorePath()).string(), trimmed);
+			return created;
+		}();
+		return &store;
+	}
+
+	/// An intact stored blob for this key, or null on a miss or corrupt entry.
+	static winrt::com_ptr<ID3DBlob> ReadStoredBlob(const Util::ShaderContentStore::Store& a_store, const Util::ContentHash::Hash128& a_key)
+	{
+		const auto stored = a_store.Get(StoreKey(a_key));
+		winrt::com_ptr<ID3DBlob> blob;
+		if (stored.empty() || FAILED(D3DCreateBlob(stored.size(), blob.put())))
+			return nullptr;
+		std::memcpy(blob->GetBufferPointer(), stored.data(), stored.size());
+		return IsIntactDxbc(blob.get()) ? blob : nullptr;
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1921,6 +1970,14 @@ namespace SIE
 						return result;
 					}
 				}
+				if (const auto* store = GetContentStore()) {
+					if (auto stored = ReadStoredBlob(*store, *result.key)) {
+						acquired.ticket->Publish(stored->GetBufferPointer(), stored->GetBufferSize());
+						result.blob = stored.detach();
+						result.origin = SharedCompileSource::ContentStore;
+						return result;
+					}
+				}
 				result.ticket.emplace(std::move(*acquired.ticket));
 				return result;
 			}
@@ -2119,6 +2176,9 @@ namespace SIE
 			case SharedCompileSource::PreviousCache:
 				cache.IncPreviousReuseTasks();
 				break;
+			case SharedCompileSource::ContentStore:
+				cache.IncContentStoreHitTasks();
+				break;
 			default:
 				break;
 			}
@@ -2210,6 +2270,13 @@ namespace SIE
 				shaderBlob->Release();
 				return nullptr;
 			}
+
+			// After the stale check, so a task that predates a cache clear cannot repopulate the store.
+			const bool storable = shared.origin == SharedCompileSource::None || shared.origin == SharedCompileSource::ActiveCache ||
+			                      shared.origin == SharedCompileSource::PreviousCache;
+			if (storable && contentKey)
+				if (const auto* contentStore = GetContentStore())
+					contentStore->Put(StoreKey(*contentKey), shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
 			// save shader to disk
 			if (useDiskCache) {
@@ -3677,17 +3744,31 @@ namespace SIE
 		return ok;
 	}
 
+	static bool RemoveActiveCachePath(bool a_keepContentStore)
+	{
+		if (!a_keepContentStore)
+			return RemoveCachePath(DiskCachePath(), "active");
+		std::error_code ec;
+		if (!std::filesystem::exists(DiskCachePath(), ec))
+			return true;
+		if (!Util::CacheInvalidation::RemoveAllExceptContentStore(DiskCachePath(), ec)) {
+			logger::error("Failed to remove active shader cache contents: {}", ec.message());
+			return false;
+		}
+		return true;
+	}
+
 	void ShaderCache::DeleteActiveDiskCache()
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
-		if (RemoveCachePath(DiskCachePath(), "active"))
+		if (RemoveActiveCachePath(true))
 			logger::info("Deleted active disk cache");
 	}
 
-	void ShaderCache::DeleteDiskCacheFiles()
+	void ShaderCache::DeleteDiskCacheFiles(bool a_keepContentStore)
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
-		const bool removedActive = RemoveCachePath(DiskCachePath(), "active");
+		const bool removedActive = RemoveActiveCachePath(a_keepContentStore);
 		const bool removedPrevious = RemoveCachePath(PreviousDiskCachePath(), "previous");
 		const bool removedSwap = RemoveCachePath(SwapDiskCachePath(), "temporary");
 		if (removedActive && removedPrevious && removedSwap)
@@ -3698,7 +3779,7 @@ namespace SIE
 	// menu reads unsynchronized (the file-watcher thread calls DeleteDiskCacheFiles()).
 	void ShaderCache::DeleteDiskCache()
 	{
-		DeleteDiskCacheFiles();
+		DeleteDiskCacheFiles(false);
 
 		diskCacheHeld = false;
 		featureSetChanged = false;
@@ -4498,6 +4579,36 @@ namespace SIE
 	void ShaderCache::IncDigestMissTasks()
 	{
 		compilationSet.digestMissTasks++;
+	}
+	ShaderCache::ContentStoreUsage ShaderCache::GetContentStoreUsage()
+	{
+		const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
+		return { std::filesystem::absolute(ContentStorePath()), usage.blobs, usage.bytes, ContentStoreMaxBytes() };
+	}
+
+	void ShaderCache::ApplyContentStoreLimit()
+	{
+		if (auto* store = GetContentStore()) {
+			store->SetMaxBytes(ContentStoreMaxBytes());
+			store->Trim(ContentStoreMaxBytes());
+		}
+	}
+
+	void ShaderCache::ClearContentStore()
+	{
+		std::error_code ec;
+		std::filesystem::remove_all(ContentStorePath(), ec);
+		if (ec)
+			logger::warn("Failed to clear the persistent shader store: {}", ec.message());
+	}
+
+	void ShaderCache::IncContentStoreHitTasks()
+	{
+		compilationSet.contentStoreHitTasks++;
+	}
+	uint64_t ShaderCache::GetContentStoreHitTasks()
+	{
+		return compilationSet.contentStoreHitTasks;
 	}
 
 	bool ShaderCache::IsHideErrors()
@@ -5389,6 +5500,7 @@ namespace SIE
 		digestComputeTimeUs = 0;
 		digestHitTasks = 0;
 		digestMissTasks = 0;
+		contentStoreHitTasks = 0;
 		contentDedupeTasks = 0;
 		activeReuseTasks = 0;
 		previousReuseTasks = 0;
@@ -5607,7 +5719,7 @@ namespace SIE
 					// DeleteDiskCache() also resets boot-mismatch/rollback UI state that
 					// the menu reads unsynchronized on the main thread; this watcher
 					// thread only needs the on-disk directories gone.
-					cache->DeleteDiskCacheFiles();
+					cache->DeleteDiskCacheFiles(true);
 					// Clear() resets every feature's LazyShader instances without
 					// synchronizing with the render thread's concurrent use of the raw
 					// pointer -- defer it to the render thread instead of calling it

@@ -28,7 +28,8 @@ on:
             - "src/Features/**"
             - "package/Shaders/**"
             - "tests/shaders/**"
-            - ".github/configs/**"
+            - ".github/configs/shader-validation*.yaml"
+            - ".github/configs/generate-shader-configs.ps1"
 
 # Least-privilege defaults; individual jobs override where needed.
 permissions:

@@ -584,3 +584,51 @@ TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback resto
 		CHECK(recorded[0].shortName == "Stale");
 	}
 }
+
+TEST_CASE("Content store survives partial invalidation, rotation and wipes", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto active = t.path / "ShaderCache";
+	auto previous = t.path / "ShaderCache.Previous";
+	auto swap = t.path / "ShaderCache.Swap";
+	const fs::path store = fs::path(kContentStoreDirName);
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(active / "Water/1.pso", "blob");
+	Write(active / "Info.ini", "[Cache]\n");
+	Write(active / store / "ab/abcd.bin", "content");
+
+	SECTION("Partial invalidation skips the store instead of falling back to a full wipe")
+	{
+		size_t deleted = 0, kept = 0;
+		REQUIRE(TryPartialInvalidation(active, shaders, { "UNIFIED_WATER" }, &deleted, &kept));
+		CHECK(deleted == 1);
+		CHECK(kept == 0);
+		CHECK(fs::exists(active / store / "ab/abcd.bin"));
+	}
+
+	SECTION("RemoveAllExceptContentStore keeps only the store")
+	{
+		std::error_code ec;
+		REQUIRE(RemoveAllExceptContentStore(active, ec));
+		CHECK_FALSE(fs::exists(active / "Water"));
+		CHECK_FALSE(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / store / "ab/abcd.bin"));
+	}
+
+	SECTION("Backup leaves the store in the active slot")
+	{
+		REQUIRE(BackupCacheDirectory(active, previous, swap));
+		CHECK(fs::exists(active / store / "ab/abcd.bin"));
+		CHECK_FALSE(fs::exists(previous / store));
+		CHECK(fs::exists(previous / "Info.ini"));
+	}
+
+	SECTION("Restore keeps the store in the active slot")
+	{
+		Write(previous / "Info.ini", "[Cache]\n");
+		REQUIRE(RestoreCacheDirectory(active, previous, swap));
+		CHECK(fs::exists(active / store / "ab/abcd.bin"));
+		CHECK_FALSE(fs::exists(previous / store));
+	}
+}

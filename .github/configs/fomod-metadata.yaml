@@ -19,6 +19,26 @@ install_step:
     # its absence gates a variant's auto-recommend to genuinely fresh installs.
     existing_install_marker: "SKSE/Plugins/CommunityShaders/SettingsUser.json"
 
+# Experimental plugin build, staged from the clang-cl CI lane. When offered, the
+# default DLL moves out of Core into its own option so each choice installs
+# exactly one DLL.
+clang_option:
+    page_name: "Plugin Build"
+    group_name: "Plugin Build (experimental performance option)"
+    default_name: "Default build (recommended)"
+    default_description: >-
+        The standard plugin build that is tested on every release.
+    name: "clang-cl build (experimental, may be faster)"
+    description: >-
+        An experimental clang-cl build of the plugin that may run faster.
+        In testing it used roughly 3 to 13 percent less CPU time in
+        rendering, though the measurements were noisy and it is not
+        guaranteed on every system. It gets less testing than the default
+        build, so choose it only if you want the possible speedup and are
+        happy to help test it. Report problems with it separately.
+    default_staging_subdir: "DefaultBuild"
+    staging_subdir: "ClangCL"
+
 # Must stay ordered highest game_version first -- see build-fomod-package.py's
 # module docstring for why.
 cache_variants:

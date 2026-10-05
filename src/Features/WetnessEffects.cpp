@@ -438,7 +438,7 @@ void WetnessEffects::DataLoaded()
 void WetnessEffects::GameLoaded()
 {
 	characterSurfaceWetness = 0.0f;
-	lastCharacterWetnessUpdateFrame = UINT32_MAX;
+	characterWetnessFrame.Reset();
 	CharacterRainSurfaces::QueueLoadedActors();
 }
 
@@ -1021,7 +1021,7 @@ void WetnessEffects::ApplyClimatePreset(ClimatePreset preset)
 	// Removed clamping for all settings to allow full preset range
 }
 
-WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrameState) const
+WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 {
 	PerFrame data{};
 
@@ -1108,7 +1108,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrame
 	}
 
 	static size_t rainTimer = 0;  // size_t for precision
-	if (a_advanceFrameState && !globals::game::ui->GameIsPaused())
+	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
+	const bool paused = globals::game::ui && globals::game::ui->GameIsPaused();
+	if (rainTimerFrame.TryAdvance(currentFrame, !paused))
 		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
@@ -1118,12 +1120,12 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData(bool a_advanceFrame
 	data.settings.RaindropGridSize = 1.0f / settings.RaindropGridSize;
 	data.settings.RaindropInterval = 1.0f / settings.RaindropInterval;
 	data.settings.RippleLifetime = settings.RaindropInterval / settings.RippleLifetime;
-	UpdateCharacterRainData(data, a_advanceFrameState);
+	UpdateCharacterRainData(data);
 
 	return data;
 }
 
-void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateState) const
+void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 {
 	static constexpr auto kMaximumCharacterRainDebugMode =
 		static_cast<std::uint32_t>(CharacterDebugMode::Count) - 1u;
@@ -1161,9 +1163,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data, bool a_updateStat
 	weatherIntensity = std::isfinite(weatherIntensity) ? std::clamp(weatherIntensity, 0.0f, 1.0f) : 0.0f;
 
 	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
-	const bool updateState = a_updateState && lastCharacterWetnessUpdateFrame != currentFrame;
-	if (updateState)
-		lastCharacterWetnessUpdateFrame = currentFrame;
+	const bool updateState = characterWetnessFrame.TryAdvance(currentFrame);
 
 	if (updateState && !a_data.settings.EnableCharacterRainSpots) {
 		characterSurfaceWetness = 0.0f;
@@ -1220,7 +1220,7 @@ void WetnessEffects::RestoreDefaultSettings()
 {
 	settings = {};
 	characterSurfaceWetness = 0.0f;
-	lastCharacterWetnessUpdateFrame = UINT32_MAX;
+	characterWetnessFrame.Reset();
 	climatePreset = defaultPreset;
 
 	// Apply the default climate preset to ensure settings reflect the preset values
@@ -1253,7 +1253,7 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		return;
 	}
 
-	auto frameData = GetCommonBufferData(false);
+	auto frameData = GetCommonBufferData();
 	const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
 	Settings defaultSettings{};
 
