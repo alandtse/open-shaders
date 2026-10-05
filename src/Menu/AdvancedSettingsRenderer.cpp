@@ -23,6 +23,66 @@
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 
+namespace
+{
+	constexpr double kStoreUsageRefreshSeconds = 5.0;
+	constexpr double kBytesPerMB = 1024.0 * 1024.0;
+
+	/// Location, size and restore count of the persistent shader store, with a button to empty it.
+	void DrawContentStoreDetails(SIE::ShaderCache* a_cache, bool a_enabled)
+	{
+		static SIE::ShaderCache::ContentStoreUsage usage;
+		static double lastRefresh = -kStoreUsageRefreshSeconds;
+		const double now = ImGui::GetTime();
+		if (now - lastRefresh >= kStoreUsageRefreshSeconds) {
+			usage = a_cache->GetContentStoreUsage();
+			lastRefresh = now;
+		}
+		if (!a_enabled && usage.blobs == 0)
+			return;
+
+		ImGui::Indent();
+		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_location",
+														  { { "path", usage.path.string() } }, "Location: {path}")
+									  .c_str());
+		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_usage",
+														  { { "count", std::to_string(usage.blobs) },
+															  { "size", std::format("{:.0f}", static_cast<double>(usage.bytes) / kBytesPerMB) },
+															  { "cap", std::format("{:.0f}", static_cast<double>(usage.maxBytes) / kBytesPerMB) } },
+														  "Stored: {count} shaders, {size} MB (limit {cap} MB)")
+									  .c_str());
+		if (a_enabled)
+			ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_hits",
+															  { { "count", std::to_string(a_cache->GetContentStoreHitTasks()) } },
+															  "Restored this session: {count}")
+										  .c_str());
+		auto limitMB = static_cast<int>(globals::state->contentStoreMaxMB.load(std::memory_order_relaxed));
+		if (ImGui::SliderInt(T("menu.advanced.content_store_limit", "Store Size Limit"), &limitMB,
+				static_cast<int>(State::kContentStoreMinMB), static_cast<int>(State::kContentStoreMaxMB), "%d MB"))
+			globals::state->contentStoreMaxMB.store(static_cast<uint32_t>(limitMB), std::memory_order_relaxed);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			a_cache->ApplyContentStoreLimit();
+			lastRefresh = -kStoreUsageRefreshSeconds;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.advanced.content_store_limit_tooltip",
+								  "Least recently used shaders are deleted once the store exceeds this. "
+								  "A full build stores about 120 MB, or about 1.1 GB in Developer Mode, "
+								  "so keep several builds' worth if you switch branches."));
+		}
+		if (ImGui::Button(T("menu.advanced.content_store_clear", "Clear Store"))) {
+			a_cache->ClearContentStore();
+			lastRefresh = -kStoreUsageRefreshSeconds;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.advanced.content_store_clear_tooltip",
+								  "Deletes every stored shader. Use this if a shader looks wrong after being restored; "
+								  "the next compile rebuilds the store from scratch. Shaders already in the shader cache are kept."));
+		}
+		ImGui::Unindent();
+	}
+}
+
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
@@ -165,6 +225,20 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 							  "differences in shaders that haven't been audited for precision sensitivity.\n"
 							  "Toggling this clears the shader cache and triggers a full recompile."));
 	}
+
+	bool contentStore = globals::state->enableContentStore.load(std::memory_order_relaxed);
+	if (ImGui::Checkbox(T("menu.advanced.content_store", "Persistent Shader Store (Developers/Testers)"), &contentStore))
+		globals::state->enableContentStore.store(contentStore, std::memory_order_relaxed);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.content_store_tooltip",
+							  "Keeps every compiled shader keyed by its preprocessed source and compiler flags. "
+							  "After a cache wipe, a branch or build switch, or a rollback, shaders already compiled "
+							  "for the same code are restored instead of recompiled.\n"
+							  "Costs one preprocess per shader (tens of milliseconds) and disk space in "
+							  "Data/ShaderCache/ContentStore, trimmed to the least recently used. "
+							  "Takes effect for shaders compiled from now on."));
+	}
+	DrawContentStoreDetails(shaderCache, contentStore);
 
 	// Avoid flow control compiler flag (transient — not saved to config because the
 	// right setting depends on the current scene, not the user).
@@ -636,7 +710,7 @@ void AdvancedSettingsRenderer::RenderCompileTraceExport()
 		if (lastExportOk) {
 			ImGui::TextColored({ 0.4f, 0.9f, 0.4f, 1.0f }, T("menu.advanced.compile_trace_exported", "Exported: %s"), lastExportPath.c_str());
 		} else {
-			ImGui::TextColored({ 0.9f, 0.4f, 0.4f, 1.0f }, "%s", T("menu.advanced.compile_trace_export_failed", "Export failed; check CommunityShaders.log for details."));
+			ImGui::TextColored({ 0.9f, 0.4f, 0.4f, 1.0f }, "%s", T("menu.advanced.compile_trace_export_failed", "Export failed; check OpenShaders.log for details."));
 		}
 	}
 }

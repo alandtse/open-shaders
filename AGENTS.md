@@ -25,7 +25,7 @@ Each rule is stated once, in the section named in brackets.
 
 ## Fork Identity & Logo Policy
 
--   **Keep as `CommunityShaders` (do not rename the C++ runtime identity, so users can switch to or from upstream without losing settings):** CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/`, `CommunityShaders.log`, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
+-   **Keep as `CommunityShaders` (do not rename the C++ runtime identity, so users can switch to or from upstream without losing settings):** CMake `PROJECT_NAME`, DLL name, `SKSE/Plugins/CommunityShaders/`, the ImGui window ID after `###`, asset paths under `package/Interface/CommunityShaders/`, and HLSL include paths.
 -   **Use "Open Shaders" for public identity:** in-game menu titles, READMEs/instructions, Nexus filenames, GitHub release names, Welcome/FAQ/About text.
 -   **Link upstream explicitly** to `community-shaders/skyrim-community-shaders` (Nexus 86492); never to dead `doodlum` paths. Open Shaders' own Nexus is 180419.
 -   **AIO bundling:**
@@ -33,6 +33,7 @@ Each rule is stated once, in the section named in brackets.
     -   Use `aio = true` (with `autoupload = false`) to bundle a third-party feature redistributed with permission.
     -   A runtime-core feature (`IsCore()` is `true`) must also carry a `CORE` marker file, or its shaders are left out of the AIO bundle and it ships broken.
     -   Partition logic is `feature_in_aio` in `CMakeLists.txt`; for local development set `AIO_INCLUDE_NON_AUTOUPLOAD=ON`.
+-   **Brand and log names:** `PLUGIN_DISPLAY_NAME` and `PLUGIN_LOG_NAME` in `CMakeLists.txt` surface as `Plugin::DISPLAY_NAME` and `Plugin::LOG_NAME` (log file `OpenShaders.log`); the DLL and SKSE plugin name stay `CommunityShaders`. Use `Plugin::DISPLAY_NAME` in C++ strings and `{brand}` in `T()` defaults, translation values and devbench descriptions, never a literal "Open Shaders".
 -   **No logo:** `cs-logo.png` is intentionally absent (non-GPL); do not restore upstream assets. Logo draws are null-safe (`IconLoader.cpp`, `Menu.cpp`, `MenuHeaderRenderer`, `HomePageRenderer`).
 
 ---
@@ -55,6 +56,7 @@ Each rule is stated once, in the section named in brackets.
 -   **Centralize constants:** magic numbers and UI theme values go in named constants (e.g. `ThemeManager::Constants`).
 -   **DRY codebase-wide:** check new code against `src/Utils/` (`Serialize.h`, `Format.h`, `FileSystem.h`, `UI.h`) and `bshoshany-thread-pool` before writing your own. Always reuse `Util::SetResourceName`, `Util::GetGameSettingValue`, and the cached `globals::game::*` pointers (`Globals.h`) instead of `RE::*::GetSingleton()` (e.g. `globals::game::player`, `globals::game::isVR`).
 -   **Feature boundaries:** no feature, core or not, may depend on a _non-core_ feature (calling it, reading its settings, `#include`ing its HLSL, or branching on its `IsEnabled()`/`loaded`), guarded or not: a non-core feature can be absent from a build. Depending on an `IsCore()` feature is fine. Central engine files (`Hooks.cpp`, `State.cpp`/`.h`, `Globals.h`) stay feature-agnostic beyond registration (`globals::features`) and generic hook points (`GetActiveConstraints()`, `DrawSettings`, `SetupResources`, `Draw`, `Prepass`); do not add a branch, field or hook wired to one feature's private need. A new interception point is exposed as a virtual any feature can use (see `docs/new-feature-template/`).
+-   **Scene depth in shaders** goes through the `Common/ReverseZ.hlsli` helpers (convert, compare, reduce, far/near values) so reverse-Z builds stay correct: [Reverse-Z consumers](docs/development/reverse-z-consumers.md).
 -   **New shared HLSL concerns get their own `.hlsli`** in `package/Shaders/Common/` rather than growing an existing shared header: a broad header makes every consumer's shader validation re-run and risks upstream merge conflicts. This does not mandate splitting existing headers.
 -   **ImGui:** pair `BeginTable()` with `EndTable()`; use RAII for style changes; use central Theme constants for spacing; reach private methods through callbacks and keep UI state in `Menu`.
 -   **Restart-gated config fields:** use `Util::Settings::BootSnapshot` + `kRestartFields` to diff boot-latched vs selected values (drives `Util::Text::RestartNeeded` and MCP/menu introspection; Upscaling is the canary).
@@ -112,7 +114,7 @@ Each rule is stated once, in the section named in brackets.
 
 ## Environment & Build Reference
 
--   **Build:** `./BuildRelease.bat [PRESET_NAME]` (from WSL: `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`). Configure presets in `CMakePresets.json`: `ALL` (default, universal SE/AE/VR), `ALL-VS2022`, `ALL-DEBUG`, `Dev-Fast`, `PR`, `Linux-ClangCL` (plus build presets `Dev`, `Debug`, `Package`, `Shaders`).
+-   **Build:** `./BuildRelease.bat [PRESET_NAME]` (from WSL: `powershell.exe -Command "./BuildRelease.bat [PRESET_NAME]"`). Configure presets in `CMakePresets.json`: `ALL` (default, universal SE/AE/VR), `ALL-VS2022`, `ALL-DEBUG`, `Dev-Fast`, `PR`, `Linux-ClangCL`, `Windows-ClangCL`, `PR-ClangCL`, `ALL-ClangCL` (plus build presets `Dev`, `Debug`, `Package`, `Shaders`).
 -   **Local presets:** many devs keep a gitignored `CMakeUserPresets.json` (from `CMakeUserPresets.json.template`) with deploy-enabled variants such as `ALL-WITH-AUTO-DEPLOYMENT` (`AUTO_PLUGIN_DEPLOYMENT=ON`, deploys to the local SE/VR `Data` dirs via `CommunityShadersOutputDir`), the preferred preset for a local test deploy. Check for the file before assuming a preset doesn't exist; it isn't in `git grep`.
 -   **Linux/macOS-host cross-compile** (build-only): `cmake --preset Linux-ClangCL && cmake --build --preset Linux-ClangCL`; see [Linux/macOS Cross-Compile](docs/development/linux-macos-cross-compile.md).
 -   **clangd:** after configuring `ALL`, `pwsh tools/gen-clangd-db.ps1`.

@@ -27,7 +27,7 @@ RWTexture2D<float2> MotionVectorsRW : register(u2);
 #if defined(TERRAIN_BLENDING)
 Texture2D<float> DepthTexture : register(t4);
 #else
-Texture2D<unorm float> DepthTexture : register(t4);
+Texture2D<SCENE_DEPTH_FORMAT> DepthTexture : register(t4);
 #endif
 
 #if defined(DYNAMIC_CUBEMAPS)
@@ -127,7 +127,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 
-	if (depth == 1.0)
+	if (depth == FrameBuffer::FarPlaneDepth())
 		MotionVectorsRW[dispatchID.xy] = MotionBlur::GetSSMotionVector(positionWS, positionWS, eyeIndex);  // Apply sky motion vectors
 
 	float glossiness = normalGlossiness.z;

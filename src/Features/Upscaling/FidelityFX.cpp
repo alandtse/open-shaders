@@ -1,4 +1,5 @@
 #include "FidelityFX.h"
+#include "Features/ReverseZ.h"
 
 #include <directx/d3dx12.h>
 
@@ -168,6 +169,8 @@ void FidelityFX::SetupFrameGeneration()
 	createFg.displaySize = { swapChain.swapChainDesc.Width, swapChain.swapChainDesc.Height };
 	createFg.maxRenderSize = createFg.displaySize;
 	createFg.flags = FFX_FRAMEGENERATION_ENABLE_ASYNC_WORKLOAD_SUPPORT;
+	if (globals::features::reverseZ.IsActive())
+		createFg.flags |= FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
 	createFg.backBufferFormat = ffxApiGetSurfaceFormatDX12(swapChain.swapChainDesc.Format);
 
 	ffx::CreateBackendDX12Desc backendDesc{};
@@ -415,6 +418,8 @@ void FidelityFX::CreateFSRResources()
 		contextDescription.displaySize.width = displayWidth;
 		contextDescription.displaySize.height = displayHeight;
 		contextDescription.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY | FFX_FSR3_ENABLE_AUTO_EXPOSURE;
+		if (globals::features::reverseZ.IsActive())
+			contextDescription.flags |= FFX_FSR3_ENABLE_DEPTH_INVERTED;
 		if (globals::features::hdrDisplay.loaded) {
 			contextDescription.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
 			contextDescription.backBufferFormat = FFX_SURFACE_FORMAT_R10G10B10A2_UNORM;

@@ -90,9 +90,7 @@ public:
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
 		bool frameGenerationAllowInMenus = false;
-		// Workaround for adapters where DLSS-G initializes successfully but silently
-		// produces no interpolated frames; forces the FSR3 FG backend instead.
-		bool preferFSRFrameGen = false;
+		bool enableDLSSFrameGen = false;
 		// Generated frames per real frame (1=2x). Clamped at apply time to the
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
@@ -144,8 +142,8 @@ public:
 	// it's already runtime-effective.
 	inline static constexpr Util::Settings::RestartTable<Settings, 9> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
-		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
-		UTIL_RESTART_FIELD(Settings, preferFSRFrameGen, "Prefer AMD FSR Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Allow frame generation below 120 Hz"),
+		UTIL_RESTART_FIELD(Settings, enableDLSSFrameGen, "Use NVIDIA DLSS-G"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),
@@ -280,7 +278,7 @@ public:
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
 	/** @brief Propagates frame inactivity to NR temporal history. */
-	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled); }
+	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup); }
 	/** @brief Resets NR history across loading transitions. */
 	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */

@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#include "Common/ReverseZ.hlsli"
+
 // Grass uses six SPD output mips. The upstream tail is retained but excluded because its additional UAV bindings exceed D3D11's eight-slot limit.
 #ifndef SPD_MAX_MIPS
 #	define SPD_MAX_MIPS 6
@@ -113,7 +115,7 @@ void SpdStore(int2 pix, float value, uint index)
 
 float SpdReduce4(float a, float b, float c, float d)
 {
-	return max(max(a, b), max(c, d));
+	return FrameBuffer::FarthestDepth(float4(a, b, c, d));
 }
 
 void SpdStoreIntermediate(uint x, uint y, float value)

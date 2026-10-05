@@ -285,6 +285,11 @@ public:
 
 	bool frameAnnotations = false;
 
+	/// frameAnnotations while a capture tool is attached; refreshed once per frame
+	/// so per-draw Begin/End events stay paired.
+	bool drawAnnotationsActive = false;
+	void RefreshDrawAnnotations();
+
 	// Multiplies ISRefraction.hlsl's heat-shimmer strength. 1.0 preserves current/vanilla
 	// behavior; lower values reduce warping, 0 disables it.
 	float refractionScale = 1.0f;
@@ -295,6 +300,11 @@ public:
 	// shaders or chasing a precision bug.
 	// Atomic: written from the UI thread, read from compilation pool workers.
 	std::atomic_bool enablePartialPrecision{ false };
+	std::atomic_bool enableContentStore{ false };
+	/// Size limit of the persistent shader store in MB; least recently used shaders beyond it are evicted.
+	std::atomic<uint32_t> contentStoreMaxMB{ 4096 };
+	static constexpr uint32_t kContentStoreMinMB = 512;
+	static constexpr uint32_t kContentStoreMaxMB = 32768;
 
 	// Pass D3DCOMPILE_AVOID_FLOW_CONTROL to fxc. Forces the compiler to flatten branches
 	// into predicated ops instead of using dynamic flow control. Can win on uniform-branch
@@ -397,7 +407,7 @@ public:
 	 */
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
 	/** @brief Publishes feature constants after render-thread resource or readiness changes. */
-	void UpdateFeatureData(bool a_inWorld, bool a_advanceFrameState = false);
+	void UpdateFeatureData(bool a_inWorld);
 	/**
 	 * @brief Updates sky shader permutation based on the current render pass.
 	 * @param a_pass The render pass to inspect.

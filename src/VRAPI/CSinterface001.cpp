@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// See COPYING.LESSER and API.md ("Consumer licensing").
+
 #include "VRAPI/CSinterface001.h"
 
 // Stores the API after it has already been fetched.

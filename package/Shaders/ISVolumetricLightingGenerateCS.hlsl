@@ -1,5 +1,6 @@
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/VR.hlsli"
 
 #if defined(CSHADER)
@@ -75,7 +76,7 @@ cbuffer PerTechnique : register(b0)
 	float2 uv = normalizedCoordinates.xy;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	float3 depthUv = Stereo::ConvertFromStereoUV(normalizedCoordinates, eyeIndex) + StepCoefficients[IterationIndex];
-	float depth = InverseRepartitionTex.SampleLevel(InverseRepartitionSampler, depthUv.z, 0);
+	float depth = FrameBuffer::ToNativeDepth(InverseRepartitionTex.SampleLevel(InverseRepartitionSampler, depthUv.z, 0));
 	float4 positionCS = float4(2 * depthUv.x - 1, 1 - 2 * depthUv.y, depth, 1);
 
 	float4 positionWS = mul(CameraViewProjInverse[eyeIndex], positionCS);
@@ -84,7 +85,7 @@ cbuffer PerTechnique : register(b0)
 	float4 positionCSShifted = mul(CameraViewProj[eyeIndex], positionWS);
 	positionCSShifted *= rcp(positionCSShifted.w);
 
-	float shadowMapDepth = positionCSShifted.z;
+	float shadowMapDepth = FrameBuffer::ToStandardDepth(positionCSShifted.z);
 
 	bool noShadow = !SharedData::InInterior;
 	if (EndSplitDistances.z >= shadowMapDepth) {

@@ -2,6 +2,7 @@
 
 #include "D3D11StateBackup.h"
 #include "Features/Effects11.h"
+#include "Features/ReverseZ.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -453,6 +454,79 @@ void EffectManager::CreateCommonResources()
 	CreateRenderStates();
 	CreateCopyShaders();
 	CreateColorCorrectionShader();
+	CreateStandardDepthShader();
+}
+
+void EffectManager::CreateStandardDepthShader()
+{
+	standardDepthComputeShader.attach(static_cast<ID3D11ComputeShader*>(
+		Util::CompileShader(L"Data\\Shaders\\Effects11\\StandardDepthCS.hlsl", {}, "cs_5_0")));
+	if (!standardDepthComputeShader)
+		logger::error("[EFFECTS11] Failed to compile standard depth compute shader");
+}
+
+ID3D11ShaderResourceView* EffectManager::GetEffectDepthSRV()
+{
+	auto renderer = globals::game::renderer;
+	auto* sceneDepthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
+	if (!globals::features::reverseZ.IsActive() || !standardDepthComputeShader || !sceneDepthSRV)
+		return sceneDepthSRV;
+
+	winrt::com_ptr<ID3D11Resource> resource;
+	sceneDepthSRV->GetResource(resource.put());
+	winrt::com_ptr<ID3D11Texture2D> sourceTexture;
+	if (!resource || !resource.try_as(sourceTexture) || !sourceTexture)
+		return sceneDepthSRV;
+
+	D3D11_TEXTURE2D_DESC sourceDesc{};
+	sourceTexture->GetDesc(&sourceDesc);
+
+	if (!standardDepthTexture || standardDepthTexture->desc.Width != sourceDesc.Width || standardDepthTexture->desc.Height != sourceDesc.Height) {
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = sourceDesc.Width;
+		desc.Height = sourceDesc.Height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R32_FLOAT;
+		desc.SampleDesc = { 1, 0 };
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		standardDepthTexture = std::make_unique<Texture2D>(desc, "Effects11::StandardDepth");
+
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = desc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		standardDepthTexture->CreateSRV(srvDesc);
+
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = desc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		standardDepthTexture->CreateUAV(uavDesc);
+
+		standardDepthFrame = 0xFFFFFFFF;
+	}
+
+	if (standardDepthFrame != globals::state->frameCount) {
+		standardDepthFrame = globals::state->frameCount;
+		CS_GPU_PASS("Effects11::StandardDepth");
+
+		auto context = globals::d3d::context;
+		context->CSSetShader(standardDepthComputeShader.get(), nullptr, 0);
+		ID3D11ShaderResourceView* srvs[] = { sceneDepthSRV };
+		context->CSSetShaderResources(0, 1, srvs);
+		ID3D11UnorderedAccessView* uavs[] = { standardDepthTexture->uav.get() };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		context->Dispatch((sourceDesc.Width + 7) / 8, (sourceDesc.Height + 7) / 8, 1);
+
+		ID3D11ShaderResourceView* nullSRV = nullptr;
+		ID3D11UnorderedAccessView* nullUAV = nullptr;
+		context->CSSetShader(nullptr, nullptr, 0);
+		context->CSSetShaderResources(0, 1, &nullSRV);
+		context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	}
+
+	return standardDepthTexture->srv.get();
 }
 
 void EffectManager::CreateQuadGeometry()
@@ -762,7 +836,8 @@ void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 	auto renderer = globals::game::renderer;
 
 	auto& depthData = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(Util::AsReal(depthData.texture), Util::AsReal(depthData.depthSRV)));
+	// The standard-Z copy is built at kMAIN's size, so it is still the desc source for the eye crop.
+	effect.SetShaderResourceVariable("TextureDepth", GetEyeCroppedDepthSRV(Util::AsReal(depthData.texture), GetEffectDepthSRV()));
 
 	static const char* const formatTargets[] = {
 		"RenderTargetRGBA32", "RenderTargetRGBA64", "RenderTargetRGBA64F",
@@ -1132,8 +1207,10 @@ void EffectManager::ReloadShaders()
 	copyVertexShader = nullptr;
 	copyPixelShader = nullptr;
 	colorCorrectionComputeShader = nullptr;
+	standardDepthComputeShader = nullptr;
 	CreateCopyShaders();
 	CreateColorCorrectionShader();
+	CreateStandardDepthShader();
 }
 
 void EffectManager::RenderEffectsList()

@@ -841,7 +841,7 @@ namespace ShadowCasterManager
 			}
 
 			ShadowField(light, projectedBoundingBox) =
-				RE::NiRect<uint32_t>((uint32_t)left, (uint32_t)right, (uint32_t)top, (uint32_t)bottom);
+				RE::NiRect<uint32_t>((uint32_t)(int32_t)left, (uint32_t)(int32_t)right, (uint32_t)(int32_t)top, (uint32_t)(int32_t)bottom);
 		}
 
 		// Publish the light so the AppendVirtual hook can contribution-cull its
@@ -2836,6 +2836,18 @@ namespace ShadowCasterManager
 			const uint32_t poolDropsThisFrame = CullPoolExhaustionFix::dropCount.exchange(0, std::memory_order_relaxed);
 			if (poolDropsThisFrame)
 				s_cullPoolDropTotal.fetch_add(poolDropsThisFrame, std::memory_order_relaxed);
+			const uint32_t reassignedThisFrame = s_hemisphereReassignCount.exchange(0, std::memory_order_relaxed);
+			if (reassignedThisFrame)
+				s_hemisphereReassignTotal.fetch_add(reassignedThisFrame, std::memory_order_relaxed);
+			const uint32_t frontAppendsThisFrame = s_frontAppendCount.exchange(0, std::memory_order_relaxed);
+			if (frontAppendsThisFrame)
+				s_frontAppendTotal.fetch_add(frontAppendsThisFrame, std::memory_order_relaxed);
+			const uint32_t backOnlyAppendsThisFrame = s_backOnlyAppendCount.exchange(0, std::memory_order_relaxed);
+			if (backOnlyAppendsThisFrame)
+				s_backOnlyAppendTotal.fetch_add(backOnlyAppendsThisFrame, std::memory_order_relaxed);
+			const uint32_t hemisphereDropsThisFrame = s_hemisphereDropCount.exchange(0, std::memory_order_relaxed);
+			if (hemisphereDropsThisFrame)
+				s_hemisphereDropTotal.fetch_add(hemisphereDropsThisFrame, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
 			// Accumulated, not just plotted: publishes a running total for headless A/B diffing.
@@ -2925,6 +2937,10 @@ namespace ShadowCasterManager
 				snap.atlasAllocDenied = clearStats.allocDenied;
 				snap.cullPoolDropsTotal = s_cullPoolDropTotal.load(std::memory_order_relaxed);
 				snap.casterCullDropsTotal = s_casterCullTotal.load(std::memory_order_relaxed);
+				snap.hemisphereReassignTotal = s_hemisphereReassignTotal.load(std::memory_order_relaxed);
+				snap.frontAppendTotal = s_frontAppendTotal.load(std::memory_order_relaxed);
+				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
+				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))
@@ -3127,6 +3143,7 @@ namespace ShadowCasterManager
 		// menu or a recent devbench dump), keeping the per-light hash churn off the hot path.
 		const bool wantDiag = Menu::GetSingleton()->IsEnabled ||
 		                      s_schedDumpFrames.load(std::memory_order_relaxed) > 0;
+		s_casterCountersEnabled.store(wantDiag, std::memory_order_relaxed);
 
 		ReserveFocusShadowSlots();
 

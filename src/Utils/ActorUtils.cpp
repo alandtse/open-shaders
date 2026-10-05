@@ -31,6 +31,62 @@ namespace
 		       std::isfinite(capsule.pointB.x) && std::isfinite(capsule.pointB.y) && std::isfinite(capsule.pointB.z) &&
 		       std::isfinite(capsule.radius) && capsule.radius > 0.0f;
 	}
+
+	/** @brief Ray hit filter that drops the player's own collision so a first-person ray is not self-occluded. */
+	class OccluderRayCollector : public RE::hkpClosestRayHitCollector
+	{
+	public:
+		void AddRayHit(const RE::hkpCdBody& a_body, const RE::hkpShapeRayCastCollectorOutput& a_hitInfo) override
+		{
+			const RE::hkpCdBody* body = std::addressof(a_body);
+			for (const auto* parent = body->parent; parent; parent = parent->parent)
+				body = parent;
+			if (!body)
+				return;
+			if (RE::TESHavokUtilities::FindCollidableRef(*static_cast<const RE::hkpCollidable*>(body)) == globals::game::player)
+				return;
+			RE::hkpClosestRayHitCollector::AddRayHit(a_body, a_hitInfo);
+		}
+	};
+
+	/** @brief True when the authored local box is usable: finite and open on every axis. */
+	bool HasAuthoredBox(const RE::NiPoint3& a_min, const RE::NiPoint3& a_max)
+	{
+		const auto finite = [](const RE::NiPoint3& a_point) {
+			return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z);
+		};
+		return finite(a_min) && finite(a_max) &&
+		       a_max.x > a_min.x && a_max.y > a_min.y && a_max.z > a_min.z;
+	}
+
+	/** @brief Most skeleton nodes one bounds query visits, so a malformed hierarchy cannot stall the frame. */
+	constexpr size_t kMaxSkeletonNodes = 512;
+
+	/**
+	 * @brief Grows a_box over the skeleton's joint positions that lie inside a_reach.
+	 *        Camera nodes ride well outside the body, and any node further than the body's own reach
+	 *        from its rest-pose box is an attachment rather than a limb, so both are ignored.
+	 */
+	void IncludeSkeletonJoints(RE::NiAVObject* a_root, const Util::PointBox& a_reach, Util::PointBox& a_box)
+	{
+		size_t visited = 0;
+		RE::BSVisit::TraverseScenegraphObjects(a_root, [&](RE::NiAVObject* a_object) {
+			auto* node = a_object ? a_object->AsNode() : nullptr;
+			if (!node)
+				return RE::BSVisit::BSVisitControl::kContinue;
+			if (++visited > kMaxSkeletonNodes)
+				return RE::BSVisit::BSVisitControl::kStop;
+			const char* name = node->name.c_str();
+			if (name && std::string_view(name).starts_with("Camera"))
+				return RE::BSVisit::BSVisitControl::kContinue;
+			const auto& translate = node->world.translate;
+			const float3 joint{ translate.x, translate.y, translate.z };
+			if (joint.x >= a_reach.min.x && joint.x <= a_reach.max.x && joint.y >= a_reach.min.y && joint.y <= a_reach.max.y &&
+				joint.z >= a_reach.min.z && joint.z <= a_reach.max.z)
+				a_box.Include(joint);
+			return RE::BSVisit::BSVisitControl::kContinue;
+		});
+	}
 }
 
 namespace Util
@@ -52,6 +108,80 @@ namespace Util
 					a_callback(actor.get());
 			}
 		}
+	}
+
+	BoundPoints GetActorBoundPoints(RE::Actor& a_actor, bool a_includeSkeleton, float a_jointMargin)
+	{
+		BoundPoints restPose;
+		auto* root = a_actor.Get3D(false);
+		if (!root)
+			return restPose;
+		PointBox reach;
+		const auto authoredMin = a_actor.GetBoundMin();
+		const auto authoredMax = a_actor.GetBoundMax();
+		if (HasAuthoredBox(authoredMin, authoredMax)) {
+			for (const float x : { authoredMin.x, authoredMax.x })
+				for (const float y : { authoredMin.y, authoredMax.y })
+					for (const float z : { authoredMin.z, authoredMax.z }) {
+						const auto world = root->world * RE::NiPoint3{ x, y, z };
+						const float3 corner{ world.x, world.y, world.z };
+						restPose.Add(corner);
+						reach.Include(corner);
+					}
+		} else if (root->worldBound.radius > 0.0f) {
+			const auto& bound = root->worldBound;
+			const float3 center{ bound.center.x, bound.center.y, bound.center.z };
+			const float3 extent{ bound.radius, bound.radius, bound.radius };
+			restPose.AddBox(center - extent, center + extent);
+			reach.Include(center - extent);
+			reach.Include(center + extent);
+		} else {
+			return restPose;
+		}
+		if (!a_includeSkeleton)
+			return restPose;
+		const bool poseFollowsRoot = !a_actor.IsDead() && !a_actor.IsInRagdollState();
+		BoundPoints result;
+		if (poseFollowsRoot)
+			result = restPose;
+		const float3 span = reach.max - reach.min;
+		reach.Expand(std::max({ span.x, span.y, span.z }));
+		PointBox joints;
+		IncludeSkeletonJoints(root, reach, joints);
+		if (joints.Valid()) {
+			joints.Expand(a_jointMargin);
+			result.AddBox(joints.min, joints.max);
+		} else if (!poseFollowsRoot) {
+			result = restPose;
+		}
+		return result;
+	}
+
+	bool IsActorVisibleFromEye(RE::Actor& a_actor, const RE::NiPoint3& a_eyePosition)
+	{
+		auto* cell = a_actor.GetParentCell();
+		auto* world = cell ? cell->GetbhkWorld() : nullptr;
+		if (!world)
+			return false;
+		const float scale = RE::bhkWorld::GetWorldScale();
+		RE::bhkPickData pickData{};
+		pickData.rayInput.from = a_eyePosition * scale;
+		pickData.rayInput.enableShapeCollectionFilter = false;
+		pickData.rayInput.filterInfo.SetCollisionLayer(RE::COL_LAYER::kLOS);
+		OccluderRayCollector collector;
+		pickData.closestRayHitCollector = &collector;
+		for (const auto location : { RE::ACTOR_LOS_LOCATION::kEye, RE::ACTOR_LOS_LOCATION::kHead,
+				 RE::ACTOR_LOS_LOCATION::kTorso, RE::ACTOR_LOS_LOCATION::kFeet }) {
+			collector.Reset();
+			pickData.rayOutput.Reset();
+			pickData.rayInput.to = a_actor.CalculateLOSLocation(location) * scale;
+			if (!world->PickObject(pickData))
+				return true;
+			const auto* collidable = pickData.rayOutput.rootCollidable;
+			if (!collidable || RE::TESHavokUtilities::FindCollidableRef(*collidable) == std::addressof(a_actor))
+				return true;
+		}
+		return false;
 	}
 
 	void ForEachGeometry(RE::NiAVObject* a_root, const std::function<void(RE::BSGeometry*)>& a_callback)

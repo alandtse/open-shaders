@@ -8,6 +8,8 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs_dlssd.h>
 
+#include <mutex>
+
 namespace NR
 {
 	namespace
@@ -27,8 +29,17 @@ namespace NR
 			void operator()(HMODULE module) const { FreeLibrary(module); }
 		};
 		using Module = std::unique_ptr<std::remove_pointer_t<HMODULE>, ModuleDeleter>;
-		/** @brief Leading digest characters echoed back when a runtime build is refused. */
-		constexpr size_t kRuntimeDigestPrefix = 16;
+
+		/** @brief Applies the runtime gates to the file on disk; the load path refuses whatever this rejects. */
+		RuntimeAvailability InspectRuntimeFile(const std::filesystem::path& directory)
+		{
+			const auto path = directory / kRuntimeFileName;
+			std::error_code error;
+			if (!std::filesystem::is_regular_file(path, error))
+				return ClassifyRuntime(false, std::optional<REL::Version>{}, {}, directory.string());
+			const auto digest = Util::FileDigest::Sha256FileHex(path);
+			return ClassifyRuntime(true, Util::GetDllVersion(path.wstring()), digest ? std::string_view(*digest) : std::string_view{}, directory.string());
+		}
 
 		template <class T>
 		T Resolve(HMODULE module, const char* name)
@@ -349,24 +360,18 @@ namespace NR
 	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
-	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory)
+	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode)
 	{
 		if (impl->initialized)
 			return;
 		auto pending = std::make_unique<Impl>();
 		auto& state = *pending;
-		const auto path = directory / L"nvngx_dlssnr.dll";
-		std::error_code error;
-		if (!std::filesystem::is_regular_file(path, error))
-			throw std::runtime_error(std::format("nvngx_dlssnr.dll not found in {}", directory.string()));
-		const auto version = Util::GetDllVersion(path.wstring());
-		const auto rejected = UnsupportedRuntimeReason(version, directory.string());
-		if (!rejected.empty())
-			throw std::runtime_error(rejected);
-		const auto digest = Util::FileDigest::Sha256FileHex(path);
-		if (!digest || !IsValidatedRuntimeHash(*digest))
-			throw std::runtime_error(std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
-				digest ? std::string_view(*digest).substr(0, kRuntimeDigestPrefix) : std::string_view{ "unavailable" }, kRequiredRuntimeMajor, kRequiredRuntimeMinor));
+		const auto path = directory / kRuntimeFileName;
+		const auto availability = InspectRuntimeFile(directory);
+		if (!availability.AllowsLoad(developerMode))
+			throw std::runtime_error(availability.reason);
+		if (!availability.Ready())
+			logger::warn("[NeuralRendering] Developer mode loaded a runtime the pass refuses: {}", availability.reason);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -407,9 +412,38 @@ namespace NR
 			if (!parameters)
 				throw std::runtime_error(std::format("{}NGX returned null parameters", kInitializationPrefix));
 		}
-		state.version = version->string();
-		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", version->string());
+		// A forced build may carry no version resource, which would otherwise read as an empty runtime.
+		state.version = availability.version.empty() ? std::string{ "unknown" } : availability.version;
+		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", state.version);
 		impl = std::move(pending);
+	}
+
+	RuntimeAvailability InspectRuntime(const std::filesystem::path& directory)
+	{
+		const auto path = directory / kRuntimeFileName;
+		std::error_code error;
+		const auto size = std::filesystem::file_size(path, error);
+		// A runtime that is simply absent is rechecked every call: it costs one stat, and the
+		// cache would otherwise hide the file that appears when the user installs it.
+		if (error)
+			return InspectRuntimeFile(directory);
+		const auto written = std::filesystem::last_write_time(path, error);
+		if (error)
+			return InspectRuntimeFile(directory);
+
+		static std::mutex mutex;
+		static std::filesystem::path cachedPath;
+		static std::uintmax_t cachedSize = 0;
+		static std::filesystem::file_time_type cachedWritten;
+		static RuntimeAvailability cached;
+		std::scoped_lock lock(mutex);
+		if (cachedPath != path || cachedSize != size || cachedWritten != written) {
+			cachedPath = path;
+			cachedSize = size;
+			cachedWritten = written;
+			cached = InspectRuntimeFile(directory);
+		}
+		return cached;
 	}
 
 	void Runtime::ResetFeatures()
@@ -446,6 +480,10 @@ namespace NR
 		};
 		const auto depthRegion = clampRegion(depth, guides.depth);
 		const auto motionRegion = clampRegion(motion, guides.motion);
+		// A zero-sized colorOutput evaluates the whole frame.
+		const auto outputRegion = clampRegion(color, guides.colorOutput.width && guides.colorOutput.height ?
+														 guides.colorOutput :
+														 GuideRegion{ 0, 0, width, height });
 		auto* parameters = eye.parameters.get();
 		ParameterWriter writer(parameters, state.floatSlot);
 		RuntimePath::Scope scope(state.compatibility);
@@ -500,12 +538,14 @@ namespace NR
 		writer.SetResource("DLSSNR.Depth", depth);
 		writer.SetResource("DLSSNR.MVec", motion);
 		writer.SetResource("DLSSNR.Output", output);
-		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY", "DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY" })
-			writer.SetUInt(key, 0u);
+		for (auto key : { "DLSSNR.ColorSubrectBaseX", "DLSSNR.OutputSubrectBaseX" })
+			writer.SetUInt(key, outputRegion.baseX);
+		for (auto key : { "DLSSNR.ColorSubrectBaseY", "DLSSNR.OutputSubrectBaseY" })
+			writer.SetUInt(key, outputRegion.baseY);
 		for (auto key : { "DLSSNR.ColorSubrectWidth", "DLSSNR.OutputSubrectWidth" })
-			writer.SetUInt(key, width);
+			writer.SetUInt(key, outputRegion.width);
 		for (auto key : { "DLSSNR.ColorSubrectHeight", "DLSSNR.OutputSubrectHeight" })
-			writer.SetUInt(key, height);
+			writer.SetUInt(key, outputRegion.height);
 		writer.SetUInt("DLSSNR.DepthSubrectBaseX", depthRegion.baseX);
 		writer.SetUInt("DLSSNR.DepthSubrectBaseY", depthRegion.baseY);
 		writer.SetUInt("DLSSNR.DepthSubrectWidth", depthRegion.width);
