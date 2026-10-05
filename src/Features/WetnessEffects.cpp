@@ -1257,7 +1257,7 @@ void WetnessEffects::DrawWeatherAnalysis() const
 		return;
 	}
 
-	auto frameData = GetCommonBufferData(false);
+	auto frameData = GetCommonBufferData();
 	const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
 	Settings defaultSettings{};
 
