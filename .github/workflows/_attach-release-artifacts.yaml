@@ -100,6 +100,13 @@ jobs:
                   name: FeatureFlipImpact
                   path: flip-impact/
 
+            - name: Download clang-cl build
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  name: dist-artifacts-clang-cl
+                  path: clang-dist/
+
             - name: Stage shader caches into dist
               shell: bash
               env:
@@ -183,6 +190,20 @@ jobs:
                     fi
                   done
 
+                  # The clang-cl lane's AIO supplies the optional experimental DLL; a missing or
+                  # unextractable artifact just means the FOMOD has no clang-cl page.
+                  clang_aio=$(find clang-dist -maxdepth 1 \( -name 'CommunityShaders_AIO-*.7z' -o -name 'CommunityShaders_AIO-*.zip' \) -print -quit 2>/dev/null || true)
+                  if [ -n "$clang_aio" ]; then
+                    mkdir -p fomod-work/clang
+                    if 7z x -y -ofomod-work/clang "$clang_aio" 'SKSE/Plugins/CommunityShaders.dll' >/dev/null; then
+                      args+=(--clang-dll fomod-work/clang)
+                    else
+                      echo "::warning::Could not extract the clang-cl DLL; the FOMOD omits the clang-cl option."
+                    fi
+                  else
+                    echo "::warning::No clang-cl build this run; the FOMOD omits the clang-cl option."
+                  fi
+
                   # pyfomod imports distutils, removed from the stdlib in
                   # Python 3.12; setuptools>=60 vendors a distutils shim,
                   # and <80 keeps it (60 requires an explicit lower bound
@@ -202,7 +223,7 @@ jobs:
                   if [ -s "$tmp_7z" ] && 7z t "$tmp_7z" >/dev/null; then
                     listing=$(7z l -ba "$tmp_7z")
                   fi
-                  if ! grep -Eq 'fomod[/\]ModuleConfig\.xml' <<<"$listing" || ! grep -Eq 'Core[/\]SKSE[/\]Plugins[/\]CommunityShaders\.dll' <<<"$listing"; then
+                  if ! grep -Eq 'fomod[/\]ModuleConfig\.xml' <<<"$listing" || ! grep -Eq '(Core|DefaultBuild)[/\]SKSE[/\]Plugins[/\]CommunityShaders\.dll' <<<"$listing"; then
                     rm -f "$tmp_7z"
                     echo "::warning::FOMOD archive is missing, corrupt or incomplete; the release ships the plain AIO."
                     exit 0

@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from test_verify_shader_cache import dxbc
@@ -39,12 +40,14 @@ class BuildFomodPackageTests(unittest.TestCase):
         (self.core / "SKSE/Plugins/CommunityShaders.dll").write_bytes(b"MZ")
         self.out = self.root / "staged"
 
-    def run_builder(self, se=None, vr=None, core=None):
+    def run_builder(self, se=None, vr=None, core=None, clang=None):
         command = [sys.executable, str(SCRIPT), "--core", str(core or self.core), "--output", str(self.out), "--version", "v1.0.0"]
         if se is not None:
             command += ["--se-cache", str(se)]
         if vr is not None:
             command += ["--vr-cache", str(vr)]
+        if clang is not None:
+            command += ["--clang-dll", str(clang)]
         return subprocess.run(command, capture_output=True, text=True)
 
     def module_config(self):
@@ -64,6 +67,73 @@ class BuildFomodPackageTests(unittest.TestCase):
     def test_module_config_has_the_exact_filename(self):
         self.assertEqual(self.run_builder().returncode, 0)
         self.assertIn("ModuleConfig.xml", [entry.name for entry in (self.out / "fomod").iterdir()])
+
+    def write_clang(self, size=2_000_000, header=b"MZ"):
+        clang = self.root / "clang"
+        (clang / "SKSE/Plugins").mkdir(parents=True)
+        (clang / "SKSE/Plugins/CommunityShaders.dll").write_bytes(header + b"\x00" * (size - len(header)))
+        return clang
+
+    def option_type(self, name):
+        plugin = ET.fromstring(self.module_config()).find(f".//plugin[@name='{name}']")
+        return plugin.find("typeDescriptor/type").get("name")
+
+    def test_clang_dll_becomes_a_radio_choice_with_the_default(self):
+        result = self.run_builder(clang=self.write_clang())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        config = self.module_config()
+        self.assertIn('type="SelectExactlyOne"', config)
+        self.assertIn("Default build (recommended)", config)
+        self.assertIn("clang-cl build (experimental, may be faster)", config)
+        self.assertIn('source="ClangCL/SKSE" destination="SKSE"', config)
+        self.assertIn('source="DefaultBuild/SKSE" destination="SKSE"', config)
+
+    def test_each_choice_installs_exactly_one_dll(self):
+        self.assertEqual(self.run_builder(clang=self.write_clang()).returncode, 0)
+        self.assertFalse((self.out / "Core/SKSE/Plugins/CommunityShaders.dll").exists())
+        self.assertTrue((self.out / "DefaultBuild/SKSE/Plugins/CommunityShaders.dll").is_file())
+        self.assertTrue((self.out / "ClangCL/SKSE/Plugins/CommunityShaders.dll").is_file())
+        self.assertNotIn("priority", self.module_config())
+
+    def test_default_build_is_recommended_and_clang_is_optional(self):
+        self.assertEqual(self.run_builder(clang=self.write_clang()).returncode, 0)
+        self.assertEqual(self.option_type("Default build (recommended)"), "Recommended")
+        self.assertEqual(self.option_type("clang-cl build (experimental, may be faster)"), "Optional")
+
+    def test_default_pdb_travels_with_the_default_dll(self):
+        (self.core / "SKSE/Plugins/CommunityShaders.pdb").write_bytes(b"pdb")
+        self.assertEqual(self.run_builder(clang=self.write_clang()).returncode, 0)
+        self.assertTrue((self.out / "DefaultBuild/SKSE/Plugins/CommunityShaders.pdb").is_file())
+        self.assertFalse((self.out / "Core/SKSE/Plugins/CommunityShaders.pdb").exists())
+
+    def test_clang_option_comes_with_the_cache_options(self):
+        write_cache(self.root / "se")
+        self.assertEqual(self.run_builder(self.root / "se", clang=self.write_clang()).returncode, 0)
+        config = self.module_config()
+        self.assertIn("SE/AE", config)
+        self.assertIn("clang-cl build (experimental, may be faster)", config)
+
+    def assert_clang_dropped(self, clang):
+        result = self.run_builder(clang=clang)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("::warning::", result.stderr)
+        self.assertNotIn("clang-cl", self.module_config())
+        self.assertFalse((self.out / "ClangCL").exists())
+        self.assertFalse((self.out / "DefaultBuild").exists())
+        self.assertTrue((self.out / "Core/SKSE/Plugins/CommunityShaders.dll").is_file())
+
+    def test_absent_clang_dll_is_dropped(self):
+        self.assert_clang_dropped(self.root / "no-such-clang")
+
+    def test_tiny_clang_dll_is_dropped(self):
+        self.assert_clang_dropped(self.write_clang(size=1000))
+
+    def test_non_pe_clang_dll_is_dropped(self):
+        self.assert_clang_dropped(self.write_clang(header=b"XX"))
+
+    def test_no_clang_argument_offers_no_clang_option(self):
+        self.assertEqual(self.run_builder().returncode, 0)
+        self.assertNotIn("clang-cl", self.module_config())
 
     def test_missing_cache_is_dropped_not_fatal(self):
         write_cache(self.root / "vr")

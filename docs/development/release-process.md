@@ -122,6 +122,14 @@ The shared C++ build (`_shared-build.yaml`) builds each preset with two compiler
 
 To ship clang-cl, swap `primary` between the two matrix entries, after the SE and VR runtime gate has passed on clang binaries. A release dispatch loads the workflow from the dispatched ref, so the swap reaches RC cuts from `dev` at once and stable cuts through the two-phase promotion above; check the "Show clang-cl toolchain" step or the build log to confirm which compiler produced a release.
 
+### Experimental clang-cl DLL
+
+The FOMOD installer offers the advisory clang-cl build as a "Plugin Build" page with two radio choices: "Default build (recommended)", pre-selected, and "clang-cl build (experimental, may be faster)", whose text states the measured 3 to 13 percent CPU saving and its uncertainty. Each choice installs exactly one plugin DLL: when the page is offered, the default DLL and its PDB move out of `Core` into the default choice, so no installer has to resolve two files with one destination. A same-path overwrite at higher priority was tried and Vortex kept the `Core` DLL, so do not reintroduce it. The clang DLL comes from the clang-cl lane's AIO built from the same source as the release. If that build is missing, or its DLL is absent, under 1 MB or not a PE file, the FOMOD is built without the page and the default DLL stays in `Core`.
+
+The clang build has not passed the full SE and VR runtime gate that the MSVC build has, which is why it is an opt-in. Its performance edge is directional: single-leg tests showed 3 to 13 percent lower CPU time in render zones in 3 of 4 scenes, with leg-to-leg noise of 5 to 10 percent, no gain from AVX2, and a 1 to 2 percent cost from keeping `std::isfinite` correct (`-fno-finite-math-only`). One real undefined-behavior difference has already surfaced.
+
+To promote clang-cl to the default, follow the gate under Compiler Lanes above.
+
 ## FOMOD and Prebuilt Cache Assets
 
 The release attach job (`_attach-release-artifacts.yaml`) wraps the AIO in a FOMOD whose installer offers the prebuilt shader caches as optional downloads. Every optional piece is dropped, never shipped broken:
