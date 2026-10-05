@@ -25,9 +25,12 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.16.0
+    VERSION 2.17.0
     LANGUAGES CXX
 )
+
+set(PLUGIN_DISPLAY_NAME "Open Shaders")
+set(PLUGIN_LOG_NAME "OpenShaders")
 
 # default install path
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)

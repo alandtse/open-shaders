@@ -30,6 +30,7 @@
 #include "Menu/BackgroundBlur.h"
 #include "Menu/CursorLoader.h"
 #include "Menu/FeatureListRenderer.h"
+#include "Menu/FlipImpactDisplay.h"
 #include "Menu/Fonts.h"
 #include "Menu/HomePageRenderer.h"
 #include "Menu/IconLoader.h"
@@ -785,7 +786,7 @@ void Menu::DrawSettings()
 	resetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
-	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("Open Shaders {}", versionStr) : std::format("Open Shaders {} [{}]", versionStr, Plugin::BUILD_DESCRIBE);
+	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) : std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
 	// Use ### to keep a stable window ID regardless of build suffix or display
 	// branding, preserving docking state. The literal "CommunityShaders" ID is
 	// load-bearing: changing it would discard users' existing docking layouts.
@@ -939,11 +940,21 @@ void Menu::DrawDisableAtBootSettings()
 			const auto checkboxLabel = std::format("{}##DisableAtBoot{}", feature->GetDisplayName(), featureName);
 			bool isDisabled = state->IsFeatureDisabled(featureName);
 
-			if (ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled)) {
+			const auto impact = FlipImpactDisplay::Of(*feature);
+			if (impact)
+				ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(impact->tier));
+			const bool toggled = ImGui::Checkbox(checkboxLabel.c_str(), &isDisabled);
+			if (impact)
+				ImGui::PopStyleColor();
+			if (toggled) {
 				if (state->SetFeatureBootEnabled(featureName, !isDisabled))
 					preferenceSaveFailures.erase(featureName);
 				else
 					preferenceSaveFailures.insert(featureName);
+			}
+			if (impact) {
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(FlipImpactDisplay::Tooltip(*impact).c_str());
 			}
 			if (preferenceSaveFailures.contains(featureName))
 				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));

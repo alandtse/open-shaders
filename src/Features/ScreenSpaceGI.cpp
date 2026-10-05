@@ -5,6 +5,7 @@
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
+#include "Features/ReverseZ.h"
 #include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
@@ -588,7 +589,8 @@ void ScreenSpaceGI::SetupResources()
 
 		texDesc.BindFlags &= ~D3D11_BIND_RENDER_TARGET;
 		texDesc.MiscFlags &= ~D3D11_RESOURCE_MISC_GENERATE_MIPS;
-		texDesc.Format = srvDesc.Format = uavDesc.Format = DXGI_FORMAT_R16_FLOAT;
+		// gi.cs.hlsl's depth-edge offset assumes FP32 working depth whenever reverse-Z is active.
+		texDesc.Format = srvDesc.Format = uavDesc.Format = globals::features::reverseZ.IsActive() ? DXGI_FORMAT_R32_FLOAT : DXGI_FORMAT_R16_FLOAT;
 		texDesc.MipLevels = srvDesc.Texture2D.MipLevels = 5;
 
 		{

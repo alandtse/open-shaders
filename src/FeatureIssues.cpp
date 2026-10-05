@@ -54,8 +54,9 @@ namespace FeatureIssues
 	static std::string GetFilePathForDisplay(const std::string& path)
 	{
 		std::string displayPath = path;
-		ReplaceAll(displayPath, "Community Shaders", "[Open Shaders data]");
-		ReplaceAll(displayPath, "CommunityShaders", "[Open Shaders data]");
+		const auto dataLabel = std::format("[{} data]", Plugin::DISPLAY_NAME);
+		ReplaceAll(displayPath, "Community Shaders", dataLabel);
+		ReplaceAll(displayPath, "CommunityShaders", dataLabel);
 		ReplaceAll(displayPath, "CSDevTestUnknownFeature", "OSDevTestUnknownFeature");
 		ReplaceAll(displayPath, "CSEditor", "[OS Editor]");
 		ReplaceAll(displayPath, "CSUtility", "[OS Utility]");
@@ -64,8 +65,8 @@ namespace FeatureIssues
 
 	static std::string GetIssueTextForDisplay(std::string text)
 	{
-		ReplaceAll(text, "Community Shaders", "Open Shaders");
-		ReplaceAll(text, "CommunityShaders", "Open Shaders");
+		ReplaceAll(text, "Community Shaders", Plugin::DISPLAY_NAME);
+		ReplaceAll(text, "CommunityShaders", Plugin::DISPLAY_NAME);
 		ReplaceAll(text, "CSDevTestUnknownFeature", "OSDevTestUnknownFeature");
 		ReplaceAll(text, "CS Editor", "OS Editor");
 		ReplaceAll(text, "CS Utility", "OS Utility");
@@ -84,20 +85,21 @@ namespace FeatureIssues
 	}
 
 	// Known obsolete features data
+	static const auto kBuiltIntoPlugin = std::format("This functionality is now built into {}. Remove the old feature as it's no longer needed.", Plugin::DISPLAY_NAME);
 	static const std::map<std::string, FeatureIssueInfo> s_obsoleteFeatureData = {
 		{ "ComplexParallaxMaterials", { .shortName = "ComplexParallaxMaterials",
 										  .displayName = "Complex Parallax Materials",
 										  .rejectionReason = "Integrated into ExtendedMaterials feature",
 										  .replacementFeature = "ExtendedMaterials",
-										  .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
+										  .userMessage = kBuiltIntoPlugin,
 										  .removedInVersion = { 1, 0, 0 },
 										  .modifiedShaderDirectory = false,
 										  .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
 		{ "TreeLODLighting", { .shortName = "TreeLODLighting",
 								 .displayName = "Tree LOD Lighting",
-								 .rejectionReason = "Functionality integrated into the base Open Shaders lighting system",
+								 .rejectionReason = std::format("Functionality integrated into the base {} lighting system", Plugin::DISPLAY_NAME),
 								 .replacementFeature = "",
-								 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
+								 .userMessage = kBuiltIntoPlugin,
 								 .removedInVersion = { 1, 0, 0 },
 								 .modifiedShaderDirectory = true,
 								 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
@@ -127,9 +129,9 @@ namespace FeatureIssues
 							   .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
 		{ "DistantTreeLighting", { .shortName = "DistantTreeLighting",
 									 .displayName = "Distant Tree Lighting",
-									 .rejectionReason = "Replaced by TreeLODLighting, which was later integrated into Open Shaders core",
+									 .rejectionReason = std::format("Replaced by TreeLODLighting, which was later integrated into {} core", Plugin::DISPLAY_NAME),
 									 .replacementFeature = "",
-									 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
+									 .userMessage = kBuiltIntoPlugin,
 									 .removedInVersion = { 0, 8, 0 },
 									 .modifiedShaderDirectory = true,
 									 .issueType = FeatureIssueInfo::IssueType::OBSOLETE } }
@@ -435,7 +437,7 @@ namespace FeatureIssues
 		if (auto section = Util::SectionWrapper(T("menu.issues.unknown_features_header", "Unknown Features"),
 				T("menu.issues.unknown_features_desc",
 					"The following features are not recognized and we tried to disable automatically. "
-					"They may be from development branches or newer Open Shaders versions. Since we cannot determine what files they may have modified, "
+					"They may be from development branches or newer {brand} versions. Since we cannot determine what files they may have modified, "
 					"they should be removed as a precaution to prevent potential shader compilation failures."),
 				theme.StatusPalette.Error, !unknownIssues.empty())) {
 			for (const auto* issue : unknownIssues) {
@@ -446,7 +448,7 @@ namespace FeatureIssues
 		if (auto section = Util::SectionWrapper(T("menu.issues.obsolete_features_header", "Obsolete Features"),
 				T("menu.issues.obsolete_features_desc",
 					"The following features are obsolete and disabled automatically. "
-					"These features have been removed or replaced in this Open Shaders version but do not modify core shaders."),
+					"These features have been removed or replaced in this {brand} version but do not modify core shaders."),
 				theme.StatusPalette.Warning, !obsoleteIssues.empty())) {
 			for (const auto* issue : obsoleteIssues) {
 				DrawFeatureIssue(*issue, theme.StatusPalette.Warning);
@@ -481,7 +483,7 @@ namespace FeatureIssues
 			ImGui::Text("%s", T("menu.issues.open_features_folder_tooltip", "Opens the Features folder containing INI files for manual review."));
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T("menu.issues.open_shaders_directory", "Open Shaders Directory"))) {
+		if (ImGui::Button(T("menu.issues.open_shaders_directory", "{brand} Directory"))) {
 			std::filesystem::path shadersPath = Util::PathHelpers::GetShadersRealPath();
 			ShellExecuteA(NULL, "open", shadersPath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
 		}
@@ -496,7 +498,7 @@ namespace FeatureIssues
 				ShellExecuteA(NULL, "open", logPath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.issues.open_logs_tooltip", "Opens the CommunityShaders.log file for manual review."));
+				ImGui::Text("%s", T("menu.issues.open_logs_tooltip", "Opens the OpenShaders.log file for manual review."));
 			}
 		}
 
@@ -515,7 +517,7 @@ namespace FeatureIssues
 		// Cleanup guidance
 		ImGui::TextColored(theme.Palette.Text, "%s", T("menu.issues.general_actions", "General Actions:"));
 		ImGui::BulletText("%s", T("menu.issues.use_open_features_folder", "Use 'Open Features Folder' to manually review INI files"));
-		ImGui::BulletText("%s", T("menu.issues.use_open_shaders_directory", "Use 'Open Shaders Directory' to check for orphaned shader folders"));
+		ImGui::BulletText("%s", T("menu.issues.use_open_shaders_directory", "Use '{brand} Directory' to check for orphaned shader folders"));
 		ImGui::BulletText("%s", T("menu.issues.use_open_logs", "Use 'Open Logs' to manually review the logs"));
 		ImGui::BulletText("%s", T("menu.issues.use_clear_issue_list", "Use 'Clear Issue List' to refresh after manual cleanup"));
 	}
@@ -668,7 +670,7 @@ namespace FeatureIssues
 			ImGui::SameLine();
 			ImGui::Text("%s", T("menu.issues.core_feature_installed", "Core feature already installed"));
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T("menu.issues.core_feature_installed_tooltip", "This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager."));
+				ImGui::TextWrapped("%s", T("menu.issues.core_feature_installed_tooltip", "This feature is already included as part of the core {brand} installation. Uninstall this feature with your mod manager."));
 			}
 		} else if (issue.IsVersionMismatch()) {
 			ImGui::SameLine();
@@ -787,7 +789,7 @@ namespace FeatureIssues
 					ImGui::TextColored(theme.StatusPalette.Warning, "%s", T("menu.issues.compilation_persist_warning", "If compilation issues persist after deletion:"));
 					ImGui::BulletText("%s", T("menu.issues.uninstall_via_mod_manager", "Completely uninstall the feature via your mod manager"));
 					ImGui::BulletText("%s", T("menu.issues.check_modified_files", "Check for modified files in Data/Shaders/ (not in feature subfolders)"));
-					ImGui::BulletText("%s", T("menu.issues.reinstall_cs", "Consider reinstalling Open Shaders if issues persist"));
+					ImGui::BulletText("%s", T("menu.issues.reinstall_cs", "Consider reinstalling {brand} if issues persist"));
 					ImGui::Spacing();
 					ImGui::Separator();
 					ImGui::Spacing();
@@ -935,7 +937,7 @@ namespace FeatureIssues
 						// Unknown orphaned feature
 						FeatureFileInfo fileInfo = GetFeatureFileInfo(featureName);
 						AddFeatureIssue(featureName, "unknown",
-							std::format("{} is not recognized by this Open Shaders version", featureName),
+							std::format("{} is not recognized by this {} version", featureName, Plugin::DISPLAY_NAME),
 							FeatureIssueInfo::IssueType::UNKNOWN, fileInfo);
 
 						logger::warn("Found orphaned unknown feature INI: {}", featureName);
@@ -1603,7 +1605,7 @@ namespace FeatureIssues
 				const bool hasActiveTests = HasActiveTestInis();
 				if (hasActiveTests) {  // Warning section using theme colors
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
-					ImGui::TextWrapped("%s", T("menu.issues.test.active_inis_warning", "Test INI files are currently active. Restart Open Shaders to see feature issues."));
+					ImGui::TextWrapped("%s", T("menu.issues.test.active_inis_warning", "Test INI files are currently active. Restart {brand} to see feature issues."));
 					ImGui::PopStyleColor();  // Show detailed test state information
 					ImGui::Spacing();
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
@@ -1632,7 +1634,7 @@ namespace FeatureIssues
 										  "- Obsolete features (ComplexParallaxMaterials, TerrainBlending, etc.)\n"
 										  "- Unknown features (fake non-existent features)\n"
 										  "- Version mismatch (modifies existing feature version)\n"
-										  "Restart Open Shaders after creating to see the issues in action."));
+										  "Restart {brand} after creating to see the issues in action."));
 				}
 
 				// Restore button
@@ -1657,7 +1659,7 @@ namespace FeatureIssues
 					ImGui::Text("%s", T("menu.issues.test.restore_tooltip",
 										  "Removes all test INI files and restores any modified INI files to their original state.\n"
 										  "This undoes all changes made by 'Create Test INIs'.\n"
-										  "Restart Open Shaders after restoring to see normal operation."));
+										  "Restart {brand} after restoring to see normal operation."));
 				}
 			}
 		}

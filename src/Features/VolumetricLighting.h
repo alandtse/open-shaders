@@ -63,8 +63,6 @@ public:
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings panel for volumetric lighting configuration. */
 	virtual void DrawSettings() override;
-	/** @brief Handles post-data-load initialization. */
-	virtual void DataLoaded() override;
 	/** @brief Resolves game engine addresses and patches the raymarch dispatch loop. */
 	virtual void PostPostLoad() override;
 	/** @brief Creates the volumetric lighting constant buffer. */

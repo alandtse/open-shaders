@@ -4,14 +4,24 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "NeuralRendering/ActorRegion.h"
 #include "NeuralRendering/D3D12Interop.h"
+#include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/Runtime.h"
+#include "Profiler.h"
 #include "State.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/LazyShader.h"
+#include "Utils/RegionOverlay.h"
+#include "Utils/Subrect.h"
+#include "Utils/UI.h"
+
+#include <chrono>
+#include <span>
 
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
 
@@ -26,6 +36,123 @@ namespace
 			return std::format("Active (runtime {})", runtime);
 		}
 	}
+
+	/** @brief A trackable actor, held by handle so the crop never dereferences a stale pointer. */
+	struct RegionCandidate
+	{
+		RE::ActorHandle handle;
+		float score;
+	};
+
+	/** @brief Absolute plugin directory the runtime loads from; the load and the panel's verdict must resolve it alike. */
+	std::filesystem::path RuntimeDirectory()
+	{
+		return Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir);
+	}
+
+	/**
+	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
+	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
+	 */
+	const char* RuntimeFixHint(NR::RuntimeAvailability::State state)
+	{
+		if (state == NR::RuntimeAvailability::State::kMissing)
+			return T(TKEY("runtime_missing_fix"), "Install nvngx_dlssnr.dll under Data\\Shaders\\Upscaling\\Streamline\\.");
+		return T(TKEY("runtime_build_fix"), "Replace it with one of the validated 310.8 builds listed in docs/development/neural-rendering.md.");
+	}
+
+	/**
+	 * @brief Projects an actor's world-space bound points into one eye's screen bounds.
+	 *        The view-projection matrix takes camera-relative input, and the origin is per eye.
+	 */
+	Util::Region::ProjectionResult ProjectActorEyeBounds(const Util::BoundPoints& a_worldPoints, uint32_t a_eye, Util::Region::ScreenBounds& a_out)
+	{
+		const auto origin = Util::GetEyePosition(static_cast<int>(a_eye));
+		const float3 eyeOrigin{ origin.x, origin.y, origin.z };
+		Util::BoundPoints relative;
+		for (const auto& point : a_worldPoints.View())
+			relative.Add(point - eyeOrigin);
+		return Util::Region::ProjectBounds(Util::GetCameraData(static_cast<int>(a_eye)).viewProjMat, relative.View(), a_out);
+	}
+
+	/**
+	 * @brief Prominence of an actor this frame, as the best of its on-screen bounds over the eyes that see it.
+	 *        Projection only: the line-of-sight rays stay in ProjectActorRegion, which runs on the
+	 *        best-scoring candidates alone.
+	 */
+	float ActorProminenceScore(RE::Actor* a_actor, uint32_t a_eyes, bool a_incumbent)
+	{
+		const auto worldPoints = Util::GetActorBoundPoints(*a_actor, false);
+		float best = 0.0f;
+		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
+			Util::Region::ScreenBounds bounds;
+			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
+			if (projection == Util::Region::ProjectionResult::kOffscreen)
+				continue;
+			if (projection == Util::Region::ProjectionResult::kBehindEye) {
+				best = std::max(best, NR::ActorRegion::kEyePlaneCrossingScore * (a_incumbent ? NR::ActorRegion::kIncumbentScoreBonus : 1.0f));
+				continue;
+			}
+			if (Util::Region::AreaFraction(bounds) < NR::ActorRegion::kMinVisibleAreaFraction)
+				continue;
+			best = std::max(best, NR::ActorRegion::ActorScore(bounds, a_incumbent));
+		}
+		return best;
+	}
+
+	/**
+	 * @brief Projects an actor's bound into per-eye crops; false when no eye has a clear view of it,
+	 *        so it cannot be tracked. An eye whose view is blocked keeps its own crop, and an eye the
+	 *        bound misses takes the other eye's crop, so both eyes enhance the same scene area.
+	 * @param a_actorBox Receives the same bound with no padding and no grid alignment: empty per eye
+	 *        the projection missed, and the whole frame where the bound is behind the eye.
+	 */
+	bool ProjectActorRegion(RE::Actor* a_actor, Util::Region::StereoRegion& a_region, Util::Region::StereoRegion& a_actorBox,
+		uint32_t a_eyeWidth, uint32_t a_eyeHeight, uint32_t a_eyes, uint32_t a_fit)
+	{
+		const Util::Subrect::PixelRegion frame{ 0, 0, a_eyeWidth, a_eyeHeight };
+		a_region.eye.fill(frame);
+		a_actorBox.eye.fill(Util::Region::kEmptyRegion);
+		const auto& padding = a_fit == NR::Tuning::kRegionFitTight ? NR::ActorRegion::kTightPadding : NR::ActorRegion::kPadding;
+		const auto worldPoints = Util::GetActorBoundPoints(*a_actor, true, NR::ActorRegion::kJointMargin);
+		bool tracked = false;
+		std::array<bool, 2> projected{};
+		for (uint32_t eye = 0; eye < a_eyes; ++eye) {
+			Util::Region::ScreenBounds bounds;
+			const auto projection = ProjectActorEyeBounds(worldPoints, eye, bounds);
+			if (projection == Util::Region::ProjectionResult::kOffscreen)
+				continue;
+			projected[eye] = true;
+			tracked |= Util::IsActorVisibleFromEye(*a_actor, Util::GetEyePosition(static_cast<int>(eye)));
+			if (projection == Util::Region::ProjectionResult::kBehindEye) {
+				a_actorBox.eye[eye] = frame;
+				continue;
+			}
+			const auto crop = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight, padding);
+			if (crop.w && crop.h)
+				a_region.eye[eye] = crop;
+			a_actorBox.eye[eye] = Util::Region::PixelRegionFromBounds(bounds, a_eyeWidth, a_eyeHeight,
+				NR::ActorRegion::kTightPadding, Util::Region::kNoPixelAlignment);
+		}
+		Util::Region::CopyCropToUnprojectedEyes(a_region, projected, a_eyeWidth, a_eyeHeight);
+		a_actorBox.active = tracked;
+		return tracked;
+	}
+
+	/** @brief Pass-to-pass timing ratio above which a calibration result is flagged as unsteady. */
+	constexpr float kCalibrationUnstableRatio = 1.5f;
+
+	/** @brief Widest the settings-panel region preview is drawn, in ImGui pixels. */
+	constexpr float kRegionPreviewMaxWidth = 400.0f;
+
+	/** @brief Rectangles the preview can draw: a crop and an actor box per eye. */
+	constexpr size_t kMaxPreviewRegions = 4;
+
+	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
+	constexpr float kRegionOutlineThicknessPixels = 3.0f;
+
+	/** @brief Colour the preview draws the tracked actor's projected box in; the shader outline uses the same yellow. */
+	constexpr ImU32 kActorBoxPreviewColor = IM_COL32(255, 255, 0, 255);
 }
 
 struct NeuralRendering::Impl
@@ -54,18 +181,35 @@ struct NeuralRendering::Impl
 		float4 dynamicRangeProtect{};
 		float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 		uint32_t hasToneData = 0;
+		uint32_t regionBaseX = 0, regionBaseY = 0, regionWidth = 0, regionHeight = 0;
+		uint32_t regionOverlayEnabled = 0;
+		float regionOutlineThickness = kRegionOutlineThicknessPixels;
+		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
+		float2 pad{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
 	static_assert(offsetof(ColorTransferData, toneRadius) == 84);
 	static_assert(offsetof(ColorTransferData, toneHighStrength) == 88);
 	static_assert(offsetof(ColorTransferData, hasToneData) == 92);
-	static_assert(sizeof(ColorTransferData) == 96);
+	static_assert(offsetof(ColorTransferData, regionBaseX) == 96);
+	static_assert(offsetof(ColorTransferData, regionOverlayEnabled) == 112);
+	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
+	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
+	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
+	static_assert(offsetof(ColorTransferData, pad) == 136);
+	static_assert(sizeof(ColorTransferData) == 144);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
+	/** @brief Crop of the last frame NR evaluated; inactive means it covered the whole frame. */
+	Util::Region::StereoRegion lastRegion;
+	/** @brief Crop this frame's evaluation uses, published by the main thread and read by TransferColor. */
+	Util::Region::StereoRegion region;
+	/** @brief The tracked actor's unpadded projected box, published alongside the crop and drawn by the overlay. */
+	Util::Region::StereoRegion actorBox;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
 	uint32_t lastDiagnosticOptions = 0;
@@ -78,6 +222,8 @@ struct NeuralRendering::Impl
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
 	bool useResolutionMotionScale = true;
+	/** @brief Draws the evaluated crop outline into the composite; read from the tuning each NR frame. */
+	bool regionOverlay = false;
 	NR::Diagnostics* captureDiagnostics = nullptr;
 	uint32_t captureFrame = UINT32_MAX;
 
@@ -105,7 +251,7 @@ struct NeuralRendering::Impl
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
-		runtime.Initialize(interop.Device(), Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir));
+		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
 		ready = true;
 	}
 
@@ -123,10 +269,30 @@ struct NeuralRendering::Impl
 		width = height = guideWidth = guideHeight = eyeCount = 0;
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
+		lastRegion = {};
 	}
 
 	/** @brief True while pass resources for a render size exist and can be released. */
 	bool HasPassResources() const { return eyeCount != 0; }
+
+	/** @brief Publishes this frame's crop for one eye; every kernel that reads a neural sample needs it. */
+	void SetRegion(ColorTransferData& a_data, uint32_t a_eye) const
+	{
+		if (region.active) {
+			const auto& crop = region.eye[a_eye];
+			a_data.regionBaseX = crop.x;
+			a_data.regionBaseY = crop.y;
+			a_data.regionWidth = crop.w;
+			a_data.regionHeight = crop.h;
+		}
+		if (actorBox.active) {
+			const auto& box = actorBox.eye[a_eye];
+			a_data.regionActorBaseX = box.x;
+			a_data.regionActorBaseY = box.y;
+			a_data.regionActorWidth = box.w;
+			a_data.regionActorHeight = box.h;
+		}
+	}
 
 	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
 	{
@@ -283,6 +449,7 @@ struct NeuralRendering::Impl
 		}
 		context->ClearState();
 		ColorTransferData data{ width, height, i * width };
+		SetRegion(data, i);
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
@@ -315,6 +482,10 @@ struct NeuralRendering::Impl
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
 		data.hasToneData = !prepare && NeedsToneData();
+		// Never on the Prepare dispatch: that writes NGX's input proxy, which the overlay would corrupt.
+		data.regionOverlayEnabled = (!prepare && regionOverlay) ? 1u : 0u;
+		data.regionOutlineThickness = kRegionOutlineThicknessPixels;
+		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
 		else if (debugOptions & NR::Diagnostics::ForceMaskOne)
@@ -415,7 +586,9 @@ struct NeuralRendering::Impl
 		// Resetting persistent NR history must not overlap its prior GPU evaluation.
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			if (eyes[i].frame.reset) {
+				const auto started = std::chrono::steady_clock::now();
 				interop.Drain();
+				diagnostic.resetDrainMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - started).count();
 				break;
 			}
 		}
@@ -442,9 +615,12 @@ struct NeuralRendering::Impl
 					commands->ResourceBarrier(2, copyBarriers);
 				} else {
 					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
+					const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+					const auto eyeRegion = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, width, height };
 					NR::GuideParameters guides;
-					guides.depth = { 0, 0, guideWidth, guideHeight };
-					guides.motion = { 0, 0, guideWidth, guideHeight };
+					guides.depth = eyeRegion;
+					guides.motion = eyeRegion;
+					guides.colorOutput = eyeRegion;
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
 					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
@@ -498,16 +674,196 @@ struct NeuralRendering::Impl
 	}
 };
 
+namespace
+{
+	/** @brief Actor-tracking call site, shared with GrassCollision; SKSE chains both hooks. */
+	struct MainUpdate_UpdateRegionOfInterest
+	{
+		static void thunk();
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	void MainUpdate_UpdateRegionOfInterest::thunk()
+	{
+		func();
+		globals::features::upscaling.neuralRendering.UpdateRegionOfInterest();
+	}
+}
+
 NeuralRendering::NeuralRendering() :
 	impl(std::make_unique<Impl>()) {}
 NeuralRendering::~NeuralRendering() = default;
+
+void NeuralRendering::InstallHooks()
+{
+	stl::write_thunk_call<MainUpdate_UpdateRegionOfInterest>(Util::MainUpdateCallSite());
+	logger::debug("[NeuralRendering] Installed actor-tracking hook");
+}
+
+void NeuralRendering::UpdateCalibration()
+{
+	auto& upscaling = globals::features::upscaling;
+	const auto resources = GetStatus();
+	if (upscaling.IsFrameGenerationActive()) {
+		calibration.Fail(NR::CropCalibration::Failure::kFrameGeneration);
+	} else if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive || !resources.eyes || !resources.width || !resources.height) {
+		calibration.Fail(NR::CropCalibration::Failure::kNotActive);
+	} else {
+		float gpuMs = 0.0f;
+		if (globals::profiler) {
+			globals::profiler->RequestCapture();
+			if (NR::CropCalibration::ConsumeCapture(globals::profiler->GetCapturedGpuFrameCount(), lastCalibrationGpuFrame)) {
+				for (const auto& timer : globals::profiler->GetResults()) {
+					if (timer.valid && timer.activeGpu && timer.name == "Upscaling::NREvaluate")
+						gpuMs = timer.gpuTimeMs;
+				}
+			}
+		}
+		calibration.AddFrame(gpuMs);
+	}
+	Util::Region::StereoRegion forced;
+	if (calibration.Running() && calibration.CurrentFraction() < 1.0f) {
+		const auto bounds = NR::CenteredBounds(calibration.CurrentFraction());
+		for (uint32_t eye = 0; eye < resources.eyes; ++eye)
+			forced.eye[eye] = Util::Region::PixelRegionFromBounds(bounds, resources.width, resources.height, NR::ActorRegion::kTightPadding);
+		forced.active = true;
+	}
+	if (calibration.GetResult().state == NR::CropCalibration::State::kDone)
+		calibratedKneeFraction = calibration.GetResult().kneeFraction;
+	std::scoped_lock lock(regionMutex);
+	regionStabilizer.Reset();
+	region = forced;
+	actorBox = {};
+	calibrationResult = calibration.GetResult();
+}
+
+NR::CropCalibration::Result NeuralRendering::GetCalibration() const
+{
+	std::scoped_lock lock(regionMutex);
+	return calibrationResult;
+}
+
+void NeuralRendering::UpdateRegionOfInterest()
+{
+	if (calibrationRequested.exchange(false, std::memory_order_relaxed)) {
+		calibration.Start();
+		std::scoped_lock lock(regionMutex);
+		calibrationResult = calibration.GetResult();
+	}
+	if (calibration.Running()) {
+		UpdateCalibration();
+		return;
+	}
+	Util::Region::StereoRegion next, nextActorBox;
+	uint32_t eyeWidth = 0, eyeHeight = 0;
+	RE::ActorHandle winner;
+	if (regionEnabled.load(std::memory_order_relaxed) && publishedState.load(std::memory_order_relaxed) == Status::State::kActive) {
+		const auto resources = GetStatus();
+		const auto eyes = resources.eyes;
+		eyeWidth = eyes ? resources.width : 0u;
+		eyeHeight = resources.height;
+		if (eyeWidth && eyeHeight) {
+			const auto fit = regionFit.load(std::memory_order_relaxed);
+			const bool group = regionGroup.load(std::memory_order_relaxed);
+			const auto camera = Util::GetEyePosition(0);
+			constexpr float maxSqDistance = NR::ActorRegion::kMaxActorDistance * NR::ActorRegion::kMaxActorDistance;
+			const auto* playerCamera = RE::PlayerCamera::GetSingleton();
+			const bool playerIsSeparateFromCamera = !globals::game::isVR && playerCamera && playerCamera->IsInThirdPerson();
+			std::vector<RegionCandidate> candidates;
+			Util::ForEachLoadedActor([&](RE::Actor* a_actor) {
+				if (!a_actor || !a_actor->Is3DLoaded() || (a_actor == globals::game::player && !playerIsSeparateFromCamera))
+					return;
+				if (camera.GetSquaredDistance(a_actor->GetPosition()) > maxSqDistance)
+					return;
+				const auto handle = a_actor->GetHandle();
+				const bool incumbent = static_cast<bool>(trackedActor) && handle == trackedActor;
+				const float score = ActorProminenceScore(a_actor, eyes, incumbent);
+				if (score > 0.0f)
+					candidates.push_back({ handle, score });
+			});
+			std::sort(candidates.begin(), candidates.end(), [](const RegionCandidate& a_left, const RegionCandidate& a_right) {
+				return a_left.score > a_right.score;
+			});
+			uint32_t members = 0, tested = 0;
+			for (const auto& candidate : candidates) {
+				auto actor = candidate.handle.get();
+				if (!actor)
+					continue;
+				if (!winner) {
+					if (!ProjectActorRegion(actor.get(), next, nextActorBox, eyeWidth, eyeHeight, eyes, fit))
+						continue;
+					next.active = true;
+					winner = candidate.handle;
+					if (!group)
+						break;
+					members = 1;
+					continue;
+				}
+				if (members >= NR::ActorRegion::kMaxGroupActors || tested++ >= NR::ActorRegion::kMaxGroupCandidatesTested)
+					break;
+				Util::Region::StereoRegion memberRegion, memberBox;
+				if (!ProjectActorRegion(actor.get(), memberRegion, memberBox, eyeWidth, eyeHeight, eyes, fit))
+					continue;
+				for (uint32_t eye = 0; eye < eyes; ++eye) {
+					if (!memberBox.eye[eye].w || !memberBox.eye[eye].h)
+						memberRegion.eye[eye] = Util::Region::kEmptyRegion;
+				}
+				if (!Util::Region::TryMergeRegions(next, memberRegion, eyeWidth, eyeHeight, eyes, NR::ActorRegion::GroupAreaCap(calibratedKneeFraction)))
+					continue;
+				for (uint32_t eye = 0; eye < eyes; ++eye)
+					nextActorBox.eye[eye] = Util::Region::UnionNonEmpty(nextActorBox.eye[eye], memberBox.eye[eye]);
+				++members;
+			}
+		}
+	}
+	trackedActor = winner;
+	std::scoped_lock lock(regionMutex);
+	if (eyeWidth && eyeHeight) {
+		region = regionStabilizer.Update(next, eyeWidth, eyeHeight);
+		Util::Region::MatchEyeSizes(region, eyeWidth, eyeHeight);
+		actorBox = nextActorBox;
+	} else {
+		regionStabilizer.Reset();
+		region = {};
+		actorBox = {};
+	}
+}
+
+Util::Region::StereoRegion NeuralRendering::GetRegionOfInterest() const
+{
+	std::scoped_lock lock(regionMutex);
+	return region;
+}
+
+Util::Region::StereoRegion NeuralRendering::GetActorBox() const
+{
+	std::scoped_lock lock(regionMutex);
+	return actorBox;
+}
+
+const char* NeuralRendering::RegionSourceName(RegionSource a_source)
+{
+	switch (a_source) {
+	case RegionSource::kActor:
+		return "actor";
+	case RegionSource::kFovea:
+		return "fovea";
+	case RegionSource::kBoth:
+		return "both";
+	default:
+		return "none";
+	}
+}
 
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
 {
+	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
+	regionFit.store(cropFit, std::memory_order_relaxed);
+	regionGroup.store(cropGroup, std::memory_order_relaxed);
 	diagnostics.SetDeveloperMode(globals::state->IsDeveloperMode());
 	if (enabled)
 		diagnostics.EndFrame(globals::state->frameCount, globals::state->worldRenderedThisFrame, globals::state->IsPausedOrMenuOpen(globals::game::ui));
@@ -557,11 +913,53 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	return snapshot;
 }
 
+NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
+{
+	return NR::InspectRuntime(RuntimeDirectory());
+}
+
+void NeuralRendering::DrawRuntimeDiagnostics() const
+{
+	// The Streamline table lists this file's version like any other DLL in that folder; the
+	// verdict is what says whether that version is one the pass will actually load.
+	const auto availability = GetRuntimeAvailability();
+	if (availability.Ready()) {
+		Util::Text::Success(T(TKEY("runtime_validated"), "Neural Rendering runtime: %s %s is a validated build."), NR::kRuntimeFileName, availability.version.c_str());
+		return;
+	}
+	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
+	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode()))
+		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+	else
+		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+}
+
 void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
+	const auto availability = GetRuntimeAvailability();
+	const bool developerMode = globals::state->IsDeveloperMode();
+	// An unavailable runtime must not strand a feature that is already on, so only the switch
+	// from off is locked. The verdict is re-read when the file changes, so installing a build
+	// mid-session unblocks the toggle without a restart.
+	const bool loadable = availability.AllowsLoad(developerMode);
+	const bool lockEnable = !loadable && !enabled;
+	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
 		retryRequested = resetHistory = true;
+	ImGui::EndDisabled();
+	if (lockEnable) {
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(availability.reason.c_str());
+			ImGui::TextUnformatted(RuntimeFixHint(availability.state));
+		}
+	}
+	if (!availability.Ready()) {
+		if (loadable)
+			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+		else
+			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and one of the validated 310.8 runtime builds listed in docs/development/neural-rendering.md."));
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
@@ -586,6 +984,74 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
+	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
+		changed = true;
+		resetHistory = true;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
+			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+	if (globals::game::isVR) {
+		if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
+				"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+	}
+	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
+	// out without it instead of accepting edits that the pass ignores.
+	const bool cropDisabled = !tuning.regionOfInterest;
+	ImGui::BeginDisabled(cropDisabled);
+	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
+		changed = true;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
+			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
+	if (globals::state->IsDeveloperMode()) {
+		if (ImGui::Checkbox(T(TKEY("crop_group"), "Track Multiple Characters"), &tuning.regionGroup)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
+				"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
+		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
+		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
+			T(TKEY("crop_fit_padded"), "Padded"),
+			T(TKEY("crop_fit_tight"), "Tight"),
+		};
+		if (ImGui::Combo(T(TKEY("crop_fit"), "Crop Fit"), &fit, fitLabels.data(), static_cast<int>(fitLabels.size()))) {
+			tuning.regionFit = static_cast<uint32_t>(fit);
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_fit_tooltip"),
+				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
+	}
+	ImGui::EndDisabled();
+	if (globals::state->IsDeveloperMode()) {
+		// The sweep forces its own centred crops, so it stays usable without a tracked actor.
+		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
+			RequestCalibration();
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_tooltip"),
+				"Measures how Neural Rendering's GPU time falls as the crop shrinks, over about half a minute, and finds the largest crop that is still about as cheap as the smallest. Turn frame generation off first; it skews the timing."));
+		const auto calibrationState = GetCalibration();
+		if (calibrationState.state == NR::CropCalibration::State::kRunning) {
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_running"), "Calibrating..."));
+		} else if (calibrationState.state == NR::CropCalibration::State::kFailed) {
+			ImGui::TextUnformatted(T(TKEY("crop_calibrate_failed"), "Calibration failed: frame generation on, Neural Rendering not running, or no timing data."));
+		} else if (calibrationState.state == NR::CropCalibration::State::kDone) {
+			for (size_t step = 0; step < NR::CropCalibration::kSteps; ++step)
+				ImGui::Text("%3.0f%%: %.2f ms", NR::CropCalibration::kFractions[step] * 100.0f, calibrationState.stepMs[step]);
+			ImGui::Text(T(TKEY("crop_calibrate_knee"), "Largest crop that is still cheap: %.0f%%"), calibrationState.kneeFraction * 100.0f);
+			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
+				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
+		}
+	}
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -606,7 +1072,50 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	}
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (tuning.regionOverlay)
+		DrawRegionPreview();
 	ImGui::PopID();
+}
+
+void NeuralRendering::DrawRegionPreview()
+{
+	ImGui::Separator();
+	// Panels draw on the rendering thread after the NR pass, so impl's preview texture needs no lock.
+	const auto tracked = GetRegionOfInterest();
+	const auto trackedBox = GetActorBox();
+	const uint32_t sourceWidth = impl->width * impl->eyeCount;
+	const uint32_t sourceHeight = impl->height;
+	auto* preview = impl->original ? impl->original->srv.get() : nullptr;
+	if (!preview || !sourceWidth || !sourceHeight) {
+		ImGui::TextDisabled("%s", T(TKEY("region_overlay_unavailable"), "Crop preview appears once Neural Rendering runs a frame."));
+		return;
+	}
+	const float maxWidth = std::min(kRegionPreviewMaxWidth, ImGui::GetContentRegionAvail().x);
+	const float aspect = static_cast<float>(sourceWidth) / static_cast<float>(sourceHeight);
+	const ImVec2 imageSize(maxWidth, maxWidth / aspect);
+	const ImVec2 imageMin = ImGui::GetCursorScreenPos();
+	Util::Subrect::ImageOpaque(preview, imageSize);
+	std::array<Util::RegionOverlay::Region, kMaxPreviewRegions> rects{};
+	size_t count = 0;
+	const uint32_t eyes = std::min<uint32_t>(impl->eyeCount, 2);
+	if (tracked.active) {
+		for (uint32_t eye = 0; eye < eyes; ++eye) {
+			const auto& crop = tracked.eye[eye];
+			rects[count].rect = Util::Subrect::PixelRegion{ crop.x + eye * impl->width, crop.y, crop.w, crop.h };
+			rects[count].label = eyes > 1 ? (eye == 0 ? "L" : "R") : nullptr;
+			++count;
+		}
+	}
+	if (trackedBox.active) {
+		for (uint32_t eye = 0; eye < eyes; ++eye) {
+			const auto& box = trackedBox.eye[eye];
+			rects[count].rect = Util::Subrect::PixelRegion{ box.x + eye * impl->width, box.y, box.w, box.h };
+			rects[count].color = kActorBoxPreviewColor;
+			rects[count].label = "actor";
+			++count;
+		}
+	}
+	Util::RegionOverlay::Draw(imageMin, imageSize, sourceWidth, sourceHeight, std::span(rects.data(), count));
 }
 
 void NeuralRendering::DrawDiagnosticsOverlay()
@@ -776,6 +1285,33 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 		uint32_t reset = NR::Diagnostics::FrameResetReasons(resetHistory.exchange(false), work.lastFrame, state->frameCount);
 		auto boundedTuning = tuning;
 		boundedTuning.Sanitize();
+		work.region = GetRegionOfInterest();
+		work.actorBox = GetActorBox();
+		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
+		const bool actorCrop = work.region.active && !calibrationRunning;
+		const bool foveatedRouteSuspended = state->IsMainOrLoadingMenuOpen();
+		bool foveaClip = false;
+		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
+			const auto& foveated = globals::features::upscaling.foveatedRender;
+			Util::Subrect::UVRegion leftUV, rightUV;
+			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {
+				const auto clip = NR::FoveaClip::BuildClip(std::array<Util::Subrect::UVRegion, 2>{ leftUV, rightUV }, w, h);
+				if (clip.active) {
+					Util::Region::ClipRegion(work.region, clip);
+					NR::FoveaClip::ClipSubject(work.actorBox, clip);
+					foveaClip = true;
+				}
+			}
+		}
+		auto source = RegionSource::kNone;
+		if (actorCrop)
+			source = foveaClip ? RegionSource::kBoth : RegionSource::kActor;
+		else if (foveaClip)
+			source = RegionSource::kFovea;
+		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
+		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
+			reset |= NR::Diagnostics::RegionChanged;
+		work.lastRegion = work.region;
 		if (diagnostic.options & NR::Diagnostics::DisableTone)
 			boundedTuning.localToneStrength = 0.0f;
 		if (diagnostic.options & NR::Diagnostics::DisableStructure)
@@ -784,6 +1320,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.regionOverlay = boundedTuning.regionOverlay;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);
 		diagnostic.compositeMode = static_cast<uint32_t>(work.compositeMode);
@@ -800,6 +1337,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
 		appliedFrames.fetch_add(1, std::memory_order_relaxed);
+		const uint32_t frameResets = diagnostic.reset[0] | diagnostic.reset[1];
+		diagnostics.RecordFrame(frameResets, diagnostic.resetDrainMs);
 		lastNgxResult[0].store(diagnostic.result[0], std::memory_order_relaxed);
 		lastNgxResult[1].store(diagnostic.result[1], std::memory_order_relaxed);
 		if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive) {

@@ -64,6 +64,18 @@ runs:
           with:
               arch: x64
 
+        - name: Pin clang-cl to the VS-bundled LLVM
+          # lukka/run-cmake re-enters the VS dev environment, whose clang-cl
+          # (VS-bundled) differs from the runner's standalone LLVM on PATH. A
+          # compiler-path change between the pre-install configure and the build
+          # configure wipes the CMake cache and drops the vcpkg setup.
+          if: endsWith(inputs.cmake-preset, '-ClangCL')
+          shell: pwsh
+          run: |
+              $llvm = Join-Path $env:VCINSTALLDIR "Tools\Llvm\x64\bin"
+              if (-not (Test-Path (Join-Path $llvm "clang-cl.exe"))) { throw "VS-bundled clang-cl not found at $llvm" }
+              $llvm | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
         - name: Get MSVC version
           id: msvc_version
           shell: pwsh

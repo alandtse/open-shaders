@@ -26,8 +26,8 @@ Before running the generation script, you must run each version of Skyrim (SE an
 
 The required log files will be created at:
 
--   **Skyrim SE**: `%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\CommunityShaders.log`
--   **Skyrim VR**: `%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\CommunityShaders.log`
+-   **Skyrim SE**: `%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\OpenShaders.log`
+-   **Skyrim VR**: `%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\OpenShaders.log`
 
 ### Running the Script
 
@@ -53,10 +53,10 @@ You can also generate the files manually using hlslkit:
 
 ```bash
 # For Skyrim SE
-hlslkit-generate --log "%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\CommunityShaders.log" --output .\.github\configs\shader-validation.yaml
+hlslkit-generate --log "%USERPROFILE%\Documents\My Games\Skyrim Special Edition\SKSE\OpenShaders.log" --output .\.github\configs\shader-validation.yaml
 
 # For Skyrim VR
-hlslkit-generate --log "%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\CommunityShaders.log" --output .\.github\configs\shader-validation-vr.yaml
+hlslkit-generate --log "%USERPROFILE%\Documents\My Games\Skyrim VR\SKSE\OpenShaders.log" --output .\.github\configs\shader-validation-vr.yaml
 ```
 
 ## Usage in CI/CD

@@ -1,5 +1,6 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Math.hlsli"
+#include "Common/ReverseZ.hlsli"
 
 struct VS_OUTPUT
 {
@@ -66,7 +67,7 @@ float4 main(VS_OUTPUT input) : SV_Target0
 	                            FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(input.TexCoord) :
 	                            input.TexCoord;
 	float4 color = SourceTex.SampleLevel(LinearSampler, sampleTexCoord, 0.0);
-	float rawDepth = DepthTex.SampleLevel(PointSampler, sampleTexCoord, 0.0);
+	float rawDepth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(PointSampler, sampleTexCoord, 0.0));
 	float mask = 1.0;
 	if (UnderwaterDepthOfFieldFlags.x != 0.0) {
 		mask = MaskTex.SampleLevel(LinearSampler, sampleTexCoord, 0.0);

@@ -12,10 +12,12 @@ using ShadowCasterManager::DemandStreakBucket;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
+using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kTileScaleFloor;
 using ShadowCasterManager::QuantizeFloat;
+using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
 using ShadowCasterManager::TileScaleForCoverage;
 using ShadowCasterManager::TileScaleTarget;
@@ -75,6 +77,32 @@ TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and no
 	// alignment check is what fails, not the minimum-address check).
 	for (std::uintptr_t off = 1; off < 8; ++off)
 		REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x10000 + off));
+}
+
+TEST_CASE("HemisphereSeamMargin floors a small light radius", "[scm]")
+{
+	// 0.5% of 1024 = 5.12, above the floor.
+	REQUIRE(HemisphereSeamMargin(1024.0f) == Approx(5.12f));
+	// Degenerate and small radii clamp to the floor instead of collapsing to 0.
+	REQUIRE(HemisphereSeamMargin(0.0f) == Approx(1.0f));
+	REQUIRE(HemisphereSeamMargin(100.0f) == Approx(1.0f));
+}
+
+TEST_CASE("SphereWhollyBehindPlane splits straddling from wholly behind", "[scm]")
+{
+	const float margin = HemisphereSeamMargin(1024.0f);  // 5.12
+
+	// In front of the plane, or straddling it by any amount: the front map can
+	// still see part of the sphere, so the engine's hemisphere choice stands.
+	REQUIRE_FALSE(SphereWhollyBehindPlane(100.0f, 10.0f, margin));
+	REQUIRE_FALSE(SphereWhollyBehindPlane(0.0f, 10.0f, margin));
+	REQUIRE_FALSE(SphereWhollyBehindPlane(-10.0f, 10.0f, margin));
+	// Entirely behind, but within the seam margin: also left alone.
+	REQUIRE_FALSE(SphereWhollyBehindPlane(-15.0f, 10.0f, margin));
+	REQUIRE_FALSE(SphereWhollyBehindPlane(-10.0f - margin + 0.01f, 10.0f, margin));
+	// Behind by more than the margin: nothing of it reaches the front map.
+	REQUIRE(SphereWhollyBehindPlane(-10.0f - margin - 0.01f, 10.0f, margin));
+	REQUIRE(SphereWhollyBehindPlane(-500.0f, 10.0f, margin));
 }
 
 TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")

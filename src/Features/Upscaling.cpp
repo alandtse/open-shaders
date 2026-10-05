@@ -32,7 +32,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -44,7 +44,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
-	preferFSRFrameGen,
+	enableDLSSFrameGen,
 	dlssgFramesToGenerate,
 	streamlineLogLevel,
 	sharpnessFSR,
@@ -121,18 +121,20 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 	upscaling.LoadUpscalingSDKs();
 
-	// FLIP_DISCARD requires BufferCount >= 2 and a flip-model-compatible (non-sRGB) format.
-	pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-	if (pSwapChainDesc->BufferCount < 2)
-		pSwapChainDesc->BufferCount = 2;
+	if (!globals::game::isVR) {
+		// FLIP_DISCARD requires BufferCount >= 2 and a flip-model-compatible (non-sRGB) format.
+		pSwapChainDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+		if (pSwapChainDesc->BufferCount < 2)
+			pSwapChainDesc->BufferCount = 2;
 
-	if (globals::features::hdrDisplay.loaded) {
-		logger::info("[Upscaling] Upgrading swap chain format from {} to R10G10B10A2_UNORM for HDR", static_cast<int>(pSwapChainDesc->BufferDesc.Format));
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-	} else if (pSwapChainDesc->BufferDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-	} else if (pSwapChainDesc->BufferDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
-		pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		if (globals::features::hdrDisplay.loaded) {
+			logger::info("[Upscaling] Upgrading swap chain format from {} to R10G10B10A2_UNORM for HDR", static_cast<int>(pSwapChainDesc->BufferDesc.Format));
+			pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+		} else if (pSwapChainDesc->BufferDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+			pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		} else if (pSwapChainDesc->BufferDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
+			pSwapChainDesc->BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		}
 	}
 
 	bool shouldProxy = !globals::game::isVR;
@@ -185,9 +187,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
 			upscaling.streamlineDX12.PostDevice();
 
-			// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
-			const bool userPrefersReachableFsr = upscaling.settings.preferFSRFrameGen && upscaling.fidelityFX.featureFSR3FG;
-			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !userPrefersReachableFsr;
+			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && upscaling.settings.enableDLSSFrameGen;
 
 			// Gating on dlssgAvailable (any cause, not just preference) keeps the FSR
 			// path on a clean device -- upgrading unconditionally corrupted FSR3's
@@ -558,6 +558,8 @@ namespace
 	{
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
+		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
+		const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 		return json{
 			{ "enabled", upscaling->settings.neuralRenderingEnabled },
 			{ "state", magic_enum::enum_name(status.state) },
@@ -570,6 +572,10 @@ namespace
 			{ "ngxResult", json::array({ status.ngxResult[0], status.ngxResult[1] }) },
 			{ "lastAppliedFrame", status.lastAppliedFrame },
 			{ "appliedFrames", status.appliedFrames },
+			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
+			{ "runtimeVersion", availability.version },
+			{ "runtimeDetail", availability.reason },
+			{ "runtimeLoadable", availability.AllowsLoad(developerMode) },
 		};
 	}
 
@@ -577,6 +583,12 @@ namespace
 	void RetryNeuralRendering(Feature* self, const json&)
 	{
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
+	}
+
+	/** @brief Devbench handler for Upscaling's calibrateNeuralCrop command. */
+	void CalibrateNeuralCrop(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCalibration();
 	}
 
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
@@ -595,11 +607,13 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
-			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
+			const std::string name = args.value("name", std::string{});
+			if (!foveatedRender.subrectController.ApplyPresetByName(name))
+				logger::warn("[FOVEATED] applyFoveationPreset preset {} not found; not applied", json(name).dump());
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -609,6 +623,10 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("captureNeuralRendering",
 		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
 		CaptureNeuralRendering);
+
+	FEATURE_COMMAND("calibrateNeuralCrop",
+		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
+		CalibrateNeuralCrop);
 }
 
 void Upscaling::DrawSettings()
@@ -831,97 +849,85 @@ void Upscaling::DrawUpscalingSettings()
 
 void Upscaling::DrawFrameGenerationSettings()
 {
-	const bool frameGenerationDx12PathActive = IsFrameGenerationDx12PathActive();
-
-	ImGui::Text("%s", T(TKEY("frame_generation_desc"),
-						  "Frame Generation interpolates real frames with generated ones for a smoother experience"));
+	ImGui::PushTextWrapPos(0.0f);
 
 	bool fgEnabled = settings.frameGenerationMode != 0;
 	if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
 		settings.frameGenerationMode = fgEnabled ? 1 : 0;
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
 		T(TKEY("frame_generation_tooltip"),
-			"Interpolate real frames with generated ones for a smoother experience. Uses NVIDIA\n"
-			"DLSS-G or AMD FSR Frame Generation depending on the adapter and preference below.\n"
-			"Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility issues;\n"
-			"in particular, frame generation works only in windowed mode."));
+			"Enable frame generation for smoother motion. Uses AMD FSR unless NVIDIA DLSS-G is selected and available.\n"
+			"Requires windowed mode."));
 
-	auto fgMethod = GetFrameGenMethod();
-	if (fgMethod == FrameGenMethod::kDLSSG) {
-		ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation (Auto)"));
-	} else if (fgMethod == FrameGenMethod::kFSR) {
-		if (streamlineDX12.featureDLSSG)
-			ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active_preferred"), "Using AMD FSR Frame Generation (Preferred)"));
-		else
-			ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation (Auto)"));
-	} else {
-		if (streamlineDX12.featureDLSSG)
-			ImGui::Text("%s", T(TKEY("frame_generation_dlssg_available"),
-								  "NVIDIA DLSS Frame Generation is available."));
-		else if (fidelityFX.featureFSR3FG)
-			ImGui::Text("%s", T(TKEY("frame_generation_fsr_available"),
-								  "AMD FSR Frame Generation is available."));
-	}
-
-	if (streamlineDX12.featureDLSSG) {
-		ImGui::Checkbox(T(TKEY("prefer_fsr_frame_gen"), "Prefer AMD FSR Frame Generation"), &settings.preferFSRFrameGen);
-		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::preferFSRFrameGen,
+	ImGui::Indent();
+	{
+		Util::DisableGuard disabled(!fgEnabled);
+		ImGui::Checkbox(T(TKEY("prefer_fsr_frame_gen"), "Use NVIDIA DLSS-G"), &settings.enableDLSSFrameGen);
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableDLSSFrameGen,
 			T(TKEY("prefer_fsr_frame_gen_tooltip"),
-				"Uses AMD FSR3 Frame Generation instead of NVIDIA DLSS-G. This is a workaround for\n"
-				"cases where DLSS-G initializes successfully but produces no interpolated frames.\n"
-				"Restart required to apply."));
+				"Selects NVIDIA DLSS-G instead of AMD FSR on supported hardware.\n"
+				"Leave off to use AMD FSR."));
+
+		bool fgForce = settings.frameGenerationForceEnable != 0;
+		if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Allow frame generation below 120 Hz"), &fgForce))
+			settings.frameGenerationForceEnable = fgForce ? 1 : 0;
+		Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
+			T(TKEY("force_enable_frame_generation_tooltip"),
+				"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
+				"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
+				"generated frames."));
+		ImGui::Text(T(TKEY("frame_limit_refresh_rate"), "Detected refresh rate: %.2f Hz"), refreshRate);
+		if (fgEnabled && lowRefreshRate && !settings.frameGenerationForceEnable)
+			Util::Text::WrappedWarning("%s", T(TKEY("fg_warn_refresh_rate"), "Enable the option above to use frame generation on displays below 120 Hz."));
 	}
+	ImGui::Unindent();
+
+	ImGui::SeparatorText(T(TKEY("fg_current_session"), "Current session"));
+	const auto fgMethod = GetFrameGenMethod();
+	if (!fgEnabled)
+		ImGui::TextDisabled("%s", T(TKEY("fg_disabled"), "Frame generation is off."));
+	else if (fgMethod == FrameGenMethod::kNone)
+		Util::Text::WrappedWarning("%s", T(TKEY("fg_not_loaded"), "Frame generation is not loaded. Check the setup above and restart."));
+
+	if (fgEnabled && !isWindowed)
+		Util::Text::Warning("%s", T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
+	if (fgEnabled && fidelityFXMissing)
+		Util::Text::Warning("%s", T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
 
 	if (fgMethod == FrameGenMethod::kDLSSG) {
+		ImGui::TextUnformatted(T(TKEY("frame_generation_dlssg_active"), "Method: NVIDIA DLSS-G"));
+		Util::DisableGuard disabled(!fgEnabled);
 		int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
 		int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
-		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier))
+		if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier, "%dx"))
 			settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
 	} else if (fgMethod == FrameGenMethod::kFSR) {
+		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
+		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
+			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
+
+		bool flEnabled = settings.frameLimitMode != 0;
+		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Limit FPS to display refresh rate"), &flEnabled))
+			settings.frameLimitMode = flEnabled ? 1 : 0;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("fg_fsr_frame_limit_tooltip"),
+				"Caps FSR's total FPS to the display refresh rate.\n"
+				"When generation pauses, caps rendered FPS instead."));
 	}
 
-	ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
-
-	if (!isWindowed) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_windowed"), "Warning: Requires windowed mode"));
+	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
+	{
+		Util::DisableGuard disabled(!fgEnabled);
+		ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
+			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
+		}
 	}
-
-	if (lowRefreshRate && !settings.frameGenerationForceEnable) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_refresh_rate"), "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation"));
-	}
-
-	if (fidelityFXMissing) {
-		Util::Text::Warning("%s", T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
-	}
-
-	if (!frameGenerationDx12PathActive)
-		ImGui::BeginDisabled();
-
-	bool flEnabled = settings.frameLimitMode != 0;
-	if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Frame Limit (Variable Refresh Rate)"), &flEnabled))
-		settings.frameLimitMode = flEnabled ? 1 : 0;
-
-	if (!frameGenerationDx12PathActive)
-		ImGui::EndDisabled();
-
-	ImGui::TextWrapped(T(TKEY("frame_limit_refresh_rate"), "Allows frame generation to function on low refresh rate monitors. Detected: %.2f Hz"), refreshRate);
-	bool fgForce = settings.frameGenerationForceEnable != 0;
-	if (ImGui::Checkbox(T(TKEY("force_enable_frame_generation"), "Force Enable Frame Generation"), &fgForce))
-		settings.frameGenerationForceEnable = fgForce ? 1 : 0;
-	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationForceEnable,
-		T(TKEY("force_enable_frame_generation_tooltip"),
-			"Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\n"
-			"displays. Useful for laptops and older monitors at the cost of less headroom for the\n"
-			"generated frames."));
-
-	ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
-		ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
-	}
+	ImGui::PopTextWrapPos();
 }
 
 void Upscaling::DrawReflexSettings()
@@ -1085,6 +1091,7 @@ void Upscaling::DrawBackendDiagnostics()
 	ImGui::Separator();
 	Util::DrawDllVersionTable(T(TKEY("ffx_dll_table_title"), "AMD FidelityFX DLLs (click to open folder)"), FidelityFX::PluginDir, FidelityFX::dllVersions, "ffx_dll_versions");
 	Util::DrawDllVersionTable(T(TKEY("sl_dll_table_title"), "NVIDIA Streamline DLLs (click to open folder)"), streamline.pluginDir.c_str(), Streamline::dllVersions, "sl_dll_versions");
+	neuralRendering.DrawRuntimeDiagnostics();
 }
 
 const VRDetection::OpenCompositeUpscalingState& Upscaling::GetOpenCompositeUpscalingBlocker(bool a_forceRefresh) const
@@ -1344,6 +1351,8 @@ void Upscaling::PostPostLoad()
 	// Subrect controller defaults + stereo flag (FoveatedRender is no longer a
 	// Feature subclass so we drive its lifecycle from here).
 	foveatedRender.PostPostLoad();
+
+	neuralRendering.InstallHooks();
 
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
@@ -2365,7 +2374,9 @@ void Upscaling::FrameLimiter()
 		HANDLE waitableObject = GetFrameLatencyWaitableObject();
 
 		// Wait for the next frame presentation slot
-		WaitForSingleObject(waitableObject, INFINITE);
+		// (bounded so a lost swapchain cannot block the render thread forever)
+		static constexpr DWORD kFrameLatencyWaitTimeoutMs = 1000;
+		WaitForSingleObject(waitableObject, kFrameLatencyWaitTimeoutMs);
 
 		if (settings.frameLimitMode) {
 			static constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
@@ -2560,9 +2571,7 @@ void Upscaling::PostBackendDevice()
 // Module availability methods
 bool Upscaling::HasFrameGenModule() const
 {
-	// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
-	const bool userPrefersReachableFsr = settings.preferFSRFrameGen && fidelityFX.featureFSR3FG;
-	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && !userPrefersReachableFsr);
+	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && settings.enableDLSSFrameGen);
 }
 
 Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const
@@ -2602,6 +2611,39 @@ json Upscaling::GetDiagnostics()
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
 	}
+	const auto crop = neuralRendering.GetRegionOfInterest();
+	diagnostics["neuralRegionActive"] = crop.active;
+	json eyes = json::array();
+	for (const auto& region : crop.eye)
+		eyes.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralRegion"] = std::move(eyes);
+	const auto actorBox = neuralRendering.GetActorBox();
+	json actorBounds = json::array();
+	for (const auto& region : actorBox.eye)
+		actorBounds.push_back({ { "x", region.x }, { "y", region.y }, { "width", region.w }, { "height", region.h } });
+	diagnostics["neuralActorBounds"] = std::move(actorBounds);
+	diagnostics["neuralRegionSource"] = NeuralRendering::RegionSourceName(neuralRendering.GetRegionSource());
+	const auto calibration = neuralRendering.GetCalibration();
+	diagnostics["neuralCalibration"] = {
+		{ "state", calibration.state == NR::CropCalibration::State::kRunning ? "running" :
+				   calibration.state == NR::CropCalibration::State::kDone    ? "done" :
+				   calibration.state == NR::CropCalibration::State::kFailed  ? "failed" :
+																			   "idle" },
+		{ "fractions", NR::CropCalibration::kFractions },
+		{ "stepMs", calibration.stepMs },
+		{ "stabilityRatio", calibration.stabilityRatio },
+		{ "floorMs", calibration.floorMs },
+		{ "kneeFraction", calibration.kneeFraction }
+	};
+	const auto resources = neuralRendering.GetStatus();
+	diagnostics["neuralRenderSize"] = { { "width", resources.width }, { "height", resources.height }, { "eyes", resources.eyes } };
+	diagnostics["neuralFrames"] = resources.appliedFrames;
+	const auto counters = neuralRendering.GetDiagnosticCounters();
+	json resets = json::object();
+	for (size_t reason = 0; reason < NR::Diagnostics::kResetReasonNames.size(); ++reason)
+		resets[NR::Diagnostics::kResetReasonNames[reason]] = counters.resets[reason];
+	diagnostics["neuralResets"] = std::move(resets);
+	diagnostics["neuralResetDrainMs"] = counters.drainMs;
 	return diagnostics;
 }
 

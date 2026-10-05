@@ -1,4 +1,6 @@
 #include "Common/Color.hlsli"
+#include "Common/RegionFeather.hlsli"
+#include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
 #include "Upscaling/NeuralRendering/ColorContract.hlsli"
 #include "Upscaling/NeuralRendering/ModeValues.hlsli"
@@ -25,6 +27,16 @@ cbuffer ColorTransfer : register(b0)
 	float ToneRadius;
 	float ToneHighStrength;
 	uint HasToneData;
+	uint RegionBaseX;
+	uint RegionBaseY;
+	uint RegionWidth;
+	uint RegionHeight;
+	uint RegionOverlayEnabled;
+	float RegionOutlineThickness;
+	uint RegionActorBaseX;
+	uint RegionActorBaseY;
+	uint RegionActorWidth;
+	uint RegionActorHeight;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -41,6 +53,9 @@ static const float kPeakEpsilon = 1e-6;
 static const float kLumaEpsilon = 1e-5;
 static const float kWeightEpsilon = 1e-5;
 static const float kSpatialEpsilon = 1e-4;
+static const float3 kRegionOutlineColor = float3(0.0, 1.0, 0.0);
+static const float3 kActorBoxOutlineColor = float3(1.0, 1.0, 0.0);
+static const float kActorBoxOutlineThickness = 2.0f;
 
 float3 ProxyLinearToSrgb(float3 value)
 {
@@ -153,11 +168,40 @@ float3 MakeDisplayProxy(float3 linearColor)
 	return ProxyLinearToSrgb(NeutwoEncode(linearColor));
 }
 
+static const float kRegionFeatherDefault = 32.0;
+static const float kRegionFeatherMin = 16.0;
+static const float kRegionFeatherMax = 96.0;
+
+float RegionWeight(int2 pixel)
+{
+	float weight = 1.0;
+	if (RegionWidth != 0) {
+		const float4 crop = float4(RegionBaseX, RegionBaseY, RegionBaseX + RegionWidth, RegionBaseY + RegionHeight);
+		const float4 subject = float4(RegionActorBaseX, RegionActorBaseY, RegionActorBaseX + RegionActorWidth, RegionActorBaseY + RegionActorHeight);
+		weight = RegionFeather::Weight(float2(pixel) + 0.5, crop, subject, float2(Width, Height),
+			kRegionFeatherDefault, kRegionFeatherMin, kRegionFeatherMax);
+	}
+	return weight;
+}
+
+// Weight 0 must return the input exactly: lerp propagates a NaN neural sample even at t = 0.
+float3 RegionStableNeuralSample(int2 pixel, float3 inputSample, float3 neuralSample)
+{
+	float3 result = neuralSample;
+	if (RegionWidth != 0) {
+		const float weight = RegionWeight(pixel);
+		result = weight <= 0.0 ? inputSample : lerp(inputSample, neuralSample, weight);
+	}
+	return result;
+}
+
 [numthreads(8, 8, 1)] void PrepareToneData(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
-	float3 input = ProxySrgbToLinear(NeuralInput[id.xy].rgb);
-	float3 output = ProxySrgbToLinear(NeuralOutput[id.xy].rgb);
+	float3 inputSample = NeuralInput[id.xy].rgb;
+	float3 outputSample = RegionStableNeuralSample(int2(id.xy), inputSample, NeuralOutput[id.xy].rgb);
+	float3 input = ProxySrgbToLinear(inputSample);
+	float3 output = ProxySrgbToLinear(outputSample);
 	float inputLuma = max(Color::RGBToLuminance(input, Luma), kLumaEpsilon);
 	float outputLuma = max(Color::RGBToLuminance(output, Luma), kLumaEpsilon);
 	float logInput = log2(inputLuma);
@@ -216,6 +260,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	uint2 sourcePixel = id.xy + uint2(EyeOffsetX, 0);
 	float4 original = Original[sourcePixel];
+	float3 inputSample = NeuralInput[id.xy].rgb;
 	float3 rawNeural = NeuralOutput[id.xy].rgb;
 	if (!all(isfinite(original))) {
 		Output[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
@@ -224,7 +269,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	Output[id.xy] = original;
 	if (!all(isfinite(rawNeural)))
 		return;
-	float3 inputProxy = ProxyToLinear(NeuralInput[id.xy].rgb);
+	rawNeural = RegionStableNeuralSample(int2(id.xy), inputSample, rawNeural);
+	float3 inputProxy = ProxyToLinear(inputSample);
 	float3 neuralProxy = ProxyToLinear(rawNeural);
 	float exposure = ManualExposure;
 	if (ExposureMode == NR::kExposureProduction || ExposureMode == NR::kExposureGame || ExposureMode == NR::kExposureDeExposeReExpose || ExposureMode == NR::kExposurePassOnly)
@@ -320,5 +366,13 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		return;
 	if (VisualMode == NR::kVisualNone && !boundedGain)
 		result = FromLinear(result);
+	if (RegionOverlayEnabled != 0) {
+		result = RegionOverlay::OutlineOnly(result, id.xy,
+			RegionOverlay::ClampToFrame(uint4(RegionBaseX, RegionBaseY, RegionWidth, RegionHeight), uint2(Width, Height)),
+			kRegionOutlineColor, RegionOutlineThickness);
+		result = RegionOverlay::OutlineOnly(result, id.xy,
+			RegionOverlay::ClampToFrame(uint4(RegionActorBaseX, RegionActorBaseY, RegionActorWidth, RegionActorHeight), uint2(Width, Height)),
+			kActorBoxOutlineColor, kActorBoxOutlineThickness);
+	}
 	Output[id.xy] = float4(result, original.a);
 }

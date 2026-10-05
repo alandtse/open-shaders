@@ -4,13 +4,27 @@ namespace HorizonFix
 	// Depth (z/w) that water folded back from beyond the far clip plane lands at: eight
 	// depth quanta inside the far plane, exactly representable in both D24 and D32F
 	// buffers - behind everything the scene rendered, in front of the depth clear.
-	static const float FoldedDepth = 1.0 - 8.0 / 16777216.0;
+	static const float FoldedDepthStandard = 1.0 - 8.0 / 16777216.0;
+	static const float FoldedDepthReversed = 8.0 / 16777216.0;
 
 	// Scene depth at or beyond this counts as "nothing rendered behind the water": the
 	// clear value, folded far water (FoldedDepth), or an external plugin's depth-clamped
 	// far-water backdrop a few quanta inside that. The margin is a few world units at the
 	// far plane, where no real surface can render.
+#	ifdef REVERSE_Z
+	static const float EmptyDepthThreshold = 64.0 / 16777216.0;
+#	else
 	static const float EmptyDepthThreshold = 1.0 - 64.0 / 16777216.0;
+#	endif
+
+	bool IsEmptyDepth(float depth)
+	{
+#	ifdef REVERSE_Z
+		return depth <= EmptyDepthThreshold;
+#	else
+		return depth >= EmptyDepthThreshold;
+#	endif
+	}
 }
 #endif
 
@@ -32,7 +46,11 @@ VS_OUTPUT main(VS_INPUT input)
 {
 	VS_OUTPUT vsout;
 
+#		ifdef REVERSE_Z
+	float z = input.Position.z - min(1, 1e-4 * max(0, input.Position.z - 70000)) * 0.5;
+#		else
 	float z = min(1, 1e-4 * max(0, input.Position.z - 70000)) * 0.5 + input.Position.z;
+#		endif
 	vsout.Position = float4(input.Position.xy, z, 1);
 
 	return vsout;
@@ -63,6 +81,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	include "Common/MotionBlur.hlsli"
 #	include "Common/Permutation.hlsli"
 #	include "Common/Random.hlsli"
+#	include "Common/ReverseZ.hlsli"
 #	include "Common/Shading.hlsli"
 #	include "Common/Color.hlsli"
 
@@ -196,14 +215,15 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 worldPos = mul(World[eyeIndex], inputPosition);
 	float4 worldViewPos = mul(WorldViewProj[eyeIndex], inputPosition);
 
-	float heightMult = min((1.0 / 10000.0) * max(worldViewPos.z - 70000, 0), 1);
+	const bool reverseProjection = FrameBuffer::IsReverseProjection(eyeIndex);
+	float heightMult = min((1.0 / 10000.0) * max(FrameBuffer::ToStandardClipZ(worldViewPos, reverseProjection) - 70000, 0), 1);
 
 	vsout.HPosition.xy = worldViewPos.xy;
-	vsout.HPosition.z = heightMult * 0.5 + worldViewPos.z;
+	vsout.HPosition.z = reverseProjection ? worldViewPos.z - heightMult * 0.5 : heightMult * 0.5 + worldViewPos.z;
 	vsout.HPosition.w = worldViewPos.w;
 
 #		if defined(HORIZON_FIX)
-	vsout.HPosition.z = min(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepth);
+	vsout.HPosition.z = reverseProjection ? max(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepthReversed) : min(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepthStandard);
 #		endif
 
 #		if defined(STENCIL)
@@ -212,7 +232,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 
 #			if !defined(UNIFIED_WATER)
-	float fogDistanceFactor = min(VSFogFarColor.w, pow(saturate(length(worldViewPos.xyz) * VSFogParam.y - VSFogParam.x), NormalsScale.w));
+	float fogDistanceFactor = min(VSFogFarColor.w, pow(saturate(length(FrameBuffer::ToStandardClip(worldViewPos, reverseProjection)) * VSFogParam.y - VSFogParam.x), NormalsScale.w));
 	vsout.FogParam.xyz = lerp(VSFogNearColor.xyz, VSFogFarColor.xyz, fogDistanceFactor);
 	vsout.FogParam.w = fogDistanceFactor;
 #			endif
@@ -917,7 +937,7 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 
 float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
 {
-	float depth = DepthTex.Load(float3(screenPosition, 0)).x;
+	float depth = FrameBuffer::ToStandardDepth(DepthTex.Load(float3(screenPosition, 0)).x);
 #			if defined(VR)  // VR appears to use hard coded values
 	return depth * 1.01 + -0.01;
 #			else
@@ -993,7 +1013,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 #					if !defined(VR)
 	float refractionDepthMul = length(float3((((VPOSOffset.zw + refractionUvRaw) * 2 - 1)) * refractionDepth / ProjData.xy, refractionDepth));
 #					else
-	float refractionDepthMul = CalculateDepthMultFromUV(refractionUvRawNoStereo, refractionDepth, eyeIndex);
+	float refractionDepthMul = CalculateDepthMultFromUV(refractionUvRawNoStereo, FrameBuffer::ToNativeDepth(refractionDepth), eyeIndex);
 #					endif  //VR
 
 	float3 refractionDepthAdjustedViewDirection = -viewDirection * refractionDepthMul;
@@ -1015,7 +1035,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	}
 
 #					if defined(HORIZON_FIX)
-	if (DepthTex.Load(float3(refractionScreenPosition, 0)).x >= HorizonFix::EmptyDepthThreshold)
+	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(refractionScreenPosition, 0)).x))
 		distanceMul = 1.0.xxxx;
 #					endif
 #				endif
@@ -1121,7 +1141,7 @@ PS_OUTPUT main(PS_INPUT input)
 #					if !defined(VR)
 	float depthMul = length(float3((depthOffset * 2 - 1) * depth / ProjData.xy, depth));
 #					else
-	float depthMul = CalculateDepthMultFromUV(Stereo::ConvertFromStereoUV(depthOffset, eyeIndex, 1), depth, eyeIndex);
+	float depthMul = CalculateDepthMultFromUV(Stereo::ConvertFromStereoUV(depthOffset, eyeIndex, 1), FrameBuffer::ToNativeDepth(depth), eyeIndex);
 #					endif  //VR
 	float3 depthAdjustedViewDirection = -viewDirection * depthMul;
 	float viewSurfaceAngle = dot(depthAdjustedViewDirection, ReflectPlane[eyeIndex].xyz);
@@ -1132,7 +1152,7 @@ PS_OUTPUT main(PS_INPUT input)
 		FogParam.z);
 
 #					if defined(HORIZON_FIX)
-	if (DepthTex.Load(float3(screenPosition, 0)).x >= HorizonFix::EmptyDepthThreshold)
+	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(screenPosition, 0)).x))
 		distanceMul = 1.0.xxxx;
 #					endif
 #				endif
@@ -1326,7 +1346,7 @@ PS_OUTPUT main(PS_INPUT input)
 #					endif
 				if (canContactShadow && passesContactIntensityGate) {
 					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
-					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
+					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), lightDist, contactShadowSteps, eyeIndex);
 				}
 			}
 

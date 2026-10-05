@@ -1,4 +1,5 @@
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 
 #include "LightLimitFix/Common.hlsli"
 
@@ -56,11 +57,11 @@ float3 IntersectionZPlane(float3 B, float z_dist)
 	float2 texcoordMax = (dispatchThreadId.xy + 1) * clusterSize;
 	float2 texcoordMin = dispatchThreadId.xy * clusterSize;
 #if !defined(VR)
-	float3 maxPointVS = GetPositionVS(texcoordMax, 1.0f);
-	float3 minPointVS = GetPositionVS(texcoordMin, 1.0f);
+	float3 maxPointVS = GetPositionVS(texcoordMax, FrameBuffer::FarPlaneDepth());
+	float3 minPointVS = GetPositionVS(texcoordMin, FrameBuffer::FarPlaneDepth());
 #else
-	float3 maxPointVS = max(GetPositionVS(texcoordMax, 1.0f, 0), GetPositionVS(texcoordMax, 1.0f, 1));
-	float3 minPointVS = min(GetPositionVS(texcoordMin, 1.0f, 0), GetPositionVS(texcoordMin, 1.0f, 1));
+	float3 maxPointVS = max(GetPositionVS(texcoordMax, FrameBuffer::FarPlaneDepth(), 0), GetPositionVS(texcoordMax, FrameBuffer::FarPlaneDepth(), 1));
+	float3 minPointVS = min(GetPositionVS(texcoordMin, FrameBuffer::FarPlaneDepth(), 0), GetPositionVS(texcoordMin, FrameBuffer::FarPlaneDepth(), 1));
 #endif  // !VR
 
 	float clusterNear = LightsNear * pow(abs(LightsFar / LightsNear), dispatchThreadId.z / float(ClusterSize.z));

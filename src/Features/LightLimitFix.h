@@ -132,18 +132,20 @@ public:
 		uint EnableContactShadows;
 		uint ContactShadowMaxSteps;
 		float ContactShadowMaxDistance;
-		float ContactShadowStride;
-		float ContactShadowThickness;
-		float ContactShadowDepthFade;
+		float ContactShadowLength;
+		float ContactShadowDepthThickness;
 		float ContactShadowMinIntensity;
 		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
+		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU reads
+		// the cluster config from the wrong offsets. SharedData::LightLimitFixSettings mirrors it.
+		float pad0;
 		// Cluster config (computed)
 		uint ClusterSize[4];
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad0;
+		uint pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 	// Compile-time size lock catches CPU/GPU cbuffer layout drift. STATIC_ASSERT_ALIGNAS_16
@@ -470,12 +472,12 @@ public:
 		uint ContactShadowMaxSteps = 4;
 		// View-space depth at which contact shadows fade fully off.
 		float ContactShadowMaxDistance = 1024.0f;
-		// Per-step march length in view-space units. Larger -> longer shadows, coarser detail.
-		float ContactShadowStride = 2.0f;
-		// Depth-delta multiplier for shadow onset (higher -> darker contact).
-		float ContactShadowThickness = 0.20f;
-		// Depth-delta multiplier for shadow falloff (higher -> shorter shadow).
-		float ContactShadowDepthFade = 0.05f;
+		// Ray length toward each light in view-space units; grows with depth so the shadow
+		// keeps its screen-space size.
+		float ContactShadowLength = 8.0f;
+		// Assumed view-space thickness of a surface; a ray passing further behind one goes
+		// around it.
+		float ContactShadowDepthThickness = 16.0f;
 		// Skip contact shadows for CLUSTERED lights whose normalized distance falloff
 		// (1 - (lightDist/radius)^2) at the pixel is below this threshold. Strict
 		// lights always raymarch. 0 = never skip; 1 = always skip.

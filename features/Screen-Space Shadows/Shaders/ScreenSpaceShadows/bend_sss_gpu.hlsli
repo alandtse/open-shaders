@@ -127,7 +127,7 @@ struct DispatchParameters
 
 	// TERRAIN_BLENDING ON  -> bound to TerrainBlending::blendedDepthTexture (R32_FLOAT) — must NOT be unorm.
 	// TERRAIN_BLENDING OFF -> bound to game's kPOST_ZPREPASS_COPY (R24_UNORM_X8_TYPELESS) — unorm.
-#if defined(TERRAIN_BLENDING)
+#if defined(TERRAIN_BLENDING) || defined(REVERSE_Z)
 	Texture2D<float> DepthTexture;  // Depth Buffer Texture (rasterized non-linear depth, R32_FLOAT)
 #else
 	Texture2D<unorm float> DepthTexture;  // Depth Buffer Texture (rasterized non-linear depth, R24_UNORM_X8_TYPELESS)
@@ -281,16 +281,16 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 		bool coord_offset_out_of_eye = coord_with_offset.x >= 0.5 * inParameters.DynamicRes.x;
 #	endif
 
-		// Clamp cross-eye depth reads to FarDepthValue (1.0) so rays near the SBS center
+		// Clamp cross-eye depth reads to FarDepthValue so rays near the SBS center
 		// seam see no occluder at the boundary. Shadow weakens by ~1 pixel at the seam but
 		// stays temporally stable across camera movement.
-		depths.x = coord_out_of_eye ? 1.0 : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
-		depths.y = coord_offset_out_of_eye ? 1.0 : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
+		depths.x = coord_out_of_eye ? inParameters.FarDepthValue : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
+		depths.y = coord_offset_out_of_eye ? inParameters.FarDepthValue : inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);
 
-		// HMD mask: depth==0 is outside the visible lens area. Remap to FarDepthValue so
-		// mask pixels do not cast false shadows.
-		depths.x = lerp(depths.x, 1.0, (float)(depths.x == 0));  // Stencil area
-		depths.y = lerp(depths.y, 1.0, (float)(depths.y == 0));  // Stencil area
+		// HMD mask: the hidden-area mesh sits at NearDepthValue outside the visible lens area. Remap
+		// to FarDepthValue so mask pixels do not cast false shadows.
+		depths.x = lerp(depths.x, inParameters.FarDepthValue, (float)(depths.x == inParameters.NearDepthValue));  // Stencil area
+		depths.y = lerp(depths.y, inParameters.FarDepthValue, (float)(depths.y == inParameters.NearDepthValue));  // Stencil area
 #else
 		depths.x = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord, 0);
 		depths.y = inParameters.DepthTexture.SampleLevel(inParameters.PointBorderSampler, coord_with_offset, 0);

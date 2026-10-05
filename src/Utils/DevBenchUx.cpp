@@ -1,5 +1,7 @@
 #include "Utils/DevBenchUx.h"
 
+#include "I18n/I18n.h"
+
 namespace Util::DevBenchUx
 {
 	Registry& Registry::GetSingleton()
@@ -10,12 +12,12 @@ namespace Util::DevBenchUx
 
 	void Registry::RegisterCommand(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, CommandFn a_fn)
 	{
-		commands[std::string(a_featureShortName)][std::string(a_name)] = { std::string(a_description), a_fn };
+		commands[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn };
 	}
 
 	void Registry::RegisterQuery(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, QueryFn a_fn)
 	{
-		queries[std::string(a_featureShortName)][std::string(a_name)] = { std::string(a_description), a_fn };
+		queries[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn };
 	}
 
 	const CommandEntry* Registry::FindCommand(std::string_view a_featureShortName, std::string_view a_name) const

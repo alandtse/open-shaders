@@ -9,6 +9,7 @@
 // or the nearer depth DepthScatterCS warped over from Eye 0's final geometry when the
 // z-prepass the classification used had omitted that geometry.
 
+#include "Common/ReverseZ.hlsli"
 #include "VRStereoOptimizations/cbuffers.hlsli"
 
 Texture2D<float> SceneDepthTexture : register(t0);  // classification depth source (full SBS)
@@ -40,5 +41,7 @@ float main(PS_INPUT input) : SV_Depth
 	// Below the classifier's own threshold the difference is the scatter's texel sampling, not
 	// missing geometry; taking it would put a per-texel sawtooth on surfaces the prepass has right.
 	float warped = asfloat(bits);
-	return (depth - warped) > DisocclusionThreshold * depth ? warped : depth;
+	const float tolerance = DisocclusionThreshold * depth;
+	const float nearLimit = FrameBuffer::NearerDepth(depth - tolerance, depth + tolerance);
+	return FrameBuffer::IsNearerDepth(warped, nearLimit) ? warped : depth;
 }
