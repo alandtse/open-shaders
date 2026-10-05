@@ -40,9 +40,6 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorHeight;
 	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
 	float4 CategoryStrength[5];
-	// Material map: the switch, the MaterialMap::Mode and the per-category filter bitmask, plus
-	// whether the by-material protection is bound this frame, which the strength view reports as 1.0
-	// when it is not.
 	uint MaterialMapEnabled;
 	uint MaterialMapMode;
 	uint MaterialMapFilter;
@@ -79,8 +76,6 @@ float CategoryStrengthAt(uint category)
 	           1.0;
 }
 
-// The strength the by-material setting gives a pixel: its own label's strength, without the box blur
-// CategoryAlphaCS.hlsl averages, and 1.0 while the protection is not bound so the view still reads.
 float MaterialStrengthAt(uint category)
 {
 	return MaterialMapStrengthBound != 0 ?

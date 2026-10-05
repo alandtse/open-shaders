@@ -202,8 +202,6 @@ struct NeuralRendering::Impl
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
-		// Material map: the switch, the mode, the category filter and whether the by-material
-		// protection is bound, then the six by-material strengths in NeuralRenderingCategory id order.
 		uint32_t materialMapEnabled = 0, materialMapMode = 0, materialMapFilter = 0, materialMapStrengthBound = 0;
 		float4 materialStrengthsA{};
 		float4 materialStrengthsB{};
@@ -546,8 +544,6 @@ struct NeuralRendering::Impl
 		data.materialMapEnabled = (!prepare && materialMapEnabled) ? 1u : 0u;
 		data.materialMapMode = materialMapMode;
 		data.materialMapFilter = materialMapFilter;
-		// The strength view reports the protection the evaluate actually bound, so a degraded
-		// material lane reads as 1.0 everywhere instead of the strengths it never applied.
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
@@ -637,7 +633,6 @@ struct NeuralRendering::Impl
 				context->ClearState();
 			}
 		} catch (...) {
-			// A removed device is not an alpha failure; leave it to the normal latch.
 			if (interop.DeviceRemoved())
 				throw;
 			return false;
@@ -1151,7 +1146,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("material_strength_tooltip"),
 			"Applies Neural Rendering by material, using the labels the deferred pass writes, and blends each material's strength into its neighbours. It changes where and how strongly the effect shows and does not reduce GPU cost. Needs the deferred pass; without its material lane the whole frame is processed."));
-	// The strengths and the softness only rewrite the per-frame alpha, so they never rebuild the pass.
 	ImGui::BeginDisabled(!tuning.materialStrength);
 	changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -1497,9 +1491,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
 		const bool materialStrengthWanted = tuning.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
-		// Feature 18 latches the UIAlpha binding at creation, so switching the setting on or off
-		// rebuilds the persistent eye features here, in one place; a strength or softness change
-		// only rewrites the per-frame alpha, with no rebuild and no history reset.
+		// Feature 18 latches the UIAlpha binding at creation, so only this switch rebuilds the eye features.
 		if (materialStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
 			work.materialStrengthOn = materialStrengthWanted;

@@ -1,7 +1,4 @@
-// Unit tests for the NR material-strength helper, the material-map filter and the Tuning values
-// they build: the NeuralRenderingCategory id order, the bounds, and the product defaults.
-// CategoryAlphaCS.hlsl reads the same order and ColorTransferCS.hlsl the same filter bits;
-// TestNeuralRenderingCategory.hlsl covers both shader-side lookups.
+// Unit tests for the NR material-strength helper, the material-map filter and the Tuning values they build.
 
 #include "Features/Upscaling/NeuralRendering/MaterialMap.h"
 #include "Features/Upscaling/NeuralRendering/MaterialStrength.h"

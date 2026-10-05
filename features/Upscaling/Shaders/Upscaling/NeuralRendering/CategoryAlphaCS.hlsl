@@ -13,7 +13,6 @@ cbuffer CategoryAlpha : register(b0)
 Texture2D<float2> Masks2Texture : register(t0);  // r vertex AO, g material category (R16G16_UNORM)
 RWTexture2D<float> CategoryAlphaOutput : register(u0);
 
-// The lane is a protection value (1 restores the pixel from DLSSNR.Backbuffer, 0 applies NR fully): the inverse of the NR strength.
 float Protection(int2 pixel)
 {
 	const uint category = NeuralRenderingCategory::Decode(Masks2Texture[pixel + int2(int(EyeOffsetX), 0)].y);
@@ -29,8 +28,6 @@ float Protection(int2 pixel)
 		CategoryAlphaOutput[id.xy] = Protection(pixel);
 		return;
 	}
-	// The box average softens a material boundary; clamping the taps keeps a material that reaches
-	// the eye border from being diluted by the missing neighbours outside it.
 	const int2 last = int2(int(Width) - 1, int(Height) - 1);
 	float sum = 0.0;
 	for (int y = -radius; y <= radius; ++y) {
