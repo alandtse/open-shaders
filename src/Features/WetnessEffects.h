@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/FrameLatch.h"
 
 /** @brief Adds dynamic weather-driven wetness, puddle formation, shore wetness, and raindrop effects. */
 struct WetnessEffects : Feature
@@ -223,7 +224,7 @@ private:
 	void DrawWeatherAnalysis() const;
 
 	mutable float characterSurfaceWetness = 0.0f;
-	mutable std::uint32_t lastCharacterWetnessUpdateFrame = UINT32_MAX;
+	mutable Util::FrameLatch characterWetnessFrame;
 	mutable std::uint32_t lastRainTimerFrame = UINT32_MAX;
 	bool splashesOfStormsLoaded = false;
 
