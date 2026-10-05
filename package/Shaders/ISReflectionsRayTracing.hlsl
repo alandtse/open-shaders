@@ -43,6 +43,8 @@ static const float rayLength = 1.0;
 
 static const int minFoveatedIterations = 16;
 
+static const float kDepthAgreeThreshold = 0.05f;
+
 // Per-pixel SSR foveation weight from the active foveation mask (VRFoveationData0
 // + per-eye center offset). 1 in the center, falling to 0 in the periphery.
 float GetVRSSRFoveationWeight(float ssrFoveationMode, float2 eyeUv, uint eyeIndex)
@@ -257,16 +259,6 @@ PS_OUTPUT main(PS_INPUT input)
 		screenPosition, eyeIndex, NormalTex, FrameBuffer::DynamicResolutionParams1.xy);
 	depthScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
 		screenPosition, eyeIndex, depthTextureDimensions, FrameBuffer::DynamicResolutionParams1.xy);
-
-	float ssrFoveationWeight = 1.0;
-	float ssrFoveationMode = SharedData::VRFoveationData0.w;
-	[branch] if (ssrFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
-	{
-		ssrFoveationWeight = GetVRSSRFoveationWeight(ssrFoveationMode, uv, eyeIndex);
-		// Outside the foveation mask: skip SSR entirely. The cubemap/water
-		// reflection fallback already covers these pixels.
-		[branch] if (!FoveatedIsShaderDetailActive(ssrFoveationWeight)) return psout;
-	}
 #	endif
 
 	[branch] if (NormalTex.Sample(NormalSampler, normalScreenPosition).z <= 0)
@@ -278,6 +270,31 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float nativeDepth = DepthTex.SampleLevel(DepthSampler, depthScreenPosition, 0).x;
 	float depth = FrameBuffer::ToStandardDepth(nativeDepth);
+
+#	if defined(VR)
+	float ssrFoveationWeight = 1.0;
+	float ssrFoveationMode = SharedData::VRFoveationData0.w;
+	[branch] if (ssrFoveationMode >= FOVEATED_SHADER_DETAIL_MODE_FEATHERED)
+	{
+		float ownFoveationWeight = GetVRSSRFoveationWeight(ssrFoveationMode, uv, eyeIndex);
+		float otherFoveationWeight = ownFoveationWeight;
+		bool otherFoveationValid = false;
+		Stereo::StereoBilateralResult reprojection = Stereo::ReprojectToOtherEye(
+			Stereo::ConvertToStereoUV(uv, eyeIndex), nativeDepth, eyeIndex, float2(depthTextureDimensions));
+		[branch] if (reprojection.valid)
+		{
+			float2 otherEyeScreenPosition = VRStereoEffects::ClampDynamicStereoUVToEyeTexel(
+				FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(reprojection.otherStereoUV),
+				1 - eyeIndex, depthTextureDimensions, FrameBuffer::DynamicResolutionParams1.xy);
+			float otherNativeDepth = DepthTex.SampleLevel(DepthSampler, otherEyeScreenPosition, 0).x;
+			otherFoveationValid = Stereo::IsReprojectionExact(reprojection, nativeDepth, otherNativeDepth, kDepthAgreeThreshold);
+			otherFoveationWeight = GetVRSSRFoveationWeight(
+				ssrFoveationMode, Stereo::ConvertFromStereoUV(reprojection.otherStereoUV, 1 - eyeIndex), 1 - eyeIndex);
+		}
+		ssrFoveationWeight = FoveatedCombineEyeWeights(ownFoveationWeight, otherFoveationWeight, otherFoveationValid);
+		[branch] if (!FoveatedIsShaderDetailActive(ssrFoveationWeight)) return psout;
+	}
+#	endif
 
 	float4 positionVS = float4(float2(uv.x, 1.0 - uv.y) * 2.0 - 1.0, nativeDepth, 1.0);
 	positionVS = mul(FrameBuffer::CameraProjInverse[eyeIndex], positionVS);

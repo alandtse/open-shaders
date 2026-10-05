@@ -75,6 +75,9 @@ static const float3 noise3D[32] = {
 	uint3 validMin = (uint3)max(0, settings.ValidMargin.xyz);
 	uint3 validMax = Skylighting::ARRAY_DIM - 1 + (uint3)min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added
+	uint probeUpdateState = isValid ? outAccumFramesArray[dtid] : 0;
+	uint storedAccumFrames = probeUpdateState & 0xFFu;
+	uint shadowSampleIndex = (probeUpdateState >> 8) & 31u;
 	float3 cellCentreMS = cellID + 0.5 - Skylighting::ARRAY_DIM / 2;
 	cellCentreMS = cellCentreMS / Skylighting::ARRAY_DIM * Skylighting::ARRAY_SIZE + settings.PosOffset.xyz;
 
@@ -83,7 +86,7 @@ static const float3 noise3D[32] = {
 	float2 occlusionUV = cellCentreOS.xy * 0.5 + 0.5;
 
 	if (all(occlusionUV > 0) && all(occlusionUV < 1)) {
-		uint accumFrames = isValid ? (outAccumFramesArray[dtid] + 1) : 1;
+		uint accumFrames = storedAccumFrames + 1;
 		float visibility = srcOcclusionDepth.SampleCmpLevelZero(comparisonSampler, occlusionUV, cellCentreOS.z);
 
 		sh2 occlusionSH = settings.OcclusionSHBasis4Pi * visibility;
@@ -97,10 +100,9 @@ static const float3 noise3D[32] = {
 		occlusionSH = lerp(unitSH, occlusionSH, min(fadeInThreshold, accumFrames) / fadeInThreshold);  // confidence fade in
 
 		outProbeArray[dtid] = occlusionSH;
-		outAccumFramesArray[dtid] = accumFrames;
+		storedAccumFrames = min(accumFrames, 255u);
 	} else if (!isValid) {
 		outProbeArray[dtid] = unitSH;
-		outAccumFramesArray[dtid] = 0;
 	}
 
 	// Shadow cascade sampling with bitmask accumulation
@@ -119,8 +121,8 @@ static const float3 noise3D[32] = {
 	if (onScreen && settings.ShadowDataAvailable != 0) {
 		DirectionalShadowLightData shadowData = DirectionalShadowLights[0];
 
-		uint bitIndex = SharedData::FrameCountAlwaysActive % 32;
-		float3 jitteredMS = cellCentreMS + noise3D[bitIndex] * 128;
+		float3 jitteredMS = cellCentreMS + noise3D[shadowSampleIndex] * 128;
+		shadowSampleIndex = (shadowSampleIndex + 1u) & 31u;
 		float4 jitteredCS = mul(FrameBuffer::CameraViewProj[0], float4(jitteredMS, 1));
 
 		if (jitteredCS.w > 0) {
@@ -154,11 +156,8 @@ static const float3 noise3D[32] = {
 		outShadowBitmask[dtid] = 0xFFFFFFFFu;
 		outShadowVisibility[dtid] = 1.0;
 	} else if (advanceShadowHistory) {
-		uint bitIndex = SharedData::FrameCountAlwaysActive % 32;
 		uint bitmask = isValid ? outShadowBitmask[dtid] : 0xFFFFFFFFu;
-		bitmask &= ~(1u << bitIndex);
-		if (shadowSample > 0.5)
-			bitmask |= (1u << bitIndex);
+		bitmask = (bitmask << 1) | (shadowSample > 0.5 ? 1u : 0u);
 
 		outShadowBitmask[dtid] = bitmask;
 
@@ -169,4 +168,5 @@ static const float3 noise3D[32] = {
 		outShadowVisibility[dtid] = 1.0;
 	}
 #endif
+	outAccumFramesArray[dtid] = storedAccumFrames | (shadowSampleIndex << 8);
 }
