@@ -1,4 +1,5 @@
 #include "Common/Color.hlsli"
+#include "Common/NeuralRenderingCategory.hlsli"
 #include "Common/RegionFeather.hlsli"
 #include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
@@ -37,6 +38,8 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorBaseY;
 	uint RegionActorWidth;
 	uint RegionActorHeight;
+	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
+	float4 CategoryStrength[5];
 };
 
 Texture2D<float4> Original : register(t0);
@@ -44,6 +47,7 @@ Texture2D<float4> NeuralInput : register(t1);
 Texture2D<float4> NeuralOutput : register(t2);
 StructuredBuffer<float> Adaptation : register(t3);
 Texture2D<float2> ToneData : register(t4);
+Texture2D<float2> Masks2Texture : register(t5);  // r vertex AO, g material category (R16G16_UNORM)
 RWTexture2D<float4> Output : register(u0);
 RWTexture2D<float2> ToneDataOutput : register(u2);
 
@@ -56,6 +60,33 @@ static const float kSpatialEpsilon = 1e-4;
 static const float3 kRegionOutlineColor = float3(0.0, 1.0, 0.0);
 static const float3 kActorBoxOutlineColor = float3(1.0, 1.0, 0.0);
 static const float kActorBoxOutlineThickness = 2.0f;
+
+float CategoryStrengthAt(uint category)
+{
+	return category >= NeuralRenderingCategory::Skin && category <= NeuralRenderingCategory::Landscape ?
+	           CategoryStrength[category - NeuralRenderingCategory::Skin].x :
+	           1.0;
+}
+
+// Category ids are never interpolated, only the strengths are: each 3x3 tent tap contributes its
+// own decoded category's strength, so a per-pixel lookup stays inside one material.
+float FilteredCategoryStrength(int2 pixel)
+{
+	const int2 limit = int2(max(Width, 1u) - 1, max(Height, 1u) - 1);
+	const int2 eyeOffset = int2(int(EyeOffsetX), 0);
+	float weighted = 0.0;
+	float weightSum = 0.0;
+	for (int y = -1; y <= 1; ++y) {
+		for (int x = -1; x <= 1; ++x) {
+			const int2 tap = clamp(pixel + int2(x, y), int2(0, 0), limit);
+			const uint category = NeuralRenderingCategory::Decode(Masks2Texture[tap + eyeOffset].y);
+			const float weight = (x == 0 ? 2.0 : 1.0) * (y == 0 ? 2.0 : 1.0);
+			weighted += CategoryStrengthAt(category) * weight;
+			weightSum += weight;
+		}
+	}
+	return weighted / weightSum;
+}
 
 float3 ProxyLinearToSrgb(float3 value)
 {
@@ -295,6 +326,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float toneHigh = toneDelta - toneLow;
 	float tone = ToneLowStrength == ToneHighStrength ? toneDelta * ToneHighStrength :
 	                                                   toneLow * ToneLowStrength + toneHigh * ToneHighStrength;
+	tone *= FilteredCategoryStrength(int2(id.xy));
 	float toneGain = exp2(tone);
 	float sceneLuminance = Color::RGBToLuminance(originalLinear, Luma);
 	float logSceneLuminance = log2(max(sceneLuminance, ratioFloor));
@@ -351,6 +383,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = toneGain.xxx;
 	else if (VisualMode == NR::kVisualFinalLuminanceRatio)
 		result = (Color::RGBToLuminance(result, Luma) / max(sceneLuminance, ratioFloor)).xxx;
+	else if (VisualMode == NR::kVisualCategory)
+		result = NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Decode(Masks2Texture[int2(id.xy) + int2(int(EyeOffsetX), 0)].y));
 	else if (VisualMode >= NR::kVisualSplitOriginalOutput) {
 		const bool left = (float(id.x) / max(1.0, float(Width))) < SplitPosition;
 		if (VisualMode == NR::kVisualSplitOriginalOutput)

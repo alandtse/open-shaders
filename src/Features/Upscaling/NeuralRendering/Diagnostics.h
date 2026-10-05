@@ -137,7 +137,8 @@ namespace NR
 			ToneLow,
 			ToneHigh,
 			ToneLowGain,
-			FinalLuminanceRatio
+			FinalLuminanceRatio,
+			Category
 		};
 		/** @brief Mask mode ColorTransferCS.hlsl reads to substitute a constant mask. */
 		enum class MaskMode : uint32_t
@@ -198,6 +199,7 @@ namespace NR
 		static_assert(static_cast<uint32_t>(VisualMode::ToneHigh) == 18);
 		static_assert(static_cast<uint32_t>(VisualMode::ToneLowGain) == 19);
 		static_assert(static_cast<uint32_t>(VisualMode::FinalLuminanceRatio) == 20);
+		static_assert(static_cast<uint32_t>(VisualMode::Category) == 21);
 		/** @brief Production defaults the diagnostic value knobs fall back to. */
 		static constexpr float kManualExposure = 1.0f, kDifferenceStrength = 4.0f, kSplitPosition = 0.5f;
 		static constexpr float kShadowProtect = 0.0f, kHighlightProtect = 0.0f, kToneRadius = 1.0f;

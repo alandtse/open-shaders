@@ -5,6 +5,7 @@
 #include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
+#include "Common/NeuralRenderingCategory.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/ReverseZ.hlsli"
@@ -720,7 +721,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Specular = float4(totalLighting.specular, 1);
 	psout.Reflectance = float4(indirectLobes.specular, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
-	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 1);
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(NeuralRenderingCategory::Foliage), 0, 1);
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
 		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
 	return psout;
@@ -1071,7 +1072,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	psout.Specular = float4(specularColor, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
-	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(NeuralRenderingCategory::Foliage), 0, 0);
 #			endif
 #			if !defined(RENDER_DEPTH)
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
@@ -1276,7 +1277,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 	psout.Albedo = float4(albedo, 1);
 	psout.Masks = float4(0, 0, Color::RGBToYCoCg(directionalAmbientColor).x, 0);
-	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, 0);
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(NeuralRenderingCategory::Foliage), 0, 0);
 #		endif
 
 #		if !defined(RENDER_DEPTH)

@@ -186,6 +186,9 @@ struct NeuralRendering::Impl
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
 		float2 pad{};
+		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
+		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
+		float4 categoryStrength[5]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -198,7 +201,8 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
 	static_assert(offsetof(ColorTransferData, pad) == 136);
-	static_assert(sizeof(ColorTransferData) == 144);
+	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
+	static_assert(sizeof(ColorTransferData) == 224);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<Texture2D> original;
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
@@ -221,6 +225,8 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	/** @brief Per-category tone multipliers from the tuning, consumed by TransferColor's cbuffer. */
+	std::array<float, 5> categoryToneStrength{ 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	bool useResolutionMotionScale = true;
 	/** @brief Draws the evaluated crop outline into the composite; read from the tuning each NR frame. */
 	bool regionOverlay = false;
@@ -481,6 +487,8 @@ struct NeuralRendering::Impl
 		data.toneLowStrength = toneLowStrength;
 		data.toneRadius = toneRadius;
 		data.toneHighStrength = toneHighStrength;
+		for (size_t category = 0; category < categoryToneStrength.size(); ++category)
+			data.categoryStrength[category].x = categoryToneStrength[category];
 		data.hasToneData = !prepare && NeedsToneData();
 		// Never on the Prepare dispatch: that writes NGX's input proxy, which the overlay would corrupt.
 		data.regionOverlayEnabled = (!prepare && regionOverlay) ? 1u : 0u;
@@ -509,9 +517,10 @@ struct NeuralRendering::Impl
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 		globals::state->BindSharedDataCS(context.get(), true);
+		auto* masks2 = Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED].SRV);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color->srv,
 			prepare ? nullptr : eye.output->srv, exposure,
-			data.hasToneData ? eye.toneData->srv.get() : nullptr };
+			data.hasToneData ? eye.toneData->srv.get() : nullptr, masks2 };
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color->uav : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
@@ -981,6 +990,16 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
+	if (ImGui::CollapsingHeader(T(TKEY("category_tone"), "Category Tone Strengths"))) {
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("category_tone_tooltip"),
+				"Scales Neural Rendering's tone edit per material: 0 leaves a material's brightness untouched, 1 is the normal edit, and 2 doubles it. Materials the deferred buffer does not label are unaffected."));
+		changed |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.skinToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.hairToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.eyeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.foliageToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		changed |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.landscapeToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	}
 	const bool autoMaskChanged = ImGui::Checkbox(T(TKEY("use_auto_mask"), "Use Auto Mask"), &tuning.useAutoMask);
 	changed |= autoMaskChanged;
 	recreateTuning |= autoMaskChanged;
@@ -1320,6 +1339,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.categoryToneStrength = { boundedTuning.skinToneStrength, boundedTuning.hairToneStrength,
+			boundedTuning.eyeToneStrength, boundedTuning.foliageToneStrength, boundedTuning.landscapeToneStrength };
 		work.regionOverlay = boundedTuning.regionOverlay;
 		diagnostic.conversion = static_cast<uint32_t>(work.conversionMode);
 		diagnostic.exposureMode = static_cast<uint32_t>(work.exposureMode);

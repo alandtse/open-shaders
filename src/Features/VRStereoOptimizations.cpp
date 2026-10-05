@@ -125,7 +125,7 @@ bool VRStereoOptimizations::SupportsGBufferFill()
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_FLOAT) &&
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R10G10B10A2_UNORM) &&
 	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R11G11B10_FLOAT) &&
-	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16_UNORM);
+	       State::SupportsTypedUAVLoad(DXGI_FORMAT_R16G16_UNORM);
 }
 
 void VRStereoOptimizations::SetupResources()

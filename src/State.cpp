@@ -1094,7 +1094,7 @@ void State::CheckTypedUAVLoadSupport()
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
 		{ DXGI_FORMAT_R10G10B10A2_UNORM, "R10G10B10A2_UNORM", "VR Stereo Reprojection G-buffer fill (NormalRoughness, Albedo)" },
-		{ DXGI_FORMAT_R16_UNORM, "R16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
+		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
 		{ DXGI_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", "HDR Display UI brightness (uiTexture)" },
 		{ DXGI_FORMAT_R8_UINT, "R8_UINT", "Skylighting accumulation frames (outAccumFramesArray)" },
 		{ DXGI_FORMAT_R16_FLOAT, "R16_FLOAT", "Vanilla volumetric lighting density (DensityRW)" },

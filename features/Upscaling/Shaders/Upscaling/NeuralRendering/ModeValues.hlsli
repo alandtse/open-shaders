@@ -58,6 +58,7 @@ namespace NR
 	static const uint kVisualToneHigh = 18;
 	static const uint kVisualToneLowGain = 19;
 	static const uint kVisualFinalLuminanceRatio = 20;
+	static const uint kVisualCategory = 21;
 }
 
 #endif  // __NR_MODE_VALUES_HLSLI__

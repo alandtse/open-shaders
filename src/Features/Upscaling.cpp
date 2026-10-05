@@ -32,7 +32,9 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength,
+		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
+		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(

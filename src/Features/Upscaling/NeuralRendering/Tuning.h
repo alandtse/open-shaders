@@ -18,6 +18,12 @@ namespace NR
 		float localToneStrength = kDefaultStrength;
 		float localStructureStrength = kDefaultStrength;
 		float skinStructureStrength = kAutomaticSkinStructure;
+		/** @brief Per-category multipliers on the composited tone edit, from the deferred Masks2 category. */
+		float skinToneStrength = kDefaultStrength;
+		float hairToneStrength = kDefaultStrength;
+		float eyeToneStrength = kDefaultStrength;
+		float foliageToneStrength = kDefaultStrength;
+		float landscapeToneStrength = kDefaultStrength;
 		bool useAutoMask = true;
 		/**
 		 * @brief Restricts NR's evaluation to a crop around the most prominent visible actor.
@@ -49,7 +55,8 @@ namespace NR
 		{
 			style = std::min(style, kMaxStyle);
 			regionFit = std::min(regionFit, kMaxRegionFit);
-			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength })
+			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength,
+					 &skinToneStrength, &hairToneStrength, &eyeToneStrength, &foliageToneStrength, &landscapeToneStrength })
 				*strength = std::isfinite(*strength) ? std::clamp(*strength, kMinStrength, kMaxStrength) : kDefaultStrength;
 			skinStructureStrength = std::isfinite(skinStructureStrength) ?
 			                            std::clamp(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength) :

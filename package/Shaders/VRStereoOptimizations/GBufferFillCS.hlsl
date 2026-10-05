@@ -34,7 +34,7 @@ RWTexture2D<unorm float4> AlbedoRW : register(u3);           // R10G10B10A2
 RWTexture2D<float3> SpecularRW : register(u4);               // R11G11B10
 RWTexture2D<float3> ReflectanceRW : register(u5);            // R11G11B10
 RWTexture2D<float3> MasksRW : register(u6);                  // R11G11B10
-RWTexture2D<unorm float> Masks2RW : register(u7);            // R16_UNORM
+RWTexture2D<unorm float2> Masks2RW : register(u7);           // R16G16_UNORM: r vertex AO, g material category
 
 static const int kEpipolarSearchRadius = 4;
 
@@ -141,7 +141,7 @@ static const int kEpipolarSearchRadius = 4;
 		specularSum += SpecularRW[idx[j]] * weight[j];
 		reflectanceSum += ReflectanceRW[idx[j]] * weight[j];
 		masksSum += MasksRW[idx[j]] * weight[j];
-		masks2Sum += Masks2RW[idx[j]] * weight[j];
+		masks2Sum += Masks2RW[idx[j]].x * weight[j];
 
 		float4 normalRoughness = NormalRoughnessRW[idx[j]];
 		normalSum += GBuffer::DecodeNormal(normalRoughness.xy) * weight[j];
@@ -153,7 +153,8 @@ static const int kEpipolarSearchRadius = 4;
 	SpecularRW[px] = specularSum / weightSum;
 	ReflectanceRW[px] = reflectanceSum / weightSum;
 	MasksRW[px] = masksSum / weightSum;
-	Masks2RW[px] = masks2Sum / weightSum;
+	// The category id is never averaged; a reprojected pixel inherits the nearest tap's code.
+	Masks2RW[px] = float2(masks2Sum / weightSum, Masks2RW[nearest].y);
 	float3 averagedNormal = normalSum / weightSum;
 	float2 encodedNormal = length(averagedNormal) > EPSILON_DIVISION ? GBuffer::EncodeNormal(normalize(averagedNormal)) : NormalRoughnessRW[nearest].xy;
 	NormalRoughnessRW[px] = float4(encodedNormal, glossSum / weightSum, stochasticSelector);

@@ -333,7 +333,7 @@ private:
 	bool unrepairableMaskValid = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
-	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
+	// R11G11B10, R16G16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
 	// return undefined data, so the feature stays off rather than corrupt Eye 1.
 	bool gBufferFillSupported = false;
 };
