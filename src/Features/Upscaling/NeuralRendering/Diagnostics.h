@@ -41,7 +41,8 @@ namespace NR
 			CameraPosition = 8,
 			CameraDirection = 16,
 			Projection = 32,
-			FeatureCreated = 64
+			FeatureCreated = 64,
+			RegionChanged = 128
 		};
 		/** @brief Which history resets a frame needs: the request, the first frame, or a frame gap. */
 		static uint32_t FrameResetReasons(bool requested, uint32_t lastFrame, uint32_t frame)
@@ -247,10 +248,26 @@ namespace NR
 			std::array<uint32_t, 2> reset{}, result{};
 			uintptr_t source = 0;
 			uint64_t submittedFence = 0, completedFence = 0;
+			/** @brief CPU milliseconds this frame blocked in the reset drain; zero when nothing reset. */
+			float resetDrainMs = 0.0f;
 			uint32_t conversion = 0, exposureMode = 0, compositeMode = 0, visualMode = 0;
 			float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 			float intensity = 0.0f, localTone = 0.0f, localStructure = 0.0f, skinStructure = 0.0f;
 		};
+		/** @brief Short names of the eight history-reset reasons, indexed by bit position. Matches ResetReason. */
+		static constexpr std::array<const char*, 8> kResetReasonNames{
+			"request", "first", "gap", "position", "direction", "projection", "creation", "region"
+		};
+		/** @brief Cumulative NR counters since startup; every field is monotonic so a caller may difference two reads. */
+		struct Counters
+		{
+			std::array<uint64_t, kResetReasonNames.size()> resets{};  ///< Frames that carried each reset reason.
+			double drainMs = 0.0;                                     ///< Cumulative CPU time blocked in the reset drain.
+		};
+		/** @brief Adds one applied frame's reset reasons and drain cost to the cumulative counters. */
+		void RecordFrame(uint32_t resetReasons, double drainMs);
+		/** @brief Snapshot of the cumulative counters, safe from any thread. */
+		Counters GetCounters() const;
 		/** @brief Records entry without overwriting a successful result on duplicate calls. */
 		Frame& BeginHook(uint32_t frame, uint32_t target);
 		/** @brief Records how far the existing post-processing chain reached. */
@@ -291,6 +308,8 @@ namespace NR
 		std::array<Frame, kHistorySize> history{};
 		size_t next = 0, count = 0;
 		std::atomic_bool showOverlay = false;
+		std::array<std::atomic<uint64_t>, kResetReasonNames.size()> resetCounts{};
+		std::atomic<uint64_t> resetDrainMicros = 0;
 		uint32_t framesSinceSummary = 0;
 		static const char* Name(Outcome outcome);
 		static char Code(Outcome outcome);

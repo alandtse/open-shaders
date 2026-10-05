@@ -1,4 +1,5 @@
 #include "State.h"
+#include <algorithm>
 
 #include <codecvt>
 
@@ -74,6 +75,10 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN ||
 		skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
+	}
+	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
+		auto* depthSRV = Util::GetCurrentSceneDepthSRV(true);
+		globals::d3d::context->VSSetShaderResources(17, 1, &depthSRV);
 	}
 }
 
@@ -264,7 +269,7 @@ void State::Debug()
 		drawCalls[magic_enum::enum_integer(RE::BSShader::Type::Total)]++;
 	}
 
-	if (currentShader && updateShader && frameAnnotations) {
+	if (currentShader && updateShader && drawAnnotationsActive) {
 		// Per-draw (thousands/frame): D3D-capture marker only, never a Tracy zone --
 		// a per-draw dynamic Tracy zone allocs a source location per call and OOMs
 		// Tracy. Matches BeginDrawEvent's rationale.
@@ -633,8 +638,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				}
 			} catch (const std::exception& e) {
 				feature->failedLoadedMessage = feature->failedLoadedMessage.empty() ?
-				                                   (feature->GetDisplayName() + " failed to load. Check CommunityShaders.log") :
-				                                   (feature->failedLoadedMessage + "\n" + feature->GetDisplayName() + " failed to load. Check CommunityShaders.log");
+				                                   (feature->GetDisplayName() + " failed to load. Check OpenShaders.log") :
+				                                   (feature->failedLoadedMessage + "\n" + feature->GetDisplayName() + " failed to load. Check OpenShaders.log");
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
@@ -690,6 +695,8 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
+	advanced["Content Store"] = enableContentStore.load(std::memory_order_relaxed);
+	advanced["Content Store Max MB"] = contentStoreMaxMB.load(std::memory_order_relaxed);
 	advanced["Refraction Scale"] = refractionScale;
 	settings["Advanced"] = advanced;
 
@@ -793,6 +800,10 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Content Store") && advanced["Content Store"].is_boolean())
+			enableContentStore.store(advanced["Content Store"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Content Store Max MB") && advanced["Content Store Max MB"].is_number_unsigned())
+			contentStoreMaxMB.store(std::clamp(advanced["Content Store Max MB"].get<uint32_t>(), kContentStoreMinMB, kContentStoreMaxMB), std::memory_order_relaxed);
 		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
 			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 	}
@@ -1200,6 +1211,19 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::DefShadow |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::CharacterLight |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow);
+
+				{
+					uint32_t technique = 0x3F & (a_pixelDescriptor >> 24);
+					if (technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODLand &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODLandNoise &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODObjects &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODObjectHD)
+						a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::Specular |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::SoftLighting |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::RimLighting |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::BackLighting);
+				}
+
 				if (a_pixelDescriptor & (uint32_t)SIE::ShaderCache::LightingShaderFlags::AdditionalAlphaMask) {
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::DoAlphaTest;
 					a_pixelDescriptor &= ~(uint32_t)SIE::ShaderCache::LightingShaderFlags::AdditionalAlphaMask;
@@ -1278,6 +1302,14 @@ static const wchar_t* WidenAnnotation(std::wstring& buffer, std::string_view tit
 	buffer.resize(title.size());
 	std::copy(title.begin(), title.end(), buffer.begin());
 	return buffer.c_str();
+}
+
+void State::RefreshDrawAnnotations()
+{
+	drawAnnotationsActive = frameAnnotations &&
+	                        ((pPerf && pPerf->GetStatus()) ||
+								GetModuleHandleW(L"renderdoc.dll") ||
+								GetModuleHandleW(L"WinPixGpuCapturer.dll"));
 }
 
 void State::BeginDrawEvent(std::string_view title)
@@ -1548,15 +1580,15 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		sharedDataCB->Update(data);
 	}
 
-	UpdateFeatureData(a_inWorld, true);
+	UpdateFeatureData(a_inWorld);
 
 	auto* srv = Util::GetCurrentSceneDepthSRV(true);
 	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
 }
 
-void State::UpdateFeatureData(bool a_inWorld, bool a_advanceFrameState)
+void State::UpdateFeatureData(bool a_inWorld)
 {
-	auto [data, size] = GetFeatureBufferData(a_inWorld, a_advanceFrameState);
+	auto [data, size] = GetFeatureBufferData(a_inWorld);
 	featureDataCB->Update(data, size);
 }
 

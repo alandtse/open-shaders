@@ -42,6 +42,7 @@ jobs:
                       .github/scripts
                       .github/configs
                       .github/assets/logo
+                      tools/feature-flip-impact.py
 
             - name: Set up Python for FOMOD packaging
               uses: actions/setup-python@v6
@@ -90,6 +91,13 @@ jobs:
                   pattern: ShaderCache-*
                   path: shader-caches/
 
+            - name: Download feature flip impact tables
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  name: FeatureFlipImpact
+                  path: flip-impact/
+
             - name: Stage shader caches into dist
               shell: bash
               env:
@@ -135,6 +143,13 @@ jobs:
 
                   mkdir -p fomod-work/core
                   7z x -y -ofomod-work/core "$aio_7z" >/dev/null
+
+                  if compgen -G "flip-impact/FeatureFlipImpact-*.json" >/dev/null; then
+                    pip install --quiet pyyaml
+                    python3 tools/feature-flip-impact.py --merge flip-impact/FeatureFlipImpact-*.json --output fomod-work/core/SKSE/Plugins/CommunityShaders/FeatureFlipImpact.json
+                  else
+                    echo "::warning::No feature flip impact tables; release ships without compile-impact tiers."
+                  fi
 
                   args=(--core fomod-work/core --version "$RELEASE_TAG" --output fomod-work/staged)
 

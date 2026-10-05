@@ -2,6 +2,7 @@
 #include "Common/GrassWindResponse.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 
 #ifdef GRASS_COLLISION
 #	include "GrassCollision/GrassCollisionField.hlsli"
@@ -193,21 +194,22 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 				const float4 clipN = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dvNear, 1.0));
 				const float nearZ = clipN.z / max(clipN.w, 1e-4);
 
-				float tileMax = 0.0;
+				float tileMax = FrameBuffer::NearPlaneDepth();
 				[unroll] for (int y = 0; y < 3; ++y)
 				{
 					[unroll] for (int x = 0; x < 3; ++x)
 					{
 						if (t0.x + x <= t1.x && t0.y + y <= t1.y) {
 							const int2 t = clamp(t0 + int2(x, y), int2(xMin, 0), int2(xMax, dimL.y - 1));
-							tileMax = max(tileMax, HiZ.Load(int3(t, level)));
+							tileMax = FrameBuffer::FartherDepth(tileMax, HiZ.Load(int3(t, level)));
 						}
 					}
 				}
 
 				// Behind the farthest occluder of every covering tile means hidden. The tolerance absorbs
 				// projection and depth error that would otherwise drop instances only marginally behind it.
-				if (nearZ > tileMax + OcclusionBias)
+				const float occluderDepth = FrameBuffer::FartherDepth(tileMax + OcclusionBias, tileMax - OcclusionBias);
+				if (FrameBuffer::IsNearerDepth(occluderDepth, nearZ))
 					return false;
 			}
 		}
@@ -229,7 +231,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 	const float edgeFade = saturate((maxDist - dist) / max(maxDist - edgeStart, 1e-4));
 
 	const float4 clip = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(dv, 1.0));
-	const float distFade = 1.0 - saturate((length(clip.xyz) - AlphaParam1) / AlphaParam2);
+	const float distFade = 1.0 - saturate((length(FrameBuffer::ToStandardClip(clip, FrameBuffer::IsReverseProjection(eyeIndex))) - AlphaParam1) / AlphaParam2);
 	const float spawnFade = saturate((FadeNow - og.w) * FadeInTimeRcp);
 
 	fade = distFade * spawnFade * lodFade * edgeFade;

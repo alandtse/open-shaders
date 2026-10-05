@@ -24,6 +24,27 @@ namespace ShadowCasterManager
 	/// for the angular-cull path.
 	std::atomic<uint64_t> s_casterCullTotal{ 0 };
 
+	/// Front-hemisphere reassignments (separate from the drop path above, which
+	/// s_casterCullCount covers); published for devbench llfshadows.
+	std::atomic<uint32_t> s_hemisphereReassignCount{ 0 };
+	std::atomic<uint64_t> s_hemisphereReassignTotal{ 0 };
+
+	/// Wholly-behind casters dropped outright because the light draws no back
+	/// hemisphere; kept out of s_casterCullCount so that total stays angular-only.
+	std::atomic<uint32_t> s_hemisphereDropCount{ 0 };
+	std::atomic<uint64_t> s_hemisphereDropTotal{ 0 };
+
+	/// Appends by destination list, so the front pass's caster count is readable
+	/// without RenderDoc: front-list appends vs back-only appends.
+	std::atomic<uint32_t> s_frontAppendCount{ 0 };
+	std::atomic<uint32_t> s_backOnlyAppendCount{ 0 };
+	std::atomic<uint64_t> s_frontAppendTotal{ 0 };
+	std::atomic<uint64_t> s_backOnlyAppendTotal{ 0 };
+
+	/// These counters sit on the hottest append path, so they only tick while
+	/// something can read them (settings menu open or a recent devbench dump).
+	std::atomic<bool> s_casterCountersEnabled{ false };
+
 	/// The shadow light currently being accumulated; only non-null across an
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
@@ -352,6 +373,11 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	// BSParabolicCullingProcess::GetHemisphereMask values: bit 0 appends the
+	// caster to the front list, bit 1 accumulates it into the back hemisphere.
+	constexpr std::uint32_t kHemisphereFrontBit = 1u;
+	constexpr std::uint32_t kHemisphereBackOnly = 2u;
+
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
 	/// threshold, or when it does not belong to the active split-cache pass.
@@ -397,6 +423,34 @@ namespace ShadowCasterManager
 			// cascade cull (see CurrentCullLight).
 			if (light && CasterFilteredByPass(a_visible))
 				return;
+			if (light && a_alphaGroupIndex == -1 && !a_this->isGroupingAlphas &&
+				(a_this->alphaGroupStopIndex & kHemisphereFrontBit) != 0) {
+				auto* pcp = static_cast<RE::BSParabolicCullingProcess*>(a_this);
+				const auto& wb = a_visible.worldBound;
+				const float planeDistance = pcp->equatorialPlane.normal.Dot(wb.center) -
+				                            pcp->equatorialPlane.constant;
+				if (SphereWhollyBehindPlane(planeDistance, wb.radius, HemisphereSeamMargin(pcp->lightRadius))) {
+					if (!pcp->backHemisphereAccumulator) {
+						if (s_casterCountersEnabled.load(std::memory_order_relaxed))
+							s_hemisphereDropCount.fetch_add(1, std::memory_order_relaxed);
+						return;  // skip append -- outside every hemisphere this light draws
+					}
+					// The engine reports "both hemispheres" for a sphere wholly behind the
+					// plane; override to back-only so the front pass skips it.
+					if (s_casterCountersEnabled.load(std::memory_order_relaxed)) {
+						s_hemisphereReassignCount.fetch_add(1, std::memory_order_relaxed);
+						s_backOnlyAppendCount.fetch_add(1, std::memory_order_relaxed);
+					}
+					const std::uint32_t engineMask = pcp->alphaGroupStopIndex;
+					pcp->alphaGroupStopIndex = kHemisphereBackOnly;
+					func(a_this, a_visible, a_alphaGroupIndex);
+					pcp->alphaGroupStopIndex = engineMask;
+					return;
+				}
+			}
+			if (light && s_casterCountersEnabled.load(std::memory_order_relaxed) &&
+				(a_this->alphaGroupStopIndex & kHemisphereFrontBit))
+				s_frontAppendCount.fetch_add(1, std::memory_order_relaxed);
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

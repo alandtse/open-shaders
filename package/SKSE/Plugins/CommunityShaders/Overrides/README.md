@@ -164,7 +164,7 @@ Settings that normally require a restart still require one. Set `_metadata.enabl
 -   Verify JSON syntax is valid
 -   Ensure feature short name is correct
 -   Check that the providing mod is enabled and the file does not set `_metadata.enabled` to `false`
--   Look for errors in the Open Shaders log (CommunityShaders.log)
+-   Look for errors in the Open Shaders log (OpenShaders.log)
 
 ### JSON Validation
 
@@ -178,7 +178,7 @@ Use a JSON validator to ensure your override files have valid syntax:
 
 Open Shaders logs override discovery and application:
 
--   Check `CommunityShaders.log` for override-related messages
+-   Check `OpenShaders.log` for override-related messages
 -   Look for "Discovered X override files" and "Applied X override(s)" messages
 
 ## Examples

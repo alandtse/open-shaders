@@ -7,6 +7,7 @@
 #include "Common/MotionBlur.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 
 #define DEFERRED
@@ -246,13 +247,10 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 #		endif
 
 	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
-#		if defined(VR)
-	// WorldViewProj carries the per-eye matrix (FrameBuffer::CameraViewProj is identical for both eyes in VR).
-	const float4 projSpacePosition = mul(WorldViewProj[CurrentEyeIndex], msPosition);
-#		else
-	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[0], float4(eyeRel, 1.0));
+	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[CurrentEyeIndex], float4(eyeRel, 1.0));
+#		if !defined(VR)
 	vsout.HPosition = projSpacePosition;
-#		endif  // VR
+#		endif  // !VR
 
 #		if defined(RENDER_DEPTH)
 	vsout.Fade = e1.z;
@@ -342,7 +340,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		if defined(VR)
 	float distanceFade = 1 - saturate((length(mul(World[0], msPosition).xyz) - AlphaParam1) / AlphaParam2);
 #		else
-	float distanceFade = 1 - saturate((length(projSpacePosition.xyz) - AlphaParam1) / AlphaParam2);
+	float distanceFade = 1 - saturate((length(FrameBuffer::ToStandardClip(projSpacePosition)) - AlphaParam1) / AlphaParam2);
 #		endif
 
 #		if defined(RENDER_DEPTH)

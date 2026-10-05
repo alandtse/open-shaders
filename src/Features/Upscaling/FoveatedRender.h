@@ -25,6 +25,7 @@
 #include "../../Utils/Subrect.h"
 
 #include <chrono>
+#include <cstdint>
 
 struct FoveatedRender
 {
@@ -148,6 +149,14 @@ struct FoveatedRender
 		float2 centerOffsets[2] = {};        // [0]=left eye, [1]=right eye
 	};
 	FoveationProfile GetFoveationProfile() const;
+
+	/**
+	 * @brief One eye's foveation region UV, for a pass that crops its evaluation to it.
+	 * @param eye 0 for the left eye, 1 for the right.
+	 * @param out Receives the region only when this returns true.
+	 * @return False while foveation is inactive or the region is being dragged in the editor.
+	 */
+	bool GetClipUV(uint32_t eye, Util::Subrect::UVRegion& out) const;
 
 	// Main enable: latched at boot, change requires restart
 	void LatchEnabled() { enabledAtBoot = (settings.enabled != 0); }

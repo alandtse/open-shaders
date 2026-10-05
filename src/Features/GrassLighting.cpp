@@ -74,7 +74,7 @@ void GrassLighting::DrawSettings()
 			ImGui::Text("%s", T(TKEY("override_complex_tooltip"),
 								  "Override the settings set by the grass mesh author. "
 								  "Complex grass authors can define the brightness for their grass meshes. "
-								  "However, some authors may not account for the extra lights available from Open Shaders. "
+								  "However, some authors may not account for the extra lights available from {brand}. "
 								  "This option will treat their grass settings like non-complex grass. "
 								  "This was the default in Community Shaders < 0.7.0"));
 		}

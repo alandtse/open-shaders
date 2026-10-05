@@ -1,4 +1,5 @@
 #include "Streamline.h"
+#include "Features/ReverseZ.h"
 
 #include <algorithm>
 #include <bit>
@@ -470,7 +471,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	slConstants.clipToCameraView = std::bit_cast<sl::float4x4>(cameraMatrices.clipToCameraView);
 	slConstants.clipToPrevClip = std::bit_cast<sl::float4x4>(cameraMatrices.clipToPrevClip);
 	slConstants.prevClipToClip = std::bit_cast<sl::float4x4>(cameraMatrices.prevClipToClip);
-	slConstants.depthInverted = sl::Boolean::eFalse;
+	slConstants.depthInverted = globals::features::reverseZ.IsActive() ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
@@ -955,6 +956,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 
 	sl::DLSSGOptions options{};
 	options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
+	options.flags = sl::DLSSGFlags::eRetainResourcesWhenOff;
 	options.numFramesToGenerate = std::clamp<uint32_t>(
 		globals::features::upscaling.settings.dlssgFramesToGenerate, 1, dlssgMaxFramesToGenerate);
 
@@ -964,6 +966,21 @@ void Streamline::ConfigureDLSSG(bool enabled)
 			errorLogged = true;
 			logger::error("[Streamline DX12] slDLSSGSetOptions failed: {}", magic_enum::enum_name(result));
 		}
+		return;
+	}
+
+	if (enabled) {
+		dlssgResourcesRetained = true;
+	} else if (!globals::features::upscaling.settings.frameGenerationMode && dlssgResourcesRetained) {
+		if (SL_FAILED(result, slFreeResources(sl::kFeatureDLSS_G, viewport))) {
+			static bool errorLogged = false;
+			if (!errorLogged) {
+				errorLogged = true;
+				logger::error("[Streamline DX12] Failed to free DLSS-G resources: {}", magic_enum::enum_name(result));
+			}
+			return;
+		}
+		dlssgResourcesRetained = false;
 	}
 
 	if (slDLSSGGetState && enabled) {

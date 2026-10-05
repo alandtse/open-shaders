@@ -116,6 +116,12 @@ Beta = True
 
 ---
 
+## Compiler Lanes
+
+The shared C++ build (`_shared-build.yaml`) builds each preset with two compilers: `vs2026` (MSVC, the `PR`/`ALL` presets) and `clang-cl` (the `PR-ClangCL`/`ALL-ClangCL` twins). Only the entry marked `primary: true` can fail the workflow and uploads `dist-artifacts`; the other is advisory, and its package is uploaded as `dist-artifacts-<name>` for 7 days so it can be downloaded and tested.
+
+To ship clang-cl, swap `primary` between the two matrix entries, after the SE and VR runtime gate has passed on clang binaries. A release dispatch loads the workflow from the dispatched ref, so the swap reaches RC cuts from `dev` at once and stable cuts through the two-phase promotion above; check the "Show clang-cl toolchain" step or the build log to confirm which compiler produced a release.
+
 ## Manual Packaging Targets
 
 These targets are defined in `CMakeLists.txt` and are useful when you want precise control over packaging (CI artifacts, local QA, or manual deployment):
