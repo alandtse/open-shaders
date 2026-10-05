@@ -53,6 +53,9 @@ namespace Util::ShaderContentStore
 		explicit Store(std::filesystem::path a_root, uint64_t a_maxBytes = 0) :
 			root(std::move(a_root)), maxBytes(a_maxBytes) {}
 
+		/// Changes the cap Put enforces; call Trim to apply a lower one immediately.
+		void SetMaxBytes(uint64_t a_maxBytes) { maxBytes.store(a_maxBytes, std::memory_order_relaxed); }
+
 		/// On-disk location of the blob for a key.
 		std::filesystem::path PathFor(const ContentHash::Hash128& a_key) const
 		{
@@ -104,10 +107,11 @@ namespace Util::ShaderContentStore
 				std::filesystem::remove(tmp, ec);
 				return false;
 			}
-			if (maxBytes && (bytesSinceTrim += a_size) >= maxBytes / 16 && trimMutex.try_lock()) {
+			const auto cap = maxBytes.load(std::memory_order_relaxed);
+			if (cap && (bytesSinceTrim += a_size) >= cap / 16 && trimMutex.try_lock()) {
 				std::scoped_lock lock(std::adopt_lock, trimMutex);
 				bytesSinceTrim = 0;
-				Trim(maxBytes);
+				Trim(cap);
 			}
 			return true;
 		}
@@ -160,7 +164,7 @@ namespace Util::ShaderContentStore
 
 	private:
 		std::filesystem::path root;
-		uint64_t maxBytes;
+		std::atomic<uint64_t> maxBytes;
 		mutable std::atomic<uint64_t> bytesSinceTrim{ 0 };
 		mutable std::mutex trimMutex;
 	};

@@ -502,8 +502,11 @@ namespace SIE
 		}
 	}
 
-	/// Least recently used blobs beyond this are evicted; a full cold build stores about 120 MB.
-	static constexpr uint64_t kContentStoreMaxBytes = 4ull << 30;
+	/// Least recently used blobs beyond the user's limit are evicted; a cold build stores about 120 MB, 1.1 GB in Developer Mode.
+	static uint64_t ContentStoreMaxBytes()
+	{
+		return static_cast<uint64_t>(globals::state->contentStoreMaxMB.load(std::memory_order_relaxed)) << 20;
+	}
 
 	static std::filesystem::path ContentStorePath()
 	{
@@ -524,8 +527,8 @@ namespace SIE
 		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
 			return nullptr;
 		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
-			static Util::ShaderContentStore::Store created(ContentStorePath(), kContentStoreMaxBytes);
-			const auto trimmed = created.Trim(kContentStoreMaxBytes);
+			static Util::ShaderContentStore::Store created(ContentStorePath(), ContentStoreMaxBytes());
+			const auto trimmed = created.Trim(ContentStoreMaxBytes());
 			const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
 			logger::info("Shader content store: {} blobs, {} MB at {}, trimmed {} entries", usage.blobs, usage.bytes >> 20,
 				std::filesystem::absolute(ContentStorePath()).string(), trimmed);
@@ -4579,7 +4582,15 @@ namespace SIE
 	ShaderCache::ContentStoreUsage ShaderCache::GetContentStoreUsage()
 	{
 		const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
-		return { std::filesystem::absolute(ContentStorePath()), usage.blobs, usage.bytes, kContentStoreMaxBytes };
+		return { std::filesystem::absolute(ContentStorePath()), usage.blobs, usage.bytes, ContentStoreMaxBytes() };
+	}
+
+	void ShaderCache::ApplyContentStoreLimit()
+	{
+		if (auto* store = GetContentStore()) {
+			store->SetMaxBytes(ContentStoreMaxBytes());
+			store->Trim(ContentStoreMaxBytes());
+		}
 	}
 
 	void ShaderCache::ClearContentStore()

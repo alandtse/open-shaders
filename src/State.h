@@ -301,6 +301,10 @@ public:
 	// Atomic: written from the UI thread, read from compilation pool workers.
 	std::atomic_bool enablePartialPrecision{ false };
 	std::atomic_bool enableContentStore{ false };
+	/// Size limit of the persistent shader store in MB; least recently used shaders beyond it are evicted.
+	std::atomic<uint32_t> contentStoreMaxMB{ 4096 };
+	static constexpr uint32_t kContentStoreMinMB = 512;
+	static constexpr uint32_t kContentStoreMaxMB = 32768;
 
 	// Pass D3DCOMPILE_AVOID_FLOW_CONTROL to fxc. Forces the compiler to flatten branches
 	// into predicated ops instead of using dynamic flow control. Can win on uniform-branch

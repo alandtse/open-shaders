@@ -822,6 +822,8 @@ namespace SIE
 		void IncContentStoreHitTasks();
 		/** @brief Deletes every blob in the persistent store, whether or not the setting is on. */
 		void ClearContentStore();
+		/** @brief Applies the store size limit setting now, evicting least recently used shaders if it was lowered. */
+		void ApplyContentStoreLimit();
 		/** @brief Where the persistent store lives and how much it holds; usable while the setting is off. */
 		struct ContentStoreUsage
 		{

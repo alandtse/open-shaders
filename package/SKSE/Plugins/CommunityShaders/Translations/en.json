@@ -3917,6 +3917,8 @@
     "menu.advanced.content_store_clear": "Clear Store",
     "menu.advanced.content_store_clear_tooltip": "Deletes every stored shader. Use this if a shader looks wrong after being restored; the next compile rebuilds the store from scratch. Shaders already in the shader cache are kept.",
     "menu.advanced.content_store_hits": "Restored this session: {count}",
+    "menu.advanced.content_store_limit": "Store Size Limit",
+    "menu.advanced.content_store_limit_tooltip": "Least recently used shaders are deleted once the store exceeds this. A full build stores about 120 MB, or about 1.1 GB in Developer Mode, so keep several builds' worth if you switch branches.",
     "menu.advanced.content_store_location": "Location: {path}",
     "menu.advanced.content_store_tooltip": "Keeps every compiled shader keyed by its preprocessed source and compiler flags. After a cache wipe, a branch or build switch, or a rollback, shaders already compiled for the same code are restored instead of recompiled.\nCosts one preprocess per shader (tens of milliseconds) and disk space in Data/ShaderCache/ContentStore, trimmed to the least recently used. Takes effect for shaders compiled from now on.",
     "menu.advanced.content_store_usage": "Stored: {count} shaders, {size} MB (limit {cap} MB)",

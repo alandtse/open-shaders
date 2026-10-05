@@ -56,6 +56,20 @@ namespace
 															  { { "count", std::to_string(a_cache->GetContentStoreHitTasks()) } },
 															  "Restored this session: {count}")
 										  .c_str());
+		auto limitMB = static_cast<int>(globals::state->contentStoreMaxMB.load(std::memory_order_relaxed));
+		if (ImGui::SliderInt(T("menu.advanced.content_store_limit", "Store Size Limit"), &limitMB,
+				static_cast<int>(State::kContentStoreMinMB), static_cast<int>(State::kContentStoreMaxMB), "%d MB"))
+			globals::state->contentStoreMaxMB.store(static_cast<uint32_t>(limitMB), std::memory_order_relaxed);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			a_cache->ApplyContentStoreLimit();
+			lastRefresh = -kStoreUsageRefreshSeconds;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("menu.advanced.content_store_limit_tooltip",
+								  "Least recently used shaders are deleted once the store exceeds this. "
+								  "A full build stores about 120 MB, or about 1.1 GB in Developer Mode, "
+								  "so keep several builds' worth if you switch branches."));
+		}
 		if (ImGui::Button(T("menu.advanced.content_store_clear", "Clear Store"))) {
 			a_cache->ClearContentStore();
 			lastRefresh = -kStoreUsageRefreshSeconds;

@@ -323,3 +323,18 @@ TEST_CASE("MeasureUsage totals blobs and ignores other files", "[ShaderContentSt
 	CHECK(usage.bytes == blob.size());
 	CHECK(MeasureUsage(dir.path / "missing").blobs == 0);
 }
+
+TEST_CASE("Lowering the cap with SetMaxBytes lets Trim evict down to it", "[ShaderContentStore]")
+{
+	TempDir dir;
+	Store store(dir.path / "store", 10'000);
+	const std::vector<char> blob(100, 'x');
+	for (unsigned i = 0; i < 20; ++i)
+		REQUIRE(store.Put(MakeKey({ std::format("code {}", i), "main", "ps_5_0", 0, "c" }), blob.data(), blob.size()));
+	REQUIRE(MeasureUsage(dir.path / "store").blobs == 20);
+
+	store.SetMaxBytes(500);
+	store.Trim(500);
+	CHECK(MeasureUsage(dir.path / "store").bytes <= 500);
+	CHECK(MeasureUsage(dir.path / "store").blobs >= 1);
+}
