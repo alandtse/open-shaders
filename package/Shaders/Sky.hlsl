@@ -3,6 +3,7 @@
 #include "Common/Math.hlsli"
 #include "Common/Permutation.hlsli"
 #include "Common/Random.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
@@ -68,6 +69,9 @@ struct VS_OUTPUT
 	float4 WorldPosition: POSITION1;
 	float4 PreviousWorldPosition: POSITION2;
 	float3 FogPosition: TEXCOORD4;
+#if defined(DITHER) && defined(TEX)
+	nointerpolation float SunGlareVisibility: TEXCOORD7;
+#endif
 #if defined(VR)
 	float ClipDistance: SV_ClipDistance0;  // o11
 	float CullDistance: SV_CullDistance0;  // p11
@@ -96,6 +100,33 @@ cbuffer PerGeometry : register(b2)
 	float2 TexCoordOff : packoffset(c29);
 #	endif  // !VR
 };
+
+#	if defined(DITHER) && defined(TEX)
+static const uint SunGlareOcclusionSampleCount = 16;
+static const float SunGlareOcclusionRadius = 0.02;
+
+float GetSunGlareVisibility(uint eyeIndex)
+{
+	if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu ||
+		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection))
+		return 1.0;
+
+	float4 sunPosition = mul(FrameBuffer::CameraViewProj[eyeIndex], float4(SharedData::SunDirection.xyz, 0.0));
+	if (sunPosition.w <= 0.0)
+		return 1.0;
+	float2 sunUV = sunPosition.xy / sunPosition.w * float2(0.5, -0.5) + 0.5;
+	float visibility = 0.0;
+	[unroll] for (uint i = 0; i < SunGlareOcclusionSampleCount; ++i)
+	{
+		float2 sampleUV = sunUV + Random::PoissonSampleOffsets16[i] * SunGlareOcclusionRadius;
+		if (any(sampleUV <= 0.0) || any(sampleUV >= 1.0))
+			visibility += 1.0;
+		else
+			visibility += SharedData::GetDepth(sampleUV, eyeIndex) >= 1.0;
+	}
+	return smoothstep(0.0, 1.0, visibility / SunGlareOcclusionSampleCount);
+}
+#	endif
 
 VS_OUTPUT main(VS_INPUT input)
 {
@@ -176,10 +207,19 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.SkyBlendColor2 = float4(BlendColor[2].xyz * VParams, 0);
 #	endif      // OCCLUSION MOONMASK HORIZFADE
 
+#	ifdef REVERSE_Z
+	float4 skyPosition = mul(WorldViewProj[eyeIndex], inputPosition);
+	vsout.Position = float4(skyPosition.xy, FrameBuffer::FarPlaneClipZ(skyPosition.w), skyPosition.w);
+#	else
 	vsout.Position = mul(WorldViewProj[eyeIndex], inputPosition).xyww;
+#	endif
 	vsout.WorldPosition = mul(World[eyeIndex], inputPosition);
 	vsout.FogPosition = vsout.WorldPosition.xyz - EyePosition[eyeIndex].xyz;
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousInputPosition);
+
+#	if defined(DITHER) && defined(TEX)
+	vsout.SunGlareVisibility = GetSunGlareVisibility(eyeIndex);
+#	endif
 
 #	ifdef VR
 	vsout.EyeIndex = eyeIndex;
@@ -205,6 +245,8 @@ struct PS_OUTPUT
 };
 
 #ifdef PSHADER
+static const float SunOcclusionDepthRatio = 0.99;
+
 SamplerState SampBaseSampler : register(s0);
 SamplerState SampBlendSampler : register(s1);
 SamplerState SampNoiseGradSampler : register(s2);
@@ -397,7 +439,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 sunGlareColor = ComposeSkyColor(skyVertColor, baseColor.xyz, skyScale, composeAuthoredSky);
 	// Dither/noise term is the legacy sky path contribution for gradient smoothing.
 	psout.Color.xyz = ((sunGlareColor * skyBrightnessMultiplier) + (ENABLE_LL ? 0.0 : noiseGrad)) * SharedData::csUtilitySettings.sunGlareIntensity;
-	psout.Color.w = baseColor.w * input.Color.w;
+	psout.Color.w = baseColor.w * input.Color.w * input.SunGlareVisibility;
 #			else
 	float3 skyGradientColor = input.Color.xyz;
 
@@ -508,14 +550,22 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// Keep sun behind scene depth to prevent halo leaks through geometry.
 	float depth = TexDepthSampler.Load(int3(input.Position.xy, 0));
+#		ifdef REVERSE_Z
+	if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * SunOcclusionDepthRatio)
+#		else
 	if (depth < input.Position.z)
+#		endif
 		psout.Color.w = 0;
 
 #	elif !defined(DITHER) || !defined(TEX)
 	// Even without cloud shadows enabled, sun disc should be occluded by scene depth (clouds, terrain, etc.)
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
 		float depth = TexDepthSampler.Load(int3(input.Position.xy, 0));
+#		ifdef REVERSE_Z
+		if (depth > 0.0 && depth < 1.0 && SharedData::GetScreenDepth(depth) < SharedData::GetScreenDepth(input.Position.z) * SunOcclusionDepthRatio)
+#		else
 		if (depth < input.Position.z)
+#		endif
 			psout.Color.w = 0;
 	}
 #	endif

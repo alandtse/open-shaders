@@ -2,10 +2,12 @@
 
 #include "Tuning.h"
 #include "Utils/StringUtils.h"
+#include "Utils/Subrect.h"
 
 #include <Windows.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <d3d11.h>
 #include <d3d12.h>
 #include <filesystem>
@@ -27,6 +29,10 @@ namespace NR
 	inline constexpr uint32_t kRequiredRuntimeMajor = 310;
 	/** @brief Minor version of the nvngx_dlssnr.dll builds this pass accepts. */
 	inline constexpr uint32_t kRequiredRuntimeMinor = 8;
+	/** @brief Name of the runtime file, resolved inside Streamline's plugin directory. */
+	inline constexpr const char* kRuntimeFileName = "nvngx_dlssnr.dll";
+	/** @brief Leading digest characters echoed back when a runtime build is refused. */
+	inline constexpr size_t kRuntimeDigestPrefix = 16;
 
 	/**
 	 * @brief Marks process teardown. Declare it as the LAST member of the object that owns the
@@ -65,6 +71,70 @@ namespace NR
 		return false;
 	}
 
+	/** @brief Whether the runtime on disk can be loaded, and why not when it cannot. */
+	struct RuntimeAvailability
+	{
+		enum class State : uint8_t
+		{
+			kReady,               ///< The validated 310.8.x runtime is on disk.
+			kMissing,             ///< No runtime file in the plugin directory.
+			kUnsupportedVersion,  ///< Present, but not a 310.8.x build.
+			kUnvalidatedBuild     ///< Present and 310.8.x, but not one of the pinned SHA-256 builds.
+		};
+
+		State state = State::kMissing;
+		/** @brief File version, empty when the file is missing or carries no version information. */
+		std::string version;
+		/** @brief Plain-language reason it cannot be used; empty when it is ready. */
+		std::string reason;
+
+		/** @brief True when the runtime is the validated build the pass accepts. */
+		[[nodiscard]] bool Ready() const { return state == State::kReady; }
+
+		/**
+		 * @brief True when the pass may load this runtime: the validated build, or in developer mode
+		 *        one it would refuse. A missing file can never load, and the pinned digests guard the
+		 *        output's channel order, so a forced build is loaded unverified rather than validated.
+		 */
+		[[nodiscard]] bool AllowsLoad(bool developerMode) const
+		{
+			return Ready() || (developerMode && state != State::kMissing);
+		}
+	};
+
+	/**
+	 * @brief Verdict for the runtime from facts already read off the file.
+	 *        Runtime::Initialize refuses exactly these, so the panel's verdict and the load agree;
+	 *        a divergence would offer an Enable that fails on the next world frame.
+	 * @param present True when the runtime file exists.
+	 * @param version File version, or nullopt when it carries none.
+	 * @param digest SHA-256 of the file, empty when it could not be computed.
+	 * @param directory Directory the file was read from, named in the reasons.
+	 */
+	template <class V>
+	RuntimeAvailability ClassifyRuntime(bool present, const std::optional<V>& version, std::string_view digest, std::string_view directory)
+	{
+		if (!present)
+			return { RuntimeAvailability::State::kMissing, {}, std::format("{} not found in {}", kRuntimeFileName, directory) };
+		const auto rejected = UnsupportedRuntimeReason(version, directory);
+		if (!rejected.empty())
+			return { RuntimeAvailability::State::kUnsupportedVersion, version ? version->string(".") : std::string{}, rejected };
+		if (!IsValidatedRuntimeHash(digest)) {
+			return { RuntimeAvailability::State::kUnvalidatedBuild, version->string("."),
+				std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
+					digest.empty() ? std::string_view{ "unavailable" } : digest.substr(0, kRuntimeDigestPrefix),
+					kRequiredRuntimeMajor, kRequiredRuntimeMinor) };
+		}
+		return { RuntimeAvailability::State::kReady, version->string("."), {} };
+	}
+
+	/**
+	 * @brief Verdict for the runtime in a plugin directory.
+	 *        SHA-256 of the 165 MB runtime costs about a fifth of a second, so an unchanged file
+	 *        answers from the last verdict instead of hashing again on every settings frame.
+	 */
+	RuntimeAvailability InspectRuntime(const std::filesystem::path& directory);
+
 	/** @brief True when an image path sits under <systemDirectory>\DriverStore\, i.e. NVIDIA's own core. */
 	inline bool IsUnderDriverStore(std::wstring_view image, std::wstring_view systemDirectory)
 	{
@@ -96,10 +166,22 @@ namespace NR
 		uint32_t baseX = 0, baseY = 0, width = 0, height = 0;
 	};
 
-	/** @brief Independent guide regions and motion conversion to NR input pixels. */
+	/** @brief Maps a pixel crop from the shared region helper onto the runtime bridge's guide rect. */
+	inline GuideRegion ToGuideRegion(const Util::Subrect::PixelRegion& a_region)
+	{
+		return { a_region.x, a_region.y, a_region.w, a_region.h };
+	}
+
+	/**
+	 * @brief Independent guide regions and motion conversion to NR input pixels.
+	 *        Depth, motion and colorOutput must name the same region: cropping the colour alone would
+	 *        leave NGX scaling full-size guides into it.
+	 */
 	struct GuideParameters
 	{
 		GuideRegion depth, motion;
+		/** @brief Color and Output crop, which always match; zero-sized means the whole frame. */
+		GuideRegion colorOutput;
 		float motionScaleX = 1.0f, motionScaleY = 1.0f;
 	};
 
@@ -121,8 +203,12 @@ namespace NR
 		~Runtime();
 		Runtime(const Runtime&) = delete;
 		Runtime& operator=(const Runtime&) = delete;
-		/** @brief Loads the supported NR runtime and resolves its function table once. */
-		void Initialize(ID3D12Device* device, const std::filesystem::path& directory);
+		/**
+		 * @brief Loads the NR runtime and resolves its function table once.
+		 * @param developerMode True to load a build the pass would otherwise refuse, which leaves the
+		 *        runtime's output unverified; see RuntimeAvailability::AllowsLoad.
+		 */
+		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */

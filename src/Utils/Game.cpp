@@ -580,6 +580,11 @@ namespace Util
 	{
 		WorldToCell(RE::NiPoint2(worldPos.x, worldPos.y), x, y);
 	}
+	std::uintptr_t MainUpdateCallSite()
+	{
+		const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
+		return REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE);
+	}
 }  // namespace Util
 
 namespace Util::EnvironmentControls

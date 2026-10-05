@@ -1,3 +1,4 @@
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
@@ -21,7 +22,7 @@ cbuffer BorderCB : register(b1)
 	float2 uv = (DTid.xy + 0.5f) / dimensions;
 	uint2 depthDimensions;
 	DepthTexture.GetDimensions(depthDimensions.x, depthDimensions.y);
-	float depth = DepthTexture[uint2(uv * depthDimensions)];
+	float depth = FrameBuffer::ToStandardDepth(DepthTexture[uint2(uv * depthDimensions)]);
 	float3 borderColor = BorderColor.xyz;
 	float depthThreshold = BorderColor.w;
 	if (depth > depthThreshold || depthThreshold == 0.0f) {

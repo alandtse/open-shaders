@@ -24,6 +24,24 @@ toggle NR off/on, or clear the shader cache to retry on the next rendered world
 frame. Resource setup also permits a retry. Failed GPU work is retired before
 releasing the failed runtime. There is no per-frame automatic retry.
 
+The Enable switch is disabled while the runtime on disk is one the pass would
+refuse, and its tooltip names the reason and the fix, so a missing file or a
+build outside the validated set is never offered only to latch a failure. The
+verdict is re-read when the file changes, so installing a runtime mid-session
+unblocks the switch without a restart; an already-enabled feature is never locked
+out. The same verdict is drawn under the Streamline DLL table in Backend
+Diagnostics, next to the version that table already lists, and DevBench's
+`neuralRenderingStatus` reports it as `runtimeAvailability`, `runtimeVersion`,
+`runtimeDetail` and `runtimeLoadable`.
+
+Developer mode loads a build the pass would otherwise refuse, so a runtime under
+test can be evaluated before it is pinned. It changes nothing about what is
+trusted: the version and digest gates still classify the file, the panel shows
+`runtime_developer_load` wherever the refusal would be explained, `Runtime::Initialize`
+logs the refusal it loaded through, and `RuntimeAvailability::AllowsLoad` is the
+one place the exception lives. A missing file is never loadable, and an unverified
+build's output is not evidence that a build is correct, only that it ran.
+
 The controls persist under `Upscaling.neuralRenderingTuning`:
 
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
@@ -59,6 +77,169 @@ Both VR and SE/AE use this hook. In VR there are two persistent Feature 18
 instances; in flatrim only eye zero is evaluated. Color and depth/motion guides
 use the current render-eye dimensions. Changing dimensions, format, eye count,
 or explicitly recreating resources recreates the NR instances.
+
+### Tracked-actor crop
+
+**Limit to Tracked Actor** (`Upscaling.neuralRenderingTuning.regionOfInterest`,
+default off) restricts evaluation to a crop around the most prominent actor the
+camera can see and leaves the rest of the frame at pre-NR content. It is not an
+NGX parameter: it sets the Color/Output subrects and gates the composite mask in
+`ColorTransferCS.hlsl`, so the periphery never samples the undefined region
+outside the evaluated subrect.
+
+The main thread scores every loaded actor within `kMaxActorDistance` by its
+on-screen coverage, falling off with distance from the frame centre by a
+Gaussian (`kCentralitySigma`), and adds a sticky bonus (`kIncumbentScoreBonus`)
+to the actor the crop already follows, so two similarly sized actors do not
+alternate and reset NR's history. A candidate covering less than
+`kMinVisibleAreaFraction` of an eye is dropped, and a candidate no eye sees is
+not a candidate at all. The player is a candidate only in third person on
+non-VR runtimes; in first person and in VR it sits at the camera, and a crop
+around it would be the near plane. The candidates are sorted by score and projected per eye
+in that order, so the line-of-sight rays only run on the best few; the winner's
+per-eye pixel crop goes through the stabiliser before publication. The crop
+maths, the stabiliser and the reset rules are shared in `Util::Region`
+(`src/Utils/Region.h`); this actor source's own values (tracking distance,
+minimum visible fraction, centre falloff, incumbent bonus, padding, stabiliser
+thresholds, reset policy and history tolerance) are named constants in
+`src/Features/Upscaling/NeuralRendering/ActorRegion.h`. A second region source,
+such as a gaze-driven one, adds a sibling namespace with its own
+values rather than a new mechanism. With the toggle off, or with no actor
+tracked, the crop is the whole frame and NR evaluates exactly as it does
+without it.
+
+The crop controls below only act through a tracked crop, so they follow that
+toggle: **Show Region Overlay**, **Crop Fit** and **Track Multiple Characters**
+are greyed out while it is off, and `NR::Tuning::Sanitize()` clears all three
+(`regionFit` back to Padded) whenever `regionOfInterest` is off, so a value
+loaded from a config file cannot read as active while the pass ignores it.
+
+The bound the crop projects is the actor's authored local-space box
+(`GetBoundMin`/`GetBoundMax`) carried into world space by its own root transform,
+not the engine's world-bound sphere: a sphere's cube is about its radius on every
+side whatever the actor's shape, so a standing humanoid got a box as wide as it
+is tall. An unusable authored box (a non-finite component, or an inverted axis)
+falls back to the sphere-cube.
+
+That box is the rest pose, so a swung limb or a ragdoll leaves it. For the actors
+that reach the crop (not for the per-frame ranking of every actor) the bound also
+includes the box around the skeleton's joint positions, grown by `kJointMargin` for
+limb thickness, so the crop follows the pose. A dead or ragdolled actor keeps an upright
+root while its bones lie flat, so its bound is the joint box alone. Camera nodes and any node further than
+the body's own reach from its rest-pose box are ignored, and the walk visits at most
+512 nodes. `Util::GetActorBoundPoints` in `src/Utils/ActorUtils.h` builds the points
+and `Util::IsActorVisibleFromEye` does the line-of-sight test, so the engine access
+lives in one utility and the NR code only projects points.
+
+**Show Region Overlay** (`Upscaling.neuralRenderingTuning.regionOverlay`,
+default off) draws the crop for debugging: a green outline in the game frame,
+through the composite kernel of `ColorTransferCS.hlsl`, and the same per-eye
+rectangles over an NR-resolution preview at the bottom of the Neural Rendering
+tab. Inside the green outline it draws the tracked actor's own projected box as
+a second, thinner yellow outline, so the margin the crop adds around the
+character is visible; that box is the raw pick and is not stabilised, so a box
+that flaps is shown flapping. It is meaningful only with **Limit to Tracked
+Actor** on; it draws nothing while no actor is tracked, and an outline along the
+frame edge when a tracked actor's crop fills the whole frame. The per-eye crop is
+also readable without the overlay from `openshaders.feature diagnostics`
+(`neuralRegionActive` and `neuralRegion`), which reports each eye's rect in
+pixels.
+
+In developer mode only, a **Crop Fit** control selects how the crop is fit to the
+projected bound: **Padded** is the normal padded crop, and **Tight** evaluates the
+grid-aligned bounds alone with no margin, for checking what the crop covers on its
+own. Both keep the 64 px alignment and the stabiliser, since NGX must not be handed
+an arbitrary subrect.
+
+Also in developer mode, **Track Multiple Characters** (`regionGroup`) grows the crop
+to cover the next most prominent actors, in score order, while the union stays under a
+share of the eye (`GroupAreaCap`: `kMaxGroupAreaFraction` by default, or the
+calibrated cost knee once a calibration has run), with at most `kMaxGroupActors`
+members and `kMaxGroupCandidatesTested` line-of-sight tests per frame. An actor that
+one eye cannot see does not stop the other eye's crop from growing. The yellow box is
+then the union of the members' boxes, and the tracked actor that carries the
+incumbent bonus stays the highest-scoring one.
+
+**Calibrate Crop Cost** (developer mode; DevBench action `calibrateNeuralCrop`)
+forces centred crops of shrinking area (`CropCalibration::kFractions`, the full
+frame first) for about half a minute, times `Upscaling::NREvaluate` from the
+profiler over four passes, and reports the fastest low-percentile GPU time per step
+(NR's timing flips between a fast and a slow state, so a median would be arbitrary),
+`stabilityRatio` between passes, the cheapest step and the
+largest crop within `kKneeTolerance` of it under `neuralCalibration` in the
+diagnostics. It refuses to run with frame generation on, since frame generation
+paces the frame and skews the GPU zones.
+
+Inside the crop the neural result eases in with a smoothstep ramp, so the different
+shading NR gives the crop does not end at a hard seam. The band on each side spans the
+margin between the tracked actor's box and the crop edge, kept between 16 and 96 px
+(`RegionFeather` in `package/Shaders/Common/RegionFeather.hlsli`), so the weight reaches
+1 by the actor's outline and the whole margin is used for the transition. With no actor
+box, as in the calibration sweep, the band is 32 px, and an edge on the frame edge has no
+band. The crop's minimum padding (`kPadding`) is what leaves that margin.
+
+Both drawings come from reusable helpers: `RegionOverlay::OutlineOnly` in
+`package/Shaders/Common/RegionOverlay.hlsli` composites a region outline over a
+pass's own colour without changing anything else in the frame, and
+`Util::RegionOverlay::Draw` (`src/Utils/RegionOverlay.h`) outlines pixel rects over
+an already-drawn ImGui image, so another feature can show a rectangular region
+with neither a new HLSL helper nor a new rect type.
+
+The published crop is always stabilised, which is what keeps a crop that jitters
+by a grid step every frame from resetting NR's temporal history continuously.
+`Util::Region::RegionStabilizer` holds the crop for `kStabilizerPolicy.holdFrames`
+after the candidate goes inactive, keeps it unchanged while the candidate stays
+inside it, grows it only by union, and shrinks it only once a whole
+`kStabilizerPolicy.shrinkWindowFrames` window's envelope is at most
+`kStabilizerPolicy.shrinkAreaFraction` of the held area. A crop change larger
+than one alignment step, or an appearance or disappearance, adds `RegionChanged`
+to the frame's reset reasons; the camera, frame-gap and resource resets are
+unaffected.
+
+`openshaders.feature diagnostics` reports the crop and its cost:
+`neuralRegionActive`, `neuralRegion` (one `{x,y,width,height}` rect per eye, in
+the pixels of `neuralRenderSize`'s `{width,height,eyes}`), `neuralActorBounds`
+(the tracked actor's own projected box, unpadded and unstabilised, in the same
+per-eye shape), `neuralRegionSource` (which sources chose the crop:
+`none`, `actor`, `fovea` or `both`), `neuralCalibration` (`state`, `fractions`, `stepMs`, `stabilityRatio`, `floorMs` and
+`kneeFraction` of the last crop cost sweep), `neuralFrames`
+(frames NR has applied), `neuralResets` (a cumulative count per reset reason,
+keyed `request`, `first`, `gap`, `position`, `direction`, `projection`,
+`creation`, `region`) and `neuralResetDrainMs` (cumulative CPU time blocked in
+the history-reset drain). The counters are monotonic since NR started, so a
+caller differences two reads: a `region` count that keeps rising against a
+rising `neuralFrames` means the crop keeps moving, and a large
+`neuralResetDrainMs` per frame means those resets are costing real CPU time.
+
+### Fovea crop
+
+**Follow Foveation** (`Upscaling.neuralRenderingTuning.regionFollowFoveation`,
+default on) is the second region source. On VR, while FoveatedRender is active
+(DLSS or FSR selected and the region narrower than Full Eye), NR evaluates only
+the foveated region, so the periphery keeps its pre-NR content, which the
+foveated route replaces with its cheap stretched view anyway. It does not act
+through the tracked actor: the foveation region alone is a valid crop, so the
+control stays set and usable with **Limit to Tracked Actor** off, and
+`NR::Tuning::Sanitize()` does not clear it. With a tracked crop the two are
+intersected per eye (`Util::Region::ClipRegion`), so the clip never leaves NR
+evaluating outside the region the upscaler sharpens.
+
+The per-eye UVs come from `FoveatedRender::GetClipUV`, which reports nothing
+while foveation is inactive or the user is dragging the region; skipping the
+clip for those frames costs at most the resets of leaving and re-entering it,
+not one per drag frame. `NR::FoveaClip::BuildClip` (`NeuralRendering/
+FoveaClip.h`) turns the two UVs into a per-eye pixel clip, padded by the
+shader's 32 px default feather band and aligned to the usual 64 px grid, so the
+composite's fade to pre-NR content lands in the stretched periphery instead of
+the sharp region; it is inactive unless both eyes resolve.
+`NR::FoveaClip::ClipSubject` narrows the yellow actor box the same way, dropping
+an eye whose box falls outside the clip, so the overlay and the feather subject
+never extend past the evaluated crop and an out-of-region actor leaves the
+feather band at its 32 px default. The clip is skipped while the crop cost
+calibration forces its own centred crops and in the main and loading menus, the
+same gate the foveated route uses. `neuralRegion` and `neuralActorBounds`
+describe the tracked-actor source alone; `neuralRegionSource` reports whether
+the fovea clip also narrowed the crop the last frame evaluated.
 
 ## Resource and temporal contract
 
@@ -205,7 +386,9 @@ Because the channel order belongs to the build and not the version number,
 310.8.0.0 test build, SHA-256
 `E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E`, whose
 in-game SE/VR captures showed no channel swap. Any other 310.8.x build is refused
-with a latched failure instead of being rendered through an unverified channel map.
+with a latched failure instead of being rendered through an unverified channel map,
+unless developer mode forces it through for evaluation as described under
+[Enable](#enable).
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,
@@ -334,7 +517,7 @@ change, NR jitter and frame time per eye. The cut thresholds are distance >256,
 direction dot <0.5 and projection change >0.1. Reset bits are 1=requested,
 2=first frame, 4=frame gap, 8=camera position, 16=camera direction, 32=projection,
 and 64=feature creation. Periodic summaries also use `[NRDiag/v2]` in
-`CommunityShaders.log`.
+`OpenShaders.log`.
 
 The overlay shows the last 120 engine frames, including missing hooks, and is
 controlled by **Show NR Diagnostics** and the global overlay setting.

@@ -45,7 +45,7 @@ namespace FrameAnnotations
 	{
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
-			if (globals::state->frameAnnotations) {
+			if (globals::state->drawAnnotationsActive) {
 				uint32_t descriptor = 0;
 				if (globals::game::currentPixelShader && *globals::game::currentPixelShader) {
 					descriptor = (*globals::game::currentPixelShader)->id;
@@ -78,7 +78,7 @@ namespace FrameAnnotations
 		{
 			func(shader, pass, renderFlags);
 
-			if (globals::state->frameAnnotations) {
+			if (globals::state->drawAnnotationsActive) {
 				globals::state->EndDrawEvent();
 			}
 		}
@@ -332,6 +332,7 @@ namespace FrameAnnotations
 	{
 		static void thunk(void* a1, bool a2, bool a3)
 		{
+			globals::state->RefreshDrawAnnotations();
 			globals::state->BeginPerfEvent("Player View");
 
 			func(a1, a2, a3);
