@@ -88,6 +88,20 @@ namespace NeuralRenderingCategory
 	}
 
 	/**
+	 * @brief Colour the material map's Strength view gives a strength: purple at 0, then blue, green and
+	 *        yellow, to red at 1, so full strength is not the same colour as an absent lane.
+	 * @param strength A strength; a value outside 0 to 1 is clamped.
+	 * @return The ramp colour.
+	 */
+	float3 StrengthColor(float strength)
+	{
+		static const float3 kStops[5] = { float3(0.19, 0.07, 0.23), float3(0.25, 0.55, 0.99), float3(0.21, 0.91, 0.51), float3(0.96, 0.81, 0.20), float3(0.48, 0.02, 0.01) };
+		const float scaled = saturate(strength) * 4.0;
+		const uint index = (uint)min(floor(scaled), 3.0);
+		return lerp(kStops[index], kStops[index + 1], scaled - float(index));
+	}
+
+	/**
 	 * @brief Fixed debug colour for a category, used by the Neural Rendering category visualisation.
 	 * @param category A decoded category id; an unknown id renders as None.
 	 * @return The debug colour.

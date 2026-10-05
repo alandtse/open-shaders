@@ -55,4 +55,17 @@ namespace NR::MaterialMap
 		{ 0.0f, 1.0f, 0.0f },
 		{ 0.0f, 1.0f, 1.0f },
 	};
+
+	/**
+	 * @brief Colour ramp the Strength view reads, from strength 0 to 1 in even steps, for the settings
+	 *        panel's legend bar. StrengthColor in package/Shaders/Common/NeuralRenderingCategory.hlsli
+	 *        draws the same stops and the two must agree.
+	 */
+	inline constexpr Color kStrengthRamp[5]{
+		{ 0.19f, 0.07f, 0.23f },
+		{ 0.25f, 0.55f, 0.99f },
+		{ 0.21f, 0.91f, 0.51f },
+		{ 0.96f, 0.81f, 0.20f },
+		{ 0.48f, 0.02f, 0.01f },
+	};
 }

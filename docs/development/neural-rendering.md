@@ -358,10 +358,11 @@ image quality, or temporal stability in this D3D12 path.
 
 ## Applying Neural Rendering by material
 
-The **Apply Neural Rendering To** combo offers named scopes: **Everything** (the
-by-material path off), **Skin, hair and eyes** and **Skin, hair, eyes and foliage**.
-Strengths that match none of them show as **Custom**, and the **Strength by Material**
-node edits them. The by-material path is backed by
+**Apply Neural Rendering To** is one checkbox per material (Skin, Hair, Eyes, Foliage,
+Landscape and Everything Else) with Select All, Select None and Characters Only quick
+buttons. A checked box is strength 1 and an unchecked one is 0; a partial strength set in
+**Fine-Tune Strengths** counts as checked. All materials at full strength, the default, is
+the unfiltered frame and leaves the by-material path off. The by-material path is backed by
 `neuralRenderingTuning.materialStrength`, the six strengths (`strengthSkin`,
 `strengthHair`, `strengthEyes`, `strengthFoliage`, `strengthLandscape` and
 `strengthOther`, each 0 to 1 where 1 applies NR fully and 0 bypasses it) and `strengthEdgeSoftness` (0 to 4 pixels), binds
@@ -424,12 +425,13 @@ category that does not exist.
 `materialMapMode` picks what a drawn pixel shows. **Category colours** blends the pixel's
 fixed `DebugColor` over the composited image at 0.65 opacity; these are the colours the
 developer **Debug view** combo's Category entry draws, and the panel shows them as legend
-swatches beside the filter. **Strength** replaces the pixel with a grayscale ramp of the
-strength the by-material path gives it (0 black, 1 white), so a material
-the classification mislabels reads as the wrong strength. The strength view samples the
+swatches beside the filter. **Strength** replaces the pixel with a colour ramp of the
+strength the by-material path gives it (purple at 0, then blue, green and yellow, to red
+at 1, with a legend bar in the panel), so a material the classification mislabels reads as
+the wrong strength and full strength is not mistaken for an absent lane. The strength view samples the
 pixel's own label and skips the `strengthEdgeSoftness` box average, which approximates the
-alpha `CategoryAlphaCS.hlsl` builds; with the scope on **Everything** nothing
-is protected, so it shows 1.0 everywhere.
+alpha `CategoryAlphaCS.hlsl` builds; with every material selected nothing is protected,
+so it shows full strength (red) everywhere.
 
 DevBench sets the three keys under `settings.neuralRenderingTuning` and reads
 `showMaterialMap` back from `neuralRenderingStatus`.

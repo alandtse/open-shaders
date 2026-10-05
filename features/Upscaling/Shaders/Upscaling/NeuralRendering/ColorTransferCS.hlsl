@@ -421,7 +421,7 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		const uint category = NeuralRenderingCategory::Decode(Masks2Texture[int2(id.xy) + int2(int(EyeOffsetX), 0)].y);
 		if (NeuralRenderingCategory::CategoryInFilter(category, MaterialMapFilter)) {
 			if (MaterialMapMode == NR::kMaterialMapStrength)
-				result = MaterialStrengthAt(category).xxx;
+				result = NeuralRenderingCategory::StrengthColor(MaterialStrengthAt(category));
 			else
 				result = lerp(result, NeuralRenderingCategory::DebugColor(category), kMaterialMapOpacity);
 		}

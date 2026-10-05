@@ -54,14 +54,15 @@ namespace NR
 		bool regionFollowFoveation = true;
 		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
-		 *        strength decides how strongly NR shows there. Off by default; it needs the deferred
-		 *        pass's material lane, and without it the whole frame is processed. It changes where
-		 *        the effect appears, not how much GPU time it costs.
+		 *        strength decides how strongly NR shows there. On exactly when some strength is below
+		 *        full (SyncMaterialSwitch keeps it so); it needs the deferred pass's material lane, and
+		 *        without it the whole frame is processed. It changes where the effect appears, not how
+		 *        much GPU time it costs.
 		 */
 		bool materialStrength = false;
 		/** @brief NR strength per material, 1 applies it fully and 0 bypasses it there. Unlabelled pixels use strengthOther. */
 		float strengthSkin = 1.0f, strengthHair = 1.0f, strengthEyes = 1.0f;
-		float strengthFoliage = 0.0f, strengthLandscape = 0.0f, strengthOther = 0.0f;
+		float strengthFoliage = 1.0f, strengthLandscape = 1.0f, strengthOther = 1.0f;
 		/** @brief Box-filter radius, in pixels, that blends each material's strength into its neighbours. */
 		uint32_t strengthEdgeSoftness = 2;
 		/**
@@ -81,27 +82,45 @@ namespace NR
 			return MaterialStrength::Sanitize({ { strengthOther, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape }, strengthEdgeSoftness });
 		}
 
-		/** @brief The named material scope the switch and strengths amount to, or kCustom when none matches. */
-		[[nodiscard]] MaterialStrength::Scope MaterialScope() const
+		/** @brief Whether the material with this NeuralRenderingCategory id has any strength, the state its checkbox shows. */
+		[[nodiscard]] bool MaterialSelected(uint32_t category) const
 		{
-			return MaterialStrength::MatchScope(materialStrength, MaterialStrengths().strength);
+			return category < MaterialStrength::kCount && MaterialStrengths().strength[category] > MaterialStrength::kMinStrength;
 		}
 
-		/** @brief Applies a named scope: kEverything turns by-material off and the others set the switch and strengths. */
-		void SetMaterialScope(MaterialStrength::Scope scope)
+		/** @brief Selects or clears one material (strength 1 or 0), then keeps the by-material switch in step. */
+		void SetMaterialSelected(uint32_t category, bool selected)
 		{
-			if (scope == MaterialStrength::Scope::kCustom)
+			if (category >= MaterialStrength::kCount)
 				return;
-			materialStrength = scope != MaterialStrength::Scope::kEverything;
-			if (!materialStrength)
-				return;
-			const auto strengths = MaterialStrength::ScopeStrengths(scope);
-			strengthOther = strengths[MaterialStrength::kNone];
-			strengthSkin = strengths[MaterialStrength::kSkin];
-			strengthHair = strengths[MaterialStrength::kHair];
-			strengthEyes = strengths[MaterialStrength::kEyes];
-			strengthFoliage = strengths[MaterialStrength::kFoliage];
-			strengthLandscape = strengths[MaterialStrength::kLandscape];
+			StrengthField(category) = selected ? MaterialStrength::kMaxStrength : MaterialStrength::kMinStrength;
+			SyncMaterialSwitch();
+		}
+
+		/** @brief Turns by-material on exactly when some material is below full strength, so all at full is the unfiltered frame. */
+		void SyncMaterialSwitch()
+		{
+			const auto values = MaterialStrengths().strength;
+			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
+		}
+
+		/** @brief The strength field for a NeuralRenderingCategory id; an id outside the range reads as Everything Else. */
+		float& StrengthField(uint32_t category)
+		{
+			switch (category) {
+			case MaterialStrength::kSkin:
+				return strengthSkin;
+			case MaterialStrength::kHair:
+				return strengthHair;
+			case MaterialStrength::kEyes:
+				return strengthEyes;
+			case MaterialStrength::kFoliage:
+				return strengthFoliage;
+			case MaterialStrength::kLandscape:
+				return strengthLandscape;
+			default:
+				return strengthOther;
+			}
 		}
 
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */

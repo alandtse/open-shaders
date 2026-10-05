@@ -79,3 +79,14 @@
 	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Foliage) == float3(0.0, 1.0, 0.0)));
 	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Landscape) == float3(0.0, 1.0, 1.0)));
 }
+
+	/// @tags neural-rendering
+	/// StrengthColor runs from the first ramp stop at 0 to the last at 1 and clamps outside that range
+	[numthreads(1, 1, 1)] void TestStrengthColorSpansTheRamp()
+{
+	ASSERT(IsTrue, all(abs(NeuralRenderingCategory::StrengthColor(0.0) - float3(0.19, 0.07, 0.23)) < 1e-5));
+	ASSERT(IsTrue, all(abs(NeuralRenderingCategory::StrengthColor(0.5) - float3(0.21, 0.91, 0.51)) < 1e-5));
+	ASSERT(IsTrue, all(abs(NeuralRenderingCategory::StrengthColor(1.0) - float3(0.48, 0.02, 0.01)) < 1e-5));
+	ASSERT(IsTrue, all(abs(NeuralRenderingCategory::StrengthColor(-1.0) - float3(0.19, 0.07, 0.23)) < 1e-5));
+	ASSERT(IsTrue, all(abs(NeuralRenderingCategory::StrengthColor(2.0) - float3(0.48, 0.02, 0.01)) < 1e-5));
+}

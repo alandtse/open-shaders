@@ -36,12 +36,8 @@ TEST_CASE("MaterialStrength Sanitize bounds every strength and the softness radi
 TEST_CASE("MaterialStrengths places the tuning fields in category id order with the product defaults", "[nr]")
 {
 	const auto defaultValues = NR::Tuning{}.MaterialStrengths();
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kNone] == 0.0f);
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kSkin] == 1.0f);
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kHair] == 1.0f);
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kEyes] == 1.0f);
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kFoliage] == 0.0f);
-	REQUIRE(defaultValues.strength[NR::MaterialStrength::kLandscape] == 0.0f);
+	for (const auto strength : defaultValues.strength)
+		REQUIRE(strength == 1.0f);
 	REQUIRE(defaultValues.edgeSoftness == 2u);
 
 	NR::Tuning tuning;
@@ -150,29 +146,63 @@ TEST_CASE("MaterialMap legend colours match the shader's DebugColor", "[nr]")
 	}
 }
 
-TEST_CASE("Material scopes round trip through the tuning", "[nr]")
+TEST_CASE("Selecting materials sets their strength and keeps the by-material switch in step", "[nr]")
 {
-	using Scope = NR::MaterialStrength::Scope;
 	NR::Tuning tuning;
-	REQUIRE(tuning.MaterialScope() == Scope::kEverything);
-	tuning.SetMaterialScope(Scope::kSkinHairEyes);
-	REQUIRE(tuning.materialStrength);
-	REQUIRE(tuning.MaterialScope() == Scope::kSkinHairEyes);
-	tuning.SetMaterialScope(Scope::kSkinHairEyesFoliage);
-	REQUIRE(tuning.strengthFoliage == 1.0f);
-	REQUIRE(tuning.MaterialScope() == Scope::kSkinHairEyesFoliage);
-	tuning.strengthLandscape = 0.5f;
-	REQUIRE(tuning.MaterialScope() == Scope::kCustom);
-	tuning.SetMaterialScope(Scope::kCustom);
-	REQUIRE(tuning.strengthLandscape == 0.5f);
-	tuning.SetMaterialScope(Scope::kEverything);
 	REQUIRE_FALSE(tuning.materialStrength);
-	REQUIRE(tuning.MaterialScope() == Scope::kEverything);
+	for (uint32_t category = 0; category < NR::MaterialStrength::kCount; ++category)
+		REQUIRE(tuning.MaterialSelected(category));
+
+	tuning.SetMaterialSelected(NR::MaterialStrength::kFoliage, false);
+	REQUIRE(tuning.strengthFoliage == 0.0f);
+	REQUIRE_FALSE(tuning.MaterialSelected(NR::MaterialStrength::kFoliage));
+	REQUIRE(tuning.MaterialSelected(NR::MaterialStrength::kSkin));
+	REQUIRE(tuning.materialStrength);
+
+	tuning.SetMaterialSelected(NR::MaterialStrength::kFoliage, true);
+	REQUIRE(tuning.strengthFoliage == 1.0f);
+	REQUIRE_FALSE(tuning.materialStrength);
 }
 
-TEST_CASE("The default tuning keeps the by-material path off and its strengths on the character scope", "[nr]")
+TEST_CASE("A partial strength counts as selected and keeps the by-material switch on", "[nr]")
 {
 	NR::Tuning tuning;
-	tuning.materialStrength = true;
-	REQUIRE(tuning.MaterialScope() == NR::MaterialStrength::Scope::kSkinHairEyes);
+	tuning.strengthHair = 0.4f;
+	tuning.SyncMaterialSwitch();
+	REQUIRE(tuning.MaterialSelected(NR::MaterialStrength::kHair));
+	REQUIRE(tuning.materialStrength);
+
+	tuning.strengthHair = 1.0f;
+	tuning.SyncMaterialSwitch();
+	REQUIRE_FALSE(tuning.materialStrength);
+}
+
+TEST_CASE("Characters Only selects exactly skin, hair and eyes", "[nr]")
+{
+	NR::Tuning tuning;
+	for (uint32_t category = 0; category < NR::MaterialStrength::kCount; ++category)
+		tuning.SetMaterialSelected(category, NR::MaterialStrength::kCharactersOnly[category] > NR::MaterialStrength::kMinStrength);
+	REQUIRE(tuning.materialStrength);
+	REQUIRE(tuning.MaterialStrengths().strength == NR::MaterialStrength::kCharactersOnly);
+}
+
+TEST_CASE("An id outside the category range selects nothing", "[nr]")
+{
+	NR::Tuning tuning;
+	REQUIRE_FALSE(tuning.MaterialSelected(NR::MaterialStrength::kCount));
+	tuning.SetMaterialSelected(NR::MaterialStrength::kCount, false);
+	REQUIRE_FALSE(tuning.materialStrength);
+}
+
+TEST_CASE("MaterialMap strength ramp matches the shader's StrengthColor stops", "[nr]")
+{
+	constexpr float expected[5][3]{
+		{ 0.19f, 0.07f, 0.23f }, { 0.25f, 0.55f, 0.99f }, { 0.21f, 0.91f, 0.51f },
+		{ 0.96f, 0.81f, 0.20f }, { 0.48f, 0.02f, 0.01f }
+	};
+	for (uint32_t i = 0; i < 5; ++i) {
+		REQUIRE(NR::MaterialMap::kStrengthRamp[i].r == expected[i][0]);
+		REQUIRE(NR::MaterialMap::kStrengthRamp[i].g == expected[i][1]);
+		REQUIRE(NR::MaterialMap::kStrengthRamp[i].b == expected[i][2]);
+	}
 }
