@@ -108,7 +108,7 @@ namespace Skylighting
 		shadowVisibility = 1.0;
 #	endif
 
-		if (SharedData::InInterior || SharedData::skylightingSettings.ProbeDataReady == 0)
+		if (SharedData::InInterior || SharedData::skylightingSettings.Enabled == 0 || SharedData::skylightingSettings.ProbeDataReady == 0)
 			return scaledUnitSH;
 
 		const uint3 ARRAY_DIM = GetArrayDims();
@@ -176,7 +176,7 @@ namespace Skylighting
 
 	float GetSkylightingDiffuse(sh2 skylightingSH, float3 positionMS, float3 evalNormal, float vertexAO = 1.0)
 	{
-		if (SharedData::InInterior)
+		if (SharedData::InInterior || SharedData::skylightingSettings.Enabled == 0)
 			return 1.0;
 
 		float3 candidateNormal = float3(evalNormal.xy, max(0.0, evalNormal.z));
@@ -193,7 +193,7 @@ namespace Skylighting
 		const float3 ARRAY_SIZE = GetArraySize();
 		sh2 scaledUnitSH = UNIT_SH / 1e-10;
 
-		if (SharedData::InInterior || SharedData::skylightingSettings.ProbeDataReady == 0)
+		if (SharedData::InInterior || SharedData::skylightingSettings.Enabled == 0 || SharedData::skylightingSettings.ProbeDataReady == 0)
 			return scaledUnitSH;
 
 		float3 positionMSAdjusted = positionMS - SharedData::skylightingSettings.PosOffset.xyz;

@@ -2803,6 +2803,7 @@
     "feature.skylighting.capture_interval": "Occlusion Capture Interval",
     "feature.skylighting.description": "Simulates realistic ambient lighting by calculating sky occlusion and directional lighting, providing more accurate and natural illumination in outdoor environments.",
     "feature.skylighting.diffuse_min_visibility": "Diffuse Min Visibility",
+    "feature.skylighting.enabled": "Enable Skylighting",
     "feature.skylighting.incremental_tooltip": "Updates a smaller depth range while stationary. Lower counts reduce update work but take longer to refresh the whole field. Movement and rebuilds update the full grid.",
     "feature.skylighting.incremental_updates": "Incremental Probe Updates",
     "feature.skylighting.key_feature_1": "Sky occlusion calculation for ambient lighting",
