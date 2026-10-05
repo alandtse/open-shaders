@@ -2264,18 +2264,19 @@ namespace SIE
 			if (dedupeTicket)
 				dedupeTicket->Publish(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
-			const bool storable = shared.origin == SharedCompileSource::None || shared.origin == SharedCompileSource::ActiveCache ||
-			                      shared.origin == SharedCompileSource::PreviousCache;
-			if (storable && contentKey)
-				if (const auto* contentStore = GetContentStore())
-					contentStore->Put(StoreKey(*contentKey), shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
-
 			// Relinquish this task's Pending claim before skipping a stale disk-cache write.
 			if (cache.IsGenerationStale(a_taskGeneration)) {
 				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration);
 				shaderBlob->Release();
 				return nullptr;
 			}
+
+			// After the stale check, so a task that predates a cache clear cannot repopulate the store.
+			const bool storable = shared.origin == SharedCompileSource::None || shared.origin == SharedCompileSource::ActiveCache ||
+			                      shared.origin == SharedCompileSource::PreviousCache;
+			if (storable && contentKey)
+				if (const auto* contentStore = GetContentStore())
+					contentStore->Put(StoreKey(*contentKey), shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize());
 
 			// save shader to disk
 			if (useDiskCache) {

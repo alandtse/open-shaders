@@ -459,6 +459,7 @@ namespace Util
 		if (shaderCache->IsDiskCache()) {
 			shaderCache->DeleteDiskCache();
 		}
+		shaderCache->ClearContentStore();
 	}
 
 	void RequestClearShaderCacheConfirmation(ShaderCacheClearScope a_scope)
