@@ -73,6 +73,18 @@ by the [evaluation contract](https://github.com/bmitch87/DLSS5VKLayer/blob/main/
 UI ranges follow the [Cost Scaler configuration](https://github.com/xenmods/DLSSNR-Cost-Scaler/blob/main/nvngx_dlssnr.ini);
 its strength default of 1.0 does not override existing OS defaults.
 
+### Dialogue-only evaluation
+
+**Only in dialogue** (`Upscaling.neuralRenderingDialogueOnly`, default off) evaluates NR
+only while `RE::DialogueMenu` is open and suspends the pass the rest of the time. A
+suspended pass keeps its resources, its runtime and its NGX features, so the frame renders
+exactly as it does with NR off and the next dialogue frame resumes without a rebuild. The
+first frame after a suspension requests one history reset, so it does not blend history
+from before the dialogue. The crop configuration is untouched: in dialogue the tracked
+actor is normally the speaker, so **Limit to Tracked Actor** keeps following it. The
+suspension shows in the panel as _Waiting for dialogue_ and in DevBench's
+`neuralRenderingStatus` as `state` `kSuspended` with `dialogueOnly` and `dialogueOpen`.
+
 Both VR and SE/AE use this hook. In VR there are two persistent Feature 18
 instances; in flatrim only eye zero is evaluated. Color and depth/motion guides
 use the current render-eye dimensions. Changing dimensions, format, eye count,

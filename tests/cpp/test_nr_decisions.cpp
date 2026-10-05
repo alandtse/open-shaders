@@ -1,6 +1,7 @@
 // Unit tests for the extracted NR decisions: the hook's per-frame action, the
-// failure outcome, history-reset reasons, the runtime/version gates, the shared
-// eye width and the output check. These exercise the production helpers only.
+// failure outcome, history-reset reasons, the dialogue-only gate, the
+// runtime/version gates, the shared eye width and the output check. These
+// exercise the production helpers only.
 
 #include "Features/Upscaling/NeuralRendering/Diagnostics.h"
 #include "Features/Upscaling/NeuralRendering/Lifecycle.h"
@@ -102,6 +103,39 @@ TEST_CASE("DecideFrame initializes on the first world frame and runs after", "[n
 	cold.ready = false;
 	cold.lastFrame = UINT32_MAX;
 	REQUIRE(NR::DecideFrame(cold) == NR::FrameAction::InitializeThenRun);
+}
+
+TEST_CASE("DecideFrame suspends without freeing pass resources while dialogue-only gating holds", "[nr]")
+{
+	auto suspended = RunningFrame(50);
+	suspended.suspended = true;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+
+	// Suspension outranks the world check: the pass stays initialized instead of looking not yet started.
+	suspended.worldRendered = false;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+
+	// Switching the feature off still frees the pass resources, suspension or not.
+	suspended.enabled = false;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::ReleasePassResources);
+}
+
+TEST_CASE("DialogueGate holds the pass only while dialogue-only is on with the menu closed", "[nr]")
+{
+	REQUIRE_FALSE(NR::DialogueGate(false, false));
+	REQUIRE_FALSE(NR::DialogueGate(false, true));
+	REQUIRE_FALSE(NR::DialogueGate(true, true));
+	REQUIRE(NR::DialogueGate(true, false));
+}
+
+TEST_CASE("ResumesFromSuspend flags exactly the first frame after a suspension", "[nr]")
+{
+	bool wasSuspended = false;
+	REQUIRE_FALSE(NR::ResumesFromSuspend(false, wasSuspended));
+	REQUIRE_FALSE(NR::ResumesFromSuspend(true, wasSuspended));
+	REQUIRE_FALSE(NR::ResumesFromSuspend(true, wasSuspended));
+	REQUIRE(NR::ResumesFromSuspend(false, wasSuspended));
+	REQUIRE_FALSE(NR::ResumesFromSuspend(false, wasSuspended));
 }
 
 TEST_CASE("OnFailure tears down only for a removed device", "[nr]")

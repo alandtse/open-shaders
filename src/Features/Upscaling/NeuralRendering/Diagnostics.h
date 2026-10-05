@@ -31,6 +31,7 @@ namespace NR
 			Error,
 			Applied,
 			Bypassed,
+			Suspended,
 			Count
 		};
 		enum ResetReason : uint32_t

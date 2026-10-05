@@ -997,6 +997,11 @@ const char* NeuralRendering::RegionSourceName(RegionSource a_source)
 	}
 }
 
+bool NeuralRendering::DialogueOpen()
+{
+	return globals::game::ui && globals::game::ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
+}
+
 void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
@@ -1245,7 +1250,7 @@ namespace
 	}
 }
 
-void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
+void NeuralRendering::DrawSettings(bool& enabled, bool& dialogueOnly, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
 	const auto availability = GetRuntimeAvailability();
@@ -1265,6 +1270,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Tuning& tuning)
 			ImGui::TextUnformatted(RuntimeFixHint(availability.state));
 		}
 	}
+	ImGui::Checkbox(T(TKEY("dialogue_only"), "Only in dialogue"), &dialogueOnly);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
+			"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
 	if (!availability.Ready()) {
 		if (loadable)
 			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
@@ -1477,12 +1486,17 @@ void NeuralRendering::CaptureAfterUpscaling()
 	diagnostics.FinishCapture(globals::state->frameCount);
 }
 
-void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
+void NeuralRendering::DrawBeforeUpscaling(bool enabled, bool dialogueOnly, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
 {
 	using Outcome = NR::Diagnostics::Outcome;
+	const bool suspended = NR::DialogueGate(dialogueOnly, DialogueOpen());
+	const bool resumed = NR::ResumesFromSuspend(suspended, wasSuspended);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	const auto action = NR::DecideFrame({ enabled, globals::state->worldRenderedThisFrame, impl->failed,
+	const auto action = NR::DecideFrame({ enabled, suspended, globals::state->worldRenderedThisFrame, impl->failed,
 		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
+	// Leaving a suspension must not blend history from before it, and only this transition requests the reset.
+	if (resumed)
+		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
 		diagnostic.outcome = Outcome::Disabled;
 		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
@@ -1509,6 +1523,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning
 			PublishStatus(Status::State::kOff, T(TKEY("status_off"), "Off"));
 		}
 		retryRequested = resetHistory = true;
+		return;
+	}
+	if (action == NR::FrameAction::Suspend) {
+		diagnostic.outcome = Outcome::Suspended;
+		if (publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended) {
+			logger::debug("[NeuralRendering] Suspended: waiting for dialogue");
+			PublishStatus(Status::State::kSuspended, T(TKEY("status_waiting_dialogue"), "Waiting for dialogue"));
+		}
 		return;
 	}
 	auto* state = globals::state;

@@ -146,6 +146,8 @@ namespace NR
 			return "WRITEBACK BYPASSED";
 		case Outcome::Applied:
 			return "COPY QUEUED";
+		case Outcome::Suspended:
+			return "SUSPENDED / DIALOGUE";
 		default:
 			return "UNKNOWN";
 		}
@@ -153,13 +155,13 @@ namespace NR
 
 	char Diagnostics::Code(Outcome outcome)
 	{
-		constexpr char codes[] = "NDWPLEAB";
+		constexpr char codes[] = "NDWPLEABS";
 		return codes[static_cast<size_t>(outcome)];
 	}
 
 	std::string Diagnostics::Legend()
 	{
-		static constexpr std::array<std::pair<Outcome, const char*>, 8> kLabels{ {
+		static constexpr std::array<std::pair<Outcome, const char*>, 9> kLabels{ {
 			{ Outcome::Applied, "copyQueued" },
 			{ Outcome::NoHook, "noHook" },
 			{ Outcome::Disabled, "disabled" },
@@ -168,6 +170,7 @@ namespace NR
 			{ Outcome::FailedLatch, "failureLatch" },
 			{ Outcome::Error, "error" },
 			{ Outcome::Bypassed, "bypassed" },
+			{ Outcome::Suspended, "suspended" },
 		} };
 		std::string legend;
 		for (const auto& [outcome, label] : kLabels) {
@@ -536,9 +539,10 @@ namespace NR
 				"Frame %u: %s", latest.number, Name(latest.outcome));
 			if (latest.outcome == Outcome::FailedLatch || latest.outcome == Outcome::Error)
 				ImGui::TextWrapped("%s", status.c_str());
-			ImGui::Text("Last %zu: applied %u | no hook %u | disabled %u | no world %u | paused %u | failures %u",
+			ImGui::Text("Last %zu: applied %u | no hook %u | disabled %u | no world %u | paused %u | suspended %u | failures %u",
 				snapshotCount, outcomes[size_t(Outcome::Applied)], outcomes[size_t(Outcome::NoHook)], outcomes[size_t(Outcome::Disabled)],
-				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
+				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::Suspended)],
+				outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
 			ImGui::Text("Reset frames %u | recreations %u | duplicate calls %u", resets, recreations, duplicates);
 			ImGui::Text("%ux%u | source/proxy DXGI %u/%u | eyes %u | eval 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.proxyFormat, latest.eyeCount, latest.evaluated, latest.copied);
 			ImGui::Text("Reset L/R 0x%X/0x%X | NGX L/R 0x%X/0x%X", latest.reset[0], latest.reset[1], latest.result[0], latest.result[1]);

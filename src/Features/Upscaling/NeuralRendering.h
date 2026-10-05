@@ -20,10 +20,11 @@ struct NeuralRendering
 	{
 		enum class State : uint8_t
 		{
-			kOff,       ///< Switched off.
-			kStarting,  ///< Enabled; the runtime initializes on the first world frame.
-			kActive,    ///< Running; text names the runtime version.
-			kFailed     ///< Latched; text is the failure reason.
+			kOff,        ///< Switched off.
+			kStarting,   ///< Enabled; the runtime initializes on the first world frame.
+			kActive,     ///< Running; text names the runtime version.
+			kSuspended,  ///< Enabled but dialogue-only gating holds it; resources and runtime stay alive.
+			kFailed      ///< Latched; text is the failure reason.
 		};
 		State state = State::kOff;
 		/** @brief Plain-language line for the settings panel and the devbench query; empty until the first publish. */
@@ -66,6 +67,9 @@ struct NeuralRendering
 	/** @brief Stable name for the region-source diagnostic. */
 	static const char* RegionSourceName(RegionSource a_source);
 
+	/** @brief True while the dialogue menu is open; dialogue-only gating evaluates NR only then. */
+	static bool DialogueOpen();
+
 	NeuralRendering();
 	~NeuralRendering();
 	/** @brief Installs the main-thread hook that tracks the actor NR scopes its evaluation to. */
@@ -87,11 +91,11 @@ struct NeuralRendering
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
-	void DrawSettings(bool& enabled, NR::Tuning& tuning);
+	void DrawSettings(bool& enabled, bool& dialogueOnly, NR::Tuning& tuning);
 	/** @brief Draws the runtime DLL's verdict and how to fix it, under Upscaling's DLL tables. */
 	void DrawRuntimeDiagnostics() const;
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
-	void DrawBeforeUpscaling(bool enabled, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
+	void DrawBeforeUpscaling(bool enabled, bool dialogueOnly, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
 	void DrawDiagnosticsOverlay();
 	/** @brief True while the developer has switched the diagnostics overlay on. */
@@ -129,6 +133,8 @@ private:
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
+	/** @brief Previous hook call left the pass suspended; NR::ResumesFromSuspend updates it and flags the one resume frame. */
+	bool wasSuspended = false;
 	Status status;
 	/** @brief Mirror of status.state so the per-frame paths can skip a publish without the lock. */
 	std::atomic<Status::State> publishedState{ Status::State::kOff };
