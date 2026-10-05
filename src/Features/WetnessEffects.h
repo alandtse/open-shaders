@@ -225,7 +225,7 @@ private:
 
 	mutable float characterSurfaceWetness = 0.0f;
 	mutable Util::FrameLatch characterWetnessFrame;
-	mutable std::uint32_t lastRainTimerFrame = UINT32_MAX;
+	mutable Util::FrameLatch rainTimerFrame;
 	bool splashesOfStormsLoaded = false;
 
 	// Weather wetness calculation result for debug display

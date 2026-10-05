@@ -1109,11 +1109,9 @@ WetnessEffects::PerFrame WetnessEffects::GetCommonBufferData() const
 
 	static size_t rainTimer = 0;  // size_t for precision
 	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
-	if (lastRainTimerFrame != currentFrame) {
-		lastRainTimerFrame = currentFrame;
-		if (!globals::game::ui->GameIsPaused())
-			rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
-	}
+	const bool paused = globals::game::ui && globals::game::ui->GameIsPaused();
+	if (rainTimerFrame.TryAdvance(currentFrame, !paused))
+		rainTimer += (size_t)(RE::GetSecondsSinceLastFrame() * 1000);  // BSTimer::delta is always 0 for some reason
 	data.Time = rainTimer / 1000.f;
 
 	data.settings = settings;
