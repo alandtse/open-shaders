@@ -54,6 +54,12 @@ struct NeuralRendering
 		std::array<float, 6> materialStrength{};
 		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
+		/** @brief True while the eye-stagger is running: the developer setting is on, both eyes render and frame generation is idle. */
+		bool skipFrameReuseActive = false;
+		/** @brief Whether the last applied frame reused each eye's stored gain instead of running the model. */
+		std::array<bool, 2> eyeReuse{};
+		/** @brief Frames the model ran for an eye, and eye-frames it was reused instead, since startup. */
+		uint32_t modelFrames = 0, reuseFrames = 0;
 	};
 
 	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
@@ -126,8 +132,8 @@ struct NeuralRendering
 	NR::Diagnostics::Counters GetDiagnosticCounters() const { return diagnostics.GetCounters(); }
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
 	void RequestRetry() { retryRequested = resetHistory = true; }
-	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame. */
-	void RequestCapture() { diagnostics.RequestCapture(); }
+	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame; see Diagnostics::RequestCapture. */
+	void RequestCapture(bool verifyReuse = false) { diagnostics.RequestCapture(verifyReuse); }
 
 private:
 	struct Impl;
@@ -159,6 +165,9 @@ private:
 	 *        off for this session; the user's saved value is untouched, and only a relaunch clears it.
 	 */
 	std::atomic_bool materialStrengthRejected = false;
+	/** @brief Eye-stagger mirrors for the status snapshot, written on the render thread. */
+	std::atomic_bool skipFrameReuseActive = false;
+	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
 	std::array<std::atomic<float>, 6> materialStrengthValues{};

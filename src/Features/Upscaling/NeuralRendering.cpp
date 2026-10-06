@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/Cadence.h"
 #include "NeuralRendering/D3D12Interop.h"
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
@@ -21,6 +22,7 @@
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 
+#include <bit>
 #include <chrono>
 #include <span>
 
@@ -167,12 +169,15 @@ struct NeuralRendering::Impl
 		std::unique_ptr<WrappedResource> materialAlpha;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
+		/** @brief Eye-stagger history: the model frame's log input luma and tone delta, its depth guide, and the proxy a reuse frame feeds the composite. Allocated only while the stagger can run. */
+		std::unique_ptr<Texture2D> gainHistory, depthHistory, reuseOutput;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
 	};
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader;
+	winrt::com_ptr<ID3D11SamplerState> linearSampler;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the six strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
@@ -227,8 +232,26 @@ struct NeuralRendering::Impl
 	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
+	/** @brief Cbuffer GainReuseCS.hlsl reads alongside the color-transfer block. */
+	struct alignas(16) GainReuseData
+	{
+		float4 cameraData{};         ///< The projection terms SharedData carries; the guide's own depth is a raw value.
+		uint32_t depthReversed = 0;  ///< True when the guide holds reverse-Z depth, which Feature 18 is told separately.
+		uint32_t pad[3]{};
+	};
+	static_assert(offsetof(GainReuseData, depthReversed) == 16);
+	static_assert(sizeof(GainReuseData) == 32);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
+	std::unique_ptr<ConstantBuffer> gainReuseBuffer;
+	/** @brief Per-eye eye-stagger schedule and the gains it may reuse; cleared by any history reset. */
+	NR::Cadence::State cadence;
+	/** @brief Whether the last frame's composite reads each eye's synthesized proxy instead of the model output. */
+	std::array<bool, 2> reuseFrame{};
+	/** @brief True while the stagger runs this frame, so the composite and the status report agree with the schedule. */
+	bool staggerActive = false;
+	/** @brief Frame generation's block on the stagger is logged once per activation, not once per frame. */
+	bool frameGenerationBlocked = false;
 	/** @brief Material-strength switch the persistent eye features were last created with; drives recreation. */
 	bool materialStrengthOn = false;
 	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
@@ -293,9 +316,17 @@ struct NeuralRendering::Impl
 		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		D3D11_SAMPLER_DESC samplerDesc{};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "NeuralRendering::LinearClamp Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
+		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
 		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
 		ready = true;
 	}
@@ -316,6 +347,9 @@ struct NeuralRendering::Impl
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 		lastRegion = {};
+		cadence = {};
+		reuseFrame = {};
+		staggerActive = false;
 	}
 
 	/** @brief True while pass resources for a render size exist and can be released. */
@@ -508,9 +542,103 @@ struct NeuralRendering::Impl
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
-		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color->srv, eye.output->srv };
+		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color->srv, reuseFrame[i] ? eye.reuseOutput->srv.get() : eye.output->srv };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		auto* output = eye.toneData->uav.get();
+		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/** @brief Creates one eye's stagger textures; only the eyes a stagger frame touches allocate them. */
+	void EnsureGainResources(uint32_t i)
+	{
+		auto& eye = eyes[i];
+		if (eye.gainHistory)
+			return;
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = width;
+		desc.Height = height;
+		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+		srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv.Texture2D.MipLevels = 1;
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
+		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16_FLOAT;
+		eye.gainHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} GainHistory", i).c_str());
+		eye.gainHistory->CreateSRV(srv);
+		eye.gainHistory->CreateUAV(uav);
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R32_FLOAT;
+		eye.depthHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} DepthHistory", i).c_str());
+		eye.depthHistory->CreateSRV(srv);
+		eye.depthHistory->CreateUAV(uav);
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		eye.reuseOutput = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} ReuseOutput", i).c_str());
+		eye.reuseOutput->CreateSRV(srv);
+		eye.reuseOutput->CreateUAV(uav);
+	}
+
+	/** @brief Frees the stagger textures while the stagger is off, so a VR session does not hold two extra render-resolution surfaces. */
+	void ReleaseGainResources()
+	{
+		for (auto& eye : eyes) {
+			eye.gainHistory.reset();
+			eye.depthHistory.reset();
+			eye.reuseOutput.reset();
+		}
+	}
+
+	/** @brief Binds the color-transfer block plus the GainReuseCS block, which carries the guide's depth convention. */
+	void BindGainBuffers(uint32_t i)
+	{
+		ColorTransferData data{ width, height, i * width };
+		SetRegion(data, i);
+		colorBuffer->Update(data);
+		gainReuseBuffer->Update(GainReuseData{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u });
+		context->ClearState();
+		ID3D11Buffer* buffers[]{ colorBuffer->CB(), gainReuseBuffer->CB() };
+		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
+		globals::state->BindSharedDataCS(context.get(), true);
+	}
+
+	/** @brief Records the model frame's tone delta and depth for one eye; the composite reads the same delta it would have computed itself. */
+	void StoreGain(uint32_t i)
+	{
+		CS_GPU_PASS("Upscaling::NRStoreGain");
+		auto* shader = storeGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
+			{}, "cs_5_0", "StoreGain", "NeuralRendering::StoreGain CS");
+		if (!shader)
+			throw std::runtime_error("NR gain-store shader unavailable");
+		auto& eye = eyes[i];
+		BindGainBuffers(i);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, eye.output->srv, eye.depth->srv };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		ID3D11UnorderedAccessView* outputs[]{ eye.gainHistory->uav.get(), eye.depthHistory->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
+	void ReuseGain(uint32_t i)
+	{
+		CS_GPU_PASS("Upscaling::NRReuseGain");
+		auto* shader = reuseGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
+			{}, "cs_5_0", "ReuseGain", "NeuralRendering::ReuseGain CS");
+		if (!shader)
+			throw std::runtime_error("NR gain-reuse shader unavailable");
+		auto& eye = eyes[i];
+		BindGainBuffers(i);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, nullptr, eye.depth->srv, eye.motion->srv,
+			eye.gainHistory->srv.get(), eye.depthHistory->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		auto* sampler = linearSampler.get();
+		context->CSSetSamplers(0, 1, &sampler);
+		auto* output = eye.reuseOutput->uav.get();
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
@@ -575,7 +703,7 @@ struct NeuralRendering::Impl
 		globals::state->BindSharedDataCS(context.get(), true);
 		auto* masks2 = Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED].SRV);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color->srv,
-			prepare ? nullptr : eye.output->srv, exposure,
+			prepare ? nullptr : (reuseFrame[i] ? eye.reuseOutput->srv.get() : eye.output->srv), exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr, masks2 };
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color->uav : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
@@ -662,6 +790,20 @@ struct NeuralRendering::Impl
 				context->SwapDeviceContextState(previous.get(), nullptr);
 			}
 		} scope(context.get(), isolated.get());
+		// The stagger's own gain history would be blended into frame generation's interpolation, and a
+		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
+		const bool frameGeneration = globals::features::upscaling.IsFrameGenerationActive();
+		if (frameGeneration != frameGenerationBlocked) {
+			if (frameGeneration)
+				logger::info("[NeuralRendering] eye-staggered gain reuse is off while frame generation is active");
+			frameGenerationBlocked = frameGeneration;
+		}
+		staggerActive = tuning.skipFrameReuse && globals::game::isVR && globals::state->IsDeveloperMode() &&
+		                eyeCount == 2 && !frameGeneration;
+		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
+		reuseFrame = {};
+		if (!staggerActive && (eyes[0].gainHistory || eyes[1].gainHistory))
+			ReleaseGainResources();
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
 		const bool capture = diagnostics.BeginCapture(diagnostic.number);
@@ -717,6 +859,30 @@ struct NeuralRendering::Impl
 			}
 		}
 		context->ClearState();
+		bool invalidate = reset != 0 || calibrationRunning ||
+		                  (diagnostic.options & NR::Diagnostics::kHistoryIsolatingOptions) != 0 ||
+		                  conversionMode != NR::Diagnostics::ColorConversion::Production;
+		for (uint32_t i = 0; i < eyeCount; ++i)
+			invalidate |= eyes[i].frame.reset;
+		const std::array<uint64_t, 2> previousModel = cadence.lastModelFrame;
+		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
+			static_cast<uint64_t>(diagnostic.number), invalidate };
+		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
+		const bool verifyReuse = capture && staggerActive && diagnostics.ConsumeVerifyReuse();
+		std::array<bool, 2> verifyEye{};
+		for (uint32_t i = 0; verifyReuse && i < eyeCount; ++i) {
+			verifyEye[i] = !decision.evaluate[i];
+			if (verifyEye[i])
+				cadence.lastModelFrame[i] = static_cast<uint64_t>(diagnostic.number);
+		}
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const bool gap = decision.evaluate[i] && previousModel[i] != NR::Cadence::kNoModelFrame &&
+			                 static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1;
+			if (gap && tuning.skipFrameGapMode != 0) {
+				eyes[i].frame.reset = true;
+				diagnostic.reset[i] |= NR::Diagnostics::FrameGap;
+			}
+		}
 		// Resetting persistent NR history must not overlap its prior GPU evaluation.
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			if (eyes[i].frame.reset) {
@@ -732,6 +898,12 @@ struct NeuralRendering::Impl
 			auto* commands = interop.Begin();
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
+				if (!decision.evaluate[i]) {
+					reuseFrame[i] = true;
+					diagnostic.reused |= 1u << i;
+					if (!verifyEye[i])
+						continue;
+				}
 				Transition(commands, eye, true);
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
 					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
@@ -759,6 +931,12 @@ struct NeuralRendering::Impl
 					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
 					guides.depthInverted = globals::features::reverseZ.IsActive();
+					if (previousModel[i] != NR::Cadence::kNoModelFrame &&
+						static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1 && tuning.skipFrameGapMode == 0) {
+						guides.motionScaleX *= 2.0f;
+						guides.motionScaleY *= 2.0f;
+						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * 2.0f);
+					}
 					const NR::ProtectionResources protection{
 						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
 						// A protected pixel is restored from the NR input itself, so the alpha and the
@@ -790,10 +968,29 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return false;
 		}
-		if (capture) {
+		if (capture)
 			interop.Drain();
-			diagnostics.DumpTexture("02_output", eyes[0].output->resource11, diagnostic.number);
+		if (staggerActive) {
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				EnsureGainResources(i);
+				if (reuseFrame[i]) {
+					ReuseGain(i);
+				} else {
+					StoreGain(i);
+					cadence.valid[i] = true;
+				}
+			}
 		}
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			if (!verifyEye[i])
+				continue;
+			const auto name = [i](const char* stage) { return std::format("{}_eye{}", stage, i); };
+			diagnostics.DumpTexture(name("NR_verify_input").c_str(), eyes[i].color->resource11, diagnostic.number);
+			diagnostics.DumpTexture(name("NR_verify_model").c_str(), eyes[i].output->resource11, diagnostic.number);
+			diagnostics.DumpTexture(name("NR_verify_reuse").c_str(), eyes[i].reuseOutput->resource.get(), diagnostic.number);
+		}
+		if (capture)
+			diagnostics.DumpTexture("02_output", reuseFrame[0] ? eyes[0].reuseOutput->resource.get() : eyes[0].output->resource11, diagnostic.number);
 		if (diagnostic.options & NR::Diagnostics::BypassWriteback) {
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
@@ -1061,6 +1258,11 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	snapshot.ngxResult = { lastNgxResult[0].load(std::memory_order_relaxed), lastNgxResult[1].load(std::memory_order_relaxed) };
 	snapshot.materialStrengthActive = materialStrengthActive.load(std::memory_order_relaxed);
 	snapshot.materialStrengthAvailable = materialStrengthAvailable.load(std::memory_order_relaxed);
+	snapshot.skipFrameReuseActive = skipFrameReuseActive.load(std::memory_order_relaxed);
+	snapshot.modelFrames = modelFrames.load(std::memory_order_relaxed);
+	snapshot.reuseFrames = reuseFrames.load(std::memory_order_relaxed);
+	const auto reuseMask = eyeReuseMask.load(std::memory_order_relaxed);
+	snapshot.eyeReuse = { (reuseMask & 1u) != 0, (reuseMask & 2u) != 0 };
 	for (size_t i = 0; i < snapshot.materialStrength.size(); ++i)
 		snapshot.materialStrength[i] = materialStrengthValues[i].load(std::memory_order_relaxed);
 	snapshot.materialEdgeSoftness = materialEdgeSoftness.load(std::memory_order_relaxed);
@@ -1447,6 +1649,29 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
 				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
 		}
+		ImGui::SeparatorText(T(TKEY("developer_frame_reuse"), "Frame reuse"));
+		if (!globals::game::isVR) {
+			ImGui::TextDisabled("%s", T(TKEY("skip_frame_reuse_vr_only"), "VR only."));
+		} else {
+			changed |= ImGui::Checkbox(T(TKEY("skip_frame_reuse"), "Reuse Eye Gains Every Other Frame"), &tuning.skipFrameReuse);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_reuse_tooltip"),
+					"Evaluates the model for one eye per frame and reuses the other eye's gain, reprojected by its motion. Halves the model's GPU cost. The reused eye keeps its own colours and takes only the model's brightness change; a sample that reprojected onto another surface or a changed lighting is dropped instead of reused. Off by default and unmeasured; judge it by eye."));
+			ImGui::BeginDisabled(!tuning.skipFrameReuse);
+			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
+			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
+				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
+				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
+			};
+			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
+				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
+					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+			ImGui::EndDisabled();
+		}
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
@@ -1521,7 +1746,7 @@ void NeuralRendering::CaptureBeforeUpscaling()
 	if (!globals::state)
 		return;
 	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (!diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
+	if (!diagnostics.VerifyReusePending() && !diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
 		diagnostics.CaptureStage("00_original_scene", Util::AsReal(main.texture), globals::state->frameCount);
 	diagnostics.CaptureStage("05_pre_sr", Util::AsReal(main.texture), globals::state->frameCount);
 }
@@ -1754,6 +1979,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
 		const bool processed = work.Draw(color, inputs.data(), shader, reset, materialStrengthWanted, materialStrengths, boundedTuning, diagnostic, diagnostics);
 		publishMaterialStrength();
+		modelFrames.fetch_add(std::popcount(diagnostic.evaluated), std::memory_order_relaxed);
+		reuseFrames.fetch_add(std::popcount(diagnostic.reused), std::memory_order_relaxed);
+		eyeReuseMask.store(diagnostic.reused, std::memory_order_relaxed);
+		skipFrameReuseActive.store(work.staggerActive, std::memory_order_relaxed);
 		if (!processed)
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));

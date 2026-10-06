@@ -582,6 +582,57 @@ directory. Initialization commits ownership only after parameter allocation
 completes. Any earlier failure releases allocated parameters, shuts down a
 successfully initialized NGX session, restores the IAT, and unloads the modules.
 
+## Eye-staggered reuse
+
+Developer mode only, VR only, off by default. The stagger evaluates Feature 18
+for one eye per frame (the even frames eye 0, the odd frames eye 1) and reuses
+the other eye's gain, so a frame runs one model dispatch instead of two. That
+is the whole point: the model is the pass's dominant cost, roughly 4.4-5.0 ms
+of VR's 11.1 ms frame budget, and this halves it.
+
+What is reused is only the model's brightness change, never its pixels. The
+composite already treats the model as a per-pixel luminance gain on the
+untouched HDR frame, so the store pass records exactly the log gain and the
+input luminance the composite's own tone table is built from, and the reuse
+pass reprojects that gain through the eye's motion vectors and rebuilds a proxy
+whose luminance ratio is the same gain. Crop, material alpha, tone filtering,
+category strengths and protection all still run, unchanged, for the reused eye;
+only its colours come from its own frame.
+
+A reused sample is dropped, giving no gain rather than a stale one, when it
+reprojected off screen, when its depth differs by more than
+`kReuseDepthTolerance` from the depth stored beside the gain, or when the input
+luminance differs by more than `kReuseLumaTolerance` in log2, which is what a
+light change or a flash looks like. Both depths are read as linear view-space
+distances through the engine's own projection terms, and the guide's depth
+convention arrives as a runtime value, so a Reverse Z guide is handled without
+a second shader permutation.
+
+Anything that makes a stored gain unreprojectable evaluates both eyes for that
+frame: a history reset of any kind, resource recreation, a change of the
+evaluated crop, a material-lane or material-strength change, the dialogue
+suspend/resume transition, a running crop calibration, a non-production colour
+conversion, and the diagnostics that isolate history (bypass evaluation, copy
+input to output, interop round trip, force reset, zero motion). Frame generation
+switches the stagger off entirely while it is active, and logs that once.
+
+An eye the model skipped runs again two frames after its last run, so it is
+missing one frame of its own history. **Gap Handling** picks what it is told:
+the default doubles that call's motion scale and frame time, so one frame of
+motion covers both, and the other resets that eye's history instead.
+
+The cost model is one model dispatch per frame plus two small compute passes,
+against two model dispatches. Measured with Tracy on VR (Dragonsreach, frame
+generation off), NR GPU time fell from 5.32 to 3.16 ms per frame, and the two
+added passes cost 0.04 ms.
+
+To measure the reuse error, run `captureNeuralRendering` with
+`verifyReuse: true` while the stagger is active. That frame also runs the model
+on the eye that would have reused, and writes `NR_verify_input`,
+`NR_verify_model` and `NR_verify_reuse` for it, so the reused gain can be
+compared with the model's own gain on the same frame. The next frame evaluates
+normally.
+
 ## Verification boundary
 
 Compile the universal `CommunityShaders` target with shader tests disabled.
