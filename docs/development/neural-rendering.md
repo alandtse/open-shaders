@@ -93,9 +93,10 @@ reports whether it suspends the pass and whether history must be reset;
     everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overrides the material
     scope while dialogue is open. A scope override in any profile binds the by-material lane in
     every situation, at a cost of about 0.04 ms, because Feature 18 latches the `UIAlpha`
-    binding at creation: a situation change must never rebuild the eye features. Where a
-    profile has no override the lane carries all-ones strengths, which leaves every pixel
-    unprotected, so that frame is unchanged.
+    binding at creation: a situation change must never rebuild the eye features. A profile
+    with no override keeps the selection the by-material setting gives it; when that setting
+    is off, the lane carries all-ones strengths, which leaves every pixel unprotected, so
+    that frame is unchanged.
 -   **In dialogue, crop** (`dialogue.region`: 0 same as normal, 1 full frame) drops the
     tracked-actor crop while dialogue is open and evaluates the whole view. It needs **Limit to
     Tracked Actor** on. Without an override the crop is untouched: in dialogue the tracked

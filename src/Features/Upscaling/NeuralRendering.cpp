@@ -1249,9 +1249,10 @@ namespace
 		return changed;
 	}
 
-	/** @brief Draws the dialogue section of the situation profiles; the crop override follows the crop's enable state. */
-	void DrawContextProfiles(NR::Context::Profiles& contexts, bool cropDisabled)
+	/** @brief Draws the dialogue section of the situation profiles; the crop override follows the crop's enable state. Returns true when the crop override changed. */
+	bool DrawContextProfiles(NR::Context::Profiles& contexts, bool cropDisabled)
 	{
+		bool cropChanged = false;
 		if (ImGui::CollapsingHeader(T(TKEY("dialogue"), "Dialogue"))) {
 			ImGui::PushID("dialogueProfile");
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -1283,14 +1284,17 @@ namespace
 				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
 				T(TKEY("dialogue_region_full"), "Full frame"),
 			};
-			if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size())))
+			if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size()))) {
 				contexts.dialogue.region = static_cast<NR::Context::RegionOverride>(regionItem);
+				cropChanged = true;
+			}
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_region_tooltip"),
 					"Full frame evaluates the whole view during dialogue instead of the character's crop. It needs Limit to Tracked Actor on; Same as normal follows that setting."));
 			ImGui::EndDisabled();
 			ImGui::PopID();
 		}
+		return cropChanged;
 	}
 }
 
@@ -1387,9 +1391,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
 	ImGui::EndDisabled();
-	DrawContextProfiles(contexts, cropDisabled);
+	if (DrawContextProfiles(contexts, cropDisabled))
+		resetHistory = true;
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
+		contexts = {};
 		changed = recreateTuning = true;
 	}
 	ImGui::SameLine();
@@ -1566,7 +1572,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	}
 	if (action == NR::FrameAction::Suspend) {
 		diagnostic.outcome = Outcome::Suspended;
-		if (publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended) {
+		if (!impl->failed && publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended) {
 			logger::debug("[NeuralRendering] Suspended: waiting for dialogue");
 			PublishStatus(Status::State::kSuspended, T(TKEY("status_waiting_dialogue"), "Waiting for dialogue"));
 		}
