@@ -1248,9 +1248,53 @@ namespace
 		ImGui::EndDisabled();
 		return changed;
 	}
+
+	/** @brief Draws the dialogue section of the situation profiles; the crop override follows the crop's enable state. */
+	void DrawContextProfiles(NR::Context::Profiles& contexts, bool cropDisabled)
+	{
+		if (ImGui::CollapsingHeader(T(TKEY("dialogue"), "Dialogue"))) {
+			ImGui::PushID("dialogueProfile");
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("dialogue_tooltip"),
+					"Changes only what Neural Rendering does while a dialogue is open. The default changes nothing: the normal frame and dialogue both follow the settings above."));
+			bool onlyInDialogue = !contexts.normal.run;
+			if (ImGui::Checkbox(T(TKEY("dialogue_only"), "Only in dialogue"), &onlyInDialogue)) {
+				contexts.normal.run = !onlyInDialogue;
+				contexts.dialogue.run = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
+					"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
+			int scopeItem = static_cast<int>(contexts.dialogue.scope);
+			const std::array<const char*, 4> dialogueScopeLabels{
+				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
+				T(TKEY("dialogue_scope_everything"), "Everything"),
+				T(TKEY("dialogue_scope_characters"), "Skin, hair and eyes"),
+				T(TKEY("dialogue_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
+			};
+			if (ImGui::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &scopeItem, dialogueScopeLabels.data(), static_cast<int>(dialogueScopeLabels.size())))
+				contexts.dialogue.scope = static_cast<NR::Context::ScopeOverride>(scopeItem);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("dialogue_scope_tooltip"),
+					"What Neural Rendering applies to while a dialogue is open. Choosing a scope keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
+			ImGui::BeginDisabled(cropDisabled);
+			int regionItem = static_cast<int>(contexts.dialogue.region);
+			const std::array<const char*, 2> dialogueRegionLabels{
+				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
+				T(TKEY("dialogue_region_full"), "Full frame"),
+			};
+			if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size())))
+				contexts.dialogue.region = static_cast<NR::Context::RegionOverride>(regionItem);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("dialogue_region_tooltip"),
+					"Full frame evaluates the whole view during dialogue instead of the character's crop. It needs Limit to Tracked Actor on; Same as normal follows that setting."));
+			ImGui::EndDisabled();
+			ImGui::PopID();
+		}
+	}
 }
 
-void NeuralRendering::DrawSettings(bool& enabled, NR::Context::DialogueProfile& dialogue, NR::Tuning& tuning)
+void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& contexts, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
 	const auto availability = GetRuntimeAvailability();
@@ -1343,41 +1387,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::DialogueProfile& 
 		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
 			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
 	ImGui::EndDisabled();
-	if (ImGui::CollapsingHeader(T(TKEY("dialogue"), "Dialogue"))) {
-		ImGui::PushID("dialogueProfile");
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("dialogue_tooltip"),
-				"Changes only what Neural Rendering does while a dialogue is open. The default changes nothing: the normal frame and dialogue both follow the settings above."));
-		ImGui::Checkbox(T(TKEY("dialogue_only"), "Only in dialogue"), &dialogue.onlyInDialogue);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
-				"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
-		int scopeItem = static_cast<int>(std::min(dialogue.scope, NR::Context::kMaxScope));
-		const std::array<const char*, 4> dialogueScopeLabels{
-			T(TKEY("dialogue_same_as_normal"), "Same as normal"),
-			T(TKEY("material_scope_everything"), "Everything"),
-			T(TKEY("material_scope_characters"), "Skin, hair and eyes"),
-			T(TKEY("material_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
-		};
-		if (ImGui::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &scopeItem, dialogueScopeLabels.data(), static_cast<int>(dialogueScopeLabels.size())))
-			dialogue.scope = static_cast<NR::Context::ScopeOverride>(scopeItem);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("dialogue_scope_tooltip"),
-				"What Neural Rendering applies to while a dialogue is open. Choosing a scope keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
-		ImGui::BeginDisabled(cropDisabled);
-		int regionItem = static_cast<int>(std::min(dialogue.region, NR::Context::kMaxRegion));
-		const std::array<const char*, 2> dialogueRegionLabels{
-			T(TKEY("dialogue_same_as_normal"), "Same as normal"),
-			T(TKEY("dialogue_region_full"), "Full frame"),
-		};
-		if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size())))
-			dialogue.region = static_cast<NR::Context::RegionOverride>(regionItem);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("dialogue_region_tooltip"),
-				"Full frame evaluates the whole view during dialogue instead of the character's crop. It needs Limit to Tracked Actor on; Same as normal follows that setting."));
-		ImGui::EndDisabled();
-		ImGui::PopID();
-	}
+	DrawContextProfiles(contexts, cropDisabled);
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		changed = recreateTuning = true;
@@ -1517,20 +1527,15 @@ void NeuralRendering::CaptureAfterUpscaling()
 	diagnostics.FinishCapture(globals::state->frameCount);
 }
 
-void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::DialogueProfile& dialogue, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
+void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
 {
 	using Outcome = NR::Diagnostics::Outcome;
-	const auto kind = NR::Context::ResolveContext(DialogueOpen());
-	const bool suspended = NR::Context::Suspended(dialogue, kind);
-	const bool resumed = NR::ResumesFromSuspend(suspended, wasSuspended);
+	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	const auto action = NR::DecideFrame({ enabled, suspended, globals::state->worldRenderedThisFrame, impl->failed,
+	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
 		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
-	if (resumed)
+	if (context.resetHistory)
 		resetHistory = true;
-	if (NR::Context::ContextChangeNeedsReset(dialogue, lastContext, kind))
-		resetHistory = true;
-	lastContext = kind;
 	if (action == NR::FrameAction::ReleasePassResources) {
 		diagnostic.outcome = Outcome::Disabled;
 		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
@@ -1575,7 +1580,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Dialo
 		resetHistory = true;
 		return;
 	}
-	const auto effective = NR::Context::EffectiveTuning(tuning, dialogue, kind);
+	const auto effective = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
@@ -1653,8 +1658,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Dialo
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
 		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
-		// Feature 18 latches the UIAlpha binding at creation, so the lane is bound from the settings
-		// alone: only a change there rebuilds the eye features, never a dialogue open or close.
 		if (materialStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
 			work.materialStrengthOn = materialStrengthWanted;

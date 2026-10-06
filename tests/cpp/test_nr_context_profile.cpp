@@ -1,5 +1,5 @@
-// Unit tests for the NR dialogue profile: the context gate, the per-context tuning it
-// yields, the context-independent material-lane need and the history-reset rule.
+// Unit tests for the NR situation profiles: the situation decision, the per-situation tuning
+// it yields, the situation-independent material lane and the history-reset rule.
 
 #include "Features/Upscaling/NeuralRendering/ContextProfile.h"
 #include "Features/Upscaling/NeuralRendering/MaterialStrength.h"
@@ -9,8 +9,10 @@
 
 namespace
 {
-	using NR::Context::DialogueProfile;
+	using NR::Context::ContextProfile;
+	using NR::Context::ContextState;
 	using NR::Context::Kind;
+	using NR::Context::Profiles;
 	using NR::Context::RegionOverride;
 	using NR::Context::ScopeOverride;
 
@@ -81,145 +83,124 @@ namespace
 	}
 }
 
-TEST_CASE("ResolveContext reads the dialogue menu state", "[nr]")
+TEST_CASE("The default profiles are identity for every situation", "[nr]")
 {
-	REQUIRE(NR::Context::ResolveContext(false) == Kind::kDefault);
-	REQUIRE(NR::Context::ResolveContext(true) == Kind::kDialogue);
+	const auto base = MovedTuning();
+	for (const auto kind : { Kind::kNormal, Kind::kDialogue })
+		RequireTuningEqual(NR::Context::EffectiveTuning(base, Profiles{}, kind), base);
+
+	NR::Tuning plain;
+	for (const auto kind : { Kind::kNormal, Kind::kDialogue })
+		RequireTuningEqual(NR::Context::EffectiveTuning(plain, Profiles{}, kind), plain);
 }
 
-TEST_CASE("The default dialogue profile is identity for both contexts", "[nr]")
+TEST_CASE("Resolve reads the dialogue menu state and suspends only a profile that does not run", "[nr]")
 {
-	const auto profile = DialogueProfile{};
-	for (const auto kind : { Kind::kDefault, Kind::kDialogue }) {
-		RequireTuningEqual(NR::Context::EffectiveTuning(NR::Tuning{}, profile, kind), NR::Tuning{});
-		const auto moved = MovedTuning();
-		RequireTuningEqual(NR::Context::EffectiveTuning(moved, profile, kind), moved);
+	ContextState state;
+	REQUIRE(NR::Context::Resolve(Profiles{}, false, state).kind == Kind::kNormal);
+	REQUIRE(NR::Context::Resolve(Profiles{}, true, state).kind == Kind::kDialogue);
+	REQUIRE_FALSE(NR::Context::Resolve(Profiles{}, true, state).suspended);
+
+	Profiles onlyInDialogue;
+	onlyInDialogue.normal.run = false;
+	ContextState gated;
+	REQUIRE(NR::Context::Resolve(onlyInDialogue, false, gated).suspended);
+	REQUIRE_FALSE(NR::Context::Resolve(onlyInDialogue, true, gated).suspended);
+}
+
+TEST_CASE("Resolve flags exactly the first frame after a suspension", "[nr]")
+{
+	Profiles onlyInDialogue;
+	onlyInDialogue.normal.run = false;
+	ContextState state;
+	REQUIRE_FALSE(NR::Context::Resolve(onlyInDialogue, false, state).resetHistory);
+	REQUIRE_FALSE(NR::Context::Resolve(onlyInDialogue, false, state).resetHistory);
+	REQUIRE(NR::Context::Resolve(onlyInDialogue, true, state).resetHistory);
+	REQUIRE_FALSE(NR::Context::Resolve(onlyInDialogue, true, state).resetHistory);
+}
+
+TEST_CASE("Resolve resets history on a situation change only when the profiles evaluate differently", "[nr]")
+{
+	ContextState state;
+	NR::Context::Resolve(Profiles{}, false, state);
+	REQUIRE_FALSE(NR::Context::Resolve(Profiles{}, true, state).resetHistory);
+	REQUIRE_FALSE(NR::Context::Resolve(Profiles{}, false, state).resetHistory);
+
+	for (const auto& override : { Profiles{ {}, { .scope = ScopeOverride::kSkinHairEyes } }, Profiles{ {}, { .region = RegionOverride::kFullFrame } } }) {
+		ContextState changing;
+		NR::Context::Resolve(override, false, changing);
+		REQUIRE(NR::Context::Resolve(override, true, changing).resetHistory);
+		REQUIRE_FALSE(NR::Context::Resolve(override, true, changing).resetHistory);
+		REQUIRE(NR::Context::Resolve(override, false, changing).resetHistory);
 	}
 }
 
-TEST_CASE("Suspended holds the pass only outside dialogue when only-in-dialogue is on", "[nr]")
-{
-	const DialogueProfile off{}, on{ .onlyInDialogue = true };
-	REQUIRE_FALSE(NR::Context::Suspended(off, Kind::kDefault));
-	REQUIRE_FALSE(NR::Context::Suspended(off, Kind::kDialogue));
-	REQUIRE(NR::Context::Suspended(on, Kind::kDefault));
-	REQUIRE_FALSE(NR::Context::Suspended(on, Kind::kDialogue));
-}
-
-TEST_CASE("A region override drops only the tracked crop, and only in dialogue", "[nr]")
+TEST_CASE("A region override drops only the tracked crop, and only in its situation", "[nr]")
 {
 	auto base = MovedTuning();
 	base.regionOfInterest = true;
-	base.regionOverlay = true;
-	base.regionGroup = true;
-	base.regionFit = NR::Tuning::kRegionFitTight;
-	const DialogueProfile profile{ .region = RegionOverride::kFullFrame };
+	const Profiles profiles{ {}, { .region = RegionOverride::kFullFrame } };
 
-	RequireTuningEqual(NR::Context::EffectiveTuning(base, profile, Kind::kDefault), base);
+	RequireTuningEqual(NR::Context::EffectiveTuning(base, profiles, Kind::kNormal), base);
 
-	const auto dialogue = NR::Context::EffectiveTuning(base, profile, Kind::kDialogue);
-	REQUIRE_FALSE(dialogue.regionOfInterest);
-	REQUIRE(dialogue.regionOverlay == base.regionOverlay);
-	REQUIRE(dialogue.regionGroup == base.regionGroup);
-	REQUIRE(dialogue.regionFit == base.regionFit);
-	REQUIRE(dialogue.regionFollowFoveation == base.regionFollowFoveation);
-	REQUIRE(dialogue.materialStrength == base.materialStrength);
-	REQUIRE(dialogue.strengthSkin == base.strengthSkin);
+	auto expected = base;
+	expected.regionOfInterest = false;
+	RequireTuningEqual(NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue), expected);
 }
 
-TEST_CASE("A scope override sets the lane and strengths in dialogue and keeps edge softness", "[nr]")
+TEST_CASE("A scope override sets the lane and strengths in its situation and keeps edge softness", "[nr]")
 {
 	NR::Tuning base;
-	base.materialStrength = false;
 	base.strengthEdgeSoftness = 3;
-	const DialogueProfile profile{ .scope = ScopeOverride::kSkinHairEyesFoliage };
+	const Profiles profiles{ {}, { .scope = ScopeOverride::kSkinHairEyesFoliage } };
 
-	const auto dialogue = NR::Context::EffectiveTuning(base, profile, Kind::kDialogue);
+	const auto dialogue = NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue);
 	REQUIRE(dialogue.materialStrength);
 	const auto expected = NR::Context::ScopeStrengths(ScopeOverride::kSkinHairEyesFoliage);
 	REQUIRE(expected[NR::MaterialStrength::kFoliage] == 1.0f);
 	REQUIRE(expected[NR::MaterialStrength::kLandscape] == 0.0f);
-	REQUIRE(dialogue.strengthOther == expected[NR::MaterialStrength::kNone]);
-	REQUIRE(dialogue.strengthSkin == expected[NR::MaterialStrength::kSkin]);
-	REQUIRE(dialogue.strengthHair == expected[NR::MaterialStrength::kHair]);
-	REQUIRE(dialogue.strengthEyes == expected[NR::MaterialStrength::kEyes]);
-	REQUIRE(dialogue.strengthFoliage == expected[NR::MaterialStrength::kFoliage]);
-	REQUIRE(dialogue.strengthLandscape == expected[NR::MaterialStrength::kLandscape]);
+	REQUIRE(dialogue.MaterialStrengths().strength == expected);
 	REQUIRE(dialogue.strengthEdgeSoftness == base.strengthEdgeSoftness);
 }
 
-TEST_CASE("A scope override leaves the normal frame unprotected", "[nr]")
+TEST_CASE("A scope override in any profile keeps the lane on everywhere, unprotected where it has no override", "[nr]")
 {
-	NR::Tuning base;
-	base.materialStrength = false;
-	const DialogueProfile profile{ .scope = ScopeOverride::kSkinHairEyes };
-
-	const auto normal = NR::Context::EffectiveTuning(base, profile, Kind::kDefault);
-	REQUIRE(normal.materialStrength);
-	for (const float strength : { normal.strengthOther, normal.strengthSkin, normal.strengthHair,
-			 normal.strengthEyes, normal.strengthFoliage, normal.strengthLandscape })
-		REQUIRE(strength == NR::MaterialStrength::kMaxStrength);
-}
-
-TEST_CASE("The material lane follows the settings, never the context", "[nr]")
-{
-	for (const auto kind : { Kind::kDefault, Kind::kDialogue })
-		REQUIRE_FALSE(NR::Context::EffectiveTuning(NR::Tuning{}, DialogueProfile{}, kind).materialStrength);
-
-	NR::Tuning onMaterial;
-	onMaterial.materialStrength = true;
-	for (const auto kind : { Kind::kDefault, Kind::kDialogue })
-		REQUIRE(NR::Context::EffectiveTuning(onMaterial, DialogueProfile{}, kind).materialStrength);
-
 	for (const auto scope : { ScopeOverride::kEverything, ScopeOverride::kSkinHairEyes, ScopeOverride::kSkinHairEyesFoliage }) {
-		const DialogueProfile profile{ .scope = scope };
-		const auto normal = NR::Context::EffectiveTuning(NR::Tuning{}, profile, Kind::kDefault);
-		const auto dialogue = NR::Context::EffectiveTuning(NR::Tuning{}, profile, Kind::kDialogue);
+		const Profiles profiles{ {}, { .scope = scope } };
+		const auto normal = NR::Context::EffectiveTuning(NR::Tuning{}, profiles, Kind::kNormal);
+		const auto dialogue = NR::Context::EffectiveTuning(NR::Tuning{}, profiles, Kind::kDialogue);
 		REQUIRE(normal.materialStrength);
 		REQUIRE(dialogue.materialStrength);
+		for (const auto strength : normal.MaterialStrengths().strength)
+			REQUIRE(strength == NR::MaterialStrength::kMaxStrength);
 	}
+
+	const Profiles flipped{ { .scope = ScopeOverride::kSkinHairEyes }, {} };
+	REQUIRE(NR::Context::EffectiveTuning(NR::Tuning{}, flipped, Kind::kNormal).materialStrength);
+	REQUIRE(NR::Context::EffectiveTuning(NR::Tuning{}, flipped, Kind::kDialogue).materialStrength);
 }
 
-TEST_CASE("ContextChangeNeedsReset requests a reset only when an override crosses contexts", "[nr]")
+TEST_CASE("The by-material selection is untouched where the profile has no scope override", "[nr]")
 {
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{}, Kind::kDefault, Kind::kDialogue));
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{}, Kind::kDialogue, Kind::kDefault));
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{}, Kind::kDefault, Kind::kDefault));
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{}, Kind::kDialogue, Kind::kDialogue));
-
-	// Suspension alone already requests its one resume reset, so it needs no context reset.
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{ .onlyInDialogue = true }, Kind::kDefault, Kind::kDialogue));
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(DialogueProfile{ .onlyInDialogue = true }, Kind::kDialogue, Kind::kDefault));
-
-	const DialogueProfile scoped{ .scope = ScopeOverride::kSkinHairEyes };
-	REQUIRE(NR::Context::ContextChangeNeedsReset(scoped, Kind::kDefault, Kind::kDialogue));
-	REQUIRE(NR::Context::ContextChangeNeedsReset(scoped, Kind::kDialogue, Kind::kDefault));
-	REQUIRE_FALSE(NR::Context::ContextChangeNeedsReset(scoped, Kind::kDialogue, Kind::kDialogue));
-
-	const DialogueProfile cropped{ .region = RegionOverride::kFullFrame };
-	REQUIRE(NR::Context::ContextChangeNeedsReset(cropped, Kind::kDefault, Kind::kDialogue));
-	REQUIRE(NR::Context::ContextChangeNeedsReset(cropped, Kind::kDialogue, Kind::kDefault));
+	NR::Tuning base;
+	base.SetMaterialSelected(NR::MaterialStrength::kFoliage, false);
+	const Profiles profiles{ {}, { .scope = ScopeOverride::kEverything } };
+	const auto normal = NR::Context::EffectiveTuning(base, profiles, Kind::kNormal);
+	REQUIRE(normal.strengthFoliage == 0.0f);
+	REQUIRE(NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue).strengthFoliage == 1.0f);
 }
 
-TEST_CASE("DialogueProfile Sanitize clamps out-of-range overrides", "[nr]")
+TEST_CASE("ContextProfile Sanitize clamps out-of-range overrides", "[nr]")
 {
-	DialogueProfile profile;
+	ContextProfile profile;
 	profile.scope = static_cast<ScopeOverride>(99);
 	profile.region = static_cast<RegionOverride>(99);
 	profile.Sanitize();
 	REQUIRE(profile.scope == NR::Context::kMaxScope);
 	REQUIRE(profile.region == NR::Context::kMaxRegion);
 
-	profile.scope = ScopeOverride::kCount;
-	profile.region = RegionOverride::kCount;
-	profile.Sanitize();
-	REQUIRE(profile.scope == NR::Context::kMaxScope);
-	REQUIRE(profile.region == NR::Context::kMaxRegion);
-
-	profile.scope = ScopeOverride::kSkinHairEyes;
-	profile.region = RegionOverride::kFullFrame;
-	profile.Sanitize();
-	REQUIRE(profile.scope == ScopeOverride::kSkinHairEyes);
-	REQUIRE(profile.region == RegionOverride::kFullFrame);
-	REQUIRE(profile.onlyInDialogue == false);
+	Profiles profiles;
+	profiles.dialogue.scope = static_cast<ScopeOverride>(99);
+	profiles.Sanitize();
+	REQUIRE(profiles.dialogue.scope == NR::Context::kMaxScope);
 }

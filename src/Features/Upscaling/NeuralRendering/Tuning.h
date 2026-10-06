@@ -76,10 +76,21 @@ namespace NR
 		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all six by default. */
 		uint32_t materialMapFilter = MaterialMap::kAllCategories;
 
+		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
+		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
+		{
+			return { &Tuning::strengthOther, &Tuning::strengthSkin, &Tuning::strengthHair, &Tuning::strengthEyes, &Tuning::strengthFoliage, &Tuning::strengthLandscape };
+		}
+
 		/** @brief Bounds and orders the material strengths for the shader's cbuffer and NeuralRenderingCategory ids. */
 		[[nodiscard]] MaterialStrength::Values MaterialStrengths() const
 		{
-			return MaterialStrength::Sanitize({ { strengthOther, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape }, strengthEdgeSoftness });
+			MaterialStrength::Values values;
+			const auto members = StrengthMembers();
+			for (uint32_t category = 0; category < MaterialStrength::kCount; ++category)
+				values.strength[category] = this->*members[category];
+			values.edgeSoftness = strengthEdgeSoftness;
+			return MaterialStrength::Sanitize(values);
 		}
 
 		/** @brief Whether the material with this NeuralRenderingCategory id has any strength, the state its checkbox shows. */
@@ -93,7 +104,7 @@ namespace NR
 		{
 			if (category >= MaterialStrength::kCount)
 				return;
-			StrengthField(category) = selected ? MaterialStrength::kMaxStrength : MaterialStrength::kMinStrength;
+			this->*StrengthMembers()[category] = selected ? MaterialStrength::kMaxStrength : MaterialStrength::kMinStrength;
 			SyncMaterialSwitch();
 		}
 
@@ -104,23 +115,12 @@ namespace NR
 			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
 		}
 
-		/** @brief The strength field for a NeuralRenderingCategory id; an id outside the range reads as Everything Else. */
-		float& StrengthField(uint32_t category)
+		/** @brief Writes the six strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
+		void ApplyStrengths(const std::array<float, MaterialStrength::kCount>& strengths)
 		{
-			switch (category) {
-			case MaterialStrength::kSkin:
-				return strengthSkin;
-			case MaterialStrength::kHair:
-				return strengthHair;
-			case MaterialStrength::kEyes:
-				return strengthEyes;
-			case MaterialStrength::kFoliage:
-				return strengthFoliage;
-			case MaterialStrength::kLandscape:
-				return strengthLandscape;
-			default:
-				return strengthOther;
-			}
+			const auto members = StrengthMembers();
+			for (uint32_t category = 0; category < MaterialStrength::kCount; ++category)
+				this->*members[category] = strengths[category];
 		}
 
 		/** @brief Bounds user input to the reference runtime's tuning range and to the crop's dependencies. */

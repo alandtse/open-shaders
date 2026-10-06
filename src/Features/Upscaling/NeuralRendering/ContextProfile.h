@@ -2,67 +2,110 @@
 
 #include "Tuning.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 
 namespace NR::Context
 {
-	/** @brief Which of the dialogue profile's two contexts a frame is in. */
+	/** @brief Situation a frame is rendered in; each has its own profile. */
 	enum class Kind : uint32_t
 	{
-		kDefault,  ///< The dialogue menu is closed; the profile's overrides do not apply.
-		kDialogue  ///< The dialogue menu is open; the profile's overrides apply.
+		kNormal,   ///< No special situation.
+		kDialogue  ///< The dialogue menu is open.
 	};
 
-	/** @brief The context a frame is in, from whether the dialogue menu is open. */
-	inline Kind ResolveContext(bool dialogueOpen)
-	{
-		return dialogueOpen ? Kind::kDialogue : Kind::kDefault;
-	}
-
-	/** @brief Material scope the dialogue profile applies instead of the by-material setting. */
+	/** @brief Material scope a profile applies instead of the by-material selection. */
 	enum class ScopeOverride : uint32_t
 	{
-		kSameAsNormal = 0,     ///< Use the by-material setting unchanged.
+		kSameAsNormal = 0,     ///< Use the by-material selection unchanged.
 		kEverything,           ///< Neural Rendering on every material.
 		kSkinHairEyes,         ///< Characters' skin, hair and eyes only.
 		kSkinHairEyesFoliage,  ///< Skin, hair, eyes and foliage.
-		kCount
 	};
 	/** @brief Largest valid ScopeOverride; Sanitize clamps above it. */
 	inline constexpr ScopeOverride kMaxScope = ScopeOverride::kSkinHairEyesFoliage;
 
-	/** @brief Crop the dialogue profile applies instead of the Limit to Tracked Actor setting. */
+	/** @brief Crop a profile applies instead of the Limit to Tracked Actor setting. */
 	enum class RegionOverride : uint32_t
 	{
 		kSameAsNormal = 0,  ///< Use the tracked-actor crop setting unchanged.
 		kFullFrame,         ///< Evaluate the whole view; no tracked-actor crop.
-		kCount
 	};
 	/** @brief Largest valid RegionOverride; Sanitize clamps above it. */
 	inline constexpr RegionOverride kMaxRegion = RegionOverride::kFullFrame;
 
-	/** @brief What Neural Rendering does while a dialogue is open, versus normally. The default is inert. */
-	struct DialogueProfile
+	/** @brief What Neural Rendering does in one situation. The defaults change nothing. */
+	struct ContextProfile
 	{
-		/** @brief Suspend the pass outside dialogue, keeping its resources and runtime alive. */
-		bool onlyInDialogue = false;
-		/** @brief Material scope applied while a dialogue is open. */
+		/** @brief Evaluate Neural Rendering; false suspends the pass with its resources and runtime kept alive. */
+		bool run = true;
+		/** @brief Material scope applied in this situation. */
 		ScopeOverride scope = ScopeOverride::kSameAsNormal;
-		/** @brief Crop applied while a dialogue is open. */
+		/** @brief Crop applied in this situation. */
 		RegionOverride region = RegionOverride::kSameAsNormal;
 
 		/** @brief Brings a hand-edited config's enums into the valid range. */
 		void Sanitize()
 		{
-			if (scope > kMaxScope)
-				scope = kMaxScope;
-			if (region > kMaxRegion)
-				region = kMaxRegion;
+			scope = std::min(scope, kMaxScope);
+			region = std::min(region, kMaxRegion);
+		}
+
+		/** @brief Whether this profile and another differ in what they evaluate, not in whether they run. */
+		[[nodiscard]] bool OverridesDiffer(const ContextProfile& other) const
+		{
+			return scope != other.scope || region != other.region;
 		}
 	};
 
-	/** @brief The six strengths an override selects, in category id order; kSameAsNormal selects NR on every material. */
+	/**
+	 * @brief The profile of every situation. Dialogue-only evaluation is the normal profile not
+	 *        running while the dialogue profile does.
+	 */
+	struct Profiles
+	{
+		ContextProfile normal;
+		ContextProfile dialogue;
+
+		/** @brief The profile for a situation. */
+		[[nodiscard]] const ContextProfile& For(Kind kind) const
+		{
+			return kind == Kind::kDialogue ? dialogue : normal;
+		}
+
+		/** @brief Sanitizes every profile. */
+		void Sanitize()
+		{
+			normal.Sanitize();
+			dialogue.Sanitize();
+		}
+
+		/** @brief Whether any profile overrides the material scope, so the by-material lane must stay bound everywhere. */
+		[[nodiscard]] bool ScopeOverridden() const
+		{
+			return normal.scope != ScopeOverride::kSameAsNormal || dialogue.scope != ScopeOverride::kSameAsNormal;
+		}
+	};
+
+	/** @brief What the previous frame was, so a transition can be recognised. */
+	struct ContextState
+	{
+		Kind previous = Kind::kNormal;
+		bool wasSuspended = false;
+	};
+
+	/** @brief What one frame's situation decides. */
+	struct Decision
+	{
+		Kind kind = Kind::kNormal;
+		/** @brief The profile suspends the pass this frame. */
+		bool suspended = false;
+		/** @brief History from before this frame must not be blended: leaving a suspension, or entering a situation that evaluates differently. */
+		bool resetHistory = false;
+	};
+
+	/** @brief The six strengths a scope override selects, in category id order; kSameAsNormal selects NR on every material. */
 	inline std::array<float, MaterialStrength::kCount> ScopeStrengths(ScopeOverride scope)
 	{
 		switch (scope) {
@@ -79,54 +122,47 @@ namespace NR::Context
 		}
 	}
 
-	/** @brief Writes the six strengths into a tuning, in category id order, leaving the by-material switch alone. */
-	inline void ApplyStrengths(Tuning& tuning, const std::array<float, MaterialStrength::kCount>& strengths)
+	/**
+	 * @brief Decides this frame's situation and updates the state.
+	 * @param profiles The profile of every situation.
+	 * @param dialogueOpen Whether the dialogue menu is open.
+	 * @param state The previous frame's situation, updated here.
+	 * @return The situation, whether it suspends the pass, and whether history must be reset.
+	 */
+	inline Decision Resolve(const Profiles& profiles, bool dialogueOpen, ContextState& state)
 	{
-		for (uint32_t category = 0; category < MaterialStrength::kCount; ++category)
-			tuning.StrengthField(category) = strengths[category];
-	}
-
-	/** @brief Whether the pass is suspended in this context: only in dialogue, and only outside it. */
-	inline bool Suspended(const DialogueProfile& profile, Kind kind)
-	{
-		return profile.onlyInDialogue && kind == Kind::kDefault;
+		Decision decision;
+		decision.kind = dialogueOpen ? Kind::kDialogue : Kind::kNormal;
+		const auto& profile = profiles.For(decision.kind);
+		decision.suspended = !profile.run;
+		const bool resumed = state.wasSuspended && !decision.suspended;
+		const bool evaluatesDifferently = decision.kind != state.previous && profile.OverridesDiffer(profiles.For(state.previous));
+		decision.resetHistory = resumed || evaluatesDifferently;
+		state.previous = decision.kind;
+		state.wasSuspended = decision.suspended;
+		return decision;
 	}
 
 	/**
-	 * @brief The tuning one frame evaluates with: the base tuning plus the profile's overrides in
-	 *        dialogue. With the default profile the result equals the base field for field.
-	 *        A scope override keeps the by-material lane on in both contexts, because Feature 18
-	 *        latches the UIAlpha binding at creation and a lane that followed the context would
-	 *        rebuild the eye features on every dialogue open and close.
+	 * @brief The tuning one frame evaluates with: the base tuning plus the situation's overrides.
+	 *        With the default profiles the result equals the base field for field. A scope override
+	 *        in any situation keeps the by-material lane on in every situation, because Feature 18
+	 *        latches the UIAlpha binding at creation and a lane that followed the situation would
+	 *        rebuild the eye features on every change.
 	 */
-	inline Tuning EffectiveTuning(const Tuning& base, const DialogueProfile& profile, Kind kind)
+	inline Tuning EffectiveTuning(const Tuning& base, const Profiles& profiles, Kind kind)
 	{
 		auto result = base;
-		const bool scopeOverride = profile.scope != ScopeOverride::kSameAsNormal;
-		if (kind == Kind::kDefault) {
-			if (!base.materialStrength && scopeOverride) {
-				result.materialStrength = true;
-				ApplyStrengths(result, MaterialStrength::kDefaults);
-			}
-			return result;
-		}
+		const auto& profile = profiles.For(kind);
 		if (profile.region == RegionOverride::kFullFrame)
 			result.regionOfInterest = false;
-		if (scopeOverride) {
+		if (profile.scope != ScopeOverride::kSameAsNormal) {
 			result.materialStrength = true;
-			ApplyStrengths(result, ScopeStrengths(profile.scope));
+			result.ApplyStrengths(ScopeStrengths(profile.scope));
+		} else if (profiles.ScopeOverridden() && !result.materialStrength) {
+			result.materialStrength = true;
+			result.ApplyStrengths(MaterialStrength::kDefaults);
 		}
 		return result;
-	}
-
-	/**
-	 * @brief Whether crossing between contexts changes the crop or the strengths, so history must
-	 *        not blend across it. A default profile changes nothing and requests no reset.
-	 */
-	inline bool ContextChangeNeedsReset(const DialogueProfile& profile, Kind previous, Kind current)
-	{
-		if (previous == current)
-			return false;
-		return profile.scope != ScopeOverride::kSameAsNormal || profile.region != RegionOverride::kSameAsNormal;
 	}
 }

@@ -73,32 +73,36 @@ by the [evaluation contract](https://github.com/bmitch87/DLSS5VKLayer/blob/main/
 UI ranges follow the [Cost Scaler configuration](https://github.com/xenmods/DLSSNR-Cost-Scaler/blob/main/nvngx_dlssnr.ini);
 its strength default of 1.0 does not override existing OS defaults.
 
-### Dialogue profile
+### Situation profiles
 
-**Dialogue** holds what Neural Rendering does while `RE::DialogueMenu` is open, versus
-normally. The default profile is inert: a normal frame and a dialogue frame both follow the
-tuning above.
+Every situation Neural Rendering can be in has a profile (`Upscaling.neuralRenderingContexts`:
+`normal` and `dialogue` today; `NR::Context::Kind` is where a combat or cutscene situation
+would be added). A profile holds `run`, a material `scope` override and a crop `region`
+override, and the defaults change nothing: a normal frame and a dialogue frame both follow the
+tuning above. `NR::Context::Resolve` picks the situation from the game state each frame and
+reports whether it suspends the pass and whether history must be reset;
+`NR::Context::EffectiveTuning` applies the situation's overrides to the tuning.
 
--   **Only in dialogue** (`Upscaling.neuralRenderingDialogue.onlyInDialogue`, default off)
-    evaluates NR only while the dialogue menu is open and suspends the pass the rest of the
-    time. A suspended pass keeps its resources, its runtime and its NGX features, so the frame
-    renders exactly as it does with NR off and the next dialogue frame resumes without a
-    rebuild. The first frame after a suspension requests one history reset, so it does not
-    blend history from before the dialogue. Shown as _Waiting for dialogue_, and in DevBench's
-    `neuralRenderingStatus` as `state` `kSuspended` with `dialogueOnly` and `dialogueOpen`.
--   **In dialogue, apply Neural Rendering to** (`...scope`: 0 same as normal, 1 everything,
-    2 skin hair and eyes, 3 skin hair eyes and foliage) overrides the material scope while
-    dialogue is open. A scope override binds the by-material lane in both contexts, at a cost
-    of about 0.04 ms, because Feature 18 latches the `UIAlpha` binding at creation: a context
-    change must never rebuild the eye features. Outside dialogue the lane is bound with
-    all-ones strengths, which leaves every pixel unprotected, so the normal frame is unchanged.
--   **In dialogue, crop** (`...region`: 0 same as normal, 1 full frame) drops the tracked-actor
-    crop while dialogue is open and evaluates the whole view. It needs **Limit to Tracked
-    Actor** on. Without an override the crop is untouched: in dialogue the tracked actor is
-    normally the speaker, so the crop keeps following it.
+-   **Only in dialogue** (the normal profile's `run` false, the dialogue profile's true; default
+    off) evaluates NR only while `RE::DialogueMenu` is open and suspends the pass the rest of
+    the time. A suspended pass keeps its resources, its runtime and its NGX features, so the
+    frame renders exactly as it does with NR off and the next dialogue frame resumes without a
+    rebuild. Shown as _Waiting for dialogue_, and in DevBench's `neuralRenderingStatus` as
+    `state` `kSuspended` with `dialogueOnly` and `dialogueOpen`.
+-   **In dialogue, apply Neural Rendering to** (`dialogue.scope`: 0 same as normal, 1
+    everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overrides the material
+    scope while dialogue is open. A scope override in any profile binds the by-material lane in
+    every situation, at a cost of about 0.04 ms, because Feature 18 latches the `UIAlpha`
+    binding at creation: a situation change must never rebuild the eye features. Where a
+    profile has no override the lane carries all-ones strengths, which leaves every pixel
+    unprotected, so that frame is unchanged.
+-   **In dialogue, crop** (`dialogue.region`: 0 same as normal, 1 full frame) drops the
+    tracked-actor crop while dialogue is open and evaluates the whole view. It needs **Limit to
+    Tracked Actor** on. Without an override the crop is untouched: in dialogue the tracked
+    actor is normally the speaker, so the crop keeps following it.
 
-Crossing between contexts that changes the crop or the strengths requests one history reset,
-so NR never blends across the two.
+History is reset once when a frame leaves a suspension and when it enters a situation whose
+scope or crop differs from the previous one, so NR never blends across them.
 
 Both VR and SE/AE use this hook. In VR there are two persistent Feature 18
 instances; in flatrim only eye zero is evaluated. Color and depth/motion guides

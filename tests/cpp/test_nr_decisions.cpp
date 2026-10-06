@@ -119,16 +119,6 @@ TEST_CASE("DecideFrame suspends without freeing pass resources while dialogue-on
 	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::ReleasePassResources);
 }
 
-TEST_CASE("ResumesFromSuspend flags exactly the first frame after a suspension", "[nr]")
-{
-	bool wasSuspended = false;
-	REQUIRE_FALSE(NR::ResumesFromSuspend(false, wasSuspended));
-	REQUIRE_FALSE(NR::ResumesFromSuspend(true, wasSuspended));
-	REQUIRE_FALSE(NR::ResumesFromSuspend(true, wasSuspended));
-	REQUIRE(NR::ResumesFromSuspend(false, wasSuspended));
-	REQUIRE_FALSE(NR::ResumesFromSuspend(false, wasSuspended));
-}
-
 TEST_CASE("OnFailure tears down only for a removed device", "[nr]")
 {
 	REQUIRE(NR::OnFailure(true) == NR::FailureAction::TeardownThenLatch);

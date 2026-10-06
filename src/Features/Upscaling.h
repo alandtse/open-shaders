@@ -101,7 +101,7 @@ public:
 		float sharpnessDLSS = 0.8f;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
 		bool neuralRenderingEnabled = false;
-		NR::Context::DialogueProfile neuralRenderingDialogue;
+		NR::Context::Profiles neuralRenderingContexts;
 		NR::Tuning neuralRenderingTuning;
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;

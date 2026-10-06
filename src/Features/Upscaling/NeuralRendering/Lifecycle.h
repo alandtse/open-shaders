@@ -65,17 +65,6 @@ namespace NR
 		TeardownThenLatch  ///< Device removed, so the runtime cannot be reused.
 	};
 
-	/**
-	 * @brief Whether this frame leaves a suspension, the one transition that must invalidate history;
-	 *        the caller keeps the previous frame's suspended state in the reference, which is updated here.
-	 */
-	inline bool ResumesFromSuspend(bool suspended, bool& wasSuspended)
-	{
-		const bool resumes = wasSuspended && !suspended;
-		wasSuspended = suspended;
-		return resumes;
-	}
-
 	/** @brief A removed device can never be reused; every other failure keeps the runtime. */
 	inline FailureAction OnFailure(bool deviceRemoved)
 	{
