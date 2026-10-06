@@ -743,6 +743,7 @@ void Effects11::ClearShaderCache()
 {
 	volumetricRaysFailed = false;
 	sunRaysFailed = false;
+	tonemapFailed = false;
 	raymarchVolumetricRaysPS = nullptr;
 	applyVolumetricRaysPS = nullptr;
 	blurHCS = nullptr;
@@ -1073,15 +1074,20 @@ bool Effects11::WantsTonemapOwnership()
 bool Effects11::RenderTonemap(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 	auto& effectManager = EffectManager::GetSingleton();
-	if (!effectManager.IsInitialized())
+	if (tonemapFailed || !effectManager.IsInitialized())
 		return false;
 
 	auto& renderTargets = globals::game::renderer->GetRuntimeData().renderTargets;
-	// Only report replacement after the effect chain actually wrote the output.
-	if (effectManager.ExecuteEffects(renderTargets[a_input], renderTargets[a_output])) {
-		// Present increments frameCount before HDR Display consumes this output.
-		tonemapReplacedFrame = globals::state->frameCount + 1;
-		return true;
+	try {
+		// Only report replacement after the effect chain actually wrote the output.
+		if (effectManager.ExecuteEffects(renderTargets[a_input], renderTargets[a_output])) {
+			// Present increments frameCount before HDR Display consumes this output.
+			tonemapReplacedFrame = globals::state->frameCount + 1;
+			return true;
+		}
+	} catch (const std::exception& error) {
+		tonemapFailed = true;
+		logger::error("[EFFECTS11] Tonemap replacement disabled until shader reload: {}", error.what());
 	}
 	return false;
 }

@@ -185,6 +185,7 @@ public:
 
 	bool volumetricRaysFailed = false;
 	bool sunRaysFailed = false;
+	bool tonemapFailed = false;
 	winrt::com_ptr<ID3D11PixelShader> raymarchVolumetricRaysPS;
 	winrt::com_ptr<ID3D11PixelShader> applyVolumetricRaysPS;
 	winrt::com_ptr<ID3D11ComputeShader> blurHCS;
