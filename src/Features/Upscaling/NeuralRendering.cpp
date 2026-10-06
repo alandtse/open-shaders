@@ -1526,10 +1526,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Dialo
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
 	const auto action = NR::DecideFrame({ enabled, suspended, globals::state->worldRenderedThisFrame, impl->failed,
 		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
-	// Leaving a suspension must not blend history from before it, and only this transition requests the reset.
 	if (resumed)
 		resetHistory = true;
-	// A profile override that changes the crop or strengths between contexts likewise must not blend across them.
 	if (NR::Context::ContextChangeNeedsReset(dialogue, lastContext, kind))
 		resetHistory = true;
 	lastContext = kind;
@@ -1690,8 +1688,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Dialo
 		auto boundedTuning = effective;
 		boundedTuning.Sanitize();
 		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
-		// The dialogue profile can drop the tracked crop for full-frame evaluation; the calibration
-		// sweep forces its own crops, so its region is always taken.
 		const bool cropActive = boundedTuning.regionOfInterest || calibrationRunning;
 		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
 		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};

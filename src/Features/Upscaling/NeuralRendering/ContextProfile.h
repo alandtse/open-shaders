@@ -68,11 +68,12 @@ namespace NR::Context
 		switch (scope) {
 		case ScopeOverride::kSkinHairEyes:
 			return MaterialStrength::kCharactersOnly;
-		case ScopeOverride::kSkinHairEyesFoliage: {
-			auto strengths = MaterialStrength::kCharactersOnly;
-			strengths[MaterialStrength::kFoliage] = MaterialStrength::kMaxStrength;
-			return strengths;
-		}
+		case ScopeOverride::kSkinHairEyesFoliage:
+			{
+				auto strengths = MaterialStrength::kCharactersOnly;
+				strengths[MaterialStrength::kFoliage] = MaterialStrength::kMaxStrength;
+				return strengths;
+			}
 		default:
 			return MaterialStrength::kDefaults;
 		}
@@ -103,7 +104,6 @@ namespace NR::Context
 		auto result = base;
 		const bool scopeOverride = profile.scope != ScopeOverride::kSameAsNormal;
 		if (kind == Kind::kDefault) {
-			// All-ones strengths leave every pixel unprotected (protection is 1 - strength).
 			if (!base.materialStrength && scopeOverride) {
 				result.materialStrength = true;
 				ApplyStrengths(result, MaterialStrength::kDefaults);
