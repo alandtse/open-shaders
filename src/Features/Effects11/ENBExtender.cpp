@@ -81,7 +81,7 @@ namespace ENBExtender
 	float SafeStof(const std::string& s, float fallback)
 	{
 		float value;
-		if (Effects11Settings::TryParseFloat(s, value))
+		if (Effects11Settings::TryParseHlslFloat(s, value))
 			return value;
 		if (!s.empty())
 			logger::warn("[ENBExtender] Failed to parse float from '{}'", s);
