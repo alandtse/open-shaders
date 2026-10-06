@@ -313,6 +313,11 @@ for reconstruction after model evaluation. This D3D12 private ABI is observed
 rather than officially documented; successful creation and evaluation do not by
 themselves establish image quality or temporal correctness.
 
+`DLSSNR.DepthInverted` follows the Reverse Z-Buffer feature, which is restart-gated, so
+the depth guide's convention never changes while the game runs. Frame time and jitter
+reach Feature 18 sanitized: a non-finite or negative frame time reads as zero and a hitch
+is capped at 250 ms, and a non-finite jitter offset or one beyond a pixel reads as zero.
+
 Feature resources and frame parameters are updated in place after creation.
 Appearance tuning is written before creation, and committed UI tuning changes
 recreate the persistent eye handles. A contract change must likewise retire

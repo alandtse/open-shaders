@@ -183,6 +183,8 @@ namespace NR
 		/** @brief Color and Output crop, which always match; zero-sized means the whole frame. */
 		GuideRegion colorOutput;
 		float motionScaleX = 1.0f, motionScaleY = 1.0f;
+		/** @brief The depth guide is reverse-Z (1 is near), which Feature 18 must be told because it does not detect it. */
+		bool depthInverted = false;
 	};
 
 	struct FrameParameters

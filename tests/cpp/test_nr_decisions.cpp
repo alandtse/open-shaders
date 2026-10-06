@@ -327,3 +327,24 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	REQUIRE(tuning.localToneStrength == Catch::Approx(0.25f));
 	REQUIRE(tuning.style == 1);
 }
+
+TEST_CASE("SanitizeFrameTimeMs passes a real frame time and bounds a bad one", "[nr]")
+{
+	REQUIRE(NR::SanitizeFrameTimeMs(16.7f) == 16.7f);
+	REQUIRE(NR::SanitizeFrameTimeMs(0.0f) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(-5.0f) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(std::numeric_limits<float>::infinity()) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(5000.0f) == NR::kMaxFrameTimeMs);
+}
+
+TEST_CASE("SanitizeJitter keeps a sub-pixel offset and zeroes an invalid one", "[nr]")
+{
+	REQUIRE(NR::SanitizeJitter(0.37f) == 0.37f);
+	REQUIRE(NR::SanitizeJitter(-0.5f) == -0.5f);
+	REQUIRE(NR::SanitizeJitter(NR::kMaxJitterPixels) == NR::kMaxJitterPixels);
+	REQUIRE(NR::SanitizeJitter(1.5f) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(-3.0f) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::infinity()) == 0.0f);
+}

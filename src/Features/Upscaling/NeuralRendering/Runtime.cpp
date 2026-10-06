@@ -574,7 +574,7 @@ namespace NR
 		writer.SetUInt("DLSSNR.MVecSubrectHeight", motionRegion.height);
 		writer.SetFloat("DLSSNR.MVecScaleX", guides.motionScaleX);
 		writer.SetFloat("DLSSNR.MVecScaleY", guides.motionScaleY);
-		writer.SetUInt("DLSSNR.DepthInverted", 0u);
+		writer.SetUInt("DLSSNR.DepthInverted", guides.depthInverted ? 1u : 0u);
 		writer.SetUInt("DLSSNR.Enabled", 1u);
 		writer.SetUInt("DLSSNR.Reset", frame.reset ? 1u : 0u);
 		writer.SetUInt("DLSSNR.Upscaling", 0u);

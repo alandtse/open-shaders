@@ -1,5 +1,6 @@
 #include "NeuralRendering.h"
 
+#include "Features/ReverseZ.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -431,9 +432,9 @@ struct NeuralRendering::Impl
 		eye.frame.worldToView = inverseView.Invert();
 		eye.frame.viewToClip = projection;
 		const auto jitter = globals::features::upscaling.jitter;
-		eye.frame.jitterX = -jitter.x;
-		eye.frame.jitterY = -jitter.y;
-		eye.frame.frameTimeMs = *globals::game::deltaTime * 1000.0f;
+		eye.frame.jitterX = NR::SanitizeJitter(-jitter.x);
+		eye.frame.jitterY = NR::SanitizeJitter(-jitter.y);
+		eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(*globals::game::deltaTime * 1000.0f);
 		eye.frame.feedCameraData = (diagnostic.options & NR::Diagnostics::FeedCameraData) != 0;
 		if (diagnostic.options & NR::Diagnostics::ZeroJitter)
 			eye.frame.jitterX = eye.frame.jitterY = 0;
@@ -757,6 +758,7 @@ struct NeuralRendering::Impl
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
 					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+					guides.depthInverted = globals::features::reverseZ.IsActive();
 					const NR::ProtectionResources protection{
 						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
 						// A protected pixel is restored from the NR input itself, so the alpha and the
