@@ -343,8 +343,6 @@ public:
 		IsBeastRace = 1 << 2,
 		GrassSphereNormal = 1 << 3,
 		IsSun = 1 << 4,
-		IsMoon = 1 << 7,
-		IsAurora = 1 << 8,
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
@@ -352,7 +350,9 @@ public:
 		IsCharacterRainSurface = 1u << 30,
 		IsHeldWeapon = 1u << 29,
 		TreeBend = 1u << 28,
-		GammaRenderTarget = 1u << 27
+		GammaRenderTarget = 1u << 27,
+		IsMoon = 1u << 26,
+		IsAurora = 1u << 25
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */
