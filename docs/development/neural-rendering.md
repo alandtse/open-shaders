@@ -247,8 +247,9 @@ the fovea clip also narrowed the crop the last frame evaluated.
     render-eye resolution. The original scene-linear `kMAIN` RGB and alpha are
     retained separately for luminance-ratio writeback.
 -   Depth: the existing upscaling encoder reads the engine depth SRV,
-    including VR's R24 depth view, and writes non-inverted device depth to
-    R32 float. Depth is not linearized.
+    including VR's R24 depth view, and writes the device depth to R32 float
+    unchanged: inverted (1 is near) when Reverse Z is active. Depth is not
+    linearized.
 -   Motion: the same encoder's undilated path writes RG16 float, preserving
     correspondence with the center-pixel depth guide. The default Feature 18
     contract converts normalized eye-UV displacement to NR input pixels using
