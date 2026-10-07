@@ -53,7 +53,7 @@ SKSE_PLUGIN_LOAD(const SKSE::LoadInterface* a_skse)
 #endif
 	InitializeLog();
 	logger::info("Loaded {} {}", Plugin::NAME, Plugin::VERSION.string());
-	SKSE::Init(a_skse);
+	SKSE::Init(a_skse, { .log = false });
 	SKSE::AllocTrampoline(1 << 12);
 	return Load();
 }
