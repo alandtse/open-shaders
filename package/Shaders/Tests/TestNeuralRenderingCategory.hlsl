@@ -12,6 +12,8 @@
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Eyes)), NeuralRenderingCategory::Eyes);
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Foliage)), NeuralRenderingCategory::Foliage);
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Landscape)), NeuralRenderingCategory::Landscape);
+	ASSERT(AreEqual, NeuralRenderingCategory::Decode(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Cloth)), NeuralRenderingCategory::Cloth);
+	ASSERT(AreEqual, NeuralRenderingCategory::Decode(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Metal)), NeuralRenderingCategory::Metal);
 }
 
 	/// @tags neural-rendering
@@ -31,6 +33,10 @@
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(hairOverNone), NeuralRenderingCategory::None);
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(hairOverSkin), NeuralRenderingCategory::None);
 	ASSERT(AreEqual, NeuralRenderingCategory::Decode(foliageOverLandscape), NeuralRenderingCategory::None);
+	const float metalOverCloth = lerp(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Cloth), NeuralRenderingCategory::Encode(NeuralRenderingCategory::Metal), 0.5);
+	const float clothOverSkin = lerp(NeuralRenderingCategory::Encode(NeuralRenderingCategory::Skin), NeuralRenderingCategory::Encode(NeuralRenderingCategory::Cloth), 0.5);
+	ASSERT(AreEqual, NeuralRenderingCategory::Decode(metalOverCloth), NeuralRenderingCategory::None);
+	ASSERT(AreEqual, NeuralRenderingCategory::Decode(clothOverSkin), NeuralRenderingCategory::None);
 }
 
 	/// @tags neural-rendering
@@ -51,21 +57,25 @@
 	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Hair, skinAndEyes));
 	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::None, skinAndEyes));
 	ASSERT(IsTrue, NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Landscape, 0x3Fu));
+	ASSERT(IsTrue, NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Metal, 0xFFu));
+	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::Metal, 0x3Fu));
 	ASSERT(IsTrue, !NeuralRenderingCategory::CategoryInFilter(NeuralRenderingCategory::None, 0u));
 }
 
 	/// @tags neural-rendering
-	/// CategoryStrength reads the strength of one category out of the packed float4 + float2 pair
+	/// CategoryStrength reads the strength of one category out of the packed float4 + float4 pair
 	[numthreads(1, 1, 1)] void TestCategoryStrengthSelectsTheCategory()
 {
 	const float4 low = float4(0.125, 0.25, 0.375, 0.5);
-	const float2 high = float2(0.625, 0.75);
+	const float4 high = float4(0.625, 0.75, 0.875, 1.0);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::None, low, high), 0.125);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Skin, low, high), 0.25);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Hair, low, high), 0.375);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Eyes, low, high), 0.5);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Foliage, low, high), 0.625);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Landscape, low, high), 0.75);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Cloth, low, high), 0.875);
+	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(NeuralRenderingCategory::Metal, low, high), 1.0);
 	ASSERT(AreEqual, NeuralRenderingCategory::CategoryStrength(200u, low, high), 0.125);
 }
 
@@ -78,6 +88,8 @@
 	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Eyes) == float3(1.0, 1.0, 0.0)));
 	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Foliage) == float3(0.0, 1.0, 0.0)));
 	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Landscape) == float3(0.0, 1.0, 1.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Cloth) == float3(1.0, 0.0, 1.0)));
+	ASSERT(IsTrue, all(NeuralRenderingCategory::DebugColor(NeuralRenderingCategory::Metal) == float3(1.0, 1.0, 1.0)));
 }
 
 	/// @tags neural-rendering

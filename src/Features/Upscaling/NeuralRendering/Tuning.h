@@ -62,7 +62,7 @@ namespace NR
 		bool materialStrength = false;
 		/** @brief NR strength per material, 1 applies it fully and 0 bypasses it there. Unlabelled pixels use strengthOther. */
 		float strengthSkin = 1.0f, strengthHair = 1.0f, strengthEyes = 1.0f;
-		float strengthFoliage = 1.0f, strengthLandscape = 1.0f, strengthOther = 1.0f;
+		float strengthFoliage = 1.0f, strengthLandscape = 1.0f, strengthCloth = 1.0f, strengthMetal = 1.0f, strengthOther = 1.0f;
 		/** @brief Box-filter radius, in pixels, that blends each material's strength into its neighbours. */
 		uint32_t strengthEdgeSoftness = 2;
 		/**
@@ -73,13 +73,13 @@ namespace NR
 		bool showMaterialMap = false;
 		/** @brief MaterialMap::Mode the map draws: the category's debug colour, or its by-material strength. */
 		uint32_t materialMapMode = static_cast<uint32_t>(MaterialMap::Mode::kCategory);
-		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all six by default. */
+		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all eight by default. */
 		uint32_t materialMapFilter = MaterialMap::kAllCategories;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
 		{
-			return { &Tuning::strengthOther, &Tuning::strengthSkin, &Tuning::strengthHair, &Tuning::strengthEyes, &Tuning::strengthFoliage, &Tuning::strengthLandscape };
+			return { &Tuning::strengthOther, &Tuning::strengthSkin, &Tuning::strengthHair, &Tuning::strengthEyes, &Tuning::strengthFoliage, &Tuning::strengthLandscape, &Tuning::strengthCloth, &Tuning::strengthMetal };
 		}
 
 		/** @brief Bounds and orders the material strengths for the shader's cbuffer and NeuralRenderingCategory ids. */
@@ -115,7 +115,7 @@ namespace NR
 			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
 		}
 
-		/** @brief Writes the six strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
+		/** @brief Writes the eight strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
 		void ApplyStrengths(const std::array<float, MaterialStrength::kCount>& strengths)
 		{
 			const auto members = StrengthMembers();
@@ -141,6 +141,8 @@ namespace NR
 			strengthEyes = materialStrengths.strength[MaterialStrength::kEyes];
 			strengthFoliage = materialStrengths.strength[MaterialStrength::kFoliage];
 			strengthLandscape = materialStrengths.strength[MaterialStrength::kLandscape];
+			strengthCloth = materialStrengths.strength[MaterialStrength::kCloth];
+			strengthMetal = materialStrengths.strength[MaterialStrength::kMetal];
 			strengthEdgeSoftness = materialStrengths.edgeSoftness;
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);

@@ -159,6 +159,8 @@ TEST_CASE("A scope override sets the lane and strengths in its situation and kee
 	const auto expected = NR::Context::ScopeStrengths(ScopeOverride::kSkinHairEyesFoliage);
 	REQUIRE(expected[NR::MaterialStrength::kFoliage] == 1.0f);
 	REQUIRE(expected[NR::MaterialStrength::kLandscape] == 0.0f);
+	REQUIRE(expected[NR::MaterialStrength::kCloth] == 0.0f);
+	REQUIRE(expected[NR::MaterialStrength::kMetal] == 0.0f);
 	REQUIRE(dialogue.MaterialStrengths().strength == expected);
 	REQUIRE(dialogue.strengthEdgeSoftness == base.strengthEdgeSoftness);
 }

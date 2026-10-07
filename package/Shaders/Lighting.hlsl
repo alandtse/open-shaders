@@ -3649,6 +3649,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		else
 	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsEye)
 		neuralRenderingCategory = NeuralRenderingCategory::Eyes;
+	else if (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight)
+#			if defined(ENVMAP)
+		neuralRenderingCategory = NeuralRenderingCategory::Metal;
+#			else
+		neuralRenderingCategory = NeuralRenderingCategory::Cloth;
+#			endif
 #		endif
 
 	// Stored as 1 - vertexAO so the cleared default (0) means no occlusion
