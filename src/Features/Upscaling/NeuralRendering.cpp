@@ -775,6 +775,22 @@ struct NeuralRendering::Impl
 		return ok;
 	}
 
+	/** @brief Runs one eye alone at full size on its own instance: the reference a reduced or side-by-side result is compared with. */
+	bool EvaluateReference(ID3D12GraphicsCommandList* commands, uint32_t i, const NR::Tuning& tuning)
+	{
+		auto& eye = eyes[i];
+		Transition(commands, eye, true);
+		NR::GuideParameters guides;
+		guides.depth = guides.motion = guides.colorOutput = NR::GuideRegion{ 0, 0, width, height };
+		guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+		guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+		guides.depthInverted = globals::features::reverseZ.IsActive();
+		const bool ok = runtime.Evaluate(commands, NR::kVerifySlot + i, eye.color->resource.get(), eye.depth->resource.get(),
+			eye.motion->resource.get(), eye.output->resource.get(), NR::ProtectionResources{}, width, height, guides, eye.frame, tuning);
+		Transition(commands, eye, false);
+		return ok;
+	}
+
 	/** @brief Writes the proxy the composite reads for a model-size evaluation: the eye's own colour scaled by the model's gain, upsampled to the eye size. */
 	void ExpandModelGain(uint32_t i, bool guided)
 	{
@@ -1076,8 +1092,8 @@ struct NeuralRendering::Impl
 			eyes[0].frame.reset |= eyes[1].frame.reset;
 			CopySbsInputs();
 		}
-		const bool sbsVerify = sbs && tuning.sbsVerify;
-		if (sbsVerify) {
+		const bool modelVerify = (sbs || lowRes) && tuning.modelVerify;
+		if (modelVerify) {
 			EnsureGainResources(0);
 			EnsureGainResources(1);
 			if (verifyRequested)
@@ -1088,13 +1104,13 @@ struct NeuralRendering::Impl
 			auto* commands = interop.Begin();
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
-				if (sbs && i == 0) {
-					success = EvaluateSbs(commands, tuning, diagnostic);
-					if (!success)
-						break;
-				}
-				if (sbs && !sbsVerify)
+				if (sbs) {
+					if (i == 0)
+						success = EvaluateSbs(commands, tuning, diagnostic);
+					if (success && modelVerify)
+						success = EvaluateReference(commands, i, tuning);
 					continue;
+				}
 				if (!decision.evaluate[i]) {
 					reuseFrame[i] = true;
 					if (!verifyEye[i]) {
@@ -1158,6 +1174,8 @@ struct NeuralRendering::Impl
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
 				}
 				Transition(commands, eye, false, lowRes);
+				if (success && modelVerify)
+					success = EvaluateReference(commands, i, tuning);
 			}
 			interop.End();
 		}
@@ -1174,8 +1192,8 @@ struct NeuralRendering::Impl
 		if (capture)
 			interop.Drain();
 		if (sbs) {
-			CopySbsOutputs(sbsVerify);
-			if (sbsVerify)
+			CopySbsOutputs(modelVerify);
+			if (modelVerify && !lowRes)
 				reuseFrame = { true, true };
 		}
 		if (lowRes) {

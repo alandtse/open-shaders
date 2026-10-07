@@ -151,8 +151,11 @@ namespace NR
 		return eyes ? renderWidth / eyes : renderWidth;
 	}
 
-	/** @brief Feature 18 instances the runtime holds: one per eye, plus one for both eyes evaluated as a single side-by-side image. */
-	constexpr uint32_t kFeatureSlots = 3, kSbsSlot = 2;
+	/**
+	 * @brief Feature 18 instances the runtime holds: one per eye, one for both eyes evaluated as a single
+	 *        side-by-side image, and one per eye at full size that a verify capture compares against.
+	 */
+	constexpr uint32_t kFeatureSlots = 5, kSbsSlot = 2, kVerifySlot = 3;
 
 	/** @brief Size the model runs at for a model scale, rounded to the kernels' 8-pixel groups; zero when it runs at the eye size. */
 	inline std::pair<uint32_t, uint32_t> ModelExtent(float scale, uint32_t width, uint32_t height)

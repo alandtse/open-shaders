@@ -98,8 +98,11 @@ namespace NR
 		 *        Developer-only and VR-only; it takes precedence over the eye stagger and the model scale.
 		 */
 		bool sbsEvaluate = false;
-		/** @brief With sbsEvaluate, also evaluates each eye alone every frame so a verify capture can compare the two. Developer-only; doubles the model cost. */
-		bool sbsVerify = false;
+		/**
+		 * @brief With a model scale or sbsEvaluate, also evaluates each eye alone at full size every frame
+		 *        so a verify capture can compare the two. Developer-only; roughly doubles the model cost.
+		 */
+		bool modelVerify = false;
 		/** @brief Feeds eye 0's model inputs to both eyes, so the two eyes' model outputs can be compared like for like. Developer-only; the right eye's picture is wrong while on. */
 		bool mirrorEyes = false;
 
