@@ -737,13 +737,14 @@ struct NeuralRendering::Impl
 		}
 	}
 
-	/** @brief Splits the side-by-side model output back into each eye's own output texture. */
-	void CopySbsOutputs()
+	/** @brief Splits the side-by-side model output back into each eye; verify keeps the eye's own run in output and puts this one in reuseOutput. */
+	void CopySbsOutputs(bool verify)
 	{
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			const uint32_t x = i * (width + kSbsGutterPixels);
 			const D3D11_BOX box{ x, 0, 0, x + width, height, 1 };
-			context->CopySubresourceRegion(eyes[i].output->resource11, 0, 0, 0, 0, eyes[0].lowOutput->resource11, 0, &box);
+			ID3D11Resource* target = verify ? static_cast<ID3D11Resource*>(eyes[i].reuseOutput->resource.get()) : static_cast<ID3D11Resource*>(eyes[i].output->resource11);
+			context->CopySubresourceRegion(target, 0, 0, 0, 0, eyes[0].lowOutput->resource11, 0, &box);
 		}
 	}
 
@@ -1066,9 +1067,21 @@ struct NeuralRendering::Impl
 			}
 		}
 		bool success = true;
+		if (tuning.mirrorEyes && eyeCount == 2) {
+			context->CopyResource(eyes[1].color->resource11, eyes[0].color->resource11);
+			context->CopyResource(eyes[1].depth->resource11, eyes[0].depth->resource11);
+			context->CopyResource(eyes[1].motion->resource11, eyes[0].motion->resource11);
+		}
 		if (sbs) {
 			eyes[0].frame.reset |= eyes[1].frame.reset;
 			CopySbsInputs();
+		}
+		const bool sbsVerify = sbs && tuning.sbsVerify;
+		if (sbsVerify) {
+			EnsureGainResources(0);
+			EnsureGainResources(1);
+			if (verifyRequested)
+				verifyEye = { true, true };
 		}
 		{
 			CS_GPU_PASS("Upscaling::NREvaluate");
@@ -1080,7 +1093,7 @@ struct NeuralRendering::Impl
 					if (!success)
 						break;
 				}
-				if (sbs)
+				if (sbs && !sbsVerify)
 					continue;
 				if (!decision.evaluate[i]) {
 					reuseFrame[i] = true;
@@ -1160,8 +1173,11 @@ struct NeuralRendering::Impl
 		}
 		if (capture)
 			interop.Drain();
-		if (sbs)
-			CopySbsOutputs();
+		if (sbs) {
+			CopySbsOutputs(sbsVerify);
+			if (sbsVerify)
+				reuseFrame = { true, true };
+		}
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				EnsureGainResources(i);

@@ -98,6 +98,10 @@ namespace NR
 		 *        Developer-only and VR-only; it takes precedence over the eye stagger and the model scale.
 		 */
 		bool sbsEvaluate = false;
+		/** @brief With sbsEvaluate, also evaluates each eye alone every frame so a verify capture can compare the two. Developer-only; doubles the model cost. */
+		bool sbsVerify = false;
+		/** @brief Feeds eye 0's model inputs to both eyes, so the two eyes' model outputs can be compared like for like. Developer-only; the right eye's picture is wrong while on. */
+		bool mirrorEyes = false;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
