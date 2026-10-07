@@ -275,7 +275,7 @@ namespace NR
 		if (!traceFile)
 			return;
 		traceFile << "frame=" << frame.number << " options=" << frame.options << " outcome=" << Name(frame.outcome)
-				  << " eval=" << frame.evaluated << " copy=" << frame.copied << " created=" << frame.created
+				  << " eval=" << frame.evaluated << " reuse=" << frame.reused << " copy=" << frame.copied << " created=" << frame.created
 				  << " recreated=" << frame.recreated << " size=" << frame.width << 'x' << frame.height
 				  << " sourceFormat=" << frame.format << " proxyFormat=" << frame.proxyFormat
 				  << " calls=" << frame.calls << " duplicates=" << frame.duplicates << " upscale=" << frame.afterUpscale
@@ -544,7 +544,7 @@ namespace NR
 				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::Suspended)],
 				outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
 			ImGui::Text("Reset frames %u | recreations %u | duplicate calls %u", resets, recreations, duplicates);
-			ImGui::Text("%ux%u | source/proxy DXGI %u/%u | eyes %u | eval 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.proxyFormat, latest.eyeCount, latest.evaluated, latest.copied);
+			ImGui::Text("%ux%u | source/proxy DXGI %u/%u | eyes %u | eval 0x%X | reuse 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.proxyFormat, latest.eyeCount, latest.evaluated, latest.reused, latest.copied);
 			ImGui::Text("Reset L/R 0x%X/0x%X | NGX L/R 0x%X/0x%X", latest.reset[0], latest.reset[1], latest.result[0], latest.result[1]);
 			ImGui::Text("After upscale/post %u/%u | target %u | main changed %u", latest.afterUpscale, latest.afterPost, latest.target, latest.mainChanged);
 			ImGui::TextUnformatted(sequence.c_str());
