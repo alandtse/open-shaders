@@ -151,6 +151,16 @@ namespace NR
 		return eyes ? renderWidth / eyes : renderWidth;
 	}
 
+	/** @brief Size the model runs at for a model scale, rounded to the kernels' 8-pixel groups; zero when it runs at the eye size. */
+	inline std::pair<uint32_t, uint32_t> ModelExtent(float scale, uint32_t width, uint32_t height)
+	{
+		if (!std::isfinite(scale) || scale >= 0.999f)
+			return { 0, 0 };
+		const auto reduce = [scale](uint32_t full) { return std::max(64u, static_cast<uint32_t>(std::lround(full * std::max(scale, 0.25f) / 8.0f)) * 8u); };
+		const uint32_t reducedWidth = reduce(width), reducedHeight = reduce(height);
+		return reducedWidth < width && reducedHeight < height ? std::pair{ reducedWidth, reducedHeight } : std::pair<uint32_t, uint32_t>{ 0, 0 };
+	}
+
 	/** @brief True when a colour target can host NR's proxy for this per-eye render size. */
 	inline bool IsSupportedOutput(const D3D11_TEXTURE2D_DESC& desc, uint32_t width, uint32_t height, uint32_t eyes)
 	{
