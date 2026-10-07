@@ -95,7 +95,8 @@ namespace NR
 		/**
 		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
 		 *        the per-instance cost of the second eye but changes the model's result by position.
-		 *        Developer-only and VR-only; it takes precedence over the eye stagger and the model scale.
+		 *        Developer-only and VR-only; it takes precedence over the eye stagger and combines with the
+		 *        model scale.
 		 */
 		bool sbsEvaluate = false;
 		/**
