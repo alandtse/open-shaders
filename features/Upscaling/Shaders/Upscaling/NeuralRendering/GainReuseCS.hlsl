@@ -49,7 +49,7 @@ cbuffer GainReuse : register(b1)
 	float toneDelta = 0.0;
 	if (all(previousUV > 0.0) && all(previousUV < 1.0)) {
 		const int2 previousPixel = clamp(int2(previousUV * float2(Width, Height)), int2(0, 0), int2(int(Width) - 1, int(Height) - 1));
-		const float2 history = GainHistory.SampleLevel(LinearClamp, previousUV, 0);
+		const float2 history = GainHistory.Load(int3(previousPixel, 0));
 		const float historyDepth = DepthHistory.Load(int3(previousPixel, 0));
 		if (NeuralRenderingReuse::SampleAgrees(true, GuideDepth[id.xy], historyDepth, CameraData, DepthReversed != 0, currentLogLuma, history.x))
 			toneDelta = history.y;

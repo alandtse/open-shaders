@@ -807,6 +807,7 @@ struct NeuralRendering::Impl
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
 		const bool capture = diagnostics.BeginCapture(diagnostic.number);
+		const bool verifyRequested = capture && diagnostics.ConsumeVerifyReuse();
 		if (capture)
 			diagnostics.DumpTexture("00_original_scene", original->resource.get(), diagnostic.number);
 		if (capture) {
@@ -868,7 +869,7 @@ struct NeuralRendering::Impl
 		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
 			static_cast<uint64_t>(diagnostic.number), invalidate };
 		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
-		const bool verifyReuse = capture && staggerActive && diagnostics.ConsumeVerifyReuse();
+		const bool verifyReuse = verifyRequested && staggerActive;
 		std::array<bool, 2> verifyEye{};
 		for (uint32_t i = 0; verifyReuse && i < eyeCount; ++i) {
 			verifyEye[i] = !decision.evaluate[i];
@@ -900,9 +901,10 @@ struct NeuralRendering::Impl
 				auto& eye = eyes[i];
 				if (!decision.evaluate[i]) {
 					reuseFrame[i] = true;
-					diagnostic.reused |= 1u << i;
-					if (!verifyEye[i])
+					if (!verifyEye[i]) {
+						diagnostic.reused |= 1u << i;
 						continue;
+					}
 				}
 				Transition(commands, eye, true);
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
