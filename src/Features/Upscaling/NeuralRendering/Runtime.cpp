@@ -333,7 +333,7 @@ namespace NR
 			std::unique_ptr<NVSDK_NGX_Parameter, ParameterDeleter> parameters{ nullptr, {} };
 			std::unique_ptr<NVSDK_NGX_Handle, FeatureDeleter> feature{ nullptr, {} };
 		};
-		std::array<Eye, 2> eyes;
+		std::array<Eye, kFeatureSlots> eyes;
 
 		~Impl()
 		{

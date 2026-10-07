@@ -157,6 +157,9 @@ namespace
 	/** @brief Brightness difference, in stops, at which a guided model-size gain sample's weight falls by 1/e. */
 	constexpr float kModelGuideSigmaStops = 0.5f;
 
+	/** @brief Blank pixels between the two eyes in the side-by-side model image. */
+	constexpr uint32_t kSbsGutterPixels = 32;
+
 	/** @brief Colour the preview draws the tracked actor's projected box in; the shader outline uses the same yellow. */
 	constexpr ImU32 kActorBoxPreviewColor = IM_COL32(255, 255, 0, 255);
 }
@@ -281,6 +284,11 @@ struct NeuralRendering::Impl
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	/** @brief Model size when the model runs below the eye size; zero when it runs at the eye size. */
 	uint32_t lowWidth = 0, lowHeight = 0;
+	/** @brief Width of the side-by-side texture both eyes are evaluated in as one; zero when each eye has its own. */
+	uint32_t sbsWidth = 0;
+	bool sbsNeedsClear = false;
+	/** @brief Both eyes' material protection side by side, for the single-instance evaluation. */
+	std::unique_ptr<WrappedResource> sbsAlpha;
 	/** @brief Crop of the last frame NR evaluated; inactive means it covered the whole frame. */
 	Util::Region::StereoRegion lastRegion;
 	/** @brief Crop this frame's evaluation uses, published by the main thread and read by TransferColor. */
@@ -362,6 +370,8 @@ struct NeuralRendering::Impl
 		encodeMasks = {};
 		materialStrengthInFlight = materialStrengthBound = false;
 		width = height = guideWidth = guideHeight = eyeCount = lowWidth = lowHeight = 0;
+		sbsWidth = 0;
+		sbsAlpha.reset();
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 		lastRegion = {};
@@ -392,9 +402,9 @@ struct NeuralRendering::Impl
 		}
 	}
 
-	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, uint32_t lw, uint32_t lh)
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, uint32_t lw, uint32_t lh, uint32_t sbsW)
 	{
-		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat && lowWidth == lw && lowHeight == lh)
+		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat && lowWidth == lw && lowHeight == lh && sbsWidth == sbsW)
 			return;
 		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
@@ -441,6 +451,15 @@ struct NeuralRendering::Impl
 				eye.lowOutput = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDROutput");
 			}
 		}
+		if (sbsW) {
+			auto& host = eyes[0];
+			host.lowColor = interop.CreateTexture(sbsW, h, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDRInput");
+			host.lowDepth = interop.CreateTexture(sbsW, h, DXGI_FORMAT_R32_FLOAT, "NeuralRendering::SBS Depth");
+			host.lowMotion = interop.CreateTexture(sbsW, h, DXGI_FORMAT_R16G16_FLOAT, "NeuralRendering::SBS Motion");
+			host.lowOutput = interop.CreateTexture(sbsW, h, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDROutput");
+			sbsNeedsClear = true;
+		}
+		sbsWidth = sbsW;
 		width = w;
 		height = h;
 		guideWidth = gw;
@@ -504,12 +523,11 @@ struct NeuralRendering::Impl
 		return reset;
 	}
 
-	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter)
+	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter, bool low = false, ID3D12Resource* alpha = nullptr)
 	{
-		const bool low = lowWidth != 0;
 		ID3D12Resource* resources[5]{ (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(),
 			(low ? eye.lowMotion : eye.motion)->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(),
-			eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr };
+			alpha ? alpha : (eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr) };
 		const D3D12_RESOURCE_STATES states[5]{
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -697,6 +715,65 @@ struct NeuralRendering::Impl
 		context->ClearState();
 	}
 
+	/** @brief Places both eyes' model inputs side by side in eye 0's SBS textures, a gutter apart. */
+	void CopySbsInputs()
+	{
+		auto& host = eyes[0];
+		if (sbsNeedsClear) {
+			constexpr float zero[4]{};
+			for (auto* uav : { host.lowColor->uav, host.lowDepth->uav, host.lowMotion->uav, host.lowOutput->uav }) {
+				if (uav)
+					context->ClearUnorderedAccessViewFloat(uav, zero);
+			}
+			sbsNeedsClear = false;
+		}
+		const D3D11_BOX colorBox{ 0, 0, 0, width, height, 1 };
+		const D3D11_BOX guideBox{ 0, 0, 0, guideWidth, guideHeight, 1 };
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const uint32_t x = i * (width + kSbsGutterPixels);
+			context->CopySubresourceRegion(host.lowColor->resource11, 0, x, 0, 0, eyes[i].color->resource11, 0, &colorBox);
+			context->CopySubresourceRegion(host.lowDepth->resource11, 0, x, 0, 0, eyes[i].depth->resource11, 0, &guideBox);
+			context->CopySubresourceRegion(host.lowMotion->resource11, 0, x, 0, 0, eyes[i].motion->resource11, 0, &guideBox);
+		}
+	}
+
+	/** @brief Splits the side-by-side model output back into each eye's own output texture. */
+	void CopySbsOutputs()
+	{
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const uint32_t x = i * (width + kSbsGutterPixels);
+			const D3D11_BOX box{ x, 0, 0, x + width, height, 1 };
+			context->CopySubresourceRegion(eyes[i].output->resource11, 0, 0, 0, 0, eyes[0].lowOutput->resource11, 0, &box);
+		}
+	}
+
+	/** @brief Runs the single Feature 18 instance over both eyes at once. */
+	bool EvaluateSbs(ID3D12GraphicsCommandList* commands, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic)
+	{
+		auto& host = eyes[0];
+		auto* alpha = materialStrengthInFlight && sbsAlpha ? sbsAlpha->resource.get() : nullptr;
+		Transition(commands, host, true, true, alpha);
+		const NR::GuideRegion whole{ 0, 0, sbsWidth, height };
+		NR::GuideParameters guides;
+		guides.depth = guides.motion = guides.colorOutput = whole;
+		// Motion is normalized to one eye, not to the combined texture.
+		guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+		guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+		guides.depthInverted = globals::features::reverseZ.IsActive();
+		const NR::ProtectionResources protection{ alpha, alpha ? host.lowColor->resource.get() : nullptr };
+		const bool ok = runtime.Evaluate(commands, NR::kSbsSlot, host.lowColor->resource.get(), host.lowDepth->resource.get(),
+			host.lowMotion->resource.get(), host.lowOutput->resource.get(), protection, sbsWidth, height, guides, host.frame, tuning);
+		diagnostic.result[0] = host.frame.result;
+		if (ok)
+			diagnostic.evaluated |= (1u << eyeCount) - 1;
+		if (host.frame.created) {
+			diagnostic.created |= 1u;
+			diagnostic.reset[0] |= NR::Diagnostics::FeatureCreated;
+		}
+		Transition(commands, host, false, true, alpha);
+		return ok;
+	}
+
 	/** @brief Writes the proxy the composite reads for a model-size evaluation: the eye's own colour scaled by the model's gain, upsampled to the eye size. */
 	void ExpandModelGain(uint32_t i, bool guided)
 	{
@@ -839,6 +916,13 @@ struct NeuralRendering::Impl
 				context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 				context->ClearState();
 			}
+			if (sbsWidth) {
+				if (!sbsAlpha)
+					sbsAlpha = interop.CreateTexture(sbsWidth, height, DXGI_FORMAT_R8_UNORM, "NeuralRendering::SBS MaterialAlpha");
+				const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
+				for (uint32_t i = 0; i < eyeCount; ++i)
+					context->CopySubresourceRegion(sbsAlpha->resource11, 0, i * (width + kSbsGutterPixels), 0, 0, eyes[i].materialAlpha->resource11, 0, &box);
+			}
 		} catch (...) {
 			if (interop.DeviceRemoved())
 				throw;
@@ -877,11 +961,12 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
-		if (lowRes) {
+		const bool sbs = sbsWidth != 0;
+		if (lowRes || sbs) {
 			region = {};
 			actorBox = {};
 		}
-		staggerActive = !lowRes && tuning.skipFrameReuse && globals::game::isVR && globals::state->IsDeveloperMode() &&
+		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR && globals::state->IsDeveloperMode() &&
 		                eyeCount == 2 && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
 		reuseFrame = {};
@@ -981,11 +1066,22 @@ struct NeuralRendering::Impl
 			}
 		}
 		bool success = true;
+		if (sbs) {
+			eyes[0].frame.reset |= eyes[1].frame.reset;
+			CopySbsInputs();
+		}
 		{
 			CS_GPU_PASS("Upscaling::NREvaluate");
 			auto* commands = interop.Begin();
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
+				if (sbs && i == 0) {
+					success = EvaluateSbs(commands, tuning, diagnostic);
+					if (!success)
+						break;
+				}
+				if (sbs)
+					continue;
 				if (!decision.evaluate[i]) {
 					reuseFrame[i] = true;
 					if (!verifyEye[i]) {
@@ -993,7 +1089,7 @@ struct NeuralRendering::Impl
 						continue;
 					}
 				}
-				Transition(commands, eye, true);
+				Transition(commands, eye, true, lowRes);
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
 					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
 					copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1048,7 +1144,7 @@ struct NeuralRendering::Impl
 					diagnostic.created |= 1u << i;
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
 				}
-				Transition(commands, eye, false);
+				Transition(commands, eye, false, lowRes);
 			}
 			interop.End();
 		}
@@ -1064,6 +1160,8 @@ struct NeuralRendering::Impl
 		}
 		if (capture)
 			interop.Drain();
+		if (sbs)
+			CopySbsOutputs();
 		if (lowRes) {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				EnsureGainResources(i);
@@ -2000,7 +2098,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
-		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
+		const uint32_t sbsWidth = effective.sbsEvaluate && count == 2 && lowExtent.first == 0 && !effective.skipFrameReuse ? 2 * w + kSbsGutterPixels : 0;
+		diagnostic.recreated |= work.sbsWidth != sbsWidth;
+		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second, sbsWidth);
 		if (diagnostic.recreated)
 			PublishResources();
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;

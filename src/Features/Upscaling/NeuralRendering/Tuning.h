@@ -92,6 +92,12 @@ namespace NR
 		float modelScale = kMaxModelScale;
 		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
 		bool modelGuidedUpsample = true;
+		/**
+		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
+		 *        the per-instance cost of the second eye but changes the model's result by position.
+		 *        Developer-only and VR-only; it takes precedence over the eye stagger and the model scale.
+		 */
+		bool sbsEvaluate = false;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
