@@ -541,6 +541,36 @@ void Deferred::EndDeferred()
 	ResetBlendStates();
 }
 
+void Deferred::SetForwardMasks2Target(bool a_bind)
+{
+	if (deferredPass || !globals::state->inWorld)
+		return;
+
+	auto shadowState = globals::game::shadowState;
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+
+	constexpr uint slot = 3;
+	if (a_bind) {
+		if (forwardMasks2Bound || renderTargets[0] != RE::RENDER_TARGET::kMAIN)
+			return;
+		forwardMasks2Replaced = renderTargets[slot];
+		forwardMasks2ReplacedMode = setRenderTargetMode[slot];
+		renderTargets[slot] = MASKS2;
+		setRenderTargetMode[slot] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+		forwardMasks2Bound = true;
+	} else if (forwardMasks2Bound) {
+		renderTargets[slot] = forwardMasks2Replaced;
+		setRenderTargetMode[slot] = forwardMasks2ReplacedMode;
+		forwardMasks2Bound = false;
+	} else {
+		return;
+	}
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+}
+
 void Deferred::OverrideBlendStates()
 {
 	auto blendStates = BlendStates::GetSingleton();
