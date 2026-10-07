@@ -3706,8 +3706,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(FORWARD_MASKS2)
-	// The forward eye pass has no deferred write, so without this the head's Skin value stays under the eyeballs.
-	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(NeuralRenderingCategory::Eyes), 0, step(0.5, psout.Diffuse.w));
+	// The forward eye pass has no deferred write, so without this the head's Skin value stays under the eyes.
+	// The vanilla eye atlas holds the lash strands below this uv; another layout classifies them as Eyes.
+	static const float2 kEyeLashMaxUV = float2(0.8, 0.47);
+	const uint eyeCategory = all(input.TexCoord0.xy < kEyeLashMaxUV) ? NeuralRenderingCategory::Hair : NeuralRenderingCategory::Eyes;
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(eyeCategory), 0, step(0.5, psout.Diffuse.w));
 #	endif
 
 #	if defined(EMAT)
