@@ -1390,7 +1390,7 @@
     "feature.linear_lighting.key_feature_2": "修正光照计算",
     "feature.linear_lighting.key_feature_3": "使PBR真正生效",
     "feature.linear_lighting.name": "线性光照",
-    "feature.linear_lighting.vanilla_diffuse_color_multiplier": "原版漫反射颜色倍率",
+    "feature.linear_lighting.vanilla_diffuse_saturation": "颜色转换饱和度",
     "feature.lod_blending.description": "在LOD对象与全细节对象之间提供无缝的视觉过渡，消除生硬的切换，创造平滑的视觉连续性。",
     "feature.lod_blending.disable_terrain_vertex_colors": "禁用地形顶点颜色",
     "feature.lod_blending.disable_terrain_vertex_colors_tooltip": "禁用附近地形上的顶点着色。建议与 xLODGen 生成、且 Vertex Color Intensity 设为 0 的地形 LOD 搭配使用。",

@@ -120,7 +120,6 @@
 
 /// @tags color, colorspace, acescg, gamma
 [numthreads(1, 1, 1)] void TestAP1AuthoredTransferRoundtrip() {
-	const float authoredGamma = 1.8f;
 	const float3 testColors[4] = {
 		float3(1.0f, 0.0f, 0.0f),
 		float3(0.0f, 1.0f, 0.0f),
@@ -130,8 +129,8 @@
 
 	for (int i = 0; i < 4; i++) {
 		const float3 linearSrgb = AP1TosRGB(testColors[i]);
-		const float3 authored = Color::SignedPow(linearSrgb, rcp(authoredGamma));
-		const float3 decoded = Color::SignedPow(authored, authoredGamma);
+		const float3 authored = Color::EncodeSRGB(linearSrgb);
+		const float3 decoded = Color::DecodeSRGB(authored);
 		const float3 roundtrip = sRGBToAP1(decoded);
 
 		ASSERT(IsTrue, all(abs(roundtrip - testColors[i]) < 0.0001f));
@@ -154,6 +153,104 @@
 
 	ASSERT(IsTrue, abs(lum1 - lum2) < 0.2f);
 	ASSERT(IsTrue, abs(lum1 - lum3) < 0.2f);
+}
+
+/// @tags color, lighting
+[numthreads(1, 1, 1)] void TestDiffuseCalibrationEndpoints() {
+	const float gammas[4] = { 0.1f, 1.0f, 2.2f, 4.0f };
+	const float whites[3] = { 0.001f, 0.5f, 1.0f };
+	const float midpoints[3] = { 0.0001f, 0.5f, 0.999f };
+	const float tolerance = 0.00001f;
+	for (int g = 0; g < 4; g++) {
+		for (int w = 0; w < 3; w++) {
+			for (int m = 0; m < 3; m++) {
+				float reflectance = min(midpoints[m], whites[w] * 0.999f);
+				float midpoint = pow(0.5f, gammas[g]);
+				float curve = reflectance * (1.0f - midpoint) / (midpoint * (whites[w] - reflectance));
+				float3 result = Color::CalibrateDiffuse(float3(0.0f, 0.5f, 1.0f), gammas[g], curve, whites[w]);
+				ASSERT(IsTrue, all(isfinite(result)));
+				ASSERT(IsTrue, abs(result.r) < tolerance);
+				ASSERT(IsTrue, abs(result.g - reflectance) < tolerance);
+				ASSERT(IsTrue, abs(result.b - whites[w]) < tolerance);
+			}
+		}
+	}
+}
+
+	/// @tags color, lighting
+	[numthreads(1, 1, 1)] void TestDiffuseCalibrationBounds()
+{
+	const float curve = 3.59479342f;
+	const float tolerance = 0.00001f;
+	float previous = 0.0f;
+	for (int i = 0; i <= 64; i++) {
+		float encoded = float(i) / 64.0f;
+		float3 result = Color::CalibrateDiffuse(encoded.xxx, 2.2f, curve, 1.0f);
+		ASSERT(IsTrue, all(result >= 0.0f) && all(result <= 1.0f + tolerance));
+		ASSERT(IsTrue, result.r >= previous - tolerance);
+		ASSERT(IsTrue, all(abs(result - result.r) < tolerance));
+		previous = result.r;
+	}
+	float3 outOfRange = Color::CalibrateDiffuse(float3(-0.1f, 1.0f, 2.0f), 2.2f, curve, 1.0f);
+	ASSERT(IsTrue, all(abs(outOfRange - float3(0.0f, 1.0f, 1.0f)) < tolerance));
+	float3 colored = Color::CalibrateDiffuse(float3(0.2f, 0.5f, 0.8f), 2.2f, curve, 1.0f);
+	ASSERT(IsTrue, all(abs(colored - float3(0.096926f, 0.5f, 0.850113f)) < tolerance));
+}
+
+/// @tags color, lighting
+[numthreads(1, 1, 1)] void TestDiffuseSaturationCalibration() {
+	const float3 colors[6] = {
+		float3(0.2f, 0.5f, 0.8f), float3(1.0f, 0.0f, 0.0f), float3(0.0f, 1.0f, 0.0f),
+		float3(0.0f, 0.0f, 1.0f), 0.5f.xxx, 1.0f.xxx
+	};
+	const float saturations[4] = { 0.0f, 0.25f, 0.75f, 1.0f };
+	const float curve = 3.59479342f;
+	const float tolerance = 0.00001f;
+	for (int c = 0; c < 6; c++) {
+		float3 reference = Color::CalibrateDiffuse(colors[c], 2.2f, curve, 1.0f);
+		float luminance = Color::RGBToLuminance(reference, Color::kRec709LuminanceWeights);
+		for (int s = 0; s < 4; s++) {
+			float3 result = Color::CalibrateDiffuse(colors[c], 2.2f, curve, 1.0f, saturations[s]);
+			ASSERT(IsTrue, abs(Color::RGBToLuminance(result, Color::kRec709LuminanceWeights) - luminance) < tolerance);
+			ASSERT(IsTrue, all(result >= 0.0f) && all(result <= 1.0f + tolerance));
+			ASSERT(IsTrue, all(abs((result - luminance) - saturations[s] * (reference - luminance)) < tolerance));
+			if (saturations[s] == 1.0f)
+				ASSERT(IsTrue, all(asuint(result) == asuint(reference)));
+			if (saturations[s] == 0.0f)
+				ASSERT(IsTrue, all(abs(result - luminance) < tolerance));
+			if (c >= 4)
+				ASSERT(IsTrue, all(abs(result - reference) < tolerance));
+		}
+	}
+}
+
+	/// @tags color, lighting, gamma
+	[numthreads(1, 1, 1)] void TestConversionSaturation()
+{
+	const float3 colors[4] = {
+		float3(4.0f, 0.2f, 1.5f), float3(-0.05f, 0.6f, 0.2f), 0.5f.xxx, 3.0f.xxx
+	};
+	const float saturations[4] = { 0.0f, 0.25f, 0.75f, 1.0f };
+	const float tolerance = 0.00001f;
+	for (int c = 0; c < 4; c++) {
+		float luminance = Color::RGBToLuminance(colors[c], Color::kRec709LuminanceWeights);
+		for (int s = 0; s < 4; s++) {
+			float3 result = Color::ApplyConversionSaturation(colors[c], saturations[s]);
+			ASSERT(IsTrue, abs(Color::RGBToLuminance(result, Color::kRec709LuminanceWeights) - luminance) < tolerance);
+			ASSERT(IsTrue, all(result >= min(colors[c].r, min(colors[c].g, colors[c].b)) - tolerance));
+			ASSERT(IsTrue, all(result <= max(colors[c].r, max(colors[c].g, colors[c].b)) + tolerance));
+			if (saturations[s] == 1.0f)
+				ASSERT(IsTrue, all(asuint(result) == asuint(colors[c])));
+			if (saturations[s] == 0.0f)
+				ASSERT(IsTrue, all(abs(result - luminance) < tolerance));
+			if (c >= 2)
+				ASSERT(IsTrue, all(abs(result - colors[c]) < tolerance));
+			float3 transported = Color::DecodeSRGB(Color::EncodeSRGB(result));
+			ASSERT(IsTrue, all(abs(transported - result) < tolerance));
+			float3 gamutRoundtrip = AP1TosRGB(sRGBToAP1(result));
+			ASSERT(IsTrue, all(abs(gamutRoundtrip - result) < tolerance));
+		}
+	}
 }
 
 /// @tags color, lighting

@@ -5,7 +5,6 @@
 #include "State.h"
 #include "Util.h"
 
-#include "ColorSpace.h"
 #include "Features/HDRDisplay.h"
 #include "Features/LinearLighting.h"
 #include "Features/PostProcessing.h"
@@ -13,6 +12,7 @@
 #include "OpenDRTIo.h"
 #include "PostProcessingUI.h"
 #include "RasterPass.h"
+#include "Utils/ColorSpace.h"
 
 #include <DDSTextureLoader.h>
 #include <DirectXPackedVector.h>

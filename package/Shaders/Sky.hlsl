@@ -317,8 +317,10 @@ float ComputeProceduralSun(float2 uv)
 float3 ComposeSkyColor(float3 skyColor, float3 textureColor, float3 skyOffset, bool composeAuthoredSky)
 {
 	if (composeAuthoredSky)
-		return Color::Sky(skyColor * textureColor + skyOffset);
-	return Color::Sky(skyColor) * textureColor + Color::Sky(skyOffset);
+		skyColor = Color::Sky(skyColor * textureColor + skyOffset);
+	else
+		skyColor = Color::Sky(skyColor) * textureColor + Color::Sky(skyOffset);
+	return skyColor;
 }
 
 #	if defined(EFFECTS11) && (defined(HORIZFADE) || defined(MOONMASK))

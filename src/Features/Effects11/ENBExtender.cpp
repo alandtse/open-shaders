@@ -5,10 +5,12 @@
 #include "Utils/ShaderInclude.h"
 
 #include <d3dcompiler.h>
+#include <fstream>
 #include <sstream>
 #include <unordered_set>
 
 #include "Features/Effects11/ShaderPatches.h"
+#include "Globals.h"
 
 namespace ENBExtender
 {
@@ -1085,5 +1087,215 @@ namespace ENBExtender
 		sourceIncludes.Close(it->second.original);
 		openIncludes.erase(it);
 		return S_OK;
+	}
+
+	enum class KiCompileFileIndex : uint32_t
+	{
+		None,
+		PreProcessing,
+		DepthOfField,
+		Bloom,
+		Lens,
+		Adaptation,
+		MainProcessing,
+		PostProcessing,
+		SunSprite,
+		Underwater,
+	};
+
+	using KiCompileFn = HRESULT (*)(KiCompileFileIndex, ID3DBlob**, ID3DBlob**);
+
+	static std::optional<KiCompileFileIndex> GetKiCompileFileIndex(std::string_view effectName)
+	{
+		static constexpr std::pair<std::string_view, KiCompileFileIndex> slots[] = {
+			{ "enbdepthoffield.fx", KiCompileFileIndex::DepthOfField },
+			{ "enbbloom.fx", KiCompileFileIndex::Bloom },
+			{ "enblens.fx", KiCompileFileIndex::Lens },
+			{ "enbadaptation.fx", KiCompileFileIndex::Adaptation },
+			{ "enbeffect.fx", KiCompileFileIndex::MainProcessing },
+			{ "enbeffectpostpass.fx", KiCompileFileIndex::PostProcessing },
+		};
+		for (const auto& [name, index] : slots)
+			if (name == effectName)
+				return index;
+		return std::nullopt;
+	}
+
+	bool IsEncryptedSource(std::string_view source)
+	{
+		return source.starts_with("KIEFX");
+	}
+
+	bool CreateEncryptedEffect(const std::string& effectName, winrt::com_ptr<ID3DX11Effect>& effect, std::string& error)
+	{
+		auto index = GetKiCompileFileIndex(effectName);
+		if (!index) {
+			error = I18n::GetSingleton()->Format("feature.effects11.error.encrypted_slot", { { "file", effectName } }, "Encrypted effect '{file}' has no ENB Extender compile slot");
+			return false;
+		}
+
+		auto* module = GetModuleHandleW(L"KiENBExtender");
+		auto compile = module ? reinterpret_cast<KiCompileFn>(GetProcAddress(module, "ENBExt_Compile")) : nullptr;
+		if (!compile) {
+			error = T("feature.effects11.error.encrypted_dependency", "Encrypted preset: requires KiLoader and ENB Extender (KiENBExtender.dll)");
+			return false;
+		}
+
+		winrt::com_ptr<ID3DBlob> code, errors;
+		HRESULT hr = compile(*index, code.put(), errors.put());
+		if (FAILED(hr) || !code) {
+			if (errors) {
+				auto* text = static_cast<const char*>(errors->GetBufferPointer());
+				error.assign(text, strnlen(text, errors->GetBufferSize()));
+			}
+			if (error.empty())
+				error = I18n::GetSingleton()->Format("feature.effects11.error.extender_compile", { { "code", std::format("{:#x}", static_cast<uint32_t>(hr)) } }, "ENB Extender compile failed ({code})");
+			return false;
+		}
+
+		if (FAILED(D3DX11CreateEffectFromMemory(code->GetBufferPointer(), code->GetBufferSize(), 0, globals::d3d::device, effect.put()))) {
+			error = T("feature.effects11.error.extender_create", "Failed to create effect from ENB Extender output");
+			return false;
+		}
+		return true;
+	}
+
+	static std::string NormalizeIniKey(std::string_view key)
+	{
+		std::string normalized;
+		normalized.reserve(key.size());
+		for (size_t i = 0; i < key.size(); ++i) {
+			if (key[i] == ' ' && i + 1 < key.size() && key[i + 1] == '.')
+				continue;
+			normalized += key[i];
+			if (key[i] == '.' && i + 1 < key.size() && key[i + 1] == ' ')
+				++i;
+		}
+		return normalized;
+	}
+
+	static std::unordered_set<std::string> ReadIniSectionKeys(const std::filesystem::path& iniPath, const std::string& section)
+	{
+		std::unordered_set<std::string> keys;
+		std::ifstream file(iniPath);
+		std::string line;
+		bool inSection = false;
+		while (std::getline(file, line)) {
+			Trim(line, " \t\r");
+			if (line.empty() || line[0] == ';')
+				continue;
+			if (line[0] == '[') {
+				auto close = line.find(']');
+				inSection = close != std::string::npos && _stricmp(line.substr(1, close - 1).c_str(), section.c_str()) == 0;
+				continue;
+			}
+			auto eq = line.find('=');
+			if (!inSection || eq == std::string::npos)
+				continue;
+			std::string key = line.substr(0, eq);
+			Trim(key);
+			if (!key.empty())
+				keys.insert(NormalizeIniKey(key));
+		}
+		return keys;
+	}
+
+	static std::vector<std::string> CollectGroupScopes(Effect& effect)
+	{
+		std::vector<std::string> scopes{ std::string{} };
+		D3DX11_EFFECT_DESC effectDesc;
+		if (FAILED(effect.effect->GetDesc(&effectDesc)))
+			return scopes;
+
+		std::vector<std::string> groupStack;
+		for (UINT i = 0; i < effectDesc.GlobalVariables; ++i) {
+			auto* variable = effect.effect->GetVariableByIndex(i);
+			D3DX11_EFFECT_TYPE_DESC typeDesc;
+			if (!variable || !variable->IsValid() || FAILED(variable->GetType()->GetDesc(&typeDesc)))
+				continue;
+			if (typeDesc.Class != D3D_SVC_OBJECT || typeDesc.Type != D3D_SVT_STRING)
+				continue;
+
+			if (IsTruthy(effect.GetUIAnnotation(variable, "UIGroupBegin"))) {
+				std::string groupName = GetStringVariableValue(variable);
+				if (groupName.empty())
+					groupName = effect.GetUIAnnotation(variable, "UIGroup");
+				if (groupName.empty())
+					continue;
+				groupStack.push_back(groupName);
+			} else if (IsTruthy(effect.GetUIAnnotation(variable, "UIGroupEnd")) && !groupStack.empty()) {
+				groupStack.pop_back();
+			} else {
+				continue;
+			}
+			scopes.push_back(BuildGroupPath(groupStack));
+		}
+		return scopes;
+	}
+
+	void ResolveCompiledGroups(Effect& effect, const std::filesystem::path& iniPath)
+	{
+		auto keys = ReadIniSectionKeys(iniPath, effect.GetName());
+		auto scopes = CollectGroupScopes(effect);
+		if (keys.empty() || scopes.size() < 2)
+			return;
+
+		std::vector<Effect::UIVariable*> vars;
+		for (auto& uiVar : effect.uiVariables)
+			if (!uiVar.isLabel && !uiVar.isDefine && !uiVar.isTopLevel && uiVar.group.empty() && uiVar.uniqueName.empty() && uiVar.effectVariable)
+				vars.push_back(&uiVar);
+		if (vars.empty())
+			return;
+
+		std::unordered_map<std::string, uint32_t> scopeIds;
+		std::vector<uint32_t> scopeIdOf(scopes.size());
+		std::vector<const std::string*> uniqueScopes;
+		for (size_t scope = 0; scope < scopes.size(); ++scope) {
+			auto [it, inserted] = scopeIds.try_emplace(scopes[scope], static_cast<uint32_t>(uniqueScopes.size()));
+			if (inserted)
+				uniqueScopes.push_back(&it->first);
+			scopeIdOf[scope] = it->second;
+		}
+
+		static constexpr uint8_t scopedHitCost = 0, rootHitCost = 1, missCost = 4;
+		const size_t varCount = vars.size(), scopeCount = scopes.size(), uniqueCount = uniqueScopes.size();
+		std::vector<uint8_t> cost(varCount * uniqueCount);
+		for (size_t var = 0; var < varCount; ++var) {
+			for (size_t unique = 0; unique < uniqueCount; ++unique) {
+				const auto& scope = *uniqueScopes[unique];
+				auto key = NormalizeIniKey(scope.empty() ? vars[var]->displayName : scope + "." + vars[var]->displayName);
+				bool found = keys.contains(key) || keys.contains(key + "X");
+				cost[var * uniqueCount + unique] = found ? (scope.empty() ? rootHitCost : scopedHitCost) : missCost;
+			}
+		}
+
+		// Variables and group markers share declaration order, so pick the cheapest non-decreasing scope sequence
+		std::vector<uint32_t> total(scopeCount), next(scopeCount);
+		std::vector<uint32_t> from(varCount * scopeCount);
+		for (size_t scope = 0; scope < scopeCount; ++scope)
+			total[scope] = cost[scopeIdOf[scope]];
+		for (size_t var = 1; var < varCount; ++var) {
+			uint32_t best = UINT32_MAX, bestScope = 0;
+			for (size_t scope = 0; scope < scopeCount; ++scope) {
+				if (total[scope] < best) {
+					best = total[scope];
+					bestScope = static_cast<uint32_t>(scope);
+				}
+				next[scope] = best + cost[var * uniqueCount + scopeIdOf[scope]];
+				from[var * scopeCount + scope] = bestScope;
+			}
+			std::swap(total, next);
+		}
+
+		size_t scope = std::min_element(total.begin(), total.end()) - total.begin();
+		size_t matched = 0;
+		for (size_t var = varCount; var-- > 0;) {
+			vars[var]->group = scopes[scope];
+			if (cost[var * uniqueCount + scopeIdOf[scope]] < missCost)
+				++matched;
+			scope = from[var * scopeCount + scope];
+		}
+
+		logger::info("[ENBEXTENDER] Recovered groups for encrypted '{}': {}/{} parameters matched '{}'", effect.GetName(), matched, varCount, iniPath.filename().string());
 	}
 }

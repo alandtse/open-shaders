@@ -556,7 +556,8 @@ bool UseAmbientEffectLighting()
 float3 GetEffectDirectionalLighting()
 {
 	float intensity = (ENABLE_LL && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0;
-	return Color::EffectLight(SharedData::DirLightColor.xyz / max(intensity, ShadowSampling::MinDirectionalLightMultiplier), SharedData::linearLightingSettings.isDirLightLinear) *
+	float3 sourceColor = SharedData::DirLightColor.xyz / max(intensity, ShadowSampling::MinDirectionalLightMultiplier);
+	return (SharedData::linearLightingSettings.isDirLightLinear ? Color::EffectLight(sourceColor, true) : Color::AuthoredColor(sourceColor)) *
 	       intensity * SharedData::csUtilitySettings.directionalLightMult;
 }
 
@@ -829,11 +830,13 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 
 	if (useAmbientEffectLighting) {
 		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness * Color::EffectLightingMultiplier();
-		return materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * brightness;
+		color = materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * brightness;
+	} else if (!isSkyObject) {
+		color = materialColor * (dirColor + ambientColor) * Color::EffectLightingMultiplier();
+	} else {
+		color = dirColor + ambientColor;
 	}
-	if (!isSkyObject)
-		return materialColor * (dirColor + ambientColor) * Color::EffectLightingMultiplier();
-	return dirColor + ambientColor;
+	return color;
 }
 #	endif
 
@@ -897,6 +900,9 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float lightingInfluence = LightingInfluence.x;
 	float3 propertyColor = PropertyColor.xyz;
+#	if !defined(LIGHTING) && !defined(MEMBRANE)
+	propertyColor = Color::CompensateGammaInput(propertyColor, Color::GameGamma);
+#	endif
 	float3 shadowedWeatherReference = 0.0;
 	float3 shadowedInfluencedWeatherReference = 0.0;
 	bool applyWeatherInfluenceToShadows = false;
@@ -1121,6 +1127,7 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 #	endif
 
+	baseColor.xyz = Color::CompensateGammaInput(baseColor.xyz, Color::GameGamma);
 	float3 lightColor = lerp(baseColor.xyz, propertyColor * baseColor.xyz, lightingInfluence);
 
 #	if !defined(MOTIONVECTORS_NORMALS)
@@ -1152,11 +1159,6 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
 		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject), lightingInfluence);
 	}
-#	endif
-
-#	if defined(PROJECTED_UV) && !defined(TRUE_PBR)
-	lightColor = Color::EffectLightToGamma(
-		Color::EffectLight(lightColor) * Color::VanillaDiffuseColorMult());
 #	endif
 
 	[branch] if (isSkyStatic)

@@ -366,13 +366,14 @@ namespace SharedData
 		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
-		float authoredColorGamma;
-		float vanillaDiffuseColorMult;
-		float2 pad0;
+		float diffuseGamma;
+		float diffuseCurve;
+		float diffuseWhiteReflectance;
+		float conversionSaturation;
 		float3 effectLightingColor;
 		float ambientMult;
 		float3 skyStaticsColor;
-		float pad1;
+		float pad;
 	};
 
 	struct ENBSettings
