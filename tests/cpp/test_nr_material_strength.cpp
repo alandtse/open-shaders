@@ -17,12 +17,14 @@ TEST_CASE("MaterialStrength indices match the NeuralRenderingCategory ids", "[nr
 	REQUIRE(NR::MaterialStrength::kEyes == 3u);
 	REQUIRE(NR::MaterialStrength::kFoliage == 4u);
 	REQUIRE(NR::MaterialStrength::kLandscape == 5u);
-	REQUIRE(NR::MaterialStrength::kCount == 6u);
+	REQUIRE(NR::MaterialStrength::kCloth == 6u);
+	REQUIRE(NR::MaterialStrength::kMetal == 7u);
+	REQUIRE(NR::MaterialStrength::kCount == 8u);
 }
 
 TEST_CASE("MaterialStrength Sanitize bounds every strength and the softness radius", "[nr]")
 {
-	const NR::MaterialStrength::Values values{ { -1.0f, 2.0f, 0.25f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 1.0f }, 100u };
+	const NR::MaterialStrength::Values values{ { -1.0f, 2.0f, 0.25f, std::numeric_limits<float>::quiet_NaN(), 0.5f, 1.0f, 0.75f, std::numeric_limits<float>::infinity() }, 100u };
 	const auto sanitized = NR::MaterialStrength::Sanitize(values);
 	REQUIRE(sanitized.strength[NR::MaterialStrength::kNone] == 0.0f);
 	REQUIRE(sanitized.strength[NR::MaterialStrength::kSkin] == 1.0f);
@@ -30,6 +32,8 @@ TEST_CASE("MaterialStrength Sanitize bounds every strength and the softness radi
 	REQUIRE(sanitized.strength[NR::MaterialStrength::kEyes] == NR::MaterialStrength::kDefaults[NR::MaterialStrength::kEyes]);
 	REQUIRE(sanitized.strength[NR::MaterialStrength::kFoliage] == Catch::Approx(0.5f));
 	REQUIRE(sanitized.strength[NR::MaterialStrength::kLandscape] == 1.0f);
+	REQUIRE(sanitized.strength[NR::MaterialStrength::kCloth] == Catch::Approx(0.75f));
+	REQUIRE(sanitized.strength[NR::MaterialStrength::kMetal] == NR::MaterialStrength::kDefaults[NR::MaterialStrength::kMetal]);
 	REQUIRE(sanitized.edgeSoftness == NR::MaterialStrength::kMaxEdgeSoftness);
 }
 
@@ -79,21 +83,22 @@ TEST_CASE("Material strength is off by default", "[nr]")
 
 TEST_CASE("MaterialMap filter bits follow the NeuralRenderingCategory ids", "[nr]")
 {
-	REQUIRE(NR::MaterialMap::kBits == 6u);
+	REQUIRE(NR::MaterialMap::kBits == 8u);
 	REQUIRE(NR::MaterialMap::kBits == NR::MaterialStrength::kCount);
-	REQUIRE(NR::MaterialMap::kAllCategories == 0x3Fu);
+	REQUIRE(NR::MaterialMap::kAllCategories == 0xFFu);
 	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kNone) == 0x01u);
 	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kSkin) == 0x02u);
 	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kLandscape) == 0x20u);
+	REQUIRE(NR::MaterialMap::Bit(NR::MaterialStrength::kMetal) == 0x80u);
 	REQUIRE(NR::MaterialMap::Bit(NR::MaterialMap::kBits) == 0u);
 }
 
-TEST_CASE("MaterialMap Sanitize keeps only the six category bits", "[nr]")
+TEST_CASE("MaterialMap Sanitize keeps only the eight category bits", "[nr]")
 {
 	REQUIRE(NR::MaterialMap::Sanitize(0xFFFFFFFFu) == NR::MaterialMap::kAllCategories);
 	REQUIRE(NR::MaterialMap::Sanitize(0u) == 0u);
 	const uint32_t skinOnly = NR::MaterialMap::Bit(NR::MaterialStrength::kSkin);
-	REQUIRE(NR::MaterialMap::Sanitize(skinOnly | 0xFFFFFFC0u) == skinOnly);
+	REQUIRE(NR::MaterialMap::Sanitize(skinOnly | 0xFFFFFF00u) == skinOnly);
 }
 
 TEST_CASE("MaterialMap Contains follows one category's bit", "[nr]")
@@ -137,7 +142,8 @@ TEST_CASE("MaterialMap legend colours match the shader's DebugColor", "[nr]")
 {
 	constexpr float expected[NR::MaterialMap::kBits][3]{
 		{ 0.05f, 0.05f, 0.05f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.5f, 0.0f },
-		{ 1.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 1.0f }
+		{ 1.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 1.0f },
+		{ 1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f }
 	};
 	for (uint32_t i = 0; i < NR::MaterialMap::kBits; ++i) {
 		REQUIRE(NR::MaterialMap::kColors[i].r == expected[i][0]);

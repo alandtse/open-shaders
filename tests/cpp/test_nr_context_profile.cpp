@@ -41,6 +41,8 @@ namespace
 		REQUIRE(a_left.strengthEyes == a_right.strengthEyes);
 		REQUIRE(a_left.strengthFoliage == a_right.strengthFoliage);
 		REQUIRE(a_left.strengthLandscape == a_right.strengthLandscape);
+		REQUIRE(a_left.strengthCloth == a_right.strengthCloth);
+		REQUIRE(a_left.strengthMetal == a_right.strengthMetal);
 		REQUIRE(a_left.strengthOther == a_right.strengthOther);
 		REQUIRE(a_left.strengthEdgeSoftness == a_right.strengthEdgeSoftness);
 		REQUIRE(a_left.showMaterialMap == a_right.showMaterialMap);
@@ -74,6 +76,8 @@ namespace
 		tuning.strengthEyes = 0.3f;
 		tuning.strengthFoliage = 0.4f;
 		tuning.strengthLandscape = 0.5f;
+		tuning.strengthCloth = 0.35f;
+		tuning.strengthMetal = 0.45f;
 		tuning.strengthOther = 0.6f;
 		tuning.strengthEdgeSoftness = 3;
 		tuning.showMaterialMap = true;
@@ -159,6 +163,8 @@ TEST_CASE("A scope override sets the lane and strengths in its situation and kee
 	const auto expected = NR::Context::ScopeStrengths(ScopeOverride::kSkinHairEyesFoliage);
 	REQUIRE(expected[NR::MaterialStrength::kFoliage] == 1.0f);
 	REQUIRE(expected[NR::MaterialStrength::kLandscape] == 0.0f);
+	REQUIRE(expected[NR::MaterialStrength::kCloth] == 0.0f);
+	REQUIRE(expected[NR::MaterialStrength::kMetal] == 0.0f);
 	REQUIRE(dialogue.MaterialStrengths().strength == expected);
 	REQUIRE(dialogue.strengthEdgeSoftness == base.strengthEdgeSoftness);
 }
