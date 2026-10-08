@@ -16,6 +16,7 @@ namespace NR
 		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
 		static constexpr uint32_t kMaxStyle = 2;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
+		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
@@ -75,6 +76,14 @@ namespace NR
 		uint32_t materialMapMode = static_cast<uint32_t>(MaterialMap::Mode::kCategory);
 		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all six by default. */
 		uint32_t materialMapFilter = MaterialMap::kAllCategories;
+		/**
+		 * @brief Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.
+		 *        Developer-only and VR-only: it halves the model cost at the price of a synthesized
+		 *        gain for one eye, so it is off by default and unvalidated.
+		 */
+		bool skipFrameReuse = false;
+		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */
+		uint32_t skipFrameGapMode = 0;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
@@ -144,6 +153,7 @@ namespace NR
 			strengthEdgeSoftness = materialStrengths.edgeSoftness;
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
+			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

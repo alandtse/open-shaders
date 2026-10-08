@@ -36,7 +36,8 @@ namespace NR
 		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
 		materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape,
-		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter);
+		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter,
+		skipFrameReuse, skipFrameGapMode);
 }
 
 namespace NR::Context
@@ -598,6 +599,12 @@ namespace
 											status.materialStrength[3], status.materialStrength[4], status.materialStrength[5] }) },
 			{ "materialEdgeSoftness", status.materialEdgeSoftness },
 			{ "showMaterialMap", upscaling->settings.neuralRenderingTuning.showMaterialMap },
+			{ "skipFrameReuse", upscaling->settings.neuralRenderingTuning.skipFrameReuse },
+			{ "skipFrameGapMode", upscaling->settings.neuralRenderingTuning.skipFrameGapMode },
+			{ "skipFrameReuseActive", status.skipFrameReuseActive },
+			{ "eyeReuse", json::array({ status.eyeReuse[0], status.eyeReuse[1] }) },
+			{ "modelFrames", status.modelFrames },
+			{ "reuseFrames", status.reuseFrames },
 		};
 	}
 
@@ -614,13 +621,13 @@ namespace
 	}
 
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
-	void CaptureNeuralRendering(Feature* self, const json&)
+	void CaptureNeuralRendering(Feature* self, const json& args)
 	{
 		if (!globals::state || !globals::state->IsDeveloperMode()) {
 			logger::warn("[NeuralRendering] captureNeuralRendering requires developer mode");
 			return;
 		}
-		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture();
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture(args.value("verifyReuse", false));
 	}
 }
 
@@ -635,7 +642,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (developer mode and VR only, off by default), reported here as skipFrameReuse, with skipFrameReuseActive true only while it actually runs (false on flat, in a non-developer build, or while frame generation is active); settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model by doubling its motion, 1 reset the eye's history) is reported as skipFrameGapMode. eyeReuse is per eye whether this frame reused its stored gain instead of running the model (left then right; both false on flat or with the stagger off), and modelFrames/reuseFrames count eye-evaluations and eye-reuses since startup, so one frame of a running stagger adds one to each. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -643,7 +650,7 @@ void Upscaling::RegisterUxActions()
 		RetryNeuralRendering);
 
 	FEATURE_COMMAND("captureNeuralRendering",
-		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
+		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: verifyReuse (boolean, optional): with eye-staggered gain reuse active, also run the model on the eye that reuses its gain this frame and write NR_verify_input, NR_verify_model and NR_verify_reuse for that eye (VR only; the next frame re-evaluates normally).",
 		CaptureNeuralRendering);
 
 	FEATURE_COMMAND("calibrateNeuralCrop",
