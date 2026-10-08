@@ -205,7 +205,25 @@ if(MSVC)
 	endif()
 endif()
 
+# The prebuilt CommonLib is MSVC-built; clang objects disagree with it on inline STL return
+# conventions (std::strong_ordering), corrupting the VR address library CSV parse at load.
+set(_commonlib_ci_env "$ENV{GITHUB_ACTIONS}")
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	set(COMMONLIB_PREBUILT OFF CACHE BOOL "Use prebuilt CommonLibSSE" FORCE)
+	unset(ENV{GITHUB_ACTIONS})
+endif()
+
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	if(_commonlib_ci_env)
+		set(ENV{GITHUB_ACTIONS} "${_commonlib_ci_env}")
+	endif()
+	get_target_property(_commonlib_prebuilt CommonLibSSE IMPORTED)
+	if(_commonlib_prebuilt)
+		message(FATAL_ERROR "clang-cl must compile CommonLibSSE from source: the prebuilt bundle is MSVC-built")
+	endif()
+endif()
 
 # Map Debug to Release imported location for the prebuilt CommonLibSSE target.
 # This ensures that Debug builds of the plugin link against the prebuilt Release

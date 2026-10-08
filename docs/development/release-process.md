@@ -118,7 +118,7 @@ Beta = True
 
 ## Compiler Lanes
 
-The shared C++ build (`_shared-build.yaml`) builds each preset with two compilers: `vs2026` (MSVC, the `PR`/`ALL` presets) and `clang-cl` (the `PR-ClangCL`/`ALL-ClangCL` twins). Only the entry marked `primary: true` can fail the workflow and uploads `dist-artifacts`; the other is advisory, and its package is uploaded as `dist-artifacts-<name>` for 7 days so it can be downloaded and tested.
+The shared C++ build (`_shared-build.yaml`) builds each preset with two compilers: `vs2026` (MSVC, the `PR`/`ALL` presets) and `clang-cl` (the `PR-ClangCL`/`ALL-ClangCL` twins). Only the entry marked `primary: true` can fail the workflow and uploads `dist-artifacts`; the other is advisory, and its package is uploaded as `dist-artifacts-<name>` for 7 days so it can be downloaded and tested. The clang-cl lane compiles CommonLibSSE from source, about 16 minutes slower than linking the prebuilt bundle, because that bundle is MSVC-built: a clang plugin linked against it calls the same inline `std::strong_ordering` function with a different return convention, which corrupts the VR Address Library CSV parse at load (error 1114, about half of VR launches). `cmake/XSEPlugin.cmake` disables the prebuilt for clang and fails configure if it is ever linked.
 
 To ship clang-cl, swap `primary` between the two matrix entries, after the SE and VR runtime gate has passed on clang binaries. A release dispatch loads the workflow from the dispatched ref, so the swap reaches RC cuts from `dev` at once and stable cuts through the two-phase promotion above; check the "Show clang-cl toolchain" step or the build log to confirm which compiler produced a release.
 
