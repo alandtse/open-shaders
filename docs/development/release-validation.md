@@ -120,6 +120,22 @@ it on the next launch.
 Run §2–§4 for **both SE and VR** — the same change can behave differently per runtime, and
 each edition produces its own shader-validation config.
 
+## 6. DLL load smoke (no game needed)
+
+A DLL that faults in a static initialiser is reported by the loader as error 1114 and never reaches
+the shader gate. Run this for any DLL built with a non-default toolchain (the clang-cl lane) or
+after a CommonLib bump, once per runtime. It loads the DLL into a stand-in host 30 times and fails
+if any load fails:
+
+```powershell
+# from an x64 Native Tools prompt
+pwsh tools/dll-load-smoke/run.ps1 -Dll <CommunityShaders.dll> -Runtime VR -GameRoot <SkyrimVR dir>
+```
+
+VR needs `Data\SKSE\Plugins\version-1-4-15-0.csv` under `-GameRoot`, since the VR Address Library is
+parsed at load. A mixed MSVC and clang build failed about half the loads here while the MSVC build
+loaded every time; one failure in 30 is a real failure.
+
 ## Future automation (see also the devbench README)
 
 -   **Shader-cache gate as a one-command check** — wrap §3's `openshaders.inspect`
