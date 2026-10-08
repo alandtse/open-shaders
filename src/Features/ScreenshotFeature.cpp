@@ -837,6 +837,18 @@ void ScreenshotFeature::Reset()
 {
 }
 
+bool ScreenshotFeature::RequestCapture(CaptureRequest request)
+{
+	{
+		std::lock_guard lock(pendingRequestMutex);
+		if (pendingRequest)
+			return false;
+		pendingRequest = std::move(request);
+	}
+	captureRequested.store(true, std::memory_order_release);
+	return true;
+}
+
 void ScreenshotFeature::ProcessCaptureRequest()
 {
 	if (captureRequested.exchange(false)) {
@@ -901,6 +913,10 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 			screenshot = std::move(screenshotQueue.front());
 			screenshotQueue.pop();
 		}
+		const auto finish = [&screenshot](bool ok) {
+			if (screenshot.onComplete)
+				screenshot.onComplete({ ok, screenshot.width, screenshot.height });
+		};
 
 		DirectX::ScratchImage image;
 		if (!PopulateScratchImageFromStagingTexture(
@@ -911,6 +927,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 				screenshot.height,
 				image)) {
 			logger::error("Failed to map screenshot staging texture.");
+			finish(false);
 			continue;
 		}
 
@@ -929,17 +946,21 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 				screenshot.saveAsHdrPng ? "HDR PNG" : "SDR");
 		}
 
-		if (saveOk) {
+		if (saveOk && !screenshot.silent) {
 			CopySavedPathToClipboard(screenshot.copyToClipboard, screenshot.outputPath);
 		}
 
 		if (!saveOk) {
-			ShowInGameNotification("Screenshot failed - see OpenShaders.log");
+			if (!screenshot.silent)
+				ShowInGameNotification("Screenshot failed - see OpenShaders.log");
 		} else {
 			logger::info("Saved screenshot to {}", screenshot.outputPath.string());
-			ShowInGameNotification(std::format("Screenshot saved: {}",
-				screenshot.outputPath.filename().string()));
+			if (!screenshot.silent) {
+				ShowInGameNotification(std::format("Screenshot saved: {}",
+					screenshot.outputPath.filename().string()));
+			}
 		}
+		finish(saveOk);
 	}
 	CoUninitialize();
 }
@@ -957,8 +978,20 @@ void ScreenshotFeature::Capture()
 	auto device = globals::d3d::device;
 	auto context = globals::d3d::context;
 
-	if (!device || !context)
+	std::optional<CaptureRequest> request;
+	{
+		std::lock_guard lock(pendingRequestMutex);
+		request.swap(pendingRequest);
+	}
+	const auto fail = [&request]() {
+		if (request && request->onComplete)
+			request->onComplete({});
+	};
+
+	if (!device || !context) {
+		fail();
 		return;
+	}
 
 	winrt::com_ptr<ID3D11Texture2D> sourceTextureKeepAlive;
 	const auto src = SelectCaptureSource(sourceTextureKeepAlive, /*forCapture=*/true);
@@ -966,6 +999,7 @@ void ScreenshotFeature::Capture()
 
 	if (!src.texture) {
 		logger::error("Failed to acquire screenshot source texture ({}).", src.description);
+		fail();
 		return;
 	}
 	ID3D11Texture2D* sourceTexture = src.texture;
@@ -978,7 +1012,13 @@ void ScreenshotFeature::Capture()
 	uint32_t copyW = srcDesc.Width;
 	uint32_t copyH = srcDesc.Height;
 
-	if (applyCropToScreenshot) {
+	if (request && request->region) {
+		const auto& uv = *request->region;
+		copyX = std::min(static_cast<uint32_t>(std::max(uv.x, 0.0f) * srcDesc.Width), srcDesc.Width - 1);
+		copyY = std::min(static_cast<uint32_t>(std::max(uv.y, 0.0f) * srcDesc.Height), srcDesc.Height - 1);
+		copyW = std::clamp(static_cast<uint32_t>(std::lround(uv.w * srcDesc.Width)), 1u, srcDesc.Width - copyX);
+		copyH = std::clamp(static_cast<uint32_t>(std::lround(uv.h * srcDesc.Height)), 1u, srcDesc.Height - copyY);
+	} else if (applyCropToScreenshot) {
 		auto region = subrect.GetPixelRegion(srcDesc.Width, srcDesc.Height);
 		copyX = region.x;
 		copyY = region.y;
@@ -1001,6 +1041,7 @@ void ScreenshotFeature::Capture()
 	winrt::com_ptr<ID3D11Texture2D> stagingTexture;
 	if (FAILED(device->CreateTexture2D(&stagingDesc, nullptr, stagingTexture.put()))) {
 		logger::error("Failed to create screenshot staging texture.");
+		fail();
 		return;
 	}
 
@@ -1019,10 +1060,11 @@ void ScreenshotFeature::Capture()
 	const bool flatHdrCapture = IsFlatHdrScreenshotCapture();
 	if (flatHdrCapture && !IsHdrCaptureFormat(srcDesc.Format)) {
 		logger::error("Unsupported HDR screenshot format: {}", static_cast<uint32_t>(srcDesc.Format));
+		fail();
 		return;
 	}
 	const bool saveAsHdrPng = flatHdrCapture && IsHdrCaptureFormat(srcDesc.Format);
-	const bool saveAsSdrPng = !saveAsHdrPng && sdrUsePng;
+	const bool saveAsSdrPng = !saveAsHdrPng && (sdrUsePng || request);
 
 	EnsureWorkerThread();
 	PendingScreenshot screenshot;
@@ -1033,8 +1075,11 @@ void ScreenshotFeature::Capture()
 	screenshot.saveAsHdrPng = saveAsHdrPng;
 	screenshot.saveAsSdrPng = saveAsSdrPng;
 	screenshot.hdrPngBitDepth = static_cast<int>(hdrPngBitDepth);
-	screenshot.outputPath = BuildScreenshotPath(screenshotPath, saveAsHdrPng || saveAsSdrPng);
-	screenshot.copyToClipboard = copyToClipboard;
+	screenshot.outputPath = request ? request->outputPath : BuildScreenshotPath(screenshotPath, saveAsHdrPng || saveAsSdrPng);
+	screenshot.copyToClipboard = copyToClipboard && !request;
+	screenshot.silent = request.has_value();
+	if (request)
+		screenshot.onComplete = std::move(request->onComplete);
 	EnqueueScreenshot(std::move(screenshot));
 }
 #undef I18N_KEY_PREFIX

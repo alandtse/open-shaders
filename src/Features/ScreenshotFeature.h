@@ -5,7 +5,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <thread>
@@ -32,6 +34,29 @@ struct ScreenshotFeature : public Feature
 	virtual void Reset() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
 	virtual void PostPostLoad() override;
+
+	/** @brief How a requested capture ended, reported from the save worker thread. */
+	struct CaptureResult
+	{
+		bool ok = false;
+		uint32_t width = 0;
+		uint32_t height = 0;
+	};
+
+	/** @brief One capture to an explicit PNG path, of the whole source or a UV sub-region, with an optional completion callback. */
+	struct CaptureRequest
+	{
+		std::filesystem::path outputPath;
+		std::optional<Util::Subrect::UVRegion> region;
+		std::function<void(const CaptureResult&)> onComplete;
+	};
+
+	/**
+	 * @brief Queues one capture for the next present. The file is a PNG at request.outputPath and gets
+	 *        no crop preset, clipboard copy or HUD notice, so a tool can call it between user captures.
+	 * @return False when another request is already waiting.
+	 */
+	bool RequestCapture(CaptureRequest request);
 
 	/** @brief Captures a screenshot from the current back buffer and enqueues it for async encoding and save. */
 	void Capture();
@@ -62,7 +87,13 @@ private:
 		bool saveAsSdrPng = false;
 		int hdrPngBitDepth = 11;
 		bool copyToClipboard = false;
+		/** @brief Set for a RequestCapture: skips the clipboard copy and the HUD notice. */
+		bool silent = false;
+		std::function<void(const CaptureResult&)> onComplete;
 	};
+
+	std::mutex pendingRequestMutex;
+	std::optional<CaptureRequest> pendingRequest;
 
 	std::mutex screenshotQueueMutex;
 	std::condition_variable screenshotQueueCV;
