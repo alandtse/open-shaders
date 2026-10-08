@@ -30,7 +30,7 @@ struct ScreenshotFeature : public Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& a_json) override;
 	virtual void SaveSettings(json& a_json) override;
-	/** @brief Resets transient state (no-op for this feature). */
+	/** @brief Fails a queued capture request, which would otherwise outlive the scene it was made for. */
 	virtual void Reset() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
 	virtual void PostPostLoad() override;
@@ -41,6 +41,8 @@ struct ScreenshotFeature : public Feature
 		bool ok = false;
 		uint32_t width = 0;
 		uint32_t height = 0;
+		/** @brief True only when the saved image is a source drawn without the HUD. */
+		bool uiExcluded = false;
 	};
 
 	/** @brief One capture to an explicit PNG path, of the whole source or a UV sub-region, with an optional completion callback. */
@@ -48,18 +50,21 @@ struct ScreenshotFeature : public Feature
 	{
 		std::filesystem::path outputPath;
 		std::optional<Util::Subrect::UVRegion> region;
+		/** @brief Use a HUD-free source when one exists (flat HDR only); otherwise the capture includes the HUD and reports it. */
+		bool excludeUi = false;
 		std::function<void(const CaptureResult&)> onComplete;
 	};
 
 	/**
 	 * @brief Queues one capture for the next present. The file is a PNG at request.outputPath and gets
 	 *        no crop preset, clipboard copy or HUD notice, so a tool can call it between user captures.
+	 *        A user capture requested in the same frame is served on the following frame.
 	 * @return False when another request is already waiting.
 	 */
 	bool RequestCapture(CaptureRequest request);
 
-	/** @brief Captures a screenshot from the current back buffer and enqueues it for async encoding and save. */
-	void Capture();
+	/** @brief Captures a screenshot from the current back buffer and enqueues it for async encoding and save. A request saves to its own path instead of the user's screenshot folder. */
+	void Capture(std::optional<CaptureRequest> request = std::nullopt);
 	/** @brief Checks for a pending capture request and executes Capture() if one is pending. Should be called before the wrapped buffers are cleared. */
 	void ProcessCaptureRequest();
 	bool applyCropToScreenshot = true;
@@ -87,8 +92,8 @@ private:
 		bool saveAsSdrPng = false;
 		int hdrPngBitDepth = 11;
 		bool copyToClipboard = false;
-		/** @brief Set for a RequestCapture: skips the clipboard copy and the HUD notice. */
 		bool silent = false;
+		bool uiExcluded = false;
 		std::function<void(const CaptureResult&)> onComplete;
 	};
 
