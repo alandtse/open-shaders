@@ -10,6 +10,7 @@
 #include "NeuralRendering/D3D12Interop.h"
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
+#include "NeuralRendering/ModelScale.h"
 #include "NeuralRendering/Runtime.h"
 #include "Profiler.h"
 #include "State.h"
@@ -761,6 +762,7 @@ struct NeuralRendering::Impl
 	/** @brief Places both eyes' model inputs, cropped or whole, side by side a gutter apart. */
 	void CopySbsInputs()
 	{
+		CS_GPU_PASS("Upscaling::NRSbsPack");
 		if (sbsNeedsClear) {
 			constexpr float zero[4]{};
 			for (auto* uav : { sbsHost.color->uav, sbsHost.depth->uav, sbsHost.motion->uav, sbsHost.output->uav }) {
@@ -788,6 +790,7 @@ struct NeuralRendering::Impl
 	 */
 	void CopySbsOutputs(bool verify)
 	{
+		CS_GPU_PASS("Upscaling::NRSbsSplit");
 		const bool reduced = lowWidth != 0;
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			const auto& crop = sbsCrop[i];

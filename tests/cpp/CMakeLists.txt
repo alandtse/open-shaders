@@ -84,6 +84,7 @@ add_executable(cpp_tests
 	test_nr_decisions.cpp
 	test_nr_cadence.cpp
 	test_nr_material_strength.cpp
+	test_nr_model_scale.cpp
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
 	test_region.cpp
