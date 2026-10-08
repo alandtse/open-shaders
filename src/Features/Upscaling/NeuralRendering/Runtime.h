@@ -151,6 +151,12 @@ namespace NR
 		return eyes ? renderWidth / eyes : renderWidth;
 	}
 
+	/**
+	 * @brief Feature 18 instances the runtime holds: one per eye, one for both eyes evaluated as a single
+	 *        side-by-side image, and one per eye at full size that a verify capture compares against.
+	 */
+	constexpr uint32_t kFeatureSlots = 5, kSbsSlot = 2, kVerifySlot = 3;
+
 	/** @brief True when a colour target can host NR's proxy for this per-eye render size. */
 	inline bool IsSupportedOutput(const D3D11_TEXTURE2D_DESC& desc, uint32_t width, uint32_t height, uint32_t eyes)
 	{
@@ -220,6 +226,9 @@ namespace NR
 		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
+
+		/** @brief Drops one instance, so its next evaluate creates it again at the size that evaluate names. */
+		void ResetFeature(uint32_t slot);
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
 		/**
