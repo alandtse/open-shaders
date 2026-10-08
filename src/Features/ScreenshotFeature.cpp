@@ -4,6 +4,10 @@
 // capture does not stall the frame.
 
 #include "Features/ScreenshotFeature.h"
+#include "Features/Screenshot/SequenceCapture.h"
+#include "Features/Screenshot/SequencePolicy.h"
+#include "Features/Screenshot/Service.h"
+#include "Utils/StringUtils.h"
 
 #include <PCH.h>
 
@@ -632,6 +636,15 @@ namespace
 
 }
 
+ScreenshotFeature::ScreenshotFeature() :
+	sequenceCapture(std::make_unique<ScreenshotSequenceCapture>([] {
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		ResolveDisplayedBackBuffer(texture);
+		return texture;
+	})),
+	sequenceFrameCount(OS::Capture::SequencePlan{}.frameCount)
+{}
+
 ScreenshotFeature::~ScreenshotFeature()
 {
 	StopWorkerThread();
@@ -771,6 +784,7 @@ void ScreenshotFeature::DrawSettings()
 											 "Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
 	}
 
+	DrawSequenceSettings();
 	ImGui::SeparatorText(T(TKEY("crop"), "Crop"));
 
 	// Preview reflects what Capture() would save.
@@ -788,6 +802,75 @@ void ScreenshotFeature::DrawSettings()
 	}
 
 	subrect.DrawEditor(previewView, src.texture, 1.0f, 0.0f, OpaquePreviewBlendCallback);
+}
+
+void ScreenshotFeature::DrawSequenceSettings()
+{
+	ImGui::SeparatorText(T(TKEY("sequence"), "Frame sequence"));
+	const bool active = sequenceCapture && sequenceCapture->IsActive();
+	ImGui::BeginDisabled(active);
+	ImGui::InputInt(T(TKEY("sequence_frames"), "Frames"), &sequenceFrameCount);
+	ImGui::InputInt(T(TKEY("sequence_interval"), "Frame interval"), &sequenceIntervalFrames);
+	ImGui::InputInt(T(TKEY("sequence_delay"), "Start delay (frames)"), &sequenceStartDelayFrames);
+	sequenceStartDelayFrames = std::clamp(sequenceStartDelayFrames, 0, int(OS::Capture::MaximumSpanFrames));
+	sequenceFrameCount = std::clamp(sequenceFrameCount, 1, int(OS::Capture::MaximumFrames));
+	sequenceIntervalFrames = std::clamp(sequenceIntervalFrames, 1, int(OS::Capture::MaximumSpanFrames));
+	ImGui::EndDisabled();
+	ImGui::TextWrapped("%s", T(TKEY("sequence_note"), "Saves full native SDR images in the folder above, with both eyes in VR. Close the menu for an unobstructed capture. Cropping applies only to single screenshots."));
+	auto dispatch = [this](json request) {
+		request["contractMajor"] = 1;
+		request["clientId"] = "screenshot-menu";
+		request["commandId"] = OS::Capture::ServiceFoundation::NewId();
+		const auto response = HandleSequenceRequest(request);
+		if (!response.value("ok", false))
+			throw std::runtime_error(response.at("error").value("message", "Sequence request failed"));
+		const auto& result = request.at("action") == "status" ? response.at("result").at("active") : response.at("result");
+		if (result.is_null())
+			return response;
+		uiSequenceId = result.at("requestId").get<std::string>();
+		const auto state = result.at("state").get<std::string>();
+		uiSequencePending = !OS::Capture::IsTerminalState(state);
+		uiSequenceMessage = std::format("{}: {}/{} written, {} dropped, {} failed", state,
+			result.at("written").get<uint32_t>(), result.at("requested").get<uint32_t>(),
+			result.at("dropped").get<uint32_t>(), result.at("failed").get<uint32_t>());
+		if (!result.value("error", std::string{}).empty())
+			uiSequenceMessage += ": " + result.at("error").get<std::string>();
+		return response;
+	};
+	try {
+		ImGui::BeginDisabled(active || !loaded || IsFlatHdrScreenshotCapture());
+		const bool start = ImGui::Button(T(TKEY("sequence_start"), "Start sequence"));
+		ImGui::EndDisabled();
+		if (start) {
+			const json sequence = {
+				{ "frameCount", sequenceFrameCount }, { "useSettings", false },
+				{ "schedule", { { "basis", "game_frames" }, { "intervalFrames", sequenceIntervalFrames }, { "startDelayFrames", sequenceStartDelayFrames } } },
+				{ "capture", OS::Capture::NativeCaptureDescriptor(globals::game::isVR, ResolveToAbsoluteGamePath(std::filesystem::u8path(screenshotPath)), sdrUsePng) }
+			};
+			dispatch({ { "action", "sequence_start" }, { "sequence", sequence } });
+		}
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!active);
+		const bool stop = ImGui::Button(T(TKEY("sequence_stop"), "Stop sequence"));
+		ImGui::EndDisabled();
+		if (stop) {
+			const auto status = dispatch({ { "action", "status" } });
+			if (!status.at("result").at("active").is_null())
+				dispatch({ { "action", "sequence_stop" }, { "requestId", uiSequenceId } });
+		}
+		const auto now = std::chrono::steady_clock::now();
+		if ((active || uiSequencePending) && now >= nextSequencePoll) {
+			nextSequencePoll = now + std::chrono::seconds(1);
+			if (active)
+				dispatch({ { "action", "status" } });
+			else if (!uiSequenceId.empty())
+				dispatch({ { "action", "request_get" }, { "requestId", uiSequenceId } });
+		}
+	} catch (const std::exception& error) {
+		uiSequenceMessage = error.what();
+	}
+	if (!uiSequenceMessage.empty())
+		ImGui::TextWrapped("%s", uiSequenceMessage.c_str());
 }
 
 void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)
@@ -839,7 +922,9 @@ void ScreenshotFeature::Reset()
 
 void ScreenshotFeature::ProcessCaptureRequest()
 {
-	if (captureRequested.exchange(false)) {
+	if (sequenceCapture)
+		sequenceCapture->Tick(loaded);
+	if ((!sequenceCapture || !sequenceCapture->IsActive()) && captureRequested.exchange(false)) {
 		try {
 			Capture();
 		} catch (const std::exception& e) {
@@ -848,6 +933,24 @@ void ScreenshotFeature::ProcessCaptureRequest()
 			logger::error("Screenshot capture failed with an unknown exception.");
 		}
 	}
+}
+
+json ScreenshotFeature::HandleSequenceRequest(const json& request)
+{
+	return sequenceCapture->HandleRequest(request, loaded, captureRequested.load() || screenshotsInFlight.load() != 0);
+}
+
+#ifdef DEVBENCH_BRIDGE_ENABLED
+json ScreenshotFeature::HandleReferenceCapture(const json& request, std::function<void(const json&)> completion)
+{
+	return sequenceCapture->HandleReferenceRequest(request, loaded, captureRequested.load() || screenshotsInFlight.load() != 0, std::move(completion));
+}
+#endif
+
+void ScreenshotFeature::OnRuntimeDisabled()
+{
+	if (sequenceCapture)
+		sequenceCapture->Stop();
 }
 
 void ScreenshotFeature::EnsureWorkerThread()
@@ -878,6 +981,7 @@ void ScreenshotFeature::EnqueueScreenshot(PendingScreenshot&& screenshot)
 	{
 		std::lock_guard<std::mutex> lock(screenshotQueueMutex);
 		screenshotQueue.push(std::move(screenshot));
+		++screenshotsInFlight;
 	}
 	screenshotQueueCV.notify_one();
 }
@@ -902,6 +1006,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 			screenshotQueue.pop();
 		}
 
+		const SKSE::stl::scope_exit complete([this] { --screenshotsInFlight; });
 		DirectX::ScratchImage image;
 		if (!PopulateScratchImageFromStagingTexture(
 				context,
