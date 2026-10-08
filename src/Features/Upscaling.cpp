@@ -594,8 +594,7 @@ namespace
 			{ "materialStrength", upscaling->settings.neuralRenderingTuning.materialStrength },
 			{ "materialStrengthAvailable", status.materialStrengthAvailable },
 			{ "materialStrengthActive", status.materialStrengthActive },
-			{ "materialStrengthValues", json::array({ status.materialStrength[0], status.materialStrength[1], status.materialStrength[2],
-											status.materialStrength[3], status.materialStrength[4], status.materialStrength[5] }) },
+			{ "materialStrengthValues", status.materialStrength },
 			{ "materialEdgeSoftness", status.materialEdgeSoftness },
 			{ "showMaterialMap", upscaling->settings.neuralRenderingTuning.showMaterialMap },
 		};

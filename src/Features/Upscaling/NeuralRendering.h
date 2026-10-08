@@ -4,6 +4,7 @@
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
+#include "NeuralRendering/MaterialStrength.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
@@ -50,8 +51,8 @@ struct NeuralRendering
 		bool materialStrengthAvailable = true;
 		/** @brief True when the last evaluate bound the graded material protection. */
 		bool materialStrengthActive = false;
-		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape. */
-		std::array<float, 6> materialStrength{};
+		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
+		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
 		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
 	};
@@ -161,7 +162,7 @@ private:
 	std::atomic_bool materialStrengthRejected = false;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
-	std::array<std::atomic<float>, 6> materialStrengthValues{};
+	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};
 	std::atomic<uint32_t> materialEdgeSoftness = 0;
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
