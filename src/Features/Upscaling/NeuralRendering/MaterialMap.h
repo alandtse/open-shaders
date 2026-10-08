@@ -6,7 +6,7 @@
 
 namespace NR::MaterialMap
 {
-	/** @brief One filter bit per NeuralRenderingCategory id, None through Landscape. */
+	/** @brief One filter bit per NeuralRenderingCategory id, None through Metal. */
 	inline constexpr uint32_t kBits = MaterialStrength::kCount;
 	/** @brief Every category enabled: the filter's default, and what Sanitize keeps. */
 	inline constexpr uint32_t kAllCategories = (1u << kBits) - 1u;
@@ -54,6 +54,8 @@ namespace NR::MaterialMap
 		{ 1.0f, 1.0f, 0.0f },
 		{ 0.0f, 1.0f, 0.0f },
 		{ 0.0f, 1.0f, 1.0f },
+		{ 1.0f, 0.0f, 1.0f },
+		{ 1.0f, 1.0f, 1.0f },
 	};
 
 	/**

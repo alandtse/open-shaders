@@ -404,13 +404,13 @@ image quality, or temporal stability in this D3D12 path.
 ## Applying Neural Rendering by material
 
 **Apply Neural Rendering To** is one checkbox per material (Skin, Hair, Eyes, Foliage,
-Landscape and Everything Else) with Select All, Select None and Characters Only quick
+Landscape, Cloth Gear, Metal Gear and Everything Else) with Select All, Select None and Characters Only quick
 buttons. A checked box is strength 1 and an unchecked one is 0; a partial strength set in
 **Fine-Tune Strengths** counts as checked. All materials at full strength, the default, is
 the unfiltered frame and leaves the by-material path off. The by-material path is backed by
-`neuralRenderingTuning.materialStrength`, the six strengths (`strengthSkin`,
-`strengthHair`, `strengthEyes`, `strengthFoliage`, `strengthLandscape` and
-`strengthOther`, each 0 to 1 where 1 applies NR fully and 0 bypasses it) and `strengthEdgeSoftness` (0 to 4 pixels), binds
+`neuralRenderingTuning.materialStrength`, the eight strengths (`strengthSkin`,
+`strengthHair`, `strengthEyes`, `strengthFoliage`, `strengthLandscape`, `strengthCloth`,
+`strengthMetal` and `strengthOther`, each 0 to 1 where 1 applies NR fully and 0 bypasses it) and `strengthEdgeSoftness` (0 to 4 pixels), binds
 Feature 18's `DLSSNR.UIAlpha` lane. That lane is a graded protection value, not a
 binary mask: alpha 0 applies NR fully, alpha 1 restores the pixel from
 `DLSSNR.Backbuffer`, and a value between the two blends. `strengthEdgeSoftness`
@@ -447,9 +447,16 @@ session without changing the saved value. Both are reported by
 Test it through devbench: `openshaders.feature set shortName=Upscaling
 settings={"neuralRenderingTuning":{"materialStrength":true,"strengthSkin":0,...}}`,
 then read `materialStrengthAvailable`, `materialStrengthActive`,
-`materialStrengthValues` (None, Skin, Hair, Eyes, Foliage, Landscape) and
+`materialStrengthValues` (None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal) and
 `materialEdgeSoftness` from `neuralRenderingStatus`, and capture a frame with
 `captureNeuralRendering`.
+
+**Cloth Gear and Metal Gear** are the actor-attached draws (the engine's character-light
+flag on the Lighting permutation) that are not skin, hair or eyes. The Envmap technique is
+Metal Gear and every other technique is Cloth Gear. This follows the shader technique, not
+the material, so a non-envmapped helmet or cuirass reads as Cloth Gear, and the mouth and
+creature bodies do too; held and sheathed weapons are Envmap and read as Metal Gear. Both
+are at full strength by default, and Characters Only leaves them off.
 
 ### Show material map
 
@@ -463,8 +470,8 @@ time.
 Every pixel whose decoded category is enabled in `materialMapFilter` is drawn; a pixel of a
 disabled category keeps the normal image. The filter is a bitmask with one bit per
 `NeuralRenderingCategory` id (bit 0 None, shown in the panel as **Everything Else**, then bit
-1 Skin, 2 Hair, 3 Eyes, 4 Foliage and 5 Landscape), all six on by default.
-`NR::Tuning::Sanitize()` keeps only the low six bits, so a hand-edited config cannot select a
+1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth and 7 Metal), all eight on by default.
+`NR::Tuning::Sanitize()` keeps only the low eight bits, so a hand-edited config cannot select a
 category that does not exist.
 
 `materialMapMode` picks what a drawn pixel shows. **Category colours** blends the pixel's

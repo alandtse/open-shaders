@@ -105,7 +105,7 @@ namespace NR::Context
 		bool resetHistory = false;
 	};
 
-	/** @brief The six strengths a scope override selects, in category id order; kSameAsNormal selects NR on every material. */
+	/** @brief The eight strengths a scope override selects, in category id order; kSameAsNormal selects NR on every material. */
 	inline std::array<float, MaterialStrength::kCount> ScopeStrengths(ScopeOverride scope)
 	{
 		switch (scope) {
