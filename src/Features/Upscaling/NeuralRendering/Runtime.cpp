@@ -458,6 +458,11 @@ namespace NR
 			eye.feature.reset();
 	}
 
+	void Runtime::ResetFeature(uint32_t slot)
+	{
+		impl->eyes.at(slot).feature.reset();
+	}
+
 	std::string Runtime::Version() const
 	{
 		return impl->version;

@@ -284,9 +284,13 @@ struct NeuralRendering::Impl
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
 	/** @brief Model size when the model runs below the eye size; zero when it runs at the eye size. */
 	uint32_t lowWidth = 0, lowHeight = 0;
-	/** @brief Width of the side-by-side texture both eyes are evaluated in as one; zero when each eye has its own. */
-	uint32_t sbsWidth = 0;
+	/** @brief Evaluates both eyes as one side-by-side image on a single instance. */
+	bool sbsEnabled = false;
+	/** @brief Size of the side-by-side texture set, which the eyes' crops or model sizes decide; zero while none exists. */
+	uint32_t sbsWidth = 0, sbsHeight = 0;
 	bool sbsNeedsClear = false;
+	/** @brief The part of each eye the side-by-side image holds this frame, in the pixels of the textures it is copied from. */
+	std::array<Util::Subrect::PixelRegion, 2> sbsCrop{};
 	/** @brief Model inputs and output of both eyes side by side, which the single instance evaluates. */
 	struct SbsHost
 	{
@@ -375,7 +379,7 @@ struct NeuralRendering::Impl
 		encodeMasks = {};
 		materialStrengthInFlight = materialStrengthBound = false;
 		width = height = guideWidth = guideHeight = eyeCount = lowWidth = lowHeight = 0;
-		sbsWidth = 0;
+		sbsWidth = sbsHeight = 0;
 		sbsAlpha.reset();
 		sbsHost = {};
 		format = DXGI_FORMAT_UNKNOWN;
@@ -408,9 +412,9 @@ struct NeuralRendering::Impl
 		}
 	}
 
-	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, uint32_t lw, uint32_t lh, uint32_t sbsW)
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, uint32_t lw, uint32_t lh)
 	{
-		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat && lowWidth == lw && lowHeight == lh && sbsWidth == sbsW)
+		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat && lowWidth == lw && lowHeight == lh)
 			return;
 		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
@@ -457,15 +461,6 @@ struct NeuralRendering::Impl
 				eye.lowOutput = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDROutput");
 			}
 		}
-		if (sbsW) {
-			const uint32_t sbsH = lw ? lh : h;
-			sbsHost.color = interop.CreateTexture(sbsW, sbsH, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDRInput");
-			sbsHost.depth = interop.CreateTexture(sbsW, sbsH, DXGI_FORMAT_R32_FLOAT, "NeuralRendering::SBS Depth");
-			sbsHost.motion = interop.CreateTexture(sbsW, sbsH, DXGI_FORMAT_R16G16_FLOAT, "NeuralRendering::SBS Motion");
-			sbsHost.output = interop.CreateTexture(sbsW, sbsH, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDROutput");
-			sbsNeedsClear = true;
-		}
-		sbsWidth = sbsW;
 		width = w;
 		height = h;
 		guideWidth = gw;
@@ -725,7 +720,45 @@ struct NeuralRendering::Impl
 		context->ClearState();
 	}
 
-	/** @brief Places both eyes' model inputs, full size or model size, side by side a gutter apart. */
+	/**
+	 * @brief Fixes what the side-by-side image holds this frame, each eye's crop or its whole image at the model size,
+	 *        and reallocates the texture set and the instance when that size changes.
+	 */
+	void PlanSbs()
+	{
+		const bool reduced = lowWidth != 0;
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const auto crop = !reduced && region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+			sbsCrop[i] = (crop.w && crop.h) ? crop : Util::Subrect::PixelRegion{ 0, 0, reduced ? lowWidth : width, reduced ? lowHeight : height };
+		}
+		const uint32_t planWidth = sbsCrop[0].w + kSbsGutterPixels + sbsCrop[1].w;
+		const uint32_t planHeight = std::max(sbsCrop[0].h, sbsCrop[1].h);
+		if (sbsHost.color && planWidth == sbsWidth && planHeight == sbsHeight)
+			return;
+		ReleaseSbs();
+		sbsHost.color = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDRInput");
+		sbsHost.depth = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R32_FLOAT, "NeuralRendering::SBS Depth");
+		sbsHost.motion = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16_FLOAT, "NeuralRendering::SBS Motion");
+		sbsHost.output = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDROutput");
+		sbsWidth = planWidth;
+		sbsHeight = planHeight;
+		sbsNeedsClear = true;
+		logger::debug("[NeuralRendering] Side-by-side NR {}x{}, eye crops {}x{} and {}x{}", planWidth, planHeight, sbsCrop[0].w, sbsCrop[0].h, sbsCrop[1].w, sbsCrop[1].h);
+	}
+
+	/** @brief Frees the side-by-side texture set and its instance once the GPU is done with them. */
+	void ReleaseSbs()
+	{
+		if (!sbsWidth)
+			return;
+		interop.Drain();
+		runtime.ResetFeature(NR::kSbsSlot);
+		sbsHost = {};
+		sbsAlpha.reset();
+		sbsWidth = sbsHeight = 0;
+	}
+
+	/** @brief Places both eyes' model inputs, cropped or whole, side by side a gutter apart. */
 	void CopySbsInputs()
 	{
 		if (sbsNeedsClear) {
@@ -737,34 +770,33 @@ struct NeuralRendering::Impl
 			sbsNeedsClear = false;
 		}
 		const bool reduced = lowWidth != 0;
-		const uint32_t modelWidth = reduced ? lowWidth : width, modelHeight = reduced ? lowHeight : height;
-		const D3D11_BOX colorBox{ 0, 0, 0, modelWidth, modelHeight, 1 };
-		const D3D11_BOX guideBox{ 0, 0, 0, reduced ? lowWidth : guideWidth, reduced ? lowHeight : guideHeight, 1 };
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			auto& eye = eyes[i];
-			const uint32_t x = i * (modelWidth + kSbsGutterPixels);
-			context->CopySubresourceRegion(sbsHost.color->resource11, 0, x, 0, 0, (reduced ? eye.lowColor : eye.color)->resource11, 0, &colorBox);
-			context->CopySubresourceRegion(sbsHost.depth->resource11, 0, x, 0, 0, (reduced ? eye.lowDepth : eye.depth)->resource11, 0, &guideBox);
-			context->CopySubresourceRegion(sbsHost.motion->resource11, 0, x, 0, 0, (reduced ? eye.lowMotion : eye.motion)->resource11, 0, &guideBox);
+			const auto& crop = sbsCrop[i];
+			const D3D11_BOX box{ crop.x, crop.y, 0, crop.x + crop.w, crop.y + crop.h, 1 };
+			const uint32_t x = i ? sbsCrop[0].w + kSbsGutterPixels : 0;
+			context->CopySubresourceRegion(sbsHost.color->resource11, 0, x, 0, 0, (reduced ? eye.lowColor : eye.color)->resource11, 0, &box);
+			context->CopySubresourceRegion(sbsHost.depth->resource11, 0, x, 0, 0, (reduced ? eye.lowDepth : eye.depth)->resource11, 0, &box);
+			context->CopySubresourceRegion(sbsHost.motion->resource11, 0, x, 0, 0, (reduced ? eye.lowMotion : eye.motion)->resource11, 0, &box);
 		}
 	}
 
 	/**
-	 * @brief Splits the side-by-side model output back into each eye: into its model-size output when the
+	 * @brief Splits the side-by-side model output back into each eye's crop: into its model-size output when the
 	 *        model runs reduced, else into its output, or into reuseOutput when a verify capture keeps the
 	 *        eye's own full-size run in output.
 	 */
 	void CopySbsOutputs(bool verify)
 	{
 		const bool reduced = lowWidth != 0;
-		const uint32_t modelWidth = reduced ? lowWidth : width, modelHeight = reduced ? lowHeight : height;
 		for (uint32_t i = 0; i < eyeCount; ++i) {
-			const uint32_t x = i * (modelWidth + kSbsGutterPixels);
-			const D3D11_BOX box{ x, 0, 0, x + modelWidth, modelHeight, 1 };
+			const auto& crop = sbsCrop[i];
+			const uint32_t x = i ? sbsCrop[0].w + kSbsGutterPixels : 0;
+			const D3D11_BOX box{ x, 0, 0, x + crop.w, crop.h, 1 };
 			ID3D11Resource* target = reduced ? eyes[i].lowOutput->resource11 :
 			                         verify  ? static_cast<ID3D11Resource*>(eyes[i].reuseOutput->resource.get()) :
 			                                   eyes[i].output->resource11;
-			context->CopySubresourceRegion(target, 0, 0, 0, 0, sbsHost.output->resource11, 0, &box);
+			context->CopySubresourceRegion(target, 0, crop.x, crop.y, 0, sbsHost.output->resource11, 0, &box);
 		}
 	}
 
@@ -777,7 +809,7 @@ struct NeuralRendering::Impl
 			sbsHost.motion->resource.get(), sbsHost.output->resource.get(), alpha };
 		TransitionResources(commands, resources, true);
 		const uint32_t modelWidth = lowWidth ? lowWidth : width, modelHeight = lowWidth ? lowHeight : height;
-		const NR::GuideRegion whole{ 0, 0, sbsWidth, modelHeight };
+		const NR::GuideRegion whole{ 0, 0, sbsWidth, sbsHeight };
 		NR::GuideParameters guides;
 		guides.depth = guides.motion = guides.colorOutput = whole;
 		// Motion is normalized to one eye, not to the combined texture.
@@ -786,7 +818,7 @@ struct NeuralRendering::Impl
 		guides.depthInverted = globals::features::reverseZ.IsActive();
 		const NR::ProtectionResources protection{ alpha, alpha ? sbsHost.color->resource.get() : nullptr };
 		const bool ok = runtime.Evaluate(commands, NR::kSbsSlot, sbsHost.color->resource.get(), sbsHost.depth->resource.get(),
-			sbsHost.motion->resource.get(), sbsHost.output->resource.get(), protection, sbsWidth, modelHeight, guides, host.frame, tuning);
+			sbsHost.motion->resource.get(), sbsHost.output->resource.get(), protection, sbsWidth, sbsHeight, guides, host.frame, tuning);
 		diagnostic.result[0] = host.frame.result;
 		if (ok)
 			diagnostic.evaluated |= (1u << eyeCount) - 1;
@@ -803,8 +835,9 @@ struct NeuralRendering::Impl
 	{
 		auto& eye = eyes[i];
 		Transition(commands, eye, true);
+		const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
 		NR::GuideParameters guides;
-		guides.depth = guides.motion = guides.colorOutput = NR::GuideRegion{ 0, 0, width, height };
+		guides.depth = guides.motion = guides.colorOutput = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, width, height };
 		guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
 		guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
 		guides.depthInverted = globals::features::reverseZ.IsActive();
@@ -958,10 +991,12 @@ struct NeuralRendering::Impl
 			}
 			if (sbsWidth) {
 				if (!sbsAlpha)
-					sbsAlpha = interop.CreateTexture(sbsWidth, height, DXGI_FORMAT_R8_UNORM, "NeuralRendering::SBS MaterialAlpha");
-				const D3D11_BOX box{ 0, 0, 0, width, height, 1 };
-				for (uint32_t i = 0; i < eyeCount; ++i)
-					context->CopySubresourceRegion(sbsAlpha->resource11, 0, i * (width + kSbsGutterPixels), 0, 0, eyes[i].materialAlpha->resource11, 0, &box);
+					sbsAlpha = interop.CreateTexture(sbsWidth, sbsHeight, DXGI_FORMAT_R8_UNORM, "NeuralRendering::SBS MaterialAlpha");
+				for (uint32_t i = 0; i < eyeCount; ++i) {
+					const auto& crop = sbsCrop[i];
+					const D3D11_BOX box{ crop.x, crop.y, 0, crop.x + crop.w, crop.y + crop.h, 1 };
+					context->CopySubresourceRegion(sbsAlpha->resource11, 0, i ? sbsCrop[0].w + kSbsGutterPixels : 0, 0, 0, eyes[i].materialAlpha->resource11, 0, &box);
+				}
 			}
 		} catch (...) {
 			if (interop.DeviceRemoved())
@@ -1001,11 +1036,15 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
-		const bool sbs = sbsWidth != 0;
-		if (lowRes || sbs) {
+		const bool sbs = sbsEnabled;
+		if (lowRes) {
 			region = {};
 			actorBox = {};
 		}
+		if (sbs)
+			PlanSbs();
+		else
+			ReleaseSbs();
 		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR && globals::state->IsDeveloperMode() &&
 		                eyeCount == 2 && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
@@ -2155,9 +2194,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
-		const uint32_t sbsWidth = effective.sbsEvaluate && count == 2 && !effective.skipFrameReuse ? 2 * (lowExtent.first ? lowExtent.first : w) + kSbsGutterPixels : 0;
-		diagnostic.recreated |= work.sbsWidth != sbsWidth;
-		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second, sbsWidth);
+		work.sbsEnabled = effective.sbsEvaluate && count == 2 && !effective.skipFrameReuse;
+		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
 		if (diagnostic.recreated)
 			PublishResources();
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;

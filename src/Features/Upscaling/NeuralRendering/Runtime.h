@@ -236,6 +236,9 @@ namespace NR
 		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
+
+		/** @brief Drops one instance, so its next evaluate creates it again at the size that evaluate names. */
+		void ResetFeature(uint32_t slot);
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
 		/**
