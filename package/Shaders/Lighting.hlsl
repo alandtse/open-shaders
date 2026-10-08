@@ -3683,7 +3683,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Stored as 1 - vertexAO so the cleared default (0) means no occlusion
 	// for pixels that do not write to this RT (sky, water, grass, effects).
-	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(neuralRenderingCategory), 0, psout.Diffuse.w);
+	// A blended class ID decodes to None, so hair snaps to fully replace or leave the category.
+	float masks2Blend = psout.Diffuse.w;
+#		if defined(HAIR)
+	masks2Blend = step(0.5, psout.Diffuse.w);
+#		endif
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(neuralRenderingCategory), 0, masks2Blend);
 
 	float stochasticBlend = (screenNoise * screenNoise) < psout.Diffuse.w ? 1.0 : 0.0;
 	psout.NormalGlossiness.w = stochasticBlend;
