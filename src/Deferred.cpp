@@ -541,6 +541,16 @@ void Deferred::EndDeferred()
 	ResetBlendStates();
 }
 
+bool Deferred::ForwardMasks2Available() const
+{
+	if (deferredPass || !globals::state->inWorld)
+		return false;
+
+	auto shadowState = globals::game::shadowState;
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	return renderTargets[0] == RE::RENDER_TARGET::kMAIN;
+}
+
 void Deferred::SetForwardMasks2Target(bool a_bind)
 {
 	if (deferredPass || !globals::state->inWorld)
@@ -553,7 +563,7 @@ void Deferred::SetForwardMasks2Target(bool a_bind)
 
 	constexpr uint slot = 3;
 	if (a_bind) {
-		if (forwardMasks2Bound || renderTargets[0] != RE::RENDER_TARGET::kMAIN)
+		if (forwardMasks2Bound || !ForwardMasks2Available())
 			return;
 		forwardMasks2Replaced = renderTargets[slot];
 		forwardMasks2ReplacedMode = setRenderTargetMode[slot];

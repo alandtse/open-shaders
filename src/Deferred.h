@@ -110,6 +110,8 @@ public:
 	 * @param a_bind True to bind Masks2, false to restore the previous slot.
 	 */
 	void SetForwardMasks2Target(bool a_bind);
+	/** @brief True when a forward draw may write Masks2 through slot 3: in world, not in the deferred pass, and rendering to the main target. */
+	bool ForwardMasks2Available() const;
 
 	/** @brief Runs feature prepasses between StartDeferred and geometry rendering. */
 	void PrepassPasses();
