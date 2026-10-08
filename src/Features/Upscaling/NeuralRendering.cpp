@@ -292,6 +292,8 @@ struct NeuralRendering::Impl
 	bool sbsNeedsClear = false;
 	/** @brief The part of each eye the side-by-side image holds this frame, in the pixels of the textures it is copied from. */
 	std::array<Util::Subrect::PixelRegion, 2> sbsCrop{};
+	/** @brief Crop sizes the packed image was last laid out for; a change moves the gutter even when the total size is the same. */
+	std::array<uint32_t, 4> sbsLayout{};
 	/** @brief Model inputs and output of both eyes side by side, which the single instance evaluates. */
 	struct SbsHost
 	{
@@ -734,6 +736,11 @@ struct NeuralRendering::Impl
 		}
 		const uint32_t planWidth = sbsCrop[0].w + kSbsGutterPixels + sbsCrop[1].w;
 		const uint32_t planHeight = std::max(sbsCrop[0].h, sbsCrop[1].h);
+		const std::array<uint32_t, 4> layout{ sbsCrop[0].w, sbsCrop[0].h, sbsCrop[1].w, sbsCrop[1].h };
+		if (layout != sbsLayout) {
+			sbsLayout = layout;
+			sbsNeedsClear = true;
+		}
 		if (sbsHost.color && planWidth == sbsWidth && planHeight == sbsHeight)
 			return;
 		ReleaseSbs();
@@ -1052,7 +1059,8 @@ struct NeuralRendering::Impl
 		                eyeCount == 2 && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
 		reuseFrame = {};
-		if (!staggerActive && (eyes[0].gainHistory || eyes[1].gainHistory))
+		const bool gainResourcesWanted = staggerActive || lowRes || (sbs && tuning.modelVerify);
+		if (!gainResourcesWanted && (eyes[0].gainHistory || eyes[1].gainHistory))
 			ReleaseGainResources();
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
@@ -2111,7 +2119,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		resetHistory = true;
 		return;
 	}
-	const auto effective = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
+	const auto effective = [&] {
+		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
+		if (!globals::state->IsDeveloperMode()) {
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
+			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
+		}
+		return resolved;
+	}();
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
@@ -2188,7 +2203,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
-		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && effective.modelScale >= NR::Tuning::kMaxModelScale;
+		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && NR::ModelExtent(effective.modelScale, w, h).first == 0;
 		if (materialStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
 			work.materialStrengthOn = materialStrengthWanted;
@@ -2197,7 +2212,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
 		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
-		work.sbsEnabled = effective.sbsEvaluate && count == 2 && !effective.skipFrameReuse;
+		work.sbsEnabled = effective.sbsEvaluate && count == 2;
 		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
 		if (diagnostic.recreated)
 			PublishResources();
