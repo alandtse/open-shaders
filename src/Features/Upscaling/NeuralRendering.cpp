@@ -1175,6 +1175,7 @@ struct NeuralRendering::Impl
 		{
 			CS_GPU_PASS("Upscaling::NREvaluate");
 			auto* commands = interop.Begin();
+			const bool parallelEyes = tuning.parallelEyes && eyeCount == 2 && globals::state->IsDeveloperMode();
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
 				if (sbs) {
@@ -1191,7 +1192,10 @@ struct NeuralRendering::Impl
 						continue;
 					}
 				}
-				Transition(commands, eye, true, lowRes);
+				auto* eyeCommands = parallelEyes && i == 1 ? interop.ParallelList() : nullptr;
+				if (!eyeCommands)
+					eyeCommands = commands;
+				Transition(eyeCommands, eye, true, lowRes);
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
 					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
 					copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1199,13 +1203,13 @@ struct NeuralRendering::Impl
 						D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE };
 					copyBarriers[1].Transition = { eye.output->resource.get(), D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
 						D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST };
-					commands->ResourceBarrier(2, copyBarriers);
-					commands->CopyResource(eye.output->resource.get(), eye.color->resource.get());
+					eyeCommands->ResourceBarrier(2, copyBarriers);
+					eyeCommands->CopyResource(eye.output->resource.get(), eye.color->resource.get());
 					copyBarriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
 					copyBarriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
 					copyBarriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
 					copyBarriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-					commands->ResourceBarrier(2, copyBarriers);
+					eyeCommands->ResourceBarrier(2, copyBarriers);
 				} else {
 					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
 					const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
@@ -1235,7 +1239,7 @@ struct NeuralRendering::Impl
 					const auto& modelDepth = lowRes ? eye.lowDepth : eye.depth;
 					const auto& modelMotion = lowRes ? eye.lowMotion : eye.motion;
 					const auto& modelOutput = lowRes ? eye.lowOutput : eye.output;
-					success = runtime.Evaluate(commands, i, modelColor->resource.get(), modelDepth->resource.get(),
+					success = runtime.Evaluate(eyeCommands, i, modelColor->resource.get(), modelDepth->resource.get(),
 						modelMotion->resource.get(), modelOutput->resource.get(), protection,
 						modelWidth, modelHeight, guides, eye.frame, tuning);
 				}
@@ -1246,9 +1250,9 @@ struct NeuralRendering::Impl
 					diagnostic.created |= 1u << i;
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
 				}
-				Transition(commands, eye, false, lowRes);
+				Transition(eyeCommands, eye, false, lowRes);
 				if (success && modelVerify)
-					success = EvaluateReference(commands, i, tuning);
+					success = EvaluateReference(eyeCommands, i, tuning);
 			}
 			interop.End();
 		}
@@ -1978,6 +1982,12 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
 			ImGui::EndDisabled();
 		}
+		ImGui::SeparatorText(T(TKEY("developer_performance"), "Performance"));
+		if (ImGui::Checkbox(T(TKEY("parallel_eyes"), "Evaluate Eyes in Parallel"), &tuning.parallelEyes))
+			changed = true;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("parallel_eyes_tooltip"),
+				"VR only. Runs the second eye's model on its own queue so both eyes run at once. The image is the same; it only lowers the GPU time."));
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
