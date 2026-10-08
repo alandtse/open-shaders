@@ -845,13 +845,6 @@ void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)
 
 void ScreenshotFeature::Reset()
 {
-	std::optional<CaptureRequest> stale;
-	{
-		std::lock_guard lock(pendingRequestMutex);
-		stale.swap(pendingRequest);
-	}
-	if (stale && stale->onComplete)
-		stale->onComplete({});
 }
 
 bool ScreenshotFeature::RequestCapture(CaptureRequest request)

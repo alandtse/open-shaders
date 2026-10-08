@@ -30,7 +30,7 @@ struct ScreenshotFeature : public Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& a_json) override;
 	virtual void SaveSettings(json& a_json) override;
-	/** @brief Fails a queued capture request, which would otherwise outlive the scene it was made for. */
+	/** @brief Resets transient state (no-op for this feature). */
 	virtual void Reset() override;
 	/** @brief Called after all features are loaded (no-op for this feature). */
 	virtual void PostPostLoad() override;
