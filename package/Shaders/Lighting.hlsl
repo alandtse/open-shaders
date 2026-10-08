@@ -461,6 +461,9 @@ struct PS_OUTPUT
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
 	float4 NormalGlossiness: SV_Target2;
+#	if defined(FORWARD_MASKS2)
+	float4 Masks2: SV_Target3;
+#	endif
 };
 #endif
 
@@ -3727,6 +3730,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	const bool outputColorToAuxiliaryTarget = SSRParams.z > 1e-5;
 	psout.NormalGlossiness = outputColorToAuxiliaryTarget ? (gammaRenderTarget ? auxiliaryDiffuse : psout.Diffuse) : normalAndSSR;
 	psout.MotionVectors = outputColorToAuxiliaryTarget ? float4(1, 0, 0, 1) : float4(screenMotionVector, 0, 1);
+#	endif
+
+#	if defined(FORWARD_MASKS2)
+	// The forward eye pass has no deferred write, so without this the head's Skin value stays under the eyes.
+	// The vanilla eye atlas holds the lash strands below this uv; another layout classifies them as Eyes.
+	static const float2 kEyeLashMaxUV = float2(0.8, 0.47);
+	const uint eyeCategory = all(input.TexCoord0.xy < kEyeLashMaxUV) ? NeuralRenderingCategory::Hair : NeuralRenderingCategory::Eyes;
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(eyeCategory), 0, step(0.5, psout.Diffuse.w));
 #	endif
 
 #	if defined(EMAT)
