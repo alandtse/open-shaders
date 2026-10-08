@@ -359,7 +359,7 @@ namespace
 	//   HDR enabled        -> swap-chain back buffer after ApplyHDR (PQ HDR10 / PQ float).
 	//   Flat SDR           -> kFRAMEBUFFER (tonemapped UNORM).
 	// forCapture: post-blur screenshot uses the snapshot; pre-blur preview uses hdrTexture.
-	CaptureSource SelectCaptureSource(winrt::com_ptr<ID3D11Texture2D>& holder, bool forCapture)
+	CaptureSource SelectCaptureSource(winrt::com_ptr<ID3D11Texture2D>& holder, bool forCapture, bool wantUi = false)
 	{
 		CaptureSource src;
 		auto* renderer = globals::game::renderer;
@@ -383,7 +383,7 @@ namespace
 		if (IsFlatHdrScreenshotCapture()) {
 			// Recompose from the clean scene with no UI buffer.
 			auto& hdr = globals::features::hdrDisplay;
-			if (Menu::GetSingleton()->IsEnabled && hdr.outputTexture && hdr.outputTexture->srv) {
+			if (!wantUi && Menu::GetSingleton()->IsEnabled && hdr.outputTexture && hdr.outputTexture->srv) {
 				ID3D11ShaderResourceView* sceneSRV =
 					(forCapture && hdr.IsCleanSceneCaptureFresh()) ? hdr.cleanSceneCapture->srv.get() :
 																	 (hdr.hdrTexture ? hdr.hdrTexture->srv.get() : nullptr);
@@ -914,8 +914,13 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 			screenshotQueue.pop();
 		}
 		const auto finish = [&screenshot](bool ok) {
-			if (screenshot.onComplete)
+			if (!screenshot.onComplete)
+				return;
+			try {
 				screenshot.onComplete({ ok, screenshot.width, screenshot.height });
+			} catch (const std::exception& e) {
+				logger::error("Screenshot completion callback threw: {}", e.what());
+			}
 		};
 
 		DirectX::ScratchImage image;
@@ -994,7 +999,7 @@ void ScreenshotFeature::Capture()
 	}
 
 	winrt::com_ptr<ID3D11Texture2D> sourceTextureKeepAlive;
-	const auto src = SelectCaptureSource(sourceTextureKeepAlive, /*forCapture=*/true);
+	const auto src = SelectCaptureSource(sourceTextureKeepAlive, /*forCapture=*/true, /*wantUi=*/request.has_value());
 	logger::debug("Capturing from {}", src.description);
 
 	if (!src.texture) {
@@ -1018,7 +1023,7 @@ void ScreenshotFeature::Capture()
 		copyY = std::min(static_cast<uint32_t>(std::max(uv.y, 0.0f) * srcDesc.Height), srcDesc.Height - 1);
 		copyW = std::clamp(static_cast<uint32_t>(std::lround(uv.w * srcDesc.Width)), 1u, srcDesc.Width - copyX);
 		copyH = std::clamp(static_cast<uint32_t>(std::lround(uv.h * srcDesc.Height)), 1u, srcDesc.Height - copyY);
-	} else if (applyCropToScreenshot) {
+	} else if (applyCropToScreenshot && !request) {
 		auto region = subrect.GetPixelRegion(srcDesc.Width, srcDesc.Height);
 		copyX = region.x;
 		copyY = region.y;

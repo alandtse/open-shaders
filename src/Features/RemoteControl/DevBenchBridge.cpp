@@ -1069,6 +1069,8 @@ namespace
 			const Util::Subrect::UVRegion region{ rect.value("x", 0.0f), rect.value("y", 0.0f), rect.value("w", 1.0f), rect.value("h", 1.0f) };
 			if (!std::isfinite(region.x) || !std::isfinite(region.y) || !std::isfinite(region.w) || !std::isfinite(region.h) || region.w <= 0.0f || region.h <= 0.0f)
 				return json{ { "error", "subrect must be finite with a positive w and h" } };
+			if (region.x < 0.0f || region.y < 0.0f || region.x + region.w > 1.0f || region.y + region.h > 1.0f)
+				return json{ { "error", "subrect must lie within 0..1 UV" } };
 			request.region = region;
 		}
 		request.onComplete = [requestId](const ScreenshotFeature::CaptureResult& a_result) {
