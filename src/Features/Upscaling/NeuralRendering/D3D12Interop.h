@@ -25,6 +25,13 @@ namespace NR
 		/** @brief Submits NR commands and queues the D3D11 output dependency. */
 		void End();
 		/**
+		 * @brief Returns a command list that runs on a second compute queue concurrently with Begin()'s list,
+		 *        submitted by the same End(). Only a compute queue overlaps NR's launch-bound kernels; a second
+		 *        direct queue serializes with the first. Call between Begin() and End().
+		 * @return Null when the queue cannot be created; the caller then records on Begin()'s list.
+		 */
+		ID3D12GraphicsCommandList* ParallelList();
+		/**
 		 * @brief Retires all submitted work on both APIs.
 		 *        Throws rather than releasing anything: on a failure the caller must keep the
 		 *        resources alive, because the GPU may still reference them.
@@ -52,6 +59,8 @@ namespace NR
 
 		/** @brief Throws for a failed HRESULT, naming device removal when the device reports it. */
 		void Check(HRESULT result);
+		/** @brief Creates a named allocator and closed command list of one type for every slot of a ring. */
+		void CreateRing(std::array<Commands, kFramesInFlight>& ring, D3D12_COMMAND_LIST_TYPE type, const wchar_t* allocatorName, const wchar_t* listName);
 		/** @brief Blocks the CPU until completion retires; throws on a timeout or a removed device. */
 		void Wait(uint64_t completion);
 		/** @brief Releases every interop resource; drain first or the GPU may still read them. */
@@ -61,6 +70,11 @@ namespace NR
 		winrt::com_ptr<ID3D11DeviceContext4> context;
 		winrt::com_ptr<ID3D12Device> device;
 		winrt::com_ptr<ID3D12CommandQueue> queue;
+		winrt::com_ptr<ID3D12CommandQueue> parallelQueue;
+		std::array<Commands, kFramesInFlight> parallelCommands;
+		uint64_t inputReady = 0;
+		bool parallelUsed = false;
+		bool parallelFailed = false;
 		SharedFence fence;
 		std::array<Commands, kFramesInFlight> commands;
 		LUID adapterLuid{};
