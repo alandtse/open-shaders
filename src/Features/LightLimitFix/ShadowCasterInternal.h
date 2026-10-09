@@ -274,6 +274,10 @@ namespace ShadowCasterManager
 	/// occupant can't poison the newcomer's score for ~25 frames.
 	void ResetScoreAnchor(const RE::NiLight* ni);
 
+	/// EMA-anchored per-light radius, advanced once per light per frame by the
+	/// scheduler; read this instead of the live radius that ISL rewrites each frame.
+	float AnchoredRadius(const RE::NiLight* ni, float liveRadius);
+
 	/// Sets camera/scene formula params once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);
 
