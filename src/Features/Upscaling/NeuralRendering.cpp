@@ -1741,10 +1741,13 @@ namespace
 		ImGui::BeginDisabled(!developerMode || unusedByMode);
 		const char* label = T(TKEY("model_scale"), "Model Scale");
 		const ImGuiID id = ImGui::GetID(label);
-		float& dragged = *ImGui::GetStateStorage()->GetFloatRef(id, tuning.modelScale);
-		if (ImGui::GetActiveID() != id)
+		ImGuiStorage* storage = ImGui::GetStateStorage();
+		float& dragged = *storage->GetFloatRef(id, tuning.modelScale);
+		bool& wasDragging = *storage->GetBoolRef(ImGui::GetID("modelScaleDragging"), false);
+		if (!wasDragging)
 			dragged = tuning.modelScale;
 		ImGui::SliderFloat(label, &dragged, NR::Tuning::kMinModelScale, NR::Tuning::kMaxModelScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		wasDragging = ImGui::IsItemActive();
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			tuning.modelScale = dragged;
 			changed = true;
@@ -1939,6 +1942,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
+	bool changed = false;
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");
 		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
@@ -1989,9 +1993,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		T(TKEY("style_1"), "Style 1"),
 		T(TKEY("style_2"), "Style 2"),
 	};
-	bool changed = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
-	bool recreateTuning = changed;
-	if (changed)
+	const bool styleChanged = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
+	changed |= styleChanged;
+	bool recreateTuning = styleChanged;
+	if (styleChanged)
 		tuning.style = static_cast<uint32_t>(style);
 	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
