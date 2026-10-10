@@ -31,6 +31,10 @@ namespace NR
 		 * @return Null when the queue cannot be created; the caller then records on Begin()'s list.
 		 */
 		ID3D12GraphicsCommandList* ParallelList();
+		/** @brief Whether the last End() submitted a list on the second queue. */
+		[[nodiscard]] bool UsedParallelLastSubmit() const { return parallelSubmitted; }
+		/** @brief Stops using the second queue for the rest of the session, after a failure that may have come from it. */
+		void DisableParallel() { parallelFailed = true; }
 		/**
 		 * @brief Retires all submitted work on both APIs.
 		 *        Throws rather than releasing anything: on a failure the caller must keep the
@@ -74,6 +78,7 @@ namespace NR
 		std::array<Commands, kFramesInFlight> parallelCommands;
 		uint64_t inputReady = 0;
 		bool parallelUsed = false;
+		bool parallelSubmitted = false;
 		bool parallelFailed = false;
 		SharedFence fence;
 		std::array<Commands, kFramesInFlight> commands;

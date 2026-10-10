@@ -1176,7 +1176,7 @@ struct NeuralRendering::Impl
 		{
 			CS_GPU_PASS("Upscaling::NREvaluate");
 			auto* commands = interop.Begin();
-			const bool parallelEyes = tuning.parallelEyes && eyeCount == 2 && globals::state->IsDeveloperMode();
+			const bool parallelEyes = tuning.parallelEyes && eyeCount == 2;
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
 				if (sbs) {
@@ -1264,6 +1264,10 @@ struct NeuralRendering::Impl
 		diagnostic.submittedFence = interop.SubmittedFence();
 		diagnostic.completedFence = interop.CompletedFence();
 		if (!success) {
+			if (interop.UsedParallelLastSubmit()) {
+				interop.DisableParallel();
+				logger::warn("[NeuralRendering] an evaluate failed with the second eye on a parallel queue; Retry will use one queue");
+			}
 			diagnostics.FinishCapture(diagnostic.number);
 			return false;
 		}
@@ -1893,6 +1897,12 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
 				"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
 	}
+	if (globals::game::isVR) {
+		changed |= ImGui::Checkbox(T(TKEY("parallel_eyes"), "Evaluate Eyes in Parallel"), &tuning.parallelEyes);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("parallel_eyes_tooltip"),
+				"Runs the second eye's model on its own queue so both eyes run at once. The image is the same and it lowers the GPU time, by about 1 ms on a full frame and about 2 ms with Follow Foveation in an RTX 5090 test. On by default; turn it off to compare, or if Neural Rendering fails to start. If an evaluate fails with it on, Retry NR uses one queue."));
+	}
 	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
 	// out without it instead of accepting edits that the pass ignores.
 	const bool cropDisabled = !tuning.regionOfInterest;
@@ -1987,12 +1997,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
 			ImGui::EndDisabled();
 		}
-		ImGui::SeparatorText(T(TKEY("developer_performance"), "Performance"));
-		if (ImGui::Checkbox(T(TKEY("parallel_eyes"), "Evaluate Eyes in Parallel"), &tuning.parallelEyes))
-			changed = true;
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("parallel_eyes_tooltip"),
-				"VR only. Runs the second eye's model on its own queue so both eyes run at once. The image is the same; it only lowers the GPU time."));
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;

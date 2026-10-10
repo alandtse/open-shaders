@@ -120,6 +120,7 @@ namespace NR
 		winrt::check_hresult(slot.list->Close());
 		ID3D12CommandList* lists[]{ slot.list.get() };
 		queue->ExecuteCommandLists(1, lists);
+		parallelSubmitted = parallelUsed;
 		if (parallelUsed) {
 			auto& parallel = parallelCommands[cursor];
 			winrt::check_hresult(parallel.list->Close());
