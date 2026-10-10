@@ -1,6 +1,7 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "Utils/FileSystem.h"
 
@@ -1052,6 +1053,53 @@ namespace
 		RunHandler(&BuildCaptureResult, a_argsJson, a_sink, a_write);
 	}
 
+	// The file is written on the next present; completion is the capture.ready event, not this return.
+	json BuildCaptureProviderResult(const json& a_args)
+	{
+		const std::string outputPath = a_args.value("outputPath", std::string{});
+		const std::string requestId = a_args.value("requestId", std::string{});
+		if (outputPath.empty() || requestId.empty())
+			return json{ { "error", "capture provider needs outputPath and requestId" } };
+
+		ScreenshotFeature::CaptureRequest request;
+		request.outputPath = std::filesystem::path(outputPath);
+		if (!request.outputPath.is_absolute() || request.outputPath.extension() != ".png")
+			return json{ { "error", "outputPath must be an absolute .png path" } };
+		request.excludeUi = a_args.value("excludeUi", true);
+		if (a_args.contains("subrect") && a_args["subrect"].is_object()) {
+			const auto& rect = a_args["subrect"];
+			const Util::Subrect::UVRegion region{ rect.value("x", 0.0f), rect.value("y", 0.0f), rect.value("w", 1.0f), rect.value("h", 1.0f) };
+			if (!std::isfinite(region.x) || !std::isfinite(region.y) || !std::isfinite(region.w) || !std::isfinite(region.h) || region.w <= 0.0f || region.h <= 0.0f)
+				return json{ { "error", "subrect must be finite with a positive w and h" } };
+			if (region.x < 0.0f || region.y < 0.0f || region.x + region.w > 1.0f || region.y + region.h > 1.0f)
+				return json{ { "error", "subrect must lie within 0..1 UV" } };
+			request.region = region;
+		}
+		request.onComplete = [requestId](const ScreenshotFeature::CaptureResult& a_result) {
+			json payload{ { "requestId", requestId }, { "ok", a_result.ok }, { "uiExcluded", a_result.uiExcluded },
+				{ "width", a_result.width }, { "height", a_result.height } };
+			if (!a_result.ok)
+				payload["error"] = "the screenshot could not be captured or written";
+			const std::string text = payload.dump();
+			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001())
+				dvb->EmitEvent("capture.ready", text.c_str());
+		};
+		const uint frame = EnqueuedFrame();
+		return RunOnMainThread([request = std::move(request), frame]() mutable -> json {
+			auto* shot = &globals::features::screenshotFeature;
+			if (!shot->loaded)
+				return json{ { "error", "Screenshot feature is not loaded" } };
+			if (!shot->RequestCapture(std::move(request)))
+				return json{ { "error", "another capture is already waiting for the next frame" } };
+			return json{ { "queued", true }, { "provider", "openshaders" }, { "enqueued_at_frame", frame } };
+		});
+	}
+
+	void CaptureProviderHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildCaptureProviderResult, a_argsJson, a_sink, a_write);
+	}
+
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
 
 	json BuildSettingsResult(const json& a_args)
@@ -1409,6 +1457,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectFeatureIssuesDesc =
 				R"({"description":"{brand} feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "featureissues", BrandedDescription(inspectFeatureIssuesDesc), &InspectFeatureIssuesHandler, nullptr);
+
+			static constexpr const char* captureProviderDesc =
+				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; the crop preset, clipboard copy and HUD notice of a user screenshot do not apply.","inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("capture", "openshaders", BrandedDescription(captureProviderDesc), &CaptureProviderHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}

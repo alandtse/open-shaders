@@ -60,10 +60,13 @@ namespace
 	{
 		return { uv.x, uv.y, uv.w, uv.h };
 	}
+}
 
-	Util::Subrect::PixelRegion UVToPixelRegion(const Util::Subrect::UVRegion& uv, uint32_t width, uint32_t height)
+namespace Util::Subrect
+{
+	PixelRegion UVToPixelRegion(const UVRegion& uv, uint32_t width, uint32_t height)
 	{
-		Util::Subrect::PixelRegion result;
+		PixelRegion result;
 		result.x = std::min<uint32_t>(width - 1, static_cast<uint32_t>(uv.x * width));
 		result.y = std::min<uint32_t>(height - 1, static_cast<uint32_t>(uv.y * height));
 		result.w = std::max<uint32_t>(1, static_cast<uint32_t>(uv.w * width));
@@ -72,10 +75,7 @@ namespace
 		result.h = std::min<uint32_t>(result.h, height - result.y);
 		return result;
 	}
-}
 
-namespace Util::Subrect
-{
 	void Controller::LoadSettings(const json& a_json)
 	{
 		if (a_json.contains("CropX"))
