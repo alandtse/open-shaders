@@ -3968,6 +3968,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "feature.light_limit_fix.json_requires_isl": ""
+    "ui.vr.secondary_controller": ""
 }
