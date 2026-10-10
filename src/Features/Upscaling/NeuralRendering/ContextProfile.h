@@ -15,7 +15,7 @@ namespace NR::Context
 		kDialogue  ///< The dialogue menu is open.
 	};
 
-	/** @brief Material scope a profile applies instead of the by-material selection. */
+	/** @brief The material scope presets older configs saved; MigrateLegacyScope turns one into per-material strengths. */
 	enum class ScopeOverride : uint32_t
 	{
 		kSameAsNormal = 0,     ///< Use the by-material selection unchanged.
@@ -40,22 +40,28 @@ namespace NR::Context
 	{
 		/** @brief Evaluate Neural Rendering; false suspends the pass with its resources and runtime kept alive. */
 		bool run = true;
-		/** @brief Material scope applied in this situation. */
+		/** @brief The scope an older config saved. Read once by MigrateLegacyScope and zero afterwards. */
 		ScopeOverride scope = ScopeOverride::kSameAsNormal;
 		/** @brief Crop applied in this situation. */
 		RegionOverride region = RegionOverride::kSameAsNormal;
+		/** @brief Apply the per-material strengths below in this situation instead of the normal ones. */
+		bool overrideMaterials = false;
+		/** @brief Strengths and edge softness this situation uses when overrideMaterials is set. */
+		MaterialStrength::Values materials;
 
-		/** @brief Brings a hand-edited config's enums into the valid range. */
+		/** @brief Brings a hand-edited config's values into the valid range. */
 		void Sanitize()
 		{
 			scope = std::min(scope, kMaxScope);
 			region = std::min(region, kMaxRegion);
+			materials = MaterialStrength::Sanitize(materials);
 		}
 
 		/** @brief Whether this profile and another differ in what they evaluate, not in whether they run. */
 		[[nodiscard]] bool OverridesDiffer(const ContextProfile& other) const
 		{
-			return scope != other.scope || region != other.region;
+			const bool materialsDiffer = overrideMaterials != other.overrideMaterials || (overrideMaterials && materials != other.materials);
+			return region != other.region || materialsDiffer;
 		}
 	};
 
@@ -81,10 +87,10 @@ namespace NR::Context
 			dialogue.Sanitize();
 		}
 
-		/** @brief Whether any profile overrides the material scope, so the by-material lane must stay bound everywhere. */
-		[[nodiscard]] bool ScopeOverridden() const
+		/** @brief Whether any profile overrides the materials, so the by-material lane must stay bound everywhere. */
+		[[nodiscard]] bool MaterialsOverridden() const
 		{
-			return normal.scope != ScopeOverride::kSameAsNormal || dialogue.scope != ScopeOverride::kSameAsNormal;
+			return normal.overrideMaterials || dialogue.overrideMaterials;
 		}
 	};
 
@@ -105,7 +111,7 @@ namespace NR::Context
 		bool resetHistory = false;
 	};
 
-	/** @brief The eight strengths a scope override selects, in category id order; kSameAsNormal selects NR on every material. */
+	/** @brief The eight strengths an older scope preset selected, in category id order; kSameAsNormal selects NR on every material. */
 	inline std::array<float, MaterialStrength::kCount> ScopeStrengths(ScopeOverride scope)
 	{
 		switch (scope) {
@@ -119,6 +125,23 @@ namespace NR::Context
 			}
 		default:
 			return MaterialStrength::kDefaults;
+		}
+	}
+
+	/**
+	 * @brief Turns the scope presets an older config saved into per-material overrides, once.
+	 *        The old override left edge softness to the base tuning, so the migrated block takes the
+	 *        base's value. A second call finds no scope left and changes nothing.
+	 */
+	inline void MigrateLegacyScope(Profiles& profiles, const Tuning& base)
+	{
+		for (auto* profile : { &profiles.normal, &profiles.dialogue }) {
+			if (profile->scope == ScopeOverride::kSameAsNormal)
+				continue;
+			profile->overrideMaterials = true;
+			profile->materials.strength = ScopeStrengths(profile->scope);
+			profile->materials.edgeSoftness = MaterialStrength::Sanitize({ {}, base.strengthEdgeSoftness }).edgeSoftness;
+			profile->scope = ScopeOverride::kSameAsNormal;
 		}
 	}
 
@@ -145,7 +168,7 @@ namespace NR::Context
 
 	/**
 	 * @brief The tuning one frame evaluates with: the base tuning plus the situation's overrides.
-	 *        With the default profiles the result equals the base field for field. A scope override
+	 *        With the default profiles the result equals the base field for field. A material override
 	 *        in any situation keeps the by-material lane on in every situation, because Feature 18
 	 *        latches the UIAlpha binding at creation and a lane that followed the situation would
 	 *        rebuild the eye features on every change.
@@ -156,10 +179,11 @@ namespace NR::Context
 		const auto& profile = profiles.For(kind);
 		if (profile.region == RegionOverride::kFullFrame)
 			result.regionOfInterest = false;
-		if (profile.scope != ScopeOverride::kSameAsNormal) {
+		if (profile.overrideMaterials) {
 			result.materialStrength = true;
-			result.ApplyStrengths(ScopeStrengths(profile.scope));
-		} else if (profiles.ScopeOverridden() && !result.materialStrength) {
+			result.ApplyStrengths(profile.materials.strength);
+			result.strengthEdgeSoftness = profile.materials.edgeSoftness;
+		} else if (profiles.MaterialsOverridden() && !result.materialStrength) {
 			result.materialStrength = true;
 			result.ApplyStrengths(MaterialStrength::kDefaults);
 		}

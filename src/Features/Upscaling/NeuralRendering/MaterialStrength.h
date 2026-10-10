@@ -30,6 +30,8 @@ namespace NR::MaterialStrength
 	{
 		std::array<float, kCount> strength = kDefaults;
 		uint32_t edgeSoftness = 0;
+
+		bool operator==(const Values&) const = default;
 	};
 
 	/**
@@ -42,5 +44,24 @@ namespace NR::MaterialStrength
 			values.strength[i] = std::isfinite(values.strength[i]) ? std::clamp(values.strength[i], kMinStrength, kMaxStrength) : kDefaults[i];
 		values.edgeSoftness = std::min(values.edgeSoftness, kMaxEdgeSoftness);
 		return values;
+	}
+
+	/** @brief Whether the material with this NeuralRenderingCategory id has any strength, the state its checkbox shows. */
+	[[nodiscard]] inline bool Selected(const Values& values, uint32_t category)
+	{
+		return category < kCount && values.strength[category] > kMinStrength;
+	}
+
+	/** @brief Selects or clears one material (strength 1 or 0). */
+	inline void SetSelected(Values& values, uint32_t category, bool selected)
+	{
+		if (category < kCount)
+			values.strength[category] = selected ? kMaxStrength : kMinStrength;
+	}
+
+	/** @brief Whether some material is below full strength, so by-material needs to be on. */
+	[[nodiscard]] inline bool AnyBelowFull(const Values& values)
+	{
+		return std::any_of(values.strength.begin(), values.strength.end(), [](float value) { return value < kMaxStrength; });
 	}
 }
