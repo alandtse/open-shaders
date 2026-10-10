@@ -866,12 +866,20 @@ void ScreenshotFeature::ProcessCaptureRequest()
 		request.swap(pendingRequest);
 	}
 	if (request || captureRequested.exchange(false)) {
+		// Capture moves the request, so keep a copy to still answer a caller waiting on a throw.
+		const auto onComplete = request ? request->onComplete : nullptr;
+		const auto failCaller = [&onComplete]() {
+			if (onComplete)
+				onComplete({});
+		};
 		try {
 			Capture(std::move(request));
 		} catch (const std::exception& e) {
 			logger::error("Screenshot capture failed: {}", e.what());
+			failCaller();
 		} catch (...) {
 			logger::error("Screenshot capture failed with an unknown exception.");
+			failCaller();
 		}
 	}
 }
