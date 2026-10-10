@@ -236,6 +236,9 @@ struct PS_OUTPUT
 	float4 Color: SV_Target0;
 	float4 MotionVectors: SV_Target1;
 	float4 Normal: SV_Target2;
+#if defined(DEFERRED) && defined(MATERIAL_CATEGORY)
+	float4 Masks2: SV_Target7;
+#endif
 #if defined(CLOUD_SHADOWS) && defined(CLOUDS) && !defined(DEFERRED)
 	float4 CloudShadows: SV_Target3;
 #endif
@@ -602,6 +605,10 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 			psout.Color.w = 0;
 	}
+#	endif
+
+#	if defined(DEFERRED) && defined(MATERIAL_CATEGORY)
+	psout.Masks2 = float4(0, 0, 0, psout.Color.w);
 #	endif
 
 	return psout;

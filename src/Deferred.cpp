@@ -1,6 +1,8 @@
 #include "Deferred.h"
 
 #include <DDSTextureLoader.h>
+#include <format>
+#include <stdexcept>
 
 #include "GpuPass.h"
 #include "ShaderCache.h"
@@ -49,19 +51,9 @@ struct BlendStates
 	}
 };
 
-void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format, uint bindFlags)
+static void ReleaseRenderTargetSlot(RE::RENDER_TARGET target)
 {
-	auto renderer = globals::game::renderer;
-	auto device = globals::d3d::device;
-
-	texDesc.BindFlags = bindFlags;
-	texDesc.Format = format;
-	srvDesc.Format = format;
-	rtvDesc.Format = format;
-	uavDesc.Format = format;
-
-	auto& data = renderer->GetRuntimeData().renderTargets[target];
-
+	auto& data = globals::game::renderer->GetRuntimeData().renderTargets[target];
 	if (data.UAV) {
 		data.UAV->Release();
 		data.UAV = nullptr;
@@ -86,17 +78,44 @@ void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D
 		data.texture->Release();
 		data.texture = nullptr;
 	}
+}
 
-	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, Util::AsReal(&data.texture)));
+void SetupRenderTarget(RE::RENDER_TARGET target, D3D11_TEXTURE2D_DESC texDesc, D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc, D3D11_RENDER_TARGET_VIEW_DESC rtvDesc, D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc, DXGI_FORMAT format, uint bindFlags)
+{
+	auto device = globals::d3d::device;
+	texDesc.BindFlags = bindFlags;
+	texDesc.Format = format;
+	srvDesc.Format = format;
+	rtvDesc.Format = format;
+	uavDesc.Format = format;
 
-	if (texDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE)
-		DX::ThrowIfFailed(device->CreateShaderResourceView(Util::AsReal(data.texture), &srvDesc, Util::AsReal(&data.SRV)));
+	winrt::com_ptr<ID3D11Texture2D> texture;
+	winrt::com_ptr<ID3D11ShaderResourceView> srv;
+	winrt::com_ptr<ID3D11RenderTargetView> rtv;
+	winrt::com_ptr<ID3D11UnorderedAccessView> uav;
+	const auto name = std::format("Deferred::{}", magic_enum::enum_name(target));
+	DX::ThrowIfFailed(device->CreateTexture2D(&texDesc, nullptr, texture.put()));
+	Util::SetResourceName(texture.get(), "%s", name.c_str());
+	if (bindFlags & D3D11_BIND_SHADER_RESOURCE) {
+		DX::ThrowIfFailed(device->CreateShaderResourceView(texture.get(), &srvDesc, srv.put()));
+		Util::SetResourceName(srv.get(), "%s SRV", name.c_str());
+	}
+	if (bindFlags & D3D11_BIND_RENDER_TARGET) {
+		DX::ThrowIfFailed(device->CreateRenderTargetView(texture.get(), &rtvDesc, rtv.put()));
+		Util::SetResourceName(rtv.get(), "%s RTV", name.c_str());
+	}
+	if (bindFlags & D3D11_BIND_UNORDERED_ACCESS) {
+		DX::ThrowIfFailed(device->CreateUnorderedAccessView(texture.get(), &uavDesc, uav.put()));
+		Util::SetResourceName(uav.get(), "%s UAV", name.c_str());
+	}
 
-	if (texDesc.BindFlags & D3D11_BIND_RENDER_TARGET)
-		DX::ThrowIfFailed(device->CreateRenderTargetView(Util::AsReal(data.texture), &rtvDesc, Util::AsReal(&data.RTV)));
-
-	if (texDesc.BindFlags & D3D11_BIND_UNORDERED_ACCESS)
-		DX::ThrowIfFailed(device->CreateUnorderedAccessView(Util::AsReal(data.texture), &uavDesc, Util::AsReal(&data.UAV)));
+	// Publish only a complete target; failures retain the previous resources and layout.
+	auto& data = globals::game::renderer->GetRuntimeData().renderTargets[target];
+	ReleaseRenderTargetSlot(target);
+	data.texture = Util::AsW32(texture.detach());
+	data.SRV = Util::AsW32(srv.detach());
+	data.RTV = Util::AsW32(rtv.detach());
+	data.UAV = Util::AsW32(uav.detach());
 }
 
 void Deferred::SetupResources()
@@ -160,8 +179,12 @@ void Deferred::SetupResources()
 		SetupRenderTarget(NORMALROUGHNESS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R10G10B10A2_UNORM, gbufferBindFlags);
 		// Masks
 		SetupRenderTarget(MASKS, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R11G11B10_FLOAT, gbufferBindFlags);
-		// Masks2 (vertexAO in r, material category in g; UNORM to allow blending)
-		SetupRenderTarget(MASKS2, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16_UNORM, gbufferBindFlags);
+		const bool categories = MaterialCategoriesRequested();
+		SetupRenderTarget(MASKS2, texDesc, srvDesc, rtvDesc, uavDesc,
+			categories ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R16_UNORM, gbufferBindFlags);
+		materialCategoriesEnabled = categories;
+		materialCategoriesValid = false;
+		failedMaterialCategoryMode.reset();
 
 		// TAA water history buffers need RGBA16: alpha stores premultiplied coverage for ISWaterBlend
 		SetupRenderTarget(RE::RENDER_TARGETS::kWATER_1, texDesc, srvDesc, rtvDesc, uavDesc, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
@@ -278,11 +301,61 @@ void Deferred::PrepassPasses()
 	Feature::ForEachLoadedFeature("Prepass", [](Feature* feature) { feature->Prepass(); }, true);
 }
 
+bool Deferred::MaterialCategoriesRequested()
+{
+	return std::ranges::any_of(Feature::GetFeatureList(), [](const Feature* feature) {
+		return feature->loaded && feature->NeedsDeferredMaterialCategories();
+	});
+}
+
+bool Deferred::IsMaterialCategoriesReady() const
+{
+	return !deferredPass && IsMaterialCategoriesEnabled() && materialCategoriesValid && sceneDepthFinal &&
+	       materialCategoryFrame == globals::state->frameCount;
+}
+
+void Deferred::UpdateMaterialCategoryTarget()
+{
+	const bool requested = MaterialCategoriesRequested();
+	if (requested == IsMaterialCategoriesEnabled()) {
+		failedMaterialCategoryMode.reset();
+		return;
+	}
+	if (failedMaterialCategoryMode == requested)
+		return;
+	materialCategoriesValid = false;
+	auto& target = globals::game::renderer->GetRuntimeData().renderTargets[MASKS2];
+	try {
+		if (!target.texture || !target.SRV || !target.RTV)
+			throw std::runtime_error("Deferred mask target is incomplete");
+		D3D11_TEXTURE2D_DESC textureDesc{};
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		D3D11_RENDER_TARGET_VIEW_DESC rtvDesc{};
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		target.texture->GetDesc(Util::AsW32(&textureDesc));
+		target.SRV->GetDesc(Util::AsW32(&srvDesc));
+		target.RTV->GetDesc(Util::AsW32(&rtvDesc));
+		if (target.UAV)
+			target.UAV->GetDesc(Util::AsW32(&uavDesc));
+		SetupRenderTarget(MASKS2, textureDesc, srvDesc, rtvDesc, uavDesc,
+			requested ? DXGI_FORMAT_R16G16_UNORM : DXGI_FORMAT_R16_UNORM, textureDesc.BindFlags);
+		materialCategoriesEnabled = requested;
+		failedMaterialCategoryMode.reset();
+	} catch (const std::exception& error) {
+		failedMaterialCategoryMode = requested;
+		logger::error("Deferred mask layout switch failed; retaining the previous layout: {}", error.what());
+	}
+}
+
 void Deferred::StartDeferred()
 {
 	sceneDepthFinal = false;
+	materialCategoriesValid = false;
 	if (!globals::state->inWorld)
 		return;
+	UpdateMaterialCategoryTarget();
+	materialCategoriesValid = IsMaterialCategoriesEnabled();
+	materialCategoryFrame = globals::state->frameCount;
 	globals::state->UpdateSharedData(true, false);
 
 	auto shadowState = globals::game::shadowState;

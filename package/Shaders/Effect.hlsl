@@ -451,7 +451,9 @@ struct PS_OUTPUT
 	float4 Specular: SV_Target4;
 	float4 Reflectance: SV_Target5;
 	float4 Masks: SV_Target6;
+#	if defined(MATERIAL_CATEGORY)
 	float4 Masks2: SV_Target7;
+#	endif
 };
 #else
 struct PS_OUTPUT
@@ -1315,13 +1317,17 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Albedo = float4(auxiliaryColor, finalColor.w);
 	psout.Reflectance = float4(auxiliaryColor, finalColor.w);
 	psout.Masks = float4(Color::RGBToLuminance(auxiliaryColor).xxx, finalColor.w);
+#			if defined(MATERIAL_CATEGORY)
 	psout.Masks2 = float4(0, NeuralRenderingCategory::Encode(NeuralRenderingCategory::None), 0, finalColor.w);
+#			endif
 #		else
 	psout.Albedo = float4(auxiliaryColor * !(Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject), finalColor.w);
 	psout.Specular = float4(0, 0, 0, finalColor.w);
 	psout.Reflectance = float4(0, 0, 0, finalColor.w);
 	psout.Masks = float4(0, 0, 0, finalColor.w);
+#			if defined(MATERIAL_CATEGORY)
 	psout.Masks2 = float4(0, NeuralRenderingCategory::Encode(NeuralRenderingCategory::None), 0, finalColor.w);
+#			endif
 #		endif
 
 #	elif defined(MOTIONVECTORS_NORMALS)

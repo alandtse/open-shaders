@@ -1242,6 +1242,9 @@ namespace SIE
 
 		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
+			const auto categoryFlag = ShaderCache::GetMaterialCategoryFlag(shader.shaderType.get());
+			const bool categories = (descriptor & categoryFlag) != 0;
+			descriptor &= ~categoryFlag;
 			switch (shader.shaderType.get()) {
 			case RE::BSShader::Type::Grass:
 				GetGrassShaderDefines(descriptor, defines);
@@ -1276,6 +1279,13 @@ namespace SIE
 			case RE::BSShader::Type::None:
 			case RE::BSShader::Type::Total:
 				break;
+			}
+			if (categories) {
+				auto end = std::ranges::find_if(defines, [](const auto& macro) { return macro.Name == nullptr; });
+				if (std::distance(end, defines.end()) < 2)
+					throw std::length_error("Material category shader macro capacity exceeded");
+				*end++ = { "MATERIAL_CATEGORY", nullptr };
+				*end = { nullptr, nullptr };
 			}
 		}
 
@@ -2703,6 +2713,14 @@ namespace SIE
 		}
 
 		return nullptr;
+	}
+
+	void ShaderCache::PrewarmDeferredPixelShaders(const RE::BSShader& shader, uint32_t descriptor, bool categories)
+	{
+		const auto categoryFlag = GetMaterialCategoryFlag(shader.shaderType.get());
+		GetPixelShader(shader, descriptor & ~categoryFlag);
+		if (categories && categoryFlag)
+			GetPixelShader(shader, descriptor | categoryFlag);
 	}
 
 	RE::BSGraphics::PixelShader* ShaderCache::GetPixelShader(const RE::BSShader& shader,

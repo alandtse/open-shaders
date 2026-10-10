@@ -1,5 +1,6 @@
 #include "NeuralRendering.h"
 
+#include "Deferred.h"
 #include "Features/ReverseZ.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
@@ -231,6 +232,7 @@ struct NeuralRendering::Impl
 	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
 	/** @brief Material-strength switch the persistent eye features were last created with; drives recreation. */
 	bool materialStrengthOn = false;
+	bool materialLaneReady = false;
 	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
 	bool materialStrengthInFlight = false;
 	/** @brief Last evaluate bound the graded protection; reported by the status readout. */
@@ -542,7 +544,8 @@ struct NeuralRendering::Impl
 		// Never on the Prepare dispatch: that writes NGX's input proxy, which the overlay would corrupt.
 		data.regionOverlayEnabled = (!prepare && regionOverlay) ? 1u : 0u;
 		data.regionOutlineThickness = kRegionOutlineThicknessPixels;
-		data.materialMapEnabled = (!prepare && materialMapEnabled) ? 1u : 0u;
+		auto* masks2 = prepare ? nullptr : MaterialLane();
+		data.materialMapEnabled = (materialMapEnabled && masks2) ? 1u : 0u;
 		data.materialMapMode = materialMapMode;
 		data.materialMapFilter = materialMapFilter;
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
@@ -573,7 +576,6 @@ struct NeuralRendering::Impl
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 		globals::state->BindSharedDataCS(context.get(), true);
-		auto* masks2 = Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED].SRV);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color->srv,
 			prepare ? nullptr : eye.output->srv, exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr, masks2 };
@@ -591,6 +593,8 @@ struct NeuralRendering::Impl
 	 */
 	ID3D11ShaderResourceView* MaterialLane()
 	{
+		if (!globals::deferred || !globals::deferred->IsMaterialCategoriesReady())
+			return nullptr;
 		const auto& target = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED];
 		if (!target.SRV)
 			return nullptr;
@@ -681,12 +685,8 @@ struct NeuralRendering::Impl
 			return true;
 		}
 		materialStrengthInFlight = materialStrengthBound = false;
-		if (materialStrengthWanted && !materialStrengthDegraded) {
-			auto* lane = MaterialLane();
-			if (!lane) {
-				materialStrengthDegraded = true;
-				logger::warn("[NeuralRendering] material strength unavailable: the deferred material lane is not present, so the whole frame is processed");
-			} else if (BuildMaterialAlpha(lane, materialStrengths)) {
+		if (auto* lane = MaterialLane(); materialStrengthWanted && !materialStrengthDegraded && lane) {
+			if (BuildMaterialAlpha(lane, materialStrengths)) {
 				materialStrengthInFlight = materialStrengthBound = true;
 			} else {
 				materialStrengthDegraded = true;
@@ -1213,7 +1213,7 @@ namespace
 			ImGui::TreePop();
 		}
 		if (tuning.materialStrength && !materialStrengthAvailable)
-			Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
+			Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is currently unavailable, so the whole frame is processed."));
 		if (ImGui::Checkbox(T(TKEY("material_map"), "Show Material Map"), &tuning.showMaterialMap))
 			changed = true;
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -1592,7 +1592,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
-		materialStrengthAvailable.store(!impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
+		materialStrengthAvailable.store(impl->materialLaneReady && !impl->materialStrengthDegraded && !materialStrengthRejected.load(std::memory_order_relaxed), std::memory_order_relaxed);
 		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
@@ -1664,6 +1664,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			if (!input || !Util::GetTexture2DDesc(input, guide) || guide.Width < gw * count || guide.Height < gh ||
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
+		}
+		const bool categoriesReady = work.MaterialLane() != nullptr;
+		if (categoriesReady != work.materialLaneReady) {
+			resetHistory = true;
+			work.materialLaneReady = categoriesReady;
 		}
 		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
 		if (materialStrengthWanted != work.materialStrengthOn) {
