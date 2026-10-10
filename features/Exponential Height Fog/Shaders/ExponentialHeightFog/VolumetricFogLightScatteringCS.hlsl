@@ -37,7 +37,6 @@ StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(
 #endif
 #if defined(LIGHT_LIMIT_FIX)
 #	include "LightLimitFix/LightLimitFix.hlsli"
-#	include "InverseSquareLighting/InverseSquareLighting.hlsli"
 #endif
 #define SKYLIGHTING_PROBE_REGISTER t50
 #include "Skylighting/Skylighting.hlsli"
@@ -268,7 +267,7 @@ float ComputeLocalLightAttenuation(float distanceSqr, float cellRadius, LightLim
 		distance = sqrt(max(distanceSqr, cellRadius * cellRadius));
 	}
 
-	return InverseSquareLighting::GetAttenuation(distance, light);
+	return LightLimitFix::GetAttenuation(distance, light);
 }
 
 float3 AccumulateLocalLightScattering(
@@ -351,6 +350,7 @@ float4 ComputeLightScattering(uint3 coord, float3 cellOffset)
 	float extinction = materialScatteringAndExtinction.w;
 
 	float3 viewDirection = normalize(positionWS);
+#if !defined(VOLUMETRIC_FOG_FAR_GRID)
 	float3 localScattering = AccumulateLocalLightScattering(
 		coord,
 		cellOffset,
@@ -358,6 +358,9 @@ float4 ComputeLightScattering(uint3 coord, float3 cellOffset)
 		viewDepth,
 		viewDirection,
 		eyeIndex);
+#else
+	float3 localScattering = 0.0f.xxx;
+#endif
 
 	float phase = ExponentialHeightFog::HenyeyGreenstein(
 		dot(normalize(SharedData::DirLightDirection.xyz), viewDirection),

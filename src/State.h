@@ -347,6 +347,7 @@ public:
 		AdditiveLighting = 1 << 6,
 		IsAurora = 1 << 7,
 		IsMoon = 1 << 8,
+		NoSkyScattering = 1 << 9,  ///< Cloud layer drawn without Effects11 cloud scattering
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
 		IsCharacterRainSurface = 1u << 30,
@@ -401,6 +402,8 @@ public:
 	bool IsFullScreenMenuOpen() const { return IsMainOrLoadingMenuOpen() || isMapMenuOpen || isStatsMenuOpen; }
 	/** @brief Menu artwork that should bypass scene post-processing. */
 	bool IsMenuArtOpen() const { return IsMainOrLoadingMenuOpen() || isStatsMenuOpen || IsFlatWorldMapOpen(); }
+	/** @brief The main menu, a loading screen or the flat world map is open. */
+	bool IsMainLoadingOrFlatMapOpen() const { return IsMainOrLoadingMenuOpen() || IsFlatWorldMapOpen(); }
 	/** @brief Gameplay is paused or suspended behind a menu. Cached menus are kept explicit in case a mod clears kPausesGame. */
 	bool IsPausedOrMenuOpen(RE::UI* ui) const
 	{

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <format>
+#include <future>
 #include <imgui.h>
 #include <imgui_stdlib.h>
 #include <thread>
@@ -28,14 +29,18 @@ namespace
 	constexpr double kStoreUsageRefreshSeconds = 5.0;
 	constexpr double kBytesPerMB = 1024.0 * 1024.0;
 
-	/// Location, size and restore count of the persistent shader store, with a button to empty it.
+	/// Location, size and restore count of the persistent shader store, with a size limit and a button to empty it.
 	void DrawContentStoreDetails(SIE::ShaderCache* a_cache, bool a_enabled)
 	{
+		// Measuring walks the whole store, so it runs on a worker every few seconds instead of in the frame.
 		static SIE::ShaderCache::ContentStoreUsage usage;
+		static std::future<SIE::ShaderCache::ContentStoreUsage> pendingUsage;
 		static double lastRefresh = -kStoreUsageRefreshSeconds;
 		const double now = ImGui::GetTime();
-		if (now - lastRefresh >= kStoreUsageRefreshSeconds) {
-			usage = a_cache->GetContentStoreUsage();
+		if (pendingUsage.valid() && pendingUsage.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+			usage = pendingUsage.get();
+		if (!pendingUsage.valid() && now - lastRefresh >= kStoreUsageRefreshSeconds) {
+			pendingUsage = std::async(std::launch::async, [a_cache] { return a_cache->GetContentStoreUsage(); });
 			lastRefresh = now;
 		}
 		if (!a_enabled && usage.blobs == 0)
@@ -43,7 +48,7 @@ namespace
 
 		ImGui::Indent();
 		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_location",
-														  { { "path", usage.path.string() } }, "Location: {path}")
+														  { { "path", usage.path } }, "Location: {path}")
 									  .c_str());
 		ImGui::TextDisabled("%s", I18n::GetSingleton()->Format("menu.advanced.content_store_usage",
 														  { { "count", std::to_string(usage.blobs) },
@@ -58,7 +63,7 @@ namespace
 										  .c_str());
 		auto limitMB = static_cast<int>(globals::state->contentStoreMaxMB.load(std::memory_order_relaxed));
 		if (ImGui::SliderInt(T("menu.advanced.content_store_limit", "Store Size Limit"), &limitMB,
-				static_cast<int>(State::kContentStoreMinMB), static_cast<int>(State::kContentStoreMaxMB), "%d MB"))
+				static_cast<int>(State::kContentStoreMinMB), static_cast<int>(State::kContentStoreMaxMB), "%d MB", ImGuiSliderFlags_AlwaysClamp))
 			globals::state->contentStoreMaxMB.store(static_cast<uint32_t>(limitMB), std::memory_order_relaxed);
 		if (ImGui::IsItemDeactivatedAfterEdit()) {
 			a_cache->ApplyContentStoreLimit();

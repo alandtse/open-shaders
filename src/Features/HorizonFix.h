@@ -11,7 +11,8 @@
  * define in Water.hlsl folds beyond-far-plane water back onto the far plane and shades it as
  * bottomless where nothing rendered behind it.
  *
- * This feature's only job is to enable that define while the HorizonFix plugin is installed. It
+ * This feature enables that define while the HorizonFix plugin is installed and publishes the
+ * plugin's far water distance so Exponential Height Fog can fog the sky out to that horizon. It
  * self-disables in PostPostLoad when the plugin is absent, so water keeps exact vanilla
  * far-clip behavior without it - and because that runs before shader cache validation, regular
  * feature validation recompiles the water shaders whenever HorizonFix is installed or removed.

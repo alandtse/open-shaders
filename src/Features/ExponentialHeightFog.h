@@ -54,8 +54,12 @@ public:
 		float fogHeight = 0.0f;
 		float fogHeightFalloff = 0.2f;
 		float fogDensity = 0.005f;
+		float fogHeight2 = 0.0f;
+		float fogHeightFalloff2 = 0.2f;
+		float fogDensity2 = 0.0f;
 		float directionalInscatteringMultiplier = 1.0f;
 		float directionalInscatteringAnisotropy = 0.2f;
+		uint useSkyIBL = 1;
 		float4 inscatteringTint = { 1.0f, 1.0f, 1.0f, 1.0f };
 		float cubemapMipLevel = 8.0f;
 		float sunlightAttenuationAmount = 1.0f;
@@ -81,6 +85,9 @@ public:
 		uint volumetricHistoryMissSampleCount = 4;
 		float volumetricSampleJitterMultiplier = 0.0f;
 		float volumetricUpsampleJitterMultiplier = 1.0f;
+		float volumetricNearGridDistance = 8000.0f;
+		uint volumetricFarGridPixelSize = 64;
+		uint volumetricFarGridSizeZ = 32;
 		float volumetricLocalLightScatteringIntensity = 1.0f;
 		uint useVanillaFogSettings = 1;
 		float vanillaFogMaxOpacity = 1.0f;
@@ -90,18 +97,25 @@ public:
 		float vanillaFogPower = 1.0f;
 		float vanillaFogStrength = 1.25f;
 		float3 pad0 = {};
+		float pad1 = 0.0f;
 		float4 vanillaFogNearColor = {};
 		float4 vanillaFogFarColor = {};
 		float fogLightingInfluence = 0.35f;
 		float distanceHazeMaxOpacity = 0.0f;
 		float distanceHazeStartDistance = 15000.0f;
 		float distanceHazeFadeDistance = 60000.0f;
+		float volumetricFogNoiseScale = 0.0f;  // noise frequency per unit; 0 = disabled
+		float volumetricFogNoiseThreshold = 0.5f;
+		float2 pad3 = {};
+		float3 volumetricFogNoiseVelocity = { 0.0f, 0.0f, 0.0f };
+		float pad4 = 0.0f;
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
-	static_assert(offsetof(Settings, vanillaFogNearColor) == 224);
-	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
-	static_assert(offsetof(Settings, distanceHazeMaxOpacity) == 260);
-	static_assert(sizeof(Settings) == 272);
+	static_assert(offsetof(Settings, vanillaFogNearColor) == 256);
+	static_assert(offsetof(Settings, fogLightingInfluence) == 288);
+	static_assert(offsetof(Settings, distanceHazeMaxOpacity) == 292);
+	static_assert(offsetof(Settings, volumetricFogNoiseVelocity) == 320);
+	static_assert(sizeof(Settings) == 336);
 
 	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;
@@ -121,6 +135,11 @@ private:
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};
 		float4 jitterParameters = {};  // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused
+		// Far volume grid (starts where the near volume ends, runs to volumetricFogDistance).
+		DirectX::XMUINT4 farGridSizeAndFlags = {};
+		float4 farInvGridSizeAndNearFade = {};
+		float4 farGridZParams = {};
+		float4 farRange = {};  // x = far start depth, y = far end depth, zw = unused
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
 
@@ -128,27 +147,44 @@ private:
 	void ReleaseVolumetricResources();
 	void BindIntegratedLightScattering();
 	ID3D11ComputeShader* GetMaterialSetupCS();
+	ID3D11ComputeShader* GetFarMaterialSetupCS();
 	ID3D11ComputeShader* GetConservativeDepthCS();
+	ID3D11ComputeShader* GetFarConservativeDepthCS();
 	ID3D11ComputeShader* GetLightScatteringCS();
+	ID3D11ComputeShader* GetFarLightScatteringCS();
 	ID3D11ComputeShader* GetIntegrationCS();
+	ID3D11ComputeShader* GetFarIntegrationCS();
 
 	std::unique_ptr<Texture3D> vBufferA;
+	std::unique_ptr<Texture3D> vBufferAFar;
 	std::unique_ptr<Texture2D> conservativeDepth;
 	std::unique_ptr<Texture2D> conservativeDepthHistory;
+	std::unique_ptr<Texture2D> conservativeDepthFar;
+	std::unique_ptr<Texture2D> conservativeDepthFarHistory;
 	std::unique_ptr<Texture3D> lightScattering;
 	std::unique_ptr<Texture3D> lightScatteringHistory;
+	std::unique_ptr<Texture3D> lightScatteringFar;
+	std::unique_ptr<Texture3D> lightScatteringFarHistory;
 	std::unique_ptr<Texture3D> integratedLightScattering;
+	std::unique_ptr<Texture3D> integratedLightScatteringFar;
 	std::unique_ptr<ConstantBuffer> volumetricFogCB;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	winrt::com_ptr<ID3D11SamplerState> shadowSampler;
 	winrt::com_ptr<ID3D11ShaderResourceView> directionalShadowMap;
 	Util::LazyShader<ID3D11ComputeShader> materialSetupCS;
+	Util::LazyShader<ID3D11ComputeShader> farMaterialSetupCS;
 	Util::LazyShader<ID3D11ComputeShader> conservativeDepthCS;
+	Util::LazyShader<ID3D11ComputeShader> farConservativeDepthCS;
 	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
+	Util::LazyShader<ID3D11ComputeShader> farLightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;
+	Util::LazyShader<ID3D11ComputeShader> farIntegrationCS;
 	DirectX::XMUINT4 currentGridSize = {};
+	DirectX::XMUINT4 currentFarGridSize = {};
 	bool hasLightScatteringHistory = false;
 	std::array<uint, 2> historyColorSpace{};
 	bool hasConservativeDepthHistory = false;
+	bool hasLightScatteringFarHistory = false;
+	bool hasConservativeDepthFarHistory = false;
 	uint32_t lastPrepassFrame = UINT32_MAX;
 };

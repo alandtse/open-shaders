@@ -1,11 +1,12 @@
 #include "LightLimitFix.h"
-#include "Features/InverseSquareLighting/Common.h"
+#include "CSEditor/EditorWindow.h"
+#include "Features/LightLimitFix/Common.h"
+#include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "InverseSquareLighting.h"
 #include "LinearLighting.h"
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
@@ -25,6 +26,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 namespace
 {
@@ -423,27 +425,20 @@ void LightLimitFix::DrawPlacedLightSettings()
 	ImGui::TextWrapped("%s",
 		T("feature.light_limit_fix.placed_lights_json_intro",
 			"Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. "
-			"Separate from particle lights; requires Inverse Square Lighting for the runtime metadata."));
+			"Separate from particle lights."));
 	ImGui::Spacing();
 
 	{
-		const bool jsonPlacedLightsSupported = globals::features::inverseSquareLighting.loaded;
-		ImGui::BeginDisabled(!jsonPlacedLightsSupported);
 		ImGui::SliderFloat(T("feature.light_limit_fix.json_intensity_scale", "Intensity Scale"), &settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s",
 				T("feature.light_limit_fix.json_intensity_scale_tooltip",
 					"Scales intensity for attached runtime lights generated from Light records.\n"
-					"Primarily targets Light Placer-style JSON lights.\n"
-					"Requires Inverse Square Lighting runtime metadata."));
+					"Primarily targets Light Placer-style JSON lights."));
 		}
 
 		ImGui::Checkbox(T("feature.light_limit_fix.json_interiors_only", "Interiors Only"), &settings.JsonPlacedLightsInteriorsOnly);
 		ImGui::Checkbox(T("feature.light_limit_fix.json_portal_strict_only", "Portal Strict Only"), &settings.JsonPlacedLightsPortalStrictOnly);
-		ImGui::EndDisabled();
-
-		if (!jsonPlacedLightsSupported)
-			ImGui::TextDisabled("%s", T("feature.light_limit_fix.json_requires_isl", "Requires Inverse Square Lighting to identify JSON-placed runtime lights."));
 	}
 }
 
@@ -840,8 +835,6 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 		return;
 	}
 
-	auto& isl = globals::features::inverseSquareLighting;
-
 	auto accumulator = *globals::game::currentAccumulator.get();
 	if (!accumulator) {
 		ClearStrictLightData(strictLightDataTemp, false);
@@ -891,18 +884,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
 				continue;
 
-			auto& runtimeData = niLight->GetLightRuntimeData();
-
-			LightData light{};
-			light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-			light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
-
-			if (isl.loaded) {
-				isl.ProcessLight(light, bsLight, niLight);
-			} else {
-				light.radius = runtimeData.radius.x;
-				light.fade = runtimeData.fade;
-			}
+			auto light = ProcessLight(bsLight, niLight);
 
 			SetPointLightTypeFlags(light, bsLight);
 			light.fade *= bsLight->lodDimmer;
@@ -1007,15 +989,13 @@ bool LightLimitFix::IsJsonPlacedLight(RE::BSLight* a_bsLight, RE::NiLight* a_niL
 {
 	if (!a_bsLight || !a_niLight || !a_bsLight->pointLight)
 		return false;
-	if (!globals::features::inverseSquareLighting.loaded)
-		return false;
 	if (const auto it = jsonPlacedLightCache.find(a_niLight); it != jsonPlacedLightCache.end())
 		return it->second;
 
 	bool isJsonPlacedLight = false;
 	if (const auto ownerRef = a_niLight->GetUserData()) {
 		if (const auto ownerBase = ownerRef->GetObjectReference(); ownerBase && ownerBase->GetFormType() != RE::FormType::Light) {
-			const auto runtimeData = ISLCommon::RuntimeLightDataExt::Get(a_niLight);
+			const auto runtimeData = LLFCommon::RuntimeLightDataExt::Get(a_niLight);
 			if (runtimeData && runtimeData->lighFormId != 0) {
 				const auto lighForm = RE::TESForm::LookupByID(runtimeData->lighFormId);
 				isJsonPlacedLight = lighForm && lighForm->GetFormType() == RE::FormType::Light;
@@ -1090,6 +1070,107 @@ void LightLimitFix::PostPostLoad()
 	Hooks::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
 	ShadowCasterManager::Install(settings.ShadowSettings);
+
+	stl::detour_thunk<CreatePointLight>(REL::RelocationID(17208, 17610));
+	stl::detour_thunk<BSLight_GetLuminance>(REL::RelocationID(101303, 108292));
+}
+
+RE::NiPointLight* LightLimitFix::CreatePointLight::thunk(RE::TESObjectLIGH* ligh, RE::TESObjectREFR* refr, RE::NiAVObject* root, bool forceDynamic, bool useLightRadius, bool affectRequesterOnly)
+{
+	const auto niLight = func(ligh, refr, root, forceDynamic, useLightRadius, affectRequesterOnly);
+
+	if (ligh && root && niLight)
+		SetExtLightData(niLight, ligh);
+
+	return niLight;
+}
+
+void LightLimitFix::SetExtLightData(RE::NiLight* niLight, const RE::TESObjectLIGH* ligh)
+{
+	const auto runtimeData = LLFCommon::RuntimeLightDataExt::Get(niLight);
+	runtimeData->flags.set(LightFlags::Initialised);
+	if (ligh->data.flags.any(static_cast<RE::TES_LIGHT_FLAGS>(LLFCommon::TES_LIGHT_FLAGS_EXT::kInverseSquare)))
+		runtimeData->flags.set(LightFlags::InverseSquare);
+	if (ligh->data.flags.any(static_cast<RE::TES_LIGHT_FLAGS>(LLFCommon::TES_LIGHT_FLAGS_EXT::kLinear)))
+		runtimeData->flags.set(LightFlags::Linear);
+	if (ligh->data.flags.any(RE::TES_LIGHT_FLAGS::kSpotlight, RE::TES_LIGHT_FLAGS::kSpotShadow)) {
+		runtimeData->flags.set(LightFlags::Spot);
+		runtimeData->flags.reset(LightFlags::OmniDirectional);
+	} else {
+		runtimeData->flags.reset(LightFlags::Spot);
+		runtimeData->flags.set(LightFlags::OmniDirectional);
+	}
+	runtimeData->cutoffOverride = std::clamp(ligh->data.fallofExponent, 0.01f, 1.f);
+	runtimeData->lighFormId = ligh->formID;
+	const float size = ligh->data.fov >= 50.0f ? std::numbers::sqrt2_v<float> : ligh->data.fov;
+	runtimeData->size = std::clamp(size, 0.01f, 50.0f);
+}
+
+LightLimitFix::LightData LightLimitFix::ProcessLight(RE::BSLight* bsLight, RE::NiLight* niLight) const
+{
+	const auto runtimeData = LLFCommon::RuntimeLightDataExt::Get(niLight);
+
+	if (runtimeData->flags.none(LightFlags::Initialised)) {
+		const auto userData = niLight->GetUserData();
+		logger::debug("[LLF] FormID: 0x{:08X} | Light*: {:p} | Name: {} - light uninitialised", userData ? userData->formID : 0, static_cast<void*>(niLight), niLight->name);
+		runtimeData->flags.set(LightFlags::Initialised);
+	}
+
+	const auto& editorRef = EditorWindow::GetSingleton()->lightEditor;
+	editorRef.ApplyOverrides(niLight, runtimeData);
+
+	LightData light{};
+	light.lightFlags = runtimeData->flags;
+	light.color = float3{ runtimeData->diffuse.red, runtimeData->diffuse.green, runtimeData->diffuse.blue };
+	light.radius = runtimeData->radius;
+	light.fade = runtimeData->fade;
+
+	const bool isInvSq = light.lightFlags.any(LightFlags::InverseSquare);
+	if (bsLight->pointLight && ((isInvSq && editorRef.disableInvSqLights) || (!isInvSq && editorRef.disableRegularLights)))
+		light.lightFlags.set(LightFlags::Disabled);
+
+	if (bsLight->pointLight && isInvSq) {
+		light.fade *= 4;
+		// SCM's IsShadowLight() hook reports false for converted shadow lights, which would widen the cutoff and shrink the radius by ~33%.
+		light.radius = CalculateRadius(light.fade, ShadowCasterManager::IsShadowLightType(bsLight), runtimeData->cutoffOverride, runtimeData->size);
+		runtimeData->radius = light.radius;
+		light.fadeZone = 1.f / (light.radius * std::clamp(ISLMath::FadeZoneBase / light.radius, 0.f, 1.f));
+		light.sizeBias = ISLMath::ScaledUnitsSq * runtimeData->size * runtimeData->size * 0.5f;
+	}
+	light.invRadius = 1.f / light.radius;
+	return light;
+}
+
+float LightLimitFix::CalculateRadius(const float intensity, const bool shadowCaster, const float cutoffOverride, const float size)
+{
+	return ISLMath::CalculateRadius(intensity, shadowCaster, cutoffOverride, size);
+}
+
+float LightLimitFix::GetAttenuation(const float distance, const float radius, const float size)
+{
+	return ISLMath::GetAttenuation(distance, radius, size);
+}
+
+float LightLimitFix::BSLight_GetLuminance::thunk(RE::BSLight* bsLight, RE::NiPoint3* targetPosition, RE::NiLight* refLight)
+{
+	auto* niLight = bsLight->light.get();
+	if (!niLight)
+		return func(bsLight, targetPosition, refLight);
+
+	const auto runtimeData = LLFCommon::RuntimeLightDataExt::Get(niLight);
+
+	if (refLight == niLight || runtimeData->flags.any(LightFlags::Disabled))
+		return 0.0f;
+
+	if (!bsLight->pointLight || runtimeData->flags.none(LightFlags::InverseSquare))
+		return func(bsLight, targetPosition, refLight);
+
+	const float dist = niLight->world.translate.GetDistance(*targetPosition);
+	const float attenuation = GetAttenuation(dist, runtimeData->radius, runtimeData->size);
+	const float luminance = (runtimeData->diffuse.red + runtimeData->diffuse.green + runtimeData->diffuse.blue) * runtimeData->fade * 4 * attenuation * (1.0f / 3.0f);
+	bsLight->luminance = luminance;
+
+	return luminance;
 }
 
 void LightLimitFix::DataLoaded()
@@ -1156,7 +1237,6 @@ void LightLimitFix::UpdateLights()
 	}
 
 	auto smState = globals::game::smState;
-	auto& isl = globals::features::inverseSquareLighting;
 	auto clearAndUpdate = [&]() {
 		lightCount = 0;
 		clusteredLightCount.store(0, std::memory_order_relaxed);
@@ -1225,18 +1305,7 @@ void LightLimitFix::UpdateLights()
 					if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
 						return;
 					if (IsValidLight(bsLight)) {
-						auto& runtimeData = niLight->GetLightRuntimeData();
-
-						LightData light{};
-						light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-						light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
-
-						if (isl.loaded) {
-							isl.ProcessLight(light, bsLight, niLight);
-						} else {
-							light.radius = runtimeData.radius.x;
-							light.fade = runtimeData.fade;
-						}
+						auto light = ProcessLight(bsLight, niLight);
 
 						Feature::ApplyPointLightColorOverrides(light.color);
 
@@ -1272,19 +1341,7 @@ void LightLimitFix::UpdateLights()
 		auto addShadowLight = [&](RE::BSShadowLight* shadowLight, bool castsShadow, uint32_t shadowSlot = 0) {
 			if (IsValidLight(shadowLight)) {
 				if (auto niLight = shadowLight->light.get()) {
-					auto& runtimeData = niLight->GetLightRuntimeData();
-
-					LightData light{};
-					light.color = float3{ runtimeData.diffuse.red, runtimeData.diffuse.green, runtimeData.diffuse.blue };
-					light.lightFlags = std::bit_cast<LightFlags>(runtimeData.ambient.red);
-
-					if (isl.loaded) {
-						isl.ProcessLight(light, shadowLight, niLight);
-					} else {
-						light.radius = runtimeData.radius.x;
-						// light.color *= runtimeData.fade;
-						light.fade = runtimeData.fade;
-					}
+					auto light = ProcessLight(shadowLight, niLight);
 
 					SetPointLightTypeFlags(light, shadowLight);
 					light.fade *= shadowLight->lodDimmer;

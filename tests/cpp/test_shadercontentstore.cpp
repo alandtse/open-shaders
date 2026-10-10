@@ -303,7 +303,8 @@ TEST_CASE("Clear removes every blob and later Puts recreate the store", "[Shader
 	const std::vector<char> blob{ 'D', 'X', 'B', 'C' };
 	const auto key = MakeKey(Base());
 	REQUIRE(store.Put(key, blob.data(), blob.size()));
-	store.Clear();
+	std::error_code ec;
+	CHECK(store.Clear(ec));
 	CHECK(store.Get(key).empty());
 	REQUIRE(store.Put(key, blob.data(), blob.size()));
 	CHECK(store.Get(key) == blob);

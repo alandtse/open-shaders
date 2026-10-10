@@ -515,13 +515,19 @@ namespace Util
 					"%s", T("ui.clear_cache_desc",
 							  "This will clear all compiled shaders from memory and disk cache (if enabled). "
 							  "Shaders will be recompiled when the game next encounters them."));
-				if (const auto usage = globals::shaderCache->GetContentStoreUsage(); usage.blobs > 0) {
-					ImGui::Spacing();
-					ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("ui.clear_cache_store_note",
-																	 { { "count", std::to_string(usage.blobs) },
-																		 { "size", std::format("{:.0f}", static_cast<double>(usage.bytes) / (1024.0 * 1024.0)) } },
-																	 "This also deletes the persistent shader store ({count} shaders, {size} MB).")
-												 .c_str());
+				if (globals::shaderCache) {
+					// Measured once when the popup opens, since it walks the store directory.
+					static std::optional<SIE::ShaderCache::ContentStoreUsage> storeUsage;
+					if (ImGui::IsWindowAppearing() || !storeUsage)
+						storeUsage = globals::shaderCache->GetContentStoreUsage();
+					if (storeUsage->blobs > 0) {
+						ImGui::Spacing();
+						ImGui::TextWrapped("%s", I18n::GetSingleton()->Format("ui.clear_cache_store_note",
+																		 { { "count", std::to_string(storeUsage->blobs) },
+																			 { "size", std::format("{:.0f}", static_cast<double>(storeUsage->bytes) / (1024.0 * 1024.0)) } },
+																		 "This also deletes the persistent shader store ({count} shaders, {size} MB).")
+													 .c_str());
+					}
 				}
 			}
 			ImGui::Spacing();
@@ -2873,6 +2879,7 @@ namespace Util
 		const char* recordingLabel)
 	{
 		bool changed = false;
+		ImGui::AlignTextToFramePadding();
 		ImGui::Text("%s", label);
 		ImGui::SameLine();
 

@@ -1129,10 +1129,6 @@ bool UseSkylightingShadowVisibility()
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
 
-#	if defined(ISL) && defined(LIGHT_LIMIT_FIX)
-#		include "InverseSquareLighting/InverseSquareLighting.hlsli"
-#	endif
-
 #	if defined(IBL)
 #		include "IBL/IBL.hlsli"
 #	endif
@@ -2636,6 +2632,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	if defined(TREE_ANIM) && defined(LIGHT_LIMIT_FIX) && defined(DEFERRED)
 	float foliageDirectionalShadowScale = 1.0;
 #	endif
+	float dirTransmissionContactShadow = 1.0;
 
 	float2 rotation;
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
@@ -2707,12 +2704,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
-	bool applyScreenSpaceShadow = dirLightAngle >= 0.0;
-#		if defined(TREE_ANIM)
-	applyScreenSpaceShadow = applyScreenSpaceShadow || SharedData::foliageLightingSettings.EnableFoliageScattering != 0;
-#		endif
-	if (!SharedData::InInterior && applyScreenSpaceShadow)
-		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.Position.xyz, screenUV, screenNoise, eyeIndex);
+	if (!SharedData::InInterior) {
+		float2 screenSpaceShadows = ScreenSpaceShadows::GetScreenSpaceShadows(input.Position.xyz, screenUV, screenNoise);
+		if (dirLightAngle >= 0.0)
+			dirDetailedShadow *= screenSpaceShadows.x;
+		dirTransmissionContactShadow = dirLightAngle >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
+	}
 #	endif  // SCREEN_SPACE_SHADOWS
 
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
@@ -2786,6 +2783,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float2 uvOriginal_ddx = ddx(uvOriginal);
 	float2 uvOriginal_ddy = ddy(uvOriginal);
 	EvaluateLighting(dirLightContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, dirLightOutput);
+	dirLightOutput.transmission *= dirTransmissionContactShadow;
 #	if defined(WETNESS_EFFECTS)
 	if (waterRoughnessSpecular < 1)
 		EvaluateWetnessLighting(wetnessNormal, dirLightContext, waterRoughnessSpecular, dirLightOutput);
@@ -2926,16 +2924,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
 
-#			if defined(ISL)
-		float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
+		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
 		if (intensityMultiplier < 1e-5)
 			continue;
-#			else
-		float intensityFactor = saturate(lightDist / light.radius);
-		if (intensityFactor == 1)
-			continue;
-		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
-#			endif
 
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 		float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * light.fade;
@@ -2972,20 +2963,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		{
 			// Strict lights always raymarch -- skip the falloff math for them entirely.
 			// Clustered lights need a normalized falloff to compare against MinIntensity;
-			// derive it from intensityMultiplier on the non-ISL path (where it IS already
-			// 1 - (d/r)^2) and re-compute on the ISL path (where GetAttenuation isn't
-			// [0,1]-normalized, so the threshold would mean different things otherwise).
+			// recompute it, since GetAttenuation isn't [0,1]-normalized for inverse-square
+			// lights and the threshold would mean different things otherwise.
 			const bool isClusteredLight = lightIndex >= LightLimitFix::NumStrictLights;
 			bool passesIntensityGate = !isClusteredLight;
 			if (isClusteredLight) {
-#				if defined(ISL)
 				float falloffFactor = saturate(lightDist * light.invRadius);
 				passesIntensityGate = (1.0 - falloffFactor * falloffFactor) >
 				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-#				else
-				passesIntensityGate = intensityMultiplier >
-				                      SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
-#				endif
 			}
 
 			// Particle lights carry both Simple and Particle bits. Simple-only lights are

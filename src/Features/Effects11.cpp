@@ -174,12 +174,15 @@ void Effects11::UpdateSkyScattering(PerFrame& a_data)
 
 	const bool sunVisible = Util::GetSunVisibility() > 0.0f;
 
+	// Hold the last direction while a weather hides the sun above the horizon so the scattering does not jump
 	auto sky = globals::game::sky;
 	if (sky && sky->sun) {
 		const auto direction = Util::GetSunDirection();
 		const float length = direction.Length();
-		if (length > 1e-6f)
+		if (length > 1e-6f && (sunVisible || direction.z < 0.0f || !hasScatteringSunDirection)) {
 			scatteringSunDirection = float3{ direction.x / length, direction.y / length, direction.z / length };
+			hasScatteringSunDirection = true;
+		}
 	}
 
 	const float sunHeight = scatteringSunDirection.z;

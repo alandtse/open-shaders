@@ -446,7 +446,7 @@ public:
 	/// only; flat has no repro and per-eye extent asymmetry doesn't apply.
 	std::atomic<bool> pendingDLSSReset{ false };
 
-	/** @brief Copies depth and motion inputs, returning false if the required shaders are unavailable. */
+	/** @brief Copies depth and motion vectors for frame generation; returns false if its shaders or shared buffers are unavailable. */
 	bool CopySharedD3D12Resources();
 	void PostDisplay();
 	void PerformUpscaling();

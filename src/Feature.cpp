@@ -24,7 +24,6 @@
 #include "Features/HorizonFix.h"
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
-#include "Features/InverseSquareLighting.h"
 #include "Features/LODBlending.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
@@ -272,7 +271,6 @@ namespace
 			&globals::features::vanillaFresnel,
 			&globals::features::volumetricLighting,
 			&globals::features::lodBlending,
-			&globals::features::inverseSquareLighting,
 			&globals::features::hairSpecular,
 			&globals::features::interiorSun,
 			&globals::features::terrainVariation,
@@ -511,17 +509,25 @@ bool Feature::ReapplyOverrideSettings()
 	// Get base settings and apply overrides fresh
 	json featureJson;
 	SaveSettings(featureJson);
+	json previousJson = featureJson;  // LoadSettings takes a non-const reference
 
 	// Apply overrides to the settings (without user customizations)
 	size_t appliedCount = overrideManager->ReapplyFeatureOverrides(featureName, featureJson);
 
 	if (appliedCount > 0) {
-		// Load the override settings back into the feature
+		// Load the override settings back into the feature. A malformed override throws from
+		// LoadSettings, possibly after some fields were already applied, so restore the previous values.
 		try {
 			LoadSettings(featureJson);
 			return true;
 		} catch (const std::exception& e) {
-			logger::warn("Failed to reapply override settings for {}. Error: {}", featureName, e.what());
+			logger::warn("Failed to reapply override settings for {}, keeping previous settings. Error: {}", featureName, e.what());
+			try {
+				LoadSettings(previousJson);
+			} catch (...) {
+				logger::warn("Failed to restore previous settings for {}, using default.", featureName);
+				RestoreDefaultSettings();
+			}
 			return false;
 		}
 	}

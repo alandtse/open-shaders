@@ -97,6 +97,8 @@ void Skylighting::ClearProbes()
 	occlusionCaptureCorner = 0;
 	nextOcclusionCorner = 0;
 	lastOcclusionRenderFrame = static_cast<uint>(-1);
+	// Grid bottom is stale until the next in-world buffer update, so don't cull this frame
+	probeGridBottomZ = -FLT_MAX;
 }
 
 void Skylighting::DrawSettings()
@@ -182,7 +184,7 @@ void Skylighting::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("rebuild_tooltip"), "Clears and rebuilds skylighting history. Use after changing Max Zenith Angle to apply it throughout the field."));
 
-	ImGui::SliderAngle(T(TKEY("max_zenith"), "Max Zenith Angle"), &settings.MaxZenith, 0, 90);
+	ImGui::SliderAngle(T(TKEY("max_zenith"), "Max Zenith Angle"), &settings.MaxZenith, 0, 90, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("max_zenith_tooltip"), "Smaller angles focus shadows more directly overhead. Use Rebuild Skylighting after changing this value."));
 }
@@ -399,6 +401,7 @@ Skylighting::SkylightingCB Skylighting::GetCommonBufferData(bool a_inWorld)
 		dispatchSliceStart = sliceCursor;
 		dispatchSliceCount = std::min(sliceCount, probeArrayDims[2] - sliceCursor);
 	}
+	probeGridBottomZ = cellOrigin.z - cellSize.z * probeArrayDims[2] * .5f;
 
 	return {
 		.OcclusionViewProj = OcclusionTransform,
@@ -706,6 +709,10 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 		return precipitationOcclusionMapRenderPassList;
 
 	if (skylighting.inOcclusion) {
+		// Only occluders above a probe lie on its ray to the sky
+		if (geometry->worldBound.center.z + geometry->worldBound.radius < skylighting.probeGridBottomZ - OCCLUSION_BELOW_GRID_MARGIN)
+			return precipitationOcclusionMapRenderPassList;
+
 		if (geometry->GetUserData()) {
 			RE::BSFadeNode* fadeNode = nullptr;
 
@@ -716,7 +723,8 @@ RE::BSShaderProperty::RenderPassArray* Skylighting::BSLightingShaderProperty_Get
 			}
 
 			if (fadeNode) {
-				if (auto extraData = fadeNode->GetExtraData("BSX")) {
+				static const RE::BSFixedString bsxKey{ "BSX" };
+				if (auto extraData = fadeNode->GetExtraData(bsxKey)) {
 					auto bsxFlags = (RE::BSXFlags*)extraData;
 					auto value = static_cast<int32_t>(bsxFlags->value);
 
@@ -904,7 +912,7 @@ void Skylighting::RenderOcclusion()
 		randomFrame = 0;
 		randomSeed = std::rand();
 	}
-	diskPoint.x = std::sqrt(diskPoint.x * std::sin(settings.MaxZenith));
+	diskPoint.x = std::sqrt(diskPoint.x) * std::sin(settings.MaxZenith);
 	diskPoint.y *= 2.0f * std::numbers::pi_v<float>;
 	diskPoint = float2{ diskPoint.x * std::cos(diskPoint.y), diskPoint.x * std::sin(diskPoint.y) };
 

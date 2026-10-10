@@ -16,7 +16,6 @@ file_common_defines:
             - EFFECTS11
             - EXP_HEIGHT_FOG
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - SCREEN_SPACE_SHADOWS
@@ -49,7 +48,6 @@ file_common_defines:
             - EXP_HEIGHT_FOG
             - HDR_OUTPUT
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - POSTPROCESS
@@ -133,7 +131,6 @@ file_common_defines:
             - EXTENDED_MATERIALS
             - EXTENDED_TRANSLUCENCY
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - SCREEN_SPACE_SHADOWS
@@ -160,7 +157,6 @@ file_common_defines:
             - EXTENDED_MATERIALS
             - EXTENDED_TRANSLUCENCY
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - SCREEN_SPACE_SHADOWS
@@ -190,7 +186,6 @@ file_common_defines:
             - GRASS_LIGHTING
             - GRASS_OPTIMIZATIONS
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - SCREEN_SPACE_SHADOWS
@@ -214,7 +209,6 @@ file_common_defines:
             - EXP_HEIGHT_FOG
             - HDR_OUTPUT
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - PROCEDURAL_SUN
@@ -244,7 +238,6 @@ file_common_defines:
             - EXP_HEIGHT_FOG
             - FOG
             - IBL
-            - ISL
             - LIGHT_LIMIT_FIX
             - LOD_BLENDING
             - SCREEN_SPACE_SHADOWS
@@ -273,7 +266,6 @@ shaders:
                   - EFFECTS11
                   - EXP_HEIGHT_FOG
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PSHADER
@@ -304,7 +296,6 @@ shaders:
                   - EFFECTS11
                   - EXP_HEIGHT_FOG
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - SCREEN_SPACE_SHADOWS
@@ -11104,7 +11095,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - HDR_OUTPUT
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - POSTPROCESS
@@ -11135,7 +11125,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - HDR_OUTPUT
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - POSTPROCESS
@@ -11470,7 +11459,6 @@ shaders:
                   - EXTENDED_MATERIALS
                   - EXTENDED_TRANSLUCENCY
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PSHADER
@@ -12864,7 +12852,6 @@ shaders:
                   - EXTENDED_MATERIALS
                   - EXTENDED_TRANSLUCENCY
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - SCREEN_SPACE_SHADOWS
@@ -13063,7 +13050,6 @@ shaders:
                   - GRASS_LIGHTING
                   - GRASS_OPTIMIZATIONS
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PSHADER
@@ -13099,7 +13085,6 @@ shaders:
                   - GRASS_LIGHTING
                   - GRASS_OPTIMIZATIONS
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - SCREEN_SPACE_SHADOWS
@@ -13136,7 +13121,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - HDR_OUTPUT
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PROCEDURAL_SUN
@@ -13241,7 +13225,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - HDR_OUTPUT
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PROCEDURAL_SUN
@@ -16586,7 +16569,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - FOG
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - PSHADER
@@ -19166,7 +19148,6 @@ shaders:
                   - EXP_HEIGHT_FOG
                   - FOG
                   - IBL
-                  - ISL
                   - LIGHT_LIMIT_FIX
                   - LOD_BLENDING
                   - SCREEN_SPACE_SHADOWS

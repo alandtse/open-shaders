@@ -366,7 +366,12 @@ PS_OUTPUT main(PS_INPUT input)
 		baseColor.xyz = ShadeStars(baseColor, input.TexCoord0.xy);
 #			elif defined(EFFECTS11) && defined(TEX) && !defined(DITHER) && !defined(CLOUDS)
 	[branch] if (SharedData::enbSettings.Enable && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsMoon))
+	{
+		float2 edge = abs(input.TexCoord0.xy * 2.0 - 1.0);
 		baseColor.xyz = pow(max(baseColor.xyz, 0.0), SharedData::enbSettings.MoonCurve);
+		if (max(edge.x, edge.y) > 0.985)
+			baseColor = 0.0;
+	}
 #			endif
 	if (!composeAuthoredSky)
 		baseColor.xyz = Color::Sky(baseColor.xyz);
@@ -593,6 +598,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	elif !defined(DITHER) || !defined(TEX)
 	// Even without cloud shadows enabled, sun disc should be occluded by scene depth (clouds, terrain, etc.)
+	// The sun glare pass (DITHER + TEX) is skipped: it fades by depth coverage in the VS instead,
+	// and the per-pixel reject made the glare disappear.
 	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsSun)) {
 		float depth = TexDepthSampler.Load(int3(input.Position.xy, 0));
 #		ifdef REVERSE_Z

@@ -225,7 +225,7 @@ void ExtendedEffect::LoadWeatherData()
 				continue;
 			if (!uiVar.effectVariable && !uiVar.isDefine)
 				continue;
-			if (uiVar.separation.empty() || uiVar.separation == "None")
+			if (!IsWeatherSeparated(uiVar))
 				continue;
 
 			std::string iniKey = GetVariableIniKey(uiVar);

@@ -927,13 +927,6 @@
     "feature.interior_sun.key_feature_3": "Включает опцию принудительного двустороннего рендеринга для неподготовленных интерьеров",
     "feature.interior_sun.key_feature_4": "Исправляет проблемы с отсечением геометрии, вызывающие утечку света",
     "feature.interior_sun.name": "Солнце в интерьере",
-    "feature.inverse_square_lighting.description": "Реализует дополнительное спадание освещения обратного квадрата для более физически точного и реалистичного затухания света.",
-    "feature.inverse_square_lighting.key_feature_1": "Автоматический расчёт радиуса освещения на основе интенсивности",
-    "feature.inverse_square_lighting.key_feature_2": "Плавное угасание источников света при настраиваемом пороге отсечения, решающее проблему бесконечной дальности",
-    "feature.inverse_square_lighting.key_feature_3": "Не изменяет существующее освещение",
-    "feature.inverse_square_lighting.key_feature_4": "Требует использования модов с источниками света, поддерживающими спадание обратного квадрата.",
-    "feature.inverse_square_lighting.key_feature_5": "Полная интеграция с Light Placer",
-    "feature.inverse_square_lighting.name": "Освещение обратного квадрата",
     "feature.key_features": "Ключевые функции:",
     "feature.light_editor.active_shadow_lights": "Активных теневых источников света: %u",
     "feature.light_editor.add_bulb": "",
@@ -1214,7 +1207,6 @@
     "feature.light_limit_fix.json_intensity_scale_tooltip": "",
     "feature.light_limit_fix.json_interiors_only": "",
     "feature.light_limit_fix.json_portal_strict_only": "",
-    "feature.light_limit_fix.json_requires_isl": "",
     "feature.light_limit_fix.key_feature_1": "Снятие лимита в 4 источника света",
     "feature.light_limit_fix.key_feature_2": "Неограниченное количество динамических источников",
     "feature.light_limit_fix.key_feature_3": "Улучшенное качество освещения",
@@ -3976,5 +3968,6 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": ""
+    "ui.vr.secondary_controller": "",
+    "feature.light_limit_fix.json_requires_isl": ""
 }

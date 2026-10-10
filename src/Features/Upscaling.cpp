@@ -1282,6 +1282,12 @@ void Upscaling::DataLoaded()
 	static auto fDRClampOffset = RE::GetINISetting("fDRClampOffset:Display");
 	fDRClampOffset->data.f = 0.0f;
 
+	// unk88 keeps the dynamic-resolution viewport, which rounds the 16x1 lens flare visibility target to nothing
+	const auto& effects = RE::ImageSpaceManager::GetSingleton()->effects;
+	const auto visibilityIndex = RE::ImageSpaceManager::GetCurrentIndex(RE::ImageSpaceManager::ISLensFlareVisibility);
+	if (visibilityIndex < effects.size() && effects[visibilityIndex])
+		effects[visibilityIndex]->unk88 = false;
+
 	// VR + DLSS workaround: rebuild the DLSS feature on cell/worldspace transitions to
 	// clear a persistent post-load GPU-time regression (see pendingDLSSReset comment).
 	if (globals::game::isVR)
@@ -2290,7 +2296,7 @@ bool Upscaling::CopySharedD3D12Resources()
 
 	auto* vs = GetUpscaleVS();
 	auto* ps = copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
-	if (!vs || !ps)
+	if (!vs || !ps || !dx12SwapChain.motionVectorBufferShared12 || !dx12SwapChain.depthBufferShared12)
 		return false;
 
 	auto renderer = globals::game::renderer;
