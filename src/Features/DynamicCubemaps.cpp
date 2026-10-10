@@ -352,9 +352,10 @@ bool DynamicCubemaps::Inferrence(bool a_reflections)
 
 	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
-	globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::CaptureMipsReflections" : "DynamicCubemaps::CaptureMips");
-	context->GenerateMips((a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get());
-	globals::profiler->EndPass();
+	{
+		CS_GPU_PASS_SELECT(a_reflections, "DynamicCubemaps::CaptureMipsReflections", "DynamicCubemaps::CaptureMips");
+		context->GenerateMips((a_reflections ? envCaptureReflectionsTexture : envCaptureTexture)->srv.get());
+	}
 
 	auto& cubemap = renderer->GetRendererData().cubemapRenderTargets[RE::RENDER_TARGETS_CUBEMAP::kREFLECTIONS];
 
@@ -405,7 +406,7 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 	auto context = globals::d3d::context;
 
 	if (a_doSetup) {
-		globals::profiler->BeginPass(a_reflections ? "DynamicCubemaps::PrepareIrradianceReflections" : "DynamicCubemaps::PrepareIrradiance");
+		CS_GPU_PASS_SELECT(a_reflections, "DynamicCubemaps::PrepareIrradianceReflections", "DynamicCubemaps::PrepareIrradiance");
 		for (uint face = 0; face < 6; face++) {
 			uint srcSubresourceIndex = D3D11CalcSubresource(0, face, MIPLEVELS);
 			context->CopySubresourceRegion(envFilteredTexture->resource.get(), D3D11CalcSubresource(0, face, MIPLEVELS), 0, 0, 0, envInferredTexture->resource.get(), srcSubresourceIndex, nullptr);
@@ -413,7 +414,6 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 
 		auto srv = envInferredTexture->srv.get();
 		context->GenerateMips(srv);
-		globals::profiler->EndPass();
 	}
 
 	// Compute pre-filtered specular environment map for the requested mip range.

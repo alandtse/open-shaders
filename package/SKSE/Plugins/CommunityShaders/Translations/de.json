@@ -3968,13 +3968,5 @@
     "ui.vr.color_coding_primary": "",
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
-    "ui.vr.secondary_controller": "",
-    "feature.inverse_square_lighting.description": "",
-    "feature.inverse_square_lighting.key_feature_1": "",
-    "feature.inverse_square_lighting.key_feature_2": "",
-    "feature.inverse_square_lighting.key_feature_3": "",
-    "feature.inverse_square_lighting.key_feature_4": "",
-    "feature.inverse_square_lighting.key_feature_5": "",
-    "feature.inverse_square_lighting.name": "",
-    "feature.light_limit_fix.json_requires_isl": ""
+    "ui.vr.secondary_controller": ""
 }

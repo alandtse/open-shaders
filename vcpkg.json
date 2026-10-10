@@ -39,8 +39,7 @@
             "features": ["on-demand"]
         },
         "unordered-dense",
-        "xbyak",
-        "xxhash"
+        "xbyak"
     ],
     "overrides": [
         {
