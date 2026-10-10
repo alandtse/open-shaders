@@ -8,6 +8,7 @@
 #include "NeuralRendering/ActorRegion.h"
 #include "NeuralRendering/Cadence.h"
 #include "NeuralRendering/D3D12Interop.h"
+#include "NeuralRendering/EyeMode.h"
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/ModelScale.h"
@@ -1682,6 +1683,79 @@ namespace
 	}
 
 	/** @brief Draws the by-material selection and the material map controls; returns true when any value changed. */
+	/** @brief Draws the eye evaluation choice and, for Alternate eyes, how a skipped eye is handled. Returns true when something changed. */
+	bool DrawEyeModeControls(NR::Tuning& tuning, bool developerMode)
+	{
+		bool changed = false;
+		const std::array<const char*, NR::kEyeModeCount> labels{
+			T(TKEY("eye_mode_parallel"), "Parallel eyes"),
+			T(TKEY("eye_mode_side_by_side"), "Side by side (experimental)"),
+			T(TKEY("eye_mode_alternate"), "Alternate eyes (experimental)"),
+			T(TKEY("eye_mode_separate"), "Separate eyes"),
+		};
+		const auto current = NR::GetEyeMode(tuning);
+		if (ImGui::BeginCombo(T(TKEY("eye_mode"), "Eye Evaluation"), labels[static_cast<uint32_t>(current)])) {
+			for (uint32_t i = 0; i < NR::kEyeModeCount; ++i) {
+				const auto mode = static_cast<NR::EyeMode>(i);
+				const bool experimental = mode == NR::EyeMode::kSideBySide || mode == NR::EyeMode::kAlternate;
+				ImGui::BeginDisabled(experimental && !developerMode);
+				if (ImGui::Selectable(labels[i], mode == current)) {
+					NR::SetEyeMode(tuning, mode);
+					changed = true;
+				}
+				ImGui::EndDisabled();
+			}
+			ImGui::EndCombo();
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
+				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 2 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other, which can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. The experimental choices need Developer Mode."));
+		if (current == NR::EyeMode::kAlternate) {
+			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
+			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
+				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
+				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
+			};
+			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
+				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
+					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+		}
+		return changed;
+	}
+
+	/** @brief Draws the model scale and its guided upsample. The scale applies on release, because each size rebuilds the model. Returns true when it changed. */
+	bool DrawModelScaleControls(NR::Tuning& tuning, bool developerMode)
+	{
+		bool changed = false;
+		const bool unusedByMode = globals::game::isVR && NR::GetEyeMode(tuning) == NR::EyeMode::kAlternate;
+		ImGui::BeginDisabled(!developerMode || unusedByMode);
+		const char* label = T(TKEY("model_scale"), "Model Scale");
+		const ImGuiID id = ImGui::GetID(label);
+		float& dragged = *ImGui::GetStateStorage()->GetFloatRef(id, tuning.modelScale);
+		if (ImGui::GetActiveID() != id)
+			dragged = tuning.modelScale;
+		ImGui::SliderFloat(label, &dragged, NR::Tuning::kMinModelScale, NR::Tuning::kMaxModelScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (ImGui::IsItemDeactivatedAfterEdit()) {
+			tuning.modelScale = dragged;
+			changed = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
+				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
+		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
+		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
+				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
+		ImGui::EndDisabled();
+		ImGui::EndDisabled();
+		return changed;
+	}
+
 	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
 	{
 		bool changed = false;
@@ -1849,6 +1923,50 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
+	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::PushID("performance");
+		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (globals::game::isVR) {
+			if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
+				changed = true;
+				resetHistory = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
+					"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+		}
+		if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
+				"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+		// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
+		// out without it instead of accepting edits that the pass ignores.
+		ImGui::BeginDisabled(!tuning.regionOfInterest);
+		if (ImGui::Checkbox(T(TKEY("crop_group"), "Include Nearby Characters"), &tuning.regionGroup)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
+				"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
+		if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
+			changed = true;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
+				"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
+		ImGui::EndDisabled();
+		if (DrawModelScaleControls(tuning, developerMode)) {
+			changed = true;
+			resetHistory = true;
+		}
+		ImGui::PopID();
+	}
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
@@ -1881,45 +1999,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		ImGui::PopID();
 	}
 	changed |= DrawMaterialControls(tuning, materialStrengthAvailable.load(std::memory_order_relaxed));
-	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
-		changed = true;
-		resetHistory = true;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
-			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
-	if (globals::game::isVR) {
-		if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
-			changed = true;
-			resetHistory = true;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
-				"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
-	}
-	if (globals::game::isVR) {
-		changed |= ImGui::Checkbox(T(TKEY("parallel_eyes"), "Evaluate Eyes in Parallel"), &tuning.parallelEyes);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("parallel_eyes_tooltip"),
-				"Runs the second eye's model on its own queue so both eyes run at once. The image is the same and it lowers the GPU time, by about 1 ms on a full frame and about 2 ms with Follow Foveation in an RTX 5090 test. On by default; turn it off to compare, or if Neural Rendering fails to start. If an evaluate fails with it on, Retry NR uses one queue."));
-	}
-	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
-	// out without it instead of accepting edits that the pass ignores.
 	const bool cropDisabled = !tuning.regionOfInterest;
-	ImGui::BeginDisabled(cropDisabled);
-	if (ImGui::Checkbox(T(TKEY("crop_group"), "Include Nearby Characters"), &tuning.regionGroup)) {
-		changed = true;
-		resetHistory = true;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
-			"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
-	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
-		changed = true;
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
-			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
-	ImGui::EndDisabled();
 	if (DrawContextProfiles(contexts, cropDisabled))
 		resetHistory = true;
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
@@ -1974,29 +2054,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
 				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
 		}
-		ImGui::SeparatorText(T(TKEY("developer_frame_reuse"), "Frame reuse"));
-		if (!globals::game::isVR) {
-			ImGui::TextDisabled("%s", T(TKEY("skip_frame_reuse_vr_only"), "VR only."));
-		} else {
-			changed |= ImGui::Checkbox(T(TKEY("skip_frame_reuse"), "Reuse Eye Gains Every Other Frame"), &tuning.skipFrameReuse);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("skip_frame_reuse_tooltip"),
-					"Evaluates the model for one eye per frame and reuses the other eye's gain, reprojected by its motion. Halves the model's GPU cost. The reused eye keeps its own colours and takes only the model's brightness change; a sample that reprojected onto another surface or a changed lighting is dropped instead of reused. Off by default and unmeasured; judge it by eye."));
-			ImGui::BeginDisabled(!tuning.skipFrameReuse);
-			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
-			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
-				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
-				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
-			};
-			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
-				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
-				changed = true;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
-					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
-			ImGui::EndDisabled();
-		}
+		ImGui::SeparatorText(T(TKEY("developer_measurement"), "Measurement"));
+		changed |= ImGui::Checkbox(T(TKEY("model_verify"), "Compare Against Full Size"), &tuning.modelVerify);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_verify_tooltip"),
+				"With Side by side or a Model Scale below 1, also evaluates each eye alone at full size every frame so a verify capture can compare the two. Roughly doubles the model's GPU time."));
+		changed |= ImGui::Checkbox(T(TKEY("mirror_eyes"), "Mirror Left Eye To Both Eyes"), &tuning.mirrorEyes);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("mirror_eyes_tooltip"),
+				"Feeds the left eye's inputs to both eyes, to check that the two eyes get the same result. The right eye's picture is wrong while this is on."));
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
