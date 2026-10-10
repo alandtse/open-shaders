@@ -3986,12 +3986,5 @@
     "ui.vr.color_coding_secondary": "",
     "ui.vr.primary_controller": "",
     "ui.vr.secondary_controller": "",
-    "feature.inverse_square_lighting.description": "为光照实现额外的平方反比衰减，使光照衰减更加物理准确和逼真。",
-    "feature.inverse_square_lighting.key_feature_1": "基于强度自动计算光照半径",
-    "feature.inverse_square_lighting.key_feature_2": "光源在可配置的截止距离处平滑淡出，解决无限距离问题",
-    "feature.inverse_square_lighting.key_feature_3": "不修改任何现有光照",
-    "feature.inverse_square_lighting.key_feature_4": "需要使用开启了平方反比衰减的模组光源。",
-    "feature.inverse_square_lighting.key_feature_5": "与Light Placer完全集成",
-    "feature.inverse_square_lighting.name": "平方反比光照",
     "feature.light_limit_fix.json_requires_isl": ""
 }

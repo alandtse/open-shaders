@@ -509,7 +509,7 @@ public:
 		int MaxParticlesPerEmitter = 256;
 		float MaxParticleDistance = 6000.0f;
 
-		// JSON-placed light intensity (requires Inverse Square Lighting runtime metadata).
+		// JSON-placed light intensity (uses the light runtime metadata).
 		float JsonPlacedLightIntensity = 1.0f;
 		bool JsonPlacedLightsInteriorsOnly = false;
 		bool JsonPlacedLightsPortalStrictOnly = false;

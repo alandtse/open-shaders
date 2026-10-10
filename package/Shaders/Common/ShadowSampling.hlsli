@@ -139,7 +139,7 @@ namespace ShadowSampling
 
 	float3 GetRawAmbientLighting()
 	{
-		return Color::Ambient(max(0, SharedData::GetAmbient(LightingSampleNormal)));
+		return max(0, SharedData::GetAmbient(LightingSampleNormal));
 	}
 
 	float3 GetAmbientLighting()
