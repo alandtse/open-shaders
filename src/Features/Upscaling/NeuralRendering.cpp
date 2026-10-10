@@ -237,10 +237,14 @@ struct NeuralRendering::Impl
 	{
 		float4 cameraData{};         ///< The projection terms SharedData carries; the guide's own depth is a raw value.
 		uint32_t depthReversed = 0;  ///< True when the guide holds reverse-Z depth, which Feature 18 is told separately.
-		uint32_t pad[3]{};
+		uint32_t crossEye = 0;       ///< True when the other eye's stored gain is bound for a rejected sample to fall back on.
+		uint32_t pad[2]{};
+		DirectX::SimpleMath::Matrix stereoMap;  ///< Column-vector map from this eye's clip space to the other eye's, the engine's own eye-to-eye conversion folded into one matrix.
 	};
 	static_assert(offsetof(GainReuseData, depthReversed) == 16);
-	static_assert(sizeof(GainReuseData) == 32);
+	static_assert(offsetof(GainReuseData, crossEye) == 20);
+	static_assert(offsetof(GainReuseData, stereoMap) == 32);
+	static_assert(sizeof(GainReuseData) == 96);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
 	std::unique_ptr<ConstantBuffer> gainReuseBuffer;
@@ -592,12 +596,19 @@ struct NeuralRendering::Impl
 	}
 
 	/** @brief Binds the color-transfer block plus the GainReuseCS block, which carries the guide's depth convention. */
-	void BindGainBuffers(uint32_t i)
+	void BindGainBuffers(uint32_t i, bool crossEye = false)
 	{
 		ColorTransferData data{ width, height, i * width };
 		SetRegion(data, i);
 		colorBuffer->Update(data);
-		gainReuseBuffer->Update(GainReuseData{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u });
+		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
+		if (crossEye) {
+			const auto& frameBuffer = globals::game::frameBufferCached;
+			const auto offset = frameBuffer.GetCameraPosAdjust(i) - frameBuffer.GetCameraPosAdjust(1 - i);
+			// The engine's matrices act on column vectors, so the row-vector translation is transposed.
+			reuse.stereoMap = frameBuffer.GetCameraViewProj(1 - i) * DirectX::SimpleMath::Matrix::CreateTranslation(offset.x, offset.y, offset.z).Transpose() * frameBuffer.GetCameraViewProjInverse(i);
+		}
+		gainReuseBuffer->Update(reuse);
 		context->ClearState();
 		ID3D11Buffer* buffers[]{ colorBuffer->CB(), gainReuseBuffer->CB() };
 		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
@@ -624,7 +635,7 @@ struct NeuralRendering::Impl
 	}
 
 	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
-	void ReuseGain(uint32_t i)
+	void ReuseGain(uint32_t i, bool crossEye = false)
 	{
 		CS_GPU_PASS("Upscaling::NRReuseGain");
 		auto* shader = reuseGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
@@ -632,10 +643,14 @@ struct NeuralRendering::Impl
 		if (!shader)
 			throw std::runtime_error("NR gain-reuse shader unavailable");
 		auto& eye = eyes[i];
-		BindGainBuffers(i);
+		BindGainBuffers(i, crossEye);
 		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, nullptr, eye.depth->srv, eye.motion->srv,
 			eye.gainHistory->srv.get(), eye.depthHistory->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		if (crossEye) {
+			ID3D11ShaderResourceView* otherInputs[]{ eyes[1 - i].gainHistory->srv.get(), eyes[1 - i].depthHistory->srv.get() };
+			context->CSSetShaderResources(12, ARRAYSIZE(otherInputs), otherInputs);
+		}
 		auto* sampler = linearSampler.get();
 		context->CSSetSamplers(0, 1, &sampler);
 		auto* output = eye.reuseOutput->uav.get();
@@ -975,12 +990,15 @@ struct NeuralRendering::Impl
 		if (staggerActive) {
 			for (uint32_t i = 0; i < eyeCount; ++i) {
 				EnsureGainResources(i);
-				if (reuseFrame[i]) {
-					ReuseGain(i);
-				} else {
+				if (!reuseFrame[i]) {
 					StoreGain(i);
 					cadence.valid[i] = true;
 				}
+			}
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				if (!reuseFrame[i])
+					continue;
+				ReuseGain(i, tuning.crossEyeGain && globals::game::isVR && eyeCount == 2 && !reuseFrame[1 - i]);
 			}
 		}
 		for (uint32_t i = 0; i < eyeCount; ++i) {
@@ -1672,6 +1690,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
 					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+			changed |= ImGui::Checkbox(T(TKEY("cross_eye_gain"), "Fill Gaps From The Other Eye"), &tuning.crossEyeGain);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("cross_eye_gain_tooltip"),
+					"Where a reused eye could not take its own earlier gain (a surface that just came into view), it takes the gain the other eye's model frame computed this frame for the same surface. Costs one extra sample per such pixel and no extra model time."));
 			ImGui::EndDisabled();
 		}
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));

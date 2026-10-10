@@ -3430,6 +3430,8 @@
     "feature.upscaling.neural_rendering.crop_fit_tooltip": "How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers.",
     "feature.upscaling.neural_rendering.crop_group": "Include Nearby Characters",
     "feature.upscaling.neural_rendering.crop_group_tooltip": "Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character.",
+    "feature.upscaling.neural_rendering.cross_eye_gain": "Fill Gaps From The Other Eye",
+    "feature.upscaling.neural_rendering.cross_eye_gain_tooltip": "Where a reused eye could not take its own earlier gain (a surface that just came into view), it takes the gain the other eye's model frame computed this frame for the same surface. Costs one extra sample per such pixel and no extra model time.",
     "feature.upscaling.neural_rendering.description": "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build.",
     "feature.upscaling.neural_rendering.developer": "Developer",
     "feature.upscaling.neural_rendering.developer_crop": "Crop",

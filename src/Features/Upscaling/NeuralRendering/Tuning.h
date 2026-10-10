@@ -84,6 +84,8 @@ namespace NR
 		bool skipFrameReuse = false;
 		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */
 		uint32_t skipFrameGapMode = 0;
+		/** @brief A reused pixel whose own previous gain is rejected takes the other eye's model gain of this frame. */
+		bool crossEyeGain = true;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
