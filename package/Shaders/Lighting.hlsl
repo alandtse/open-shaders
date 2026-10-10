@@ -1225,7 +1225,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
-		g_terrainStochasticLodBase = ComputeTerrainStochasticLodBase(uvOriginal);
+		InitializeTerrainStochasticGradients(uvOriginal);
 		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal);
 	}
 #		else
@@ -1300,6 +1300,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// SampleTerrain (LightingLandscape.hlsli) reads this for any LANDSCAPE
 	// permutation, not just EMAT.
 #		if defined(TERRAIN_VARIATION)
+	InitializeTerrainStochasticGradients(uvOriginal);
 	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
 #		endif
 #		if defined(EMAT)
@@ -1619,7 +1620,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(LANDSCAPE)
 #		if defined(TERRAIN_VARIATION)
-	g_terrainStochasticLodBase = ComputeTerrainStochasticLodBase(uv);
 #			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffect(TEX, SAMP, UV, OFFSET)
 #			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffect(TEX, SAMP, UV, OFFSET, true, PBR)
 #		else
