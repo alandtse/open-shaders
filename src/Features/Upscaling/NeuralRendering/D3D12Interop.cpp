@@ -38,14 +38,7 @@ namespace NR
 			queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 			Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));
 			Check(queue->SetName(L"NeuralRendering::Queue"));
-			for (auto& slot : commands) {
-				Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(slot.allocator.put())));
-				Check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-					slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
-				Check(slot.allocator->SetName(L"NeuralRendering::Allocator"));
-				Check(slot.list->SetName(L"NeuralRendering::Commands"));
-				Check(slot.list->Close());
-			}
+			CreateRing(commands, D3D12_COMMAND_LIST_TYPE_DIRECT, L"NeuralRendering::Allocator", L"NeuralRendering::Commands");
 			fence.Create(device.get(), device11.get(), "NeuralRendering::Fence");
 			adapterLuid = desc.AdapterLuid;
 		} catch (...) {
@@ -55,9 +48,23 @@ namespace NR
 		}
 	}
 
+	void D3D12Interop::CreateRing(std::array<Commands, kFramesInFlight>& ring, D3D12_COMMAND_LIST_TYPE type, const wchar_t* allocatorName, const wchar_t* listName)
+	{
+		for (auto& slot : ring) {
+			Check(device->CreateCommandAllocator(type, IID_PPV_ARGS(slot.allocator.put())));
+			Check(device->CreateCommandList(0, type, slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
+			Check(slot.allocator->SetName(allocatorName));
+			Check(slot.list->SetName(listName));
+			Check(slot.list->Close());
+		}
+	}
+
 	void D3D12Interop::Reset()
 	{
 		commands = {};
+		parallelCommands = {};
+		parallelQueue = nullptr;
+		parallelUsed = parallelFailed = false;
 		fence.Reset();
 		queue = nullptr;
 		device = nullptr;
@@ -100,6 +107,7 @@ namespace NR
 		winrt::check_hresult(slot.allocator->Reset());
 		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
 		const auto ready = fence.Next();
+		inputReady = ready;
 		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
 		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
@@ -112,11 +120,53 @@ namespace NR
 		winrt::check_hresult(slot.list->Close());
 		ID3D12CommandList* lists[]{ slot.list.get() };
 		queue->ExecuteCommandLists(1, lists);
+		parallelSubmitted = parallelUsed;
+		if (parallelUsed) {
+			auto& parallel = parallelCommands[cursor];
+			winrt::check_hresult(parallel.list->Close());
+			ID3D12CommandList* parallelLists[]{ parallel.list.get() };
+			parallelQueue->ExecuteCommandLists(1, parallelLists);
+			const auto parallelDone = fence.Next();
+			winrt::check_hresult(parallelQueue->Signal(fence.fence12.get(), parallelDone));
+			parallel.completion = parallelDone;
+			// The D3D11 wait below covers this work only because the main queue's completion follows it.
+			winrt::check_hresult(queue->Wait(fence.fence12.get(), parallelDone));
+			parallelUsed = false;
+		}
 		const auto complete = fence.Next();
 		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
 		slot.completion = complete;
 		winrt::check_hresult(context->Wait(fence.fence11.get(), complete));
 		cursor = (cursor + 1) % static_cast<uint32_t>(commands.size());
+	}
+
+	ID3D12GraphicsCommandList* D3D12Interop::ParallelList()
+	{
+		if (parallelFailed)
+			return nullptr;
+		if (!parallelQueue) {
+			try {
+				D3D12_COMMAND_QUEUE_DESC queueDesc{};
+				queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+				Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(parallelQueue.put())));
+				Check(parallelQueue->SetName(L"NeuralRendering::ParallelQueue"));
+				CreateRing(parallelCommands, D3D12_COMMAND_LIST_TYPE_COMPUTE, L"NeuralRendering::ParallelAllocator", L"NeuralRendering::ParallelCommands");
+			} catch (const std::exception& error) {
+				logger::warn("[NeuralRendering] parallel eye queue unavailable, using one queue: {}", error.what());
+				parallelCommands = {};
+				parallelQueue = nullptr;
+				parallelFailed = true;
+				return nullptr;
+			}
+		}
+		auto& slot = parallelCommands[cursor];
+		Wait(slot.completion);
+		winrt::check_hresult(slot.allocator->Reset());
+		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
+		if (!parallelUsed)
+			winrt::check_hresult(parallelQueue->Wait(fence.fence12.get(), inputReady));
+		parallelUsed = true;
+		return slot.list.get();
 	}
 
 	void D3D12Interop::Drain()

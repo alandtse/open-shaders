@@ -53,6 +53,12 @@ namespace NR
 		/** @brief On VR with foveation active, evaluates only the foveated region, intersected with the tracked crop when one is set. */
 		bool regionFollowFoveation = true;
 		/**
+		 * @brief Evaluates the second eye on a second compute queue so the two eyes' launch-bound model runs
+		 *        overlap. VR only; the output is the same as one queue. On by default, and falls back to one
+		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
+		 */
+		bool parallelEyes = true;
+		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
 		 *        strength decides how strongly NR shows there. On exactly when some strength is below
 		 *        full (SyncMaterialSwitch keeps it so); it needs the deferred pass's material lane, and
