@@ -45,7 +45,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TruePBR::Settings,
-	VertexAOStrength);
+	VertexAOStrength,
+	EnableMicroShadows,
+	MicroShadowStrength);
 
 // Vanilla SetupMaterial reads field offsets for a different material layout
 // than BSLightingShaderMaterialPBR has -- falling through to it for a
@@ -151,6 +153,17 @@ void TruePBR::DrawSettings()
 {
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
+		ImGui::Checkbox(T(TKEY("micro_shadows"), "Micro Shadows"), (bool*)&settings.EnableMicroShadows);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::Text("%s", T(TKEY("micro_shadows_tooltip"), "Occludes direct light with the material's ambient occlusion map, adding contact shadowing to surface detail such as seams, rivets and fabric weave."));
+
+		if (settings.EnableMicroShadows) {
+			ImGui::SliderFloat(T(TKEY("micro_shadow_strength"), "Micro Shadow Strength"), &settings.MicroShadowStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("micro_shadow_strength_tooltip"), "How strongly ambient occlusion darkens direct light."));
+		}
+
 		ImGui::TreePop();
 	}
 
@@ -1519,6 +1532,9 @@ struct BSGrassShader_SetupTechnique
 			return false;
 		}
 
+		// Match vanilla grass depth sampling so the alpha tests cover the same pixels.
+		shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kTrilinear);
+
 		static auto fogMethod = REL::Relocation<void (*)()>(REL::RelocationID(100000, 106707));
 		fogMethod();
 
@@ -1540,9 +1556,11 @@ struct BSGrassShader_SetupMaterial
 {
 	static void thunk(RE::BSShader* shader, RE::BSLightingShaderMaterialBase const* material)
 	{
+		// Let vanilla bind the diffuse texture and clamp addressing, so it matches the depth pass
+		func(shader, material);
+
 		const auto technique = static_cast<SIE::ShaderCache::GrassShaderTechniques>(globals::state->currentPixelDescriptor & 0b1111);
 		if (technique != SIE::ShaderCache::GrassShaderTechniques::TruePbr) {
-			func(shader, material);
 			return;
 		}
 
@@ -1553,9 +1571,6 @@ struct BSGrassShader_SetupMaterial
 
 		RE::BSGraphics::Renderer::PreparePSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);
 
-		shadowState->SetPSTexture(0, pbrMaterial->diffuseTexture->rendererTexture);
-		shadowState->SetPSTextureAddressMode(0, clampMode);
-		shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kAnisotropic);
 		shadowState->SetPSTexture(2, pbrMaterial->normalTexture->rendererTexture);
 		shadowState->SetPSTextureAddressMode(2, clampMode);
 		shadowState->SetPSTextureFilterMode(2, RE::BSGraphics::TextureFilterMode::kAnisotropic);

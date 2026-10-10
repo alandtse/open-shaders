@@ -360,7 +360,11 @@ namespace SIE
 	/// Writes via a sibling temp file and rename so a crash mid-write cannot leave a torn blob at diskPath.
 	static bool WriteBlobAtomic(const std::wstring& diskPath, ID3DBlob* blob)
 	{
-		const std::wstring tempPath = diskPath + L".tmp";
+		// A temp name per call: two compiles of one key (two threads, or two game instances) must not
+		// write or delete each other's temp file. Both renames carry the same bytes, so either may win.
+		static std::atomic<uint32_t> tempCounter{ 0 };
+		const std::wstring tempPath = std::format(L"{}.{}-{}-{}.tmp", diskPath, GetCurrentProcessId(), GetCurrentThreadId(),
+			tempCounter.fetch_add(1, std::memory_order_relaxed));
 		std::error_code ec;
 		if (SUCCEEDED(D3DWriteBlobToFile(blob, tempPath.c_str(), true))) {
 			std::filesystem::rename(tempPath, diskPath, ec);
@@ -371,18 +375,22 @@ namespace SIE
 		return false;
 	}
 
-	/// Size and timestamp of the loaded d3dcompiler, so a compiler update cannot reuse bytecode the old one built.
+	/// Link timestamp, image size and checksum of the loaded d3dcompiler, read from its PE header in memory,
+	/// so a compiler update cannot reuse bytecode the old one built. Empty if the module cannot be identified.
 	static const std::string& GetCompilerIdentity()
 	{
-		static const std::string identity = [] {
-			wchar_t path[MAX_PATH]{};
+		static const std::string identity = []() -> std::string {
 			const HMODULE module = GetModuleHandleW(L"d3dcompiler_47.dll");
-			if (!module || !GetModuleFileNameW(module, path, MAX_PATH))
-				return std::string("unknown");
-			std::error_code ec;
-			const auto size = std::filesystem::file_size(path, ec);
-			const auto time = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
-			return std::format("{}:{}", size, time);
+			if (!module)
+				return {};
+			const auto* base = reinterpret_cast<const std::byte*>(module);
+			const auto* dosHeader = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+			if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE)
+				return {};
+			const auto* ntHeaders = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
+			if (ntHeaders->Signature != IMAGE_NT_SIGNATURE)
+				return {};
+			return std::format("{:08x}:{:08x}:{:08x}", ntHeaders->FileHeader.TimeDateStamp, ntHeaders->OptionalHeader.SizeOfImage, ntHeaders->OptionalHeader.CheckSum);
 		}();
 		return identity;
 	}
@@ -521,31 +529,49 @@ namespace SIE
 		return Util::ContentHash::CombineHashes(a_key, Util::ContentHash::HashString(kContentStoreSchema));
 	}
 
-	/// Content-addressed blob store inside the disk cache; null while the setting is off.
+	/// Absolute store path as UTF-8, for logs and the menu; `path::string()` throws on characters outside the ANSI code page.
+	static std::string ContentStoreDisplayPath()
+	{
+		std::error_code ec;
+		const auto absolute = std::filesystem::absolute(ContentStorePath(), ec);
+		return Util::WStringToString((ec ? ContentStorePath() : absolute).wstring());
+	}
+
+	/// The store once it has been opened, whether or not the setting is still on.
+	static std::atomic<Util::ShaderContentStore::Store*> g_openedContentStore{ nullptr };
+
+	/// Content-addressed blob store inside the disk cache; null while the setting is off or the compiler cannot be identified.
 	static Util::ShaderContentStore::Store* GetContentStore()
 	{
 		if (!globals::state->enableContentStore.load(std::memory_order_relaxed))
 			return nullptr;
+		if (GetCompilerIdentity().empty()) {
+			static std::once_flag warned;
+			std::call_once(warned, [] { logger::warn("Shader content store disabled: could not identify d3dcompiler_47.dll"); });
+			return nullptr;
+		}
 		static Util::ShaderContentStore::Store& store = []() -> Util::ShaderContentStore::Store& {
 			static Util::ShaderContentStore::Store created(ContentStorePath(), ContentStoreMaxBytes());
-			const auto trimmed = created.Trim(ContentStoreMaxBytes());
-			const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
-			logger::info("Shader content store: {} blobs, {} MB at {}, trimmed {} entries", usage.blobs, usage.bytes >> 20,
-				std::filesystem::absolute(ContentStorePath()).string(), trimmed);
+			// Before any Put, so unfinished writes from an earlier session can be removed in the same walk.
+			Util::ShaderContentStore::Usage usage;
+			const auto trimmed = created.Trim(ContentStoreMaxBytes(), true, &usage);
+			logger::info("Shader content store: {} blobs, {} MB at {}, trimmed {} entries", usage.blobs, usage.bytes >> 20, ContentStoreDisplayPath(), trimmed);
+			g_openedContentStore = &created;
 			return created;
 		}();
+		// The limit can change after the store opened (slider, settings reload).
+		store.SetMaxBytes(ContentStoreMaxBytes());
 		return &store;
 	}
 
-	/// An intact stored blob for this key, or null on a miss or corrupt entry.
+	/// An intact stored blob for this key, or null on a miss. A corrupt entry is deleted.
 	static winrt::com_ptr<ID3DBlob> ReadStoredBlob(const Util::ShaderContentStore::Store& a_store, const Util::ContentHash::Hash128& a_key)
 	{
-		const auto stored = a_store.Get(StoreKey(a_key));
-		winrt::com_ptr<ID3DBlob> blob;
-		if (stored.empty() || FAILED(D3DCreateBlob(stored.size(), blob.put())))
-			return nullptr;
-		std::memcpy(blob->GetBufferPointer(), stored.data(), stored.size());
-		return IsIntactDxbc(blob.get()) ? blob : nullptr;
+		const auto storeKey = StoreKey(a_key);
+		auto blob = ReadIntactBlob(a_store.PathFor(storeKey).wstring());
+		if (blob)
+			a_store.Touch(storeKey);
+		return blob;
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1941,6 +1967,7 @@ namespace SIE
 			std::optional<Util::CompileDedupe::Ticket> ticket;       ///< Set when this task must compile.
 			std::optional<Util::ContentHash::Hash128> key;           ///< Content key of the preprocessed code.
 			std::string source;                                      ///< The preprocessed code the key was built from; empty if preprocessing failed.
+			bool compileFailed = false;                              ///< An identical compile already failed; skip compiling.
 		};
 
 		static SharedCompile AcquireSharedCompile(ShaderClass a_class, const std::wstring& a_path, const std::string& a_pathString,
@@ -1962,6 +1989,9 @@ namespace SIE
 			const auto keyText = globals::state->IsDeveloperMode() ? result.source : Util::CompileDedupe::StripLineDirectives(result.source);
 			result.key = Util::CompileDedupe::MakeKey({ keyText, "main", GetShaderProfile(a_class), a_flags, GetCompilerIdentity() });
 			auto acquired = GetCompileDedupe().Acquire(*result.key);
+			result.compileFailed = acquired.compileFailed;
+			if (acquired.compileFailed)
+				return result;
 			if (!acquired.blob) {
 				if (a_reusableFrom) {
 					if (auto reused = FindReusableBlob(*result.key, *a_reusableFrom, result.origin)) {
@@ -2017,12 +2047,16 @@ namespace SIE
 
 			// Atomically check the shaderMap and either:
 			//  - return the blob if already Completed (cache hit),
+			//  - return nullptr if a previous attempt Failed,
 			//  - wait if another thread is compiling (Pending),
 			//  - claim the slot with Pending if nobody started yet.
 			auto [claimResult, cachedBlob] = cache.ClaimCompilation(key, a_taskGeneration);
 			if (claimResult == ShaderCache::ClaimResult::CacheHit) {
 				cache.IncCacheHitTasks();
 				return cachedBlob;
+			}
+			if (claimResult == ShaderCache::ClaimResult::Failed) {
+				return nullptr;
 			}
 
 			const auto type = shader.shaderType.get();
@@ -2064,10 +2098,18 @@ namespace SIE
 
 				if (!decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
-					auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath));
-					diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
-					if (diskCacheOutdated)
-						logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
+					// An unreadable timestamp means freshness can't be verified; treat it as a miss.
+					std::error_code ec;
+					const auto diskCacheFileTime = std::filesystem::last_write_time(diskPath, ec);
+					if (ec) {
+						diskCacheOutdated = true;
+						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
+					} else {
+						auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(diskCacheFileTime);
+						diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
+						if (diskCacheOutdated)
+							logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
+					}
 				} else if (!decidedByDigest && cache.IsSkipUnchangedShaders()) {
 					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
@@ -2185,11 +2227,12 @@ namespace SIE
 
 			// Compiling the preprocessed snapshot keeps the published bytecode matched to the key if the files change meanwhile.
 			const bool fromSnapshot = !shared.source.empty();
-			const HRESULT compileResult = dedupeHit    ? S_OK :
-			                              fromSnapshot ? D3DCompile(shared.source.data(), shared.source.size(), pathString.c_str(), nullptr, nullptr, "main",
-															 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob) :
-			                                             D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
-															 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
+			const HRESULT compileResult = shared.compileFailed ? E_FAIL :
+			                              dedupeHit            ? S_OK :
+			                              fromSnapshot         ? D3DCompile(shared.source.data(), shared.source.size(), pathString.c_str(), nullptr, nullptr, "main",
+																	 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob) :
+			                                                     D3DCompileFromFile(path.c_str(), defines.data(), &includeHandler, "main",
+																	 GetShaderProfile(shaderClass), flags, 0, &shaderBlob, &errorBlob);
 			const auto& capturedIncludes = fromSnapshot ? preprocessHandler.includes : includeHandler.includes;
 			// If the include handler captured any includes, register them so the watcher
 			// can invalidate dependents even if this compilation fails. Do NOT clear
@@ -2201,6 +2244,8 @@ namespace SIE
 
 			if (FAILED(compileResult)) {
 				std::string errorText;
+				if (dedupeTicket)
+					dedupeTicket->FailCompile();
 				if (errorBlob != nullptr) {
 					// ID3DBlob does not guarantee a NUL terminator; copy by GetBufferSize()
 					// instead of trusting GetBufferPointer() as a C string.
@@ -2863,6 +2908,7 @@ namespace SIE
 			hlslToShaderMap.clear();
 		}
 		compilationSet.Clear(true);
+		Util::ClearShaderCompileFailures();
 		globals::deferred->ClearShaderCache();
 		for (auto* feature : Feature::GetFeatureList()) {
 			if (feature->loaded) {
@@ -3034,6 +3080,8 @@ namespace SIE
 		std::unique_lock lockM{ mapMutex };
 
 		for (;;) {
+			if (const auto failed = shaderMap.find(key); failed != shaderMap.end() && failed->second.status == ShaderCompilationTask::Status::Failed)
+				return { ClaimResult::Failed, nullptr };
 			using Util::GenerationClaim::ClaimOutcome;
 			auto [outcome, it] = Util::GenerationClaim::TryClaim<ShaderCacheResultTraits>(shaderMap, key, a_taskGeneration,
 				compilationSet.generation.load(std::memory_order_acquire),
@@ -4584,21 +4632,28 @@ namespace SIE
 	ShaderCache::ContentStoreUsage ShaderCache::GetContentStoreUsage()
 	{
 		const auto usage = Util::ShaderContentStore::MeasureUsage(ContentStorePath());
-		return { std::filesystem::absolute(ContentStorePath()), usage.blobs, usage.bytes, ContentStoreMaxBytes() };
+		return { ContentStoreDisplayPath(), usage.blobs, usage.bytes, ContentStoreMaxBytes() };
 	}
 
 	void ShaderCache::ApplyContentStoreLimit()
 	{
-		if (auto* store = GetContentStore()) {
-			store->SetMaxBytes(ContentStoreMaxBytes());
-			store->Trim(ContentStoreMaxBytes());
-		}
+		auto* store = g_openedContentStore.load();
+		if (!store)
+			return;
+		const auto maxBytes = ContentStoreMaxBytes();
+		store->SetMaxBytes(maxBytes);
+		// Walking and deleting can take a while on a large store; the store outlives the plugin, so detach.
+		std::thread([store, maxBytes] { store->Trim(maxBytes); }).detach();
 	}
 
 	void ShaderCache::ClearContentStore()
 	{
 		std::error_code ec;
-		std::filesystem::remove_all(ContentStorePath(), ec);
+		// Through the opened store, so the delete does not overlap one of its trims.
+		if (auto* store = g_openedContentStore.load())
+			store->Clear(ec);
+		else
+			std::filesystem::remove_all(ContentStorePath(), ec);
 		if (ec)
 			logger::warn("Failed to clear the persistent shader store: {}", ec.message());
 	}
@@ -5416,8 +5471,8 @@ namespace SIE
 		if (shouldLogCompletion) {
 			logger::info("Shader compilation completed: {}/{} tasks ({} failed) in {}",
 				completedSnapshot, totalSnapshot, failedSnapshot, GetHumanTime(completionTimeMs));
-			logger::info("Compile dedupe: {} compiles shared, {} MiB retained, {} blobs over the retention cap",
-				contentDedupeTasks.load(), GetCompileDedupe().RetainedBytes() >> 20, GetCompileDedupe().DroppedBlobs());
+			logger::info("Compile dedupe: {} compiles shared, {} restored from the persistent store, {} MiB retained, {} blobs over the retention cap",
+				contentDedupeTasks.load(), contentStoreHitTasks.load(), GetCompileDedupe().RetainedBytes() >> 20, GetCompileDedupe().DroppedBlobs());
 			logger::info("Cache reuse: {} blobs kept from the active cache and {} from the previous cache because their code is unchanged",
 				activeReuseTasks.load(), previousReuseTasks.load());
 			GetCompileDedupe().Clear();
@@ -5716,6 +5771,8 @@ namespace SIE
 					if (fileDone)
 						continue;
 				}
+				// Feature shaders are not dependency-tracked, so any edit may fix a failed compile.
+				Util::ClearShaderCompileFailures();
 				if (clearCache) {
 					// DeleteDiskCache() also resets boot-mismatch/rollback UI state that
 					// the menu reads unsynchronized on the main thread; this watcher

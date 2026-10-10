@@ -1,11 +1,5 @@
 #pragma once
 
-// Fast, non-cryptographic content hashing (XXH3-128) for shader-cache keys.
-// No adversarial threat model applies here -- the disk-cache loader already
-// trusts anything sitting at the expected path unconditionally (see
-// ShaderCache.cpp's use of D3DCOMPILE_SKIP_VALIDATION) -- so speed wins over
-// collision-resistance against a deliberate attacker.
-
 #include <xxhash.h>
 
 #include <array>
@@ -17,6 +11,7 @@
 #include <string>
 #include <string_view>
 
+/// Fast non-cryptographic XXH3-128 hashing for shader cache keys.
 namespace Util::ContentHash
 {
 	struct Hash128
@@ -26,31 +21,29 @@ namespace Util::ContentHash
 
 		bool operator==(const Hash128&) const = default;
 
+		/** @brief 32 lowercase hex digits, high word first. */
 		std::string ToHex() const
 		{
 			return std::format("{:016x}{:016x}", high, low);
 		}
 	};
 
-	inline Hash128 HashBytes(const void* data, size_t size)
+	inline Hash128 HashBytes(const void* a_data, size_t a_size)
 	{
-		const XXH128_hash_t h = XXH3_128bits(data, size);
-		return Hash128{ h.high64, h.low64 };
+		const XXH128_hash_t hash = XXH3_128bits(a_data, a_size);
+		return { hash.high64, hash.low64 };
 	}
 
-	inline Hash128 HashString(std::string_view s)
+	inline Hash128 HashString(std::string_view a_text)
 	{
-		return HashBytes(s.data(), s.size());
+		return HashBytes(a_text.data(), a_text.size());
 	}
 
-	/// Combine two hashes into one, order-sensitive. For folding a dependency
-	/// tree Merkle-style: CombineHashes(selfHash, childHash) per child, in a
-	/// stable (e.g. sorted-by-path) order so the result doesn't depend on
-	/// filesystem iteration order.
-	inline Hash128 CombineHashes(const Hash128& a, const Hash128& b)
+	/// Order-sensitive combination of two hashes.
+	inline Hash128 CombineHashes(const Hash128& a_first, const Hash128& a_second)
 	{
-		const std::array<uint64_t, 4> buf{ a.high, a.low, b.high, b.low };
-		return HashBytes(buf.data(), buf.size() * sizeof(uint64_t));
+		const std::array<uint64_t, 4> buffer{ a_first.high, a_first.low, a_second.high, a_second.low };
+		return HashBytes(buffer.data(), buffer.size() * sizeof(uint64_t));
 	}
 
 	/// Content hash of a file's bytes, normalizing CRLF -> LF first so a line-

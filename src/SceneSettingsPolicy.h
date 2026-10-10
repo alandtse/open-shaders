@@ -17,6 +17,8 @@ namespace SceneSettingsPolicy
 		{ "CSUtility", "Underwater Dof", "values", "mode" },
 		{ "ExponentialHeightFog", "volumetricGridPixelSize" },
 		{ "ExponentialHeightFog", "volumetricGridSizeZ" },
+		{ "ExponentialHeightFog", "volumetricFarGridPixelSize" },
+		{ "ExponentialHeightFog", "volumetricFarGridSizeZ" },
 		{ "ExponentialHeightFog", "volumetricShadowBias" },
 		{ "ExponentialHeightFog", "volumetricDepthDistributionScale" },
 		{ "ExponentialHeightFog", "volumetricHistoryWeight" },

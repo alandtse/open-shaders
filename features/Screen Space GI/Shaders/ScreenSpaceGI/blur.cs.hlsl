@@ -103,7 +103,7 @@ float2x2 getRotationMatrix(float noise)
 
 	float depth = READ_DEPTH(srcDepth, dtid);
 	float3 pos = ScreenToViewPosition(screenPos, depth, eyeIndex);
-	float3 normal = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, dtid, uv, samplerLinearClamp).xy);
+	float3 normal = GBuffer::DecodeNormal(FULLRES_LOAD(srcNormalRoughness, dtid, uv * frameScale, samplerLinearClamp).xy);
 
 	const float2 pixelDirRBViewspaceSizeAtCenterZ = depth.xx * (eyeIndex == 0 ? NDCToViewMul.xy : NDCToViewMul.zw) * RCP_OUT_FRAME_DIM;
 	const float worldRadius = radius * pixelDirRBViewspaceSizeAtCenterZ.x;
@@ -113,7 +113,7 @@ float2x2 getRotationMatrix(float noise)
 	TvBv[0] *= worldRadius;
 	TvBv[1] *= worldRadius;
 #ifdef TEMPORAL_DENOISER
-	halfAngle *= 1 - lerp(0, 0.8, sqrt(accumFrames / (float)MaxAccumFrames));
+	halfAngle *= 1 - lerp(0, 0.8, sqrt(saturate(accumFrames * 255 / (float)MaxAccumFrames)));
 #endif
 
 	const float4 ilY = srcIlY[dtid];

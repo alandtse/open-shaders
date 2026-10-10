@@ -647,7 +647,9 @@ void ScreenSpaceShadows::SetupResources()
 		shadowMask.texture->GetDesc(Util::AsW32(&texDesc));
 		shadowMask.SRV->GetDesc(Util::AsW32(&srvDesc));
 
-		texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		// Store normal front-facing visibility and the reversed depth-offset
+		// visibility used by back-facing SSS/transmission receivers.
+		texDesc.Format = DXGI_FORMAT_R8G8_UNORM;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 		srvDesc.Format = texDesc.Format;
