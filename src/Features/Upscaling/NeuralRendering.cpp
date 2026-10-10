@@ -1624,14 +1624,20 @@ namespace
 		return ImGui::ColorConvertFloat4ToU32(ImVec4(color.r, color.g, color.b, 1.0f));
 	}
 
-	/** @brief Draws one checkbox per material, three to a row, optionally led by its map colour; returns true when one changed. */
-	bool DrawMaterialChecklist(MaterialSelection& selected, bool colourSwatches)
+	/** @brief The labels of the materials in kMaterialListOrder. */
+	std::array<const char*, NR::MaterialMap::kBits> MaterialLabels()
 	{
-		const std::array<const char*, NR::MaterialMap::kBits> labels{
+		return {
 			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
 			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("category_cloth"), "Cloth Gear"),
 			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_other"), "Everything Else")
 		};
+	}
+
+	/** @brief Draws one checkbox per material, three to a row, optionally led by its map colour; returns true when one changed. */
+	bool DrawMaterialChecklist(MaterialSelection& selected, bool colourSwatches)
+	{
+		const auto labels = MaterialLabels();
 		bool changed = false;
 		for (uint32_t i = 0; i < selected.size(); ++i) {
 			ImGui::PushID(static_cast<int>(i));
@@ -1756,17 +1762,19 @@ namespace
 		return changed;
 	}
 
-	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
+	/**
+	 * @brief Draws the per-material selection, strengths and edge softness of one set of values, so the
+	 *        normal settings and a situation profile edit the same widgets. Returns true when one changed.
+	 * @param idScope Keeps the widget IDs of two editors on one panel apart.
+	 */
+	bool DrawMaterialValues(NR::MaterialStrength::Values& values, const char* idScope)
 	{
 		bool changed = false;
-		ImGui::TextUnformatted(T(TKEY("material_apply_to"), "Apply Neural Rendering To"));
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("material_apply_to_tooltip"),
-				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
+		ImGui::PushID(idScope);
 		ImGui::PushID("materialSelection");
 		MaterialSelection selected{};
 		for (uint32_t i = 0; i < selected.size(); ++i)
-			selected[i] = tuning.MaterialSelected(kMaterialListOrder[i]) ? 1 : 0;
+			selected[i] = NR::MaterialStrength::Selected(values, kMaterialListOrder[i]) ? 1 : 0;
 		const auto before = selected;
 		DrawMaterialSelectionButtons(selected);
 		ImGui::SameLine();
@@ -1777,28 +1785,18 @@ namespace
 		ImGui::PopID();
 		for (uint32_t i = 0; i < selected.size(); ++i) {
 			if (selected[i] != before[i]) {
-				tuning.SetMaterialSelected(kMaterialListOrder[i], selected[i] != 0);
+				NR::MaterialStrength::SetSelected(values, kMaterialListOrder[i], selected[i] != 0);
 				changed = true;
 			}
 		}
 		if (ImGui::TreeNodeEx(T(TKEY("material_strengths"), "Fine-Tune Strengths"), ImGuiTreeNodeFlags_None)) {
 			ImGui::PushID("materialStrength");
-			bool strengthChanged = false;
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_skin"), "Skin"), &tuning.strengthSkin, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_hair"), "Hair"), &tuning.strengthHair, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_cloth"), "Cloth Gear"), &tuning.strengthCloth, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_metal"), "Metal Gear"), &tuning.strengthMetal, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (strengthChanged) {
-				tuning.SyncMaterialSwitch();
-				changed = true;
-			}
-			int edgeSoftness = static_cast<int>(tuning.strengthEdgeSoftness);
+			const auto labels = MaterialLabels();
+			for (uint32_t i = 0; i < kMaterialListOrder.size(); ++i)
+				changed |= ImGui::SliderFloat(labels[i], &values.strength[kMaterialListOrder[i]], NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			int edgeSoftness = static_cast<int>(values.edgeSoftness);
 			if (ImGui::SliderInt(T(TKEY("edge_softness"), "Edge Softness"), &edgeSoftness, 0, static_cast<int>(NR::MaterialStrength::kMaxEdgeSoftness))) {
-				tuning.strengthEdgeSoftness = static_cast<uint32_t>(edgeSoftness);
+				values.edgeSoftness = static_cast<uint32_t>(edgeSoftness);
 				changed = true;
 			}
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -1806,6 +1804,24 @@ namespace
 					"Blends each material's strength into its neighbours over this many pixels; 0 keeps a hard boundary between materials."));
 			ImGui::PopID();
 			ImGui::TreePop();
+		}
+		ImGui::PopID();
+		return changed;
+	}
+
+	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
+	{
+		bool changed = false;
+		ImGui::TextUnformatted(T(TKEY("material_apply_to"), "Apply Neural Rendering To"));
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("material_apply_to_tooltip"),
+				"Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts."));
+		auto values = tuning.MaterialStrengths();
+		if (DrawMaterialValues(values, "normal")) {
+			tuning.ApplyStrengths(values.strength);
+			tuning.strengthEdgeSoftness = values.edgeSoftness;
+			tuning.SyncMaterialSwitch();
+			changed = true;
 		}
 		if (tuning.materialStrength && !materialStrengthAvailable)
 			Util::Text::WrappedWarning("%s", T(TKEY("material_unavailable"), "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries."));
@@ -1847,7 +1863,7 @@ namespace
 	}
 
 	/** @brief Draws the dialogue section of the situation profiles; the crop override follows the crop's enable state. Returns true when the crop override changed. */
-	bool DrawContextProfiles(NR::Context::Profiles& contexts, bool cropDisabled)
+	bool DrawContextProfiles(NR::Context::Profiles& contexts, const NR::Tuning& tuning, bool cropDisabled)
 	{
 		bool cropChanged = false;
 		if (ImGui::CollapsingHeader(T(TKEY("dialogue"), "Dialogue"))) {
@@ -1863,18 +1879,18 @@ namespace
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
 					"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
-			int scopeItem = static_cast<int>(contexts.dialogue.scope);
-			const std::array<const char*, 4> dialogueScopeLabels{
-				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
-				T(TKEY("dialogue_scope_everything"), "Everything"),
-				T(TKEY("dialogue_scope_characters"), "Skin, hair and eyes"),
-				T(TKEY("dialogue_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
-			};
-			if (ImGui::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &scopeItem, dialogueScopeLabels.data(), static_cast<int>(dialogueScopeLabels.size())))
-				contexts.dialogue.scope = static_cast<NR::Context::ScopeOverride>(scopeItem);
+			bool sameMaterials = !contexts.dialogue.overrideMaterials;
+			if (ImGui::Checkbox(T(TKEY("dialogue_materials_same"), "Same materials as normal"), &sameMaterials)) {
+				contexts.dialogue.overrideMaterials = !sameMaterials;
+				// Open the editor on what the tester already sees instead of on a blank set.
+				if (contexts.dialogue.overrideMaterials)
+					contexts.dialogue.materials = tuning.MaterialStrengths();
+			}
 			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("dialogue_scope_tooltip"),
-					"What Neural Rendering applies to while a dialogue is open. Choosing a scope keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
+				ImGui::TextUnformatted(T(TKEY("dialogue_materials_tooltip"),
+					"Untick to give dialogue its own per-material strengths and edge softness, set the same way as the settings above. Using them keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
+			if (contexts.dialogue.overrideMaterials)
+				DrawMaterialValues(contexts.dialogue.materials, "dialogue");
 			ImGui::BeginDisabled(cropDisabled);
 			int regionItem = static_cast<int>(contexts.dialogue.region);
 			const std::array<const char*, 2> dialogueRegionLabels{
@@ -2000,7 +2016,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	changed |= DrawMaterialControls(tuning, materialStrengthAvailable.load(std::memory_order_relaxed));
 	const bool cropDisabled = !tuning.regionOfInterest;
-	if (DrawContextProfiles(contexts, cropDisabled))
+	if (DrawContextProfiles(contexts, tuning, cropDisabled))
 		resetHistory = true;
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};

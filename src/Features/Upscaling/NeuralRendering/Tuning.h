@@ -133,7 +133,7 @@ namespace NR
 		/** @brief Whether the material with this NeuralRenderingCategory id has any strength, the state its checkbox shows. */
 		[[nodiscard]] bool MaterialSelected(uint32_t category) const
 		{
-			return category < MaterialStrength::kCount && MaterialStrengths().strength[category] > MaterialStrength::kMinStrength;
+			return MaterialStrength::Selected(MaterialStrengths(), category);
 		}
 
 		/** @brief Selects or clears one material (strength 1 or 0), then keeps the by-material switch in step. */
@@ -148,8 +148,7 @@ namespace NR
 		/** @brief Turns by-material on exactly when some material is below full strength, so all at full is the unfiltered frame. */
 		void SyncMaterialSwitch()
 		{
-			const auto values = MaterialStrengths().strength;
-			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
+			materialStrength = MaterialStrength::AnyBelowFull(MaterialStrengths());
 		}
 
 		/** @brief Writes the eight strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */

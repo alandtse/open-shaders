@@ -7,6 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
+
 namespace
 {
 	using NR::Context::ContextProfile;
@@ -130,7 +132,7 @@ TEST_CASE("Resolve resets history on a situation change only when the profiles e
 	REQUIRE_FALSE(NR::Context::Resolve(Profiles{}, true, state).resetHistory);
 	REQUIRE_FALSE(NR::Context::Resolve(Profiles{}, false, state).resetHistory);
 
-	for (const auto& override : { Profiles{ {}, { .scope = ScopeOverride::kSkinHairEyes } }, Profiles{ {}, { .region = RegionOverride::kFullFrame } } }) {
+	for (const auto& override : { Profiles{ {}, { .overrideMaterials = true, .materials = { .strength = NR::MaterialStrength::kCharactersOnly } } }, Profiles{ {}, { .region = RegionOverride::kFullFrame } } }) {
 		ContextState changing;
 		NR::Context::Resolve(override, false, changing);
 		REQUIRE(NR::Context::Resolve(override, true, changing).resetHistory);
@@ -152,48 +154,88 @@ TEST_CASE("A region override drops only the tracked crop, and only in its situat
 	RequireTuningEqual(NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue), expected);
 }
 
-TEST_CASE("A scope override sets the lane and strengths in its situation and keeps edge softness", "[nr]")
+TEST_CASE("A material override sets the lane, strengths and edge softness in its situation only", "[nr]")
 {
 	NR::Tuning base;
 	base.strengthEdgeSoftness = 3;
-	const Profiles profiles{ {}, { .scope = ScopeOverride::kSkinHairEyesFoliage } };
+	NR::MaterialStrength::Values values;
+	values.strength = NR::MaterialStrength::kCharactersOnly;
+	values.edgeSoftness = 1;
+	const Profiles profiles{ {}, { .overrideMaterials = true, .materials = values } };
 
 	const auto dialogue = NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue);
 	REQUIRE(dialogue.materialStrength);
-	const auto expected = NR::Context::ScopeStrengths(ScopeOverride::kSkinHairEyesFoliage);
-	REQUIRE(expected[NR::MaterialStrength::kFoliage] == 1.0f);
-	REQUIRE(expected[NR::MaterialStrength::kLandscape] == 0.0f);
-	REQUIRE(expected[NR::MaterialStrength::kCloth] == 0.0f);
-	REQUIRE(expected[NR::MaterialStrength::kMetal] == 0.0f);
-	REQUIRE(dialogue.MaterialStrengths().strength == expected);
-	REQUIRE(dialogue.strengthEdgeSoftness == base.strengthEdgeSoftness);
+	REQUIRE(dialogue.MaterialStrengths() == values);
+
+	const auto normal = NR::Context::EffectiveTuning(base, profiles, Kind::kNormal);
+	REQUIRE(normal.materialStrength);
+	REQUIRE(normal.strengthEdgeSoftness == 3);
+	for (const auto strength : normal.MaterialStrengths().strength)
+		REQUIRE(strength == NR::MaterialStrength::kMaxStrength);
 }
 
-TEST_CASE("A scope override in any profile keeps the lane on everywhere, unprotected where it has no override", "[nr]")
+TEST_CASE("A material override in either profile keeps the lane on everywhere", "[nr]")
 {
-	for (const auto scope : { ScopeOverride::kEverything, ScopeOverride::kSkinHairEyes, ScopeOverride::kSkinHairEyesFoliage }) {
-		const Profiles profiles{ {}, { .scope = scope } };
-		const auto normal = NR::Context::EffectiveTuning(NR::Tuning{}, profiles, Kind::kNormal);
-		const auto dialogue = NR::Context::EffectiveTuning(NR::Tuning{}, profiles, Kind::kDialogue);
-		REQUIRE(normal.materialStrength);
-		REQUIRE(dialogue.materialStrength);
-		for (const auto strength : normal.MaterialStrengths().strength)
-			REQUIRE(strength == NR::MaterialStrength::kMaxStrength);
-	}
-
-	const Profiles flipped{ { .scope = ScopeOverride::kSkinHairEyes }, {} };
-	REQUIRE(NR::Context::EffectiveTuning(NR::Tuning{}, flipped, Kind::kNormal).materialStrength);
-	REQUIRE(NR::Context::EffectiveTuning(NR::Tuning{}, flipped, Kind::kDialogue).materialStrength);
+	NR::MaterialStrength::Values values;
+	values.strength = NR::MaterialStrength::kCharactersOnly;
+	const Profiles dialogueOverride{ {}, { .overrideMaterials = true, .materials = values } };
+	const Profiles normalOverride{ { .overrideMaterials = true, .materials = values }, {} };
+	for (const auto& profiles : { dialogueOverride, normalOverride })
+		for (const auto kind : { Kind::kNormal, Kind::kDialogue })
+			REQUIRE(NR::Context::EffectiveTuning(NR::Tuning{}, profiles, kind).materialStrength);
 }
 
-TEST_CASE("The by-material selection is untouched where the profile has no scope override", "[nr]")
+TEST_CASE("The by-material selection is untouched where the profile has no material override", "[nr]")
 {
 	NR::Tuning base;
 	base.SetMaterialSelected(NR::MaterialStrength::kFoliage, false);
-	const Profiles profiles{ {}, { .scope = ScopeOverride::kEverything } };
-	const auto normal = NR::Context::EffectiveTuning(base, profiles, Kind::kNormal);
-	REQUIRE(normal.strengthFoliage == 0.0f);
+	NR::MaterialStrength::Values everything;
+	const Profiles profiles{ {}, { .overrideMaterials = true, .materials = everything } };
+	REQUIRE(NR::Context::EffectiveTuning(base, profiles, Kind::kNormal).strengthFoliage == 0.0f);
 	REQUIRE(NR::Context::EffectiveTuning(base, profiles, Kind::kDialogue).strengthFoliage == 1.0f);
+}
+
+TEST_CASE("Resolve resets history when only the edge softness differs between situations", "[nr]")
+{
+	NR::MaterialStrength::Values values;
+	values.edgeSoftness = 4;
+	const Profiles profiles{ {}, { .overrideMaterials = true, .materials = values } };
+	ContextState state;
+	NR::Context::Resolve(profiles, false, state);
+	REQUIRE(NR::Context::Resolve(profiles, true, state).resetHistory);
+}
+
+TEST_CASE("MigrateLegacyScope turns each saved scope into per-material strengths once", "[nr]")
+{
+	NR::Tuning base;
+	base.strengthEdgeSoftness = 3;
+	Profiles profiles{ {}, { .scope = ScopeOverride::kSkinHairEyes } };
+	NR::Context::MigrateLegacyScope(profiles, base);
+	REQUIRE(profiles.dialogue.overrideMaterials);
+	REQUIRE(profiles.dialogue.materials.strength == NR::MaterialStrength::kCharactersOnly);
+	REQUIRE(profiles.dialogue.materials.edgeSoftness == 3);
+	REQUIRE(profiles.dialogue.scope == ScopeOverride::kSameAsNormal);
+	REQUIRE_FALSE(profiles.normal.overrideMaterials);
+
+	const auto migrated = profiles;
+	NR::Context::MigrateLegacyScope(profiles, base);
+	REQUIRE(profiles.dialogue.materials == migrated.dialogue.materials);
+	REQUIRE(profiles.dialogue.overrideMaterials);
+
+	Profiles foliage{ { .scope = ScopeOverride::kSkinHairEyesFoliage }, { .scope = ScopeOverride::kEverything } };
+	NR::Context::MigrateLegacyScope(foliage, base);
+	REQUIRE(foliage.normal.materials.strength[NR::MaterialStrength::kFoliage] == NR::MaterialStrength::kMaxStrength);
+	REQUIRE(foliage.normal.materials.strength[NR::MaterialStrength::kLandscape] == NR::MaterialStrength::kMinStrength);
+	REQUIRE(foliage.dialogue.materials.strength == NR::MaterialStrength::kDefaults);
+}
+
+TEST_CASE("MigrateLegacyScope leaves a profile with no saved scope alone", "[nr]")
+{
+	Profiles profiles;
+	NR::Context::MigrateLegacyScope(profiles, NR::Tuning{});
+	REQUIRE_FALSE(profiles.normal.overrideMaterials);
+	REQUIRE_FALSE(profiles.dialogue.overrideMaterials);
+	REQUIRE(profiles.dialogue.materials == NR::MaterialStrength::Values{});
 }
 
 TEST_CASE("ContextProfile Sanitize clamps out-of-range overrides", "[nr]")
@@ -201,12 +243,32 @@ TEST_CASE("ContextProfile Sanitize clamps out-of-range overrides", "[nr]")
 	ContextProfile profile;
 	profile.scope = static_cast<ScopeOverride>(99);
 	profile.region = static_cast<RegionOverride>(99);
+	profile.materials.strength[NR::MaterialStrength::kSkin] = 5.0f;
+	profile.materials.strength[NR::MaterialStrength::kHair] = std::numeric_limits<float>::quiet_NaN();
+	profile.materials.edgeSoftness = 9;
 	profile.Sanitize();
 	REQUIRE(profile.scope == NR::Context::kMaxScope);
 	REQUIRE(profile.region == NR::Context::kMaxRegion);
+	REQUIRE(profile.materials.strength[NR::MaterialStrength::kSkin] == NR::MaterialStrength::kMaxStrength);
+	REQUIRE(profile.materials.strength[NR::MaterialStrength::kHair] == NR::MaterialStrength::kDefaults[NR::MaterialStrength::kHair]);
+	REQUIRE(profile.materials.edgeSoftness == NR::MaterialStrength::kMaxEdgeSoftness);
 
 	Profiles profiles;
 	profiles.dialogue.scope = static_cast<ScopeOverride>(99);
 	profiles.Sanitize();
 	REQUIRE(profiles.dialogue.scope == NR::Context::kMaxScope);
+}
+
+TEST_CASE("Selecting a material through the value helpers matches the tuning's own selection", "[nr]")
+{
+	NR::Tuning tuning;
+	tuning.SetMaterialSelected(NR::MaterialStrength::kHair, false);
+	auto values = tuning.MaterialStrengths();
+	for (uint32_t category = 0; category < NR::MaterialStrength::kCount; ++category)
+		REQUIRE(NR::MaterialStrength::Selected(values, category) == tuning.MaterialSelected(category));
+	NR::MaterialStrength::SetSelected(values, NR::MaterialStrength::kHair, true);
+	REQUIRE(NR::MaterialStrength::Selected(values, NR::MaterialStrength::kHair));
+	REQUIRE_FALSE(NR::MaterialStrength::AnyBelowFull(values));
+	NR::MaterialStrength::SetSelected(values, NR::MaterialStrength::kMetal, false);
+	REQUIRE(NR::MaterialStrength::AnyBelowFull(values));
 }
