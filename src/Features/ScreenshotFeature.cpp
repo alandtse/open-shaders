@@ -866,11 +866,23 @@ void ScreenshotFeature::ProcessCaptureRequest()
 		request.swap(pendingRequest);
 	}
 	if (request || captureRequested.exchange(false)) {
-		// Capture moves the request, so keep a copy to still answer a caller waiting on a throw.
-		const auto onComplete = request ? request->onComplete : nullptr;
+		// Capture moves the request, so keep a once-only handle to still answer a caller
+		// waiting on a throw without invoking a throwing callback a second time.
+		std::function<void(const CaptureResult&)> onComplete;
+		if (request && request->onComplete) {
+			request->onComplete = onComplete = [callback = std::move(request->onComplete), done = std::make_shared<std::atomic_bool>(false)](const CaptureResult& result) {
+				if (!done->exchange(true))
+					callback(result);
+			};
+		}
 		const auto failCaller = [&onComplete]() {
-			if (onComplete)
+			if (!onComplete)
+				return;
+			try {
 				onComplete({});
+			} catch (...) {
+				logger::error("Screenshot completion callback threw.");
+			}
 		};
 		try {
 			Capture(std::move(request));
