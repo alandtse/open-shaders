@@ -300,7 +300,7 @@ bool Effect::Apply()
 					GetCachedCommonTexture(info.renderTargetName);
 	} catch (const std::exception& error) {
 		logger::error("[EFFECTS11] Failed to create resources for '{}': {}", GetName(), error.what());
-		effect = nullptr;
+		ReleaseEffect();
 		errors.push_back(T("feature.effects11.error.resources", "Failed to create effect resources. See the log for details."));
 		return false;
 	}
@@ -309,16 +309,22 @@ bool Effect::Apply()
 	return true;
 }
 
-void Effect::Unload()
+void Effect::ReleaseEffect()
 {
-	effect = nullptr;
-
 	techniques.clear();
 	variables.clear();
-	customTextureCache.clear();
 	uiVariables.clear();
-	separators.clear();
 	externBindings.clear();
+	ClearVariableCache();
+	effect = nullptr;
+}
+
+void Effect::Unload()
+{
+	ReleaseEffect();
+
+	customTextureCache.clear();
+	separators.clear();
 	effectTextureCache.clear();
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
@@ -326,8 +332,6 @@ void Effect::Unload()
 	techniqueDropdown = {};
 	sourceGroupMap.clear();
 	sourceOrderMap.clear();
-
-	ClearVariableCache();
 
 	filePresent = false;
 	errors.clear();
