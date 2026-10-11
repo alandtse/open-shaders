@@ -777,10 +777,10 @@ namespace FoveatedRenderImpl::Ops
 			uint32_t dstX = (i == 1) ? eyeWidthOut : 0;
 			uint32_t srcX = (i == 1) ? eyeWidthIn : 0;
 			if (!StretchDRSToFullEye(
-				src, dstUAV,
-				dstX, eyeWidthOut, eyeHeightOut,
-				srcX, renderW, renderH,
-				eyeWidthIn, eyeHeightIn))
+					src, dstUAV,
+					dstX, eyeWidthOut, eyeHeightOut,
+					srcX, renderW, renderH,
+					eyeWidthIn, eyeHeightIn))
 				return false;
 		}
 		return true;
