@@ -183,6 +183,14 @@ grid-aligned bounds alone with no margin, for checking what the crop covers on i
 own. Both keep the 64 px alignment and the stabiliser, since NGX must not be handed
 an arbitrary subrect.
 
+**Evaluate Eyes in Parallel** (`parallelEyes`, VR only, on by default) records the
+second eye's evaluation on a second compute queue (`NeuralRendering::ParallelQueue`). NR's
+model kernels launch few thread blocks, so the two eyes' runs overlap there; a second direct
+queue does not overlap. The main queue waits for the second queue before the D3D11 output
+dependency, so the composite sees both eyes. If the queue cannot be created, or an evaluate
+fails while the second queue was in use, it falls back to one queue for the rest of the
+session and logs a warning.
+
 Also in developer mode, **Track Multiple Characters** (`regionGroup`) grows the crop
 to cover the next most prominent actors, in score order, while the union stays under a
 share of the eye (`GroupAreaCap`: `kMaxGroupAreaFraction` by default, or the

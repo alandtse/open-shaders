@@ -294,6 +294,8 @@ public:
 private:
 	bool LoadFXFile();
 	void ReflectCompiledEffect();
+	/** @brief Drops every pointer into the effect's variables and techniques, then the effect that owns them. */
+	void ReleaseEffect();
 
 	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
 	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;
