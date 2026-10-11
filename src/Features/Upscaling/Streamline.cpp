@@ -8,8 +8,8 @@
 #include <dxgi1_3.h>
 #include <exception>
 
-#include "../../Deferred.h"
 #include "../../Buffer.h"
+#include "../../Deferred.h"
 #include "../../GpuPass.h"
 #include "../../Hooks.h"
 #include "../../State.h"
@@ -852,7 +852,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 						fallbackSetupErrorLogged = true;
 					}
 				} else if (FoveatedRenderImpl::Ops::StretchDRSBothEyes(fallbackOutput->uav.get(), eyeWidthOut, eyeHeightOut,
-						   eyeWidthIn, eyeHeightIn, (uint32_t)renderSize.x, eyeHeightIn)) {
+							   eyeWidthIn, eyeHeightIn, (uint32_t)renderSize.x, eyeHeightIn)) {
 					D3D11_BOX fallbackBox = { 0, 0, 0, eyeWidthOut * 2, eyeHeightOut, 1 };
 					context->CopySubresourceRegion(colorOut, 0, 0, 0, 0, fallbackOutput->resource.get(), 0, &fallbackBox);
 				} else if (!fallbackSetupErrorLogged) {
