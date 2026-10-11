@@ -13,7 +13,9 @@
 #	include "Effects11/SettingManager.h"
 #endif
 #include "Globals.h"
+#include "Utils/ColorSpace.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -26,12 +28,27 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LinearLighting::Settings,
 	enableLinearLighting,
 	enableACEScg,
-	ambientMult,
-	vanillaDiffuseColorMult)
+	conversionSaturation,
+	ambientMult)
 
 namespace
 {
-	constexpr float kAuthoredColorGamma = 1.8f;
+	constexpr float kDiffuseGamma = 2.2f;
+	constexpr float kDiffuseMidReflectance = 0.5f;
+	constexpr float kDiffuseWhiteReflectance = 1.0f;
+	constexpr float kDiffuseEncodedMidpoint = 0.5f;
+	const float kDiffuseCurve = []() {
+		const float midpoint = std::pow(kDiffuseEncodedMidpoint, kDiffuseGamma);
+		return kDiffuseMidReflectance * (1.0f - midpoint) / (midpoint * (kDiffuseWhiteReflectance - kDiffuseMidReflectance));
+	}();
+	constexpr float kSaturationMin = 0.0f;
+	constexpr float kSaturationMax = 1.0f;
+	constexpr std::array kLinearSRGBLuminanceWeights{ 0.2125f, 0.7154f, 0.0721f };
+	constexpr float kSRGBEncodedThreshold = 0.04045f;
+	constexpr float kSRGBLinearScale = 12.92f;
+	constexpr float kSRGBOffset = 0.055f;
+	constexpr float kSRGBScale = 1.055f;
+	constexpr float kSRGBExponent = 2.4f;
 	constexpr float kMultiplierMin = 0.0f;
 	constexpr float kMultiplierMax = 5.0f;
 
@@ -45,8 +62,8 @@ namespace
 	void SanitizeSettings(LinearLighting::Settings& a_settings)
 	{
 		const LinearLighting::Settings defaults{};
+		a_settings.conversionSaturation = Util::ClampFiniteOrDefault(a_settings.conversionSaturation, kSaturationMin, kSaturationMax, defaults.conversionSaturation);
 		a_settings.ambientMult = ClampFiniteOrDefault(a_settings.ambientMult, defaults.ambientMult);
-		a_settings.vanillaDiffuseColorMult = ClampFiniteOrDefault(a_settings.vanillaDiffuseColorMult, defaults.vanillaDiffuseColorMult);
 	}
 }
 
@@ -71,13 +88,17 @@ void LinearLighting::DrawSettings()
 							  "Requires Linear Lighting and Post Processing enabled.\n"
 							  "All sRGB-gamut textures and colors will be converted to ACEScg during shading."));
 
-	ImGui::SliderFloat(T(TKEY("vanilla_diffuse_color_multiplier"), "Vanilla Diffuse Color Multiplier"), &settings.vanillaDiffuseColorMult, kMultiplierMin, kMultiplierMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("vanilla_diffuse_saturation"), "Conversion Saturation"), &settings.conversionSaturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat(T(TKEY("ambient_multiplier"), "Ambient Multiplier"), &settings.ambientMult, kMultiplierMin, kMultiplierMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 }
 
 void LinearLighting::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!o_json.contains("conversionSaturation")) {
+		if (const auto legacy = o_json.find("vanillaDiffuseSaturation"); legacy != o_json.end() && legacy->is_number())
+			settings.conversionSaturation = legacy->get<float>();
+	}
 	SanitizeSettings(settings);
 	weatherLightingColorsInitialized = false;
 }
@@ -220,13 +241,30 @@ void LinearLighting::OnBeforePostProcessing(RE::RENDER_TARGET a_renderTarget)
 
 std::function<void()> LinearLighting::OnReflectionsRenderBegin()
 {
-	constexpr auto gammaRenderTarget = static_cast<uint32_t>(State::ExtraShaderDescriptors::GammaRenderTarget);
-	auto* const state = globals::state;
-	if ((state->permutationData.ExtraShaderDescriptor & gammaRenderTarget) == 0)
+	if (!IsLinearLightingActive() || !globals::game::renderer)
 		return nullptr;
 
+	constexpr auto gammaRenderTarget = static_cast<uint32_t>(State::ExtraShaderDescriptors::GammaRenderTarget);
+	auto* const state = globals::state;
+	const auto previousGammaRenderTarget = state->permutationData.ExtraShaderDescriptor & gammaRenderTarget;
+	auto& clearColor = globals::game::renderer->GetRendererData().clearColor;
+	const auto previousClearColor = std::to_array(clearColor);
+	const auto linearLightingData = GetCommonBufferData();
+	const auto linearColor = DecodeAuthoredColor({ clearColor[0], clearColor[1], clearColor[2] }, linearLightingData.conversionSaturation);
+	DirectX::SimpleMath::Vector3 reflectionClearColor{ linearColor.red, linearColor.green, linearColor.blue };
+	if (linearLightingData.enableACEScg) {
+		static const auto srgbToACEScg = getWhiteAdaptedRGBMatrix("sRGB", "ACEScg").Transpose();
+		reflectionClearColor = DirectX::SimpleMath::Vector3::Transform(reflectionClearColor, srgbToACEScg);
+	}
+	clearColor[0] = reflectionClearColor.x;
+	clearColor[1] = reflectionClearColor.y;
+	clearColor[2] = reflectionClearColor.z;
+
 	state->permutationData.ExtraShaderDescriptor &= ~gammaRenderTarget;
-	return [state]() { state->permutationData.ExtraShaderDescriptor |= gammaRenderTarget; };
+	return [state, &clearColor, previousClearColor, previousGammaRenderTarget]() {
+		std::ranges::copy(previousClearColor, clearColor);
+		state->permutationData.ExtraShaderDescriptor = (state->permutationData.ExtraShaderDescriptor & ~gammaRenderTarget) | previousGammaRenderTarget;
+	};
 }
 
 void LinearLighting::Prepass()
@@ -290,13 +328,15 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 	data.enableACEScg = settings.enableACEScg && data.enableLinearLighting && globals::features::postProcessing.loaded;
 	data.isDirLightLinear = isDirLightLinear;
 	data.dirLightMult = dirLightMult;
-	data.authoredColorGamma = kAuthoredColorGamma;
 
 	Settings sanitizedSettings = settings;
 	SanitizeSettings(sanitizedSettings);
-	data.vanillaDiffuseColorMult = sanitizedSettings.vanillaDiffuseColorMult;
+	data.diffuseGamma = kDiffuseGamma;
+	data.diffuseWhiteReflectance = kDiffuseWhiteReflectance;
+	data.conversionSaturation = sanitizedSettings.conversionSaturation;
+	data.diffuseCurve = kDiffuseCurve;
 	data.ambientMult = sanitizedSettings.ambientMult;
-	if (data.enableLinearLighting && !weatherLightingColorsInitialized)
+	if (data.enableLinearLighting && (!weatherLightingColorsInitialized || data.conversionSaturation != weatherConversionSaturation))
 		OnWeatherColorsUpdated(globals::game::sky);
 	data.effectLightingColor = effectLightingColor;
 	data.skyStaticsColor = skyStaticsColor;
@@ -307,7 +347,6 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 		auto& enb = globals::features::effects11;
 		if (enb.enableEffect) {
 			data.ambientMult = 1.0f;
-			data.vanillaDiffuseColorMult = 1.0f;
 			data.dirLightMult = 1.0f;
 		}
 	}
@@ -340,24 +379,38 @@ void LinearLighting::OnWeatherColorsUpdated(RE::Sky* a_sky)
 		a_sky->skyColor[static_cast<uint>(RE::TESWeather::ColorTypes::kEffectLighting)];
 	const auto skyStaticsSource =
 		a_sky->skyColor[static_cast<uint>(RE::TESWeather::ColorTypes::kSkyStatics)];
+	const float saturation = Util::ClampFiniteOrDefault(settings.conversionSaturation, kSaturationMin, kSaturationMax, Settings{}.conversionSaturation);
 	if (weatherLightingColorsInitialized &&
+		saturation == weatherConversionSaturation &&
 		effectLightingSource == weatherEffectLightingSource &&
 		skyStaticsSource == weatherSkyStaticsSource)
 		return;
 
 	weatherEffectLightingSource = effectLightingSource;
 	weatherSkyStaticsSource = skyStaticsSource;
-	effectLightingColor = DecodeAuthoredColor(effectLightingSource);
-	skyStaticsColor = DecodeAuthoredColor(skyStaticsSource);
+	weatherConversionSaturation = saturation;
+	effectLightingColor = DecodeAuthoredColor(effectLightingSource, saturation);
+	skyStaticsColor = DecodeAuthoredColor(skyStaticsSource, saturation);
 	weatherLightingColorsInitialized = true;
 }
 
-RE::NiColor LinearLighting::DecodeAuthoredColor(RE::NiColor inColor)
+RE::NiColor LinearLighting::DecodeAuthoredColor(RE::NiColor inColor, float saturation)
 {
+	const auto decode = [](float value) {
+		const float magnitude = std::abs(value);
+		const float linear = magnitude <= kSRGBEncodedThreshold ? magnitude / kSRGBLinearScale : std::pow((magnitude + kSRGBOffset) / kSRGBScale, kSRGBExponent);
+		return std::copysign(linear, value);
+	};
 	RE::NiColor outColor;
-	outColor.red = std::pow(inColor.red, kAuthoredColorGamma);
-	outColor.green = std::pow(inColor.green, kAuthoredColorGamma);
-	outColor.blue = std::pow(inColor.blue, kAuthoredColorGamma);
+	outColor.red = decode(inColor.red);
+	outColor.green = decode(inColor.green);
+	outColor.blue = decode(inColor.blue);
+	if (saturation < kSaturationMax) {
+		const float luminance = outColor.red * kLinearSRGBLuminanceWeights[0] + outColor.green * kLinearSRGBLuminanceWeights[1] + outColor.blue * kLinearSRGBLuminanceWeights[2];
+		outColor.red = std::lerp(luminance, outColor.red, saturation);
+		outColor.green = std::lerp(luminance, outColor.green, saturation);
+		outColor.blue = std::lerp(luminance, outColor.blue, saturation);
+	}
 	return outColor;
 }
 

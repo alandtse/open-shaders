@@ -30,9 +30,9 @@ namespace LandscapeLayers
 			[branch] if ((WEIGHT) > 0.01)                                                                                                                          \
 			{                                                                                                                                                      \
 				float weight = WEIGHT;                                                                                                                             \
-				float4 landColor = SampleTerrain(COLOR_TEX, COLOR_SAMP, uv, sharedOffset);                                                                         \
+				float4 landColor = SampleTerrainColor(COLOR_TEX, COLOR_SAMP, uv, sharedOffset, LandscapeLayers::PbrTileUsesFullPBR(TILE));                         \
 				float3 landColorRGB = landColor.rgb;                                                                                                               \
-				[branch] if (!LandscapeLayers::PbrTileUsesFullPBR(TILE))                                                                                           \
+				[branch] if (!LandscapeLayers::PbrTileUsesFullPBR(TILE) && !ENABLE_LL)                                                                             \
 				{                                                                                                                                                  \
 					landColorRGB = Color::SrgbToLinear(landColorRGB / Color::PBRLightingScale);                                                                    \
 				}                                                                                                                                                  \
@@ -70,7 +70,7 @@ namespace LandscapeLayers
 			[branch] if ((WEIGHT) > 0.01)                                                                                    \
 			{                                                                                                                \
 				float weight = WEIGHT;                                                                                       \
-				float4 landColor = SampleTerrain(COLOR_TEX, COLOR_SAMP, uv, sharedOffset);                                   \
+				float4 landColor = SampleTerrainColor(COLOR_TEX, COLOR_SAMP, uv, sharedOffset, false);                       \
 				float3 landColorRGB = landColor.rgb;                                                                         \
 				float landAlpha = landColor.a;                                                                               \
 				float4 landNormal = SampleTerrain(NORM_TEX, NORM_SAMP, uv, sharedOffset);                                    \

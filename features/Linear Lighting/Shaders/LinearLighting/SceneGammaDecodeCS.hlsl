@@ -13,6 +13,6 @@ RWTexture2D<float4> SceneColor : register(u0);
 		return;
 
 	float4 color = SceneColor[pixel];
-	color.rgb = Color::DecodeAuthoredColor(color.rgb);
+	color.rgb = Color::SceneGammaToLinear(color.rgb);
 	SceneColor[pixel] = color;
 }
