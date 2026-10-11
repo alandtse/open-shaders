@@ -340,8 +340,18 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	DX::ThrowIfFailed(commandQueue->Wait(interopFence.fence12.get(), d3d11SignalValue));
 
 	// New frame, reset
-	if (frameFenceValues[frameIndex])
-		DX::ThrowIfFailed(interopFence.fence12->SetEventOnCompletion(frameFenceValues[frameIndex], nullptr));
+	if (frameFenceValues[frameIndex]) {
+		DWORD waitError = 0;
+		const auto outcome = interopFence.CpuWaitOutcome(frameFenceValues[frameIndex], kFrameFenceTimeoutMs, &waitError);
+		if (outcome == SharedFence::WaitOutcome::kTimeout) {
+			static bool timeoutLogged = false;
+			if (!std::exchange(timeoutLogged, true))
+				logger::warn("[DX12SwapChain] frame fence did not retire within {} ms; skipping presents until it does", kFrameFenceTimeoutMs);
+			return DXGI_ERROR_WAS_STILL_DRAWING;
+		}
+		if (outcome == SharedFence::WaitOutcome::kFailed)
+			return waitError ? HRESULT_FROM_WIN32(waitError) : DXGI_ERROR_DEVICE_REMOVED;
+	}
 	DX::ThrowIfFailed(commandAllocators[frameIndex]->Reset());
 	DX::ThrowIfFailed(commandLists[frameIndex]->Reset(commandAllocators[frameIndex].get(), nullptr));
 
