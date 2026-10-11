@@ -22,6 +22,7 @@ static const float TAP_SWAP_FADE_WIDTH = 0.1;
 static const float DOMINANCE_GUARD_WIDTH = 0.02;
 static const float STOCHASTIC_LOD_PHI = 1.618;
 static const float STOCHASTIC_LOD_BLEND = 0.65;
+static const float STOCHASTIC_SURFACE_MIP_BIAS = -1.0;
 
 // Structure to hold stochastic sampling offsets and tap weights
 struct StochasticOffsets
@@ -32,8 +33,8 @@ struct StochasticOffsets
 	float tap1Weight;
 };
 
-// Shared LOD base for the six-way blend (set once per pixel).
-static float g_terrainStochasticLodBase;
+static float2 g_terrainStochasticDdx;
+static float2 g_terrainStochasticDdy;
 
 struct StochasticCorner
 {
@@ -57,22 +58,12 @@ inline float2 hashLOD(float2 p)
 	return frac(float2(dot(p, float2(1.0, 17.0)), dot(p, float2(1.0, 23.0))));
 }
 
-// LOD base from original UV derivatives + MipBias.
-// Hashed offsets break implicit derivatives, so SampleLevel needs an explicit mip.
-inline float ComputeTerrainStochasticLodBase(float2 uv)
+// Hashed offsets must not enter the gradients used for anisotropic filtering.
+inline void InitializeTerrainStochasticGradients(float2 uv)
 {
-	float2 dx = ddx(uv);
-	float2 dy = ddy(uv);
-	float minDeltaSq = min(dot(dx, dx), dot(dy, dy));
-	return 0.5 * log2(max(minDeltaSq, 1e-12)) + SharedData::MipBias;
-}
-
-// Per-texture mip; square landscape maps only shift the shared LOD by log2(size).
-inline float TerrainStochasticMipLevel(Texture2D tex)
-{
-	float2 textureDims;
-	tex.GetDimensions(textureDims.x, textureDims.y);
-	return max(g_terrainStochasticLodBase + log2(max(textureDims.x, textureDims.y)), 0.0);
+	float biasScale = exp2(SharedData::MipBias + STOCHASTIC_SURFACE_MIP_BIAS);
+	g_terrainStochasticDdx = ddx(uv) * biasScale;
+	g_terrainStochasticDdy = ddy(uv) * biasScale;
 }
 
 // Two highest barycentric corners of the triangular grid.
@@ -175,11 +166,8 @@ inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, f
 // Main stochastic sampling function
 inline float4 StochasticEffect(Texture2D tex, SamplerState samp, float2 uv, StochasticOffsets offsets, bool colorTexture = false, bool linearInput = false)
 {
-	// Calculate custom mip level from original UVs.
-	float mipLevel = TerrainStochasticMipLevel(tex);
-
-	float4 s1 = tex.SampleLevel(samp, uv + offsets.offset1, mipLevel);
-	float4 s2 = tex.SampleLevel(samp, uv + offsets.offset2, mipLevel);
+	float4 s1 = tex.SampleGrad(samp, uv + offsets.offset1, g_terrainStochasticDdx, g_terrainStochasticDdy);
+	float4 s2 = tex.SampleGrad(samp, uv + offsets.offset2, g_terrainStochasticDdx, g_terrainStochasticDdy);
 
 	// Height calculation - use luminance for RGB data, alpha when available
 	float h1 = lerp(dot(s1.rgb, LUMINANCE_WEIGHTS), s1.a, step(0.001, s1.a));
