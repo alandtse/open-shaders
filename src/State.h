@@ -523,7 +523,7 @@ public:
 	static_assert(sizeof(PermutationCB) == 144);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
-	ConstantBuffer* permutationCB = nullptr;
+	std::unique_ptr<ConstantBuffer> permutationCB;
 
 	struct alignas(16) SharedDataCB
 	{
@@ -589,8 +589,8 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
 	static_assert(sizeof(SharedDataCB) <= D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
 
-	ConstantBuffer* sharedDataCB = nullptr;
-	ConstantBuffer* featureDataCB = nullptr;
+	std::unique_ptr<ConstantBuffer> sharedDataCB;
+	std::unique_ptr<ConstantBuffer> featureDataCB;
 
 	PermutationCB permutationData{};
 	PermutationCB permutationDataPrevious{};

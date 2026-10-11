@@ -300,7 +300,7 @@ bool Effect::Apply()
 					GetCachedCommonTexture(info.renderTargetName);
 	} catch (const std::exception& error) {
 		logger::error("[EFFECTS11] Failed to create resources for '{}': {}", GetName(), error.what());
-		effect = nullptr;
+		ReleaseEffect();
 		errors.push_back(T("feature.effects11.error.resources", "Failed to create effect resources. See the log for details."));
 		return false;
 	}
@@ -309,16 +309,22 @@ bool Effect::Apply()
 	return true;
 }
 
-void Effect::Unload()
+void Effect::ReleaseEffect()
 {
-	effect = nullptr;
-
 	techniques.clear();
 	variables.clear();
-	customTextureCache.clear();
 	uiVariables.clear();
-	separators.clear();
 	externBindings.clear();
+	ClearVariableCache();
+	effect = nullptr;
+}
+
+void Effect::Unload()
+{
+	ReleaseEffect();
+
+	customTextureCache.clear();
+	separators.clear();
 	effectTextureCache.clear();
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
@@ -326,8 +332,6 @@ void Effect::Unload()
 	techniqueDropdown = {};
 	sourceGroupMap.clear();
 	sourceOrderMap.clear();
-
-	ClearVariableCache();
 
 	filePresent = false;
 	errors.clear();
@@ -353,9 +357,17 @@ bool Effect::LoadFXFile()
 	}
 	std::string sourceCode(file.data.get(), file.size);
 
-	if (sourceCode.starts_with("KIEFX")) {
-		errors.push_back(T("feature.effects11.error.encrypted_unsupported", "Encrypted Shader 2 effects are not supported."));
-		return false;
+	if (ENBExtender::IsEncryptedSource(sourceCode)) {
+		uiDefines.clear();
+		std::string error;
+		if (!ENBExtender::CreateEncryptedEffect(GetName(), effect, error)) {
+			errors.push_back(error);
+			return false;
+		}
+		ReflectCompiledEffect();
+		ENBExtender::ResolveCompiledGroups(*this, filePath.parent_path() / (GetName() + ".ini"));
+		logger::info("[EFFECTS11] Loaded encrypted FX file through ENB Extender: {}", filePath.string());
+		return true;
 	}
 	EffectSourceCompatibility::PatchInteriorTimeOfDayMacro(sourceCode);
 
@@ -584,8 +596,9 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 
 	DirectX::ScratchImage image;
 	HRESULT hr = DirectX::LoadFromDDSFile(filepath.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+	// PNG color-space metadata must not add hardware sRGB decoding to preset LUT values.
 	if (FAILED(hr))
-		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_NONE, nullptr, image);
+		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
 	if (SUCCEEDED(hr))
 		hr = DirectX::CreateShaderResourceView(device, image.GetImages(), image.GetImageCount(), image.GetMetadata(), srv.put());
 

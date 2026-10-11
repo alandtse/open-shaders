@@ -1390,7 +1390,7 @@
     "feature.linear_lighting.key_feature_2": "",
     "feature.linear_lighting.key_feature_3": "",
     "feature.linear_lighting.name": "",
-    "feature.linear_lighting.vanilla_diffuse_color_multiplier": "",
+    "feature.linear_lighting.vanilla_diffuse_saturation": "Saturación de la conversión",
     "feature.lod_blending.description": "",
     "feature.lod_blending.disable_terrain_vertex_colors": "",
     "feature.lod_blending.disable_terrain_vertex_colors_tooltip": "",
