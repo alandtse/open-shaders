@@ -1726,7 +1726,7 @@ namespace SIE
 		template <size_t MaxOffsetsSize>
 		static void ReflectConstantBuffers(ID3D11ShaderReflection& reflector,
 			std::array<size_t, 3>& bufferSizes,
-			std::array<int8_t, MaxOffsetsSize>& constantOffsets,
+			std::array<uint8_t, MaxOffsetsSize>& constantOffsets,
 			uint64_t& vertexDesc,
 			ShaderClass shaderClass, uint32_t descriptor, const RE::BSShader& shader)
 		{
@@ -1828,7 +1828,7 @@ namespace SIE
 							GetVariableIndex(shaderClass, shader, varDesc.Name);
 						const bool variableFound = variableIndex != -1;
 						if (variableFound) {
-							constantOffsets[variableIndex] = (int8_t)(varDesc.StartOffset / 4);
+							constantOffsets[variableIndex] = (uint8_t)(varDesc.StartOffset / 4);
 						} else {
 							logger::trace("Unknown variable name {} in {} shader {}::{:X}",
 								varDesc.Name, magic_enum::enum_name(shaderClass),
@@ -1846,7 +1846,7 @@ namespace SIE
 									const auto variableArrayIndex =
 										GetVariableIndex(shaderClass, shader, arrayName.c_str());
 									if (variableArrayIndex != -1) {
-										constantOffsets[variableArrayIndex] = static_cast<int8_t>(varDesc.StartOffset / 4);
+										constantOffsets[variableArrayIndex] = static_cast<uint8_t>(varDesc.StartOffset / 4);
 									} else {
 										logger::debug("Unknown variable name {} in {} shader {}::{:X}",
 											arrayName, magic_enum::enum_name(shaderClass),
@@ -1862,7 +1862,7 @@ namespace SIE
 											GetVariableIndex(shaderClass, shader, varName.c_str());
 										if (variableArrayElementIndex != -1) {
 											constantOffsets[variableArrayElementIndex] =
-												static_cast<int8_t>((varDesc.StartOffset + elementSize * arrayIndex) / 4);
+												static_cast<uint8_t>((varDesc.StartOffset + elementSize * arrayIndex) / 4);
 										} else {
 											logger::debug(
 												"Unknown variable name {} in {} shader {}::{:X}", varName,
@@ -2391,7 +2391,7 @@ namespace SIE
 					descriptor);
 			} else {
 				std::array<size_t, 3> bufferSizes = { 0, 0, 0 };
-				std::ranges::fill(newShader->constantTable, (int8_t)0);
+				std::ranges::fill(newShader->constantTable, (uint8_t)0);
 				uint64_t dummy;
 				ReflectConstantBuffers(*reflector.get(), bufferSizes, newShader->constantTable,
 					dummy,
