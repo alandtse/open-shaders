@@ -319,6 +319,8 @@ int main() {
             check(simulatedSSS.settings.ScatterMode == 2, "Absent modern SSS fields use current defaults");
             check(!simulatedUpscaling.neuralRenderingEnabled && !simulatedUpscaling.enableDLSSFrameGen,
                 "Absent Open Shaders opt-ins stay off using actual current Upscaling settings");
+            check(!simulatedUpscaling.neuralRenderingStartupPrewarm,
+                "Startup prewarm remains opt-in for configs that predate the setting");
             check(!simulatedUpscaling.fsr4RuntimeEnable, "FSR4 starts from its declared default before adapter migration");
             check(json(simulatedUpscaling.neuralRenderingContexts) == json(NR::Context::Profiles{}),
                 "Old configs keep the new dialogue profiles at their unchanged defaults");
@@ -388,15 +390,17 @@ int main() {
     };
     for (const bool enabled : {false, true}) {
         json imported = {{"Version", "old"}, {"Upscaling", {
-            {"neuralRenderingEnabled", enabled}, {"neuralRenderingContexts", profiles}}}};
+            {"neuralRenderingEnabled", enabled}, {"neuralRenderingStartupPrewarm", enabled},
+            {"neuralRenderingContexts", profiles}}}};
         const auto originalBytes = imported.dump(1);
         check(WriteConfigFile(userPath, originalBytes), "Write saved dialogue profiles");
         State migrated;
         migrated.Load();
         check(read(userPath) == originalBytes, "Loading dialogue profiles preserves the original bytes");
         check(simulatedUpscaling.neuralRenderingEnabled == enabled &&
+            simulatedUpscaling.neuralRenderingStartupPrewarm == enabled &&
             json(simulatedUpscaling.neuralRenderingContexts) == profiles,
-            "Dialogue profiles and explicit NR enablement import independently");
+            "Dialogue profiles, NR enablement, and startup prewarm import independently");
         const json favoritePatch = {{"Favorites", {{"Upscaling", true}}}};
         check(migrated.SaveFeaturePreference(favoritePatch), "Favorite imported dialogue profiles");
         imported.merge_patch(favoritePatch);
@@ -407,8 +411,9 @@ int main() {
             "Explicit Save preserves dialogue profiles");
         migrated.Load();
         check(simulatedUpscaling.neuralRenderingEnabled == enabled &&
+            simulatedUpscaling.neuralRenderingStartupPrewarm == enabled &&
             json(simulatedUpscaling.neuralRenderingContexts) == profiles,
-            "Saved dialogue profiles and NR enablement round trip");
+            "Saved dialogue profiles, NR enablement, and startup prewarm round trip");
         check(json::parse(read(userPath)) == normalized, "Reload does not rewrite saved dialogue profiles");
     }
 }

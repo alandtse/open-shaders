@@ -22,6 +22,7 @@
 #include "Utils/UI.h"
 
 #include <chrono>
+#include <cmath>
 #include <span>
 
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
@@ -304,10 +305,11 @@ struct NeuralRendering::Impl
 	 * @brief Releases the per-frame pass resources, keeping the D3D12 device and NGX instance.
 	 *        Rebuilding those costs a driver-level re-init; the textures do not.
 	 */
-	void ReleasePassResources()
+	void ReleasePassResources(bool preservePreparedFeatures = false)
 	{
 		interop.Drain();
-		runtime.ResetFeatures();
+		if (!preservePreparedFeatures)
+			runtime.ResetFeatures();
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
@@ -340,11 +342,11 @@ struct NeuralRendering::Impl
 		}
 	}
 
-	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force)
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, bool preservePreparedFeatures = false)
 	{
 		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat)
 			return;
-		ReleasePassResources();
+		ReleasePassResources(preservePreparedFeatures && !HasPassResources());
 		D3D11_TEXTURE2D_DESC maskDesc{};
 		maskDesc.Width = gw;
 		maskDesc.Height = gh;
@@ -1012,9 +1014,128 @@ bool NeuralRendering::DialogueOpen()
 	return globals::game::ui && globals::game::ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
 }
 
-void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
+void NeuralRendering::SetupResources()
+{
+	retryRequested = recreate = resetHistory = true;
+	ResetStartupPrewarm();
+}
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
+
+NeuralRendering::StartupPrewarmStatus NeuralRendering::GetStartupPrewarmStatus() const
+{
+	std::scoped_lock lock(statusMutex);
+	return startupPrewarmStatus;
+}
+
+void NeuralRendering::PublishStartupPrewarm()
+{
+	StartupPrewarmStatus next;
+	next.reason = startupPrewarm.failed ? startupPrewarmFailure : std::string(startupPrewarm.reason);
+	next.width = startupPrewarm.extent.width;
+	next.height = startupPrewarm.extent.height;
+	next.eyes = startupPrewarm.extent.eyes;
+	next.preparedEyes = startupPrewarm.preparedEyes;
+	next.reused = startupPrewarm.reused;
+	if (startupPrewarm.failed)
+		next.stage = "failed";
+	else if (startupPrewarm.reused)
+		next.stage = "reused";
+	else if (!startupPrewarmRequestedLast)
+		next.stage = "disabled";
+	else if (startupPrewarm.usedInWorld)
+		next.stage = "finished";
+	else if (next.eyes && next.preparedEyes == next.eyes)
+		next.stage = "ready";
+	else if (impl->ready)
+		next.stage = "preparing";
+	else
+		next.stage = "waiting";
+	std::scoped_lock lock(statusMutex);
+	startupPrewarmStatus = std::move(next);
+}
+
+void NeuralRendering::TryStartupPrewarm(bool enabled, bool requested, const NR::Tuning& tuning, float2 renderSize)
+{
+	// Called only by Upscaling::Reset on the rendering thread. UI/DevBench queue resets.
+	const bool reset = resetStartupPrewarmRequested.exchange(false) || (requested && !startupPrewarmRequestedLast);
+	startupPrewarmRequestedLast = requested;
+	const auto fail = [&](std::string detail) {
+		startupPrewarm.failed = true;
+		startupPrewarm.preparedEyes = 0;
+		startupPrewarmFailure = std::move(detail);
+		logger::warn("[NeuralRendering] Startup preparation failed; using lazy initialization: {}", startupPrewarmFailure);
+		// A failed submit may still have queued commands. Keep their handles alive until retirement succeeds.
+		try {
+			impl->interop.Drain();
+			impl = std::make_unique<Impl>();
+		} catch (...) {
+			impl->failed = true;
+			retryRequested = true;
+			logger::warn("[NeuralRendering] Startup resources retained until a world-frame retry can retire them");
+		}
+		resetHistory = true;
+	};
+	try {
+		if (reset) {
+			if (!impl->HasPassResources() && impl->ready) {
+				impl->interop.Drain();
+				impl->runtime.ResetFeatures();
+			}
+			startupPrewarm.Reset();
+			startupPrewarmFailure.clear();
+		}
+		const auto* state = globals::state;
+		const auto count = globals::game::isVR ? 2u : 1u;
+		NR::PrewarmExtent extent;
+		if (std::isfinite(renderSize.x) && std::isfinite(renderSize.y) && renderSize.x >= count && renderSize.y >= 1.0f &&
+			renderSize.x < static_cast<float>(UINT32_MAX) && renderSize.y < static_cast<float>(UINT32_MAX))
+			extent = { NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), count), static_cast<uint32_t>(renderSize.y), count };
+		// The configured extent is captured before UI rendering resets dynamic resolution.
+		if (requested && !startupPrewarm.usedInWorld && !impl->HasPassResources() && extent.Valid() && extent != startupPrewarm.extent) {
+			if (startupPrewarm.preparedEyes) {
+				impl->interop.Drain();
+				impl->runtime.ResetFeatures();
+			}
+			startupPrewarm.SetExtent(extent);
+		}
+		const NR::PrewarmInputs inputs{
+			.requested = requested,
+			.enabled = enabled,
+			.startupMenu = state->IsMainOrLoadingMenuOpen(),
+			.worldRendered = state->worldRenderedThisFrame,
+			.deviceReady = globals::d3d::device && globals::d3d::context,
+			.runtimeReady = impl->ready,
+			.runtimeFailed = impl->failed,
+			.passResources = impl->HasPassResources(),
+			.materialStrength = tuning.materialStrength,
+			.configuredExtentReady = extent.Valid(),
+			.frame = state->frameCount
+		};
+		const auto step = startupPrewarm.Next(inputs);
+		if (step == NR::PrewarmStep::Initialize) {
+			impl->Initialize();
+			logger::info("[NeuralRendering] Startup runtime prepared");
+		} else if (step == NR::PrewarmStep::Eye0 || step == NR::PrewarmStep::Eye1) {
+			CS_GPU_PASS("Upscaling::NRStartupPrewarm");
+			const uint32_t eye = step == NR::PrewarmStep::Eye0 ? 0u : 1u;
+			NR::FrameParameters frame;
+			const auto dimensions = startupPrewarm.extent;
+			const bool prepared = impl->runtime.PrepareEye(impl->interop.Begin(), eye, dimensions.width, dimensions.height, {}, frame, tuning);
+			impl->interop.End();
+			if (!prepared)
+				throw std::runtime_error(std::format("Feature 18 eye {} creation failed (0x{:08X})", eye, frame.result));
+			logger::info("[NeuralRendering] Startup eye {} prepared at {}x{}", eye, extent.width, extent.height);
+		}
+		if (step != NR::PrewarmStep::None)
+			startupPrewarm.Complete(step);
+	} catch (const winrt::hresult_error& error) {
+		fail(winrt::to_string(error.message()));
+	} catch (const std::exception& error) {
+		fail(error.what());
+	}
+	PublishStartupPrewarm();
+}
 
 void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
 {
@@ -1613,6 +1734,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	};
 	try {
 		retryRequested = false;
+		startupPrewarm.usedInWorld = true;
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
@@ -1686,7 +1808,13 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate);
+		const bool reusePrepared = !work.HasPassResources() && !materialStrengthWanted &&
+		                           startupPrewarm.Matches({ w, h, count }) && work.runtime.IsPreparedEye(0, w, h, false);
+		if (!work.HasPassResources() && startupPrewarm.preparedEyes && !reusePrepared) {
+			startupPrewarm.preparedEyes = 0;
+			startupPrewarm.reason = "configuration-changed";
+		}
+		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, reusePrepared);
 		if (diagnostic.recreated)
 			PublishResources();
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
@@ -1772,6 +1900,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
+		if (reusePrepared) {
+			startupPrewarm.reused = true;
+			logger::info("[NeuralRendering] Reused {} startup eye instance(s) on the first world frame", startupPrewarm.preparedEyes);
+		}
+		PublishStartupPrewarm();
 		appliedFrames.fetch_add(1, std::memory_order_relaxed);
 		const uint32_t frameResets = diagnostic.reset[0] | diagnostic.reset[1];
 		diagnostics.RecordFrame(frameResets, diagnostic.resetDrainMs);

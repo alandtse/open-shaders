@@ -42,7 +42,41 @@ logs the refusal it loaded through, and `RuntimeAvailability::AllowsLoad` is the
 one place the exception lives. A missing file is never loadable, and an unverified
 build's output is not evidence that a build is correct, only that it ran.
 
-The controls persist under `Upscaling.neuralRenderingTuning`:
+### Startup prewarm
+
+`Upscaling.neuralRenderingStartupPrewarm` opts into staged Feature 18 model
+creation during loading or main-menu frames. It defaults off. Each eligible frame performs at
+most one initialization or eye-creation step. An individual NGX call is synchronous
+and has no fixed latency bound. It evaluates no world pixels; if prewarm has not
+finished when the world starts, the normal lazy creation path remains available.
+Prewarm can therefore reduce first-use work without guaranteeing it completes
+before entering the world. The Neural Rendering panel shows its current stage
+and prepared-eye count while the option is enabled. Eye creation waits for the
+configured render dimensions. With material-strength protection enabled,
+prewarm initializes only the runtime; protected eye creation waits for live guides.
+Matching prepared instances survive the first world resource allocation; changed
+dimensions or protection settings use normal lazy creation. A prewarm failure is
+reported once and leaves lazy initialization available.
+
+DevBench can enable the option and inspect its progress with:
+
+```text
+openshaders.feature action=set shortName=Upscaling settings={"neuralRenderingStartupPrewarm":true}
+openshaders.actions action=query shortName=Upscaling name=neuralRenderingStatus
+```
+
+To queue a state-only reset of prewarm progress, use:
+
+```text
+openshaders.actions action=command shortName=Upscaling name=resetNeuralRenderingPrewarm
+```
+
+The command queues work on the render thread. Before the first world use, it
+retires and clears prepared instances for a fresh startup attempt. After world
+resources exist, it resets only startup diagnostics and leaves those resources
+and NR history intact.
+
+Appearance and crop controls persist under `Upscaling.neuralRenderingTuning`:
 
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
 | ------------------------ | ------------------------ | --------------------------- | ---------- | ------------------------------- |

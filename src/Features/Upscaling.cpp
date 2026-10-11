@@ -62,6 +62,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	presetDLSS,
 	neuralRenderingEnabled,
+	neuralRenderingStartupPrewarm,
 	neuralRenderingContexts,
 	neuralRenderingTuning,
 	reflexLowLatencyMode,
@@ -569,6 +570,7 @@ namespace
 	{
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
+		const auto prewarm = upscaling->neuralRendering.GetStartupPrewarmStatus();
 		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
 		const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 		const bool dialogueOpen = NeuralRendering::DialogueOpen();
@@ -599,6 +601,14 @@ namespace
 											status.materialStrength[3], status.materialStrength[4], status.materialStrength[5] }) },
 			{ "materialEdgeSoftness", status.materialEdgeSoftness },
 			{ "showMaterialMap", upscaling->settings.neuralRenderingTuning.showMaterialMap },
+			{ "startupPrewarmEnabled", upscaling->settings.neuralRenderingStartupPrewarm },
+			{ "prewarmStage", prewarm.stage },
+			{ "prewarmReason", prewarm.reason },
+			{ "prewarmWidth", prewarm.width },
+			{ "prewarmHeight", prewarm.height },
+			{ "prewarmEyes", prewarm.eyes },
+			{ "prewarmPreparedEyes", prewarm.preparedEyes },
+			{ "prewarmReused", prewarm.reused },
 		};
 	}
 
@@ -606,6 +616,12 @@ namespace
 	void RetryNeuralRendering(Feature* self, const json&)
 	{
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
+	}
+
+	/** @brief Handler for the state-only startup-prewarm reset command. */
+	void ResetNeuralRenderingPrewarm(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.ResetStartupPrewarm();
 	}
 
 	/** @brief Devbench handler for Upscaling's calibrateNeuralCrop command. */
@@ -636,12 +652,16 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
+		"Neural Rendering state: the status line the settings panel shows. Startup prewarm is reported as startupPrewarmEnabled, prewarmStage, prewarmReason, prewarmWidth, prewarmHeight, prewarmEyes, prewarmPreparedEyes, and prewarmReused. The failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
 		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
 		RetryNeuralRendering);
+
+	FEATURE_COMMAND("resetNeuralRenderingPrewarm",
+		"Queue a fresh Neural Rendering startup preparation. Before world use it retires prepared instances; while world resources exist it resets only startup diagnostics, preserving those resources and NR history. Params: none.",
+		ResetNeuralRenderingPrewarm);
 
 	FEATURE_COMMAND("captureNeuralRendering",
 		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
@@ -680,6 +700,12 @@ void Upscaling::DrawSettings()
 	}
 
 	if (ImGui::BeginTabItem(std::format("{}###NeuralRendering", Util::AppendReleaseStageTag(T(TKEY("tab_neural_rendering"), "Neural Rendering"), Feature::ReleaseStage::Alpha)).c_str())) {
+		ImGui::Checkbox(T(TKEY("neural_rendering.startup_prewarm"), "Prewarm at Startup"), &settings.neuralRenderingStartupPrewarm);
+		ImGui::TextWrapped("%s", T(TKEY("neural_rendering.startup_prewarm_tooltip"), "Uses one loading or main-menu frame for each runtime or model creation step. With material strength enabled, only the runtime is prepared until live guides exist. Normal lazy creation remains available. It evaluates no scene pixels and may not finish before entering the world."));
+		if (settings.neuralRenderingStartupPrewarm) {
+			const auto prewarm = neuralRendering.GetStartupPrewarmStatus();
+			ImGui::Text(T(TKEY("neural_rendering.startup_prewarm_status"), "Startup prewarm: %s (%u/%u eyes)"), prewarm.stage.c_str(), prewarm.preparedEyes, prewarm.eyes);
+		}
 		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingContexts, settings.neuralRenderingTuning);
 		ImGui::EndTabItem();
 	}
@@ -2166,6 +2192,28 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	// Disable dynamic resolution unless the game explicitly enables it
 	if (!globals::game::isVR)
 		runtimeData.dynamicResolutionLock = 1;
+
+	const auto neuralRenderSize = Util::ConvertToDynamic(state->screenSize);
+	const auto neuralRenderWidth = static_cast<uint32_t>(neuralRenderSize.x);
+	const auto neuralRenderHeight = static_cast<uint32_t>(neuralRenderSize.y);
+	cachedNeuralRenderExtent.store((static_cast<uint64_t>(neuralRenderWidth) << 32) | neuralRenderHeight, std::memory_order_release);
+}
+
+void Upscaling::Reset()
+{
+	const bool enabled = settings.neuralRenderingEnabled &&
+	                     (settings.neuralRenderingContexts.normal.run || settings.neuralRenderingContexts.dialogue.run);
+	const auto context = settings.neuralRenderingContexts.normal.run ? NR::Context::Kind::kNormal : NR::Context::Kind::kDialogue;
+	const auto tuning = NR::Context::EffectiveTuning(settings.neuralRenderingTuning, settings.neuralRenderingContexts, context);
+	neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest,
+		settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup);
+
+	const uint64_t extent = cachedNeuralRenderExtent.load(std::memory_order_acquire);
+	const float2 renderSize{
+		static_cast<float>(static_cast<uint32_t>(extent >> 32)),
+		static_cast<float>(static_cast<uint32_t>(extent))
+	};
+	neuralRendering.TryStartupPrewarm(enabled, settings.neuralRenderingStartupPrewarm, tuning, renderSize);
 }
 
 Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
@@ -2182,6 +2230,7 @@ Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
 
 void Upscaling::SetupResources()
 {
+	cachedNeuralRenderExtent.store(0, std::memory_order_release);
 	neuralRendering.SetupResources();
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {

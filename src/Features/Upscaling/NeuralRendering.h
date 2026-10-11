@@ -5,6 +5,7 @@
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
 #include "NeuralRendering/Runtime.h"
+#include "NeuralRendering/StartupPrewarm.h"
 #include "NeuralRendering/Tuning.h"
 
 #include <array>
@@ -110,6 +111,18 @@ struct NeuralRendering
 
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
+	/** @brief Snapshot of the optional startup preparation, safe from any thread. */
+	struct StartupPrewarmStatus
+	{
+		std::string stage = "disabled", reason = "disabled";
+		uint32_t width = 0, height = 0, eyes = 0, preparedEyes = 0;
+		bool reused = false;
+	};
+	StartupPrewarmStatus GetStartupPrewarmStatus() const;
+	/** @brief Creates runtime/eye instances on startup menu frames without evaluating guides. */
+	void TryStartupPrewarm(bool enabled, bool requested, const NR::Tuning& tuning, float2 renderSize);
+	/** @brief Queues a fresh startup attempt; never tears down active world resources. */
+	void ResetStartupPrewarm() { resetStartupPrewarmRequested = true; }
 	/** @brief Cached verdict for the runtime on disk: whether NR can start, and why not when it cannot. */
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
@@ -133,6 +146,11 @@ private:
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
+	NR::StartupPrewarm startupPrewarm;
+	StartupPrewarmStatus startupPrewarmStatus;
+	std::atomic_bool resetStartupPrewarmRequested = false;
+	bool startupPrewarmRequestedLast = false;
+	std::string startupPrewarmFailure;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;
@@ -192,6 +210,7 @@ private:
 	void DrawRegionPreview();
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
+	void PublishStartupPrewarm();
 	/** @brief Republishes the render size and eye count after the pass resources are recreated. */
 	void PublishResources();
 	/** @brief Publishes a failure with the prefix the panel shows for a stopped pass. */
