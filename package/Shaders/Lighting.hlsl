@@ -1225,7 +1225,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
-		g_terrainStochasticLodBase = ComputeTerrainStochasticLodBase(uvOriginal);
+		InitializeTerrainStochasticGradients(uvOriginal);
 		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal);
 	}
 #		else
@@ -1300,6 +1300,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// SampleTerrain (LightingLandscape.hlsli) reads this for any LANDSCAPE
 	// permutation, not just EMAT.
 #		if defined(TERRAIN_VARIATION)
+	InitializeTerrainStochasticGradients(uvOriginal);
 	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
 #		endif
 #		if defined(EMAT)
@@ -1619,7 +1620,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	if defined(LANDSCAPE)
 #		if defined(TERRAIN_VARIATION)
-	g_terrainStochasticLodBase = ComputeTerrainStochasticLodBase(uv);
 #			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffect(TEX, SAMP, UV, OFFSET)
 #			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffect(TEX, SAMP, UV, OFFSET, true, PBR)
 #		else
@@ -3674,7 +3674,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Stored as 1 - vertexAO so the cleared default (0) means no occlusion
 	// for pixels that do not write to this RT (sky, water, grass, effects).
-	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(neuralRenderingCategory), 0, psout.Diffuse.w);
+	// A blended class ID decodes to None, so hair snaps to fully replace or leave the category.
+	float masks2Blend = psout.Diffuse.w;
+#		if defined(HAIR)
+	masks2Blend = step(0.5, psout.Diffuse.w);
+#		endif
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(neuralRenderingCategory), 0, masks2Blend);
 
 	float stochasticBlend = (screenNoise * screenNoise) < psout.Diffuse.w ? 1.0 : 0.0;
 	psout.NormalGlossiness.w = stochasticBlend;

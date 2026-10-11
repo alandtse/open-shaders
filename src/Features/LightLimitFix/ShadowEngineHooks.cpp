@@ -304,6 +304,19 @@ namespace ShadowCasterManager
 		return *reinterpret_cast<RE::ShadowSceneNode**>(uid.address());
 	}
 
+	// RemoveLightAssociations erases lightData->lights under objectListLock; unlocked, a second
+	// eraser underflows an emptied array's size.
+	template <class F>
+	static void WithObjectListLock(F&& a_fn)
+	{
+		if (auto* ssn = GetShadowSceneNode()) {
+			RE::BSSpinLockGuard guard(ssn->GetRuntimeData().objectListLock);
+			a_fn();
+			return;
+		}
+		a_fn();
+	}
+
 	RE::NiCamera* GetWorldCamera()
 	{
 		// world scene graph -> camera
@@ -530,7 +543,7 @@ namespace ShadowCasterManager
 	{
 		using F = void (*)(RE::BSLight*, RE::BSGeometry*);
 		static REL::Relocation<F> func{ REL::RelocationID(101296, 108283) };
-		func(light, geom);
+		WithObjectListLock([&] { func(light, geom); });
 	}
 
 	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale)
@@ -891,6 +904,15 @@ namespace ShadowCasterManager
 				return;
 			}
 			func(a_ssn, a_2, a_3, a_4);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct Hook_ClearGeometryList
+	{
+		static void thunk(RE::BSLight* a_light)
+		{
+			WithObjectListLock([&] { func(a_light); });
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -1392,6 +1414,8 @@ namespace ShadowCasterManager
 		// Parabolic Render (vtable 0x0A): repair the engine's omission of copying
 		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
+		if (long rc = stl::detour_thunk<Hook_ClearGeometryList>(REL::RelocationID(101298, 108285)))
+			logger::error("[SCM] Hook_ClearGeometryList detour FAILED ({})", rc);
 		InstallPassRegistrationHooks();
 
 		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
