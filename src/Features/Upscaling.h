@@ -370,7 +370,7 @@ public:
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
 	// Shared VR HMD Mask Clearing
-	winrt::com_ptr<ID3D11ComputeShader> vrClearHMDMaskCS;
+	Util::LazyShader<ID3D11ComputeShader> vrClearHMDMaskCS;
 	winrt::com_ptr<ID3D11Buffer> vrClearHMDMaskCB;
 	// Helper to dispatch mask clearing for a single eye region
 	void ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,

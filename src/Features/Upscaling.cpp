@@ -1970,22 +1970,25 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 
 	auto context = globals::d3d::context;
 
-	if (!vrClearHMDMaskCS) {
-		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
+	auto* shader = vrClearHMDMaskCS.Get(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0", "main", "Upscaling::ClearHMDMaskCS");
+	if (!shader)
+		return;
 
+	if (!vrClearHMDMaskCB) {
 		D3D11_BUFFER_DESC cbDesc = {};
 		cbDesc.ByteWidth = 16;  // 4 uints
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
+		Util::SetResourceName(vrClearHMDMaskCB.get(), "Upscaling::ClearHMDMaskCB");
 	}
 
-	if (vrClearHMDMaskCS) {
+	if (shader && vrClearHMDMaskCB) {
 		auto dispatchX = (eyeWidth + 7) / 8;
 		auto dispatchY = (eyeHeight + 7) / 8;
 
-		context->CSSetShader(vrClearHMDMaskCS.get(), nullptr, 0);
+		context->CSSetShader(shader, nullptr, 0);
 
 		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
 		context->CSSetShaderResources(0, 1, srvs);
@@ -2272,6 +2275,7 @@ void Upscaling::ClearShaderCache()
 {
 	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
+	vrClearHMDMaskCS.Reset();
 	for (auto& methodSlot : encodeTexturesCS) {
 		for (auto& outputSlot : methodSlot) {
 			outputSlot.Reset();
