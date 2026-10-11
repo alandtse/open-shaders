@@ -103,14 +103,14 @@ public:
 	void EndDeferred();
 
 	/**
-	 * @brief Binds or unbinds Masks2 as render target 3 around a forward draw whose shader has FORWARD_MASKS2.
+	 * @brief Binds or unbinds Masks2 as render target 3 around a forward eye draw.
 	 *
 	 * Only the main scene pass binds it; a reflection or other off-screen pass leaves the slot alone and the
 	 * shader's extra output is discarded. A false call restores the slot a true call replaced.
 	 * @param a_bind True to bind Masks2, false to restore the previous slot.
 	 */
 	void SetForwardMasks2Target(bool a_bind);
-	/** @brief True when a forward draw may write Masks2 through slot 3: in world, not in the deferred pass, and rendering to the main target. */
+	/** @brief True when a forward draw may write Masks2 through slot 3: a feature asked for it, in world, not in the deferred pass, and rendering to the main target. */
 	bool ForwardMasks2Available() const;
 
 	/** @brief Runs feature prepasses between StartDeferred and geometry rendering. */
@@ -146,6 +146,8 @@ public:
 	RE::RENDER_TARGET forwardMasks2Replaced = RE::RENDER_TARGET::kNONE;
 	RE::BSGraphics::SetRenderTargetMode forwardMasks2ReplacedMode = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
 	bool forwardMasks2Bound = false;
+	/** @brief Whether any loaded feature wants forward eye draws to write the material category; refreshed each StartDeferred. */
+	bool forwardMaterialCategoryRequested = false;
 
 	Util::LazyShader<ID3D11ComputeShader> mainCompositeCS;
 	Util::LazyShader<ID3D11ComputeShader> mainCompositeInteriorCS;
