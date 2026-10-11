@@ -411,6 +411,40 @@ int main() {
             "Saved dialogue profiles and NR enablement round trip");
         check(json::parse(read(userPath)) == normalized, "Reload does not rewrite saved dialogue profiles");
     }
+
+    // A pre-feature settings file omits the four new tone controls. Loading it
+    // must retain their neutral defaults, and current values must round-trip.
+    json legacyToneSettings = {{"Version", "old"}, {"Upscaling", {
+        {"neuralRenderingEnabled", true},
+        {"neuralRenderingTuning", {{"intensity", 0.75f}}}
+    }}};
+    check(WriteConfigFile(userPath, legacyToneSettings.dump(1)), "Write legacy NR tuning fixture");
+    State legacyTone;
+    legacyTone.Load();
+    const auto& legacyTuning = simulatedUpscaling.neuralRenderingTuning;
+    check(legacyTuning.brightening == 1.0f && legacyTuning.darkening == 1.0f &&
+        legacyTuning.maxBrighteningStops == 2.0f && legacyTuning.maxDarkeningStops == 2.0f,
+        "Legacy tuning blobs that omit directional controls load neutral defaults");
+    check(legacyTuning.intensity == 0.75f, "Legacy NR tuning values remain intact");
+
+    json directionalSettings = legacyToneSettings;
+    directionalSettings["Upscaling"]["neuralRenderingTuning"] = {
+        {"brightening", 0.25f}, {"darkening", 1.5f},
+        {"maxBrighteningStops", 0.5f}, {"maxDarkeningStops", 1.25f}
+    };
+    check(WriteConfigFile(userPath, directionalSettings.dump(1)), "Write directional NR tuning fixture");
+    State directional;
+    directional.Load();
+    check(simulatedUpscaling.neuralRenderingTuning.brightening == 0.25f &&
+        simulatedUpscaling.neuralRenderingTuning.darkening == 1.5f &&
+        simulatedUpscaling.neuralRenderingTuning.maxBrighteningStops == 0.5f &&
+        simulatedUpscaling.neuralRenderingTuning.maxDarkeningStops == 1.25f,
+        "Directional controls load from the user settings JSON");
+    directional.Save();
+    const auto savedDirectional = json::parse(read(userPath))["Upscaling"]["neuralRenderingTuning"];
+    check(savedDirectional["brightening"] == 0.25f && savedDirectional["darkening"] == 1.5f &&
+        savedDirectional["maxBrighteningStops"] == 0.5f && savedDirectional["maxDarkeningStops"] == 1.25f,
+        "Directional tone controls round-trip through the settings writer");
 }
 '''
         tokens = {
@@ -446,7 +480,15 @@ int main() {
             source = source.replace(token, replacement)
         with tempfile.TemporaryDirectory(prefix="settings-load-fixture-") as fixture:
             source = source.replace("FIXTURE_ROOT", json.dumps(Path(fixture).as_posix()))
-            library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
+            library_candidates = [
+                Path(os.environ["OPENNR_TEST_VCPKG_TRIPLET_ROOT"]) if os.environ.get("OPENNR_TEST_VCPKG_TRIPLET_ROOT") else None,
+                ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release",
+                Path("C:/OpenNR/Dependencies/runtime-2.16.0/vcpkg_installed/x64-windows-static-md-release"),
+            ]
+            library_root = next((candidate for candidate in library_candidates
+                                 if candidate is not None and (candidate / "include/imgui.h").is_file()), None)
+            if library_root is None:
+                self.fail("Could not find the vcpkg triplet root; set OPENNR_TEST_VCPKG_TRIPLET_ROOT")
             runtime.SceneSettingsRuntimeTests.compile_and_run(self, source, imgui_root=library_root)
 
 

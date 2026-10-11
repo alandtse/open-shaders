@@ -398,6 +398,17 @@ bounded proxy is never inverse-tone-mapped. Both eyes must evaluate successfully
 before either is written back. NR remains before the existing HDR DLSS pass and
 the actual tone mapper stays downstream. Per-eye history/reset behavior is unchanged.
 
+The final composite also exposes separate brightening and darkening weights
+(`neuralRenderingTuning.brightening` and `darkening`, each 0–2 with neutral
+default 1) and separate maximum adjustments (`maxBrighteningStops` and
+`maxDarkeningStops`, each 0–2 stops with default 2). The weights scale the
+signed tone edit after the local-tone, local-structure, material-category, and
+protection controls have shaped it. The directional bounds then clamp that
+edit before conversion to the final gain. Both bounds remain inside the existing
+global 2-stop limit; setting either bound to 0 disables only that direction.
+Defaults preserve the prior composite, and no additional pass or resource is
+used.
+
 Runtime validation still requires the supported hardware and in-game comparison in
 SE/AE and VR. A C++ build and deployment do not establish native HDR model support,
 image quality, or temporal stability in this D3D12 path.

@@ -13,6 +13,7 @@ namespace NR
 	struct Tuning
 	{
 		static constexpr float kMinStrength = 0.0f, kMaxStrength = 2.0f;
+		static constexpr float kMaxToneStops = 2.0f;
 		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
 		static constexpr uint32_t kMaxStyle = 2;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
@@ -20,6 +21,14 @@ namespace NR
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
 		float localStructureStrength = kDefaultStrength;
+		/** @brief Scales positive (brightening) final tone edits; 1 leaves them unchanged. */
+		float brightening = kDefaultStrength;
+		/** @brief Scales negative (darkening) final tone edits; 1 leaves them unchanged. */
+		float darkening = kDefaultStrength;
+		/** @brief Maximum positive tone adjustment in stops, bounded by the composite's global 2-stop cap. */
+		float maxBrighteningStops = kMaxToneStops;
+		/** @brief Maximum negative tone adjustment in stops, bounded by the composite's global 2-stop cap. */
+		float maxDarkeningStops = kMaxToneStops;
 		float skinStructureStrength = kAutomaticSkinStructure;
 		/** @brief Per-category multipliers on the composited tone edit, from the deferred Masks2 category. */
 		float skinToneStrength = kDefaultStrength;
@@ -134,9 +143,11 @@ namespace NR
 		{
 			style = std::min(style, kMaxStyle);
 			regionFit = std::min(regionFit, kMaxRegionFit);
-			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength,
+			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength, &brightening, &darkening,
 					 &skinToneStrength, &hairToneStrength, &eyeToneStrength, &foliageToneStrength, &landscapeToneStrength })
 				*strength = std::isfinite(*strength) ? std::clamp(*strength, kMinStrength, kMaxStrength) : kDefaultStrength;
+			maxBrighteningStops = std::isfinite(maxBrighteningStops) ? std::clamp(maxBrighteningStops, 0.0f, kMaxToneStops) : kMaxToneStops;
+			maxDarkeningStops = std::isfinite(maxDarkeningStops) ? std::clamp(maxDarkeningStops, 0.0f, kMaxToneStops) : kMaxToneStops;
 			skinStructureStrength = std::isfinite(skinStructureStrength) ?
 			                            std::clamp(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength) :
 			                            kAutomaticSkinStructure;

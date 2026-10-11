@@ -38,6 +38,8 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorBaseY;
 	uint RegionActorWidth;
 	uint RegionActorHeight;
+	float BrighteningWeight;
+	float DarkeningWeight;
 	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
 	float4 CategoryStrength[5];
 	uint MaterialMapEnabled;
@@ -46,7 +48,8 @@ cbuffer ColorTransfer : register(b0)
 	uint MaterialMapStrengthBound;
 	float4 MaterialStrengthsA;  // None, Skin, Hair, Eyes
 	float2 MaterialStrengthsB;  // Foliage, Landscape
-	float2 MaterialStrengthsPad;
+	float MaxBrighteningStops;
+	float MaxDarkeningStops;
 };
 
 Texture2D<float4> Original : register(t0);
@@ -352,7 +355,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float3 result = originalLinear * ratio;
 	const bool boundedGain = CompositeMode == NR::kCompositeProduction;
 	if (boundedGain)
-		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
+		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), BrighteningWeight, DarkeningWeight,
+									MaxBrighteningStops, MaxDarkeningStops);
 	if (CompositeMode == NR::kCompositeReplacement)
 		result = neuralLinear;
 	else if (CompositeMode == NR::kCompositeMaskedLerp)
