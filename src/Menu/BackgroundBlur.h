@@ -21,6 +21,8 @@ namespace BackgroundBlur
 	void RestoreRetainedBuffers();
 	/** @brief Draws an opaque HDR scene preview without passing scene color through the SDR UI buffer. */
 	bool ImageHDRScene(const ImVec2& size);
+	/** @brief Identifies HDR scene previews whose callback draws with panel-space pixel coordinates. */
+	bool HasHDRSceneImageCallback(const ImDrawData* drawData);
 
 	/**
 	 * @brief Cleans up all blur resources

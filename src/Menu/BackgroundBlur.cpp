@@ -10,6 +10,7 @@
 #include "../I18n/I18n.h"
 #include "../State.h"
 #include "../Util.h"
+#include "DesktopMirrorDrawData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,6 +96,7 @@ namespace BackgroundBlur
 			ImRect clip;
 		};
 		SceneImage sceneImage;
+		ImDrawCallback hdrSceneImageCallback = nullptr;
 
 		UINT textureWidth = 0;
 		UINT textureHeight = 0;
@@ -744,7 +746,7 @@ namespace BackgroundBlur
 		sceneImage = { drawList, ImRect(toPixels(min), toPixels(ImVec2(min.x + size.x, min.y + size.y))),
 			ImRect(toPixels(drawList->GetClipRectMin()), toPixels(drawList->GetClipRectMax())) };
 		sceneImage.clip.ClipWith(sceneImage.rect);
-		drawList->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+		const auto sceneImageCallback = [](const ImDrawList*, const ImDrawCmd*) {
 			auto& hdr = globals::features::hdrDisplay;
 			if (!hdr.IsCleanSceneCaptureFresh() || sceneImage.clip.GetWidth() <= 0.0f || sceneImage.clip.GetHeight() <= 0.0f)
 				return;
@@ -778,10 +780,16 @@ namespace BackgroundBlur
 			context->PSSetShaderResources(0, 1, &source);
 			context->PSSetSamplers(0, 1, &sampler);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
-		},
-			nullptr);
+		};
+		hdrSceneImageCallback = sceneImageCallback;
+		drawList->AddCallback(sceneImageCallback, nullptr);
 		ImGui::Dummy(size);
 		return true;
+	}
+
+	bool HasHDRSceneImageCallback(const ImDrawData* drawData)
+	{
+		return drawData && DesktopMirrorDrawData::ContainsCallback(*drawData, hdrSceneImageCallback);
 	}
 
 	bool RenderDrawData(ImDrawData* drawData)

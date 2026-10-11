@@ -3,6 +3,7 @@
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
+#include <cmath>
 #include <dxgi.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
@@ -13,6 +14,7 @@
 #include "CSEditor/EditorWindow.h"
 #include "Feature.h"
 #include "FeatureIssues.h"
+#include "Menu/DesktopMirrorDrawData.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
@@ -445,8 +447,32 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui::Render();
 
-	if (!BackgroundBlur::RenderDrawData(ImGui::GetDrawData()))
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+	auto* drawData = ImGui::GetDrawData();
+	bool renderedDesktopMirror = false;
+	uint32_t panelWidth = 0;
+	uint32_t panelHeight = 0;
+	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
+	if (helperPanelActive && drawData && globals::d3d::swapChain) {
+		DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+		if (SUCCEEDED(globals::d3d::swapChain->GetDesc(&swapChainDesc))) {
+			const ImVec2 desktopSize(
+				static_cast<float>(swapChainDesc.BufferDesc.Width),
+				static_cast<float>(swapChainDesc.BufferDesc.Height));
+			const double sourceWidth = static_cast<double>(drawData->DisplaySize.x) * drawData->FramebufferScale.x;
+			const double sourceHeight = static_cast<double>(drawData->DisplaySize.y) * drawData->FramebufferScale.y;
+			const bool sourceCanvasValid = std::isfinite(sourceWidth) && std::isfinite(sourceHeight) && sourceWidth > 0.0 && sourceHeight > 0.0;
+			const bool dimensionsDiffer = !sourceCanvasValid || std::abs(desktopSize.x - sourceWidth) > 0.5 || std::abs(desktopSize.y - sourceHeight) > 0.5;
+			if (dimensionsDiffer && !BackgroundBlur::HasHDRSceneImageCallback(drawData)) {
+				DesktopMirrorDrawData mirror;
+				if (mirror.Build(*drawData, desktopSize)) {
+					ImGui_ImplDX11_RenderDrawData(mirror.Get());
+					renderedDesktopMirror = true;
+				}
+			}
+		}
+	}
+	if (!renderedDesktopMirror && !BackgroundBlur::RenderDrawData(drawData))
+		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
