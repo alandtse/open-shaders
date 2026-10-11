@@ -127,8 +127,8 @@ namespace NR
 			ID3D12CommandList* parallelLists[]{ parallel.list.get() };
 			parallelQueue->ExecuteCommandLists(1, parallelLists);
 			const auto parallelDone = fence.Next();
-			winrt::check_hresult(parallelQueue->Signal(fence.fence12.get(), parallelDone));
 			parallel.completion = parallelDone;
+			winrt::check_hresult(parallelQueue->Signal(fence.fence12.get(), parallelDone));
 			// The D3D11 wait below covers this work only because the main queue's completion follows it.
 			winrt::check_hresult(queue->Wait(fence.fence12.get(), parallelDone));
 			parallelUsed = false;
