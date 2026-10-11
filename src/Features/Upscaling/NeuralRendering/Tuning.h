@@ -106,6 +106,8 @@ namespace NR
 		bool modelVerify = false;
 		/** @brief Feeds eye 0's model inputs to both eyes, so the two eyes' model outputs can be compared like for like. Developer-only; the right eye's picture is wrong while on. */
 		bool mirrorEyes = false;
+		/** @brief A reused pixel whose own previous gain is rejected takes the other eye's model gain of this frame. */
+		bool crossEyeGain = true;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
