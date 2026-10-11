@@ -88,6 +88,15 @@ namespace NR::Context
 		}
 	};
 
+	/** @brief Keeps categories allocated for configured consumers across dialogue and suspension transitions. */
+	inline bool NeedsMaterialCategories(const Tuning& tuning, const Profiles& profiles)
+	{
+		return tuning.materialStrength || tuning.showMaterialMap || profiles.ScopeOverridden() ||
+		       tuning.skinToneStrength != Tuning::kDefaultStrength || tuning.hairToneStrength != Tuning::kDefaultStrength ||
+		       tuning.eyeToneStrength != Tuning::kDefaultStrength || tuning.foliageToneStrength != Tuning::kDefaultStrength ||
+		       tuning.landscapeToneStrength != Tuning::kDefaultStrength;
+	}
+
 	/** @brief What the previous frame was, so a transition can be recognised. */
 	struct ContextState
 	{

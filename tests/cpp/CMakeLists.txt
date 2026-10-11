@@ -1,8 +1,9 @@
-# C++ unit tests for plugin utility code.
+# C++ utility tests and D3D11 deferred-mask regression checks.
 #
 # Catch2-based. Disjoint from tests/shaders (which tests HLSL via
 # ShaderTestFramework). Add test sources here for any plugin code that
 # doesn't require a live DirectX device or ImGui context.
+# DeferredMaskTests uses WARP without a running game.
 
 cmake_minimum_required(VERSION 4.2)
 
@@ -156,3 +157,12 @@ set_tests_properties(CppUtilTests PROPERTIES
 )
 
 message(STATUS "C++ unit tests configured successfully")
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/extract_deferred_mask.cmake")
+add_executable(deferred_mask_tests test_deferred_mask.cpp)
+target_compile_features(deferred_mask_tests PRIVATE cxx_std_23)
+target_compile_definitions(deferred_mask_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_include_directories(deferred_mask_tests PRIVATE "${deferred_mask_test_directory}")
+target_link_libraries(deferred_mask_tests PRIVATE d3d11 d3dcompiler)
+add_test(NAME DeferredMaskTests COMMAND deferred_mask_tests "${CMAKE_SOURCE_DIR}/package/Shaders")
+set_tests_properties(DeferredMaskTests PROPERTIES TIMEOUT 120 LABELS "Cpp;GPU;Deferred")

@@ -204,3 +204,28 @@ TEST_CASE("ContextProfile Sanitize clamps out-of-range overrides", "[nr]")
 	profiles.Sanitize();
 	REQUIRE(profiles.dialogue.scope == NR::Context::kMaxScope);
 }
+
+TEST_CASE("Deferred categories follow configured material consumers across context suspension", "[nr]")
+{
+	NR::Tuning tuning;
+	NR::Context::Profiles profiles;
+	CHECK_FALSE(NR::Context::NeedsMaterialCategories(tuning, profiles));
+	for (auto member : { &NR::Tuning::materialStrength, &NR::Tuning::showMaterialMap }) {
+		tuning.*member = true;
+		CHECK(NR::Context::NeedsMaterialCategories(tuning, profiles));
+		tuning.*member = false;
+	}
+	for (auto member : { &NR::Tuning::skinToneStrength, &NR::Tuning::hairToneStrength, &NR::Tuning::eyeToneStrength,
+			 &NR::Tuning::foliageToneStrength, &NR::Tuning::landscapeToneStrength }) {
+		tuning.*member = 0.5f;
+		CHECK(NR::Context::NeedsMaterialCategories(tuning, profiles));
+		tuning.*member = NR::Tuning::kDefaultStrength;
+	}
+	for (auto member : { &NR::Context::Profiles::normal, &NR::Context::Profiles::dialogue }) {
+		(profiles.*member).run = false;
+		(profiles.*member).scope = NR::Context::ScopeOverride::kSkinHairEyes;
+		CHECK(NR::Context::NeedsMaterialCategories(tuning, profiles));
+		(profiles.*member).scope = NR::Context::ScopeOverride::kSameAsNormal;
+	}
+	CHECK_FALSE(NR::Context::NeedsMaterialCategories(tuning, profiles));
+}

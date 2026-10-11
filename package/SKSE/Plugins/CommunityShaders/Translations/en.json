@@ -3470,7 +3470,7 @@
     "feature.upscaling.neural_rendering.material_map_tooltip": "Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a colour ramp of the strength the by-material selection gives that pixel, read at the pixel without Edge Softness. Needs the deferred pass; unlabelled pixels follow Everything Else.",
     "feature.upscaling.neural_rendering.material_other": "Everything Else",
     "feature.upscaling.neural_rendering.material_strengths": "Fine-Tune Strengths",
-    "feature.upscaling.neural_rendering.material_unavailable": "Neural Rendering by material is unavailable this session, so the whole frame is processed. Check the log; restarting the game retries.",
+    "feature.upscaling.neural_rendering.material_unavailable": "Neural Rendering by material is currently unavailable, so the whole frame is processed.",
     "feature.upscaling.neural_rendering.region_follow_foveation": "Follow Foveation",
     "feature.upscaling.neural_rendering.region_follow_foveation_tooltip": "With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view.",
     "feature.upscaling.neural_rendering.region_of_interest": "Limit to Tracked Actor",

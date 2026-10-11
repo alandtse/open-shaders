@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -635,7 +636,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the last processed frame had a complete authored deferred material lane and the graded protection has not been rejected or degraded; native shader fallback temporarily disables material consumers and recovers on a complete pass), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -1633,6 +1634,13 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			sharpenerTexture = nullptr;
 		}
 	}
+}
+
+void Upscaling::OnPixelShaderFallback(RE::BSShader::Type type)
+{
+	if (auto* deferred = globals::deferred; deferred && deferred->deferredPass &&
+											SIE::ShaderCache::GetMaterialCategoryFlag(type) != 0)
+		deferred->InvalidateMaterialCategories();
 }
 
 void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)

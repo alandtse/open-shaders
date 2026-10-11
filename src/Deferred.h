@@ -7,6 +7,9 @@
 #include "RE/B/BSShadowLight.h"
 #include "Utils/LazyShader.h"
 
+#include <atomic>
+#include <optional>
+
 #define ALBEDO RE::RENDER_TARGETS::kINDIRECT
 #define SPECULAR RE::RENDER_TARGETS::kINDIRECT_DOWNSCALED
 #define REFLECTANCE RE::RENDER_TARGETS::kRAWINDIRECT
@@ -89,6 +92,14 @@ public:
 
 	/** @brief Begins deferred rendering by binding GBuffer targets and overriding blend states. */
 	void StartDeferred();
+	/** @brief Current feature demand, available before render targets are allocated. */
+	static bool MaterialCategoriesRequested();
+	/** @brief The allocated mask layout, latched before the deferred pass. */
+	bool IsMaterialCategoriesEnabled() const { return materialCategoriesEnabled.load(std::memory_order_relaxed); }
+	/** @brief Rejects the current pass's material lane after native shader fallback. */
+	void InvalidateMaterialCategories() { materialCategoriesValid = false; }
+	/** @brief True only for a completed, fully authored material lane from the current frame. */
+	bool IsMaterialCategoriesReady() const;
 
 	/** @brief Replaces engine blend states with deferred-compatible variants for GBuffer output. */
 	void OverrideBlendStates();
@@ -149,6 +160,11 @@ public:
 	ID3D11SamplerState* pointSampler = nullptr;
 
 private:
+	void UpdateMaterialCategoryTarget();
+	std::atomic_bool materialCategoriesEnabled{ false };
+	bool materialCategoriesValid = false;
+	uint32_t materialCategoryFrame = UINT32_MAX;
+	std::optional<bool> failedMaterialCategoryMode;
 	template <typename T>
 	void SetShadowCascadeParameters(T& lightData, DirectionalShadowLightData& dd);
 
