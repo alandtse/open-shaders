@@ -102,9 +102,17 @@ public:
 	{
 		kVramWarning,
 		kEvaluateError,
+		kStereoFallbackOutputError,
+		kStereoFallbackSnapshotError,
+		kStereoFallbackStretchError,
+		kStereoFallbackSetupError,
 		kCount
 	};
 	uint32_t lastDLSSLogFrame[static_cast<size_t>(DLSSLogKind::kCount)][2] = {
+		{ UINT32_MAX, UINT32_MAX },
+		{ UINT32_MAX, UINT32_MAX },
+		{ UINT32_MAX, UINT32_MAX },
+		{ UINT32_MAX, UINT32_MAX },
 		{ UINT32_MAX, UINT32_MAX },
 		{ UINT32_MAX, UINT32_MAX }
 	};

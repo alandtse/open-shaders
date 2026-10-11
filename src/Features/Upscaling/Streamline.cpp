@@ -836,34 +836,26 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 				context->CopySubresourceRegion(colorOut, 0, eye * eyeWidthOut, 0, 0,
 					upscaling.vrIntermediateColorOut[eye]->resource.get(), 0, &eyeOut);
 		} else {
-			static bool fallbackSetupErrorLogged = false;
 			CS_GPU_PASS("Streamline::SpatialFallback");
 			try {
 				auto fallbackOutput = FoveatedRenderImpl::Ops::CreateTextureFromSource(colorOut,
 					eyeWidthOut * 2, eyeHeightOut, false, false, true, "Streamline::SpatialFallback");
 				if (!fallbackOutput || !fallbackOutput->resource || !fallbackOutput->uav) {
-					if (!fallbackSetupErrorLogged) {
+					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackOutputError, 0, state->frameCount))
 						logger::error("[Streamline {}] Could not create output for stereo DLSS fallback", instanceTag);
-						fallbackSetupErrorLogged = true;
-					}
 				} else if (!FoveatedRenderImpl::Ops::SnapshotSBS(a_upscalingTexture, (uint32_t)renderSize.x, eyeHeightIn)) {
-					if (!fallbackSetupErrorLogged) {
+					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackSnapshotError, 0, state->frameCount))
 						logger::error("[Streamline {}] Could not snapshot input for stereo DLSS fallback", instanceTag);
-						fallbackSetupErrorLogged = true;
-					}
 				} else if (FoveatedRenderImpl::Ops::StretchDRSBothEyes(fallbackOutput->uav.get(), eyeWidthOut, eyeHeightOut,
-						   eyeWidthIn, eyeHeightIn, (uint32_t)renderSize.x, eyeHeightIn)) {
+							   eyeWidthIn, eyeHeightIn, (uint32_t)renderSize.x, eyeHeightIn)) {
 					D3D11_BOX fallbackBox = { 0, 0, 0, eyeWidthOut * 2, eyeHeightOut, 1 };
 					context->CopySubresourceRegion(colorOut, 0, 0, 0, 0, fallbackOutput->resource.get(), 0, &fallbackBox);
-				} else if (!fallbackSetupErrorLogged) {
+				} else if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackStretchError, 0, state->frameCount)) {
 					logger::error("[Streamline {}] Stereo DLSS fallback stretch failed", instanceTag);
-					fallbackSetupErrorLogged = true;
 				}
 			} catch (const std::exception& e) {
-				if (!fallbackSetupErrorLogged) {
+				if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackSetupError, 0, state->frameCount))
 					logger::error("[Streamline {}] Stereo DLSS fallback setup failed: {}", instanceTag, e.what());
-					fallbackSetupErrorLogged = true;
-				}
 			}
 		}
 	} else {
