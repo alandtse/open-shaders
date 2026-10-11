@@ -92,13 +92,14 @@ namespace NR
 		[[nodiscard]] bool Ready() const { return state == State::kReady; }
 
 		/**
-		 * @brief True when the pass may load this runtime: the validated build, or in developer mode
-		 *        one it would refuse. A missing file can never load, and the pinned digests guard the
-		 *        output's channel order, so a forced build is loaded unverified rather than validated.
+		 * @brief True when the pass may load this runtime: the validated build, in developer mode
+		 *        one it would refuse, or with allowUnverified a 310.8.x build outside the pinned digests.
+		 *        A missing file can never load, and the pinned digests guard the output's channel
+		 *        order, so a forced build is loaded unverified rather than validated.
 		 */
-		[[nodiscard]] bool AllowsLoad(bool developerMode) const
+		[[nodiscard]] bool AllowsLoad(bool developerMode, bool allowUnverified = false) const
 		{
-			return Ready() || (developerMode && state != State::kMissing);
+			return Ready() || (developerMode && state != State::kMissing) || (allowUnverified && state == State::kUnvalidatedBuild);
 		}
 	};
 
@@ -216,8 +217,9 @@ namespace NR
 		 * @brief Loads the NR runtime and resolves its function table once.
 		 * @param developerMode True to load a build the pass would otherwise refuse, which leaves the
 		 *        runtime's output unverified; see RuntimeAvailability::AllowsLoad.
+		 * @param allowUnverified True to load a 310.8.x build outside the pinned digests.
 		 */
-		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
+		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */

@@ -80,7 +80,7 @@ struct NeuralRendering
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup);
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -152,6 +152,8 @@ private:
 	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
 	/** @brief Whether the crop covers several actors, mirrored from the tuning like regionEnabled. */
 	std::atomic_bool regionGroup = false;
+	/** @brief Mirrors the tuning's allowUnverifiedRuntime for the status text, which has no tuning at hand. */
+	std::atomic_bool allowUnverifiedRuntime = false;
 	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
 	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
 	/**

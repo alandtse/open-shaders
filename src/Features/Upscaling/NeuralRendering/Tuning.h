@@ -58,6 +58,8 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
+		/** @brief Loads a 310.8.x runtime outside the pinned digests, without developer mode; its output is unverified. */
+		bool allowUnverifiedRuntime = false;
 		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
 		 *        strength decides how strongly NR shows there. On exactly when some strength is below

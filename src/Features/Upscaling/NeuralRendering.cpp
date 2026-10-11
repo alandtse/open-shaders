@@ -249,6 +249,8 @@ struct NeuralRendering::Impl
 	Util::Region::StereoRegion actorBox;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
+	/** @brief Set from the tuning before Initialize; lets a 310.8.x build outside the pinned digests load. */
+	bool allowUnverifiedRuntime = false;
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -296,7 +298,7 @@ struct NeuralRendering::Impl
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
-		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
+		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
 
@@ -1016,8 +1018,9 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified)
 {
+	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
 	regionFit.store(cropFit, std::memory_order_relaxed);
 	regionGroup.store(cropGroup, std::memory_order_relaxed);
@@ -1090,8 +1093,8 @@ void NeuralRendering::DrawRuntimeDiagnostics() const
 		return;
 	}
 	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
-	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode()))
-		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode(), allowUnverifiedRuntime.load(std::memory_order_relaxed)))
+		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 	else
 		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 }
@@ -1316,7 +1319,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	// An unavailable runtime must not strand a feature that is already on, so only the switch
 	// from off is locked. The verdict is re-read when the file changes, so installing a build
 	// mid-session unblocks the toggle without a restart.
-	const bool loadable = availability.AllowsLoad(developerMode);
+	const bool loadable = availability.AllowsLoad(developerMode, tuning.allowUnverifiedRuntime);
 	const bool lockEnable = !loadable && !enabled;
 	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
@@ -1330,9 +1333,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	if (!availability.Ready()) {
 		if (loadable)
-			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 		else
 			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+		if (availability.state == NR::RuntimeAvailability::State::kUnvalidatedBuild) {
+			ImGui::Checkbox(T(TKEY("allow_unverified"), "Use This Build Anyway"), &tuning.allowUnverifiedRuntime);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("allow_unverified_tooltip"),
+					"Loads a 310.8.x runtime that is not one of the builds checked in game. Its colour channels may be wrong; turn this off if the picture looks tinted."));
+		}
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
@@ -1640,6 +1649,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		}
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
+			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
