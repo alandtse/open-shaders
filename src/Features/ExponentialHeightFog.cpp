@@ -198,7 +198,7 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	const float adjustedOpacity = std::clamp(targetOpacity * utilityData.fogIntensity, 0.0f, 1.0f);
 	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
 	const float calibratedOpacity = linearLightingData.enableLinearLighting ?
-	                                    std::pow(adjustedOpacity, linearLightingData.authoredColorGamma) :
+	                                    LinearLighting::DecodeAuthoredColor(RE::NiColor{ adjustedOpacity, adjustedOpacity, adjustedOpacity }).red :
 	                                    adjustedOpacity;
 	data.vanillaFogDensity = -std::log(std::max(1.0f - calibratedOpacity, kMinimumFogTransmittance)) / (referenceDistance * kAnalyticalExtinctionScale);
 	return data;

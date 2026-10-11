@@ -41,6 +41,15 @@ namespace Color
 	static const uint MaxVanillaPointLightFlags = 8;
 	static const float MinAdjustedGamma = 0.1;
 	static const float MaxAdjustedGamma = 3.0;
+	static const float GameGamma = 1.6;
+	static const float LegacyTextureGamma = 1.8;
+	static const float AuthoredColorGamma = 2.2;
+	static const float SRGBEncodedThreshold = 0.04045;
+	static const float SRGBLinearThreshold = 0.0031308;
+	static const float SRGBLinearScale = 12.92;
+	static const float SRGBOffset = 0.055;
+	static const float SRGBScale = 1.055;
+	static const float SRGBExponent = 2.4;
 
 	// Copyright 2019 Google LLC.
 	// SPDX-License-Identifier: Apache-2.0
@@ -138,22 +147,22 @@ namespace Color
 
 	float SkyrimGammaToLinear(float color)
 	{
-		return pow(abs(color), 1.6);
+		return pow(abs(color), GameGamma);
 	}
 
 	float LinearToSkyrimGamma(float color)
 	{
-		return pow(abs(color), 1.0 / 1.6);
+		return pow(abs(color), 1.0 / GameGamma);
 	}
 
 	float3 SkyrimGammaToLinear(float3 color)
 	{
-		return pow(abs(color), 1.6);
+		return pow(abs(color), GameGamma);
 	}
 
 	float3 LinearToSkyrimGamma(float3 color)
 	{
-		return pow(abs(color), 1.0 / 1.6);
+		return pow(abs(color), 1.0 / GameGamma);
 	}
 
 	float3 SrgbToLinear(float3 color)
@@ -169,6 +178,48 @@ namespace Color
 	float3 SignedPow(float3 color, float exponent)
 	{
 		return sign(color) * pow(abs(color), exponent);
+	}
+
+	float DecodeSRGB(float color)
+	{
+		float magnitude = abs(color);
+		float linearColor = magnitude <= SRGBEncodedThreshold ? magnitude / SRGBLinearScale : pow((magnitude + SRGBOffset) / SRGBScale, SRGBExponent);
+		return linearColor * sign(color);
+	}
+
+	float3 DecodeSRGB(float3 color)
+	{
+		return float3(DecodeSRGB(color.r), DecodeSRGB(color.g), DecodeSRGB(color.b));
+	}
+
+	float EncodeSRGB(float color)
+	{
+		float magnitude = abs(color);
+		float encoded = magnitude <= SRGBLinearThreshold ? magnitude * SRGBLinearScale : SRGBScale * pow(magnitude, 1.0 / SRGBExponent) - SRGBOffset;
+		return encoded * sign(color);
+	}
+
+	float3 EncodeSRGB(float3 color)
+	{
+		return float3(EncodeSRGB(color.r), EncodeSRGB(color.g), EncodeSRGB(color.b));
+	}
+
+	float3 ApplyConversionSaturation(float3 color, float saturation)
+	{
+		if (saturation < 1.0) {
+			float luminance = RGBToLuminance(color, kRec709LuminanceWeights);
+			color = lerp(luminance.xxx, color, saturation);
+		}
+		return color;
+	}
+
+	/** @brief Maps diffuse channels with Jiaye's bounded reflectance curve. */
+	float3 CalibrateDiffuse(float3 color, float gamma, float curve, float whiteReflectance, float saturation = 1.0)
+	{
+		color = pow(saturate(color), gamma);
+		float3 scaledColor = curve * color;
+		color = whiteReflectance * (scaledColor / (1.0 - color + scaledColor));
+		return ApplyConversionSaturation(color, saturation);
 	}
 
 	float3 GammaToLinearSafe(float3 color)
@@ -250,14 +301,19 @@ namespace Color
 		return GamutTransform(linearSrgbColor * tint);
 	}
 
-	float3 AuthoredGammaToLinear(float3 color)
+	float3 AuthoredGammaToLinear(float3 color, float gammaOffset = 0.0)
 	{
-		return SignedPow(color, SharedData::linearLightingSettings.authoredColorGamma);
+		color = DecodeSRGB(color);
+		if (gammaOffset != 0.0) {
+			float gamma = clamp(AuthoredColorGamma + gammaOffset, MinAdjustedGamma, MaxAdjustedGamma);
+			color = SignedPow(color, gamma / AuthoredColorGamma);
+		}
+		return color;
 	}
 
 	float3 LinearToAuthoredGamma(float3 color)
 	{
-		return SignedPow(color, 1.0 / SharedData::linearLightingSettings.authoredColorGamma);
+		return EncodeSRGB(color);
 	}
 
 	float3 DecodeAuthoredColor(float3 color)
@@ -270,18 +326,56 @@ namespace Color
 		return LinearToAuthoredGamma(ENABLE_ACEScg ? AP1TosRGB(color) : color);
 	}
 
+	/** @brief Compensates converted input colors in linear sRGB before the working gamut transform. */
+	float3 CompensateConvertedColor(float3 linearColor)
+	{
+		return ENABLE_LL ? ApplyConversionSaturation(linearColor, SharedData::linearLightingSettings.conversionSaturation) : linearColor;
+	}
+
+	/** @brief Compensates authored inputs that must retain their gamma blending domain. */
+	float3 CompensateGammaInput(float3 color, float gamma)
+	{
+		[branch] if (ENABLE_LL && SharedData::linearLightingSettings.conversionSaturation < 1.0)
+			color = SignedPow(CompensateConvertedColor(SignedPow(color, gamma)), 1.0 / gamma);
+		return color;
+	}
+
 	float3 AuthoredColor(float3 color)
 	{
-		return ENABLE_LL ? DecodeAuthoredColor(color) : color;
+		return ENABLE_LL ? GamutTransform(CompensateConvertedColor(AuthoredGammaToLinear(color))) : color;
 	}
 
 	float3 AdjustedAuthoredColor(float3 color, float gammaOffset)
 	{
-		if (ENABLE_LL || gammaOffset != 0.0) {
-			float gamma = (ENABLE_LL ? SharedData::linearLightingSettings.authoredColorGamma : 1.0) + gammaOffset;
-			color = SignedPow(color, clamp(gamma, MinAdjustedGamma, MaxAdjustedGamma));
-		}
-		return ENABLE_LL ? GamutTransform(color) : color;
+		if (ENABLE_LL)
+			color = AuthoredGammaToLinear(color, gammaOffset);
+		else if (gammaOffset != 0.0)
+			color = SignedPow(color, clamp(1.0 + gammaOffset, MinAdjustedGamma, MaxAdjustedGamma));
+		return ENABLE_LL ? GamutTransform(CompensateConvertedColor(color)) : color;
+	}
+
+	/** @brief Converts a diffuse texture to the working gamut, calibrating legacy inputs. */
+	float3 DiffuseToWorking(float3 color, bool linearInput = false)
+	{
+		if (!ENABLE_LL)
+			return color;
+		if (!linearInput)
+			color = CalibrateDiffuse(color, SharedData::linearLightingSettings.diffuseGamma, SharedData::linearLightingSettings.diffuseCurve, SharedData::linearLightingSettings.diffuseWhiteReflectance, SharedData::linearLightingSettings.conversionSaturation);
+		return GamutTransform(color);
+	}
+
+	float4 DiffuseToWorking(float4 color, bool linearInput = false)
+	{
+		return float4(DiffuseToWorking(color.rgb, linearInput), color.a);
+	}
+
+	float3 TextureToWorking(float3 color, float3 authoredTint = 1.0)
+	{
+		if (!ENABLE_LL)
+			return color * authoredTint;
+		float3 linearColor = CompensateConvertedColor(pow(abs(color), LegacyTextureGamma));
+		float3 linearTint = CompensateConvertedColor(AuthoredGammaToLinear(authoredTint));
+		return GamutTransform(linearColor * linearTint);
 	}
 
 	float3 EnbColorPow(float3 color)
@@ -293,14 +387,22 @@ namespace Color
 		return color;
 	}
 
-	float3 Diffuse(float3 color)
+	float3 Albedo(float3 color)
 	{
 		color = EnbColorPow(color);
 #	if defined(TRUE_PBR)
-		// TRUE_PBR: input is already linear sRGB; gamut-convert only
-		return ENABLE_LL ? GamutTransform(color) : LinearToSrgb(color);
+		return ENABLE_LL ? color : LinearToSrgb(color);
 #	else
-		return AuthoredColor(color) * (ENABLE_LL ? SharedData::linearLightingSettings.vanillaDiffuseColorMult : 1.0);
+		return color;
+#	endif
+	}
+
+	float3 Diffuse(float3 color)
+	{
+#	if defined(TRUE_PBR)
+		return Albedo(DiffuseToWorking(color, true));
+#	else
+		return Albedo(DiffuseToWorking(color));
 #	endif
 	}
 
@@ -309,20 +411,23 @@ namespace Color
 #	if defined(TRUE_PBR)
 		// The shared UNORM projection texture enters PBR in its legacy gamma space.
 		float3 projectedColor = max(0, color * tint * materialColorScale);
-		return ENABLE_LL ? GamutTransform(SrgbToLinear(projectedColor)) : projectedColor;
+		return ENABLE_LL ? GamutTransform(CompensateConvertedColor(SrgbToLinear(projectedColor))) : projectedColor;
 #	else
+		if (!ENABLE_LL)
+			return EnbColorPow(color * tint);
 #		if defined(PSHADER) && defined(LIGHTING) && (defined(LODOBJECTS) || defined(LODOBJECTSHD))
 		if (ENABLE_LL && projectedMaterialColorScale.x >= 0.0)
-			return GamutTransform(SrgbToLinear(max(0, color * tint * projectedMaterialColorScale)));
+			return GamutTransform(CompensateConvertedColor(SrgbToLinear(max(0, color * tint * projectedMaterialColorScale))));
 #		endif
-		return Diffuse(color * tint);
+		float3 linearTint = CompensateConvertedColor(AuthoredGammaToLinear(tint));
+		return ApplyLinearSrgbTint(Albedo(DiffuseToWorking(color)), linearTint);
 #	endif
 	}
 
 	float3 Light(float3 color, bool isLinear = false)
 	{
-		color = (ENABLE_LL && !isLinear) ? DecodeAuthoredColor(color) : (ENABLE_LL && isLinear) ? GamutTransform(color) :
-		                                                                                          color;
+		color = (ENABLE_LL && !isLinear) ? AuthoredColor(color) : (ENABLE_LL && isLinear) ? GamutTransform(color) :
+		                                                                                    color;
 #	if defined(TRUE_PBR)
 		return color * PBRLightingCompensation;  // Compensate for traditional Lambertian diffuse
 #	else
@@ -330,24 +435,27 @@ namespace Color
 #	endif
 	}
 
+	float3 SceneGammaToLinear(float3 color);
+	float3 SceneLinearToGamma(float3 color);
+
 	float3 EffectLight(float3 color, bool isLinear = false)
 	{
-		return ENABLE_LL ? GamutTransform(isLinear ? color : AuthoredGammaToLinear(color)) : color;
+		return ENABLE_LL ? (isLinear ? GamutTransform(color) : SceneGammaToLinear(color)) : color;
 	}
 
 	float3 EffectLightToGamma(float3 color)
 	{
-		return ENABLE_LL ? EncodeAuthoredColor(color) : color;
+		return ENABLE_LL ? SceneLinearToGamma(color) : color;
 	}
 
 	float3 SceneGammaToLinear(float3 color)
 	{
-		return ENABLE_LL ? DecodeAuthoredColor(color) : SkyrimGammaToLinear(color);
+		return ENABLE_LL ? GamutTransform(SignedPow(color, GameGamma)) : SkyrimGammaToLinear(color);
 	}
 
 	float3 SceneLinearToGamma(float3 color)
 	{
-		return ENABLE_LL ? EncodeAuthoredColor(color) : LinearToSkyrimGamma(color);
+		return ENABLE_LL ? SignedPow(ENABLE_ACEScg ? AP1TosRGB(color) : color, 1.0 / GameGamma) : LinearToSkyrimGamma(color);
 	}
 
 	float3 DirectionalLight(float3 color, bool isLinear = false)
@@ -382,7 +490,7 @@ namespace Color
 
 	float3 EffectPointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
 	{
-		return EffectLight(color, isLinear) *
+		return (isLinear ? EffectLight(color, true) : AuthoredColor(color)) *
 		       GetPointLightMultiplier(isLinear) *
 		       GetPointLightTypeMultiplier(isLinear, lightFlags);
 	}
@@ -400,7 +508,7 @@ namespace Color
 #	if defined(LIGHTING)
 	float3 EmitColor(float3 color)
 	{
-		color = ENABLE_LL ? DecodeAuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
+		color = ENABLE_LL ? AuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
 		return color * SharedData::csUtilitySettings.emitColorMult;
 	}
 #	endif
@@ -410,7 +518,7 @@ namespace Color
 #	if defined(TRUE_PBR)
 		color = ENABLE_LL ? GamutTransform(color) : LinearToSrgb(color);
 #	else
-		color = AuthoredColor(color);
+		color = TextureToWorking(color);
 #	endif
 		return color * SharedData::csUtilitySettings.glowmapMult;
 	}
@@ -418,7 +526,7 @@ namespace Color
 	float EffectLightingMultiplier()
 	{
 		float multiplier = SharedData::csUtilitySettings.effectLightingMult;
-		return ENABLE_LL ? pow(abs(multiplier), 1.0 / SharedData::linearLightingSettings.authoredColorGamma) : multiplier;
+		return ENABLE_LL ? pow(abs(multiplier), 1.0 / GameGamma) : multiplier;
 	}
 
 	float3 Ambient(float3 color)
@@ -480,10 +588,11 @@ namespace Color
 	float VolumetricLighting(float intensity)
 	{
 		float gammaOffset = SharedData::csUtilitySettings.vlGammaOffset;
-		if (gammaOffset == 0.0)
-			return (ENABLE_LL ? AuthoredGammaToLinear(intensity.xxx).x : intensity) * SharedData::csUtilitySettings.vlIntensity;
-		float gamma = (ENABLE_LL ? SharedData::linearLightingSettings.authoredColorGamma : 1.0) + gammaOffset;
-		return sign(intensity) * pow(abs(intensity), clamp(gamma, MinAdjustedGamma, MaxAdjustedGamma)) * SharedData::csUtilitySettings.vlIntensity;
+		if (ENABLE_LL)
+			intensity = AuthoredGammaToLinear(intensity.xxx, gammaOffset).x;
+		else if (gammaOffset != 0.0)
+			intensity = sign(intensity) * pow(abs(intensity), clamp(1.0 + gammaOffset, MinAdjustedGamma, MaxAdjustedGamma));
+		return intensity * SharedData::csUtilitySettings.vlIntensity;
 	}
 
 	float3 RadianceToLinear(float3 color)
@@ -514,11 +623,6 @@ namespace Color
 	float VanillaNormalization()
 	{
 		return ENABLE_LL ? 1.0 / Math::PI : 1.0f;
-	}
-
-	float VanillaDiffuseColorMult()
-	{
-		return ENABLE_LL ? SharedData::linearLightingSettings.vanillaDiffuseColorMult : 1.0f;
 	}
 #else
 	const static float PBRLightingScale = 1.0;
