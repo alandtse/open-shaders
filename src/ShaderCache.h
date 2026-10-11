@@ -937,6 +937,7 @@ namespace SIE
 			// Community Shaders start
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
+			ForwardMasks2 = 1 << 5,  // Forward eye pass also writes the Masks2 material class
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,

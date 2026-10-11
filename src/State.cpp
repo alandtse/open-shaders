@@ -1250,6 +1250,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 
 				if (deferred->deferredPass || a_forceDeferred)
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::Deferred;
+				else if ((0x3F & (a_pixelDescriptor >> 24)) == (uint32_t)SIE::ShaderCache::LightingShaderTechniques::Eye && deferred->ForwardMasks2Available())
+					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::ForwardMasks2;
 
 				{
 					uint32_t technique = 0x3F & (a_vertexDescriptor >> 24);

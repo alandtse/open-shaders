@@ -685,6 +685,9 @@ namespace SIE
 			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::Deferred)) {
 				defines[lastIndex++] = { "DEFERRED", nullptr };
 			}
+			if (descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::ForwardMasks2)) {
+				defines[lastIndex++] = { "FORWARD_MASKS2", nullptr };
+			}
 			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::TruePbr)) != 0) {
 				defines[lastIndex++] = { "TRUE_PBR", nullptr };
 				if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::AnisoLighting)) != 0) {
