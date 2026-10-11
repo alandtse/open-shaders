@@ -1994,7 +1994,17 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
 		D3D11_MAPPED_SUBRESOURCE mapped{};
-		context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		HRESULT mapResult = context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(mapResult) || !mapped.pData) {
+			if (SUCCEEDED(mapResult))
+				context->Unmap(vrClearHMDMaskCB.get(), 0);
+			ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+			ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+			context->CSSetShaderResources(0, 1, nullSRV);
+			context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+			context->CSSetShader(nullptr, nullptr, 0);
+			return;
+		}
 
 		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
 
