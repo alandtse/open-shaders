@@ -3731,7 +3731,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.MotionVectors = outputColorToAuxiliaryTarget ? float4(1, 0, 0, 1) : float4(screenMotionVector, 0, 1);
 #	endif
 
-#	if defined(EYE)
+#	if defined(EYE) && !defined(DEFERRED)
 	// The forward eye pass has no deferred write, so without this the head's Skin value stays under the eyes.
 	// The vanilla eye atlas holds the lash strands below this uv; another layout classifies them as Eyes.
 	static const float2 kEyeLashMaxUV = float2(0.8, 0.47);
