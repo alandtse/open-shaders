@@ -366,7 +366,7 @@ namespace NR
 	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
-	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode)
+	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified)
 	{
 		if (impl->initialized)
 			return;
@@ -374,10 +374,10 @@ namespace NR
 		auto& state = *pending;
 		const auto path = directory / kRuntimeFileName;
 		const auto availability = InspectRuntimeFile(directory);
-		if (!availability.AllowsLoad(developerMode))
+		if (!availability.AllowsLoad(developerMode, allowUnverified))
 			throw std::runtime_error(availability.reason);
 		if (!availability.Ready())
-			logger::warn("[NeuralRendering] Developer mode loaded a runtime the pass refuses: {}", availability.reason);
+			logger::warn("[NeuralRendering] Loaded an unverified runtime ({}): {}", developerMode ? "developer mode" : "unverified-build option", availability.reason);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();

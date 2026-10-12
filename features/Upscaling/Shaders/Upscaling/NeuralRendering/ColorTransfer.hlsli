@@ -45,8 +45,7 @@ cbuffer ColorTransfer : register(b0)
 	uint MaterialMapFilter;
 	uint MaterialMapStrengthBound;
 	float4 MaterialStrengthsA;  // None, Skin, Hair, Eyes
-	float2 MaterialStrengthsB;  // Foliage, Landscape
-	float2 MaterialStrengthsPad;
+	float4 MaterialStrengthsB;  // Foliage, Landscape, Cloth, Metal
 };
 
 static const float3 Luma = Color::kRec709LuminanceWeights;

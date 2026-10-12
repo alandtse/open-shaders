@@ -1536,7 +1536,7 @@ void Effects11Editor::DrawLauncher()
 		Open(true);
 	if (!menuSettings.Effects11EditorKey.empty()) {
 		ImGui::SameLine();
-		ImGui::AlignTextToFramePadding();
+		ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (buttonSize.y - ImGui::GetTextLineHeight()) * 0.5f);
 		const auto hotkey = I18n::GetSingleton()->Format(TKEY("editor_hotkey"),
 			{ { "key", Util::Input::KeyIdToString(menuSettings.Effects11EditorKey) } }, "Hotkey: {key}");
 		Util::TextUnformattedDisabled(hotkey.c_str());

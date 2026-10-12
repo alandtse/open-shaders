@@ -229,7 +229,7 @@ namespace SkyScattering
 
 	float3 ShadeCloud(float3 cloudColor, float textureAlpha, float textureGray, float3 viewDirection, SamplerState textureSampler)
 	{
-		bool scattering = SharedData::enbSettings.EnableCloudsScattering;
+		bool scattering = SharedData::enbSettings.EnableCloudsScattering && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoSkyScattering);
 		float edgeWeight = saturate(1.0 - textureAlpha - SharedData::enbSettings.CloudsEdgeClamp);
 		float3 result = cloudColor;
 		float3 edge = 0.0;

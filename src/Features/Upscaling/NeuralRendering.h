@@ -4,6 +4,7 @@
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
+#include "NeuralRendering/MaterialStrength.h"
 #include "NeuralRendering/Runtime.h"
 #include "NeuralRendering/Tuning.h"
 
@@ -50,8 +51,8 @@ struct NeuralRendering
 		bool materialStrengthAvailable = true;
 		/** @brief True when the last evaluate bound the graded material protection. */
 		bool materialStrengthActive = false;
-		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape. */
-		std::array<float, 6> materialStrength{};
+		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
+		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
 		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
 		/** @brief True while the eye-stagger is running: the developer setting is on, both eyes render and frame generation is idle. */
@@ -86,7 +87,7 @@ struct NeuralRendering
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup);
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -158,6 +159,8 @@ private:
 	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
 	/** @brief Whether the crop covers several actors, mirrored from the tuning like regionEnabled. */
 	std::atomic_bool regionGroup = false;
+	/** @brief Mirrors the tuning's allowUnverifiedRuntime for the status text, which has no tuning at hand. */
+	std::atomic_bool allowUnverifiedRuntime = false;
 	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
 	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
 	/**
@@ -170,7 +173,7 @@ private:
 	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
-	std::array<std::atomic<float>, 6> materialStrengthValues{};
+	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};
 	std::atomic<uint32_t> materialEdgeSoftness = 0;
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;

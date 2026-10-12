@@ -178,13 +178,12 @@ struct NeuralRendering::Impl
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain;
-	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the six strengths. */
+	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
 		uint32_t width, height, eyeOffsetX, edgeSoftness;
 		float4 strengthsA;
-		float2 strengthsB;
-		float2 pad{};
+		float4 strengthsB;
 	};
 	static_assert(offsetof(CategoryAlphaData, strengthsA) == 16);
 	static_assert(offsetof(CategoryAlphaData, strengthsB) == 32);
@@ -276,6 +275,8 @@ struct NeuralRendering::Impl
 	Util::Region::StereoRegion actorBox;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
+	/** @brief Set from the tuning before Initialize; lets a 310.8.x build outside the pinned digests load. */
+	bool allowUnverifiedRuntime = false;
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -331,7 +332,7 @@ struct NeuralRendering::Impl
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
 		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
-		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
+		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
 
@@ -691,7 +692,8 @@ struct NeuralRendering::Impl
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
-		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape], 0.0f, 0.0f };
+		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape],
+			materialMapStrength[NR::MaterialStrength::kCloth], materialMapStrength[NR::MaterialStrength::kMetal] };
 		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
@@ -766,7 +768,8 @@ struct NeuralRendering::Impl
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
 						strengths.strength[NR::MaterialStrength::kHair], strengths.strength[NR::MaterialStrength::kEyes] },
-					{ strengths.strength[NR::MaterialStrength::kFoliage], strengths.strength[NR::MaterialStrength::kLandscape] } });
+					{ strengths.strength[NR::MaterialStrength::kFoliage], strengths.strength[NR::MaterialStrength::kLandscape],
+						strengths.strength[NR::MaterialStrength::kCloth], strengths.strength[NR::MaterialStrength::kMetal] } });
 				auto buffer = categoryAlphaBuffer->CB();
 				context->CSSetConstantBuffers(0, 1, &buffer);
 				context->CSSetShaderResources(0, 1, &masks2);
@@ -1233,8 +1236,9 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified)
 {
+	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
 	regionFit.store(cropFit, std::memory_order_relaxed);
 	regionGroup.store(cropGroup, std::memory_order_relaxed);
@@ -1312,8 +1316,8 @@ void NeuralRendering::DrawRuntimeDiagnostics() const
 		return;
 	}
 	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
-	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode()))
-		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode(), allowUnverifiedRuntime.load(std::memory_order_relaxed)))
+		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 	else
 		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 }
@@ -1327,7 +1331,8 @@ namespace
 	/** @brief NeuralRenderingCategory ids in the order the material checklists list them. */
 	constexpr std::array<uint32_t, NR::MaterialMap::kBits> kMaterialListOrder{
 		NR::MaterialStrength::kSkin, NR::MaterialStrength::kHair, NR::MaterialStrength::kEyes,
-		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kNone
+		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kCloth,
+		NR::MaterialStrength::kMetal, NR::MaterialStrength::kNone
 	};
 
 	ImU32 ToColor(const NR::MaterialMap::Color& color)
@@ -1340,7 +1345,8 @@ namespace
 	{
 		const std::array<const char*, NR::MaterialMap::kBits> labels{
 			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
-			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("material_other"), "Everything Else")
+			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("category_cloth"), "Cloth Gear"),
+			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_other"), "Everything Else")
 		};
 		bool changed = false;
 		for (uint32_t i = 0; i < selected.size(); ++i) {
@@ -1426,6 +1432,8 @@ namespace
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_cloth"), "Cloth Gear"), &tuning.strengthCloth, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_metal"), "Metal Gear"), &tuning.strengthMetal, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (strengthChanged) {
 				tuning.SyncMaterialSwitch();
@@ -1538,7 +1546,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	// An unavailable runtime must not strand a feature that is already on, so only the switch
 	// from off is locked. The verdict is re-read when the file changes, so installing a build
 	// mid-session unblocks the toggle without a restart.
-	const bool loadable = availability.AllowsLoad(developerMode);
+	const bool loadable = availability.AllowsLoad(developerMode, tuning.allowUnverifiedRuntime);
 	const bool lockEnable = !loadable && !enabled;
 	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
@@ -1552,9 +1560,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	if (!availability.Ready()) {
 		if (loadable)
-			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 		else
 			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+		if (availability.state == NR::RuntimeAvailability::State::kUnvalidatedBuild) {
+			ImGui::Checkbox(T(TKEY("allow_unverified"), "Use This Build Anyway"), &tuning.allowUnverifiedRuntime);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("allow_unverified_tooltip"),
+					"Loads a 310.8.x runtime that is not one of the builds checked in game. Its colour channels may be wrong; turn this off if the picture looks tinted."));
+		}
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
@@ -1889,6 +1903,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		}
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
+			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);

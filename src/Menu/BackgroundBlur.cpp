@@ -673,6 +673,12 @@ namespace BackgroundBlur
 		context->PSSetShaderResources(0, 1, &srv);
 	}
 
+	void ReleaseSourceCache()
+	{
+		cachedSourceSRV = nullptr;
+		cachedSourceTexture = nullptr;
+	}
+
 	void Cleanup()
 	{
 		std::lock_guard<std::mutex> lock(resourceMutex);
@@ -698,8 +704,7 @@ namespace BackgroundBlur
 		retainedScene = {};
 		retainedUI = {};
 
-		cachedSourceSRV = nullptr;
-		cachedSourceTexture = nullptr;
+		ReleaseSourceCache();
 
 		enabled = false;
 		initialized = false;
