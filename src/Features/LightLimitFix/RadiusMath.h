@@ -4,7 +4,7 @@
 #include <cmath>
 
 // Pure ISL radius/attenuation math, extracted so it can be unit-tested without
-// the game/RE runtime. InverseSquareLighting's static methods delegate here.
+// the game/RE runtime. LightLimitFix's static methods delegate here.
 namespace ISLMath
 {
 	inline constexpr float DefaultCutoff = 0.05f;

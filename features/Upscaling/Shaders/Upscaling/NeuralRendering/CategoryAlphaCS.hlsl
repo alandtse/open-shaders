@@ -7,7 +7,7 @@ cbuffer CategoryAlpha : register(b0)
 	uint EyeOffsetX;
 	uint EdgeSoftness;
 	float4 StrengthsA;  // None, Skin, Hair, Eyes
-	float2 StrengthsB;  // Foliage, Landscape
+	float4 StrengthsB;  // Foliage, Landscape, Cloth, Metal
 };
 
 Texture2D<float2> Masks2Texture : register(t0);  // r vertex AO, g material category (R16G16_UNORM)

@@ -51,17 +51,34 @@ public:
 	ConstantBuffer* spmapCB = nullptr;
 	Texture2D* envTexture = nullptr;
 	Texture2D* envReflectionsTexture = nullptr;
+	Texture2D* envFilteredTexture = nullptr;
 	ID3D11UnorderedAccessView* uavArray[8];
-	ID3D11UnorderedAccessView* uavReflectionsArray[8];
 
 	// Reflection capture
 
 	struct alignas(16) UpdateCubemapCB
 	{
 		float3 CameraPreviousPosAdjust;
-		uint pad0;
+		uint CaptureIndex;
+		float CaptureDeltaTime;
+		uint ResetCapture;
+		uint pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);
+
+	struct alignas(16) CaptureLightingState
+	{
+		float ReferenceLuminance;
+		uint PendingResetMask;
+		uint Reset;
+		uint Initialized;
+	};
+	STATIC_ASSERT_ALIGNAS_16(CaptureLightingState);
+
+	std::unique_ptr<StructuredBuffer> captureLightingState;
+	Util::LazyShader<ID3D11ComputeShader> detectCaptureLightingCS;
+	float3 cameraPreviousPosAdjust[2] = {};
+	float previousCaptureTime[2] = {};
 
 	Util::LazyShader<ID3D11ComputeShader> updateCubemapCS;
 	Util::LazyShader<ID3D11ComputeShader> updateCubemapReflectionsCS;
@@ -89,6 +106,7 @@ public:
 	bool fakeReflections = false;
 
 	bool resetCapture[2] = { true, true };
+	bool cubemapValid[2] = {};
 	bool recompileFlag = false;
 	float previousHoursPassed = 0.0f;
 
@@ -117,8 +135,7 @@ public:
 	Util::LazyShader<ID3D11ComputeShader> bc6hEncodeCS;
 	ConstantBuffer* bc6hEncodeCB = nullptr;
 
-	ID3D11ShaderResourceView* envTextureArraySRV = nullptr;
-	ID3D11ShaderResourceView* envReflectionsTextureArraySRV = nullptr;
+	ID3D11ShaderResourceView* envFilteredTextureArraySRV = nullptr;
 
 	Texture2D* envTextureBC6H = nullptr;
 	Texture2D* envReflectionsTextureBC6H = nullptr;
@@ -211,6 +228,7 @@ public:
 	};
 
 	virtual void ClearShaderCache() override;
+	ID3D11ComputeShader* GetComputeShaderDetectLighting();
 	ID3D11ComputeShader* GetComputeShaderUpdate();
 	ID3D11ComputeShader* GetComputeShaderUpdateReflections();
 	ID3D11ComputeShader* GetComputeShaderUpdateFakeReflections();

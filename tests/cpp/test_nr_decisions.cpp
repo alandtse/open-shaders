@@ -208,6 +208,11 @@ TEST_CASE("Only a validated runtime loads unless developer mode forces one", "[n
 		REQUIRE(verdict(refused).AllowsLoad(true));
 	}
 
+	// The unverified-build option covers a 310.8.x build outside the pinned digests and nothing else.
+	REQUIRE(verdict(RuntimeAvailability::State::kUnvalidatedBuild).AllowsLoad(false, true));
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kUnsupportedVersion).AllowsLoad(false, true));
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(false, true));
+
 	// There is nothing to load without the file, whatever developer mode says.
 	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(false));
 	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(true));

@@ -2871,6 +2871,10 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 		return;
 	}
 
+	// Keep the pre-map scene settings applied while the map is open.
+	if (globals::state && globals::state->isMapMenuOpen)
+		return;
+
 	auto* player = globals::game::player;
 	auto* cell = player ? player->GetParentCell() : nullptr;
 	if (!player || !cell) {
