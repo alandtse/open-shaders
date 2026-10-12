@@ -270,6 +270,12 @@ namespace ShadowCasterManager
 	/// Bakes retired (latched or dropped on slot reassignment) before any DynamicOnly accumulate reused them.
 	std::atomic<uint64_t> s_splitWastedBakeTotal{ 0 };
 
+	/// Tile-class changes that alone made a light dirty: promotions, and the demotions
+	/// whose retained tile already held the requested content (the redraws this saves).
+	/// Each counts once per scale-change event, not once per frame the change stays pending.
+	std::atomic<uint64_t> s_scalePromotionRedraws{ 0 };
+	std::atomic<uint64_t> s_scaleDemotionRedrawsAvoided{ 0 };
+
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
 	/// whether Hook_ResetScene fires only on real zone transitions or also
 	/// on ordinary exterior cell-grid streaming during normal movement.
@@ -616,8 +622,8 @@ namespace ShadowCasterManager
 	{
 		if (e.LastDrawnFrame < 0 || SlotStaticCompositePending(slot))
 			return false;
-		// A staged class change must rerender before the light may sleep.
-		if (e.pendingScale != e.renderedScale)
+		// A staged promotion must rerender before the light may sleep.
+		if (e.pendingScale > e.renderedScale)
 			return false;
 		const auto it = s_splitState.find(e.Light);
 		if (it == s_splitState.end())
@@ -667,8 +673,8 @@ namespace ShadowCasterManager
 		assert(slot == e.Index && e.Index == GetShadowSlot(e.Light));
 		if (e.LastDrawnFrame < 0)
 			return false;
-		// A staged class change must rerender before the light may be skipped.
-		if (e.pendingScale != e.renderedScale)
+		// A staged promotion must rerender before the light may be skipped.
+		if (e.pendingScale > e.renderedScale)
 			return false;
 		AtlasTileTexels tile{};
 		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
@@ -2119,14 +2125,26 @@ namespace ShadowCasterManager
 			const bool tileInvalid = AtlasActive() &&
 			                         (!GetSlotTileTexels(e->Index, schedDirtyTile) || !schedDirtyTile.contentValid);
 			const bool staticCompositePending = SlotStaticCompositePending(e->Index);
-			e->schedDirty = e->LastDrawnFrame < 0 ||
-			                e->lastGeomHash == 0 ||
-			                e->pendingGeomHash != e->lastGeomHash ||
-			                e->pendingScale != e->renderedScale ||
-			                displacementTexels >= 1.0 ||
-			                tileInvalid ||
-			                staticCompositePending ||
-			                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
+			// `>` not `!=`: a demotion keeps the larger tile (EnsureSlotTile never
+			// shrinks one), so rerastering it can only reproduce the same content.
+			const bool scaleDirty = e->pendingScale > e->renderedScale;
+			const bool otherDirty = e->LastDrawnFrame < 0 ||
+			                        e->lastGeomHash == 0 ||
+			                        e->pendingGeomHash != e->lastGeomHash ||
+			                        displacementTexels >= 1.0 ||
+			                        tileInvalid ||
+			                        staticCompositePending ||
+			                        (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
+			if (e->pendingScale == e->renderedScale) {
+				e->countedScaleEvent = 0.0f;
+			} else if (!otherDirty && e->pendingScale != e->countedScaleEvent) {
+				if (e->pendingScale > e->renderedScale)
+					s_scalePromotionRedraws.fetch_add(1, std::memory_order_relaxed);
+				else
+					s_scaleDemotionRedrawsAvoided.fetch_add(1, std::memory_order_relaxed);
+				e->countedScaleEvent = e->pendingScale;
+			}
+			e->schedDirty = otherDirty || scaleDirty;
 
 			// VSM-style demand tiebreaker: must stay in RedrawScore's native frame-count
 			// scale, or a too-large term becomes the sort key instead of a tiebreaker.
@@ -2971,6 +2989,8 @@ namespace ShadowCasterManager
 				snap.splitLatchMismatchTotal = s_splitLatchMismatchTotal.load(std::memory_order_relaxed);
 				snap.splitLatchWindowTotal = s_splitLatchWindowTotal.load(std::memory_order_relaxed);
 				snap.splitWastedBakesTotal = s_splitWastedBakeTotal.load(std::memory_order_relaxed);
+				snap.scalePromotionRedraws = s_scalePromotionRedraws.load(std::memory_order_relaxed);
+				snap.scaleDemotionRedrawsAvoided = s_scaleDemotionRedrawsAvoided.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);

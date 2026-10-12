@@ -414,6 +414,9 @@ namespace ShadowCasterManager
 		/// Tile scale scheduler desires for next redraw.
 		float pendingScale{ 1.0f };
 
+		/// pendingScale value a scale-change event was already counted for.
+		float countedScaleEvent{ 0.0f };
+
 		/// Importance-domain class before atlas capacity clamp.
 		float desiredScale{ 1.0f };
 
@@ -446,6 +449,7 @@ namespace ShadowCasterManager
 			cachedSkinnedCasters = 0;
 			renderedScale = 1.0f;
 			pendingScale = 1.0f;
+			countedScaleEvent = 0.0f;
 			desiredScale = 1.0f;
 			budgetScale = 1.0f;
 			lastScore = 0.0;
@@ -713,6 +717,12 @@ namespace ShadowCasterManager
 		uint64_t splitLatchMismatchTotal = 0;
 		uint64_t splitLatchWindowTotal = 0;
 		uint64_t splitWastedBakesTotal = 0;
+
+		/// Redraws a resolution promotion forced, and demotions skipped because the
+		/// retained tile already holds the requested content. Each counts once per
+		/// scale-change event, not once per frame the change stays pending.
+		uint64_t scalePromotionRedraws = 0;
+		uint64_t scaleDemotionRedrawsAvoided = 0;
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
