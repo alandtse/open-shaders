@@ -730,6 +730,9 @@ namespace ShadowCasterManager
 		/// Promotions the previous `pendingScale > renderedScale` rule dirtied although
 		/// the retained tile already held the requested class.
 		uint64_t scalePromotionRedundantAvoided = 0;
+		/// Converted-light engine re-enables run versus skipped as unchanged.
+		uint64_t convertReEnableRun = 0;
+		uint64_t convertReEnableSkipped = 0;
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.

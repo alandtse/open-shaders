@@ -278,6 +278,9 @@ namespace ShadowCasterManager
 	/// Promotions the previous `pendingScale > renderedScale` rule dirtied although the
 	/// retained tile already held the requested class (the redraws the tile test removes).
 	std::atomic<uint64_t> s_scalePromotionRedundantAvoided{ 0 };
+	/// Converted-light re-enables run versus skipped because no engine-walk input changed.
+	std::atomic<uint64_t> s_convertReEnableRun{ 0 };
+	std::atomic<uint64_t> s_convertReEnableSkipped{ 0 };
 
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
 	/// whether Hook_ResetScene fires only on real zone transitions or also
@@ -707,6 +710,38 @@ namespace ShadowCasterManager
 
 	// Light enable / disable helpers.
 
+	bool EnableInputs::operator==(const EnableInputs& o) const
+	{
+		for (int r = 0; r < 3; ++r)
+			for (int c = 0; c < 3; ++c)
+				if (rotate.entry[r][c] != o.rotate.entry[r][c])
+					return false;
+		return translate.x == o.translate.x && translate.y == o.translate.y && translate.z == o.translate.z &&
+		       radius == o.radius && fade == o.fade && hidden == o.hidden && dynamic == o.dynamic &&
+		       portalStrict == o.portalStrict && portalGraph == o.portalGraph && roomCount == o.roomCount;
+	}
+
+	/// Caller holds s_portalGraphMutex shared, so the graph pointer stays valid.
+	static EnableInputs CaptureEnableInputs(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn)
+	{
+		EnableInputs in;
+		if (const auto* ni = light->light.get()) {
+			in.translate = ni->world.translate;
+			in.rotate = ni->world.rotate;
+			const auto& lightData = ni->GetLightRuntimeData();
+			in.radius = lightData.radius.x;
+			in.fade = lightData.fade;
+			in.hidden = ni->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+		}
+		in.dynamic = light->dynamic;
+		in.portalStrict = light->portalStrict;
+		if (const auto* graph = ssn->GetRuntimeData().portalGraph) {
+			in.portalGraph = graph;
+			in.roomCount = graph->rooms.size();
+		}
+		return in;
+	}
+
 	static void EraseFromConvertList(RE::BSShadowLight* light)
 	{
 		for (auto it = s_normalConvert.begin(); it != s_normalConvert.end(); ++it) {
@@ -732,11 +767,19 @@ namespace ShadowCasterManager
 	// capture distinguishes steady-state cost from fresh-conversion cost.
 	void ConvertLight(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn, bool isNS)
 	{
-		// Already converted: just re-enable so geometry picks it up this frame.
+		// Already converted: re-enable only when an input of the engine walk changed.
 		for (auto& c : s_normalConvert) {
 			if (c.light == light) {
+				const EnableInputs now = CaptureEnableInputs(light, ssn);
+				if (c.enableValid && c.lastEnable == now) {
+					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
+					return;
+				}
 				ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
 				GameEnableLight(ssn, light);
+				c.lastEnable = now;
+				c.enableValid = true;
+				s_convertReEnableRun.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
 		}
@@ -750,6 +793,8 @@ namespace ShadowCasterManager
 
 		s_normalConvert.push_back({ light, isNS });
 		GameEnableLight(ssn, light);
+		s_normalConvert.back().lastEnable = CaptureEnableInputs(light, ssn);
+		s_normalConvert.back().enableValid = true;
 	}
 
 	// Reset a promoted light's descriptor pool-slot indices to kNONE. BSShadowParabolicLight is
@@ -3011,6 +3056,8 @@ namespace ShadowCasterManager
 				snap.scalePromotionRedraws = s_scalePromotionRedraws.load(std::memory_order_relaxed);
 				snap.scaleDemotionRedrawsAvoided = s_scaleDemotionRedrawsAvoided.load(std::memory_order_relaxed);
 				snap.scalePromotionRedundantAvoided = s_scalePromotionRedundantAvoided.load(std::memory_order_relaxed);
+				snap.convertReEnableRun = s_convertReEnableRun.load(std::memory_order_relaxed);
+				snap.convertReEnableSkipped = s_convertReEnableSkipped.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
