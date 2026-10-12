@@ -1,6 +1,6 @@
 // Unit tests for ISL radius/attenuation math (RadiusMath.h).
 
-#include "Features/InverseSquareLighting/RadiusMath.h"
+#include "Features/LightLimitFix/RadiusMath.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>

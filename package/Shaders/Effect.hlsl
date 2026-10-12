@@ -541,10 +541,6 @@ cbuffer PerGeometry : register(b2)
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
 
-#	if defined(ISL) && defined(LIGHT_LIMIT_FIX)
-#		include "InverseSquareLighting/InverseSquareLighting.hlsli"
-#	endif
-
 static const float EffectDirectionalLightScale = 0.5;
 
 bool UseAmbientEffectLighting()
@@ -998,16 +994,9 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WorldPosition.xyz;
 		float lightDist = length(lightDirection);
 
-#			if defined(ISL)
-		float intensityMultiplier = InverseSquareLighting::GetAttenuation(lightDist, light);
+		float intensityMultiplier = LightLimitFix::GetAttenuation(lightDist, light);
 		if (intensityMultiplier < 1e-5)
 			continue;
-#			else
-		float intensityFactor = saturate(lightDist / light.radius);
-		if (intensityFactor == 1)
-			continue;
-		float intensityMultiplier = 1 - intensityFactor * intensityFactor;
-#			endif
 
 		const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 		float3 lightColor = Color::EffectPointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensityMultiplier * 0.5 * light.fade;

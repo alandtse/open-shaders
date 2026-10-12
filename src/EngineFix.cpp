@@ -6,6 +6,7 @@
 #include "EngineFixes/ShadowParabolicNullAccumulatorFix.h"
 #include "EngineFixes/ShadowmapCascadeCullingFix.h"
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
+#include "EngineFixes/WaterReflectionCubemapFix.h"
 
 const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 {
@@ -15,6 +16,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 	static ShadowmapCascadeCullingFix shadowmapCascadeCullingFix;
 	static ShadowmapRasterizerFix shadowmapRasterizerFix;
 	static ShadowParabolicNullAccumulatorFix shadowParabolicNullAccumulatorFix;
+	static WaterReflectionCubemapFix waterReflectionCubemapFix;
 
 	static std::vector<EngineFix*> fixes = {
 		&alphaGeometryGroupCeilingFix,
@@ -22,7 +24,8 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 		&effectShaderNoDecalsFix,
 		&shadowmapCascadeCullingFix,
 		&shadowmapRasterizerFix,
-		&shadowParabolicNullAccumulatorFix
+		&shadowParabolicNullAccumulatorFix,
+		&waterReflectionCubemapFix
 	};
 
 	return fixes;

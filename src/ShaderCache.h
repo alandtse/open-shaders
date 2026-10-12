@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <variant>
 #include <vector>
+#include <winrt/base.h>
 
 #include "Utils/CacheInvalidation.h"
 #include "Utils/WinApi.h"
@@ -687,7 +688,8 @@ namespace SIE
 		enum class ClaimResult
 		{
 			CacheHit,  // Already compiled; use the returned blob
-			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
+			Claimed,   // Claimed as Pending; caller must compile and call AddCompletedShader
+			Failed     // Previous attempt failed; skipped until invalidation drops the entry
 		};
 		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		void ResolvePendingFailure(const std::string& key);
@@ -827,7 +829,7 @@ namespace SIE
 		/** @brief Where the persistent store lives and how much it holds; usable while the setting is off. */
 		struct ContentStoreUsage
 		{
-			std::filesystem::path path;
+			std::string path;  ///< Absolute, UTF-8
 			uint64_t blobs = 0;
 			uint64_t bytes = 0;
 			uint64_t maxBytes = 0;

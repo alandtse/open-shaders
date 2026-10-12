@@ -10,6 +10,7 @@
 #include <cassert>
 #include <d3dcompiler.h>
 #include <mutex>
+#include <unordered_set>
 
 namespace Util
 {
@@ -136,13 +137,39 @@ namespace Util
 			logger::debug("[{}] Shader logs:\n{}", Context, static_cast<char*>(ErrorBlob->GetBufferPointer()));
 	}
 
+	// Per-frame getters would otherwise retry a failed compile every frame.
+	namespace
+	{
+		std::mutex shaderCompileFailuresMutex;
+		std::unordered_set<std::string> shaderCompileFailures;
+	}
+
+	void ClearShaderCompileFailures()
+	{
+		std::lock_guard lock(shaderCompileFailuresMutex);
+		shaderCompileFailures.clear();
+	}
+
 	winrt::com_ptr<ID3DBlob> CompileShaderBlob(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)
 	{
+		std::string failureKey = std::format("{}|{}|{}", Util::WStringToString(FilePath), ProgramType, Program);
 		for (auto& i : Defines) {
 			if (!i.first || _stricmp(i.first, "") == 0)
 				logger::error("Failed to process shader defines for {}", Util::WStringToString(FilePath));
+			else
+				failureKey += std::format("|{}={}", i.first, i.second ? i.second : "");
 		}
-		return globals::shaderCache->CompileStandaloneBlobCached(FilePath, Defines, ProgramType, Program);
+		{
+			std::lock_guard lock(shaderCompileFailuresMutex);
+			if (shaderCompileFailures.contains(failureKey))
+				return nullptr;
+		}
+		auto blob = globals::shaderCache->CompileStandaloneBlobCached(FilePath, Defines, ProgramType, Program);
+		if (!blob) {
+			std::lock_guard lock(shaderCompileFailuresMutex);
+			shaderCompileFailures.insert(failureKey);
+		}
+		return blob;
 	}
 
 	ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const std::vector<std::pair<const char*, const char*>>& Defines, const char* ProgramType, const char* Program)

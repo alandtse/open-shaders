@@ -15,8 +15,13 @@ RWTexture3D<float4> IntegratedLightScattering : register(u0);
 	float previousDepth;
 	float3 previousPositionWS = ExponentialHeightFog::ComputeCellWorldPosition(uint3(dispatchID.xy, 0), float3(0.5f, 0.5f, 0.0f), eyeIndex, previousDepth);
 
+#if defined(VOLUMETRIC_FOG_FAR_GRID)
+	float nearGridStartDepth = (1.0f - VolumetricFogGridZParams.y) / max(VolumetricFogGridZParams.x, 1e-20f);
+	accumulatedDepth = length(previousPositionWS) * max(previousDepth - nearGridStartDepth, 0.0f) / max(previousDepth, 1e-5f);
+#else
 	if (ExponentialHeightFog::GetVolumetricStartDistance() == 0.0f)
 		previousPositionWS = 0.0f.xxx;
+#endif
 
 	[loop] for (uint layerIndex = 0; layerIndex < VolumetricFogGridSize.z; layerIndex++)
 	{

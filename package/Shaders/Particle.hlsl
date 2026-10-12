@@ -272,10 +272,6 @@ cbuffer PerGeometry : register(b2)
 #		include "LightLimitFix/LightLimitFix.hlsli"
 #	endif
 
-#	if defined(ISL) && defined(LIGHT_LIMIT_FIX)
-#		include "InverseSquareLighting/InverseSquareLighting.hlsli"
-#	endif
-
 #	include "Common/DirectionalShadow.hlsli"
 
 #	if defined(IBL)
@@ -316,12 +312,7 @@ float GetPointLightIntensity(LightLimitFix::Light light, float3 positionWS, uint
 	float lightDist = length(lightDirection);
 	lightDirection /= max(lightDist, ParticleLightDirectionEpsilon);
 
-#		if defined(ISL)
-	float intensity = InverseSquareLighting::GetAttenuation(lightDist, light);
-#		else
-	float intensityFactor = saturate(lightDist / light.radius);
-	float intensity = 1 - intensityFactor * intensityFactor;
-#		endif
+	float intensity = LightLimitFix::GetAttenuation(lightDist, light);
 	intensity *= light.fade;
 	if (intensity < ParticleLightIntensityCutoff)
 		return 0.0;
