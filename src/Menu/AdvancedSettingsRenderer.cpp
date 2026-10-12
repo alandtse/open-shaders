@@ -199,7 +199,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	Util::DrawSectionHeader(T("menu.advanced.compile_flags_header", "Compile Flags"));
 
 	// Shader Defines input
-	auto& shaderDefines = globals::state->shaderDefinesString;
+	auto shaderDefines = globals::state->GetDefinesString();
 	if (ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines)) {
 		globals::state->SetDefines(shaderDefines);
 	}

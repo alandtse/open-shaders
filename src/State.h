@@ -66,6 +66,7 @@ public:
 	std::string shaderDefinesString = "";
 	std::shared_ptr<const std::vector<std::pair<std::string, std::string>>> shaderDefines = std::make_shared<const std::vector<std::pair<std::string, std::string>>>();  // data structure to parse string into; needed to avoid dangling pointers
 	std::mutex shaderDefinesMutex;
+	std::atomic<uint32_t> shaderDefinesVersion{ 0 };
 
 	float timer = 0;
 	double smoothDrawCalls[RE::BSShader::Type::Total + 1];
@@ -177,6 +178,10 @@ public:
 	 */
 	void SetDefines(std::string defines);
 	std::shared_ptr<const std::vector<std::pair<std::string, std::string>>> GetDefines();
+	/** @brief Returns a copy of the normalized define string; safe from any thread. */
+	std::string GetDefinesString();
+	/** @brief Changes whenever SetDefines publishes new defines; lets hot paths skip re-reading the string. */
+	uint32_t GetDefinesVersion() const noexcept { return shaderDefinesVersion.load(std::memory_order_acquire); }
 
 	/**
 	 * @brief Checks whether the given shader type is enabled.

@@ -485,7 +485,7 @@ namespace SIE
 			state += "D3DCOMPILE_SKIP_OPTIMIZATION;D3DCOMPILE_DEBUG;";
 		if (globals::game::isVR)
 			state += "VR;";
-		state += globals::state->shaderDefinesString;
+		state += globals::state->GetDefinesString();
 		return Util::ContentHash::HashString(state);
 	}
 
@@ -1924,7 +1924,7 @@ namespace SIE
 				descriptor = (descriptor & ~0b1111u) | static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth);
 			}
 
-			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
+			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->GetDefinesString());
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
 			const auto wname = std::wstring(name.begin(), name.end());
