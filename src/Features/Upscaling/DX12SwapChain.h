@@ -133,6 +133,8 @@ public:
 	UINT frameIndex = 0;
 
 	UINT64 frameFenceValues[kMaxBackBuffers] = {};
+	/** @brief CPU bound for the previous frame's allocator fence; a wedged GPU must not hang Present. */
+	static constexpr DWORD kFrameFenceTimeoutMs = 1000;
 
 	LARGE_INTEGER qpf;
 

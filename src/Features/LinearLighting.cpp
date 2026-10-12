@@ -357,7 +357,7 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 bool LinearLighting::IsLinearLightingActive() const
 {
 	if (!loaded || !settings.enableLinearLighting || !sceneGammaDecodeCS || !globals::state || !globals::shaderCache ||
-		!globals::shaderCache->IsEnabled() || globals::state->IsMainOrLoadingMenuOpen())
+		!globals::shaderCache->IsEnabled() || globals::state->IsMainLoadingOrFlatMapOpen())
 		return false;
 
 #if defined(ENABLE_EFFECTS11)

@@ -23,9 +23,9 @@ Texture2D<float> SrcDepthTexture : register(t0);
 #	else
 Texture2D<SCENE_DEPTH_FORMAT> SrcDepthTexture : register(t0);
 #	endif
-Texture2D<unorm float> SrcShadowTexture : register(t1);
+Texture2D<unorm float2> SrcShadowTexture : register(t1);
 
-RWTexture2D<unorm float> OutShadowTexture : register(u0);
+RWTexture2D<unorm float2> OutShadowTexture : register(u0);
 
 cbuffer StereoSyncCB : register(b1)
 {
@@ -44,7 +44,7 @@ static const int kEdgeMargin = 2;               // Neighbor offset (pixels) for 
 
 // Depth-weighted 4-sample blur using a rotated Poisson disk.
 // Uses dtid hash for per-pixel rotation to break structured patterns.
-float BlurShadow(int2 dtid, float centerDepth)
+float2 BlurShadow(int2 dtid, float centerDepth)
 {
 	// Per-pixel rotation from interleaved gradient noise
 	float noise = Random::InterleavedGradientNoise(float2(dtid));
@@ -61,7 +61,7 @@ float BlurShadow(int2 dtid, float centerDepth)
 	};
 
 	float weight = 0;
-	float shadow = 0;
+	float2 shadow = 0;
 
 	[unroll] for (uint i = 0; i < 4; i++)
 	{
@@ -162,7 +162,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 
 	// Depth-weighted blur on this eye's shadow data.
 	// Only reached by world pixels that will attempt stereo sync.
-	float myShadow = BlurShadow(dtid, depth);
+	float2 myShadow = BlurShadow(dtid, depth);
 
 	// centerWeight fading already happened once in the source (bend raymarch);
 	// re-fading here would compound it, so pass the blurred/blended value through.
@@ -186,12 +186,12 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	float4 otherNeighbors = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
 	Stereo::StereoSyncWeight(r, uv, depth, otherDepth, otherNeighbors, eyeIndex, FrameDim, params);
 
-	float otherShadow = SrcShadowTexture[r.otherPx];
+	float2 otherShadow = SrcShadowTexture[r.otherPx];
 
 	// Use min (darkest) when depths agree: if either eye detected an
 	// occluder, that shadow should be visible. blendWeight is 0 on a dest-edge
 	// reject, collapsing the lerp to myShadow.
-	float combined = min(myShadow, otherShadow);
+	float2 combined = min(myShadow, otherShadow);
 	OutShadowTexture[dtid] = lerp(myShadow, combined, r.blendWeight);
 }
 
