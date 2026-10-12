@@ -1074,7 +1074,7 @@ struct NeuralRendering::Impl
 			PlanSbs();
 		else
 			ReleaseSbs();
-		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR && globals::state->IsDeveloperMode() &&
+		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR &&
 		                eyeCount == 2 && !frameGeneration;
 		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
 		reuseFrame = {};
@@ -1711,14 +1711,14 @@ namespace
 		const std::array<const char*, NR::kEyeModeCount> labels{
 			T(TKEY("eye_mode_parallel"), "Parallel eyes"),
 			T(TKEY("eye_mode_side_by_side"), "Side by side (experimental)"),
-			T(TKEY("eye_mode_alternate"), "Alternate eyes (experimental)"),
+			T(TKEY("eye_mode_alternate"), "Alternate eyes"),
 			T(TKEY("eye_mode_separate"), "Separate eyes"),
 		};
 		const auto current = NR::GetEyeMode(tuning);
 		if (ImGui::BeginCombo(T(TKEY("eye_mode"), "Eye Evaluation"), labels[static_cast<uint32_t>(current)])) {
 			for (uint32_t i = 0; i < NR::kEyeModeCount; ++i) {
 				const auto mode = static_cast<NR::EyeMode>(i);
-				const bool experimental = mode == NR::EyeMode::kSideBySide || mode == NR::EyeMode::kAlternate;
+				const bool experimental = mode == NR::EyeMode::kSideBySide;
 				ImGui::BeginDisabled(experimental && !developerMode);
 				if (ImGui::Selectable(labels[i], mode == current)) {
 					NR::SetEyeMode(tuning, mode);
@@ -1730,7 +1730,7 @@ namespace
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
-				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 2 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other, which can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. The experimental choices need Developer Mode."));
+				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 2 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other, which can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
 		if (current == NR::EyeMode::kAlternate) {
 			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
 			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{

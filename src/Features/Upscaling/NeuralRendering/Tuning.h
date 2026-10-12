@@ -87,8 +87,8 @@ namespace NR
 		uint32_t materialMapFilter = MaterialMap::kAllCategories;
 		/**
 		 * @brief Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.
-		 *        Developer-only and VR-only: it halves the model cost at the price of a synthesized
-		 *        gain for one eye, so it is off by default and unvalidated.
+		 *        VR-only: it halves the model cost at the price of a synthesized gain for one eye,
+		 *        so it is off by default and the Performance profile turns it on.
 		 */
 		bool skipFrameReuse = false;
 		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */

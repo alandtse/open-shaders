@@ -599,7 +599,7 @@ successfully initialized NGX session, restores the IAT, and unloads the modules.
 
 ## Eye-staggered reuse
 
-Developer mode only, VR only, off by default. The stagger evaluates Feature 18
+VR only, off by default; the Performance profile turns it on. The stagger evaluates Feature 18
 for one eye per frame (the even frames eye 0, the odd frames eye 1) and reuses
 the other eye's gain, so a frame runs one model dispatch instead of two. That
 is the whole point: the model is the pass's dominant cost, roughly 4.4-5.0 ms

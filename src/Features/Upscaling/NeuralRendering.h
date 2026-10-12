@@ -55,7 +55,7 @@ struct NeuralRendering
 		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
 		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
-		/** @brief True while the eye-stagger is running: the developer setting is on, both eyes render and frame generation is idle. */
+		/** @brief True while the eye-stagger is running: both eyes render and frame generation is idle. */
 		bool skipFrameReuseActive = false;
 		/** @brief Whether the last applied frame reused each eye's stored gain instead of running the model. */
 		std::array<bool, 2> eyeReuse{};
