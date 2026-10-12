@@ -1761,13 +1761,16 @@ namespace
 		const char* label = T(TKEY("model_scale"), "Model Scale");
 		const ImGuiID id = ImGui::GetID(label);
 		ImGuiStorage* storage = ImGui::GetStateStorage();
-		float& dragged = *storage->GetFloatRef(id, tuning.modelScale);
-		bool& wasDragging = *storage->GetBoolRef(ImGui::GetID("modelScaleDragging"), false);
-		if (!wasDragging)
+		const ImGuiID draggingId = ImGui::GetID("modelScaleDragging");
+		float dragged = storage->GetFloat(id, tuning.modelScale);
+		if (!storage->GetBool(draggingId, false))
 			dragged = tuning.modelScale;
 		ImGui::SliderFloat(label, &dragged, NR::Tuning::kMinModelScale, NR::Tuning::kMaxModelScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		wasDragging = ImGui::IsItemActive();
-		if (ImGui::IsItemDeactivatedAfterEdit()) {
+		const bool dragActive = ImGui::IsItemActive();
+		const bool dragDone = ImGui::IsItemDeactivatedAfterEdit();
+		storage->SetFloat(id, dragged);
+		storage->SetBool(draggingId, dragActive);
+		if (dragDone) {
 			tuning.modelScale = dragged;
 			changed = true;
 		}
@@ -2246,6 +2249,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			resolved.modelScale = NR::Tuning::kMaxModelScale;
 			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
 		}
+		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
 		return resolved;
 	}();
 	const auto materialStrengths = effective.MaterialStrengths();
