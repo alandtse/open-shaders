@@ -193,6 +193,7 @@ void Streamline::LoadInterposer()
 		for (auto& kindFrames : lastDLSSLogFrame)
 			for (auto& frame : kindFrames)
 				frame = UINT32_MAX;
+		stereoFallbackOutput.reset();
 		logger::info("[Streamline {}] Successfully initialized Streamline", instanceTag);
 	}
 }
@@ -770,8 +771,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	//
 	// Both eyes copy their color slice into per-eye intermediates so ClearHMDMask can zero
 	// outside-mask regions before DLSS sees them (prevents temporal bleed into visible pixels).
-	// Both outputs stay isolated until both evaluations succeed, so a failed eye cannot
-	// publish stale output or overwrite the other eye's fallback input.
+	// Outputs stay isolated until both evaluations succeed, so a failed eye never publishes stale output.
 	//
 	if (globals::game::isVR) {
 		auto context = globals::d3d::context;
@@ -803,7 +803,6 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		bool eye0Succeeded = false;
 		bool eye1Succeeded = false;
 
-		// Keep the output untouched until both eye results are ready.
 		if (eye0Ready) {
 			D3D11_BOX leftIn = { 0, 0, 0, eyeWidthIn, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[0]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &leftIn);
@@ -838,23 +837,25 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		} else {
 			CS_GPU_PASS("Streamline::SpatialFallback");
 			try {
-				auto fallbackOutput = FoveatedRenderImpl::Ops::CreateTextureFromSource(colorOut,
-					eyeWidthOut * 2, eyeHeightOut, false, false, true, "Streamline::SpatialFallback");
+				if (!stereoFallbackOutput || stereoFallbackOutput->desc.Width != eyeWidthOut * 2 || stereoFallbackOutput->desc.Height != eyeHeightOut)
+					stereoFallbackOutput = FoveatedRenderImpl::Ops::CreateTextureFromSource(colorOut,
+						eyeWidthOut * 2, eyeHeightOut, false, false, true, "Streamline::SpatialFallback");
+				auto* fallbackOutput = stereoFallbackOutput.get();
 				if (!fallbackOutput || !fallbackOutput->resource || !fallbackOutput->uav) {
-					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackOutputError, 0, state->frameCount))
+					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallback, 0, state->frameCount))
 						logger::error("[Streamline {}] Could not create output for stereo DLSS fallback", instanceTag);
 				} else if (!FoveatedRenderImpl::Ops::SnapshotSBS(a_upscalingTexture, (uint32_t)renderSize.x, eyeHeightIn)) {
-					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackSnapshotError, 0, state->frameCount))
+					if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallback, 0, state->frameCount))
 						logger::error("[Streamline {}] Could not snapshot input for stereo DLSS fallback", instanceTag);
 				} else if (FoveatedRenderImpl::Ops::StretchDRSBothEyes(fallbackOutput->uav.get(), eyeWidthOut, eyeHeightOut,
 							   eyeWidthIn, eyeHeightIn, (uint32_t)renderSize.x, eyeHeightIn)) {
 					D3D11_BOX fallbackBox = { 0, 0, 0, eyeWidthOut * 2, eyeHeightOut, 1 };
 					context->CopySubresourceRegion(colorOut, 0, 0, 0, 0, fallbackOutput->resource.get(), 0, &fallbackBox);
-				} else if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackStretchError, 0, state->frameCount)) {
+				} else if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallback, 0, state->frameCount)) {
 					logger::error("[Streamline {}] Stereo DLSS fallback stretch failed", instanceTag);
 				}
 			} catch (const std::exception& e) {
-				if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallbackSetupError, 0, state->frameCount))
+				if (ShouldLogDLSSProblem(DLSSLogKind::kStereoFallback, 0, state->frameCount))
 					logger::error("[Streamline {}] Stereo DLSS fallback setup failed: {}", instanceTag, e.what());
 			}
 		}
@@ -1085,6 +1086,8 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
  */
 void Streamline::DestroyDLSSResources()
 {
+	stereoFallbackOutput.reset();
+
 	// DLSS entry points are only resolved when DLSS is available; calling them otherwise faults.
 	if (!featureDLSS)
 		return;

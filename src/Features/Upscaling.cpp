@@ -1999,42 +1999,7 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		Util::SetResourceName(vrClearHMDMaskCB.get(), "Upscaling::ClearHMDMaskCB");
 	}
 
-	if (shader && vrClearHMDMaskCB) {
-		auto dispatchX = (eyeWidth + 7) / 8;
-		auto dispatchY = (eyeHeight + 7) / 8;
-
-		context->CSSetShader(shader, nullptr, 0);
-
-		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
-		context->CSSetShaderResources(0, 1, srvs);
-
-		ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
-		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-		D3D11_MAPPED_SUBRESOURCE mapped{};
-		HRESULT mapResult = context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-		if (FAILED(mapResult) || !mapped.pData) {
-			if (SUCCEEDED(mapResult))
-				context->Unmap(vrClearHMDMaskCB.get(), 0);
-			ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
-			ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
-			context->CSSetShaderResources(0, 1, nullSRV);
-			context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
-			context->CSSetShader(nullptr, nullptr, 0);
-			return;
-		}
-
-		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
-
-		memcpy(mapped.pData, offsets, sizeof(offsets));
-		context->Unmap(vrClearHMDMaskCB.get(), 0);
-
-		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
-		context->CSSetConstantBuffers(0, 1, cbs);
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-
-		// Unbind
+	const auto unbind = [context] {
 		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
 		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
 		ID3D11Buffer* nullCB[1] = { nullptr };
@@ -2042,7 +2007,39 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
+	};
+
+	auto dispatchX = (eyeWidth + 7) / 8;
+	auto dispatchY = (eyeHeight + 7) / 8;
+
+	context->CSSetShader(shader, nullptr, 0);
+
+	ID3D11ShaderResourceView* srvs[1] = { depthSRV };
+	context->CSSetShaderResources(0, 1, srvs);
+
+	ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	HRESULT mapResult = context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+	if (FAILED(mapResult) || !mapped.pData) {
+		if (SUCCEEDED(mapResult))
+			context->Unmap(vrClearHMDMaskCB.get(), 0);
+		unbind();
+		return;
 	}
+
+	uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
+
+	memcpy(mapped.pData, offsets, sizeof(offsets));
+	context->Unmap(vrClearHMDMaskCB.get(), 0);
+
+	ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
+	context->CSSetConstantBuffers(0, 1, cbs);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	unbind();
 }
 
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
