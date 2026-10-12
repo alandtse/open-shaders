@@ -6084,15 +6084,24 @@ bool SceneSettingsManager::CaptureFeatureSceneEditChanges(Feature* feature)
 			*destination = *source;
 	}
 	if (sanitized != snapshot) {
+		bool loaded = false;
 		try {
 			feature->LoadSettings(sanitized);
+			loaded = true;
 		} catch (const std::exception& e) {
 			logger::warn("[SceneSettings] Could not restore non-scene settings for {}: {}",
 				feature->GetShortName(), e.what());
-			return false;
 		} catch (...) {
 			logger::warn("[SceneSettings] Could not restore non-scene settings for {}",
 				feature->GetShortName());
+		}
+		if (!loaded) {
+			try {
+				feature->LoadSettings(snapshot);
+			} catch (...) {
+				logger::error("[SceneSettings] Failed to roll back {} after a restore error",
+					feature->GetShortName());
+			}
 			return false;
 		}
 	}
