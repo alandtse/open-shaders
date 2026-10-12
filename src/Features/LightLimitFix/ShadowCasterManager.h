@@ -417,6 +417,9 @@ namespace ShadowCasterManager
 		/// pendingScale value a scale-change event was already counted for.
 		float countedScaleEvent{ 0.0f };
 
+		/// pendingScale value a redundant-promotion event was already counted for.
+		float countedPromotionRedundantEvent{ 0.0f };
+
 		/// Importance-domain class before atlas capacity clamp.
 		float desiredScale{ 1.0f };
 
@@ -450,6 +453,7 @@ namespace ShadowCasterManager
 			renderedScale = 1.0f;
 			pendingScale = 1.0f;
 			countedScaleEvent = 0.0f;
+			countedPromotionRedundantEvent = 0.0f;
 			desiredScale = 1.0f;
 			budgetScale = 1.0f;
 			lastScore = 0.0;
@@ -723,6 +727,9 @@ namespace ShadowCasterManager
 		/// scale-change event, not once per frame the change stays pending.
 		uint64_t scalePromotionRedraws = 0;
 		uint64_t scaleDemotionRedrawsAvoided = 0;
+		/// Promotions the previous `pendingScale > renderedScale` rule dirtied although
+		/// the retained tile already held the requested class.
+		uint64_t scalePromotionRedundantAvoided = 0;
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.

@@ -595,6 +595,9 @@ namespace ShadowCasterManager
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
+	/// True when the slot's rendered tile already covers `scale`'s class, so a redraw
+	/// would refill the same rect: a staged promotion is not a fit.
+	bool SlotTileFits(int32_t poolSlot, float scale);
 	int32_t FindFreeSlotByOwner(const void* a_owner);
 	void DumpSlotTileRegion(int32_t poolSlot, uint32_t a_stamp);
 

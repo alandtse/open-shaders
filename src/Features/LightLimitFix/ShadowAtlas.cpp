@@ -1028,6 +1028,16 @@ namespace ShadowCasterManager
 		return true;
 	}
 
+	bool SlotTileFits(int32_t poolSlot, float scale)
+	{
+		// slot.tile, never slot.pending: a staged promotion's content is not
+		// rendered yet, so counting it would skip the redraw that fills it.
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		return slot.tile.valid && slot.tile.order >= OrderForScale(scale);
+	}
+
 	AtlasClearStats GetAtlasClearStats()
 	{
 		return {
