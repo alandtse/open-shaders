@@ -60,14 +60,18 @@ namespace
 
 		explicit D3D11MultithreadGuard(ID3D11DeviceContext* context)
 		{
-			if (context && SUCCEEDED(context->QueryInterface(multithread.put())))
+			if (context && SUCCEEDED(context->QueryInterface(multithread.put()))) {
+				multithread->SetMultithreadProtected(TRUE);
 				multithread->Enter();
+			}
 		}
 
 		~D3D11MultithreadGuard()
 		{
-			if (multithread)
+			if (multithread) {
 				multithread->Leave();
+				multithread->SetMultithreadProtected(FALSE);
+			}
 		}
 	};
 
@@ -1112,8 +1116,6 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	screenshot.uiExcluded = src.uiExcluded;
 	if (request)
 		screenshot.onComplete = std::move(request->onComplete);
-	if (winrt::com_ptr<REX::W32::ID3D11Multithread> multithread; SUCCEEDED(context->QueryInterface(multithread.put())))
-		multithread->SetMultithreadProtected(TRUE);
 	EnqueueScreenshot(std::move(screenshot));
 }
 #undef I18N_KEY_PREFIX
