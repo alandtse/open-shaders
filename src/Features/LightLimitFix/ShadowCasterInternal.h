@@ -349,6 +349,9 @@ namespace ShadowCasterManager
 	extern std::atomic<uint64_t> s_hemisphereReassignTotal;
 	extern std::atomic<uint32_t> s_hemisphereDropCount;
 	extern std::atomic<uint64_t> s_hemisphereDropTotal;
+	extern std::atomic<uint64_t> s_passlessCasterSkipTotal;
+	/// Indexed by the classifier's PasslessReason (0 unused).
+	extern std::atomic<uint64_t> s_passlessCasterSkipByReason[5];
 	extern std::atomic<uint32_t> s_frontAppendCount;
 	extern std::atomic<uint32_t> s_backOnlyAppendCount;
 	extern std::atomic<uint64_t> s_frontAppendTotal;
