@@ -47,13 +47,14 @@ namespace FoveatedRenderImpl
 		}
 
 		context->OMSetRenderTargets(0, nullptr, nullptr);
-		upscaling.rcas.ApplySharpen(Util::AsReal(main.SRV), upscaling.sharpenerTexture->uav.get(), currentSharpness);
-		context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
+		const bool sharpened = upscaling.rcas.ApplySharpen(Util::AsReal(main.SRV), upscaling.sharpenerTexture->uav.get(), currentSharpness);
+		if (sharpened)
+			context->CopyResource(mainResource, upscaling.sharpenerTexture->resource.get());
 		mainResource->Release();
 
 		if (globals::game::stateUpdateFlags) {
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 		}
-		return true;
+		return sharpened;
 	}
 }

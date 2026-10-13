@@ -7,6 +7,7 @@
 void ABTestAggregator::OnABSwitch(ABVariant variant)
 {
 	auto now = std::chrono::steady_clock::now();
+	cachedResults.reset();
 
 	// End the current interval if it exists
 	if (currentInterval) {
@@ -66,7 +67,9 @@ void ABTestAggregator::OnFrame(const std::vector<DrawCallRow>& rows)
 
 	// Only add frame if it's not an outlier
 	if (!isOutlier) {
-		currentInterval->frameRows.push_back(rows);
+		auto& stored = currentInterval->frameRows.emplace_back(rows);
+		for (auto& row : stored)
+			std::string().swap(row.tooltip);
 	}
 }
 
@@ -74,6 +77,7 @@ void ABTestAggregator::OnTestEnd()
 {
 	auto now = std::chrono::steady_clock::now();
 	testEndTime = now;
+	cachedResults.reset();
 
 	if (currentInterval) {
 		currentInterval->endTime = now;
@@ -88,6 +92,7 @@ void ABTestAggregator::Clear()
 {
 	intervals.clear();
 	currentInterval.reset();
+	cachedResults.reset();
 	recentFrameTimes.clear();
 	hasSettingsA = false;
 	hasSettingsB = false;
@@ -113,6 +118,9 @@ static float median(std::vector<float> v)
 
 std::vector<AggregatedDrawCallStats> ABTestAggregator::GetAggregatedResults() const
 {
+	if (cachedResults)
+		return *cachedResults;
+
 	// Map: shaderType -> label
 	std::map<int, std::string> labelMap;
 	// Map: shaderType -> all frameTimes/costPerCall for A and B
@@ -190,6 +198,7 @@ std::vector<AggregatedDrawCallStats> ABTestAggregator::GetAggregatedResults() co
 		otherStat.shaderType = -2;
 		result.push_back(otherStat);
 	}
+	cachedResults = result;
 	return result;
 }
 

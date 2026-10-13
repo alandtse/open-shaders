@@ -97,10 +97,11 @@ void ENBEffect::UpdateEffectVariables()
 		SetShaderResourceVariable(shaderVar, srv);
 	};
 
-	bindTextureIfEnabled(idEnableBloom, "TextureBloom", "TextureBloom");
-	bindTextureIfEnabled(idEnableLens, "TextureLens", "TextureLens", /*cropForEye=*/true);
+	auto& effectManager = EffectManager::GetSingleton();
+	bindTextureIfEnabled(effectManager.enbBloom.IsCompiled() ? idEnableBloom : 0xFFFFFFFF, "TextureBloom", "TextureBloom");
+	bindTextureIfEnabled(effectManager.enbLens.IsCompiled() ? idEnableLens : 0xFFFFFFFF, "TextureLens", "TextureLens", /*cropForEye=*/true);
 
-	SetShaderResourceVariable("TextureAdaptation", settingManager.GetValue<bool>(idEnableAdaptation) ? EffectManager::GetSingleton().enbAdaptation.GetHistorySRV() : nullptr);
+	SetShaderResourceVariable("TextureAdaptation", settingManager.GetValue<bool>(idEnableAdaptation) ? effectManager.enbAdaptation.GetHistorySRV() : nullptr);
 
 	SetShaderResourceVariable("TextureOriginal", Util::AsReal(EffectManager::GetSingleton().GetTextureOriginal().SRV));
 }

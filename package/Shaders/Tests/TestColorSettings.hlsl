@@ -1,5 +1,6 @@
 #define CSHADER
 #define EFFECTS11
+#define LIGHTING
 #include "/Shaders/Common/SharedData.hlsli"
 
 // Namespace statics let the GPU tests supply settings without binding the game's constant buffers.
@@ -9,6 +10,8 @@ namespace SharedData
 	static CSUtilitySettings csUtilitySettings = (CSUtilitySettings)0;
 	static ENBSettings enbSettings = (ENBSettings)0;
 }
+
+static float emissiveMult = 1.0;
 
 #include "/Shaders/Common/Color.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
@@ -125,6 +128,7 @@ namespace SharedData
 	/// @tags color, gamma, effects
 	[numthreads(1, 1, 1)] void TestEffectLightingGain()
 {
+	SharedData::csUtilitySettings.effectLightingColor = float2(1.0, 0.0);
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	const float gains[4] = { 0.0, 0.25, 1.0, 4.0 };
 	for (uint acescg = 0; acescg < 2; acescg++) {
@@ -132,14 +136,14 @@ namespace SharedData
 		float3 radiance = Color::GamutTransform(float3(0.18, 0.5, 2.0));
 		for (uint i = 0; i < 4; i++) {
 			SharedData::csUtilitySettings.effectLightingMult = gains[i];
-			float3 encoded = Color::EffectLightToGamma(radiance) * Color::EffectLightingMultiplier();
+			float3 encoded = Color::EffectLighting(Color::EffectLightToGamma(radiance));
 			ASSERT(IsTrue, all(abs(Color::SceneGammaToLinear(encoded) - radiance * gains[i]) < 0.00001));
 		}
 	}
 	SharedData::linearLightingSettings.enableLinearLighting = false;
 	for (uint i = 0; i < 4; i++) {
 		SharedData::csUtilitySettings.effectLightingMult = gains[i];
-		ASSERT(AreEqual, Color::EffectLightingMultiplier(), gains[i]);
+		ASSERT(IsTrue, all(Color::EffectLighting(1.0.xxx) == gains[i]));
 	}
 }
 
@@ -161,5 +165,116 @@ namespace SharedData
 			float3 acescg = Color::ProjectedDiffuse(textureColor, tints[j], 1.0.xxx);
 			ASSERT(IsTrue, all(abs(AP1TosRGB(acescg) - linearSrgb) < 0.00001));
 		}
+	}
+}
+
+	/// @tags color, utility
+	[numthreads(1, 1, 1)] void TestUtilityColorNeutralAndGamma()
+{
+	const float3 colors[4] = { 0.0.xxx, 1.0.xxx, float3(0.2, 0.5, 4.0), float3(-0.02, 0.0, 2.0) };
+	for (uint enabled = 0; enabled < 2; enabled++) {
+		SharedData::linearLightingSettings.enableLinearLighting = enabled;
+		for (uint gamut = 0; gamut < 2; gamut++) {
+			SharedData::linearLightingSettings.enableACEScg = gamut;
+			for (uint i = 0; i < 4; i++) {
+				ASSERT(IsTrue, all(Color::AdjustUtilityColor(colors[i], float2(1.0, 0.0)) == colors[i]));
+				ASSERT(IsTrue, all(Color::AdjustUtilityEffectColor(colors[i], float2(1.0, 0.0)) == colors[i]));
+				ASSERT(IsTrue, all(isfinite(Color::AdjustUtilityColor(colors[i], float2(1.0, -1.0)))));
+				ASSERT(IsTrue, all(isfinite(Color::AdjustUtilityColor(colors[i], float2(1.0, 1.0)))));
+			}
+			ASSERT(IsTrue, all(Color::AdjustUtilityColor(0.25.xxx, float2(1.0, -0.5)) > 0.25));
+			ASSERT(IsTrue, all(Color::AdjustUtilityColor(0.25.xxx, float2(1.0, 0.5)) < 0.25));
+			ASSERT(IsTrue, all(Color::AdjustUtilityColor(0.0.xxx, float2(2.0, -1.0)) == 0.0));
+		}
+	}
+}
+
+/// @tags color, utility
+[numthreads(1, 1, 1)] void TestUtilitySaturationAndGamut() {
+	SharedData::linearLightingSettings.enableLinearLighting = true;
+	const float3 input = float3(0.2, 0.5, 4.0);
+	const float2 adjustments[4] = { float2(0.0, 0.0), float2(0.5, 0.0), float2(1.5, 0.3), float2(1.0, -0.5) };
+	for (uint i = 0; i < 4; i++) {
+		SharedData::linearLightingSettings.enableACEScg = false;
+		float3 srgb = Color::AdjustUtilityColor(input, adjustments[i]);
+		SharedData::linearLightingSettings.enableACEScg = true;
+		float3 aces = Color::AdjustUtilityColor(Color::GamutTransform(input), adjustments[i]);
+		ASSERT(IsTrue, all(abs(AP1TosRGB(aces) - srgb) < 0.00001));
+		if (i < 2)
+			ASSERT(IsTrue, abs(dot(srgb - input, Color::kRec709LuminanceWeights)) < 0.000001);
+		if (i == 0)
+			ASSERT(IsTrue, srgb.r == srgb.g && srgb.g == srgb.b);
+	}
+}
+
+	/// @tags color, utility, lighting
+	[numthreads(1, 1, 1)] void TestUtilityPointLightIsolation()
+{
+	SharedData::linearLightingSettings.enableLinearLighting = true;
+	SharedData::csUtilitySettings.pointLightColor = float2(0.0, 0.0);
+	SharedData::csUtilitySettings.linearPointLightColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.spotlightColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.linearSpotlightColor = float2(1.0, -0.5);
+	SharedData::csUtilitySettings.omnidirectionalBulbColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.linearOmnidirectionalBulbColor = float2(0.0, 0.0);
+	const float3 input = float3(0.2, 0.3, 0.5);
+	ASSERT(IsTrue, all(Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(true, 0)) == input));
+	float3 converted = Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(false, 0));
+	ASSERT(IsTrue, converted.r == converted.g && converted.g == converted.b);
+	ASSERT(IsTrue, all(Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(true, Color::PointLightFlagSpot)) > input));
+	float3 bulb = Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(true, Color::PointLightFlagOmnidirectionalBulb));
+	ASSERT(IsTrue, bulb.r == bulb.g && bulb.g == bulb.b);
+	SharedData::linearLightingSettings.enableLinearLighting = false;
+	ASSERT(IsTrue, all(Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(true, Color::PointLightFlagSpot)) == converted));
+}
+
+/// @tags color, utility, effects
+[numthreads(1, 1, 1)] void TestUtilityWeatherSceneAdjustment() {
+	SharedData::linearLightingSettings.enableLinearLighting = true;
+	SharedData::csUtilitySettings.sceneColor = float2(0.0, -0.25);
+	SharedData::csUtilitySettings.effectColor = float2(1.0, 0.0);
+	SharedData::csUtilitySettings.skyStaticColor = float2(1.0, 0.0);
+	const float3 input = float3(0.1, 0.3, 0.8);
+	float3 expected = Color::AdjustUtilityColor(input, SharedData::csUtilitySettings.sceneColor);
+	for (uint ambientEnabled = 0; ambientEnabled < 2; ambientEnabled++) {
+		SharedData::csUtilitySettings.useAmbientEffectLighting = ambientEnabled;
+		for (uint skyObject = 0; skyObject < 2; skyObject++) {
+			ASSERT(IsTrue, all(abs(Color::WeatherEffect(input, skyObject, true) - expected) < 0.000001));
+			ASSERT(IsTrue, all(Color::WeatherEffect(expected, skyObject) == expected));
+		}
+	}
+}
+
+	/// @tags color, utility, materials
+	[numthreads(1, 1, 1)] void TestUtilityEmissiveIntensity()
+{
+	SharedData::linearLightingSettings.enableLinearLighting = true;
+	SharedData::linearLightingSettings.conversionSaturation = 0.92;
+	SharedData::csUtilitySettings.emitColor = float2(0.5, -0.5);
+	SharedData::csUtilitySettings.emitColorMult = 1.0;
+	const float3 input = float3(0.2, 0.5, 0.8);
+	const float gains[3] = { 0.0, 0.25, 4.0 };
+	for (uint gamut = 0; gamut < 2; gamut++) {
+		SharedData::linearLightingSettings.enableACEScg = gamut;
+		emissiveMult = 1.0;
+		float3 reference = Color::EmitColor(input);
+		for (uint i = 0; i < 3; i++) {
+			emissiveMult = gains[i];
+			ASSERT(IsTrue, all(abs(Color::EmitColor(input * gains[i]) - reference * gains[i]) < 0.00001));
+		}
+	}
+}
+
+/// @tags color, utility, effects
+[numthreads(1, 1, 1)] void TestUtilityEffectAdjustmentDomain() {
+	SharedData::linearLightingSettings.enableLinearLighting = true;
+	const float2 adjustment = float2(0.5, -0.25);
+	const float3 input = float3(0.03, 0.7, 3.0);
+	for (uint gamut = 0; gamut < 2; gamut++) {
+		SharedData::linearLightingSettings.enableACEScg = gamut;
+		float3 working = Color::GamutTransform(input);
+		float3 encoded = Color::EffectLightToGamma(working);
+		float3 adjusted = Color::AdjustUtilityEffectColor(encoded, adjustment);
+		ASSERT(IsTrue, all(abs(Color::EffectLight(adjusted) - Color::AdjustUtilityColor(working, adjustment)) < 0.00001));
 	}
 }

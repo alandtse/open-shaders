@@ -81,6 +81,12 @@ namespace NR
 			FeedCameraData = 2097152,
 			DilateMotion = 4194304
 		};
+		/**
+		 * @brief Options under which NR's history is deliberately isolated, so the eye-stagger must
+		 *        evaluate both eyes instead of reusing a gain: they bypass the model, force a reset every
+		 *        frame or zero the motion a reuse would reproject by.
+		 */
+		static constexpr uint32_t kHistoryIsolatingOptions = BypassEvaluation | CopyInputToOutput | InteropRoundTrip | ForceReset | ZeroMotion;
 		enum class ColorConversion : uint32_t
 		{
 			Raw,
@@ -225,8 +231,20 @@ namespace NR
 		};
 		/** @brief Resolves every option; outside developer mode a render reads the production defaults. */
 		Selection Selected() const;
-		/** @brief Requests one lossless DDS capture of every stage in the next NR frame. */
-		void RequestCapture() { captureRequested = true; }
+		/**
+		 * @brief Requests one lossless DDS capture of every stage in the next NR frame.
+		 * @param verifyReuse On a staggered frame, also run the model on the eye that reuses its gain and dump its
+		 *        input, model output and reused output, so the reuse error can be measured offline.
+		 */
+		void RequestCapture(bool verifyReuse = false)
+		{
+			verifyReuseRequested = verifyReuse;
+			captureRequested = true;
+		}
+		/** @brief True once for a capture that asked to verify the reuse; call only on the capture frame. */
+		bool ConsumeVerifyReuse() { return verifyReuseRequested.exchange(false); }
+		/** @brief A queued capture wants the verify dumps, which only the NR pass itself can write. */
+		bool VerifyReusePending() const { return verifyReuseRequested.load(); }
 		bool BeginCapture(uint32_t frame) { return captureRequested.exchange(false) ? (captureFrame = frame, true) : false; }
 		bool CaptureActive(uint32_t frame) const { return captureFrame.load() == frame; }
 		void FinishCapture(uint32_t frame) { captureFrame.compare_exchange_strong(frame, UINT32_MAX); }
@@ -247,7 +265,8 @@ namespace NR
 			uint32_t number = UINT32_MAX, calls = 0, duplicates = 0, target = 0;
 			Outcome outcome = Outcome::NoHook;
 			bool world = false, paused = false, recreated = false, afterUpscale = false, afterPost = false, mainChanged = false;
-			uint32_t width = 0, height = 0, format = 0, proxyFormat = 0, eyeCount = 0, evaluated = 0, copied = 0, created = 0;
+			/** @brief evaluated, reused and copied are per-eye bitmasks over the eyes this frame handled. */
+			uint32_t width = 0, height = 0, format = 0, proxyFormat = 0, eyeCount = 0, evaluated = 0, reused = 0, copied = 0, created = 0;
 			std::array<uint32_t, 2> reset{}, result{};
 			uintptr_t source = 0;
 			uint64_t submittedFence = 0, completedFence = 0;
@@ -293,6 +312,7 @@ namespace NR
 		std::atomic<float> manualExposure = kManualExposure, differenceStrength = kDifferenceStrength, splitPosition = kSplitPosition;
 		std::atomic<float> shadowProtect = kShadowProtect, highlightProtect = kHighlightProtect, toneRadius = kToneRadius;
 		std::atomic_bool captureRequested = false;
+		std::atomic_bool verifyReuseRequested = false;
 		std::atomic<uint32_t> captureFrame = UINT32_MAX;
 		std::atomic_bool startSuite = false;
 		std::atomic_bool stopSuite = false;

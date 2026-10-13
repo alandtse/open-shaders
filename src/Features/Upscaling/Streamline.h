@@ -102,12 +102,15 @@ public:
 	{
 		kVramWarning,
 		kEvaluateError,
+		kStereoFallback,
 		kCount
 	};
 	uint32_t lastDLSSLogFrame[static_cast<size_t>(DLSSLogKind::kCount)][2] = {
 		{ UINT32_MAX, UINT32_MAX },
+		{ UINT32_MAX, UINT32_MAX },
 		{ UINT32_MAX, UINT32_MAX }
 	};
+	eastl::unique_ptr<Texture2D> stereoFallbackOutput;
 
 	struct ReflexOptionsCache
 	{

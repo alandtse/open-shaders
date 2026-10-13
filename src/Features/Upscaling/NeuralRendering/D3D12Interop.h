@@ -66,7 +66,7 @@ namespace NR
 		/** @brief Creates a named allocator and closed command list of one type for every slot of a ring. */
 		void CreateRing(std::array<Commands, kFramesInFlight>& ring, D3D12_COMMAND_LIST_TYPE type, const wchar_t* allocatorName, const wchar_t* listName);
 		/** @brief Blocks the CPU until completion retires; throws on a timeout or a removed device. */
-		void Wait(uint64_t completion);
+		void Wait(SharedFence& target, uint64_t completion);
 		/** @brief Releases every interop resource; drain first or the GPU may still read them. */
 		void Reset();
 
@@ -76,6 +76,8 @@ namespace NR
 		winrt::com_ptr<ID3D12CommandQueue> queue;
 		winrt::com_ptr<ID3D12CommandQueue> parallelQueue;
 		std::array<Commands, kFramesInFlight> parallelCommands;
+		/** @brief Completion timeline signaled only by the parallel queue. */
+		SharedFence parallelFence;
 		uint64_t inputReady = 0;
 		bool parallelUsed = false;
 		bool parallelSubmitted = false;

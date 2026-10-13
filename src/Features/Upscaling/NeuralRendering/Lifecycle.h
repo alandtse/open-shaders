@@ -11,11 +11,11 @@ namespace NR
 	{
 		ReleasePassResources,  ///< Disabled: free the pass resources, keep the device and NGX instance.
 		Suspend,               ///< Gated off this frame: skip dispatch and composite, keep resources, runtime and NGX features.
-		SkipNoWorld,           ///< No world rendered yet; the runtime starts on the first world frame.
+		SkipNoWorld,           ///< No world rendered yet and startup preparation was not requested.
 		RebuildThenRun,        ///< A retry was requested after a latched failure: rebuild, then run.
 		SkipLatched,           ///< Failed, with no retry pending.
 		SkipDuplicate,         ///< A second hook call for a frame NR already handled.
-		InitializeThenRun,     ///< First world frame: initialize the runtime, then run.
+		InitializeThenRun,     ///< Initialize for the first world frame, or perform one requested startup step.
 		Run                    ///< Evaluate normally.
 	};
 
@@ -34,6 +34,8 @@ namespace NR
 		bool retryRequested = false;
 		/** @brief The NR runtime is initialized. */
 		bool ready = false;
+		/** @brief A startup-only request has a runtime or instance still to prepare on this frame. */
+		bool prewarmPending = false;
 		/** @brief Engine frame this hook last handled; UINT32_MAX before the first. */
 		uint32_t lastFrame = UINT32_MAX;
 		/** @brief Engine frame of this call. */
@@ -47,8 +49,11 @@ namespace NR
 			return FrameAction::ReleasePassResources;
 		if (inputs.suspended)
 			return FrameAction::Suspend;
-		if (!inputs.worldRendered)
+		if (!inputs.worldRendered) {
+			if (inputs.prewarmPending && !inputs.failed)
+				return inputs.lastFrame == inputs.frameCount ? FrameAction::SkipDuplicate : FrameAction::InitializeThenRun;
 			return FrameAction::SkipNoWorld;
+		}
 		if (inputs.failed && inputs.retryRequested)
 			return FrameAction::RebuildThenRun;
 		if (inputs.failed)

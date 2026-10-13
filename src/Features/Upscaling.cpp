@@ -13,6 +13,7 @@
 #include "Upscaling/FoveatedRender/Core.h"
 #include "Upscaling/FoveatedRender/Postprocess.h"
 #include "Upscaling/FoveatedRender/Preprocess.h"
+#include "Upscaling/NeuralRendering/EyeMode.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/DevBenchUx.h"
@@ -35,8 +36,9 @@ namespace NR
 	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength,
 		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
-		parallelEyes, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape,
-		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter);
+		parallelEyes, allowUnverifiedRuntime, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal,
+		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter,
+		skipFrameReuse, skipFrameGapMode, modelScale, modelGuidedUpsample, sbsEvaluate, modelVerify, mirrorEyes, crossEyeGain);
 }
 
 namespace NR::Context
@@ -62,7 +64,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessDLSS,
 	presetDLSS,
 	neuralRenderingEnabled,
-	neuralRenderingStartupPrewarm,
 	neuralRenderingContexts,
 	neuralRenderingTuning,
 	reflexLowLatencyMode,
@@ -422,6 +423,7 @@ namespace
 		FoveatedRender::StretchMode stretchMode;
 		FoveatedRender::PeripheryAAMode peripheryAAMode;
 		FoveatedRender::SubrectBlendMode subrectBlendMode;
+		NR::EyeMode neuralEyeMode;
 	};
 
 	// Single source of truth for Apply/MatchesPerformanceProfile below.
@@ -431,15 +433,15 @@ namespace
 		case Feature::PerfProfile::Performance:
 			return { (uint)Upscaling::QualityMode::kPerformance, true, FoveatedRender::kPresetCenter50,
 				FoveatedRender::DlssMode::kFaster, FoveatedRender::StretchMode::kBilinear,
-				FoveatedRender::PeripheryAAMode::kNone, FoveatedRender::SubrectBlendMode::kDither };
+				FoveatedRender::PeripheryAAMode::kNone, FoveatedRender::SubrectBlendMode::kDither, NR::EyeMode::kAlternate };
 		case Feature::PerfProfile::Balanced:
 			return { (uint)Upscaling::QualityMode::kBalanced, true, FoveatedRender::kPresetCenter75,
 				FoveatedRender::DlssMode::kDefault, FoveatedRender::StretchMode::kGaussianBlur,
-				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather };
+				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather, NR::EyeMode::kParallel };
 		default:
 			return { (uint)Upscaling::QualityMode::kQuality, false, FoveatedRender::kPresetFullEye,
 				FoveatedRender::DlssMode::kDefault, FoveatedRender::StretchMode::kGaussianBlur,
-				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather };
+				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather, NR::EyeMode::kParallel };
 		}
 	}
 }
@@ -495,6 +497,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 			if (!foveatedRender.subrectController.HasCustomCrop())
 				foveatedRender.subrectController.ApplyPresetByName(preset.cropPresetName);
 		}
+		NR::SetEyeMode(settings.neuralRenderingTuning, preset.neuralEyeMode);
 	}
 }
 
@@ -516,6 +519,9 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	}
 	if (!globals::game::isVR) {
 		return true;
+	}
+	if (NR::GetEyeMode(settings.neuralRenderingTuning) != preset.neuralEyeMode) {
+		return false;
 	}
 	if ((foveatedRender.settings.enabled != 0) != preset.foveation) {
 		return false;
@@ -548,8 +554,9 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	if (!globals::game::isVR)
 		return "";
 	const auto preset = GetUpscalePreset(profile);
+	const std::string eyeNote = preset.neuralEyeMode == NR::EyeMode::kAlternate ? std::string(" / ") + T(TKEY("profile_preview_alternate_eyes"), "Alternate-eye NR") : std::string{};
 	if (!preset.foveation)
-		return T(TKEY("profile_preview_foveation_off"), "Foveation off (Full Eye)");
+		return std::string(T(TKEY("profile_preview_foveation_off"), "Foveation off (Full Eye)")) + eyeNote;
 	// ApplyPerformanceProfile leaves a custom crop alone rather than switching to the
 	// preset region -- the preview must match, or it promises a crop change that won't happen.
 	const std::string cropLabel = foveatedRender.subrectController.HasCustomCrop() ?
@@ -560,7 +567,8 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	const char* peripheryAAName = FoveatedRender::PeripheryAAModeName(preset.peripheryAAMode);
 	const char* blendModeName = FoveatedRender::SubrectBlendModeName(preset.subrectBlendMode);
 	return std::vformat(T(TKEY("profile_preview_format"), "Foveation: {} / {} / {} / {} / {} blend"),
-		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
+			   std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName)) +
+	       eyeNote;
 }
 
 namespace
@@ -592,23 +600,30 @@ namespace
 			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
 			{ "runtimeVersion", availability.version },
 			{ "runtimeDetail", availability.reason },
-			{ "runtimeLoadable", availability.AllowsLoad(developerMode) },
+			{ "runtimeLoadable", availability.AllowsLoad(developerMode, upscaling->settings.neuralRenderingTuning.allowUnverifiedRuntime) },
+			{ "allowUnverifiedRuntime", upscaling->settings.neuralRenderingTuning.allowUnverifiedRuntime },
 			{ "parallelEyes", upscaling->settings.neuralRenderingTuning.parallelEyes },
 			{ "materialStrength", upscaling->settings.neuralRenderingTuning.materialStrength },
 			{ "materialStrengthAvailable", status.materialStrengthAvailable },
 			{ "materialStrengthActive", status.materialStrengthActive },
-			{ "materialStrengthValues", json::array({ status.materialStrength[0], status.materialStrength[1], status.materialStrength[2],
-											status.materialStrength[3], status.materialStrength[4], status.materialStrength[5] }) },
+			{ "materialStrengthValues", status.materialStrength },
 			{ "materialEdgeSoftness", status.materialEdgeSoftness },
 			{ "showMaterialMap", upscaling->settings.neuralRenderingTuning.showMaterialMap },
-			{ "startupPrewarmEnabled", upscaling->settings.neuralRenderingStartupPrewarm },
-			{ "prewarmStage", prewarm.stage },
-			{ "prewarmReason", prewarm.reason },
-			{ "prewarmWidth", prewarm.width },
-			{ "prewarmHeight", prewarm.height },
-			{ "prewarmEyes", prewarm.eyes },
-			{ "prewarmPreparedEyes", prewarm.preparedEyes },
-			{ "prewarmReused", prewarm.reused },
+			{ "skipFrameReuse", upscaling->settings.neuralRenderingTuning.skipFrameReuse },
+			{ "skipFrameGapMode", upscaling->settings.neuralRenderingTuning.skipFrameGapMode },
+			{ "modelScale", upscaling->settings.neuralRenderingTuning.modelScale },
+			{ "crossEyeGain", upscaling->settings.neuralRenderingTuning.crossEyeGain },
+			{ "skipFrameReuseActive", status.skipFrameReuseActive },
+			{ "eyeReuse", json::array({ status.eyeReuse[0], status.eyeReuse[1] }) },
+			{ "modelFrames", status.modelFrames },
+			{ "reuseFrames", status.reuseFrames },
+			{ "startupPrewarm", upscaling->settings.neuralRenderingStartupPrewarm },
+			{ "startupPrewarmStatus", prewarm.stage },
+			{ "startupPrewarmReason", prewarm.reason },
+			{ "startupPrewarmWidth", prewarm.width },
+			{ "startupPrewarmHeight", prewarm.height },
+			{ "startupPrewarmEyes", prewarm.eyes },
+			{ "startupPrewarmPreparedEyes", prewarm.preparedEyes },
 		};
 	}
 
@@ -618,12 +633,6 @@ namespace
 		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
 	}
 
-	/** @brief Handler for the state-only startup-prewarm reset command. */
-	void ResetNeuralRenderingPrewarm(Feature* self, const json&)
-	{
-		static_cast<Upscaling*>(self)->neuralRendering.ResetStartupPrewarm();
-	}
-
 	/** @brief Devbench handler for Upscaling's calibrateNeuralCrop command. */
 	void CalibrateNeuralCrop(Feature* self, const json&)
 	{
@@ -631,13 +640,13 @@ namespace
 	}
 
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
-	void CaptureNeuralRendering(Feature* self, const json&)
+	void CaptureNeuralRendering(Feature* self, const json& args)
 	{
 		if (!globals::state || !globals::state->IsDeveloperMode()) {
 			logger::warn("[NeuralRendering] captureNeuralRendering requires developer mode");
 			return;
 		}
-		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture();
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture(args.value("verifyReuse", false));
 	}
 }
 
@@ -652,19 +661,15 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows. Startup prewarm is reported as startupPrewarmEnabled, prewarmStage, prewarmReason, prewarmWidth, prewarmHeight, prewarmEyes, prewarmPreparedEyes, and prewarmReused. The failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
+		"Neural Rendering status including runtime verdict, render size, per-eye results and application counts. settings.neuralRenderingStartupPrewarm (default false) requests startup preparation on loading or main-menu frames through the existing InitializeThenRun lifecycle. The query reports startupPrewarmStatus, startupPrewarmReason, startupPrewarmWidth/Height, startupPrewarmEyes and startupPrewarmPreparedEyes. Each frame performs at most one runtime initialization or eye creation and evaluates no world guides. Material-strength eyes and ROI-dependent SBS extents are deferred until the required world guides are available; synchronous NGX creation means completion and hitch reduction are not guaranteed. Existing runtime, material-strength, crop, eye-stagger and model-scale fields retain their meanings. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
 		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
 		RetryNeuralRendering);
 
-	FEATURE_COMMAND("resetNeuralRenderingPrewarm",
-		"Queue a fresh Neural Rendering startup preparation. Before world use it retires prepared instances; while world resources exist it resets only startup diagnostics, preserving those resources and NR history. Params: none.",
-		ResetNeuralRenderingPrewarm);
-
 	FEATURE_COMMAND("captureNeuralRendering",
-		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
+		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: verifyReuse (boolean, optional): with eye-staggered gain reuse active, also run the model on the eye that reuses its gain this frame and write NR_verify_input, NR_verify_model and NR_verify_reuse for that eye (VR only; the next frame re-evaluates normally).",
 		CaptureNeuralRendering);
 
 	FEATURE_COMMAND("calibrateNeuralCrop",
@@ -700,13 +705,7 @@ void Upscaling::DrawSettings()
 	}
 
 	if (ImGui::BeginTabItem(std::format("{}###NeuralRendering", Util::AppendReleaseStageTag(T(TKEY("tab_neural_rendering"), "Neural Rendering"), Feature::ReleaseStage::Alpha)).c_str())) {
-		ImGui::Checkbox(T(TKEY("neural_rendering.startup_prewarm"), "Prewarm at Startup"), &settings.neuralRenderingStartupPrewarm);
-		ImGui::TextWrapped("%s", T(TKEY("neural_rendering.startup_prewarm_tooltip"), "Uses one loading or main-menu frame for each runtime or model creation step. With material strength enabled, only the runtime is prepared until live guides exist. Normal lazy creation remains available. It evaluates no scene pixels and may not finish before entering the world."));
-		if (settings.neuralRenderingStartupPrewarm) {
-			const auto prewarm = neuralRendering.GetStartupPrewarmStatus();
-			ImGui::Text(T(TKEY("neural_rendering.startup_prewarm_status"), "Startup prewarm: %s (%u/%u eyes)"), prewarm.stage.c_str(), prewarm.preparedEyes, prewarm.eyes);
-		}
-		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingContexts, settings.neuralRenderingTuning);
+		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingStartupPrewarm, settings.neuralRenderingContexts, settings.neuralRenderingTuning);
 		ImGui::EndTabItem();
 	}
 
@@ -831,7 +830,7 @@ void Upscaling::DrawUpscalingSettings()
 			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
-			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str(), ImGuiSliderFlags_AlwaysClamp);
 
 			// Pending-diff vs the boot snapshot the runtime upscaler actually
 			// uses; while an explicit scale is latched the preset is inert.
@@ -1240,8 +1239,8 @@ void Upscaling::LoadSettings(json& o_json)
 		settings.vrRenderScale = clamped;
 	}
 	if (settings.qualityMode > 4) {
-		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
-		settings.qualityMode = 4;
+		logger::warn("[Upscaling] Loaded qualityMode {} out of range, resetting to 1", settings.qualityMode);
+		settings.qualityMode = 1;
 	}
 	if (settings.presetDLSS > 4) {
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
@@ -1715,7 +1714,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
 		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
-		previousUpscalingWasActive = IsUpscalingActive();
+		previousUpscalingWasActive = a_upscalemethod == UpscaleMethod::kDLSS || a_upscalemethod == UpscaleMethod::kFSR;
 	}
 }
 
@@ -2002,43 +2001,21 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 
 	auto context = globals::d3d::context;
 
-	if (!vrClearHMDMaskCS) {
-		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
+	auto* shader = vrClearHMDMaskCS.Get(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0", "main", "Upscaling::ClearHMDMaskCS");
+	if (!shader)
+		return;
 
+	if (!vrClearHMDMaskCB) {
 		D3D11_BUFFER_DESC cbDesc = {};
 		cbDesc.ByteWidth = 16;  // 4 uints
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
+		Util::SetResourceName(vrClearHMDMaskCB.get(), "Upscaling::ClearHMDMaskCB");
 	}
 
-	if (vrClearHMDMaskCS) {
-		auto dispatchX = (eyeWidth + 7) / 8;
-		auto dispatchY = (eyeHeight + 7) / 8;
-
-		context->CSSetShader(vrClearHMDMaskCS.get(), nullptr, 0);
-
-		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
-		context->CSSetShaderResources(0, 1, srvs);
-
-		ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
-		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-		D3D11_MAPPED_SUBRESOURCE mapped{};
-		context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-
-		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
-
-		memcpy(mapped.pData, offsets, sizeof(offsets));
-		context->Unmap(vrClearHMDMaskCB.get(), 0);
-
-		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
-		context->CSSetConstantBuffers(0, 1, cbs);
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-
-		// Unbind
+	const auto unbind = [context] {
 		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
 		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
 		ID3D11Buffer* nullCB[1] = { nullptr };
@@ -2046,7 +2023,39 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
+	};
+
+	auto dispatchX = (eyeWidth + 7) / 8;
+	auto dispatchY = (eyeHeight + 7) / 8;
+
+	context->CSSetShader(shader, nullptr, 0);
+
+	ID3D11ShaderResourceView* srvs[1] = { depthSRV };
+	context->CSSetShaderResources(0, 1, srvs);
+
+	ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	HRESULT mapResult = context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+	if (FAILED(mapResult) || !mapped.pData) {
+		if (SUCCEEDED(mapResult))
+			context->Unmap(vrClearHMDMaskCB.get(), 0);
+		unbind();
+		return;
 	}
+
+	uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
+
+	memcpy(mapped.pData, offsets, sizeof(offsets));
+	context->Unmap(vrClearHMDMaskCB.get(), 0);
+
+	ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
+	context->CSSetConstantBuffers(0, 1, cbs);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	unbind();
 }
 
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
@@ -2192,28 +2201,6 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 	// Disable dynamic resolution unless the game explicitly enables it
 	if (!globals::game::isVR)
 		runtimeData.dynamicResolutionLock = 1;
-
-	const auto neuralRenderSize = Util::ConvertToDynamic(state->screenSize);
-	const auto neuralRenderWidth = static_cast<uint32_t>(neuralRenderSize.x);
-	const auto neuralRenderHeight = static_cast<uint32_t>(neuralRenderSize.y);
-	cachedNeuralRenderExtent.store((static_cast<uint64_t>(neuralRenderWidth) << 32) | neuralRenderHeight, std::memory_order_release);
-}
-
-void Upscaling::Reset()
-{
-	const bool enabled = settings.neuralRenderingEnabled &&
-	                     (settings.neuralRenderingContexts.normal.run || settings.neuralRenderingContexts.dialogue.run);
-	const auto context = settings.neuralRenderingContexts.normal.run ? NR::Context::Kind::kNormal : NR::Context::Kind::kDialogue;
-	const auto tuning = NR::Context::EffectiveTuning(settings.neuralRenderingTuning, settings.neuralRenderingContexts, context);
-	neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest,
-		settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup);
-
-	const uint64_t extent = cachedNeuralRenderExtent.load(std::memory_order_acquire);
-	const float2 renderSize{
-		static_cast<float>(static_cast<uint32_t>(extent >> 32)),
-		static_cast<float>(static_cast<uint32_t>(extent))
-	};
-	neuralRendering.TryStartupPrewarm(enabled, settings.neuralRenderingStartupPrewarm, tuning, renderSize);
 }
 
 Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
@@ -2230,7 +2217,6 @@ Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
 
 void Upscaling::SetupResources()
 {
-	cachedNeuralRenderExtent.store(0, std::memory_order_release);
 	neuralRendering.SetupResources();
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
@@ -2327,6 +2313,7 @@ void Upscaling::ClearShaderCache()
 {
 	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
+	vrClearHMDMaskCS.Reset();
 	for (auto& methodSlot : encodeTexturesCS) {
 		for (auto& outputSlot : methodSlot) {
 			outputSlot.Reset();
@@ -3322,7 +3309,8 @@ void Upscaling::ApplySharpening()
 
 		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
 		currentSharpness = exp2(-currentSharpness);
-		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
+		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
+			globals::d3d::context->CopyResource(perfMode.GetTestTexture(), perfMode.GetRefraTempTex());
 		return;
 	}
 
@@ -3349,7 +3337,8 @@ void Upscaling::ApplySharpening()
 		currentSharpness = exp2(-currentSharpness);
 
 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-		rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness);
+		if (!rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness))
+			context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
 	} else {
 		// Sharpening is disabled: resolve the DLSS output without altering it.
 		context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
@@ -3390,7 +3379,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingStartupPrewarm, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	upscaling.frameGenerationPrepared = false;

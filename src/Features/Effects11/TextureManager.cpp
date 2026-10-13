@@ -1,4 +1,5 @@
 #include "TextureManager.h"
+#include "EffectManager.h"
 #include "GpuPass.h"
 
 #include "Globals.h"
@@ -248,6 +249,11 @@ void TextureManager::DownsampleToFixed(ID3D11ShaderResourceView* source, Downsam
 	viewport.MinDepth = 0.0f;
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);
+
+	auto& effectManager = EffectManager::GetSingleton();
+	context->RSSetState(effectManager.rasterizerState.get());
+	context->OMSetBlendState(effectManager.blendState.get(), nullptr, 0xFFFFFFFF);
+	context->OMSetDepthStencilState(nullptr, 0);
 
 	context->VSSetShader(downsampleVS.get(), nullptr, 0);
 

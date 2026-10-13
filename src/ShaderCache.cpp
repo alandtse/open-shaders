@@ -485,7 +485,7 @@ namespace SIE
 			state += "D3DCOMPILE_SKIP_OPTIMIZATION;D3DCOMPILE_DEBUG;";
 		if (globals::game::isVR)
 			state += "VR;";
-		state += globals::state->shaderDefinesString;
+		state += globals::state->GetDefinesString();
 		return Util::ContentHash::HashString(state);
 	}
 
@@ -716,6 +716,9 @@ namespace SIE
 				if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::AnisoLighting)) != 0) {
 					defines[lastIndex++] = { "GLINT", nullptr };
 				}
+			}
+			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::LandscapeSeams)) != 0) {
+				defines[lastIndex++] = { "LANDSCAPE_SEAMS", nullptr };
 			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
@@ -1190,6 +1193,9 @@ namespace SIE
 			}
 			if (descriptor & static_cast<uint32_t>(LocalMapFogOfWar)) {
 				defines[lastIndex++] = { "LOCALMAP_FOGOFWAR", nullptr };
+			}
+			if (descriptor & static_cast<uint32_t>(TruePbr)) {
+				defines[lastIndex++] = { "TRUE_PBR", nullptr };
 			}
 
 			if (hasShadowMask) {
@@ -1918,7 +1924,7 @@ namespace SIE
 				descriptor = (descriptor & ~0b1111u) | static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth);
 			}
 
-			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
+			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->GetDefinesString());
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
 			const auto wname = std::wstring(name.begin(), name.end());
@@ -2278,8 +2284,10 @@ namespace SIE
 				cache.AddCompletedShader(shaderClass, shader, descriptor, nullptr, false, a_taskGeneration);
 				return nullptr;
 			}
-			if (errorBlob)
+			if (errorBlob) {
 				logger::debug("Shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
+				errorBlob->Release();
+			}
 			logger::debug("Compiled shader {}:{}:{:X}", magic_enum::enum_name(type), magic_enum::enum_name(shaderClass), descriptor);
 
 #ifdef TRACY_ENABLE
@@ -3328,7 +3336,8 @@ namespace SIE
 					ownedDefines.emplace_back("D3DCOMPILE_DEBUG", "");
 					flags = D3DCOMPILE_DEBUG;
 				}
-				for (const auto& [name, value] : *state->GetDefines())
+				const auto stateDefines = state->GetDefines();
+				for (const auto& [name, value] : *stateDefines)
 					ownedDefines.emplace_back(name, value);
 				if (state->enablePartialPrecision.load(std::memory_order_relaxed))
 					flags |= D3DCOMPILE_PARTIAL_PRECISION;

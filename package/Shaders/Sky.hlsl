@@ -483,6 +483,7 @@ PS_OUTPUT main(PS_INPUT input)
 #			ifdef TEX
 	float3 skyVertColor = ENABLE_LL ? (input.Color.xyz + noiseGrad) : input.Color.xyz;
 	float3 sunGlareColor = ComposeSkyColor(skyVertColor, baseColor.xyz, skyScale, composeAuthoredSky);
+	sunGlareColor = Color::AdjustUtilityColor(sunGlareColor, SharedData::csUtilitySettings.sunGlareColor);
 	// Dither/noise term is the legacy sky path contribution for gradient smoothing.
 	psout.Color.xyz = ((sunGlareColor * skyBrightnessMultiplier) + (ENABLE_LL ? 0.0 : noiseGrad)) * SharedData::csUtilitySettings.sunGlareIntensity;
 	psout.Color.w = baseColor.w * input.Color.w * input.SunGlareVisibility;

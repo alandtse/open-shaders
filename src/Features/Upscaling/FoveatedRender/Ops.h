@@ -47,17 +47,17 @@ namespace FoveatedRenderImpl::Ops
 	// Copy per-eye output intermediates back into the SBS output texture.
 	bool FinalizePerEyeOutputs(ID3D11Resource* colorDst, uint32_t eyeWidthOut, uint32_t eyeHeightOut);
 
-	// Snapshot kMAIN DRS data into vrRenderSBS.
-	void SnapshotSBS(ID3D11Resource* src, uint32_t renderW, uint32_t renderH);
+	/// Snapshots kMAIN DRS data into vrRenderSBS; returns false if the snapshot cannot be prepared.
+	bool SnapshotSBS(ID3D11Resource* src, uint32_t renderW, uint32_t renderH);
 
-	// Compute-shader stretch of a single eye region from renderSBS → kMAIN.
-	void StretchDRSToFullEye(ID3D11ShaderResourceView* renderSBSSRV, ID3D11UnorderedAccessView* kMainUAV,
+	/// Stretches one eye and returns false when the dispatch cannot run.
+	bool StretchDRSToFullEye(ID3D11ShaderResourceView* renderSBSSRV, ID3D11UnorderedAccessView* kMainUAV,
 		uint32_t dstOffsetX, uint32_t dstWidth, uint32_t dstHeight,
 		uint32_t srcOffsetX, uint32_t srcWidth, uint32_t srcHeight,
 		uint32_t srcEyeWidth, uint32_t srcEyeHeight);
 
-	// StretchDRS for both eyes (snapshot must already exist in vrRenderSBS).
-	void StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
+	/// Stretches both eyes from the snapshot and returns false if either eye fails.
+	bool StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride = nullptr);
 

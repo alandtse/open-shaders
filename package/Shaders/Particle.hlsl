@@ -458,6 +458,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float dirDetailedShadow = 1.0;
 
 	float3 dirLightColor = Color::GamutTransform(SharedData::DirLightColor.xyz);
+	dirLightColor = Color::AdjustUtilityColor(dirLightColor, SharedData::csUtilitySettings.directionalLightColor);
 	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)
 		dirLightColor *= ShadowSampling::GetWorldShadow(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 

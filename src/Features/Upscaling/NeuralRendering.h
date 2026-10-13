@@ -4,8 +4,8 @@
 #include "NeuralRendering/ContextProfile.h"
 #include "NeuralRendering/CropCalibration.h"
 #include "NeuralRendering/Diagnostics.h"
+#include "NeuralRendering/MaterialStrength.h"
 #include "NeuralRendering/Runtime.h"
-#include "NeuralRendering/StartupPrewarm.h"
 #include "NeuralRendering/Tuning.h"
 
 #include <array>
@@ -51,10 +51,16 @@ struct NeuralRendering
 		bool materialStrengthAvailable = true;
 		/** @brief True when the last evaluate bound the graded material protection. */
 		bool materialStrengthActive = false;
-		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape. */
-		std::array<float, 6> materialStrength{};
+		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
+		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
 		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
+		/** @brief True while the eye-stagger is running: both eyes render and frame generation is idle. */
+		bool skipFrameReuseActive = false;
+		/** @brief Whether the last applied frame reused each eye's stored gain instead of running the model. */
+		std::array<bool, 2> eyeReuse{};
+		/** @brief Frames the model ran for an eye, and eye-frames it was reused instead, since startup. */
+		uint32_t modelFrames = 0, reuseFrames = 0;
 	};
 
 	/** @brief Which sources chose the crop NR last evaluated, as the settings panel and devbench report it. */
@@ -81,7 +87,7 @@ struct NeuralRendering
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup);
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -93,11 +99,11 @@ struct NeuralRendering
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
-	void DrawSettings(bool& enabled, NR::Context::Profiles& contexts, NR::Tuning& tuning);
+	void DrawSettings(bool& enabled, bool& startupPrewarm, NR::Context::Profiles& contexts, NR::Tuning& tuning);
 	/** @brief Draws the runtime DLL's verdict and how to fix it, under Upscaling's DLL tables. */
 	void DrawRuntimeDiagnostics() const;
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
-	void DrawBeforeUpscaling(bool enabled, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
+	void DrawBeforeUpscaling(bool enabled, bool prewarmRequested, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
 	void DrawDiagnosticsOverlay();
 	/** @brief True while the developer has switched the diagnostics overlay on. */
@@ -119,9 +125,7 @@ struct NeuralRendering
 		bool reused = false;
 	};
 	StartupPrewarmStatus GetStartupPrewarmStatus() const;
-	/** @brief Creates runtime/eye instances on startup menu frames without evaluating guides. */
-	void TryStartupPrewarm(bool enabled, bool requested, const NR::Tuning& tuning, float2 renderSize);
-	/** @brief Queues a fresh startup attempt; never tears down active world resources. */
+	/** @brief Queues a drained reset of prepared startup instances when no world resources are active. */
 	void ResetStartupPrewarm() { resetStartupPrewarmRequested = true; }
 	/** @brief Cached verdict for the runtime on disk: whether NR can start, and why not when it cannot. */
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
@@ -139,18 +143,15 @@ struct NeuralRendering
 	NR::Diagnostics::Counters GetDiagnosticCounters() const { return diagnostics.GetCounters(); }
 	/** @brief Queues one retry for the next world frame; all the Retry action does. */
 	void RequestRetry() { retryRequested = resetHistory = true; }
-	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame. */
-	void RequestCapture() { diagnostics.RequestCapture(); }
+	/** @brief Queues one lossless DDS capture of every NR stage in the next NR frame; see Diagnostics::RequestCapture. */
+	void RequestCapture(bool verifyReuse = false) { diagnostics.RequestCapture(verifyReuse); }
 
 private:
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
-	NR::StartupPrewarm startupPrewarm;
 	StartupPrewarmStatus startupPrewarmStatus;
 	std::atomic_bool resetStartupPrewarmRequested = false;
-	bool startupPrewarmRequestedLast = false;
-	std::string startupPrewarmFailure;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;
@@ -170,6 +171,8 @@ private:
 	std::atomic<uint32_t> regionFit{ NR::Tuning::kRegionFitPadded };
 	/** @brief Whether the crop covers several actors, mirrored from the tuning like regionEnabled. */
 	std::atomic_bool regionGroup = false;
+	/** @brief Mirrors the tuning's allowUnverifiedRuntime for the status text, which has no tuning at hand. */
+	std::atomic_bool allowUnverifiedRuntime = false;
 	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
 	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
 	/**
@@ -177,9 +180,12 @@ private:
 	 *        off for this session; the user's saved value is untouched, and only a relaunch clears it.
 	 */
 	std::atomic_bool materialStrengthRejected = false;
+	/** @brief Eye-stagger mirrors for the status snapshot, written on the render thread. */
+	std::atomic_bool skipFrameReuseActive = false;
+	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
-	std::array<std::atomic<float>, 6> materialStrengthValues{};
+	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};
 	std::atomic<uint32_t> materialEdgeSoftness = 0;
 	/** @brief The tracked actor's crop, written by the main thread and read by the rendering thread. */
 	Util::Region::StereoRegion region;
@@ -210,7 +216,7 @@ private:
 	void DrawRegionPreview();
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
-	void PublishStartupPrewarm();
+	void PublishStartupPrewarm(std::string stage, std::string reason, uint32_t width = 0, uint32_t height = 0, uint32_t eyes = 0, uint32_t preparedEyes = 0, bool reused = false);
 	/** @brief Republishes the render size and eye count after the pass resources are recreated. */
 	void PublishResources();
 	/** @brief Publishes a failure with the prefix the panel shows for a stopped pass. */

@@ -6,9 +6,13 @@
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "NeuralRendering/ActorRegion.h"
+#include "NeuralRendering/Cadence.h"
 #include "NeuralRendering/D3D12Interop.h"
+#include "NeuralRendering/EyeMode.h"
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
+#include "NeuralRendering/ModelScale.h"
+#include "NeuralRendering/PrewarmDimensions.h"
 #include "NeuralRendering/Runtime.h"
 #include "Profiler.h"
 #include "State.h"
@@ -21,8 +25,8 @@
 #include "Utils/Subrect.h"
 #include "Utils/UI.h"
 
+#include <bit>
 #include <chrono>
-#include <cmath>
 #include <span>
 
 #define I18N_KEY_PREFIX "feature.upscaling.neural_rendering."
@@ -153,6 +157,12 @@ namespace
 	/** @brief Width the debug region overlay draws the crop outline at, in NR render-resolution pixels. */
 	constexpr float kRegionOutlineThicknessPixels = 3.0f;
 
+	/** @brief Brightness difference, in stops, at which a guided model-size gain sample's weight falls by 1/e. */
+	constexpr float kModelGuideSigmaStops = 0.5f;
+
+	/** @brief Blank pixels between the two eyes in the side-by-side model image. */
+	constexpr uint32_t kSbsGutterPixels = NR::kSideBySideGutter;
+
 	/** @brief Colour the preview draws the tracked actor's projected box in; the shader outline uses the same yellow. */
 	constexpr ImU32 kActorBoxPreviewColor = IM_COL32(255, 255, 0, 255);
 }
@@ -164,23 +174,27 @@ struct NeuralRendering::Impl
 	struct Eye
 	{
 		std::unique_ptr<WrappedResource> color, depth, motion, output;
+		/** @brief The model's own inputs and output at the reduced model size; created only while the model runs below the eye size. */
+		std::unique_ptr<WrappedResource> lowColor, lowDepth, lowMotion, lowOutput;
 		/** @brief DLSSNR.UIAlpha built from the Masks2 category lane; created only while the material strength is on. */
 		std::unique_ptr<WrappedResource> materialAlpha;
 		NR::FrameParameters frame;
 		std::unique_ptr<Texture2D> resolved, toneData;
+		/** @brief Eye-stagger history: the model frame's log input luma and tone delta, its depth guide, and the proxy a reuse frame feeds the composite. Allocated only while the stagger can run. */
+		std::unique_ptr<Texture2D> gainHistory, depthHistory, reuseOutput;
 		DirectX::SimpleMath::Vector3 position{}, forward{};
 	};
 	std::array<Eye, 2> eyes;
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader;
-	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the six strengths. */
+	winrt::com_ptr<ID3D11SamplerState> linearSampler;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow;
+	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
 	struct alignas(16) CategoryAlphaData
 	{
 		uint32_t width, height, eyeOffsetX, edgeSoftness;
 		float4 strengthsA;
-		float2 strengthsB;
-		float2 pad{};
+		float4 strengthsB;
 	};
 	static_assert(offsetof(CategoryAlphaData, strengthsA) == 16);
 	static_assert(offsetof(CategoryAlphaData, strengthsB) == 32);
@@ -228,8 +242,40 @@ struct NeuralRendering::Impl
 	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
+	/** @brief Cbuffer GainReuseCS.hlsl reads alongside the color-transfer block. */
+	struct alignas(16) GainReuseData
+	{
+		float4 cameraData{};         ///< The projection terms SharedData carries; the guide's own depth is a raw value.
+		uint32_t depthReversed = 0;  ///< True when the guide holds reverse-Z depth, which Feature 18 is told separately.
+		uint32_t crossEye = 0;       ///< True when the other eye's stored gain is bound for a rejected sample to fall back on.
+		uint32_t pad[2]{};
+		DirectX::SimpleMath::Matrix stereoMap;  ///< Column-vector map from this eye's clip space to the other eye's, the engine's own eye-to-eye conversion folded into one matrix.
+	};
+	static_assert(offsetof(GainReuseData, depthReversed) == 16);
+	static_assert(offsetof(GainReuseData, crossEye) == 20);
+	static_assert(offsetof(GainReuseData, stereoMap) == 32);
+	static_assert(sizeof(GainReuseData) == 96);
 	std::unique_ptr<ConstantBuffer> colorBuffer;
 	std::unique_ptr<ConstantBuffer> categoryAlphaBuffer;
+	std::unique_ptr<ConstantBuffer> gainReuseBuffer;
+	/** @brief Cbuffer LowResCS.hlsl reads alongside the color-transfer block. */
+	struct alignas(16) LowResData
+	{
+		uint32_t lowWidth, lowHeight, guideWidth, guideHeight;
+		float guideSigma;
+		uint32_t guided;
+		uint32_t pad[2]{};
+	};
+	static_assert(sizeof(LowResData) == 32);
+	std::unique_ptr<ConstantBuffer> lowResBuffer;
+	/** @brief Per-eye eye-stagger schedule and the gains it may reuse; cleared by any history reset. */
+	NR::Cadence::State cadence;
+	/** @brief Whether the last frame's composite reads each eye's synthesized proxy instead of the model output. */
+	std::array<bool, 2> reuseFrame{};
+	/** @brief True while the stagger runs this frame, so the composite and the status report agree with the schedule. */
+	bool staggerActive = false;
+	/** @brief Frame generation's block on the stagger is logged once per activation, not once per frame. */
+	bool frameGenerationBlocked = false;
 	/** @brief Material-strength switch the persistent eye features were last created with; drives recreation. */
 	bool materialStrengthOn = false;
 	/** @brief The graded protection is bound for the evaluate now in flight, so a fault belongs to it. */
@@ -242,6 +288,24 @@ struct NeuralRendering::Impl
 	std::unique_ptr<ConstantBuffer> encodeBuffer;
 	std::array<std::unique_ptr<Texture2D>, 2> encodeMasks;
 	uint32_t width = 0, height = 0, guideWidth = 0, guideHeight = 0, eyeCount = 0, lastFrame = UINT32_MAX;
+	/** @brief Model size when the model runs below the eye size; zero when it runs at the eye size. */
+	uint32_t lowWidth = 0, lowHeight = 0;
+	/** @brief Evaluates both eyes as one side-by-side image on a single instance. */
+	bool sbsEnabled = false;
+	/** @brief Size of the side-by-side texture set, which the eyes' crops or model sizes decide; zero while none exists. */
+	uint32_t sbsWidth = 0, sbsHeight = 0;
+	bool sbsNeedsClear = false;
+	/** @brief The part of each eye the side-by-side image holds this frame, in the pixels of the textures it is copied from. */
+	std::array<Util::Subrect::PixelRegion, 2> sbsCrop{};
+	/** @brief Crop sizes the packed image was last laid out for; a change moves the gutter even when the total size is the same. */
+	std::array<uint32_t, 4> sbsLayout{};
+	/** @brief Model inputs and output of both eyes side by side, which the single instance evaluates. */
+	struct SbsHost
+	{
+		std::unique_ptr<WrappedResource> color, depth, motion, output;
+	} sbsHost;
+	/** @brief Both eyes' material protection side by side, for the single-instance evaluation. */
+	std::unique_ptr<WrappedResource> sbsAlpha;
 	/** @brief Crop of the last frame NR evaluated; inactive means it covered the whole frame. */
 	Util::Region::StereoRegion lastRegion;
 	/** @brief Crop this frame's evaluation uses, published by the main thread and read by TransferColor. */
@@ -250,6 +314,8 @@ struct NeuralRendering::Impl
 	Util::Region::StereoRegion actorBox;
 	DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 	bool ready = false, failed = false;
+	/** @brief Set from the tuning before Initialize; lets a 310.8.x build outside the pinned digests load. */
+	bool allowUnverifiedRuntime = false;
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
@@ -294,10 +360,19 @@ struct NeuralRendering::Impl
 		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
+		D3D11_SAMPLER_DESC samplerDesc{};
+		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		Util::SetResourceName(linearSampler.get(), "NeuralRendering::LinearClamp Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
-		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode());
+		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
+		lowResBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LowResData>(), "NeuralRendering::LowRes CB");
+		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
 
@@ -305,19 +380,24 @@ struct NeuralRendering::Impl
 	 * @brief Releases the per-frame pass resources, keeping the D3D12 device and NGX instance.
 	 *        Rebuilding those costs a driver-level re-init; the textures do not.
 	 */
-	void ReleasePassResources(bool preservePreparedFeatures = false)
+	void ReleasePassResources()
 	{
 		interop.Drain();
-		if (!preservePreparedFeatures)
-			runtime.ResetFeatures();
+		runtime.ResetFeatures();
 		eyes = {};
 		original.reset();
 		encodeMasks = {};
 		materialStrengthInFlight = materialStrengthBound = false;
-		width = height = guideWidth = guideHeight = eyeCount = 0;
+		width = height = guideWidth = guideHeight = eyeCount = lowWidth = lowHeight = 0;
+		sbsWidth = sbsHeight = 0;
+		sbsAlpha.reset();
+		sbsHost = {};
 		format = DXGI_FORMAT_UNKNOWN;
 		lastFrame = UINT32_MAX;
 		lastRegion = {};
+		cadence = {};
+		reuseFrame = {};
+		staggerActive = false;
 	}
 
 	/** @brief True while pass resources for a render size exist and can be released. */
@@ -342,11 +422,11 @@ struct NeuralRendering::Impl
 		}
 	}
 
-	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, bool preservePreparedFeatures = false)
+	void EnsureResources(uint32_t w, uint32_t h, uint32_t gw, uint32_t gh, uint32_t count, DXGI_FORMAT colorFormat, bool force, uint32_t lw, uint32_t lh)
 	{
-		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat)
+		if (!force && width == w && height == h && guideWidth == gw && guideHeight == gh && eyeCount == count && format == colorFormat && lowWidth == lw && lowHeight == lh)
 			return;
-		ReleasePassResources(preservePreparedFeatures && !HasPassResources());
+		ReleasePassResources();
 		D3D11_TEXTURE2D_DESC maskDesc{};
 		maskDesc.Width = gw;
 		maskDesc.Height = gh;
@@ -384,12 +464,20 @@ struct NeuralRendering::Impl
 			eye.depth = interop.CreateTexture(gw, gh, DXGI_FORMAT_R32_FLOAT, name + " Depth");
 			eye.motion = interop.CreateTexture(gw, gh, DXGI_FORMAT_R16G16_FLOAT, name + " Motion");
 			eye.output = interop.CreateTexture(w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " HDROutput");
+			if (lw) {
+				eye.lowColor = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDRInput");
+				eye.lowDepth = interop.CreateTexture(lw, lh, DXGI_FORMAT_R32_FLOAT, name + " LowDepth");
+				eye.lowMotion = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16_FLOAT, name + " LowMotion");
+				eye.lowOutput = interop.CreateTexture(lw, lh, DXGI_FORMAT_R16G16B16A16_FLOAT, name + " LowHDROutput");
+			}
 		}
 		width = w;
 		height = h;
 		guideWidth = gw;
 		guideHeight = gh;
-		logger::debug("[NeuralRendering] Render-resolution NR {}x{}, guides {}x{}, eyes {}", w, h, gw, gh, count);
+		lowWidth = lw;
+		lowHeight = lh;
+		logger::debug("[NeuralRendering] Render-resolution NR {}x{}, guides {}x{}, model {}x{}, eyes {}", w, h, gw, gh, lw ? lw : w, lw ? lh : h, count);
 		eyeCount = count;
 		format = colorFormat;
 	}
@@ -446,10 +534,15 @@ struct NeuralRendering::Impl
 		return reset;
 	}
 
-	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter)
+	void Transition(ID3D12GraphicsCommandList* commands, Eye& eye, bool enter, bool low = false)
 	{
-		ID3D12Resource* resources[5]{ eye.color->resource.get(), eye.depth->resource.get(), eye.motion->resource.get(),
-			eye.output->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr };
+		TransitionResources(commands, { (low ? eye.lowColor : eye.color)->resource.get(), (low ? eye.lowDepth : eye.depth)->resource.get(), (low ? eye.lowMotion : eye.motion)->resource.get(), (low ? eye.lowOutput : eye.output)->resource.get(), eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr },
+			enter);
+	}
+
+	/** @brief Moves a model's color, depth, motion, output and optional protection alpha between the D3D11 owner state and what the model reads and writes. */
+	void TransitionResources(ID3D12GraphicsCommandList* commands, const std::array<ID3D12Resource*, 5>& resources, bool enter)
+	{
 		const D3D12_RESOURCE_STATES states[5]{
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
 			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
@@ -510,10 +603,298 @@ struct NeuralRendering::Impl
 		colorBuffer->Update(data);
 		auto buffer = colorBuffer->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
-		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color->srv, eye.output->srv };
+		ID3D11ShaderResourceView* inputs[]{ nullptr, eye.color->srv, reuseFrame[i] ? eye.reuseOutput->srv.get() : eye.output->srv };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
 		auto* output = eye.toneData->uav.get();
 		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/** @brief Creates one eye's stagger textures; only the eyes a stagger frame touches allocate them. */
+	void EnsureGainResources(uint32_t i)
+	{
+		auto& eye = eyes[i];
+		if (eye.gainHistory)
+			return;
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = width;
+		desc.Height = height;
+		desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
+		srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srv.Texture2D.MipLevels = 1;
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uav{};
+		uav.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16_FLOAT;
+		eye.gainHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} GainHistory", i).c_str());
+		eye.gainHistory->CreateSRV(srv);
+		eye.gainHistory->CreateUAV(uav);
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R32_FLOAT;
+		eye.depthHistory = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} DepthHistory", i).c_str());
+		eye.depthHistory->CreateSRV(srv);
+		eye.depthHistory->CreateUAV(uav);
+		desc.Format = srv.Format = uav.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		eye.reuseOutput = std::make_unique<Texture2D>(desc, std::format("NeuralRendering::Eye{} ReuseOutput", i).c_str());
+		eye.reuseOutput->CreateSRV(srv);
+		eye.reuseOutput->CreateUAV(uav);
+	}
+
+	/** @brief Frees the stagger textures while the stagger is off, so a VR session does not hold two extra render-resolution surfaces. */
+	void ReleaseGainResources()
+	{
+		for (auto& eye : eyes) {
+			eye.gainHistory.reset();
+			eye.depthHistory.reset();
+			eye.reuseOutput.reset();
+		}
+	}
+
+	/** @brief Binds the color-transfer block plus the GainReuseCS block, which carries the guide's depth convention. */
+	void BindGainBuffers(uint32_t i, bool crossEye = false)
+	{
+		ColorTransferData data{ width, height, i * width };
+		SetRegion(data, i);
+		colorBuffer->Update(data);
+		GainReuseData reuse{ Util::GetCameraData(), globals::features::reverseZ.IsActive() ? 1u : 0u, crossEye ? 1u : 0u };
+		if (crossEye) {
+			const auto& frameBuffer = globals::game::frameBufferCached;
+			const auto offset = frameBuffer.GetCameraPosAdjust(i) - frameBuffer.GetCameraPosAdjust(1 - i);
+			// The engine's matrices act on column vectors, so the row-vector translation is transposed.
+			reuse.stereoMap = frameBuffer.GetCameraViewProj(1 - i) * DirectX::SimpleMath::Matrix::CreateTranslation(offset.x, offset.y, offset.z).Transpose() * frameBuffer.GetCameraViewProjInverse(i);
+		}
+		gainReuseBuffer->Update(reuse);
+		context->ClearState();
+		ID3D11Buffer* buffers[]{ colorBuffer->CB(), gainReuseBuffer->CB() };
+		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
+		globals::state->BindSharedDataCS(context.get(), true);
+	}
+
+	/** @brief Records the model frame's tone delta and depth for one eye; the composite reads the same delta it would have computed itself. */
+	void StoreGain(uint32_t i)
+	{
+		CS_GPU_PASS("Upscaling::NRStoreGain");
+		auto* shader = storeGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
+			{}, "cs_5_0", "StoreGain", "NeuralRendering::StoreGain CS");
+		if (!shader)
+			throw std::runtime_error("NR gain-store shader unavailable");
+		auto& eye = eyes[i];
+		BindGainBuffers(i);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, eye.output->srv, eye.depth->srv };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		ID3D11UnorderedAccessView* outputs[]{ eye.gainHistory->uav.get(), eye.depthHistory->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/** @brief Rebuilds one eye's proxy from its stored gain reprojected by motion, so the composite applies the same tone edit for a frame the model did not run. */
+	void ReuseGain(uint32_t i, bool crossEye = false)
+	{
+		CS_GPU_PASS("Upscaling::NRReuseGain");
+		auto* shader = reuseGain.Get(L"Data/Shaders/Upscaling/NeuralRendering/GainReuseCS.hlsl",
+			{}, "cs_5_0", "ReuseGain", "NeuralRendering::ReuseGain CS");
+		if (!shader)
+			throw std::runtime_error("NR gain-reuse shader unavailable");
+		auto& eye = eyes[i];
+		BindGainBuffers(i, crossEye);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, nullptr, eye.depth->srv, eye.motion->srv,
+			eye.gainHistory->srv.get(), eye.depthHistory->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		if (crossEye) {
+			ID3D11ShaderResourceView* otherInputs[]{ eyes[1 - i].gainHistory->srv.get(), eyes[1 - i].depthHistory->srv.get() };
+			context->CSSetShaderResources(12, ARRAYSIZE(otherInputs), otherInputs);
+		}
+		auto* sampler = linearSampler.get();
+		context->CSSetSamplers(0, 1, &sampler);
+		auto* output = eye.reuseOutput->uav.get();
+		context->CSSetUnorderedAccessViews(2, 1, &output, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/** @brief Averages one eye's proxy down to the model's size and takes its depth and motion at the footprint centres. */
+	void DownsampleModelInputs(uint32_t i)
+	{
+		CS_GPU_PASS("Upscaling::NRDownsample");
+		auto* shader = downsampleLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+			{}, "cs_5_0", "Downsample", "NeuralRendering::Downsample CS");
+		if (!shader)
+			throw std::runtime_error("NR downsample shader unavailable");
+		auto& eye = eyes[i];
+		context->ClearState();
+		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, 0.0f, 0 });
+		auto buffer = lowResBuffer->CB();
+		context->CSSetConstantBuffers(1, 1, &buffer);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, nullptr, nullptr, eye.depth->srv, eye.motion->srv };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		auto* sampler = linearSampler.get();
+		context->CSSetSamplers(0, 1, &sampler);
+		ID3D11UnorderedAccessView* outputs[]{ eye.lowColor->uav, eye.lowDepth->uav, eye.lowMotion->uav };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
+		context->CSSetShader(shader, nullptr, 0);
+		context->Dispatch((lowWidth + 7) / 8, (lowHeight + 7) / 8, 1);
+		context->ClearState();
+	}
+
+	/**
+	 * @brief Fixes what the side-by-side image holds this frame, each eye's crop or its whole image at the model size,
+	 *        and reallocates the texture set and the instance when that size changes.
+	 */
+	void PlanSbs()
+	{
+		const bool reduced = lowWidth != 0;
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const auto crop = !reduced && region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+			sbsCrop[i] = (crop.w && crop.h) ? crop : Util::Subrect::PixelRegion{ 0, 0, reduced ? lowWidth : width, reduced ? lowHeight : height };
+		}
+		const auto [planWidth, planHeight] = NR::SideBySideExtent(sbsCrop, reduced ? lowWidth : width, reduced ? lowHeight : height);
+		const std::array<uint32_t, 4> layout{ sbsCrop[0].w, sbsCrop[0].h, sbsCrop[1].w, sbsCrop[1].h };
+		if (layout != sbsLayout) {
+			sbsLayout = layout;
+			sbsNeedsClear = true;
+		}
+		if (sbsHost.color && planWidth == sbsWidth && planHeight == sbsHeight)
+			return;
+		ReleaseSbs();
+		sbsHost.color = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDRInput");
+		sbsHost.depth = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R32_FLOAT, "NeuralRendering::SBS Depth");
+		sbsHost.motion = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16_FLOAT, "NeuralRendering::SBS Motion");
+		sbsHost.output = interop.CreateTexture(planWidth, planHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "NeuralRendering::SBS HDROutput");
+		sbsWidth = planWidth;
+		sbsHeight = planHeight;
+		sbsNeedsClear = true;
+		logger::debug("[NeuralRendering] Side-by-side NR {}x{}, eye crops {}x{} and {}x{}", planWidth, planHeight, sbsCrop[0].w, sbsCrop[0].h, sbsCrop[1].w, sbsCrop[1].h);
+	}
+
+	/** @brief Frees the side-by-side texture set and its instance once the GPU is done with them. */
+	void ReleaseSbs()
+	{
+		if (!sbsWidth)
+			return;
+		interop.Drain();
+		runtime.ResetFeature(NR::kSbsSlot);
+		sbsHost = {};
+		sbsAlpha.reset();
+		sbsWidth = sbsHeight = 0;
+	}
+
+	/** @brief Places both eyes' model inputs, cropped or whole, side by side a gutter apart. */
+	void CopySbsInputs()
+	{
+		CS_GPU_PASS("Upscaling::NRSbsPack");
+		if (sbsNeedsClear) {
+			constexpr float zero[4]{};
+			for (auto* uav : { sbsHost.color->uav, sbsHost.depth->uav, sbsHost.motion->uav, sbsHost.output->uav }) {
+				if (uav)
+					context->ClearUnorderedAccessViewFloat(uav, zero);
+			}
+			sbsNeedsClear = false;
+		}
+		const bool reduced = lowWidth != 0;
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			auto& eye = eyes[i];
+			const auto& crop = sbsCrop[i];
+			const D3D11_BOX box{ crop.x, crop.y, 0, crop.x + crop.w, crop.y + crop.h, 1 };
+			const uint32_t x = i ? sbsCrop[0].w + kSbsGutterPixels : 0;
+			context->CopySubresourceRegion(sbsHost.color->resource11, 0, x, 0, 0, (reduced ? eye.lowColor : eye.color)->resource11, 0, &box);
+			context->CopySubresourceRegion(sbsHost.depth->resource11, 0, x, 0, 0, (reduced ? eye.lowDepth : eye.depth)->resource11, 0, &box);
+			context->CopySubresourceRegion(sbsHost.motion->resource11, 0, x, 0, 0, (reduced ? eye.lowMotion : eye.motion)->resource11, 0, &box);
+		}
+	}
+
+	/**
+	 * @brief Splits the side-by-side model output back into each eye's crop: into its model-size output when the
+	 *        model runs reduced, else into its output, or into reuseOutput when a verify capture keeps the
+	 *        eye's own full-size run in output.
+	 */
+	void CopySbsOutputs(bool verify)
+	{
+		CS_GPU_PASS("Upscaling::NRSbsSplit");
+		const bool reduced = lowWidth != 0;
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const auto& crop = sbsCrop[i];
+			const uint32_t x = i ? sbsCrop[0].w + kSbsGutterPixels : 0;
+			const D3D11_BOX box{ x, 0, 0, x + crop.w, crop.h, 1 };
+			ID3D11Resource* target = reduced ? eyes[i].lowOutput->resource11 :
+			                         verify  ? static_cast<ID3D11Resource*>(eyes[i].reuseOutput->resource.get()) :
+			                                   eyes[i].output->resource11;
+			context->CopySubresourceRegion(target, 0, crop.x, crop.y, 0, sbsHost.output->resource11, 0, &box);
+		}
+	}
+
+	/** @brief Runs the single Feature 18 instance over both eyes at once. */
+	bool EvaluateSbs(ID3D12GraphicsCommandList* commands, const NR::Tuning& tuning, NR::Diagnostics::Frame& diagnostic)
+	{
+		auto& host = eyes[0];
+		auto* alpha = materialStrengthInFlight && sbsAlpha ? sbsAlpha->resource.get() : nullptr;
+		const std::array<ID3D12Resource*, 5> resources{ sbsHost.color->resource.get(), sbsHost.depth->resource.get(),
+			sbsHost.motion->resource.get(), sbsHost.output->resource.get(), alpha };
+		TransitionResources(commands, resources, true);
+		const uint32_t modelWidth = lowWidth ? lowWidth : width, modelHeight = lowWidth ? lowHeight : height;
+		const NR::GuideRegion whole{ 0, 0, sbsWidth, sbsHeight };
+		NR::GuideParameters guides;
+		guides.depth = guides.motion = guides.colorOutput = whole;
+		// Motion is normalized to one eye, not to the combined texture.
+		guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(modelWidth) : 1.0f;
+		guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(modelHeight) : 1.0f;
+		guides.depthInverted = globals::features::reverseZ.IsActive();
+		const NR::ProtectionResources protection{ alpha, alpha ? sbsHost.color->resource.get() : nullptr };
+		const bool ok = runtime.Evaluate(commands, NR::kSbsSlot, sbsHost.color->resource.get(), sbsHost.depth->resource.get(),
+			sbsHost.motion->resource.get(), sbsHost.output->resource.get(), protection, sbsWidth, sbsHeight, guides, host.frame, tuning);
+		diagnostic.result[0] = host.frame.result;
+		if (ok)
+			diagnostic.evaluated |= (1u << eyeCount) - 1;
+		if (host.frame.created) {
+			diagnostic.created |= 1u;
+			diagnostic.reset[0] |= NR::Diagnostics::FeatureCreated;
+		}
+		TransitionResources(commands, resources, false);
+		return ok;
+	}
+
+	/** @brief Runs one eye alone at full size on its own instance: the reference a reduced or side-by-side result is compared with. */
+	bool EvaluateReference(ID3D12GraphicsCommandList* commands, uint32_t i, const NR::Tuning& tuning)
+	{
+		auto& eye = eyes[i];
+		Transition(commands, eye, true);
+		const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
+		NR::GuideParameters guides;
+		guides.depth = guides.motion = guides.colorOutput = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, width, height };
+		guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
+		guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+		guides.depthInverted = globals::features::reverseZ.IsActive();
+		const bool ok = runtime.Evaluate(commands, NR::kVerifySlot + i, eye.color->resource.get(), eye.depth->resource.get(),
+			eye.motion->resource.get(), eye.output->resource.get(), NR::ProtectionResources{}, width, height, guides, eye.frame, tuning);
+		Transition(commands, eye, false);
+		return ok;
+	}
+
+	/** @brief Writes the proxy the composite reads for a model-size evaluation: the eye's own colour scaled by the model's gain, upsampled to the eye size. */
+	void ExpandModelGain(uint32_t i, bool guided)
+	{
+		CS_GPU_PASS("Upscaling::NRExpandGain");
+		auto* shader = expandLow.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
+			{}, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandGain CS");
+		if (!shader)
+			throw std::runtime_error("NR gain-expand shader unavailable");
+		auto& eye = eyes[i];
+		context->ClearState();
+		ColorTransferData data{ width, height, i * width };
+		colorBuffer->Update(data);
+		lowResBuffer->Update(LowResData{ lowWidth, lowHeight, guideWidth, guideHeight, kModelGuideSigmaStops, guided ? 1u : 0u });
+		ID3D11Buffer* buffers[]{ colorBuffer->CB(), lowResBuffer->CB() };
+		context->CSSetConstantBuffers(0, ARRAYSIZE(buffers), buffers);
+		ID3D11ShaderResourceView* inputs[]{ eye.color->srv, eye.lowColor->srv, eye.lowOutput->srv };
+		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
+		auto* sampler = linearSampler.get();
+		context->CSSetSamplers(0, 1, &sampler);
+		ID3D11UnorderedAccessView* outputs[]{ nullptr, nullptr, nullptr, eye.reuseOutput->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(outputs), outputs, nullptr);
 		context->CSSetShader(shader, nullptr, 0);
 		context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 		context->ClearState();
@@ -550,7 +931,8 @@ struct NeuralRendering::Impl
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
-		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape], 0.0f, 0.0f };
+		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape],
+			materialMapStrength[NR::MaterialStrength::kCloth], materialMapStrength[NR::MaterialStrength::kMetal] };
 		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
@@ -577,7 +959,7 @@ struct NeuralRendering::Impl
 		globals::state->BindSharedDataCS(context.get(), true);
 		auto* masks2 = Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kRAWINDIRECT_PREVIOUS_DOWNSCALED].SRV);
 		ID3D11ShaderResourceView* inputs[]{ original->srv.get(), prepare ? nullptr : eye.color->srv,
-			prepare ? nullptr : eye.output->srv, exposure,
+			prepare ? nullptr : (reuseFrame[i] ? eye.reuseOutput->srv.get() : eye.output->srv), exposure,
 			data.hasToneData ? eye.toneData->srv.get() : nullptr, masks2 };
 		ID3D11UnorderedAccessView* outputs[]{ prepare ? eye.color->uav : eye.resolved->uav.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(inputs), inputs);
@@ -625,7 +1007,8 @@ struct NeuralRendering::Impl
 				categoryAlphaBuffer->Update(CategoryAlphaData{ width, height, i * width, strengths.edgeSoftness,
 					{ strengths.strength[NR::MaterialStrength::kNone], strengths.strength[NR::MaterialStrength::kSkin],
 						strengths.strength[NR::MaterialStrength::kHair], strengths.strength[NR::MaterialStrength::kEyes] },
-					{ strengths.strength[NR::MaterialStrength::kFoliage], strengths.strength[NR::MaterialStrength::kLandscape] } });
+					{ strengths.strength[NR::MaterialStrength::kFoliage], strengths.strength[NR::MaterialStrength::kLandscape],
+						strengths.strength[NR::MaterialStrength::kCloth], strengths.strength[NR::MaterialStrength::kMetal] } });
 				auto buffer = categoryAlphaBuffer->CB();
 				context->CSSetConstantBuffers(0, 1, &buffer);
 				context->CSSetShaderResources(0, 1, &masks2);
@@ -634,6 +1017,15 @@ struct NeuralRendering::Impl
 				context->CSSetShader(shader, nullptr, 0);
 				context->Dispatch((width + 7) / 8, (height + 7) / 8, 1);
 				context->ClearState();
+			}
+			if (sbsWidth) {
+				if (!sbsAlpha)
+					sbsAlpha = interop.CreateTexture(sbsWidth, sbsHeight, DXGI_FORMAT_R8_UNORM, "NeuralRendering::SBS MaterialAlpha");
+				for (uint32_t i = 0; i < eyeCount; ++i) {
+					const auto& crop = sbsCrop[i];
+					const D3D11_BOX box{ crop.x, crop.y, 0, crop.x + crop.w, crop.y + crop.h, 1 };
+					context->CopySubresourceRegion(sbsAlpha->resource11, 0, i ? sbsCrop[0].w + kSbsGutterPixels : 0, 0, 0, eyes[i].materialAlpha->resource11, 0, &box);
+				}
 			}
 		} catch (...) {
 			if (interop.DeviceRemoved())
@@ -664,9 +1056,35 @@ struct NeuralRendering::Impl
 				context->SwapDeviceContextState(previous.get(), nullptr);
 			}
 		} scope(context.get(), isolated.get());
+		// The stagger's own gain history would be blended into frame generation's interpolation, and a
+		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
+		const bool frameGeneration = globals::features::upscaling.IsFrameGenerationActive();
+		if (frameGeneration != frameGenerationBlocked) {
+			if (frameGeneration)
+				logger::info("[NeuralRendering] eye-staggered gain reuse is off while frame generation is active");
+			frameGenerationBlocked = frameGeneration;
+		}
+		const bool lowRes = lowWidth != 0;
+		const bool sbs = sbsEnabled;
+		if (lowRes) {
+			region = {};
+			actorBox = {};
+		}
+		if (sbs)
+			PlanSbs();
+		else
+			ReleaseSbs();
+		staggerActive = !lowRes && !sbs && tuning.skipFrameReuse && globals::game::isVR &&
+		                eyeCount == 2 && !frameGeneration;
+		const bool calibrationRunning = globals::features::upscaling.neuralRendering.GetCalibration().state == NR::CropCalibration::State::kRunning;
+		reuseFrame = {};
+		const bool gainResourcesWanted = staggerActive || lowRes || (sbs && tuning.modelVerify);
+		if (!gainResourcesWanted && (eyes[0].gainHistory || eyes[1].gainHistory))
+			ReleaseGainResources();
 		const D3D11_BOX originalBox{ 0, 0, 0, width * eyeCount, height, 1 };
 		context->CopySubresourceRegion(original->resource.get(), 0, 0, 0, 0, color, 0, &originalBox);
 		const bool capture = diagnostics.BeginCapture(diagnostic.number);
+		const bool verifyRequested = capture && diagnostics.ConsumeVerifyReuse();
 		if (capture)
 			diagnostics.DumpTexture("00_original_scene", original->resource.get(), diagnostic.number);
 		if (capture) {
@@ -683,7 +1101,7 @@ struct NeuralRendering::Impl
 			return true;
 		}
 		materialStrengthInFlight = materialStrengthBound = false;
-		if (materialStrengthWanted && !materialStrengthDegraded) {
+		if (materialStrengthWanted && !materialStrengthDegraded && !lowRes) {
 			auto* lane = MaterialLane();
 			if (!lane) {
 				materialStrengthDegraded = true;
@@ -719,6 +1137,34 @@ struct NeuralRendering::Impl
 			}
 		}
 		context->ClearState();
+		if (lowRes) {
+			for (uint32_t i = 0; i < eyeCount; ++i)
+				DownsampleModelInputs(i);
+		}
+		bool invalidate = reset != 0 || calibrationRunning ||
+		                  (diagnostic.options & NR::Diagnostics::kHistoryIsolatingOptions) != 0 ||
+		                  conversionMode != NR::Diagnostics::ColorConversion::Production;
+		for (uint32_t i = 0; i < eyeCount; ++i)
+			invalidate |= eyes[i].frame.reset;
+		const std::array<uint64_t, 2> previousModel = cadence.lastModelFrame;
+		const NR::Cadence::Inputs cadenceInputs{ staggerActive, static_cast<bool>(globals::game::isVR), eyeCount,
+			static_cast<uint64_t>(diagnostic.number), invalidate };
+		const auto decision = NR::Cadence::Decide(cadenceInputs, cadence);
+		const bool verifyReuse = verifyRequested && staggerActive;
+		std::array<bool, 2> verifyEye{};
+		for (uint32_t i = 0; verifyReuse && i < eyeCount; ++i) {
+			verifyEye[i] = !decision.evaluate[i];
+			if (verifyEye[i])
+				cadence.lastModelFrame[i] = static_cast<uint64_t>(diagnostic.number);
+		}
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			const bool gap = decision.evaluate[i] && previousModel[i] != NR::Cadence::kNoModelFrame &&
+			                 static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1;
+			if (gap && tuning.skipFrameGapMode != 0) {
+				eyes[i].frame.reset = true;
+				diagnostic.reset[i] |= NR::Diagnostics::FrameGap;
+			}
+		}
 		// Resetting persistent NR history must not overlap its prior GPU evaluation.
 		for (uint32_t i = 0; i < eyeCount; ++i) {
 			if (eyes[i].frame.reset) {
@@ -729,16 +1175,46 @@ struct NeuralRendering::Impl
 			}
 		}
 		bool success = true;
+		if (tuning.mirrorEyes && eyeCount == 2) {
+			context->CopyResource(eyes[1].color->resource11, eyes[0].color->resource11);
+			context->CopyResource(eyes[1].depth->resource11, eyes[0].depth->resource11);
+			context->CopyResource(eyes[1].motion->resource11, eyes[0].motion->resource11);
+		}
+		if (sbs) {
+			eyes[0].frame.reset |= eyes[1].frame.reset;
+			CopySbsInputs();
+		}
+		const bool modelVerify = (sbs || lowRes) && tuning.modelVerify;
+		if (modelVerify) {
+			EnsureGainResources(0);
+			EnsureGainResources(1);
+			if (verifyRequested)
+				verifyEye = { true, true };
+		}
 		{
 			CS_GPU_PASS("Upscaling::NREvaluate");
 			auto* commands = interop.Begin();
 			const bool parallelEyes = tuning.parallelEyes && eyeCount == 2;
 			for (uint32_t i = 0; i < eyeCount && success; ++i) {
 				auto& eye = eyes[i];
+				if (sbs) {
+					if (i == 0)
+						success = EvaluateSbs(commands, tuning, diagnostic);
+					if (success && modelVerify)
+						success = EvaluateReference(commands, i, tuning);
+					continue;
+				}
+				if (!decision.evaluate[i]) {
+					reuseFrame[i] = true;
+					if (!verifyEye[i]) {
+						diagnostic.reused |= 1u << i;
+						continue;
+					}
+				}
 				auto* eyeCommands = parallelEyes && i == 1 ? interop.ParallelList() : nullptr;
 				if (!eyeCommands)
 					eyeCommands = commands;
-				Transition(eyeCommands, eye, true);
+				Transition(eyeCommands, eye, true, lowRes);
 				if (debugOptions & (NR::Diagnostics::InteropRoundTrip | NR::Diagnostics::CopyInputToOutput)) {
 					D3D12_RESOURCE_BARRIER copyBarriers[2]{};
 					copyBarriers[0].Type = copyBarriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -756,24 +1232,35 @@ struct NeuralRendering::Impl
 				} else {
 					// The encoder extracts render-resolution guides into zero-origin per-eye textures.
 					const auto crop = region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
-					const auto eyeRegion = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, width, height };
+					const uint32_t modelWidth = lowRes ? lowWidth : width, modelHeight = lowRes ? lowHeight : height;
+					const auto eyeRegion = (crop.w && crop.h) ? NR::ToGuideRegion(crop) : NR::GuideRegion{ 0, 0, modelWidth, modelHeight };
 					NR::GuideParameters guides;
 					guides.depth = eyeRegion;
 					guides.motion = eyeRegion;
 					guides.colorOutput = eyeRegion;
 					// MotionBlur produces normalized eye-UV displacement; NR consumes input-pixel displacement.
-					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(width) : 1.0f;
-					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(height) : 1.0f;
+					guides.motionScaleX = useResolutionMotionScale ? static_cast<float>(modelWidth) : 1.0f;
+					guides.motionScaleY = useResolutionMotionScale ? static_cast<float>(modelHeight) : 1.0f;
 					guides.depthInverted = globals::features::reverseZ.IsActive();
+					if (previousModel[i] != NR::Cadence::kNoModelFrame &&
+						static_cast<uint64_t>(diagnostic.number) - previousModel[i] > 1 && tuning.skipFrameGapMode == 0) {
+						guides.motionScaleX *= 2.0f;
+						guides.motionScaleY *= 2.0f;
+						eye.frame.frameTimeMs = NR::SanitizeFrameTimeMs(eye.frame.frameTimeMs * 2.0f);
+					}
 					const NR::ProtectionResources protection{
 						materialStrengthInFlight && eye.materialAlpha ? eye.materialAlpha->resource.get() : nullptr,
 						// A protected pixel is restored from the NR input itself, so the alpha and the
 						// backbuffer share the proxy colour domain the model works in.
 						materialStrengthInFlight ? eye.color->resource.get() : nullptr
 					};
-					success = runtime.Evaluate(eyeCommands, i, eye.color->resource.get(), eye.depth->resource.get(),
-						eye.motion->resource.get(), eye.output->resource.get(), protection,
-						width, height, guides, eye.frame, tuning);
+					const auto& modelColor = lowRes ? eye.lowColor : eye.color;
+					const auto& modelDepth = lowRes ? eye.lowDepth : eye.depth;
+					const auto& modelMotion = lowRes ? eye.lowMotion : eye.motion;
+					const auto& modelOutput = lowRes ? eye.lowOutput : eye.output;
+					success = runtime.Evaluate(eyeCommands, i, modelColor->resource.get(), modelDepth->resource.get(),
+						modelMotion->resource.get(), modelOutput->resource.get(), protection,
+						modelWidth, modelHeight, guides, eye.frame, tuning);
 				}
 				diagnostic.result[i] = eye.frame.result;
 				if (success)
@@ -782,7 +1269,9 @@ struct NeuralRendering::Impl
 					diagnostic.created |= 1u << i;
 					diagnostic.reset[i] |= NR::Diagnostics::FeatureCreated;
 				}
-				Transition(eyeCommands, eye, false);
+				Transition(eyeCommands, eye, false, lowRes);
+				if (success && modelVerify)
+					success = EvaluateReference(eyeCommands, i, tuning);
 			}
 			interop.End();
 		}
@@ -800,10 +1289,44 @@ struct NeuralRendering::Impl
 			diagnostics.FinishCapture(diagnostic.number);
 			return false;
 		}
-		if (capture) {
+		if (capture)
 			interop.Drain();
-			diagnostics.DumpTexture("02_output", eyes[0].output->resource11, diagnostic.number);
+		if (sbs) {
+			CopySbsOutputs(modelVerify);
+			if (modelVerify && !lowRes)
+				reuseFrame = { true, true };
 		}
+		if (lowRes) {
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				EnsureGainResources(i);
+				ExpandModelGain(i, tuning.modelGuidedUpsample);
+				reuseFrame[i] = true;
+			}
+		}
+		if (staggerActive) {
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				EnsureGainResources(i);
+				if (!reuseFrame[i]) {
+					StoreGain(i);
+					cadence.valid[i] = true;
+				}
+			}
+			for (uint32_t i = 0; i < eyeCount; ++i) {
+				if (!reuseFrame[i])
+					continue;
+				ReuseGain(i, tuning.crossEyeGain && globals::game::isVR && eyeCount == 2 && !reuseFrame[1 - i]);
+			}
+		}
+		for (uint32_t i = 0; i < eyeCount; ++i) {
+			if (!verifyEye[i])
+				continue;
+			const auto name = [i](const char* stage) { return std::format("{}_eye{}", stage, i); };
+			diagnostics.DumpTexture(name("NR_verify_input").c_str(), eyes[i].color->resource11, diagnostic.number);
+			diagnostics.DumpTexture(name("NR_verify_model").c_str(), eyes[i].output->resource11, diagnostic.number);
+			diagnostics.DumpTexture(name("NR_verify_reuse").c_str(), eyes[i].reuseOutput->resource.get(), diagnostic.number);
+		}
+		if (capture)
+			diagnostics.DumpTexture("02_output", reuseFrame[0] ? eyes[0].reuseOutput->resource.get() : eyes[0].output->resource11, diagnostic.number);
 		if (diagnostic.options & NR::Diagnostics::BypassWriteback) {
 			diagnostics.FinishCapture(diagnostic.number);
 			return true;
@@ -1014,131 +1537,13 @@ bool NeuralRendering::DialogueOpen()
 	return globals::game::ui && globals::game::ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME);
 }
 
-void NeuralRendering::SetupResources()
-{
-	retryRequested = recreate = resetHistory = true;
-	ResetStartupPrewarm();
-}
+void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistory = true; }
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-NeuralRendering::StartupPrewarmStatus NeuralRendering::GetStartupPrewarmStatus() const
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified)
 {
-	std::scoped_lock lock(statusMutex);
-	return startupPrewarmStatus;
-}
-
-void NeuralRendering::PublishStartupPrewarm()
-{
-	StartupPrewarmStatus next;
-	next.reason = startupPrewarm.failed ? startupPrewarmFailure : std::string(startupPrewarm.reason);
-	next.width = startupPrewarm.extent.width;
-	next.height = startupPrewarm.extent.height;
-	next.eyes = startupPrewarm.extent.eyes;
-	next.preparedEyes = startupPrewarm.preparedEyes;
-	next.reused = startupPrewarm.reused;
-	if (startupPrewarm.failed)
-		next.stage = "failed";
-	else if (startupPrewarm.reused)
-		next.stage = "reused";
-	else if (!startupPrewarmRequestedLast)
-		next.stage = "disabled";
-	else if (startupPrewarm.usedInWorld)
-		next.stage = "finished";
-	else if (next.eyes && next.preparedEyes == next.eyes)
-		next.stage = "ready";
-	else if (impl->ready)
-		next.stage = "preparing";
-	else
-		next.stage = "waiting";
-	std::scoped_lock lock(statusMutex);
-	startupPrewarmStatus = std::move(next);
-}
-
-void NeuralRendering::TryStartupPrewarm(bool enabled, bool requested, const NR::Tuning& tuning, float2 renderSize)
-{
-	// Called only by Upscaling::Reset on the rendering thread. UI/DevBench queue resets.
-	const bool reset = resetStartupPrewarmRequested.exchange(false) || (requested && !startupPrewarmRequestedLast);
-	startupPrewarmRequestedLast = requested;
-	const auto fail = [&](std::string detail) {
-		startupPrewarm.failed = true;
-		startupPrewarm.preparedEyes = 0;
-		startupPrewarmFailure = std::move(detail);
-		logger::warn("[NeuralRendering] Startup preparation failed; using lazy initialization: {}", startupPrewarmFailure);
-		// A failed submit may still have queued commands. Keep their handles alive until retirement succeeds.
-		try {
-			impl->interop.Drain();
-			impl = std::make_unique<Impl>();
-		} catch (...) {
-			impl->failed = true;
-			retryRequested = true;
-			logger::warn("[NeuralRendering] Startup resources retained until a world-frame retry can retire them");
-		}
-		resetHistory = true;
-	};
-	try {
-		if (reset) {
-			if (!impl->HasPassResources() && impl->ready) {
-				impl->interop.Drain();
-				impl->runtime.ResetFeatures();
-			}
-			startupPrewarm.Reset();
-			startupPrewarmFailure.clear();
-		}
-		const auto* state = globals::state;
-		const auto count = globals::game::isVR ? 2u : 1u;
-		NR::PrewarmExtent extent;
-		if (std::isfinite(renderSize.x) && std::isfinite(renderSize.y) && renderSize.x >= count && renderSize.y >= 1.0f &&
-			renderSize.x < static_cast<float>(UINT32_MAX) && renderSize.y < static_cast<float>(UINT32_MAX))
-			extent = { NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), count), static_cast<uint32_t>(renderSize.y), count };
-		// The configured extent is captured before UI rendering resets dynamic resolution.
-		if (requested && !startupPrewarm.usedInWorld && !impl->HasPassResources() && extent.Valid() && extent != startupPrewarm.extent) {
-			if (startupPrewarm.preparedEyes) {
-				impl->interop.Drain();
-				impl->runtime.ResetFeatures();
-			}
-			startupPrewarm.SetExtent(extent);
-		}
-		const NR::PrewarmInputs inputs{
-			.requested = requested,
-			.enabled = enabled,
-			.startupMenu = state->IsMainOrLoadingMenuOpen(),
-			.worldRendered = state->worldRenderedThisFrame,
-			.deviceReady = globals::d3d::device && globals::d3d::context,
-			.runtimeReady = impl->ready,
-			.runtimeFailed = impl->failed,
-			.passResources = impl->HasPassResources(),
-			.materialStrength = tuning.materialStrength,
-			.configuredExtentReady = extent.Valid(),
-			.frame = state->frameCount
-		};
-		const auto step = startupPrewarm.Next(inputs);
-		if (step == NR::PrewarmStep::Initialize) {
-			impl->Initialize();
-			logger::info("[NeuralRendering] Startup runtime prepared");
-		} else if (step == NR::PrewarmStep::Eye0 || step == NR::PrewarmStep::Eye1) {
-			CS_GPU_PASS("Upscaling::NRStartupPrewarm");
-			const uint32_t eye = step == NR::PrewarmStep::Eye0 ? 0u : 1u;
-			NR::FrameParameters frame;
-			const auto dimensions = startupPrewarm.extent;
-			const bool prepared = impl->runtime.PrepareEye(impl->interop.Begin(), eye, dimensions.width, dimensions.height, {}, frame, tuning);
-			impl->interop.End();
-			if (!prepared)
-				throw std::runtime_error(std::format("Feature 18 eye {} creation failed (0x{:08X})", eye, frame.result));
-			logger::info("[NeuralRendering] Startup eye {} prepared at {}x{}", eye, extent.width, extent.height);
-		}
-		if (step != NR::PrewarmStep::None)
-			startupPrewarm.Complete(step);
-	} catch (const winrt::hresult_error& error) {
-		fail(winrt::to_string(error.message()));
-	} catch (const std::exception& error) {
-		fail(error.what());
-	}
-	PublishStartupPrewarm();
-}
-
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup)
-{
+	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
 	regionFit.store(cropFit, std::memory_order_relaxed);
 	regionGroup.store(cropGroup, std::memory_order_relaxed);
@@ -1190,6 +1595,11 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	snapshot.ngxResult = { lastNgxResult[0].load(std::memory_order_relaxed), lastNgxResult[1].load(std::memory_order_relaxed) };
 	snapshot.materialStrengthActive = materialStrengthActive.load(std::memory_order_relaxed);
 	snapshot.materialStrengthAvailable = materialStrengthAvailable.load(std::memory_order_relaxed);
+	snapshot.skipFrameReuseActive = skipFrameReuseActive.load(std::memory_order_relaxed);
+	snapshot.modelFrames = modelFrames.load(std::memory_order_relaxed);
+	snapshot.reuseFrames = reuseFrames.load(std::memory_order_relaxed);
+	const auto reuseMask = eyeReuseMask.load(std::memory_order_relaxed);
+	snapshot.eyeReuse = { (reuseMask & 1u) != 0, (reuseMask & 2u) != 0 };
 	for (size_t i = 0; i < snapshot.materialStrength.size(); ++i)
 		snapshot.materialStrength[i] = materialStrengthValues[i].load(std::memory_order_relaxed);
 	snapshot.materialEdgeSoftness = materialEdgeSoftness.load(std::memory_order_relaxed);
@@ -1211,8 +1621,8 @@ void NeuralRendering::DrawRuntimeDiagnostics() const
 		return;
 	}
 	Util::Text::WrappedWarning(T(TKEY("runtime_unavailable"), "Neural Rendering runtime: %s"), availability.reason.c_str());
-	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode()))
-		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+	if (availability.AllowsLoad(globals::state && globals::state->IsDeveloperMode(), allowUnverifiedRuntime.load(std::memory_order_relaxed)))
+		Util::Text::Disabled("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 	else
 		Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
 }
@@ -1226,7 +1636,8 @@ namespace
 	/** @brief NeuralRenderingCategory ids in the order the material checklists list them. */
 	constexpr std::array<uint32_t, NR::MaterialMap::kBits> kMaterialListOrder{
 		NR::MaterialStrength::kSkin, NR::MaterialStrength::kHair, NR::MaterialStrength::kEyes,
-		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kNone
+		NR::MaterialStrength::kFoliage, NR::MaterialStrength::kLandscape, NR::MaterialStrength::kCloth,
+		NR::MaterialStrength::kMetal, NR::MaterialStrength::kNone
 	};
 
 	ImU32 ToColor(const NR::MaterialMap::Color& color)
@@ -1239,7 +1650,8 @@ namespace
 	{
 		const std::array<const char*, NR::MaterialMap::kBits> labels{
 			T(TKEY("category_skin"), "Skin"), T(TKEY("category_hair"), "Hair"), T(TKEY("category_eyes"), "Eyes"),
-			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("material_other"), "Everything Else")
+			T(TKEY("category_foliage"), "Foliage"), T(TKEY("category_landscape"), "Landscape"), T(TKEY("category_cloth"), "Cloth Gear"),
+			T(TKEY("category_metal"), "Metal Gear"), T(TKEY("material_other"), "Everything Else")
 		};
 		bool changed = false;
 		for (uint32_t i = 0; i < selected.size(); ++i) {
@@ -1292,6 +1704,89 @@ namespace
 	}
 
 	/** @brief Draws the by-material selection and the material map controls; returns true when any value changed. */
+	/** @brief Draws the eye evaluation choice and, for Alternate eyes, how a skipped eye is handled. Returns true when something changed. */
+	bool DrawEyeModeControls(NR::Tuning& tuning, bool developerMode)
+	{
+		bool changed = false;
+		const std::array<const char*, NR::kEyeModeCount> labels{
+			T(TKEY("eye_mode_parallel"), "Parallel eyes"),
+			T(TKEY("eye_mode_side_by_side"), "Side by side (experimental)"),
+			T(TKEY("eye_mode_alternate"), "Alternate eyes"),
+			T(TKEY("eye_mode_separate"), "Separate eyes"),
+		};
+		const auto current = NR::GetEyeMode(tuning);
+		if (ImGui::BeginCombo(T(TKEY("eye_mode"), "Eye Evaluation"), labels[static_cast<uint32_t>(current)])) {
+			for (uint32_t i = 0; i < NR::kEyeModeCount; ++i) {
+				const auto mode = static_cast<NR::EyeMode>(i);
+				const bool experimental = mode == NR::EyeMode::kSideBySide;
+				ImGui::BeginDisabled(experimental && !developerMode);
+				if (ImGui::Selectable(labels[i], mode == current)) {
+					NR::SetEyeMode(tuning, mode);
+					changed = true;
+				}
+				ImGui::EndDisabled();
+			}
+			ImGui::EndCombo();
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
+				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 2 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other, which can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
+		if (current == NR::EyeMode::kAlternate) {
+			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
+			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
+				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
+				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
+			};
+			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
+				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
+				changed = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
+					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
+			changed |= ImGui::Checkbox(T(TKEY("cross_eye_gain"), "Fill Gaps From The Other Eye"), &tuning.crossEyeGain);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("cross_eye_gain_tooltip"),
+					"Where a reused eye could not take its own earlier gain (a surface that just came into view), it takes the gain the other eye's model frame computed this frame for the same surface. Costs one extra sample per such pixel and no extra model time."));
+		}
+		return changed;
+	}
+
+	/** @brief Draws the model scale and its guided upsample. The scale applies on release, because each size rebuilds the model. Returns true when it changed. */
+	bool DrawModelScaleControls(NR::Tuning& tuning, bool developerMode)
+	{
+		bool changed = false;
+		const bool unusedByMode = globals::game::isVR && NR::GetEyeMode(tuning) == NR::EyeMode::kAlternate;
+		ImGui::BeginDisabled(!developerMode || unusedByMode);
+		const char* label = T(TKEY("model_scale"), "Model Scale");
+		const ImGuiID id = ImGui::GetID(label);
+		ImGuiStorage* storage = ImGui::GetStateStorage();
+		const ImGuiID draggingId = ImGui::GetID("modelScaleDragging");
+		float dragged = storage->GetFloat(id, tuning.modelScale);
+		if (!storage->GetBool(draggingId, false))
+			dragged = tuning.modelScale;
+		ImGui::SliderFloat(label, &dragged, NR::Tuning::kMinModelScale, NR::Tuning::kMaxModelScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		const bool dragActive = ImGui::IsItemActive();
+		const bool dragDone = ImGui::IsItemDeactivatedAfterEdit();
+		storage->SetFloat(id, dragged);
+		storage->SetBool(draggingId, dragActive);
+		if (dragDone) {
+			tuning.modelScale = dragged;
+			changed = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_scale_tooltip"),
+				"Runs the model at a fraction of the eye size and carries only its brightness change back to the full image. 0.75 saves about 8% of the model's GPU time and 0.5 about 16%, with a loss of fine detail. It needs Developer Mode and does not apply with Alternate eyes."));
+		ImGui::BeginDisabled(tuning.modelScale >= NR::Tuning::kMaxModelScale);
+		changed |= ImGui::Checkbox(T(TKEY("model_guided_upsample"), "Guided Upsample"), &tuning.modelGuidedUpsample);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_guided_upsample_tooltip"),
+				"Weights the upsampled brightness change by how similar the pixels' brightness is, so it follows edges instead of blurring across them."));
+		ImGui::EndDisabled();
+		ImGui::EndDisabled();
+		return changed;
+	}
+
 	bool DrawMaterialControls(NR::Tuning& tuning, bool materialStrengthAvailable)
 	{
 		bool changed = false;
@@ -1325,6 +1820,8 @@ namespace
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_eyes"), "Eyes"), &tuning.strengthEyes, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_foliage"), "Foliage"), &tuning.strengthFoliage, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_landscape"), "Landscape"), &tuning.strengthLandscape, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_cloth"), "Cloth Gear"), &tuning.strengthCloth, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			strengthChanged |= ImGui::SliderFloat(T(TKEY("category_metal"), "Metal Gear"), &tuning.strengthMetal, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			strengthChanged |= ImGui::SliderFloat(T(TKEY("material_other"), "Everything Else"), &tuning.strengthOther, NR::MaterialStrength::kMinStrength, NR::MaterialStrength::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 			if (strengthChanged) {
 				tuning.SyncMaterialSwitch();
@@ -1429,7 +1926,7 @@ namespace
 	}
 }
 
-void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& contexts, NR::Tuning& tuning)
+void NeuralRendering::DrawSettings(bool& enabled, bool& startupPrewarm, NR::Context::Profiles& contexts, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
 	const auto availability = GetRuntimeAvailability();
@@ -1437,7 +1934,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	// An unavailable runtime must not strand a feature that is already on, so only the switch
 	// from off is locked. The verdict is re-read when the file changes, so installing a build
 	// mid-session unblocks the toggle without a restart.
-	const bool loadable = availability.AllowsLoad(developerMode);
+	const bool loadable = availability.AllowsLoad(developerMode, tuning.allowUnverifiedRuntime);
 	const bool lockEnable = !loadable && !enabled;
 	ImGui::BeginDisabled(lockEnable);
 	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Neural Rendering"), &enabled))
@@ -1451,21 +1948,85 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	if (!availability.Ready()) {
 		if (loadable)
-			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode is on; its output is unverified."));
+			Util::Text::WrappedWarning("%s", T(TKEY("runtime_developer_load"), "Loading this build because developer mode or the unverified-build option is on; its output is unverified."));
 		else
 			Util::Text::Disabled("%s", RuntimeFixHint(availability.state));
+		if (availability.state == NR::RuntimeAvailability::State::kUnvalidatedBuild) {
+			ImGui::Checkbox(T(TKEY("allow_unverified"), "Use This Build Anyway"), &tuning.allowUnverifiedRuntime);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("allow_unverified_tooltip"),
+					"Loads a 310.8.x runtime that is not one of the builds checked in game. Its colour channels may be wrong; turn this off if the picture looks tinted."));
+		}
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
+	ImGui::Checkbox(T(TKEY("startup_prewarm"), "Prepare Feature 18 at startup"), &startupPrewarm);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("startup_prewarm_tooltip"),
+			"Uses the normal initialization path on loading or main-menu frames to create the runtime and at most one eye instance per frame. It evaluates no scene guides. NGX creation is synchronous, so completion and hitch reduction are not guaranteed. Off by default."));
+	if (startupPrewarm) {
+		const auto prewarm = GetStartupPrewarmStatus();
+		ImGui::Text(T(TKEY("startup_prewarm_status"), "Startup preparation: %s (%u/%u eyes)"), prewarm.stage.c_str(), prewarm.preparedEyes, prewarm.eyes);
+		if (prewarm.stage == "deferred")
+			ImGui::TextWrapped(T(TKEY("startup_prewarm_deferred"), "Eye creation is deferred: %s"), prewarm.reason.c_str());
+		if (ImGui::Button(T(TKEY("startup_prewarm_reset"), "Reset Startup Preparation")))
+			ResetStartupPrewarm();
+	}
+	bool changed = false;
+	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::PushID("performance");
+		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (globals::game::isVR) {
+			if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
+				changed = true;
+				resetHistory = true;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
+					"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
+		}
+		if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
+				"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
+		// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
+		// out without it instead of accepting edits that the pass ignores.
+		ImGui::BeginDisabled(!tuning.regionOfInterest);
+		if (ImGui::Checkbox(T(TKEY("crop_group"), "Include Nearby Characters"), &tuning.regionGroup)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
+				"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
+		if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
+			changed = true;
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
+				"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
+		ImGui::EndDisabled();
+		if (DrawModelScaleControls(tuning, developerMode)) {
+			changed = true;
+			resetHistory = true;
+		}
+		ImGui::PopID();
+	}
 	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
 		T(TKEY("style_1"), "Style 1"),
 		T(TKEY("style_2"), "Style 2"),
 	};
-	bool changed = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
-	bool recreateTuning = changed;
-	if (changed)
+	const bool styleChanged = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
+	changed |= styleChanged;
+	bool recreateTuning = styleChanged;
+	if (styleChanged)
 		tuning.style = static_cast<uint32_t>(style);
 	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
@@ -1489,45 +2050,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		ImGui::PopID();
 	}
 	changed |= DrawMaterialControls(tuning, materialStrengthAvailable.load(std::memory_order_relaxed));
-	if (ImGui::Checkbox(T(TKEY("region_of_interest"), "Limit to Tracked Actor"), &tuning.regionOfInterest)) {
-		changed = true;
-		resetHistory = true;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("region_of_interest_tooltip"),
-			"Restricts Neural Rendering to a crop around the most prominent visible character, the one covering the most of the view with the centre favoured, and leaves the rest of the frame at pre-NR quality. Costs less GPU time when a character is on screen."));
-	if (globals::game::isVR) {
-		if (ImGui::Checkbox(T(TKEY("region_follow_foveation"), "Follow Foveation"), &tuning.regionFollowFoveation)) {
-			changed = true;
-			resetHistory = true;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("region_follow_foveation_tooltip"),
-				"With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view."));
-	}
-	if (globals::game::isVR) {
-		changed |= ImGui::Checkbox(T(TKEY("parallel_eyes"), "Evaluate Eyes in Parallel"), &tuning.parallelEyes);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("parallel_eyes_tooltip"),
-				"Runs the second eye's model on its own queue so both eyes run at once. The image is the same and it lowers the GPU time, by about 1 ms on a full frame and about 2 ms with Follow Foveation in an RTX 5090 test. On by default; turn it off to compare, or if Neural Rendering fails to start. If an evaluate fails with it on, Retry NR uses one queue."));
-	}
-	// The crop controls act only through a tracked crop, so they follow the toggle and are greyed
-	// out without it instead of accepting edits that the pass ignores.
 	const bool cropDisabled = !tuning.regionOfInterest;
-	ImGui::BeginDisabled(cropDisabled);
-	if (ImGui::Checkbox(T(TKEY("crop_group"), "Include Nearby Characters"), &tuning.regionGroup)) {
-		changed = true;
-		resetHistory = true;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("crop_group_tooltip"),
-			"Grows the crop to also cover the next most prominent characters while it stays under half the view, so a group is evaluated together. Off tracks one character."));
-	if (ImGui::Checkbox(T(TKEY("region_overlay"), "Show Region Overlay"), &tuning.regionOverlay))
-		changed = true;
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("region_overlay_tooltip"),
-			"Draws the evaluated crop: a green outline in the game frame and the same rectangle over the preview below. Only meaningful with Limit to Tracked Actor on, and it draws nothing while no character is tracked, since the whole frame is evaluated then."));
-	ImGui::EndDisabled();
 	if (DrawContextProfiles(contexts, cropDisabled))
 		resetHistory = true;
 	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
@@ -1582,6 +2105,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			if (calibrationState.stabilityRatio > kCalibrationUnstableRatio)
 				ImGui::TextUnformatted(T(TKEY("crop_calibrate_unstable"), "Timing was unsteady between passes; run it again."));
 		}
+		ImGui::SeparatorText(T(TKEY("developer_measurement"), "Measurement"));
+		changed |= ImGui::Checkbox(T(TKEY("model_verify"), "Compare Against Full Size"), &tuning.modelVerify);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_verify_tooltip"),
+				"With Side by side or a Model Scale below 1, also evaluates each eye alone at full size every frame so a verify capture can compare the two. Roughly doubles the model's GPU time."));
+		changed |= ImGui::Checkbox(T(TKEY("mirror_eyes"), "Mirror Left Eye To Both Eyes"), &tuning.mirrorEyes);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("mirror_eyes_tooltip"),
+				"Feeds the left eye's inputs to both eyes, to check that the two eyes get the same result. The right eye's picture is wrong while this is on."));
 		ImGui::SeparatorText(T(TKEY("developer_diagnostics"), "Diagnostics"));
 		if (ImGui::Checkbox("Use resolution-scaled NR motion", &impl->useResolutionMotionScale))
 			resetHistory = true;
@@ -1597,6 +2129,18 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	if (tuning.regionOverlay)
 		DrawRegionPreview();
 	ImGui::PopID();
+}
+
+NeuralRendering::StartupPrewarmStatus NeuralRendering::GetStartupPrewarmStatus() const
+{
+	std::scoped_lock lock(statusMutex);
+	return startupPrewarmStatus;
+}
+
+void NeuralRendering::PublishStartupPrewarm(std::string stage, std::string reason, uint32_t width, uint32_t height, uint32_t eyes, uint32_t preparedEyes, bool reused)
+{
+	std::scoped_lock lock(statusMutex);
+	startupPrewarmStatus = { std::move(stage), std::move(reason), width, height, eyes, preparedEyes, reused };
 }
 
 void NeuralRendering::DrawRegionPreview()
@@ -1656,7 +2200,7 @@ void NeuralRendering::CaptureBeforeUpscaling()
 	if (!globals::state)
 		return;
 	auto& main = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (!diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
+	if (!diagnostics.VerifyReusePending() && !diagnostics.CaptureActive(globals::state->frameCount) && diagnostics.BeginCapture(globals::state->frameCount))
 		diagnostics.CaptureStage("00_original_scene", Util::AsReal(main.texture), globals::state->frameCount);
 	diagnostics.CaptureStage("05_pre_sr", Util::AsReal(main.texture), globals::state->frameCount);
 }
@@ -1670,17 +2214,92 @@ void NeuralRendering::CaptureAfterUpscaling()
 	diagnostics.FinishCapture(globals::state->frameCount);
 }
 
-void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
+void NeuralRendering::DrawBeforeUpscaling(bool enabled, bool prewarmRequested, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
 {
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
+	const auto effective = [&] {
+		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
+		if (!globals::state->IsDeveloperMode()) {
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
+			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
+		}
+		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
+		return resolved;
+	}();
+	auto* state = globals::state;
+	const auto eyeCount = NR::PrewarmEyeCount(globals::game::isVR);
+	std::array<std::array<uint32_t, 3>, 2> prewarmTargets{};
+	uint32_t prewarmTargetCount = 0;
+	uint32_t prewarmWidth = 0, prewarmHeight = 0;
+	const char* prewarmDeferredReason = nullptr;
+	if (std::isfinite(renderSize.x) && std::isfinite(renderSize.y) && renderSize.x >= eyeCount && renderSize.y >= 1.0f &&
+		renderSize.x < static_cast<float>(UINT32_MAX) && renderSize.y < static_cast<float>(UINT32_MAX)) {
+		prewarmWidth = NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), eyeCount);
+		prewarmHeight = static_cast<uint32_t>(renderSize.y);
+	}
+	if (!prewarmWidth || !prewarmHeight)
+		prewarmDeferredReason = "render-extent-unavailable";
+	const auto modelExtent = NR::PrewarmEyeExtent(effective, globals::game::isVR, prewarmWidth, prewarmHeight);
+	const auto reducedExtent = NR::ModelExtent(effective.modelScale, prewarmWidth, prewarmHeight);
+	const bool materialGuidesDeferred = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && !reducedExtent.first;
+	if (prewarmWidth && prewarmHeight) {
+		if (materialGuidesDeferred) {
+			prewarmDeferredReason = "material-guides-required";
+		} else if (globals::game::isVR && NR::GetEyeMode(effective) == NR::EyeMode::kSideBySide) {
+			const Util::Subrect::PixelRegion fullEye{ 0, 0, modelExtent.first, modelExtent.second };
+			std::array<Util::Subrect::PixelRegion, 2> crops{ fullEye, fullEye };
+			const auto trackedRegion = effective.regionOfInterest ? GetRegionOfInterest() : Util::Region::StereoRegion{};
+			if (effective.regionOfInterest && !trackedRegion.active) {
+				prewarmDeferredReason = "region-requires-world-guides";
+			} else {
+				if (!reducedExtent.first && trackedRegion.active) {
+					for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+						const auto crop = Util::Region::ClampToFrame(trackedRegion.eye[eye], prewarmWidth, prewarmHeight);
+						if (crop.w && crop.h)
+							crops[eye] = crop;
+					}
+				}
+				const auto extent = NR::SideBySideExtent(crops, modelExtent.first, modelExtent.second);
+				prewarmTargets[prewarmTargetCount++] = { NR::kSbsSlot, extent.first, extent.second };
+			}
+		} else {
+			for (uint32_t eye = 0; eye < eyeCount; ++eye)
+				prewarmTargets[prewarmTargetCount++] = { eye, modelExtent.first, modelExtent.second };
+		}
+	}
+	const bool startupMenu = state->IsMainOrLoadingMenuOpen();
+	const bool resetStartupRequested = startupMenu && enabled && !context.suspended && !impl->HasPassResources() &&
+	                                   appliedFrames.load(std::memory_order_relaxed) == 0 && resetStartupPrewarmRequested.exchange(false);
+	const bool previousPrewarmFailed = GetStartupPrewarmStatus().stage == "failed";
+	const bool startupRequestActive = prewarmRequested && enabled && startupMenu && !context.suspended && !impl->failed &&
+	                                  (!previousPrewarmFailed || resetStartupRequested) &&
+	                                  !impl->HasPassResources() && appliedFrames.load(std::memory_order_relaxed) == 0;
+	bool prewarmPending = startupRequestActive && !impl->ready;
+	uint32_t preparedEyes = 0;
+	if (startupRequestActive && impl->ready) {
+		for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+			const auto& [slot, width, height] = prewarmTargets[i];
+			if (impl->runtime.IsPreparedEye(slot, width, height, false))
+				++preparedEyes;
+			else
+				prewarmPending = true;
+		}
+	}
+	if (resetStartupRequested && startupRequestActive) {
+		preparedEyes = 0;
+		prewarmPending = true;
+	}
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
 	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
-		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
+		retryRequested.load(), impl->ready, prewarmPending, impl->lastFrame, globals::state->frameCount });
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
 		diagnostic.outcome = Outcome::Disabled;
+		if (!prewarmRequested)
+			PublishStartupPrewarm("disabled", "disabled");
 		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
 		if (impl->HasPassResources() && !impl->failed) {
 			std::string failure;
@@ -1715,15 +2334,17 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		}
 		return;
 	}
-	auto* state = globals::state;
 	if (action == NR::FrameAction::SkipNoWorld) {
 		diagnostic.outcome = Outcome::NoWorld;
+		if (startupRequestActive && prewarmDeferredReason)
+			PublishStartupPrewarm("deferred", prewarmDeferredReason, prewarmWidth, prewarmHeight, eyeCount);
+		else if (!prewarmRequested)
+			PublishStartupPrewarm("disabled", "disabled");
 		if (publishedState.load(std::memory_order_relaxed) == Status::State::kOff)
 			PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
 		resetHistory = true;
 		return;
 	}
-	const auto effective = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
@@ -1732,9 +2353,24 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
 	};
+	const auto retireFailedStartupPrewarm = [this, startupRequestActive, state, prewarmWidth, prewarmHeight, eyeCount](const char* detail) {
+		if (!startupRequestActive || state->worldRenderedThisFrame || impl->interop.DeviceRemoved())
+			return false;
+		try {
+			impl->interop.Drain();
+			impl = std::make_unique<Impl>();
+			retryRequested = false;
+			resetHistory = true;
+			PublishStartupPrewarm("failed", "lazy-fallback", prewarmWidth, prewarmHeight, eyeCount);
+			PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
+			logger::warn("[NeuralRendering] Optional startup preparation failed; ordinary first-world initialization remains available: {}", detail);
+			return true;
+		} catch (...) {
+			return false;
+		}
+	};
 	try {
 		retryRequested = false;
-		startupPrewarm.usedInWorld = true;
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
@@ -1760,11 +2396,87 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			++diagnostic.duplicates;
 			return;
 		}
+		const bool readyBeforeAction = work.ready;
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
+			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
+		}
+		if (resetStartupRequested && startupRequestActive) {
+			if (readyBeforeAction) {
+				work.interop.Drain();
+				work.runtime.ResetFeatures();
+			}
+			PublishStartupPrewarm("waiting", "reset", prewarmWidth, prewarmHeight, eyeCount);
+		}
+		if (action == NR::FrameAction::InitializeThenRun && !state->worldRenderedThisFrame) {
+			work.lastFrame = state->frameCount;
+			if (startupRequestActive) {
+				if (!readyBeforeAction) {
+					PublishStartupPrewarm("preparing", "runtime-ready", prewarmWidth, prewarmHeight, eyeCount);
+				} else {
+					if (prewarmTargetCount) {
+						for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+							const auto [slot, width, height] = prewarmTargets[i];
+							if (work.runtime.IsPreparedEye(slot, width, height, false))
+								continue;
+							try {
+								work.interop.Drain();
+								work.runtime.ResetFeature(slot);
+								NR::FrameParameters frame;
+								const NR::ProtectionResources protection{};
+								auto* commands = work.interop.Begin();
+								bool created = false;
+								try {
+									created = work.runtime.PrepareEye(commands, slot, width, height, protection, frame, effective);
+								} catch (...) {
+									try {
+										work.interop.End();
+									} catch (...) {
+									}
+									throw;
+								}
+								work.interop.End();
+								if (!created)
+									throw std::runtime_error(std::format("Feature 18 instance {} creation failed (0x{:08X})", slot, frame.result));
+								++preparedEyes;
+							} catch (...) {
+								try {
+									work.interop.Drain();
+									impl = std::make_unique<Impl>();
+									PublishStartupPrewarm("failed", "lazy-fallback", prewarmWidth, prewarmHeight, eyeCount);
+									PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
+								} catch (...) {
+									impl->failed = true;
+									retryRequested = true;
+									PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
+								}
+								return;
+							}
+							break;
+						}
+					}
+					work.lastFrame = state->frameCount;
+					preparedEyes = 0;
+					for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+						const auto& [slot, width, height] = prewarmTargets[i];
+						preparedEyes += work.runtime.IsPreparedEye(slot, width, height, false) ? 1u : 0u;
+					}
+					if (prewarmTargetCount && preparedEyes == prewarmTargetCount)
+						PublishStartupPrewarm("ready", "prepared", prewarmWidth, prewarmHeight, eyeCount, preparedEyes);
+					else if (prewarmDeferredReason)
+						PublishStartupPrewarm("deferred", prewarmDeferredReason, prewarmWidth, prewarmHeight, eyeCount);
+					else
+						PublishStartupPrewarm("preparing", "prepared-eye", prewarmWidth, prewarmHeight, eyeCount, preparedEyes);
+				}
+			} else {
+				PublishStartupPrewarm("waiting", startupRequestActive ? "waiting" : "disabled", prewarmWidth, prewarmHeight, eyeCount);
+			}
+			diagnostic.outcome = Outcome::NoWorld;
+			resetHistory = true;
+			return;
 		}
 		if (clearShaders.exchange(false)) {
 			work.prepareColor.Reset();
@@ -1801,20 +2513,17 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				guide.ArraySize != 1 || guide.SampleDesc.Count != 1)
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
-		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed);
+		const bool materialStrengthWanted = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && NR::ModelExtent(effective.modelScale, w, h).first == 0;
 		if (materialStrengthWanted != work.materialStrengthOn) {
 			recreate = resetHistory = true;
 			work.materialStrengthOn = materialStrengthWanted;
 		}
 		const bool forceRecreate = recreate.exchange(false);
 		diagnostic.recreated = forceRecreate || work.width != w || work.height != h || work.guideWidth != gw || work.guideHeight != gh || work.eyeCount != count || work.format != desc.Format;
-		const bool reusePrepared = !work.HasPassResources() && !materialStrengthWanted &&
-		                           startupPrewarm.Matches({ w, h, count }) && work.runtime.IsPreparedEye(0, w, h, false);
-		if (!work.HasPassResources() && startupPrewarm.preparedEyes && !reusePrepared) {
-			startupPrewarm.preparedEyes = 0;
-			startupPrewarm.reason = "configuration-changed";
-		}
-		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, reusePrepared);
+		const auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
+		diagnostic.recreated |= work.lowWidth != lowExtent.first || work.lowHeight != lowExtent.second;
+		work.sbsEnabled = effective.sbsEvaluate && count == 2;
+		work.EnsureResources(w, h, gw, gh, count, desc.Format, forceRecreate, lowExtent.first, lowExtent.second);
 		if (diagnostic.recreated)
 			PublishResources();
 		const bool dilateMotion = (diagnostic.options & NR::Diagnostics::DilateMotion) != 0;
@@ -1896,15 +2605,14 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		diagnostic.skinStructure = boundedTuning.skinStructureStrength;
 		const bool processed = work.Draw(color, inputs.data(), shader, reset, materialStrengthWanted, materialStrengths, boundedTuning, diagnostic, diagnostics);
 		publishMaterialStrength();
+		modelFrames.fetch_add(std::popcount(diagnostic.evaluated), std::memory_order_relaxed);
+		reuseFrames.fetch_add(std::popcount(diagnostic.reused), std::memory_order_relaxed);
+		eyeReuseMask.store(diagnostic.reused, std::memory_order_relaxed);
+		skipFrameReuseActive.store(work.staggerActive, std::memory_order_relaxed);
 		if (!processed)
 			throw std::runtime_error(std::format("the NVIDIA runtime failed to process a frame. Update the GPU driver, then press Retry (NGX L/R 0x{:08X}/0x{:08X})",
 				diagnostic.result[0], diagnostic.result[1]));
 		appliedFrame.store(state->frameCount, std::memory_order_relaxed);
-		if (reusePrepared) {
-			startupPrewarm.reused = true;
-			logger::info("[NeuralRendering] Reused {} startup eye instance(s) on the first world frame", startupPrewarm.preparedEyes);
-		}
-		PublishStartupPrewarm();
 		appliedFrames.fetch_add(1, std::memory_order_relaxed);
 		const uint32_t frameResets = diagnostic.reset[0] | diagnostic.reset[1];
 		diagnostics.RecordFrame(frameResets, diagnostic.resetDrainMs);
@@ -1920,6 +2628,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		work.lastFrame = state->frameCount;
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
+		if (retireFailedStartupPrewarm(winrt::to_string(error.message()).c_str()))
+			return;
+		if (startupRequestActive && !state->worldRenderedThisFrame)
+			PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
 		const bool strengthHandled = RevertMaterialStrengthOnFailure(winrt::to_string(error.message()).c_str());
 		publishMaterialStrength();
 		if (strengthHandled)
@@ -1929,6 +2641,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
+		if (retireFailedStartupPrewarm(error.what()))
+			return;
+		if (startupRequestActive && !state->worldRenderedThisFrame)
+			PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
 		const bool strengthHandled = RevertMaterialStrengthOnFailure(error.what());
 		publishMaterialStrength();
 		if (strengthHandled)

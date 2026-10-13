@@ -13,8 +13,6 @@
 #include "VR/OpenVRDetection.h"
 #include <algorithm>
 #include <array>
-#include <atomic>
-#include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -281,10 +279,10 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
-	/** @brief Render extent captured by ConfigureUpscaling for the next reset/prewarm request. */
-	std::atomic<uint64_t> cachedNeuralRenderExtent{ 0 };
-	/** @brief Propagates frame inactivity to NR temporal history and requests startup prewarm. */
-	void Reset() override;
+	/** @brief Propagates frame inactivity to NR temporal history. */
+	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup, settings.neuralRenderingTuning.allowUnverifiedRuntime); }
+	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
+	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
 	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
@@ -375,7 +373,7 @@ public:
 	winrt::com_ptr<ID3D11RasterizerState> upscaleRasterizerState;
 
 	// Shared VR HMD Mask Clearing
-	winrt::com_ptr<ID3D11ComputeShader> vrClearHMDMaskCS;
+	Util::LazyShader<ID3D11ComputeShader> vrClearHMDMaskCS;
 	winrt::com_ptr<ID3D11Buffer> vrClearHMDMaskCB;
 	// Helper to dispatch mask clearing for a single eye region
 	void ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderResourceView* depthSRV,

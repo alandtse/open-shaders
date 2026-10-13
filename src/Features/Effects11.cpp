@@ -172,17 +172,14 @@ void Effects11::UpdateSkyScattering(PerFrame& a_data)
 		return settingManager.GetInterpolatedTimeOfDayValue(a_key, a_category);
 	};
 
-	const bool sunVisible = Util::GetSunVisibility() > 0.0f;
-
-	// Hold the last direction while a weather hides the sun above the horizon so the scattering does not jump
 	auto sky = globals::game::sky;
+
+	// Mirror the direction below the horizon while the sun is hidden (e.g. by a weather)
 	if (sky && sky->sun) {
-		const auto direction = Util::GetSunDirection();
-		const float length = direction.Length();
-		if (length > 1e-6f && (sunVisible || direction.z < 0.0f || !hasScatteringSunDirection)) {
-			scatteringSunDirection = float3{ direction.x / length, direction.y / length, direction.z / length };
-			hasScatteringSunDirection = true;
-		}
+		auto direction = Util::GetSunDirection();
+		if (Util::GetSunVisibility() <= 0.0f && direction.z > 0.0f)
+			direction.z = -direction.z;
+		scatteringSunDirection = float3{ direction.x, direction.y, direction.z };
 	}
 
 	const float sunHeight = scatteringSunDirection.z;
@@ -225,7 +222,7 @@ void Effects11::UpdateSkyScattering(PerFrame& a_data)
 	a_data.SkyScatteringAtmosphereThickness = 100.0f / std::max(atmosphereThickness * atmosphereThickness, 1e-6f);
 	a_data.SkyScatteringAirGlowIntensity = timeOfDay("AirGlowIntensity");
 	a_data.SkyScatteringAirGlowRange = 1.0f / std::max(airGlowRange * airGlowRange, 1e-6f);
-	a_data.SkyScatteringSunGlowIntensity = sunVisible ? timeOfDay("SunGlowIntensity") : 0.0f;
+	a_data.SkyScatteringSunGlowIntensity = timeOfDay("SunGlowIntensity");
 	a_data.SkyScatteringSunGlowRange = 10.0f / std::max(sunGlowRange * sunGlowRange, 1e-6f);
 	a_data.SkyScatteringMoonGlowAmount = timeOfDay("MoonGlowAmount");
 	a_data.SkyScatteringMoonGlowRange = 10.0f / std::max(moonGlowRange * moonGlowRange, 1e-6f);
@@ -475,13 +472,13 @@ namespace
 		return json{
 			{ "currentWeatherFormID", weather.currentWeatherFormID },
 			{ "outgoingWeatherFormID", weather.outgoingWeatherFormID },
-			{ "effectiveCurrentWeatherID", weatherManager.GetEffectiveWeatherID(weather.currentWeatherFormID & 0x00FFFFFF) },
-			{ "effectiveOutgoingWeatherID", weatherManager.GetEffectiveWeatherID(weather.outgoingWeatherFormID & 0x00FFFFFF) },
+			{ "effectiveCurrentWeatherID", weatherManager.GetEffectiveWeatherID(weather.currentWeatherFormID & WeatherManager::LocalFormIDMask) },
+			{ "effectiveOutgoingWeatherID", weatherManager.GetEffectiveWeatherID(weather.outgoingWeatherFormID & WeatherManager::LocalFormIDMask) },
 			{ "weatherTransition", weather.weatherTransition },
 			{ "currentClassification", weather.currentClassification },
 			{ "outgoingClassification", weather.outgoingClassification },
-			{ "locationFormID", location.locationFormID & 0x00FFFFFF },
-			{ "worldSpaceFormID", location.worldSpaceFormID & 0x00FFFFFF },
+			{ "locationFormID", location.locationFormID & WeatherManager::LocalFormIDMask },
+			{ "worldSpaceFormID", location.worldSpaceFormID & WeatherManager::LocalFormIDMask },
 			{ "isInterior", location.isInterior },
 			{ "gameHour", time.gameHour },
 			{ "dayOfYear", time.dayOfYear },

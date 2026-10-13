@@ -57,7 +57,7 @@ void VolumetricLighting::DrawVolumetricLightingSettings(int32_t& quality, Textur
 		T(TKEY("quality_custom"), "Custom")
 	};
 
-	if (ImGui::SliderInt(isInterior ? T(TKEY("interior_quality"), "Interior Quality") : T(TKEY("exterior_quality"), "Exterior Quality"), &quality, 0, static_cast<uint8_t>(Quality::Count) - 1, qualityNames[quality])) {
+	if (ImGui::SliderInt(isInterior ? T(TKEY("interior_quality"), "Interior Quality") : T(TKEY("exterior_quality"), "Exterior Quality"), &quality, 0, static_cast<uint8_t>(Quality::Count) - 1, qualityNames[std::clamp(quality, 0, static_cast<int32_t>(Quality::Count) - 1)], ImGuiSliderFlags_AlwaysClamp)) {
 		if (inLocationType)
 			SetupVL();
 	}
@@ -146,6 +146,12 @@ void VolumetricLighting::LoadSettings(json& o_json)
 	settings = o_json;
 	settings.ExteriorQuality = std::clamp(settings.ExteriorQuality, 0, static_cast<int32_t>(Quality::Count) - 1);
 	settings.InteriorQuality = std::clamp(settings.InteriorQuality, 0, static_cast<int32_t>(Quality::Count) - 1);
+	// Custom sizes are stored in texels; the sliders only offer whole 32/32/10 texel steps
+	for (auto* size : { &settings.ExteriorCustomSize, &settings.InteriorCustomSize }) {
+		size->Width = std::clamp(size->Width, 32, 640);
+		size->Height = std::clamp(size->Height, 32, 640);
+		size->Depth = std::clamp(size->Depth, 10, 640);
+	}
 	// Mirror the menu toggle's immediate refresh. initialised gates this: EarlyPrepass's
 	// first run always calls SetupVL itself and is what establishes inInterior, so a
 	// settings load before that has run would otherwise set up the wrong interior/exterior.
@@ -238,12 +244,14 @@ void VolumetricLighting::EarlyPrepass()
 	const auto interiorCell = RE::TES::GetSingleton()->interiorCell;
 	const bool currentlyInInterior = interiorCell != nullptr;
 
-	if (initialised && currentlyInInterior == inInterior)
+	const bool currentlyInInteriorWithSun = InteriorSun::IsInteriorWithSun(interiorCell);
+
+	if (initialised && currentlyInInterior == inInterior && currentlyInInteriorWithSun == inInteriorWithSun)
 		return;
 
 	initialised = true;
 	inInterior = currentlyInInterior;
-	inInteriorWithSun = InteriorSun::IsInteriorWithSun(interiorCell);
+	inInteriorWithSun = currentlyInInteriorWithSun;
 	SetupVL();
 }
 

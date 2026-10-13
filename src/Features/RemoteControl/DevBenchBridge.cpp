@@ -11,7 +11,7 @@
 // devbench plugin is present (GetDevBenchInterface001() returns null).
 //
 // The openshaders.* tools below expose Open Shaders' graphics-feature, inspect,
-// capture, shadercache, and settings operations through the single devbench
+// capture, nvperf, shadercache, and settings operations through the single devbench
 // host over both MCP and REST. Each is namespaced to avoid collisions in devbench's
 // shared registry; the action / kind / inputSchema shapes are stable so clients can
 // rely on them.
@@ -22,6 +22,7 @@
 #	include "Feature.h"
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
+#	include "Features/RemoteControl/NvPerf.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
@@ -40,6 +41,7 @@
 
 #	include <algorithm>
 #	include <chrono>
+#	include <cmath>
 #	include <cstring>
 #	include <format>
 #	include <functional>
@@ -48,6 +50,7 @@
 #	include <optional>
 #	include <stdexcept>
 #	include <unordered_map>
+#	include <unordered_set>
 
 namespace
 {
@@ -59,6 +62,8 @@ namespace
 		static std::deque<std::string> storage;
 		return storage.emplace_back(I18n::ExpandBrand(a_template)).c_str();
 	}
+
+	std::unordered_set<Feature*> g_bootLoadedFeatures;
 
 	// Current render frame, used as a coarse "enqueued at" stamp so callers can poll
 	// `inspect kind=openshaders` until frame_count advances past it (i.e. a queued
@@ -240,6 +245,14 @@ namespace
 			const bool explicitVal = a_args.value("enabled", false);
 			task->AddTask([target, hasExplicit, explicitVal, shortName]() {
 				const bool applied = hasExplicit ? explicitVal : !target->loaded;
+				if (applied && !target->loaded && !g_bootLoadedFeatures.contains(target)) {
+					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
+						const std::string payload = json{ { "shortName", shortName }, { "error", "feature was not loaded at boot; enable it at boot and restart" } }.dump();
+						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
+					}
+					logger::warn("DevBenchBridge: refused to enable '{}' -- not loaded at boot, so its resources were never set up", shortName);
+					return;
+				}
 				// Reject enabling a feature unsupported on the current runtime, unless Developer
 				// Mode is on (this repo's existing override escape hatch).
 				const bool wantsUnsupportedRuntime = applied && globals::game::isVR && !target->SupportsVR();
@@ -808,7 +821,7 @@ namespace
 			profiler->RequestCapture();
 
 			json timers = json::array();
-			for (const auto& r : profiler->GetResults()) {
+			for (const auto& r : profiler->GetStatistics()) {
 				if (!r.valid)
 					continue;
 				timers.push_back(json{
@@ -1051,6 +1064,165 @@ namespace
 	void CaptureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildCaptureResult, a_argsJson, a_sink, a_write);
+	}
+
+	// ---- nvperf: status / metrics / capture / cancel / result ---------------------------
+
+	const char* CaptureStateName(NvPerf::CaptureState a_state)
+	{
+		switch (a_state) {
+		case NvPerf::CaptureState::Waiting:
+			return "waiting";
+		case NvPerf::CaptureState::Capturing:
+			return "capturing";
+		case NvPerf::CaptureState::Decoding:
+			return "decoding";
+		case NvPerf::CaptureState::Done:
+			return "done";
+		case NvPerf::CaptureState::Failed:
+			return "failed";
+		default:
+			return "idle";
+		}
+	}
+
+	json StatusJson(const NvPerf::Status& a_status)
+	{
+		return json{ { "state", CaptureStateName(a_status.state) }, { "captureId", a_status.captureId }, { "sample", a_status.sample },
+			{ "samples", a_status.samples }, { "pass", a_status.pass }, { "passes", a_status.passes }, { "error", a_status.error } };
+	}
+
+	json MetricJson(const NvPerf::MetricRequest& a_metric)
+	{
+		return json{ { "metric", NvPerf::FormatMetric(a_metric) }, { "label", NvPerf::MetricLabel(a_metric) } };
+	}
+
+	/**
+	 * @brief Serializes a capture result: the per-filter summary always, every range of every sample on request.
+	 *
+	 * Summary values are per frame and keyed by metric label; a value no replay pass completed is null.
+	 */
+	json CaptureResultJson(const NvPerf::CaptureResult& a_result, bool a_detail)
+	{
+		json metrics = json::array();
+		std::vector<std::string> labels;
+		for (const auto& metric : a_result.metrics) {
+			metrics.push_back(MetricJson(metric));
+			labels.push_back(NvPerf::MetricLabel(metric));
+		}
+		json unsupported = json::array();
+		for (const auto& metric : a_result.unsupportedMetrics)
+			unsupported.push_back(MetricJson(metric));
+		const auto values = [&](const std::vector<double>& a_values) {
+			json out = json::object();
+			for (std::size_t m = 0; m < labels.size() && m < a_values.size(); ++m)
+				out[labels[m]] = std::isnan(a_values[m]) ? json(nullptr) : json(a_values[m]);
+			return out;
+		};
+		json summary = json::array();
+		for (const auto& entry : a_result.summary)
+			summary.push_back(json{ { "range", entry.name }, { "perFrame", entry.occurrencesPerFrame }, { "incomplete", entry.incomplete },
+				{ "values", values(entry.values) } });
+		json out{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error }, { "chip", a_result.chipName },
+			{ "startFrame", a_result.startFrame }, { "endFrame", a_result.endFrame }, { "samples", a_result.samples },
+			{ "passesPerSample", a_result.passesPerSample }, { "droppedRanges", a_result.droppedRanges },
+			{ "droppedTraceBytes", a_result.droppedTraceBytes }, { "ranges", a_result.ranges }, { "metrics", std::move(metrics) },
+			{ "unsupportedMetrics", std::move(unsupported) }, { "summary", std::move(summary) }, { "csvPath", a_result.csvPath.string() } };
+		if (a_detail) {
+			json ranges = json::array();
+			for (const auto& range : a_result.rangeResults)
+				ranges.push_back(json{ { "sample", range.sample }, { "range", range.name }, { "path", range.path }, { "occurrence", range.occurrence },
+					{ "values", values(range.values) } });
+			out["rangeResults"] = std::move(ranges);
+		}
+		return out;
+	}
+
+	/**
+	 * @brief Builds the response of the openshaders.nvperf tool.
+	 *
+	 * Captures run over the next frames on the render thread, so `capture` only queues one and returns its id; poll
+	 * `result` (or wait for the openshaders.nvperf.completed event) for its counters. No call here touches the
+	 * immediate context, so none marshals to the main thread.
+	 */
+	json BuildNvPerfResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		if (action.empty())
+			return json{ { "error", "missing required parameter 'action'" } };
+
+		if (action == "status") {
+			NvPerf::Probe();
+			const auto device = NvPerf::GetDeviceInfo();
+			return json{ { "built", device.built }, { "available", device.available }, { "gpuSupported", device.gpuSupported },
+				{ "device", device.deviceName }, { "chip", device.chipName }, { "deviceError", device.error },
+				{ "library", device.libraryPath.string() }, { "capture", StatusJson(NvPerf::GetStatus()) } };
+		}
+
+		if (action == "metrics") {
+			json metrics = json::array();
+			for (const auto& metric : NvPerf::DefaultMetrics())
+				metrics.push_back(MetricJson(metric));
+			return json{ { "defaults", std::move(metrics) },
+				{ "kinds", json::array({ "counter", "ratio", "throughput", "active", "elapsed", "percycle" }) } };
+		}
+
+		if (action == "capture") {
+			NvPerf::CaptureConfiguration configuration;
+			if (a_args.contains("metrics")) {
+				if (!a_args["metrics"].is_array())
+					return json{ { "error", "metrics must be an array of \"name[:kind]\" strings" } };
+				for (const auto& entry : a_args["metrics"]) {
+					if (!entry.is_string())
+						return json{ { "error", "metrics must be an array of \"name[:kind]\" strings" } };
+					NvPerf::MetricRequest metric;
+					std::string error;
+					if (!NvPerf::ParseMetric(entry.get<std::string>(), metric, error))
+						return json{ { "error", error } };
+					configuration.metrics.push_back(std::move(metric));
+				}
+			}
+			if (a_args.contains("ranges")) {
+				if (!a_args["ranges"].is_array())
+					return json{ { "error", "ranges must be an array of strings" } };
+				for (const auto& entry : a_args["ranges"]) {
+					if (!entry.is_string() || entry.get<std::string>().empty())
+						return json{ { "error", "ranges must be an array of non-empty strings" } };
+					configuration.ranges.push_back(entry.get<std::string>());
+				}
+			}
+			configuration.samples = a_args.value("samples", 1u);
+			configuration.delayFrames = a_args.value("delayFrames", 0u);
+			configuration.nestingLevels = static_cast<std::uint16_t>(std::clamp(a_args.value("nestingLevels", 1u), 0u, 0xFFFFu));
+			std::uint64_t captureId = 0;
+			std::string error;
+			if (!NvPerf::RequestCapture(configuration, captureId, error))
+				return json{ { "error", error } };
+			return json{ { "queued", true }, { "captureId", captureId }, { "enqueued_at_frame", EnqueuedFrame() } };
+		}
+
+		if (action == "cancel") {
+			NvPerf::CancelCapture();
+			return json{ { "cancelRequested", true }, { "capture", StatusJson(NvPerf::GetStatus()) } };
+		}
+
+		if (action == "result") {
+			const auto status = NvPerf::GetStatus();
+			const auto result = NvPerf::LatestResult();
+			const std::uint64_t wanted = a_args.value("captureId", result ? result->id : status.captureId);
+			if (result && result->id == wanted)
+				return CaptureResultJson(*result, a_args.value("detail", false));
+			if (status.captureId == wanted && wanted)
+				return json{ { "pending", true }, { "capture", StatusJson(status) } };
+			return json{ { "error", "no such capture" }, { "captureId", wanted } };
+		}
+
+		return json{ { "error", "unknown action (status|metrics|capture|cancel|result)" }, { "action", action } };
+	}
+
+	void NvPerfToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildNvPerfResult, a_argsJson, a_sink, a_write);
 	}
 
 	// The file is written on the next present; completion is the capture.ready event, not this return.
@@ -1382,6 +1554,10 @@ namespace DevBenchBridge
 {
 	void Install()
 	{
+		for (auto* feature : Feature::GetFeatureList())
+			if (feature->loaded)
+				g_bootLoadedFeatures.insert(feature);
+
 		auto* dvb = DevBenchAPI::GetDevBenchInterface001();
 		if (!dvb) {
 			logger::info("DevBenchBridge: devbench not present; CS tools not registered");
@@ -1395,7 +1571,7 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All {brand} graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes enableDLSSFrameGen (boolean, default false); existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, and white reflectance 1.0. These calibration values are not settings. PBR texture inputs bypass calibration. Scene storage gamma is fixed at 1.6. conversionSaturation (0-1, default 0.92) compensates gamma-authored inputs entering linear lighting, including diffuse, tint, glow, lights, effects, sky, fog, water and cached weather colors. It preserves linear-sRGB luminance and neutral colors; 1 is unchanged. Already-linear material and light inputs bypass it; converted shared lighting still affects PBR surfaces. Scene storage and gamma round trips do not apply compensation again. ambientMult (0-5, default 0.32) scales ambient lighting. CSUtility atmosphere settings include independent sky/cloud brightness, saturation and gamma, vanilla fog intensity (opacity multiplier), volumetric lighting intensity and sun glare intensity (0 off, 1 unchanged), useAmbientEffectLighting (boolean, default false; replaces weather Effect Lighting and Sky Statics lighting with ambient/IBL plus shadowed directional light), effect brightness and sky static brightness (0-2, scale their respective weather or ambient/directional lighting; 1 unchanged at the center) and sky static transparency (0 unchanged, 1 fully transparent). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); automatically saves whether the feature loads next launch, without changing its current loaded state. Both actions persist only the selected preference and preserve unrelated unsaved settings; failures return an error.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]},"shortName":{"type":"string"},"settings":{"type":"object","description":"Partial SaveSettings object from get. Upscaling exposes enableDLSSFrameGen (boolean, default false, restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); read the live state and the active strengths back with the neuralRenderingStatus query. The material map debug view adds settings.neuralRenderingTuning.showMaterialMap (boolean), materialMapMode (0 category colours, 1 strength ramp) and materialMapFilter (bitmask of the categories it draws: bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; only the low six bits are kept). PostProcessing exposes cinematic_camera including Enabled, Lens.FocalLengthMM, Lens.FNumber and Exposure.ISO. LinearLighting keys: enableLinearLighting (integer, 0/1), enableACEScg (integer, 0/1), conversionSaturation (number, 0-1, default 0.92), ambientMult (number, 0-5, default 0.32). CSUtility atmosphere keys: useAmbientEffectLighting (boolean), skyBrightness, cloudBrightness, skySaturation, cloudSaturation, skyGammaOffset, cloudGammaOffset, effectBrightness, skyStaticBrightness, skyStaticTransparency, fogGammaOffset, fogAlphaGammaOffset, fogIntensity, vlGammaOffset, vlIntensity, sunGlareIntensity."},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}},"oneOf":[{"properties":{"action":{"enum":["favorite","boot"]},"shortName":{"minLength":1}},"required":["action","shortName","enabled"]},{"properties":{"action":{"not":{"enum":["favorite","boot"]}}}}]}})";
+			R"({"description":"All {brand} graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes enableDLSSFrameGen (boolean, default false); existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, and white reflectance 1.0. These calibration values are not settings. PBR texture inputs bypass calibration. Scene storage gamma is fixed at 1.6. conversionSaturation (0-1, default 0.92) compensates gamma-authored inputs entering linear lighting, including diffuse, tint, glow, lights, effects, sky, fog, water and cached weather colors. It preserves linear-sRGB luminance and neutral colors; 1 is unchanged. Already-linear material and light inputs bypass it; converted shared lighting still affects PBR surfaces. Scene storage and gamma round trips do not apply compensation again. ambientMult (0-5, default 0.32) scales ambient lighting. CSUtility atmosphere settings include independent sky/cloud brightness, saturation and gamma, vanilla fog intensity (opacity multiplier), volumetric lighting intensity and sun glare intensity (0 off, 1 unchanged), useAmbientEffectLighting (boolean, default false; replaces weather Effect Lighting and Sky Statics lighting with ambient/IBL plus shadowed directional light), effect brightness and sky static brightness (0-2, scale their respective weather or ambient/directional lighting; 1 unchanged at the center) and sky static transparency (0 unchanged, 1 fully transparent). CSUtility Light and Materials color controls are nested objects containing saturation (0-2, default 1) and gammaOffset (-1 to 1, default 0): sceneColor, ambientLightColor, directionalLightColor, pointLightColor, linearPointLightColor, spotlightColor, linearSpotlightColor, omnidirectionalBulbColor, linearOmnidirectionalBulbColor, emitColor, glowmapColor and effectLightingColor. Existing multiplier keys remain unchanged. sceneColor adjusts the lighting and atmosphere inputs, not the finished image. The atmosphere adds effectColor, skyStaticColor and sunGlareColor with the same object shape, plus fogSaturation and vlSaturation (0-2, default 1). Existing sky/cloud saturation, gamma offsets and opacity controls retain their meanings. set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. Rejects enabling a feature that was not loaded at boot, since its resources were never set up; enable it with boot and restart. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); automatically saves whether the feature loads next launch, without changing its current loaded state. Both actions persist only the selected preference and preserve unrelated unsaved settings; failures return an error.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]},"shortName":{"type":"string"},"settings":{"type":"object","description":"Partial SaveSettings object from get. Upscaling exposes enableDLSSFrameGen (boolean, default false, restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); read the live state and the active strengths back with the neuralRenderingStatus query. The material map debug view adds settings.neuralRenderingTuning.showMaterialMap (boolean), materialMapMode (0 category colours, 1 strength ramp) and materialMapFilter (bitmask of the categories it draws: bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth, 7 Metal; the low eight bits only). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (boolean, default false; VR only, on in the Performance profile, and forced off while frame generation is active) with settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model, 1 reset the eye's history); read the live state and the per-eye reuse from the neuralRenderingStatus query. PostProcessing exposes cinematic_camera including Enabled, Lens.FocalLengthMM, Lens.FNumber and Exposure.ISO. LinearLighting keys: enableLinearLighting (integer, 0/1), enableACEScg (integer, 0/1), conversionSaturation (number, 0-1, default 0.92), ambientMult (number, 0-5, default 0.32). CSUtility atmosphere keys: useAmbientEffectLighting (boolean), skyBrightness, cloudBrightness, skySaturation, cloudSaturation, skyGammaOffset, cloudGammaOffset, effectBrightness, skyStaticBrightness, skyStaticTransparency, fogGammaOffset, fogAlphaGammaOffset, fogIntensity, vlGammaOffset, vlIntensity, sunGlareIntensity. CSUtility Light and Materials color controls are nested objects containing saturation (0-2, default 1) and gammaOffset (-1 to 1, default 0): sceneColor, ambientLightColor, directionalLightColor, pointLightColor, linearPointLightColor, spotlightColor, linearSpotlightColor, omnidirectionalBulbColor, linearOmnidirectionalBulbColor, emitColor, glowmapColor and effectLightingColor. Existing multiplier keys remain unchanged. sceneColor adjusts the lighting and atmosphere inputs, not the finished image. The atmosphere adds effectColor, skyStaticColor and sunGlareColor with the same object shape, plus fogSaturation and vlSaturation (0-2, default 1). Existing sky/cloud saturation, gamma offsets and opacity controls retain their meanings."},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}},"oneOf":[{"properties":{"action":{"enum":["favorite","boot"]},"shortName":{"minLength":1}},"required":["action","shortName","enabled"]},{"properties":{"action":{"not":{"enum":["favorite","boot"]}}}}]}})";
 		dvb->RegisterTool("openshaders.feature", BrandedDescription(featureDesc), &FeatureToolHandler, nullptr);
 
 		// One-time: builds Util::DevBenchUx::Registry from every feature's
@@ -1417,6 +1593,16 @@ namespace DevBenchBridge
 		static constexpr const char* captureDesc =
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. With kind=shadowmaps and frames=N it records N shadow frames, and slot (an integer light index, default -1 for none) adds that light's caster set. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"},"slot":{"type":"integer"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", BrandedDescription(captureDesc), &CaptureToolHandler, nullptr);
+
+		static constexpr const char* nvperfDesc =
+			R"({"description":"NVIDIA Nsight Perf GPU hardware counters per render pass (D3D11; builds with NVPERF_SUPPORT, NVIDIA GPUs only). Ranges are the perf events {brand} emits (engine passes need Frame Annotations enabled at startup). Action-dispatched. status -> {built,available,gpuSupported,device,chip,deviceError,library,capture:{state,captureId,sample,samples,pass,passes,error}}. metrics -> {defaults:[{metric,label}],kinds}. capture: optional metrics (array of name[:counter|ratio|throughput|active|elapsed|percycle] strings, default the defaults), ranges (array of names, trailing * = prefix; default every outermost range), samples (1-64, default 1), delayFrames (default 0), nestingLevels (1-8, default 1; each level multiplies the passes) -> {queued,captureId}; runs over the next frames, one profiler pass per frame. cancel: stop the running capture. result: optional captureId (default latest), detail (boolean: include every range of every sample) -> {pending,capture} while running, else {captureId,success,error,chip,startFrame,endFrame,samples,passesPerSample,metrics:[{metric,label}],unsupportedMetrics,summary:[{range,perFrame,incomplete,values:{label:value}}],csvPath}. Summary values are per frame: counters summed (gpu__time_duration in ns), rates weighted by range time. Event openshaders.nvperf.completed {captureId,success,error} fires when a capture ends.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","metrics","capture","cancel","result"]},"metrics":{"type":"array","items":{"type":"string"}},"ranges":{"type":"array","items":{"type":"string"}},"samples":{"type":"number"},"delayFrames":{"type":"number"},"nestingLevels":{"type":"number"},"captureId":{"type":"number"},"detail":{"type":"boolean"}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.nvperf", BrandedDescription(nvperfDesc), &NvPerfToolHandler, nullptr);
+		NvPerf::SetCompletionCallback([](const NvPerf::CaptureResult& a_result) {
+			if (auto* host = DevBenchAPI::GetDevBenchInterface001()) {
+				const std::string payload = json{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error } }.dump();
+				host->EmitEvent("openshaders.nvperf.completed", payload.c_str());
+			}
+		});
 
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL {brand} user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";

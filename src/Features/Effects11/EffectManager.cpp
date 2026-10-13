@@ -409,7 +409,8 @@ void EffectManager::ExecuteEffect(EffectBase& a_effect, uint32_t enableSettingID
 	CS_GPU_PASS_DYNAMIC("Effects11::" + a_effect.GetName());
 
 #ifdef ENABLE_ENB_EXTENDER
-	a_effect.ApplyWeatherBlending(commonData.weather[2], currentWeatherID, previousWeatherID);
+	const float weatherBlend = Effects11Editor::GetSingleton().IsOpen() ? (commonData.weather[2] > 0.5f ? 1.0f : 0.0f) : commonData.weather[2];
+	a_effect.ApplyWeatherBlending(weatherBlend, currentWeatherID, previousWeatherID);
 	a_effect.ApplyTimeOfDayInterpolation();
 #endif
 	UpdateCommonVariablesForEffect(a_effect);

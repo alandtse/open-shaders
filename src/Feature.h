@@ -400,6 +400,12 @@ public:
 	virtual bool WantsRenderPassHook() const { return false; }
 
 	/**
+	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
+	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
+	 */
+	virtual bool WantsForwardMaterialCategory() const { return false; }
+
+	/**
 	 * @brief Called once per qualifying BSRenderPass, before the engine draws it, for every
 	 * loaded feature that opted in via WantsRenderPassHook(). Lets a feature apply render-pass
 	 * -scoped state (e.g. permutation data) without editing the shared render-pass hooks

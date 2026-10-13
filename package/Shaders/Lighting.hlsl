@@ -461,6 +461,9 @@ struct PS_OUTPUT
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
 	float4 NormalGlossiness: SV_Target2;
+#	if defined(EYE)
+	float4 Masks2: SV_Target3;
+#	endif
 };
 #endif
 
@@ -997,6 +1000,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "Common/PBR.hlsli"
 #	endif
 
+#	if defined(LANDSCAPE) && defined(LANDSCAPE_SEAMS)
+#		include "Common/LandscapeSeams.hlsli"
+#	endif
+
 #	if defined(EMAT)
 #		include "ExtendedMaterials/ExtendedMaterials.hlsli"
 #	endif
@@ -1181,9 +1188,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #	endif  // defined (SKINNED) || !defined (MODELSPACENORMALS)
 
+#	if defined(LANDSCAPE) && defined(LANDSCAPE_SEAMS)
+	LandscapeSeams::Load(input.WorldPosition.xy + FrameBuffer::CameraPosAdjust[eyeIndex].xy, input.LandBlendWeights1, input.LandBlendWeights2);
+#	endif
+
 #	if !defined(TRUE_PBR)
 #		if defined(LANDSCAPE)
 	float shininess = dot(input.LandBlendWeights1, LandscapeTexture1to4IsSpecPower) + input.LandBlendWeights2.x * LandscapeTexture5to6IsSpecPower.x + input.LandBlendWeights2.y * LandscapeTexture5to6IsSpecPower.y;
+#			if defined(LANDSCAPE_SEAMS)
+	shininess += dot(LandscapeSeams::ExtraWeights, LandscapeSeams::Data.SpecPower);
+#			endif
 #		else
 	float shininess = HasSpecular() ? SpecularColor.w : 0.0;
 #		endif  // defined (LANDSCAPE)
@@ -1504,6 +1518,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Normalise blend weights
 	float totalWeight = input.LandBlendWeights1.x + input.LandBlendWeights1.y + input.LandBlendWeights1.z +
 	                    input.LandBlendWeights1.w + input.LandBlendWeights2.x + input.LandBlendWeights2.y;
+#		if defined(LANDSCAPE_SEAMS)
+	totalWeight += dot(LandscapeSeams::ExtraWeights, 1.0);
+	if (totalWeight > 0.0)
+		LandscapeSeams::ExtraWeights /= totalWeight;
+#		endif
 	if (totalWeight > 0.0) {
 		input.LandBlendWeights1 /= totalWeight;
 		input.LandBlendWeights2.xy /= totalWeight;
@@ -1562,6 +1581,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			input.LandBlendWeights1.w = weights[3];
 			input.LandBlendWeights2.x = weights[4];
 			input.LandBlendWeights2.y = weights[5];
+#			if defined(LANDSCAPE_SEAMS)
+			// Height blending covers only the engine layers; scale them back to their share beside the borrowed ones.
+			const float engineWeight = dot(input.LandBlendWeights1, 1.0) + input.LandBlendWeights2.x + input.LandBlendWeights2.y;
+			if (engineWeight > 0.0) {
+				const float engineScale = saturate(1.0 - dot(LandscapeSeams::ExtraWeights, 1.0)) / engineWeight;
+				input.LandBlendWeights1 *= engineScale;
+				input.LandBlendWeights2.xy *= engineScale;
+			}
+#			endif
 		}
 		hasTerrainParallaxShadow =
 			viewPosition.z < ExtendedMaterials::ParallaxCheapDistance &&
@@ -1636,6 +1664,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	LIGHTING_LANDSCAPE_BLEND_ONE_LAYER(3, TexLandColor4Sampler, SampLandColor4Sampler, TexLandNormal4Sampler, SampLandNormal4Sampler, input.LandBlendWeights1.w, LandscapeTexture1to4IsSnow.w)
 	LIGHTING_LANDSCAPE_BLEND_ONE_LAYER(4, TexLandColor5Sampler, SampLandColor5Sampler, TexLandNormal5Sampler, SampLandNormal5Sampler, input.LandBlendWeights2.x, LandscapeTexture5to6IsSnow.x)
 	LIGHTING_LANDSCAPE_BLEND_ONE_LAYER(5, TexLandColor6Sampler, SampLandColor6Sampler, TexLandNormal6Sampler, SampLandNormal6Sampler, input.LandBlendWeights2.y, LandscapeTexture5to6IsSnow.y)
+#		endif
+#		if defined(LANDSCAPE_SEAMS)
+	LANDSCAPE_SEAMS_BLEND_EXTRAS
 #		endif
 #		undef SampleTerrain
 #		undef SampleTerrainColor
@@ -2595,7 +2626,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(WATER_EFFECTS)
-	dirLightColor *= WaterEffects::ComputeCaustics(waterData, input.WorldPosition.xyz, eyeIndex);
+	if (inWorld || inReflection)
+		dirLightColor *= WaterEffects::ComputeCaustics(waterData, input.WorldPosition.xyz, eyeIndex);
 #	endif
 
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
@@ -3655,6 +3687,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		else
 	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsEye)
 		neuralRenderingCategory = NeuralRenderingCategory::Eyes;
+	else if (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight)
+#			if defined(ENVMAP)
+		neuralRenderingCategory = NeuralRenderingCategory::Metal;
+#			else
+		neuralRenderingCategory = NeuralRenderingCategory::Cloth;
+#			endif
 #		endif
 
 	// Stored as 1 - vertexAO so the cleared default (0) means no occlusion
@@ -3711,6 +3749,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	const bool outputColorToAuxiliaryTarget = SSRParams.z > 1e-5;
 	psout.NormalGlossiness = outputColorToAuxiliaryTarget ? (gammaRenderTarget ? auxiliaryDiffuse : psout.Diffuse) : normalAndSSR;
 	psout.MotionVectors = outputColorToAuxiliaryTarget ? float4(1, 0, 0, 1) : float4(screenMotionVector, 0, 1);
+#	endif
+
+#	if defined(EYE) && !defined(DEFERRED)
+	// The forward eye pass has no deferred write, so without this the head's Skin value stays under the eyes.
+	// The vanilla eye atlas holds the lash strands below this uv; another layout classifies them as Eyes.
+	static const float2 kEyeLashMaxUV = float2(0.8, 0.47);
+	const uint eyeCategory = all(input.TexCoord0.xy < kEyeLashMaxUV) ? NeuralRenderingCategory::Hair : NeuralRenderingCategory::Eyes;
+	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(eyeCategory), 0, step(0.5, psout.Diffuse.w));
 #	endif
 
 #	if defined(EMAT)

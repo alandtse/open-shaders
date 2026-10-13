@@ -170,6 +170,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsEnabled ||
+			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
@@ -177,7 +178,6 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
 			 renderDoc->IsAvailable() ||
-			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 globals::features::vr.HelperRequestsRender());
 }
 

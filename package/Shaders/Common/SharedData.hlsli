@@ -350,7 +350,25 @@ namespace SharedData
 		float skyStaticTransparency;
 		float effectBrightness;
 		float skyStaticBrightness;
-		float2 padding;
+		float fogSaturation;
+		float vlSaturation;
+		float2 ambientLightColor;
+		float2 directionalLightColor;
+		float2 pointLightColor;
+		float2 linearPointLightColor;
+		float2 spotlightColor;
+		float2 linearSpotlightColor;
+		float2 omnidirectionalBulbColor;
+		float2 linearOmnidirectionalBulbColor;
+		float2 emitColor;
+		float2 glowmapColor;
+		float2 effectLightingColor;
+		float2 effectColor;
+		float2 skyStaticColor;
+		float2 sunGlareColor;
+		float waterSaturation;
+		float padding;
+		float2 sceneColor;
 	};
 
 	struct WindSettings

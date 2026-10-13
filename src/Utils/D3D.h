@@ -54,6 +54,27 @@ namespace Util
 	void SetResourceName(ID3D11DeviceChild* Resource, const char* Format, ...);
 
 	/**
+	 * @brief Holds D3D11 multithread protection and the device lock on the immediate context for its scope.
+	 * Holders are reference counted: protection is restored to its prior state only when the last holder leaves,
+	 * so overlapping scopes never turn it off under each other. Protection must not outlive the scope; leaving it
+	 * on corrupts ReverseZ depth state.
+	 */
+	class MultithreadScope
+	{
+	public:
+		explicit MultithreadScope(ID3D11DeviceContext* context);
+		~MultithreadScope();
+		MultithreadScope(const MultithreadScope&) = delete;
+		MultithreadScope& operator=(const MultithreadScope&) = delete;
+
+		/** @brief False when ID3D11Multithread could not be obtained and no lock is held. */
+		explicit operator bool() const { return multithread != nullptr; }
+
+	private:
+		winrt::com_ptr<REX::W32::ID3D11Multithread> multithread;
+	};
+
+	/**
 	 * @brief Reads the Texture2D description backing an SRV/UAV/RTV/DSV.
 	 * @param View Any D3D11 view (ID3D11View is the common base for all four).
 	 * @param OutDesc Filled with the underlying texture's description on success.

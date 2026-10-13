@@ -46,6 +46,7 @@ PS_OUTPUT main(PS_INPUT input)
 		volumetricLightingColor *= SharedData::enbSettings.VolumetricRaysColorFilter;
 	}
 #		endif
+	volumetricLightingColor = Color::AdjustUtilityColor(volumetricLightingColor, float2(SharedData::csUtilitySettings.vlSaturation, 0.0));
 	color += volumetricLightingColor * volumetricLightingPower;
 #	endif
 

@@ -336,7 +336,7 @@ namespace NR
 			uint32_t height = 0;
 			bool protectionEnabled = false;
 		};
-		std::array<Eye, 2> eyes;
+		std::array<Eye, kFeatureSlots> eyes;
 
 		~Impl()
 		{
@@ -369,7 +369,7 @@ namespace NR
 	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
-	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode)
+	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified)
 	{
 		if (impl->initialized)
 			return;
@@ -377,10 +377,10 @@ namespace NR
 		auto& state = *pending;
 		const auto path = directory / kRuntimeFileName;
 		const auto availability = InspectRuntimeFile(directory);
-		if (!availability.AllowsLoad(developerMode))
+		if (!availability.AllowsLoad(developerMode, allowUnverified))
 			throw std::runtime_error(availability.reason);
 		if (!availability.Ready())
-			logger::warn("[NeuralRendering] Developer mode loaded a runtime the pass refuses: {}", availability.reason);
+			logger::warn("[NeuralRendering] Loaded an unverified runtime ({}): {}", developerMode ? "developer mode" : "unverified-build option", availability.reason);
 		state.module.reset(LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS));
 		if (!state.module)
 			winrt::throw_last_error();
@@ -469,6 +469,15 @@ namespace NR
 	{
 		const auto& eye = impl->eyes.at(eyeIndex);
 		return eye.feature && eye.width == width && eye.height == height && eye.protectionEnabled == protectionEnabled;
+	}
+
+	void Runtime::ResetFeature(uint32_t slot)
+	{
+		auto& eye = impl->eyes.at(slot);
+		eye.feature.reset();
+		eye.width = 0;
+		eye.height = 0;
+		eye.protectionEnabled = false;
 	}
 
 	std::string Runtime::Version() const
