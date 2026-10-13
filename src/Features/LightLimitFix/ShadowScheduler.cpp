@@ -1409,6 +1409,7 @@ namespace ShadowCasterManager
 				// promoted light added but never enabled before teardown reads it.
 				if (s_settings.ShadowLightCount > 4) {
 					if (auto* ni = l->light.get(); ni) {
+						ZoneScopedN("SCM::ScoreCandidates::PromotedInit");
 						std::scoped_lock lk(s_shadowConvertMutex);
 						if (s_shadowConvert.contains(ni) && !s_shadowConvertDescriptorInited.contains(ni)) {
 							InitPromotedDescriptorSlots(l);
@@ -1420,8 +1421,11 @@ namespace ShadowCasterManager
 				c.light = l;
 				c.sun = false;
 				float impact = 1.0f;
-				c.score = CalculateLightScore(l, camera, tmpIndex++,
-					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
+				{
+					ZoneScopedN("SCM::ScoreCandidates::LightScore");
+					c.score = CalculateLightScore(l, camera, tmpIndex++,
+						s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
+				}
 				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor) {
 					// Exit hysteresis, own consecutive-count gate (unlike the recency-based
 					// s_lastValidFrame above): a light must fail 15 consecutive frames
@@ -1448,6 +1452,7 @@ namespace ShadowCasterManager
 		// wipe (deferred, races the new cell's promotions) and bulk ClearLightArrays bypasses
 		// the per-light erase, so without it promoted lights leak in and read as native.
 		{
+			ZoneScopedN("SCM::ScoreCandidates::PromotedCleanup");
 			std::scoped_lock lk(s_shadowConvertMutex);
 			if (!s_shadowConvert.empty() || !s_shadowConvertDescriptorInited.empty()) {
 				static std::vector<RE::NiLight*> liveNi;
@@ -1488,6 +1493,7 @@ namespace ShadowCasterManager
 		// Sort descending by score; sun always first. Deterministic tiebreak on exact
 		// ties (e.g. symmetric braziers): std::sort isn't stable, so an unstable tie
 		// flips which fixture claims a free slot first, producing visible flicker.
+		ZoneScopedN("SCM::ScoreCandidates::Sort");
 		std::sort(candidates.begin(), candidates.end(),
 			[](const CandidateLight& a, const CandidateLight& b) {
 				if (a.sun != b.sun)
@@ -1561,7 +1567,12 @@ namespace ShadowCasterManager
 					AuditFrustumCull(c, camera);
 				// frustrumCull != 0 does NOT mean geometrically off-screen --
 				// BSShadowParabolicLight also sets it for a shadow-distance LOD test.
-				if (!l->UpdateCamera(camera)) {
+				bool cameraValid;
+				{
+					ZoneScopedN("SCM::CandidateValidation::UpdateCamera");
+					cameraValid = l->UpdateCamera(camera);
+				}
+				if (!cameraValid) {
 					// Exit hysteresis: honor invalid only after kCameraExitStreak frames.
 					// Age-prune (not PruneIfOversized): a missing entry means
 					// never-valid, so only drop entries past the exit-streak window.
@@ -1606,6 +1617,7 @@ namespace ShadowCasterManager
 				}
 				// No culling process/portal means unconditionally visible. Skip for
 				// promoted lights (rebuilt process never room-associates) and held lights.
+				ZoneScopedN("SCM::CandidateValidation::Portal");
 				auto* cull = (c.cameraHold || IsPromotedLight(l->light.get())) ? nullptr : GetLightCullingProcess(l);
 				if (cull) {
 					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
