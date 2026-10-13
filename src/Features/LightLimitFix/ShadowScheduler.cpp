@@ -2151,6 +2151,7 @@ namespace ShadowCasterManager
 
 			double interval = 0.0;
 			if (s_formulaRedrawInterval) {
+				ZoneScopedN("SCM::Score::Formula");
 				SetupLightFormula(e->Light, camera, 0);
 				// e->Index is the pool index. Beyond PointLightEnd are converted slots.
 				if (e->Index >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
@@ -2180,6 +2181,7 @@ namespace ShadowCasterManager
 			float sizeProxy = 0.0f;
 
 			if (auto* ni = e->Light->light.get()) {
+				ZoneScopedN("SCM::Score::LightGeometry");
 				const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
 				// Legacy contribution metric, kept for the UI table and
 				// s_highImportanceLightCount; ranking decisions use lastScore
@@ -2241,6 +2243,7 @@ namespace ShadowCasterManager
 			                          geomSize != e->lastHashGeomListSize ||
 			                          (now - e->lastHashComputeFrame) >= kGeomHashRehashInterval;
 			if (dueForRehash) {
+				ZoneScopedN("SCM::Score::GeomHash");
 				e->cachedPendingGeomHash = ComputeShadowGeomHash(e->Light, posStep, e->cachedSkinnedCasters);
 				e->lastHashComputeFrame = now;
 				e->lastHashGeomListSize = geomSize;
@@ -2656,7 +2659,10 @@ namespace ShadowCasterManager
 			cameraHoldSkips.clear();
 			static std::vector<LightEntry*> newLightSkips;
 			newLightSkips.clear();
-			ClassifyPendingLights(now, pending, highPrioritySkips, sleepSkips, cameraHoldSkips, newLightSkips);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::Classify");
+				ClassifyPendingLights(now, pending, highPrioritySkips, sleepSkips, cameraHoldSkips, newLightSkips);
+			}
 
 			// Base texels for the coverage classifier; lazily captured from the live
 			// texture, so fall back until it is readable.
@@ -2674,18 +2680,27 @@ namespace ShadowCasterManager
 					scoreRank.push_back(s_lights.Lights[i].lastScore);
 			std::sort(scoreRank.begin(), scoreRank.end());
 
-			LogAndRefreshSkippedLights(camera, baseTileTexels, scoreRank, highPrioritySkips, sleepSkips,
-				cameraHoldSkips, newLightSkips);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::RefreshSkipped");
+				LogAndRefreshSkippedLights(camera, baseTileTexels, scoreRank, highPrioritySkips, sleepSkips,
+					cameraHoldSkips, newLightSkips);
+			}
 
-			ScorePendingLights(camera, now, baseTileTexels, auditDemand, scoreRank, pending);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::Score");
+				ScorePendingLights(camera, now, baseTileTexels, auditDemand, scoreRank, pending);
+			}
 
 			int cfMaxRedrawStart = 0;
 			int32_t cfBudgetStart = 0;
 			bool cfIsFirstStart = false;
 			bool anyCostRejected = false;
 			uint32_t starvationFloorFrames = 0;
-			SortAndAdmitPendingLights(pending, now, maxRedraw, budgetRemain, isFirst, cfMaxRedrawStart,
-				cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::SortAdmit");
+				SortAndAdmitPendingLights(pending, now, maxRedraw, budgetRemain, isFirst, cfMaxRedrawStart,
+					cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
+			}
 
 			AuditDemandCounterfactual(auditDemand, pending, highPrioritySkips, cfMaxRedrawStart, cfBudgetStart,
 				cfIsFirstStart, starvationFloorFrames, maxRedraw, budgetRemain, anyCostRejected, now);
@@ -3174,6 +3189,7 @@ namespace ShadowCasterManager
 				snap.scalePromotionRedundantAvoided = s_scalePromotionRedundantAvoided.load(std::memory_order_relaxed);
 				snap.convertReEnableRun = s_convertReEnableRun.load(std::memory_order_relaxed);
 				snap.convertReEnableSkipped = s_convertReEnableSkipped.load(std::memory_order_relaxed);
+				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
@@ -3189,7 +3205,6 @@ namespace ShadowCasterManager
 				snap.demandSubTap = s_schedDiag.demand_sub_tap;
 				snap.demandSkipEligible = s_schedDiag.demand_skip_eligible;
 				snap.demandSwapIn = s_schedDiag.demand_swap_in;
-				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
 				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
 				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
 				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;
