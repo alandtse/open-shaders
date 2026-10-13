@@ -294,6 +294,7 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_scalePromotionRedundantAvoided{ 0 };
 	/// Converted-light re-enables run versus skipped because no engine-walk input changed.
 	std::atomic<uint64_t> s_convertReEnableRun{ 0 };
+	std::atomic<uint64_t> s_convertReEnableToleranceSkipped{ 0 };
 	std::atomic<uint64_t> s_convertReEnableSkipped{ 0 };
 
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
@@ -735,6 +736,33 @@ namespace ShadowCasterManager
 		       portalStrict == o.portalStrict && portalGraph == o.portalGraph && roomCount == o.roomCount;
 	}
 
+	// Flicker drift a converted light's engine enable walk absorbs. The walk
+	// reads fade only as an on/off threshold and the rotation only for strict
+	// portal lights; room and geometry membership move with position and
+	// radius, so a drift past these bounds, or the refresh interval, re-enables.
+	constexpr float kConvertReEnableDriftSq = 1.0f;
+	constexpr float kConvertReEnableRadiusFraction = 0.02f;
+	constexpr std::uint32_t kConvertReEnableRefreshFrames = 8;
+	constexpr float kFadeOnThreshold = 0.05f;
+
+	/// Flicker-tolerant match against the last-enabled snapshot.
+	static bool EnableInputsEquivalent(const EnableInputs& a, const EnableInputs& b)
+	{
+		if (a.hidden != b.hidden || a.dynamic != b.dynamic || a.portalStrict != b.portalStrict ||
+			a.portalGraph != b.portalGraph || a.roomCount != b.roomCount ||
+			(a.fade > kFadeOnThreshold) != (b.fade > kFadeOnThreshold))
+			return false;
+		if (a.portalStrict) {
+			for (int r = 0; r < 3; ++r)
+				for (int c = 0; c < 3; ++c)
+					if (a.rotate.entry[r][c] != b.rotate.entry[r][c])
+						return false;
+		}
+		const float dx = a.translate.x - b.translate.x, dy = a.translate.y - b.translate.y, dz = a.translate.z - b.translate.z;
+		return dx * dx + dy * dy + dz * dz <= kConvertReEnableDriftSq &&
+		       std::abs(a.radius - b.radius) <= std::max(1.0f, kConvertReEnableRadiusFraction * a.radius);
+	}
+
 	/// Caller holds s_portalGraphMutex shared, so the graph pointer stays valid.
 	static EnableInputs CaptureEnableInputs(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn)
 	{
@@ -789,10 +817,19 @@ namespace ShadowCasterManager
 					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
 					return;
 				}
+				const std::uint32_t enableFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				// Staggered per light so the periodic refreshes do not land on one frame.
+				const std::uint32_t refreshInterval = kConvertReEnableRefreshFrames + static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(light) >> 4) % kConvertReEnableRefreshFrames);
+				if (c.enableValid && enableFrame - c.lastEnableFrame < refreshInterval && EnableInputsEquivalent(c.lastEnable, now)) {
+					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
+					s_convertReEnableToleranceSkipped.fetch_add(1, std::memory_order_relaxed);
+					return;
+				}
 				ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
 				GameEnableLight(ssn, light);
 				c.lastEnable = now;
 				c.enableValid = true;
+				c.lastEnableFrame = enableFrame;
 				s_convertReEnableRun.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
@@ -3156,6 +3193,7 @@ namespace ShadowCasterManager
 				snap.demandSubTap = s_schedDiag.demand_sub_tap;
 				snap.demandSkipEligible = s_schedDiag.demand_skip_eligible;
 				snap.demandSwapIn = s_schedDiag.demand_swap_in;
+				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
 				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
 				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
 				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;

@@ -754,6 +754,7 @@ namespace ShadowCasterManager
 		/// Converted-light engine re-enables run versus skipped as unchanged.
 		uint64_t convertReEnableRun = 0;
 		uint64_t convertReEnableSkipped = 0;
+		uint64_t convertReEnableToleranceSkipped = 0;  ///< subset of convertReEnableSkipped taken on flicker-scale drift
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
