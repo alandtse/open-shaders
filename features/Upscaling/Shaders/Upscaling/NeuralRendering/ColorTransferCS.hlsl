@@ -7,8 +7,6 @@
 #include "Upscaling/NeuralRendering/ColorTransfer.hlsli"
 #include "Upscaling/NeuralRendering/ModeValues.hlsli"
 
-
-
 Texture2D<float4> Original : register(t0);
 Texture2D<float4> NeuralInput : register(t1);
 Texture2D<float4> NeuralOutput : register(t2);
