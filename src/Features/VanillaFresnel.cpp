@@ -1,6 +1,7 @@
 #include "VanillaFresnel.h"
 
 #include "../I18n/I18n.h"
+#include "Deferred.h"
 #include "Globals.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -37,13 +38,16 @@ namespace
 				   }) != a_name.end();
 	}
 
+	bool IsEyeTechnique(const RE::BSLightingShader* a_shader)
+	{
+		return a_shader &&
+		       static_cast<SIE::ShaderCache::LightingShaderTechniques>(0x3F & (a_shader->currentRawTechnique >> 24)) == SIE::ShaderCache::LightingShaderTechniques::Eye;
+	}
+
 	bool IsEyePass(const RE::BSLightingShader* a_shader, const RE::BSRenderPass* a_pass)
 	{
-		if (a_shader) {
-			const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>(0x3F & (a_shader->currentRawTechnique >> 24));
-			if (technique == SIE::ShaderCache::LightingShaderTechniques::Eye) {
-				return true;
-			}
+		if (IsEyeTechnique(a_shader)) {
+			return true;
 		}
 
 		if (!a_pass || !a_pass->shaderProperty) {
@@ -82,7 +86,18 @@ namespace
 		static void thunk(RE::BSLightingShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
 		{
 			UpdateEyePermutation(a_shader, a_pass);
+			globals::deferred->SetForwardMasks2Target(IsEyeTechnique(a_shader));
 			func(a_shader, a_pass, a_renderFlags);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSLightingShader_RestoreGeometry
+	{
+		static void thunk(RE::BSLightingShader* a_shader, RE::BSRenderPass* a_pass, uint32_t a_renderFlags)
+		{
+			func(a_shader, a_pass, a_renderFlags);
+			globals::deferred->SetForwardMasks2Target(false);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -91,7 +106,8 @@ namespace
 void VanillaFresnel::PostPostLoad()
 {
 	stl::write_vfunc<0x6, BSLightingShader_SetupGeometry>(RE::VTABLE_BSLightingShader[0]);
-	logger::info("[VanillaFresnel] Installed hooks - BSLightingShader_SetupGeometry");
+	stl::write_vfunc<0x7, BSLightingShader_RestoreGeometry>(RE::VTABLE_BSLightingShader[0]);
+	logger::info("[VanillaFresnel] Installed hooks - BSLightingShader_SetupGeometry, BSLightingShader_RestoreGeometry");
 }
 
 void VanillaFresnel::RestoreDefaultSettings()

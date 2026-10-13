@@ -14,12 +14,12 @@ namespace FrameAnnotations
 		// annotation doesn't re-derive it every draw. Render-thread only, plain static.
 		static std::string_view CachedDefinesSuffix()
 		{
-			thread_local std::string s_src;
+			thread_local uint32_t s_version = UINT32_MAX;
 			thread_local std::string s_suffix;
-			const std::string& src = globals::state->shaderDefinesString;
-			if (src != s_src) {
-				s_src = src;
-				s_suffix = Util::GetShaderDefinesSuffix(src);
+			const uint32_t version = globals::state->GetDefinesVersion();
+			if (version != s_version) {
+				s_suffix = Util::GetShaderDefinesSuffix(globals::state->GetDefinesString());
+				s_version = version;
 			}
 			return s_suffix;
 		}

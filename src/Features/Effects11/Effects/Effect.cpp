@@ -360,7 +360,7 @@ bool Effect::LoadFXFile()
 	if (ENBExtender::IsEncryptedSource(sourceCode)) {
 		uiDefines.clear();
 		std::string error;
-		if (!ENBExtender::CreateEncryptedEffect(GetName(), effect, error)) {
+		if (!ENBExtender::CreateEncryptedEffect(filePath, effect, error)) {
 			errors.push_back(error);
 			return false;
 		}

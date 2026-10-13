@@ -394,7 +394,7 @@ namespace FoveatedRenderImpl::Ops
 		return true;
 	}
 
-	void StretchDRSToFullEye(
+	bool StretchDRSToFullEye(
 		ID3D11ShaderResourceView* renderSBSSRV,
 		ID3D11UnorderedAccessView* kMainUAV,
 		uint32_t dstOffsetX,
@@ -407,6 +407,8 @@ namespace FoveatedRenderImpl::Ops
 		uint32_t srcEyeHeight)
 	{
 		auto context = globals::d3d::context;
+		if (!context || !globals::d3d::device)
+			return false;
 
 		if (!Core::vrSubrectStretchCS) {
 			Core::vrSubrectStretchCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/FoveatedRender/SubrectStretchCS.hlsl", {}, "cs_5_0"));
@@ -424,7 +426,7 @@ namespace FoveatedRenderImpl::Ops
 				// guard above stays false forever and Faster mode is dead for
 				// the rest of the session.
 				Core::vrSubrectStretchCS = nullptr;
-				return;
+				return false;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchCB.get(), "FoveatedRender::SubrectStretchCB");
 
@@ -437,13 +439,13 @@ namespace FoveatedRenderImpl::Ops
 				logger::error("[FOVEATED] Failed to create SubrectStretch sampler");
 				Core::vrSubrectStretchCS = nullptr;
 				Core::vrSubrectStretchCB = nullptr;
-				return;
+				return false;
 			}
 			Util::SetResourceName(Core::vrSubrectStretchSampler.get(), "FoveatedRender::SubrectStretchSampler");
 		}
 
 		if (!Core::vrSubrectStretchCS || !Core::vrSubrectStretchCB || !Core::vrSubrectStretchSampler) {
-			return;
+			return false;
 		}
 
 		// Guard against a null destination UAV — CSSetUnorderedAccessViews +
@@ -452,7 +454,7 @@ namespace FoveatedRenderImpl::Ops
 		// fall back to standard DLSS so users still see output.
 		if (!kMainUAV) {
 			logger::error("[FOVEATED] StretchDRSToFullEye called with null kMainUAV");
-			return;
+			return false;
 		}
 
 		D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -461,9 +463,12 @@ namespace FoveatedRenderImpl::Ops
 		// shader against stale geometry/scale parameters, producing wrong
 		// pixels rather than no pixels. Early-return preserves the prior
 		// frame's output.
-		if (FAILED(context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-			logger::error("[FOVEATED] StretchDRSToFullEye Map(vrSubrectStretchCB) failed; skipping dispatch");
-			return;
+		const HRESULT mapResult = context->Map(Core::vrSubrectStretchCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+		if (FAILED(mapResult) || !mapped.pData) {
+			if (SUCCEEDED(mapResult) && !mapped.pData)
+				context->Unmap(Core::vrSubrectStretchCB.get(), 0);
+			logger::error("[FOVEATED] StretchDRSToFullEye Map(vrSubrectStretchCB) failed or returned null data; skipping dispatch");
+			return false;
 		}
 		{
 			auto& enhSettings = globals::features::upscaling.foveatedRender.settings;
@@ -510,6 +515,7 @@ namespace FoveatedRenderImpl::Ops
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetSamplers(0, 1, nullSampler);
 		context->CSSetShader(nullptr, nullptr, 0);
+		return true;
 	}
 
 	void EnsureVRRenderSBS(uint32_t renderW, uint32_t renderH, ID3D11Resource* colorSrc)
@@ -738,15 +744,24 @@ namespace FoveatedRenderImpl::Ops
 		return h;
 	}
 
-	void SnapshotSBS(ID3D11Resource* src, uint32_t renderW, uint32_t renderH)
+	bool SnapshotSBS(ID3D11Resource* src, uint32_t renderW, uint32_t renderH)
 	{
+		if (!src || !globals::d3d::context || renderW == 0 || renderH == 0) {
+			return false;
+		}
+
 		EnsureVRRenderSBS(renderW, renderH, src);
+		if (!Core::vrRenderSBS || !Core::vrRenderSBS->resource || !Core::vrRenderSBS->srv) {
+			return false;
+		}
+
 		auto context = globals::d3d::context;
 		D3D11_BOX drsBox = { 0, 0, 0, renderW, renderH, 1 };
 		context->CopySubresourceRegion(Core::vrRenderSBS->resource.get(), 0, 0, 0, 0, src, 0, &drsBox);
+		return true;
 	}
 
-	void StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
+	bool StretchDRSBothEyes(ID3D11UnorderedAccessView* dstUAV, uint32_t eyeWidthOut, uint32_t eyeHeightOut,
 		uint32_t eyeWidthIn, uint32_t eyeHeightIn, uint32_t renderW, uint32_t renderH,
 		ID3D11ShaderResourceView* srcOverride)
 	{
@@ -756,17 +771,19 @@ namespace FoveatedRenderImpl::Ops
 		                          (Core::vrRenderSBS ? Core::vrRenderSBS->srv.get() : nullptr);
 		if (!src) {
 			logger::error("[FOVEATED] StretchDRSBothEyes missing source SRV");
-			return;
+			return false;
 		}
 		for (uint32_t i = 0; i < 2; ++i) {
 			uint32_t dstX = (i == 1) ? eyeWidthOut : 0;
 			uint32_t srcX = (i == 1) ? eyeWidthIn : 0;
-			StretchDRSToFullEye(
-				src, dstUAV,
-				dstX, eyeWidthOut, eyeHeightOut,
-				srcX, renderW, renderH,
-				eyeWidthIn, eyeHeightIn);
+			if (!StretchDRSToFullEye(
+					src, dstUAV,
+					dstX, eyeWidthOut, eyeHeightOut,
+					srcX, renderW, renderH,
+					eyeWidthIn, eyeHeightIn))
+				return false;
 		}
+		return true;
 	}
 
 	void BlendSubrectToOutput(ID3D11Resource* dlssSrc, ID3D11Resource* dst, ID3D11UnorderedAccessView* dstUAV,

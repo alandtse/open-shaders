@@ -402,7 +402,7 @@ void TerrainShadows::LoadHeightmap()
 			return;
 		}
 
-		texHeightMap.release();
+		texHeightMap.reset();
 		texHeightMap = std::make_unique<Texture2D>(reinterpret_cast<ID3D11Texture2D*>(pResource), "TerrainShadows::HeightMap");
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
@@ -437,7 +437,7 @@ void TerrainShadows::Precompute()
 		}
 
 		shadowHeightValid = false;
-		texShadowHeight.release();
+		texShadowHeight.reset();
 
 		D3D11_TEXTURE2D_DESC texDesc = {
 			.Width = texHeightMap->desc.Width,

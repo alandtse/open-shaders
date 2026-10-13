@@ -917,6 +917,7 @@ namespace
 			const char* current = effect->uiTechniques[effect->selectedTechniqueIndex].displayName.c_str();
 			if (ImGui::BeginCombo("##technique", current)) {
 				for (uint32_t i = 0; i < effect->uiTechniques.size(); ++i) {
+					ImGui::PushID(static_cast<int>(i));
 					if (ImGui::Selectable(effect->uiTechniques[i].displayName.c_str(), effect->selectedTechniqueIndex == i)) {
 						effect->selectedTechniqueIndex = i;
 						ctx.changedEffects.insert(effect);
@@ -924,6 +925,7 @@ namespace
 					}
 					if (effect->selectedTechniqueIndex == i)
 						ImGui::SetItemDefaultFocus();
+					ImGui::PopID();
 				}
 				ImGui::EndCombo();
 			}

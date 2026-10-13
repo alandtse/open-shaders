@@ -420,6 +420,9 @@ Menu::~Menu()
 	// Clean up blur resources
 	BackgroundBlur::Cleanup();
 
+	if (!initialized)
+		return;
+
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();
@@ -549,7 +552,10 @@ void Menu::OverlayInputSettings(json& merged, const json& defaults, const json& 
 
 void Menu::LoadTheme(json& o_json)
 {
-	if (o_json["Theme"].is_object()) {
+	if (!o_json["Theme"].is_object())
+		return;
+	const ThemeSettings backupTheme = settings.Theme;
+	try {
 		bool hasFontRoles = o_json["Theme"].contains("FontRoles");
 		SanitizeFontRolesJson(o_json["Theme"]);
 		settings.Theme = o_json["Theme"];
@@ -571,6 +577,9 @@ void Menu::LoadTheme(json& o_json)
 
 		// Apply background blur enabled state from theme
 		BackgroundBlur::SetEnabled(settings.Theme.BackgroundBlurEnabled);
+	} catch (const std::exception& e) {
+		logger::warn("Error loading theme: {}", e.what());
+		settings.Theme = backupTheme;
 	}
 }
 void Menu::SaveTheme(json& o_json)
@@ -1013,6 +1022,11 @@ void Menu::DrawOverlay()
 	ImGuiContext* ctx = ImGui::GetCurrentContext();
 	bool canReload = ctx && !ctx->WithinFrameScope && ctx->WithinEndChildID == 0;
 
+	if (!IsEnabled && wantsFontPreviewAtlas) {
+		wantsFontPreviewAtlas = false;
+		pendingFontReload = true;
+	}
+
 	// Process deferred font reload BEFORE any ImGui operations
 	// This is the safest place to do font atlas modifications
 	if (pendingFontReload && canReload) {
@@ -1195,9 +1209,8 @@ void Menu::ProcessInputEventQueue()
 					ew->AdjustFlySpeed(event.keyCode == 8 ? 1.0f : -1.0f);
 				}
 			} else if (!flying) {
-				if (event.keyCode > 5)
-					event.keyCode = 5;
-				io.AddMouseButtonEvent(event.keyCode, event.IsPressed());
+				if (static_cast<int>(event.keyCode) < ImGuiMouseButton_COUNT)
+					io.AddMouseButtonEvent(event.keyCode, event.IsPressed());
 			}
 		}
 

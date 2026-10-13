@@ -553,7 +553,7 @@ float3 GetEffectDirectionalLighting()
 {
 	float intensity = (ENABLE_LL && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0;
 	float3 sourceColor = SharedData::DirLightColor.xyz / max(intensity, ShadowSampling::MinDirectionalLightMultiplier);
-	return (SharedData::linearLightingSettings.isDirLightLinear ? Color::EffectLight(sourceColor, true) : Color::AuthoredColor(sourceColor)) *
+	return Color::AdjustUtilityColor(SharedData::linearLightingSettings.isDirLightLinear ? Color::EffectLight(sourceColor, true) : Color::AuthoredColor(sourceColor), SharedData::csUtilitySettings.directionalLightColor) *
 	       intensity * SharedData::csUtilitySettings.directionalLightMult;
 }
 
@@ -561,9 +561,9 @@ float3 GetWeatherEffectLighting(bool isSkyObject)
 {
 	const float3 weatherLightingColor = isSkyObject ? SharedData::linearLightingSettings.skyStaticsColor : SharedData::linearLightingSettings.effectLightingColor;
 #	if defined(LIGHTING)
-	return ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz;
+	return Color::WeatherEffect(ENABLE_LL ? Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult : DLightColor.xyz, isSkyObject, true);
 #	else
-	return Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult;
+	return Color::WeatherEffect(Color::EffectLight(weatherLightingColor, true) * SharedData::linearLightingSettings.dirLightMult, isSkyObject, true);
 #	endif
 }
 
@@ -741,7 +741,7 @@ float3 GetLightingColor(
 	}
 	if (useAmbientEffectLighting) {
 		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness;
-		color = Color::EffectLight(Color::EffectLightToGamma(color) * brightness);
+		color = Color::EffectLight(Color::EffectLightToGamma(Color::WeatherEffect(color, isSkyObject)) * brightness);
 	}
 
 #		if defined(LIGHT_LIMIT_FIX)
@@ -755,9 +755,11 @@ float3 GetLightingColor(
 #		else
 		float pointScale = 1.0;
 #		endif
-		color.x += dot(Color::EffectPointLight(PLightColorR.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
-		color.y += dot(Color::EffectPointLight(PLightColorG.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
-		color.z += dot(Color::EffectPointLight(PLightColorB.xxx).x * lightFadeMul, 1.0.xxxx) * pointScale;
+		[unroll] for (uint lightIndex = 0; lightIndex < 4; lightIndex++)
+		{
+			float3 pointColor = float3(PLightColorR[lightIndex], PLightColorG[lightIndex], PLightColorB[lightIndex]);
+			color += Color::EffectPointLight(pointColor) * lightFadeMul[lightIndex] * pointScale;
+		}
 	}
 
 	return color;
@@ -795,6 +797,8 @@ float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float n
 float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise, bool isSkyObject)
 {
 	color = Color::EffectLight(color);
+	if (isSkyObject)
+		color = Color::WeatherEffect(color, true, true);
 
 	float3 dirColor;
 	float3 ambientColor;
@@ -825,10 +829,11 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 #		endif
 
 	if (useAmbientEffectLighting) {
-		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness * Color::EffectLightingMultiplier();
-		color = materialColor * Color::EffectLightToGamma(dirColor + ambientColor) * brightness;
+		float brightness = isSkyObject ? SharedData::csUtilitySettings.skyStaticBrightness : SharedData::csUtilitySettings.effectBrightness;
+		float3 lighting = Color::EffectLightToGamma(Color::WeatherEffect(dirColor + ambientColor, isSkyObject));
+		color = materialColor * (isSkyObject ? lighting : Color::EffectLighting(lighting)) * brightness;
 	} else if (!isSkyObject) {
-		color = materialColor * (dirColor + ambientColor) * Color::EffectLightingMultiplier();
+		color = materialColor * Color::EffectLighting(dirColor + ambientColor);
 	} else {
 		color = dirColor + ambientColor;
 	}
@@ -1010,7 +1015,7 @@ PS_OUTPUT main(PS_INPUT input)
 		                lightingInfluence * (propertyColor - shadowedWeatherReference);
 		lightingInfluence = 1.0;
 	}
-	propertyColor *= Color::EffectLightingMultiplier();
+	propertyColor = Color::EffectLighting(propertyColor);
 #	elif defined(MEMBRANE)
 	propertyColor *= 0;
 	lightingInfluence = 0;

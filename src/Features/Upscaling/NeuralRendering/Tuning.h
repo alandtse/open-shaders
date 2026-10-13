@@ -16,7 +16,9 @@ namespace NR
 		static constexpr float kMaxToneStops = 2.0f;
 		static constexpr float kDefaultStrength = 1.0f, kAutomaticSkinStructure = -1.0f;
 		static constexpr uint32_t kMaxStyle = 2;
+		static constexpr float kMinModelScale = 0.25f, kMaxModelScale = 1.0f;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
+		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
@@ -67,6 +69,8 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
+		/** @brief Loads a 310.8.x runtime outside the pinned digests, without developer mode; its output is unverified. */
+		bool allowUnverifiedRuntime = false;
 		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
 		 *        strength decides how strongly NR shows there. On exactly when some strength is below
@@ -77,7 +81,7 @@ namespace NR
 		bool materialStrength = false;
 		/** @brief NR strength per material, 1 applies it fully and 0 bypasses it there. Unlabelled pixels use strengthOther. */
 		float strengthSkin = 1.0f, strengthHair = 1.0f, strengthEyes = 1.0f;
-		float strengthFoliage = 1.0f, strengthLandscape = 1.0f, strengthOther = 1.0f;
+		float strengthFoliage = 1.0f, strengthLandscape = 1.0f, strengthCloth = 1.0f, strengthMetal = 1.0f, strengthOther = 1.0f;
 		/** @brief Box-filter radius, in pixels, that blends each material's strength into its neighbours. */
 		uint32_t strengthEdgeSoftness = 2;
 		/**
@@ -88,13 +92,44 @@ namespace NR
 		bool showMaterialMap = false;
 		/** @brief MaterialMap::Mode the map draws: the category's debug colour, or its by-material strength. */
 		uint32_t materialMapMode = static_cast<uint32_t>(MaterialMap::Mode::kCategory);
-		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all six by default. */
+		/** @brief Which categories the map draws, one bit per NeuralRenderingCategory id; all eight by default. */
 		uint32_t materialMapFilter = MaterialMap::kAllCategories;
+		/**
+		 * @brief Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.
+		 *        VR-only: it halves the model cost at the price of a synthesized gain for one eye,
+		 *        so it is off by default and the Performance profile turns it on.
+		 */
+		bool skipFrameReuse = false;
+		/** @brief What a gap evaluation tells the model: 0 doubles its motion and frame time, 1 resets its history. */
+		uint32_t skipFrameGapMode = 0;
+		/**
+		 * @brief Runs the model at this fraction of the eye size and upsamples its tone gain onto the
+		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
+		 */
+		float modelScale = kMaxModelScale;
+		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
+		bool modelGuidedUpsample = true;
+		/**
+		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
+		 *        the per-instance cost of the second eye but changes the model's result by position.
+		 *        Developer-only and VR-only; it takes precedence over the eye stagger and combines with the
+		 *        model scale.
+		 */
+		bool sbsEvaluate = false;
+		/**
+		 * @brief With a model scale or sbsEvaluate, also evaluates each eye alone at full size every frame
+		 *        so a verify capture can compare the two. Developer-only; roughly doubles the model cost.
+		 */
+		bool modelVerify = false;
+		/** @brief Feeds eye 0's model inputs to both eyes, so the two eyes' model outputs can be compared like for like. Developer-only; the right eye's picture is wrong while on. */
+		bool mirrorEyes = false;
+		/** @brief A reused pixel whose own previous gain is rejected takes the other eye's model gain of this frame. */
+		bool crossEyeGain = true;
 
 		/** @brief The strength field of each material, indexed by NeuralRenderingCategory id; the one place that mapping lives. */
 		static constexpr std::array<float Tuning::*, MaterialStrength::kCount> StrengthMembers()
 		{
-			return { &Tuning::strengthOther, &Tuning::strengthSkin, &Tuning::strengthHair, &Tuning::strengthEyes, &Tuning::strengthFoliage, &Tuning::strengthLandscape };
+			return { &Tuning::strengthOther, &Tuning::strengthSkin, &Tuning::strengthHair, &Tuning::strengthEyes, &Tuning::strengthFoliage, &Tuning::strengthLandscape, &Tuning::strengthCloth, &Tuning::strengthMetal };
 		}
 
 		/** @brief Bounds and orders the material strengths for the shader's cbuffer and NeuralRenderingCategory ids. */
@@ -130,7 +165,7 @@ namespace NR
 			materialStrength = std::any_of(values.begin(), values.end(), [](float value) { return value < MaterialStrength::kMaxStrength; });
 		}
 
-		/** @brief Writes the six strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
+		/** @brief Writes the eight strengths, in NeuralRenderingCategory id order, leaving the by-material switch alone. */
 		void ApplyStrengths(const std::array<float, MaterialStrength::kCount>& strengths)
 		{
 			const auto members = StrengthMembers();
@@ -158,9 +193,13 @@ namespace NR
 			strengthEyes = materialStrengths.strength[MaterialStrength::kEyes];
 			strengthFoliage = materialStrengths.strength[MaterialStrength::kFoliage];
 			strengthLandscape = materialStrengths.strength[MaterialStrength::kLandscape];
+			strengthCloth = materialStrengths.strength[MaterialStrength::kCloth];
+			strengthMetal = materialStrengths.strength[MaterialStrength::kMetal];
 			strengthEdgeSoftness = materialStrengths.edgeSoftness;
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
+			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
+			modelScale = std::isfinite(modelScale) ? std::clamp(modelScale, kMinModelScale, kMaxModelScale) : kMaxModelScale;
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

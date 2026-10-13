@@ -294,6 +294,26 @@ namespace Color
 		return ENABLE_ACEScg ? sRGBToAP1(linearColor) : linearColor;
 	}
 
+	/** @brief Adjusts working-space color independently of brightness multipliers. */
+	float3 AdjustUtilityColor(float3 color, float2 adjustment)
+	{
+		[branch] if (adjustment.x != 1.0 || adjustment.y != 0.0)
+		{
+			const bool useACEScg = ENABLE_LL && ENABLE_ACEScg;
+			float3 inputColor = useACEScg ? AP1TosRGB(color) : color;
+			if (adjustment.y != 0.0) {
+				float baseGamma = ENABLE_LL ? AuthoredColorGamma : 1.0;
+				inputColor = SignedPow(inputColor, clamp(baseGamma + adjustment.y, MinAdjustedGamma, MaxAdjustedGamma) / baseGamma);
+			}
+			if (adjustment.x != 1.0) {
+				float luminance = dot(inputColor, kRec709LuminanceWeights);
+				inputColor = max(lerp(luminance.xxx, inputColor, adjustment.x), 0.0);
+			}
+			color = useACEScg ? sRGBToAP1(inputColor) : inputColor;
+		}
+		return color;
+	}
+
 	float3 ApplyLinearSrgbTint(float3 color, float3 tint)
 	{
 		// Apply tint in linear sRGB so white stays neutral in ACEScg.
@@ -424,10 +444,11 @@ namespace Color
 #	endif
 	}
 
-	float3 Light(float3 color, bool isLinear = false)
+	float3 Light(float3 color, bool isLinear = false, float2 adjustment = float2(1.0, 0.0))
 	{
 		color = (ENABLE_LL && !isLinear) ? AuthoredColor(color) : (ENABLE_LL && isLinear) ? GamutTransform(color) :
 		                                                                                    color;
+		color = AdjustUtilityColor(color, adjustment);
 #	if defined(TRUE_PBR)
 		return color * PBRLightingCompensation;  // Compensate for traditional Lambertian diffuse
 #	else
@@ -458,9 +479,28 @@ namespace Color
 		return ENABLE_LL ? SignedPow(ENABLE_ACEScg ? AP1TosRGB(color) : color, 1.0 / GameGamma) : LinearToSkyrimGamma(color);
 	}
 
+	/** @brief Adjusts effect lighting while retaining the scene blending domain. */
+	float3 AdjustUtilityEffectColor(float3 color, float2 adjustment)
+	{
+		[branch] if (adjustment.x != 1.0 || adjustment.y != 0.0)
+			color = EffectLightToGamma(AdjustUtilityColor(EffectLight(color), adjustment));
+		return color;
+	}
+
+	/** @brief Adjusts the weather or ambient lighting used by effect meshes. */
+	float3 WeatherEffect(float3 color, bool isSkyObject, bool useSceneAdjustment = false)
+	{
+		float2 adjustment = isSkyObject ? SharedData::csUtilitySettings.skyStaticColor : SharedData::csUtilitySettings.effectColor;
+		if (useSceneAdjustment) {
+			adjustment.x *= SharedData::csUtilitySettings.sceneColor.x;
+			adjustment.y += SharedData::csUtilitySettings.sceneColor.y;
+		}
+		return AdjustUtilityColor(color, adjustment);
+	}
+
 	float3 DirectionalLight(float3 color, bool isLinear = false)
 	{
-		return Light(color, isLinear) *
+		return Light(color, isLinear, SharedData::csUtilitySettings.directionalLightColor) *
 		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f) *
 		       SharedData::csUtilitySettings.directionalLightMult;
 	}
@@ -480,9 +520,24 @@ namespace Color
 		return 1.0f;
 	}
 
+	/** @brief Selects global and type-specific adjustments without decoding a light twice. */
+	float2 GetPointLightColorAdjustment(bool isLinear, uint lightFlags)
+	{
+		const bool useLinear = ENABLE_LL && isLinear;
+		float2 adjustment = useLinear ? SharedData::csUtilitySettings.linearPointLightColor : SharedData::csUtilitySettings.pointLightColor;
+		float2 typeAdjustment = float2(1.0, 0.0);
+		if ((lightFlags & PointLightFlagSpot) != 0)
+			typeAdjustment = useLinear ? SharedData::csUtilitySettings.linearSpotlightColor : SharedData::csUtilitySettings.spotlightColor;
+		else if ((lightFlags & PointLightFlagOmnidirectionalBulb) != 0)
+			typeAdjustment = useLinear ? SharedData::csUtilitySettings.linearOmnidirectionalBulbColor : SharedData::csUtilitySettings.omnidirectionalBulbColor;
+		adjustment.x *= typeAdjustment.x;
+		adjustment.y += typeAdjustment.y;
+		return adjustment;
+	}
+
 	float3 PointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
 	{
-		return Light(color, isLinear) *
+		return Light(color, isLinear, GetPointLightColorAdjustment(isLinear, lightFlags)) *
 		       ((ENABLE_LL && !isLinear) ? Math::PI : 1.0f) *
 		       GetPointLightMultiplier(isLinear) *
 		       GetPointLightTypeMultiplier(isLinear, lightFlags);
@@ -490,7 +545,7 @@ namespace Color
 
 	float3 EffectPointLight(float3 color, bool isLinear = false, uint lightFlags = 0)
 	{
-		return (isLinear ? EffectLight(color, true) : AuthoredColor(color)) *
+		return AdjustUtilityColor(isLinear ? EffectLight(color, true) : AuthoredColor(color), GetPointLightColorAdjustment(isLinear, lightFlags)) *
 		       GetPointLightMultiplier(isLinear) *
 		       GetPointLightTypeMultiplier(isLinear, lightFlags);
 	}
@@ -508,7 +563,10 @@ namespace Color
 #	if defined(LIGHTING)
 	float3 EmitColor(float3 color)
 	{
-		color = ENABLE_LL ? AuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
+		if (ENABLE_LL)
+			color = AdjustUtilityColor(AuthoredColor(color / max(emissiveMult, 1e-5)), SharedData::csUtilitySettings.emitColor) * emissiveMult;
+		else
+			color = AdjustUtilityColor(color, SharedData::csUtilitySettings.emitColor);
 		return color * SharedData::csUtilitySettings.emitColorMult;
 	}
 #	endif
@@ -520,18 +578,19 @@ namespace Color
 #	else
 		color = TextureToWorking(color);
 #	endif
-		return color * SharedData::csUtilitySettings.glowmapMult;
+		return AdjustUtilityColor(color, SharedData::csUtilitySettings.glowmapColor) * SharedData::csUtilitySettings.glowmapMult;
 	}
 
-	float EffectLightingMultiplier()
+	float3 EffectLighting(float3 color)
 	{
 		float multiplier = SharedData::csUtilitySettings.effectLightingMult;
-		return ENABLE_LL ? pow(abs(multiplier), 1.0 / GameGamma) : multiplier;
+		return AdjustUtilityEffectColor(color, SharedData::csUtilitySettings.effectLightingColor) *
+		       (ENABLE_LL ? pow(abs(multiplier), 1.0 / GameGamma) : multiplier);
 	}
 
 	float3 Ambient(float3 color)
 	{
-		return AuthoredColor(color) *
+		return AdjustUtilityColor(AuthoredColor(color), SharedData::csUtilitySettings.ambientLightColor) *
 		       SharedData::csUtilitySettings.ambientLightMult *
 		       (ENABLE_LL ? SharedData::linearLightingSettings.ambientMult : 1.0);
 	}
@@ -539,11 +598,14 @@ namespace Color
 	float3 Fog(float3 color)
 	{
 		float gammaOffset = SharedData::csUtilitySettings.fogGammaOffset;
+		float saturation = SharedData::csUtilitySettings.fogSaturation;
 #	if defined(EXP_HEIGHT_FOG)
-		if (SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.disableVanillaFog)
+		if (SharedData::exponentialHeightFogSettings.enabled && SharedData::exponentialHeightFogSettings.disableVanillaFog) {
 			gammaOffset = 0.0;
+			saturation = 1.0;
+		}
 #	endif
-		return AdjustedAuthoredColor(color, gammaOffset);
+		return AdjustUtilityColor(AdjustedAuthoredColor(color, gammaOffset), float2(saturation, 0.0));
 	}
 
 	float FogAlpha(float alpha)
@@ -582,7 +644,7 @@ namespace Color
 
 	float3 Water(float3 color)
 	{
-		return AdjustedAuthoredColor(color, SharedData::csUtilitySettings.waterGammaOffset);
+		return AdjustUtilityColor(AdjustedAuthoredColor(color, SharedData::csUtilitySettings.waterGammaOffset), float2(SharedData::csUtilitySettings.waterSaturation, 0.0));
 	}
 
 	float VolumetricLighting(float intensity)

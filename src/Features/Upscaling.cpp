@@ -13,6 +13,7 @@
 #include "Upscaling/FoveatedRender/Core.h"
 #include "Upscaling/FoveatedRender/Postprocess.h"
 #include "Upscaling/FoveatedRender/Preprocess.h"
+#include "Upscaling/NeuralRendering/EyeMode.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/DevBenchUx.h"
@@ -36,8 +37,9 @@ namespace NR
 		brightening, darkening, maxBrighteningStops, maxDarkeningStops,
 		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
-		parallelEyes, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape,
-		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter);
+		parallelEyes, allowUnverifiedRuntime, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal,
+		strengthOther, strengthEdgeSoftness, showMaterialMap, materialMapMode, materialMapFilter,
+		skipFrameReuse, skipFrameGapMode, modelScale, modelGuidedUpsample, sbsEvaluate, modelVerify, mirrorEyes, crossEyeGain);
 }
 
 namespace NR::Context
@@ -422,6 +424,7 @@ namespace
 		FoveatedRender::StretchMode stretchMode;
 		FoveatedRender::PeripheryAAMode peripheryAAMode;
 		FoveatedRender::SubrectBlendMode subrectBlendMode;
+		NR::EyeMode neuralEyeMode;
 	};
 
 	// Single source of truth for Apply/MatchesPerformanceProfile below.
@@ -431,15 +434,15 @@ namespace
 		case Feature::PerfProfile::Performance:
 			return { (uint)Upscaling::QualityMode::kPerformance, true, FoveatedRender::kPresetCenter50,
 				FoveatedRender::DlssMode::kFaster, FoveatedRender::StretchMode::kBilinear,
-				FoveatedRender::PeripheryAAMode::kNone, FoveatedRender::SubrectBlendMode::kDither };
+				FoveatedRender::PeripheryAAMode::kNone, FoveatedRender::SubrectBlendMode::kDither, NR::EyeMode::kAlternate };
 		case Feature::PerfProfile::Balanced:
 			return { (uint)Upscaling::QualityMode::kBalanced, true, FoveatedRender::kPresetCenter75,
 				FoveatedRender::DlssMode::kDefault, FoveatedRender::StretchMode::kGaussianBlur,
-				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather };
+				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather, NR::EyeMode::kParallel };
 		default:
 			return { (uint)Upscaling::QualityMode::kQuality, false, FoveatedRender::kPresetFullEye,
 				FoveatedRender::DlssMode::kDefault, FoveatedRender::StretchMode::kGaussianBlur,
-				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather };
+				FoveatedRender::PeripheryAAMode::kTemporalSmooth, FoveatedRender::SubrectBlendMode::kFeather, NR::EyeMode::kParallel };
 		}
 	}
 }
@@ -495,6 +498,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 			if (!foveatedRender.subrectController.HasCustomCrop())
 				foveatedRender.subrectController.ApplyPresetByName(preset.cropPresetName);
 		}
+		NR::SetEyeMode(settings.neuralRenderingTuning, preset.neuralEyeMode);
 	}
 }
 
@@ -516,6 +520,9 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	}
 	if (!globals::game::isVR) {
 		return true;
+	}
+	if (NR::GetEyeMode(settings.neuralRenderingTuning) != preset.neuralEyeMode) {
+		return false;
 	}
 	if ((foveatedRender.settings.enabled != 0) != preset.foveation) {
 		return false;
@@ -548,8 +555,9 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	if (!globals::game::isVR)
 		return "";
 	const auto preset = GetUpscalePreset(profile);
+	const std::string eyeNote = preset.neuralEyeMode == NR::EyeMode::kAlternate ? std::string(" / ") + T(TKEY("profile_preview_alternate_eyes"), "Alternate-eye NR") : std::string{};
 	if (!preset.foveation)
-		return T(TKEY("profile_preview_foveation_off"), "Foveation off (Full Eye)");
+		return std::string(T(TKEY("profile_preview_foveation_off"), "Foveation off (Full Eye)")) + eyeNote;
 	// ApplyPerformanceProfile leaves a custom crop alone rather than switching to the
 	// preset region -- the preview must match, or it promises a crop change that won't happen.
 	const std::string cropLabel = foveatedRender.subrectController.HasCustomCrop() ?
@@ -560,7 +568,8 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	const char* peripheryAAName = FoveatedRender::PeripheryAAModeName(preset.peripheryAAMode);
 	const char* blendModeName = FoveatedRender::SubrectBlendModeName(preset.subrectBlendMode);
 	return std::vformat(T(TKEY("profile_preview_format"), "Foveation: {} / {} / {} / {} / {} blend"),
-		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
+			   std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName)) +
+	       eyeNote;
 }
 
 namespace
@@ -591,7 +600,8 @@ namespace
 			{ "runtimeAvailability", magic_enum::enum_name(availability.state) },
 			{ "runtimeVersion", availability.version },
 			{ "runtimeDetail", availability.reason },
-			{ "runtimeLoadable", availability.AllowsLoad(developerMode) },
+			{ "runtimeLoadable", availability.AllowsLoad(developerMode, upscaling->settings.neuralRenderingTuning.allowUnverifiedRuntime) },
+			{ "allowUnverifiedRuntime", upscaling->settings.neuralRenderingTuning.allowUnverifiedRuntime },
 			{ "parallelEyes", upscaling->settings.neuralRenderingTuning.parallelEyes },
 			{ "brightening", upscaling->settings.neuralRenderingTuning.brightening },
 			{ "darkening", upscaling->settings.neuralRenderingTuning.darkening },
@@ -600,10 +610,17 @@ namespace
 			{ "materialStrength", upscaling->settings.neuralRenderingTuning.materialStrength },
 			{ "materialStrengthAvailable", status.materialStrengthAvailable },
 			{ "materialStrengthActive", status.materialStrengthActive },
-			{ "materialStrengthValues", json::array({ status.materialStrength[0], status.materialStrength[1], status.materialStrength[2],
-											status.materialStrength[3], status.materialStrength[4], status.materialStrength[5] }) },
+			{ "materialStrengthValues", status.materialStrength },
 			{ "materialEdgeSoftness", status.materialEdgeSoftness },
 			{ "showMaterialMap", upscaling->settings.neuralRenderingTuning.showMaterialMap },
+			{ "skipFrameReuse", upscaling->settings.neuralRenderingTuning.skipFrameReuse },
+			{ "skipFrameGapMode", upscaling->settings.neuralRenderingTuning.skipFrameGapMode },
+			{ "modelScale", upscaling->settings.neuralRenderingTuning.modelScale },
+			{ "crossEyeGain", upscaling->settings.neuralRenderingTuning.crossEyeGain },
+			{ "skipFrameReuseActive", status.skipFrameReuseActive },
+			{ "eyeReuse", json::array({ status.eyeReuse[0], status.eyeReuse[1] }) },
+			{ "modelFrames", status.modelFrames },
+			{ "reuseFrames", status.reuseFrames },
 		};
 	}
 
@@ -620,13 +637,13 @@ namespace
 	}
 
 	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
-	void CaptureNeuralRendering(Feature* self, const json&)
+	void CaptureNeuralRendering(Feature* self, const json& args)
 	{
 		if (!globals::state || !globals::state->IsDeveloperMode()) {
 			logger::warn("[NeuralRendering] captureNeuralRendering requires developer mode");
 			return;
 		}
-		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture();
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture(args.value("verifyReuse", false));
 	}
 }
 
@@ -641,7 +658,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape; the low six bits only, all on by default). brightening and darkening (settings.neuralRenderingTuning.brightening and darkening, each 0-2, default 1) independently scale positive and negative final tone edits; maxBrighteningStops and maxDarkeningStops (each 0-2 stops, default 2) set their directional limits inside the global 2-stop cap, and zero disables only that direction. parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Params: none.",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth, 7 Metal; the low eight bits only, all on by default). allowUnverifiedRuntime (default false, settings.neuralRenderingTuning.allowUnverifiedRuntime) loads a 310.8.x nvngx_dlssnr.dll outside the pinned builds (state UnvalidatedBuild) without developer mode; its output is unverified. parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (VR only, off by default, on in the Performance profile), reported here as skipFrameReuse, with skipFrameReuseActive true only while it actually runs (false on flat or while frame generation is active); settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model by doubling its motion, 1 reset the eye's history) is reported as skipFrameGapMode. settings.neuralRenderingTuning.crossEyeGain (default true; with the stagger) lets a reused pixel whose own earlier gain was rejected take the other eye's model gain of the same frame, and is reported as crossEyeGain. eyeReuse is per eye whether this frame reused its stored gain instead of running the model (left then right; both false on flat or with the stagger off), and modelFrames/reuseFrames count eye-evaluations and eye-reuses since startup, so one frame of a running stagger adds one to each. The model scale settings.neuralRenderingTuning.modelScale (0.25 to 1, developer-only, default 1) runs the model below the eye size and upsamples its tone gain onto the eye; modelGuidedUpsample weights that upsample by brightness similarity, and modelScale is reported here. settings.neuralRenderingTuning.sbsEvaluate (developer mode and VR only, off by default) evaluates both eyes as one side-by-side image on a single instance, which takes precedence over the stagger and combines with the model scale. With a model scale or sbsEvaluate on, modelVerify also evaluates each eye alone at full size every frame so a verify capture can compare the two, and mirrorEyes feeds eye 0's inputs to both eyes; both are developer-only measurement aids.  Tone direction settings are settings.neuralRenderingTuning.brightening and darkening (0-2, default 1) and maxBrighteningStops and maxDarkeningStops (0-2 stops, default 2); zero disables that direction, within the global two-stop cap. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -649,7 +666,7 @@ void Upscaling::RegisterUxActions()
 		RetryNeuralRendering);
 
 	FEATURE_COMMAND("captureNeuralRendering",
-		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
+		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: verifyReuse (boolean, optional): with eye-staggered gain reuse active, also run the model on the eye that reuses its gain this frame and write NR_verify_input, NR_verify_model and NR_verify_reuse for that eye (VR only; the next frame re-evaluates normally).",
 		CaptureNeuralRendering);
 
 	FEATURE_COMMAND("calibrateNeuralCrop",
@@ -810,7 +827,7 @@ void Upscaling::DrawUpscalingSettings()
 			const float displayScale = 1.0f / GetQualityModeRatio(settings.qualityMode);
 			std::string labelWithScale = std::format("{} ( {:.2f}x )", baseLabel, displayScale);
 
-			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
+			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str(), ImGuiSliderFlags_AlwaysClamp);
 
 			// Pending-diff vs the boot snapshot the runtime upscaler actually
 			// uses; while an explicit scale is latched the preset is inert.
@@ -1219,8 +1236,8 @@ void Upscaling::LoadSettings(json& o_json)
 		settings.vrRenderScale = clamped;
 	}
 	if (settings.qualityMode > 4) {
-		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
-		settings.qualityMode = 4;
+		logger::warn("[Upscaling] Loaded qualityMode {} out of range, resetting to 1", settings.qualityMode);
+		settings.qualityMode = 1;
 	}
 	if (settings.presetDLSS > 4) {
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
@@ -1694,7 +1711,7 @@ void Upscaling::CheckResources(UpscaleMethod a_upscalemethod)
 		// Update tracking for next call
 		previousUpscaleMode = a_upscalemethod;
 		previousFrameGenMode = (settings.frameGenerationMode && d3d12SwapChainActive);
-		previousUpscalingWasActive = IsUpscalingActive();
+		previousUpscalingWasActive = a_upscalemethod == UpscaleMethod::kDLSS || a_upscalemethod == UpscaleMethod::kFSR;
 	}
 }
 
@@ -1981,43 +1998,21 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 
 	auto context = globals::d3d::context;
 
-	if (!vrClearHMDMaskCS) {
-		vrClearHMDMaskCS.attach((ID3D11ComputeShader*)Util::CompileShader(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0"));
+	auto* shader = vrClearHMDMaskCS.Get(L"Data/Shaders/Upscaling/ClearHMDMaskCS.hlsl", {}, "cs_5_0", "main", "Upscaling::ClearHMDMaskCS");
+	if (!shader)
+		return;
 
+	if (!vrClearHMDMaskCB) {
 		D3D11_BUFFER_DESC cbDesc = {};
 		cbDesc.ByteWidth = 16;  // 4 uints
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		DX::ThrowIfFailed(globals::d3d::device->CreateBuffer(&cbDesc, nullptr, vrClearHMDMaskCB.put()));
+		Util::SetResourceName(vrClearHMDMaskCB.get(), "Upscaling::ClearHMDMaskCB");
 	}
 
-	if (vrClearHMDMaskCS) {
-		auto dispatchX = (eyeWidth + 7) / 8;
-		auto dispatchY = (eyeHeight + 7) / 8;
-
-		context->CSSetShader(vrClearHMDMaskCS.get(), nullptr, 0);
-
-		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
-		context->CSSetShaderResources(0, 1, srvs);
-
-		ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
-		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-
-		D3D11_MAPPED_SUBRESOURCE mapped{};
-		context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-
-		uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
-
-		memcpy(mapped.pData, offsets, sizeof(offsets));
-		context->Unmap(vrClearHMDMaskCB.get(), 0);
-
-		ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
-		context->CSSetConstantBuffers(0, 1, cbs);
-
-		context->Dispatch(dispatchX, dispatchY, 1);
-
-		// Unbind
+	const auto unbind = [context] {
 		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
 		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
 		ID3D11Buffer* nullCB[1] = { nullptr };
@@ -2025,7 +2020,39 @@ void Upscaling::ClearHMDMask(ID3D11UnorderedAccessView* colorUAV, ID3D11ShaderRe
 		context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
 		context->CSSetConstantBuffers(0, 1, nullCB);
 		context->CSSetShader(nullptr, nullptr, 0);
+	};
+
+	auto dispatchX = (eyeWidth + 7) / 8;
+	auto dispatchY = (eyeHeight + 7) / 8;
+
+	context->CSSetShader(shader, nullptr, 0);
+
+	ID3D11ShaderResourceView* srvs[1] = { depthSRV };
+	context->CSSetShaderResources(0, 1, srvs);
+
+	ID3D11UnorderedAccessView* uavs[1] = { colorUAV };
+	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	HRESULT mapResult = context->Map(vrClearHMDMaskCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+	if (FAILED(mapResult) || !mapped.pData) {
+		if (SUCCEEDED(mapResult))
+			context->Unmap(vrClearHMDMaskCB.get(), 0);
+		unbind();
+		return;
 	}
+
+	uint32_t offsets[4] = { depthOffsetX, colorOffsetX, 0, 0 };
+
+	memcpy(mapped.pData, offsets, sizeof(offsets));
+	context->Unmap(vrClearHMDMaskCB.get(), 0);
+
+	ID3D11Buffer* cbs[1] = { vrClearHMDMaskCB.get() };
+	context->CSSetConstantBuffers(0, 1, cbs);
+
+	context->Dispatch(dispatchX, dispatchY, 1);
+
+	unbind();
 }
 
 int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
@@ -2283,6 +2310,7 @@ void Upscaling::ClearShaderCache()
 {
 	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
+	vrClearHMDMaskCS.Reset();
 	for (auto& methodSlot : encodeTexturesCS) {
 		for (auto& outputSlot : methodSlot) {
 			outputSlot.Reset();
@@ -3278,7 +3306,8 @@ void Upscaling::ApplySharpening()
 
 		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
 		currentSharpness = exp2(-currentSharpness);
-		rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness);
+		if (!rcas.ApplySharpen(perfMode.GetRefraTempSRV(), perfMode.GetTestTextureUAV(), currentSharpness))
+			globals::d3d::context->CopyResource(perfMode.GetTestTexture(), perfMode.GetRefraTempTex());
 		return;
 	}
 
@@ -3305,7 +3334,8 @@ void Upscaling::ApplySharpening()
 		currentSharpness = exp2(-currentSharpness);
 
 		// DLSS has already written to sharpenerTexture; sharpen directly into kMAIN.UAV.
-		rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness);
+		if (!rcas.ApplySharpen(sharpenerTexture->srv.get(), Util::AsReal(main.UAV), currentSharpness))
+			context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());
 	} else {
 		// Sharpening is disabled: resolve the DLSS output without altering it.
 		context->CopyResource(Util::AsReal(main.texture), sharpenerTexture->resource.get());

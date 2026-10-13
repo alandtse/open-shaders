@@ -447,7 +447,7 @@ void FidelityFX::DestroyFSRResources()
 	ResetFSRIdleFence();
 
 	uint32_t numContexts = globals::game::isVR ? 2 : 1;
-	for (uint32_t i = 0; i < numContexts; ++i) {
+	for (uint32_t i = 0; fsrScratchBuffer && i < numContexts; ++i) {
 		if (ffxFsr3ContextDestroy(&fsrContext[i]) != FFX_OK)
 			logger::critical("[FidelityFX] Failed to destroy FSR3 context for eye {}!", i);
 	}

@@ -30,11 +30,11 @@ float Profiler::RollingHistory::GetPercentile(float p) const
 	if (count == 0)
 		return lastMs;
 
-	thread_local std::vector<float> sorted;
-	sorted.resize(count);
-	for (uint32_t i = 0; i < count; i++)
-		sorted[i] = history[i];
-	std::sort(sorted.begin(), sorted.end());
+	if (sortedDirty) {
+		std::copy_n(history, count, sorted.begin());
+		std::sort(sorted.begin(), sorted.begin() + count);
+		sortedDirty = false;
+	}
 
 	float idx = (p / 100.0f) * static_cast<float>(count - 1);
 	uint32_t lo = static_cast<uint32_t>(idx);
@@ -556,12 +556,6 @@ void Profiler::RebuildResults()
 		result.gpuTimeMs = known.gpu.lastMs;
 		result.topLevelMs = known.activeGpu ? known.topLevelMs : 0.0f;
 		result.cpuTimeMs = known.cpu.lastMs;
-		result.avgMs = known.gpu.GetAverage();
-		result.p95Ms = known.gpu.GetPercentile(95.0f);
-		result.p99Ms = known.gpu.GetPercentile(99.0f);
-		result.cpuAvgMs = known.cpu.GetAverage();
-		result.cpuP95Ms = known.cpu.GetPercentile(95.0f);
-		result.cpuP99Ms = known.cpu.GetPercentile(99.0f);
 		result.valid = true;
 		result.historyBuffer = known.gpu.history;
 		result.historyHead = known.gpu.head;
@@ -571,6 +565,29 @@ void Profiler::RebuildResults()
 		result.cpuHistoryCount = known.cpu.count;
 		results.push_back(std::move(result));
 	}
+}
+
+std::vector<Profiler::TimerResult> Profiler::GetStatistics(std::string_view timerPrefix) const
+{
+	std::vector<TimerResult> snapshot;
+	snapshot.reserve(results.size());
+	for (const auto& live : results) {
+		if (!live.name.starts_with(timerPrefix))
+			continue;
+		auto it = knownTimerIndex.find(live.name);
+		if (it == knownTimerIndex.end())
+			continue;
+		const auto& known = knownTimers[it->second];
+		auto result = live;
+		result.avgMs = known.gpu.GetAverage();
+		result.p95Ms = known.gpu.GetPercentile(95.0f);
+		result.p99Ms = known.gpu.GetPercentile(99.0f);
+		result.cpuAvgMs = known.cpu.GetAverage();
+		result.cpuP95Ms = known.cpu.GetPercentile(95.0f);
+		result.cpuP99Ms = known.cpu.GetPercentile(99.0f);
+		snapshot.push_back(std::move(result));
+	}
+	return snapshot;
 }
 
 void Profiler::RetireStaleTimers()

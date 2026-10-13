@@ -51,7 +51,7 @@ namespace LandscapeLayers
 				}                                                                                                                                                  \
 				else                                                                                                                                               \
 				{                                                                                                                                                  \
-					landRMAOS = float4(1 - glossiness.x, 0, 1, 0);                                                                                                 \
+					landRMAOS = float4(1 - landNormalAlpha, 0, 1, 0);                                                                                              \
 				}                                                                                                                                                  \
 				blendedRMAOS += landRMAOS * weight;                                                                                                                \
 				blendedRGB += landColorRGB * weight;                                                                                                               \

@@ -543,6 +543,11 @@ namespace Util
 		return IsNewFrame(globals::state->frameCount);
 	}
 
+	bool GraphSampleGate::ShouldSample()
+	{
+		return ShouldSample(globals::state->frameCount);
+	}
+
 	RE::BGSTextureSet* GetSeasonalSwap(RE::BGSTextureSet* textureSet)
 	{
 		if (textureSet == nullptr) {

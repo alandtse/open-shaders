@@ -3,6 +3,7 @@
 #include "EngineFixes/AlphaGeometryGroupCeilingFix.h"
 #include "EngineFixes/CullPoolExhaustionFix.h"
 #include "EngineFixes/EffectShaderNoDecalsFix.h"
+#include "EngineFixes/LandscapeSeamsFix.h"
 #include "EngineFixes/ShadowParabolicNullAccumulatorFix.h"
 #include "EngineFixes/ShadowmapCascadeCullingFix.h"
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
@@ -22,6 +23,7 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 		&alphaGeometryGroupCeilingFix,
 		&cullPoolExhaustionFix,
 		&effectShaderNoDecalsFix,
+		&LandscapeSeamsFix::GetInstance(),
 		&shadowmapCascadeCullingFix,
 		&shadowmapRasterizerFix,
 		&shadowParabolicNullAccumulatorFix,

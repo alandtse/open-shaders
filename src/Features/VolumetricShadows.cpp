@@ -166,6 +166,13 @@ void VolumetricShadows::CopyShadowLightData()
 				auto* blurHorizontal = blurShadowHorizontalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_HORIZONTAL", nullptr } }, "cs_5_0");
 				auto* blurVertical = blurShadowVerticalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_VERTICAL", nullptr } }, "cs_5_0");
 
+				if (shadowTexture && !(downsampleMip0 && downsampleMip1 && blurHorizontal && blurVertical)) {
+					const float lit[4] = { 1.0f, 1.0f, 0.0f, 0.0f };
+					context->ClearUnorderedAccessViewFloat(shadowCopyMip0UAV, lit);
+					context->ClearUnorderedAccessViewFloat(shadowCopyMip1UAV, lit);
+					shadowCopyUpdated = true;
+				}
+
 				if (shadowTexture) {
 					if (downsampleMip0 && downsampleMip1 && blurHorizontal && blurVertical) {
 						D3D11_TEXTURE2D_DESC srcDesc;

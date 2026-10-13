@@ -145,6 +145,7 @@ namespace
 
 TEST_CASE("Directional tone controls default neutral, sanitize, and copy with context tuning", "[nr][tone]")
 {
+	STATIC_REQUIRE(NR::Tuning::kMaxToneStops == 2.0f);
 	NR::Tuning tuning;
 	CHECK(tuning.brightening == 1.0f);
 	CHECK(tuning.darkening == 1.0f);
@@ -225,11 +226,12 @@ TEST_CASE("Production tone shader include compiles through the runtime handler a
 {
 	WorkingDirectory working;
 	const std::filesystem::path contractSource = NR_TONE_DIRECTION_CONTRACT_SOURCE;
+	const std::filesystem::path cbufferSource = NR_TONE_DIRECTION_CBUFFER_SOURCE;
 	const std::filesystem::path shaderSource = NR_TONE_DIRECTION_SHADER_SOURCE;
 	const auto contractPath = working.root / "Data/Shaders/Upscaling/NeuralRendering/ColorContract.hlsli";
 	std::filesystem::copy_file(contractSource, contractPath);
 
-	const auto cbuffer = ExtractCbuffer(ReadFile(shaderSource), "ColorTransfer");
+	const auto cbuffer = ExtractCbuffer(ReadFile(cbufferSource), "ColorTransfer");
 	// Verify the production helper and the extracted production parameter block
 	// compile together with the same include handler used by runtime shaders.
 	const auto source = std::string("#define ENABLE_LL 1\nnamespace Color { float LinearToSkyrimGamma(float value) { return value; } }\n") +
@@ -242,7 +244,7 @@ TEST_CASE("Production tone shader include compiles through the runtime handler a
 	ID3D11ShaderReflection* reflection = nullptr;
 	ID3D11ShaderReflectionConstantBuffer* buffer = nullptr;
 	const auto description = ReflectConstantBuffer(compiled, reflection, buffer);
-	CHECK(description.Size == 272u);
+	CHECK(description.Size == 288u);
 	D3D11_SHADER_VARIABLE_DESC variable{};
 	auto* reflected = buffer->GetVariableByName("BrighteningWeight");
 	REQUIRE(reflected != nullptr);
@@ -255,14 +257,14 @@ TEST_CASE("Production tone shader include compiles through the runtime handler a
 	reflected = buffer->GetVariableByName("MaxBrighteningStops");
 	REQUIRE(reflected != nullptr);
 	REQUIRE(SUCCEEDED(reflected->GetDesc(&variable)));
-	CHECK(variable.StartOffset == 264u);
+	CHECK(variable.StartOffset == 272u);
 	reflected = buffer->GetVariableByName("MaxDarkeningStops");
 	REQUIRE(reflected != nullptr);
 	REQUIRE(SUCCEEDED(reflected->GetDesc(&variable)));
-	CHECK(variable.StartOffset == 268u);
+	CHECK(variable.StartOffset == 276u);
 	reflection->Release();
 
-	// Compile the three actual production ColorTransfer entrypoints with all
+	// Compile actual production ColorTransfer and GainReuse entrypoints with all
 	// runtime-relative includes resolved by Util::CustomInclude. D3DCompile is
 	// CPU-only; this does not create a D3D device or dispatch a shader.
 	const auto shaderRoot = working.root / "Data/Shaders";
@@ -270,9 +272,14 @@ TEST_CASE("Production tone shader include compiles through the runtime handler a
 	CopyTree(NR_TONE_DIRECTION_FEATURE_SHADER_ROOT, shaderRoot);
 	const D3D_SHADER_MACRO vrDefines[]{ { "VR", "1" }, { nullptr, nullptr } };
 	for (const auto* defines : { static_cast<const D3D_SHADER_MACRO*>(nullptr), vrDefines }) {
+		const auto colorTransfer = shaderRoot / "Upscaling/NeuralRendering/ColorTransferCS.hlsl";
 		for (const char* entryPoint : { "PrepareToneData", "Prepare", "Composite" }) {
-			const auto file = shaderRoot / "Upscaling/NeuralRendering/ColorTransferCS.hlsl";
-			const auto productionShader = CompileShaderFileWithProductionInclude(file, entryPoint, defines);
+			const auto productionShader = CompileShaderFileWithProductionInclude(colorTransfer, entryPoint, defines);
+			CHECK(productionShader.bytecode->GetBufferSize() > 0);
+		}
+		const auto gainReuse = shaderRoot / "Upscaling/NeuralRendering/GainReuseCS.hlsl";
+		for (const char* entryPoint : { "StoreGain", "ReuseGain" }) {
+			const auto productionShader = CompileShaderFileWithProductionInclude(gainReuse, entryPoint, defines);
 			CHECK(productionShader.bytecode->GetBufferSize() > 0);
 		}
 	}

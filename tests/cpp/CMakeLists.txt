@@ -82,8 +82,14 @@ add_executable(cpp_tests
 	test_windfield.cpp
 	test_sehguard.cpp
 	test_nr_decisions.cpp
+	test_nr_cadence.cpp
 	test_nr_material_strength.cpp
+
     test_nr_tone_direction.cpp
+
+	test_nr_model_scale.cpp
+	test_nr_eye_mode.cpp
+
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
 	test_region.cpp
@@ -128,6 +134,7 @@ target_include_directories(cpp_tests PRIVATE
 
 target_compile_definitions(cpp_tests PRIVATE
     NR_TONE_DIRECTION_SHADER_SOURCE="${CMAKE_SOURCE_DIR}/features/Upscaling/Shaders/Upscaling/NeuralRendering/ColorTransferCS.hlsl"
+	NR_TONE_DIRECTION_CBUFFER_SOURCE="${CMAKE_SOURCE_DIR}/features/Upscaling/Shaders/Upscaling/NeuralRendering/ColorTransfer.hlsli"
     NR_TONE_DIRECTION_CONTRACT_SOURCE="${CMAKE_SOURCE_DIR}/features/Upscaling/Shaders/Upscaling/NeuralRendering/ColorContract.hlsli"
     NR_TONE_DIRECTION_FEATURE_SHADER_ROOT="${CMAKE_SOURCE_DIR}/features/Upscaling/Shaders"
     NR_TONE_DIRECTION_PACKAGE_SHADER_ROOT="${CMAKE_SOURCE_DIR}/package/Shaders"

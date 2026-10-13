@@ -24,8 +24,8 @@ namespace
 	constexpr float kSkyBrightnessMax = 2.0f;
 	constexpr float kWeatherBrightnessMin = 0.0f;
 	constexpr float kWeatherBrightnessMax = 2.0f;
-	constexpr float kSkySaturationMin = 0.0f;
-	constexpr float kSkySaturationMax = 2.0f;
+	constexpr float kSaturationMin = 0.0f;
+	constexpr float kSaturationMax = 2.0f;
 	constexpr float kSkyStaticTransparencyMin = 0.0f;
 	constexpr float kSkyStaticTransparencyMax = 1.0f;
 	constexpr float kMultiplierMin = 0.0f;
@@ -61,13 +61,20 @@ namespace
 	constexpr uint32_t kVanillaPointLightCBRegister = 3;
 	constexpr uint32_t kFirstPointLightSceneIndex = 1;
 
+	void SanitizeColorAdjustment(CSUtility::ColorAdjustment& a_settings)
+	{
+		const CSUtility::ColorAdjustment defaults{};
+		a_settings.saturation = Util::ClampFiniteOrDefault(a_settings.saturation, kSaturationMin, kSaturationMax, defaults.saturation);
+		a_settings.gammaOffset = Util::ClampFiniteOrDefault(a_settings.gammaOffset, kGammaOffsetMin, kGammaOffsetMax, defaults.gammaOffset);
+	}
+
 	void SanitizeSettings(CSUtility::Settings& a_settings)
 	{
 		const CSUtility::Settings defaults{};
 		a_settings.skyBrightness = Util::ClampFiniteOrDefault(a_settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.skyBrightness);
 		a_settings.cloudBrightness = Util::ClampFiniteOrDefault(a_settings.cloudBrightness, kSkyBrightnessMin, kSkyBrightnessMax, defaults.cloudBrightness);
-		a_settings.skySaturation = Util::ClampFiniteOrDefault(a_settings.skySaturation, kSkySaturationMin, kSkySaturationMax, defaults.skySaturation);
-		a_settings.cloudSaturation = Util::ClampFiniteOrDefault(a_settings.cloudSaturation, kSkySaturationMin, kSkySaturationMax, defaults.cloudSaturation);
+		a_settings.skySaturation = Util::ClampFiniteOrDefault(a_settings.skySaturation, kSaturationMin, kSaturationMax, defaults.skySaturation);
+		a_settings.cloudSaturation = Util::ClampFiniteOrDefault(a_settings.cloudSaturation, kSaturationMin, kSaturationMax, defaults.cloudSaturation);
 		a_settings.ambientLightMult = Util::ClampFiniteOrDefault(a_settings.ambientLightMult, kMultiplierMin, kMultiplierMax, defaults.ambientLightMult);
 		a_settings.directionalLightMult = Util::ClampFiniteOrDefault(a_settings.directionalLightMult, kMultiplierMin, kMultiplierMax, defaults.directionalLightMult);
 		a_settings.pointLightMult = Util::ClampFiniteOrDefault(a_settings.pointLightMult, kMultiplierMin, kMultiplierMax, defaults.pointLightMult);
@@ -92,6 +99,23 @@ namespace
 		a_settings.vlGammaOffset = Util::ClampFiniteOrDefault(a_settings.vlGammaOffset, kGammaOffsetMin, kGammaOffsetMax, defaults.vlGammaOffset);
 		a_settings.vlIntensity = Util::ClampFiniteOrDefault(a_settings.vlIntensity, kMultiplierMin, kMultiplierMax, defaults.vlIntensity);
 		a_settings.sunGlareIntensity = Util::ClampFiniteOrDefault(a_settings.sunGlareIntensity, kMultiplierMin, kMultiplierMax, defaults.sunGlareIntensity);
+		SanitizeColorAdjustment(a_settings.sceneColor);
+		SanitizeColorAdjustment(a_settings.ambientLightColor);
+		SanitizeColorAdjustment(a_settings.directionalLightColor);
+		SanitizeColorAdjustment(a_settings.pointLightColor);
+		SanitizeColorAdjustment(a_settings.linearPointLightColor);
+		SanitizeColorAdjustment(a_settings.spotlightColor);
+		SanitizeColorAdjustment(a_settings.linearSpotlightColor);
+		SanitizeColorAdjustment(a_settings.omnidirectionalBulbColor);
+		SanitizeColorAdjustment(a_settings.linearOmnidirectionalBulbColor);
+		SanitizeColorAdjustment(a_settings.emitColor);
+		SanitizeColorAdjustment(a_settings.glowmapColor);
+		SanitizeColorAdjustment(a_settings.effectLightingColor);
+		SanitizeColorAdjustment(a_settings.effectColor);
+		SanitizeColorAdjustment(a_settings.skyStaticColor);
+		SanitizeColorAdjustment(a_settings.sunGlareColor);
+		a_settings.fogSaturation = Util::ClampFiniteOrDefault(a_settings.fogSaturation, kSaturationMin, kSaturationMax, defaults.fogSaturation);
+		a_settings.vlSaturation = Util::ClampFiniteOrDefault(a_settings.vlSaturation, kSaturationMin, kSaturationMax, defaults.vlSaturation);
 		CSUtility::SanitizeWaterSettings(a_settings.water);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.sceneDof);
 		CSUtility::SanitizeDepthOfFieldOverride(a_settings.underwaterDof);
@@ -103,24 +127,43 @@ namespace
 		ImGui::SliderFloat(a_label, &a_value, kMultiplierMin, a_max, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	}
 
-	void DrawLinearMultiplierSlider(const char* a_label, float& a_value, bool a_linearLightingEnabled)
-	{
-		ImGui::BeginDisabled(!a_linearLightingEnabled);
-		DrawMultiplierSlider(a_label, a_value);
-		ImGui::EndDisabled();
-
-		if (!a_linearLightingEnabled) {
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("linear_slider_disabled_tooltip"), "Enable Linear Lighting to use this multiplier."));
-			}
-		}
-	}
-
 	void DrawGammaOffsetSlider(const char* a_label, float& a_value)
 	{
 		ImGui::SliderFloat(a_label, &a_value, kGammaOffsetMin, kGammaOffsetMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextWrapped("%s", T(TKEY("gamma_offset_tooltip"), "Adjusts the brightness curve. Negative values lift midtones; positive values lower them. Zero preserves the current curve."));
+		}
+	}
+
+	void DrawColorAdjustmentSliders(const char* a_name, float& a_saturation, float& a_gammaOffset)
+	{
+		const auto saturationLabel = I18n::GetSingleton()->Format(TKEY("color_saturation"), { { "name", a_name } }, "{name} Saturation");
+		ImGui::SliderFloat(saturationLabel.c_str(), &a_saturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		const auto gammaLabel = I18n::GetSingleton()->Format(TKEY("color_gamma_offset"), { { "name", a_name } }, "{name} Gamma Offset");
+		DrawGammaOffsetSlider(gammaLabel.c_str(), a_gammaOffset);
+	}
+
+	void DrawColorAdjustmentSliders(const char* a_name, CSUtility::ColorAdjustment& a_settings)
+	{
+		DrawColorAdjustmentSliders(a_name, a_settings.saturation, a_settings.gammaOffset);
+	}
+
+	void DrawLightGroup(const char* a_name, float& a_multiplier, CSUtility::ColorAdjustment& a_color, ImGuiTreeNodeFlags a_flags = ImGuiTreeNodeFlags_None, float a_min = kMultiplierMin, float a_max = kMultiplierMax, bool a_enabled = true, const char* a_tooltip = nullptr, const char* a_sliderName = nullptr)
+	{
+		if (ImGui::TreeNodeEx(a_name, a_flags)) {
+			const char* sliderName = a_sliderName ? a_sliderName : a_name;
+			ImGui::BeginDisabled(!a_enabled);
+			const auto label = I18n::GetSingleton()->Format(TKEY("color_multiplier"), { { "name", sliderName } }, "{name} Multiplier");
+			ImGui::SliderFloat(label.c_str(), &a_multiplier, a_min, a_max, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+			if (a_tooltip) {
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextWrapped("%s", a_tooltip);
+			}
+			DrawColorAdjustmentSliders(sliderName, a_color);
+			ImGui::EndDisabled();
+			if (!a_enabled)
+				ImGui::TextDisabled("%s", T(TKEY("linear_slider_disabled_tooltip"), "Enable Linear Lighting to use these controls."));
+			ImGui::TreePop();
 		}
 	}
 
@@ -178,6 +221,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	parallaxQuality)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	CSUtility::ColorAdjustment,
+	saturation,
+	gammaOffset)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	CSUtility::Settings,
 	useAmbientEffectLighting,
 	skyBrightness,
@@ -208,87 +256,140 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	vlGammaOffset,
 	vlIntensity,
 	sunGlareIntensity,
+	sceneColor,
+	ambientLightColor,
+	directionalLightColor,
+	pointLightColor,
+	linearPointLightColor,
+	spotlightColor,
+	linearSpotlightColor,
+	omnidirectionalBulbColor,
+	linearOmnidirectionalBulbColor,
+	emitColor,
+	glowmapColor,
+	effectLightingColor,
+	effectColor,
+	skyStaticColor,
+	sunGlareColor,
+	fogSaturation,
+	vlSaturation,
 	water,
 	sceneDof,
 	underwaterDof,
 	bloomEnhancement)
 
+void CSUtility::DrawAtmosphereSettings()
+{
+	if (!ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere")))
+		return;
+	activeSettingsPage = SettingsPage::Atmosphere;
+	ImGui::Checkbox(T(TKEY("ambient_effect_lighting"), "Ambient Lighting for Effects and Sky Statics"), &settings.useAmbientEffectLighting);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextWrapped("%s", T(TKEY("ambient_effect_lighting_tooltip"), "Uses ambient lighting, including IBL when enabled, plus shadowed directional light for the color and brightness of effect meshes and sky statics. Separate brightness controls still apply."));
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("sky"), "Sky"))) {
+		ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("sky_saturation"), "Sky Saturation"), &settings.skySaturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("sky_saturation_tooltip"), "Zero makes the sky grayscale. One preserves the current colors; higher values increase saturation."));
+		}
+		DrawGammaOffsetSlider(T(TKEY("sky_gamma_offset"), "Sky Gamma Offset"), settings.skyGammaOffset);
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("clouds"), "Clouds"))) {
+		ImGui::SliderFloat(T(TKEY("cloud_brightness"), "Cloud Brightness"), &settings.cloudBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("cloud_saturation"), "Cloud Saturation"), &settings.cloudSaturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		DrawGammaOffsetSlider(T(TKEY("cloud_gamma_offset"), "Cloud Gamma Offset"), settings.cloudGammaOffset);
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("effects"), "Effects"))) {
+		ImGui::SliderFloat(T(TKEY("effect_brightness"), "Effect Brightness"), &settings.effectBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("effect_brightness_tooltip"), "Scales effect lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
+		}
+		DrawColorAdjustmentSliders(T(TKEY("effects"), "Effects"), settings.effectColor);
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("sky_statics"), "Sky Statics"))) {
+		ImGui::SliderFloat(T(TKEY("sky_static_brightness"), "Sky Static Brightness"), &settings.skyStaticBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("sky_static_brightness_tooltip"), "Scales sky static lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
+		}
+		DrawColorAdjustmentSliders(T(TKEY("sky_statics"), "Sky Statics"), settings.skyStaticColor);
+		ImGui::SliderFloat(T(TKEY("sky_static_transparency"), "Sky Static Transparency"), &settings.skyStaticTransparency, kSkyStaticTransparencyMin, kSkyStaticTransparencyMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("sky_static_transparency_tooltip"), "Fades sky static meshes. Zero preserves their current visibility; one makes them fully transparent."));
+		}
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("vanilla_fog"), "Vanilla Fog"))) {
+		DrawMultiplierSlider(T(TKEY("fog_intensity"), "Vanilla Fog Intensity"), settings.fogIntensity);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("fog_intensity_tooltip"), "Scales vanilla distance fog opacity. Zero removes it; one preserves its current strength. Has no effect when Exponential Height Fog disables vanilla fog."));
+		}
+		ImGui::SliderFloat(T(TKEY("fog_saturation"), "Vanilla Fog Saturation"), &settings.fogSaturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		DrawGammaOffsetSlider(T(TKEY("fog_gamma_offset"), "Vanilla Fog Gamma Offset"), settings.fogGammaOffset);
+		ImGui::SliderFloat(T(TKEY("fog_transparency_gamma_offset"), "Vanilla Fog Transparency Gamma Offset"), &settings.fogAlphaGammaOffset, kGammaOffsetMin, kGammaOffsetMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextWrapped("%s", T(TKEY("fog_transparency_gamma_offset_tooltip"), "Adjusts vanilla distance fog opacity. Negative values make fog denser; positive values make it more transparent."));
+		}
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("volumetric_lighting"), "Volumetric Lighting"))) {
+		DrawMultiplierSlider(T(TKEY("volumetric_lighting_intensity"), "Volumetric Lighting Intensity"), settings.vlIntensity);
+		ImGui::SliderFloat(T(TKEY("volumetric_lighting_saturation"), "Volumetric Lighting Saturation"), &settings.vlSaturation, kSaturationMin, kSaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		DrawGammaOffsetSlider(T(TKEY("volumetric_lighting_gamma_offset"), "Volumetric Lighting Gamma Offset"), settings.vlGammaOffset);
+		ImGui::TreePop();
+	}
+	if (ImGui::TreeNodeEx(T(TKEY("sun_glare"), "Sun Glare"))) {
+		DrawMultiplierSlider(T(TKEY("sun_glare_intensity"), "Sun Glare Intensity"), settings.sunGlareIntensity);
+		DrawColorAdjustmentSliders(T(TKEY("sun_glare"), "Sun Glare"), settings.sunGlareColor);
+		ImGui::TreePop();
+	}
+	ImGui::EndTabItem();
+}
+
+void CSUtility::DrawLightSettings()
+{
+	if (!ImGui::BeginTabItem(T(TKEY("tab_multipliers"), "Light")))
+		return;
+	activeSettingsPage = SettingsPage::Light;
+	const bool linearLightingEnabled = globals::features::linearLighting.settings.enableLinearLighting;
+	DrawLightGroup(T(TKEY("scene_brightness"), "Scene Brightness"), settings.sceneBrightness, settings.sceneColor, ImGuiTreeNodeFlags_None, kSceneBrightnessMin, kSceneBrightnessMax, true,
+		T(TKEY("scene_brightness_tooltip"), "Adjusts lighting and atmosphere together. One preserves the individual controls; lower values darken the scene and higher values brighten it."));
+	DrawLightGroup(T(TKEY("ambient_multiplier"), "Ambient Light"), settings.ambientLightMult, settings.ambientLightColor);
+	DrawLightGroup(T(TKEY("directional_light_multiplier"), "Directional Light"), settings.directionalLightMult, settings.directionalLightColor);
+	DrawLightGroup(T(TKEY("global_point_lighting"), "Global Point Lighting"), settings.pointLightMult, settings.pointLightColor);
+	DrawLightGroup(T(TKEY("global_point_lighting_linear"), "Global Point Lighting (Linear Flagged)"), settings.linearPointLightMult, settings.linearPointLightColor, ImGuiTreeNodeFlags_None, kMultiplierMin, kMultiplierMax, linearLightingEnabled, nullptr,
+		T(TKEY("global_point_lighting_linear_label"), "Global Point Lighting (Linear)"));
+	DrawLightGroup(T(TKEY("spotlights"), "Spotlights"), settings.spotlightMult, settings.spotlightColor);
+	DrawLightGroup(T(TKEY("spotlights_linear"), "Spotlights (Linear Flagged)"), settings.linearSpotlightMult, settings.linearSpotlightColor, ImGuiTreeNodeFlags_None, kMultiplierMin, kMultiplierMax, linearLightingEnabled, nullptr,
+		T(TKEY("spotlights_linear_label"), "Spotlights (Linear)"));
+	DrawLightGroup(T(TKEY("omnidirectional_bulbs"), "Omnidirectional Bulbs"), settings.omnidirectionalBulbMult, settings.omnidirectionalBulbColor);
+	DrawLightGroup(T(TKEY("omnidirectional_bulbs_linear"), "Omnidirectional Bulbs (Linear Flagged)"), settings.linearOmnidirectionalBulbMult, settings.linearOmnidirectionalBulbColor, ImGuiTreeNodeFlags_None, kMultiplierMin, kMultiplierMax, linearLightingEnabled, nullptr,
+		T(TKEY("omnidirectional_bulbs_linear_label"), "Omnidirectional Bulbs (Linear)"));
+	ImGui::EndTabItem();
+}
+
+void CSUtility::DrawMaterialSettings()
+{
+	if (!ImGui::BeginTabItem(T(TKEY("materials"), "Materials")))
+		return;
+	activeSettingsPage = SettingsPage::Materials;
+	DrawLightGroup(T(TKEY("emissive_multiplier"), "Emissive"), settings.emitColorMult, settings.emitColor, ImGuiTreeNodeFlags_DefaultOpen);
+	DrawLightGroup(T(TKEY("glowmap_multiplier"), "Glowmaps"), settings.glowmapMult, settings.glowmapColor, ImGuiTreeNodeFlags_DefaultOpen);
+	DrawLightGroup(T(TKEY("effect_lighting_multiplier"), "Effects"), settings.effectLightingMult, settings.effectLightingColor, ImGuiTreeNodeFlags_DefaultOpen, kMultiplierMin, kMultiplierMax, true,
+		T(TKEY("effect_lighting_multiplier_tooltip"), "Adjusts lighting on effect meshes according to their lighting influence."));
+	ImGui::EndTabItem();
+}
+
 void CSUtility::DrawSettings()
 {
 	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
-		if (ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere"))) {
-			activeSettingsPage = SettingsPage::Atmosphere;
-			ImGui::Checkbox(T(TKEY("ambient_effect_lighting"), "Ambient Lighting for Effects and Sky Statics"), &settings.useAmbientEffectLighting);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("ambient_effect_lighting_tooltip"), "Uses ambient lighting, including IBL when enabled, plus shadowed directional light for the color and brightness of effect meshes and sky statics. Separate brightness controls still apply."));
-			}
-			ImGui::SliderFloat(T(TKEY("sky_brightness"), "Sky Brightness"), &settings.skyBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("cloud_brightness"), "Cloud Brightness"), &settings.cloudBrightness, kSkyBrightnessMin, kSkyBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::SliderFloat(T(TKEY("sky_saturation"), "Sky Saturation"), &settings.skySaturation, kSkySaturationMin, kSkySaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("sky_saturation_tooltip"), "Zero makes the sky grayscale. One preserves the current colors; higher values increase saturation."));
-			}
-			ImGui::SliderFloat(T(TKEY("cloud_saturation"), "Cloud Saturation"), &settings.cloudSaturation, kSkySaturationMin, kSkySaturationMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			DrawGammaOffsetSlider(T(TKEY("sky_gamma_offset"), "Sky Gamma Offset"), settings.skyGammaOffset);
-			DrawGammaOffsetSlider(T(TKEY("cloud_gamma_offset"), "Cloud Gamma Offset"), settings.cloudGammaOffset);
-			ImGui::SliderFloat(T(TKEY("effect_brightness"), "Effect Brightness"), &settings.effectBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("effect_brightness_tooltip"), "Scales effect lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
-			}
-			ImGui::SliderFloat(T(TKEY("sky_static_brightness"), "Sky Static Brightness"), &settings.skyStaticBrightness, kWeatherBrightnessMin, kWeatherBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("sky_static_brightness_tooltip"), "Scales sky static lighting from the weather or ambient lighting. One preserves its brightness; lower values darken it and higher values brighten it."));
-			}
-			ImGui::SliderFloat(T(TKEY("sky_static_transparency"), "Sky Static Transparency"), &settings.skyStaticTransparency, kSkyStaticTransparencyMin, kSkyStaticTransparencyMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("sky_static_transparency_tooltip"), "Fades sky static meshes. Zero preserves their current visibility; one makes them fully transparent."));
-			}
-			DrawMultiplierSlider(T(TKEY("fog_intensity"), "Vanilla Fog Intensity"), settings.fogIntensity);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("fog_intensity_tooltip"), "Scales vanilla distance fog opacity. Zero removes it; one preserves its current strength. Has no effect when Exponential Height Fog disables vanilla fog."));
-			}
-			DrawGammaOffsetSlider(T(TKEY("fog_gamma_offset"), "Vanilla Fog Gamma Offset"), settings.fogGammaOffset);
-			ImGui::SliderFloat(T(TKEY("fog_transparency_gamma_offset"), "Vanilla Fog Transparency Gamma Offset"), &settings.fogAlphaGammaOffset, kGammaOffsetMin, kGammaOffsetMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextWrapped("%s", T(TKEY("fog_transparency_gamma_offset_tooltip"), "Adjusts vanilla distance fog opacity. Negative values make fog denser; positive values make it more transparent."));
-			}
-			DrawMultiplierSlider(T(TKEY("volumetric_lighting_intensity"), "Volumetric Lighting Intensity"), settings.vlIntensity);
-			DrawGammaOffsetSlider(T(TKEY("volumetric_lighting_gamma_offset"), "Volumetric Lighting Gamma Offset"), settings.vlGammaOffset);
-			DrawMultiplierSlider(T(TKEY("sun_glare_intensity"), "Sun Glare Intensity"), settings.sunGlareIntensity);
-			ImGui::EndTabItem();
-		}
-
+		DrawAtmosphereSettings();
+		DrawLightSettings();
 		DrawWaterSettings();
-
-		if (ImGui::BeginTabItem(T(TKEY("tab_multipliers"), "Multipliers"))) {
-			activeSettingsPage = SettingsPage::Multipliers;
-			if (ImGui::TreeNodeEx(T(TKEY("lighting"), "Lighting"), ImGuiTreeNodeFlags_DefaultOpen)) {
-				ImGui::SliderFloat(T(TKEY("scene_brightness"), "Scene Brightness"), &settings.sceneBrightness, kSceneBrightnessMin, kSceneBrightnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextWrapped("%s", T(TKEY("scene_brightness_tooltip"), "Adjusts lighting and atmosphere together. One preserves the individual controls; lower values darken the scene and higher values brighten it."));
-				}
-				const bool linearLightingEnabled = globals::features::linearLighting.settings.enableLinearLighting;
-				DrawMultiplierSlider(T(TKEY("ambient_multiplier"), "Ambient Multiplier"), settings.ambientLightMult);
-				DrawMultiplierSlider(T(TKEY("directional_light_multiplier"), "Directional Light Multiplier"), settings.directionalLightMult);
-				DrawMultiplierSlider(T(TKEY("global_point_lighting"), "Global Point Lighting"), settings.pointLightMult);
-				DrawLinearMultiplierSlider(T(TKEY("global_point_lighting_linear"), "Global Point Lighting (Linear)"), settings.linearPointLightMult, linearLightingEnabled);
-				DrawMultiplierSlider(T(TKEY("spotlights"), "Spotlights"), settings.spotlightMult);
-				DrawLinearMultiplierSlider(T(TKEY("spotlights_linear"), "Spotlights (Linear)"), settings.linearSpotlightMult, linearLightingEnabled);
-				DrawMultiplierSlider(T(TKEY("omnidirectional_bulbs"), "Omnidirectional Bulbs"), settings.omnidirectionalBulbMult);
-				DrawLinearMultiplierSlider(T(TKEY("omnidirectional_bulbs_linear"), "Omnidirectional Bulbs (Linear)"), settings.linearOmnidirectionalBulbMult, linearLightingEnabled);
-				ImGui::TreePop();
-			}
-			if (ImGui::TreeNodeEx(T(TKEY("materials"), "Materials"), ImGuiTreeNodeFlags_DefaultOpen)) {
-				DrawMultiplierSlider(T(TKEY("emissive_multiplier"), "Emissive"), settings.emitColorMult);
-				DrawMultiplierSlider(T(TKEY("glowmap_multiplier"), "Glowmaps"), settings.glowmapMult);
-				DrawMultiplierSlider(T(TKEY("effect_lighting_multiplier"), "Effects"), settings.effectLightingMult);
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::TextWrapped("%s", T(TKEY("effect_lighting_multiplier_tooltip"), "Scales lighting on effect meshes according to their lighting influence."));
-				}
-				ImGui::TreePop();
-			}
-			ImGui::EndTabItem();
-		}
+		DrawMaterialSettings();
 
 		DrawDepthOfFieldSettings();
 		DrawVanillaBloomSettings();
@@ -350,7 +451,6 @@ void CSUtility::DrawWaterSettings()
 	DrawWaterSlider(T(TKEY("water_muddiness"), "Muddiness"), water.muddiness, kWaterAmountMin, kWaterAmountMax,
 		T(TKEY("water_muddiness_tooltip"), "Scales the water tint mixed over the refracted scene. Lower values make water clearer."));
 
-	ImGui::SeparatorText(T("feature.water_effects.name", "Water Effects"));
 	DrawWaterSlider(T(TKEY("water_caustics_strength"), "Caustics Strength"), water.causticsStrength, kWaterAmountMin, kWaterAmountMax,
 		T(TKEY("water_caustics_strength_tooltip"), "Scales the underwater light pattern contrast. One preserves the current appearance; zero disables caustics."));
 	DrawWaterSlider(T(TKEY("water_caustics_tiling"), "Caustics Tiling"), water.causticsTiling, kWaterCausticsTilingMin, kWaterCausticsTilingMax,
@@ -417,12 +517,17 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.vlGammaOffset = defaults.vlGammaOffset;
 		settings.vlIntensity = defaults.vlIntensity;
 		settings.sunGlareIntensity = defaults.sunGlareIntensity;
+		settings.effectColor = defaults.effectColor;
+		settings.skyStaticColor = defaults.skyStaticColor;
+		settings.sunGlareColor = defaults.sunGlareColor;
+		settings.fogSaturation = defaults.fogSaturation;
+		settings.vlSaturation = defaults.vlSaturation;
 		break;
 	case SettingsPage::Water:
 		settings.water = defaults.water;
 		settings.waterGammaOffset = defaults.waterGammaOffset;
 		break;
-	case SettingsPage::Multipliers:
+	case SettingsPage::Light:
 		settings.ambientLightMult = defaults.ambientLightMult;
 		settings.directionalLightMult = defaults.directionalLightMult;
 		settings.pointLightMult = defaults.pointLightMult;
@@ -432,6 +537,20 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 		settings.omnidirectionalBulbMult = defaults.omnidirectionalBulbMult;
 		settings.linearOmnidirectionalBulbMult = defaults.linearOmnidirectionalBulbMult;
 		settings.sceneBrightness = defaults.sceneBrightness;
+		settings.sceneColor = defaults.sceneColor;
+		settings.ambientLightColor = defaults.ambientLightColor;
+		settings.directionalLightColor = defaults.directionalLightColor;
+		settings.pointLightColor = defaults.pointLightColor;
+		settings.linearPointLightColor = defaults.linearPointLightColor;
+		settings.spotlightColor = defaults.spotlightColor;
+		settings.linearSpotlightColor = defaults.linearSpotlightColor;
+		settings.omnidirectionalBulbColor = defaults.omnidirectionalBulbColor;
+		settings.linearOmnidirectionalBulbColor = defaults.linearOmnidirectionalBulbColor;
+		break;
+	case SettingsPage::Materials:
+		settings.emitColor = defaults.emitColor;
+		settings.glowmapColor = defaults.glowmapColor;
+		settings.effectLightingColor = defaults.effectLightingColor;
 		settings.emitColorMult = defaults.emitColorMult;
 		settings.glowmapMult = defaults.glowmapMult;
 		settings.effectLightingMult = defaults.effectLightingMult;
@@ -451,22 +570,10 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 
 bool CSUtility::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 16> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity" };
+	static constexpr std::array<std::string_view, 21> atmosphereKeys{ "useAmbientEffectLighting", "skyBrightness", "cloudBrightness", "skySaturation", "cloudSaturation", "skyGammaOffset", "cloudGammaOffset", "effectBrightness", "skyStaticBrightness", "skyStaticTransparency", "fogGammaOffset", "fogAlphaGammaOffset", "fogIntensity", "vlGammaOffset", "vlIntensity", "sunGlareIntensity", "effectColor", "skyStaticColor", "sunGlareColor", "fogSaturation", "vlSaturation" };
 	static constexpr std::array<std::string_view, 2> waterKeys{ "water", "waterGammaOffset" };
-	static constexpr std::array<std::string_view, 12> multiplierKeys{
-		"ambientLightMult",
-		"directionalLightMult",
-		"pointLightMult",
-		"linearPointLightMult",
-		"spotlightMult",
-		"linearSpotlightMult",
-		"omnidirectionalBulbMult",
-		"linearOmnidirectionalBulbMult",
-		"sceneBrightness",
-		"emitColorMult",
-		"glowmapMult",
-		"effectLightingMult"
-	};
+	static constexpr std::array<std::string_view, 18> lightKeys{ "ambientLightMult", "directionalLightMult", "pointLightMult", "linearPointLightMult", "spotlightMult", "linearSpotlightMult", "omnidirectionalBulbMult", "linearOmnidirectionalBulbMult", "sceneBrightness", "sceneColor", "ambientLightColor", "directionalLightColor", "pointLightColor", "linearPointLightColor", "spotlightColor", "linearSpotlightColor", "omnidirectionalBulbColor", "linearOmnidirectionalBulbColor" };
+	static constexpr std::array<std::string_view, 6> materialKeys{ "emitColorMult", "glowmapMult", "effectLightingMult", "emitColor", "glowmapColor", "effectLightingColor" };
 	static constexpr std::array<std::string_view, 2> depthOfFieldKeys{ "sceneDof", "underwaterDof" };
 	static constexpr std::array<std::string_view, 1> bloomKeys{ "bloomEnhancement" };
 
@@ -475,8 +582,10 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		return ReapplyOverrideSettingsForKeys(atmosphereKeys);
 	case SettingsPage::Water:
 		return ReapplyOverrideSettingsForKeys(waterKeys);
-	case SettingsPage::Multipliers:
-		return ReapplyOverrideSettingsForKeys(multiplierKeys);
+	case SettingsPage::Light:
+		return ReapplyOverrideSettingsForKeys(lightKeys);
+	case SettingsPage::Materials:
+		return ReapplyOverrideSettingsForKeys(materialKeys);
 	case SettingsPage::VanillaDepthOfField:
 		return ReapplyOverrideSettingsForKeys(depthOfFieldKeys);
 	case SettingsPage::VanillaBloom:
@@ -501,6 +610,12 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	const float gammaOffset = -brightnessDelta * kSceneGammaWeight;
 	const auto scaleMultiplier = [&](float a_value, float a_weight) {
 		return std::clamp(a_value * (1.0f + brightnessDelta * a_weight), kMultiplierMin, kMultiplierMax);
+	};
+
+	const auto combineColor = [&](ColorAdjustment a_color) {
+		a_color.saturation *= sanitizedSettings.sceneColor.saturation;
+		a_color.gammaOffset += sanitizedSettings.sceneColor.gammaOffset;
+		return a_color;
 	};
 
 	PerFrameData data{};
@@ -528,14 +643,14 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	data.emitColorMult = scaleMultiplier(sanitizedSettings.emitColorMult, kSceneEmissiveWeight);
 	data.glowmapMult = scaleMultiplier(sanitizedSettings.glowmapMult, kSceneEmissiveWeight);
 	data.effectLightingMult = scaleMultiplier(sanitizedSettings.effectLightingMult, kSceneEffectWeight);
-	data.skyGammaOffset = sanitizedSettings.skyGammaOffset + gammaOffset * kSceneSkyGammaWeight;
-	data.cloudGammaOffset = sanitizedSettings.cloudGammaOffset + gammaOffset * kSceneSkyGammaWeight;
+	data.skyGammaOffset = sanitizedSettings.skyGammaOffset + sanitizedSettings.sceneColor.gammaOffset + gammaOffset * kSceneSkyGammaWeight;
+	data.cloudGammaOffset = sanitizedSettings.cloudGammaOffset + sanitizedSettings.sceneColor.gammaOffset + gammaOffset * kSceneSkyGammaWeight;
 	data.skyStaticTransparency = sanitizedSettings.skyStaticTransparency;
-	data.fogGammaOffset = sanitizedSettings.fogGammaOffset + gammaOffset * kSceneFogGammaWeight;
+	data.fogGammaOffset = sanitizedSettings.fogGammaOffset + sanitizedSettings.sceneColor.gammaOffset + gammaOffset * kSceneFogGammaWeight;
 	data.fogAlphaGammaOffset = sanitizedSettings.fogAlphaGammaOffset + gammaOffset * kSceneFogAlphaGammaWeight;
 	data.fogIntensity = sanitizedSettings.fogIntensity;
-	data.waterGammaOffset = sanitizedSettings.waterGammaOffset + gammaOffset * kSceneWaterGammaWeight;
-	data.vlGammaOffset = sanitizedSettings.vlGammaOffset + gammaOffset * kSceneVolumetricGammaWeight;
+	data.waterGammaOffset = sanitizedSettings.waterGammaOffset + sanitizedSettings.sceneColor.gammaOffset + gammaOffset * kSceneWaterGammaWeight;
+	data.vlGammaOffset = sanitizedSettings.vlGammaOffset + sanitizedSettings.sceneColor.gammaOffset + gammaOffset * kSceneVolumetricGammaWeight;
 	data.vlIntensity = sanitizedSettings.vlIntensity;
 	data.sunGlareIntensity = sanitizedSettings.sunGlareIntensity;
 	data.waterCausticsStrength = sanitizedSettings.water.causticsStrength;
@@ -543,9 +658,27 @@ CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 	data.waterCausticsSpeed = sanitizedSettings.water.causticsSpeed;
 	data.waterCausticsDispersion = sanitizedSettings.water.causticsDispersion;
 	data.waterParallaxStrength = sanitizedSettings.water.parallaxStrength;
-	data.skySaturation = sanitizedSettings.skySaturation;
-	data.cloudSaturation = sanitizedSettings.cloudSaturation;
+	data.skySaturation = std::clamp(sanitizedSettings.skySaturation * sanitizedSettings.sceneColor.saturation, kSaturationMin, kSaturationMax);
+	data.cloudSaturation = std::clamp(sanitizedSettings.cloudSaturation * sanitizedSettings.sceneColor.saturation, kSaturationMin, kSaturationMax);
 	data.waterParallaxQuality = static_cast<uint32_t>(sanitizedSettings.water.parallaxQuality);
+	data.ambientLightColor = combineColor(sanitizedSettings.ambientLightColor);
+	data.directionalLightColor = combineColor(sanitizedSettings.directionalLightColor);
+	data.pointLightColor = combineColor(sanitizedSettings.pointLightColor);
+	data.linearPointLightColor = combineColor(sanitizedSettings.linearPointLightColor);
+	data.spotlightColor = sanitizedSettings.spotlightColor;
+	data.linearSpotlightColor = sanitizedSettings.linearSpotlightColor;
+	data.omnidirectionalBulbColor = sanitizedSettings.omnidirectionalBulbColor;
+	data.linearOmnidirectionalBulbColor = sanitizedSettings.linearOmnidirectionalBulbColor;
+	data.emitColor = combineColor(sanitizedSettings.emitColor);
+	data.glowmapColor = combineColor(sanitizedSettings.glowmapColor);
+	data.effectLightingColor = sanitizedSettings.effectLightingColor;
+	data.effectColor = sanitizedSettings.effectColor;
+	data.skyStaticColor = sanitizedSettings.skyStaticColor;
+	data.sunGlareColor = sanitizedSettings.sunGlareColor;
+	data.fogSaturation = std::clamp(sanitizedSettings.fogSaturation * sanitizedSettings.sceneColor.saturation, kSaturationMin, kSaturationMax);
+	data.vlSaturation = std::clamp(sanitizedSettings.vlSaturation * sanitizedSettings.sceneColor.saturation, kSaturationMin, kSaturationMax);
+	data.waterSaturation = sanitizedSettings.sceneColor.saturation;
+	data.sceneColor = sanitizedSettings.sceneColor;
 	return data;
 }
 

@@ -283,6 +283,7 @@ void Deferred::StartDeferred()
 	sceneDepthFinal = false;
 	if (!globals::state->inWorld)
 		return;
+	forwardMaterialCategoryRequested = std::ranges::any_of(Feature::GetFeatureList(), [](const Feature* a_feature) { return a_feature->loaded && a_feature->WantsForwardMaterialCategory(); });
 	globals::state->UpdateSharedData(true, false);
 
 	auto shadowState = globals::game::shadowState;
@@ -539,6 +540,44 @@ void Deferred::EndDeferred()
 	deferredPass = false;
 
 	ResetBlendStates();
+}
+
+bool Deferred::ForwardMasks2Available() const
+{
+	if (!forwardMaterialCategoryRequested || deferredPass || !globals::state->inWorld)
+		return false;
+
+	auto shadowState = globals::game::shadowState;
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	return renderTargets[0] == RE::RENDER_TARGET::kMAIN;
+}
+
+void Deferred::SetForwardMasks2Target(bool a_bind)
+{
+	if (a_bind ? !ForwardMasks2Available() : !forwardMasks2Bound)
+		return;
+
+	auto shadowState = globals::game::shadowState;
+	GET_INSTANCE_MEMBER(renderTargets, shadowState)
+	GET_INSTANCE_MEMBER(setRenderTargetMode, shadowState)
+	GET_INSTANCE_MEMBER(stateUpdateFlags, shadowState)
+
+	constexpr uint slot = 3;
+	if (a_bind) {
+		if (forwardMasks2Bound)
+			return;
+		forwardMasks2Replaced = renderTargets[slot];
+		forwardMasks2ReplacedMode = setRenderTargetMode[slot];
+		renderTargets[slot] = MASKS2;
+		setRenderTargetMode[slot] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+		forwardMasks2Bound = true;
+	} else {
+		renderTargets[slot] = forwardMasks2Replaced;
+		setRenderTargetMode[slot] = forwardMasks2ReplacedMode;
+		forwardMasks2Bound = false;
+	}
+
+	stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 }
 
 void Deferred::OverrideBlendStates()

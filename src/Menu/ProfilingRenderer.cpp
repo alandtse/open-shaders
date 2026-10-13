@@ -362,7 +362,8 @@ void ProfilingRenderer::RenderGraph()
 	if (tasks.empty())
 		return;
 
-	gpuGraph.LoadFrameData(tasks.data(), tasks.size());
+	if (gpuGraphGate.ShouldSample())
+		gpuGraph.LoadFrameData(tasks.data(), tasks.size());
 
 	float maxFrameTimeSec = gpuGraph.GetPeakFrameTime() * kGraphHeadroomScale;
 	if (maxFrameTimeSec < kMainGraphMinFrameTimeSec)
@@ -646,7 +647,7 @@ void ProfilingRenderer::UpdateStatistics(bool cpuMode)
 	std::unordered_map<std::string, size_t> groupIndex;
 	std::unordered_map<std::string, DisplayTimingSampleAccumulator<Profiler::kHistorySize>> groupSamples;
 
-	for (const auto& result : globals::profiler->GetResults()) {
+	for (const auto& result : globals::profiler->GetStatistics()) {
 		if (!result.valid || !HasLiveTimingMode(result, cpuMode))
 			continue;
 
@@ -724,7 +725,7 @@ float ProfilingRenderer::GetFeatureTimingDataHeight(const FeatureTimingData& dat
 	return kFeatureGraphHeight * Util::GetUIScale() + tableHeight + style.ItemSpacing.y * 3.0f;
 }
 
-bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight)
+bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate, float graphHeight)
 {
 	if (data.entries.empty())
 		return false;
@@ -744,7 +745,8 @@ bool ProfilingRenderer::RenderFeatureTimingGraph(const FeatureTimingData& data, 
 	if (tasks.empty())
 		return false;
 
-	graph.LoadFrameData(tasks.data(), tasks.size());
+	if (gate.ShouldSample())
+		graph.LoadFrameData(tasks.data(), tasks.size());
 
 	float maxFrameTimeSec = graph.GetPeakFrameTime() * kGraphHeadroomScale;
 	if (maxFrameTimeSec < kFeatureGraphMinFrameTimeSec)
@@ -770,7 +772,7 @@ void ProfilingRenderer::RenderFeatureTimingData(const std::string& featurePrefix
 	}
 
 	auto& state = featureGraphs[featurePrefix];
-	if (RenderFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, kFeatureGraphHeight))
+	if (RenderFeatureTimingGraph(data, cpuMode ? state.cpuGraph : state.gpuGraph, cpuMode ? state.cpuGate : state.gpuGate, kFeatureGraphHeight))
 		ImGui::Spacing();
 
 	if (ImGui::BeginTable("##FeatureTimers", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_Sortable | ImGuiTableFlags_SortTristate)) {
@@ -857,13 +859,13 @@ bool ProfilingRenderer::RenderFeatureOverview()
 
 			ImGui::TableNextColumn();
 			ImGui::PushID((featurePrefix + "::GPU").c_str());
-			if (!RenderFeatureTimingGraph(gpuData, state.gpuGraph, kFeatureOverviewGraphHeight))
+			if (!RenderFeatureTimingGraph(gpuData, state.gpuGraph, state.gpuGate, kFeatureOverviewGraphHeight))
 				ImGui::TextDisabled("%s", T("menu.profiling.no_gpu_timing_data", "No GPU timing data"));
 			ImGui::PopID();
 
 			ImGui::TableNextColumn();
 			ImGui::PushID((featurePrefix + "::CPU").c_str());
-			if (!RenderFeatureTimingGraph(cpuData, state.cpuGraph, kFeatureOverviewGraphHeight))
+			if (!RenderFeatureTimingGraph(cpuData, state.cpuGraph, state.cpuGate, kFeatureOverviewGraphHeight))
 				ImGui::TextDisabled("%s", T("menu.profiling.no_cpu_timing_data", "No CPU timing data"));
 			ImGui::PopID();
 		}

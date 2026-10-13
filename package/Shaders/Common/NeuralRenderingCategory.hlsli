@@ -17,10 +17,12 @@ namespace NeuralRenderingCategory
 	static const uint Eyes = 3;
 	static const uint Foliage = 4;
 	static const uint Landscape = 5;
-	static const uint Count = 6;
+	static const uint Cloth = 6;
+	static const uint Metal = 7;
+	static const uint Count = 8;
 
 	/** Category code in 1/255 units, indexed by category id. */
-	static const uint kCodes[Count] = { 0, 25, 75, 100, 225, 250 };
+	static const uint kCodes[Count] = { 0, 25, 75, 100, 225, 250, 140, 185 };
 
 	/** Largest distance from an exact code, in 1/255 units, that still decodes as that category. */
 	static const float kCodeTolerance = 0.1;
@@ -53,12 +55,12 @@ namespace NeuralRenderingCategory
 
 	/**
 	 * @brief NR strength for a category, in NeuralRenderingCategory id order.
-	 * @param category A decoded category id (None..Landscape).
+	 * @param category A decoded category id (None..Metal).
 	 * @param low Strengths for None, Skin, Hair and Eyes in .x, .y, .z and .w.
-	 * @param high Strengths for Foliage and Landscape in .x and .y.
+	 * @param high Strengths for Foliage, Landscape, Cloth and Metal in .x, .y, .z and .w.
 	 * @return The category's strength; an unknown id returns the None strength.
 	 */
-	float CategoryStrength(uint category, float4 low, float2 high)
+	float CategoryStrength(uint category, float4 low, float4 high)
 	{
 		switch (category) {
 		case Skin:
@@ -71,6 +73,10 @@ namespace NeuralRenderingCategory
 			return high.x;
 		case Landscape:
 			return high.y;
+		case Cloth:
+			return high.z;
+		case Metal:
+			return high.w;
 		default:
 			return low.x;
 		}
@@ -119,6 +125,10 @@ namespace NeuralRenderingCategory
 			return float3(0.0, 1.0, 0.0);
 		case Landscape:
 			return float3(0.0, 1.0, 1.0);
+		case Cloth:
+			return float3(1.0, 0.0, 1.0);
+		case Metal:
+			return float3(1.0, 1.0, 1.0);
 		default:
 			return float3(0.05, 0.05, 0.05);
 		}

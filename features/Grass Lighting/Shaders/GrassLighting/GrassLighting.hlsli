@@ -53,7 +53,8 @@ namespace GrassLighting
 		}
 #endif
 		float shininess = (1.0 - roughness) * 100.f;
-		float HdotN = saturate(dot(H, N));
+		// log2(0) times a zero shininess is NaN
+		float HdotN = max(saturate(dot(H, N)), 1e-6);
 		float lightColorMultiplier = exp2(shininess * log2(HdotN));
 		return lightColor * lightColorMultiplier.xxx;
 	}
