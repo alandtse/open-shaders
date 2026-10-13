@@ -147,6 +147,10 @@ void RenderTargetStats::EndFrame()
 		ring[current].batch.EndBatch(context);
 		ring[current].pending = true;
 		inFrame = false;
+	} else {
+		for (auto& binding : bindings)
+			binding.smoothGpuMs *= 1.0f - kSmoothing;
+		smoothTimedMs *= 1.0f - kSmoothing;
 	}
 	for (auto& binding : bindings) {
 		binding.smoothDraws = binding.smoothDraws * (1.0f - kSmoothing) + static_cast<float>(binding.frameDraws) * kSmoothing;
