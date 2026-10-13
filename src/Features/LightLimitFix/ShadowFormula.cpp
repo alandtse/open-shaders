@@ -109,6 +109,13 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
+	/// Frustum (spot) lights answer true to a BSShadowLight virtual that every other
+	/// shadow light class leaves false; cheaper than an RTTI cast per candidate.
+	static const RE::BSShadowFrustumLight* AsFrustumLight(const RE::BSShadowLight* light)
+	{
+		return const_cast<RE::BSShadowLight*>(light)->GetIsFrustumLight() ? static_cast<const RE::BSShadowFrustumLight*>(light) : nullptr;
+	}
+
 	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius)
 	{
 		LightGeometry g{};
@@ -144,7 +151,7 @@ namespace ShadowCasterManager
 		// Corrects the omnidirectional-sphere assumption for spot/frustum lights
 		// via coneFraction. Magnitude-only, not direction-gated: forward-axis
 		// sign is unverified, and a wrong gate could invert rankings.
-		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
+		const RE::BSShadowFrustumLight* frustumLight = AsFrustumLight(light);
 		float coneFraction = 1.0f;
 		if (frustumLight) {
 			// semiWidth/semiHeight are runtime-versioned (BSShadowFrustumLight::
@@ -332,7 +339,7 @@ namespace ShadowCasterManager
 		// is a strong predictor of this-frame's. Trading a one-frame lag
 		// for not double-calling UpdateCamera is a worthwhile cost since
 		// the score is a preference, not a gate.
-		const bool isSpot = (skyrim_cast<const RE::BSShadowFrustumLight*>(light) != nullptr);
+		const bool isSpot = (AsFrustumLight(light) != nullptr);
 		double spotVisible = 1.0;  // default for non-spots: always "visible"
 		if (isSpot) {
 			// frustumCull == 0 means "in frustum"; engine sets 0xff when
