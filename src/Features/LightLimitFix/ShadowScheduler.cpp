@@ -92,7 +92,21 @@ namespace ShadowCasterManager
 		// counts as "moved".
 		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRadiusStep = 1.0f;
+		// worldBound and skinInstance sit on different cache lines of a geometry
+		// that the walk has not touched this frame: pull a few ahead.
+		constexpr int kPrefetchAhead = 8;
+		auto lookahead = light->geomList.begin();
+		const auto listEnd = light->geomList.end();
+		for (int i = 0; i < kPrefetchAhead && lookahead != listEnd; ++i)
+			++lookahead;
 		for (auto& nip : light->geomList) {
+			if (lookahead != listEnd) {
+				if (const auto* ahead = (*lookahead).get()) {
+					_mm_prefetch(reinterpret_cast<const char*>(&ahead->worldBound), _MM_HINT_T0);
+					_mm_prefetch(reinterpret_cast<const char*>(&ahead->GetGeometryRuntimeData().skinInstance), _MM_HINT_T0);
+				}
+				++lookahead;
+			}
 			auto* ts = nip.get();
 			if (!ts)
 				continue;
