@@ -777,6 +777,8 @@ namespace ShadowCasterManager
 		uint64_t backOnlyAppendTotal = 0;
 		/// Wholly-behind casters dropped because the light has no back hemisphere.
 		uint64_t hemisphereDropTotal = 0;
+		uint64_t passlessCasterSkipTotal = 0;      ///< casters skipped because the engine emits no shadow-map pass for them
+		uint64_t passlessCasterSkipByReason[5]{};  ///< no-shadow shader, refraction, alpha blend, faded
 
 		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose
 		/// valid static bake saw no movers) -- this pass and cumulative, the direct measure of the early-out's savings.

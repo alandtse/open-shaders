@@ -3089,6 +3089,9 @@ namespace ShadowCasterManager
 				snap.frontAppendTotal = s_frontAppendTotal.load(std::memory_order_relaxed);
 				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
 				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
+				snap.passlessCasterSkipTotal = s_passlessCasterSkipTotal.load(std::memory_order_relaxed);
+				for (int reason = 1; reason < 5; ++reason)
+					snap.passlessCasterSkipByReason[reason] = s_passlessCasterSkipByReason[reason].load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))
