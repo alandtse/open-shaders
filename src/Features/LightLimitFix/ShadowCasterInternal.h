@@ -186,6 +186,7 @@ namespace ShadowCasterManager
 		bool isNS;
 		bool enableValid{ false };
 		EnableInputs lastEnable{};
+		std::uint32_t lastEnableFrame{ 0 };
 	};
 	extern std::vector<ConvertedLight> s_normalConvert;
 	extern std::set<RE::NiLight*> s_shadowConvert;
