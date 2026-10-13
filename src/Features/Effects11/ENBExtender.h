@@ -73,8 +73,8 @@ namespace ENBExtender
 
 	/** @brief Recognizes the encrypted preset source signature. */
 	bool IsEncryptedSource(std::string_view source);
-	/** @brief Creates an effect from bytecode supplied by the loaded ENB Extender. */
-	bool CreateEncryptedEffect(const std::string& effectName, winrt::com_ptr<ID3DX11Effect>& effect, std::string& error);
+	/** @brief Creates an effect from bytecode supplied by the loaded ENB Extender; only the game folder's enbseries is supported. */
+	bool CreateEncryptedEffect(const std::filesystem::path& effectPath, winrt::com_ptr<ID3DX11Effect>& effect, std::string& error);
 	/** @brief Recovers encrypted preset groups from reflected names and saved settings. */
 	void ResolveCompiledGroups(Effect& effect, const std::filesystem::path& iniPath);
 }

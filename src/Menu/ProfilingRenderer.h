@@ -8,6 +8,7 @@
 #include <imgui.h>
 
 #include "Profiler.h"
+#include "Utils/Game.h"
 #include "Utils/LegitProfiler.h"
 
 /**
@@ -109,11 +110,14 @@ private:
 	static inline std::vector<GroupEntry> cachedGroups;
 
 	static inline ImGuiUtils::ProfilerGraph gpuGraph{ Profiler::kHistorySize };
+	static inline Util::GraphSampleGate gpuGraphGate;
 
 	struct FeatureGraphState
 	{
 		ImGuiUtils::ProfilerGraph gpuGraph{ Profiler::kHistorySize };
 		ImGuiUtils::ProfilerGraph cpuGraph{ Profiler::kHistorySize };
+		Util::GraphSampleGate gpuGate;
+		Util::GraphSampleGate cpuGate;
 	};
 	static inline std::unordered_map<std::string, FeatureGraphState> featureGraphs;
 	static inline std::unordered_map<std::string, FeatureTimingMode> featureTimingModes;
@@ -163,7 +167,7 @@ private:
 	static FeatureTimingData CollectFeatureTimingData(const std::string& featurePrefix, bool cpuMode);
 	static float GetFeatureTimingDataHeight(const FeatureTimingData& data);
 	static int ComputeFeatureGraphLegendWidth(const FeatureTimingData& data, int totalWidth);
-	static bool RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight);
+	static bool RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, Util::GraphSampleGate& gate, float graphHeight);
 	static void RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, const FeatureTimingData& data);
 	static void RenderFeatureTimingModeControls(const std::string& featurePrefix, FeatureTimingMode& featureMode);
 	static void RenderFeatureTimingButton(const std::string& featurePrefix);

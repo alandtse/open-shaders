@@ -199,7 +199,7 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	Util::DrawSectionHeader(T("menu.advanced.compile_flags_header", "Compile Flags"));
 
 	// Shader Defines input
-	auto& shaderDefines = globals::state->shaderDefinesString;
+	auto shaderDefines = globals::state->GetDefinesString();
 	if (ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines)) {
 		globals::state->SetDefines(shaderDefines);
 	}
@@ -286,14 +286,14 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	shaderCache->compilationThreadCount = std::clamp(shaderCache->compilationThreadCount, 1, maxThreads);
 	shaderCache->backgroundCompilationThreadCount = std::clamp(shaderCache->backgroundCompilationThreadCount, 1, maxThreads);
 
-	ImGui::SliderInt(T("menu.advanced.compiler_threads", "Compiler Threads"), &shaderCache->compilationThreadCount, 1, maxThreads);
+	ImGui::SliderInt(T("menu.advanced.compiler_threads", "Compiler Threads"), &shaderCache->compilationThreadCount, 1, maxThreads, "%d", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.compiler_threads_tooltip",
 							  "Number of threads used to compile shaders at startup. "
 							  "Defaults to all logical cores minus one for OS headroom (E-cores included). "
 							  "Higher values finish compilation faster but may make the system less responsive."));
 	}
-	ImGui::SliderInt(T("menu.advanced.background_compiler_threads", "Background Compiler Threads"), &shaderCache->backgroundCompilationThreadCount, 1, maxThreads);
+	ImGui::SliderInt(T("menu.advanced.background_compiler_threads", "Background Compiler Threads"), &shaderCache->backgroundCompilationThreadCount, 1, maxThreads, "%d", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.background_compiler_threads_tooltip",
 							  "Number of threads used to compile shaders during gameplay. "
@@ -808,7 +808,8 @@ void AdvancedSettingsRenderer::RenderShaderBlockingPanel()
 		ImGui::PushStyleColor(ImGuiCol_ChildBg, blockedBgColor);
 
 		float maxHeight = ImGui::GetContentRegionAvail().y * 0.3f;  // Limit to 30% to keep Active Shaders visible
-		if (ImGui::BeginChild("##BlockedShaderInfo", ImVec2(0, maxHeight), true, ImGuiChildFlags_AutoResizeY)) {
+		ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, maxHeight));
+		if (ImGui::BeginChild("##BlockedShaderInfo", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY)) {
 			Util::Text::Error("%s", T("menu.advanced.shader_blocking_active", "Shader Blocking Active"));
 			ImGui::SameLine();
 			if (ImGui::SmallButton(T("menu.advanced.stop_blocking", "Stop Blocking##Section"))) {

@@ -266,8 +266,8 @@ namespace Util::Subrect
 		// Hosts that render without first calling LoadSettings would otherwise
 		// see an empty presets vector and the combo would mislabel as "(Custom)".
 		EnsureDefaultPreset();
-		if (selectedPresetIndex < 0 || selectedPresetIndex >= static_cast<int>(presets.size())) {
-			selectedPresetIndex = 0;
+		if (selectedPresetIndex >= static_cast<int>(presets.size())) {
+			selectedPresetIndex = -1;
 		}
 
 		std::string currentPreview =

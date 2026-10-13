@@ -11829,6 +11829,34 @@ shaders:
                         - LOD_LAND_BLEND
                         - MULTI_TEXTURE
                         - TRUE_PBR
+                  - entry: Lighting:Pixel:13000021
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:13000029
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13000031
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:13000039
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
                   - entry: Lighting:Pixel:13010009
                     defines:
                         - ANISO_LIGHTING
@@ -11843,6 +11871,25 @@ shaders:
                         - DEFERRED
                         - GLINT
                         - LANDSCAPE
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13010029
+                    defines:
+                        - ANISO_LIGHTING
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13010039
+                    defines:
+                        - ANISO_LIGHTING
+                        - DEFERRED
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
                         - LOD_LAND_BLEND
                         - MULTI_TEXTURE
                         - TRUE_PBR
@@ -12200,6 +12247,30 @@ shaders:
                         - LANDSCAPE
                         - MULTI_TEXTURE
                         - TRUE_PBR
+                  - entry: Lighting:Pixel:8000021
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:8000029
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8000031
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:8000039
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
                   - entry: Lighting:Pixel:8001
                     defines: &id512
                         - PROJECTED_UV
@@ -12220,6 +12291,23 @@ shaders:
                         - DEFERRED
                         - GLINT
                         - LANDSCAPE
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8010029
+                    defines:
+                        - ANISO_LIGHTING
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8010039
+                    defines:
+                        - ANISO_LIGHTING
+                        - DEFERRED
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
                         - MULTI_TEXTURE
                         - TRUE_PBR
                   - entry: Lighting:Pixel:8011

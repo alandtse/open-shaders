@@ -14,6 +14,37 @@
 
 namespace Util
 {
+	namespace
+	{
+		std::mutex multithreadScopeMutex;
+		int multithreadScopeHolders = 0;
+		BOOL multithreadScopePriorProtection = FALSE;
+	}
+
+	MultithreadScope::MultithreadScope(ID3D11DeviceContext* context)
+	{
+		if (!context || FAILED(context->QueryInterface(multithread.put()))) {
+			multithread = nullptr;
+			return;
+		}
+		{
+			std::lock_guard lock(multithreadScopeMutex);
+			const BOOL prior = multithread->SetMultithreadProtected(TRUE);
+			if (multithreadScopeHolders++ == 0)
+				multithreadScopePriorProtection = prior;
+		}
+		multithread->Enter();
+	}
+
+	MultithreadScope::~MultithreadScope()
+	{
+		if (!multithread)
+			return;
+		multithread->Leave();
+		std::lock_guard lock(multithreadScopeMutex);
+		if (--multithreadScopeHolders == 0)
+			multithread->SetMultithreadProtected(multithreadScopePriorProtection);
+	}
 
 	ID3D11ShaderResourceView* GetCurrentSceneDepthSRV(bool prefer16bit)
 	{
@@ -110,7 +141,9 @@ namespace Util
 		int len = _vsnprintf_s(buffer, _TRUNCATE, Format, va);
 		va_end(va);
 
-		Resource->SetPrivateData(WKPDID_D3DDebugObjectNameT, len, buffer);
+		if (len < 0)
+			len = static_cast<int>(strnlen(buffer, sizeof(buffer)));
+		Resource->SetPrivateData(WKPDID_D3DDebugObjectNameT, static_cast<UINT>(len), buffer);
 	}
 
 	bool GetTexture2DDesc(ID3D11View* View, D3D11_TEXTURE2D_DESC& OutDesc)

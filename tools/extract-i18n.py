@@ -237,6 +237,16 @@ def extract_strings(src_dir: Path):
             prefix_match = prefix_pattern.search(clean)
             if prefix_match:
                 prefix = prefix_match.group(1)
+            # A file may redefine the prefix for a later section; TKEY uses the last define above it.
+            prefix_spans = [(m.start(), m.group(1)) for m in prefix_pattern.finditer(clean)]
+
+            def prefix_at(pos):
+                active = prefix
+                for start, value in prefix_spans:
+                    if start > pos:
+                        break
+                    active = value
+                return active
 
             def add_string(key, default, source_path):
                 if key in strings and strings[key] != default:
@@ -255,7 +265,7 @@ def extract_strings(src_dir: Path):
             # Extract T(TKEY("suffix"), "default") calls (prefix + suffix)
             if prefix:
                 for match in tkey_pattern.finditer(clean):
-                    key = prefix + match.group(1)
+                    key = prefix_at(match.start()) + match.group(1)
                     default = concat_string_literals(match.group(2))
                     add_string(key, default, rel_path)
 
@@ -273,7 +283,7 @@ def extract_strings(src_dir: Path):
             # Track T(TKEY("suffix")) key-only calls
             if prefix:
                 for match in tkey_keyonly_pattern.finditer(clean):
-                    key = prefix + match.group(1)
+                    key = prefix_at(match.start()) + match.group(1)
                     if key not in strings:
                         key_only.add(key)
 

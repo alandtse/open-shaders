@@ -92,13 +92,14 @@ namespace NR
 		[[nodiscard]] bool Ready() const { return state == State::kReady; }
 
 		/**
-		 * @brief True when the pass may load this runtime: the validated build, or in developer mode
-		 *        one it would refuse. A missing file can never load, and the pinned digests guard the
-		 *        output's channel order, so a forced build is loaded unverified rather than validated.
+		 * @brief True when the pass may load this runtime: the validated build, in developer mode
+		 *        one it would refuse, or with allowUnverified a 310.8.x build outside the pinned digests.
+		 *        A missing file can never load, and the pinned digests guard the output's channel
+		 *        order, so a forced build is loaded unverified rather than validated.
 		 */
-		[[nodiscard]] bool AllowsLoad(bool developerMode) const
+		[[nodiscard]] bool AllowsLoad(bool developerMode, bool allowUnverified = false) const
 		{
-			return Ready() || (developerMode && state != State::kMissing);
+			return Ready() || (developerMode && state != State::kMissing) || (allowUnverified && state == State::kUnvalidatedBuild);
 		}
 	};
 
@@ -150,6 +151,12 @@ namespace NR
 	{
 		return eyes ? renderWidth / eyes : renderWidth;
 	}
+
+	/**
+	 * @brief Feature 18 instances the runtime holds: one per eye, one for both eyes evaluated as a single
+	 *        side-by-side image, and one per eye at full size that a verify capture compares against.
+	 */
+	constexpr uint32_t kFeatureSlots = 5, kSbsSlot = 2, kVerifySlot = 3;
 
 	/** @brief True when a colour target can host NR's proxy for this per-eye render size. */
 	inline bool IsSupportedOutput(const D3D11_TEXTURE2D_DESC& desc, uint32_t width, uint32_t height, uint32_t eyes)
@@ -216,10 +223,14 @@ namespace NR
 		 * @brief Loads the NR runtime and resolves its function table once.
 		 * @param developerMode True to load a build the pass would otherwise refuse, which leaves the
 		 *        runtime's output unverified; see RuntimeAvailability::AllowsLoad.
+		 * @param allowUnverified True to load a 310.8.x build outside the pinned digests.
 		 */
-		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode);
+		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
+
+		/** @brief Drops one instance, so its next evaluate creates it again at the size that evaluate names. */
+		void ResetFeature(uint32_t slot);
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
 		/**

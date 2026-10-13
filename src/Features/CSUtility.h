@@ -85,6 +85,14 @@ struct CSUtility : Feature
 		int parallaxQuality = 16;
 	};
 
+	/** Saturation and gamma adjustments for one color input. */
+	struct ColorAdjustment
+	{
+		float saturation = 1.0f;
+		float gammaOffset = 0.0f;
+	};
+	static_assert(sizeof(ColorAdjustment) == 8);
+
 	struct Settings
 	{
 		bool useAmbientEffectLighting = false;
@@ -116,6 +124,23 @@ struct CSUtility : Feature
 		float vlGammaOffset = 0.0f;
 		float vlIntensity = 1.0f;
 		float sunGlareIntensity = 1.0f;
+		ColorAdjustment sceneColor;
+		ColorAdjustment ambientLightColor;
+		ColorAdjustment directionalLightColor;
+		ColorAdjustment pointLightColor;
+		ColorAdjustment linearPointLightColor;
+		ColorAdjustment spotlightColor;
+		ColorAdjustment linearSpotlightColor;
+		ColorAdjustment omnidirectionalBulbColor;
+		ColorAdjustment linearOmnidirectionalBulbColor;
+		ColorAdjustment emitColor;
+		ColorAdjustment glowmapColor;
+		ColorAdjustment effectLightingColor;
+		ColorAdjustment effectColor;
+		ColorAdjustment skyStaticColor;
+		ColorAdjustment sunGlareColor;
+		float fogSaturation = 1.0f;
+		float vlSaturation = 1.0f;
 		WaterSettings water;
 		DepthOfFieldOverride sceneDof;
 		DepthOfFieldOverride underwaterDof;
@@ -126,8 +151,9 @@ struct CSUtility : Feature
 	enum class SettingsPage
 	{
 		Atmosphere,           ///< Sky atmosphere controls.
+		Light,                ///< Lighting color controls.
 		Water,                ///< Water rendering controls.
-		Multipliers,          ///< Lighting multiplier controls.
+		Materials,            ///< Material color controls.
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
 		VanillaBloom,         ///< Vanilla bloom controls.
 		VolumetricLighting
@@ -179,10 +205,31 @@ struct CSUtility : Feature
 		float skyStaticTransparency;
 		float effectBrightness;
 		float skyStaticBrightness;
-		float padding[2];
+		float fogSaturation;
+		float vlSaturation;
+		ColorAdjustment ambientLightColor;
+		ColorAdjustment directionalLightColor;
+		ColorAdjustment pointLightColor;
+		ColorAdjustment linearPointLightColor;
+		ColorAdjustment spotlightColor;
+		ColorAdjustment linearSpotlightColor;
+		ColorAdjustment omnidirectionalBulbColor;
+		ColorAdjustment linearOmnidirectionalBulbColor;
+		ColorAdjustment emitColor;
+		ColorAdjustment glowmapColor;
+		ColorAdjustment effectLightingColor;
+		ColorAdjustment effectColor;
+		ColorAdjustment skyStaticColor;
+		ColorAdjustment sunGlareColor;
+		float waterSaturation;
+		float padding;
+		ColorAdjustment sceneColor;
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 176);
+	static_assert(sizeof(PerFrameData) == 304);
+	static_assert(offsetof(PerFrameData, ambientLightColor) == 176);
+	static_assert(offsetof(PerFrameData, waterSaturation) == 288);
+	static_assert(offsetof(PerFrameData, sceneColor) == 296);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -216,6 +263,12 @@ struct CSUtility : Feature
 	void DrawDepthOfFieldSettings();
 	/** Draws water tuning controls. */
 	void DrawWaterSettings();
+	/** Draws atmosphere color controls. */
+	void DrawAtmosphereSettings();
+	/** Draws light color controls. */
+	void DrawLightSettings();
+	/** Draws material color controls. */
+	void DrawMaterialSettings();
 	void DrawVanillaBloomSettings();
 	void InstallDepthOfFieldHooks();
 

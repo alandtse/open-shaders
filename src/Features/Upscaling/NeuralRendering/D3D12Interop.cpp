@@ -64,6 +64,7 @@ namespace NR
 		commands = {};
 		parallelCommands = {};
 		parallelQueue = nullptr;
+		parallelFence.Reset();
 		parallelUsed = parallelFailed = false;
 		fence.Reset();
 		queue = nullptr;
@@ -85,13 +86,13 @@ namespace NR
 		return std::make_unique<WrappedResource>(desc, device11.get(), device.get(), name);
 	}
 
-	void D3D12Interop::Wait(uint64_t completion)
+	void D3D12Interop::Wait(SharedFence& target, uint64_t completion)
 	{
-		if (!fence.fence12)
+		if (!target.fence12)
 			return;
 		Check(device->GetDeviceRemovedReason());
 		DWORD waitError = 0;
-		const auto outcome = fence.CpuWaitOutcome(completion, SharedFence::kFenceTimeoutMs, &waitError);
+		const auto outcome = target.CpuWaitOutcome(completion, SharedFence::kFenceTimeoutMs, &waitError);
 		if (outcome == SharedFence::WaitOutcome::kComplete)
 			return;
 		Check(device->GetDeviceRemovedReason());
@@ -103,7 +104,7 @@ namespace NR
 	ID3D12GraphicsCommandList* D3D12Interop::Begin()
 	{
 		auto& slot = commands[cursor];
-		Wait(slot.completion);
+		Wait(fence, slot.completion);
 		winrt::check_hresult(slot.allocator->Reset());
 		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
 		const auto ready = fence.Next();
@@ -126,11 +127,10 @@ namespace NR
 			winrt::check_hresult(parallel.list->Close());
 			ID3D12CommandList* parallelLists[]{ parallel.list.get() };
 			parallelQueue->ExecuteCommandLists(1, parallelLists);
-			const auto parallelDone = fence.Next();
+			const auto parallelDone = parallelFence.Next();
 			parallel.completion = parallelDone;
-			winrt::check_hresult(parallelQueue->Signal(fence.fence12.get(), parallelDone));
-			// The D3D11 wait below covers this work only because the main queue's completion follows it.
-			winrt::check_hresult(queue->Wait(fence.fence12.get(), parallelDone));
+			winrt::check_hresult(parallelQueue->Signal(parallelFence.fence12.get(), parallelDone));
+			winrt::check_hresult(queue->Wait(parallelFence.fence12.get(), parallelDone));
 			parallelUsed = false;
 		}
 		const auto complete = fence.Next();
@@ -151,16 +151,25 @@ namespace NR
 				Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(parallelQueue.put())));
 				Check(parallelQueue->SetName(L"NeuralRendering::ParallelQueue"));
 				CreateRing(parallelCommands, D3D12_COMMAND_LIST_TYPE_COMPUTE, L"NeuralRendering::ParallelAllocator", L"NeuralRendering::ParallelCommands");
+				parallelFence.Create(device.get(), device11.get(), "NeuralRendering::ParallelFence");
+			} catch (const winrt::hresult_error& error) {
+				logger::warn("[NeuralRendering] parallel eye queue unavailable, using one queue: {}", winrt::to_string(error.message()));
+				parallelCommands = {};
+				parallelQueue = nullptr;
+				parallelFence.Reset();
+				parallelFailed = true;
+				return nullptr;
 			} catch (const std::exception& error) {
 				logger::warn("[NeuralRendering] parallel eye queue unavailable, using one queue: {}", error.what());
 				parallelCommands = {};
 				parallelQueue = nullptr;
+				parallelFence.Reset();
 				parallelFailed = true;
 				return nullptr;
 			}
 		}
 		auto& slot = parallelCommands[cursor];
-		Wait(slot.completion);
+		Wait(parallelFence, slot.completion);
 		winrt::check_hresult(slot.allocator->Reset());
 		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
 		if (!parallelUsed)
@@ -177,8 +186,14 @@ namespace NR
 		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
 		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
+		if (parallelQueue) {
+			// End may fail after parallel submission but before joining it.
+			const auto parallelComplete = parallelFence.Next();
+			winrt::check_hresult(parallelQueue->Signal(parallelFence.fence12.get(), parallelComplete));
+			winrt::check_hresult(queue->Wait(parallelFence.fence12.get(), parallelComplete));
+		}
 		const auto complete = fence.Next();
 		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
-		Wait(complete);
+		Wait(fence, complete);
 	}
 }
