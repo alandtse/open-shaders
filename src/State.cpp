@@ -238,6 +238,9 @@ void State::Draw()
 			}
 		}
 
+		if (currentShader)
+			Feature::ApplyDrawHooks();
+
 		if (globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible())
 			Debug();
 
