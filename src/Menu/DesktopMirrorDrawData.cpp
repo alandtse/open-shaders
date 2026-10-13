@@ -33,14 +33,19 @@ bool DesktopMirrorDrawData::ContainsCallback(const ImDrawData& source, const ImD
 	return false;
 }
 
-bool DesktopMirrorDrawData::Build(const ImDrawData& source, const ImVec2 targetSize)
+bool DesktopMirrorDrawData::FitTransform::MapPosition(const ImVec2 position, const ImVec2 displayPos, const ImVec2 framebufferScale, ImVec2& result) const
 {
-	Reset();
-	const auto fail = [this]() {
-		Reset();
+	const double x = offsetX + (static_cast<double>(position.x) - displayPos.x) * framebufferScale.x * scale;
+	const double y = offsetY + (static_cast<double>(position.y) - displayPos.y) * framebufferScale.y * scale;
+	if (!std::isfinite(x) || !std::isfinite(y) || std::abs(x) > std::numeric_limits<float>::max() || std::abs(y) > std::numeric_limits<float>::max())
 		return false;
-	};
-	if (!source.Valid || source.CmdLists.Size <= 0 || !IsFinitePositive(source.DisplaySize.x) || !IsFinitePositive(source.DisplaySize.y) ||
+	result = ImVec2(static_cast<float>(x), static_cast<float>(y));
+	return true;
+}
+
+bool DesktopMirrorDrawData::GetFitTransform(const ImDrawData& source, const ImVec2 targetSize, FitTransform& transform)
+{
+	if (!source.Valid || !IsFinitePositive(source.DisplaySize.x) || !IsFinitePositive(source.DisplaySize.y) ||
 		!IsFinite(source.DisplayPos) || !IsFinitePositive(source.FramebufferScale.x) || !IsFinitePositive(source.FramebufferScale.y) ||
 		!IsFinitePositive(targetSize.x) || !IsFinitePositive(targetSize.y)) {
 		return false;
@@ -52,18 +57,26 @@ bool DesktopMirrorDrawData::Build(const ImDrawData& source, const ImVec2 targetS
 		return false;
 
 	const double scale = (std::min)(static_cast<double>(targetSize.x) / sourceWidth, static_cast<double>(targetSize.y) / sourceHeight);
-	if (!std::isfinite(scale) || scale <= 0.0)
-		return false;
-
 	const double offsetX = (static_cast<double>(targetSize.x) - sourceWidth * scale) * 0.5;
 	const double offsetY = (static_cast<double>(targetSize.y) - sourceHeight * scale) * 0.5;
-	const auto transform = [&](float value, float displayPosition, float framebufferScale, double offset, float& result) {
-		const double transformed = offset + (static_cast<double>(value) - displayPosition) * framebufferScale * scale;
-		if (!std::isfinite(transformed) || std::abs(transformed) > std::numeric_limits<float>::max())
-			return false;
-		result = static_cast<float>(transformed);
-		return true;
+	if (!std::isfinite(scale) || scale <= 0.0 || !std::isfinite(offsetX) || !std::isfinite(offsetY))
+		return false;
+
+	transform = { scale, offsetX, offsetY };
+	return true;
+}
+
+bool DesktopMirrorDrawData::Build(const ImDrawData& source, const ImVec2 targetSize)
+{
+	Reset();
+	const auto fail = [this]() {
+		Reset();
+		return false;
 	};
+	FitTransform fit{};
+	if (source.CmdLists.Size <= 0 || !GetFitTransform(source, targetSize, fit)) {
+		return false;
+	}
 
 	try {
 		m_clonedLists.reserve(static_cast<size_t>(source.CmdLists.Size));
@@ -78,24 +91,22 @@ bool DesktopMirrorDrawData::Build(const ImDrawData& source, const ImVec2 targetS
 
 			for (int vertexIndex = 0; vertexIndex < clone->VtxBuffer.Size; ++vertexIndex) {
 				auto& position = clone->VtxBuffer[vertexIndex].pos;
-				if (!transform(position.x, source.DisplayPos.x, source.FramebufferScale.x, offsetX, position.x) ||
-					!transform(position.y, source.DisplayPos.y, source.FramebufferScale.y, offsetY, position.y)) {
+				if (!fit.MapPosition(position, source.DisplayPos, source.FramebufferScale, position)) {
 					return fail();
 				}
 			}
 
 			for (int commandIndex = 0; commandIndex < clone->CmdBuffer.Size; ++commandIndex) {
 				auto& clipRect = clone->CmdBuffer[commandIndex].ClipRect;
-				if (!transform(clipRect.x, source.DisplayPos.x, source.FramebufferScale.x, offsetX, clipRect.x) ||
-					!transform(clipRect.y, source.DisplayPos.y, source.FramebufferScale.y, offsetY, clipRect.y) ||
-					!transform(clipRect.z, source.DisplayPos.x, source.FramebufferScale.x, offsetX, clipRect.z) ||
-					!transform(clipRect.w, source.DisplayPos.y, source.FramebufferScale.y, offsetY, clipRect.w)) {
+				ImVec2 min{}, max{};
+				if (!fit.MapPosition(ImVec2(clipRect.x, clipRect.y), source.DisplayPos, source.FramebufferScale, min) ||
+					!fit.MapPosition(ImVec2(clipRect.z, clipRect.w), source.DisplayPos, source.FramebufferScale, max)) {
 					return fail();
 				}
-				clipRect.x = std::clamp(clipRect.x, 0.0f, targetSize.x);
-				clipRect.y = std::clamp(clipRect.y, 0.0f, targetSize.y);
-				clipRect.z = std::clamp(clipRect.z, 0.0f, targetSize.x);
-				clipRect.w = std::clamp(clipRect.w, 0.0f, targetSize.y);
+				clipRect.x = std::clamp(min.x, 0.0f, targetSize.x);
+				clipRect.y = std::clamp(min.y, 0.0f, targetSize.y);
+				clipRect.z = std::clamp(max.x, 0.0f, targetSize.x);
+				clipRect.w = std::clamp(max.y, 0.0f, targetSize.y);
 			}
 
 			m_clonedLists.push_back(std::move(clone));

@@ -139,6 +139,13 @@ void testFitAndPreservation() {
 
     DesktopMirrorDrawData mirror;
     check(mirror.Build(source.data, ImVec2(300.0f, 300.0f)), "valid source builds a mirror");
+    DesktopMirrorDrawData::FitTransform fit{};
+    check(DesktopMirrorDrawData::GetFitTransform(source.data, ImVec2(300.0f, 300.0f), fit),
+          "fit parameters are available for window geometry");
+    ImVec2 blurPoint{};
+    check(fit.MapPosition(ImVec2(displayPos.x, displayPos.y), source.data.DisplayPos,
+                          source.data.FramebufferScale, blurPoint), "window geometry maps to target pixels");
+    checkVec(blurPoint, ImVec2(0.0f, 50.0f), "window geometry shares the draw-data letterbox transform");
     const ImDrawData* output = mirror.Get();
     check(output != nullptr, "successful build exposes draw data");
     if (!output) return;
@@ -362,13 +369,60 @@ class DesktopMirrorNativeTests(unittest.TestCase):
     def test_mirror_callsite_checks_hdr_detector_before_build(self):
         overlay = (ROOT / "src/Menu/OverlayRenderer.cpp").read_text(encoding="utf-8")
         finalize = self.extract_braced(overlay, "void OverlayRenderer::FinalizeImGuiFrame(")
+        self.assertIn("RenderDesktopMirror(drawData)", finalize)
+        helper = self.extract_braced(overlay, "bool OverlayRenderer::RenderDesktopMirror(")
         eligibility = "const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);"
-        self.assertIn(eligibility, finalize)
-        self.assertLess(finalize.index(eligibility), finalize.index("mirror.Build(*drawData, desktopSize)"))
-        helper_branch = self.extract_braced(finalize, "if (helperPanelActive && drawData && globals::d3d::swapChain)")
-        guard = "if (dimensionsDiffer && !BackgroundBlur::HasHDRSceneImageCallback(drawData))"
-        self.assertIn(guard, helper_branch)
-        self.assertLess(helper_branch.index(guard), helper_branch.index("mirror.Build(*drawData, desktopSize)"))
+        self.assertIn(eligibility, helper)
+        self.assertLess(helper.index(eligibility), helper.index("pendingDesktopMirror.Build(*drawData, desktopSize)"))
+        self.assertIn("pendingDesktopMirrorSource = drawData", helper)
+        self.assertIn("IsSupportedDesktopMirrorFormat(swapChainDesc.BufferDesc.Format)", helper)
+        self.assertLess(helper.index("IsSupportedDesktopMirrorFormat(swapChainDesc.BufferDesc.Format)"), helper.index("pendingDesktopMirror.Build(*drawData, desktopSize)"))
+        self.assertIn("d3d12SwapChainActive", helper)
+        self.assertIn("settings.enableHDR", helper)
+        self.assertIn("!dimensionsDiffer || BackgroundBlur::HasHDRSceneImageCallback(drawData)", helper)
+        self.assertLess(helper.index("HasHDRSceneImageCallback(drawData)"), helper.index("pendingDesktopMirror.Build(*drawData, desktopSize)"))
+
+        present = self.extract_braced(overlay, "void OverlayRenderer::RenderDesktopMirrorAtPresent(")
+        self.assertIn("swapChain->GetBuffer(bufferIndex", present)
+        self.assertIn("CreateRenderTargetView(backBuffer.get()", present)
+        self.assertIn("IsSupportedDesktopMirrorFormat(backBufferDesc.Format)", present)
+        self.assertIn("DXGI_FORMAT_R8G8B8A8_UNORM_SRGB", overlay)
+        self.assertIn("DXGI_FORMAT_B8G8R8A8_UNORM", overlay)
+        self.assertIn("OMSetRenderTargets(1, &target, nullptr)", present)
+        self.assertIn("D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT", present)
+        self.assertIn("previousDSV.get()", present)
+        self.assertIn("scope_exit consumePending", present)
+        self.assertIn("CS_GPU_PASS(\"OverlayRenderer::DesktopMirror\")", present)
+        self.assertIn("OverlayRenderer::DesktopMirror RTV", present)
+        self.assertLess(present.index("GetBuffer(bufferIndex"), present.index("ImGui_ImplDX11_RenderDrawData(mirrorDrawData)"))
+
+        hdr = (ROOT / "src/Features/HDRDisplay.cpp").read_text(encoding="utf-8")
+        present_chain = self.extract_braced(hdr, "HRESULT HDRDisplay::RunPresentChainWithHDR(")
+        self.assertLess(present_chain.index("RenderDesktopMirrorAtPresent"), present_chain.index("return presentChain(swapChain"))
+
+    def test_blur_mirror_uses_fit_transform_and_matching_target(self):
+        blur = (ROOT / "src/Menu/BackgroundBlur.cpp").read_text(encoding="utf-8")
+        gather = self.extract_braced(blur, "std::vector<WindowBlur> GatherWindows(")
+        self.assertIn("fit.MapPosition(rect.Min", gather)
+        self.assertIn("fit.MapPosition(rect.Max", gather)
+        self.assertIn("drawData->CmdLists[drawOrder]", gather)
+        render = self.extract_braced(
+            blur, "static bool RenderDrawDataImpl(ImDrawData* drawData, const ImDrawData* sourceDrawData, bool desktopMirror)\n\t{"
+        )
+        self.assertIn("imguiDesc.Width != texDesc.Width || imguiDesc.Height != texDesc.Height", render)
+        self.assertIn("texDesc.Width) - drawData->DisplaySize.x", render)
+        self.assertLess(render.index("if (!PreserveUIBuffer(uiBuffer))"), render.index("retainedDesktopMirror = desktopMirror;"))
+        self.assertLess(render.index("retainedDesktopMirror = desktopMirror;"), render.index("retainedScene = { currentTexture"))
+        self.assertLess(render.index("!CopyCompatible(currentTexture.get(), hdr->cleanSceneCapture->resource.get())"),
+                        render.index("retainedScene = { currentTexture"))
+        self.assertIn("desktopMirrorSourceTexture", blur)
+        self.assertIn("desktopMirrorSourceSRV", blur)
+        self.assertIn("mirrorSourceCopy = desktopMirrorSourceTexture.get()", render)
+        self.assertNotIn("CopyResource(desktopMirrorSourceTexture.get(), currentTexture.get())", render)
+        refresh = self.extract_braced(blur, "void RenderWindowBlur(const ImDrawList*, const ImDrawCmd* command)")
+        self.assertLess(refresh.index("OMSetRenderTargets(0, nullptr, nullptr)"), refresh.index("CopyResource(window.frame->mirrorSourceCopy, window.frame->mirrorSourceTexture)"))
+        self.assertLess(refresh.index("CopyResource(window.frame->mirrorSourceCopy, window.frame->mirrorSourceTexture)"), refresh.index("OMSetRenderTargets(1, &target, nullptr)"))
+        self.assertLess(refresh.index("OMSetRenderTargets(1, &target, nullptr)"), refresh.index("PerformBlur(*window.frame, window.constants)"))
 
     def test_native_draw_data_fit_and_lifetime(self):
         if os.name != "nt":

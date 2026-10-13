@@ -17,6 +17,8 @@ namespace BackgroundBlur
 
 	/** @brief Renders ImGui with ordered background blur; returns false when the caller must render normally. */
 	bool RenderDrawData(ImDrawData* drawData);
+	/** @brief Applies flat-menu blur to a fitted desktop mirror using source window coordinates. */
+	bool RenderDrawDataForDesktopMirror(ImDrawData* drawData, const ImDrawData& sourceDrawData);
 	/** @brief Restores blur-modified buffers only when the engine has retained their previous contents. */
 	void RestoreRetainedBuffers();
 	/** @brief Draws an opaque HDR scene preview without passing scene color through the SDR UI buffer. */
