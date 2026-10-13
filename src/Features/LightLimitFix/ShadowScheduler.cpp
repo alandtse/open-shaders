@@ -3197,6 +3197,9 @@ namespace ShadowCasterManager
 				snap.convertReEnableRun = s_convertReEnableRun.load(std::memory_order_relaxed);
 				snap.convertReEnableSkipped = s_convertReEnableSkipped.load(std::memory_order_relaxed);
 				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
+				snap.convertedLights = static_cast<uint32_t>(s_normalConvert.size());
+				for (const auto& converted : s_normalConvert)
+					snap.convertedStrictLights += (converted.light && converted.light->portalStrict) ? 1u : 0u;
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);

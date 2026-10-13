@@ -755,6 +755,8 @@ namespace ShadowCasterManager
 		uint64_t convertReEnableRun = 0;
 		uint64_t convertReEnableSkipped = 0;
 		uint64_t convertReEnableToleranceSkipped = 0;  ///< subset of convertReEnableSkipped taken on flicker-scale drift
+		uint32_t convertedLights = 0;                  ///< lights currently converted to normal lights
+		uint32_t convertedStrictLights = 0;            ///< of those, lights using strict portal membership
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
