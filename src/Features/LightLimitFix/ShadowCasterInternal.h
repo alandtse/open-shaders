@@ -663,6 +663,11 @@ namespace ShadowCasterManager
 	/// depthScale (bake radius / live radius) so it stays valid under radius flicker.
 	void CopyStaticTileToLive(int32_t poolSlot, float depthScale);
 
+	/// Reprojects the slot's static tile (baked at the pose given by invBake, normalised by
+	/// bakeRadius) onto the light's current pose (liveProj, liveRadius) and writes it into the
+	/// live tile. isOmni: 2 = dual paraboloid, 1 = hemisphere. Returns false when unavailable.
+	bool WarpStaticTileToLive(int32_t poolSlot, const float* invBake, const float* liveProj, float bakeRadius, float liveRadius, uint32_t isOmni);
+
 	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
 	/// the baked tile captured zero casters (a blank bake latched valid).
 	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut = nullptr);

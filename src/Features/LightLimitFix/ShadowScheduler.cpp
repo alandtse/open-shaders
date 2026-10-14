@@ -332,6 +332,8 @@ namespace ShadowCasterManager
 		RE::NiPoint3 bakePos{};      ///< light position the static tile was baked at
 		RE::NiMatrix3 bakeRot{};     ///< light rotation the static tile was baked at
 		float bakeRadius = 0.0f;
+		float bakeInvProj[16]{};  ///< light-to-world matrix the static tile was baked with
+		bool bakeInvProjValid = false;
 		bool bakePoseValid = false;
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
@@ -808,6 +810,12 @@ namespace ShadowCasterManager
 	constexpr float kConvertReEnableRadiusFraction = 0.02f;
 	constexpr std::uint32_t kConvertReEnableRefreshFrames = 8;
 	constexpr float kFadeOnThreshold = 0.05f;
+
+	constexpr float kWarpEdgeErrOnPx = 1.0f;
+	constexpr float kWarpEdgeErrOffPx = 0.5f;
+	constexpr uint32_t kWarpOffFrames = 8;
+	constexpr float kWarpNearClampUnits = 35.0f;
+	constexpr uint32_t kWarpZeroDemandSamples = 30;
 
 	/// Flicker-tolerant match against the last-enabled snapshot.
 	static bool EnableInputsEquivalent(const EnableInputs& a, const EnableInputs& b)
@@ -1392,6 +1400,19 @@ namespace ShadowCasterManager
 
 	static std::unordered_map<uintptr_t, float> s_originPinDrift;
 
+	/// Per-light warp gate: `active` is the current decision, `belowStreak` the consecutive
+	/// sub-threshold seeds that will eventually latch it off.
+	struct WarpGateState
+	{
+		bool active = true;
+		uint32_t belowStreak = 0;
+	};
+	static std::unordered_map<uintptr_t, WarpGateState> s_warpGate;
+	static std::atomic<uint32_t> s_warpsRun{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedSubPixel{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedOffscreen{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedNoDemand{ 0 };
+
 	int GetFlickerMode()
 	{
 		return static_cast<int>(s_settings.FlickerShadowMode);
@@ -1430,6 +1451,22 @@ namespace ShadowCasterManager
 		else
 			s_originPinDrift.erase(key);
 		return pin && GetFlickerMode() == 1;
+	}
+
+	static bool WarpIsVisible(RE::BSShadowLight* light, const SplitState& st, int32_t slot);
+
+	/// Seeds the live tile with the cached static depth: reprojected to the live origin in the
+	/// warped flicker mode, otherwise copied (rescaled for radius drift).
+	static void SeedLiveTileFromStatic(int32_t slot, RE::BSShadowLight* light, const SplitState& st)
+	{
+		if (TolerantSplit() && GetFlickerMode() == 2 && st.bakeInvProjValid && light->GetIsParabolicLight() && WarpIsVisible(light, st, slot)) {
+			const auto* ni = light->light.get();
+			float liveProj[16], liveInv[16];
+			if (ni && GetLightProjection(light, liveProj, liveInv) &&
+				WarpStaticTileToLive(slot, st.bakeInvProj, liveProj, st.bakeRadius, ni->GetLightRuntimeData().radius.x, light->shadowMapCount == 2 ? 2u : 1u))
+				return;
+		}
+		CopyStaticTileToLive(slot, StaticDepthScale(light, st));
 	}
 
 	// Run UpdateCamera + EnableLight + the validity scan in one SEH region: EnableLight can read a
@@ -1658,6 +1695,60 @@ namespace ShadowCasterManager
 			inside = inside || eyeInside;
 		}
 		return inside;
+	}
+
+	/// True when reprojecting the cached static tile would move the light's shadow edge by
+	/// more than a pixel on screen; otherwise the plain copy is visually indistinguishable.
+	static bool WarpIsVisible(RE::BSShadowLight* light, const SplitState& st, int32_t slot)
+	{
+		if (!s_settings.WarpVisibilityGate)
+			return true;
+		if (s_settings.WarpZeroDemandSkip && slot >= 0 && slot < s_lights.Size && DemandSampleUsable()) {
+			const auto& entry = s_lights.Lights[slot];
+			const int32_t demandSlot = DemandSlotFor(entry);
+			if (entry.Light == light && demandSlot >= 0 && s_shadowDemand.maxLatest[demandSlot] <= kDemandUntouchedMaxRaw &&
+				entry.untouchedSamples >= kWarpZeroDemandSamples) {
+				s_warpsSkippedNoDemand.fetch_add(1, std::memory_order_relaxed);
+				return false;
+			}
+		}
+		const auto* ni = light->light.get();
+		if (!ni)
+			return true;
+		const float drift = std::sqrt(ni->world.translate.GetSquaredDistance(st.bakePos));
+		const float radius = ni->GetLightRuntimeData().radius.x;
+		float nearestEyeDistance = 0.0f;
+		if (!OwnSphereInFrustum(ni->world.translate, radius, nearestEyeDistance)) {
+			s_warpsSkippedOffscreen.fetch_add(1, std::memory_order_relaxed);
+			s_warpGate.erase(reinterpret_cast<uintptr_t>(light));
+			return false;
+		}
+		// The nearest lit receiver lies at the sphere's near point, the worst-case displacement.
+		const float d = std::max(nearestEyeDistance - radius, kWarpNearClampUnits);
+		const int eyes = globals::game::isVR ? 2 : 1;
+		const float eyeWidthPx = globals::state->screenSize.x / static_cast<float>(eyes);
+		float edgeErrPx = 0.0f;
+		for (int eye = 0; eye < eyes; ++eye) {
+			const float focalPx = 0.5f * eyeWidthPx * std::abs(globals::game::frameBufferCached.GetCameraProjUnjittered(eye)._11);
+			edgeErrPx = std::max(edgeErrPx, drift * focalPx / d);
+		}
+		auto& gate = s_warpGate[reinterpret_cast<uintptr_t>(light)];
+		if (edgeErrPx > kWarpEdgeErrOnPx) {
+			gate.active = true;
+			gate.belowStreak = 0;
+		} else if (edgeErrPx < kWarpEdgeErrOffPx) {
+			++gate.belowStreak;
+			if (gate.belowStreak >= kWarpOffFrames)
+				gate.active = false;
+		} else {
+			gate.belowStreak = 0;
+		}
+		if (!gate.active) {
+			s_warpsSkippedSubPixel.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
+		s_warpsRun.fetch_add(1, std::memory_order_relaxed);
+		return true;
 	}
 
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
@@ -3090,6 +3181,9 @@ namespace ShadowCasterManager
 			std::erase_if(s_originPinDrift, [&](const auto& kv) {
 				return !std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), reinterpret_cast<RE::BSShadowLight*>(kv.first));
 			});
+			std::erase_if(s_warpGate, [&](const auto& kv) {
+				return !std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), reinterpret_cast<RE::BSShadowLight*>(kv.first));
+			});
 
 			int endIdx = (int)*GetAccumLightSlot();
 
@@ -3326,6 +3420,10 @@ namespace ShadowCasterManager
 				if (const uint32_t n = s_cpuEnableN.exchange(0, std::memory_order_relaxed))
 					snap.cpuEnableUsAvg = static_cast<uint32_t>(s_cpuEnableUs.exchange(0, std::memory_order_relaxed) / n);
 				snap.originPinnedLights = static_cast<uint32_t>(s_originPinDrift.size());
+				snap.warpsRun = s_warpsRun.load(std::memory_order_relaxed);
+				snap.warpsSkippedSubPixel = s_warpsSkippedSubPixel.load(std::memory_order_relaxed);
+				snap.warpsSkippedOffscreen = s_warpsSkippedOffscreen.load(std::memory_order_relaxed);
+				snap.warpsSkippedNoDemand = s_warpsSkippedNoDemand.load(std::memory_order_relaxed);
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
@@ -3752,9 +3850,11 @@ namespace ShadowCasterManager
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
 							// A skipped bake leaves the static tile blank: drop the slot's static cache and re-arm.
-							if (rendered)
+							if (rendered) {
 								MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
-							else
+								float bakeProj[16];
+								st.bakeInvProjValid = GetLightProjection(e.Light, bakeProj, st.bakeInvProj);
+							} else
 								InvalidateSlotStaticBake(i);
 							st.bakeThisFrame = false;
 							if (!rendered) {
@@ -3770,7 +3870,7 @@ namespace ShadowCasterManager
 							// A bake that captured nothing is a blank rect: seeding a fresh
 							// tile from it would advertise a flat tile as content.
 							if (!liveHasContent && st.bakeSawStatic)
-								CopyStaticTileToLive(i, StaticDepthScale(e.Light, st));
+								SeedLiveTileFromStatic(i, e.Light, st);
 							s_budget.EndLight(e.Light, 1);
 							if (liveHasContent || st.bakeSawStatic) {
 								e.renderedScale = e.pendingScale;
@@ -3798,7 +3898,7 @@ namespace ShadowCasterManager
 							s_budget.BeginLight(e.Light, 1);
 							if (compositeValid) {
 								if (!compositeKeepPrior)
-									CopyStaticTileToLive(i, StaticDepthScale(e.Light, st));  // seed the tile with cached static depth
+									SeedLiveTileFromStatic(i, e.Light, st);  // seed the tile with cached static depth
 							} else {
 								if (!compositeKeepPrior)
 									ClearSlotTile(i);

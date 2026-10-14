@@ -669,13 +669,15 @@ namespace ShadowCasterManager
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
 						if (float pinDrift = 0.0f; GetOriginPinState(row.info.lightKey, pinDrift)) {
 							ImGui::SameLine();
-							if (GetFlickerMode() == 1)
-								ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.95f, 1), "P %.1f", pinDrift);
+							const bool warped = GetFlickerMode() == 2;
+							if (GetFlickerMode() != 0)
+								ImGui::TextColored(warped ? ImVec4(0.55f, 0.95f, 0.45f, 1) : ImVec4(0.35f, 0.8f, 0.95f, 1), "%c %.1f", warped ? 'W' : 'P', pinDrift);
 							if (ImGui::IsItemHovered())
 								ImGui::SetTooltip("%s", T(TKEY("status_pin_tooltip"),
-															"P: shadow origin pinned at the cached bake pose. The light itself\n"
-															"always flickers. The number is how far the live light has drifted\n"
-															"from the bake pose, in world units."));
+															"P: shadow origin pinned at the cached bake pose. W: cached shadow\n"
+															"reprojected to the live origin. The light itself always flickers.\n"
+															"The number is how far the live light has drifted from the bake\n"
+															"pose, in world units."));
 						}
 					} else if (row.converted) {
 						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), "%s", T(TKEY("status_conv"), "Conv"));
@@ -1662,10 +1664,10 @@ namespace ShadowCasterManager
 											"it every time. Removes the static redraw work of flickering lights."));
 
 			ImGui::BeginDisabled(!settings.TolerantSplitCache);
-			const char* modeNames[2] = { T(TKEY("flicker_live"), "Live"), T(TKEY("flicker_pinned"), "Pinned") };
+			const char* modeNames[3] = { T(TKEY("flicker_live"), "Live"), T(TKEY("flicker_pinned"), "Pinned"), T(TKEY("flicker_warped"), "Warped") };
 			int flickerMode = static_cast<int>(settings.FlickerShadowMode);
-			if (ImGui::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &flickerMode, modeNames, 2))
-				settings.FlickerShadowMode = static_cast<FlickerShadowModeEnum>(std::clamp(flickerMode, 0, 1));
+			if (ImGui::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &flickerMode, modeNames, 3))
+				settings.FlickerShadowMode = static_cast<FlickerShadowModeEnum>(std::clamp(flickerMode, 0, 2));
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("flicker_tooltip"),
 											"How a cached shadow follows a flickering light:\n"
@@ -1673,7 +1675,22 @@ namespace ShadowCasterManager
 											"copied unmoved, which leaves a small mismatch near occluders.\n"
 											"Pinned: the shadow origin stays at the bake pose, so the shadow\n"
 											"does not move with the flame.\n"
-											"P in the shadow light table marks lights using Pinned."));
+											"Warped: the cached depth is reprojected to the live origin on the\n"
+											"GPU, so the shadow moves with the flame.\n"
+											"P / W in the shadow light table marks lights using Pinned / Warped."));
+
+			ImGui::Checkbox(T(TKEY("warp_visibility_gate"), "Skip Warp When Not Visible"), &settings.WarpVisibilityGate);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("warp_visibility_gate_tooltip"),
+											"Skips the Warped reprojection for a light that is off screen or whose\n"
+											"shadow edge would move by under a pixel, and copies the cached depth\n"
+											"instead."));
+
+			ImGui::Checkbox(T(TKEY("warp_zero_demand_skip"), "Skip Warp for Unseen Lights"), &settings.WarpZeroDemandSkip);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("warp_zero_demand_skip_tooltip"),
+											"Skips the Warped reprojection for a light the GPU measures as lighting\n"
+											"nothing on screen across many samples. Requires the Shadow Atlas."));
 			ImGui::EndDisabled();
 
 			ImGui::TreePop();

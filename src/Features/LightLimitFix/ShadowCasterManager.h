@@ -213,8 +213,9 @@ namespace ShadowCasterManager
 	/// How a flickering light's cached static shadow follows the light's live origin.
 	enum class FlickerShadowModeEnum : int32_t
 	{
-		Live,   ///< The shadow origin follows the light; the cached depth is copied unmoved
-		Pinned  ///< Hold the shadow camera at the bake origin
+		Live,    ///< Rebake when the light drifts past the tolerance
+		Pinned,  ///< Hold the shadow camera at the bake origin
+		Warped   ///< Reproject the cached depth to the live origin on the GPU
 	};
 
 	struct Settings
@@ -316,7 +317,14 @@ namespace ShadowCasterManager
 		bool TolerantSplitCache = false;
 
 		/// How the cached static shadow follows a flickering light; ignored when TolerantSplitCache is off.
-		FlickerShadowModeEnum FlickerShadowMode = FlickerShadowModeEnum::Live;
+		FlickerShadowModeEnum FlickerShadowMode = FlickerShadowModeEnum::Warped;
+
+		/// Skips the GPU reprojection for a light whose shadow edge would move under a pixel
+		/// on screen, or that is off screen, and copies the cached depth instead.
+		bool WarpVisibilityGate = true;
+
+		/// Skips the GPU reprojection for a light the GPU measures as unseen for many samples.
+		bool WarpZeroDemandSkip = true;
 
 		/// Scores spot lights by the frustum they light instead of by their emitter, and wakes
 		/// them for the player only inside that frustum.
@@ -332,7 +340,7 @@ namespace ShadowCasterManager
 		{ { BudgetModeEnum::Auto, 0 }, { BudgetModeEnum::Manual, 1 }, { BudgetModeEnum::Formula, 2 } })
 
 	NLOHMANN_JSON_SERIALIZE_ENUM(FlickerShadowModeEnum,
-		{ { FlickerShadowModeEnum::Live, 0 }, { FlickerShadowModeEnum::Pinned, 1 } })
+		{ { FlickerShadowModeEnum::Live, 0 }, { FlickerShadowModeEnum::Pinned, 1 }, { FlickerShadowModeEnum::Warped, 2 } })
 
 	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 		Settings,
@@ -364,6 +372,8 @@ namespace ShadowCasterManager
 		DemandTileCap,
 		TolerantSplitCache,
 		FlickerShadowMode,
+		WarpVisibilityGate,
+		WarpZeroDemandSkip,
 		SpotLitRegion)
 
 	/// Restart-gated hook toggles applied at boot.
@@ -806,6 +816,10 @@ namespace ShadowCasterManager
 		uint64_t convertReEnableRun = 0;
 		uint64_t convertReEnableSkipped = 0;
 		uint32_t originPinnedLights = 0;
+		uint32_t warpsRun = 0;
+		uint32_t warpsSkippedSubPixel = 0;
+		uint32_t warpsSkippedOffscreen = 0;
+		uint32_t warpsSkippedNoDemand = 0;
 		uint64_t convertReEnableToleranceSkipped = 0;  ///< subset of convertReEnableSkipped taken on flicker-scale drift
 		uint32_t convertedLights = 0;                  ///< lights currently converted to normal lights
 		uint32_t convertedStrictLights = 0;            ///< of those, lights using strict portal membership
@@ -902,7 +916,8 @@ namespace ShadowCasterManager
 	/// the live light has drifted from it. False when the light renders at its live pose.
 	bool GetOriginPinState(uintptr_t lightKey, float& driftUnitsOut);
 	/// How a cached shadow follows a flickering light: 0 live origin with the plain static copy,
-	/// 1 shadow origin pinned at the bake pose. Needs the tolerant split cache.
+	/// 1 shadow origin pinned at the bake pose, 2 cached tile reprojected to the live origin.
+	/// Needs the tolerant split cache.
 	int GetFlickerMode();
 	/// The engine's world-to-light matrix for shadow descriptor 0 and its inverse (row-major, 16 floats each).
 	bool GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut);
