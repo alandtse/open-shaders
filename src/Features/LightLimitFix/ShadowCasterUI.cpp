@@ -1623,6 +1623,19 @@ namespace ShadowCasterManager
 			ImGui::TreePop();
 		}
 
+		// ---- Spot lights ----------------------------------------------------
+		if (ImGui::TreeNode(T(TKEY("spot_lights"), "Spot Lights##SpotLights"))) {
+			ImGui::Checkbox(T(TKEY("spot_lit_region"), "Score Spot Lights by Their Lit Area"), &settings.SpotLitRegion);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("spot_lit_region_tooltip"),
+											"Measures a spot light's distance to the camera and player from the\n"
+											"frustum it lights instead of from its emitter, which can be far from\n"
+											"the lit area, and wakes its shadow for the player only inside that\n"
+											"frustum."));
+
+			ImGui::TreePop();
+		}
+
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {
 			ImGui::Checkbox(T(TKEY("convert_excess_to_normal"), "Convert Excess Lights to Normal"), &settings.ConvertExcessToNormal);

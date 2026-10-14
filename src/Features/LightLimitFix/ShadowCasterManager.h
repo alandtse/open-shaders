@@ -290,6 +290,10 @@ namespace ShadowCasterManager
 		/// candidates, instead of always spending the full budget -- see
 		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition.
 		bool RedrawDueGateEnabled = true;
+
+		/// Scores spot lights by the frustum they light instead of by their emitter, and wakes
+		/// them for the player only inside that frustum.
+		bool SpotLitRegion = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -326,7 +330,8 @@ namespace ShadowCasterManager
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
 		SkipZeroDemandRedraw,
-		RedrawDueGateEnabled)
+		RedrawDueGateEnabled,
+		SpotLitRegion)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -846,6 +851,8 @@ namespace ShadowCasterManager
 	void SetPinnedShadow(uintptr_t lightKey, bool pinned);
 	void SetPinnedConvert(uintptr_t lightKey, bool pinned);
 
+	/// The engine's world-to-light matrix for shadow descriptor 0 and its inverse (row-major, 16 floats each).
+	bool GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut);
 	uintptr_t GetSoloLight();
 	void SetSoloLight(uintptr_t lightKey);
 

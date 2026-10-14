@@ -18,6 +18,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
@@ -125,16 +126,32 @@ namespace ShadowCasterManager
 		return h;
 	}
 
-	/// True when the player stands inside `ni`'s radius. Player-specific
+	/// Player body height: a spot's frustum test uses the player's feet, so the beam
+	/// counts as reaching the player when it passes within this distance of them.
+	constexpr float kPlayerCasterReachUnits = 128.0f;
+
+	/// True when the player stands inside `light`'s radius, or for a spot inside its
+	/// lit frustum (a spot's radius can span the whole cell). Player-specific
 	/// supplement to the geomList-derived signals: the player's geometry
 	/// usually isn't in geomList at scheduling time. O(1), safe every frame.
-	static bool PlayerWithinLightRadius(RE::NiLight* ni)
+	static bool PlayerWithinLightRadius(RE::BSShadowLight* light)
 	{
 		auto* plr = globals::game::player;
+		const auto* ni = light ? light->light.get() : nullptr;
 		if (!plr || !ni)
 			return false;
 		const float r = ni->GetLightRuntimeData().radius.x;
-		return ni->world.translate.GetSquaredDistance(plr->GetPosition()) < r * r;
+		const auto pp = plr->GetPosition();
+		if (ni->world.translate.GetSquaredDistance(pp) >= r * r)
+			return false;
+		if (!light->GetIsFrustumLight() || !s_settings.SpotLitRegion)
+			return true;
+		float proj[16], inv[16];
+		if (!GetLightProjection(light, proj, inv))
+			return true;
+		const float playerPos[3] = { pp.x, pp.y, pp.z };
+		const float beamDistance = LightLimitFixLitRegion::DistanceToFrustum(proj, playerPos);
+		return beamDistance < kPlayerCasterReachUnits;
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -145,9 +162,9 @@ namespace ShadowCasterManager
 	/// RedrawDueGateEnabled, starving its redraw admission -- reads as flicker
 	/// (the actual reported bug this fixes). All actors would starve the
 	/// budget, so this stays player-only; O(1), safe to run uncached.
-	static std::uint64_t FoldPlayerCasterProxy(std::uint64_t h, RE::NiLight* ni, float posStep)
+	static std::uint64_t FoldPlayerCasterProxy(std::uint64_t h, RE::BSShadowLight* light, float posStep)
 	{
-		if (!PlayerWithinLightRadius(ni))
+		if (!PlayerWithinLightRadius(light))
 			return h;
 		const auto pp = globals::game::player->GetPosition();
 		const float actorStep = std::clamp(posStep, 1.0f, 8.0f);
@@ -665,7 +682,7 @@ namespace ShadowCasterManager
 		// The player's pose animation changes the tile without touching any
 		// signal a sleeping light re-checks -- never sleep a light the
 		// player stands in.
-		if (PlayerWithinLightRadius(e.Light->light.get()))
+		if (PlayerWithinLightRadius(e.Light))
 			return false;
 		uint64_t bakedHash = 0;
 		bool staticValid = false;
@@ -2172,7 +2189,7 @@ namespace ShadowCasterManager
 			// Computed OUTSIDE the accumulate so admission can't deadlock on a
 			// latch that only updates after admission.
 			uint32_t dynamicCasters = e->cachedSkinnedCasters;
-			if (PlayerWithinLightRadius(e->Light->light.get()))
+			if (PlayerWithinLightRadius(e->Light))
 				dynamicCasters++;
 			if (dynamicCasters == 0) {
 				if (const auto splitIt = s_splitState.find(e->Light);
@@ -2282,7 +2299,7 @@ namespace ShadowCasterManager
 			// Player proxy folded in every frame, uncached -- see
 			// FoldPlayerCasterProxy's comment for why it can't ride the
 			// walk-cost cache above.
-			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light->light.get(), posStep);
+			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep);
 
 			// 0 (visible/unmeasured) unless a real GPU reading confirms absence. MAX
 			// channel + streak, not an EMA -- an EMA's magnitude scales with tile
