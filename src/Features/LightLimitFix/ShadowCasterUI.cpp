@@ -667,6 +667,16 @@ namespace ShadowCasterManager
 						ImGui::Text(T(TKEY("status_slot"), "Slot %u"), row.idx);
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
+						if (float pinDrift = 0.0f; GetOriginPinState(row.info.lightKey, pinDrift)) {
+							ImGui::SameLine();
+							if (GetFlickerMode() == 1)
+								ImGui::TextColored(ImVec4(0.35f, 0.8f, 0.95f, 1), "P %.1f", pinDrift);
+							if (ImGui::IsItemHovered())
+								ImGui::SetTooltip("%s", T(TKEY("status_pin_tooltip"),
+															"P: shadow origin pinned at the cached bake pose. The light itself\n"
+															"always flickers. The number is how far the live light has drifted\n"
+															"from the bake pose, in world units."));
+						}
 					} else if (row.converted) {
 						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), "%s", T(TKEY("status_conv"), "Conv"));
 						if (ImGui::IsItemHovered()) {
@@ -1638,6 +1648,33 @@ namespace ShadowCasterManager
 											"frustum it lights instead of from its emitter, which can be far from\n"
 											"the lit area, and wakes its shadow for the player only inside that\n"
 											"frustum."));
+
+			ImGui::TreePop();
+		}
+
+		// ---- Flicker shadows ------------------------------------------------
+		if (ImGui::TreeNode(T(TKEY("flicker_shadows"), "Flicker Shadows##FlickerShadows"))) {
+			ImGui::Checkbox(T(TKEY("tolerant_split_cache"), "Keep Cached Shadows Across Flicker"), &settings.TolerantSplitCache);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("tolerant_split_cache_tooltip"),
+											"Keeps a light's baked static shadow while the light only drifts a few\n"
+											"units or a few percent in radius (flame flicker), instead of rebaking\n"
+											"it every time. Removes the static redraw work of flickering lights."));
+
+			ImGui::BeginDisabled(!settings.TolerantSplitCache);
+			const char* modeNames[2] = { T(TKEY("flicker_live"), "Live"), T(TKEY("flicker_pinned"), "Pinned") };
+			int flickerMode = static_cast<int>(settings.FlickerShadowMode);
+			if (ImGui::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &flickerMode, modeNames, 2))
+				settings.FlickerShadowMode = static_cast<FlickerShadowModeEnum>(std::clamp(flickerMode, 0, 1));
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("flicker_tooltip"),
+											"How a cached shadow follows a flickering light:\n"
+											"Live: the shadow origin follows the light and the cached depth is\n"
+											"copied unmoved, which leaves a small mismatch near occluders.\n"
+											"Pinned: the shadow origin stays at the bake pose, so the shadow\n"
+											"does not move with the flame.\n"
+											"P in the shadow light table marks lights using Pinned."));
+			ImGui::EndDisabled();
 
 			ImGui::TreePop();
 		}

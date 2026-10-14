@@ -655,13 +655,33 @@ namespace ShadowCasterManager
 		return s_settings.DemandTileCap && e.litCapped && e.LastDrawnFrame >= 0 && DemandSampleUsable();
 	}
 
-	/// Tests whether a cached bake uses this light's current transform and radius.
+	constexpr float kSplitRadiusTolerance = 0.10f;
+	constexpr float kSplitPositionToleranceSq = 4.0f * 4.0f;
+	constexpr uint8_t kPoseRebakeLatch = 8;
+
+	/// Tests whether a cached bake is still usable at this light's current transform and radius.
 	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
 	{
 		const auto* ni = light->light.get();
-		return ni && st.bakePoseValid &&
-		       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
-		       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+		if (!TolerantSplit())
+			return ni && st.bakePoseValid &&
+			       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
+			       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot)
+			return false;
+		const float radius = ni->GetLightRuntimeData().radius.x;
+		return std::abs(radius - st.bakeRadius) <= kSplitRadiusTolerance * st.bakeRadius &&
+		       ni->world.translate.GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
+	}
+
+	/// Factor taking baked depth (normalised by the bake radius) to the live radius.
+	static float StaticDepthScale(RE::BSShadowLight* light, const SplitState& st)
+	{
+		if (!TolerantSplit())
+			return 1.0f;
+		const auto* ni = light->light.get();
+		const float radius = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
+		return radius > 0.0f ? st.bakeRadius / radius : 1.0f;
 	}
 
 	/// Shared cache-validity check for caster selection and sleeping shadows.
@@ -715,6 +735,10 @@ namespace ShadowCasterManager
 		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
 			return false;
 		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid))
+			return false;
+		// A held tile was drawn at the exact bake pose, so drifted depth scale or position must wake it.
+		if (StaticDepthScale(e.Light, st) != 1.0f ||
+			e.Light->light.get()->world.translate != st.bakePos)
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due,
 		// and keep pressing for it every frame until the budget grants it.
@@ -1010,7 +1034,7 @@ namespace ShadowCasterManager
 			bool staticValid = false;
 			bool staticEmpty = false;
 			if (split) {
-				if (st->splitExcluded || (st->bakePoseValid && !SplitPoseMatches(light, *st))) {
+				if (st->splitExcluded || (!TolerantSplit() && st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
 					// it, so it renders full every redraw (no bake, no copy).
 					st->bakeThisFrame = false;
@@ -1047,8 +1071,16 @@ namespace ShadowCasterManager
 					}
 				}
 				if (mode == CasterPass::StaticOnly) {
+					if (st->bakePoseValid && !SplitPoseMatches(light, *st))
+						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
 						st->bakePos = ni->world.translate;
+						if (TolerantSplit()) {
+							// A pinned bake renders from the shadow camera's pose, not the live light's.
+							RE::NiPoint3 cameraPos;
+							if (GetShadowCameraPos(light, cameraPos))
+								st->bakePos = cameraPos;
+						}
 						st->bakeRot = ni->world.rotate;
 						st->bakeRadius = ni->GetLightRuntimeData().radius.x;
 						st->bakePoseValid = true;
@@ -1057,14 +1089,14 @@ namespace ShadowCasterManager
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
 				if (st->bakeThisFrame) {
-					// A pose-stable light bakes once per window; >=4 bakes in 300
+					// A pose-stable light bakes once per window; kPoseRebakeLatch bakes in 300
 					// frames means the cache never holds -- render full and stop it.
 					const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 					if (nowFrame < st->poseWindowStart || nowFrame - st->poseWindowStart > 300u) {
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
 					}
-					if (++st->poseRebakes >= 4) {
+					if (++st->poseRebakes >= (TolerantSplit() ? kPoseRebakeLatch : uint8_t{ 4 })) {
 						if (!st->splitExcluded) {
 							s_splitLatchWindowTotal.fetch_add(1, std::memory_order_relaxed);
 							RetireSplitBake(*st);
@@ -1358,16 +1390,63 @@ namespace ShadowCasterManager
 		}
 	}
 
+	static std::unordered_map<uintptr_t, float> s_originPinDrift;
+
+	int GetFlickerMode()
+	{
+		return static_cast<int>(s_settings.FlickerShadowMode);
+	}
+	bool GetOriginPinState(uintptr_t lightKey, float& driftUnitsOut)
+	{
+		const auto it = s_originPinDrift.find(lightKey);
+		if (it == s_originPinDrift.end())
+			return false;
+		driftUnitsOut = it->second;
+		return true;
+	}
+
+	/// True when the light's shadow camera should keep its bake pose this frame: the cached
+	/// static depth is valid and the live pose is within tolerance, so static and dynamic
+	/// layers share one origin while shading still uses the live light.
+	static bool ShouldPinShadowOrigin(RE::BSShadowLight* light, std::uint32_t slot)
+	{
+		bool pin = false;
+		float drift = 0.0f;
+		if (TolerantSplit()) {
+			if (const auto it = s_splitState.find(light); it != s_splitState.end()) {
+				std::uint64_t bakedHash = 0;
+				bool staticValid = false;
+				if (GetSlotStaticState(static_cast<int32_t>(slot), bakedHash, staticValid) &&
+					SplitDynamicOnlyEligible(light, it->second, staticValid)) {
+					pin = true;
+					if (const auto* ni = light->light.get())
+						drift = std::sqrt(ni->world.translate.GetSquaredDistance(it->second.bakePos));
+				}
+			}
+		}
+		const auto key = reinterpret_cast<uintptr_t>(light);
+		if (pin)
+			s_originPinDrift[key] = drift;
+		else
+			s_originPinDrift.erase(key);
+		return pin && GetFlickerMode() == 1;
+	}
+
 	// Run UpdateCamera + EnableLight + the validity scan in one SEH region: EnableLight can read a
 	// freed light and corrupt accumLightSlot/bounds, AV'ing here; catching it skips the light (the
 	// per-frame accumLightSlot reset recovers). __declspec(noinline) is load-bearing -- inlining
 	// dissolves the __except. No C++ unwinding objects in this frame (MSVC __try).
 	template <class UsableFn>
 	__declspec(noinline) static bool SafeEnableAndValidate(LightEntry& e, RE::NiCamera* a_camera,
-		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, UsableFn&& a_isUsable)
+		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, bool a_pinOrigin, UsableFn&& a_isUsable)
 	{
 		__try {
+			// UpdateCamera copies the light pose into the shadow camera only while dynamic is set.
+			const bool wasDynamic = e.Light->dynamic;
+			if (a_pinOrigin)
+				e.Light->dynamic = false;
 			e.Light->UpdateCamera(a_camera);
+			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot);
 			return e.Light && a_isUsable(e.Light);
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
@@ -1613,7 +1692,14 @@ namespace ShadowCasterManager
 				bool cameraValid;
 				{
 					ZoneScopedN("SCM::CandidateValidation::UpdateCamera");
+					// A pinned light keeps its bake pose here too, or the pin is undone before enable.
+					const std::int32_t pinSlot = TolerantSplit() ? GetShadowSlot(l) : -1;
+					const bool pinNow = pinSlot >= 0 && ShouldPinShadowOrigin(l, static_cast<std::uint32_t>(pinSlot));
+					const bool wasDynamic = l->dynamic;
+					if (pinNow)
+						l->dynamic = false;
 					cameraValid = l->UpdateCamera(camera);
+					l->dynamic = wasDynamic;
 				}
 				c.updateCameraFailed = !cameraValid;
 				if (!cameraValid) {
@@ -2941,7 +3027,7 @@ namespace ShadowCasterManager
 						bool stillUsable;
 						{
 							ZoneNamedN(zEnable, "SCM::Engine::EnableLight", true);
-							s_cpuEnableUs.fetch_add(TimeUs([&] { stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, isUsableLight); }), std::memory_order_relaxed);
+							s_cpuEnableUs.fetch_add(TimeUs([&] { stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, ShouldPinShadowOrigin(e.Light, slot), isUsableLight); }), std::memory_order_relaxed);
 							s_cpuEnableN.fetch_add(1, std::memory_order_relaxed);
 						}
 						if (!stillUsable)
@@ -3001,6 +3087,9 @@ namespace ShadowCasterManager
 			ZoneNamedN(zonePostAtomic, "SCM::PostAtomicRevalidate", true);
 			static std::vector<RE::BSShadowLight*> aliveAfterAtomic;
 			CollectAliveShadowLights(ssn, sunLight, aliveAfterAtomic);
+			std::erase_if(s_originPinDrift, [&](const auto& kv) {
+				return !std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), reinterpret_cast<RE::BSShadowLight*>(kv.first));
+			});
 
 			int endIdx = (int)*GetAccumLightSlot();
 
@@ -3236,6 +3325,7 @@ namespace ShadowCasterManager
 					snap.cpuSubmitUsAvg = static_cast<uint32_t>(s_cpuSubmitUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuEnableN.exchange(0, std::memory_order_relaxed))
 					snap.cpuEnableUsAvg = static_cast<uint32_t>(s_cpuEnableUs.exchange(0, std::memory_order_relaxed) / n);
+				snap.originPinnedLights = static_cast<uint32_t>(s_originPinDrift.size());
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
@@ -3680,7 +3770,7 @@ namespace ShadowCasterManager
 							// A bake that captured nothing is a blank rect: seeding a fresh
 							// tile from it would advertise a flat tile as content.
 							if (!liveHasContent && st.bakeSawStatic)
-								CopyStaticTileToLive(i);
+								CopyStaticTileToLive(i, StaticDepthScale(e.Light, st));
 							s_budget.EndLight(e.Light, 1);
 							if (liveHasContent || st.bakeSawStatic) {
 								e.renderedScale = e.pendingScale;
@@ -3708,7 +3798,7 @@ namespace ShadowCasterManager
 							s_budget.BeginLight(e.Light, 1);
 							if (compositeValid) {
 								if (!compositeKeepPrior)
-									CopyStaticTileToLive(i);  // seed the tile with cached static depth
+									CopyStaticTileToLive(i, StaticDepthScale(e.Light, st));  // seed the tile with cached static depth
 							} else {
 								if (!compositeKeepPrior)
 									ClearSlotTile(i);

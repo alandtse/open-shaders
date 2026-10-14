@@ -62,6 +62,7 @@ namespace ShadowCasterManager
 			winrt::com_ptr<ID3D11ShaderResourceView> staticSrv;
 			winrt::com_ptr<ID3D11DepthStencilState> copyDepthState;
 			winrt::com_ptr<ID3D11RasterizerState> copyRasterizerState;
+			winrt::com_ptr<ID3D11Buffer> copyParams;
 			Util::LazyShader<ID3D11VertexShader> copyVS;
 			Util::LazyShader<ID3D11PixelShader> copyPS;
 			bool staticReady = false;
@@ -382,6 +383,14 @@ namespace ShadowCasterManager
 			if (FAILED(device->CreateRasterizerState(&rasterizerDesc, s_atlas.copyRasterizerState.put())))
 				return fail("static depth copy rasterizer creation failed");
 			Util::SetResourceName(s_atlas.copyRasterizerState.get(), "SCM::ShadowDepthCopy Rasterizer");
+
+			D3D11_BUFFER_DESC paramsDesc{};
+			paramsDesc.ByteWidth = 16;
+			paramsDesc.Usage = D3D11_USAGE_DEFAULT;
+			paramsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			if (FAILED(device->CreateBuffer(&paramsDesc, nullptr, s_atlas.copyParams.put())))
+				return fail("static depth copy constant buffer creation failed");
+			Util::SetResourceName(s_atlas.copyParams.get(), "SCM::ShadowDepthCopy Params");
 
 			// Far-depth clear once so never-baked regions read as unshadowed.
 			const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -1123,7 +1132,7 @@ namespace ShadowCasterManager
 		s_atlas.context1->ClearView(s_atlas.staticDsv.get(), farDepth, &rect, 1);
 	}
 
-	void CopyStaticTileToLive(int32_t poolSlot)
+	void CopyStaticTileToLive(int32_t poolSlot, float depthScale)
 	{
 		AtlasTileTexels t{};
 		if (!StaticAtlasReady() || !GetSlotTileTexels(poolSlot, t))
@@ -1146,6 +1155,10 @@ namespace ShadowCasterManager
 		context->DSSetShader(nullptr, nullptr, 0);
 		context->GSSetShader(nullptr, nullptr, 0);
 		context->PSSetShader(s_atlas.copyPS.get(), nullptr, 0);
+		const float params[4] = { depthScale, 0.0f, 0.0f, 0.0f };
+		context->UpdateSubresource(s_atlas.copyParams.get(), 0, nullptr, params, 0, 0);
+		auto* paramsBuffer = s_atlas.copyParams.get();
+		context->PSSetConstantBuffers(0, 1, &paramsBuffer);
 		auto* source = s_atlas.staticSrv.get();
 		context->PSSetShaderResources(0, 1, &source);
 		context->Draw(3, 0);

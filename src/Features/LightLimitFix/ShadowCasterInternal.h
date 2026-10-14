@@ -35,6 +35,9 @@ namespace ShadowCasterManager
 	extern LightContainer s_lights;
 	extern BudgetTracker s_budget;
 
+	/// True while a flickering light keeps its baked static shadow across small pose drift.
+	inline bool TolerantSplit() { return s_settings.TolerantSplitCache; }
+
 	// External conflict detection
 	extern bool s_externalConflict;
 	extern std::string s_conflictMessage;
@@ -656,8 +659,9 @@ namespace ShadowCasterManager
 	/// Clears slot static-cache tile to far depth.
 	void ClearStaticSlotTile(int32_t poolSlot);
 
-	/// Copies slot's static tile into live atlas tile.
-	void CopyStaticTileToLive(int32_t poolSlot);
+	/// Copies slot's static tile into live atlas tile, multiplying baked depth by
+	/// depthScale (bake radius / live radius) so it stays valid under radius flicker.
+	void CopyStaticTileToLive(int32_t poolSlot, float depthScale);
 
 	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
 	/// the baked tile captured zero casters (a blank bake latched valid).

@@ -31,6 +31,30 @@ bool ShadowCasterManager::GetLightProjection(RE::BSShadowLight* light, float* pr
 	                             ReadLightTransform(light->GetRuntimeData(), projOut, invOut);
 }
 
+template <typename T>
+static bool ReadShadowCameraPos(T& lightData, RE::NiPoint3& posOut)
+{
+	if (lightData.shadowmapDescriptors.empty())
+		return false;
+	auto& desc = lightData.shadowmapDescriptors[0];
+	// The VR descriptor carries a camera pair; the first one holds the light-space pose.
+	const RE::NiCamera* camera = nullptr;
+	if constexpr (std::is_array_v<std::remove_reference_t<decltype(desc.camera)>>)
+		camera = desc.camera[0].get();
+	else
+		camera = desc.camera.get();
+	if (!camera)
+		return false;
+	posOut = camera->world.translate;
+	return true;
+}
+
+bool ShadowCasterManager::GetShadowCameraPos(RE::BSShadowLight* light, RE::NiPoint3& posOut)
+{
+	return globals::game::isVR ? ReadShadowCameraPos(light->GetVRRuntimeData(), posOut) :
+	                             ReadShadowCameraPos(light->GetRuntimeData(), posOut);
+}
+
 // False means no usable descriptors; see the ShadowParam.y sentinel contract
 // below (CopyShadowLightData) for what the caller must do with that.
 template <typename T>
