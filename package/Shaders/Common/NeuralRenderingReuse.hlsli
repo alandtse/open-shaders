@@ -7,6 +7,10 @@ namespace NeuralRenderingReuse
 	static const float kReuseDepthTolerance = 0.05f;
 	/** @brief Largest absolute log2 input-luminance difference a reprojected gain tolerates; beyond it the lighting changed. */
 	static const float kReuseLumaTolerance = 0.5f;
+	/** @brief Least total bilinear weight the agreeing taps must hold for a reprojected gain to count as found. */
+	static const float kReuseMinimumWeight = 1e-3f;
+	/** @brief Fraction of the gain stored at the same pixel that a sample with no reprojected or borrowed gain takes. */
+	static const float kReuseFallbackStrength = 0.5f;
 	/** @brief Denominator floor of the relative depth test, so two depths at the same place still compare finitely. */
 	static const float kDepthEpsilon = 1e-6f;
 
