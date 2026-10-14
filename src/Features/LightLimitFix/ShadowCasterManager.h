@@ -314,7 +314,7 @@ namespace ShadowCasterManager
 
 		/// Keeps a light's baked static shadow across flame-scale position and radius drift
 		/// instead of rebaking, so flickering lights stop paying for static redraws.
-		bool TolerantSplitCache = false;
+		bool TolerantSplitCache = true;
 
 		/// How the cached static shadow follows a flickering light; ignored when TolerantSplitCache is off.
 		FlickerShadowModeEnum FlickerShadowMode = FlickerShadowModeEnum::Warped;
