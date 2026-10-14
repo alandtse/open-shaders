@@ -3,6 +3,7 @@
 // Only translation unit including exprtk.hpp (heavy header; keep it out of the other SCM modules).
 
 #include "../../Globals.h"
+#include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 
 #include <exprtk.hpp>
@@ -409,17 +410,32 @@ namespace ShadowCasterManager
 		float camz = camera ? camera->world.translate.z : (float)FormulaHelper::GetParam(kFormulaParam_CameraZ);
 
 		float dx = x - camx, dy = y - camy, dz = z - camz;
-		FormulaHelper::SetParam(kFormulaParam_LightDistance, sqrtf(dx * dx + dy * dy + dz * dz));
+		float lightDistance = sqrtf(dx * dx + dy * dy + dz * dz);
 
 		// Player-to-light distance: ensures third-person shadow maps redraw when the
 		// player character is inside a light's radius even if the camera is outside.
-		double playerLightDist = FormulaHelper::GetParam(kFormulaParam_LightDistance);
+		double playerLightDist = lightDistance;
 		auto* plr = RE::PlayerCharacter::GetSingleton();
 		if (plr) {
 			auto pp = plr->GetPosition();
 			float pdx = x - pp.x, pdy = y - pp.y, pdz = z - pp.z;
 			playerLightDist = static_cast<double>(sqrtf(pdx * pdx + pdy * pdy + pdz * pdz));
 		}
+
+		// A spot lights a frustum that can start far from its emitter, so measure to that region.
+		float shadowProj[16], shadowInvProj[16];
+		if (isSpot && s_settings.SpotLitRegion && GetLightProjection(const_cast<RE::BSShadowLight*>(light), shadowProj, shadowInvProj)) {
+			const float camPos[3] = { camx, camy, camz };
+			if (const float regionDistance = LightLimitFixLitRegion::DistanceToFrustum(shadowProj, camPos); regionDistance >= 0.0f)
+				lightDistance = regionDistance;
+			if (plr) {
+				const auto pp = plr->GetPosition();
+				const float plrPos[3] = { pp.x, pp.y, pp.z };
+				if (const float regionDistance = LightLimitFixLitRegion::DistanceToFrustum(shadowProj, plrPos); regionDistance >= 0.0f)
+					playerLightDist = regionDistance;
+			}
+		}
+		FormulaHelper::SetParam(kFormulaParam_LightDistance, lightDistance);
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, playerLightDist);
 	}
 

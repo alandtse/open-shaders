@@ -11,6 +11,26 @@
 #include "Util.h"
 #include "Utils/D3D.h"
 
+template <typename T>
+static bool ReadLightTransform(T& lightData, float* projOut, float* invOut)
+{
+	if (lightData.shadowmapDescriptors.empty())
+		return false;
+	const DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(Util::AsReal(&lightData.shadowmapDescriptors[0].lightTransform));
+	DirectX::XMFLOAT4X4 out;
+	DirectX::XMStoreFloat4x4(&out, proj);
+	std::memcpy(projOut, &out, sizeof(out));
+	DirectX::XMStoreFloat4x4(&out, DirectX::XMMatrixInverse(nullptr, proj));
+	std::memcpy(invOut, &out, sizeof(out));
+	return true;
+}
+
+bool ShadowCasterManager::GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut)
+{
+	return globals::game::isVR ? ReadLightTransform(light->GetVRRuntimeData(), projOut, invOut) :
+	                             ReadLightTransform(light->GetRuntimeData(), projOut, invOut);
+}
+
 // False means no usable descriptors; see the ShadowParam.y sentinel contract
 // below (CopyShadowLightData) for what the caller must do with that.
 template <typename T>
