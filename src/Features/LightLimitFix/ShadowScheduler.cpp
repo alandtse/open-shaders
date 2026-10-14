@@ -1113,13 +1113,12 @@ namespace ShadowCasterManager
 									  // routes through cluster lighting which has no
 									  // portal awareness and would bleed through walls.
 
-		// Sub-reasons for invalidCamera, recovered from engine side-band flags:
-		//   frustrumCull == 0xff -> off-screen, ConvertLight wasted -> drop
-		//   lodDimmer == 0.0f    -> past LOD fade end, still visible -> ConvertLight
-		//                           (resets lodDimmer so cluster lighting picks it up)
-		// Both can fire together; frustum-out wins (contribution is zero either way).
+		// Sub-reasons for invalidCamera, exclusive: hidden NiLight; else lodDimmer == 0.0f
+		// (past the shadow distance, still lights the scene -> ConvertLight resets lodDimmer
+		// so cluster lighting picks it up); else the sphere missed the frustum.
 		bool invalidFrustum{ false };  // BSMultiBoundSphere::WithinFrustum / cone-frustum cull
-		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
+		bool invalidLod{ false };      // engine's shadow-distance test zeroed lodDimmer
+		bool invalidHidden{ false };   // NiLight flagged hidden
 
 		// UpdateCamera failed but the exit streak hasn't matured and the light
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
@@ -1443,6 +1442,40 @@ namespace ShadowCasterManager
 			});
 	}
 
+	/// Latest per-candidate visibility audit, refilled only while diagnostics are wanted.
+	static std::vector<SchedSnapshot::LightVisibility> s_visAudit;
+
+	/// Tests a sphere against the four side planes of every eye's view-projection,
+	/// independent of the engine's own frustum flag. `centre` is world space.
+	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
+	{
+		const int eyes = globals::game::isVR ? 2 : 1;
+		bool inside = false;
+		nearestEyeDistance = FLT_MAX;
+		for (int eye = 0; eye < eyes; ++eye) {
+			const auto view = Util::GetCameraData(eye);
+			const auto rel = centre - Util::GetEyePosition(eye);
+			nearestEyeDistance = std::min(nearestEyeDistance, std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z));
+			const auto& m = view.viewProjMat;
+			bool eyeInside = true;
+			for (int side = 0; side < 4 && eyeInside; ++side) {
+				const int axis = side >> 1;
+				const float sign = (side & 1) ? -1.0f : 1.0f;
+				const float px = m.m[0][3] + sign * m.m[0][axis];
+				const float py = m.m[1][3] + sign * m.m[1][axis];
+				const float pz = m.m[2][3] + sign * m.m[2][axis];
+				const float pw = m.m[3][3] + sign * m.m[3][axis];
+				const float len = std::sqrt(px * px + py * py + pz * pz);
+				if (len <= 0.0f)
+					continue;
+				if ((px * rel.x + py * rel.y + pz * rel.z + pw) / len < -radius)
+					eyeInside = false;
+			}
+			inside = inside || eyeInside;
+		}
+		return inside;
+	}
+
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
 	{
 		// ---- Validation pass (no game mutations) ----
@@ -1485,6 +1518,8 @@ namespace ShadowCasterManager
 					// Capture BEFORE the restore below overwrites lodDimmer, else
 					// invalidLod always reads false and its UI reason goes dead.
 					const bool lodFadedNow = (l->lodDimmer == 0.0f);
+					const auto* nilightNow = l->light.get();
+					const bool hiddenNow = !nilightNow || nilightNow->GetFlags().any(RE::NiAVObject::Flag::kHidden);
 					// UpdateCamera's LOD sub-test can zero lodDimmer even on a held frame;
 					// without restoring it, addShadowLight's fade*=lodDimmer would render
 					// a held light at zero intensity despite keeping its slot.
@@ -1502,10 +1537,12 @@ namespace ShadowCasterManager
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
-						// Both can be true (off-screen AND LOD-faded); recorded as
-						// independent bits, since frustum-out is terminal but LOD-faded is a convert.
-						c.invalidFrustum = (l->frustrumCull != 0);
-						c.invalidLod = lodFadedNow;
+						// UpdateCamera sets frustrumCull to 0xff for every rejection, so it cannot
+						// name the cause: hidden skips both tests, the shadow-distance test runs
+						// only after the frustum test passed and zeroes lodDimmer.
+						c.invalidHidden = hiddenNow;
+						c.invalidLod = !hiddenNow && lodFadedNow;
+						c.invalidFrustum = !hiddenNow && !lodFadedNow;
 						continue;
 					}
 				} else {
@@ -1547,9 +1584,33 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown, per-frame, to verify chosen + excess +
 			// invalid_camera + invalid_portal == total. Demotion map only fills
 			// when wantDiag (menu open / devbench dump) to skip per-frame hash churn.
-			if (wantDiag)
+			if (wantDiag) {
 				s_convertReason.clear();
+				s_visAudit.clear();
+			}
 			for (auto& c : candidates) {
+				if (wantDiag && !c.sun && c.light) {
+					SchedSnapshot::LightVisibility v;
+					v.light = reinterpret_cast<uintptr_t>(c.light);
+					v.chosen = c.chosen;
+					v.engineCulled = c.invalidCamera;
+					v.frustrumCull = c.light->frustrumCull;
+					v.lodDimmer = c.light->lodDimmer;
+					v.cameraHold = c.cameraHold;
+					v.hidden = c.invalidHidden;
+					v.shadowDistanceCulled = c.invalidLod;
+					v.frustumCulled = c.invalidFrustum;
+					if (const auto* ni = c.light->light.get()) {
+						v.name = ni->name.c_str() ? ni->name.c_str() : "";
+						const auto rel = ni->world.translate - Util::GetEyePosition(0);
+						v.x = rel.x;
+						v.y = rel.y;
+						v.z = rel.z;
+						v.radius = ni->GetLightRuntimeData().radius.x;
+						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius, v.distance);
+					}
+					s_visAudit.push_back(std::move(v));
+				}
 				s_schedDiag.candidates_total++;
 				if (c.chosen)
 					s_schedDiag.candidates_chosen++;
@@ -2961,6 +3022,7 @@ namespace ShadowCasterManager
 				snap.demoted.reserve(s_convertReason.size());
 				for (const auto& [ptr, reason] : s_convertReason)
 					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				snap.visibility = s_visAudit;
 				const auto& slotInfos = GetSlotInfos();
 				for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 					const auto& e = s_lights.Lights[i];

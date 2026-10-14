@@ -629,6 +629,27 @@ namespace ShadowCasterManager
 		/// Per non-chosen light: (light pointer, demotion-reason byte). Name via SchedReasonName().
 		std::vector<std::pair<uintptr_t, uint8_t>> demoted;
 
+		/// Independent visibility audit per candidate light: the engine verdict next to a
+		/// sphere-versus-camera-frustum test computed from the published view-projection.
+		struct LightVisibility
+		{
+			uintptr_t light = 0;
+			bool chosen = false;
+			bool engineCulled = false;           ///< UpdateCamera rejected it (frustum, LOD or other)
+			uint32_t frustrumCull = 0;           ///< raw engine flag after UpdateCamera; 0xff for every rejection
+			float lodDimmer = 1.0f;              ///< engine LOD fade multiplier
+			float distance = 0.0f;               ///< light centre to the nearest eye
+			float radius = 0.0f;                 ///< light radius
+			bool ownInFrustum = false;           ///< sphere touches any eye's left/right/top/bottom planes
+			bool cameraHold = false;             ///< kept by the exit-streak hysteresis after leaving view
+			bool hidden = false;                 ///< engine rejected it because the NiLight is hidden
+			bool shadowDistanceCulled = false;   ///< engine rejected it past the shadow distance
+			bool frustumCulled = false;          ///< engine sphere-versus-frustum test failed
+			std::string name;                    ///< NiLight node name
+			float x = 0.0f, y = 0.0f, z = 0.0f;  ///< light centre, camera-relative (nearest eye)
+		};
+		std::vector<LightVisibility> visibility;
+
 		/// Per occupied point-light pool slot: tile classing and atlas
 		/// placement, for headless assertion of the variable-resolution path.
 		struct SlotState
