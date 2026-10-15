@@ -176,11 +176,13 @@ void Profiler::LatchCaptureRequest()
 
 void Profiler::BeginFrame()
 {
-	if (!initialized || !context || frameActive || !IsEnabled())
+	if (!initialized || !context || frameActive || frameRefused || !IsEnabled())
 		return;
 
-	if (!CollectResults())
+	if (!CollectResults()) {
+		frameRefused = true;
 		return;
+	}
 
 	auto& frame = frames[writeFrame];
 	frame.batch.Reset();
@@ -291,6 +293,7 @@ void Profiler::EndPass(bool fireCallbacks)
 
 void Profiler::EndFrame(uint32_t a_frameCount)
 {
+	const bool refused = std::exchange(frameRefused, false);
 	if (!initialized || !context) {
 		LatchCaptureRequest();
 		activeCpuTimers.clear();
@@ -324,6 +327,10 @@ void Profiler::EndFrame(uint32_t a_frameCount)
 			// Advance past drained slots so the next capture cannot replay them.
 			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.captureCycle; }))
 				writeFrame = (writeFrame + 1) % kFrameLatency;
+			LatchCaptureRequest();
+			return;
+		}
+		if (refused) {
 			LatchCaptureRequest();
 			return;
 		}

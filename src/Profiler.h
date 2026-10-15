@@ -339,6 +339,9 @@ private:
 	uint32_t readFrame = 0;
 	bool initialized = false;
 	bool frameActive = false;
+	/// Set when the oldest slot was still pending at the frame's first pass; a bracket
+	/// opened by a later pass would record the earlier passes as 0 ms.
+	bool frameRefused = false;
 	// Enabled by default so profiling pages show data without an extra toggle;
 	// zero-overhead idling still holds because captureActive stays false until requested.
 	std::atomic_bool userEnabled{ true };
