@@ -614,14 +614,17 @@ whose luminance ratio is the same gain. Crop, material alpha, tone filtering,
 category strengths and protection all still run, unchanged, for the reused eye;
 only its colours come from its own frame.
 
-A reused sample is dropped, giving no gain rather than a stale one, when it
-reprojected off screen, when its depth differs by more than
-`kReuseDepthTolerance` from the depth stored beside the gain, or when the input
-luminance differs by more than `kReuseLumaTolerance` in log2, which is what a
-light change or a flash looks like. Both depths are read as linear view-space
-distances through the engine's own projection terms, and the guide's depth
-convention arrives as a runtime value, so a Reverse Z guide is handled without
-a second shader permutation.
+The reprojected position takes four bilinear taps of the stored gain. A tap is
+dropped, giving no gain rather than a stale one, when its depth differs by more
+than `kReuseDepthTolerance` from the depth stored beside the gain, or when the
+input luminance differs by more than `kReuseLumaTolerance` in log2, which is what
+a light change or a flash looks like. The remaining taps keep their bilinear
+weights, renormalised, and a sample whose taps all fail (or that reprojected off
+screen) falls back to the other eye's gain and then to `kReuseFallbackStrength`
+of the gain stored at the same pixel when its depth agrees. Both depths are read
+as linear view-space distances through the engine's own projection terms, and the
+guide's depth convention arrives as a runtime value, so a Reverse Z guide is
+handled without a second shader permutation.
 
 Anything that makes a stored gain unreprojectable evaluates both eyes for that
 frame: a history reset of any kind, resource recreation, a change of the

@@ -400,6 +400,18 @@ public:
 	virtual bool WantsRenderPassHook() const { return false; }
 
 	/**
+	 * @brief Opt-in flag checked once, when the draw hook's feature list is built: return true to
+	 * have OnDraw() visited for every draw the shader cache sets up.
+	 */
+	virtual bool WantsDrawHook() const { return false; }
+
+	/**
+	 * @brief Called on the render thread for every draw the shader cache sets up, for every loaded
+	 * feature that opted in via WantsDrawHook(). Runs thousands of times a frame.
+	 */
+	virtual void OnDraw() {}
+
+	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
 	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
 	 */
@@ -595,6 +607,9 @@ public:
 	 * rather than calling GetFeatureList() and filtering it themselves each time.
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
+
+	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
+	static void ApplyDrawHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

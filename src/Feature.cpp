@@ -360,6 +360,15 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	return hookFeatures;
 }
 
+void Feature::ApplyDrawHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDrawHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->OnDraw();
+	}
+}
+
 void Feature::ApplyPointLightColorOverrides(float3& a_color)
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPointLightColorOverride(); });
