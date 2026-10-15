@@ -1214,14 +1214,16 @@ namespace ShadowCasterManager
 			Util::SetResourceName(scratch.uav.get(), "SCM::ShadowDepthWarp Scratch UAV");
 			Util::SetResourceName(scratch.srv.get(), "SCM::ShadowDepthWarp Scratch SRV");
 		}
+		D3D11_BUFFER_DESC bd{};
+		bd.Usage = D3D11_USAGE_DEFAULT;
+		bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		if (!s_atlas.warpParams) {
-			D3D11_BUFFER_DESC bd{};
 			bd.ByteWidth = 160;
-			bd.Usage = D3D11_USAGE_DEFAULT;
-			bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 			if (FAILED(device->CreateBuffer(&bd, nullptr, s_atlas.warpParams.put())))
 				return false;
 			Util::SetResourceName(s_atlas.warpParams.get(), "SCM::ShadowDepthWarp Params");
+		}
+		if (!s_atlas.warpResolveParams) {
 			bd.ByteWidth = 16;
 			if (FAILED(device->CreateBuffer(&bd, nullptr, s_atlas.warpResolveParams.put())))
 				return false;
