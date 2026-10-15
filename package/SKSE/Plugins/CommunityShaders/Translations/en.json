@@ -1582,6 +1582,8 @@
     "feature.light_limit_fix.converted_shadow_slots": "Converted Shadow Slots",
     "feature.light_limit_fix.converted_shadow_slots_tooltip": "Extra pool slots for lights converted to normal (unshadowed) mode.\nIncrease if Convert Excess Lights drops lights you expect to see.",
     "feature.light_limit_fix.debug": "Debug",
+    "feature.light_limit_fix.demand_tile_cap": "Shrink Tiles of Blocked Lights",
+    "feature.light_limit_fix.demand_tile_cap_tooltip": "Gives a light the GPU measures as lit on screen far less than the\nbest-lit light a small shadow tile, so blocked lights stop taking large tiles.",
     "feature.light_limit_fix.description": "Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes. It also extends shadow support to all point and spot lights.",
     "feature.light_limit_fix.dump_atlas_btn": "Dump Atlas",
     "feature.light_limit_fix.dump_atlas_tooltip": "Save the shadow atlas depth texture (DDS) plus a\nper-slot tile manifest (JSON) to\nData/SKSE/Plugins/CommunityShaders/Captures.\nWritten on the next shadow pass.",

@@ -62,6 +62,7 @@ add_executable(cpp_tests
     test_mathutils.cpp
     test_llf_sanitize.cpp
     test_litregion.cpp
+    test_litcap.cpp
     test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp

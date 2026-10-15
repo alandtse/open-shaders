@@ -18,6 +18,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "LitCap.h"
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 
@@ -419,6 +420,8 @@ namespace ShadowCasterManager
 	/// Whether a streak consumer was live last frame. Streaks freeze while none
 	/// is, and a frozen count says nothing about the sampling since.
 	bool s_demandStreaksActive = false;
+	/// Largest lit area among the lights eligible to set the tile cap's reference.
+	uint32_t s_litRef = 0;
 
 	/// Audit totals accumulated across the log interval. s_schedDiag resets every
 	/// frame, so logging it directly would report one arbitrary sample rather
@@ -507,6 +510,16 @@ namespace ShadowCasterManager
 				s_lights.Lights[i].untouchedSamples = 0;
 		}
 		const bool usable = DemandSampleUsable();
+		s_litRef = 0;
+		if (usable) {
+			for (int i = 0; i < s_lights.Size; i++) {
+				const auto& e = s_lights.Lights[i];
+				const int32_t slot = e.Light ? DemandSlotFor(e) : -1;
+				const auto* ni = e.Light ? e.Light->light.get() : nullptr;
+				if (slot >= 0 && ni && LightLimitFixLitCap::SetsReference(s_shadowDemand.litReason[slot], ni->GetLightRuntimeData().radius.x))
+					s_litRef = std::max(s_litRef, s_shadowDemand.litSum[slot]);
+			}
+		}
 		for (int i = 0; i < s_lights.Size; i++) {
 			auto& e = s_lights.Lights[i];
 			// An empty slot's reading belongs to nobody. Zeroing (not skipping) stops
@@ -526,6 +539,10 @@ namespace ShadowCasterManager
 			// GetShadowSlot is a linear scan.
 			assert(e.Index == GetShadowSlot(e.Light));
 			e.lastDemandSerial = s_shadowDemand.sampleSerial;
+			if (LightLimitFixLitCap::IsMeasured(s_shadowDemand.litReason[slot])) {
+				e.litSmoothed = LightLimitFixLitCap::Smooth(e.litSmoothed, static_cast<float>(s_shadowDemand.litSum[slot]));
+				e.litCapped = LightLimitFixLitCap::NextCapped(e.litCapped, e.litSmoothed, static_cast<float>(s_litRef));
+			}
 			// Hard reset, not a decay: one above-floor tap is strong evidence of
 			// presence (the sparse sampler rarely hits a small lit footprint), so it
 			// erases the whole streak. Sampling-gap tolerance lives in streak length.
@@ -630,6 +647,12 @@ namespace ShadowCasterManager
 			return false;
 		return s_shadowDemand.maxLatest[slot] <= kDemandUntouchedMaxRaw &&
 		       e.untouchedSamples >= EffectiveZeroDemandStreak();
+	}
+
+	/// Whether the lit-area cap holds this light at a quarter-size tile class.
+	static bool LitCapsTile(const LightEntry& e)
+	{
+		return s_settings.DemandTileCap && e.litCapped && e.LastDrawnFrame >= 0 && DemandSampleUsable();
 	}
 
 	/// Tests whether a cached bake uses this light's current transform and radius.
@@ -2123,6 +2146,8 @@ namespace ShadowCasterManager
 				e->desiredScale = AtlasActive() ?
 				                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 				                      1.0f;
+				if (AtlasActive() && LitCapsTile(*e))
+					e->desiredScale = std::min(e->desiredScale, kTileScaleQuarter);
 				if (!AtlasActive())
 					e->pendingScale = e->desiredScale;
 			}
@@ -2268,6 +2293,8 @@ namespace ShadowCasterManager
 			e->desiredScale = AtlasActive() ?
 			                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 			                      1.0f;
+			if (AtlasActive() && LitCapsTile(*e))
+				e->desiredScale = std::min(e->desiredScale, kTileScaleQuarter);
 			// Atlas mode: the render-pass rank budget owns pendingScale.
 			if (!AtlasActive())
 				e->pendingScale = e->desiredScale;
@@ -3139,6 +3166,15 @@ namespace ShadowCasterManager
 					st.budgetScale = e.budgetScale;
 					st.pendingScale = e.pendingScale;
 					st.renderedScale = e.renderedScale;
+					const int32_t demandSlot = DemandSlotFor(e);
+					st.demandMax = demandSlot >= 0 ? s_shadowDemand.maxLatest[demandSlot] : 0u;
+					st.untouchedSamples = e.untouchedSamples;
+					st.litMax = demandSlot >= 0 ? s_shadowDemand.litLatest[demandSlot] : 0u;
+					st.litSum = demandSlot >= 0 ? s_shadowDemand.litSum[demandSlot] : 0u;
+					st.litReason = demandSlot >= 0 ? s_shadowDemand.litReason[demandSlot] : 0u;
+					st.litTile = demandSlot >= 0 ? s_shadowDemand.litTile[demandSlot] : 0u;
+					st.litSmoothed = e.litSmoothed;
+					st.litCapped = e.litCapped;
 					st.redrawnThisFrame = e.RedrawFrame;
 					st.schedDirty = e.schedDirty;
 					st.dirtyStallFrames = e.dirtyStallFrames;

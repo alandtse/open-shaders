@@ -1620,6 +1620,12 @@ namespace ShadowCasterManager
 											"actually changing (e.g. a lit interior with the player standing still).\n"
 											"Worst-case staleness stays bounded by Shadow Staleness Ceiling above."));
 
+			ImGui::Checkbox(T(TKEY("demand_tile_cap"), "Shrink Tiles of Blocked Lights"), &settings.DemandTileCap);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("demand_tile_cap_tooltip"),
+											"Gives a light the GPU measures as lit on screen far less than the\n"
+											"best-lit light a small shadow tile, so blocked lights stop taking large tiles."));
+
 			ImGui::TreePop();
 		}
 

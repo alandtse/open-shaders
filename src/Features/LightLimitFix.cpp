@@ -665,6 +665,10 @@ void LightLimitFix::SetupResources()
 		shadowDemandEMA.fill(0.0f);
 		shadowDemandEMAInitialized = false;
 		shadowDemandMaxLatest.fill(0);
+		shadowDemandLitLatest.fill(0);
+		shadowDemandLitTile.fill(0);
+		shadowDemandLitReason.fill(0);
+		shadowDemandLitSum.fill(0);
 	}
 
 	{
@@ -1040,6 +1044,10 @@ void LightLimitFix::Prepass()
 	ShadowCasterManager::ShadowDemandSample demandSample;
 	demandSample.ema = shadowDemandEMA;
 	demandSample.maxLatest = shadowDemandMaxLatest;
+	demandSample.litLatest = shadowDemandLitLatest;
+	demandSample.litReason = shadowDemandLitReason;
+	demandSample.litTile = shadowDemandLitTile;
+	demandSample.litSum = shadowDemandLitSum;
 	demandSample.initialized = shadowDemandEMAInitialized;
 	demandSample.clusterSaturated = shadowDemandClusterSaturated;
 	demandSample.instrumentation = ShadowDemandInstrumentation;
@@ -1562,6 +1570,10 @@ void LightLimitFix::UpdateShadowDemand()
 		shadowDemandEMA.fill(0.0f);
 		shadowDemandEMAInitialized = false;
 		shadowDemandMaxLatest.fill(0);
+		shadowDemandLitLatest.fill(0);
+		shadowDemandLitTile.fill(0);
+		shadowDemandLitReason.fill(0);
+		shadowDemandLitSum.fill(0);
 		shadowDemandClusterSaturated = false;
 		// A Pending slot's GPU readback may still land after shaders recover;
 		// drop it too, or its pre-failure sample would drain straight back in.
@@ -1637,6 +1649,7 @@ void LightLimitFix::UpdateShadowDemand()
 		// is never 0, so HLSL's FrameIndex==0 centre-tap branch is dead but kept for
 		// re-enabling that debug path without a shader edit.
 		cbData.TapCount = std::clamp(std::bit_ceil(static_cast<uint32_t>(kDemandTapCount)), 1u, 8u);
+		cbData.DebugLit = ShadowDemandInstrumentation ? 1u : 0u;
 		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
 
@@ -1651,6 +1664,11 @@ void LightLimitFix::UpdateShadowDemand()
 			shadowDemandMax->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
+		ID3D11ShaderResourceView* litSrvs[] = { shadowLights ? shadowLights->srv.get() : nullptr };
+		ID3D11ShaderResourceView* atlasSrv = ShadowCasterManager::AtlasSRV();
+		context->CSSetShaderResources(102, 1, litSrvs);
+		context->CSSetShaderResources(104, 1, &atlasSrv);
+
 		context->CSSetShader(shadowDemandCS.get(), nullptr, 0);
 		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, 1);
 
@@ -1659,6 +1677,9 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetConstantBuffers(0, 1, &null_cb);
 		ID3D11ShaderResourceView* null_srvs[ARRAYSIZE(srvs)] = { nullptr };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), null_srvs);
+		ID3D11ShaderResourceView* nullLit = nullptr;
+		context->CSSetShaderResources(102, 1, &nullLit);
+		context->CSSetShaderResources(104, 1, &nullLit);
 		ID3D11UnorderedAccessView* null_uavs2[ARRAYSIZE(uavs)] = { nullptr };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
 	}
@@ -1739,6 +1760,13 @@ void LightLimitFix::UpdateShadowDemand()
 
 	if (drainedThisFrame) {
 		std::copy_n(maxCombined.begin(), MAX_SHADOW_DEMAND_SLOTS, shadowDemandMaxLatest.begin());
+		for (uint32_t s = 0; s < MAX_SHADOW_DEMAND_SLOTS; s++) {
+			const uint32_t packed = maxCombined[kShadowDemandLitMaxBase + s];
+			shadowDemandLitLatest[s] = packed >> kShadowDemandLitTileBits;
+			shadowDemandLitTile[s] = packed & ((1u << kShadowDemandLitTileBits) - 1u);
+			shadowDemandLitReason[s] = maxCombined[kShadowDemandLitReasonBase + s];
+			shadowDemandLitSum[s] = maxCombined[kShadowDemandLitSumBase + s];
+		}
 		shadowDemandClusterSaturated = maxCombined[MAX_SHADOW_DEMAND_SLOTS] != 0;
 		shadowDemandSampleSerial++;
 		shadowDemandLastDrainFrame = shadowDemandFrameCounter;

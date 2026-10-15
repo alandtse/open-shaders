@@ -43,6 +43,13 @@ namespace ShadowCasterManager
 		/// Raw last-drained per-slot tile maximum (accumulator units,
 		/// 1024==1.0 demand); unfiltered -- only filter is the consumer's sample streak.
 		std::array<uint32_t, kMaxShadowDemandSlots> maxLatest{};
+		/// Per-slot demand weighted by the light's own shadow test, summed over the taps (lit area x brightness).
+		std::array<uint32_t, kMaxShadowDemandSlots> litSum{};
+		/// Per-slot OR of LightLimitFixLitCap::Reason bits.
+		std::array<uint32_t, kMaxShadowDemandSlots> litReason{};
+		/// Best lit tap per slot and its tile id; recorded only while Shadow Demand Instrumentation is on.
+		std::array<uint32_t, kMaxShadowDemandSlots> litLatest{};
+		std::array<uint32_t, kMaxShadowDemandSlots> litTile{};
 		/// False until a reading has landed; every slot must read as fully visible
 		/// until then, since "never measured" is not "measured absent".
 		bool initialized = false;
@@ -291,6 +298,10 @@ namespace ShadowCasterManager
 		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition.
 		bool RedrawDueGateEnabled = true;
 
+		/// Holds a light at a quarter-size tile class when the GPU measures it as lit on screen far less
+		/// than the best-lit light.
+		bool DemandTileCap = true;
+
 		/// Scores spot lights by the frustum they light instead of by their emitter, and wakes
 		/// them for the player only inside that frustum.
 		bool SpotLitRegion = true;
@@ -331,6 +342,7 @@ namespace ShadowCasterManager
 		RedrawIntervalMaxFrames,
 		SkipZeroDemandRedraw,
 		RedrawDueGateEnabled,
+		DemandTileCap,
 		SpotLitRegion)
 
 	/// Restart-gated hook toggles applied at boot.
@@ -441,6 +453,9 @@ namespace ShadowCasterManager
 		/// ShadowDemandSample::sampleSerial the streak last advanced on.
 		uint32_t lastDemandSerial{ 0 };
 
+		float litSmoothed{ 0.0f };
+		bool litCapped{ false };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -464,6 +479,8 @@ namespace ShadowCasterManager
 			lastScore = 0.0;
 			untouchedSamples = 0;
 			lastDemandSerial = 0;
+			litSmoothed = 0.0f;
+			litCapped = false;
 			// Slot-reuse hazard: a stale promoteStreak would let a new
 			// occupant promote on its first eligible frame.
 			promoteStreak = 0;
@@ -667,6 +684,14 @@ namespace ShadowCasterManager
 			float budgetScale = 1.0f;
 			float pendingScale = 1.0f;
 			float renderedScale = 1.0f;
+			uint32_t demandMax = 0;
+			uint32_t untouchedSamples = 0;
+			uint32_t litMax = 0;   ///< needs Shadow Demand Instrumentation
+			uint32_t litTile = 0;  ///< needs Shadow Demand Instrumentation
+			uint32_t litSum = 0;
+			uint32_t litReason = 0;
+			float litSmoothed = 0.0f;
+			bool litCapped = false;
 			uint32_t tileX = 0;  ///< atlas texels; tileSize 0 = no atlas tile
 			uint32_t tileY = 0;
 			uint32_t tileSize = 0;
@@ -855,6 +880,9 @@ namespace ShadowCasterManager
 	bool GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut);
 	uintptr_t GetSoloLight();
 	void SetSoloLight(uintptr_t lightKey);
+
+	/// Shader resource view of the shadow atlas, null while the atlas is inactive.
+	ID3D11ShaderResourceView* AtlasSRV();
 
 	/// Mouse-hover key for the per-frame 3D light highlight pulse.
 	uintptr_t GetHoveredLight();

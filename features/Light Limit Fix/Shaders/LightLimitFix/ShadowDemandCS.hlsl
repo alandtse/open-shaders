@@ -17,7 +17,8 @@ cbuffer PerFrame : register(b0)
 	uint FrameIndex;          // 0 disables the jitter, keeping the tap at the tile centre
 	uint4 ClusterSize;
 	uint TapCount;  // Spatial samples per tile per frame; forced to 1 when FrameIndex == 0.
-	uint3 pad;
+	uint DebugLit;  // Nonzero records each light's best lit tap and its tile, for devbench.
+	uint2 pad;
 }
 
 Texture2D<float> Depth : register(t0);
@@ -36,7 +37,37 @@ RWStructuredBuffer<uint> overflowCount : register(u1);
 // samples it invalidates so it can never arrive a readback later than they do.
 RWStructuredBuffer<uint> demandMax : register(u2);
 
+struct DemandShadowLightData  // Mirrors LightLimitFix::ShadowLightData.
+{
+	column_major float4x4 ShadowProj;
+	column_major float4x4 InvShadowProj;
+	float4 ShadowLightParam;
+	float4 AtlasRect;
+	float4 FadeParam;
+};
+
+StructuredBuffer<DemandShadowLightData> DemandShadows : register(t102);
+Texture2D<float> DemandShadowAtlas : register(t104);
+
+// Per-slot blocks of demandMax after the saturation flag; match LightLimitFix.h.
+#define LIT_MAX_BASE (MAX_SHADOW_DEMAND_SLOTS + 1)
+#define LIT_REASON_BASE (LIT_MAX_BASE + MAX_SHADOW_DEMAND_SLOTS)
+#define LIT_SUM_BASE (LIT_REASON_BASE + MAX_SHADOW_DEMAND_SLOTS)
+
+// Match LightLimitFixLitCap::Reason (LitCap.h).
+#define LIT_NO_PROJECTION 1
+#define LIT_SPOT 2
+#define LIT_NO_TILE 4
+#define LIT_FADING 8
+#define LIT_BEHIND_HEMISPHERE 16
+#define LIT_LIT 32
+#define LIT_BLOCKED 64
+#define LIT_TILE_BITS 11
+
 groupshared uint gDemandLDS[MAX_SHADOW_DEMAND_SLOTS];
+groupshared uint gLitMaxLDS[MAX_SHADOW_DEMAND_SLOTS];
+groupshared uint gLitReasonLDS[MAX_SHADOW_DEMAND_SLOTS];
+groupshared uint gLitSumLDS[MAX_SHADOW_DEMAND_SLOTS];
 groupshared uint gMaxLDS[MAX_SHADOW_DEMAND_SLOTS];
 groupshared uint gOverflowLDS;
 groupshared uint gSaturatedLDS;
@@ -66,6 +97,58 @@ static const uint2 kJitterOffsets[8] = {
 	uint2(4, 4), uint2(12, 36), uint2(20, 20), uint2(28, 52),
 	uint2(36, 12), uint2(44, 44), uint2(52, 28), uint2(60, 60)
 };
+
+// One tap of the light's own atlas tile, mirroring GetOmnidirectionalShadow: 1 lit, 0 blocked.
+// Anything it cannot measure returns lit and sets a reason that tells the consumer to ignore it.
+float SampleLitVisibility(uint slot, float3 worldPositionWS, out uint reason)
+{
+	reason = 0;
+	DemandShadowLightData data = DemandShadows[slot];
+	if (data.ShadowLightParam.y <= 0.0) {
+		reason = LIT_NO_PROJECTION;
+		return 1.0;
+	}
+	if (data.ShadowLightParam.x == 0) {
+		reason = LIT_SPOT;
+		return 1.0;
+	}
+	if (data.AtlasRect.x <= 0.0) {
+		reason = LIT_NO_TILE;
+		return 1.0;
+	}
+	if (data.FadeParam.x < 1.0) {
+		reason = LIT_FADING;
+		return 1.0;
+	}
+
+	float4 positionLS = mul(data.ShadowProj, float4(worldPositionWS, 1));
+	const bool isOmni = data.ShadowLightParam.x == 2;
+	const bool lowerHalf = positionLS.z < 0;
+	if (!isOmni && lowerHalf) {
+		reason = LIT_BEHIND_HEMISPHERE;
+		return 1.0;
+	}
+
+	positionLS.xyz /= positionLS.w;
+	float3 posOffset = lowerHalf ? float3(0, 0, -1) : float3(0, 0, 1);
+	float3 lightDirection = normalize(normalize(positionLS.xyz) + posOffset);
+	float2 sampleUV = lightDirection.xy / lightDirection.z * 0.5 + 0.5;
+	if (isOmni)
+		sampleUV.y = lowerHalf ? 1.0 - 0.5 * sampleUV.y : 0.5 * sampleUV.y;
+
+	float tileScale = data.ShadowLightParam.w;
+	tileScale = (tileScale <= 0.0 || tileScale > 1.0) ? 1.0 : tileScale;
+	float receiverDepth = saturate(length(positionLS.xyz) / data.ShadowLightParam.y) - data.ShadowLightParam.z / tileScale;
+
+	float atlasWidth, atlasHeight;
+	DemandShadowAtlas.GetDimensions(atlasWidth, atlasHeight);
+	float2 atlasSize = float2(atlasWidth, atlasHeight);
+	float2 guard = 1.5 / atlasSize;
+	float2 atlasUV = clamp(data.AtlasRect.zw + sampleUV * data.AtlasRect.xy, data.AtlasRect.zw + guard, data.AtlasRect.zw + data.AtlasRect.xy - guard);
+	const bool lit = DemandShadowAtlas.Load(int3(atlasUV * atlasSize, 0)) > receiverDepth;
+	reason = lit ? LIT_LIT : LIT_BLOCKED;
+	return lit ? 1.0 : 0.0;
+}
 
 uint DemandTileHash(uint2 tile, uint cycle)
 {
@@ -166,6 +249,18 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 				// Per-tile MAX, not sum: a sum would dilute a light strongly
 				// present in one tile and absent in the other 509.
 				InterlockedMax(gMaxLDS[light.shadowMapIndex], scaled);
+
+				// Same weight times the shadow test. Ranks and sizes tiles only; the sums above keep
+				// driving the redraw skip so a light that is shadowing something never reads as unused.
+				uint litReason;
+				float visibility = SampleLitVisibility(light.shadowMapIndex, posWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, litReason);
+				uint litScaled = min((uint)(demandWeight * visibility * kDemandScale), kDemandCeiling);
+				InterlockedOr(gLitReasonLDS[light.shadowMapIndex], litReason);
+				if (litScaled > 0 && (litReason & (LIT_LIT | LIT_BLOCKED | LIT_SPOT | LIT_BEHIND_HEMISPHERE))) {
+					InterlockedAdd(gLitSumLDS[light.shadowMapIndex], litScaled);
+					if (DebugLit)
+						InterlockedMax(gLitMaxLDS[light.shadowMapIndex], (litScaled << LIT_TILE_BITS) | ((tileXY.y * ClusterSize.x + tileXY.x) & ((1u << LIT_TILE_BITS) - 1u)));
+				}
 			}
 		} else {
 			InterlockedAdd(gOverflowLDS, 1);
@@ -183,6 +278,9 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS) {
 		gDemandLDS[groupIndex] = 0;
 		gMaxLDS[groupIndex] = 0;
+		gLitMaxLDS[groupIndex] = 0;
+		gLitReasonLDS[groupIndex] = 0;
+		gLitSumLDS[groupIndex] = 0;
 	}
 	if (groupIndex == 0) {
 		gOverflowLDS = 0;
@@ -248,6 +346,12 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		InterlockedAdd(demand[groupIndex], gDemandLDS[groupIndex]);
 	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS && gMaxLDS[groupIndex] > 0)
 		InterlockedMax(demandMax[groupIndex], gMaxLDS[groupIndex]);
+	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS && gLitSumLDS[groupIndex] > 0)
+		InterlockedAdd(demandMax[LIT_SUM_BASE + groupIndex], gLitSumLDS[groupIndex]);
+	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS && gLitReasonLDS[groupIndex] > 0)
+		InterlockedOr(demandMax[LIT_REASON_BASE + groupIndex], gLitReasonLDS[groupIndex]);
+	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS && gLitMaxLDS[groupIndex] > 0)
+		InterlockedMax(demandMax[LIT_MAX_BASE + groupIndex], gLitMaxLDS[groupIndex]);
 	if (groupIndex == 0 && gOverflowLDS > 0)
 		InterlockedAdd(overflowCount[0], gOverflowLDS);
 	if (groupIndex == 0 && gSaturatedLDS > 0)
