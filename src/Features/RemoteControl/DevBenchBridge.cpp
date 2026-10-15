@@ -1004,6 +1004,23 @@ namespace
 		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|contentStore|acceptRebuild|restorePrevious|exportTrace)" }, { "action", action } };
 	}
 
+	json BuildLightHighlightResult(const json& a_args)
+	{
+		uintptr_t key = 0;
+		if (a_args.contains("ptr") && a_args["ptr"].is_string()) {
+			const std::string text = a_args["ptr"].get<std::string>();
+			if (text != "none")
+				key = static_cast<uintptr_t>(std::stoull(text, nullptr, 16));
+		}
+		ShadowCasterManager::SetDebugHighlightLight(key);
+		return json{ { "ptr", std::format("{:#018x}", key) } };
+	}
+
+	void LightHighlightToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildLightHighlightResult, a_argsJson, a_sink, a_write);
+	}
+
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildShadercacheResult, a_argsJson, a_sink, a_write);
@@ -1626,6 +1643,10 @@ namespace DevBenchBridge
 		static constexpr const char* shadercacheDesc =
 			R"({"description":"Manage {brand}' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and restorePrevious are queued onto the main thread, fire-and-forget. backgroundCompile and contentStore are immediate atomic state changes made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), accept it and rebuild for the current setup -- mirrors the in-game prompt's 'rebuild' button. restorePrevious: swap the rollback slot (the pre-change cache) back into the active slot -- mirrors the in-game prompt's 'restore previous' button; cancels an in-progress compile if one is running, only takes effect after a restart, check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. contentStore (param enabled: bool): toggle the developer/tester Advanced setting that persists compiled blobs keyed by the preprocessed source, entry, profile, flags and compiler; the store lives in Data/ShaderCache/ContentStore and survives invalidation, rotation and file-watcher wipes, but deleteDisk removes it too. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache. exportTrace: write every task record from the current build to a Chrome Trace Event Format JSON file (importable at ui.perfetto.dev or chrome://tracing) -- a timeline can localize external CPU contention during a build in a way aggregate stats can't. Runs synchronously on the calling thread (read-only over the record set plus a file write). Optional 'path' overrides the default (next to OpenShaders.log); fails if the current build has no recorded tasks yet.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile","contentStore","acceptRebuild","restorePrevious","exportTrace"]},"enabled":{"type":"boolean","description":"contentStore only: turn the content-addressed compile store on or off."},"path":{"type":"string","description":"exportTrace only: destination file path; defaults to OpenShaders.log's directory."}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", BrandedDescription(shadercacheDesc), &ShadercacheToolHandler, nullptr);
+
+		static constexpr const char* lightHighlightDesc =
+			R"({"description":"Forces one shadow-scheduler light to bright magenta (intensity 40) so a capture shows every pixel that light reaches. ptr is a light pointer string from inspect kind=llfshadows (slots[].ptr or visibility[].ptr); pass 'none' to clear. One light at a time; it persists until cleared.","inputSchema":{"type":"object","properties":{"ptr":{"type":"string"}},"required":["ptr"]}})";
+		dvb->RegisterTool("openshaders.lighthighlight", BrandedDescription(lightHighlightDesc), &LightHighlightToolHandler, nullptr);
 
 		static constexpr const char* profilerDesc =
 			R"({"description":"Enable or disable {brand}' runtime GPU/CPU profiler capture. Action-dispatched. enable/disable: SetUserEnabled(true/false) -- the same flag the in-game Profiling page's checkbox drives, so this is the one state transition (off->on) a script can reach no other way. Read timing data via inspect kind=profiler; that tool also requests a capture on its own, so a script doesn't need to enable AND separately request one, only enable if disabled.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["enable","disable"]}},"required":["action"]}})";

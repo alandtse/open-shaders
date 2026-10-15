@@ -860,6 +860,11 @@ namespace ShadowCasterManager
 	uintptr_t GetHoveredLight();
 	void SetHoveredLight(uintptr_t lightKey);
 
+	/// Light key forced to bright magenta, set from devbench so a capture shows every pixel one
+	/// light reaches. 0 clears it.
+	uintptr_t GetDebugHighlightLight();
+	void SetDebugHighlightLight(uintptr_t lightKey);
+
 	/// Highlights lights selected by UI group hover.
 	void ClearHighlight();
 	void AddHighlight(uintptr_t lightKey);

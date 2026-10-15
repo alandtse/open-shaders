@@ -91,7 +91,12 @@ namespace
 	{
 		const auto key = reinterpret_cast<uintptr_t>(a_lightPtr);
 		auto hoverKey = ShadowCasterManager::GetHoveredLight();
-		if (hoverKey != 0 && key == hoverKey) {
+		const auto scriptKey = ShadowCasterManager::GetDebugHighlightLight();
+		if (scriptKey != 0 && key == scriptKey) {
+			// Brighter than the hover pulse so every pixel the light reaches shows.
+			a_light.color = float3{ 1.0f, 0.0f, 1.0f };
+			a_light.fade = 40.0f;
+		} else if (hoverKey != 0 && key == hoverKey) {
 			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
 			a_light.color = float3{ 1.0f, 0.0f, 1.0f };  // magenta
 			a_light.fade = 4.0f + t * 4.0f;              // pulsed intensity
