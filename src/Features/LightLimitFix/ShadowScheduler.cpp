@@ -1123,6 +1123,9 @@ namespace ShadowCasterManager
 		// UpdateCamera failed but the exit streak hasn't matured and the light
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
+
+		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
+		bool updateCameraFailed{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
@@ -1506,6 +1509,7 @@ namespace ShadowCasterManager
 				// frustrumCull != 0 does NOT mean geometrically off-screen --
 				// BSShadowParabolicLight also sets it for a shadow-distance LOD test.
 				if (!l->UpdateCamera(camera)) {
+					c.updateCameraFailed = true;
 					// Exit hysteresis: honor invalid only after kCameraExitStreak frames.
 					// Age-prune (not PruneIfOversized): a missing entry means
 					// never-valid, so only drop entries past the exit-streak window.
@@ -1593,7 +1597,7 @@ namespace ShadowCasterManager
 					SchedSnapshot::LightVisibility v;
 					v.light = reinterpret_cast<uintptr_t>(c.light);
 					v.chosen = c.chosen;
-					v.engineCulled = c.invalidCamera;
+					v.engineCulled = c.updateCameraFailed;
 					v.frustrumCull = c.light->frustrumCull;
 					v.lodDimmer = c.light->lodDimmer;
 					v.cameraHold = c.cameraHold;
@@ -1607,7 +1611,7 @@ namespace ShadowCasterManager
 						v.y = rel.y;
 						v.z = rel.z;
 						v.radius = ni->GetLightRuntimeData().radius.x;
-						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius, v.distance);
+						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius * ni->world.scale, v.distance);
 					}
 					s_visAudit.push_back(std::move(v));
 				}
