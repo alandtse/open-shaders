@@ -1255,6 +1255,8 @@ namespace
 		request.onComplete = [requestId](const ScreenshotFeature::CaptureResult& a_result) {
 			json payload{ { "requestId", requestId }, { "ok", a_result.ok }, { "uiExcluded", a_result.uiExcluded },
 				{ "width", a_result.width }, { "height", a_result.height } };
+			if (a_result.ok)
+				payload["renderFrame"] = a_result.renderFrame;
 			if (!a_result.ok)
 				payload["error"] = "the screenshot could not be captured or written";
 			const std::string text = payload.dump();
@@ -1650,7 +1652,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "featureissues", BrandedDescription(inspectFeatureIssuesDesc), &InspectFeatureIssuesHandler, nullptr);
 
 			static constexpr const char* captureProviderDesc =
-				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; the crop preset, clipboard copy and HUD notice of a user screenshot do not apply.","inputSchema":{"type":"object"}})";
+				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height, renderFrame). renderFrame is the engine graphics frame copied on the render thread, not the request frame. subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; the crop preset, clipboard copy and HUD notice of a user screenshot do not apply.","inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("capture", "openshaders", BrandedDescription(captureProviderDesc), &CaptureProviderHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());

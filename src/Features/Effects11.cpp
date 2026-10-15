@@ -15,6 +15,7 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "IBL.h"
+#include "LODShadows.h"
 #include "ShaderCache.h"
 #include "SkySync.h"
 #include "State.h"
@@ -1232,6 +1233,8 @@ void Effects11::DrawVolumetricScattering()
 			defines.push_back({ "CLOUD_SHADOWS", nullptr });
 		if (globals::features::terrainShadows.loaded)
 			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
+		if (globals::features::lodShadows.loaded)
+			defines.push_back({ "LOD_SHADOWS", nullptr });
 
 		raymarchVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0")));
 		if (!raymarchVolumetricRaysPS) {

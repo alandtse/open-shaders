@@ -36,7 +36,7 @@ public:
 		int32_t MoonLightSource = 0;
 		int32_t SunPath = 0;
 		float CustomAngle = -35.0f;
-		float MinShadowElevation = 10.0f;
+		float MinShadowElevation = 0.0f;
 		float ShadowTransitionDuration = 100.0f;
 		bool DimSunlightUnderHorizon = true;
 		bool DimVolumetricLighting = true;
@@ -54,6 +54,8 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	/** @brief Exposes the active celestial source and horizon transition state. */
+	void RegisterUxActions() override;
 
 	virtual bool IsCore() const override { return true; }
 	virtual bool SupportsVR() override { return true; }
@@ -63,6 +65,8 @@ public:
 	 * @param sky The sky object whose directional light color may be modified.
 	 */
 	void OnSkyUpdateColors(RE::Sky* sky);
+	/** @brief Blends the weather's night lighting into the selected moon contribution before preset processing. */
+	void OnWeatherColorsComputed(RE::Sky* sky) override;
 
 	/** @brief Returns sun/Masser/Secunda transition weights, or nullopt when synchronization is inactive. */
 	std::optional<float3> GetCelestialLightWeights() const;
@@ -132,18 +136,12 @@ private:
 		float fadeTimer = 0.0f;
 		float immediateTransitionRemaining = 0.0f;
 		bool transitioning = false;
-		bool sunriseReleased = false;
-		float frozenHeading = 0.0f;
-		bool sunsetHeadingLocked = false;
-		float vlIntensityFactor = 1.0f;
 
 		void Update(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[], float fadeDuration, float fadeAdvance, bool a_immediateTransition);
-		void LockSunElevation(RE::NiPoint3 dirs[]);
 		static void SetLighting(const RE::Sky* sky, RE::NiPoint3 dir);
 		static void SetDirection(RE::NiPoint3& dir, float headingRadians, float elevRadians);
 		static void SetElevation(RE::NiPoint3& dir, float elevRadians);
 		static void ClampDirection(RE::NiPoint3& dir);
-		static float ComputeVLFactor(const RE::NiPoint3& current, const RE::NiPoint3& target);
 		void Reset();
 	};
 
@@ -153,10 +151,8 @@ private:
 	static constexpr float NorthernSunAngle = 90.0f + 35.0f;
 	static constexpr float VanillaSunAngle = 90.0f + 5.0f;
 	static constexpr float SecondsPerGameHour = 3600.0f;
-	static constexpr float SunsetHeadingLockThreshold = 0.5f;
-	static constexpr float VLFadeStartAngle = 2.0f;
-	static constexpr float VLFadeEndAngle = 10.0f;
 	static constexpr float MaxHorizonFadeHours = 1.5f;
+	static Caster SelectMoonCaster(float masser, float secunda, Caster previous);
 
 	inline static RE::NiPoint3* gSunPosition = nullptr;
 	inline static RE::BSVolumetricLightingRenderData* gVolumetricLighting = nullptr;
@@ -190,6 +186,14 @@ private:
 	void SetSkyRotation(const RE::Sky* sky, RE::TESObjectCELL* cell);
 
 	void ProcessSun(const RE::Sky* sky, RE::NiPoint3 dirs[], float intensities[]);
+	struct SunFadeTimes
+	{
+		float sunriseBegin;
+		float sunriseMiddle;
+		float sunsetMiddle;
+		float sunsetEnd;
+	};
+	static SunFadeTimes GetSunFadeTimes(const RE::Sky* sky);
 
 	/** @brief Hides the sun disc and glare at and outside vanilla's fade boundaries. */
 	static void HideSunOutsideFadeWindow(const RE::Sky* sky);

@@ -26,7 +26,7 @@ struct PS_OUTPUT
 static const uint SampleCount = 16;
 static const float RcpSampleCount = 1.0 / float(SampleCount);
 
-float GetVolumetricRaysScattering(float3 positionMS, float noise, float3 cameraOffset)
+float GetVolumetricRaysScattering(float3 positionMS, float noise, uint eyeIndex)
 {
 	float negExtTimesRayLen = -SharedData::enbSettings.VolumetricRaysExtinction * length(positionMS);
 	float scattering = 0.0;
@@ -40,15 +40,7 @@ float GetVolumetricRaysScattering(float3 positionMS, float noise, float3 cameraO
 		t1 *= t1;
 		float3 samplePos = positionMS * lerp(t0, t1, noise);
 
-		float shadow = 1.0;
-
-#if defined(TERRAIN_SHADOWS)
-		shadow = TerrainShadows::GetTerrainShadow(samplePos + cameraOffset, LinearSampler);
-#endif
-
-#if defined(CLOUD_SHADOWS)
-		shadow *= CloudShadows::GetCloudShadowMult(samplePos, LinearSampler);
-#endif
+		float shadow = ShadowSampling::GetWorldShadow(samplePos, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 		shadow *= shadow;
 		float stepTransmittance = exp(negExtTimesRayLen * (t1 - t0));
@@ -70,10 +62,8 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 	positionMS.xyz /= positionMS.w;
 
 	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.pos.xy, ScreenSize), SharedData::FrameCount);
-	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eye.index].xyz;
-
 	PS_OUTPUT output;
-	output.Scattering = GetVolumetricRaysScattering(positionMS.xyz, noise, cameraOffset);
+	output.Scattering = GetVolumetricRaysScattering(positionMS.xyz, noise, eye.index);
 	output.Depth = SharedData::GetScreenDepth(depth);
 	return output;
 }

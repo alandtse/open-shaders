@@ -1,7 +1,7 @@
 {
     "_meta": {
         "auto_generated": true,
-        "generator": "",
+        "generator": "Cero sigue al sol y las lunas sin limitar la elevación. Los valores mayores acortan las sombras del horizonte, pero separan la iluminación de la posición celeste.",
         "language": "Español",
         "locale": "es",
         "note": ""
@@ -1412,6 +1412,11 @@
     "feature.lod_blending.lod_terrain_brightness": "",
     "feature.lod_blending.lod_terrain_gamma": "",
     "feature.lod_blending.name": "",
+    "feature.lod_shadows.depth_bias": "Sesgo de profundidad",
+    "feature.lod_shadows.description": "Proyecta sombras del sol y la luna almacenadas en caché a partir del terreno, objetos y árboles distantes.",
+    "feature.lod_shadows.enabled": "Activar sombras LOD",
+    "feature.lod_shadows.name": "Sombras LOD",
+    "feature.lod_shadows.update_budget": "Presupuesto de actualización de GPU (ms)",
     "feature.perf_overlay.a_user_fps": "",
     "feature.perf_overlay.a_user_median_fps": "",
     "feature.perf_overlay.a_user_ms": "",

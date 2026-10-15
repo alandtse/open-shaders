@@ -234,6 +234,9 @@ typedef VS_OUTPUT PS_INPUT;
 struct PS_OUTPUT
 {
 	float4 Color: SV_Target0;
+#if defined(IBL) && !defined(DEFERRED)
+	float4 ReflectionRadiance: SV_Target7;
+#endif
 	float4 MotionVectors: SV_Target1;
 	float4 Normal: SV_Target2;
 #if defined(CLOUD_SHADOWS) && defined(CLOUDS) && !defined(DEFERRED)
@@ -610,6 +613,10 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 			psout.Color.w = 0;
 	}
+#	endif
+
+#	if defined(IBL) && !defined(DEFERRED)
+	psout.ReflectionRadiance = psout.Color;
 #	endif
 
 	return psout;

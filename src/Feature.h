@@ -382,6 +382,9 @@ public:
 	/** @brief Called after reflection prepasses; returned cleanup runs after cubemap rendering. */
 	virtual std::function<void()> OnReflectionsRenderBegin() { return nullptr; }
 
+	/** @brief Called after engine weather colors are computed, before preset color adjustments. */
+	virtual void OnWeatherColorsComputed(RE::Sky* /*a_sky*/) {}
+
 	/** @brief Called after engine weather colors and weather extensions have finished updating. */
 	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
 

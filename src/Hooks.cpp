@@ -347,6 +347,7 @@ namespace WeatherExtensions
 		static void thunk(RE::Sky* sky, float a_delta)
 		{
 			func(sky, a_delta);
+			Feature::ForEachLoadedFeature("OnWeatherColorsComputed", [sky](Feature* feature) { feature->OnWeatherColorsComputed(sky); });
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
 				globals::features::effects11.OnSkyUpdateColors(sky);

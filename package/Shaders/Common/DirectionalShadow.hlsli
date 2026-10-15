@@ -5,23 +5,24 @@
 
 namespace DirectionalShadow
 {
-	// Single owner of the directional-shadow routing decision, so new consumers
-	// can't read the stale engine mask under SLF. Under LIGHT_LIMIT_FIX the engine
-	// mask is a no-op, so sample LLF cascades directly (fully lit past range);
-	// otherwise return the engine mask as-is. Also owns the PCF noise-rotation so
-	// callers skip the sincos boilerplate. Lighting.hlsl uses LLF's coverage
-	// overload for VSM merging. Needs LightLimitFix.hlsli first.
-	float GetSceneDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise, float a_engineMaskShadow, out float directionalCoverage)
+	float GetSceneDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise, float a_engineMaskShadow, out float directionalCoverage, out float nativeContactWeight)
 	{
 #if defined(LIGHT_LIMIT_FIX)
 		float2 rotation;
 		sincos(Math::TAU * a_screenNoise, rotation.y, rotation.x);
 		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
-		return LightLimitFix::GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, a_engineMaskShadow, directionalCoverage);
+		return LightLimitFix::GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, directionalCoverage, nativeContactWeight);
 #else
 		directionalCoverage = 1.0;
+		nativeContactWeight = 1.0;
 		return a_engineMaskShadow;
 #endif
+	}
+
+	float GetSceneDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise, float a_engineMaskShadow, out float directionalCoverage)
+	{
+		float nativeContactWeight;
+		return GetSceneDirectionalShadow(worldPosition, worldPositionWS, eyeIndex, a_screenNoise, a_engineMaskShadow, directionalCoverage, nativeContactWeight);
 	}
 
 	float GetSceneDirectionalShadow(float3 worldPosition, float3 worldPositionWS, uint eyeIndex, float a_screenNoise, float a_engineMaskShadow)

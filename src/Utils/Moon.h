@@ -93,6 +93,12 @@ namespace Util::Moon
 		return IsMoonAndStarsLoaded() ? RE::NiPoint3{ dir.y, -dir.x, dir.z } : dir;
 	}
 
+	/** @brief Whether the bright moon node and its parent are visible. */
+	inline bool IsVisible(const RE::Moon* moon)
+	{
+		return moon && moon->root && moon->moonNode && !moon->root->GetAppCulled() && !moon->moonNode->GetAppCulled();
+	}
+
 	/**
 	 * @brief Compute the final blended colour contribution of a moon.
 	 *
@@ -108,7 +114,7 @@ namespace Util::Moon
 	 */
 	inline float4 GetBlendColor(const RE::Moon* moon, const float4& baseColor, float newMoon = NewMoonIntensityFactor, float crescent = CrescentMoonIntensityFactor, float full = FullMoonIntensityFactor)
 	{
-		if (!moon || !moon->moonMesh)
+		if (!IsVisible(moon) || !moon->moonMesh)
 			return {};
 
 		const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(moon->moonMesh->GetGeometryRuntimeData().shaderProperty.get());

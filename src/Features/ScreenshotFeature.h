@@ -43,6 +43,8 @@ struct ScreenshotFeature : public Feature
 		uint32_t height = 0;
 		/** @brief True only when the saved image is a source drawn without the HUD. */
 		bool uiExcluded = false;
+		/** @brief Engine frame whose image was copied on the render thread. */
+		uint32_t renderFrame = 0;
 	};
 
 	/** @brief One capture to an explicit PNG path, of the whole source or a UV sub-region, with an optional completion callback. */
@@ -94,6 +96,7 @@ private:
 		bool copyToClipboard = false;
 		bool silent = false;
 		bool uiExcluded = false;
+		uint32_t renderFrame = 0;
 		std::function<void(const CaptureResult&)> onComplete;
 	};
 
