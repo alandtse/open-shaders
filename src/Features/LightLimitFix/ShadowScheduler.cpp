@@ -1174,6 +1174,9 @@ namespace ShadowCasterManager
 		// UpdateCamera failed but the exit streak hasn't matured and the light
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
+
+		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
+		bool updateCameraFailed{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
@@ -1572,6 +1575,7 @@ namespace ShadowCasterManager
 					ZoneScopedN("SCM::CandidateValidation::UpdateCamera");
 					cameraValid = l->UpdateCamera(camera);
 				}
+				c.updateCameraFailed = !cameraValid;
 				if (!cameraValid) {
 					// Exit hysteresis: honor invalid only after kCameraExitStreak frames.
 					// Age-prune (not PruneIfOversized): a missing entry means
@@ -1661,7 +1665,7 @@ namespace ShadowCasterManager
 					SchedSnapshot::LightVisibility v;
 					v.light = reinterpret_cast<uintptr_t>(c.light);
 					v.chosen = c.chosen;
-					v.engineCulled = c.invalidCamera;
+					v.engineCulled = c.updateCameraFailed;
 					v.frustrumCull = c.light->frustrumCull;
 					v.lodDimmer = c.light->lodDimmer;
 					v.cameraHold = c.cameraHold;
@@ -1675,7 +1679,7 @@ namespace ShadowCasterManager
 						v.y = rel.y;
 						v.z = rel.z;
 						v.radius = ni->GetLightRuntimeData().radius.x;
-						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius, v.distance);
+						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius * ni->world.scale, v.distance);
 					}
 					s_visAudit.push_back(std::move(v));
 				}
@@ -3227,6 +3231,7 @@ namespace ShadowCasterManager
 				snap.demandSubTap = s_schedDiag.demand_sub_tap;
 				snap.demandSkipEligible = s_schedDiag.demand_skip_eligible;
 				snap.demandSwapIn = s_schedDiag.demand_swap_in;
+				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
 				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
 				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
 				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;

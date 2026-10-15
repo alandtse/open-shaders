@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "CSEditor/EditorWindow.h"
 #include "Features/LightLimitFix/Common.h"
+#include "Features/LightLimitFix/LightReadSafety.h"
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
 #include "Features/LightLimitFix/ShadowCasterMath.h"
@@ -1771,26 +1772,20 @@ void LightLimitFix::UpdateShadowDemand()
 
 namespace
 {
-	// Defined below with the effect-shader guard.
-	bool ProbeReadable(const void* a_ptr, std::size_t a_size);
-
 	// Every unguarded engine read on these types, VR layout: NiLight fade +0x15C,
 	// diffuse +0x144, direction through +0x173; BSLight through its NiPointer slot.
 	constexpr std::size_t kNiLightEngineReadSize = 0x174;
 	constexpr std::size_t kBSLightEngineReadSize = 0x50;
 
-	// Plausibility + committed-readability in one check: the value test rejects
-	// null/garbage cheaply, the VirtualQuery probe rejects freed-but-canonical
-	// pointers the value test cannot (a recycled light block stays mapped-looking).
-	bool IsSafeLightRange(const void* a_ptr, std::size_t a_size)
+	template <std::size_t Size>
+	bool IsSafeLightRange(const void* a_ptr)
 	{
+		ZoneScopedN("LLF::EffectLightProbe");
 		return ShadowCasterManager::IsPlausibleShadowLightPtr(reinterpret_cast<std::uintptr_t>(a_ptr)) &&
-		       ProbeReadable(a_ptr, a_size);
+		       LightReadSafety::IsReadable<Size>(a_ptr);
 	}
 
-	// The directional slot is almost always the same sun NiLight for every pass in a
-	// frame; revalidating it per pass would put a VirtualQuery syscall on the hottest
-	// draw path. Render-thread-only state, revalidated once per pointer per frame.
+	// Render-thread state is revalidated for each pointer and frame.
 	bool IsSafeDirectionalNiLight(const RE::NiLight* a_light)
 	{
 		static const RE::NiLight* validated = nullptr;
@@ -1798,7 +1793,7 @@ namespace
 		const uint32_t frame = globals::state ? globals::state->frameCount : 0;
 		if (a_light == validated && frame == validatedFrame)
 			return true;
-		if (!IsSafeLightRange(a_light, kNiLightEngineReadSize))
+		if (!IsSafeLightRange<kNiLightEngineReadSize>(a_light))
 			return false;
 		validated = a_light;
 		validatedFrame = frame;
@@ -1865,39 +1860,17 @@ void LightLimitFix::Hooks::BSLightingShader_SetupGeometry::thunk(RE::BSShader* T
 	singleton.BSLightingShader_SetupGeometry_After(Pass);
 }
 
-namespace
-{
-	// VirtualQuery readability probe -- the environment-independent check the address-floor
-	// heuristic can't be: asks the OS whether [ptr, ptr+size) is committed + readable, rejecting
-	// a freed light at ANY address without guessing the heap base. Tracy zone LLF::EffectLightProbe.
-	bool IsReadableRange(const void* a_ptr, std::size_t a_size) noexcept
-	{
-		MEMORY_BASIC_INFORMATION mbi{};
-		if (::VirtualQuery(a_ptr, &mbi, sizeof(mbi)) == 0)
-			return false;
-		if (mbi.State != MEM_COMMIT)
-			return false;
-		constexpr DWORD kReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
-		                            PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
-		if ((mbi.Protect & kReadable) == 0 || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
-			return false;
-		const auto base = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress);
-		const auto p = reinterpret_cast<std::uintptr_t>(a_ptr);
-		return (p + a_size) <= (base + mbi.RegionSize);  // whole range in this committed region
-	}
-
-	bool ProbeReadable(const void* a_ptr, std::size_t a_size)
-	{
-		ZoneScopedN("LLF::EffectLightProbe");
-		return IsReadableRange(a_ptr, a_size);
-	}
-}
-
 void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 {
+	using EffectFlags = SIE::ShaderCache::EffectShaderFlags;
+	constexpr auto sceneLightMask = static_cast<uint32_t>(EffectFlags::Lighting) | static_cast<uint32_t>(EffectFlags::Membrane);
+	const auto* state = globals::state;
+	const bool usesSceneLights = !state || state->currentShader != This ||
+	                             (state->currentVertexDescriptor & sceneLightMask) == static_cast<uint32_t>(EffectFlags::Lighting);
+
 	// Validate each raw scene-light pair on first use per frame; cache hits still SEH-read the
 	// BSLight field so unmapped or changed entries fall back to the full guard.
-	if (Pass && Pass->sceneLights && Pass->numLights > 0) {
+	if (usesSceneLights && Pass && Pass->sceneLights && Pass->numLights > 0) {
 		std::uint8_t validCount = 0;
 		auto& validationCache = globals::features::lightLimitFix.effectLightValidationCache;
 		for (std::uint8_t i = 0; i < Pass->numLights; ++i) {
@@ -1911,7 +1884,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				validationCache.erase(cached);
 			}
 
-			if (!IsSafeLightRange(bsLight, kBSLightEngineReadSize)) {
+			if (!IsSafeLightRange<kBSLightEngineReadSize>(bsLight)) {
 				static int loggedBsLight = 0;
 				if (loggedBsLight++ < 10) {
 					logger::warn(
@@ -1922,7 +1895,7 @@ void LightLimitFix::Hooks::BSEffectShader_SetupGeometry::thunk(RE::BSShader* Thi
 				break;
 			}
 			RE::NiLight* niLight = SafeReadNiLight(bsLight);
-			if (!IsSafeLightRange(niLight, kNiLightEngineReadSize)) {
+			if (!IsSafeLightRange<kNiLightEngineReadSize>(niLight)) {
 				// Catches both NULL (engine cleared the NiPointer) and
 				// garbage (BSLight memory recycled). NULL is the more common
 				// observed failure -- the engine's loop has no null check

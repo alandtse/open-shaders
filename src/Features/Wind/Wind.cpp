@@ -48,11 +48,12 @@ namespace
 
 	bool IsExplicitTreeLeavesGeometry(const RE::BSGeometry* a_geometry)
 	{
-		if (!a_geometry || !netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent))
+		if (!a_geometry)
 			return false;
 
 		const char* geometryName = a_geometry->name.c_str();
-		return geometryName && std::strcmp(geometryName, "leaves") == 0;
+		return geometryName && std::strcmp(geometryName, "leaves") == 0 &&
+		       netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent);
 	}
 
 	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)

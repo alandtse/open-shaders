@@ -108,6 +108,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShowDrawCalls,
 	ShowVRAM,
 	ShowCSPasses,
+	ShowRenderTargets,
 	ShowFPS,
 	ShowPreFGFrameTimeGraph,
 	ShowPostFGFrameTimeGraph,
@@ -160,6 +161,10 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Checkbox(T(TKEY("show_draw_calls"), "Show Draw Calls"), &this->settings.ShowDrawCalls);
 		ImGui::Checkbox(T(TKEY("show_vram"), "Show VRAM Usage"), &this->settings.ShowVRAM);
 		ImGui::Checkbox(T(TKEY("show_cs_passes"), "Show OS Render Passes"), &this->settings.ShowCSPasses);
+		ImGui::Checkbox(T(TKEY("show_render_targets"), "Show Render Targets"), &this->settings.ShowRenderTargets);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::TextUnformatted(T(TKEY("show_render_targets_tooltip"), "Draw calls and GPU time per render target the game draws into, including\nshadow maps. GPU time runs from the first draw into a target to the next draw\ninto another, idle time included, so passes issued in between count toward the\nearlier target; the frame's last target ends at Present."));
+		}
 
 		bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 		if (this->settings.ShowFPS && isFrameGenerationActive) {
@@ -323,7 +328,7 @@ void PerformanceOverlay::DrawOverlay()
 	bool hasGraphs = this->settings.ShowPreFGFrameTimeGraph ||
 	                 (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive);
 	float minWidth = 0.0f;
-	const bool hasWideContent = hasGraphs || this->settings.ShowDrawCalls || this->settings.ShowCSPasses;
+	const bool hasWideContent = hasGraphs || this->settings.ShowDrawCalls || this->settings.ShowCSPasses || this->settings.ShowRenderTargets;
 	if (hasWideContent) {
 		minWidth = Settings::kDefaultContentWidth * scale * this->settings.TextSize;
 	}
@@ -394,6 +399,13 @@ void PerformanceOverlay::DrawOverlay()
 		// RenderStatistics requests capture itself -- only pay query/QPC
 		// overhead while this row is actually visible.
 		ProfilingRenderer::RenderStatistics(false, false);
+		needsSeparator = true;
+	}
+
+	if (this->settings.ShowRenderTargets) {
+		if (needsSeparator)
+			ImGui::Separator();
+		DrawRenderTargets();
 		needsSeparator = true;
 	}
 
@@ -553,6 +565,64 @@ void PerformanceOverlay::DrawVRAM()
 		// Display a fallback message if we couldn't get the VRAM info
 		ImGui::Text("%s", T(TKEY("vram_not_available"), "VRAM Usage: Not available"));
 	}
+}
+
+void PerformanceOverlay::DrawRenderTargets()
+{
+	const auto rows = this->renderTargetStats.GetRows();
+	ImGui::Text("%s", std::format("{} {:.2f} ms", T(TKEY("render_targets_timed"), "Render Targets (GPU):"), this->renderTargetStats.GetTimedMs()).c_str());
+	if (this->renderTargetStats.IsSpanLimitHit() || this->renderTargetStats.IsBindingLimitHit())
+		ImGui::TextUnformatted(T(TKEY("render_targets_limit"), "Some draws were not timed (limit reached)."));
+	if (rows.empty())
+		return;
+
+	if (ImGui::BeginTable("##RenderTargets", 3, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX)) {
+		ImGui::TableSetupColumn(T(TKEY("render_target"), "Render Target"));
+		ImGui::TableSetupColumn(T(TKEY("draw_calls"), "Draw Calls"));
+		ImGui::TableSetupColumn(T(TKEY("gpu_time"), "GPU Time"));
+		ImGui::TableHeadersRow();
+		for (const auto& row : rows) {
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(row.name.c_str());
+			ImGui::TableNextColumn();
+			ImGui::Text("%.0f", row.drawCalls);
+			ImGui::TableNextColumn();
+			ImGui::Text("%.2f ms", row.gpuMs);
+		}
+		ImGui::EndTable();
+	}
+}
+
+json PerformanceOverlay::GetDiagnostics()
+{
+	json rows = json::array();
+	for (const auto& row : this->renderTargetStats.GetRows())
+		rows.push_back({ { "name", row.name }, { "drawCalls", row.drawCalls }, { "gpuMs", row.gpuMs } });
+	return {
+		{ "renderTargets", {
+							   { "enabled", this->settings.ShowRenderTargets },
+							   { "timedGpuMs", this->renderTargetStats.GetTimedMs() },
+							   { "resolvedShare", this->renderTargetStats.GetResolvedShare() },
+							   { "spanLimitHit", this->renderTargetStats.IsSpanLimitHit() },
+							   { "bindingLimitHit", this->renderTargetStats.IsBindingLimitHit() },
+							   { "rows", std::move(rows) },
+						   } },
+	};
+}
+
+void PerformanceOverlay::OnDraw()
+{
+	if (this->settings.ShowRenderTargets)
+		this->renderTargetStats.CountDraw();
+}
+
+void PerformanceOverlay::Reset()
+{
+	if (this->settings.ShowRenderTargets)
+		this->renderTargetStats.EndFrame();
+	else
+		this->renderTargetStats.Clear();
 }
 
 void PerformanceOverlay::DrawPostFGFrameTimeGraph()
