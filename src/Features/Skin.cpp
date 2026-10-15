@@ -373,7 +373,7 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 		if (actor->IsInWater()) {
 			wetness.y = 2.0f;
 			const float waterHeight = GetWaterHeight(userData, actor->GetPosition());
-			wetness.w = std::max(0.0f, waterHeight - positionZ);
+			wetness.w = std::max(cached.wetness.w, waterHeight - positionZ);
 		} else {
 			wetness.y = 0.0f;
 			wetness.w = 0.0f;

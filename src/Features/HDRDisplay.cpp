@@ -492,7 +492,7 @@ void HDRDisplay::DrawSettings()
 			currentPeakNits = settings.hdrPeakNits;
 		}
 
-		ImGui::SliderInt(T(TKEY("paper_white_nits"), "Paper White (nits)"), reinterpret_cast<int*>(&currentPaperWhite), 80, 500);
+		ImGui::SliderInt(T(TKEY("paper_white_nits"), "Paper White (nits)"), reinterpret_cast<int*>(&currentPaperWhite), kHdrPaperWhiteMin, 500);
 		{
 			std::lock_guard<std::mutex> lock(settingsMutex);
 			if (currentPaperWhite >= settings.hdrPeakNits) {
@@ -516,8 +516,8 @@ void HDRDisplay::DrawSettings()
 		const uint peakSliderMax = autoHDRActive ? kAutoHDRMaxNits : kHdrPeakNitsMax;
 		int displayedPeakNits = static_cast<int>(std::min(currentPeakNits, peakSliderMax));
 		if (ImGui::SliderInt(T(TKEY("peak_brightness_nits"), "Peak Brightness (nits)"), &displayedPeakNits, kHdrPeakNitsMin, peakSliderMax, "%d",
-				ImGuiSliderFlags_AlwaysClamp | (autoHDRActive ? ImGuiSliderFlags_None : ImGuiSliderFlags_Logarithmic)))
-			currentPeakNits = static_cast<uint>(displayedPeakNits);
+				autoHDRActive ? ImGuiSliderFlags_None : ImGuiSliderFlags_Logarithmic))
+			currentPeakNits = static_cast<uint>(std::clamp(displayedPeakNits, 0, static_cast<int>(kHdrPeakNitsMax)));
 		{
 			std::lock_guard<std::mutex> lock(settingsMutex);
 			if (currentPeakNits <= settings.hdrPaperWhite) {
@@ -581,8 +581,8 @@ void HDRDisplay::LoadSettings(json& o_json)
 	bool oldEnableHDR = settings.enableHDR;
 
 	settings = o_json;
-	settings.hdrPeakNits = std::clamp(settings.hdrPeakNits, kHdrPeakNitsMin, kHdrPeakNitsMax);
-	settings.hdrPaperWhite = std::clamp(settings.hdrPaperWhite, 80u, settings.hdrPeakNits - 1);
+	settings.hdrPeakNits = std::clamp(settings.hdrPeakNits, kHdrPaperWhiteMin + 1, kHdrPeakNitsMax);
+	settings.hdrPaperWhite = std::clamp(settings.hdrPaperWhite, kHdrPaperWhiteMin, settings.hdrPeakNits - 1);
 	if (!std::isfinite(settings.hdrUIBrightness))
 		settings.hdrUIBrightness = 1.0f;
 

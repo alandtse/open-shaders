@@ -443,7 +443,7 @@ namespace ShadowCasterManager
 				// Dedupe per walk (see s_healAttached).
 				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
-					ni && newlyAttached &&
+					ni && newlyAttached && ShadowMapPassless(a_visible) == PasslessReason::kNone &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
@@ -518,7 +518,7 @@ namespace ShadowCasterManager
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
-					ni && newlyAttached &&
+					ni && newlyAttached && ShadowMapPassless(a_visible) == PasslessReason::kNone &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}

@@ -3,6 +3,7 @@
 #include "Menu.h"
 #include "OverlayFeature.h"
 #include "PerformanceOverlay/ABTesting/ABTestAggregator.h"
+#include "PerformanceOverlay/RenderTargetStats.h"
 #include "Utils/PerfUtils.h"
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -142,6 +143,10 @@ struct PerformanceOverlay : OverlayFeature
 	virtual void DrawSettings() override;
 	virtual void DataLoaded() override;
 	void DrawOverlay() override;
+	virtual json GetDiagnostics() override;
+	virtual bool WantsDrawHook() const override { return true; }
+	virtual void OnDraw() override;
+	virtual void Reset() override;
 	// Settings persistence and defaults
 	void SaveSettings(json& j) override;
 	void LoadSettings(json& j) override;
@@ -172,6 +177,7 @@ struct PerformanceOverlay : OverlayFeature
 	void UpdateGraphValues();
 	void DrawFPS();
 	void DrawVRAM();
+	void DrawRenderTargets();
 	void DrawPostFGFrameTimeGraph();
 
 	// ============================================================================
@@ -283,6 +289,7 @@ struct PerformanceOverlay : OverlayFeature
 		bool ShowInOverlay = true;  // was: Enabled
 		bool ShowDrawCalls = true;
 		bool ShowCSPasses = true;
+		bool ShowRenderTargets = false;
 		bool ShowVRAM = true;
 		bool ShowFPS = true;
 		bool ShowPreFGFrameTimeGraph = true;
@@ -297,6 +304,8 @@ struct PerformanceOverlay : OverlayFeature
 		bool PositionSet = false;
 	};
 	Settings settings;
+
+	RenderTargetStats renderTargetStats;
 
 private:
 	// ============================================================================
