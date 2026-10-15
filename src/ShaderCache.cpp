@@ -3787,12 +3787,15 @@ namespace SIE
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
 	static bool SetPreviousCacheRestoreCandidate(
 		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
-		bool& previousDiskCacheAvailable,
+		std::atomic<bool>& previousDiskCacheAvailable,
 		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
 	{
-		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
+		bool available = previousDiskCacheAvailable;
+		const bool set = Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
 			HasDiskCacheInfo(PreviousDiskCachePath()),
-			previousDiskCacheAvailable, previousCacheMismatches);
+			available, previousCacheMismatches);
+		previousDiskCacheAvailable = available;
+		return set;
 	}
 
 	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).

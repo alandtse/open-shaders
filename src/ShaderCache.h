@@ -1270,12 +1270,13 @@ namespace SIE
 
 		bool isEnabled = true;
 		bool isDiskCache = true;
-		bool diskCacheHeld = false;
 		bool requireDigestForReuse = false;
-		bool featureSetChanged = false;
-		bool featureSetRevertPending = false;
-		bool featureSetCacheBackedUp = false;
-		bool previousDiskCacheAvailable = false;
+		// Written on the main thread, read from devbench's listener thread by inspect kind=shadercache.
+		std::atomic<bool> diskCacheHeld = false;
+		std::atomic<bool> featureSetChanged = false;
+		std::atomic<bool> featureSetRevertPending = false;
+		std::atomic<bool> featureSetCacheBackedUp = false;
+		std::atomic<bool> previousDiskCacheAvailable = false;
 		// Guards cacheMismatches/previousCacheMismatches: reassigned/cleared on the main
 		// thread (ValidateDiskCache, rollback actions), read from devbench's listener
 		// thread via GetCacheMismatches/GetPreviousCacheMismatches.
