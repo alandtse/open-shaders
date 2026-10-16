@@ -607,6 +607,7 @@ namespace
 		auto* cache = globals::shaderCache;
 		if (!cache)
 			return json{ { "error", "shader cache unavailable" } };
+		const auto rollback = cache->GetRollbackState();
 		return json{
 			{ "compiling", cache->IsCompiling() },
 			{ "completedTasks", cache->GetCompletedTasks() },
@@ -625,13 +626,13 @@ namespace
 			{ "digestComputeTimeUs", cache->GetDigestComputeTimeUs() },
 			{ "frame_count", EnqueuedFrame() },
 			// Rollback/backup-slot state, mirrored by the restorePrevious/acceptRebuild actions.
-			{ "diskCacheHeld", cache->IsDiskCacheHeld() },
-			{ "featureSetChanged", cache->HasFeatureSetChanges() },
-			{ "featureSetRevertPending", cache->HasFeatureSetRevertPending() },
-			{ "featureSetCacheBackedUp", cache->HasFeatureSetCacheBackup() },
-			{ "previousDiskCacheAvailable", cache->HasPreviousDiskCache() },
-			{ "cacheMismatches", MismatchesToJson(cache->GetCacheMismatches()) },
-			{ "previousCacheMismatches", MismatchesToJson(cache->GetPreviousCacheMismatches()) },
+			{ "diskCacheHeld", rollback.diskCacheHeld },
+			{ "featureSetChanged", rollback.featureSetChanged },
+			{ "featureSetRevertPending", rollback.featureSetRevertPending },
+			{ "featureSetCacheBackedUp", rollback.featureSetCacheBackedUp },
+			{ "previousDiskCacheAvailable", rollback.previousDiskCacheAvailable },
+			{ "cacheMismatches", MismatchesToJson(rollback.cacheMismatches) },
+			{ "previousCacheMismatches", MismatchesToJson(rollback.previousCacheMismatches) },
 		};
 	}
 

@@ -612,6 +612,25 @@ namespace SIE
 		/// True if Data/ShaderCache.Previous holds a cache restorable for the current setup.
 		bool HasPreviousDiskCache() const { return previousDiskCacheAvailable; }
 
+		/// The rollback flags and both mismatch lists as one update left them.
+		struct RollbackState
+		{
+			bool diskCacheHeld = false;
+			bool featureSetChanged = false;
+			bool featureSetRevertPending = false;
+			bool featureSetCacheBackedUp = false;
+			bool previousDiskCacheAvailable = false;
+			std::vector<CacheMismatch> cacheMismatches;
+			std::vector<CacheMismatch> previousCacheMismatches;
+		};
+		/// Consistent snapshot of the rollback state; safe from any thread.
+		RollbackState GetRollbackState() const
+		{
+			std::lock_guard lock{ mismatchesMutex };
+			return { diskCacheHeld, featureSetChanged, featureSetRevertPending, featureSetCacheBackedUp,
+				previousDiskCacheAvailable, cacheMismatches, previousCacheMismatches };
+		}
+
 		/// True while an enabled-flip mismatch holds the disk cache: blobs preserved on
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
 		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
@@ -1255,7 +1274,8 @@ namespace SIE
 		void ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task);
 		bool BackupActiveDiskCache();
 		void DeleteActiveDiskCache();
-		void RefreshPreviousDiskCacheInfo();
+		/** @brief Re-reads the rollback slot; if it offers nothing, tries a_retained (the pre-change mismatches) as the candidate. */
+		void RefreshPreviousDiskCacheInfo(std::optional<std::vector<CacheMismatch>> a_retained = std::nullopt);
 
 		~ShaderCache();
 
@@ -1271,15 +1291,15 @@ namespace SIE
 		bool isEnabled = true;
 		bool isDiskCache = true;
 		bool requireDigestForReuse = false;
-		// Written on the main thread, read from devbench's listener thread by inspect kind=shadercache.
+		// Written only on the main thread under mismatchesMutex; compile workers, the menu and devbench read
+		// single flags lock-free, and GetRollbackState() reads all of them together.
 		std::atomic<bool> diskCacheHeld = false;
 		std::atomic<bool> featureSetChanged = false;
 		std::atomic<bool> featureSetRevertPending = false;
 		std::atomic<bool> featureSetCacheBackedUp = false;
 		std::atomic<bool> previousDiskCacheAvailable = false;
-		// Guards cacheMismatches/previousCacheMismatches: reassigned/cleared on the main
-		// thread (ValidateDiskCache, rollback actions), read from devbench's listener
-		// thread via GetCacheMismatches/GetPreviousCacheMismatches.
+		// Guards both mismatch lists and every write of the flags above, so a locked reader
+		// never sees a flag from one update beside a list from another.
 		mutable std::mutex mismatchesMutex;
 		std::vector<CacheMismatch> cacheMismatches;
 		std::vector<CacheMismatch> previousCacheMismatches;
