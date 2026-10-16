@@ -1289,7 +1289,8 @@ namespace SIE
 		ShaderMapArray<RE::BSGraphics::ComputeShader> computeShaders;
 
 		bool isEnabled = true;
-		bool isDiskCache = true;
+		// Read by compile workers through IsDiskCacheActive() while the menu or a settings load sets it.
+		std::atomic<bool> isDiskCache = true;
 		bool requireDigestForReuse = false;
 		// Written only on the main thread under mismatchesMutex; compile workers, the menu and devbench read
 		// single flags lock-free, and GetRollbackState() reads all of them together.
