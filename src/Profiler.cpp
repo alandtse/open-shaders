@@ -68,6 +68,7 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	writeFrame = 0;
 	readFrame = 0;
 	frameActive = false;
+	frameRefused = false;
 	initialized = true;
 	// userEnabled is left as-is: a device teardown/re-init (e.g. display
 	// mode change) must not silently re-enable a user's "off" preference.
@@ -122,6 +123,7 @@ void Profiler::Release()
 	completedCpuTimers.clear();
 	activePassUsesGpu.clear();
 	frameActive = false;
+	frameRefused = false;
 	initialized = false;
 	device = nullptr;
 	context = nullptr;
@@ -190,6 +192,7 @@ void Profiler::BeginFrame()
 	frame.captureCycle = true;
 	frame.inFlight = frame.batch.BeginBatch(device, context);
 	frameActive = frame.inFlight;
+	frameRefused = !frameActive;
 	frame.acquiredTimerCount = 0;
 	acquiredSlotsThisFrame = 0;
 	if (!frameActive)
