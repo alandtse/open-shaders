@@ -304,7 +304,7 @@ void Profiler::EndFrame(uint32_t a_frameCount)
 		return;
 	}
 
-	const bool captureCycleActive = activeCaptureMode != CaptureMode::None;
+	const bool captureCycleActive = activeCaptureMode != CaptureMode::None && (!refused || HasCaptureMode(activeCaptureMode, CaptureMode::CPU));
 	const uint64_t captureCycle = captureCycleActive ? ++captureCycleCount : captureCycleCount;
 	if (HasCaptureMode(activeCaptureMode, CaptureMode::CPU)) {
 		PublishCpuResults(activeNamePrefix, a_frameCount, captureCycle);
