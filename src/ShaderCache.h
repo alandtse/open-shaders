@@ -592,6 +592,8 @@ namespace SIE
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
 		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
 		bool IsDiskCacheHeld() const { return diskCacheHeld; }
+		/// True when the cache was kept across a version change, so a blob without a recorded digest must recompile.
+		bool RequiresDigestForReuse() const { return requireDigestForReuse; }
 
 		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
 		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
@@ -1239,6 +1241,7 @@ namespace SIE
 		bool isEnabled = true;
 		bool isDiskCache = true;
 		bool diskCacheHeld = false;
+		bool requireDigestForReuse = false;
 		bool featureSetChanged = false;
 		bool featureSetRevertPending = false;
 		bool featureSetCacheBackedUp = false;

@@ -165,15 +165,16 @@ namespace Util::CacheInvalidation
 
 	enum class CompileFlagsCheck
 	{
-		Adopt,     ///< no flags recorded (an older cache): assume it was built with the current ones
-		Match,     ///< recorded flags equal the current ones
-		Mismatch,  ///< the cache was built with different flags
+		Adopt,         ///< no flags recorded (an older cache) and the current ones are the defaults it was built with
+		Match,         ///< recorded flags equal the current ones
+		Mismatch,      ///< the cache was built with different flags
+		Unestablished  ///< no flags recorded and the current ones are not the defaults, so the cache's flags are unknown
 	};
 
 	inline CompileFlagsCheck CheckCompileFlags(const std::optional<std::string>& recorded, const std::string& current)
 	{
 		if (!recorded)
-			return CompileFlagsCheck::Adopt;
+			return current == BuildCompileFlagsTag(false, false) ? CompileFlagsCheck::Adopt : CompileFlagsCheck::Unestablished;
 		return *recorded == current ? CompileFlagsCheck::Match : CompileFlagsCheck::Mismatch;
 	}
 

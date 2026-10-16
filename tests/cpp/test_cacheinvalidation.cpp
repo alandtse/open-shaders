@@ -641,9 +641,11 @@ TEST_CASE("BuildCompileFlagsTag: encodes both flags", "[cacheinvalidation]")
 	CHECK(BuildCompileFlagsTag(true, true) == "pp=1;afc=1");
 }
 
-TEST_CASE("CheckCompileFlags: older caches adopt, differing flags mismatch", "[cacheinvalidation]")
+TEST_CASE("CheckCompileFlags: older caches adopt only under default flags, differing flags mismatch", "[cacheinvalidation]")
 {
 	CHECK(CheckCompileFlags(std::nullopt, "pp=0;afc=0") == CompileFlagsCheck::Adopt);
+	CHECK(CheckCompileFlags(std::nullopt, "pp=1;afc=0") == CompileFlagsCheck::Unestablished);
+	CHECK(CheckCompileFlags(std::nullopt, "pp=0;afc=1") == CompileFlagsCheck::Unestablished);
 	CHECK(CheckCompileFlags(std::string("pp=0;afc=0"), "pp=0;afc=0") == CompileFlagsCheck::Match);
 	CHECK(CheckCompileFlags(std::string("pp=1;afc=0"), "pp=0;afc=0") == CompileFlagsCheck::Mismatch);
 }

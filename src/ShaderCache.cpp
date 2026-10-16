@@ -2109,7 +2109,9 @@ namespace SIE
 					}
 				}
 
-				if (!decidedByDigest && cache.UseFileWatcher()) {
+				if (!decidedByDigest && cache.RequiresDigestForReuse()) {
+					diskCacheOutdated = true;
+				} else if (!decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
 					// An unreadable timestamp means freshness can't be verified; treat it as a miss.
 					std::error_code ec;
@@ -3942,8 +3944,9 @@ namespace SIE
 			cachedCompileFlags = compileFlags;
 		const auto currentCompileFlags = GetCurrentCompileFlagsTag();
 		const auto compileFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(cachedCompileFlags, currentCompileFlags);
-		if (compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch) {
-			logger::info("Disk cache compile flags changed ({} -> {}); rebuilding", *cachedCompileFlags, currentCompileFlags);
+		if (compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
+			compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
+			logger::info("Disk cache compile flags changed or unknown ({} -> {}); rebuilding", cachedCompileFlags.value_or("none"), currentCompileFlags);
 			DeleteActiveDiskCache();
 			return;
 		}
@@ -4051,6 +4054,7 @@ namespace SIE
 		// changed; with no manifest nothing can be revalidated, so wipe.
 		if (Util::CacheInvalidation::AreMismatchesDigestResolvable(cacheMismatches) && !GetShaderCacheManifest().Empty()) {
 			logger::info("Plugin or feature versions changed; keeping disk cache and revalidating each shader by content digest");
+			requireDigestForReuse = true;
 			WriteDiskCacheInfo();
 			PruneOrphanedShaderCacheEntries();
 		} else {
