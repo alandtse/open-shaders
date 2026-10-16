@@ -24,6 +24,7 @@ struct ID3D11Device {};
 struct ID3D11DeviceContext {};
 struct LARGE_INTEGER { int64_t QuadPart = 0; };
 uint64_t clockTicks = 0, cpuReads = 0, gpuWrites = 0, gpuBatches = 0;
+bool batchBeginFails = false;
 bool QueryPerformanceFrequency(LARGE_INTEGER* value) { value->QuadPart = 1000; return true; }
 bool QueryPerformanceCounter(LARGE_INTEGER* value) { ++cpuReads; value->QuadPart = ++clockTicks; return true; }
 
@@ -39,7 +40,7 @@ public:
     bool Preallocate(ID3D11Device*) { return true; }
     void ReleaseQueries() { intervals.clear(); }
     void Reset() { intervals.clear(); }
-    bool BeginBatch(ID3D11Device*, ID3D11DeviceContext*) { ++gpuBatches; return true; }
+    bool BeginBatch(ID3D11Device*, ID3D11DeviceContext*) { ++gpuBatches; return !batchBeginFails; }
     void EndBatch(ID3D11DeviceContext*) {}
     int AcquireInterval(ID3D11Device*, ID3D11DeviceContext*) {
         if (intervals.size() >= capacity) return -1;
@@ -238,6 +239,37 @@ check(profiler.GetResults().empty(), "Cleared queued intervals cannot resurrect 
 profiler.Initialize(&device, &context);
 check(profiler.GetResults().empty() && profiler.GetCapturedCpuFrameCount() == 0 && profiler.GetCapturedGpuFrameCount() == 0,
     "Reinitialization resets both publications");
+''')
+
+    def test_frame_that_cannot_open_at_its_first_pass_is_skipped_whole(self):
+        self.compile_profiler(r'''
+using Status = Util::TimestampQueryBatch::Status;
+for (bool batchFails : { false, true }) {
+    Profiler profiler;
+    profiler.Initialize(&device, &context);
+    profiler.RequestCapture(Mode::GPU);
+    profiler.EndFrame(0);
+    for (uint32_t frame = 1; frame <= 7; ++frame) {
+        if (frame == 4) {
+            if (batchFails) batchBeginFails = true;
+            else Util::TimestampQueryBatch::status = Status::NotReady;
+        }
+        pass(profiler, "Early::Pass");
+        batchBeginFails = false;
+        Util::TimestampQueryBatch::status = Status::Ok;
+        pass(profiler, "Late::Pass");
+        if (frame < 7) profiler.RequestCapture(Mode::GPU);
+        profiler.EndFrame(frame);
+    }
+    for (uint32_t frame = 8; frame <= 14; ++frame) profiler.EndFrame(frame);
+    const auto* early = find(profiler, "Early::Pass");
+    const auto* late = find(profiler, "Late::Pass");
+    check(early && late && early->historyCount == 6 && late->historyCount == 6,
+        "A frame refused at its first pass publishes no GPU sample at all");
+    for (uint32_t index = 0; index < early->historyCount; ++index)
+        check(early->GetHistorySample(index) > 0, "Passes before a refusal are never published as 0 ms");
+    check(profiler.GetCapturedGpuFrameCount() == 7, "The frame after a refusal opens and resolves on time");
+}
 ''')
 
     def test_statistics_group_percentiles_use_frame_sums(self):
