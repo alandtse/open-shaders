@@ -3913,6 +3913,16 @@ namespace SIE
 			return;
 		}
 
+		std::optional<std::string> previousCompileFlags;
+		if (auto compileFlags = ini.GetValue("Cache", "CompileFlags"))
+			previousCompileFlags = compileFlags;
+		const auto previousFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(previousCompileFlags, GetCurrentCompileFlagsTag());
+		if (previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
+			previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
+			logger::info("Previous shader cache is not offered for restore because its compile flags differ or are unknown");
+			return;
+		}
+
 		{
 			std::lock_guard lock{ mismatchesMutex };
 			previousCacheMismatches = std::move(mismatches);
