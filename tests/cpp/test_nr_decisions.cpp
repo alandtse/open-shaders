@@ -139,15 +139,17 @@ TEST_CASE("FrameResetReasons covers the request, the first frame and a frame gap
 	REQUIRE(NR::Diagnostics::FrameResetReasons(true, UINT32_MAX, 100) == (Requested | FirstFrame));
 }
 
-TEST_CASE("Only a 310.8 runtime is accepted", "[nr]")
+TEST_CASE("Only a 310.8 or 310.9 runtime is accepted", "[nr]")
 {
-	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ FakeVersion{ 310, 8 } }, "C:\\game").empty());
-	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ FakeVersion{ 310, 8 } }, "").empty());
+	for (const auto& accepted : { FakeVersion{ 310, 8 }, FakeVersion{ 310, 9 } }) {
+		REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ accepted }, "C:\\game").empty());
+		REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ accepted }, "").empty());
+	}
 
-	for (const auto& rejected : { FakeVersion{ 310, 7 }, FakeVersion{ 310, 9 }, FakeVersion{ 311, 8 }, FakeVersion{ 309, 8 } }) {
+	for (const auto& rejected : { FakeVersion{ 310, 7 }, FakeVersion{ 310, 10 }, FakeVersion{ 311, 8 }, FakeVersion{ 309, 8 } }) {
 		const auto reason = NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ rejected }, "C:\\game");
 		REQUIRE_FALSE(reason.empty());
-		REQUIRE(reason == std::format("unsupported runtime version {} (needs 310.8)", rejected.string(".")));
+		REQUIRE(reason == std::format("unsupported runtime version {} (needs 310.8 or 310.9)", rejected.string(".")));
 	}
 
 	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{}, "C:\\game") ==
@@ -168,10 +170,13 @@ TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
 	REQUIRE(missing.reason == "nvngx_dlssnr.dll not found in C:\\game");
 
 	// A version the pass does not accept is refused by version, even for a pinned build.
-	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, validated, "C:\\game");
+	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 10 } }, validated, "C:\\game");
 	REQUIRE(versioned.state == RuntimeAvailability::State::kUnsupportedVersion);
-	REQUIRE(versioned.version == "310.9.0");
-	REQUIRE(versioned.reason == "unsupported runtime version 310.9.0 (needs 310.8)");
+	REQUIRE(versioned.version == "310.10.0");
+	REQUIRE(versioned.reason == "unsupported runtime version 310.10.0 (needs 310.8 or 310.9)");
+
+	const auto newer = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, std::string(64, '0'), "C:\\game");
+	REQUIRE(newer.state == RuntimeAvailability::State::kUnvalidatedBuild);
 
 	// An unpinned build of the accepted version is refused by digest, and an unreadable
 	// digest is refused too rather than being treated as unchanged.

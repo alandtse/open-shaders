@@ -63,7 +63,7 @@ namespace
 	{
 		if (state == NR::RuntimeAvailability::State::kMissing)
 			return T(TKEY("runtime_missing_fix"), "Install nvngx_dlssnr.dll under Data\\Shaders\\Upscaling\\Streamline\\.");
-		return T(TKEY("runtime_build_fix"), "Replace it with a validated 310.8 build of that file.");
+		return T(TKEY("runtime_build_fix"), "Replace it with a validated 310.8 or 310.9 build of that file.");
 	}
 
 	/**
@@ -1955,11 +1955,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			ImGui::Checkbox(T(TKEY("allow_unverified"), "Use This Build Anyway"), &tuning.allowUnverifiedRuntime);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("allow_unverified_tooltip"),
-					"Loads a 310.8.x runtime that is not one of the builds checked in game. Its colour channels may be wrong; turn this off if the picture looks tinted."));
+					"Loads a 310.8.x or 310.9.x runtime that is not one of the builds checked in game. Its colour channels may be wrong; turn this off if the picture looks tinted."));
 		}
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
-								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
+								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 or 310.9 runtime build."));
 	bool changed = false;
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");

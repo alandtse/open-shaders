@@ -27,8 +27,10 @@ namespace NR
 
 	/** @brief Major version of the nvngx_dlssnr.dll builds this pass accepts. */
 	inline constexpr uint32_t kRequiredRuntimeMajor = 310;
-	/** @brief Minor version of the nvngx_dlssnr.dll builds this pass accepts. */
+	/** @brief Minor version of the validated nvngx_dlssnr.dll builds. */
 	inline constexpr uint32_t kRequiredRuntimeMinor = 8;
+	/** @brief First minor version of the 310.9 line, which is accepted but never validated. */
+	inline constexpr uint32_t kNewerRuntimeMinor = 9;
 	/** @brief Name of the runtime file, resolved inside Streamline's plugin directory. */
 	inline constexpr const char* kRuntimeFileName = "nvngx_dlssnr.dll";
 	/** @brief Leading digest characters echoed back when a runtime build is refused. */
@@ -43,14 +45,14 @@ namespace NR
 		~TerminationSentinel() { processTerminating.store(true, std::memory_order_relaxed); }
 	};
 
-	/** @brief Reason a runtime version cannot be used, or empty when it is the accepted 310.8.x. */
+	/** @brief Reason a runtime version cannot be used, or empty when it is an accepted 310.8.x or 310.9.x. */
 	template <class V>
 	std::string UnsupportedRuntimeReason(const std::optional<V>& version, std::string_view directory)
 	{
 		if (!version)
 			return std::format("nvngx_dlssnr.dll in {} has no version information", directory);
-		if (version->major() != kRequiredRuntimeMajor || version->minor() != kRequiredRuntimeMinor)
-			return std::format("unsupported runtime version {} (needs {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor);
+		if (version->major() != kRequiredRuntimeMajor || (version->minor() != kRequiredRuntimeMinor && version->minor() != kNewerRuntimeMinor))
+			return std::format("unsupported runtime version {} (needs {}.{} or {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor, kRequiredRuntimeMajor, kNewerRuntimeMinor);
 		return {};
 	}
 
