@@ -4,6 +4,7 @@
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
 #include "Utils/ExternalEmittance.h"
 
+#include "Deferred.h"
 #include "EngineFix.h"
 #include "Feature.h"
 #include "Globals.h"
@@ -113,6 +114,7 @@ struct BSShader_LoadShaders
 		auto state = globals::state;
 		auto shaderCache = globals::shaderCache;
 		if (shaderCache->IsDiskCache() || shaderCache->IsDump()) {
+			const bool materialCategoriesRequested = Deferred::MaterialCategoriesRequested();
 			if (shaderCache->IsDiskCache()) {
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
@@ -148,7 +150,7 @@ struct BSShader_LoadShaders
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor);
 				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
 				state->ModifyShaderLookup(*shader, vertexShaderDesriptor, pixelShaderDescriptor, true);
-				shaderCache->GetPixelShader(*shader, pixelShaderDescriptor);
+				shaderCache->PrewarmDeferredPixelShaders(*shader, pixelShaderDescriptor, materialCategoriesRequested);
 			}
 
 			if (shaderCache->IsDiskCache() && shader->shaderType.get() == RE::BSShader::Type::Effect) {
@@ -156,9 +158,10 @@ struct BSShader_LoadShaders
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MultBlend) |
 					static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::MotionVectorsNormals);
 				shaderCache->GetPixelShader(*shader, sharedRuntimeUnionDescriptor);
-				shaderCache->GetPixelShader(*shader,
+				shaderCache->PrewarmDeferredPixelShaders(*shader,
 					sharedRuntimeUnionDescriptor |
-						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred));
+						static_cast<std::uint32_t>(SIE::ShaderCache::EffectShaderFlags::Deferred),
+					materialCategoriesRequested);
 			}
 		}
 		BSShaderHooks::hk_LoadShaders(shader, stream);
@@ -185,6 +188,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	}
 
 	state->updateShader = true;
+	state->deferredPixelShaderMissing = false;
 	state->currentShader = shader;
 
 	state->currentVertexDescriptor = vertexDescriptor;
@@ -206,7 +210,8 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 
 	if (!shaderFound && shader->shaderType.get() != RE::BSShader::Type::Effect) {
 		RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*shader, state->modifiedVertexDescriptor);
-		RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*shader, state->modifiedPixelDescriptor);
+		RE::BSGraphics::PixelShader* pixelShader = skipPixelShader ? nullptr :
+		                                                             shaderCache->GetPixelShader(*shader, state->modifiedPixelDescriptor, SIE::ShaderCache::PixelShaderLookup::Draw);
 		if (vertexShader == nullptr || (!skipPixelShader && pixelShader == nullptr)) {
 			shaderFound = false;
 		} else {
@@ -214,12 +219,8 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 			globals::d3d::context->VSSetShader(Util::AsReal(vertexShader->shader), NULL, NULL);
 			*globals::game::currentVertexShader = vertexShader;
 			globals::game::stateUpdateFlags->set(RE::BSGraphics::DIRTY_VERTEX_DESC);
-			if (skipPixelShader) {
-				pixelShader = nullptr;
-			}
 			*globals::game::currentPixelShader = pixelShader;
-			if (pixelShader)
-				globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
+			globals::d3d::context->PSSetShader(pixelShader ? Util::AsReal(pixelShader->shader) : nullptr, NULL, NULL);
 			state->settingCustomShader = false;
 			shaderFound = true;
 		}
@@ -228,7 +229,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	state->lastModifiedVertexDescriptor = state->modifiedVertexDescriptor;
 	state->lastModifiedPixelDescriptor = state->modifiedPixelDescriptor;
 
-	return shaderFound;
+	return shaderFound && !state->deferredPixelShaderMissing;
 }
 
 namespace LightingExtensions
@@ -960,12 +961,12 @@ namespace Hooks
 			auto state = globals::state;
 			auto shaderCache = globals::shaderCache;
 
-			if (!state->settingCustomShader) {
+			if (!state->settingCustomShader && a_pixelShader) {
 				if (shaderCache->IsEnabled()) {
 					auto currentShader = state->currentShader;
 					auto type = currentShader->shaderType.get();
 					if (state->ShaderEnabled(type)) {
-						RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor);
+						RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*currentShader, state->modifiedPixelDescriptor, SIE::ShaderCache::PixelShaderLookup::Draw);
 						if (pixelShader) {
 							globals::d3d::context->PSSetShader(Util::AsReal(pixelShader->shader), NULL, NULL);
 							*globals::game::currentPixelShader = a_pixelShader;
@@ -975,10 +976,21 @@ namespace Hooks
 				}
 			}
 
+			if (!state->settingCustomShader && a_pixelShader && state->deferredPixelShaderMissing) {
+				*globals::game::currentPixelShader = a_pixelShader;
+				return;
+			}
+			if (!state->settingCustomShader && a_pixelShader && state->currentShader &&
+				globals::deferred->deferredPass && globals::deferred->IsMaterialCategoriesEnabled()) {
+				const auto type = state->currentShader->shaderType.get();
+				Feature::ForEachLoadedFeature("OnPixelShaderFallback", [type](Feature* feature) {
+					feature->OnPixelShaderFallback(type);
+				});
+			}
+
 			*globals::game::currentPixelShader = a_pixelShader;
 
-			if (a_pixelShader)
-				globals::d3d::context->PSSetShader(Util::AsReal(a_pixelShader->shader), NULL, NULL);
+			globals::d3d::context->PSSetShader(a_pixelShader ? Util::AsReal(a_pixelShader->shader) : nullptr, NULL, NULL);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

@@ -1281,6 +1281,9 @@ namespace SIE
 
 		static void GetShaderDefines(const RE::BSShader& shader, uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
+			const auto categoryFlag = ShaderCache::GetMaterialCategoryFlag(shader.shaderType.get());
+			const bool categories = (descriptor & categoryFlag) != 0;
+			descriptor &= ~categoryFlag;
 			switch (shader.shaderType.get()) {
 			case RE::BSShader::Type::Grass:
 				GetGrassShaderDefines(descriptor, defines);
@@ -1315,6 +1318,13 @@ namespace SIE
 			case RE::BSShader::Type::None:
 			case RE::BSShader::Type::Total:
 				break;
+			}
+			if (categories) {
+				auto end = std::ranges::find_if(defines, [](const auto& macro) { return macro.Name == nullptr; });
+				if (std::distance(end, defines.end()) < 2)
+					throw std::length_error("Material category shader macro capacity exceeded");
+				*end++ = { "MATERIAL_CATEGORY", nullptr };
+				*end = { nullptr, nullptr };
 			}
 		}
 
@@ -2767,10 +2777,20 @@ namespace SIE
 		return nullptr;
 	}
 
+	void ShaderCache::PrewarmDeferredPixelShaders(const RE::BSShader& shader, uint32_t descriptor, bool categories)
+	{
+		const auto categoryFlag = GetMaterialCategoryFlag(shader.shaderType.get());
+		GetPixelShader(shader, descriptor & ~categoryFlag);
+		if (categories && categoryFlag)
+			GetPixelShader(shader, descriptor | categoryFlag);
+	}
+
 	RE::BSGraphics::PixelShader* ShaderCache::GetPixelShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, PixelShaderLookup a_lookup)
 	{
 		auto state = globals::state;
+		if (a_lookup == PixelShaderLookup::Draw)
+			state->deferredPixelShaderMissing = false;
 		if (globals::game::isVR && strcmp(shader.fxpFilename, "OBBOcclusionTesting") == 0)
 			// use vanilla shader
 			return nullptr;
@@ -2807,10 +2827,22 @@ namespace SIE
 			}
 		}
 
+		if (a_lookup == PixelShaderLookup::Cached)
+			return nullptr;
 		if (IsAsync()) {
 			compilationSet.Add({ ShaderClass::Pixel, shader, descriptor });
-		} else {
-			return MakeAndAddPixelShader(shader, descriptor);
+		} else if (auto* compiled = MakeAndAddPixelShader(shader, descriptor)) {
+			return compiled;
+		}
+
+		auto* deferred = globals::deferred;
+		const auto categoryFlag = GetMaterialCategoryFlag(shader.shaderType.get());
+		if (a_lookup == PixelShaderLookup::Draw && deferred && deferred->deferredPass && categoryFlag) {
+			// Both variants preserve the G-buffer; an AO-only draw cannot author complete categories.
+			deferred->InvalidateMaterialCategories();
+			auto* fallback = GetPixelShader(shader, descriptor ^ categoryFlag, PixelShaderLookup::Cached);
+			state->deferredPixelShaderMissing = fallback == nullptr;
+			return fallback;
 		}
 
 		return nullptr;

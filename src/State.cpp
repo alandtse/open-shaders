@@ -1145,6 +1145,7 @@ void State::CheckTypedUAVLoadSupport()
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
 		{ DXGI_FORMAT_R10G10B10A2_UNORM, "R10G10B10A2_UNORM", "VR Stereo Reprojection G-buffer fill (NormalRoughness, Albedo)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
+		{ DXGI_FORMAT_R16_UNORM, "R16_UNORM", "VR Stereo Reprojection G-buffer fill (vertex AO)" },
 		{ DXGI_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", "HDR Display UI brightness (uiTexture)" },
 		{ DXGI_FORMAT_R16_UINT, "R16_UINT", "Skylighting packed probe state (outAccumFramesArray)" },
 		{ DXGI_FORMAT_R16_FLOAT, "R16_FLOAT", "Vanilla volumetric lighting density (DensityRW)" },
@@ -1233,6 +1234,11 @@ void State::SetupResources()
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
 {
 	auto deferred = globals::deferred;
+	const auto categoryFlag = SIE::ShaderCache::GetMaterialCategoryFlag(a_shader.shaderType.get());
+	a_vertexDescriptor &= ~categoryFlag;
+	a_pixelDescriptor &= ~categoryFlag;
+	if ((deferred->deferredPass || a_forceDeferred) && deferred->IsMaterialCategoriesEnabled())
+		a_pixelDescriptor |= categoryFlag;
 
 	if (a_shader.shaderType.get() != RE::BSShader::Type::Utility && a_shader.shaderType.get() != RE::BSShader::Type::ImageSpace) {
 		switch (a_shader.shaderType.get()) {

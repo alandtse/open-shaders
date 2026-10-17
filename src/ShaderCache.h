@@ -707,9 +707,37 @@ namespace SIE
 		bool IsShaderKeyAbsent(const std::string& a_key);
 		std::string GetShaderStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 
+		/** @brief Warms AO-only shaders and, when requested, their deferred category variants. */
+		void PrewarmDeferredPixelShaders(const RE::BSShader& shader, uint32_t descriptor, bool categories);
+
 		RE::BSGraphics::VertexShader* GetVertexShader(const RE::BSShader& shader, uint32_t descriptor);
+		/** @brief Reserved pixel-descriptor bit for the authored material-category output layout. */
+		static constexpr uint32_t GetMaterialCategoryFlag(RE::BSShader::Type type)
+		{
+			switch (type) {
+			case RE::BSShader::Type::Lighting:
+				return static_cast<uint32_t>(LightingShaderFlags::MaterialCategory);
+			case RE::BSShader::Type::Grass:
+			case RE::BSShader::Type::DistantTree:
+			case RE::BSShader::Type::Sky:
+			case RE::BSShader::Type::Effect:
+				return 1u << 9;
+			default:
+				return 0;
+			}
+		}
+
+		/** Cached lookups never schedule compilation; draw lookups permit compatible deferred fallback. */
+		enum class PixelShaderLookup
+		{
+			Compile,
+			Draw,
+			Cached
+		};
+
+		/** Draw lookups may use the other deferred category layout while the exact variant compiles. */
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, PixelShaderLookup a_lookup = PixelShaderLookup::Compile);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
 			uint32_t descriptor);
 
@@ -942,6 +970,7 @@ namespace SIE
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
+			MaterialCategory = 1 << 6,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,

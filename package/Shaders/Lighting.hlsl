@@ -3673,36 +3673,41 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.Masks = float4(0, 0, masksZ, psout.Diffuse.w);
 #		endif
 
+#		if defined(MATERIAL_CATEGORY)
 	uint neuralRenderingCategory = NeuralRenderingCategory::None;
-#		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
+#			if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 	neuralRenderingCategory = NeuralRenderingCategory::Skin;
-#		elif defined(HAIR)
+#			elif defined(HAIR)
 	neuralRenderingCategory = NeuralRenderingCategory::Hair;
-#		elif defined(EYE)
+#			elif defined(EYE)
 	neuralRenderingCategory = NeuralRenderingCategory::Eyes;
-#		elif defined(TREE_ANIM)
-	neuralRenderingCategory = NeuralRenderingCategory::Foliage;
-#		elif defined(LANDSCAPE) || defined(LODLANDSCAPE) || defined(LODLANDNOISE)
-	neuralRenderingCategory = NeuralRenderingCategory::Landscape;
-#		else
-	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsEye)
-		neuralRenderingCategory = NeuralRenderingCategory::Eyes;
-	else if (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight)
-#			if defined(ENVMAP)
-		neuralRenderingCategory = NeuralRenderingCategory::Metal;
+#			elif defined(TREE_ANIM)
+neuralRenderingCategory = NeuralRenderingCategory::Foliage;
+#			elif defined(LANDSCAPE) || defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+neuralRenderingCategory = NeuralRenderingCategory::Landscape;
 #			else
-		neuralRenderingCategory = NeuralRenderingCategory::Cloth;
+if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsEye)
+	neuralRenderingCategory = NeuralRenderingCategory::Eyes;
+else if (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::CharacterLight)
+#				if defined(ENVMAP)
+	neuralRenderingCategory = NeuralRenderingCategory::Metal;
+#				else
+	neuralRenderingCategory = NeuralRenderingCategory::Cloth;
+#				endif
 #			endif
-#		endif
 
 	// Stored as 1 - vertexAO so the cleared default (0) means no occlusion
 	// for pixels that do not write to this RT (sky, water, grass, effects).
 	// A blended class ID decodes to None, so hair snaps to fully replace or leave the category.
 	float masks2Blend = psout.Diffuse.w;
-#		if defined(HAIR)
+#			if defined(HAIR)
 	masks2Blend = step(0.5, psout.Diffuse.w);
-#		endif
+#			endif
 	psout.Masks2 = float4(1.0 - vertexAO, NeuralRenderingCategory::Encode(neuralRenderingCategory), 0, masks2Blend);
+
+#		else
+	psout.Masks2 = float4(1.0 - vertexAO, 0, 0, psout.Diffuse.w);
+#		endif
 
 	float stochasticBlend = (screenNoise * screenNoise) < psout.Diffuse.w ? 1.0 : 0.0;
 	psout.NormalGlossiness.w = stochasticBlend;
