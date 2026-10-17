@@ -38,6 +38,8 @@ namespace NR
 		uint32_t lastFrame = UINT32_MAX;
 		/** @brief Engine frame of this call. */
 		uint32_t frameCount = 0;
+		/** @brief The selected runtime build changed since the loaded one started. */
+		bool swapRequested = false;
 	};
 
 	/** @brief Settles what this hook call must do. */
@@ -57,6 +59,8 @@ namespace NR
 			return FrameAction::SkipDuplicate;
 		if (!inputs.ready)
 			return FrameAction::InitializeThenRun;
+		if (inputs.swapRequested)
+			return FrameAction::RebuildThenRun;
 		return FrameAction::Run;
 	}
 

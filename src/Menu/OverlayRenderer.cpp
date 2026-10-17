@@ -97,6 +97,7 @@ void OverlayRenderer::RenderOverlay(
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
 		io.ClearInputKeys();
 		io.ClearEventsQueue();
+		EditorWindow::GetSingleton()->UpdateOpenState();
 		return;
 	}
 

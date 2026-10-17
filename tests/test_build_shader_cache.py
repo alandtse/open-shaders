@@ -28,6 +28,15 @@ class ShaderCacheManifestTests(unittest.TestCase):
             "entries": entries or [{"entry": "Lighting:Pixel:1", "defines": ["ALPHA"]}],
         }}}]}), encoding="utf-8")
 
+    def test_info_ini_records_default_compile_flags(self):
+        features = self.root / "stage" / "Features"
+        features.mkdir(parents=True)
+        (features / "Sample.ini").write_text("[Info]\nVersion = 1-0-0\n", encoding="utf-8")
+        builder.write_info_ini(self.cache, self.root / "stage", "1-7-1-0", "SE")
+        text = (self.cache / "Info.ini").read_bytes().decode("utf-8-sig")
+        self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\n", text)
+        self.assertIn("[Sample]\r\nEnabled = true\r\nVersion = 1-0-0", text)
+
     def test_key_matches_runtime_sort_values_and_trailing_space(self):
         self.write_config(common=["ZETA", "SHADOWSPLITCOUNT=3", "EMPTY=", "PSHADER", "VR",
                                   "D3DCOMPILE_DEBUG", "D3DCOMPILE_SKIP_OPTIMIZATION"])

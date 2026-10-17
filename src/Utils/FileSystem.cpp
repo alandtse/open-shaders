@@ -258,6 +258,17 @@ namespace Util
 			return result;
 		}
 
+		std::vector<std::filesystem::path> SafeChildDirectories(const std::filesystem::path& root)
+		{
+			std::vector<std::filesystem::path> children;
+			std::error_code ec;
+			for (auto it = std::filesystem::directory_iterator(root, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+				if (it->is_directory(ec))
+					children.push_back(SafeAbsolute(it->path()));
+			}
+			return children;
+		}
+
 		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path)
 		{
 			if (directory.empty() || path.empty())

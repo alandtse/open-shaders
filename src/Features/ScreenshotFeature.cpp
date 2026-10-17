@@ -816,15 +816,22 @@ void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)
 		previewCacheTexture = nullptr;
 		return;
 	}
+	Util::SetResourceName(previewCacheTexture.get(), "Screenshot::PreviewCache");
 	if (FAILED(globals::d3d::device->CreateShaderResourceView(
 			previewCacheTexture.get(), nullptr, previewCacheSRV.put()))) {
 		previewCacheSRV = nullptr;
 		previewCacheTexture = nullptr;
+		return;
 	}
+	Util::SetResourceName(previewCacheSRV.get(), "Screenshot::PreviewCache SRV");
 }
 
 void ScreenshotFeature::Reset()
 {
+	if (previewCacheTexture && !Menu::GetSingleton()->IsEnabled) {
+		previewCacheSRV = nullptr;
+		previewCacheTexture = nullptr;
+	}
 }
 
 bool ScreenshotFeature::RequestCapture(CaptureRequest request)

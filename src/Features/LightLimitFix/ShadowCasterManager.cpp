@@ -109,6 +109,7 @@ namespace ShadowCasterManager
 	std::unordered_set<uintptr_t> s_pinConvert;
 	uintptr_t s_soloLight = 0;
 	uintptr_t s_hoverLightKey = 0;
+	std::atomic<uintptr_t> s_debugHighlightKey{ 0 };
 
 	// =========================================================================
 	// Public API
@@ -591,6 +592,9 @@ namespace ShadowCasterManager
 
 	uintptr_t GetSoloLight() { return s_soloLight; }
 	void SetSoloLight(uintptr_t lightKey) { s_soloLight = lightKey; }
+
+	uintptr_t GetDebugHighlightLight() { return s_debugHighlightKey.load(std::memory_order_relaxed); }
+	void SetDebugHighlightLight(uintptr_t lightKey) { s_debugHighlightKey.store(lightKey, std::memory_order_relaxed); }
 
 	uintptr_t GetHoveredLight() { return s_hoverLightKey; }
 	void SetHoveredLight(uintptr_t lightKey) { s_hoverLightKey = lightKey; }

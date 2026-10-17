@@ -18,6 +18,8 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "LitCap.h"
+#include "LitRegion.h"
 #include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
@@ -92,7 +94,21 @@ namespace ShadowCasterManager
 		// counts as "moved".
 		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRadiusStep = 1.0f;
+		// worldBound and skinInstance sit on different cache lines of a geometry
+		// that the walk has not touched this frame: pull a few ahead.
+		constexpr int kPrefetchAhead = 8;
+		auto lookahead = light->geomList.begin();
+		const auto listEnd = light->geomList.end();
+		for (int i = 0; i < kPrefetchAhead && lookahead != listEnd; ++i)
+			++lookahead;
 		for (auto& nip : light->geomList) {
+			if (lookahead != listEnd) {
+				if (const auto* ahead = (*lookahead).get()) {
+					_mm_prefetch(reinterpret_cast<const char*>(&ahead->worldBound), _MM_HINT_T0);
+					_mm_prefetch(reinterpret_cast<const char*>(&ahead->GetGeometryRuntimeData().skinInstance), _MM_HINT_T0);
+				}
+				++lookahead;
+			}
 			auto* ts = nip.get();
 			if (!ts)
 				continue;
@@ -111,16 +127,32 @@ namespace ShadowCasterManager
 		return h;
 	}
 
-	/// True when the player stands inside `ni`'s radius. Player-specific
+	/// Player body height: a spot's frustum test uses the player's feet, so the beam
+	/// counts as reaching the player when it passes within this distance of them.
+	constexpr float kPlayerCasterReachUnits = 128.0f;
+
+	/// True when the player stands inside `light`'s radius, or for a spot inside its
+	/// lit frustum (a spot's radius can span the whole cell). Player-specific
 	/// supplement to the geomList-derived signals: the player's geometry
 	/// usually isn't in geomList at scheduling time. O(1), safe every frame.
-	static bool PlayerWithinLightRadius(RE::NiLight* ni)
+	static bool PlayerWithinLightRadius(RE::BSShadowLight* light)
 	{
 		auto* plr = globals::game::player;
+		const auto* ni = light ? light->light.get() : nullptr;
 		if (!plr || !ni)
 			return false;
 		const float r = ni->GetLightRuntimeData().radius.x;
-		return ni->world.translate.GetSquaredDistance(plr->GetPosition()) < r * r;
+		const auto pp = plr->GetPosition();
+		if (ni->world.translate.GetSquaredDistance(pp) >= r * r)
+			return false;
+		if (!light->GetIsFrustumLight() || !s_settings.SpotLitRegion)
+			return true;
+		float proj[16], inv[16];
+		if (!GetLightProjection(light, proj, inv))
+			return true;
+		const float playerPos[3] = { pp.x, pp.y, pp.z };
+		const float beamDistance = LightLimitFixLitRegion::DistanceToFrustum(proj, playerPos);
+		return beamDistance < kPlayerCasterReachUnits;
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -131,9 +163,9 @@ namespace ShadowCasterManager
 	/// RedrawDueGateEnabled, starving its redraw admission -- reads as flicker
 	/// (the actual reported bug this fixes). All actors would starve the
 	/// budget, so this stays player-only; O(1), safe to run uncached.
-	static std::uint64_t FoldPlayerCasterProxy(std::uint64_t h, RE::NiLight* ni, float posStep)
+	static std::uint64_t FoldPlayerCasterProxy(std::uint64_t h, RE::BSShadowLight* light, float posStep)
 	{
-		if (!PlayerWithinLightRadius(ni))
+		if (!PlayerWithinLightRadius(light))
 			return h;
 		const auto pp = globals::game::player->GetPosition();
 		const float actorStep = std::clamp(posStep, 1.0f, 8.0f);
@@ -280,6 +312,7 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_scalePromotionRedundantAvoided{ 0 };
 	/// Converted-light re-enables run versus skipped because no engine-walk input changed.
 	std::atomic<uint64_t> s_convertReEnableRun{ 0 };
+	std::atomic<uint64_t> s_convertReEnableToleranceSkipped{ 0 };
 	std::atomic<uint64_t> s_convertReEnableSkipped{ 0 };
 
 	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
@@ -299,6 +332,8 @@ namespace ShadowCasterManager
 		RE::NiPoint3 bakePos{};      ///< light position the static tile was baked at
 		RE::NiMatrix3 bakeRot{};     ///< light rotation the static tile was baked at
 		float bakeRadius = 0.0f;
+		float bakeInvProj[16]{};  ///< light-to-world matrix the static tile was baked with
+		bool bakeInvProjValid = false;
 		bool bakePoseValid = false;
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
@@ -387,6 +422,8 @@ namespace ShadowCasterManager
 	/// Whether a streak consumer was live last frame. Streaks freeze while none
 	/// is, and a frozen count says nothing about the sampling since.
 	bool s_demandStreaksActive = false;
+	/// Largest lit area among the lights eligible to set the tile cap's reference.
+	uint32_t s_litRef = 0;
 
 	/// Audit totals accumulated across the log interval. s_schedDiag resets every
 	/// frame, so logging it directly would report one arbitrary sample rather
@@ -475,6 +512,16 @@ namespace ShadowCasterManager
 				s_lights.Lights[i].untouchedSamples = 0;
 		}
 		const bool usable = DemandSampleUsable();
+		s_litRef = 0;
+		if (usable) {
+			for (int i = 0; i < s_lights.Size; i++) {
+				const auto& e = s_lights.Lights[i];
+				const int32_t slot = e.Light ? DemandSlotFor(e) : -1;
+				const auto* ni = e.Light ? e.Light->light.get() : nullptr;
+				if (slot >= 0 && ni && LightLimitFixLitCap::SetsReference(s_shadowDemand.litReason[slot], ni->GetLightRuntimeData().radius.x))
+					s_litRef = std::max(s_litRef, s_shadowDemand.litSum[slot]);
+			}
+		}
 		for (int i = 0; i < s_lights.Size; i++) {
 			auto& e = s_lights.Lights[i];
 			// An empty slot's reading belongs to nobody. Zeroing (not skipping) stops
@@ -494,6 +541,10 @@ namespace ShadowCasterManager
 			// GetShadowSlot is a linear scan.
 			assert(e.Index == GetShadowSlot(e.Light));
 			e.lastDemandSerial = s_shadowDemand.sampleSerial;
+			if (LightLimitFixLitCap::IsMeasured(s_shadowDemand.litReason[slot])) {
+				e.litSmoothed = LightLimitFixLitCap::Smooth(e.litSmoothed, static_cast<float>(s_shadowDemand.litSum[slot]));
+				e.litCapped = LightLimitFixLitCap::NextCapped(e.litCapped, e.litSmoothed, static_cast<float>(s_litRef));
+			}
 			// Hard reset, not a decay: one above-floor tap is strong evidence of
 			// presence (the sparse sampler rarely hits a small lit footprint), so it
 			// erases the whole streak. Sampling-gap tolerance lives in streak length.
@@ -600,13 +651,39 @@ namespace ShadowCasterManager
 		       e.untouchedSamples >= EffectiveZeroDemandStreak();
 	}
 
-	/// Tests whether a cached bake uses this light's current transform and radius.
+	/// Whether the lit-area cap holds this light at a quarter-size tile class.
+	static bool LitCapsTile(const LightEntry& e)
+	{
+		return s_settings.DemandTileCap && e.litCapped && e.LastDrawnFrame >= 0 && DemandSampleUsable();
+	}
+
+	constexpr float kSplitRadiusTolerance = 0.10f;
+	constexpr float kSplitPositionToleranceSq = 4.0f * 4.0f;
+	constexpr uint8_t kPoseRebakeLatch = 8;
+
+	/// Tests whether a cached bake is still usable at this light's current transform and radius.
 	static bool SplitPoseMatches(RE::BSShadowLight* light, const SplitState& st)
 	{
 		const auto* ni = light->light.get();
-		return ni && st.bakePoseValid &&
-		       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
-		       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+		if (!TolerantSplit())
+			return ni && st.bakePoseValid &&
+			       ni->GetLightRuntimeData().radius.x == st.bakeRadius &&
+			       ni->world.translate == st.bakePos && ni->world.rotate == st.bakeRot;
+		if (!ni || !st.bakePoseValid || ni->world.rotate != st.bakeRot)
+			return false;
+		const float radius = ni->GetLightRuntimeData().radius.x;
+		return std::abs(radius - st.bakeRadius) <= kSplitRadiusTolerance * st.bakeRadius &&
+		       ni->world.translate.GetSquaredDistance(st.bakePos) <= kSplitPositionToleranceSq;
+	}
+
+	/// Factor taking baked depth (normalised by the bake radius) to the live radius.
+	static float StaticDepthScale(RE::BSShadowLight* light, const SplitState& st)
+	{
+		if (!TolerantSplit())
+			return 1.0f;
+		const auto* ni = light->light.get();
+		const float radius = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
+		return radius > 0.0f ? st.bakeRadius / radius : 1.0f;
 	}
 
 	/// Shared cache-validity check for caster selection and sleeping shadows.
@@ -650,7 +727,7 @@ namespace ShadowCasterManager
 		// The player's pose animation changes the tile without touching any
 		// signal a sleeping light re-checks -- never sleep a light the
 		// player stands in.
-		if (PlayerWithinLightRadius(e.Light->light.get()))
+		if (PlayerWithinLightRadius(e.Light))
 			return false;
 		uint64_t bakedHash = 0;
 		bool staticValid = false;
@@ -660,6 +737,10 @@ namespace ShadowCasterManager
 		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
 			return false;
 		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid))
+			return false;
+		// A held tile was drawn at the exact bake pose, so drifted depth scale or position must wake it.
+		if (StaticDepthScale(e.Light, st) != 1.0f ||
+			e.Light->light.get()->world.translate != st.bakePos)
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due,
 		// and keep pressing for it every frame until the budget grants it.
@@ -721,6 +802,39 @@ namespace ShadowCasterManager
 		       portalStrict == o.portalStrict && portalGraph == o.portalGraph && roomCount == o.roomCount;
 	}
 
+	// Flicker drift a converted light's engine enable walk absorbs. The walk
+	// reads fade only as an on/off threshold and the rotation only for strict
+	// portal lights; room and geometry membership move with position and
+	// radius, so a drift past these bounds, or the refresh interval, re-enables.
+	constexpr float kConvertReEnableDriftSq = 1.0f;
+	constexpr float kConvertReEnableRadiusFraction = 0.02f;
+	constexpr std::uint32_t kConvertReEnableRefreshFrames = 8;
+	constexpr float kFadeOnThreshold = 0.05f;
+
+	constexpr float kWarpEdgeErrOnPx = 1.0f;
+	constexpr float kWarpEdgeErrOffPx = 0.5f;
+	constexpr uint32_t kWarpOffFrames = 8;
+	constexpr float kWarpNearClampUnits = 35.0f;
+	constexpr uint32_t kWarpZeroDemandSamples = 30;
+
+	/// Flicker-tolerant match against the last-enabled snapshot.
+	static bool EnableInputsEquivalent(const EnableInputs& a, const EnableInputs& b)
+	{
+		if (a.hidden != b.hidden || a.dynamic != b.dynamic || a.portalStrict != b.portalStrict ||
+			a.portalGraph != b.portalGraph || a.roomCount != b.roomCount ||
+			(a.fade > kFadeOnThreshold) != (b.fade > kFadeOnThreshold))
+			return false;
+		if (a.portalStrict) {
+			for (int r = 0; r < 3; ++r)
+				for (int c = 0; c < 3; ++c)
+					if (a.rotate.entry[r][c] != b.rotate.entry[r][c])
+						return false;
+		}
+		const float dx = a.translate.x - b.translate.x, dy = a.translate.y - b.translate.y, dz = a.translate.z - b.translate.z;
+		return dx * dx + dy * dy + dz * dz <= kConvertReEnableDriftSq &&
+		       std::abs(a.radius - b.radius) <= std::max(1.0f, kConvertReEnableRadiusFraction * a.radius);
+	}
+
 	/// Caller holds s_portalGraphMutex shared, so the graph pointer stays valid.
 	static EnableInputs CaptureEnableInputs(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn)
 	{
@@ -775,10 +889,19 @@ namespace ShadowCasterManager
 					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
 					return;
 				}
+				const std::uint32_t enableFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				// Staggered per light so the periodic refreshes do not land on one frame.
+				const std::uint32_t refreshInterval = kConvertReEnableRefreshFrames + static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(light) >> 4) % kConvertReEnableRefreshFrames);
+				if (c.enableValid && enableFrame - c.lastEnableFrame < refreshInterval && EnableInputsEquivalent(c.lastEnable, now)) {
+					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
+					s_convertReEnableToleranceSkipped.fetch_add(1, std::memory_order_relaxed);
+					return;
+				}
 				ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
 				GameEnableLight(ssn, light);
 				c.lastEnable = now;
 				c.enableValid = true;
+				c.lastEnableFrame = enableFrame;
 				s_convertReEnableRun.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
@@ -919,7 +1042,7 @@ namespace ShadowCasterManager
 			bool staticValid = false;
 			bool staticEmpty = false;
 			if (split) {
-				if (st->splitExcluded || (st->bakePoseValid && !SplitPoseMatches(light, *st))) {
+				if (st->splitExcluded || (!TolerantSplit() && st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
 					// it, so it renders full every redraw (no bake, no copy).
 					st->bakeThisFrame = false;
@@ -956,8 +1079,16 @@ namespace ShadowCasterManager
 					}
 				}
 				if (mode == CasterPass::StaticOnly) {
+					if (st->bakePoseValid && !SplitPoseMatches(light, *st))
+						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 					if (auto* ni = light->light.get()) {
 						st->bakePos = ni->world.translate;
+						if (TolerantSplit()) {
+							// A pinned bake renders from the shadow camera's pose, not the live light's.
+							RE::NiPoint3 cameraPos;
+							if (GetShadowCameraPos(light, cameraPos))
+								st->bakePos = cameraPos;
+						}
 						st->bakeRot = ni->world.rotate;
 						st->bakeRadius = ni->GetLightRuntimeData().radius.x;
 						st->bakePoseValid = true;
@@ -966,14 +1097,14 @@ namespace ShadowCasterManager
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
 				if (st->bakeThisFrame) {
-					// A pose-stable light bakes once per window; >=4 bakes in 300
+					// A pose-stable light bakes once per window; kPoseRebakeLatch bakes in 300
 					// frames means the cache never holds -- render full and stop it.
 					const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 					if (nowFrame < st->poseWindowStart || nowFrame - st->poseWindowStart > 300u) {
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
 					}
-					if (++st->poseRebakes >= 4) {
+					if (++st->poseRebakes >= (TolerantSplit() ? kPoseRebakeLatch : uint8_t{ 4 })) {
 						if (!st->splitExcluded) {
 							s_splitLatchWindowTotal.fetch_add(1, std::memory_order_relaxed);
 							RetireSplitBake(*st);
@@ -1113,17 +1244,19 @@ namespace ShadowCasterManager
 									  // routes through cluster lighting which has no
 									  // portal awareness and would bleed through walls.
 
-		// Sub-reasons for invalidCamera, recovered from engine side-band flags:
-		//   frustrumCull == 0xff -> off-screen, ConvertLight wasted -> drop
-		//   lodDimmer == 0.0f    -> past LOD fade end, still visible -> ConvertLight
-		//                           (resets lodDimmer so cluster lighting picks it up)
-		// Both can fire together; frustum-out wins (contribution is zero either way).
+		// Sub-reasons for invalidCamera, exclusive: hidden NiLight; else lodDimmer == 0.0f
+		// (past the shadow distance, still lights the scene -> ConvertLight resets lodDimmer
+		// so cluster lighting picks it up); else the sphere missed the frustum.
 		bool invalidFrustum{ false };  // BSMultiBoundSphere::WithinFrustum / cone-frustum cull
-		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
+		bool invalidLod{ false };      // engine's shadow-distance test zeroed lodDimmer
+		bool invalidHidden{ false };   // NiLight flagged hidden
 
 		// UpdateCamera failed but the exit streak hasn't matured and the light
 		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
+
+		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
+		bool updateCameraFailed{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
@@ -1265,16 +1398,92 @@ namespace ShadowCasterManager
 		}
 	}
 
+	static std::unordered_map<uintptr_t, float> s_originPinDrift;
+
+	/// Per-light warp gate: `active` is the current decision, `belowStreak` the consecutive
+	/// sub-threshold seeds that will eventually latch it off.
+	struct WarpGateState
+	{
+		bool active = true;
+		uint32_t belowStreak = 0;
+	};
+	static std::unordered_map<uintptr_t, WarpGateState> s_warpGate;
+	static std::atomic<uint32_t> s_warpsRun{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedSubPixel{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedOffscreen{ 0 };
+	static std::atomic<uint32_t> s_warpsSkippedNoDemand{ 0 };
+
+	int GetFlickerMode()
+	{
+		return static_cast<int>(s_settings.FlickerShadowMode);
+	}
+	bool GetOriginPinState(uintptr_t lightKey, float& driftUnitsOut)
+	{
+		const auto it = s_originPinDrift.find(lightKey);
+		if (it == s_originPinDrift.end())
+			return false;
+		driftUnitsOut = it->second;
+		return true;
+	}
+
+	/// True when the light's shadow camera should keep its bake pose this frame: the cached
+	/// static depth is valid and the live pose is within tolerance, so static and dynamic
+	/// layers share one origin while shading still uses the live light.
+	static bool ShouldPinShadowOrigin(RE::BSShadowLight* light, std::uint32_t slot)
+	{
+		bool pin = false;
+		float drift = 0.0f;
+		if (TolerantSplit()) {
+			if (const auto it = s_splitState.find(light); it != s_splitState.end()) {
+				std::uint64_t bakedHash = 0;
+				bool staticValid = false;
+				if (GetSlotStaticState(static_cast<int32_t>(slot), bakedHash, staticValid) &&
+					SplitDynamicOnlyEligible(light, it->second, staticValid)) {
+					pin = true;
+					if (const auto* ni = light->light.get())
+						drift = std::sqrt(ni->world.translate.GetSquaredDistance(it->second.bakePos));
+				}
+			}
+		}
+		const auto key = reinterpret_cast<uintptr_t>(light);
+		if (pin)
+			s_originPinDrift[key] = drift;
+		else
+			s_originPinDrift.erase(key);
+		return pin && GetFlickerMode() == 1;
+	}
+
+	static bool WarpIsVisible(RE::BSShadowLight* light, const SplitState& st, int32_t slot);
+
+	/// Seeds the live tile with the cached static depth: reprojected to the live origin in the
+	/// warped flicker mode, otherwise copied (rescaled for radius drift).
+	static void SeedLiveTileFromStatic(int32_t slot, RE::BSShadowLight* light, const SplitState& st)
+	{
+		if (TolerantSplit() && GetFlickerMode() == 2 && st.bakeInvProjValid && light->GetIsParabolicLight() && WarpIsVisible(light, st, slot)) {
+			const auto* ni = light->light.get();
+			float liveProj[16], liveInv[16];
+			if (ni && GetLightProjection(light, liveProj, liveInv) &&
+				WarpStaticTileToLive(slot, st.bakeInvProj, liveProj, st.bakeRadius, ni->GetLightRuntimeData().radius.x, light->shadowMapCount == 2 ? 2u : 1u))
+				return;
+		}
+		CopyStaticTileToLive(slot, StaticDepthScale(light, st));
+	}
+
 	// Run UpdateCamera + EnableLight + the validity scan in one SEH region: EnableLight can read a
 	// freed light and corrupt accumLightSlot/bounds, AV'ing here; catching it skips the light (the
 	// per-frame accumLightSlot reset recovers). __declspec(noinline) is load-bearing -- inlining
 	// dissolves the __except. No C++ unwinding objects in this frame (MSVC __try).
 	template <class UsableFn>
 	__declspec(noinline) static bool SafeEnableAndValidate(LightEntry& e, RE::NiCamera* a_camera,
-		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, UsableFn&& a_isUsable)
+		RE::ShadowSceneNode* a_ssn, std::uint32_t a_slot, bool a_pinOrigin, UsableFn&& a_isUsable)
 	{
 		__try {
+			// UpdateCamera copies the light pose into the shadow camera only while dynamic is set.
+			const bool wasDynamic = e.Light->dynamic;
+			if (a_pinOrigin)
+				e.Light->dynamic = false;
 			e.Light->UpdateCamera(a_camera);
+			e.Light->dynamic = wasDynamic;
 			EnableLight(e.Light, a_camera, a_ssn, a_slot);
 			return e.Light && a_isUsable(e.Light);
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
@@ -1359,6 +1568,7 @@ namespace ShadowCasterManager
 				// promoted light added but never enabled before teardown reads it.
 				if (s_settings.ShadowLightCount > 4) {
 					if (auto* ni = l->light.get(); ni) {
+						ZoneScopedN("SCM::ScoreCandidates::PromotedInit");
 						std::scoped_lock lk(s_shadowConvertMutex);
 						if (s_shadowConvert.contains(ni) && !s_shadowConvertDescriptorInited.contains(ni)) {
 							InitPromotedDescriptorSlots(l);
@@ -1370,8 +1580,11 @@ namespace ShadowCasterManager
 				c.light = l;
 				c.sun = false;
 				float impact = 1.0f;
-				c.score = CalculateLightScore(l, camera, tmpIndex++,
-					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
+				{
+					ZoneScopedN("SCM::ScoreCandidates::LightScore");
+					c.score = CalculateLightScore(l, camera, tmpIndex++,
+						s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
+				}
 				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor) {
 					// Exit hysteresis, own consecutive-count gate (unlike the recency-based
 					// s_lastValidFrame above): a light must fail 15 consecutive frames
@@ -1398,14 +1611,18 @@ namespace ShadowCasterManager
 		// wipe (deferred, races the new cell's promotions) and bulk ClearLightArrays bypasses
 		// the per-light erase, so without it promoted lights leak in and read as native.
 		{
+			ZoneScopedN("SCM::ScoreCandidates::PromotedCleanup");
 			std::scoped_lock lk(s_shadowConvertMutex);
 			if (!s_shadowConvert.empty() || !s_shadowConvertDescriptorInited.empty()) {
-				std::set<RE::NiLight*> liveNi;
+				static std::vector<RE::NiLight*> liveNi;
+				liveNi.clear();
 				for (auto& c : candidates)
 					if (auto* ni = c.light->light.get())
-						liveNi.insert(ni);
-				std::erase_if(s_shadowConvert, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
-				std::erase_if(s_shadowConvertDescriptorInited, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
+						liveNi.push_back(ni);
+				std::sort(liveNi.begin(), liveNi.end());
+				const auto isLive = [&](RE::NiLight* ni) { return std::binary_search(liveNi.begin(), liveNi.end(), ni); };
+				std::erase_if(s_shadowConvert, [&](RE::NiLight* ni) { return !isLive(ni); });
+				std::erase_if(s_shadowConvertDescriptorInited, [&](RE::NiLight* ni) { return !isLive(ni); });
 			}
 		}
 
@@ -1413,10 +1630,12 @@ namespace ShadowCasterManager
 		// light inheriting a stale splitExcluded latch renders full forever.
 		// Threshold avoids churning state for gate-flapping lights in small scenes.
 		if (s_splitState.size() > 128) {
-			std::set<RE::BSShadowLight*> liveLights;
+			static std::vector<RE::BSShadowLight*> liveLights;
+			liveLights.clear();
 			for (auto& c : candidates)
-				liveLights.insert(c.light);
-			std::erase_if(s_splitState, [&](const auto& kv) { return !liveLights.contains(kv.first); });
+				liveLights.push_back(c.light);
+			std::sort(liveLights.begin(), liveLights.end());
+			std::erase_if(s_splitState, [&](const auto& kv) { return !std::binary_search(liveLights.begin(), liveLights.end(), kv.first); });
 		}
 
 		// Apply debug pins: bias scoring so pinned-shadow lights sort to the top
@@ -1433,6 +1652,7 @@ namespace ShadowCasterManager
 		// Sort descending by score; sun always first. Deterministic tiebreak on exact
 		// ties (e.g. symmetric braziers): std::sort isn't stable, so an unstable tie
 		// flips which fixture claims a free slot first, producing visible flicker.
+		ZoneScopedN("SCM::ScoreCandidates::Sort");
 		std::sort(candidates.begin(), candidates.end(),
 			[](const CandidateLight& a, const CandidateLight& b) {
 				if (a.sun != b.sun)
@@ -1441,6 +1661,94 @@ namespace ShadowCasterManager
 					return a.score > b.score;
 				return reinterpret_cast<uintptr_t>(a.light) < reinterpret_cast<uintptr_t>(b.light);
 			});
+	}
+
+	/// Latest per-candidate visibility audit, refilled only while diagnostics are wanted.
+	static std::vector<SchedSnapshot::LightVisibility> s_visAudit;
+
+	/// Tests a sphere against the four side planes of every eye's view-projection,
+	/// independent of the engine's own frustum flag. `centre` is world space.
+	static bool OwnSphereInFrustum(const RE::NiPoint3& centre, float radius, float& nearestEyeDistance)
+	{
+		const int eyes = globals::game::isVR ? 2 : 1;
+		bool inside = false;
+		nearestEyeDistance = FLT_MAX;
+		for (int eye = 0; eye < eyes; ++eye) {
+			const auto view = Util::GetCameraData(eye);
+			const auto rel = centre - Util::GetEyePosition(eye);
+			nearestEyeDistance = std::min(nearestEyeDistance, std::sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z));
+			const auto& m = view.viewProjMat;
+			bool eyeInside = true;
+			for (int side = 0; side < 4 && eyeInside; ++side) {
+				const int axis = side >> 1;
+				const float sign = (side & 1) ? -1.0f : 1.0f;
+				const float px = m.m[0][3] + sign * m.m[0][axis];
+				const float py = m.m[1][3] + sign * m.m[1][axis];
+				const float pz = m.m[2][3] + sign * m.m[2][axis];
+				const float pw = m.m[3][3] + sign * m.m[3][axis];
+				const float len = std::sqrt(px * px + py * py + pz * pz);
+				if (len <= 0.0f)
+					continue;
+				if ((px * rel.x + py * rel.y + pz * rel.z + pw) / len < -radius)
+					eyeInside = false;
+			}
+			inside = inside || eyeInside;
+		}
+		return inside;
+	}
+
+	/// True when reprojecting the cached static tile would move the light's shadow edge by
+	/// more than a pixel on screen; otherwise the plain copy is visually indistinguishable.
+	static bool WarpIsVisible(RE::BSShadowLight* light, const SplitState& st, int32_t slot)
+	{
+		if (!s_settings.WarpVisibilityGate)
+			return true;
+		if (s_settings.WarpZeroDemandSkip && slot >= 0 && slot < s_lights.Size && DemandSampleUsable()) {
+			const auto& entry = s_lights.Lights[slot];
+			const int32_t demandSlot = DemandSlotFor(entry);
+			if (entry.Light == light && demandSlot >= 0 && s_shadowDemand.maxLatest[demandSlot] <= kDemandUntouchedMaxRaw &&
+				entry.untouchedSamples >= kWarpZeroDemandSamples) {
+				s_warpsSkippedNoDemand.fetch_add(1, std::memory_order_relaxed);
+				return false;
+			}
+		}
+		const auto* ni = light->light.get();
+		if (!ni)
+			return true;
+		const float drift = std::sqrt(ni->world.translate.GetSquaredDistance(st.bakePos));
+		const float radius = ni->GetLightRuntimeData().radius.x;
+		float nearestEyeDistance = 0.0f;
+		if (!OwnSphereInFrustum(ni->world.translate, radius, nearestEyeDistance)) {
+			s_warpsSkippedOffscreen.fetch_add(1, std::memory_order_relaxed);
+			s_warpGate.erase(reinterpret_cast<uintptr_t>(light));
+			return false;
+		}
+		// The nearest lit receiver lies at the sphere's near point, the worst-case displacement.
+		const float d = std::max(nearestEyeDistance - radius, kWarpNearClampUnits);
+		const int eyes = globals::game::isVR ? 2 : 1;
+		const float eyeWidthPx = globals::state->screenSize.x / static_cast<float>(eyes);
+		float edgeErrPx = 0.0f;
+		for (int eye = 0; eye < eyes; ++eye) {
+			const float focalPx = 0.5f * eyeWidthPx * std::abs(globals::game::frameBufferCached.GetCameraProjUnjittered(eye)._11);
+			edgeErrPx = std::max(edgeErrPx, drift * focalPx / d);
+		}
+		auto& gate = s_warpGate[reinterpret_cast<uintptr_t>(light)];
+		if (edgeErrPx > kWarpEdgeErrOnPx) {
+			gate.active = true;
+			gate.belowStreak = 0;
+		} else if (edgeErrPx < kWarpEdgeErrOffPx) {
+			++gate.belowStreak;
+			if (gate.belowStreak >= kWarpOffFrames)
+				gate.active = false;
+		} else {
+			gate.belowStreak = 0;
+		}
+		if (!gate.active) {
+			s_warpsSkippedSubPixel.fetch_add(1, std::memory_order_relaxed);
+			return false;
+		}
+		s_warpsRun.fetch_add(1, std::memory_order_relaxed);
+		return true;
 	}
 
 	static void ValidateCandidates(RE::NiCamera* camera, bool wantDiag, std::vector<CandidateLight>& candidates)
@@ -1472,7 +1780,20 @@ namespace ShadowCasterManager
 					AuditFrustumCull(c, camera);
 				// frustrumCull != 0 does NOT mean geometrically off-screen --
 				// BSShadowParabolicLight also sets it for a shadow-distance LOD test.
-				if (!l->UpdateCamera(camera)) {
+				bool cameraValid;
+				{
+					ZoneScopedN("SCM::CandidateValidation::UpdateCamera");
+					// A pinned light keeps its bake pose here too, or the pin is undone before enable.
+					const std::int32_t pinSlot = TolerantSplit() ? GetShadowSlot(l) : -1;
+					const bool pinNow = pinSlot >= 0 && ShouldPinShadowOrigin(l, static_cast<std::uint32_t>(pinSlot));
+					const bool wasDynamic = l->dynamic;
+					if (pinNow)
+						l->dynamic = false;
+					cameraValid = l->UpdateCamera(camera);
+					l->dynamic = wasDynamic;
+				}
+				c.updateCameraFailed = !cameraValid;
+				if (!cameraValid) {
 					// Exit hysteresis: honor invalid only after kCameraExitStreak frames.
 					// Age-prune (not PruneIfOversized): a missing entry means
 					// never-valid, so only drop entries past the exit-streak window.
@@ -1485,6 +1806,8 @@ namespace ShadowCasterManager
 					// Capture BEFORE the restore below overwrites lodDimmer, else
 					// invalidLod always reads false and its UI reason goes dead.
 					const bool lodFadedNow = (l->lodDimmer == 0.0f);
+					const auto* nilightNow = l->light.get();
+					const bool hiddenNow = !nilightNow || nilightNow->GetFlags().any(RE::NiAVObject::Flag::kHidden);
 					// UpdateCamera's LOD sub-test can zero lodDimmer even on a held frame;
 					// without restoring it, addShadowLight's fade*=lodDimmer would render
 					// a held light at zero intensity despite keeping its slot.
@@ -1502,10 +1825,12 @@ namespace ShadowCasterManager
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
-						// Both can be true (off-screen AND LOD-faded); recorded as
-						// independent bits, since frustum-out is terminal but LOD-faded is a convert.
-						c.invalidFrustum = (l->frustrumCull != 0);
-						c.invalidLod = lodFadedNow;
+						// UpdateCamera sets frustrumCull to 0xff for every rejection, so it cannot
+						// name the cause: hidden skips both tests, the shadow-distance test runs
+						// only after the frustum test passed and zeroes lodDimmer.
+						c.invalidHidden = hiddenNow;
+						c.invalidLod = !hiddenNow && lodFadedNow;
+						c.invalidFrustum = !hiddenNow && !lodFadedNow;
 						continue;
 					}
 				} else {
@@ -1513,6 +1838,7 @@ namespace ShadowCasterManager
 				}
 				// No culling process/portal means unconditionally visible. Skip for
 				// promoted lights (rebuilt process never room-associates) and held lights.
+				ZoneScopedN("SCM::CandidateValidation::Portal");
 				auto* cull = (c.cameraHold || IsPromotedLight(l->light.get())) ? nullptr : GetLightCullingProcess(l);
 				if (cull) {
 					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
@@ -1547,9 +1873,33 @@ namespace ShadowCasterManager
 			// Tracy candidate breakdown, per-frame, to verify chosen + excess +
 			// invalid_camera + invalid_portal == total. Demotion map only fills
 			// when wantDiag (menu open / devbench dump) to skip per-frame hash churn.
-			if (wantDiag)
+			if (wantDiag) {
 				s_convertReason.clear();
+				s_visAudit.clear();
+			}
 			for (auto& c : candidates) {
+				if (wantDiag && !c.sun && c.light) {
+					SchedSnapshot::LightVisibility v;
+					v.light = reinterpret_cast<uintptr_t>(c.light);
+					v.chosen = c.chosen;
+					v.engineCulled = c.updateCameraFailed;
+					v.frustrumCull = c.light->frustrumCull;
+					v.lodDimmer = c.light->lodDimmer;
+					v.cameraHold = c.cameraHold;
+					v.hidden = c.invalidHidden;
+					v.shadowDistanceCulled = c.invalidLod;
+					v.frustumCulled = c.invalidFrustum;
+					if (const auto* ni = c.light->light.get()) {
+						v.name = ni->name.c_str() ? ni->name.c_str() : "";
+						const auto rel = ni->world.translate - Util::GetEyePosition(0);
+						v.x = rel.x;
+						v.y = rel.y;
+						v.z = rel.z;
+						v.radius = ni->GetLightRuntimeData().radius.x;
+						v.ownInFrustum = OwnSphereInFrustum(ni->world.translate, v.radius * ni->world.scale, v.distance);
+					}
+					s_visAudit.push_back(std::move(v));
+				}
 				s_schedDiag.candidates_total++;
 				if (c.chosen)
 					s_schedDiag.candidates_chosen++;
@@ -1592,6 +1942,22 @@ namespace ShadowCasterManager
 		}  // end SCM::CandidateValidation
 	}
 
+	/// Sorted active shadow lights plus the sun, in a caller-owned buffer so the
+	/// per-frame membership tests binary-search instead of building a hash set.
+	static void CollectAliveShadowLights(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight,
+		std::vector<RE::BSShadowLight*>& out)
+	{
+		out.clear();
+		auto& alive = ssn->GetRuntimeData().activeShadowLights;
+		out.reserve(alive.size() + 1);
+		if (sunLight)
+			out.push_back(sunLight);
+		for (auto& sp : alive)
+			if (auto* l = sp.get())
+				out.push_back(l);
+		std::sort(out.begin(), out.end());
+	}
+
 	static void UpdatePoolMembership(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight,
 		std::vector<CandidateLight>& candidates)
 	{
@@ -1603,20 +1969,12 @@ namespace ShadowCasterManager
 			// Drop entries whose pointers are no longer in activeShadowLights (engine
 			// may have freed them since last frame), protecting later lookups from
 			// dereferencing dangling pointers.
-			std::unordered_set<RE::BSShadowLight*> aliveSet;
-			{
-				auto& alive = ssn->GetRuntimeData().activeShadowLights;
-				aliveSet.reserve(alive.size() + 1);
-				if (sunLight)
-					aliveSet.insert(sunLight);
-				for (auto& sp : alive)
-					if (auto* l = sp.get())
-						aliveSet.insert(l);
-			}
+			static std::vector<RE::BSShadowLight*> aliveSet;
+			CollectAliveShadowLights(ssn, sunLight, aliveSet);
 			for (int i = 0; i < s_lights.Size; i++) {
 				if (!s_lights.Lights[i].Light)
 					continue;
-				if (aliveSet.find(s_lights.Lights[i].Light) == aliveSet.end()) {
+				if (!std::binary_search(aliveSet.begin(), aliveSet.end(), s_lights.Lights[i].Light)) {
 					s_schedDiag.reconciliation_clears++;
 					s_lights.Lights[i].Clear();
 				}
@@ -1626,18 +1984,20 @@ namespace ShadowCasterManager
 			// lists (bulk cell-teardown bypasses Hook_ConvertLights_Remove), plus
 			// functionally-dead ones (fade=0/lodDimmer=0/null) GameEnableLight never deactivates.
 			if (!s_normalConvert.empty()) {
-				std::unordered_set<RE::BSLight*> normalAlive;
+				static std::vector<RE::BSLight*> normalAlive;
+				normalAlive.clear();
 				normalAlive.reserve(aliveSet.size() + ssn->GetRuntimeData().activeLights.size());
 				for (auto* p : aliveSet)
-					normalAlive.insert(static_cast<RE::BSLight*>(p));
+					normalAlive.push_back(static_cast<RE::BSLight*>(p));
 				for (auto& sp : ssn->GetRuntimeData().activeLights)
 					if (auto* l = sp.get())
-						normalAlive.insert(l);
+						normalAlive.push_back(l);
+				std::sort(normalAlive.begin(), normalAlive.end());
 
 				const std::size_t before = s_normalConvert.size();
 				std::erase_if(s_normalConvert, [&](const ConvertedLight& c) {
 					// Tier 1: dangling / engine-removed.
-					if (!c.light || normalAlive.find(static_cast<RE::BSLight*>(c.light)) == normalAlive.end())
+					if (!c.light || !std::binary_search(normalAlive.begin(), normalAlive.end(), static_cast<RE::BSLight*>(c.light)))
 						return true;
 					// Tier 2: functionally dead. Cheap derefs only -- no
 					// virtual calls or extra hash lookups.
@@ -1758,16 +2118,16 @@ namespace ShadowCasterManager
 			// Publish each occupant's score: it also orders the atlas cell budget
 			// (within a class band) and drives the redraw curve percentile.
 			{
-				std::unordered_map<const RE::BSShadowLight*, double> scoreByLight;
-				scoreByLight.reserve(candidates.size());
-				for (const auto& c : candidates)
-					scoreByLight.emplace(c.light, c.score);
 				for (int i = 0; i < s_lights.Size; i++) {
 					auto& e = s_lights.Lights[i];
 					if (!e.Light)
 						continue;
-					if (auto it = scoreByLight.find(e.Light); it != scoreByLight.end())
-						e.lastScore = it->second;
+					for (const auto& c : candidates) {
+						if (c.light == e.Light) {
+							e.lastScore = c.score;
+							break;
+						}
+					}
 				}
 			}
 		}  // end SCM::UpdatePoolMembership
@@ -1967,6 +2327,8 @@ namespace ShadowCasterManager
 				e->desiredScale = AtlasActive() ?
 				                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 				                      1.0f;
+				if (AtlasActive() && LitCapsTile(*e))
+					e->desiredScale = std::min(e->desiredScale, kTileScaleQuarter);
 				if (!AtlasActive())
 					e->pendingScale = e->desiredScale;
 			}
@@ -2029,7 +2391,7 @@ namespace ShadowCasterManager
 			// Computed OUTSIDE the accumulate so admission can't deadlock on a
 			// latch that only updates after admission.
 			uint32_t dynamicCasters = e->cachedSkinnedCasters;
-			if (PlayerWithinLightRadius(e->Light->light.get()))
+			if (PlayerWithinLightRadius(e->Light))
 				dynamicCasters++;
 			if (dynamicCasters == 0) {
 				if (const auto splitIt = s_splitState.find(e->Light);
@@ -2039,6 +2401,7 @@ namespace ShadowCasterManager
 
 			double interval = 0.0;
 			if (s_formulaRedrawInterval) {
+				ZoneScopedN("SCM::Score::Formula");
 				SetupLightFormula(e->Light, camera, 0);
 				// e->Index is the pool index. Beyond PointLightEnd are converted slots.
 				if (e->Index >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
@@ -2068,6 +2431,7 @@ namespace ShadowCasterManager
 			float sizeProxy = 0.0f;
 
 			if (auto* ni = e->Light->light.get()) {
+				ZoneScopedN("SCM::Score::LightGeometry");
 				const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
 				// Legacy contribution metric, kept for the UI table and
 				// s_highImportanceLightCount; ranking decisions use lastScore
@@ -2110,6 +2474,8 @@ namespace ShadowCasterManager
 			e->desiredScale = AtlasActive() ?
 			                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 			                      1.0f;
+			if (AtlasActive() && LitCapsTile(*e))
+				e->desiredScale = std::min(e->desiredScale, kTileScaleQuarter);
 			// Atlas mode: the render-pass rank budget owns pendingScale.
 			if (!AtlasActive())
 				e->pendingScale = e->desiredScale;
@@ -2129,6 +2495,7 @@ namespace ShadowCasterManager
 			                          geomSize != e->lastHashGeomListSize ||
 			                          (now - e->lastHashComputeFrame) >= kGeomHashRehashInterval;
 			if (dueForRehash) {
+				ZoneScopedN("SCM::Score::GeomHash");
 				e->cachedPendingGeomHash = ComputeShadowGeomHash(e->Light, posStep, e->cachedSkinnedCasters);
 				e->lastHashComputeFrame = now;
 				e->lastHashGeomListSize = geomSize;
@@ -2136,7 +2503,7 @@ namespace ShadowCasterManager
 			// Player proxy folded in every frame, uncached -- see
 			// FoldPlayerCasterProxy's comment for why it can't ride the
 			// walk-cost cache above.
-			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light->light.get(), posStep);
+			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light, posStep);
 
 			// 0 (visible/unmeasured) unless a real GPU reading confirms absence. MAX
 			// channel + streak, not an EMA -- an EMA's magnitude scales with tile
@@ -2544,7 +2911,10 @@ namespace ShadowCasterManager
 			cameraHoldSkips.clear();
 			static std::vector<LightEntry*> newLightSkips;
 			newLightSkips.clear();
-			ClassifyPendingLights(now, pending, highPrioritySkips, sleepSkips, cameraHoldSkips, newLightSkips);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::Classify");
+				ClassifyPendingLights(now, pending, highPrioritySkips, sleepSkips, cameraHoldSkips, newLightSkips);
+			}
 
 			// Base texels for the coverage classifier; lazily captured from the live
 			// texture, so fall back until it is readable.
@@ -2562,18 +2932,27 @@ namespace ShadowCasterManager
 					scoreRank.push_back(s_lights.Lights[i].lastScore);
 			std::sort(scoreRank.begin(), scoreRank.end());
 
-			LogAndRefreshSkippedLights(camera, baseTileTexels, scoreRank, highPrioritySkips, sleepSkips,
-				cameraHoldSkips, newLightSkips);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::RefreshSkipped");
+				LogAndRefreshSkippedLights(camera, baseTileTexels, scoreRank, highPrioritySkips, sleepSkips,
+					cameraHoldSkips, newLightSkips);
+			}
 
-			ScorePendingLights(camera, now, baseTileTexels, auditDemand, scoreRank, pending);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::Score");
+				ScorePendingLights(camera, now, baseTileTexels, auditDemand, scoreRank, pending);
+			}
 
 			int cfMaxRedrawStart = 0;
 			int32_t cfBudgetStart = 0;
 			bool cfIsFirstStart = false;
 			bool anyCostRejected = false;
 			uint32_t starvationFloorFrames = 0;
-			SortAndAdmitPendingLights(pending, now, maxRedraw, budgetRemain, isFirst, cfMaxRedrawStart,
-				cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
+			{
+				ZoneScopedN("SCM::ScheduleLoop::SortAdmit");
+				SortAndAdmitPendingLights(pending, now, maxRedraw, budgetRemain, isFirst, cfMaxRedrawStart,
+					cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
+			}
 
 			AuditDemandCounterfactual(auditDemand, pending, highPrioritySkips, cfMaxRedrawStart, cfBudgetStart,
 				cfIsFirstStart, starvationFloorFrames, maxRedraw, budgetRemain, anyCostRejected, now);
@@ -2739,7 +3118,7 @@ namespace ShadowCasterManager
 						bool stillUsable;
 						{
 							ZoneNamedN(zEnable, "SCM::Engine::EnableLight", true);
-							s_cpuEnableUs.fetch_add(TimeUs([&] { stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, isUsableLight); }), std::memory_order_relaxed);
+							s_cpuEnableUs.fetch_add(TimeUs([&] { stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, ShouldPinShadowOrigin(e.Light, slot), isUsableLight); }), std::memory_order_relaxed);
 							s_cpuEnableN.fetch_add(1, std::memory_order_relaxed);
 						}
 						if (!stillUsable)
@@ -2797,16 +3176,14 @@ namespace ShadowCasterManager
 		// longer in the scene to avoid dereferencing freed memory below.
 		{
 			ZoneNamedN(zonePostAtomic, "SCM::PostAtomicRevalidate", true);
-			std::unordered_set<RE::BSShadowLight*> aliveAfterAtomic;
-			{
-				auto& alive = ssn->GetRuntimeData().activeShadowLights;
-				aliveAfterAtomic.reserve(alive.size() + 1);
-				if (sunLight)
-					aliveAfterAtomic.insert(sunLight);
-				for (auto& sp : alive)
-					if (auto* l = sp.get())
-						aliveAfterAtomic.insert(l);
-			}
+			static std::vector<RE::BSShadowLight*> aliveAfterAtomic;
+			CollectAliveShadowLights(ssn, sunLight, aliveAfterAtomic);
+			std::erase_if(s_originPinDrift, [&](const auto& kv) {
+				return !std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), reinterpret_cast<RE::BSShadowLight*>(kv.first));
+			});
+			std::erase_if(s_warpGate, [&](const auto& kv) {
+				return !std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), reinterpret_cast<RE::BSShadowLight*>(kv.first));
+			});
 
 			int endIdx = (int)*GetAccumLightSlot();
 
@@ -2817,7 +3194,7 @@ namespace ShadowCasterManager
 				if (e.Light && (!e.RedrawFrame || i >= s_lights.PointLightEnd(s_settings.ShadowLightCount))) {
 					// Membership check uses the snapshot built above (aliveAfterAtomic
 					// captures scene state for O(1) queries, since the atomic loop may have invalidated pointers).
-					if (aliveAfterAtomic.find(e.Light) == aliveAfterAtomic.end()) {
+					if (!std::binary_search(aliveAfterAtomic.begin(), aliveAfterAtomic.end(), e.Light)) {
 						s_schedDiag.reconciliation_clears++;
 						e.Clear();
 						continue;
@@ -2961,6 +3338,7 @@ namespace ShadowCasterManager
 				snap.demoted.reserve(s_convertReason.size());
 				for (const auto& [ptr, reason] : s_convertReason)
 					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				snap.visibility = s_visAudit;
 				const auto& slotInfos = GetSlotInfos();
 				for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 					const auto& e = s_lights.Lights[i];
@@ -2975,6 +3353,15 @@ namespace ShadowCasterManager
 					st.budgetScale = e.budgetScale;
 					st.pendingScale = e.pendingScale;
 					st.renderedScale = e.renderedScale;
+					const int32_t demandSlot = DemandSlotFor(e);
+					st.demandMax = demandSlot >= 0 ? s_shadowDemand.maxLatest[demandSlot] : 0u;
+					st.untouchedSamples = e.untouchedSamples;
+					st.litMax = demandSlot >= 0 ? s_shadowDemand.litLatest[demandSlot] : 0u;
+					st.litSum = demandSlot >= 0 ? s_shadowDemand.litSum[demandSlot] : 0u;
+					st.litReason = demandSlot >= 0 ? s_shadowDemand.litReason[demandSlot] : 0u;
+					st.litTile = demandSlot >= 0 ? s_shadowDemand.litTile[demandSlot] : 0u;
+					st.litSmoothed = e.litSmoothed;
+					st.litCapped = e.litCapped;
 					st.redrawnThisFrame = e.RedrawFrame;
 					st.schedDirty = e.schedDirty;
 					st.dirtyStallFrames = e.dirtyStallFrames;
@@ -3023,12 +3410,20 @@ namespace ShadowCasterManager
 				snap.frontAppendTotal = s_frontAppendTotal.load(std::memory_order_relaxed);
 				snap.backOnlyAppendTotal = s_backOnlyAppendTotal.load(std::memory_order_relaxed);
 				snap.hemisphereDropTotal = s_hemisphereDropTotal.load(std::memory_order_relaxed);
+				snap.passlessCasterSkipTotal = s_passlessCasterSkipTotal.load(std::memory_order_relaxed);
+				for (int reason = 1; reason < 5; ++reason)
+					snap.passlessCasterSkipByReason[reason] = s_passlessCasterSkipByReason[reason].load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))
 					snap.cpuSubmitUsAvg = static_cast<uint32_t>(s_cpuSubmitUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuEnableN.exchange(0, std::memory_order_relaxed))
 					snap.cpuEnableUsAvg = static_cast<uint32_t>(s_cpuEnableUs.exchange(0, std::memory_order_relaxed) / n);
+				snap.originPinnedLights = static_cast<uint32_t>(s_originPinDrift.size());
+				snap.warpsRun = s_warpsRun.load(std::memory_order_relaxed);
+				snap.warpsSkippedSubPixel = s_warpsSkippedSubPixel.load(std::memory_order_relaxed);
+				snap.warpsSkippedOffscreen = s_warpsSkippedOffscreen.load(std::memory_order_relaxed);
+				snap.warpsSkippedNoDemand = s_warpsSkippedNoDemand.load(std::memory_order_relaxed);
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
@@ -3058,6 +3453,10 @@ namespace ShadowCasterManager
 				snap.scalePromotionRedundantAvoided = s_scalePromotionRedundantAvoided.load(std::memory_order_relaxed);
 				snap.convertReEnableRun = s_convertReEnableRun.load(std::memory_order_relaxed);
 				snap.convertReEnableSkipped = s_convertReEnableSkipped.load(std::memory_order_relaxed);
+				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
+				snap.convertedLights = static_cast<uint32_t>(s_normalConvert.size());
+				for (const auto& converted : s_normalConvert)
+					snap.convertedStrictLights += (converted.light && converted.light->portalStrict) ? 1u : 0u;
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
@@ -3073,6 +3472,7 @@ namespace ShadowCasterManager
 				snap.demandSubTap = s_schedDiag.demand_sub_tap;
 				snap.demandSkipEligible = s_schedDiag.demand_skip_eligible;
 				snap.demandSwapIn = s_schedDiag.demand_swap_in;
+				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
 				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
 				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
 				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;
@@ -3450,9 +3850,11 @@ namespace ShadowCasterManager
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
 							// A skipped bake leaves the static tile blank: drop the slot's static cache and re-arm.
-							if (rendered)
+							if (rendered) {
 								MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
-							else
+								float bakeProj[16];
+								st.bakeInvProjValid = GetLightProjection(e.Light, bakeProj, st.bakeInvProj);
+							} else
 								InvalidateSlotStaticBake(i);
 							st.bakeThisFrame = false;
 							if (!rendered) {
@@ -3468,7 +3870,7 @@ namespace ShadowCasterManager
 							// A bake that captured nothing is a blank rect: seeding a fresh
 							// tile from it would advertise a flat tile as content.
 							if (!liveHasContent && st.bakeSawStatic)
-								CopyStaticTileToLive(i);
+								SeedLiveTileFromStatic(i, e.Light, st);
 							s_budget.EndLight(e.Light, 1);
 							if (liveHasContent || st.bakeSawStatic) {
 								e.renderedScale = e.pendingScale;
@@ -3496,7 +3898,7 @@ namespace ShadowCasterManager
 							s_budget.BeginLight(e.Light, 1);
 							if (compositeValid) {
 								if (!compositeKeepPrior)
-									CopyStaticTileToLive(i);  // seed the tile with cached static depth
+									SeedLiveTileFromStatic(i, e.Light, st);  // seed the tile with cached static depth
 							} else {
 								if (!compositeKeepPrior)
 									ClearSlotTile(i);

@@ -56,6 +56,13 @@ namespace Util::ShaderCacheManifest
 			}
 		}
 
+		/// True when no digest is on record, so no cached blob can be validated against its source.
+		bool Empty() const
+		{
+			std::lock_guard lock(mutex);
+			return entries.empty();
+		}
+
 		/// Digest last recorded for this relative blob path, if any.
 		std::optional<std::string> Get(const std::string& relativePath) const
 		{

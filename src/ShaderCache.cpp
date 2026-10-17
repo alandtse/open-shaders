@@ -489,6 +489,13 @@ namespace SIE
 		return Util::ContentHash::HashString(state);
 	}
 
+	static std::string GetCurrentCompileFlagsTag()
+	{
+		return Util::CacheInvalidation::BuildCompileFlagsTag(
+			globals::state->enablePartialPrecision.load(std::memory_order_relaxed),
+			globals::state->enableAvoidFlowControl.load(std::memory_order_relaxed));
+	}
+
 	// `key` already encodes the descriptor's actual #defines; omitting it lets a C++-side
 	// change to that mapping keep a stale disk-cached blob reading as valid forever.
 	static Util::ContentHash::Hash128 GetPerShaderDefinesDigest(const std::string& key)
@@ -2102,7 +2109,9 @@ namespace SIE
 					}
 				}
 
-				if (!decidedByDigest && cache.UseFileWatcher()) {
+				if (!decidedByDigest && cache.RequiresDigestForReuse()) {
+					diskCacheOutdated = true;
+				} else if (!decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
 					// An unreadable timestamp means freshness can't be verified; treat it as a miss.
 					std::error_code ec;
@@ -3904,6 +3913,16 @@ namespace SIE
 			return;
 		}
 
+		std::optional<std::string> previousCompileFlags;
+		if (auto compileFlags = ini.GetValue("Cache", "CompileFlags"))
+			previousCompileFlags = compileFlags;
+		const auto previousFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(previousCompileFlags, GetCurrentCompileFlagsTag());
+		if (previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
+			previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
+			logger::info("Previous shader cache is not offered for restore because its compile flags differ or are unknown");
+			return;
+		}
+
 		{
 			std::lock_guard lock{ mismatchesMutex };
 			previousCacheMismatches = std::move(mismatches);
@@ -3929,6 +3948,19 @@ namespace SIE
 		heldMismatchDefines.clear();
 
 		RefreshPreviousDiskCacheInfo();
+
+		std::optional<std::string> cachedCompileFlags;
+		if (auto compileFlags = ini.GetValue("Cache", "CompileFlags"))
+			cachedCompileFlags = compileFlags;
+		const auto currentCompileFlags = GetCurrentCompileFlagsTag();
+		const auto compileFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(cachedCompileFlags, currentCompileFlags);
+		if (compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
+			compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
+			logger::info("Disk cache compile flags changed or unknown ({} -> {}); rebuilding", cachedCompileFlags.value_or("none"), currentCompileFlags);
+			DeleteActiveDiskCache();
+			return;
+		}
+		const bool adoptCompileFlags = compileFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Adopt;
 
 		std::optional<std::string> cachedPluginVersion;
 		if (auto pluginVersion = ini.GetValue("Cache", "PluginVersion"))
@@ -3963,9 +3995,10 @@ namespace SIE
 
 		// Defines of mismatched features, for partial invalidation or the held accept path.
 		heldMismatchDefines = GetDefinesForMismatches(cacheMismatches, featureStates, CacheMismatch::Kind::EnabledFlip);
-		const auto versionMismatchDefines = GetDefinesForMismatches(cacheMismatches, featureStates, CacheMismatch::Kind::FeatureVersion);
 
 		if (cacheMismatches.empty()) {
+			if (adoptCompileFlags)
+				WriteDiskCacheInfo();
 			logger::info("Using disk cache");
 			return;
 		}
@@ -4027,29 +4060,11 @@ namespace SIE
 			return;
 		}
 
-		// Feature version bumps only affect shaders that actually reference the
-		// feature's define; keep the rest of the cache. Anything else (plugin
-		// version change, missing define, scan failure) falls back to a full wipe
-		// of the active slot only; the rollback slot stays for its own validation.
-		const bool onlyFeatureVersions = std::ranges::all_of(cacheMismatches,
-			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::FeatureVersion; });
-		// A plugin-version bump with every feature's enabled/version state still
-		// matching claims no shader-affecting change at all; the per-shader
-		// content digest (GetShaderContentDigest) is authoritative for individual
-		// staleness now, so this no longer needs a full wipe to stay safe.
-		const bool onlyPluginVersion = std::ranges::all_of(cacheMismatches,
-			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::PluginVersion; });
-		// Any failure here (destructive or not) already falls through to the
-		// unconditional DeleteActiveDiskCache() below, so the distinction doesn't
-		// change behavior at this call site.
-		[[maybe_unused]] bool versionInvalidationDestructive = false;
-		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines, versionInvalidationDestructive)) {
-			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
-			// The cache survives this mismatch instead of a full wipe, so nothing else
-			// prunes entries for shaders removed/renamed since the last version that did wipe.
-			PruneOrphanedShaderCacheEntries();
-		} else if (onlyPluginVersion) {
-			logger::info("Plugin version changed with no feature-state changes; keeping disk cache");
+		// Blobs revalidate against their content digest, so version bumps and toggles recompile only what
+		// changed; with no manifest nothing can be revalidated, so wipe.
+		if (Util::CacheInvalidation::AreMismatchesDigestResolvable(cacheMismatches) && !GetShaderCacheManifest().Empty()) {
+			logger::info("Plugin or feature versions changed; keeping disk cache and revalidating each shader by content digest");
+			requireDigestForReuse = true;
 			WriteDiskCacheInfo();
 			PruneOrphanedShaderCacheEntries();
 		} else {
@@ -4207,6 +4222,7 @@ namespace SIE
 		CSimpleIniA ini;
 		ini.SetUnicode();
 		ini.SetValue("Cache", "PluginVersion", Plugin::VERSION.string().c_str());
+		ini.SetValue("Cache", "CompileFlags", GetCurrentCompileFlagsTag().c_str());
 		globals::state->WriteDiskCacheInfo(ini);
 		if (ini.SaveFile((DiskCachePath() / L"Info.ini").c_str()) < 0) {
 			logger::error("Failed to save disk cache info; the cache will be revalidated from scratch next boot");
@@ -4411,9 +4427,11 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
-				return vertexShaders[static_cast<size_t>(shader.shaderType.get())]
-				    .insert_or_assign(descriptor, std::move(newShader))
-				    .first->second.get();
+				auto& entry = vertexShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
+				if (entry && entry->shader)
+					entry->shader->Release();
+				entry = std::move(newShader);
+				return entry.get();
 			}
 		}
 		return nullptr;
@@ -4455,9 +4473,11 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
-				return pixelShaders[static_cast<size_t>(shader.shaderType.get())]
-				    .insert_or_assign(descriptor, std::move(newShader))
-				    .first->second.get();
+				auto& entry = pixelShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
+				if (entry && entry->shader)
+					entry->shader->Release();
+				entry = std::move(newShader);
+				return entry.get();
 			}
 		}
 		return nullptr;
@@ -4499,9 +4519,11 @@ namespace SIE
 					newShader->shader->Release();
 				}
 			} else {
-				return computeShaders[static_cast<size_t>(shader.shaderType.get())]
-				    .insert_or_assign(descriptor, std::move(newShader))
-				    .first->second.get();
+				auto& entry = computeShaders[static_cast<size_t>(shader.shaderType.get())][descriptor];
+				if (entry && entry->shader)
+					entry->shader->Release();
+				entry = std::move(newShader);
+				return entry.get();
 			}
 		}
 		return nullptr;

@@ -15,7 +15,7 @@ Enable Neural Rendering in the Upscaling panel. Its
 `Upscaling.neuralRenderingEnabled` setting defaults to `false`.
 There is no separate NR feature registration, feature flag, or INI.
 The package does not redistribute NVIDIA runtime binaries. Supply
-`nvngx_dlssnr.dll` **310.8.x** under
+`nvngx_dlssnr.dll` **310.8.x** (or **310.9.x**, see below) under
 `Data/Shaders/Upscaling/Streamline/`. NR uses the same
 `Streamline::pluginDir` that the existing DLL version check scans.
 Initialization or evaluation errors pause NR and appear in the Upscaling panel and
@@ -527,6 +527,43 @@ in-game SE/VR captures showed no channel swap. Any other 310.8.x build is refuse
 with a latched failure instead of being rendered through an unverified channel map,
 unless developer mode forces it through for evaluation as described under
 [Enable](#enable).
+
+### 310.9 runtimes
+
+The NVIDIA-signed 310.9.16.0 `nvngx_dlssnr.dll` (SHA-256
+`2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F`) is pinned in
+`NR::kValidatedRuntimeSha256`. Any other 310.9.x build is accepted by version only, so it loads in developer
+mode or with **Use This Build Anyway**.
+
+The runtime ships two networks chosen at feature creation by `DLSSNR.Hint.Render.Preset`.
+`Tuning::modelPreset` writes 1 (the original 310.8 network, the default) or 2 (the newest, faster one), and
+changing it recreates the eye features. A 310.8 runtime always gets 0.
+
+Measured in game on VR (1080x1200 per eye, RTX 5090, Dragonsreach hall, scene frozen, eye-staggered
+captures of the model input and output):
+
+| Network                      | `NREvaluate` GPU, median | Mean model gain | p99 gain |
+| ---------------------------- | ------------------------ | --------------- | -------- |
+| 310.8.0.0 runtime            | not timed                | 0.236 stops     | 1.11     |
+| 310.9.16 original (preset 1) | about 4.5 ms             | 0.236 stops     | 1.12     |
+| 310.9.16 newest (preset 2)   | about 2.6 ms             | 0.167 stops     | 0.76     |
+
+The original preset reproduces the 310.8 gain: the maps differ by 0.039 stops, the same as two captures of
+one network. The newest network applies a weaker, finer-grained gain (the maps differ from the original's by
+0.16 stops). The red, green and blue gains are the same across all three, so there is no channel swap. The
+scene had no characters, so skin, hair and eyes were not compared.
+
+#### Choosing a runtime build
+
+The default runtime is the `nvngx_dlssnr.dll` in the Streamline folder. Other builds can sit beside it, each
+in its own subfolder with the same file name (for example `Streamline/310.8/nvngx_dlssnr.dll`). When any
+exist, the panel shows a **Runtime Build** combo and `Tuning::runtimeVariant` names the subfolder; empty is
+the default file. Each build is classified on its own (version, SHA-256, validated or not), so an
+unvalidated one still needs developer mode or **Use This Build Anyway**. Changing the choice drains the GPU,
+unloads the running runtime and loads the other one, the same rebuild a retry performs. A choice made
+while NR is off, suspended or waiting for a world takes effect on the next frame that can run it. The
+picker lists each build with its version and verdict, and the Upscaling debug page shows the same table
+under the Streamline DLL list. The devbench status reports `runtimeVariant` and `runtimeBuilds`.
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,

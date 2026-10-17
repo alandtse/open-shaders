@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <unordered_map>
 
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -62,8 +63,21 @@ namespace ShadowCasterManager
 			winrt::com_ptr<ID3D11ShaderResourceView> staticSrv;
 			winrt::com_ptr<ID3D11DepthStencilState> copyDepthState;
 			winrt::com_ptr<ID3D11RasterizerState> copyRasterizerState;
+			winrt::com_ptr<ID3D11Buffer> copyParams;
 			Util::LazyShader<ID3D11VertexShader> copyVS;
 			Util::LazyShader<ID3D11PixelShader> copyPS;
+			// Reprojection warp of a baked tile to the light's current origin.
+			Util::LazyShader<ID3D11ComputeShader> warpCS;
+			Util::LazyShader<ID3D11PixelShader> warpResolvePS;
+			winrt::com_ptr<ID3D11Buffer> warpParams;
+			winrt::com_ptr<ID3D11Buffer> warpResolveParams;
+			struct WarpScratch
+			{
+				winrt::com_ptr<ID3D11Texture2D> texture;
+				winrt::com_ptr<ID3D11UnorderedAccessView> uav;
+				winrt::com_ptr<ID3D11ShaderResourceView> srv;
+			};
+			std::unordered_map<uint32_t, WarpScratch> warpScratch;  ///< keyed by tile edge
 			bool staticReady = false;
 			bool staticFailed = false;
 			DXGI_FORMAT texFormat = DXGI_FORMAT_UNKNOWN;  ///< chosen typeless depth format
@@ -382,6 +396,14 @@ namespace ShadowCasterManager
 			if (FAILED(device->CreateRasterizerState(&rasterizerDesc, s_atlas.copyRasterizerState.put())))
 				return fail("static depth copy rasterizer creation failed");
 			Util::SetResourceName(s_atlas.copyRasterizerState.get(), "SCM::ShadowDepthCopy Rasterizer");
+
+			D3D11_BUFFER_DESC paramsDesc{};
+			paramsDesc.ByteWidth = 16;
+			paramsDesc.Usage = D3D11_USAGE_DEFAULT;
+			paramsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+			if (FAILED(device->CreateBuffer(&paramsDesc, nullptr, s_atlas.copyParams.put())))
+				return fail("static depth copy constant buffer creation failed");
+			Util::SetResourceName(s_atlas.copyParams.get(), "SCM::ShadowDepthCopy Params");
 
 			// Far-depth clear once so never-baked regions read as unshadowed.
 			const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -1104,6 +1126,8 @@ namespace ShadowCasterManager
 	{
 		s_atlas.copyVS.Reset();
 		s_atlas.copyPS.Reset();
+		s_atlas.warpCS.Reset();
+		s_atlas.warpResolvePS.Reset();
 	}
 
 	ID3D11DepthStencilView* StaticAtlasDSV(bool)
@@ -1123,7 +1147,7 @@ namespace ShadowCasterManager
 		s_atlas.context1->ClearView(s_atlas.staticDsv.get(), farDepth, &rect, 1);
 	}
 
-	void CopyStaticTileToLive(int32_t poolSlot)
+	void CopyStaticTileToLive(int32_t poolSlot, float depthScale)
 	{
 		AtlasTileTexels t{};
 		if (!StaticAtlasReady() || !GetSlotTileTexels(poolSlot, t))
@@ -1146,10 +1170,130 @@ namespace ShadowCasterManager
 		context->DSSetShader(nullptr, nullptr, 0);
 		context->GSSetShader(nullptr, nullptr, 0);
 		context->PSSetShader(s_atlas.copyPS.get(), nullptr, 0);
+		const float params[4] = { depthScale, 0.0f, 0.0f, 0.0f };
+		context->UpdateSubresource(s_atlas.copyParams.get(), 0, nullptr, params, 0, 0);
+		auto* paramsBuffer = s_atlas.copyParams.get();
+		context->PSSetConstantBuffers(0, 1, &paramsBuffer);
 		auto* source = s_atlas.staticSrv.get();
 		context->PSSetShaderResources(0, 1, &source);
 		context->Draw(3, 0);
 		context->OMSetRenderTargets(0, nullptr, nullptr);
+	}
+
+	bool WarpStaticTileToLive(int32_t poolSlot, const float* invBake, const float* liveProj, float bakeRadius, float liveRadius, uint32_t isOmni)
+	{
+		AtlasTileTexels t{};
+		if (!StaticAtlasReady() || !GetSlotTileTexels(poolSlot, t) || bakeRadius <= 0.0f || liveRadius <= 0.0f)
+			return false;
+		auto* device = globals::d3d::device;
+		auto* context = globals::d3d::context;
+		if (!device || !context)
+			return false;
+		constexpr auto shaderPath = L"Data\\Shaders\\LightLimitFix\\ShadowDepthWarp.hlsl";
+		auto* cs = s_atlas.warpCS.Get(shaderPath, { { "CSHADER", "" } }, "cs_5_0", "main", "SCM::ShadowDepthWarp CS");
+		auto* ps = s_atlas.warpResolvePS.Get(shaderPath, { { "PSHADER", "" } }, "ps_5_0", "main", "SCM::ShadowDepthWarp Resolve PS");
+		if (!cs || !ps)
+			return false;
+
+		auto& scratch = s_atlas.warpScratch[t.size];
+		if (!scratch.texture) {
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = desc.Height = t.size;
+			desc.MipLevels = desc.ArraySize = 1;
+			desc.Format = DXGI_FORMAT_R32_UINT;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, scratch.texture.put())) ||
+				FAILED(device->CreateUnorderedAccessView(scratch.texture.get(), nullptr, scratch.uav.put())) ||
+				FAILED(device->CreateShaderResourceView(scratch.texture.get(), nullptr, scratch.srv.put()))) {
+				s_atlas.warpScratch.erase(t.size);
+				return false;
+			}
+			Util::SetResourceName(scratch.texture.get(), "SCM::ShadowDepthWarp Scratch");
+			Util::SetResourceName(scratch.uav.get(), "SCM::ShadowDepthWarp Scratch UAV");
+			Util::SetResourceName(scratch.srv.get(), "SCM::ShadowDepthWarp Scratch SRV");
+		}
+		D3D11_BUFFER_DESC bd{};
+		bd.Usage = D3D11_USAGE_DEFAULT;
+		bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		if (!s_atlas.warpParams) {
+			bd.ByteWidth = 160;
+			if (FAILED(device->CreateBuffer(&bd, nullptr, s_atlas.warpParams.put())))
+				return false;
+			Util::SetResourceName(s_atlas.warpParams.get(), "SCM::ShadowDepthWarp Params");
+		}
+		if (!s_atlas.warpResolveParams) {
+			bd.ByteWidth = 16;
+			if (FAILED(device->CreateBuffer(&bd, nullptr, s_atlas.warpResolveParams.put())))
+				return false;
+			Util::SetResourceName(s_atlas.warpResolveParams.get(), "SCM::ShadowDepthWarp Resolve Params");
+		}
+
+		CS_GPU_PASS("SCM::Render::StaticWarp");
+		const UINT clearValue[4] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
+		context->ClearUnorderedAccessViewUint(scratch.uav.get(), clearValue);
+
+		struct WarpParamsCB
+		{
+			float invBake[16];
+			float liveProj[16];
+			uint32_t srcX, srcY, tileSize, isOmni;
+			float bakeRadius, liveRadius, pad[2];
+		} cb{};
+		std::memcpy(cb.invBake, invBake, sizeof(cb.invBake));
+		std::memcpy(cb.liveProj, liveProj, sizeof(cb.liveProj));
+		cb.srcX = t.x;
+		cb.srcY = t.y;
+		cb.tileSize = t.size;
+		cb.isOmni = isOmni;
+		cb.bakeRadius = bakeRadius;
+		cb.liveRadius = liveRadius;
+		context->UpdateSubresource(s_atlas.warpParams.get(), 0, nullptr, &cb, 0, 0);
+
+		auto* paramsBuffer = s_atlas.warpParams.get();
+		auto* staticSrv = s_atlas.staticSrv.get();
+		auto* scratchUav = scratch.uav.get();
+		context->CSSetShader(cs, nullptr, 0);
+		context->CSSetConstantBuffers(0, 1, &paramsBuffer);
+		context->CSSetShaderResources(0, 1, &staticSrv);
+		context->CSSetUnorderedAccessViews(0, 1, &scratchUav, nullptr);
+		const UINT groups = (t.size + 7u) / 8u;
+		context->Dispatch(groups, groups, 1);
+		ID3D11UnorderedAccessView* nullUav = nullptr;
+		ID3D11ShaderResourceView* nullSrv = nullptr;
+		ID3D11Buffer* nullCb = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
+		context->CSSetShaderResources(0, 1, &nullSrv);
+		context->CSSetConstantBuffers(0, 1, &nullCb);
+		context->CSSetShader(nullptr, nullptr, 0);
+
+		const uint32_t resolve[4] = { t.x, t.y, t.size, 0 };
+		context->UpdateSubresource(s_atlas.warpResolveParams.get(), 0, nullptr, resolve, 0, 0);
+		Util::FullscreenPassScope savedState(context);
+		context->OMSetRenderTargets(0, nullptr, s_atlas.dsv.get());
+		context->OMSetDepthStencilState(s_atlas.copyDepthState.get(), 0);
+		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		context->RSSetState(s_atlas.copyRasterizerState.get());
+		const D3D11_VIEWPORT viewport{ static_cast<float>(t.x), static_cast<float>(t.y),
+			static_cast<float>(t.size), static_cast<float>(t.size), 0.0f, 1.0f };
+		context->RSSetViewports(1, &viewport);
+		context->IASetInputLayout(nullptr);
+		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		context->VSSetShader(s_atlas.copyVS.get(), nullptr, 0);
+		context->HSSetShader(nullptr, nullptr, 0);
+		context->DSSetShader(nullptr, nullptr, 0);
+		context->GSSetShader(nullptr, nullptr, 0);
+		context->PSSetShader(ps, nullptr, 0);
+		auto* resolveBuffer = s_atlas.warpResolveParams.get();
+		context->PSSetConstantBuffers(0, 1, &resolveBuffer);
+		auto* warpedSrv = scratch.srv.get();
+		context->PSSetShaderResources(0, 1, &warpedSrv);
+		context->Draw(3, 0);
+		ID3D11ShaderResourceView* nullPsSrv = nullptr;
+		context->PSSetShaderResources(0, 1, &nullPsSrv);
+		context->OMSetRenderTargets(0, nullptr, nullptr);
+		return true;
 	}
 
 	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut)

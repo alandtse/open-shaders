@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace NR
 {
@@ -27,8 +28,10 @@ namespace NR
 
 	/** @brief Major version of the nvngx_dlssnr.dll builds this pass accepts. */
 	inline constexpr uint32_t kRequiredRuntimeMajor = 310;
-	/** @brief Minor version of the nvngx_dlssnr.dll builds this pass accepts. */
+	/** @brief Minor version of the validated nvngx_dlssnr.dll builds. */
 	inline constexpr uint32_t kRequiredRuntimeMinor = 8;
+	/** @brief First minor version of the 310.9 line, which is accepted but never validated. */
+	inline constexpr uint32_t kNewerRuntimeMinor = 9;
 	/** @brief Name of the runtime file, resolved inside Streamline's plugin directory. */
 	inline constexpr const char* kRuntimeFileName = "nvngx_dlssnr.dll";
 	/** @brief Leading digest characters echoed back when a runtime build is refused. */
@@ -43,22 +46,26 @@ namespace NR
 		~TerminationSentinel() { processTerminating.store(true, std::memory_order_relaxed); }
 	};
 
-	/** @brief Reason a runtime version cannot be used, or empty when it is the accepted 310.8.x. */
+	/** @brief Reason a runtime version cannot be used, or empty when it is an accepted 310.8.x or 310.9.x. */
 	template <class V>
 	std::string UnsupportedRuntimeReason(const std::optional<V>& version, std::string_view directory)
 	{
 		if (!version)
 			return std::format("nvngx_dlssnr.dll in {} has no version information", directory);
-		if (version->major() != kRequiredRuntimeMajor || version->minor() != kRequiredRuntimeMinor)
-			return std::format("unsupported runtime version {} (needs {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor);
+		if (version->major() != kRequiredRuntimeMajor || (version->minor() != kRequiredRuntimeMinor && version->minor() != kNewerRuntimeMinor))
+			return std::format("unsupported runtime version {} (needs {}.{} or {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor, kRequiredRuntimeMajor, kNewerRuntimeMinor);
 		return {};
 	}
 
-	// SHA-256 of the nvngx_dlssnr.dll builds (310.8 DVS Production, 310.8.0.0 test) whose channel
-	// order was verified in game. A build outside this list is refused, not rendered on trust.
-	inline constexpr std::array<std::string_view, 2> kValidatedRuntimeSha256{
+	/** @brief `DLSSNR.Hint.Render.Preset` value for each Tuning::modelPreset: 1 the original network, 2 the newest. */
+	inline constexpr std::array<uint32_t, Tuning::kMaxModelPreset + 1> kRuntimeModelPreset{ 1u, 2u };
+
+	// SHA-256 of the nvngx_dlssnr.dll builds whose channel order was verified in game. A build
+	// outside this list is refused, not rendered on trust.
+	inline constexpr std::array<std::string_view, 3> kValidatedRuntimeSha256{
 		"8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206",
 		"E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E",
+		"2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F",
 	};
 
 	/** @brief True when a SHA-256 hex digest names a validated build; hex case is ignored. */
@@ -87,6 +94,8 @@ namespace NR
 		std::string version;
 		/** @brief Plain-language reason it cannot be used; empty when it is ready. */
 		std::string reason;
+		/** @brief True for a 310.9 or newer accepted build, which ships the networks Tuning::modelPreset selects between. */
+		bool modelPresets = false;
 
 		/** @brief True when the runtime is the validated build the pass accepts. */
 		[[nodiscard]] bool Ready() const { return state == State::kReady; }
@@ -120,14 +129,32 @@ namespace NR
 		const auto rejected = UnsupportedRuntimeReason(version, directory);
 		if (!rejected.empty())
 			return { RuntimeAvailability::State::kUnsupportedVersion, version ? version->string(".") : std::string{}, rejected };
+		const bool modelPresets = version->minor() >= kNewerRuntimeMinor;
 		if (!IsValidatedRuntimeHash(digest)) {
 			return { RuntimeAvailability::State::kUnvalidatedBuild, version->string("."),
 				std::format("unsupported runtime build (SHA-256 {}...); Neural Rendering is validated with specific {}.{} builds",
 					digest.empty() ? std::string_view{ "unavailable" } : digest.substr(0, kRuntimeDigestPrefix),
-					kRequiredRuntimeMajor, kRequiredRuntimeMinor) };
+					kRequiredRuntimeMajor, kRequiredRuntimeMinor),
+				modelPresets };
 		}
-		return { RuntimeAvailability::State::kReady, version->string("."), {} };
+		return { RuntimeAvailability::State::kReady, version->string("."), {}, modelPresets };
 	}
+
+	/** @brief Directory holding a runtime variant: the plugin directory itself for the default, else its subfolder. */
+	inline std::filesystem::path RuntimeVariantDirectory(const std::filesystem::path& directory, std::string_view variant)
+	{
+		return IsValidRuntimeVariant(variant) ? directory / std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(variant.data()), variant.size())) : directory;
+	}
+
+	/** @brief Name of a runtime subfolder as the UTF-8 string settings and devbench carry. */
+	inline std::string RuntimeVariantName(const std::filesystem::path& folder)
+	{
+		const auto utf8 = folder.filename().u8string();
+		return { reinterpret_cast<const char*>(utf8.data()), utf8.size() };
+	}
+
+	/** @brief Names of the subfolders of a plugin directory that hold their own runtime file, sorted. */
+	std::vector<std::string> DiscoverRuntimeVariants(const std::filesystem::path& directory);
 
 	/**
 	 * @brief Verdict for the runtime in a plugin directory.

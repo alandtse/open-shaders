@@ -43,6 +43,13 @@ namespace ShadowCasterManager
 		/// Raw last-drained per-slot tile maximum (accumulator units,
 		/// 1024==1.0 demand); unfiltered -- only filter is the consumer's sample streak.
 		std::array<uint32_t, kMaxShadowDemandSlots> maxLatest{};
+		/// Per-slot demand weighted by the light's own shadow test, summed over the taps (lit area x brightness).
+		std::array<uint32_t, kMaxShadowDemandSlots> litSum{};
+		/// Per-slot OR of LightLimitFixLitCap::Reason bits.
+		std::array<uint32_t, kMaxShadowDemandSlots> litReason{};
+		/// Best lit tap per slot and its tile id; recorded only while Shadow Demand Instrumentation is on.
+		std::array<uint32_t, kMaxShadowDemandSlots> litLatest{};
+		std::array<uint32_t, kMaxShadowDemandSlots> litTile{};
 		/// False until a reading has landed; every slot must read as fully visible
 		/// until then, since "never measured" is not "measured absent".
 		bool initialized = false;
@@ -203,6 +210,14 @@ namespace ShadowCasterManager
 	// -------------------------------------------------------------------------
 	// Settings
 	// -------------------------------------------------------------------------
+	/// How a flickering light's cached static shadow follows the light's live origin.
+	enum class FlickerShadowModeEnum : int32_t
+	{
+		Live,    ///< Rebake when the light drifts past the tolerance
+		Pinned,  ///< Hold the shadow camera at the bake origin
+		Warped   ///< Reproject the cached depth to the live origin on the GPU
+	};
+
 	struct Settings
 	{
 		/// Enables shadow caster scheduler (requires restart).
@@ -290,6 +305,30 @@ namespace ShadowCasterManager
 		/// candidates, instead of always spending the full budget -- see
 		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition.
 		bool RedrawDueGateEnabled = true;
+
+		/// Holds a light at a quarter-size tile class when the GPU measures it as lit on screen far less
+		/// than the best-lit light.
+		bool DemandTileCap = true;
+
+		// --- Flicker-tolerant shadow caching ---
+
+		/// Keeps a light's baked static shadow across flame-scale position and radius drift
+		/// instead of rebaking, so flickering lights stop paying for static redraws.
+		bool TolerantSplitCache = true;
+
+		/// How the cached static shadow follows a flickering light; ignored when TolerantSplitCache is off.
+		FlickerShadowModeEnum FlickerShadowMode = FlickerShadowModeEnum::Warped;
+
+		/// Skips the GPU reprojection for a light whose shadow edge would move under a pixel
+		/// on screen, or that is off screen, and copies the cached depth instead.
+		bool WarpVisibilityGate = true;
+
+		/// Skips the GPU reprojection for a light the GPU measures as unseen for many samples.
+		bool WarpZeroDemandSkip = true;
+
+		/// Scores spot lights by the frustum they light instead of by their emitter, and wakes
+		/// them for the player only inside that frustum.
+		bool SpotLitRegion = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -299,6 +338,9 @@ namespace ShadowCasterManager
 
 	NLOHMANN_JSON_SERIALIZE_ENUM(BudgetModeEnum,
 		{ { BudgetModeEnum::Auto, 0 }, { BudgetModeEnum::Manual, 1 }, { BudgetModeEnum::Formula, 2 } })
+
+	NLOHMANN_JSON_SERIALIZE_ENUM(FlickerShadowModeEnum,
+		{ { FlickerShadowModeEnum::Live, 0 }, { FlickerShadowModeEnum::Pinned, 1 }, { FlickerShadowModeEnum::Warped, 2 } })
 
 	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 		Settings,
@@ -326,7 +368,13 @@ namespace ShadowCasterManager
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
 		SkipZeroDemandRedraw,
-		RedrawDueGateEnabled)
+		RedrawDueGateEnabled,
+		DemandTileCap,
+		TolerantSplitCache,
+		FlickerShadowMode,
+		WarpVisibilityGate,
+		WarpZeroDemandSkip,
+		SpotLitRegion)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -436,6 +484,9 @@ namespace ShadowCasterManager
 		/// ShadowDemandSample::sampleSerial the streak last advanced on.
 		uint32_t lastDemandSerial{ 0 };
 
+		float litSmoothed{ 0.0f };
+		bool litCapped{ false };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -459,6 +510,8 @@ namespace ShadowCasterManager
 			lastScore = 0.0;
 			untouchedSamples = 0;
 			lastDemandSerial = 0;
+			litSmoothed = 0.0f;
+			litCapped = false;
 			// Slot-reuse hazard: a stale promoteStreak would let a new
 			// occupant promote on its first eligible frame.
 			promoteStreak = 0;
@@ -629,6 +682,27 @@ namespace ShadowCasterManager
 		/// Per non-chosen light: (light pointer, demotion-reason byte). Name via SchedReasonName().
 		std::vector<std::pair<uintptr_t, uint8_t>> demoted;
 
+		/// Independent visibility audit per candidate light: the engine verdict next to a
+		/// sphere-versus-camera-frustum test computed from the published view-projection.
+		struct LightVisibility
+		{
+			uintptr_t light = 0;
+			bool chosen = false;
+			bool engineCulled = false;           ///< UpdateCamera rejected it (frustum, LOD or other)
+			uint32_t frustrumCull = 0;           ///< raw engine flag after UpdateCamera; 0xff for every rejection
+			float lodDimmer = 1.0f;              ///< engine LOD fade multiplier
+			float distance = 0.0f;               ///< light centre to the nearest eye
+			float radius = 0.0f;                 ///< light radius
+			bool ownInFrustum = false;           ///< sphere touches any eye's left/right/top/bottom planes
+			bool cameraHold = false;             ///< kept by the exit-streak hysteresis after leaving view
+			bool hidden = false;                 ///< engine rejected it because the NiLight is hidden
+			bool shadowDistanceCulled = false;   ///< engine rejected it past the shadow distance
+			bool frustumCulled = false;          ///< engine sphere-versus-frustum test failed
+			std::string name;                    ///< NiLight node name
+			float x = 0.0f, y = 0.0f, z = 0.0f;  ///< light centre, camera-relative (nearest eye)
+		};
+		std::vector<LightVisibility> visibility;
+
 		/// Per occupied point-light pool slot: tile classing and atlas
 		/// placement, for headless assertion of the variable-resolution path.
 		struct SlotState
@@ -641,6 +715,14 @@ namespace ShadowCasterManager
 			float budgetScale = 1.0f;
 			float pendingScale = 1.0f;
 			float renderedScale = 1.0f;
+			uint32_t demandMax = 0;
+			uint32_t untouchedSamples = 0;
+			uint32_t litMax = 0;   ///< needs Shadow Demand Instrumentation
+			uint32_t litTile = 0;  ///< needs Shadow Demand Instrumentation
+			uint32_t litSum = 0;
+			uint32_t litReason = 0;
+			float litSmoothed = 0.0f;
+			bool litCapped = false;
 			uint32_t tileX = 0;  ///< atlas texels; tileSize 0 = no atlas tile
 			uint32_t tileY = 0;
 			uint32_t tileSize = 0;
@@ -733,6 +815,14 @@ namespace ShadowCasterManager
 		/// Converted-light engine re-enables run versus skipped as unchanged.
 		uint64_t convertReEnableRun = 0;
 		uint64_t convertReEnableSkipped = 0;
+		uint32_t originPinnedLights = 0;
+		uint32_t warpsRun = 0;
+		uint32_t warpsSkippedSubPixel = 0;
+		uint32_t warpsSkippedOffscreen = 0;
+		uint32_t warpsSkippedNoDemand = 0;
+		uint64_t convertReEnableToleranceSkipped = 0;  ///< subset of convertReEnableSkipped taken on flicker-scale drift
+		uint32_t convertedLights = 0;                  ///< lights currently converted to normal lights
+		uint32_t convertedStrictLights = 0;            ///< of those, lights using strict portal membership
 
 		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
 		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
@@ -756,6 +846,8 @@ namespace ShadowCasterManager
 		uint64_t backOnlyAppendTotal = 0;
 		/// Wholly-behind casters dropped because the light has no back hemisphere.
 		uint64_t hemisphereDropTotal = 0;
+		uint64_t passlessCasterSkipTotal = 0;      ///< casters skipped because the engine emits no shadow-map pass for them
+		uint64_t passlessCasterSkipByReason[5]{};  ///< no-shadow shader, refraction, alpha blend, faded
 
 		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose
 		/// valid static bake saw no movers) -- this pass and cumulative, the direct measure of the early-out's savings.
@@ -820,12 +912,31 @@ namespace ShadowCasterManager
 	void SetPinnedShadow(uintptr_t lightKey, bool pinned);
 	void SetPinnedConvert(uintptr_t lightKey, bool pinned);
 
+	/// Whether the pool light's shadow origin is pinned at its bake pose this frame, and how far
+	/// the live light has drifted from it. False when the light renders at its live pose.
+	bool GetOriginPinState(uintptr_t lightKey, float& driftUnitsOut);
+	/// How a cached shadow follows a flickering light: 0 live origin with the plain static copy,
+	/// 1 shadow origin pinned at the bake pose, 2 cached tile reprojected to the live origin.
+	/// Needs the tolerant split cache.
+	int GetFlickerMode();
+	/// The engine's world-to-light matrix for shadow descriptor 0 and its inverse (row-major, 16 floats each).
+	bool GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut);
+	/// World position of shadow descriptor 0's camera node: the origin the light's tile is rendered from.
+	bool GetShadowCameraPos(RE::BSShadowLight* light, RE::NiPoint3& posOut);
 	uintptr_t GetSoloLight();
 	void SetSoloLight(uintptr_t lightKey);
+
+	/// Shader resource view of the shadow atlas, null while the atlas is inactive.
+	ID3D11ShaderResourceView* AtlasSRV();
 
 	/// Mouse-hover key for the per-frame 3D light highlight pulse.
 	uintptr_t GetHoveredLight();
 	void SetHoveredLight(uintptr_t lightKey);
+
+	/// Light key forced to bright magenta, set from devbench so a capture shows every pixel one
+	/// light reaches. 0 clears it.
+	uintptr_t GetDebugHighlightLight();
+	void SetDebugHighlightLight(uintptr_t lightKey);
 
 	/// Highlights lights selected by UI group hover.
 	void ClearHighlight();

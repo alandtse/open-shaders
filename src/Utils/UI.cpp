@@ -12,6 +12,7 @@
 #include "SceneSettingsManager.h"
 #include "SceneSettingsUIHooks.h"
 #include "ShaderCache.h"
+#include "TabLabel.h"
 
 #ifndef DIRECTINPUT_VERSION
 #	define DIRECTINPUT_VERSION 0x0800
@@ -2198,16 +2199,38 @@ namespace Util
 		}
 	}
 
+	bool SelectTabByLabel(std::string_view label)
+	{
+		ImGuiContext& context = *ImGui::GetCurrentContext();
+		for (int i = 0; i < context.TabBars.GetMapSize(); ++i) {
+			ImGuiTabBar* bar = context.TabBars.TryGetMapData(i);
+			if (!bar || bar->PrevFrameVisible < context.FrameCount - 1)
+				continue;
+			for (ImGuiTabItem& tab : bar->Tabs) {
+				if (TabLabelMatches(ImGui::TabBarGetTabName(bar, &tab), label)) {
+					bar->NextSelectedTabId = tab.ID;
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	void DrawOpenFolderSelectable(const char* label, const wchar_t* pluginDir)
+	{
+		if (ImGui::Selectable(label)) {
+			auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(pluginDir);
+			ShellExecuteW(nullptr, L"open", realPath.empty() ? pluginDir : realPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+		}
+	}
+
 	void DrawDllVersionTable(
 		const char* label,
 		const wchar_t* pluginDir,
 		const std::vector<std::pair<std::string, std::string>>& dllVersions,
 		const char* tableId)
 	{
-		if (ImGui::Selectable(label)) {
-			auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(pluginDir);
-			ShellExecuteW(nullptr, L"open", realPath.empty() ? pluginDir : realPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-		}
+		DrawOpenFolderSelectable(label, pluginDir);
 		std::vector<std::string> headers = { T("ui.table.dll_name", "DLL Name"), T("ui.table.version", "Version") };
 		std::vector<std::vector<std::string>> rows;
 		rows.reserve(dllVersions.size());

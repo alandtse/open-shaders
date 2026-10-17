@@ -10,9 +10,11 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 /** @brief Applies one native-resolution NGX Neural Rendering pass before upscaling. */
 struct NeuralRendering
@@ -87,7 +89,7 @@ struct NeuralRendering
 	/** @brief Invalidates both temporal histories on loading or setting changes. */
 	void ResetHistory();
 	/** @brief Discards history when NR or the world is inactive, and mirrors the crop controls for the main thread. */
-	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified);
+	void Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& runtimeVariant);
 	/**
 	 * @brief Republishes the tracked actor's per-eye crop; runs on the main thread.
 	 *        Crop pixels are NR's render pixels, not the screen's, and the hook measures nothing
@@ -117,8 +119,18 @@ struct NeuralRendering
 
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
-	/** @brief Cached verdict for the runtime on disk: whether NR can start, and why not when it cannot. */
+	/** @brief Cached verdict for the selected runtime build on disk: whether NR can start, and why not when it cannot. */
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
+	/** @brief Selected runtime subfolder, empty for the default file; safe from any thread. */
+	std::string GetRuntimeVariant() const;
+	/** @brief One nvngx_dlssnr.dll on disk and its verdict; an empty variant is the file in the Streamline folder itself. */
+	struct RuntimeBuild
+	{
+		std::string variant;
+		NR::RuntimeAvailability availability;
+	};
+	/** @brief The default runtime file first, then each subfolder build; the folder scan repeats at most once a second. */
+	std::vector<RuntimeBuild> GetRuntimeBuilds() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
 	Util::Region::StereoRegion GetRegionOfInterest() const;
 	/** @brief Which sources chose the crop of the last applied frame, safe from any thread. */
@@ -161,6 +173,12 @@ private:
 	std::atomic_bool regionGroup = false;
 	/** @brief Mirrors the tuning's allowUnverifiedRuntime for the status text, which has no tuning at hand. */
 	std::atomic_bool allowUnverifiedRuntime = false;
+	/** @brief Mirrors the tuning's runtimeVariant; a change sets swapRuntime so the next hook call reloads the runtime. */
+	std::string runtimeVariant;
+	mutable std::mutex variantMutex;
+	mutable std::vector<std::string> variantList;
+	mutable std::chrono::steady_clock::time_point variantScanTime;
+	std::atomic_bool swapRuntime = false;
 	/** @brief Which sources chose the crop of the last applied frame; published for the diagnostics. */
 	std::atomic<uint32_t> regionSource{ static_cast<uint32_t>(RegionSource::kNone) };
 	/**

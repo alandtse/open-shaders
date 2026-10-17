@@ -4,11 +4,37 @@
 #include "MaterialStrength.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace NR
 {
+	/** @brief Longest runtime subfolder name accepted. */
+	inline constexpr size_t kMaxRuntimeVariantLength = 64;
+
+	/**
+	 * @brief True for the name of one subfolder of the runtime directory that Windows resolves to a folder:
+	 *        no separators, drive, wildcard or control character, not a relative step, no trailing dot or
+	 *        space, not a device name such as CON or COM1, and at most kMaxRuntimeVariantLength bytes.
+	 */
+	inline bool IsValidRuntimeVariant(std::string_view name)
+	{
+		if (name.empty() || name.size() > kMaxRuntimeVariantLength || name == "." || name == ".." || name.back() == '.' || name.back() == ' ')
+			return false;
+		if (name.find_first_of("\\/:*?\"<>|") != std::string_view::npos)
+			return false;
+		if (std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 0x20; }))
+			return false;
+		std::string stem(name.substr(0, name.find('.')));
+		std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+		if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL")
+			return false;
+		return !(stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem[3] >= '1' && stem[3] <= '9');
+	}
+
 	/** @brief Appearance and evaluation-scope controls for the full-resolution Feature 18 pass. */
 	struct Tuning
 	{
@@ -18,6 +44,7 @@ namespace NR
 		static constexpr float kMinModelScale = 0.25f, kMaxModelScale = 1.0f;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
 		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
+		static constexpr uint32_t kMaxModelPreset = 1;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
@@ -60,8 +87,13 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
-		/** @brief Loads a 310.8.x runtime outside the pinned digests, without developer mode; its output is unverified. */
+		/** @brief Loads a 310.8.x or 310.9.x runtime outside the pinned digests, without developer mode; its output is unverified. */
 		bool allowUnverifiedRuntime = false;
+		/**
+		 * @brief Subfolder of the runtime directory whose nvngx_dlssnr.dll to load; empty is the file in the
+		 *        directory itself. Changing it unloads the runtime and loads the other build.
+		 */
+		std::string runtimeVariant;
 		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
 		 *        strength decides how strongly NR shows there. On exactly when some strength is below
@@ -98,6 +130,11 @@ namespace NR
 		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
+		/**
+		 * @brief Which network a 310.9 or newer runtime creates: 0 the original 310.8 network, 1 the
+		 *        newest it ships (the faster one). A 310.8 runtime has one network and ignores it.
+		 */
+		uint32_t modelPreset = 0;
 		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
 		bool modelGuidedUpsample = true;
 		/**
@@ -188,6 +225,9 @@ namespace NR
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
+			modelPreset = std::min(modelPreset, kMaxModelPreset);
+			if (!IsValidRuntimeVariant(runtimeVariant))
+				runtimeVariant.clear();
 			modelScale = std::isfinite(modelScale) ? std::clamp(modelScale, kMinModelScale, kMaxModelScale) : kMaxModelScale;
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a

@@ -61,6 +61,8 @@ add_executable(cpp_tests
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_llf_sanitize.cpp
+    test_litregion.cpp
+    test_litcap.cpp
     test_passchainguard.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
@@ -91,6 +93,7 @@ add_executable(cpp_tests
 	test_region.cpp
 	test_bound_points.cpp
 	test_region_overlay.cpp
+	test_tablabel.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp

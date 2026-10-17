@@ -894,8 +894,8 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 	float3 R = reflect(viewDirection, WaterParams.y * normal + float3(0, 0, 1 - WaterParams.y));
 
 #			if defined(DYNAMIC_CUBEMAPS)
-	if (SharedData::InInterior)
-		return DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz * SharedData::csUtilitySettings.waterReflectionAmount;
+	// [flatten] keeps fxc from raising X4000 on this early return
+	[flatten] if (SharedData::InInterior) return DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz * SharedData::csUtilitySettings.waterReflectionAmount;
 
 	float3 specularIrradiance = 0.0;
 	if (skylightingSpecular < 1.0)

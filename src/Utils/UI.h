@@ -1937,4 +1937,23 @@ namespace Util
 		const wchar_t* pluginDir,
 		const std::vector<std::pair<std::string, std::string>>& dllVersions,
 		const char* tableId);
+
+	/**
+	 * Selects a tab of any tab bar drawn this frame or the one before, without a click.
+	 * The label matches as Util::TabLabelMatches describes. The tab takes effect on the next frame,
+	 * so a tab inside another tab appears only after that one is selected; call it again until it
+	 * returns true.
+	 *
+	 * @param label  Visible text or "###" id of the tab.
+	 * @return true when a matching tab was found and queued for selection.
+	 */
+	bool SelectTabByLabel(std::string_view label);
+
+	/**
+	 * Shows a selectable label that opens the given Data-relative directory in the file explorer when clicked.
+	 *
+	 * @param label  Display label for the clickable folder link.
+	 * @param pluginDir  Wide string path to the directory (opened on click).
+	 */
+	void DrawOpenFolderSelectable(const char* label, const wchar_t* pluginDir);
 }  // namespace Util

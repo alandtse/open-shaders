@@ -75,6 +75,9 @@ def stage_merged_shaders(stage: Path) -> None:
 # for them at all on the other (verified against live SE and VR installs).
 RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 
+# Must match Util::CacheInvalidation::BuildCompileFlagsTag(false, false): the shipped cache is built with default flags.
+DEFAULT_COMPILE_FLAGS_TAG = "pp=0;afc=0"
+
 # Features whose required companion DLL is not bundled with the AIO.
 DEFAULT_DISABLED_COMPANION_FEATURES = {"HorizonFix"}
 
@@ -464,7 +467,7 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     disabled_stems (default-disabled stages plus required external dependencies) marks
     which of those sections a default install actually loads with Enabled=false."""
     disabled_stems = disabled_stems or set()
-    lines = ["[Cache]", f"PluginVersion = {plugin_version}", "", ""]
+    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
         if ini_path.stem in RUNTIME_EXCLUDED_FEATURES[runtime]:

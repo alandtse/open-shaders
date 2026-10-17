@@ -139,19 +139,88 @@ TEST_CASE("FrameResetReasons covers the request, the first frame and a frame gap
 	REQUIRE(NR::Diagnostics::FrameResetReasons(true, UINT32_MAX, 100) == (Requested | FirstFrame));
 }
 
-TEST_CASE("Only a 310.8 runtime is accepted", "[nr]")
+TEST_CASE("Only a 310.8 or 310.9 runtime is accepted", "[nr]")
 {
-	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ FakeVersion{ 310, 8 } }, "C:\\game").empty());
-	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ FakeVersion{ 310, 8 } }, "").empty());
+	for (const auto& accepted : { FakeVersion{ 310, 8 }, FakeVersion{ 310, 9 } }) {
+		REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ accepted }, "C:\\game").empty());
+		REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ accepted }, "").empty());
+	}
 
-	for (const auto& rejected : { FakeVersion{ 310, 7 }, FakeVersion{ 310, 9 }, FakeVersion{ 311, 8 }, FakeVersion{ 309, 8 } }) {
+	for (const auto& rejected : { FakeVersion{ 310, 7 }, FakeVersion{ 310, 10 }, FakeVersion{ 311, 8 }, FakeVersion{ 309, 8 } }) {
 		const auto reason = NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{ rejected }, "C:\\game");
 		REQUIRE_FALSE(reason.empty());
-		REQUIRE(reason == std::format("unsupported runtime version {} (needs 310.8)", rejected.string(".")));
+		REQUIRE(reason == std::format("unsupported runtime version {} (needs 310.8 or 310.9)", rejected.string(".")));
 	}
 
 	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{}, "C:\\game") ==
 			"nvngx_dlssnr.dll in C:\\game has no version information");
+}
+
+TEST_CASE("A runtime variant is one subfolder name", "[nr]")
+{
+	for (const auto name : { "310.8", "310.9.16-compat", "a b", "x", "CONSOLE", "com10", "caf\xC3\xA9" })
+		REQUIRE(NR::IsValidRuntimeVariant(name));
+	for (const auto name : { "", ".", "..", "a/b", "a\\b", "..\\x", "C:", "C:x", "\\\\srv\\x", "a.", "a ", "CON", "con.txt", "NUL", "aux", "PRN.x", "COM1", "lpt9", "a*", "a?b", "a<b", "a|b", "a\"b", "a\tb" })
+		REQUIRE_FALSE(NR::IsValidRuntimeVariant(name));
+	REQUIRE(NR::IsValidRuntimeVariant(std::string(NR::kMaxRuntimeVariantLength, 'x')));
+	REQUIRE_FALSE(NR::IsValidRuntimeVariant(std::string(NR::kMaxRuntimeVariantLength + 1, 'x')));
+
+	const std::filesystem::path root = "C:\\game\\Streamline";
+	REQUIRE(NR::RuntimeVariantDirectory(root, "") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "310.8") == root / "310.8");
+	REQUIRE(NR::RuntimeVariantDirectory(root, "..") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "..\\other") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "CON") == root);
+
+	const std::string accented = "caf\xC3\xA9";
+	REQUIRE(NR::RuntimeVariantName(NR::RuntimeVariantDirectory(root, accented)) == accented);
+
+	NR::Tuning tuning;
+	tuning.runtimeVariant = "..\\other";
+	tuning.Sanitize();
+	REQUIRE(tuning.runtimeVariant.empty());
+	tuning.runtimeVariant = "310.8";
+	tuning.Sanitize();
+	REQUIRE(tuning.runtimeVariant == "310.8");
+}
+
+TEST_CASE("Only an accepted 310.9 or newer runtime has model presets", "[nr]")
+{
+	const auto classify = [](uint32_t minor) {
+		return NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, minor } }, NR::kValidatedRuntimeSha256[2], "C:\\game");
+	};
+	REQUIRE(classify(9).modelPresets);
+	REQUIRE_FALSE(classify(8).modelPresets);
+	REQUIRE_FALSE(classify(10).modelPresets);
+	REQUIRE_FALSE(NR::ClassifyRuntime(false, std::optional<FakeVersion>{}, {}, "C:\\game").modelPresets);
+	REQUIRE(NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, std::string(64, '0'), "C:\\game").modelPresets);
+}
+
+TEST_CASE("DecideFrame rebuilds for a requested runtime swap only when it can run", "[nr]")
+{
+	auto swapping = RunningFrame(10);
+	swapping.swapRequested = true;
+	REQUIRE(NR::DecideFrame(swapping) == NR::FrameAction::RebuildThenRun);
+
+	// The request outlives the frames that cannot act on it.
+	auto disabled = swapping;
+	disabled.enabled = false;
+	REQUIRE(NR::DecideFrame(disabled) == NR::FrameAction::ReleasePassResources);
+	auto suspended = swapping;
+	suspended.suspended = true;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+	auto noWorld = swapping;
+	noWorld.worldRendered = false;
+	REQUIRE(NR::DecideFrame(noWorld) == NR::FrameAction::SkipNoWorld);
+	auto duplicate = swapping;
+	duplicate.lastFrame = duplicate.frameCount;
+	REQUIRE(NR::DecideFrame(duplicate) == NR::FrameAction::SkipDuplicate);
+	auto uninitialized = swapping;
+	uninitialized.ready = false;
+	REQUIRE(NR::DecideFrame(uninitialized) == NR::FrameAction::InitializeThenRun);
+	auto latched = swapping;
+	latched.failed = true;
+	REQUIRE(NR::DecideFrame(latched) == NR::FrameAction::SkipLatched);
 }
 
 TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
@@ -168,10 +237,16 @@ TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
 	REQUIRE(missing.reason == "nvngx_dlssnr.dll not found in C:\\game");
 
 	// A version the pass does not accept is refused by version, even for a pinned build.
-	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, validated, "C:\\game");
+	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 10 } }, validated, "C:\\game");
 	REQUIRE(versioned.state == RuntimeAvailability::State::kUnsupportedVersion);
-	REQUIRE(versioned.version == "310.9.0");
-	REQUIRE(versioned.reason == "unsupported runtime version 310.9.0 (needs 310.8)");
+	REQUIRE(versioned.version == "310.10.0");
+	REQUIRE(versioned.reason == "unsupported runtime version 310.10.0 (needs 310.8 or 310.9)");
+
+	const auto newer = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, std::string(64, '0'), "C:\\game");
+	REQUIRE(newer.state == RuntimeAvailability::State::kUnvalidatedBuild);
+
+	const auto pinned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, NR::kValidatedRuntimeSha256[2], "C:\\game");
+	REQUIRE(pinned.state == RuntimeAvailability::State::kReady);
 
 	// An unpinned build of the accepted version is refused by digest, and an unreadable
 	// digest is refused too rather than being treated as unchanged.
@@ -220,7 +295,7 @@ TEST_CASE("Only a validated runtime loads unless developer mode forces one", "[n
 
 TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
 {
-	REQUIRE(NR::kValidatedRuntimeSha256.size() == 2);
+	REQUIRE(NR::kValidatedRuntimeSha256.size() == 3);
 	for (const auto validated : NR::kValidatedRuntimeSha256) {
 		REQUIRE(NR::IsValidatedRuntimeHash(validated));
 

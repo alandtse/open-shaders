@@ -33,6 +33,7 @@ namespace ShadowCasterManager
 	/// hemisphere; kept out of s_casterCullCount so that total stays angular-only.
 	std::atomic<uint32_t> s_hemisphereDropCount{ 0 };
 	std::atomic<uint64_t> s_hemisphereDropTotal{ 0 };
+	std::atomic<uint64_t> s_passlessCasterSkipTotal{ 0 };
 
 	/// Appends by destination list, so the front pass's caster count is readable
 	/// without RenderDoc: front-list appends vs back-only appends.
@@ -332,6 +333,49 @@ namespace ShadowCasterManager
 		s_visitStaticHash += r.foldHash;
 	}
 
+	/// Why the engine registers no shadow-map pass for a caster (kNone = it may).
+	enum class PasslessReason : int
+	{
+		kNone,
+		kNoShadowShader,  ///< effect, particle or water property: slot 0x2B is null for every shadow-map mode
+		kRefraction,
+		kAlphaBlend,
+		kFaded,
+		kCount
+	};
+	std::atomic<uint64_t> s_passlessCasterSkipByReason[5]{};
+	static_assert(static_cast<int>(PasslessReason::kCount) == 5);
+
+	/// Mirrors the cases where BSEffectShaderProperty / BSLightingShaderProperty
+	/// ::GetRenderPasses_ShadowMapOrMask register nothing for the shadow-map
+	/// render modes (0xD-0xF); each test is sufficient for "no pass".
+	static PasslessReason ShadowMapPassless(RE::BSGeometry& geom)
+	{
+		auto* property = geom.GetGeometryRuntimeData().shaderProperty.get();
+		if (!property)
+			return PasslessReason::kNone;
+		const auto* rtti = property->GetRTTI();
+		static const REL::Relocation<const RE::NiRTTI*> particleRTTI{ RE::BSParticleShaderProperty::Ni_RTTI };
+		if (rtti == globals::rtti::BSEffectShaderPropertyRTTI.get() ||
+			rtti == globals::rtti::BSWaterShaderPropertyRTTI.get() || rtti == particleRTTI.get())
+			return PasslessReason::kNoShadowShader;
+		if (rtti != globals::rtti::BSLightingShaderPropertyRTTI.get())
+			return PasslessReason::kNone;
+		using enum RE::BSShaderProperty::EShaderPropertyFlag;
+		if (property->flags.any(kRefraction, kTempRefraction))
+			return PasslessReason::kRefraction;
+		const auto* alpha = geom.GetGeometryRuntimeData().alphaProperty.get();
+		const bool hairDecal = property->flags.all(kHairTint) && property->flags.any(kDecal, kDynamicDecal);
+		if (alpha && alpha->GetAlphaBlending() && !hairDecal)
+			return PasslessReason::kAlphaBlend;
+		if (property->fadeNode && property->material) {
+			const auto* material = static_cast<const RE::BSLightingShaderMaterialBase*>(property->material);
+			if (property->fadeNode->GetRuntimeData().currentFade * material->materialAlpha < 1.0f)
+				return PasslessReason::kFaded;
+		}
+		return PasslessReason::kNone;
+	}
+
 	/// Classifies `geom` for the active split-cache pass, folding it into the
 	/// running static hash; returns true when the caller should skip it.
 	/// Shared by both cull-append hooks for identical StaticOnly/DynamicOnly semantics.
@@ -339,6 +383,11 @@ namespace ShadowCasterManager
 	{
 		if (!AtlasActive())
 			return false;
+		if (const auto passless = ShadowMapPassless(geom); passless != PasslessReason::kNone) {
+			s_passlessCasterSkipTotal.fetch_add(1, std::memory_order_relaxed);
+			s_passlessCasterSkipByReason[static_cast<int>(passless)].fetch_add(1, std::memory_order_relaxed);
+			return true;
+		}
 		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
 		// casters have a mobility record, classified once per frame.
 		CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
@@ -394,7 +443,7 @@ namespace ShadowCasterManager
 				// Dedupe per walk (see s_healAttached).
 				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
-					ni && newlyAttached &&
+					ni && newlyAttached && ShadowMapPassless(a_visible) == PasslessReason::kNone &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
@@ -469,7 +518,7 @@ namespace ShadowCasterManager
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
-					ni && newlyAttached &&
+					ni && newlyAttached && ShadowMapPassless(a_visible) == PasslessReason::kNone &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
