@@ -156,6 +156,28 @@ TEST_CASE("Only a 310.8 or 310.9 runtime is accepted", "[nr]")
 			"nvngx_dlssnr.dll in C:\\game has no version information");
 }
 
+TEST_CASE("A runtime variant is one subfolder name", "[nr]")
+{
+	for (const auto name : { "310.8", "310.9.16-compat", "a b", "x" })
+		REQUIRE(NR::IsValidRuntimeVariant(name));
+	for (const auto name : { "", ".", "..", "a/b", "a\\b", "..\\x", "C:", "C:x" })
+		REQUIRE_FALSE(NR::IsValidRuntimeVariant(name));
+
+	const std::filesystem::path root = "C:\\game\\Streamline";
+	REQUIRE(NR::RuntimeVariantDirectory(root, "") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "310.8") == root / "310.8");
+	REQUIRE(NR::RuntimeVariantDirectory(root, "..") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "..\\other") == root);
+
+	NR::Tuning tuning;
+	tuning.runtimeVariant = "..\\other";
+	tuning.Sanitize();
+	REQUIRE(tuning.runtimeVariant.empty());
+	tuning.runtimeVariant = "310.8";
+	tuning.Sanitize();
+	REQUIRE(tuning.runtimeVariant == "310.8");
+}
+
 TEST_CASE("Only a 310.9 or newer runtime has model presets", "[nr]")
 {
 	REQUIRE(NR::RuntimeHasModelPresets("310.9.16.0"));

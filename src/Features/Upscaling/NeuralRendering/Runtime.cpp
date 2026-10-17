@@ -1,6 +1,7 @@
 #include "Runtime.h"
 
 #include "Utils/FileDigest.h"
+#include "Utils/FileSystem.h"
 #include "Utils/SehGuard.h"
 #include "Utils/WinApi.h"
 
@@ -8,6 +9,7 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs_dlssd.h>
 
+#include <algorithm>
 #include <mutex>
 
 namespace NR
@@ -450,6 +452,18 @@ namespace NR
 			cached = InspectRuntimeFile(directory);
 		}
 		return cached;
+	}
+
+	std::vector<std::string> DiscoverRuntimeVariants(const std::filesystem::path& directory)
+	{
+		std::vector<std::string> names;
+		for (const auto& child : Util::PathHelpers::SafeChildDirectories(directory)) {
+			const auto name = child.filename().string();
+			if (IsValidRuntimeVariant(name) && Util::PathHelpers::SafeExists(child / kRuntimeFileName))
+				names.push_back(name);
+		}
+		std::sort(names.begin(), names.end());
+		return names;
 	}
 
 	void Runtime::ResetFeatures()

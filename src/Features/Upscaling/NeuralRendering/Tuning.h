@@ -6,9 +6,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace NR
 {
+	/** @brief True for the name of one subfolder of the runtime directory: no separators, no drive, not a relative step. */
+	inline bool IsValidRuntimeVariant(std::string_view name)
+	{
+		return !name.empty() && name != "." && name != ".." && name.find_first_of("\\/:") == std::string_view::npos;
+	}
+
 	/** @brief Appearance and evaluation-scope controls for the full-resolution Feature 18 pass. */
 	struct Tuning
 	{
@@ -61,8 +69,13 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
-		/** @brief Loads a 310.8.x runtime outside the pinned digests, without developer mode; its output is unverified. */
+		/** @brief Loads a 310.8.x or 310.9.x runtime outside the pinned digests, without developer mode; its output is unverified. */
 		bool allowUnverifiedRuntime = false;
+		/**
+		 * @brief Subfolder of the runtime directory whose nvngx_dlssnr.dll to load; empty is the file in the
+		 *        directory itself. Changing it unloads the runtime and loads the other build.
+		 */
+		std::string runtimeVariant;
 		/**
 		 * @brief Applies NR by material through the graded protection lane, so a material's
 		 *        strength decides how strongly NR shows there. On exactly when some strength is below
@@ -195,6 +208,8 @@ namespace NR
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
 			modelPreset = std::min(modelPreset, kMaxModelPreset);
+			if (!IsValidRuntimeVariant(runtimeVariant))
+				runtimeVariant.clear();
 			modelScale = std::isfinite(modelScale) ? std::clamp(modelScale, kMinModelScale, kMaxModelScale) : kMaxModelScale;
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a

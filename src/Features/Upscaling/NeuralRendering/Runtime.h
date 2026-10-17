@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace NR
 {
@@ -145,6 +146,15 @@ namespace NR
 		}
 		return { RuntimeAvailability::State::kReady, version->string("."), {} };
 	}
+
+	/** @brief Directory holding a runtime variant: the plugin directory itself for the default, else its subfolder. */
+	inline std::filesystem::path RuntimeVariantDirectory(const std::filesystem::path& directory, std::string_view variant)
+	{
+		return IsValidRuntimeVariant(variant) ? directory / std::filesystem::path(std::string(variant)) : directory;
+	}
+
+	/** @brief Names of the subfolders of a plugin directory that hold their own runtime file, sorted. */
+	std::vector<std::string> DiscoverRuntimeVariants(const std::filesystem::path& directory);
 
 	/**
 	 * @brief Verdict for the runtime in a plugin directory.

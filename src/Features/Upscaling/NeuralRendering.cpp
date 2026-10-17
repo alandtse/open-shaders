@@ -55,6 +55,12 @@ namespace
 		return Util::PathHelpers::SafeAbsolute(Upscaling::streamline.pluginDir);
 	}
 
+	/** @brief Directory the selected runtime build loads from: the plugin directory, or its subfolder for a variant. */
+	std::filesystem::path RuntimeDirectory(std::string_view variant)
+	{
+		return NR::RuntimeVariantDirectory(RuntimeDirectory(), variant);
+	}
+
 	/**
 	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
 	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
@@ -315,6 +321,8 @@ struct NeuralRendering::Impl
 	bool ready = false, failed = false;
 	/** @brief Set from the tuning before Initialize; lets a 310.8.x build outside the pinned digests load. */
 	bool allowUnverifiedRuntime = false;
+	/** @brief Set from the tuning before Initialize; the runtime subfolder to load, empty for the default file. */
+	std::string runtimeVariant;
 	uint32_t lastDiagnosticOptions = 0;
 	uint32_t lastModelPreset = 0;
 	uint32_t debugOptions = 0;
@@ -372,7 +380,7 @@ struct NeuralRendering::Impl
 		categoryAlphaBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CategoryAlphaData>(), "NeuralRendering::CategoryAlpha CB");
 		gainReuseBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<GainReuseData>(), "NeuralRendering::GainReuse CB");
 		lowResBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<LowResData>(), "NeuralRendering::LowRes CB");
-		runtime.Initialize(interop.Device(), RuntimeDirectory(), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
+		runtime.Initialize(interop.Device(), RuntimeDirectory(runtimeVariant), globals::state->IsDeveloperMode(), allowUnverifiedRuntime);
 		ready = true;
 	}
 
@@ -1542,9 +1550,16 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified)
+void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& variant)
 {
 	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
+	{
+		std::scoped_lock lock(variantMutex);
+		if (runtimeVariant != variant) {
+			runtimeVariant = variant;
+			swapRuntime.store(true, std::memory_order_relaxed);
+		}
+	}
 	regionEnabled.store(enabled && regionOfInterest, std::memory_order_relaxed);
 	regionFit.store(cropFit, std::memory_order_relaxed);
 	regionGroup.store(cropGroup, std::memory_order_relaxed);
@@ -1607,9 +1622,27 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 	return snapshot;
 }
 
+std::string NeuralRendering::GetRuntimeVariant() const
+{
+	std::scoped_lock lock(variantMutex);
+	return runtimeVariant;
+}
+
+std::vector<std::string> NeuralRendering::GetRuntimeVariants() const
+{
+	constexpr auto kRescanInterval = std::chrono::seconds(1);
+	std::scoped_lock lock(variantMutex);
+	const auto now = std::chrono::steady_clock::now();
+	if (now - variantScanTime >= kRescanInterval) {
+		variantList = NR::DiscoverRuntimeVariants(RuntimeDirectory());
+		variantScanTime = now;
+	}
+	return variantList;
+}
+
 NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
 {
-	return NR::InspectRuntime(RuntimeDirectory());
+	return NR::InspectRuntime(RuntimeDirectory(GetRuntimeVariant()));
 }
 
 void NeuralRendering::DrawRuntimeDiagnostics() const
@@ -1962,6 +1995,33 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 or 310.9 runtime build."));
 	bool changed = false;
+	if (const auto variants = GetRuntimeVariants(); !variants.empty()) {
+		const auto defaultLabel = T(TKEY("runtime_variant_default"), "Default");
+		int selected = 0;
+		for (size_t i = 0; i < variants.size(); ++i) {
+			if (variants[i] == tuning.runtimeVariant)
+				selected = static_cast<int>(i) + 1;
+		}
+		const std::string preview = selected ? variants[selected - 1] : std::string(defaultLabel);
+		if (ImGui::BeginCombo(T(TKEY("runtime_variant"), "Runtime Build"), preview.c_str())) {
+			if (ImGui::Selectable(defaultLabel, selected == 0) && selected != 0) {
+				tuning.runtimeVariant.clear();
+				changed = true;
+			}
+			for (size_t i = 0; i < variants.size(); ++i) {
+				if (ImGui::Selectable(variants[i].c_str(), selected == static_cast<int>(i) + 1) && selected != static_cast<int>(i) + 1) {
+					tuning.runtimeVariant = variants[i];
+					changed = true;
+				}
+			}
+			ImGui::EndCombo();
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("runtime_variant_tooltip"),
+				"Which nvngx_dlssnr.dll to load: the file in the Streamline folder, or one kept in a subfolder of it. Switching unloads the running one and loads the other, and each build is checked on its own."));
+		if (changed)
+			resetHistory = true;
+	}
 	if (NR::RuntimeHasModelPresets(availability.version)) {
 		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));
 		const std::array<const char*, NR::Tuning::kMaxModelPreset + 1> presetLabels{
@@ -2210,8 +2270,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
+	auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
 		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
+	// Another runtime build needs the loaded one unloaded first, which a rebuild does.
+	if (swapRuntime.exchange(false, std::memory_order_relaxed) && action == NR::FrameAction::Run)
+		action = NR::FrameAction::RebuildThenRun;
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
@@ -2313,6 +2376,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
 			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
+			work.runtimeVariant = GetRuntimeVariant();
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);

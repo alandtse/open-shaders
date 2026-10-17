@@ -553,6 +553,16 @@ one network. The newest network applies a weaker, finer-grained gain (the maps d
 0.16 stops). The red, green and blue gains are the same across all three, so there is no channel swap. The
 scene had no characters, so skin, hair and eyes were not compared.
 
+#### Choosing a runtime build
+
+The default runtime is the `nvngx_dlssnr.dll` in the Streamline folder. Other builds can sit beside it, each
+in its own subfolder with the same file name (for example `Streamline/310.8/nvngx_dlssnr.dll`). When any
+exist, the panel shows a **Runtime Build** combo and `Tuning::runtimeVariant` names the subfolder; empty is
+the default file. Each build is classified on its own (version, SHA-256, validated or not), so an
+unvalidated one still needs developer mode or **Use This Build Anyway**. Changing the choice drains the GPU,
+unloads the running runtime and loads the other one, the same rebuild a retry performs. The devbench status
+reports `runtimeVariant` and the `runtimeVariants` found.
+
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,
 matching the documented float-HDR convention. Applying another paper-white
