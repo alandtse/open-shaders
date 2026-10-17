@@ -129,15 +129,7 @@ void PresetManager::Rescan()
 		discoveredLocations.push_back({ PresetLocationKind::GameRoot, gameRoot, "Game root", true });
 	}
 
-	// Manual increment(ec) rather than a range-for: the implicit operator++() a range-for
-	// calls is still throwing even when the iterator was constructed with an ec, so a file
-	// deleted mid-scan could otherwise crash the whole game.
-	std::error_code ec;
-	for (auto it = std::filesystem::directory_iterator(dataRoot, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
-		if (!it->is_directory(ec))
-			continue;
-
-		const auto childRoot = Util::PathHelpers::SafeAbsolute(it->path());
+	for (const auto& childRoot : Util::PathHelpers::SafeChildDirectories(dataRoot)) {
 		if (Util::PathHelpers::SafeExists(childRoot / "enbseries.ini") && Util::PathHelpers::SafeIsDirectory(childRoot / "enbseries")) {
 			discoveredLocations.push_back({ PresetLocationKind::DataSubfolder,
 				childRoot,

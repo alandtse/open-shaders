@@ -251,6 +251,15 @@ namespace Util
 		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base);
 
 		/**
+		 * Lists the immediate subdirectories of a directory without throwing. Entries are stepped
+		 * with an error code because a file removed mid-scan makes the throwing increment abort
+		 * the process.
+		 * @param root The directory to list
+		 * @return Absolute paths of the child directories, in directory order; empty if the scan fails
+		 */
+		std::vector<std::filesystem::path> SafeChildDirectories(const std::filesystem::path& root);
+
+		/**
 		 * Checks logical containment without resolving virtual filesystem mappings or symlinks.
 		 * @param directory The containing directory
 		 * @param path The path to validate
