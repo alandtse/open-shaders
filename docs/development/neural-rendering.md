@@ -530,10 +530,28 @@ unless developer mode forces it through for evaluation as described under
 
 ### 310.9 runtimes
 
-A 310.9.x `nvngx_dlssnr.dll` is accepted by version but has no pinned digest, so it loads only in developer
-mode or with **Use This Build Anyway**. It ships two networks chosen at feature creation by
-`DLSSNR.Hint.Render.Preset`; `Tuning::modelPreset` writes 1 (the original 310.8 network, the default) or 2
-(the newest, faster one), and changing it recreates the eye features. A 310.8 runtime always gets 0.
+The NVIDIA-signed 310.9.16.0 `nvngx_dlssnr.dll` (SHA-256
+`2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F`) is pinned in
+`NR::kValidatedRuntimeSha256`. Any other 310.9.x build is accepted by version only, so it loads in developer
+mode or with **Use This Build Anyway**.
+
+The runtime ships two networks chosen at feature creation by `DLSSNR.Hint.Render.Preset`.
+`Tuning::modelPreset` writes 1 (the original 310.8 network, the default) or 2 (the newest, faster one), and
+changing it recreates the eye features. A 310.8 runtime always gets 0.
+
+Measured in game on VR (1080x1200 per eye, RTX 5090, Dragonsreach hall, scene frozen, eye-staggered
+captures of the model input and output):
+
+| Network                      | `NREvaluate` GPU, median | Mean model gain | p99 gain |
+| ---------------------------- | ------------------------ | --------------- | -------- |
+| 310.8.0.0 runtime            | not timed                | 0.236 stops     | 1.11     |
+| 310.9.16 original (preset 1) | about 4.5 ms             | 0.236 stops     | 1.12     |
+| 310.9.16 newest (preset 2)   | about 2.6 ms             | 0.167 stops     | 0.76     |
+
+The original preset reproduces the 310.8 gain: the maps differ by 0.039 stops, the same as two captures of
+one network. The newest network applies a weaker, finer-grained gain (the maps differ from the original's by
+0.16 stops). The red, green and blue gains are the same across all three, so there is no channel swap. The
+scene had no characters, so skin, hair and eyes were not compared.
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,

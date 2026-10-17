@@ -69,11 +69,13 @@ namespace NR
 		return (stream >> major >> dot >> minor) && dot == '.' && major == kRequiredRuntimeMajor && minor >= kNewerRuntimeMinor;
 	}
 
-	// SHA-256 of the nvngx_dlssnr.dll builds (310.8 DVS Production, 310.8.0.0 test) whose channel
-	// order was verified in game. A build outside this list is refused, not rendered on trust.
-	inline constexpr std::array<std::string_view, 2> kValidatedRuntimeSha256{
+	// SHA-256 of the nvngx_dlssnr.dll builds (310.8 DVS Production, 310.8.0.0 test, NVIDIA-signed
+	// 310.9.16.0) whose channel order was verified in game. A build outside this list is refused,
+	// not rendered on trust.
+	inline constexpr std::array<std::string_view, 3> kValidatedRuntimeSha256{
 		"8270B350CD82DE5CE89806872CDD6B6A9249B80836B91BBEB3573470744CC206",
 		"E16BCF15E16E13F527491CDF7845B2FE6521A738D8F7C9C721866A8496E1FC8E",
+		"2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F",
 	};
 
 	/** @brief True when a SHA-256 hex digest names a validated build; hex case is ignored. */

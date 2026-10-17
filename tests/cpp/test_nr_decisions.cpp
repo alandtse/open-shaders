@@ -188,6 +188,9 @@ TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
 	const auto newer = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, std::string(64, '0'), "C:\\game");
 	REQUIRE(newer.state == RuntimeAvailability::State::kUnvalidatedBuild);
 
+	const auto pinned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, NR::kValidatedRuntimeSha256[2], "C:\\game");
+	REQUIRE(pinned.state == RuntimeAvailability::State::kReady);
+
 	// An unpinned build of the accepted version is refused by digest, and an unreadable
 	// digest is refused too rather than being treated as unchanged.
 	for (const std::string refused : { std::string{}, std::string(64, '0') }) {
@@ -235,7 +238,7 @@ TEST_CASE("Only a validated runtime loads unless developer mode forces one", "[n
 
 TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
 {
-	REQUIRE(NR::kValidatedRuntimeSha256.size() == 2);
+	REQUIRE(NR::kValidatedRuntimeSha256.size() == 3);
 	for (const auto validated : NR::kValidatedRuntimeSha256) {
 		REQUIRE(NR::IsValidatedRuntimeHash(validated));
 
