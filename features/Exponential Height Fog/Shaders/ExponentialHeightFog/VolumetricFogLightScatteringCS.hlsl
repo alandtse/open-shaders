@@ -258,13 +258,14 @@ float3 ComputeSkyLightScattering(float3 positionWS, float3 viewDirection, uint e
 }
 
 #if defined(LIGHT_LIMIT_FIX)
-float SampleLocalLightShadow(LightLimitFix::Light light, float3 positionWS, uint eyeIndex, float2x2 rotationMatrix)
+float SampleLocalLightShadow(LightLimitFix::Light light, float3 positionWS, uint eyeIndex)
 {
 	[branch] if (VolumetricFogHasLocalShadows && (light.lightFlags & LightLimitFix::LightFlags::Shadow) && light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
 	{
 		bool shadowCoverage;
 		float3 worldPositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		return LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
+		// One tap per cell: the fog volume's temporal history does the filtering the surface passes get from 8 taps.
+		return LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), 1u, shadowCoverage);
 	}
 	return 1.0f;
 }
@@ -310,11 +311,6 @@ float3 AccumulateLocalLightScattering(
 
 	float phaseG = SharedData::exponentialHeightFogSettings.volumetricFogScatteringDistribution;
 	float3 localScattering = 0.0f.xxx;
-	// Rotating the PCF kernel per cell and frame turns the filter pattern into noise the temporal history resolves.
-	float shadowAngle = 6.2831853f * float(Rand4DPCG32(int4(coord, VolumetricFogStateFrameIndexMod8)).w) / float(uint(0xffffffff));
-	float2 shadowRotation;
-	sincos(shadowAngle, shadowRotation.y, shadowRotation.x);
-	const float2x2 shadowRotationMatrix = float2x2(shadowRotation.x, shadowRotation.y, -shadowRotation.y, shadowRotation.x);
 	[loop] for (uint lightIndex = 0; lightIndex < lightCount; lightIndex++)
 	{
 		uint clusteredLightIndex = LightLimitFix::lightList[grid.offset + lightIndex];
@@ -332,7 +328,7 @@ float3 AccumulateLocalLightScattering(
 		if (attenuation < 1e-5f)
 			continue;
 
-		attenuation *= SampleLocalLightShadow(light, positionWS, eyeIndex, shadowRotationMatrix);
+		attenuation *= SampleLocalLightShadow(light, positionWS, eyeIndex);
 		if (attenuation < 1e-5f)
 			continue;
 
