@@ -875,6 +875,9 @@ void Menu::DrawSettings()
 
 		// Draw global popups (needs to be called once per frame)
 		Util::DrawClearShaderCacheConfirmation();
+
+		if (!pendingTab.empty() && (Util::SelectTabByLabel(pendingTab) || --pendingTabFramesLeft == 0))
+			pendingTab.clear();
 	}
 	ImGui::End();
 }
@@ -1146,6 +1149,18 @@ void Menu::ProcessInputEventQueue()
 		}
 		if (!requested.empty())
 			SelectFeatureMenu(requested);
+	}
+
+	{
+		std::string requested;
+		{
+			std::lock_guard<std::mutex> lock(offThreadTabMutex);
+			requested.swap(offThreadTab);
+		}
+		if (!requested.empty()) {
+			pendingTab = std::move(requested);
+			pendingTabFramesLeft = kPendingTabFrames;
+		}
 	}
 
 	std::vector<KeyEvent> queuedEvents;

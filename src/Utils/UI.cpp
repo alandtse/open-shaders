@@ -12,6 +12,7 @@
 #include "SceneSettingsManager.h"
 #include "SceneSettingsUIHooks.h"
 #include "ShaderCache.h"
+#include "TabLabel.h"
 
 #ifndef DIRECTINPUT_VERSION
 #	define DIRECTINPUT_VERSION 0x0800
@@ -2196,6 +2197,23 @@ namespace Util
 			}
 			ImGui::EndTable();
 		}
+	}
+
+	bool SelectTabByLabel(std::string_view label)
+	{
+		ImGuiContext& context = *ImGui::GetCurrentContext();
+		for (int i = 0; i < context.TabBars.GetMapSize(); ++i) {
+			ImGuiTabBar* bar = context.TabBars.TryGetMapData(i);
+			if (!bar || bar->PrevFrameVisible < context.FrameCount - 1)
+				continue;
+			for (ImGuiTabItem& tab : bar->Tabs) {
+				if (TabLabelMatches(ImGui::TabBarGetTabName(bar, &tab), label)) {
+					bar->NextSelectedTabId = tab.ID;
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	void DrawDllVersionTable(

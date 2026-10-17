@@ -93,6 +93,7 @@ add_executable(cpp_tests
 	test_region.cpp
 	test_bound_points.cpp
 	test_region_overlay.cpp
+	test_tablabel.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
