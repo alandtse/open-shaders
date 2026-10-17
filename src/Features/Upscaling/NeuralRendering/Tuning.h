@@ -4,6 +4,7 @@
 #include "MaterialStrength.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -11,10 +12,27 @@
 
 namespace NR
 {
-	/** @brief True for the name of one subfolder of the runtime directory: no separators, no drive, not a relative step. */
+	/** @brief Longest runtime subfolder name accepted. */
+	inline constexpr size_t kMaxRuntimeVariantLength = 64;
+
+	/**
+	 * @brief True for the name of one subfolder of the runtime directory that Windows resolves to a folder:
+	 *        no separators, drive, wildcard or control character, not a relative step, no trailing dot or
+	 *        space, not a device name such as CON or COM1, and at most kMaxRuntimeVariantLength bytes.
+	 */
 	inline bool IsValidRuntimeVariant(std::string_view name)
 	{
-		return !name.empty() && name != "." && name != ".." && name.find_first_of("\\/:") == std::string_view::npos;
+		if (name.empty() || name.size() > kMaxRuntimeVariantLength || name == "." || name == ".." || name.back() == '.' || name.back() == ' ')
+			return false;
+		if (name.find_first_of("\\/:*?\"<>|") != std::string_view::npos)
+			return false;
+		if (std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 0x20; }))
+			return false;
+		std::string stem(name.substr(0, name.find('.')));
+		std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+		if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL")
+			return false;
+		return !(stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem[3] >= '1' && stem[3] <= '9');
 	}
 
 	/** @brief Appearance and evaluation-scope controls for the full-resolution Feature 18 pass. */

@@ -158,16 +158,22 @@ TEST_CASE("Only a 310.8 or 310.9 runtime is accepted", "[nr]")
 
 TEST_CASE("A runtime variant is one subfolder name", "[nr]")
 {
-	for (const auto name : { "310.8", "310.9.16-compat", "a b", "x" })
+	for (const auto name : { "310.8", "310.9.16-compat", "a b", "x", "CONSOLE", "com10", "caf\xC3\xA9" })
 		REQUIRE(NR::IsValidRuntimeVariant(name));
-	for (const auto name : { "", ".", "..", "a/b", "a\\b", "..\\x", "C:", "C:x" })
+	for (const auto name : { "", ".", "..", "a/b", "a\\b", "..\\x", "C:", "C:x", "\\\\srv\\x", "a.", "a ", "CON", "con.txt", "NUL", "aux", "PRN.x", "COM1", "lpt9", "a*", "a?b", "a<b", "a|b", "a\"b", "a\tb" })
 		REQUIRE_FALSE(NR::IsValidRuntimeVariant(name));
+	REQUIRE(NR::IsValidRuntimeVariant(std::string(NR::kMaxRuntimeVariantLength, 'x')));
+	REQUIRE_FALSE(NR::IsValidRuntimeVariant(std::string(NR::kMaxRuntimeVariantLength + 1, 'x')));
 
 	const std::filesystem::path root = "C:\\game\\Streamline";
 	REQUIRE(NR::RuntimeVariantDirectory(root, "") == root);
 	REQUIRE(NR::RuntimeVariantDirectory(root, "310.8") == root / "310.8");
 	REQUIRE(NR::RuntimeVariantDirectory(root, "..") == root);
 	REQUIRE(NR::RuntimeVariantDirectory(root, "..\\other") == root);
+	REQUIRE(NR::RuntimeVariantDirectory(root, "CON") == root);
+
+	const std::string accented = "caf\xC3\xA9";
+	REQUIRE(NR::RuntimeVariantName(NR::RuntimeVariantDirectory(root, accented)) == accented);
 
 	NR::Tuning tuning;
 	tuning.runtimeVariant = "..\\other";
@@ -178,14 +184,43 @@ TEST_CASE("A runtime variant is one subfolder name", "[nr]")
 	REQUIRE(tuning.runtimeVariant == "310.8");
 }
 
-TEST_CASE("Only a 310.9 or newer runtime has model presets", "[nr]")
+TEST_CASE("Only an accepted 310.9 or newer runtime has model presets", "[nr]")
 {
-	REQUIRE(NR::RuntimeHasModelPresets("310.9.16.0"));
-	REQUIRE(NR::RuntimeHasModelPresets("310.9.0"));
-	REQUIRE_FALSE(NR::RuntimeHasModelPresets("310.8.0.0"));
-	REQUIRE_FALSE(NR::RuntimeHasModelPresets("309.9.0"));
-	REQUIRE_FALSE(NR::RuntimeHasModelPresets("unknown"));
-	REQUIRE_FALSE(NR::RuntimeHasModelPresets(""));
+	const auto classify = [](uint32_t minor) {
+		return NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, minor } }, NR::kValidatedRuntimeSha256[2], "C:\\game");
+	};
+	REQUIRE(classify(9).modelPresets);
+	REQUIRE_FALSE(classify(8).modelPresets);
+	REQUIRE_FALSE(classify(10).modelPresets);
+	REQUIRE_FALSE(NR::ClassifyRuntime(false, std::optional<FakeVersion>{}, {}, "C:\\game").modelPresets);
+	REQUIRE(NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, std::string(64, '0'), "C:\\game").modelPresets);
+}
+
+TEST_CASE("DecideFrame rebuilds for a requested runtime swap only when it can run", "[nr]")
+{
+	auto swapping = RunningFrame(10);
+	swapping.swapRequested = true;
+	REQUIRE(NR::DecideFrame(swapping) == NR::FrameAction::RebuildThenRun);
+
+	// The request outlives the frames that cannot act on it.
+	auto disabled = swapping;
+	disabled.enabled = false;
+	REQUIRE(NR::DecideFrame(disabled) == NR::FrameAction::ReleasePassResources);
+	auto suspended = swapping;
+	suspended.suspended = true;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+	auto noWorld = swapping;
+	noWorld.worldRendered = false;
+	REQUIRE(NR::DecideFrame(noWorld) == NR::FrameAction::SkipNoWorld);
+	auto duplicate = swapping;
+	duplicate.lastFrame = duplicate.frameCount;
+	REQUIRE(NR::DecideFrame(duplicate) == NR::FrameAction::SkipDuplicate);
+	auto uninitialized = swapping;
+	uninitialized.ready = false;
+	REQUIRE(NR::DecideFrame(uninitialized) == NR::FrameAction::InitializeThenRun);
+	auto latched = swapping;
+	latched.failed = true;
+	REQUIRE(NR::DecideFrame(latched) == NR::FrameAction::SkipLatched);
 }
 
 TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")

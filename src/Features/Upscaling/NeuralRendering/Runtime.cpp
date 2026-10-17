@@ -300,6 +300,7 @@ namespace NR
 		NR::Evaluate evaluate = nullptr;
 		Release release = nullptr;
 		std::string version;
+		bool modelPresets = false;
 		int floatSlot = -1;
 		bool initialized = false;
 		struct FeatureDeleter
@@ -423,6 +424,7 @@ namespace NR
 		}
 		// A forced build may carry no version resource, which would otherwise read as an empty runtime.
 		state.version = availability.version.empty() ? std::string{ "unknown" } : availability.version;
+		state.modelPresets = availability.modelPresets;
 		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", state.version);
 		impl = std::move(pending);
 	}
@@ -460,7 +462,7 @@ namespace NR
 	{
 		std::vector<std::string> names;
 		for (const auto& child : Util::PathHelpers::SafeChildDirectories(directory)) {
-			const auto name = child.filename().string();
+			const auto name = RuntimeVariantName(child);
 			if (IsValidRuntimeVariant(name) && Util::PathHelpers::SafeExists(child / kRuntimeFileName))
 				names.push_back(name);
 		}
@@ -533,7 +535,7 @@ namespace NR
 			writer.SetFloat("DLSSNR.Scale", 1.0f);
 			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
 			writer.SetUInt("DLSSNR.Upscaling", 0u);
-			writer.SetUInt("DLSSNR.Hint.Render.Preset", RuntimeHasModelPresets(state.version) ? kRuntimeModelPreset[tuning.modelPreset] : 0u);
+			writer.SetUInt("DLSSNR.Hint.Render.Preset", state.modelPresets ? kRuntimeModelPreset[std::min(tuning.modelPreset, Tuning::kMaxModelPreset)] : 0u);
 			const auto flags = static_cast<unsigned int>(
 				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
 			writer.SetUInt("Feature_Flags", flags);

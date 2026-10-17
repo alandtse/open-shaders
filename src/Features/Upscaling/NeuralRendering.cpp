@@ -61,10 +61,6 @@ namespace
 		return NR::RuntimeVariantDirectory(RuntimeDirectory(), variant);
 	}
 
-	/**
-	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
-	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
-	 */
 	/** @brief Short verdict a runtime build shows in the picker and on the debug page. */
 	const char* RuntimeStateLabel(NR::RuntimeAvailability::State state)
 	{
@@ -92,6 +88,10 @@ namespace
 		return std::format("{} ({}, {})", RuntimeBuildName(build.variant), build.availability.version.empty() ? "?" : build.availability.version, RuntimeStateLabel(build.availability.state));
 	}
 
+	/**
+	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
+	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
+	 */
 	const char* RuntimeFixHint(NR::RuntimeAvailability::State state)
 	{
 		if (state == NR::RuntimeAvailability::State::kMissing)
@@ -1684,7 +1684,7 @@ NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
 
 void NeuralRendering::DrawRuntimeDiagnostics() const
 {
-	// The Streamline table lists these files' versions like any other DLL in that folder; the
+	// The Streamline table lists this file's version like any other DLL in that folder; the
 	// verdict is what says whether that version is one the pass will actually load.
 	const auto builds = GetRuntimeBuilds();
 	const auto selected = GetRuntimeVariant();
@@ -2085,7 +2085,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 			ImGui::TextUnformatted(T(TKEY("runtime_variant_tooltip"),
 				"Which nvngx_dlssnr.dll to load: the file in the Streamline folder, or one kept in a subfolder of it. Switching unloads the running one and loads the other, and each build is checked on its own."));
 	}
-	if (NR::RuntimeHasModelPresets(availability.version)) {
+	if (availability.modelPresets) {
 		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));
 		const std::array<const char*, NR::Tuning::kMaxModelPreset + 1> presetLabels{
 			T(TKEY("model_preset_original"), "Original"),
@@ -2333,11 +2333,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
-		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
-	// Another runtime build needs the loaded one unloaded first, which a rebuild does.
-	if (swapRuntime.exchange(false, std::memory_order_relaxed) && action == NR::FrameAction::Run)
-		action = NR::FrameAction::RebuildThenRun;
+	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
+		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
@@ -2439,6 +2436,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
 			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
+			swapRuntime.store(false, std::memory_order_relaxed);
 			work.runtimeVariant = GetRuntimeVariant();
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
