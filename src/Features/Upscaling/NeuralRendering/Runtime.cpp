@@ -10,6 +10,7 @@
 #include <nvsdk_ngx_defs_dlssd.h>
 
 #include <algorithm>
+#include <map>
 #include <mutex>
 
 namespace NR
@@ -439,19 +440,20 @@ namespace NR
 		if (error)
 			return InspectRuntimeFile(directory);
 
+		struct Cached
+		{
+			std::uintmax_t size = 0;
+			std::filesystem::file_time_type written;
+			RuntimeAvailability availability;
+		};
 		static std::mutex mutex;
-		static std::filesystem::path cachedPath;
-		static std::uintmax_t cachedSize = 0;
-		static std::filesystem::file_time_type cachedWritten;
-		static RuntimeAvailability cached;
+		static std::map<std::filesystem::path, Cached> cache;
 		std::scoped_lock lock(mutex);
-		if (cachedPath != path || cachedSize != size || cachedWritten != written) {
-			cachedPath = path;
-			cachedSize = size;
-			cachedWritten = written;
-			cached = InspectRuntimeFile(directory);
+		auto& entry = cache[path];
+		if (entry.size != size || entry.written != written) {
+			entry = { size, written, InspectRuntimeFile(directory) };
 		}
-		return cached;
+		return entry.availability;
 	}
 
 	std::vector<std::string> DiscoverRuntimeVariants(const std::filesystem::path& directory)

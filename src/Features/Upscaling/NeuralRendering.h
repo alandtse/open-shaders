@@ -123,8 +123,14 @@ struct NeuralRendering
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
 	/** @brief Selected runtime subfolder, empty for the default file; safe from any thread. */
 	std::string GetRuntimeVariant() const;
-	/** @brief Subfolders of the Streamline directory that hold their own runtime file, rescanned at most once a second. */
-	std::vector<std::string> GetRuntimeVariants() const;
+	/** @brief One nvngx_dlssnr.dll on disk and its verdict; an empty variant is the file in the Streamline folder itself. */
+	struct RuntimeBuild
+	{
+		std::string variant;
+		NR::RuntimeAvailability availability;
+	};
+	/** @brief The default runtime file first, then each subfolder build; the folder scan repeats at most once a second. */
+	std::vector<RuntimeBuild> GetRuntimeBuilds() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
 	Util::Region::StereoRegion GetRegionOfInterest() const;
 	/** @brief Which sources chose the crop of the last applied frame, safe from any thread. */

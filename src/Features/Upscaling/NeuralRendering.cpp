@@ -65,6 +65,33 @@ namespace
 	 * @brief How to get a runtime the pass will load, for a verdict that found none it can use.
 	 *        A missing file needs supplying; a rejected build needs replacing, never trusting it.
 	 */
+	/** @brief Short verdict a runtime build shows in the picker and on the debug page. */
+	const char* RuntimeStateLabel(NR::RuntimeAvailability::State state)
+	{
+		switch (state) {
+		case NR::RuntimeAvailability::State::kReady:
+			return T(TKEY("runtime_state_validated"), "Validated");
+		case NR::RuntimeAvailability::State::kUnvalidatedBuild:
+			return T(TKEY("runtime_state_unverified"), "Unverified");
+		case NR::RuntimeAvailability::State::kUnsupportedVersion:
+			return T(TKEY("runtime_state_unsupported"), "Unsupported version");
+		default:
+			return T(TKEY("runtime_state_missing"), "Missing");
+		}
+	}
+
+	/** @brief Name of a runtime build: the subfolder, or Default for the file in the Streamline folder. */
+	std::string RuntimeBuildName(const std::string& variant)
+	{
+		return variant.empty() ? std::string(T(TKEY("runtime_variant_default"), "Default")) : variant;
+	}
+
+	/** @brief Combo entry for a runtime build, such as "310.8 (310.8.0.0, Validated)". */
+	std::string RuntimeBuildLabel(const NeuralRendering::RuntimeBuild& build)
+	{
+		return std::format("{} ({}, {})", RuntimeBuildName(build.variant), build.availability.version.empty() ? "?" : build.availability.version, RuntimeStateLabel(build.availability.state));
+	}
+
 	const char* RuntimeFixHint(NR::RuntimeAvailability::State state)
 	{
 		if (state == NR::RuntimeAvailability::State::kMissing)
@@ -1628,16 +1655,26 @@ std::string NeuralRendering::GetRuntimeVariant() const
 	return runtimeVariant;
 }
 
-std::vector<std::string> NeuralRendering::GetRuntimeVariants() const
+std::vector<NeuralRendering::RuntimeBuild> NeuralRendering::GetRuntimeBuilds() const
 {
 	constexpr auto kRescanInterval = std::chrono::seconds(1);
-	std::scoped_lock lock(variantMutex);
-	const auto now = std::chrono::steady_clock::now();
-	if (now - variantScanTime >= kRescanInterval) {
-		variantList = NR::DiscoverRuntimeVariants(RuntimeDirectory());
-		variantScanTime = now;
+	std::vector<std::string> variants;
+	{
+		std::scoped_lock lock(variantMutex);
+		const auto now = std::chrono::steady_clock::now();
+		if (now - variantScanTime >= kRescanInterval) {
+			variantList = NR::DiscoverRuntimeVariants(RuntimeDirectory());
+			variantScanTime = now;
+		}
+		variants = variantList;
 	}
-	return variantList;
+	std::vector<RuntimeBuild> builds;
+	builds.push_back({ {}, NR::InspectRuntime(RuntimeDirectory()) });
+	for (auto& variant : variants) {
+		auto availability = NR::InspectRuntime(RuntimeDirectory(variant));
+		builds.push_back({ std::move(variant), std::move(availability) });
+	}
+	return builds;
 }
 
 NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
@@ -1647,9 +1684,42 @@ NR::RuntimeAvailability NeuralRendering::GetRuntimeAvailability() const
 
 void NeuralRendering::DrawRuntimeDiagnostics() const
 {
-	// The Streamline table lists this file's version like any other DLL in that folder; the
+	// The Streamline table lists these files' versions like any other DLL in that folder; the
 	// verdict is what says whether that version is one the pass will actually load.
-	const auto availability = GetRuntimeAvailability();
+	const auto builds = GetRuntimeBuilds();
+	const auto selected = GetRuntimeVariant();
+	Util::DrawOpenFolderSelectable(T(TKEY("runtime_builds_title"), "Neural Rendering runtime builds (click to open folder)"), Upscaling::streamline.pluginDir.c_str());
+	std::vector<std::string> headers = { T(TKEY("runtime_builds_build"), "Build"), T("ui.table.version", "Version"), T(TKEY("runtime_builds_status"), "Status"), T(TKEY("runtime_builds_in_use"), "In Use") };
+	std::vector<std::vector<std::string>> rows;
+	for (const auto& build : builds) {
+		rows.push_back({ RuntimeBuildName(build.variant), build.availability.version.empty() ? "-" : build.availability.version,
+			RuntimeStateLabel(build.availability.state), build.variant == selected ? T(TKEY("runtime_builds_yes"), "Yes") : "" });
+	}
+	const std::string validated = RuntimeStateLabel(NR::RuntimeAvailability::State::kReady);
+	const std::string unverified = RuntimeStateLabel(NR::RuntimeAvailability::State::kUnvalidatedBuild);
+	constexpr int kStatusColumn = 2;
+	const std::string defaultName = RuntimeBuildName({});
+	const std::vector<Util::TableSortFunc> sorters{
+		[defaultName](const std::string& a, const std::string& b, bool ascending) {
+			if (a == b)
+				return false;
+			if (a == defaultName || b == defaultName)
+				return a == defaultName;
+			return ascending ? a < b : a > b;
+		},
+		Util::VersionSortComparator
+	};
+	Util::ShowSortedStringTableStrings("nr_runtime_builds", headers, rows, 0, true, sorters, [&](int, int col, const std::string& value) {
+		if (col != kStatusColumn) {
+			ImGui::TextUnformatted(value.c_str());
+			return;
+		}
+		const auto color = value == validated ? Util::Colors::GetSuccess() : value == unverified ? Util::Colors::GetWarning() :
+		                                                                                           Util::Colors::GetTimerCritical();
+		ImGui::TextColored(color, "%s", value.c_str());
+	});
+	const auto active = std::find_if(builds.begin(), builds.end(), [&](const RuntimeBuild& build) { return build.variant == selected; });
+	const auto& availability = (active != builds.end() ? *active : builds.front()).availability;
 	if (availability.Ready()) {
 		Util::Text::Success(T(TKEY("runtime_validated"), "Neural Rendering runtime: %s %s is a validated build."), NR::kRuntimeFileName, availability.version.c_str());
 		return;
@@ -1995,23 +2065,18 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 or 310.9 runtime build."));
 	bool changed = false;
-	if (const auto variants = GetRuntimeVariants(); !variants.empty()) {
-		const auto defaultLabel = T(TKEY("runtime_variant_default"), "Default");
-		int selected = 0;
-		for (size_t i = 0; i < variants.size(); ++i) {
-			if (variants[i] == tuning.runtimeVariant)
-				selected = static_cast<int>(i) + 1;
+	if (const auto builds = GetRuntimeBuilds(); builds.size() > 1) {
+		size_t selected = 0;
+		for (size_t i = 0; i < builds.size(); ++i) {
+			if (builds[i].variant == tuning.runtimeVariant)
+				selected = i;
 		}
-		const std::string preview = selected ? variants[selected - 1] : std::string(defaultLabel);
-		if (ImGui::BeginCombo(T(TKEY("runtime_variant"), "Runtime Build"), preview.c_str())) {
-			if (ImGui::Selectable(defaultLabel, selected == 0) && selected != 0) {
-				tuning.runtimeVariant.clear();
-				changed = true;
-			}
-			for (size_t i = 0; i < variants.size(); ++i) {
-				if (ImGui::Selectable(variants[i].c_str(), selected == static_cast<int>(i) + 1) && selected != static_cast<int>(i) + 1) {
-					tuning.runtimeVariant = variants[i];
+		if (ImGui::BeginCombo(T(TKEY("runtime_variant"), "Runtime Build"), RuntimeBuildLabel(builds[selected]).c_str())) {
+			for (size_t i = 0; i < builds.size(); ++i) {
+				if (ImGui::Selectable(RuntimeBuildLabel(builds[i]).c_str(), i == selected) && i != selected) {
+					tuning.runtimeVariant = builds[i].variant;
 					changed = true;
+					resetHistory = true;
 				}
 			}
 			ImGui::EndCombo();
@@ -2019,8 +2084,6 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("runtime_variant_tooltip"),
 				"Which nvngx_dlssnr.dll to load: the file in the Streamline folder, or one kept in a subfolder of it. Switching unloads the running one and loads the other, and each build is checked on its own."));
-		if (changed)
-			resetHistory = true;
 	}
 	if (NR::RuntimeHasModelPresets(availability.version)) {
 		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));

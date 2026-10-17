@@ -1948,4 +1948,12 @@ namespace Util
 	 * @return true when a matching tab was found and queued for selection.
 	 */
 	bool SelectTabByLabel(std::string_view label);
+
+	/**
+	 * Shows a selectable label that opens the given Data-relative directory in the file explorer when clicked.
+	 *
+	 * @param label  Display label for the clickable folder link.
+	 * @param pluginDir  Wide string path to the directory (opened on click).
+	 */
+	void DrawOpenFolderSelectable(const char* label, const wchar_t* pluginDir);
 }  // namespace Util

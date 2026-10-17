@@ -560,8 +560,8 @@ in its own subfolder with the same file name (for example `Streamline/310.8/nvng
 exist, the panel shows a **Runtime Build** combo and `Tuning::runtimeVariant` names the subfolder; empty is
 the default file. Each build is classified on its own (version, SHA-256, validated or not), so an
 unvalidated one still needs developer mode or **Use This Build Anyway**. Changing the choice drains the GPU,
-unloads the running runtime and loads the other one, the same rebuild a retry performs. The devbench status
-reports `runtimeVariant` and the `runtimeVariants` found.
+unloads the running runtime and loads the other one, the same rebuild a retry performs. The picker lists each build with its version and verdict, and the Upscaling debug page shows the same table
+under the Streamline DLL list. The devbench status reports `runtimeVariant` and `runtimeBuilds`.
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,

@@ -2216,16 +2216,21 @@ namespace Util
 		return false;
 	}
 
+	void DrawOpenFolderSelectable(const char* label, const wchar_t* pluginDir)
+	{
+		if (ImGui::Selectable(label)) {
+			auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(pluginDir);
+			ShellExecuteW(nullptr, L"open", realPath.empty() ? pluginDir : realPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+		}
+	}
+
 	void DrawDllVersionTable(
 		const char* label,
 		const wchar_t* pluginDir,
 		const std::vector<std::pair<std::string, std::string>>& dllVersions,
 		const char* tableId)
 	{
-		if (ImGui::Selectable(label)) {
-			auto realPath = Util::PathHelpers::GetRealPathFromDataRelative(pluginDir);
-			ShellExecuteW(nullptr, L"open", realPath.empty() ? pluginDir : realPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-		}
+		DrawOpenFolderSelectable(label, pluginDir);
 		std::vector<std::string> headers = { T("ui.table.dll_name", "DLL Name"), T("ui.table.version", "Version") };
 		std::vector<std::vector<std::string>> rows;
 		rows.reserve(dllVersions.size());
