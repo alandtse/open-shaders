@@ -8,23 +8,25 @@
 #	undef IBL
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
-#if !defined(ENVCUBE)
+#	if !defined(ENVCUBE)
 	float4 Normal: NORMAL0;
-#endif
+#	endif
 	float4 TexCoord0: TEXCOORD0;
-#if defined(ENVCUBE)
+#	if defined(ENVCUBE)
 	float4
-#else
+#	else
 	int4
-#endif
+#	endif
 		TexCoord1: TEXCOORD1;
-#if defined(VR)
+#	if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 struct VS_OUTPUT
 {
