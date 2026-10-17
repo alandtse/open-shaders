@@ -200,7 +200,7 @@ public:
 
 	/** @brief Thread-safe request to select a tab by its label (see Util::SelectTabByLabel) once the
 	 *  menu draws it; ProcessInputEventQueue hands it to the render thread. A request that finds no
-	 *  tab within a few seconds of frames is dropped. */
+	 *  tab within kPendingTabFrames menu frames is dropped with a warning. */
 	void RequestTab(std::string a_label)
 	{
 		std::lock_guard<std::mutex> lock(offThreadTabMutex);
@@ -299,7 +299,6 @@ private:
 	std::mutex offThreadFeatureSelectionMutex;
 	std::string offThreadFeatureSelection;
 
-	// Off-thread tab request (see RequestTab) and the one the render thread is still applying.
 	std::mutex offThreadTabMutex;
 	std::string offThreadTab;
 	std::string pendingTab;

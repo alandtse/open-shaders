@@ -876,8 +876,14 @@ void Menu::DrawSettings()
 		// Draw global popups (needs to be called once per frame)
 		Util::DrawClearShaderCacheConfirmation();
 
-		if (!pendingTab.empty() && (Util::SelectTabByLabel(pendingTab) || --pendingTabFramesLeft == 0))
-			pendingTab.clear();
+		if (!pendingTab.empty()) {
+			if (Util::SelectTabByLabel(pendingTab)) {
+				pendingTab.clear();
+			} else if (--pendingTabFramesLeft == 0) {
+				logger::warn("[Menu] No tab named '{}' drew within {} menu frames; the request was dropped", pendingTab, kPendingTabFrames);
+				pendingTab.clear();
+			}
+		}
 	}
 	ImGui::End();
 }
