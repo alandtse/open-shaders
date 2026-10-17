@@ -11,6 +11,7 @@
 #	undef IBL
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float3 Position: POSITION0;
@@ -19,10 +20,11 @@ struct VS_INPUT
 	float4 InstanceData2: TEXCOORD5;
 	float4 InstanceData3: TEXCOORD6;
 	float4 InstanceData4: TEXCOORD7;
-#if defined(VR)
+#	if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 struct VS_OUTPUT
 {
