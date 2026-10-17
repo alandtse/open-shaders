@@ -416,7 +416,8 @@ namespace SharedData
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
-		float2 ProceduralSunPad;
+		float SkyScaleMultiplier;
+		float ProceduralSunPad;
 
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;

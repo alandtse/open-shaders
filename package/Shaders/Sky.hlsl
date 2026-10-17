@@ -351,6 +351,9 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 	const bool gammaRenderTarget = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) != 0;
 	float3 skyScale = PParams.yyy;
+#	if defined(EFFECTS11)
+	skyScale *= SharedData::enbSettings.SkyScaleMultiplier;
+#	endif
 	bool composeAuthoredSky = ENABLE_LL;
 #	if !defined(VR)
 	uint eyeIndex = 0;

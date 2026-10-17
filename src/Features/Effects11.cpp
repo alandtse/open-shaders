@@ -553,6 +553,8 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 
 	data.Enable = enableEffect;
 	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
+	if (enableEffect)
+		data.SkyScaleMultiplier = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
@@ -695,27 +697,6 @@ void Effects11::ClearShaderCache()
 
 	auto& effectManager = EffectManager::GetSingleton();
 	effectManager.ReloadShaders();
-}
-
-void Effects11::Prepass()
-{
-	if (!enableEffect) {
-		return;
-	}
-
-	auto& settingManager = SettingManager::GetSingleton();
-
-	auto imageSpaceManager = globals::game::imageSpaceManager;
-	if (!imageSpaceManager) {
-		return;
-	}
-
-	GET_INSTANCE_MEMBER_VRPTR(data, imageSpaceManager);
-
-	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
-	float skyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
-
-	data.baseData.hdr.skyScale *= skyScaleIntensity;
 }
 
 float3 Curve(float3 color, float power)

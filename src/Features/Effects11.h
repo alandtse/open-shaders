@@ -61,7 +61,8 @@ public:
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
-		float ProceduralSunPad[2];
+		float SkyScaleMultiplier = 1.0f;
+		float ProceduralSunPad;
 
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
@@ -230,7 +231,6 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
-	virtual void Prepass() override;
 	virtual void ClearShaderCache() override;
 
 	/** @brief Resolves settings.presetLocation against PresetManager's freshly rescanned
