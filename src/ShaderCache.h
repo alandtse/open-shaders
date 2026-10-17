@@ -716,7 +716,7 @@ namespace SIE
 		{
 			switch (type) {
 			case RE::BSShader::Type::Lighting:
-				return static_cast<uint32_t>(LightingShaderFlags::MaterialCategory);
+				return 1u << 6;
 			case RE::BSShader::Type::Grass:
 			case RE::BSShader::Type::DistantTree:
 			case RE::BSShader::Type::Sky:

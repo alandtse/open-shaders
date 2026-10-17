@@ -45,6 +45,7 @@ namespace RE
 			DistantTree,
 			Sky,
 			Effect,
+			Utility,
 			ImageSpace,
 			Total
 		};
@@ -229,6 +230,11 @@ namespace Permutations
 {
 	std::vector<uint32_t> pixelPermutations;
 	const auto& GeneratePBRLightingPixelPermutations() { return pixelPermutations; }
+	const std::vector<uint32_t>& GeneratePBRUtilityPixelPermutations()
+	{
+		static const std::vector<uint32_t> none;
+		return none;
+	}
 }
 struct TruePBR
 {
@@ -302,7 +308,7 @@ void TestLayoutTransitions(RE::BSShader::Type type, bool categories)
 void TestColdAndFailedVariants()
 {
 	Fixture f;
-	const uint32_t requested = 0x10021u, plain = 0x10001u;
+	const uint32_t requested = 0x10041u, plain = 0x10001u;
 	f.Bind(requested);
 	Require(f.state.deferredPixelShaderMissing && f.context.binds == 0 && f.current == &f.native);
 	Require(f.cache.compilationSet.requests == std::set<uint32_t>{ requested });
@@ -324,7 +330,7 @@ void TestColdAndFailedVariants()
 void TestSynchronousAndCachedLookups()
 {
 	Fixture f;
-	constexpr uint32_t requested = 0x10021u;
+	constexpr uint32_t requested = 0x10041u;
 	f.cache.async = false;
 	Require(!f.cache.GetPixelShader(f.shader, requested, SIE::ShaderCache::PixelShaderLookup::Cached));
 	Require(f.cache.compiles == 0 && f.deferred.captureReady);
@@ -342,19 +348,19 @@ void TestVROcclusionBypass()
 {
 	Fixture f;
 	f.shader.fxpFilename = "OBBOcclusionTesting";
-	f.Bind(0x10021u);
+	f.Bind(0x10041u);
 	if (globals::game::isVR) {
 		Require(f.context.bound == f.native.shader && !f.state.deferredPixelShaderMissing);
 		Require(f.cache.compilationSet.requests.empty());
 	} else {
 		Require(f.context.binds == 0 && f.state.deferredPixelShaderMissing);
-		Require(f.cache.compilationSet.requests == std::set<uint32_t>{ 0x10021u });
+		Require(f.cache.compilationSet.requests == std::set<uint32_t>{ 0x10041u });
 	}
 }
 void TestExactAndProtectedLookups()
 {
 	Fixture f;
-	constexpr uint32_t requested = 0x10021u, plain = 0x10001u;
+	constexpr uint32_t requested = 0x10041u, plain = 0x10001u;
 	auto* fallback = f.cache.Add(f.shader, plain);
 	Require(!f.cache.GetPixelShader(f.shader, requested));
 	Require(f.deferred.captureReady && !f.state.deferredPixelShaderMissing);
@@ -388,7 +394,7 @@ void TestUnusedCategoriesStayCold()
 	Require(f.state.deferredPixelShaderMissing && f.context.binds == 0);
 	Require(f.cache.compilationSet.requests == std::set<uint32_t>{ 0x10001u });
 	f.cache.compilationSet.requests.clear();
-	Require(!f.cache.GetPixelShader(f.shader, 0x10021u, SIE::ShaderCache::PixelShaderLookup::Cached));
+	Require(!f.cache.GetPixelShader(f.shader, 0x10041u, SIE::ShaderCache::PixelShaderLookup::Cached));
 	Require(f.cache.compilationSet.requests.empty());
 }
 bool nativeTechniqueReady = true;
@@ -402,7 +408,7 @@ bool NativeTechnique(RE::BSShader*, uint32_t, uint32_t, bool skipPixel)
 void TestTechniqueAdmission()
 {
 	Fixture f;
-	constexpr uint32_t requested = 0x10021u, plain = 0x10001u;
+	constexpr uint32_t requested = 0x10041u, plain = 0x10001u;
 	Hooks::BSShader_BeginTechnique::func = NativeTechnique;
 	nativeTechniquePixel = &f.native;
 	nativeTechniqueReady = true;
@@ -438,7 +444,7 @@ void TestNullPixelBinding()
 		Fixture f;
 		f.context.bound = f.native.shader;
 		f.current = &f.native;
-		f.state.modifiedPixelDescriptor = 0x10021u;
+		f.state.modifiedPixelDescriptor = 0x10041u;
 		if (cached)
 			f.cache.Add(f.shader, f.state.modifiedPixelDescriptor);
 		Hooks::BSShader__BeginTechnique_SetPixelShader::thunk(nullptr, nullptr);
