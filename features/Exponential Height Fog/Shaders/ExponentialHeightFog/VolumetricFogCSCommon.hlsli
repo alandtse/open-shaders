@@ -18,6 +18,7 @@ cbuffer VolumetricFogCB : register(b0)
 	float4 VolumetricFogFarInvGridSizeAndNearFade;
 	float4 VolumetricFogFarGridZParams;
 	float4 VolumetricFogFarRange;
+	float4 VolumetricFogMistShapeParameters;
 };
 
 #if defined(VOLUMETRIC_FOG_FAR_GRID)
@@ -51,6 +52,7 @@ cbuffer VolumetricFogCB : register(b0)
 #define VolumetricFogHistoryMissSampleCount max(1u, min(16u, (uint)(VolumetricFogHistoryParameters.y + 0.5f)))
 #define VolumetricFogSampleJitterMultiplier VolumetricFogJitterParameters.x
 #define VolumetricFogStateFrameIndexMod8 ((uint)(VolumetricFogJitterParameters.y + 0.5f))
+#define VolumetricFogMistDriftOffset VolumetricFogJitterParameters.zw
 #include "ExponentialHeightFog/VolumetricFogCommon.hlsli"
 
 namespace ExponentialHeightFog

@@ -600,6 +600,14 @@ namespace SharedData
 		float2 pad3;
 		float3 volumetricFogNoiseVelocity;
 		float pad4;
+		uint mistsEnabled;
+		float mistStrength;
+		float mistRange;
+		float mistSize;
+		float mistDriftSpeed;
+		uint mistFollowWind;
+		float mistWindMultiplier;
+		float pad5;
 	};
 
 	struct TruePBRSettings
