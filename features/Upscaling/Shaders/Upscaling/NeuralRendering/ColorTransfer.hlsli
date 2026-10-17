@@ -38,6 +38,8 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorBaseY;
 	uint RegionActorWidth;
 	uint RegionActorHeight;
+	float BrighteningWeight;
+	float DarkeningWeight;
 	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
 	float4 CategoryStrength[5];
 	uint MaterialMapEnabled;
@@ -46,6 +48,9 @@ cbuffer ColorTransfer : register(b0)
 	uint MaterialMapStrengthBound;
 	float4 MaterialStrengthsA;  // None, Skin, Hair, Eyes
 	float4 MaterialStrengthsB;  // Foliage, Landscape, Cloth, Metal
+	float MaxBrighteningStops;
+	float MaxDarkeningStops;
+	uint2 ColorTransferPadding;
 };
 
 static const float3 Luma = Color::kRec709LuminanceWeights;

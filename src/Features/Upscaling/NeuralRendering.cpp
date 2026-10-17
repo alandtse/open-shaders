@@ -213,13 +213,15 @@ struct NeuralRendering::Impl
 		uint32_t regionOverlayEnabled = 0;
 		float regionOutlineThickness = kRegionOutlineThicknessPixels;
 		uint32_t regionActorBaseX = 0, regionActorBaseY = 0, regionActorWidth = 0, regionActorHeight = 0;
-		float2 pad{};
+		float brighteningWeight = 1.0f, darkeningWeight = 1.0f;
 		// Per-category tone multipliers, Skin..Landscape in .x; the 16-byte rows mirror
 		// ColorTransferCS.hlsl's float4 CategoryStrength[5].
 		float4 categoryStrength[5]{};
 		uint32_t materialMapEnabled = 0, materialMapMode = 0, materialMapFilter = 0, materialMapStrengthBound = 0;
 		float4 materialStrengthsA{};
 		float4 materialStrengthsB{};
+		float maxBrighteningStops = NR::Tuning::kMaxToneStops, maxDarkeningStops = NR::Tuning::kMaxToneStops;
+		uint32_t padding[2]{};
 	};
 	static_assert(offsetof(ColorTransferData, dynamicRangeProtect) == 64);
 	static_assert(offsetof(ColorTransferData, toneLowStrength) == 80);
@@ -231,13 +233,17 @@ struct NeuralRendering::Impl
 	static_assert(offsetof(ColorTransferData, regionOutlineThickness) == 116);
 	static_assert(offsetof(ColorTransferData, regionActorBaseX) == 120);
 	static_assert(offsetof(ColorTransferData, regionActorHeight) == 132);
-	static_assert(offsetof(ColorTransferData, pad) == 136);
+	static_assert(offsetof(ColorTransferData, brighteningWeight) == 136);
+	static_assert(offsetof(ColorTransferData, darkeningWeight) == 140);
 	static_assert(offsetof(ColorTransferData, categoryStrength) == 144);
 	static_assert(offsetof(ColorTransferData, materialMapEnabled) == 224);
 	static_assert(offsetof(ColorTransferData, materialMapStrengthBound) == 236);
 	static_assert(offsetof(ColorTransferData, materialStrengthsA) == 240);
 	static_assert(offsetof(ColorTransferData, materialStrengthsB) == 256);
-	static_assert(sizeof(ColorTransferData) == 272);
+	static_assert(offsetof(ColorTransferData, maxBrighteningStops) == 272);
+	static_assert(offsetof(ColorTransferData, maxDarkeningStops) == 276);
+	static_assert(offsetof(ColorTransferData, padding) == 280);
+	static_assert(sizeof(ColorTransferData) == 288);
 	// ModeValues.hlsli carries these numbers for ColorTransferCS.hlsl's tint.
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kCategory) == 0);
 	static_assert(static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength) == 1);
@@ -324,6 +330,8 @@ struct NeuralRendering::Impl
 	float manualExposure = 1.0f, differenceStrength = 1.0f, splitPosition = 0.5f;
 	float shadowProtect = 0.0f, highlightProtect = 0.0f;
 	float toneLowStrength = 1.0f, toneRadius = 1.0f, toneHighStrength = 1.0f;
+	float brighteningWeight = 1.0f, darkeningWeight = 1.0f;
+	float maxBrighteningStops = NR::Tuning::kMaxToneStops, maxDarkeningStops = NR::Tuning::kMaxToneStops;
 	/** @brief Per-category tone multipliers from the tuning, consumed by TransferColor's cbuffer. */
 	std::array<float, 5> categoryToneStrength{ 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 	bool useResolutionMotionScale = true;
@@ -931,8 +939,14 @@ struct NeuralRendering::Impl
 		data.materialMapStrengthBound = materialStrengthBound ? 1u : 0u;
 		data.materialStrengthsA = float4{ materialMapStrength[NR::MaterialStrength::kNone], materialMapStrength[NR::MaterialStrength::kSkin],
 			materialMapStrength[NR::MaterialStrength::kHair], materialMapStrength[NR::MaterialStrength::kEyes] };
+
 		data.materialStrengthsB = float4{ materialMapStrength[NR::MaterialStrength::kFoliage], materialMapStrength[NR::MaterialStrength::kLandscape],
 			materialMapStrength[NR::MaterialStrength::kCloth], materialMapStrength[NR::MaterialStrength::kMetal] };
+		data.brighteningWeight = brighteningWeight;
+		data.darkeningWeight = darkeningWeight;
+		data.maxBrighteningStops = maxBrighteningStops;
+		data.maxDarkeningStops = maxDarkeningStops;
+
 		SetRegion(data, i);
 		if (debugOptions & NR::Diagnostics::ForceMaskZero)
 			data.maskMode = static_cast<uint32_t>(NR::Diagnostics::MaskMode::ForceZero);
@@ -2011,8 +2025,10 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		T(TKEY("style_1"), "Style 1"),
 		T(TKEY("style_2"), "Style 2"),
 	};
+
 	const bool styleChanged = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
 	changed |= styleChanged;
+	bool directionChanged = false;
 	bool recreateTuning = styleChanged;
 	if (styleChanged)
 		tuning.style = static_cast<uint32_t>(style);
@@ -2022,6 +2038,14 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	changed |= ImGui::SliderFloat(T(TKEY("local_structure"), "Local Structure Strength"), &tuning.localStructureStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
+	if (ImGui::CollapsingHeader(T(TKEY("tone_direction"), "Brightening and Darkening"))) {
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("tone_direction_tooltip"), "Scale positive and negative tone edits separately; limits are capped at 2 stops."));
+		directionChanged |= ImGui::SliderFloat(T(TKEY("brightening"), "Brighten"), &tuning.brightening, 0.0f, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		directionChanged |= ImGui::SliderFloat(T(TKEY("darkening"), "Darken"), &tuning.darkening, 0.0f, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		directionChanged |= ImGui::SliderFloat(T(TKEY("max_brightening_stops"), "Brightening Limit (stops)"), &tuning.maxBrighteningStops, 0.0f, NR::Tuning::kMaxToneStops, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		directionChanged |= ImGui::SliderFloat(T(TKEY("max_darkening_stops"), "Darkening Limit (stops)"), &tuning.maxDarkeningStops, 0.0f, NR::Tuning::kMaxToneStops, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	}
 	changed |= ImGui::SliderFloat(T(TKEY("skin_structure"), "Skin Structure Strength"), &tuning.skinStructureStrength, NR::Tuning::kAutomaticSkinStructure, NR::Tuning::kMaxStrength,
 		tuning.skinStructureStrength == NR::Tuning::kAutomaticSkinStructure ? T(TKEY("skin_auto"), "Auto") : "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
@@ -2108,7 +2132,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		diagnostics.DrawSettings();
 		ImGui::TreePop();
 	}
-	if (changed)
+	if (changed || directionChanged)
 		tuning.Sanitize();
 	if (recreateTuning)
 		recreate = resetHistory = true;
@@ -2402,6 +2426,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			boundedTuning.skinStructureStrength = NR::Tuning::kAutomaticSkinStructure;
 		work.toneLowStrength = boundedTuning.localToneStrength;
 		work.toneHighStrength = boundedTuning.localStructureStrength;
+		work.brighteningWeight = boundedTuning.brightening;
+		work.darkeningWeight = boundedTuning.darkening;
+		work.maxBrighteningStops = boundedTuning.maxBrighteningStops;
+		work.maxDarkeningStops = boundedTuning.maxDarkeningStops;
 		work.categoryToneStrength = { boundedTuning.skinToneStrength, boundedTuning.hairToneStrength,
 			boundedTuning.eyeToneStrength, boundedTuning.foliageToneStrength, boundedTuning.landscapeToneStrength };
 		work.regionOverlay = boundedTuning.regionOverlay;

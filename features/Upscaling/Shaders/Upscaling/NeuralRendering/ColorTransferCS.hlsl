@@ -265,7 +265,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 	float3 result = originalLinear * ratio;
 	const bool boundedGain = CompositeMode == NR::kCompositeProduction;
 	if (boundedGain)
-		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), NR::kMaxToneStops);
+		result = original.rgb * NR::CompositeGain(tone * saturate(protectionWeight), BrighteningWeight, DarkeningWeight,
+									MaxBrighteningStops, MaxDarkeningStops);
 	if (CompositeMode == NR::kCompositeReplacement)
 		result = neuralLinear;
 	else if (CompositeMode == NR::kCompositeMaskedLerp)

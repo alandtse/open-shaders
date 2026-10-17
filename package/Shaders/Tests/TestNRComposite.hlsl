@@ -10,8 +10,8 @@
 
 /// @tags nr, color
 [numthreads(1, 1, 1)] void TestNRCompositeGainIsAnExactPassthroughAtZeroTone() {
-	ASSERT(AreEqual, NR::CompositeGain(0.0f, NR::kMaxToneStops), 1.0f);
-	ASSERT(AreEqual, NR::CompositeGain(0.0f, 0.0f), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(0.0f, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(0.0f, 0.0f, 0.0f, 0.0f, 0.0f), 1.0f);
 }
 
 	/// @tags nr, color
@@ -21,9 +21,9 @@
 	const float positiveInfinity = asfloat(0x7F800000u);
 	const float negativeInfinity = -positiveInfinity;
 
-	ASSERT(AreEqual, NR::CompositeGain(notANumber, NR::kMaxToneStops), 1.0f);
-	ASSERT(AreEqual, NR::CompositeGain(positiveInfinity, NR::kMaxToneStops), 1.0f);
-	ASSERT(AreEqual, NR::CompositeGain(negativeInfinity, NR::kMaxToneStops), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(notANumber, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(positiveInfinity, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(negativeInfinity, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops), 1.0f);
 }
 
 /// @tags nr, color
@@ -31,13 +31,26 @@
 	const float largest = 3.402823466e+38f;
 	float tones[6] = { 1e4f, -1e4f, largest, -largest, NR::kMaxToneStops, -NR::kMaxToneStops };
 	for (int i = 0; i < 6; ++i) {
-		float gain = NR::CompositeGain(tones[i], NR::kMaxToneStops);
+		float gain = NR::CompositeGain(tones[i], 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops);
 		ASSERT(IsTrue, isfinite(gain));
 		ASSERT(IsTrue, gain > 0.0f);
 		ASSERT(IsTrue, abs(log2(gain)) <= NR::kMaxToneStops + 1e-4f);
 	}
 
 	// The clamp saturates instead of growing with the input.
-	ASSERT(IsTrue, abs(NR::CompositeGain(1e4f, NR::kMaxToneStops) - exp2(NR::kMaxToneStops)) < 1e-3f);
-	ASSERT(IsTrue, abs(NR::CompositeGain(-1e4f, NR::kMaxToneStops) - exp2(-NR::kMaxToneStops)) < 1e-3f);
+	ASSERT(IsTrue, abs(NR::CompositeGain(1e4f, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops) - exp2(NR::kMaxToneStops)) < 1e-3f);
+	ASSERT(IsTrue, abs(NR::CompositeGain(-1e4f, 1.0f, 1.0f, NR::kMaxToneStops, NR::kMaxToneStops) - exp2(-NR::kMaxToneStops)) < 1e-3f);
+}
+
+	/// @tags nr, color
+	[numthreads(1, 1, 1)] void TestNRCompositeGainWeightsAndDirectionalLimits()
+{
+	ASSERT(AreEqual, NR::CompositeGain(1.0f, 0.0f, 2.0f, 2.0f, 2.0f), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(-1.0f, 2.0f, 0.0f, 2.0f, 2.0f), 1.0f);
+	ASSERT(AreEqual, NR::CompositeGain(1.0f, 2.0f, 0.0f, 2.0f, 2.0f), 4.0f);
+	ASSERT(AreEqual, NR::CompositeGain(-1.0f, 0.0f, 2.0f, 2.0f, 2.0f), 0.25f);
+	ASSERT(AreEqual, NR::CompositeGain(2.0f, 2.0f, 0.0f, 0.5f, 2.0f), exp2(0.5f));
+	ASSERT(AreEqual, NR::CompositeGain(-2.0f, 0.0f, 2.0f, 2.0f, 0.5f), exp2(-0.5f));
+	ASSERT(AreEqual, NR::CompositeGain(2.0f, 2.0f, 0.0f, 10.0f, 2.0f), exp2(NR::kMaxToneStops));
+	ASSERT(AreEqual, NR::CompositeGain(-2.0f, 0.0f, 2.0f, 2.0f, 10.0f), exp2(-NR::kMaxToneStops));
 }
