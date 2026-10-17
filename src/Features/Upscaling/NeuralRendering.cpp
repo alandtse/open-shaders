@@ -316,6 +316,7 @@ struct NeuralRendering::Impl
 	/** @brief Set from the tuning before Initialize; lets a 310.8.x build outside the pinned digests load. */
 	bool allowUnverifiedRuntime = false;
 	uint32_t lastDiagnosticOptions = 0;
+	uint32_t lastModelPreset = 0;
 	uint32_t debugOptions = 0;
 	NR::Diagnostics::ColorConversion conversionMode = NR::Diagnostics::ColorConversion::Production;
 	NR::Diagnostics::ExposureMode exposureMode = NR::Diagnostics::ExposureMode::Production;
@@ -1961,6 +1962,20 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 or 310.9 runtime build."));
 	bool changed = false;
+	if (NR::RuntimeHasModelPresets(availability.version)) {
+		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));
+		const std::array<const char*, NR::Tuning::kMaxModelPreset + 1> presetLabels{
+			T(TKEY("model_preset_original"), "Original"),
+			T(TKEY("model_preset_newest"), "Newest (faster)"),
+		};
+		if (ImGui::Combo(T(TKEY("model_preset"), "Network"), &preset, presetLabels.data(), static_cast<int>(presetLabels.size()))) {
+			tuning.modelPreset = static_cast<uint32_t>(preset);
+			changed = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("model_preset_tooltip"),
+				"This runtime ships two networks. Original is the network of the 310.8 runtime. Newest costs less GPU time but changes the picture, so compare faces and hair before keeping it. The change recreates the model."));
+	}
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");
 		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
@@ -2279,6 +2294,13 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				work.runtime.ResetFeatures();
 			}
 			work.lastDiagnosticOptions = diagnostic.options;
+		}
+		if (effective.modelPreset != work.lastModelPreset) {
+			// The network is chosen when a feature is created, so a new choice needs new features.
+			work.interop.Drain();
+			work.runtime.ResetFeatures();
+			resetHistory = true;
+			work.lastModelPreset = effective.modelPreset;
 		}
 		if (action == NR::FrameAction::SkipLatched) {
 			diagnostic.outcome = Outcome::FailedLatch;

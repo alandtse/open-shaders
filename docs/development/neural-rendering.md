@@ -531,7 +531,9 @@ unless developer mode forces it through for evaluation as described under
 ### 310.9 runtimes
 
 A 310.9.x `nvngx_dlssnr.dll` is accepted by version but has no pinned digest, so it loads only in developer
-mode or with **Use This Build Anyway**.
+mode or with **Use This Build Anyway**. It ships two networks chosen at feature creation by
+`DLSSNR.Hint.Render.Preset`; `Tuning::modelPreset` writes 1 (the original 310.8 network, the default) or 2
+(the newest, faster one), and changing it recreates the eye features. A 310.8 runtime always gets 0.
 
 The existing scene-white normalization is separate and remains valid. Open
 Shaders' exposed-linear value `1.0` represents the current scene paper white,

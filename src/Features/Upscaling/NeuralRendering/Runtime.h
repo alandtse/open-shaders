@@ -14,6 +14,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -54,6 +55,18 @@ namespace NR
 		if (version->major() != kRequiredRuntimeMajor || (version->minor() != kRequiredRuntimeMinor && version->minor() != kNewerRuntimeMinor))
 			return std::format("unsupported runtime version {} (needs {}.{} or {}.{})", version->string("."), kRequiredRuntimeMajor, kRequiredRuntimeMinor, kRequiredRuntimeMajor, kNewerRuntimeMinor);
 		return {};
+	}
+
+	/** @brief `DLSSNR.Hint.Render.Preset` value for each Tuning::modelPreset: 1 the original network, 2 the newest. */
+	inline constexpr std::array<uint32_t, Tuning::kMaxModelPreset + 1> kRuntimeModelPreset{ 1u, 2u };
+
+	/** @brief True when a runtime file version such as "310.9.16.0" ships the networks Tuning::modelPreset selects between. */
+	inline bool RuntimeHasModelPresets(std::string_view version)
+	{
+		uint32_t major = 0, minor = 0;
+		char dot = 0;
+		std::istringstream stream{ std::string(version) };
+		return (stream >> major >> dot >> minor) && dot == '.' && major == kRequiredRuntimeMajor && minor >= kNewerRuntimeMinor;
 	}
 
 	// SHA-256 of the nvngx_dlssnr.dll builds (310.8 DVS Production, 310.8.0.0 test) whose channel

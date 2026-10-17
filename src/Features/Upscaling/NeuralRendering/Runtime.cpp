@@ -517,7 +517,7 @@ namespace NR
 			writer.SetFloat("DLSSNR.Scale", 1.0f);
 			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
 			writer.SetUInt("DLSSNR.Upscaling", 0u);
-			writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
+			writer.SetUInt("DLSSNR.Hint.Render.Preset", RuntimeHasModelPresets(state.version) ? kRuntimeModelPreset[tuning.modelPreset] : 0u);
 			const auto flags = static_cast<unsigned int>(
 				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
 			writer.SetUInt("Feature_Flags", flags);

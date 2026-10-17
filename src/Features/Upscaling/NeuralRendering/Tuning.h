@@ -18,6 +18,7 @@ namespace NR
 		static constexpr float kMinModelScale = 0.25f, kMaxModelScale = 1.0f;
 		static constexpr uint32_t kRegionFitPadded = 0, kRegionFitTight = 1, kMaxRegionFit = kRegionFitTight;
 		static constexpr uint32_t kMaxSkipFrameGapMode = 1;
+		static constexpr uint32_t kMaxModelPreset = 1;
 		uint32_t style = 0;
 		float intensity = kDefaultStrength;
 		float localToneStrength = kDefaultStrength;
@@ -98,6 +99,11 @@ namespace NR
 		 *        full-resolution frame. Developer-only; 1 is the full-resolution pass.
 		 */
 		float modelScale = kMaxModelScale;
+		/**
+		 * @brief Which network a 310.9 or newer runtime creates: 0 the original 310.8 network, 1 the
+		 *        newest it ships (the faster one). A 310.8 runtime has one network and ignores it.
+		 */
+		uint32_t modelPreset = 0;
 		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
 		bool modelGuidedUpsample = true;
 		/**
@@ -188,6 +194,7 @@ namespace NR
 			materialMapMode = std::min(materialMapMode, MaterialMap::kMaxMode);
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
+			modelPreset = std::min(modelPreset, kMaxModelPreset);
 			modelScale = std::isfinite(modelScale) ? std::clamp(modelScale, kMinModelScale, kMaxModelScale) : kMaxModelScale;
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a

@@ -156,6 +156,16 @@ TEST_CASE("Only a 310.8 or 310.9 runtime is accepted", "[nr]")
 			"nvngx_dlssnr.dll in C:\\game has no version information");
 }
 
+TEST_CASE("Only a 310.9 or newer runtime has model presets", "[nr]")
+{
+	REQUIRE(NR::RuntimeHasModelPresets("310.9.16.0"));
+	REQUIRE(NR::RuntimeHasModelPresets("310.9.0"));
+	REQUIRE_FALSE(NR::RuntimeHasModelPresets("310.8.0.0"));
+	REQUIRE_FALSE(NR::RuntimeHasModelPresets("309.9.0"));
+	REQUIRE_FALSE(NR::RuntimeHasModelPresets("unknown"));
+	REQUIRE_FALSE(NR::RuntimeHasModelPresets(""));
+}
+
 TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
 {
 	using NR::RuntimeAvailability;
