@@ -12,6 +12,7 @@
 #include "NeuralRendering/FoveaClip.h"
 #include "NeuralRendering/Lifecycle.h"
 #include "NeuralRendering/ModelScale.h"
+#include "NeuralRendering/PrewarmDimensions.h"
 #include "NeuralRendering/Runtime.h"
 #include "Profiler.h"
 #include "State.h"
@@ -160,7 +161,7 @@ namespace
 	constexpr float kModelGuideSigmaStops = 0.5f;
 
 	/** @brief Blank pixels between the two eyes in the side-by-side model image. */
-	constexpr uint32_t kSbsGutterPixels = 32;
+	constexpr uint32_t kSbsGutterPixels = NR::kSideBySideGutter;
 
 	/** @brief Colour the preview draws the tracked actor's projected box in; the shader outline uses the same yellow. */
 	constexpr ImU32 kActorBoxPreviewColor = IM_COL32(255, 255, 0, 255);
@@ -751,8 +752,7 @@ struct NeuralRendering::Impl
 			const auto crop = !reduced && region.active ? Util::Region::ClampToFrame(region.eye[i], width, height) : Util::Region::kEmptyRegion;
 			sbsCrop[i] = (crop.w && crop.h) ? crop : Util::Subrect::PixelRegion{ 0, 0, reduced ? lowWidth : width, reduced ? lowHeight : height };
 		}
-		const uint32_t planWidth = sbsCrop[0].w + kSbsGutterPixels + sbsCrop[1].w;
-		const uint32_t planHeight = std::max(sbsCrop[0].h, sbsCrop[1].h);
+		const auto [planWidth, planHeight] = NR::SideBySideExtent(sbsCrop, reduced ? lowWidth : width, reduced ? lowHeight : height);
 		const std::array<uint32_t, 4> layout{ sbsCrop[0].w, sbsCrop[0].h, sbsCrop[1].w, sbsCrop[1].h };
 		if (layout != sbsLayout) {
 			sbsLayout = layout;
@@ -1926,7 +1926,7 @@ namespace
 	}
 }
 
-void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& contexts, NR::Tuning& tuning)
+void NeuralRendering::DrawSettings(bool& enabled, bool& startupPrewarm, NR::Context::Profiles& contexts, NR::Tuning& tuning)
 {
 	ImGui::PushID("NeuralRendering");
 	const auto availability = GetRuntimeAvailability();
@@ -1960,6 +1960,18 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	ImGui::TextWrapped("%s", T(TKEY("description"),
 								 "One display-referred NR proxy pass at eye render resolution, composed back into scene-linear HDR before DLSS/FSR and frame-generation capture. Requires an NR-capable NVIDIA GPU and a validated 310.8 runtime build."));
+	ImGui::Checkbox(T(TKEY("startup_prewarm"), "Prepare Feature 18 at startup"), &startupPrewarm);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("startup_prewarm_tooltip"),
+			"Uses the normal initialization path on loading or main-menu frames to create the runtime and at most one eye instance per frame. It evaluates no scene guides. NGX creation is synchronous, so completion and hitch reduction are not guaranteed. Off by default."));
+	if (startupPrewarm) {
+		const auto prewarm = GetStartupPrewarmStatus();
+		ImGui::Text(T(TKEY("startup_prewarm_status"), "Startup preparation: %s (%u/%u eyes)"), prewarm.stage.c_str(), prewarm.preparedEyes, prewarm.eyes);
+		if (prewarm.stage == "deferred")
+			ImGui::TextWrapped(T(TKEY("startup_prewarm_deferred"), "Eye creation is deferred: %s"), prewarm.reason.c_str());
+		if (ImGui::Button(T(TKEY("startup_prewarm_reset"), "Reset Startup Preparation")))
+			ResetStartupPrewarm();
+	}
 	bool changed = false;
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");
@@ -2119,6 +2131,18 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	ImGui::PopID();
 }
 
+NeuralRendering::StartupPrewarmStatus NeuralRendering::GetStartupPrewarmStatus() const
+{
+	std::scoped_lock lock(statusMutex);
+	return startupPrewarmStatus;
+}
+
+void NeuralRendering::PublishStartupPrewarm(std::string stage, std::string reason, uint32_t width, uint32_t height, uint32_t eyes, uint32_t preparedEyes, bool reused)
+{
+	std::scoped_lock lock(statusMutex);
+	startupPrewarmStatus = { std::move(stage), std::move(reason), width, height, eyes, preparedEyes, reused };
+}
+
 void NeuralRendering::DrawRegionPreview()
 {
 	ImGui::Separator();
@@ -2190,17 +2214,92 @@ void NeuralRendering::CaptureAfterUpscaling()
 	diagnostics.FinishCapture(globals::state->frameCount);
 }
 
-void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
+void NeuralRendering::DrawBeforeUpscaling(bool enabled, bool prewarmRequested, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize)
 {
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
+	const auto effective = [&] {
+		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
+		if (!globals::state->IsDeveloperMode()) {
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
+			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
+		}
+		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
+			resolved.modelScale = NR::Tuning::kMaxModelScale;
+		return resolved;
+	}();
+	auto* state = globals::state;
+	const auto eyeCount = NR::PrewarmEyeCount(globals::game::isVR);
+	std::array<std::array<uint32_t, 3>, 2> prewarmTargets{};
+	uint32_t prewarmTargetCount = 0;
+	uint32_t prewarmWidth = 0, prewarmHeight = 0;
+	const char* prewarmDeferredReason = nullptr;
+	if (std::isfinite(renderSize.x) && std::isfinite(renderSize.y) && renderSize.x >= eyeCount && renderSize.y >= 1.0f &&
+		renderSize.x < static_cast<float>(UINT32_MAX) && renderSize.y < static_cast<float>(UINT32_MAX)) {
+		prewarmWidth = NR::EyeRenderWidth(static_cast<uint32_t>(renderSize.x), eyeCount);
+		prewarmHeight = static_cast<uint32_t>(renderSize.y);
+	}
+	if (!prewarmWidth || !prewarmHeight)
+		prewarmDeferredReason = "render-extent-unavailable";
+	const auto modelExtent = NR::PrewarmEyeExtent(effective, globals::game::isVR, prewarmWidth, prewarmHeight);
+	const auto reducedExtent = NR::ModelExtent(effective.modelScale, prewarmWidth, prewarmHeight);
+	const bool materialGuidesDeferred = effective.materialStrength && !materialStrengthRejected.load(std::memory_order_relaxed) && !reducedExtent.first;
+	if (prewarmWidth && prewarmHeight) {
+		if (materialGuidesDeferred) {
+			prewarmDeferredReason = "material-guides-required";
+		} else if (globals::game::isVR && NR::GetEyeMode(effective) == NR::EyeMode::kSideBySide) {
+			const Util::Subrect::PixelRegion fullEye{ 0, 0, modelExtent.first, modelExtent.second };
+			std::array<Util::Subrect::PixelRegion, 2> crops{ fullEye, fullEye };
+			const auto trackedRegion = effective.regionOfInterest ? GetRegionOfInterest() : Util::Region::StereoRegion{};
+			if (effective.regionOfInterest && !trackedRegion.active) {
+				prewarmDeferredReason = "region-requires-world-guides";
+			} else {
+				if (!reducedExtent.first && trackedRegion.active) {
+					for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+						const auto crop = Util::Region::ClampToFrame(trackedRegion.eye[eye], prewarmWidth, prewarmHeight);
+						if (crop.w && crop.h)
+							crops[eye] = crop;
+					}
+				}
+				const auto extent = NR::SideBySideExtent(crops, modelExtent.first, modelExtent.second);
+				prewarmTargets[prewarmTargetCount++] = { NR::kSbsSlot, extent.first, extent.second };
+			}
+		} else {
+			for (uint32_t eye = 0; eye < eyeCount; ++eye)
+				prewarmTargets[prewarmTargetCount++] = { eye, modelExtent.first, modelExtent.second };
+		}
+	}
+	const bool startupMenu = state->IsMainOrLoadingMenuOpen();
+	const bool resetStartupRequested = startupMenu && enabled && !context.suspended && !impl->HasPassResources() &&
+	                                   appliedFrames.load(std::memory_order_relaxed) == 0 && resetStartupPrewarmRequested.exchange(false);
+	const bool previousPrewarmFailed = GetStartupPrewarmStatus().stage == "failed";
+	const bool startupRequestActive = prewarmRequested && enabled && startupMenu && !context.suspended && !impl->failed &&
+	                                  (!previousPrewarmFailed || resetStartupRequested) &&
+	                                  !impl->HasPassResources() && appliedFrames.load(std::memory_order_relaxed) == 0;
+	bool prewarmPending = startupRequestActive && !impl->ready;
+	uint32_t preparedEyes = 0;
+	if (startupRequestActive && impl->ready) {
+		for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+			const auto& [slot, width, height] = prewarmTargets[i];
+			if (impl->runtime.IsPreparedEye(slot, width, height, false))
+				++preparedEyes;
+			else
+				prewarmPending = true;
+		}
+	}
+	if (resetStartupRequested && startupRequestActive) {
+		preparedEyes = 0;
+		prewarmPending = true;
+	}
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
 	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
-		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount });
+		retryRequested.load(), impl->ready, prewarmPending, impl->lastFrame, globals::state->frameCount });
 	if (context.resetHistory)
 		resetHistory = true;
 	if (action == NR::FrameAction::ReleasePassResources) {
 		diagnostic.outcome = Outcome::Disabled;
+		if (!prewarmRequested)
+			PublishStartupPrewarm("disabled", "disabled");
 		// A latched failure may be a wedged queue, so its resources wait for Retry's draining teardown.
 		if (impl->HasPassResources() && !impl->failed) {
 			std::string failure;
@@ -2235,24 +2334,17 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		}
 		return;
 	}
-	auto* state = globals::state;
 	if (action == NR::FrameAction::SkipNoWorld) {
 		diagnostic.outcome = Outcome::NoWorld;
+		if (startupRequestActive && prewarmDeferredReason)
+			PublishStartupPrewarm("deferred", prewarmDeferredReason, prewarmWidth, prewarmHeight, eyeCount);
+		else if (!prewarmRequested)
+			PublishStartupPrewarm("disabled", "disabled");
 		if (publishedState.load(std::memory_order_relaxed) == Status::State::kOff)
 			PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
 		resetHistory = true;
 		return;
 	}
-	const auto effective = [&] {
-		auto resolved = NR::Context::EffectiveTuning(tuning, contexts, context.kind);
-		if (!globals::state->IsDeveloperMode()) {
-			resolved.modelScale = NR::Tuning::kMaxModelScale;
-			resolved.sbsEvaluate = resolved.modelVerify = resolved.mirrorEyes = false;
-		}
-		if (globals::game::isVR && NR::GetEyeMode(resolved) == NR::EyeMode::kAlternate)
-			resolved.modelScale = NR::Tuning::kMaxModelScale;
-		return resolved;
-	}();
 	const auto materialStrengths = effective.MaterialStrengths();
 	const auto publishMaterialStrength = [this, &materialStrengths] {
 		materialStrengthActive.store(impl->materialStrengthBound, std::memory_order_relaxed);
@@ -2260,6 +2352,22 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		for (size_t i = 0; i < materialStrengths.strength.size(); ++i)
 			materialStrengthValues[i].store(materialStrengths.strength[i], std::memory_order_relaxed);
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
+	};
+	const auto retireFailedStartupPrewarm = [this, startupRequestActive, state, prewarmWidth, prewarmHeight, eyeCount](const char* detail) {
+		if (!startupRequestActive || state->worldRenderedThisFrame || impl->interop.DeviceRemoved())
+			return false;
+		try {
+			impl->interop.Drain();
+			impl = std::make_unique<Impl>();
+			retryRequested = false;
+			resetHistory = true;
+			PublishStartupPrewarm("failed", "lazy-fallback", prewarmWidth, prewarmHeight, eyeCount);
+			PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
+			logger::warn("[NeuralRendering] Optional startup preparation failed; ordinary first-world initialization remains available: {}", detail);
+			return true;
+		} catch (...) {
+			return false;
+		}
 	};
 	try {
 		retryRequested = false;
@@ -2288,12 +2396,87 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			++diagnostic.duplicates;
 			return;
 		}
+		const bool readyBeforeAction = work.ready;
 		// A rebuilt runtime starts uninitialized, so both actions end in Initialize().
 		if (action == NR::FrameAction::InitializeThenRun || action == NR::FrameAction::RebuildThenRun) {
 			work.allowUnverifiedRuntime = allowUnverifiedRuntime.load(std::memory_order_relaxed);
 			work.Initialize();
 			const auto luid = work.interop.AdapterLuid();
 			logger::debug("[NeuralRendering] D3D12 device on renderer adapter LUID {:08X}:{:08X}", luid.HighPart, luid.LowPart);
+		}
+		if (resetStartupRequested && startupRequestActive) {
+			if (readyBeforeAction) {
+				work.interop.Drain();
+				work.runtime.ResetFeatures();
+			}
+			PublishStartupPrewarm("waiting", "reset", prewarmWidth, prewarmHeight, eyeCount);
+		}
+		if (action == NR::FrameAction::InitializeThenRun && !state->worldRenderedThisFrame) {
+			work.lastFrame = state->frameCount;
+			if (startupRequestActive) {
+				if (!readyBeforeAction) {
+					PublishStartupPrewarm("preparing", "runtime-ready", prewarmWidth, prewarmHeight, eyeCount);
+				} else {
+					if (prewarmTargetCount) {
+						for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+							const auto [slot, width, height] = prewarmTargets[i];
+							if (work.runtime.IsPreparedEye(slot, width, height, false))
+								continue;
+							try {
+								work.interop.Drain();
+								work.runtime.ResetFeature(slot);
+								NR::FrameParameters frame;
+								const NR::ProtectionResources protection{};
+								auto* commands = work.interop.Begin();
+								bool created = false;
+								try {
+									created = work.runtime.PrepareEye(commands, slot, width, height, protection, frame, effective);
+								} catch (...) {
+									try {
+										work.interop.End();
+									} catch (...) {
+									}
+									throw;
+								}
+								work.interop.End();
+								if (!created)
+									throw std::runtime_error(std::format("Feature 18 instance {} creation failed (0x{:08X})", slot, frame.result));
+								++preparedEyes;
+							} catch (...) {
+								try {
+									work.interop.Drain();
+									impl = std::make_unique<Impl>();
+									PublishStartupPrewarm("failed", "lazy-fallback", prewarmWidth, prewarmHeight, eyeCount);
+									PublishStatus(Status::State::kStarting, T(TKEY("status_starting"), "Starting..."));
+								} catch (...) {
+									impl->failed = true;
+									retryRequested = true;
+									PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
+								}
+								return;
+							}
+							break;
+						}
+					}
+					work.lastFrame = state->frameCount;
+					preparedEyes = 0;
+					for (uint32_t i = 0; i < prewarmTargetCount; ++i) {
+						const auto& [slot, width, height] = prewarmTargets[i];
+						preparedEyes += work.runtime.IsPreparedEye(slot, width, height, false) ? 1u : 0u;
+					}
+					if (prewarmTargetCount && preparedEyes == prewarmTargetCount)
+						PublishStartupPrewarm("ready", "prepared", prewarmWidth, prewarmHeight, eyeCount, preparedEyes);
+					else if (prewarmDeferredReason)
+						PublishStartupPrewarm("deferred", prewarmDeferredReason, prewarmWidth, prewarmHeight, eyeCount);
+					else
+						PublishStartupPrewarm("preparing", "prepared-eye", prewarmWidth, prewarmHeight, eyeCount, preparedEyes);
+				}
+			} else {
+				PublishStartupPrewarm("waiting", startupRequestActive ? "waiting" : "disabled", prewarmWidth, prewarmHeight, eyeCount);
+			}
+			diagnostic.outcome = Outcome::NoWorld;
+			resetHistory = true;
+			return;
 		}
 		if (clearShaders.exchange(false)) {
 			work.prepareColor.Reset();
@@ -2445,6 +2628,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		work.lastFrame = state->frameCount;
 	} catch (const winrt::hresult_error& error) {
 		diagnostic.outcome = Outcome::Error;
+		if (retireFailedStartupPrewarm(winrt::to_string(error.message()).c_str()))
+			return;
+		if (startupRequestActive && !state->worldRenderedThisFrame)
+			PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
 		const bool strengthHandled = RevertMaterialStrengthOnFailure(winrt::to_string(error.message()).c_str());
 		publishMaterialStrength();
 		if (strengthHandled)
@@ -2454,6 +2641,10 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
+		if (retireFailedStartupPrewarm(error.what()))
+			return;
+		if (startupRequestActive && !state->worldRenderedThisFrame)
+			PublishStartupPrewarm("failed", "retirement-failed", prewarmWidth, prewarmHeight, eyeCount);
 		const bool strengthHandled = RevertMaterialStrengthOnFailure(error.what());
 		publishMaterialStrength();
 		if (strengthHandled)

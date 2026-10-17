@@ -228,11 +228,16 @@ namespace NR
 		void Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified);
 		/** @brief Releases temporal instances after the caller has retired GPU work. */
 		void ResetFeatures();
+		/** @brief True when a slot's live instance matches its creation size and protection mode. */
+		[[nodiscard]] bool IsPreparedEye(uint32_t slot, uint32_t width, uint32_t height, bool protectionEnabled) const;
 
 		/** @brief Drops one instance, so its next evaluate creates it again at the size that evaluate names. */
 		void ResetFeature(uint32_t slot);
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
+		/** @brief Creates a Feature 18 instance without evaluating its inputs. */
+		bool PrepareEye(ID3D12GraphicsCommandList* commands, uint32_t slot, uint32_t width, uint32_t height,
+			const ProtectionResources& protection, FrameParameters& frame, const Tuning& tuning);
 		/**
 		 * @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye.
 		 * @param protection Optional graded protection resources; a null alpha leaves DLSSNR.UIAlpha

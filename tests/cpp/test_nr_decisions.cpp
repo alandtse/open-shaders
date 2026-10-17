@@ -104,6 +104,39 @@ TEST_CASE("DecideFrame initializes on the first world frame and runs after", "[n
 	REQUIRE(NR::DecideFrame(cold) == NR::FrameAction::InitializeThenRun);
 }
 
+TEST_CASE("Startup preparation uses InitializeThenRun and remains menu-only", "[nr][prewarm]")
+{
+	auto menu = RunningFrame(200);
+	menu.worldRendered = false;
+	menu.ready = false;
+	menu.prewarmPending = true;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::InitializeThenRun);
+
+	// Once initialized, one still-pending eye instance uses the same action on a later frame.
+	menu.ready = true;
+	menu.frameCount++;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::InitializeThenRun);
+
+	// The existing frame guard still limits startup work to one action per frame.
+	menu.lastFrame = menu.frameCount;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::SkipDuplicate);
+	menu.lastFrame = UINT32_MAX;
+	menu.failed = true;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::SkipNoWorld);
+	menu.failed = false;
+
+	// No request or no pending instance preserves the ordinary no-world fast path.
+	menu.lastFrame--;
+	menu.prewarmPending = false;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::SkipNoWorld);
+
+	menu.prewarmPending = true;
+	menu.suspended = true;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::Suspend);
+	menu.enabled = false;
+	REQUIRE(NR::DecideFrame(menu) == NR::FrameAction::ReleasePassResources);
+}
+
 TEST_CASE("DecideFrame suspends without freeing pass resources while dialogue-only gating holds", "[nr]")
 {
 	auto suspended = RunningFrame(50);

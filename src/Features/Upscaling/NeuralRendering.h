@@ -99,11 +99,11 @@ struct NeuralRendering
 	/** @brief Invalidates the cached existing upscaling encoder. */
 	void ClearShaderCache();
 	/** @brief Draws Upscaling's NR tuning, retry controls, and runtime status. */
-	void DrawSettings(bool& enabled, NR::Context::Profiles& contexts, NR::Tuning& tuning);
+	void DrawSettings(bool& enabled, bool& startupPrewarm, NR::Context::Profiles& contexts, NR::Tuning& tuning);
 	/** @brief Draws the runtime DLL's verdict and how to fix it, under Upscaling's DLL tables. */
 	void DrawRuntimeDiagnostics() const;
 	/** @brief Replaces active kMAIN eye regions before upscaling and frame-generation capture. */
-	void DrawBeforeUpscaling(bool enabled, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
+	void DrawBeforeUpscaling(bool enabled, bool prewarmRequested, const NR::Context::Profiles& contexts, const NR::Tuning& tuning, uint32_t target, float2 renderSize);
 	/** @brief Draws the bounded scheduling diagnostics overlay. */
 	void DrawDiagnosticsOverlay();
 	/** @brief True while the developer has switched the diagnostics overlay on. */
@@ -117,6 +117,16 @@ struct NeuralRendering
 
 	/** @brief Snapshot of the current status, safe from any thread. */
 	Status GetStatus() const;
+	/** @brief Snapshot of the optional startup preparation, safe from any thread. */
+	struct StartupPrewarmStatus
+	{
+		std::string stage = "disabled", reason = "disabled";
+		uint32_t width = 0, height = 0, eyes = 0, preparedEyes = 0;
+		bool reused = false;
+	};
+	StartupPrewarmStatus GetStartupPrewarmStatus() const;
+	/** @brief Queues a drained reset of prepared startup instances when no world resources are active. */
+	void ResetStartupPrewarm() { resetStartupPrewarmRequested = true; }
 	/** @brief Cached verdict for the runtime on disk: whether NR can start, and why not when it cannot. */
 	NR::RuntimeAvailability GetRuntimeAvailability() const;
 	/** @brief Snapshot of the tracked actor's crop, safe from any thread. */
@@ -140,6 +150,8 @@ private:
 	struct Impl;
 	std::unique_ptr<Impl> impl;
 	NR::Diagnostics diagnostics;
+	StartupPrewarmStatus startupPrewarmStatus;
+	std::atomic_bool resetStartupPrewarmRequested = false;
 	std::atomic_bool resetHistory = true, recreate = false, clearShaders = false, retryRequested = false;
 	/** @brief The previous hook call's situation; NR::Context::Resolve updates it and flags the transitions that reset history. */
 	NR::Context::ContextState contextState;
@@ -204,6 +216,7 @@ private:
 	void DrawRegionPreview();
 	/** @brief Publishes a status line plus the run state the panel and devbench report. */
 	void PublishStatus(Status::State state, std::string text);
+	void PublishStartupPrewarm(std::string stage, std::string reason, uint32_t width = 0, uint32_t height = 0, uint32_t eyes = 0, uint32_t preparedEyes = 0, bool reused = false);
 	/** @brief Republishes the render size and eye count after the pass resources are recreated. */
 	void PublishResources();
 	/** @brief Publishes a failure with the prefix the panel shows for a stopped pass. */

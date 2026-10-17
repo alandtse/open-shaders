@@ -332,6 +332,9 @@ namespace NR
 		{
 			std::unique_ptr<NVSDK_NGX_Parameter, ParameterDeleter> parameters{ nullptr, {} };
 			std::unique_ptr<NVSDK_NGX_Handle, FeatureDeleter> feature{ nullptr, {} };
+			uint32_t width = 0;
+			uint32_t height = 0;
+			bool protectionEnabled = false;
 		};
 		std::array<Eye, kFeatureSlots> eyes;
 
@@ -454,18 +457,102 @@ namespace NR
 
 	void Runtime::ResetFeatures()
 	{
-		for (auto& eye : impl->eyes)
+		for (auto& eye : impl->eyes) {
 			eye.feature.reset();
+			eye.width = 0;
+			eye.height = 0;
+			eye.protectionEnabled = false;
+		}
+	}
+
+	bool Runtime::IsPreparedEye(uint32_t eyeIndex, uint32_t width, uint32_t height, bool protectionEnabled) const
+	{
+		const auto& eye = impl->eyes.at(eyeIndex);
+		return eye.feature && eye.width == width && eye.height == height && eye.protectionEnabled == protectionEnabled;
 	}
 
 	void Runtime::ResetFeature(uint32_t slot)
 	{
-		impl->eyes.at(slot).feature.reset();
+		auto& eye = impl->eyes.at(slot);
+		eye.feature.reset();
+		eye.width = 0;
+		eye.height = 0;
+		eye.protectionEnabled = false;
 	}
 
 	std::string Runtime::Version() const
 	{
 		return impl->version;
+	}
+
+	bool Runtime::PrepareEye(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex, uint32_t width, uint32_t height,
+		const ProtectionResources& protection, FrameParameters& frame, const Tuning& tuning)
+	{
+		auto& state = *impl;
+		auto& eye = state.eyes.at(eyeIndex);
+		frame.created = false;
+		frame.result = 0;
+		const bool protectionEnabled = protection.alpha != nullptr;
+		if (eye.feature) {
+			if (eye.width != width || eye.height != height || eye.protectionEnabled != protectionEnabled) {
+				frame.result = static_cast<uint32_t>(NVSDK_NGX_Result_Fail);
+				logger::warn("[NeuralRendering] Eye {} Feature 18 creation configuration changed; retire and reset the existing instance before preparing it again", eyeIndex);
+				return false;
+			}
+			return true;
+		}
+		auto* parameters = eye.parameters.get();
+		ParameterWriter writer(parameters, state.floatSlot);
+		RuntimePath::Scope scope(state.compatibility);
+		parameters->Reset();
+		Check(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.populate(parameters); }), "NR parameter population");
+		writer.DiscoverFloatSlot();
+		for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
+			writer.SetUInt(key, width);
+		for (auto key : { "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
+			writer.SetUInt(key, height);
+		writer.SetUInt("Width", width);
+		writer.SetUInt("Height", height);
+		writer.SetUInt("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+		writer.SetUInt("CreationNodeMask", 1u);
+		writer.SetUInt("VisibilityNodeMask", 1u);
+		writer.SetUInt("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
+		writer.SetUInt("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
+		writer.SetUInt("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
+		writer.SetFloat("DLSSNR.Scale", 1.0f);
+		writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
+		writer.SetUInt("DLSSNR.Upscaling", 0u);
+		writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
+		const auto flags = static_cast<unsigned int>(
+			NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
+		writer.SetUInt("Feature_Flags", flags);
+		writer.SetUInt("NVSDK_NGX_Parameter_Feature_Flags", flags);
+		writer.SetFloat("InPreExposure", 1.0f);
+		writer.SetFloat("InExposureScale", 1.0f);
+		writer.SetFloat("NVSDK_NGX_Parameter_PreExposure", 1.0f);
+		writer.SetFloat("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
+		writer.SetUInt("DLSSNR.AutoExposure", 1u);
+		writer.SetUInt("DLSSNR.Hdr", 1u);
+		writer.SetUInt("DLSSNR.SDR", 0u);
+		WriteTuning(writer, tuning, protection);
+		writer.SetUInt("DLSSNR.UICorrection", 1u);
+		NVSDK_NGX_Handle* handle = nullptr;
+		const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
+			return state.create(commands, NVSDK_NGX_Feature_Reserved18, parameters, &handle);
+		});
+		frame.result = static_cast<uint32_t>(result);
+		eye.feature.reset(handle);
+		if (NVSDK_NGX_FAILED(result) || !handle) {
+			logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
+			return false;
+		}
+		eye.width = width;
+		eye.height = height;
+		eye.protectionEnabled = protectionEnabled;
+		logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
+		frame.created = true;
+		frame.reset = true;
+		return true;
 	}
 
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
@@ -474,7 +561,6 @@ namespace NR
 		FrameParameters& frame, const Tuning& tuning)
 	{
 		auto& state = *impl;
-		auto& eye = state.eyes.at(eyeIndex);
 		frame.created = false;
 		frame.result = 0;
 		const auto clampRegion = [](ID3D12Resource* resource, GuideRegion region) {
@@ -495,56 +581,14 @@ namespace NR
 		const auto outputRegion = clampRegion(color, guides.colorOutput.width && guides.colorOutput.height ?
 														 guides.colorOutput :
 														 GuideRegion{ 0, 0, width, height });
+		// Existing world instances keep their ordinary evaluation path, including degraded protection.
+		// Startup compatibility is checked before the first pass-resource allocation.
+		if (!state.eyes.at(eyeIndex).feature && !PrepareEye(commands, eyeIndex, width, height, protection, frame, tuning))
+			return false;
+		auto& eye = state.eyes.at(eyeIndex);
 		auto* parameters = eye.parameters.get();
 		ParameterWriter writer(parameters, state.floatSlot);
 		RuntimePath::Scope scope(state.compatibility);
-		if (!eye.feature) {
-			parameters->Reset();
-			Check(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.populate(parameters); }), "NR parameter population");
-			writer.DiscoverFloatSlot();
-			for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
-				writer.SetUInt(key, width);
-			for (auto key : { "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
-				writer.SetUInt(key, height);
-			writer.SetUInt("Width", width);
-			writer.SetUInt("Height", height);
-			writer.SetUInt("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-			writer.SetUInt("CreationNodeMask", 1u);
-			writer.SetUInt("VisibilityNodeMask", 1u);
-			writer.SetUInt("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-			writer.SetUInt("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
-			writer.SetUInt("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
-			writer.SetFloat("DLSSNR.Scale", 1.0f);
-			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
-			writer.SetUInt("DLSSNR.Upscaling", 0u);
-			writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
-			const auto flags = static_cast<unsigned int>(
-				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
-			writer.SetUInt("Feature_Flags", flags);
-			writer.SetUInt("NVSDK_NGX_Parameter_Feature_Flags", flags);
-			writer.SetFloat("InPreExposure", 1.0f);
-			writer.SetFloat("InExposureScale", 1.0f);
-			writer.SetFloat("NVSDK_NGX_Parameter_PreExposure", 1.0f);
-			writer.SetFloat("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
-			writer.SetUInt("DLSSNR.AutoExposure", 1u);
-			writer.SetUInt("DLSSNR.Hdr", 1u);
-			writer.SetUInt("DLSSNR.SDR", 0u);
-			WriteTuning(writer, tuning, protection);
-			writer.SetUInt("DLSSNR.UICorrection", 1u);
-			NVSDK_NGX_Handle* handle = nullptr;
-			const auto result = GuardNgxCall(NVSDK_NGX_Result_Fail, [&] {
-				return state.create(commands, NVSDK_NGX_Feature_Reserved18, parameters, &handle);
-			});
-			frame.result = static_cast<uint32_t>(result);
-			eye.feature.reset(handle);
-			if (NVSDK_NGX_FAILED(result) || !handle) {
-				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
-				return false;
-			}
-			logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
-			frame.created = true;
-			frame.reset = true;
-		}
 		writer.SetResource("DLSSNR.Color", color);
 		writer.SetResource("DLSSNR.Depth", depth);
 		writer.SetResource("DLSSNR.MVec", motion);

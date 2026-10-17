@@ -42,7 +42,39 @@ logs the refusal it loaded through, and `RuntimeAvailability::AllowsLoad` is the
 one place the exception lives. A missing file is never loadable, and an unverified
 build's output is not evidence that a build is correct, only that it ran.
 
-The controls persist under `Upscaling.neuralRenderingTuning`:
+### Startup prewarm
+
+`Upscaling.neuralRenderingStartupPrewarm` opts into Feature 18 preparation on
+loading or main-menu frames. It defaults off and uses the existing NR
+`InitializeThenRun` lifecycle: one eligible frame initializes the runtime, and a
+later eligible frame creates at most one eye instance. It evaluates no world
+pixels. NGX creation is synchronous and has no fixed latency bound, so preparation
+may itself hitch and may not finish before the world starts. Any unprepared or
+mismatched instance follows the normal lazy creation path when world guides exist.
+The Neural Rendering panel and `neuralRenderingStatus` query show the current
+stage, reason, requested extent and prepared-eye count. The same query exposes
+`startupPrewarmStatus`, `startupPrewarmReason`, `startupPrewarmWidth`,
+`startupPrewarmHeight`, `startupPrewarmEyes` and `startupPrewarmPreparedEyes`.
+
+Prewarm uses the active flat/VR eye count, Alternate's full-resolution model
+extent, model scale and the same side-by-side extent calculation as world
+evaluation. When material-strength protection needs live guides, eye creation is
+deferred with reason `material-guides-required`. With ROI enabled, SBS creation is
+deferred until a tracked region is available (`region-requires-world-guides`),
+because the final SBS dimensions depend on those crops. A failed startup attempt
+is latched to prevent menu-frame retry loops; it leaves ordinary first-world
+initialization available. **Reset Startup Preparation** queues a fresh attempt
+while still before the first world use and preserves the configured
+allow-unverified policy.
+
+DevBench can enable the option and inspect its progress with:
+
+```text
+openshaders.feature action=set shortName=Upscaling settings={"neuralRenderingStartupPrewarm":true}
+openshaders.actions action=query shortName=Upscaling name=neuralRenderingStatus
+```
+
+Appearance and crop controls persist under `Upscaling.neuralRenderingTuning`:
 
 | UI control               | Config key               | Range                       | OS default | Evaluation parameter            |
 | ------------------------ | ------------------------ | --------------------------- | ---------- | ------------------------------- |

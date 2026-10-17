@@ -578,6 +578,7 @@ namespace
 	{
 		const auto* upscaling = static_cast<const Upscaling*>(self);
 		const auto status = upscaling->neuralRendering.GetStatus();
+		const auto prewarm = upscaling->neuralRendering.GetStartupPrewarmStatus();
 		const auto availability = upscaling->neuralRendering.GetRuntimeAvailability();
 		const bool developerMode = globals::state && globals::state->IsDeveloperMode();
 		const bool dialogueOpen = NeuralRendering::DialogueOpen();
@@ -616,6 +617,13 @@ namespace
 			{ "eyeReuse", json::array({ status.eyeReuse[0], status.eyeReuse[1] }) },
 			{ "modelFrames", status.modelFrames },
 			{ "reuseFrames", status.reuseFrames },
+			{ "startupPrewarm", upscaling->settings.neuralRenderingStartupPrewarm },
+			{ "startupPrewarmStatus", prewarm.stage },
+			{ "startupPrewarmReason", prewarm.reason },
+			{ "startupPrewarmWidth", prewarm.width },
+			{ "startupPrewarmHeight", prewarm.height },
+			{ "startupPrewarmEyes", prewarm.eyes },
+			{ "startupPrewarmPreparedEyes", prewarm.preparedEyes },
 		};
 	}
 
@@ -653,7 +661,7 @@ void Upscaling::RegisterUxActions()
 		});
 
 	FEATURE_QUERY("neuralRenderingStatus",
-		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth, 7 Metal; the low eight bits only, all on by default). allowUnverifiedRuntime (default false, settings.neuralRenderingTuning.allowUnverifiedRuntime) loads a 310.8.x nvngx_dlssnr.dll outside the pinned builds (state UnvalidatedBuild) without developer mode; its output is unverified. parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (VR only, off by default, on in the Performance profile), reported here as skipFrameReuse, with skipFrameReuseActive true only while it actually runs (false on flat or while frame generation is active); settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model by doubling its motion, 1 reset the eye's history) is reported as skipFrameGapMode. settings.neuralRenderingTuning.crossEyeGain (default true; with the stagger) lets a reused pixel whose own earlier gain was rejected take the other eye's model gain of the same frame, and is reported as crossEyeGain. eyeReuse is per eye whether this frame reused its stored gain instead of running the model (left then right; both false on flat or with the stagger off), and modelFrames/reuseFrames count eye-evaluations and eye-reuses since startup, so one frame of a running stagger adds one to each. The model scale settings.neuralRenderingTuning.modelScale (0.25 to 1, developer-only, default 1) runs the model below the eye size and upsamples its tone gain onto the eye; modelGuidedUpsample weights that upsample by brightness similarity, and modelScale is reported here. settings.neuralRenderingTuning.sbsEvaluate (developer mode and VR only, off by default) evaluates both eyes as one side-by-side image on a single instance, which takes precedence over the stagger and combines with the model scale. With a model scale or sbsEvaluate on, modelVerify also evaluates each eye alone at full size every frame so a verify capture can compare the two, and mirrorEyes feeds eye 0's inputs to both eyes; both are developer-only measurement aids. Params: none.",
+		"Neural Rendering status including runtime verdict, render size, per-eye results and application counts. settings.neuralRenderingStartupPrewarm (default false) requests startup preparation on loading or main-menu frames through the existing InitializeThenRun lifecycle. The query reports startupPrewarmStatus, startupPrewarmReason, startupPrewarmWidth/Height, startupPrewarmEyes and startupPrewarmPreparedEyes. Each frame performs at most one runtime initialization or eye creation and evaluates no world guides. Material-strength eyes and ROI-dependent SBS extents are deferred until the required world guides are available; synchronous NGX creation means completion and hitch reduction are not guaranteed. Existing runtime, material-strength, crop, eye-stagger and model-scale fields retain their meanings. Params: none.",
 		NeuralRenderingStatus);
 
 	FEATURE_COMMAND("retryNeuralRendering",
@@ -697,7 +705,7 @@ void Upscaling::DrawSettings()
 	}
 
 	if (ImGui::BeginTabItem(std::format("{}###NeuralRendering", Util::AppendReleaseStageTag(T(TKEY("tab_neural_rendering"), "Neural Rendering"), Feature::ReleaseStage::Alpha)).c_str())) {
-		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingContexts, settings.neuralRenderingTuning);
+		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingStartupPrewarm, settings.neuralRenderingContexts, settings.neuralRenderingTuning);
 		ImGui::EndTabItem();
 	}
 
@@ -3371,7 +3379,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
-	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingStartupPrewarm, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	upscaling.frameGenerationPrepared = false;
