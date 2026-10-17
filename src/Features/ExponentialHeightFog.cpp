@@ -744,6 +744,7 @@ void ExponentialHeightFog::Prepass()
 		lightLimitFix.lights &&
 		lightLimitFix.lightIndexList &&
 		lightLimitFix.lightGrid;
+	const bool hasLocalShadowData = hasLocalLightData && lightLimitFix.BindShadowResourcesCS();
 	auto* depthSrv = Util::GetCurrentSceneDepthSRV(true);
 	auto& ibl = globals::features::ibl;
 	auto& skylighting = globals::features::skylighting;
@@ -803,7 +804,8 @@ void ExponentialHeightFog::Prepass()
 			(hasIBL ? 4u : 0u) |
 			(hasSkylighting ? 8u : 0u) |
 			(depthSrv && temporalHistoryValid && hasConservativeDepthHistory ? 16u : 0u) |
-			(hasLocalLightData ? 32u : 0u)
+			(hasLocalLightData ? 32u : 0u) |
+			(hasLocalShadowData ? 64u : 0u)
 	};
 	cb.invGridSizeAndNearFade = float4{
 		1.0f / static_cast<float>(currentGridSize.x),
@@ -1024,6 +1026,8 @@ void ExponentialHeightFog::Prepass()
 	context->CSSetShaderResources(50, 1, nullDepthSrv);
 	context->CSSetShaderResources(76, 2, nullSrvs);
 	context->CSSetShaderResources(98, 1, nullSrvs);
+	if (hasLocalShadowData)
+		lightLimitFix.UnbindShadowResourcesCS();
 	context->CSSetUnorderedAccessViews(0, 1, nullUav, nullptr);
 	context->CSSetSamplers(0, 2, nullSamplers);
 	context->CSSetConstantBuffers(0, 1, nullCb);
