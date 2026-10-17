@@ -5,6 +5,8 @@
 #include <vector>
 
 class Menu;
+struct ImDrawData;
+struct IDXGISwapChain;
 
 /**
  * @brief Specialized renderer component for overlay and frame management
@@ -51,6 +53,8 @@ public:
 	static void RenderShaderCompilationStatus(const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
 	static void RenderShaderBlockingStatus();
 	static void RenderFeatureOverlays();
+	/** Draws a queued VR desktop mirror to the swap-chain back buffer before Present. */
+	static void RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, bool hdrReady, bool frameGenActive);
 
 private:
 	static bool ShouldSkipRendering();
@@ -60,4 +64,5 @@ private:
 	static void RenderFirstTimeSetupOverlay();
 	static void HandleABTesting();
 	static void FinalizeImGuiFrame();
+	static bool RenderDesktopMirror(ImDrawData* drawData);
 };
