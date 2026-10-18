@@ -400,12 +400,17 @@ void ExponentialHeightFog::DrawGeneralSettings()
 
 void ExponentialHeightFog::DrawMistSettings()
 {
+	const bool volumeAvailable = settings.enabled && settings.volumetricFogEnabled;
+	ImGui::BeginDisabled(!volumeAvailable);
 	Util::CheckboxFlag(T(TKEY("enable_mists"), "Enable Nearby Mists"), settings.mistsEnabled);
+	ImGui::EndDisabled();
+	if (!volumeAvailable)
+		Util::AddTooltip(T(TKEY("mists_requires_volume"), "Enable Exponential Height Fog and Volumetric Fog to render mists."), ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled);
 	ImGui::TextWrapped("%s", T(TKEY("mists_description"), "Adds drifting 3D mist pockets nearby, using the existing volumetric grid and lighting. Strength follows the active fog: clear weather stays restrained. This is an artistic addition to the vanilla match, not an exact match."));
-	if (!settings.enabled || !settings.volumetricFogEnabled) {
+	if (!volumeAvailable) {
 		ImGui::TextWrapped("%s", T(TKEY("mists_requires_volume"), "Enable Exponential Height Fog and Volumetric Fog to render mists."));
 	}
-	ImGui::BeginDisabled(!settings.mistsEnabled);
+	ImGui::BeginDisabled(!volumeAvailable || !settings.mistsEnabled);
 	ImGui::SliderFloat(T(TKEY("mist_strength"), "Mist Strength"), &settings.mistStrength, 0.0f, kMistStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextWrapped("%s", T(TKEY("mist_strength_tooltip"), "Scales weather-driven opacity across one mist pocket, independently of Mist Range. Higher values make pockets thicker when you enter them. Zero removes the added mists."));
