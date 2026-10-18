@@ -196,6 +196,7 @@ jobs:
                   if [ -n "$clang_aio" ]; then
                     mkdir -p fomod-work/clang
                     if 7z x -y -ofomod-work/clang "$clang_aio" 'SKSE/Plugins/CommunityShaders.dll' >/dev/null; then
+                      7z x -y -ofomod-work/clang "$clang_aio" 'SKSE/Plugins/CommunityShaders.pdb' >/dev/null || echo "::warning::The clang-cl AIO has no PDB; the clang-cl option ships without symbols."
                       args+=(--clang-dll fomod-work/clang)
                     else
                       echo "::warning::Could not extract the clang-cl DLL; the FOMOD omits the clang-cl option."
