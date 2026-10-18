@@ -942,6 +942,8 @@ namespace SIE
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
+			FurShells = 1 << 6,
+			FurShellsDepth = 1 << 7,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,

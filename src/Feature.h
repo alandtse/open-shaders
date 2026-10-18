@@ -330,6 +330,9 @@ public:
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
 
+	/** @brief Called in the main world pass just before the engine renders blended decals, after terrain blending's deferred passes. */
+	virtual void OnBeforeBlendedDecals() {}
+
 	/** @brief Replacement scene in engine color encoding, with borrowed resources valid during the post-processing pass. */
 	struct PostProcessingInput
 	{
