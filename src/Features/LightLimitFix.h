@@ -445,6 +445,10 @@ public:
 	/** @brief Runs the light update and binds clustered light SRVs for the frame. */
 	virtual void Prepass() override;
 	void CopyShadowLightData();
+	/** @brief Binds this frame's point and spot light shadow data (t102-t104) to the compute stage; false when there is none to sample. */
+	bool BindShadowResourcesCS() const;
+	/** @brief Unbinds the compute-stage slots bound by BindShadowResourcesCS. */
+	void UnbindShadowResourcesCS() const;
 
 	// Shadow rendering helpers (implemented in LightLimitFix/ShadowRenderer.cpp)
 

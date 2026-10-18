@@ -67,6 +67,7 @@ add_executable(cpp_tests
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
     test_compilededupe.cpp
+    test_shaderdescriptor.cpp
     test_contenthash.cpp
     test_shadercachemanifest.cpp
     test_shadercontentstore.cpp

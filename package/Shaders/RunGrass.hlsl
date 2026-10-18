@@ -21,6 +21,7 @@
 #	undef IBL
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
@@ -31,10 +32,11 @@ struct VS_INPUT
 	float4 InstanceData2: TEXCOORD5;
 	float4 InstanceData3: TEXCOORD6;
 	float4 InstanceData4: TEXCOORD7;
-#ifdef VR
+#	ifdef VR
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 // Both paths use upstream's vertex inputs. Only outputs consumed by this pass are interpolated.
 struct VS_OUTPUT

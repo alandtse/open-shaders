@@ -13,6 +13,7 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Util.h"
+#include "Utils/ShaderDescriptor.h"
 
 #include "Features/CSUtility.h"
 #include "Features/Effects11.h"
@@ -200,7 +201,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 
 	// Only check against non-shader bits
-	state->permutationData.PixelShaderDescriptor &= ~state->modifiedPixelDescriptor;
+	state->permutationData.PixelShaderDescriptor = Util::ShaderDescriptor::UploadedPixelDescriptor(state->permutationData.PixelShaderDescriptor, state->modifiedPixelDescriptor, State::GetRuntimePixelBits(*shader));
 
 	bool shaderFound = func(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 

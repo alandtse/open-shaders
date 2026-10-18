@@ -1137,6 +1137,7 @@ LightLimitFix::LightData LightLimitFix::ProcessLight(RE::BSLight* bsLight, RE::N
 
 	LightData light{};
 	light.lightFlags = runtimeData->flags;
+	light.lightFlags.reset(LightFlags::Shadow);
 	light.color = float3{ runtimeData->diffuse.red, runtimeData->diffuse.green, runtimeData->diffuse.blue };
 	light.radius = runtimeData->radius;
 	light.fade = runtimeData->fade;

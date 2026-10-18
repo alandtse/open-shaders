@@ -235,6 +235,9 @@ def main():
             clang_target = args.output / clang["staging_subdir"] / PLUGIN_DLL
             clang_target.parent.mkdir(parents=True)
             shutil.copy2(args.clang_dll / PLUGIN_DLL, clang_target)
+            clang_pdb = args.clang_dll / PLUGIN_DLL.with_suffix(".pdb")
+            if clang_pdb.is_file():
+                shutil.copy2(clang_pdb, clang_target.with_suffix(".pdb"))
             # The default DLL (and its PDB) leave Core so each choice installs exactly one.
             default_dir = args.output / clang["default_staging_subdir"] / PLUGIN_DLL.parent
             default_dir.mkdir(parents=True)

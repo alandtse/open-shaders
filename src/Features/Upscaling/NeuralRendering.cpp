@@ -389,10 +389,10 @@ struct NeuralRendering::Impl
 	{
 		interop.Initialize();
 		winrt::com_ptr<ID3D11Device1> device;
-		winrt::check_hresult(globals::d3d::device->QueryInterface(device.put()));
-		winrt::check_hresult(globals::d3d::context->QueryInterface(context.put()));
+		DX::ThrowIfFailed(globals::d3d::device->QueryInterface(device.put()));
+		DX::ThrowIfFailed(globals::d3d::context->QueryInterface(context.put()));
 		const auto level = globals::d3d::device->GetFeatureLevel();
-		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
+		DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		D3D11_SAMPLER_DESC samplerDesc{};
@@ -400,7 +400,7 @@ struct NeuralRendering::Impl
 		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		DX::ThrowIfFailed(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
 		Util::SetResourceName(linearSampler.get(), "NeuralRendering::LinearClamp Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");

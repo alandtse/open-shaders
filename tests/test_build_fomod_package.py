@@ -68,10 +68,12 @@ class BuildFomodPackageTests(unittest.TestCase):
         self.assertEqual(self.run_builder().returncode, 0)
         self.assertIn("ModuleConfig.xml", [entry.name for entry in (self.out / "fomod").iterdir()])
 
-    def write_clang(self, size=2_000_000, header=b"MZ"):
+    def write_clang(self, size=2_000_000, header=b"MZ", pdb=False):
         clang = self.root / "clang"
         (clang / "SKSE/Plugins").mkdir(parents=True)
         (clang / "SKSE/Plugins/CommunityShaders.dll").write_bytes(header + b"\x00" * (size - len(header)))
+        if pdb:
+            (clang / "SKSE/Plugins/CommunityShaders.pdb").write_bytes(b"pdb")
         return clang
 
     def option_type(self, name):
@@ -99,6 +101,14 @@ class BuildFomodPackageTests(unittest.TestCase):
         self.assertEqual(self.run_builder(clang=self.write_clang()).returncode, 0)
         self.assertEqual(self.option_type("Default build (recommended)"), "Recommended")
         self.assertEqual(self.option_type("clang-cl build (experimental, may be faster)"), "Optional")
+
+    def test_clang_pdb_travels_with_the_clang_dll(self):
+        self.assertEqual(self.run_builder(clang=self.write_clang(pdb=True)).returncode, 0)
+        self.assertTrue((self.out / "ClangCL/SKSE/Plugins/CommunityShaders.pdb").is_file())
+
+    def test_clang_option_without_a_pdb_still_builds(self):
+        self.assertEqual(self.run_builder(clang=self.write_clang()).returncode, 0)
+        self.assertFalse((self.out / "ClangCL/SKSE/Plugins/CommunityShaders.pdb").exists())
 
     def test_default_pdb_travels_with_the_default_dll(self):
         (self.core / "SKSE/Plugins/CommunityShaders.pdb").write_bytes(b"pdb")

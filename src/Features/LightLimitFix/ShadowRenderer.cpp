@@ -329,6 +329,30 @@ void LightLimitFix::CopyShadowLightData()
 	context->PSSetShaderResources(104, 1, &atlasSRV);
 }
 
+bool LightLimitFix::BindShadowResourcesCS() const
+{
+	if (!loaded || !shadowLights || !shadowLights->srv || shadowLightCount == 0 || ShadowCasterManager::IsSessionResetPending())
+		return false;
+
+	auto* shadowMapSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV);
+	if (!shadowMapSRV)
+		return false;
+
+	ID3D11ShaderResourceView* srvs[3]{
+		shadowLights->srv.get(),
+		shadowMapSRV,
+		ShadowCasterManager::AtlasSRV()
+	};
+	globals::d3d::context->CSSetShaderResources(102, ARRAYSIZE(srvs), srvs);
+	return true;
+}
+
+void LightLimitFix::UnbindShadowResourcesCS() const
+{
+	ID3D11ShaderResourceView* nullSrvs[3]{};
+	globals::d3d::context->CSSetShaderResources(102, ARRAYSIZE(nullSrvs), nullSrvs);
+}
+
 // ─── Debug helpers ────────────────────────────────────────────────────────────
 
 std::string LightLimitFix::BuildShadowSlotColorLegend() const
