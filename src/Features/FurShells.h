@@ -33,6 +33,7 @@ struct FurShells : Feature
 		bool HideCoveredFur = true;
 		bool OverlayFur = true;
 		float MinFurPixels = 0.0f;
+		float WindStrength = 1.0f;
 	} settings;
 
 	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
@@ -107,8 +108,9 @@ private:
 		float TipWeight;
 		float Pad0 = 0.0f;
 		float Pad1 = 0.0f;
+		float4 Wind;
 	};
-	static_assert(sizeof(PerPass) == 48);
+	static_assert(sizeof(PerPass) == 64);
 
 	struct DeferredPass
 	{
@@ -163,6 +165,9 @@ private:
 	ShellLookup FindShell(RE::BSRenderPass* a_pass);
 	const FrameBody* FindFrameBody(RE::BSGeometry* a_geometry) const;
 	void RecordFrameBody(RE::NiSkinInstance* a_skinInstance, RE::BSGeometry* a_geometry, const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView, bool a_deferred);
+	/** @brief Wind pushing a mesh at a_position, scaled by Wind Strength; zero indoors or when the Wind feature has no sample. */
+	float3 GetWind(const RE::NiPoint3& a_position) const;
+
 	void BeginOverlayPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, const FrameBody& a_body);
 	void BindPass(const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView);
 	const DepthStates* GetDepthStates(ID3D11DepthStencilState* a_source);
@@ -201,6 +206,8 @@ private:
 	uint32_t lastMaxShells = 0;
 	float minDensity = 1.0f;
 	float lastMinDensity = 1.0f;
+	float windSpeed = 0.0f;
+	float lastWindSpeed = 0.0f;
 
 	eastl::unique_ptr<ConstantBuffer> perPassCB;
 	winrt::com_ptr<ID3D11BlendState> noColorWrite;

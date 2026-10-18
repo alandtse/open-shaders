@@ -1194,6 +1194,8 @@
     "feature.fur_shells.shell_texture_tooltip": "Shell textures drawn this session. If one is missing, bring its armor or creature on screen first.",
     "feature.fur_shells.tip_threshold": "Tip Cutoff",
     "feature.fur_shells.tip_threshold_tooltip": "Shell texture alpha needed at the tip. Higher thins the strands toward the end.",
+    "feature.fur_shells.wind_strength": "Wind Strength",
+    "feature.fur_shells.wind_strength_tooltip": "How strongly the world wind bends the fur. Fur is only blown outdoors. 0 disables wind.",
     "feature.grass_collision.compression_height": "Compression Reach",
     "feature.grass_collision.compression_recovery": "Compression Recovery",
     "feature.grass_collision.compression_recovery_tooltip": "Lower values keep grass compressed longer after an actor moves away.",

@@ -309,8 +309,14 @@ VS_OUTPUT main(VS_INPUT input)
 
 #	if defined(FUR_SHELLS)
 	const float furDroop = FurShells::Droop * furShell * furShell;
-	worldPosition.z -= furDroop;
-	previousWorldPosition.z -= furDroop;
+#		if defined(SKINNED)
+	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
+#		else
+	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
+#		endif
+	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell);
+	worldPosition.xyz += furDisplacement;
+	previousWorldPosition.xyz += furDisplacement;
 #		if defined(SKINNED)
 	const float4 furRootViewPos = mul(ViewProj[eyeIndex], float4(mul(furRootPosition, transpose(worldMatrix)), 1));
 #		else
@@ -347,7 +353,7 @@ VS_OUTPUT main(VS_INPUT input)
 		precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
 		viewPos = mul(modelView, inputPosition);
 #		if defined(FUR_SHELLS)
-		viewPos -= furDroop * float4(ViewProj[eyeIndex][0].z, ViewProj[eyeIndex][1].z, ViewProj[eyeIndex][2].z, ViewProj[eyeIndex][3].z);
+		viewPos += mul(ViewProj[eyeIndex], float4(furDisplacement, 0.0));
 #		endif
 	}
 #	endif
