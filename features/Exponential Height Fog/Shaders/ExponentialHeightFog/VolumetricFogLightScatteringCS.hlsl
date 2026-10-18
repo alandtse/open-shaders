@@ -260,14 +260,15 @@ float3 ComputeSkyLightScattering(float3 positionWS, float3 viewDirection, uint e
 #if defined(LIGHT_LIMIT_FIX)
 float SampleLocalLightShadow(LightLimitFix::Light light, float3 positionWS, uint eyeIndex)
 {
+	float shadow = 1.0f;
 	[branch] if (VolumetricFogHasLocalShadows && (light.lightFlags & LightLimitFix::LightFlags::Shadow) && light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
 	{
 		bool shadowCoverage;
 		float3 worldPositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		// One tap per cell: the fog volume's temporal history does the filtering the surface passes get from 8 taps.
-		return LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), 1u, shadowCoverage);
+		shadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), 1u, shadowCoverage);
 	}
-	return 1.0f;
+	return shadow;
 }
 
 float ComputeLocalLightAttenuation(float distanceSqr, float cellRadius, LightLimitFix::Light light)

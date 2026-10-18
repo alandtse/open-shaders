@@ -526,18 +526,21 @@ namespace LightLimitFix
 		float width, height, slices;
 		float2 tapUV;
 		float4 samples;
+		float2 texelPosition;
 		[branch] if (useAtlas)
 		{
 			ShadowAtlasTex.GetDimensions(width, height);
 			tapUV = AtlasUV(uv, atlasRect, clampLo, clampHi);
-			float2 texelPosition = tapUV * float2(width, height) - 0.5;
+			texelPosition = tapUV * float2(width, height) - 0.5;
 			samples = ShadowAtlasTex.GatherRed(LinearSampler, (floor(texelPosition) + 1.0) / float2(width, height));
-			return BilinearCompare(samples, depth, frac(texelPosition));
 		}
-		ShadowMaps.GetDimensions(width, height, slices);
-		tapUV = TileUV(uv, tileScale, clampLo.x, clampHi.x);
-		float2 texelPosition = tapUV * float2(width, height) - 0.5;
-		samples = ShadowMaps.GatherRed(LinearSampler, float3((floor(texelPosition) + 1.0) / float2(width, height), shadowIndex));
+		else
+		{
+			ShadowMaps.GetDimensions(width, height, slices);
+			tapUV = TileUV(uv, tileScale, clampLo.x, clampHi.x);
+			texelPosition = tapUV * float2(width, height) - 0.5;
+			samples = ShadowMaps.GatherRed(LinearSampler, float3((floor(texelPosition) + 1.0) / float2(width, height), shadowIndex));
+		}
 		return BilinearCompare(samples, depth, frac(texelPosition));
 	}
 
