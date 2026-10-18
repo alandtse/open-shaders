@@ -65,7 +65,7 @@ namespace
 	bool IsFirstPersonPass()
 	{
 		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && (accumulator->GetRuntimeFlags().firstPerson || static_cast<uint32_t>(accumulator->GetRuntimeData().renderMode) == FirstPersonRenderMode);
+		return accumulator && static_cast<uint32_t>(accumulator->GetRuntimeData().renderMode) == FirstPersonRenderMode;
 	}
 
 	bool CanDrawShells(RE::BSGeometry* a_geometry)
