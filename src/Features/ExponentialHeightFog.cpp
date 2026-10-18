@@ -433,7 +433,8 @@ void ExponentialHeightFog::DrawMistSettings()
 	ImGui::BeginDisabled(!settings.mistFollowWind);
 	ImGui::SliderFloat(T(TKEY("mist_wind_multiplier"), "Mist Wind Multiplier"), &settings.mistWindMultiplier, 0.0f, kMistWindMultiplierMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
-	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f units (%.1f m)"), mistDriftDistance, Util::Units::GameUnitsToMeters(mistDriftDistance));
+	const auto driftUnits = static_cast<float>(mistDriftDistance);
+	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f units (%.1f m)"), driftUnits, Util::Units::GameUnitsToMeters(driftUnits));
 	ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Range cannot extend the volumetric grid. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
 	ImGui::EndDisabled();
 }
