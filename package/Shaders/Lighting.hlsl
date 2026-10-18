@@ -1283,7 +1283,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float3 furFacingNormal = tbnTr[2];
 #		endif
 	float furFacing = abs(dot(furFacingNormal, viewDirection)) * rsqrt(max(dot(furFacingNormal, furFacingNormal), 1e-12));
-	float furCoverage = FurShells::GetCoverage(furSample.w, lerp(FurShells::RootThreshold, FurShells::TipThreshold, input.FurShell), uv);
+	float furCoverage = FurShells::GetCoverage(furSample.w, lerp(FurShells::RootThreshold, FurShells::TipThreshold, input.FurShell), uv) * FurShells::GetLayerWeight(input.FurShell);
 	if (input.FurShell > 0.0 && (furRootCovered || furCoverage < screenNoise))
 		discard;
 #	endif

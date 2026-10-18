@@ -18,6 +18,8 @@ namespace FurShells
 		float RootDarkening;
 		float ShellColor;
 		float RootTest;
+		float Density;
+		float TipWeight;
 	};
 
 #if defined(PSHADER)
@@ -78,6 +80,14 @@ namespace FurShells
 	{
 		return saturate((ShellCount - float(shellIndex)) / max(ShellCount, 1.0));
 	}
+
+#if defined(PSHADER)
+	/** @brief Strand survival weight: distance and size thinning for every layer, and the fractional share of the tip layer. */
+	float GetLayerWeight(float shell)
+	{
+		return Density * (shell >= 0.999 ? TipWeight : 1.0);
+	}
+#endif
 
 	float GetDarkening(float shell, float facing)
 	{

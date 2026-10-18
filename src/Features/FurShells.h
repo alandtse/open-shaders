@@ -32,6 +32,7 @@ struct FurShells : Feature
 		float FadeEnd = 2500.0f;
 		bool HideCoveredFur = true;
 		bool OverlayFur = true;
+		float MinFurPixels = 0.0f;
 	} settings;
 
 	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
@@ -102,8 +103,12 @@ private:
 		float RootDarkening;
 		float ShellColor;
 		float RootTest;
+		float Density;
+		float TipWeight;
+		float Pad0 = 0.0f;
+		float Pad1 = 0.0f;
 	};
-	static_assert(sizeof(PerPass) == 32);
+	static_assert(sizeof(PerPass) == 48);
 
 	struct DeferredPass
 	{

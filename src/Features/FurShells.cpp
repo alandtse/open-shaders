@@ -26,7 +26,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FadeStart,
 	FadeEnd,
 	HideCoveredFur,
-	OverlayFur)
+	OverlayFur,
+	MinFurPixels)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FurShells::ShellOverride,
@@ -104,14 +105,12 @@ namespace
 		return technique == Facegen || technique == FacegenRGBTint;
 	}
 
-	uint32_t GetResolvableShells(float a_length, float a_distance)
+	float GetFurPixels(float a_length, float a_distance)
 	{
 		const float projection = std::abs(Util::GetCameraData(0).projMat.m[1][1]);
 		const float height = Util::ConvertToDynamic({ 0.0f, static_cast<float>(globals::game::graphicsState->screenHeight) }).y;
 		const float pixels = a_length * 0.5f * height * projection / std::max(a_distance, 1.0f);
-		if (!std::isfinite(pixels))
-			return MaxShells;
-		return static_cast<uint32_t>(std::clamp(std::ceil(pixels / PixelsPerShell), 1.0f, static_cast<float>(MaxShells)));
+		return std::isfinite(pixels) ? pixels : static_cast<float>(MaxShells) * PixelsPerShell;
 	}
 
 	std::string NormalizeTexturePath(const char* a_path)
@@ -255,6 +254,10 @@ void FurShells::DrawSettings()
 	ImGui::Checkbox(T(TKEY("hide_covered_fur"), "Hide Fur Under Clothing"), &settings.HideCoveredFur);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("hide_covered_fur_tooltip"), "Skips fur whose roots are covered by clothing, armor or anything else in front of them, so it stops poking through. Works in the world view, not in first person or menus."));
+
+	ImGui::SliderFloat(T(TKEY("min_fur_pixels"), "Minimum Fur Size"), &settings.MinFurPixels, 0.0f, 16.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("min_fur_pixels_tooltip"), "Fur thins out as its on-screen height falls below this many pixels and is skipped at zero. 0 disables the cutoff."));
 
 	ImGui::Checkbox(T(TKEY("overlay_fur"), "Show Overlays On Fur"), &settings.OverlayFur);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -633,8 +636,10 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 		return;
 
 	const float fade = std::clamp((values.FadeEnd - distance) / std::max(values.FadeEnd - values.FadeStart, 1.0f), 0.0f, 1.0f);
-	auto shells = static_cast<uint32_t>(std::lround(static_cast<float>(std::min(values.ShellCount, MaxShells)) * fade));
-	if (shells == 0)
+	const float pixels = GetFurPixels(values.Length, distance);
+	const float sizeFade = settings.MinFurPixels > 0.0f ? std::clamp(pixels / settings.MinFurPixels, 0.0f, 1.0f) : 1.0f;
+	const float density = fade * sizeFade;
+	if (density <= 0.0f)
 		return;
 
 	ID3D11ShaderResourceView* normalView = nullptr;
@@ -645,7 +650,9 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 			return;
 	}
 
-	shells = std::min(shells, GetResolvableShells(values.Length, distance));
+	const float layers = std::clamp(pixels / PixelsPerShell, 1.0f, static_cast<float>(std::min(values.ShellCount, MaxShells)));
+	const auto shells = static_cast<uint32_t>(std::ceil(layers));
+	const float tipWeight = layers - static_cast<float>(shells - 1);
 
 	auto* shaderCache = globals::shaderCache;
 	auto* vertexShader = shaderCache->GetVertexShader(*a_shader, state->modifiedVertexDescriptor | FurFlag);
@@ -656,7 +663,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 
 	const bool defer = !replaying && !deferralClosed && settings.HideCoveredFur && state->inWorld && currentPass.pass == a_pass;
 
-	PerPass perPass{ values.Length, static_cast<float>(shells), values.Droop, values.RootThreshold, values.TipThreshold, values.RootDarkening, values.ShellColor, 0.0f };
+	PerPass perPass{ values.Length, static_cast<float>(shells), values.Droop, values.RootThreshold, values.TipThreshold, values.RootDarkening, values.ShellColor, 0.0f, density, tipWeight };
 	if (skinInstance && settings.OverlayFur)
 		RecordFrameBody(skinInstance, geometry, perPass, shellView, normalView, defer || replaying);
 

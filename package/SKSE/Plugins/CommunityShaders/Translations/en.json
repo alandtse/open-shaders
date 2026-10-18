@@ -1170,6 +1170,8 @@
     "feature.fur_shells.key_feature_4": "Adjustable length, density and droop",
     "feature.fur_shells.length": "Length",
     "feature.fur_shells.length_tooltip": "Fur length in game units.",
+    "feature.fur_shells.min_fur_pixels": "Minimum Fur Size",
+    "feature.fur_shells.min_fur_pixels_tooltip": "Fur thins out as its on-screen height falls below this many pixels and is skipped at zero. 0 disables the cutoff.",
     "feature.fur_shells.name": "Fur Shells",
     "feature.fur_shells.overlay_fur": "Show Overlays On Fur",
     "feature.fur_shells.overlay_fur_tooltip": "Carries RaceMenu overlays such as tattoos, body paint and fur patterns up through the fur, so they color it instead of staying hidden under it. Each overlay in use draws the fur once more.",
