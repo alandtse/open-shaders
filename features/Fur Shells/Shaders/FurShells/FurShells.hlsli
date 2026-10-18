@@ -21,6 +21,7 @@ namespace FurShells
 		float Density;
 		float TipWeight;
 		float4 Wind;
+		float WetStrength;
 	};
 
 #if defined(PSHADER)
@@ -94,6 +95,51 @@ namespace FurShells
 #	endif
 	}
 #endif
+
+	static const float WetClumpCells = 48.0;
+	static const float WetClumpPull = 0.7;
+	static const float WetDarkening = 0.5;
+	static const float WetDroopGain = 1.5;
+	static const float WetCollapse = 0.35;
+	static const float TipShell = 0.999;
+
+	/** @brief How wet the fur is, from the character's retained wetness, scaled by Wet Fur Strength. */
+	float GetWetFactor(float a_retainedWetness, bool a_characterSurface)
+	{
+		return a_characterSurface ? saturate(a_retainedWetness) * WetStrength : 0.0;
+	}
+
+	/** @brief Centre of the clump a texture coordinate falls in; clumps are jittered cells of the shell texture. */
+	float2 GetClumpCentre(float2 a_uv)
+	{
+		float2 cell = floor(a_uv * WetClumpCells);
+		float2 hash = frac(sin(float2(dot(cell, float2(127.1, 311.7)), dot(cell, float2(269.5, 183.3)))) * 43758.5453);
+		return (cell + lerp(0.2, 0.8, hash)) / WetClumpCells;
+	}
+
+	/** @brief Shell texture coordinate pulled toward its clump centre, more at the tip than at the root, so wet strands gather into wisps. */
+	float2 GetClumpedUv(float2 a_uv, float a_shell, float a_wet)
+	{
+		return lerp(a_uv, GetClumpCentre(a_uv), saturate(a_wet * WetClumpPull * a_shell));
+	}
+
+	/** @brief Fur length scale of wet fur, which loses volume as it mats down. */
+	float GetWetLength(float a_wet)
+	{
+		return 1.0 - WetCollapse * a_wet;
+	}
+
+	/** @brief Darkening of wet fur. */
+	float GetWetDarkening(float a_wet)
+	{
+		return 1.0 - WetDarkening * a_wet;
+	}
+
+	/** @brief Droop scale of wet fur, which hangs heavier. */
+	float GetWetDroop(float a_wet)
+	{
+		return 1.0 + WetDroopGain * a_wet;
+	}
 
 	float GetShell(uint shellIndex)
 	{

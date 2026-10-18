@@ -20,6 +20,16 @@
 
 #if defined(FUR_SHELLS)
 #	include "FurShells/FurShells.hlsli"
+
+float GetFurWet()
+{
+#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+	return FurShells::GetWetFactor(SharedData::wetnessEffectsSettings.CharacterRetainedWetness,
+		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsCharacterRainSurface) != 0);
+#	else
+	return 0.0;
+#	endif
+}
 #endif
 
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
@@ -277,7 +287,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 	const float3 furNormal = input.Normal.xyz * 2.0 - 1.0;
 #		endif
-	const float3 furOffset = furNormal * (FurShells::Length * furShell);
+	const float3 furOffset = furNormal * (FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 	inputPosition.xyz += furOffset;
 	previousInputPosition.xyz += furOffset;
 #	endif
@@ -308,7 +318,7 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 #	if defined(FUR_SHELLS)
-	const float furDroop = FurShells::Droop * furShell * furShell;
+	const float furDroop = FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell;
 #		if defined(SKINNED)
 	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
 #		else
@@ -1281,7 +1291,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float2 uvOriginal = uv;
 
 #	if defined(FUR_SHELLS)
-	float4 furSample = FurShells::TexShell.SampleBias(SampColorSampler, uv, SharedData::MipBias);
+	const float furMipScale = exp2(SharedData::MipBias);
+	float4 furSample = FurShells::TexShell.SampleGrad(SampColorSampler, FurShells::GetClumpedUv(uv, input.FurShell, GetFurWet()), ddx(uv) * furMipScale, ddy(uv) * furMipScale);
 	bool furRootCovered = FurShells::IsRootCovered(input.FurRoot, fwidth(input.FurRoot.w), eyeIndex);
 #		if defined(MODELSPACENORMALS)
 	float3 furFacingNormal = cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz));
@@ -1899,7 +1910,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(FUR_SHELLS)
 	if (input.FurShell > 0.0)
-		baseColor.xyz *= FurShells::GetDarkening(input.FurShell, furFacing);
+		baseColor.xyz *= FurShells::GetDarkening(input.FurShell, furFacing) * FurShells::GetWetDarkening(GetFurWet());
 #	endif
 
 #	if defined(CS_SKIN_SHADING)
@@ -2529,7 +2540,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsHeldWeapon) != 0;
 	float3 characterDrop = 0.0f;
 	float characterRainSkyVisibility = SharedData::InInterior ? 0.0f : wetnessOcclusion;
-	const bool evaluateCharacterDrops = characterRainSurface && inWorld && !SharedData::HideSky &&
+#			if defined(FUR_SHELLS)
+	const bool furDropLayer = input.FurShell <= 0.0 || input.FurShell >= FurShells::TipShell;
+#			else
+	const bool furDropLayer = true;
+#			endif
+	const bool evaluateCharacterDrops = characterRainSurface && furDropLayer && inWorld && !SharedData::HideSky &&
 	                                    max(SharedData::wetnessEffectsSettings.CharacterImpactIntensity,
 											SharedData::wetnessEffectsSettings.CharacterRetainedWetness) > 0.0f &&
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);

@@ -1216,6 +1216,8 @@
     "feature.fur_shells.shell_texture_tooltip": "Shell textures drawn this session. If one is missing, bring its armor or creature on screen first.",
     "feature.fur_shells.tip_threshold": "Tip Cutoff",
     "feature.fur_shells.tip_threshold_tooltip": "Shell texture alpha needed at the tip. Higher thins the strands toward the end.",
+    "feature.fur_shells.wet_strength": "Wet Fur Strength",
+    "feature.fur_shells.wet_strength_tooltip": "How much rain mats the fur: wet fur thins into clumps, darkens and hangs heavier. Water beads and drips on the outer layer come from Wetness Effects. 0 disables wet fur.",
     "feature.fur_shells.wind_strength": "Wind Strength",
     "feature.fur_shells.wind_strength_tooltip": "How strongly the world wind bends the fur. Fur is only blown outdoors. 0 disables wind.",
     "feature.grass_collision.compression_height": "Compression Reach",

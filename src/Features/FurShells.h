@@ -34,6 +34,7 @@ struct FurShells : Feature
 		bool OverlayFur = true;
 		float MinFurPixels = 0.0f;
 		float WindStrength = 1.0f;
+		float WetStrength = 1.0f;
 	} settings;
 
 	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
@@ -109,8 +110,12 @@ private:
 		float Pad0 = 0.0f;
 		float Pad1 = 0.0f;
 		float4 Wind;
+		float WetStrength;
+		float Pad2 = 0.0f;
+		float Pad3 = 0.0f;
+		float Pad4 = 0.0f;
 	};
-	static_assert(sizeof(PerPass) == 64);
+	static_assert(sizeof(PerPass) == 80);
 
 	struct DeferredPass
 	{

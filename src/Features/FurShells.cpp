@@ -29,7 +29,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HideCoveredFur,
 	OverlayFur,
 	MinFurPixels,
-	WindStrength)
+	WindStrength,
+	WetStrength)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FurShells::ShellOverride,
@@ -265,6 +266,10 @@ void FurShells::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("wind_strength"), "Wind Strength"), &settings.WindStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("wind_strength_tooltip"), "How strongly the world wind bends the fur. Fur is only blown outdoors. 0 disables wind."));
+
+	ImGui::SliderFloat(T(TKEY("wet_strength"), "Wet Fur Strength"), &settings.WetStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("wet_strength_tooltip"), "How much rain mats the fur: wet fur thins into clumps, darkens and hangs heavier. Water beads and drips on the outer layer come from Wetness Effects. 0 disables wet fur."));
 
 	ImGui::Checkbox(T(TKEY("overlay_fur"), "Show Overlays On Fur"), &settings.OverlayFur);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -682,6 +687,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	windSpeed = std::max(windSpeed, wind.Length());
 	PerPass perPass{ values.Length, static_cast<float>(shells), values.Droop, values.RootThreshold, values.TipThreshold, values.RootDarkening, values.ShellColor, 0.0f, density, tipWeight };
 	perPass.Wind = float4(wind.x, wind.y, wind.z, 0.0f);
+	perPass.WetStrength = settings.WetStrength;
 	if (skinInstance && settings.OverlayFur)
 		RecordFrameBody(skinInstance, geometry, perPass, shellView, normalView, defer || replaying);
 
