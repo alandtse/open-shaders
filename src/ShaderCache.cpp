@@ -4189,14 +4189,15 @@ namespace SIE
 		if (featureSetChanged || featureSetRevertPending || diskCacheHeld)
 			return false;
 
+		bool removed;
 		{
 			std::scoped_lock lock{ compilationSet.compilationMutex };
-			const bool removedPrevious = RemoveCachePath(PreviousDiskCachePath(), "previous");
-			const bool removedSwap = RemoveCachePath(SwapDiskCachePath(), "temporary");
-			if (!removedPrevious || !removedSwap)
-				return false;
+			// The swap slot goes first so its failure leaves the rollback copy intact.
+			removed = RemoveCachePath(SwapDiskCachePath(), "temporary") && RemoveCachePath(PreviousDiskCachePath(), "previous");
 		}
 		RefreshPreviousDiskCacheInfo();
+		if (!removed)
+			return false;
 		logger::info("Previous shader cache discarded: keeping the current cache");
 		return true;
 	}
