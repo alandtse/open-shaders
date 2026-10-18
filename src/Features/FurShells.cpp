@@ -957,7 +957,10 @@ void FurShells::OnBeforeBlendedDecals()
 
 	CS_GPU_PASS("FurShells::DeferredShells");
 
-	rootTest = CopySceneDepth();
+	{
+		CS_GPU_PASS("FurShells::DepthCopy");
+		rootTest = CopySceneDepth();
+	}
 	if (rootTest) {
 		ID3D11ShaderResourceView* view = depthCopyView.get();
 		globals::d3d::context->PSSetShaderResources(DepthTextureSlot, 1, &view);
@@ -978,12 +981,15 @@ void FurShells::OnBeforeBlendedDecals()
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
 
-	replaying = true;
-	for (const auto& deferred : deferredPasses)
-		Hooks::BSBatchRenderer_RenderPassImmediately::func(deferred.pass, deferred.technique, deferred.alphaTest, deferred.renderFlags);
-	for (const auto& deferred : deferredOverlayPasses)
-		Hooks::BSBatchRenderer_RenderPassImmediately::func(deferred.pass, deferred.technique, deferred.alphaTest, deferred.renderFlags);
-	replaying = false;
+	{
+		CS_GPU_PASS("FurShells::ReplayPasses");
+		replaying = true;
+		for (const auto& deferred : deferredPasses)
+			Hooks::BSBatchRenderer_RenderPassImmediately::func(deferred.pass, deferred.technique, deferred.alphaTest, deferred.renderFlags);
+		for (const auto& deferred : deferredOverlayPasses)
+			Hooks::BSBatchRenderer_RenderPassImmediately::func(deferred.pass, deferred.technique, deferred.alphaTest, deferred.renderFlags);
+		replaying = false;
+	}
 	deferredPasses.clear();
 	deferredOverlayPasses.clear();
 
@@ -1003,8 +1009,15 @@ json FurShells::GetDiagnostics()
 		textures.push_back({ { "path", path }, { "overridden", data.overridden }, { "skin", data.skin } });
 	}
 
+	D3D11_TEXTURE2D_DESC depthDesc{};
+	if (depthCopy)
+		depthCopy->GetDesc(&depthDesc);
+
 	return {
 		{ "enabled", settings.Enabled },
+		{ "depthCopyWidth", depthDesc.Width },
+		{ "depthCopyHeight", depthDesc.Height },
+		{ "depthCopyFormat", static_cast<uint32_t>(depthDesc.Format) },
 		{ "vr", globals::game::isVR },
 		{ "passesLastFrame", lastPassCount },
 		{ "stereoDrawsLastFrame", lastStereoDraws },
