@@ -932,7 +932,7 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
-		enum class LightingShaderFlags
+		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
 			Skinned = 1 << 1,
@@ -942,8 +942,6 @@ namespace SIE
 			TruePbr = 1 << 3,
 			Deferred = 1 << 4,
 			LandscapeSeams = 1 << 5,
-			FurShells = 1 << 6,
-			FurShellsDepth = 1 << 7,
 			// Community Shaders end
 			Specular = 1 << 9,
 			SoftLighting = 1 << 10,
@@ -959,7 +957,10 @@ namespace SIE
 			DoAlphaTest = 1 << 20,
 			Snow = 1 << 21,
 			CharacterLight = 1 << 22,
-			AdditionalAlphaMask = 1 << 23
+			AdditionalAlphaMask = 1 << 23,
+			// Open Shaders fork-only flags: bits 30 and 31 sit above the technique bits (24-29) and away from the low bits upstream claims.
+			FurShells = 1u << 30,
+			FurShellsDepth = 1u << 31
 		};
 
 		enum class BloodSplatterShaderTechniques
