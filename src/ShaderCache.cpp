@@ -4818,25 +4818,26 @@ namespace SIE
 				{ "args", { { "priority", rec.priority }, { "defineCount", rec.defineCount }, { "sourceSizeBytes", rec.sourceSizeBytes } } } });
 		}
 
+		const auto pathText = Util::PathHelpers::ToUtf8(a_path);
 		try {
 			std::filesystem::create_directories(a_path.parent_path());
 			std::ofstream file(a_path);
 			if (!file.is_open()) {
-				logger::warn("ExportCompileTrace: failed to open {} for writing", a_path.string());
+				logger::warn("ExportCompileTrace: failed to open {} for writing", pathText);
 				return false;
 			}
 			file << events.dump(2);
 			file.flush();
 			if (!file.good()) {
-				logger::warn("ExportCompileTrace: write to {} failed (disk full or I/O error)", a_path.string());
+				logger::warn("ExportCompileTrace: write to {} failed (disk full or I/O error)", pathText);
 				return false;
 			}
 		} catch (const std::exception& e) {
-			logger::warn("ExportCompileTrace: failed writing {}: {}", a_path.string(), e.what());
+			logger::warn("ExportCompileTrace: failed writing {}: {}", pathText, e.what());
 			return false;
 		}
 
-		logger::info("ExportCompileTrace: wrote {} task records to {}", records.size(), a_path.string());
+		logger::info("ExportCompileTrace: wrote {} task records to {}", records.size(), pathText);
 		return true;
 	}
 

@@ -267,6 +267,21 @@ namespace Util
 		 */
 		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path);
 
+		/**
+		 * UTF-8 text of a path for JSON, ImGui and logs, without throwing.
+		 * path::string() uses the ANSI code page and throws on characters it cannot map.
+		 * @param path The path to convert
+		 * @return UTF-8 text; an unpaired surrogate becomes U+FFFD
+		 */
+		std::string ToUtf8(const std::filesystem::path& path);
+
+		/**
+		 * Path from UTF-8 text (path(std::string) reads it as ANSI), without throwing.
+		 * @param utf8 UTF-8 text, e.g. a JSON string
+		 * @return The path; invalid sequences become U+FFFD
+		 */
+		std::filesystem::path FromUtf8(std::string_view utf8);
+
 	}
 
 	/**

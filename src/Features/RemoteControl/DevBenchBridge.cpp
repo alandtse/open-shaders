@@ -996,7 +996,7 @@ namespace
 			const auto logDir = Util::PathHelpers::GetLogPath().parent_path();
 			std::filesystem::path path = logDir / "compile-trace.json";
 			if (a_args.contains("path")) {
-				const std::filesystem::path requested(a_args.value("path", std::string{}));
+				const std::filesystem::path requested = Util::PathHelpers::FromUtf8(a_args.value("path", std::string{}));
 				if (requested.is_absolute()) {
 					return json{ { "action", "exportTrace" }, { "success", false }, { "error", "path must be relative to the log directory, not absolute" } };
 				}
@@ -1012,7 +1012,7 @@ namespace
 			if (!ok) {
 				return json{ { "action", "exportTrace" }, { "success", false }, { "error", "export failed or no task records for the current build; see OpenShaders.log" } };
 			}
-			return json{ { "action", "exportTrace" }, { "success", true }, { "path", path.string() } };
+			return json{ { "action", "exportTrace" }, { "success", true }, { "path", Util::PathHelpers::ToUtf8(path) } };
 		}
 		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|contentStore|acceptRebuild|restorePrevious|exportTrace)" }, { "action", action } };
 	}
@@ -1198,7 +1198,7 @@ namespace
 			{ "startFrame", a_result.startFrame }, { "endFrame", a_result.endFrame }, { "samples", a_result.samples },
 			{ "passesPerSample", a_result.passesPerSample }, { "droppedRanges", a_result.droppedRanges },
 			{ "droppedTraceBytes", a_result.droppedTraceBytes }, { "ranges", a_result.ranges }, { "metrics", std::move(metrics) },
-			{ "unsupportedMetrics", std::move(unsupported) }, { "summary", std::move(summary) }, { "csvPath", a_result.csvPath.string() } };
+			{ "unsupportedMetrics", std::move(unsupported) }, { "summary", std::move(summary) }, { "csvPath", Util::PathHelpers::ToUtf8(a_result.csvPath) } };
 		if (a_detail) {
 			json ranges = json::array();
 			for (const auto& range : a_result.rangeResults)
@@ -1227,7 +1227,7 @@ namespace
 			const auto device = NvPerf::GetDeviceInfo();
 			return json{ { "built", device.built }, { "available", device.available }, { "gpuSupported", device.gpuSupported },
 				{ "device", device.deviceName }, { "chip", device.chipName }, { "deviceError", device.error },
-				{ "library", device.libraryPath.string() }, { "capture", StatusJson(NvPerf::GetStatus()) } };
+				{ "library", Util::PathHelpers::ToUtf8(device.libraryPath) }, { "capture", StatusJson(NvPerf::GetStatus()) } };
 		}
 
 		if (action == "metrics") {
@@ -1305,7 +1305,7 @@ namespace
 			return json{ { "error", "capture provider needs outputPath and requestId" } };
 
 		ScreenshotFeature::CaptureRequest request;
-		request.outputPath = std::filesystem::path(outputPath);
+		request.outputPath = Util::PathHelpers::FromUtf8(outputPath);
 		if (!request.outputPath.is_absolute() || request.outputPath.extension() != ".png")
 			return json{ { "error", "outputPath must be an absolute .png path" } };
 		request.excludeUi = a_args.value("excludeUi", true);

@@ -285,6 +285,20 @@ namespace Util
 			const auto relative = absolutePath.lexically_normal().lexically_relative(absoluteDirectory.lexically_normal());
 			return !relative.empty() && *relative.begin() != "..";
 		}
+
+		std::string ToUtf8(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			return stl::utf16_to_utf8(path.native()).value_or("<unprintable path>");
+		}
+
+		std::filesystem::path FromUtf8(std::string_view utf8)
+		{
+			if (utf8.empty())
+				return {};
+			return stl::utf8_to_utf16(utf8).value_or(std::wstring{});
+		}
 	}
 
 	// File system utilities implementation
