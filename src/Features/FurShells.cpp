@@ -787,6 +787,13 @@ const FurShells::DepthStates* FurShells::GetDepthStates(ID3D11DepthStencilState*
 	return it->second.prepass ? &it->second : nullptr;
 }
 
+void FurShells::DrawInstanced(UINT a_indexCount, UINT a_instanceCount, UINT a_startIndexLocation, INT a_baseVertexLocation)
+{
+	issuingDraw = true;
+	globals::d3d::context->DrawIndexedInstanced(a_indexCount, a_instanceCount, a_startIndexLocation, a_baseVertexLocation, 0);
+	issuingDraw = false;
+}
+
 bool FurShells::DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_startIndexLocation, INT a_baseVertexLocation)
 {
 	if (instanceCount == 0)
@@ -809,7 +816,7 @@ bool FurShells::DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_sta
 		context->OMSetDepthStencilState(states->overlay.get(), stencilRef);
 		context->VSSetShader(furVertexShader, nullptr, 0);
 		context->PSSetShader(furPixelShader, nullptr, 0);
-		context->DrawIndexedInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation, 0);
+		DrawInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation);
 		context->VSSetShader(savedVertexShader.get(), nullptr, 0);
 		context->PSSetShader(savedPixelShader.get(), nullptr, 0);
 		context->OMSetDepthStencilState(depthState.get(), stencilRef);
@@ -824,12 +831,12 @@ bool FurShells::DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_sta
 	context->OMSetBlendState(noColorWrite.get(), nullptr, 0xFFFFFFFF);
 	context->OMSetDepthStencilState(states->prepass.get(), stencilRef);
 	context->PSSetShader(depthPixelShader, nullptr, 0);
-	context->DrawIndexedInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation, 0);
+	DrawInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation);
 
 	context->OMSetBlendState(blendState.get(), blendFactor, sampleMask);
 	context->OMSetDepthStencilState(states->shade.get(), stencilRef);
 	context->PSSetShader(furPixelShader, nullptr, 0);
-	context->DrawIndexedInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation, 0);
+	DrawInstanced(a_indexCount, totalInstances, a_startIndexLocation, a_baseVertexLocation);
 
 	context->OMSetDepthStencilState(depthState.get(), stencilRef);
 	return true;

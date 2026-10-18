@@ -80,8 +80,8 @@ struct FurShells : Feature
 	 */
 	bool DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_startIndexLocation, INT a_baseVertexLocation);
 
-	/** @brief True while a fur pass is active or deferred passes are replaying. */
-	bool IsDrawing() const { return instanceCount != 0 || replaying; }
+	/** @brief True while a fur pass is active or deferred passes are replaying, except during the fur draws themselves so VR's DrawIndexedInstanced hook does not re-enter. */
+	bool IsDrawing() const { return !issuingDraw && (instanceCount != 0 || replaying); }
 
 private:
 	struct Hooks;
@@ -161,6 +161,7 @@ private:
 	void UpdateOverrideFadeEnd();
 	void DrawOverrideSettings();
 	bool CopySceneDepth();
+	void DrawInstanced(UINT a_indexCount, UINT a_instanceCount, UINT a_startIndexLocation, INT a_baseVertexLocation);
 
 	std::unordered_map<std::string, ShellData> shellTextures;
 	std::string selectedShellName;
@@ -180,6 +181,7 @@ private:
 	bool replaying = false;
 	bool rootTest = false;
 	bool overlayPass = false;
+	bool issuingDraw = false;
 
 	eastl::unique_ptr<ConstantBuffer> perPassCB;
 	winrt::com_ptr<ID3D11BlendState> noColorWrite;
