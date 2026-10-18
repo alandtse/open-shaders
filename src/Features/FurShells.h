@@ -59,6 +59,7 @@ struct FurShells : Feature
 	virtual void GenerateShaderPermutations(RE::BSShader* a_shader) override;
 
 	virtual void OnBeforeBlendedDecals() override;
+	virtual json GetDiagnostics() override;
 
 	/**
 	 * @brief Starts a fur pass for the render pass the engine just set up, or defers it when covered-fur hiding is on.

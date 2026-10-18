@@ -799,6 +799,8 @@ bool FurShells::DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_sta
 	if (instanceCount == 0)
 		return replaying;
 
+	CS_GPU_PASS("FurShells::Draw");
+
 	const UINT totalInstances = instanceCount * a_engineInstances;
 	auto* context = globals::d3d::context;
 
@@ -984,6 +986,30 @@ void FurShells::OnBeforeBlendedDecals()
 	depthStencilDepthMode = savedDepthMode;
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 	stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
+}
+
+json FurShells::GetDiagnostics()
+{
+	size_t overridden = 0;
+	json textures = json::array();
+	for (const auto& [path, data] : shellTextures) {
+		overridden += data.overridden ? 1 : 0;
+		textures.push_back({ { "path", path }, { "overridden", data.overridden }, { "skin", data.skin } });
+	}
+
+	return {
+		{ "enabled", settings.Enabled },
+		{ "vr", globals::game::isVR },
+		{ "passesLastFrame", lastPassCount },
+		{ "deferredPasses", deferredPasses.size() },
+		{ "deferredOverlayPasses", deferredOverlayPasses.size() },
+		{ "frameBodies", frameBodies.size() },
+		{ "rootTest", rootTest },
+		{ "depthCopyFailed", depthCopyFailed },
+		{ "resolvedShellTextures", shellTextures.size() },
+		{ "overriddenShellTextures", overridden },
+		{ "shellTextures", std::move(textures) },
+	};
 }
 
 void FurShells::SetupResources()
