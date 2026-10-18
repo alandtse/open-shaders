@@ -112,7 +112,7 @@ public:
 		float volumetricFogNoiseThreshold = 0.5f;
 		float2 pad3 = {};
 		float3 volumetricFogNoiseVelocity = { 0.0f, 0.0f, 0.0f };
-		float pad4 = 0.0f;
+		uint volumetricFogNoiseType = 0;  // 0 = hash value noise, 1 = PCG value noise with a quintic fade
 		uint mistsEnabled = 0;
 		float mistStrength = 0.1f;
 		float mistRange = 8192.0f;

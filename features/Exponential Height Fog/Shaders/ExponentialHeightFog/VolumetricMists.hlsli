@@ -29,8 +29,8 @@ namespace ExponentialHeightFog
 
 	float EvaluateNearbyMistExtinction(uint3 coord, float3 positionWS, uint eyeIndex)
 	{
-		[branch] if (SharedData::exponentialHeightFogSettings.mistsEnabled == 0 ||
-					 SharedData::exponentialHeightFogSettings.mistStrength <= 0.0f) return 0.0f;
+		if (SharedData::exponentialHeightFogSettings.mistsEnabled == 0 || SharedData::exponentialHeightFogSettings.mistStrength <= 0.0f)
+			return 0.0f;
 
 		float range = min(SharedData::exponentialHeightFogSettings.mistRange, GetVolumetricEndDistance() * kMistGridRangeFraction);
 		float3 cameraWS = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;

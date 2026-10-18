@@ -75,6 +75,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	volumetricFogNoiseScale,
 	volumetricFogNoiseThreshold,
 	volumetricFogNoiseVelocity,
+	volumetricFogNoiseType,
 	mistsEnabled,
 	mistStrength,
 	mistRange,
@@ -95,6 +96,8 @@ namespace
 
 	constexpr float MinDistanceHazeFadeDistance = 1.0f;
 	constexpr float MaxDistanceHazeDistance = 200000.0f;
+
+	constexpr uint32_t kVolumetricNoiseTypeCount = 2;
 
 	constexpr float kMistStrengthMax = 4.0f;
 	constexpr float kMistRangeMin = 512.0f;
@@ -131,7 +134,8 @@ namespace
 	bool CanReuseFogHistory(const ExponentialHeightFog::Settings& current, const ExponentialHeightFog::Settings& previous)
 	{
 		using Settings = ExponentialHeightFog::Settings;
-		if (current.useVanillaFogSettings != previous.useVanillaFogSettings || current.mistsEnabled != previous.mistsEnabled)
+		if (current.useVanillaFogSettings != previous.useVanillaFogSettings || current.mistsEnabled != previous.mistsEnabled ||
+			current.volumetricFogNoiseType != previous.volumetricFogNoiseType)
 			return false;
 		for (const auto field : {
 				 &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
@@ -206,6 +210,7 @@ void ExponentialHeightFog::LoadSettings(json& o_json)
 	settings = o_json;
 	ClampDistanceHazeSettings(settings);
 	ClampMistSettings(settings);
+	settings.volumetricFogNoiseType = std::min(settings.volumetricFogNoiseType, kVolumetricNoiseTypeCount - 1u);
 	settings.vanillaFogStrength = std::clamp(std::isfinite(settings.vanillaFogStrength) ? settings.vanillaFogStrength : Settings{}.vanillaFogStrength, 0.0f, 4.0f);
 	settings.fogLightingInfluence = std::clamp(std::isfinite(settings.fogLightingInfluence) ? settings.fogLightingInfluence : Settings{}.fogLightingInfluence, 0.0f, 1.0f);
 }
@@ -463,12 +468,20 @@ void ExponentialHeightFog::DrawVolumetricSettings()
 		ImGui::SliderFloat(T(TKEY("volumetric_noise_scale"), "Noise Scale"), &settings.volumetricFogNoiseScale, 0.0f, 0.01f, "%.6f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat(T(TKEY("volumetric_noise_threshold"), "Noise Threshold"), &settings.volumetricFogNoiseThreshold, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		ImGui::SliderFloat3(T(TKEY("volumetric_noise_velocity"), "Noise Velocity"), &settings.volumetricFogNoiseVelocity.x, -1.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		const char* noiseTypeLabels[kVolumetricNoiseTypeCount] = {
+			T(TKEY("volumetric_noise_type_hash"), "Hash (Default)"),
+			T(TKEY("volumetric_noise_type_pcg"), "PCG Quintic"),
+		};
+		int noiseType = static_cast<int>(settings.volumetricFogNoiseType);
+		if (ImGui::Combo(T(TKEY("volumetric_noise_type"), "Noise Type"), &noiseType, noiseTypeLabels, IM_ARRAYSIZE(noiseTypeLabels)))
+			settings.volumetricFogNoiseType = static_cast<uint32_t>(noiseType);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("volumetric_noise_tooltip"),
 								  "Modulates the volumetric fog density with a 3D value noise field.\n"
 								  "Noise Scale: spatial frequency of the fog clumps (0 = disabled).\n"
 								  "Noise Threshold: soft cutoff that carves clumps out of the noise.\n"
-								  "Noise Velocity: animation drift of the noise field, scaled by time."));
+								  "Noise Velocity: animation drift of the noise field, scaled by time.\n"
+								  "Noise Type: Hash is the original field. PCG Quintic uses an integer lattice that stays exact far from the origin."));
 		}
 		ImGui::TreePop();
 	}

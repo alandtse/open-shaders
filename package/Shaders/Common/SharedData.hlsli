@@ -599,7 +599,7 @@ namespace SharedData
 		float volumetricFogNoiseThreshold;
 		float2 pad3;
 		float3 volumetricFogNoiseVelocity;
-		float pad4;
+		uint volumetricFogNoiseType;
 		uint mistsEnabled;
 		float mistStrength;
 		float mistRange;
