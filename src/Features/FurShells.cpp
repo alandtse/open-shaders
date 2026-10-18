@@ -442,6 +442,10 @@ void FurShells::Reset()
 	resolveBudget = ResolvesPerFrame;
 	lastPassCount = passCount;
 	passCount = 0;
+	lastStereoDraws = stereoDraws;
+	lastMonoDraws = monoDraws;
+	stereoDraws = 0;
+	monoDraws = 0;
 	lastDiffuse = nullptr;
 	lastLookup = {};
 	if (!entries.empty() && globals::state->IsMainOrLoadingMenuOpen())
@@ -803,6 +807,7 @@ bool FurShells::DrawShells(UINT a_indexCount, UINT a_engineInstances, UINT a_sta
 	CS_GPU_PASS("FurShells::Draw");
 
 	const UINT totalInstances = instanceCount * a_engineInstances;
+	++(a_engineInstances > 1 ? stereoDraws : monoDraws);
 	auto* context = globals::d3d::context;
 
 	winrt::com_ptr<ID3D11DepthStencilState> depthState;
@@ -1002,6 +1007,8 @@ json FurShells::GetDiagnostics()
 		{ "enabled", settings.Enabled },
 		{ "vr", globals::game::isVR },
 		{ "passesLastFrame", lastPassCount },
+		{ "stereoDrawsLastFrame", lastStereoDraws },
+		{ "monoDrawsLastFrame", lastMonoDraws },
 		{ "deferredPasses", deferredPasses.size() },
 		{ "deferredOverlayPasses", deferredOverlayPasses.size() },
 		{ "frameBodies", frameBodies.size() },

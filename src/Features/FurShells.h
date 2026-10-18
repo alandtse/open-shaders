@@ -188,6 +188,10 @@ private:
 	bool rootTest = false;
 	bool overlayPass = false;
 	bool issuingDraw = false;
+	uint32_t stereoDraws = 0;
+	uint32_t monoDraws = 0;
+	uint32_t lastStereoDraws = 0;
+	uint32_t lastMonoDraws = 0;
 
 	eastl::unique_ptr<ConstantBuffer> perPassCB;
 	winrt::com_ptr<ID3D11BlendState> noColorWrite;
