@@ -388,19 +388,24 @@ struct NeuralRendering::Impl
 	void Initialize()
 	{
 		interop.Initialize();
+		const auto check = [](HRESULT result, const char* call) {
+			if (FAILED(result))
+				throw std::runtime_error(std::format("{}{} failed (HRESULT 0x{:08X})", NR::kInitializationPrefix, call, static_cast<uint32_t>(result)));
+		};
 		winrt::com_ptr<ID3D11Device1> device;
-		winrt::check_hresult(globals::d3d::device->QueryInterface(device.put()));
-		winrt::check_hresult(globals::d3d::context->QueryInterface(context.put()));
+		check(globals::d3d::device->QueryInterface(device.put()), "ID3D11Device1 query");
+		check(globals::d3d::context->QueryInterface(context.put()), "ID3D11DeviceContext1 query");
 		const auto level = globals::d3d::device->GetFeatureLevel();
-		winrt::check_hresult(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
-			__uuidof(ID3D11Device), nullptr, isolated.put()));
+		check(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
+				  __uuidof(ID3D11Device), nullptr, isolated.put()),
+			"CreateDeviceContextState");
 		Util::SetResourceName(isolated.get(), "NeuralRendering::ContextState");
 		D3D11_SAMPLER_DESC samplerDesc{};
 		samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		samplerDesc.AddressU = samplerDesc.AddressV = samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
 		samplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
 		samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
-		winrt::check_hresult(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()));
+		check(globals::d3d::device->CreateSamplerState(&samplerDesc, linearSampler.put()), "CreateSamplerState");
 		Util::SetResourceName(linearSampler.get(), "NeuralRendering::LinearClamp Sampler");
 		encodeBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<Upscaling::UpscalingDataCB>(), "NeuralRendering::Encode CB");
 		colorBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<ColorTransferData>(), "NeuralRendering::ColorTransfer CB");
@@ -2598,7 +2603,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			return;
 		LatchFailure();
 		PublishFailure(winrt::to_string(error.message()));
-		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X}", static_cast<uint32_t>(error.code().value));
+		logger::error("[NeuralRendering] D3D initialization/dispatch failed: 0x{:08X} ({}x{}, DXGI format {})", static_cast<uint32_t>(error.code().value), diagnostic.width, diagnostic.height, diagnostic.format);
 	} catch (const std::exception& error) {
 		diagnostic.outcome = Outcome::Error;
 		const bool strengthHandled = RevertMaterialStrengthOnFailure(error.what());
