@@ -557,6 +557,8 @@ namespace SIE
 		void CommitFeatureSetChange();
 		/** @brief Swaps the rollback cache back into use and matches boot toggles to it. Restart required. */
 		bool RestorePreviousDiskCache();
+		/** @brief Deletes the rollback cache so the current one is kept and the mismatch notice clears. Refused while a feature-set change awaits commit or a restore is pending. */
+		bool DiscardPreviousDiskCache();
 		/** @brief Writes cache metadata (version, feature list) to the disk cache directory. */
 		void WriteDiskCacheInfo();
 		/// One disk-cache/runtime state divergence found by ValidateDiskCache.

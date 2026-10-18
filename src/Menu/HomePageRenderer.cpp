@@ -248,9 +248,16 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	const bool cacheHeld = shaderCache->IsDiskCacheHeld() && !featureSetChanged && !revertPending;
 	const bool featureChangeHeld = shaderCache->IsDiskCacheHeld() && featureSetChanged && !featureSetCacheBackedUp;
 
-	ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
-	bool headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_mismatch", "Shader Cache Mismatch Detected"), ImGuiTreeNodeFlags_DefaultOpen);
-	ImGui::PopStyleColor();
+	// With the cache in sync and only a rollback copy left over, nothing is wrong: offer it quietly.
+	const bool rollbackOnly = !shaderCache->IsDiskCacheHeld() && !featureSetChanged && !revertPending;
+	bool headerOpen;
+	if (rollbackOnly) {
+		headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_previous_available", "Previous Shader Cache Available"));
+	} else {
+		ImGui::PushStyleColor(ImGuiCol_Text, warningColor);
+		headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_mismatch", "Shader Cache Mismatch Detected"), ImGuiTreeNodeFlags_DefaultOpen);
+		ImGui::PopStyleColor();
+	}
 	if (!headerOpen)
 		return;
 
@@ -342,6 +349,20 @@ void HomePageRenderer::RenderCacheMismatchSection()
 		}
 
 		if (restoreDisabled)
+			ImGui::EndDisabled();
+
+		ImGui::SameLine();
+		const bool keepDisabled = !previousCacheAvailable || featureSetChanged;
+		if (keepDisabled)
+			ImGui::BeginDisabled();
+		if (ImGui::Button(T("menu.home.cache_mismatch_keep", "Keep Current Cache")))
+			shaderCache->DiscardPreviousDiskCache();
+		if (auto _ttk = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", featureSetChanged ?
+								  T("menu.home.cache_mismatch_keep_pending", "Available once the new cache has been committed (after the startup compile).") :
+								  T("menu.home.cache_mismatch_keep_tooltip", "Deletes the previous cache and hides this notice. The current cache stays in use; going back to the earlier feature setup then needs a full recompile."));
+		}
+		if (keepDisabled)
 			ImGui::EndDisabled();
 
 		if (isCompiling) {

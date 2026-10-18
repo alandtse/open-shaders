@@ -4183,6 +4183,24 @@ namespace SIE
 		return true;
 	}
 
+	bool ShaderCache::DiscardPreviousDiskCache()
+	{
+		// A pending commit re-offers the backup it just took, and a pending restore needs it.
+		if (featureSetChanged || featureSetRevertPending || diskCacheHeld)
+			return false;
+
+		{
+			std::scoped_lock lock{ compilationSet.compilationMutex };
+			const bool removedPrevious = RemoveCachePath(PreviousDiskCachePath(), "previous");
+			const bool removedSwap = RemoveCachePath(SwapDiskCachePath(), "temporary");
+			if (!removedPrevious || !removedSwap)
+				return false;
+		}
+		RefreshPreviousDiskCacheInfo();
+		logger::info("Previous shader cache discarded: keeping the current cache");
+		return true;
+	}
+
 	void ShaderCache::AcceptCacheRebuild()
 	{
 		if (!diskCacheHeld)
