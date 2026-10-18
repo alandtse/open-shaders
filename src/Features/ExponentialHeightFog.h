@@ -10,6 +10,8 @@ private:
 
 public:
 	static constexpr float kMaxMistDriftSpeed = 2000.0f;
+	/** @brief Initial pattern angle (radians), the heading of the manual drift direction (0.8, 0.6). */
+	static constexpr double kMistInitialShapeAngle = 0.6435011088;
 
 	virtual bool SupportsVR() override { return true; };
 	virtual inline std::string GetName() override { return "Exponential Height Fog"; }
@@ -138,11 +140,11 @@ private:
 	void DrawVolumetricSettings();
 
 	Settings previousFogSettings = {};
-	std::chrono::steady_clock::time_point previousMistTick{};
+	double previousMistTime = 0.0;
 	double mistDriftDistance = 0.0;
 	std::array<double, 2> mistDriftOffset = {};
 	std::array<double, 2> mistDriftVelocity = {};
-	std::array<double, 2> mistShapeAnimation = { 0.6435011088, 0.0 };
+	std::array<double, 2> mistShapeAnimation = { kMistInitialShapeAngle, 0.0 };
 	uint32_t lastMistAnimationFrame = UINT32_MAX;
 
 	struct VolumetricFogCB
@@ -165,6 +167,10 @@ private:
 	static_assert(offsetof(VolumetricFogCB, mistShapeParameters) == 528);
 	static_assert(sizeof(VolumetricFogCB) == 544);
 
+	/** @brief Mist drift velocity the animation eases toward: outdoor wind when followed, else the manual direction. */
+	std::array<double, 2> GetMistTargetVelocity(const Settings& frameSettings) const;
+	/** @brief Turns the pattern toward the drift direction around the player and advances its slow evolution. */
+	void AdvanceMistShape(double elapsed);
 	void UpdateMistAnimation(const Settings& frameSettings);
 
 	void EnsureVolumetricResources();

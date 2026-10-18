@@ -16,6 +16,7 @@
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
+#include "Utils/PerfUtils.h"
 #include "Utils/UI.h"
 
 #include <numbers>
@@ -95,6 +96,20 @@ namespace
 	constexpr float MinDistanceHazeFadeDistance = 1.0f;
 	constexpr float MaxDistanceHazeDistance = 200000.0f;
 
+	constexpr float kMistStrengthMax = 4.0f;
+	constexpr float kMistRangeMin = 512.0f;
+	constexpr float kMistRangeMax = 16384.0f;
+	constexpr float kMistSizeMin = 128.0f;
+	constexpr float kMistSizeMax = 4096.0f;
+	constexpr float kMistWindMultiplierMax = 10.0f;
+	constexpr double kMistManualDriftDirectionX = 0.8;
+	constexpr double kMistManualDriftDirectionY = 0.6;
+	constexpr double kMaximumAnimationFrameSeconds = 0.25;
+	constexpr double kWindResponseSeconds = 1.0;
+	constexpr double kMistShapeResponseSeconds = 10.0;
+	constexpr double kMistShapeEvolutionRate = 0.015;
+	constexpr double kMistMinimumTurnSpeed = 0.1;
+
 	void ClampDistanceHazeSettings(ExponentialHeightFog::Settings& settings)
 	{
 		const ExponentialHeightFog::Settings defaults{};
@@ -106,11 +121,11 @@ namespace
 	void ClampMistSettings(ExponentialHeightFog::Settings& settings)
 	{
 		const ExponentialHeightFog::Settings defaults{};
-		settings.mistStrength = Util::ClampFinite(settings.mistStrength, 0.0f, 4.0f, defaults.mistStrength);
-		settings.mistRange = Util::ClampFinite(settings.mistRange, 512.0f, 16384.0f, defaults.mistRange);
-		settings.mistSize = Util::ClampFinite(settings.mistSize, 128.0f, 4096.0f, defaults.mistSize);
+		settings.mistStrength = Util::ClampFinite(settings.mistStrength, 0.0f, kMistStrengthMax, defaults.mistStrength);
+		settings.mistRange = Util::ClampFinite(settings.mistRange, kMistRangeMin, kMistRangeMax, defaults.mistRange);
+		settings.mistSize = Util::ClampFinite(settings.mistSize, kMistSizeMin, kMistSizeMax, defaults.mistSize);
 		settings.mistDriftSpeed = Util::ClampFinite(settings.mistDriftSpeed, 0.0f, ExponentialHeightFog::kMaxMistDriftSpeed, defaults.mistDriftSpeed);
-		settings.mistWindMultiplier = Util::ClampFinite(settings.mistWindMultiplier, 0.0f, 10.0f, defaults.mistWindMultiplier);
+		settings.mistWindMultiplier = Util::ClampFinite(settings.mistWindMultiplier, 0.0f, kMistWindMultiplierMax, defaults.mistWindMultiplier);
 	}
 
 	bool CanReuseFogHistory(const ExponentialHeightFog::Settings& current, const ExponentialHeightFog::Settings& previous)
@@ -386,12 +401,12 @@ void ExponentialHeightFog::DrawMistSettings()
 		ImGui::TextWrapped("%s", T(TKEY("mists_requires_volume"), "Enable Exponential Height Fog and Volumetric Fog to render mists."));
 	}
 	ImGui::BeginDisabled(!settings.mistsEnabled);
-	ImGui::SliderFloat(T(TKEY("mist_strength"), "Mist Strength"), &settings.mistStrength, 0.0f, 4.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("mist_strength"), "Mist Strength"), &settings.mistStrength, 0.0f, kMistStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextWrapped("%s", T(TKEY("mist_strength_tooltip"), "Scales weather-driven opacity across one mist pocket, independently of Mist Range. Higher values make pockets thicker when you enter them. Zero removes the added mists."));
 	}
-	ImGui::SliderFloat(T(TKEY("mist_range"), "Mist Range"), &settings.mistRange, 512.0f, 16384.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("mist_size"), "Mist Pocket Size"), &settings.mistSize, 128.0f, 4096.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("mist_range"), "Mist Range"), &settings.mistRange, kMistRangeMin, kMistRangeMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("mist_size"), "Mist Pocket Size"), &settings.mistSize, kMistSizeMin, kMistSizeMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::SliderFloat(T(TKEY("mist_drift_speed"), "Mist Movement Speed"), &settings.mistDriftSpeed, 0.0f, kMaxMistDriftSpeed, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("mist_drift_speed_tooltip"), "Game units per second for manual drift, or at full outdoor wind strength. Changing speed only affects future movement. Zero freezes the pattern; pausing also pauses animation."));
@@ -401,7 +416,7 @@ void ExponentialHeightFog::DrawMistSettings()
 		ImGui::TextWrapped("%s", T(TKEY("mist_follow_wind_tooltip"), "Uses the current outdoor wind direction and strength, smoothing changes over one second. Calm wind stops drift. Interiors retain manual drift. Wind changes movement, not density."));
 	}
 	ImGui::BeginDisabled(!settings.mistFollowWind);
-	ImGui::SliderFloat(T(TKEY("mist_wind_multiplier"), "Mist Wind Multiplier"), &settings.mistWindMultiplier, 0.0f, 10.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("mist_wind_multiplier"), "Mist Wind Multiplier"), &settings.mistWindMultiplier, 0.0f, kMistWindMultiplierMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
 	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f game units"), mistDriftDistance);
 	ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Distances are in game units. Range controls coverage and the outer fade, not pocket density; it cannot extend the volumetric grid. Pocket Size sets the pattern scale, with density adjusted to retain its optical thickness. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
@@ -766,59 +781,63 @@ ID3D11ComputeShader* ExponentialHeightFog::GetFarIntegrationCS()
 	return farIntegrationCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogIntegrationCS.hlsl", { { "VOLUMETRIC_FOG_FAR_GRID", "" } }, "cs_5_0");
 }
 
+std::array<double, 2> ExponentialHeightFog::GetMistTargetVelocity(const Settings& frameSettings) const
+{
+	const auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
+	const auto* sky = globals::game::sky;
+	if (frameSettings.mistFollowWind && cell && !cell->IsInteriorCell() && sky &&
+		std::isfinite(sky->windAngle) && std::isfinite(sky->windSpeed)) {
+		const double speed = std::min<double>(kMaxMistDriftSpeed,
+			frameSettings.mistDriftSpeed * std::clamp(sky->windSpeed, 0.0f, 1.0f) * frameSettings.mistWindMultiplier);
+		return { std::sin(sky->windAngle) * speed, std::cos(sky->windAngle) * speed };
+	}
+	return { kMistManualDriftDirectionX * frameSettings.mistDriftSpeed, kMistManualDriftDirectionY * frameSettings.mistDriftSpeed };
+}
+
+void ExponentialHeightFog::AdvanceMistShape(double elapsed)
+{
+	if (std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]) > kMistMinimumTurnSpeed) {
+		const double targetAngle = std::atan2(mistDriftVelocity[1], mistDriftVelocity[0]);
+		const double delta = targetAngle - mistShapeAnimation[0];
+		const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * (1.0 - std::exp(-elapsed / kMistShapeResponseSeconds));
+		if (globals::game::player) {
+			const auto anchor = globals::game::player->GetPosition();
+			const double relativeX = anchor.x - mistDriftOffset[0];
+			const double relativeY = anchor.y - mistDriftOffset[1];
+			// Keep the nearby pattern anchored when the wind turns, rather than orbiting the world origin.
+			mistDriftOffset[0] = anchor.x - (std::cos(rotation) * relativeX - std::sin(rotation) * relativeY);
+			mistDriftOffset[1] = anchor.y - (std::sin(rotation) * relativeX + std::cos(rotation) * relativeY);
+		}
+		mistShapeAnimation[0] += rotation;
+	}
+	mistShapeAnimation[1] += elapsed * kMistShapeEvolutionRate;
+}
+
 void ExponentialHeightFog::UpdateMistAnimation(const Settings& frameSettings)
 {
 	const uint32_t frame = globals::state->frameCount;
 	if (lastMistAnimationFrame == frame)
 		return;
 
-	const auto now = std::chrono::steady_clock::now();
+	const double now = Util::GetNowSecs();
 	const bool consecutiveFrame = lastMistAnimationFrame != UINT32_MAX && frame == lastMistAnimationFrame + 1u;
 	const bool paused = globals::state->IsPausedOrMenuOpen(globals::game::ui);
-	if (consecutiveFrame && !paused && frameSettings.enabled && frameSettings.volumetricFogEnabled && frameSettings.mistsEnabled) {
-		const double elapsed = std::chrono::duration<double>(now - previousMistTick).count();
-		constexpr double kMaximumAnimationFrameSeconds = 0.25;
-		if (elapsed <= kMaximumAnimationFrameSeconds) {
-			std::array<double, 2> targetVelocity = { 0.8 * frameSettings.mistDriftSpeed, 0.6 * frameSettings.mistDriftSpeed };
-			const auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
-			const auto* sky = globals::game::sky;
-			if (frameSettings.mistFollowWind && cell && !cell->IsInteriorCell() && sky &&
-				std::isfinite(sky->windAngle) && std::isfinite(sky->windSpeed)) {
-				const double speed = std::min<double>(kMaxMistDriftSpeed,
-					frameSettings.mistDriftSpeed * std::clamp(sky->windSpeed, 0.0f, 1.0f) * frameSettings.mistWindMultiplier);
-				targetVelocity = { std::sin(sky->windAngle) * speed, std::cos(sky->windAngle) * speed };
-			}
-			constexpr double kWindResponseSeconds = 1.0;
-			const double response = 1.0 - std::exp(-elapsed / kWindResponseSeconds);
-			for (size_t axis = 0; axis < mistDriftOffset.size(); ++axis) {
-				mistDriftVelocity[axis] += (targetVelocity[axis] - mistDriftVelocity[axis]) * response;
-				if (frameSettings.mistDriftSpeed == 0.0f)
-					mistDriftVelocity[axis] = 0.0;
-				mistDriftOffset[axis] += elapsed * mistDriftVelocity[axis];
-			}
-			mistDriftDistance += elapsed * std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]);
-			if (frameSettings.mistDriftSpeed > 0.0f) {
-				constexpr double kMistShapeResponseSeconds = 10.0;
-				constexpr double kMistShapeEvolutionRate = 0.015;
-				if (std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]) > 0.1) {
-					const double targetAngle = std::atan2(mistDriftVelocity[1], mistDriftVelocity[0]);
-					const double delta = targetAngle - mistShapeAnimation[0];
-					const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * (1.0 - std::exp(-elapsed / kMistShapeResponseSeconds));
-					if (globals::game::player) {
-						const auto anchor = globals::game::player->GetPosition();
-						const double relativeX = anchor.x - mistDriftOffset[0];
-						const double relativeY = anchor.y - mistDriftOffset[1];
-						// Keep the nearby pattern anchored when the wind turns, rather than orbiting the world origin.
-						mistDriftOffset[0] = anchor.x - (std::cos(rotation) * relativeX - std::sin(rotation) * relativeY);
-						mistDriftOffset[1] = anchor.y - (std::sin(rotation) * relativeX + std::cos(rotation) * relativeY);
-					}
-					mistShapeAnimation[0] += rotation;
-				}
-				mistShapeAnimation[1] += elapsed * kMistShapeEvolutionRate;
-			}
+	const double elapsed = now - previousMistTime;
+	if (consecutiveFrame && !paused && frameSettings.enabled && frameSettings.volumetricFogEnabled && frameSettings.mistsEnabled &&
+		elapsed >= 0.0 && elapsed <= kMaximumAnimationFrameSeconds) {
+		const auto targetVelocity = GetMistTargetVelocity(frameSettings);
+		const double response = 1.0 - std::exp(-elapsed / kWindResponseSeconds);
+		for (size_t axis = 0; axis < mistDriftOffset.size(); ++axis) {
+			mistDriftVelocity[axis] += (targetVelocity[axis] - mistDriftVelocity[axis]) * response;
+			if (frameSettings.mistDriftSpeed == 0.0f)
+				mistDriftVelocity[axis] = 0.0;
+			mistDriftOffset[axis] += elapsed * mistDriftVelocity[axis];
 		}
+		mistDriftDistance += elapsed * std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]);
+		if (frameSettings.mistDriftSpeed > 0.0f)
+			AdvanceMistShape(elapsed);
 	}
-	previousMistTick = now;
+	previousMistTime = now;
 	lastMistAnimationFrame = frame;
 }
 
