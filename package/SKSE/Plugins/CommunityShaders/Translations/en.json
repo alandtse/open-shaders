@@ -1030,6 +1030,7 @@
     "feature.exp_height_fog.mist_follow_wind": "Follow Outdoor Wind",
     "feature.exp_height_fog.mist_follow_wind_tooltip": "Uses the current outdoor wind direction and strength, smoothing changes over one second. Calm wind stops drift. Interiors retain manual drift. Wind changes movement, not density.",
     "feature.exp_height_fog.mist_movement_offset": "Movement offset: %.1f units (%.1f m)",
+    "feature.exp_height_fog.mist_movement_offset_tooltip": "Total distance the mist pattern has drifted this session.",
     "feature.exp_height_fog.mist_per_second_format": "{} per second",
     "feature.exp_height_fog.mist_range": "Mist Range",
     "feature.exp_height_fog.mist_range_tooltip": "Coverage and outer fade distance. It does not change pocket density.",

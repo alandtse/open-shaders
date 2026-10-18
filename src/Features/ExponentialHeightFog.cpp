@@ -440,6 +440,10 @@ void ExponentialHeightFog::DrawMistSettings()
 	ImGui::EndDisabled();
 	const auto driftUnits = static_cast<float>(mistDriftDistance);
 	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f units (%.1f m)"), driftUnits, Util::Units::GameUnitsToMeters(driftUnits));
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		Util::DrawMultiLineTooltip({ T(TKEY("mist_movement_offset_tooltip"), "Total distance the mist pattern has drifted this session."),
+			Util::Units::FormatDistance(driftUnits) });
+	}
 	ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Range cannot extend the volumetric grid. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
 	ImGui::EndDisabled();
 }
