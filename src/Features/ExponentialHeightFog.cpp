@@ -135,7 +135,7 @@ namespace
 	{
 		using Settings = ExponentialHeightFog::Settings;
 		if (current.useVanillaFogSettings != previous.useVanillaFogSettings || current.mistsEnabled != previous.mistsEnabled ||
-			current.volumetricFogNoiseType != previous.volumetricFogNoiseType)
+			current.volumetricFogNoiseType != previous.volumetricFogNoiseType || current.mistFollowWind != previous.mistFollowWind)
 			return false;
 		for (const auto field : {
 				 &Settings::vanillaFogStrength, &Settings::fogLightingInfluence,
@@ -145,7 +145,7 @@ namespace
 				 &Settings::volumetricFogDistance, &Settings::volumetricFogStartDistance,
 				 &Settings::volumetricFogNearFadeInDistance, &Settings::volumetricFogExtinctionScale,
 				 &Settings::volumetricDepthDistributionScale,
-				 &Settings::mistStrength, &Settings::mistRange, &Settings::mistSize, &Settings::mistDriftSpeed }) {
+				 &Settings::mistStrength, &Settings::mistRange, &Settings::mistSize, &Settings::mistDriftSpeed, &Settings::mistWindMultiplier }) {
 			if (current.*field != previous.*field)
 				return false;
 		}
