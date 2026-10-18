@@ -59,12 +59,13 @@ namespace
 	constexpr size_t MaxMissingShells = 65536;
 	constexpr uint32_t MaxOverrideSize = 65536;
 	constexpr float PixelsPerShell = 1.0f;
+	constexpr uint32_t FirstPersonRenderMode = 0x16;
 	constexpr std::string_view EmptyOverlayPath = "textures\\actors\\character\\overlays\\default.dds";
 
 	bool IsFirstPersonPass()
 	{
 		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && accumulator->GetRuntimeFlags().firstPerson;
+		return accumulator && (accumulator->GetRuntimeFlags().firstPerson || static_cast<uint32_t>(accumulator->GetRuntimeData().renderMode) == FirstPersonRenderMode);
 	}
 
 	bool CanDrawShells(RE::BSGeometry* a_geometry)
