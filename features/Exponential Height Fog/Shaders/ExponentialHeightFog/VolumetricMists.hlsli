@@ -1,7 +1,7 @@
 #ifndef __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_MISTS_HLSLI__
 #define __EXPONENTIAL_HEIGHT_FOG_VOLUMETRIC_MISTS_HLSLI__
 
-#include "Common/Random.hlsli"
+#include "Common/ValueNoise.hlsli"
 #include "ExponentialHeightFog/VolumetricFogCSCommon.hlsli"
 
 namespace ExponentialHeightFog
@@ -25,25 +25,6 @@ namespace ExponentialHeightFog
 		float2 alongWind = VolumetricFogMistShapeParameters.xy;
 		float2 acrossWind = float2(-alongWind.y, alongWind.x);
 		return float3(dot(position.xy, alongWind), dot(position.xy, acrossWind), position.z) * kMistShapeFrequency;
-	}
-
-	float3 MistLatticeValue(int3 lattice)
-	{
-		return float3(Random::pcg3d(asuint(lattice)) >> 8u) * (1.0f / 16777216.0f);
-	}
-
-	float3 MistValueNoise(float3 position)
-	{
-		int3 lattice = int3(floor(position));
-		float3 blend = frac(position);
-		blend = blend * blend * blend * (blend * (blend * 6.0f - 15.0f) + 10.0f);
-		float3 front = lerp(
-			lerp(MistLatticeValue(lattice), MistLatticeValue(lattice + int3(1, 0, 0)), blend.x),
-			lerp(MistLatticeValue(lattice + int3(0, 1, 0)), MistLatticeValue(lattice + int3(1, 1, 0)), blend.x), blend.y);
-		float3 back = lerp(
-			lerp(MistLatticeValue(lattice + int3(0, 0, 1)), MistLatticeValue(lattice + int3(1, 0, 1)), blend.x),
-			lerp(MistLatticeValue(lattice + int3(0, 1, 1)), MistLatticeValue(lattice + int3(1, 1, 1)), blend.x), blend.y);
-		return lerp(front, back, blend.z);
 	}
 
 	float EvaluateNearbyMistExtinction(uint3 coord, float3 positionWS, uint eyeIndex)
@@ -78,12 +59,12 @@ namespace ExponentialHeightFog
 		float3 noisePosition = MistShapeCoordinates(absolutePosition - float3(VolumetricFogMistDriftOffset, 0.0f)) /
 		                       SharedData::exponentialHeightFogSettings.mistSize;
 		float3 evolution = VolumetricFogMistShapeParameters.z * kMistEvolutionDirection;
-		float3 broadNoise = MistValueNoise(noisePosition + evolution);
+		float3 broadNoise = ValueNoise::Evaluate3(noisePosition + evolution);
 		float detailWeight = 1.0f - smoothstep(kMistResolutionFade.x, kMistResolutionFade.y, footprint * kMistDetailFrequency);
 		float shape = broadNoise.x;
 		[branch] if (detailWeight > 0.0f)
 		{
-			float detail = MistValueNoise(noisePosition * kMistDetailFrequency + (broadNoise.yzx - 0.5f) * kMistWarpAmount + kMistDetailOffset - evolution).x;
+			float detail = ValueNoise::Evaluate3(noisePosition * kMistDetailFrequency + (broadNoise.yzx - 0.5f) * kMistWarpAmount + kMistDetailOffset - evolution).x;
 			shape = lerp(shape, detail, kMistDetailAmount * detailWeight);
 		}
 		float pockets = smoothstep(kMistPocketThresholds.x, kMistPocketThresholds.y, shape);
