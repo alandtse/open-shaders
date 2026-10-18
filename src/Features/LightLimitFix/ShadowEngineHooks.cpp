@@ -176,12 +176,12 @@ namespace ShadowCasterManager
 		// Only fire when RBX points at depthStencils[4], not at other delete calls.
 		auto* data = reinterpret_cast<RE::BSGraphics::DepthStencilData*>(ctx.Rbx);
 		if (data == &RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[4])
-			ReleaseExtendedDepthBuffers(s_settings.ShadowLightCount);
+			ReleaseExtendedDepthBuffers(static_cast<int>(s_requestedSlotCount));
 	}
 
 	static void Hook_DeleteDepthBuffers_AE(CONTEXT& /*ctx*/)
 	{
-		ReleaseExtendedDepthBuffers(s_settings.ShadowLightCount);
+		ReleaseExtendedDepthBuffers(static_cast<int>(s_requestedSlotCount));
 	}
 
 	// -------------------------------------------------------------------------
@@ -1112,11 +1112,7 @@ namespace ShadowCasterManager
 	{
 		s_settings = settings;
 		s_installedShadowLightCount = settings.ShadowLightCount;
-		// kSHADOWMAPS is point/spot only -- the sun renders to a separate
-		// kSHADOWMAPS_ESRAM texture (cascade descriptors live there, not
-		// here). So the engine allocates exactly ShadowLightCount slices
-		// in kSHADOWMAPS; no +1 for the sun.
-		s_requestedSlotCount = static_cast<uint32_t>(settings.ShadowLightCount);
+		s_requestedSlotCount = static_cast<uint32_t>(EngineShadowSliceCount(settings.ShadowLightCount));
 
 		// One-shot capture of the boot Enabled value. Install() is called
 		// once at startup, but guard anyway in case it's ever re-invoked.
@@ -1145,15 +1141,15 @@ namespace ShadowCasterManager
 			logger::info("[SCM] Shadow atlas boot-enabled: engine kSHADOWMAPS stays at {} slices", kVanillaShadowSliceCount);
 		}
 
-		bool needExtraBuffers = !s_bootAtlasEnabled && settings.ShadowLightCount > kVanillaShadowSliceCount;
+		bool needExtraBuffers = !s_bootAtlasEnabled && s_requestedSlotCount > static_cast<uint32_t>(kVanillaShadowSliceCount);
 
 		// ---- Extended depth buffer infrastructure -------------------------
 
 		if (needExtraBuffers) {
-			globals::features::llf::normalDepthBuffer = new void*[settings.ShadowLightCount + 1]();
-			globals::features::llf::readOnlyDepthBuffer = new void*[settings.ShadowLightCount + 1]();
+			globals::features::llf::normalDepthBuffer = new void*[s_requestedSlotCount + 1]();
+			globals::features::llf::readOnlyDepthBuffer = new void*[s_requestedSlotCount + 1]();
 
-			// Patch the creation-loop count from 8 to ShadowLightCount.
+			// Patch the creation-loop count from 8 to the requested slice count.
 			// SE/VR: pattern "C7 44 24 68 08 00 00 00" (+4 = the imm32 0x00000008)
 			// AE:    same pattern at different offset
 			//
@@ -1165,7 +1161,7 @@ namespace ShadowCasterManager
 				static REL::RelocationID uid(100458, 107175);
 				uintptr_t addr = uid.address() + REL::Relocate(0xD326 - 0xC940, 0xBF6 - 0x210, 0xc91);
 				int immOff = REL::Relocate(4, 4, 3);
-				uint32_t newCount = static_cast<uint32_t>(settings.ShadowLightCount);
+				uint32_t newCount = s_requestedSlotCount;
 				REL::safe_write(addr + immOff, &newCount, sizeof(newCount));
 			}
 

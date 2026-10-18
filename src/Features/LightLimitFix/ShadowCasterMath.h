@@ -137,4 +137,19 @@ namespace ShadowCasterManager
 		std::nth_element(tmp, tmp + idx, tmp + n);
 		return tmp[idx];
 	}
+
+	inline constexpr int32_t kVanillaShadowSliceCount = 8;
+
+	/// Slices the engine array needs without the atlas: exteriors keep the sun at pool index 0,
+	/// so point lights index slices 1..count, and the engine never allocates fewer than 8.
+	inline constexpr int32_t EngineShadowSliceCount(int32_t a_shadowLightCount) noexcept
+	{
+		return std::max(kVanillaShadowSliceCount, a_shadowLightCount + 1);
+	}
+
+	/// Point lights an array of a_slices slices can hold beside the sun's pool index 0.
+	inline constexpr int32_t SliceCappedLightCount(int32_t a_shadowLightCount, int32_t a_slices) noexcept
+	{
+		return std::min(a_shadowLightCount, std::max(a_slices - 1, 0));
+	}
 }

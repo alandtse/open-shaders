@@ -9,6 +9,7 @@
 
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
+using ShadowCasterManager::EngineShadowSliceCount;
 using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
@@ -16,7 +17,9 @@ using ShadowCasterManager::HemisphereSeamMargin;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
 using ShadowCasterManager::kShadowSizeToTexels;
 using ShadowCasterManager::kTileScaleFloor;
+using ShadowCasterManager::kVanillaShadowSliceCount;
 using ShadowCasterManager::QuantizeFloat;
+using ShadowCasterManager::SliceCappedLightCount;
 using ShadowCasterManager::SphereWhollyBehindPlane;
 using ShadowCasterManager::StallBucket;
 using ShadowCasterManager::TileScaleForCoverage;
@@ -207,4 +210,32 @@ TEST_CASE("DemandStreakBucket boundaries match the histogram ladder", "[scm]")
 	REQUIRE(DemandStreakBucket(255) == 7);
 	REQUIRE(DemandStreakBucket(256) == 8);
 	REQUIRE(DemandStreakBucket(100000) == 8);
+}
+
+TEST_CASE("EngineShadowSliceCount leaves a slice for the sun's pool index", "[scm]")
+{
+	REQUIRE(EngineShadowSliceCount(0) == kVanillaShadowSliceCount);
+	REQUIRE(EngineShadowSliceCount(4) == kVanillaShadowSliceCount);
+	REQUIRE(EngineShadowSliceCount(7) == kVanillaShadowSliceCount);
+	REQUIRE(EngineShadowSliceCount(8) == 9);
+	REQUIRE(EngineShadowSliceCount(16) == 17);
+	REQUIRE(EngineShadowSliceCount(127) == 128);
+}
+
+TEST_CASE("SliceCappedLightCount keeps the highest point index inside the array", "[scm]")
+{
+	REQUIRE(SliceCappedLightCount(8, kVanillaShadowSliceCount) == 7);
+	REQUIRE(SliceCappedLightCount(16, kVanillaShadowSliceCount) == 7);
+	REQUIRE(SliceCappedLightCount(5, kVanillaShadowSliceCount) == 5);
+	REQUIRE(SliceCappedLightCount(8, 0) == 0);
+	// Point lights index slices 1..count beside the sun, so count must stay below slices.
+	for (int32_t slices = 1; slices <= 129; ++slices)
+		for (int32_t count = 0; count <= 127; ++count)
+			REQUIRE(SliceCappedLightCount(count, slices) < slices);
+}
+
+TEST_CASE("Every light count fits the slices allocated for it", "[scm]")
+{
+	for (int32_t count = 0; count <= 127; ++count)
+		REQUIRE(SliceCappedLightCount(count, EngineShadowSliceCount(count)) == count);
 }
