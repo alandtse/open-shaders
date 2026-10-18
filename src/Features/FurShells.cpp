@@ -408,7 +408,7 @@ void FurShells::LoadOverride(const std::string& a_shellPath, ShellData& a_data)
 bool FurShells::SaveOverride(const std::string& a_shellPath, const ShellOverride& a_values, std::string& a_outputPath)
 {
 	a_outputPath = "Data\\" + GetOverridePath(a_shellPath);
-	if (a_shellPath.find("..") != std::string::npos || a_shellPath.find(':') != std::string::npos) {
+	if (!a_shellPath.starts_with("textures\\") || !a_shellPath.ends_with("_shell.dds") || a_shellPath.find("..") != std::string::npos || a_shellPath.find(':') != std::string::npos) {
 		logger::error("[Fur Shells] Refused to write {}", a_outputPath);
 		return false;
 	}

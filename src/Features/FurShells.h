@@ -16,6 +16,7 @@ struct FurShells : Feature
 				T("feature.fur_shells.key_feature_4", "Adjustable length, density and droop") } };
 	}
 
+	/** @brief Global fur settings, used for every shell texture that has no override. */
 	struct Settings
 	{
 		bool Enabled = true;
@@ -33,6 +34,7 @@ struct FurShells : Feature
 		bool OverlayFur = true;
 	} settings;
 
+	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
 	struct ShellOverride
 	{
 		bool Enabled = true;
@@ -58,7 +60,10 @@ struct FurShells : Feature
 	virtual void Reset() override;
 	virtual void GenerateShaderPermutations(RE::BSShader* a_shader) override;
 
+	/** @brief Replays the deferred fur passes after terrain blending and before blended decals. */
 	virtual void OnBeforeBlendedDecals() override;
+
+	/** @brief Reports pass counts, deferred passes, resolved shell textures and depth-copy state for devbench. */
 	virtual json GetDiagnostics() override;
 
 	/**
