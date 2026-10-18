@@ -2030,7 +2030,8 @@ namespace ShadowCasterManager
 				if (!s_lights.Lights[i].Light)
 					continue;
 				bool stillChosen = (i == 0 && s_lights.Sun);  // sun slot
-				if (!stillChosen) {
+				// A light past the point range (count lowered, sun gone) never redraws; drop it to be re-placed.
+				if (!stillChosen && i < s_lights.PointLightEnd(s_settings.ShadowLightCount)) {
 					for (auto& c : candidates) {
 						if (c.light == s_lights.Lights[i].Light && c.chosen) {
 							stillChosen = true;
@@ -2062,7 +2063,9 @@ namespace ShadowCasterManager
 				bool reclaimed = false;
 				if (auto* ni = c.light->light.get()) {
 					const int ownerIdx = FindFreeSlotByOwner(ni);
-					if (ownerIdx >= 0 && !s_lights.Lights[ownerIdx].Light) {
+					// A tile can be parked at any light-free index; reclaim it only inside the point range.
+					if (ownerIdx >= s_lights.PointLightFirst() && ownerIdx < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
+						!s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
 						reclaimed = true;
 					}
