@@ -12688,6 +12688,41 @@ shaders:
                         - PROJECTED_UV
                         - TRUE_PBR
                         - WORLD_MAP
+                  - entry: Lighting:Pixel:41000011
+                    defines:
+                        - DEFERRED
+                        - ENVMAP
+                        - FUR_SHELLS
+                  - entry: Lighting:Pixel:C1000011
+                    defines:
+                        - DEFERRED
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - FUR_SHELLS_DEPTH
+                  - entry: Lighting:Pixel:41100001
+                    defines:
+                        - DO_ALPHA_TEST
+                        - ENVMAP
+                        - FUR_SHELLS
+                  - entry: Lighting:Pixel:C1100001
+                    defines:
+                        - DO_ALPHA_TEST
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - FUR_SHELLS_DEPTH
+                  - entry: Lighting:Pixel:41100011
+                    defines:
+                        - DEFERRED
+                        - DO_ALPHA_TEST
+                        - ENVMAP
+                        - FUR_SHELLS
+                  - entry: Lighting:Pixel:C1100011
+                    defines:
+                        - DEFERRED
+                        - DO_ALPHA_TEST
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - FUR_SHELLS_DEPTH
           VSHADER:
               common_defines:
                   - CLOUD_SHADOWS
@@ -12851,6 +12886,26 @@ shaders:
                     defines:
                         - PROJECTED_UV
                         - TREE_ANIM
+                        - VC
+                  - entry: Lighting:Vertex:40000002
+                    defines:
+                        - FUR_SHELLS
+                        - SKINNED
+                  - entry: Lighting:Vertex:41000002
+                    defines:
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - SKINNED
+                  - entry: Lighting:Vertex:41000001
+                    defines:
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - VC
+                  - entry: Lighting:Vertex:41000003
+                    defines:
+                        - ENVMAP
+                        - FUR_SHELLS
+                        - SKINNED
                         - VC
     - file: Particle.hlsl
       configs:
