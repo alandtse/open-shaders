@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FurShells/Interactors.h"
+
 struct FurShells : Feature
 {
 	virtual inline std::string GetName() override { return "Fur Shells"; }
@@ -35,6 +37,8 @@ struct FurShells : Feature
 		float MinFurPixels = 0.0f;
 		float WindStrength = 1.0f;
 		float WetStrength = 1.0f;
+		float TouchStrength = 1.0f;
+		bool ShowTouchEdges = false;
 	} settings;
 
 	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
@@ -114,8 +118,16 @@ private:
 		float Pad2 = 0.0f;
 		float Pad3 = 0.0f;
 		float Pad4 = 0.0f;
+		float TouchEye[2][4];
+		float TouchCount;
+		float TouchStrength;
+		float TouchDebug;
+		float TouchPad1 = 0.0f;
+		float TouchA[FurInteractors::MaxCapsulesPerPass][4];
+		float TouchB[FurInteractors::MaxCapsulesPerPass][4];
+		float TouchMove[FurInteractors::MaxCapsulesPerPass][4];
 	};
-	static_assert(sizeof(PerPass) == 80);
+	static_assert(sizeof(PerPass) == 512);
 
 	struct DeferredPass
 	{
@@ -173,6 +185,9 @@ private:
 	/** @brief Wind pushing a mesh at a_position, scaled by Wind Strength; zero indoors or when the Wind feature has no sample. */
 	float3 GetWind(const RE::NiPoint3& a_position) const;
 
+	/** @brief Fills a pass's touch capsules with the interactors near a mesh, and the camera offsets the shader needs to place them. */
+	void FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry);
+
 	void BeginOverlayPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, const FrameBody& a_body);
 	void BindPass(const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView);
 	const DepthStates* GetDepthStates(ID3D11DepthStencilState* a_source);
@@ -211,6 +226,13 @@ private:
 	uint32_t lastMaxShells = 0;
 	float minDensity = 1.0f;
 	float lastMinDensity = 1.0f;
+	FurInteractors::Tracker interactors;
+	uint32_t touchCapsules = 0;
+	uint32_t lastTouchCapsules = 0;
+	uint32_t maxTouchPerPass = 0;
+	uint32_t lastMaxTouchPerPass = 0;
+	float touchNearestGap = FLT_MAX;
+	float lastTouchNearestGap = FLT_MAX;
 	float windSpeed = 0.0f;
 	float lastWindSpeed = 0.0f;
 

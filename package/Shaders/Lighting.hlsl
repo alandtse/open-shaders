@@ -120,6 +120,7 @@ struct VS_OUTPUT
 #if defined(FUR_SHELLS)
 	nointerpolation float FurShell: TEXCOORD13;
 	float4 FurRoot: TEXCOORD14;
+	float2 FurTouch: TEXCOORD15;
 #endif
 };
 #ifdef VSHADER
@@ -324,7 +325,9 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
 #		endif
-	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell);
+	float2 furTouchDebug;
+	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
+	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell) + furTouch;
 	worldPosition.xyz += furDisplacement;
 	previousWorldPosition.xyz += furDisplacement;
 #		if defined(SKINNED)
@@ -489,6 +492,7 @@ VS_OUTPUT main(VS_INPUT input)
 #	if defined(FUR_SHELLS)
 	vsout.FurShell = furShell;
 	vsout.FurRoot = furRootViewPos;
+	vsout.FurTouch = furTouchDebug;
 #	endif
 
 	return vsout;
@@ -1911,6 +1915,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if defined(FUR_SHELLS)
 	if (input.FurShell > 0.0)
 		baseColor.xyz *= FurShells::GetDarkening(input.FurShell, furFacing) * FurShells::GetWetDarkening(GetFurWet());
+	if (input.FurShell > 0.0 && FurShells::TouchDebug > 0.0) {
+		const float4 touchDebug = FurShells::GetTouchDebugColor(input.FurTouch);
+		baseColor.xyz = lerp(baseColor.xyz, touchDebug.rgb, touchDebug.a);
+	}
 #	endif
 
 #	if defined(CS_SKIN_SHADING)

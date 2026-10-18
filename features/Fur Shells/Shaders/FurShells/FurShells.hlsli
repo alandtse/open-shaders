@@ -22,6 +22,13 @@ namespace FurShells
 		float TipWeight;
 		float4 Wind;
 		float WetStrength;
+		float4 TouchEye[2];
+		float TouchCount;
+		float TouchStrength;
+		float TouchDebug;
+		float4 TouchA[8];
+		float4 TouchB[8];
+		float4 TouchMove[8];
 	};
 
 #if defined(PSHADER)
@@ -67,8 +74,45 @@ namespace FurShells
 #endif
 
 #if defined(VSHADER)
+	static const float TouchBend = 0.5;
+	static const float TouchMarginScale = 0.25;
+	static const float TouchMinMargin = 0.3;
+	static const float TouchDrag = 0.8;
+	static const float TouchMaxPush = 3.0;
 	static const float WindMaxBend = 0.6;
 	static const float WindLeeShare = 0.25;
+
+	/**
+	 * @brief World-space push of a shell layer away from, and along, the capsules touching the mesh.
+	 * @details Each capsule bends fur within one fur length of its surface and pushes fur that is inside it back out. Capsule movement drags the fur along, so a stroke combs it.
+	 *          The push grows with layer height squared so the root stays put, and is capped at TouchMaxPush.
+	 * @param a_absolutePosition World position of the layer, including the camera offset.
+	 * @param a_length The fur's current length, wet fur included, which sets the width of the zone before contact.
+	 * @param a_debug Receives the strongest capsule influence in x, and 1 in y when the layer is inside a capsule.
+	 */
+	float3 GetTouchDisplacement(float3 a_absolutePosition, float a_shell, float a_length, out float2 a_debug)
+	{
+		float3 total = 0.0;
+		a_debug = 0.0;
+		float margin = max(a_length * TouchMarginScale, TouchMinMargin);
+		[loop] for (uint index = 0; index < uint(TouchCount); ++index)
+		{
+			float3 pointA = TouchA[index].xyz;
+			float3 axis = TouchB[index].xyz - pointA;
+			float t = saturate(dot(a_absolutePosition - pointA, axis) / max(dot(axis, axis), 1e-4));
+			float3 offset = a_absolutePosition - (pointA + axis * t);
+			float distance = length(offset);
+			float3 direction = offset / max(distance, 1e-4);
+			float radius = TouchA[index].w;
+			float influence = saturate((radius + margin - distance) / margin);
+			float penetration = max(radius - distance, 0.0);
+			a_debug = float2(max(a_debug.x, influence), max(a_debug.y, step(0.0, radius - distance)));
+			total += direction * (influence * a_length * TouchBend + penetration) + TouchMove[index].xyz * (influence * TouchDrag);
+		}
+		total *= TouchStrength;
+		float magnitude = length(total);
+		return total * (min(magnitude, TouchMaxPush) / max(magnitude, 1e-4)) * (a_shell * a_shell);
+	}
 
 	/**
 	 * @brief World-space push of a shell layer by the wind sampled for the whole mesh.
@@ -139,6 +183,20 @@ namespace FurShells
 	float GetWetDroop(float a_wet)
 	{
 		return 1.0 + WetDroopGain * a_wet;
+	}
+
+	static const float TouchDebugEdge = 0.12;
+
+	/** @brief Debug tint for touched fur: red inside a capsule, magenta along the edge of the touched zone, cyan to yellow with growing influence inside it. The alpha is the tint strength. */
+	float4 GetTouchDebugColor(float2 a_debug)
+	{
+		if (a_debug.y > 0.5)
+			return float4(1.0, 0.0, 0.0, 0.85);
+		if (a_debug.x <= 0.0)
+			return 0.0;
+		if (a_debug.x < TouchDebugEdge)
+			return float4(1.0, 0.0, 1.0, 0.9);
+		return float4(lerp(float3(0.0, 1.0, 1.0), float3(1.0, 1.0, 0.0), a_debug.x), 0.6);
 	}
 
 	float GetShell(uint shellIndex)

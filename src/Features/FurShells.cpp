@@ -7,6 +7,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
+#include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
@@ -30,7 +31,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	OverlayFur,
 	MinFurPixels,
 	WindStrength,
-	WetStrength)
+	WetStrength,
+	TouchStrength,
+	ShowTouchEdges)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FurShells::ShellOverride,
@@ -64,6 +67,96 @@ namespace
 	constexpr uint32_t MaxOverrideSize = 65536;
 	constexpr float PixelsPerShell = 1.0f;
 	constexpr float MaxWindSpeed = 1.5f;
+	constexpr float TouchActorRange = 800.0f;
+	constexpr float TouchReach = 10.0f;
+
+	/** @brief Reports, per skinned mesh of an actor, whether the engine kept CPU copies of vertex positions and skin weights. */
+	json ProbeSkinData(RE::Actor* a_actor)
+	{
+		constexpr size_t MaxMeshes = 48;
+		json meshes = json::array();
+		RE::NiAVObject* thirdPersonRoot = a_actor->Get3D(false);
+		RE::NiAVObject* firstPersonRoot = a_actor->Get3D(true);
+		const auto findIn = [](RE::NiAVObject* a_root, const char* a_name) -> const RE::NiAVObject* {
+			RE::NiNode* node = a_root ? a_root->AsNode() : nullptr;
+			return node ? node->GetObjectByName(RE::BSFixedString(a_name)) : nullptr;
+		};
+		Util::ForEachActorGeometry(a_actor, [&](RE::BSGeometry* a_geometry) {
+			if (meshes.size() >= MaxMeshes)
+				return;
+			const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+			if (!skin)
+				return;
+			json entry = { { "name", a_geometry->name.c_str() ? a_geometry->name.c_str() : "" }, { "hasSkinData", skin->skinData != nullptr }, { "bones", skin->skinData ? skin->skinData->GetBoneCount() : 0u } };
+			if (skin->bones) {
+				json names = json::array();
+				uint32_t handBones = 0;
+				uint32_t inThirdPerson = 0;
+				uint32_t inFirstPerson = 0;
+				for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
+					const char* boneName = skin->bones[bone] && skin->bones[bone]->name.c_str() ? skin->bones[bone]->name.c_str() : "";
+					const std::string_view view{ boneName };
+					if (view.find("Hand [") != std::string_view::npos || view.find("Finger") != std::string_view::npos) {
+						++handBones;
+						inThirdPerson += skin->bones[bone] == findIn(thirdPersonRoot, boneName) ? 1u : 0u;
+						inFirstPerson += skin->bones[bone] == findIn(firstPersonRoot, boneName) ? 1u : 0u;
+					}
+					if (names.size() < 24)
+						names.push_back(boneName);
+				}
+				entry["handBones"] = handBones;
+				entry["handBonesInThirdPersonTree"] = inThirdPerson;
+				entry["handBonesInFirstPersonTree"] = inFirstPerson;
+				entry["boneNames"] = std::move(names);
+			}
+			if (const auto* partition = skin->skinPartition.get()) {
+				entry["vertexCount"] = partition->vertexCount;
+				json parts = json::array();
+				for (uint32_t index = 0; index < partition->numPartitions && index < 8; ++index) {
+					const auto& part = partition->partitions[index];
+					RE::BSGraphics::VertexDesc desc = part.vertexDesc;
+					parts.push_back({ { "vertices", part.vertices }, { "vertexSize", desc.GetSize() }, { "skinnedVertex", desc.HasFlag(RE::BSGraphics::Vertex::VF_SKINNED) }, { "buffData", part.buffData != nullptr }, { "rawVertexData", part.buffData && part.buffData->rawVertexData != nullptr }, { "cpuBones", part.bones != nullptr }, { "cpuWeights", part.weights != nullptr }, { "bonesPerVertex", part.bonesPerVertex } });
+				}
+				entry["partitions"] = std::move(parts);
+			}
+			meshes.push_back(std::move(entry));
+		});
+		json trees = json::object();
+		for (const auto& [label, root] : { std::pair{ "thirdPerson", thirdPersonRoot }, std::pair{ "firstPerson", firstPersonRoot } }) {
+			json sides = json::object();
+			for (const char* name : { "NPC R Hand [RHnd]", "NPC L Hand [LHnd]" }) {
+				const auto* node = findIn(root, name);
+				sides[name] = node ? json{ node->world.translate.x, node->world.translate.y, node->world.translate.z } : json(nullptr);
+			}
+			trees[label] = std::move(sides);
+		}
+		return json{ { "handNodePositionsByTree", std::move(trees) }, { "sameRoot", thirdPersonRoot == firstPersonRoot }, { "meshes", std::move(meshes) } };
+	}
+
+	/** @brief World positions of each hand node and its middle fingertip joint, or null when not found. */
+	json HandPositionsJson(const FurInteractors::Tracker& a_tracker)
+	{
+		json result = json::object();
+		for (const bool left : { true, false }) {
+			float3 hand;
+			float3 joint;
+			result[left ? "left" : "right"] = a_tracker.GetHandPositions(left, hand, joint) ?
+			                                      json{ { "hand", { hand.x, hand.y, hand.z } }, { "middleFingerDistalJoint", { joint.x, joint.y, joint.z } } } :
+			                                      json(nullptr);
+		}
+		return result;
+	}
+
+	/** @brief Form ID of the reference that owns a mesh, found by walking up to the root that carries the reference, or 0. */
+	RE::FormID GetWearer(const RE::NiAVObject* a_object)
+	{
+		constexpr int MaxDepth = 16;
+		for (int depth = 0; a_object && depth < MaxDepth; ++depth, a_object = a_object->parent) {
+			if (const auto* reference = a_object->GetUserData())
+				return reference->GetFormID();
+		}
+		return 0;
+	}
 	constexpr uint32_t FirstPersonRenderMode = 0x16;
 	constexpr std::string_view EmptyOverlayPath = "textures\\actors\\character\\overlays\\default.dds";
 
@@ -271,6 +364,14 @@ void FurShells::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("wet_strength_tooltip"), "How much rain mats the fur: wet fur thins into clumps, darkens and hangs heavier. Water beads and drips on the outer layer come from Wetness Effects. 0 disables wet fur."));
 
+	ImGui::SliderFloat(T(TKEY("touch_strength"), "Touch Strength"), &settings.TouchStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("touch_strength_tooltip"), "How strongly hands, fingers and bodies press and drag the fur they touch, including fur on your own gear in VR. 0 disables touch."));
+
+	ImGui::Checkbox(T(TKEY("show_touch_edges"), "Show Touch Edges"), &settings.ShowTouchEdges);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("show_touch_edges_tooltip"), "Tints touched fur to show how far a hand or body reaches: red inside the touching shape, magenta along the edge of the affected fur, cyan to yellow as the push grows. For tuning only."));
+
 	ImGui::Checkbox(T(TKEY("overlay_fur"), "Show Overlays On Fur"), &settings.OverlayFur);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("overlay_fur_tooltip"), "Carries RaceMenu overlays such as tattoos, body paint and fur patterns up through the fur, so they color it instead of staying hidden under it. Each overlay in use draws the fur once more."));
@@ -463,6 +564,15 @@ void FurShells::Reset()
 	lastMinDensity = minDensity;
 	lastWindSpeed = windSpeed;
 	windSpeed = 0.0f;
+	lastTouchCapsules = static_cast<uint32_t>(interactors.GetCount());
+	lastMaxTouchPerPass = maxTouchPerPass;
+	lastTouchNearestGap = touchNearestGap;
+	touchNearestGap = FLT_MAX;
+	maxTouchPerPass = 0;
+	if (settings.TouchStrength > 0.0f && lastPassCount > 0)
+		interactors.Update(TouchActorRange);
+	else
+		interactors.Clear();
 	maxShells = 0;
 	minDensity = 1.0f;
 	stereoDraws = 0;
@@ -688,6 +798,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	PerPass perPass{ values.Length, static_cast<float>(shells), values.Droop, values.RootThreshold, values.TipThreshold, values.RootDarkening, values.ShellColor, 0.0f, density, tipWeight };
 	perPass.Wind = float4(wind.x, wind.y, wind.z, 0.0f);
 	perPass.WetStrength = settings.WetStrength;
+	FillTouch(perPass, geometry);
 	if (skinInstance && settings.OverlayFur)
 		RecordFrameBody(skinInstance, geometry, perPass, shellView, normalView, defer || replaying);
 
@@ -701,6 +812,37 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	furPixelShader = reinterpret_cast<ID3D11PixelShader*>(pixelShader->shader);
 	depthPixelShader = reinterpret_cast<ID3D11PixelShader*>(depthShader->shader);
 	BindPass(perPass, shellView, normalView);
+}
+
+void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
+{
+	std::array<FurInteractors::Capsule, FurInteractors::MaxCapsulesPerPass> touches;
+	const size_t count = settings.TouchStrength > 0.0f ?
+	                         interactors.Select(a_geometry->worldBound.center, a_geometry->worldBound.radius, TouchReach, GetWearer(a_geometry), touches, touchNearestGap) :
+	                         0;
+	maxTouchPerPass = std::max(maxTouchPerPass, static_cast<uint32_t>(count));
+	a_perPass.TouchCount = static_cast<float>(count);
+	a_perPass.TouchStrength = settings.TouchStrength;
+	a_perPass.TouchDebug = settings.ShowTouchEdges ? 1.0f : 0.0f;
+	for (int eye = 0; eye < 2; ++eye) {
+		const auto position = Util::GetEyePosition(eye);
+		a_perPass.TouchEye[eye][0] = position.x;
+		a_perPass.TouchEye[eye][1] = position.y;
+		a_perPass.TouchEye[eye][2] = position.z;
+	}
+	for (size_t index = 0; index < count; ++index) {
+		const auto& touch = touches[index];
+		a_perPass.TouchA[index][0] = touch.pointA.x;
+		a_perPass.TouchA[index][1] = touch.pointA.y;
+		a_perPass.TouchA[index][2] = touch.pointA.z;
+		a_perPass.TouchA[index][3] = touch.radius;
+		a_perPass.TouchB[index][0] = touch.pointB.x;
+		a_perPass.TouchB[index][1] = touch.pointB.y;
+		a_perPass.TouchB[index][2] = touch.pointB.z;
+		a_perPass.TouchMove[index][0] = touch.move.x;
+		a_perPass.TouchMove[index][1] = touch.move.y;
+		a_perPass.TouchMove[index][2] = touch.move.z;
+	}
 }
 
 float3 FurShells::GetWind(const RE::NiPoint3& a_position) const
@@ -1071,6 +1213,15 @@ json FurShells::GetDiagnostics()
 		{ "maxShellsLastFrame", lastMaxShells },
 		{ "minDensityLastFrame", lastMinDensity },
 		{ "windSpeedLastFrame", lastWindSpeed },
+		{ "touchCapsulesLastFrame", lastTouchCapsules },
+		{ "touchMaxPerPassLastFrame", lastMaxTouchPerPass },
+		{ "touchHandNodesFound", interactors.GetHandNodeCount() },
+		{ "touchFitMeshes", interactors.GetFitMeshCount() },
+		{ "touchHandPositions", HandPositionsJson(interactors) },
+		{ "touchFingerRadius", interactors.GetAverageFingerRadius() },
+		{ "touchPalmRadius", interactors.GetAveragePalmRadius() },
+		{ "playerSkinData", globals::game::player ? ProbeSkinData(globals::game::player) : json::object() },
+		{ "touchNearestGapLastFrame", lastTouchNearestGap == FLT_MAX ? -1.0f : lastTouchNearestGap },
 		{ "deferredPasses", deferredPasses.size() },
 		{ "deferredOverlayPasses", deferredOverlayPasses.size() },
 		{ "frameBodies", frameBodies.size() },
