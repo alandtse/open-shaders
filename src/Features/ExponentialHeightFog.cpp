@@ -410,11 +410,21 @@ void ExponentialHeightFog::DrawMistSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextWrapped("%s", T(TKEY("mist_strength_tooltip"), "Scales weather-driven opacity across one mist pocket, independently of Mist Range. Higher values make pockets thicker when you enter them. Zero removes the added mists."));
 	}
-	ImGui::SliderFloat(T(TKEY("mist_range"), "Mist Range"), &settings.mistRange, kMistRangeMin, kMistRangeMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("mist_size"), "Mist Pocket Size"), &settings.mistSize, kMistSizeMin, kMistSizeMax, "%.0f", ImGuiSliderFlags_AlwaysClamp);
-	ImGui::SliderFloat(T(TKEY("mist_drift_speed"), "Mist Movement Speed"), &settings.mistDriftSpeed, 0.0f, kMaxMistDriftSpeed, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	ImGui::SliderFloat(T(TKEY("mist_range"), "Mist Range"), &settings.mistRange, kMistRangeMin, kMistRangeMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("mist_drift_speed_tooltip"), "Game units per second for manual drift, or at full outdoor wind strength. Changing speed only affects future movement. Zero freezes the pattern; pausing also pauses animation."));
+		Util::DrawMultiLineTooltip({ T(TKEY("mist_range_tooltip"), "Coverage and outer fade distance. It does not change pocket density."),
+			Util::Units::FormatDistance(settings.mistRange) });
+	}
+	ImGui::SliderFloat(T(TKEY("mist_size"), "Mist Pocket Size"), &settings.mistSize, kMistSizeMin, kMistSizeMax, "%.0f units", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		Util::DrawMultiLineTooltip({ T(TKEY("mist_size_tooltip"), "Scale of the mist pattern. Density is adjusted to keep each pocket's optical thickness."),
+			Util::Units::FormatDistance(settings.mistSize) });
+	}
+	ImGui::SliderFloat(T(TKEY("mist_drift_speed"), "Mist Movement Speed"), &settings.mistDriftSpeed, 0.0f, kMaxMistDriftSpeed, "%.1f units/s", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		const auto speedPerSecond = Util::Units::FormatDistance(settings.mistDriftSpeed);
+		Util::DrawMultiLineTooltip({ T(TKEY("mist_drift_speed_tooltip"), "Manual drift speed, or the speed at full outdoor wind strength. Changing speed only affects future movement. Zero freezes the pattern; pausing also pauses animation."),
+			std::vformat(T(TKEY("mist_per_second_format"), "{} per second"), std::make_format_args(speedPerSecond)) });
 	}
 	Util::CheckboxFlag(T(TKEY("mist_follow_wind"), "Follow Outdoor Wind"), settings.mistFollowWind);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -423,8 +433,8 @@ void ExponentialHeightFog::DrawMistSettings()
 	ImGui::BeginDisabled(!settings.mistFollowWind);
 	ImGui::SliderFloat(T(TKEY("mist_wind_multiplier"), "Mist Wind Multiplier"), &settings.mistWindMultiplier, 0.0f, kMistWindMultiplierMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	ImGui::EndDisabled();
-	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f game units"), mistDriftDistance);
-	ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Distances are in game units. Range controls coverage and the outer fade, not pocket density; it cannot extend the volumetric grid. Pocket Size sets the pattern scale, with density adjusted to retain its optical thickness. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
+	ImGui::Text(T(TKEY("mist_movement_offset"), "Movement offset: %.1f units (%.1f m)"), mistDriftDistance, Util::Units::GameUnitsToMeters(mistDriftDistance));
+	ImGui::TextWrapped("%s", T(TKEY("mists_range_help"), "Range cannot extend the volumetric grid. Small pockets fade where the grid is too coarse to resolve them. Speed 0 freezes the pattern in the world."));
 	ImGui::EndDisabled();
 }
 

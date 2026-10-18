@@ -29,7 +29,7 @@ when testing; it does not claim complete sky/reflection participation.
 
 ## Density and lighting
 
-Optical depth over a fixed 8192-game-unit reference distance supplies mist
+Optical depth over a fixed 8192-game-unit (about 117 m) reference distance supplies mist
 strength: the fog extinction segment from the camera to that distance, as
 the volumetric material pass evaluates it. In Follow vanilla fog mode it
 includes Weather Fog Strength, Volumetric Extinction Scale, the height
@@ -77,10 +77,10 @@ This implementation is procedural art direction, not a fluid simulation.
 
 -   **Mist Strength: 0.1.** Scales only the added pockets; zero restores the
     baseline. It cannot create mist if the weather reference is zero.
--   **Mist Range: 8192 game units.** With the existing 8030-unit volumetric
+-   **Mist Range: 8192 game units (about 117 m).** With the existing 8030-unit volumetric
     distance, support ends at 7227. Increasing this control alone cannot
     enlarge the volumetric grid.
--   **Mist Pocket Size: 4096 game units.** Controls the broad noise scale.
+-   **Mist Pocket Size: 4096 game units (about 58 m).** Controls the broad noise scale.
     Density scales inversely with size to retain pocket optical thickness.
     Very small pockets fade sooner as depth cells become too large.
 -   **Follow Outdoor Wind: on.** Outdoor drift follows the live sky wind
@@ -88,8 +88,8 @@ This implementation is procedural art direction, not a fluid simulation.
     response time. Interiors and disabling this option use manual drift.
     This does not change density or simulate shelter behind geometry.
 -   **Mist Wind Multiplier: 1.0.** Scales outdoor wind-driven movement only.
-    Final speed is capped at 2000 game units/second.
--   **Mist Movement Speed: 1000 game units/second.** Manual speed, or speed
+    Final speed is capped at 2000 game units/second (about 29 m/s).
+-   **Mist Movement Speed: 1000 game units/second (about 14 m/s).** Manual speed, or speed
     at full wind strength before the wind multiplier. Adjustable from zero
     to 2000. Zero freezes the field in world space, not to the camera.
     Movement accumulates from a monotonic per-frame clock and is uploaded
