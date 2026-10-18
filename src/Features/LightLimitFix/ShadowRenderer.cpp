@@ -334,9 +334,13 @@ bool LightLimitFix::BindShadowResourcesCS() const
 	if (!loaded || !shadowLights || !shadowLights->srv || shadowLightCount == 0 || ShadowCasterManager::IsSessionResetPending())
 		return false;
 
+	auto* shadowMapSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV);
+	if (!shadowMapSRV)
+		return false;
+
 	ID3D11ShaderResourceView* srvs[3]{
 		shadowLights->srv.get(),
-		Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV),
+		shadowMapSRV,
 		ShadowCasterManager::AtlasSRV()
 	};
 	globals::d3d::context->CSSetShaderResources(102, ARRAYSIZE(srvs), srvs);
