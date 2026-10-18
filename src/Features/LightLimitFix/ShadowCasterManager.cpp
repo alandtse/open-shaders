@@ -315,7 +315,7 @@ namespace ShadowCasterManager
 		RefreshInstalledSlotCount();
 
 		Settings capped = settings;
-		if (s_installedShadowLightCount > 0)
+		if (s_installedShadowLightCount > 0 || s_installedSlotCount > 0)
 			capped.ShadowLightCount = std::min(settings.ShadowLightCount, s_installedShadowLightCount);
 
 		// Until the atlas resources exist (or if the probe failed), the
