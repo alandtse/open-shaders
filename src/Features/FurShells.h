@@ -197,6 +197,10 @@ private:
 	uint32_t monoDraws = 0;
 	uint32_t lastStereoDraws = 0;
 	uint32_t lastMonoDraws = 0;
+	uint32_t maxShells = 0;
+	uint32_t lastMaxShells = 0;
+	float minDensity = 1.0f;
+	float lastMinDensity = 1.0f;
 
 	eastl::unique_ptr<ConstantBuffer> perPassCB;
 	winrt::com_ptr<ID3D11BlendState> noColorWrite;

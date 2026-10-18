@@ -447,6 +447,10 @@ void FurShells::Reset()
 	passCount = 0;
 	lastStereoDraws = stereoDraws;
 	lastMonoDraws = monoDraws;
+	lastMaxShells = maxShells;
+	lastMinDensity = minDensity;
+	maxShells = 0;
+	minDensity = 1.0f;
 	stereoDraws = 0;
 	monoDraws = 0;
 	lastDiffuse = nullptr;
@@ -653,6 +657,8 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	const float layers = std::clamp(pixels / PixelsPerShell, 1.0f, static_cast<float>(std::min(values.ShellCount, MaxShells)));
 	const auto shells = static_cast<uint32_t>(std::ceil(layers));
 	const float tipWeight = layers - static_cast<float>(shells - 1);
+	maxShells = std::max(maxShells, shells);
+	minDensity = std::min(minDensity, density);
 
 	auto* shaderCache = globals::shaderCache;
 	auto* vertexShader = shaderCache->GetVertexShader(*a_shader, state->modifiedVertexDescriptor | FurFlag);
@@ -1029,6 +1035,8 @@ json FurShells::GetDiagnostics()
 		{ "passesLastFrame", lastPassCount },
 		{ "stereoDrawsLastFrame", lastStereoDraws },
 		{ "monoDrawsLastFrame", lastMonoDraws },
+		{ "maxShellsLastFrame", lastMaxShells },
+		{ "minDensityLastFrame", lastMinDensity },
 		{ "deferredPasses", deferredPasses.size() },
 		{ "deferredOverlayPasses", deferredOverlayPasses.size() },
 		{ "frameBodies", frameBodies.size() },
