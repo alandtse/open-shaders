@@ -2,6 +2,10 @@
 
 #include <shared_mutex>
 #include <new>
+#include <format>
+#include <source_location>
+#include <string_view>
+#include <system_error>
 void* operator new[](size_t size, const char* pName, int flags, unsigned debugFlags, const char* file, int line);
 void* operator new[](size_t size, size_t alignment, size_t alignmentOffset, const char* pName, int flags,
 	unsigned debugFlags, const char* file, int line);
@@ -158,25 +162,26 @@ namespace DX
 	class com_exception : public std::exception
 	{
 	public:
-		explicit com_exception(HRESULT hr) noexcept :
-			result(hr) {}
-
-		const char* what() const override
+		explicit com_exception(HRESULT hr, const std::source_location& where = std::source_location::current()) :
+			result(hr)
 		{
-			static char s_str[64] = {};
-			sprintf_s(s_str, "Failure with HRESULT of %08X", static_cast<unsigned int>(result));
-			return s_str;
+			std::string_view file = where.file_name();
+			file.remove_prefix(file.find_last_of("\\/") == std::string_view::npos ? 0 : file.find_last_of("\\/") + 1);
+			message = std::format("{} (HRESULT 0x{:08X}) at {}:{}", std::system_category().message(hr), static_cast<uint32_t>(hr), file, where.line());
 		}
+
+		const char* what() const noexcept override { return message.c_str(); }
 
 	private:
 		HRESULT result;
+		std::string message;
 	};
 
-	// Helper utility converts D3D API failures into exceptions.
-	inline void ThrowIfFailed(HRESULT hr)
+	// Helper utility converts D3D API failures into exceptions that name the failing call site.
+	inline void ThrowIfFailed(HRESULT hr, const std::source_location& where = std::source_location::current())
 	{
 		if (FAILED(hr)) {
-			throw com_exception(hr);
+			throw com_exception(hr, where);
 		}
 	}
 }
