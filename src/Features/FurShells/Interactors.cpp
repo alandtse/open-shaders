@@ -202,13 +202,6 @@ namespace FurInteractors
 		capsules.clear();
 		previousCenters.clear();
 		currentCenters.clear();
-		handNodeRoot = nullptr;
-		handNodesFound = 0;
-		fitMeshes = 0;
-		fitSignature = 0;
-		handRadii = {};
-		for (auto& hand : handNodes)
-			hand = {};
 	}
 
 	void Tracker::Push(Capsule a_capsule, size_t a_index)
