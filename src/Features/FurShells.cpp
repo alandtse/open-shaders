@@ -569,10 +569,12 @@ void FurShells::Reset()
 	lastTouchNearestGap = touchNearestGap;
 	touchNearestGap = FLT_MAX;
 	maxTouchPerPass = 0;
-	if (settings.TouchStrength > 0.0f && lastPassCount > 0)
+	if (settings.TouchStrength <= 0.0f)
+		interactors.Clear();
+	else if (lastPassCount > 0)
 		interactors.Update(TouchActorRange);
 	else
-		interactors.Clear();
+		interactors.Rest();
 	maxShells = 0;
 	minDensity = 1.0f;
 	stereoDraws = 0;
@@ -817,9 +819,11 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 {
 	std::array<FurInteractors::Capsule, FurInteractors::MaxCapsulesPerPass> touches;
-	const size_t count = settings.TouchStrength > 0.0f ?
-	                         interactors.Select(a_geometry->worldBound.center, a_geometry->worldBound.radius, TouchReach, GetWearer(a_geometry), touches, touchNearestGap) :
-	                         0;
+	size_t count = settings.TouchStrength > 0.0f ?
+	                   interactors.Select(a_geometry->worldBound.center, a_geometry->worldBound.radius, TouchReach, GetWearer(a_geometry), touches, touchNearestGap) :
+	                   0;
+	if (settings.TouchStrength > 0.0f)
+		count = interactors.Remember(a_geometry, a_perPass.Length, count, touches);
 	maxTouchPerPass = std::max(maxTouchPerPass, static_cast<uint32_t>(count));
 	a_perPass.TouchCount = static_cast<float>(count);
 	a_perPass.TouchStrength = settings.TouchStrength;
@@ -842,6 +846,7 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 		a_perPass.TouchMove[index][0] = touch.move.x;
 		a_perPass.TouchMove[index][1] = touch.move.y;
 		a_perPass.TouchMove[index][2] = touch.move.z;
+		a_perPass.TouchMove[index][3] = touch.strength;
 	}
 }
 
@@ -1215,6 +1220,7 @@ json FurShells::GetDiagnostics()
 		{ "windSpeedLastFrame", lastWindSpeed },
 		{ "touchCapsulesLastFrame", lastTouchCapsules },
 		{ "touchMaxPerPassLastFrame", lastMaxTouchPerPass },
+		{ "touchDents", interactors.GetDentCount() },
 		{ "touchHandNodesFound", interactors.GetHandNodeCount() },
 		{ "touchFitMeshes", interactors.GetFitMeshCount() },
 		{ "touchHandPositions", HandPositionsJson(interactors) },

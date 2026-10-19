@@ -120,7 +120,7 @@ struct VS_OUTPUT
 #if defined(FUR_SHELLS)
 	nointerpolation float FurShell: TEXCOORD13;
 	float4 FurRoot: TEXCOORD14;
-	float2 FurTouch: TEXCOORD15;
+	float3 FurTouch: TEXCOORD15;
 #endif
 };
 #ifdef VSHADER
@@ -325,8 +325,8 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
 #		endif
-	float2 furTouchDebug;
-	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
+	float3 furTouchDebug;
+	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furWorldNormal, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
 	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell) + furTouch;
 	worldPosition.xyz += furDisplacement;
 	previousWorldPosition.xyz += furDisplacement;

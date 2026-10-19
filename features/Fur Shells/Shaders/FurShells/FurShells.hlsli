@@ -26,9 +26,9 @@ namespace FurShells
 		float TouchCount;
 		float TouchStrength;
 		float TouchDebug;
-		float4 TouchA[8];
-		float4 TouchB[8];
-		float4 TouchMove[8];
+		float4 TouchA[12];
+		float4 TouchB[12];
+		float4 TouchMove[12];
 	};
 
 #if defined(PSHADER)
@@ -79,20 +79,25 @@ namespace FurShells
 	static const float TouchMinMargin = 0.3;
 	static const float TouchDrag = 0.8;
 	static const float TouchMaxPush = 3.0;
+	static const float TouchPress = 0.7;
+	static const float TouchStableRadius = 0.5;
 	static const float WindMaxBend = 0.6;
 	static const float WindLeeShare = 0.25;
 
 	/**
 	 * @brief World-space push of a shell layer away from, and along, the capsules touching the mesh.
 	 * @details Each capsule bends fur within one fur length of its surface and pushes fur that is inside it back out. Capsule movement drags the fur along, so a stroke combs it.
-	 *          The push grows with layer height squared so the root stays put, and is capped at TouchMaxPush.
+	 *          The push grows with layer height squared so the root stays put, and is capped at TouchMaxPush. Near a capsule's axis, where the push direction is unstable, the sideways push fades out
+	 *          and the layers flatten toward the root along the surface normal instead, so a deep press squashes the fur. Remembered dents arrive as capsules whose strength fades as the fur recovers.
 	 * @param a_absolutePosition World position of the layer, including the camera offset.
+	 * @param a_worldNormal World-space surface normal the layer grows along.
 	 * @param a_length The fur's current length, wet fur included, which sets the width of the zone before contact.
-	 * @param a_debug Receives the strongest capsule influence in x, and 1 in y when the layer is inside a capsule.
+	 * @param a_debug Receives the strongest live capsule influence in x, 1 in y when the layer is inside a capsule, and the strongest remembered dent's strength in z.
 	 */
-	float3 GetTouchDisplacement(float3 a_absolutePosition, float a_shell, float a_length, out float2 a_debug)
+	float3 GetTouchDisplacement(float3 a_absolutePosition, float3 a_worldNormal, float a_shell, float a_length, out float3 a_debug)
 	{
 		float3 total = 0.0;
+		float press = 0.0;
 		a_debug = 0.0;
 		float margin = max(a_length * TouchMarginScale, TouchMinMargin);
 		[loop] for (uint index = 0; index < uint(TouchCount); ++index)
@@ -104,14 +109,20 @@ namespace FurShells
 			float distance = length(offset);
 			float3 direction = offset / max(distance, 1e-4);
 			float radius = TouchA[index].w;
-			float influence = saturate((radius + margin - distance) / margin);
-			float penetration = max(radius - distance, 0.0);
-			a_debug = float2(max(a_debug.x, influence), max(a_debug.y, step(0.0, radius - distance)));
-			total += direction * (influence * a_length * TouchBend + penetration) + TouchMove[index].xyz * (influence * TouchDrag);
+			float strength = TouchMove[index].w;
+			float reach = saturate((radius + margin - distance) / margin);
+			float influence = reach * strength;
+			float penetration = max(radius - distance, 0.0) * strength;
+			bool remembered = strength < 0.999;
+			a_debug = float3(remembered ? a_debug.x : max(a_debug.x, influence), remembered ? a_debug.y : max(a_debug.y, step(0.0, radius - distance)), remembered && reach > 0.0 ? max(a_debug.z, strength) : a_debug.z);
+			float stable = saturate(distance / max(radius * TouchStableRadius, 1e-3));
+			total += direction * ((influence * a_length * TouchBend + penetration) * stable) + TouchMove[index].xyz * (influence * TouchDrag);
+			press = max(press, influence);
 		}
 		total *= TouchStrength;
 		float magnitude = length(total);
-		return total * (min(magnitude, TouchMaxPush) / max(magnitude, 1e-4)) * (a_shell * a_shell);
+		float3 push = total * (min(magnitude, TouchMaxPush) / max(magnitude, 1e-4)) * (a_shell * a_shell);
+		return push - a_worldNormal * (a_length * a_shell * press * TouchPress * saturate(TouchStrength));
 	}
 
 	/**
@@ -187,11 +198,20 @@ namespace FurShells
 
 	static const float TouchDebugEdge = 0.12;
 
-	/** @brief Debug tint for touched fur: red inside a capsule, magenta along the edge of the touched zone, cyan to yellow with growing influence inside it. The alpha is the tint strength. */
-	float4 GetTouchDebugColor(float2 a_debug)
+	static const float TouchMemoryHueSpan = 0.66;
+
+	/**
+	 * @brief Debug tint for touched fur: white inside a live capsule, magenta along the edge of the touched zone, cyan to yellow with growing influence inside it.
+	 *        Fur still remembering a press is a heat map from red for a fresh press through green to blue as it recovers. The alpha is the tint strength.
+	 */
+	float4 GetTouchDebugColor(float3 a_debug)
 	{
 		if (a_debug.y > 0.5)
-			return float4(1.0, 0.0, 0.0, 0.85);
+			return float4(1.0, 1.0, 1.0, 0.85);
+		if (a_debug.z > 0.0) {
+			float hue = (1.0 - saturate(a_debug.z)) * TouchMemoryHueSpan;
+			return float4(saturate(abs(frac(hue + float3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0), 0.85);
+		}
 		if (a_debug.x <= 0.0)
 			return 0.0;
 		if (a_debug.x < TouchDebugEdge)

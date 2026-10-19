@@ -127,7 +127,7 @@ private:
 		float TouchB[FurInteractors::MaxCapsulesPerPass][4];
 		float TouchMove[FurInteractors::MaxCapsulesPerPass][4];
 	};
-	static_assert(sizeof(PerPass) == 512);
+	static_assert(sizeof(PerPass) == 704);
 
 	struct DeferredPass
 	{
