@@ -263,7 +263,7 @@ namespace Util
 	{
 		auto* rigid = a_body ? skyrim_cast<RE::hkpRigidBody*>(a_body->referencedObject.get()) : nullptr;
 		const auto* shape = rigid && rigid->world ? rigid->collidable.GetShape() : nullptr;
-		if (!shape || skyrim_cast<const RE::hkpListShape*>(shape))
+		if (!shape)
 			return false;
 
 		RE::hkTransform transform;
@@ -277,19 +277,28 @@ namespace Util
 			return IsCapsuleFinite(a_capsule);
 		}
 
-		const auto extent = [shape](float x, float y, float z) {
-			return shape->GetMaximumProjection(RE::hkVector4{ x, y, z, 0.0f });
-		};
-		const float high[3] = { extent(1.0f, 0.0f, 0.0f), extent(0.0f, 1.0f, 0.0f), extent(0.0f, 0.0f, 1.0f) };
-		const float low[3] = { -extent(-1.0f, 0.0f, 0.0f), -extent(0.0f, -1.0f, 0.0f), -extent(0.0f, 0.0f, -1.0f) };
 		float centre[3];
 		float half[3];
-		for (int axis = 0; axis < 3; ++axis) {
-			centre[axis] = 0.5f * (high[axis] + low[axis]);
-			half[axis] = 0.5f * (high[axis] - low[axis]);
+		if (const auto* list = skyrim_cast<const RE::hkpListShape*>(shape)) {
+			alignas(16) float listCentre[4];
+			alignas(16) float listHalf[4];
+			_mm_store_ps(listCentre, list->aabbCenter.quad);
+			_mm_store_ps(listHalf, list->aabbHalfExtents.quad);
+			std::copy_n(listCentre, 3, centre);
+			std::copy_n(listHalf, 3, half);
+		} else {
+			const auto extent = [shape](float x, float y, float z) {
+				return shape->GetMaximumProjection(RE::hkVector4{ x, y, z, 0.0f });
+			};
+			const float high[3] = { extent(1.0f, 0.0f, 0.0f), extent(0.0f, 1.0f, 0.0f), extent(0.0f, 0.0f, 1.0f) };
+			const float low[3] = { -extent(-1.0f, 0.0f, 0.0f), -extent(0.0f, -1.0f, 0.0f), -extent(0.0f, 0.0f, -1.0f) };
+			for (int axis = 0; axis < 3; ++axis) {
+				centre[axis] = 0.5f * (high[axis] + low[axis]);
+				half[axis] = 0.5f * (high[axis] - low[axis]);
+			}
 		}
 		const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
-		const float radius = std::max(half[(longest + 1) % 3], half[(longest + 2) % 3]);
+		const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
 		const float reach = std::max(half[longest] - radius, 0.0f);
 
 		const auto endpoint = [&](float a_sign) {
