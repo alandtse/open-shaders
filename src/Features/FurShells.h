@@ -226,7 +226,7 @@ private:
 	uint32_t lastMaxShells = 0;
 	float minDensity = 1.0f;
 	float lastMinDensity = 1.0f;
-	FurInteractors::Tracker interactors;
+	FurInteractors::Memory dentMemory;
 	uint32_t touchCapsules = 0;
 	uint32_t lastTouchCapsules = 0;
 	uint32_t maxTouchPerPass = 0;
