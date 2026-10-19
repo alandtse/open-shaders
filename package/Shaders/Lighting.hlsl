@@ -318,7 +318,7 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 #	if defined(FUR_SHELLS)
-	const float furDroop = FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell;
+	const float furDroop = min(FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 #		if defined(SKINNED)
 	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
 #		else
