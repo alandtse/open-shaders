@@ -71,6 +71,23 @@ namespace Util::BodyCapsules
 		return true;
 	}
 
+	Tracker::HandReport Tracker::GetHandReport(bool a_left) const
+	{
+		HandReport report;
+		const auto& nodes = handNodes[a_left ? 0 : 1].nodes;
+		const auto& radii = handRadii[a_left ? 0 : 1];
+		for (size_t joint = 0; joint < report.position.size(); ++joint) {
+			const auto& node = nodes[1 + joint];
+			report.found[joint] = node && node->parent;
+			if (report.found[joint])
+				report.position[joint] = ToFloat3(node->world.translate);
+			report.radius[joint] = radii.finger[joint];
+		}
+		report.tipExtent = radii.tipExtent;
+		report.palmRadius = radii.palm;
+		return report;
+	}
+
 	float Tracker::GetAverageFingerRadius() const
 	{
 		float sum = 0.0f;

@@ -10,7 +10,7 @@
 namespace Util::BodyCapsules
 {
 	/** @brief Most capsules Select can return for one query. */
-	inline constexpr size_t MaxSelectedCapsules = 16;
+	inline constexpr size_t MaxSelectedCapsules = 64;
 
 	/** @brief Finger and palm capsule radii used until a fit to the player's hand meshes succeeds. */
 	inline constexpr float DefaultFingerRadius = 1.2f;
@@ -67,6 +67,19 @@ namespace Util::BodyCapsules
 
 		/** @brief World position of a hand node and of its middle fingertip joint, for checking that injected controller poses move the hands; false while the nodes are not found. */
 		[[nodiscard]] bool GetHandPositions(bool a_left, float3& a_hand, float3& a_fingerJoint) const;
+
+		/** @brief One hand's skeleton and fit, for diagnostics: per finger joint a world position (valid when found) and radius, per finger the fitted tip extent. */
+		struct HandReport
+		{
+			static constexpr size_t Fingers = 5;
+			static constexpr size_t Joints = 3;
+			std::array<float3, Fingers * Joints> position;
+			std::array<bool, Fingers * Joints> found{};
+			std::array<float, Fingers * Joints> radius{};
+			std::array<float, Fingers> tipExtent{};
+			float palmRadius = 0.0f;
+		};
+		[[nodiscard]] HandReport GetHandReport(bool a_left) const;
 
 		/** @brief How many skinned meshes the capsule radii were fitted from, 0 while the defaults are in use. */
 		[[nodiscard]] size_t GetFitMeshCount() const { return fitMeshes; }

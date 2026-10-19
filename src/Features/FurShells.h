@@ -228,6 +228,14 @@ private:
 	float lastMinDensity = 1.0f;
 	FurInteractors::Memory dentMemory;
 	uint32_t touchCapsules = 0;
+	/** @brief The capsules each fur mesh took last frame, for diagnostics. */
+	struct TouchSelection
+	{
+		std::string mesh;
+		std::vector<FurInteractors::Capsule> capsules;
+	};
+	std::vector<TouchSelection> touchSelections;
+	std::vector<TouchSelection> lastTouchSelections;
 	uint32_t lastTouchCapsules = 0;
 	uint32_t maxTouchPerPass = 0;
 	uint32_t lastMaxTouchPerPass = 0;

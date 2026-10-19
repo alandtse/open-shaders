@@ -3,6 +3,7 @@
 #include "Utils/BodyCapsules.h"
 
 #include <array>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -39,6 +40,16 @@ namespace FurInteractors
 		 * @return The new total, live capsules plus dents.
 		 */
 		size_t Remember(const RE::BSGeometry* a_geometry, float a_furLength, size_t a_count, std::array<Capsule, MaxCapsulesPerPass>& a_capsules);
+
+		/**
+		 * @brief Keeps the capsules nearest a fur mesh's surface, so a fingertip is not dropped for a palm capsule that is nearer the mesh centre.
+		 * @details Distance is measured to the skinned mesh vertices. A mesh without skin data keeps the first capsules in the order given.
+		 * @param a_geometry The fur mesh.
+		 * @param a_candidates Capsules within reach of the mesh.
+		 * @param a_out Receives up to its size of the nearest candidates.
+		 * @return How many entries of a_out were filled.
+		 */
+		size_t Nearest(const RE::BSGeometry* a_geometry, std::span<const Capsule> a_candidates, std::span<Capsule> a_out);
 
 		/** @brief How many dents all meshes are remembering. */
 		[[nodiscard]] size_t GetDentCount() const;

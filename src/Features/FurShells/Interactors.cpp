@@ -93,6 +93,52 @@ namespace FurInteractors
 		}
 	}
 
+	size_t Memory::Nearest(const RE::BSGeometry* a_geometry, std::span<const Capsule> a_candidates, std::span<Capsule> a_out)
+	{
+		const size_t keep = std::min(a_out.size(), a_candidates.size());
+		const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+		if (!skin || a_candidates.size() <= a_out.size()) {
+			std::copy_n(a_candidates.begin(), keep, a_out.begin());
+			return keep;
+		}
+
+		MeshMemory& mesh = memory[a_geometry];
+		mesh.usedFrame = frame;
+		if (mesh.skin != skin) {
+			mesh.skin = skin;
+			mesh.dents.clear();
+			mesh.measuredFrame = UINT32_MAX;
+			BuildPressSamples(a_geometry, mesh);
+		}
+		if (mesh.samples.empty()) {
+			std::copy_n(a_candidates.begin(), keep, a_out.begin());
+			return keep;
+		}
+
+		std::vector<float3> positions;
+		positions.reserve(mesh.samples.size());
+		for (const PressSample& sample : mesh.samples)
+			positions.push_back(ToFloat3(mesh.bones[sample.bone]->world * sample.local));
+
+		std::vector<std::pair<float, size_t>> gaps;
+		gaps.reserve(a_candidates.size());
+		for (size_t index = 0; index < a_candidates.size(); ++index) {
+			const Capsule& capsule = a_candidates[index];
+			const float3 axis = capsule.pointB - capsule.pointA;
+			const float axisLengthSquared = std::max(axis.LengthSquared(), 1e-4f);
+			float nearest = FLT_MAX;
+			for (const float3& position : positions) {
+				const float t = std::clamp((position - capsule.pointA).Dot(axis) / axisLengthSquared, 0.0f, 1.0f);
+				nearest = std::min(nearest, (position - (capsule.pointA + axis * t)).LengthSquared());
+			}
+			gaps.emplace_back(std::sqrt(nearest) - capsule.radius, index);
+		}
+		std::ranges::partial_sort(gaps, gaps.begin() + static_cast<std::ptrdiff_t>(keep));
+		for (size_t index = 0; index < keep; ++index)
+			a_out[index] = a_candidates[gaps[index].second];
+		return keep;
+	}
+
 	size_t Memory::Remember(const RE::BSGeometry* a_geometry, float a_furLength, size_t a_count, std::array<Capsule, MaxCapsulesPerPass>& a_capsules)
 	{
 		const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
