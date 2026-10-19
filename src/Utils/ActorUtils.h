@@ -54,6 +54,17 @@ namespace Util
 	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule);
 
 	/**
+	 * @brief Reduces a rigid body's shape to a world-space capsule along its longest axis.
+	 * @details A capsule shape is used as it is. Any other shape, such as a box or convex hull, becomes a capsule along the longest
+	 *          side of its bounds in the body's own frame, with the widest of the other two sides as its radius, so a blade or a
+	 *          club stays long and thin. A shape list is not supported.
+	 * @param a_body Rigid body that is in a physics world.
+	 * @param a_capsule Receives the capsule.
+	 * @return True when the body has a supported shape and the capsule is finite.
+	 */
+	bool GetRigidBodyCapsule(RE::bhkRigidBody* a_body, ShapeCollisionCapsule& a_capsule);
+
+	/**
 	 * @brief World-space points that bound an actor's current pose.
 	 *
 	 * The corners of the actor's authored local box carried by its root transform, or of its root

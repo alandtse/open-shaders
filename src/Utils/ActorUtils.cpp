@@ -259,6 +259,50 @@ namespace Util
 		return false;
 	}
 
+	bool GetRigidBodyCapsule(RE::bhkRigidBody* a_body, ShapeCollisionCapsule& a_capsule)
+	{
+		auto* rigid = a_body ? skyrim_cast<RE::hkpRigidBody*>(a_body->referencedObject.get()) : nullptr;
+		const auto* shape = rigid && rigid->world ? rigid->collidable.GetShape() : nullptr;
+		if (!shape || skyrim_cast<const RE::hkpListShape*>(shape))
+			return false;
+
+		RE::hkTransform transform;
+		a_body->GetTransform(transform);
+		const float scale = RE::bhkWorld::GetWorldScaleInverse();
+		if (shape->type == RE::hkpShapeType::kCapsule) {
+			const auto* capsuleShape = static_cast<const RE::hkpCapsuleShape*>(shape);
+			a_capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
+			a_capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
+			a_capsule.radius = capsuleShape->radius * scale;
+			return IsCapsuleFinite(a_capsule);
+		}
+
+		const auto extent = [shape](float x, float y, float z) {
+			return shape->GetMaximumProjection(RE::hkVector4{ x, y, z, 0.0f });
+		};
+		const float high[3] = { extent(1.0f, 0.0f, 0.0f), extent(0.0f, 1.0f, 0.0f), extent(0.0f, 0.0f, 1.0f) };
+		const float low[3] = { -extent(-1.0f, 0.0f, 0.0f), -extent(0.0f, -1.0f, 0.0f), -extent(0.0f, 0.0f, -1.0f) };
+		float centre[3];
+		float half[3];
+		for (int axis = 0; axis < 3; ++axis) {
+			centre[axis] = 0.5f * (high[axis] + low[axis]);
+			half[axis] = 0.5f * (high[axis] - low[axis]);
+		}
+		const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
+		const float radius = std::max(half[(longest + 1) % 3], half[(longest + 2) % 3]);
+		const float reach = std::max(half[longest] - radius, 0.0f);
+
+		const auto endpoint = [&](float a_sign) {
+			float local[4] = { centre[0], centre[1], centre[2], 0.0f };
+			local[longest] += a_sign * reach;
+			return TransformHavokPoint(transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
+		};
+		a_capsule.pointA = endpoint(-1.0f);
+		a_capsule.pointB = endpoint(1.0f);
+		a_capsule.radius = radius * scale;
+		return IsCapsuleFinite(a_capsule);
+	}
+
 	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)
 	{
 		ShapeCollisionCapsule capsule;

@@ -24,15 +24,16 @@ namespace Util::BodyCapsules
 		float radius = 0.0f;
 		float3 move;             ///< How far the capsule centre moved since the previous Update, in world units per frame and capped at 8 units.
 		RE::FormID owner = 0;    ///< The actor whose body the capsule belongs to.
-		bool appendage = false;  ///< A hand or finger, which also touches the owner's own gear.
-		int side = -1;           ///< For a hand or finger capsule, 0 for the left hand and 1 for the right.
+		bool appendage = false;  ///< A hand, a finger or an item held in a hand, which also touches the owner's own gear.
+		int side = -1;           ///< For an appendage, 0 for the left hand and 1 for the right, which for a held item is the hand holding it.
 		float strength = 1.0f;   ///< How strongly the capsule acts, 1 for a live body part and lower for a contact that is fading.
 	};
 
 	/**
 	 * @brief Collects the collision capsules of nearby actors and the player's VR hands and fingers.
 	 * @details Actor capsules come from the same Havok collision objects Grass Collision reads. Finger capsules come from
-	 *          the player skeleton, so they work without HIGGS. Update rebuilds the list at most once per rendered frame,
+	 *          the player skeleton, so they work without HIGGS. When HIGGS is installed in VR, the weapon and object in each hand
+	 *          are added too, as appendages of that hand, and its hand body stands in for the fingers until the skeleton nodes are found. Update rebuilds the list at most once per rendered frame,
 	 *          so every consumer can call it; read the list on the thread that calls Update, since nothing locks it.
 	 */
 	class Tracker
@@ -90,6 +91,7 @@ namespace Util::BodyCapsules
 		void AddHandCapsules(RE::Actor* a_player, bool a_left);
 		void Push(Capsule a_capsule, size_t a_index);
 		void RefreshHandNodes(RE::Actor* a_player);
+		void AddHeldCapsules(RE::Actor* a_player);
 
 		/**
 		 * @brief Fits each finger and palm capsule radius to the skinned vertices of the player's hand and armor meshes.

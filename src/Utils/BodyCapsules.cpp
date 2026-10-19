@@ -4,6 +4,7 @@
 #include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/Game.h"
+#include "Utils/HiggsInterface.h"
 #include "Utils/SkinnedMesh.h"
 
 #include <algorithm>
@@ -34,6 +35,7 @@ namespace Util::BodyCapsules
 		constexpr float MaxMovePerFrame = 8.0f;
 		constexpr uint64_t AppendageKeyBase = 0x100000000ull;
 		constexpr size_t RightHandKeyOffset = 64;
+		constexpr size_t HeldKeyOffset = 128;
 
 		float3 ToFloat3(const RE::NiPoint3& a_point)
 		{
@@ -323,6 +325,35 @@ namespace Util::BodyCapsules
 		}
 	}
 
+	void Tracker::AddHeldCapsules(RE::Actor* a_player)
+	{
+		auto* higgs = Util::Higgs::GetInterface();
+		if (!higgs)
+			return;
+
+		for (int side = 0; side < 2; ++side) {
+			const bool left = side == 0;
+			const auto add = [&](RE::NiObject* a_object, size_t a_slot) {
+				Util::ShapeCollisionCapsule shape;
+				if (!Util::GetRigidBodyCapsule(a_object ? a_object->AsBhkRigidBody() : nullptr, shape))
+					return;
+				Capsule capsule;
+				capsule.pointA = ToFloat3(shape.pointA);
+				capsule.pointB = ToFloat3(shape.pointB);
+				capsule.radius = shape.radius;
+				capsule.owner = a_player->GetFormID();
+				capsule.appendage = true;
+				capsule.side = side;
+				Push(capsule, HeldKeyOffset + a_slot * 2 + static_cast<size_t>(side));
+			};
+			add(higgs->GetWeaponRigidBody(left), 0);
+			if (higgs->IsHoldingObject(left))
+				add(higgs->GetGrabbedRigidBody(left), 1);
+			if (handNodesFound == 0)
+				add(higgs->GetHandRigidBody(left), 2);
+		}
+	}
+
 	void Tracker::Update(float a_maxDistance)
 	{
 		const uint32_t frame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
@@ -373,6 +404,7 @@ namespace Util::BodyCapsules
 			}
 			AddHandCapsules(player, true);
 			AddHandCapsules(player, false);
+			AddHeldCapsules(player);
 		}
 
 		previousCenters.swap(currentCenters);
