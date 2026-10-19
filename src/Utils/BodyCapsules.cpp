@@ -25,7 +25,6 @@ namespace Util::BodyCapsules
 		constexpr float MaxPalmFitRadius = 2.0f;
 		constexpr float FitPercentile = 0.85f;
 		constexpr size_t MinFitVertices = 6;
-		constexpr float MinDominantWeight = 0.5f;
 		constexpr uint32_t FitCheckInterval = 120;
 		constexpr float FingertipLengthScale = 0.9f;
 		constexpr float TipPercentile = 0.97f;
@@ -36,11 +35,6 @@ namespace Util::BodyCapsules
 		constexpr uint64_t AppendageKeyBase = 0x100000000ull;
 		constexpr size_t RightHandKeyOffset = 64;
 		constexpr size_t HeldKeyOffset = 128;
-
-		float3 ToFloat3(const RE::NiPoint3& a_point)
-		{
-			return { a_point.x, a_point.y, a_point.z };
-		}
 
 		uint64_t MakeKey(RE::FormID a_owner, size_t a_index)
 		{
@@ -150,17 +144,10 @@ namespace Util::BodyCapsules
 			std::array<std::vector<float>, 2 * HandNodeCount> alongAxis;
 			bool touched = false;
 			for (const Util::SkinnedVertex& vertex : vertices) {
-				size_t dominant = 0;
-				float dominantWeight = 0.0f;
-				for (size_t slot = 0; slot < vertex.weight.size(); ++slot) {
-					if (vertex.weight[slot] > dominantWeight) {
-						dominantWeight = vertex.weight[slot];
-						dominant = slot;
-					}
-				}
-				const uint16_t skinBone = vertex.bone[dominant];
-				if (dominantWeight < MinDominantWeight || skinBone == Util::InvalidSkinBone || !slots[skinBone])
+				const auto dominant = Util::DominantBone(vertex);
+				if (!dominant || !slots[*dominant])
 					continue;
+				const uint16_t skinBone = *dominant;
 
 				const size_t handSlot = *slots[skinBone];
 				const auto end = segmentEnd(handSlot / HandNodeCount, handSlot % HandNodeCount);
@@ -345,15 +332,27 @@ namespace Util::BodyCapsules
 	void Tracker::AddHeldCapsules(RE::Actor* a_player)
 	{
 		auto* higgs = Util::Higgs::GetInterface();
+		for (auto& side : heldReports)
+			side.fill({});
 		if (!higgs)
 			return;
 
 		for (int side = 0; side < 2; ++side) {
 			const bool left = side == 0;
 			const auto add = [&](RE::NiObject* a_object, size_t a_slot) {
+				auto& report = heldReports[side][a_slot];
+				report.available = true;
+				auto* body = a_object ? a_object->AsBhkRigidBody() : nullptr;
+				report.body = body != nullptr;
+				if (auto* rigid = body ? skyrim_cast<RE::hkpRigidBody*>(body->referencedObject.get()) : nullptr) {
+					report.inWorld = rigid->world != nullptr;
+					if (const auto* shape = rigid->collidable.GetShape())
+						report.shapeType = static_cast<int>(shape->type);
+				}
 				Util::ShapeCollisionCapsule shape;
-				if (!Util::GetRigidBodyCapsule(a_object ? a_object->AsBhkRigidBody() : nullptr, shape))
+				if (!Util::GetRigidBodyCapsule(body, shape))
 					return;
+				report.capsule = true;
 				Capsule capsule;
 				capsule.pointA = ToFloat3(shape.pointA);
 				capsule.pointB = ToFloat3(shape.pointB);

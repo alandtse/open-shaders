@@ -34,6 +34,12 @@ namespace Util
 	/** @brief Returns the actor's normalized aim direction in Skyrim's Z-up world space. */
 	[[nodiscard]] float3 GetAimDirection(RE::Actor& a_actor) noexcept;
 
+	/** @brief A Havok or Gamebryo point as the float3 the shaders and constant buffers use. */
+	inline float3 ToFloat3(const RE::NiPoint3& a_point)
+	{
+		return { a_point.x, a_point.y, a_point.z };
+	}
+
 	/** @brief World-space capsule used to approximate an actor collision shape. */
 	struct ShapeCollisionCapsule
 	{

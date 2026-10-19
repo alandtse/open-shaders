@@ -81,6 +81,17 @@ namespace Util::BodyCapsules
 		};
 		[[nodiscard]] HandReport GetHandReport(bool a_left) const;
 
+		/** @brief What HIGGS gave for one hand's weapon (slot 0), grabbed object (slot 1) or hand body (slot 2) last frame, for diagnostics. */
+		struct HeldReport
+		{
+			bool available = false;  ///< HIGGS answered the interface fetch.
+			bool body = false;       ///< HIGGS returned a rigid body.
+			bool inWorld = false;    ///< The body is in a physics world.
+			int shapeType = -1;      ///< hkpShapeType of the body's shape, -1 when there is none.
+			bool capsule = false;    ///< The body was reduced to a capsule and added.
+		};
+		[[nodiscard]] HeldReport GetHeldReport(bool a_left, size_t a_slot) const { return heldReports[a_left ? 0 : 1][a_slot]; }
+
 		/** @brief How many skinned meshes the capsule radii were fitted from, 0 while the defaults are in use. */
 		[[nodiscard]] size_t GetFitMeshCount() const { return fitMeshes; }
 
@@ -132,6 +143,7 @@ namespace Util::BodyCapsules
 		size_t fitMeshes = 0;
 		uint64_t fitSignature = 0;
 		uint32_t updatesSinceFitCheck = 0;
+		std::array<std::array<HeldReport, 3>, 2> heldReports{};
 		FrameLatch updateLatch;
 		uint32_t lastUpdateFrame = 0;
 	};

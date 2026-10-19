@@ -4,12 +4,16 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace Util
 {
 	/** @brief Skin bone slot value for an unused or invalid influence. */
 	inline constexpr uint16_t InvalidSkinBone = 0xFFFF;
+
+	/** @brief Skin weight a vertex's strongest bone needs for DominantBone to name it. */
+	inline constexpr float MinDominantBoneWeight = 0.5f;
 
 	/** @brief One vertex of a skinned mesh as the engine keeps it on the CPU: bind-pose position and up to four bone influences. */
 	struct SkinnedVertex
@@ -30,4 +34,17 @@ namespace Util
 	 * @return False when the geometry has no usable CPU vertex data.
 	 */
 	[[nodiscard]] bool ReadSkinnedVertices(RE::BSGeometry* a_geometry, std::vector<SkinnedVertex>& a_vertices);
+
+	/** @brief The skin bone that carries most of a vertex, or nothing when it has no valid bone or none weighs at least MinDominantBoneWeight. */
+	[[nodiscard]] inline std::optional<uint16_t> DominantBone(const SkinnedVertex& a_vertex)
+	{
+		size_t dominant = 0;
+		for (size_t slot = 1; slot < a_vertex.weight.size(); ++slot) {
+			if (a_vertex.weight[slot] > a_vertex.weight[dominant])
+				dominant = slot;
+		}
+		if (a_vertex.weight[dominant] < MinDominantBoneWeight || a_vertex.bone[dominant] == InvalidSkinBone)
+			return std::nullopt;
+		return a_vertex.bone[dominant];
+	}
 }

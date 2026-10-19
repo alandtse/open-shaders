@@ -43,7 +43,8 @@ namespace FurInteractors
 
 		/**
 		 * @brief Keeps the capsules nearest a fur mesh's surface, so a fingertip is not dropped for a palm capsule that is nearer the mesh centre.
-		 * @details Distance is measured to the skinned mesh vertices. A mesh without skin data keeps the first capsules in the order given.
+		 * @details Distance is measured to the skinned mesh vertices. A hand and finger capsule ignores the vertices driven by that same hand's bones, such as its own
+		 *          gauntlet, which the hand fills and would otherwise take every slot. A mesh without skin data keeps the first capsules in the order given.
 		 * @param a_geometry The fur mesh.
 		 * @param a_candidates Capsules within reach of the mesh.
 		 * @param a_out Receives up to its size of the nearest candidates.
@@ -70,6 +71,7 @@ namespace FurInteractors
 		struct PressSample
 		{
 			uint16_t bone = 0;
+			int side = -1;       ///< 0 or 1 when that bone is a left or right hand or finger bone, which a hand fills, otherwise -1.
 			RE::NiPoint3 local;  ///< Position in that bone's space.
 		};
 
@@ -79,11 +81,11 @@ namespace FurInteractors
 			std::vector<RE::NiPointer<RE::NiAVObject>> bones;
 			std::vector<PressSample> samples;
 			std::vector<Dent> dents;
-			uint32_t handSides = 0;  ///< Bit per hand whose skeleton nodes the mesh is skinned to, such as a gauntlet.
 			uint32_t measuredFrame = UINT32_MAX;
 			uint32_t usedFrame = 0;
 		};
 
+		MeshMemory& Prepare(const RE::BSGeometry* a_geometry, const void* a_skin);
 		void DecayDents();
 		void BuildPressSamples(const RE::BSGeometry* a_geometry, MeshMemory& a_memory) const;
 

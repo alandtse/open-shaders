@@ -169,6 +169,22 @@ namespace
 		return result;
 	}
 
+	/** @brief What HIGGS returned for each hand's weapon, grabbed object and hand body, to see why a held item is missing. */
+	json HeldJson(const Util::BodyCapsules::Tracker& a_tracker)
+	{
+		json result = json::object();
+		for (const bool left : { true, false }) {
+			json slots = json::object();
+			size_t slot = 0;
+			for (const char* name : { "weapon", "grabbed", "hand" }) {
+				const auto report = a_tracker.GetHeldReport(left, slot++);
+				slots[name] = { { "interface", report.available }, { "body", report.body }, { "inWorld", report.inWorld }, { "shapeType", report.shapeType }, { "capsule", report.capsule } };
+			}
+			result[left ? "left" : "right"] = std::move(slots);
+		}
+		return result;
+	}
+
 	/** @brief The capsules each fur mesh took, with the strength that dents fade to. */
 	template <class T>
 	json SelectionsJson(const std::vector<T>& a_selections)
@@ -1272,6 +1288,7 @@ json FurShells::GetDiagnostics()
 		{ "touchHandPositions", HandPositionsJson(Util::BodyCapsules::GetTracker()) },
 		{ "touchHandFingers", HandFingersJson(Util::BodyCapsules::GetTracker()) },
 		{ "touchSelections", SelectionsJson(lastTouchSelections) },
+		{ "touchHeld", HeldJson(Util::BodyCapsules::GetTracker()) },
 		{ "touchFingerRadius", Util::BodyCapsules::GetTracker().GetAverageFingerRadius() },
 		{ "touchPalmRadius", Util::BodyCapsules::GetTracker().GetAveragePalmRadius() },
 		{ "playerSkinData", globals::game::player ? ProbeSkinData(globals::game::player) : json::object() },
