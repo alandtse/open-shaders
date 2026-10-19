@@ -871,6 +871,8 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 
 	if (b.cullSlot == UINT32_MAX)
 		return;
+	if (globals::features::wind.loaded)
+		globals::features::wind.BindGrassWindProfile(b.slices.empty() ? nullptr : b.slices.front().shape, true);
 
 	// Reset only the instance-count dword(s): the args UAV spans CPU-set fields (StartInstanceLocation
 	// on VR) that must survive every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
@@ -941,10 +943,9 @@ bool GrassOptimizations::EnsureCullBucketCapacity(uint32_t slots, [[maybe_unused
 	return true;
 }
 
-void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_dtor::thunk(RE::BSMultiStreamInstanceTriShape* shape)
+void GrassOptimizations::OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* shape)
 {
-	globals::features::grassOptimizations.bucketStore.StageRemoval(shape);
-	func(shape);
+	bucketStore.StageRemoval(shape);
 }
 
 void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(RE::BSMultiStreamInstanceTriShape* This, RE::NiCullingProcess* process, std::int32_t alphaGroupIndex)
@@ -1071,14 +1072,10 @@ void GrassOptimizations::Hooks::AddGroupGIDFile::thunk(RE::BSMultiStreamInstance
 	}
 }
 
-RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, uint64_t* typeKey, RE::BSFixedString* modelPath)
+void GrassOptimizations::OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* shape, const char* modelPath)
 {
-	auto* shape = func(grassManager, a_param, CellXDivided, CellYDivided, typeKey, modelPath);
-
 	if (shape && modelPath)
-		globals::features::grassOptimizations.bucketStore.meshLibrary.RecordModelPath(shape, modelPath->c_str());
-
-	return shape;
+		bucketStore.meshLibrary.RecordModelPath(shape, modelPath);
 }
 
 static void UploadEyeIndexCB(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t capacityPerEye)
@@ -1245,6 +1242,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	vbs[1] = b->compactedBuf;
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
+	if (globals::features::wind.loaded)
+		globals::features::wind.BindGrassWindProfile(geometry);
 	DrawGrassIndirect(self, ctx, b->argsBuf, descVal, b->capacityInstances);
 
 	std::array<const GrassMeshLibrary::LODMesh*, (size_t)GrassMeshLibrary::LODTier::kCount> lodMeshes{};

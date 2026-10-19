@@ -11,6 +11,7 @@ enum class WindSettingsPage
 	WindEffects,
 	Trees,
 	TreeMeshes,
+	GrassMeshes,
 	Grass
 };
 
@@ -27,4 +28,11 @@ struct WindUIState
 	int debugWindEffectSpawnCount = 8;
 	bool debugWindEffectWorstCase = false;
 	bool treeWindSaveSucceeded = false;
+	std::array<char, 256> grassMeshSearch{};
+	std::vector<std::size_t> filteredGrassRuleIndices;
+	std::string appliedGrassMeshSearch;
+	std::string grassWindSaveStatus;
+	std::size_t filteredGrassRuleCount = static_cast<std::size_t>(-1);
+	std::size_t selectedUnconfiguredGrassMesh = 0;
+	bool grassWindSaveSucceeded = false;
 };

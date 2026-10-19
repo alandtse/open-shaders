@@ -52,11 +52,25 @@ static_assert(offsetof(GrassWindSpringData, flutterGustInfluence) == 224);
 static_assert(offsetof(GrassWindSpringData, transientResponseRadians) == 232);
 static_assert(offsetof(GrassWindSpringData, transientFlutterHalfLife) == 236);
 
+struct alignas(16) GrassWindProfileData
+{
+	float bendSensitivity = 1.0f;
+	float flutterSensitivity = 1.0f;
+	float flutterTipConcentration = 1.0f;
+	float tipFlexibility = WindSettings{}.grassWindBendProfile;
+};
+
+STATIC_ASSERT_ALIGNAS_16(GrassWindProfileData);
+static_assert(sizeof(GrassWindProfileData) == 16);
+
 struct GrassWindState
 {
 	using TexturePair = std::array<std::unique_ptr<Texture2D>, 2>;
 
 	std::unique_ptr<ConstantBuffer> springConstantBuffer;
+	std::unique_ptr<ConstantBuffer> profileConstantBuffer;
+	GrassWindProfileData boundProfile{};
+	bool boundProfileValid = false;
 	std::array<TexturePair, WindSettingsLimits::kGrassWindSpringQualityRangeCount> springResponseTextures;
 	std::array<TexturePair, WindSettingsLimits::kGrassWindSpringQualityRangeCount> springVelocityTextures;
 	winrt::com_ptr<ID3D11SamplerState> springSampler;

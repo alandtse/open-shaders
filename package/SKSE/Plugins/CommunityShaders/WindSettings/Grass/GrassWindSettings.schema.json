@@ -1,0 +1,77 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://open-shaders.org/schemas/grass-wind-settings-v2.json",
+    "title": "Open Shaders Grass Wind Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["version", "profiles", "grass"],
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "version": {
+            "const": 2
+        },
+        "profiles": {
+            "type": "object",
+            "maxProperties": 4096,
+            "additionalProperties": {
+                "$ref": "#/$defs/profile"
+            }
+        },
+        "grass": {
+            "type": "array",
+            "maxItems": 4096,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mesh", "profile"],
+                "properties": {
+                    "mesh": {
+                        "type": "string",
+                        "maxLength": 260,
+                        "pattern": "[.][nN][iI][fF]$"
+                    },
+                    "profile": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                    }
+                }
+            }
+        }
+    },
+    "$defs": {
+        "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "bendSensitivity": {
+                    "type": "number",
+                    "default": 1.0,
+                    "minimum": 0.0,
+                    "maximum": 4.0
+                },
+                "flutterSensitivity": {
+                    "type": "number",
+                    "default": 1.0,
+                    "minimum": 0.0,
+                    "maximum": 4.0
+                },
+                "flutterTipConcentration": {
+                    "type": "number",
+                    "default": 1.0,
+                    "minimum": 0.0,
+                    "maximum": 3.0
+                },
+                "tipFlexibility": {
+                    "type": ["number", "null"],
+                    "default": null,
+                    "minimum": 0.0,
+                    "maximum": 1.0,
+                    "description": "Overrides global Tip Flexibility for broad wind bending; omitted or null inherits the global setting."
+                }
+            }
+        }
+    }
+}

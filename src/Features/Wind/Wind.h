@@ -92,6 +92,7 @@ struct Wind : Feature
 	using PerFrameData = WindPerFrameData;
 	using GrassWindSpringFieldData = ::GrassWindSpringFieldData;
 	using GrassWindSpringData = ::GrassWindSpringData;
+	using GrassWindProfileData = ::GrassWindProfileData;
 	using WindFieldDebugView = ::WindFieldDebugView;
 	using RuntimeWindTest = ::RuntimeWindTest;
 
@@ -179,6 +180,13 @@ struct Wind : Feature
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
+	virtual bool WantsGrassMeshHooks() const override { return true; }
+	/** @brief Tracks a loaded grass type's source mesh for response profiles. */
+	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath) override;
+	/** @brief Drops a destroyed grass shape's source-mesh mapping. */
+	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* a_shape) override;
+	/** @brief Binds the shared field and mesh response before a grass draw. */
+	virtual void OnGrassGeometrySetup(RE::BSGeometry* a_geometry) override;
 	virtual void DataLoaded() override;
 	virtual void OnSceneTransitionReset(bool a_opening) override;
 	virtual bool WantsRenderPassHook() const override { return true; }
@@ -213,6 +221,8 @@ struct Wind : Feature
 	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
 	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
 	void UpdateGrassWindSpring(bool a_compute = false);
+	/** @brief Binds the source mesh's authored grass response to a vertex or culling shader. */
+	void BindGrassWindProfile(const RE::BSGeometry* a_geometry, bool a_compute = false);
 	void UpdateTreeWindSpring();
 	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
 	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;
@@ -274,6 +284,9 @@ private:
 	void DrawTreeGlobalOverrideSettings();
 	void DrawTreeMeshRuleControls();
 	void DrawTreeMeshRulesTable();
+	void DrawGrassMeshSettings();
+	void DrawGrassMeshRuleControls();
+	void DrawGrassMeshRulesTable();
 	void ResetGrassWindSettings();
 	void DrawGrassTransientSettings();
 	void DrawGrassWindSettings();

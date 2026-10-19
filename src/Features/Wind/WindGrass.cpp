@@ -1,5 +1,7 @@
 #include "Wind.h"
 
+#include "Features/Wind/Grass/GrassWindPatcher.h"
+#include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "State.h"
@@ -15,6 +17,7 @@ using namespace WindSettingsLimits;
 namespace
 {
 	constexpr UINT kGrassWindSpringVertexConstantBufferSlot = 3;
+	constexpr UINT kGrassWindProfileConstantBufferSlot = 9;
 }
 
 void Wind::RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize)
@@ -83,6 +86,9 @@ void Wind::SetupGrassWindResources()
 {
 	grassState.springConstantBuffer = std::make_unique<ConstantBuffer>(
 		ConstantBufferDesc<GrassWindSpringData>(), "Wind::GrassWindSpringData");
+	grassState.profileConstantBuffer = std::make_unique<ConstantBuffer>(
+		ConstantBufferDesc<GrassWindProfileData>(), "Wind::GrassWindProfileData");
+	grassState.boundProfileValid = false;
 	Settings sanitizedSettings = settings;
 	SanitizeSettings(sanitizedSettings);
 	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex)
@@ -96,6 +102,49 @@ void Wind::SetupGrassWindResources()
 	samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
 	DX::ThrowIfFailed(globals::d3d::device->CreateSamplerState(&samplerDesc, grassState.springSampler.put()));
 	Util::SetResourceName(grassState.springSampler.get(), "Wind::GrassWindSpringSampler");
+}
+
+void Wind::BindGrassWindProfile(const RE::BSGeometry* a_geometry, bool a_compute)
+{
+	if (!grassState.profileConstantBuffer)
+		return;
+	const auto behavior = GrassWindPatcher::GetBehavior(a_geometry);
+	const GrassWindProfileData data{
+		behavior.bendSensitivity,
+		behavior.flutterSensitivity,
+		behavior.flutterTipConcentration,
+		WindMath::ClampFiniteOrDefault(behavior.tipFlexibility.value_or(settings.grassWindBendProfile),
+			kGrassWindBendProfileMin, kGrassWindBendProfileMax, Settings{}.grassWindBendProfile)
+	};
+	if (!grassState.boundProfileValid || grassState.boundProfile.bendSensitivity != data.bendSensitivity ||
+		grassState.boundProfile.flutterSensitivity != data.flutterSensitivity ||
+		grassState.boundProfile.flutterTipConcentration != data.flutterTipConcentration ||
+		grassState.boundProfile.tipFlexibility != data.tipFlexibility) {
+		grassState.profileConstantBuffer->Update(data);
+		grassState.boundProfile = data;
+		grassState.boundProfileValid = true;
+	}
+	ID3D11Buffer* buffer = grassState.profileConstantBuffer->CB();
+	if (a_compute)
+		globals::d3d::context->CSSetConstantBuffers(kGrassWindProfileConstantBufferSlot, 1, &buffer);
+	else
+		globals::d3d::context->VSSetConstantBuffers(kGrassWindProfileConstantBufferSlot, 1, &buffer);
+}
+
+void Wind::OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath)
+{
+	GrassWindPatcher::RecordModelPath(a_shape, a_modelPath);
+}
+
+void Wind::OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* a_shape)
+{
+	GrassWindPatcher::ForgetShape(a_shape);
+}
+
+void Wind::OnGrassGeometrySetup(RE::BSGeometry* a_geometry)
+{
+	UpdateGrassWindSpring();
+	BindGrassWindProfile(a_geometry);
 }
 
 void Wind::ClearShaderCache()

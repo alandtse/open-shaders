@@ -4,6 +4,7 @@
 #include "Features/Wind/WindMath.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
+#include "Utils/ModelPath.h"
 
 #include <Windows.h>
 
@@ -27,13 +28,14 @@
 
 namespace TreeWindPatcher
 {
+	using Util::IsSafeModelPath;
+	using Util::NormalizeModelPath;
 	using WindMath::ClampFiniteOrDefault;
 
 	namespace
 	{
 		constexpr std::size_t kMaximumPatchFileSize = 1024 * 1024;
 		constexpr std::size_t kMaximumRulesPerFile = 4096;
-		constexpr std::size_t kMaximumModelPathLength = 260;
 		constexpr float kDefaultUpperBendRange = 100.0f;
 		constexpr float kDefaultMaximumDisplacementPercent = 3.0f;
 		constexpr float kDefaultTrunkGustInfluence = 0.5f;
@@ -142,8 +144,6 @@ namespace TreeWindPatcher
 			return std::abs(a_lhs - a_rhs) > 0.0001f;
 		}
 
-		std::string NormalizeModelPath(std::string a_path);
-
 		bool WriteJsonAtomically(const std::filesystem::path& a_path, const nlohmann::json& a_root, std::string& a_error)
 		{
 			auto temporaryPath = a_path;
@@ -211,24 +211,6 @@ namespace TreeWindPatcher
 				a_rule.leafTransientFlutterMaximum.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			a_rule.persistedTransientMaximumBendMultiplier.store(
 				a_rule.transientMaximumBendMultiplier.load(std::memory_order_relaxed), std::memory_order_relaxed);
-		}
-
-		std::string NormalizeModelPath(std::string a_path)
-		{
-			a_path = Util::FixFilePath(a_path);
-			while (a_path.starts_with("./"))
-				a_path.erase(0, 2);
-			if (const auto meshesPosition = a_path.find("meshes/"); meshesPosition != std::string::npos)
-				a_path.erase(0, meshesPosition);
-			else
-				a_path.insert(0, "meshes/");
-			return a_path;
-		}
-
-		bool IsSafeModelPath(const std::string& a_path)
-		{
-			return a_path.size() <= kMaximumModelPathLength && a_path.starts_with("meshes/") && a_path.ends_with(".nif") &&
-			       a_path.find("../") == std::string::npos && a_path.find(':') == std::string::npos;
 		}
 
 		std::optional<float> ReadFloat(

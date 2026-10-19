@@ -1,5 +1,7 @@
 # Wind Settings
 
+Tree response files live in this directory. Grass response profiles and mesh bindings live in the `Grass` subdirectory and are documented there.
+
 Place tree-response JSON files in this directory. Open Shaders scans every `.json` file in deterministic filename order at startup; `WindSettings.schema.json` and `*_backup.json` files are ignored. If multiple files define the same parameter for the same mesh, the later file wins and one warning lists every conflicting JSON file.
 
 If this directory contains no settings JSONs, every tree uses the built-in defaults for every response parameter.

@@ -2,6 +2,8 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/GrassWind.hlsli"
+#include "Common/GrassWindProfile.hlsli"
+#include "Common/GrassWindSpring.hlsli"
 #include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
@@ -153,20 +155,33 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
+	float bendResponse = min(response.z * GrassWindProfile::BendSensitivity,
+		GrassWindSpring::Fields[0].MaximumTiltRadians);
+	float compression = saturate(response.w * GrassWindProfile::BendSensitivity);
+	float tipWeight = saturate(input.Color.w);
+	float tipWeightSquared = tipWeight * tipWeight;
+	float flutterWeight = GrassWindProfile::FlutterTipConcentration < 1.0f ?
+	                          lerp(tipWeight, tipWeightSquared, GrassWindProfile::FlutterTipConcentration) :
+	                      GrassWindProfile::FlutterTipConcentration < 2.0f ?
+	                          lerp(tipWeightSquared, tipWeightSquared * tipWeight, GrassWindProfile::FlutterTipConcentration - 1.0f) :
+	                          lerp(tipWeightSquared * tipWeight, tipWeightSquared * tipWeightSquared,
+								  GrassWindProfile::FlutterTipConcentration - 2.0f);
+	flutter *= GrassWindProfile::FlutterSensitivity;
 	float3 displacement = 0.0f.xxx;
 	if (Permutation::EnableGrassWindSpringBend != 0u) {
 		displacement = GrassWind::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, rootHeight, bendAxis, response.z, response.w, bendAngle);
+			input.Color.w, modelHeight, rootHeight, bendAxis, bendResponse, compression,
+			GrassWindProfile::TipFlexibility, bendAngle);
 	} else {
 		bendAngle = 0.0f;
 	}
 	if (Permutation::EnableAmbientGrassWind != 0 && response.w >= 0.0f) {
 		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
-			input.Color.w, bladeReach, bendAxis, flutter);
+			flutterWeight, bladeReach, bendAxis, flutter);
 		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
 	}
 	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
-	                             (WindVector.z * flutter * (0.5 * input.Color.w * input.Color.w));
+	                             (WindVector.z * flutter * (0.5 * flutterWeight));
 	return displacement + GrassWind::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
 }
 

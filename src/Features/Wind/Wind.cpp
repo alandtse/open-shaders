@@ -1,5 +1,6 @@
 #include "Wind.h"
 
+#include "Features/Wind/Grass/GrassWindPatcher.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/WindEffects/DragonWind.h"
 #include "Features/Wind/WindEffects/ExplosionWindRouter.h"
@@ -239,6 +240,8 @@ json Wind::GetDiagnostics()
 {
 	const auto [universalOverrideEnabled, universalValues] = TreeWindPatcher::GetUniversalOverride();
 	return json{
+		{ "grassWindRuleCount", GrassWindPatcher::GetRuleCount() },
+		{ "grassWindUnsavedRuleCount", GrassWindPatcher::GetUnsavedRuleCount() },
 		{ "treeWindRuleCount", TreeWindPatcher::GetRuleCount() },
 		{ "treeWindUnsavedRuleCount", TreeWindPatcher::GetUnsavedRuleCount() },
 		{ "treeWindConflictingFiles", TreeWindPatcher::GetConflictingFiles() },
@@ -318,6 +321,40 @@ void Wind::RegisterUxActions()
 				args["frequency"].get<float>(), kGrassTransientFlutterFrequencyMin,
 				kGrassTransientFlutterFrequencyMax, wind->settings.grassTransientFlutterFrequency);
 		});
+	FEATURE_COMMAND("setGrassWindRule",
+		"Apply live per-mesh grass response. Required args: mesh (full meshes/... nif path), bendSensitivity (0-4), flutterSensitivity (0-4), flutterTipConcentration (0-3). Optional tipFlexibility (0-1); null or omitted inherits global Tip Flexibility. The mesh must already have a profile.",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
+				!args.contains("flutterSensitivity") || !args["flutterSensitivity"].is_number() ||
+				!args.contains("flutterTipConcentration") || !args["flutterTipConcentration"].is_number() ||
+				(args.contains("tipFlexibility") && !args["tipFlexibility"].is_null() && !args["tipFlexibility"].is_number())) {
+				logger::warn("[GrassWindPatcher] Devbench setGrassWindRule received invalid arguments");
+				return;
+			}
+			const auto mesh = Util::FixFilePath(args["mesh"].get<std::string>());
+			GrassWindPatcher::Behavior behavior;
+			behavior.bendSensitivity = args["bendSensitivity"].get<float>();
+			behavior.flutterSensitivity = args["flutterSensitivity"].get<float>();
+			behavior.flutterTipConcentration = args["flutterTipConcentration"].get<float>();
+			if (args.contains("tipFlexibility") && args["tipFlexibility"].is_number())
+				behavior.tipFlexibility = args["tipFlexibility"].get<float>();
+			for (std::size_t index = 0; index < GrassWindPatcher::GetRuleCount(); ++index) {
+				if (GrassWindPatcher::GetRule(index).mesh == mesh) {
+					(void)GrassWindPatcher::SetRule(index, behavior);
+					return;
+				}
+			}
+			logger::warn("[GrassWindPatcher] Devbench setGrassWindRule did not match mesh {}", mesh);
+		});
+	FEATURE_COMMAND("saveGrassWindRules", "Save edited grass profiles and bindings to the grass authoring JSON overlay.",
+		[](Feature*, const json&) {
+			const auto result = GrassWindPatcher::SaveRules();
+			if (!result.success)
+				logger::error("[GrassWindPatcher] Devbench save failed: {}", result.error);
+		});
+	FEATURE_COMMAND("revertGrassWindRules", "Revert grass profile edits and unsaved mesh bindings.",
+		[](Feature*, const json&) { GrassWindPatcher::RevertUnsavedChanges(); });
 	FEATURE_COMMAND("setUniversalTreeResponse",
 		"Set the runtime-only response used for every tree. All response params and enabled are optional.",
 		[](Feature*, const json& args) {
@@ -597,6 +634,9 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		TreeWindPatcher::RevertUnsavedChanges();
 		TreeWindPatcher::SetUniversalOverride(false, {});
 		break;
+	case SettingsPage::GrassMeshes:
+		GrassWindPatcher::RevertUnsavedChanges();
+		break;
 	case SettingsPage::Grass:
 		ResetGrassWindSettings();
 		break;
@@ -670,6 +710,9 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 	case SettingsPage::TreeMeshes:
 		TreeWindPatcher::RevertUnsavedChanges();
 		TreeWindPatcher::SetUniversalOverride(false, {});
+		return true;
+	case SettingsPage::GrassMeshes:
+		GrassWindPatcher::RevertUnsavedChanges();
 		return true;
 	case SettingsPage::Grass:
 		return ReapplyOverrideSettingsForKeys(grassKeys);
@@ -760,6 +803,7 @@ Wind::PerFrameData Wind::GetCommonBufferData() const
 
 void Wind::PostPostLoad()
 {
+	GrassWindPatcher::LoadAndInstall();
 	TreeWindPatcher::LoadAndInstall();
 }
 

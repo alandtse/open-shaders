@@ -48,14 +48,13 @@ namespace GrassWind
 	}
 
 	float3 CalculateFlutterDisplacement(
-		float tipWeight, float bladeReach, float3 bendAxis, float flutter)
+		float flutterWeight, float bladeReach, float3 bendAxis, float flutter)
 	{
 		float axisLength = length(bendAxis.xy);
 		if (axisLength <= EPSILON_WIND_RESPONSE)
 			return 0.0f.xxx;
 		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
-		float weight = saturate(tipWeight);
-		float flutterDrive = flutter * (weight * weight);
+		float flutterDrive = flutter * flutterWeight;
 		float windPower = bladeReach * FlutterDisplacementRatio * flutterDrive;
 		return flutterDirection * windPower;
 	}
@@ -63,12 +62,13 @@ namespace GrassWind
 	/** @brief Deforms a grass vertex from an already-resolved rigid bend. */
 	float3 CalculateAmbientDisplacement(
 		float tipWeight, float modelHeight, float instanceBaseHeight, float3 bendAxis,
-		float rigidBendAngle, float rigidCompression, out float bendAngle)
+		float rigidBendAngle, float rigidCompression, float tipFlexibility, out float bendAngle)
 	{
-		float squaredTipWeight = saturate(tipWeight);
+		float tipWeightLinear = saturate(tipWeight);
+		float squaredTipWeight = tipWeightLinear;
 		squaredTipWeight *= squaredTipWeight;
 		float deformationWeight = lerp(
-			1.0, squaredTipWeight, saturate(Permutation::GrassWindBendProfile));
+			tipWeightLinear, squaredTipWeight, saturate(tipFlexibility));
 		bendAngle = rigidBendAngle * deformationWeight;
 		float compression = saturate(rigidCompression * deformationWeight);
 
