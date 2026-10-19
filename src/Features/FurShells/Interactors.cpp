@@ -3,8 +3,7 @@
 #include "Globals.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/Game.h"
-
-#include <DirectXPackedVector.h>
+#include "Utils/SkinnedMesh.h"
 
 #include <algorithm>
 #include <format>
@@ -110,70 +109,53 @@ namespace FurInteractors
 		std::array<float, 2 * HandNodeCount> tipExtents{};
 		size_t meshes = 0;
 
+		std::vector<Util::SkinnedVertex> vertices;
 		Util::ForEachActorGeometry(a_player, [&](RE::BSGeometry* a_geometry) {
-			const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
-			const auto* partitionSet = skin ? skin->skinPartition.get() : nullptr;
-			if (!partitionSet || !skin->skinData || !skin->bones)
+			if (!Util::ReadSkinnedVertices(a_geometry, vertices))
 				return;
+			const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+
+			// Per skin bone: the hand slot it drives, if any.
+			std::vector<std::optional<size_t>> slots(skin->numMatrices);
+			for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
+				const RE::NiAVObject* boneNode = skin->bones[bone];
+				if (!boneNode || !boneNode->name.c_str())
+					continue;
+				if (const auto found = slotOfName.find(boneNode->name.c_str()); found != slotOfName.end())
+					slots[bone] = found->second;
+			}
 
 			std::array<std::vector<float>, 2 * HandNodeCount> distances;
 			std::array<std::vector<float>, 2 * HandNodeCount> alongAxis;
 			bool touched = false;
-			for (uint32_t partitionIndex = 0; partitionIndex < partitionSet->numPartitions; ++partitionIndex) {
-				const auto& part = partitionSet->partitions[partitionIndex];
-				RE::BSGraphics::VertexDesc desc = part.vertexDesc;
-				if (!part.bones || !part.buffData || !part.buffData->rawVertexData || !desc.HasFlag(RE::BSGraphics::Vertex::VF_SKINNED) || !desc.HasFlag(RE::BSGraphics::Vertex::VF_VERTEX))
+			for (const Util::SkinnedVertex& vertex : vertices) {
+				size_t dominant = 0;
+				float dominantWeight = 0.0f;
+				for (size_t slot = 0; slot < vertex.weight.size(); ++slot) {
+					if (vertex.weight[slot] > dominantWeight) {
+						dominantWeight = vertex.weight[slot];
+						dominant = slot;
+					}
+				}
+				const uint16_t skinBone = vertex.bone[dominant];
+				if (dominantWeight < MinDominantWeight || skinBone == Util::InvalidSkinBone || !slots[skinBone])
 					continue;
 
-				const uint32_t stride = desc.GetSize();
-				const uint32_t skinOffset = desc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_SKINNING);
-				// Per partition bone: the hand slot it drives, if any.
-				std::vector<std::optional<size_t>> slots(part.numBones);
-				for (uint16_t bone = 0; bone < part.numBones; ++bone) {
-					const uint16_t skinBone = part.bones[bone];
-					if (skinBone >= skin->numMatrices)
-						continue;
-					const RE::NiAVObject* boneNode = skin->bones[skinBone];
-					if (!boneNode || !boneNode->name.c_str())
-						continue;
-					if (const auto found = slotOfName.find(boneNode->name.c_str()); found != slotOfName.end())
-						slots[bone] = found->second;
-				}
+				const size_t handSlot = *slots[skinBone];
+				const auto end = segmentEnd(handSlot / HandNodeCount, handSlot % HandNodeCount);
+				if (!end)
+					continue;
 
-				for (uint16_t vertex = 0; vertex < part.vertices; ++vertex) {
-					const uint8_t* data = part.buffData->rawVertexData + static_cast<size_t>(vertex) * stride;
-					const auto* weights = reinterpret_cast<const uint16_t*>(data + skinOffset);
-					const uint8_t* indices = data + skinOffset + 4 * sizeof(uint16_t);
-					size_t dominant = 0;
-					float dominantWeight = 0.0f;
-					for (size_t slot = 0; slot < 4; ++slot) {
-						const float weight = DirectX::PackedVector::XMConvertHalfToFloat(weights[slot]);
-						if (weight > dominantWeight) {
-							dominantWeight = weight;
-							dominant = slot;
-						}
-					}
-					const uint8_t partitionBone = indices[dominant];
-					if (dominantWeight < MinDominantWeight || partitionBone >= part.numBones || !slots[partitionBone])
-						continue;
-
-					const size_t handSlot = *slots[partitionBone];
-					const auto end = segmentEnd(handSlot / HandNodeCount, handSlot % HandNodeCount);
-					if (!end)
-						continue;
-
-					const auto* position = reinterpret_cast<const float*>(data);
-					const RE::NiTransform skinToBone = skin->skinData->GetBoneDataSkinToBone(part.bones[partitionBone]);
-					const float3 point = ToFloat3(skinToBone * RE::NiPoint3{ position[0], position[1], position[2] });
-					const bool distal = handSlot % HandNodeCount != 0 && (handSlot % HandNodeCount - 1) % JointsPerFinger == JointsPerFinger - 1;
-					const float along = point.Dot(*end) / std::max(end->LengthSquared(), 1e-4f);
-					// A fingertip's radius is measured to the open ray, so vertices past the joint count toward its length instead.
-					const float t = distal ? std::max(along, 0.0f) : std::clamp(along, 0.0f, 1.0f);
-					distances[handSlot].push_back((point - *end * t).Length());
-					if (distal)
-						alongAxis[handSlot].push_back(along * end->Length());
-					touched = true;
-				}
+				const RE::NiTransform skinToBone = skin->skinData->GetBoneDataSkinToBone(skinBone);
+				const float3 point = ToFloat3(skinToBone * vertex.position);
+				const bool distal = handSlot % HandNodeCount != 0 && (handSlot % HandNodeCount - 1) % JointsPerFinger == JointsPerFinger - 1;
+				const float along = point.Dot(*end) / std::max(end->LengthSquared(), 1e-4f);
+				// A fingertip's radius is measured to the open ray, so vertices past the joint count toward its length instead.
+				const float t = distal ? std::max(along, 0.0f) : std::clamp(along, 0.0f, 1.0f);
+				distances[handSlot].push_back((point - *end * t).Length());
+				if (distal)
+					alongAxis[handSlot].push_back(along * end->Length());
+				touched = true;
 			}
 
 			if (!touched)
