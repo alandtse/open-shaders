@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <span>
 #include <string_view>
 
 namespace
@@ -259,57 +260,90 @@ namespace Util
 		return false;
 	}
 
-	bool GetRigidBodyCapsule(RE::bhkRigidBody* a_body, ShapeCollisionCapsule& a_capsule)
+	namespace
 	{
-		auto* rigid = a_body ? skyrim_cast<RE::hkpRigidBody*>(a_body->referencedObject.get()) : nullptr;
-		const auto* shape = rigid && rigid->world ? rigid->collidable.GetShape() : nullptr;
-		if (!shape)
-			return false;
+		/** @brief A world-space capsule along the longest side of a shape's bounds in the body's own frame, or false for a shape this cannot bound. */
+		bool BoundShapeCapsule(const RE::hkpShape* a_shape, const RE::hkTransform& a_transform, ShapeCollisionCapsule& a_capsule)
+		{
+			const float scale = RE::bhkWorld::GetWorldScaleInverse();
+			if (a_shape->type == RE::hkpShapeType::kCapsule) {
+				const auto* capsuleShape = static_cast<const RE::hkpCapsuleShape*>(a_shape);
+				a_capsule.pointA = TransformHavokPoint(a_transform, capsuleShape->vertexA);
+				a_capsule.pointB = TransformHavokPoint(a_transform, capsuleShape->vertexB);
+				a_capsule.radius = capsuleShape->radius * scale;
+				return IsCapsuleFinite(a_capsule);
+			}
+			if (a_shape->type == RE::hkpShapeType::kList || a_shape->type == RE::hkpShapeType::kCompound || a_shape->type == RE::hkpShapeType::kMOPP)
+				return false;
 
-		RE::hkTransform transform;
-		a_body->GetTransform(transform);
-		const float scale = RE::bhkWorld::GetWorldScaleInverse();
-		if (shape->type == RE::hkpShapeType::kCapsule) {
-			const auto* capsuleShape = static_cast<const RE::hkpCapsuleShape*>(shape);
-			a_capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
-			a_capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
-			a_capsule.radius = capsuleShape->radius * scale;
-			return IsCapsuleFinite(a_capsule);
-		}
-
-		float centre[3];
-		float half[3];
-		if (const auto* list = skyrim_cast<const RE::hkpListShape*>(shape)) {
-			alignas(16) float listCentre[4];
-			alignas(16) float listHalf[4];
-			_mm_store_ps(listCentre, list->aabbCenter.quad);
-			_mm_store_ps(listHalf, list->aabbHalfExtents.quad);
-			std::copy_n(listCentre, 3, centre);
-			std::copy_n(listHalf, 3, half);
-		} else {
-			const auto extent = [shape](float x, float y, float z) {
-				return shape->GetMaximumProjection(RE::hkVector4{ x, y, z, 0.0f });
+			const auto extent = [a_shape](float x, float y, float z) {
+				return a_shape->GetMaximumProjection(RE::hkVector4{ x, y, z, 0.0f });
 			};
 			const float high[3] = { extent(1.0f, 0.0f, 0.0f), extent(0.0f, 1.0f, 0.0f), extent(0.0f, 0.0f, 1.0f) };
 			const float low[3] = { -extent(-1.0f, 0.0f, 0.0f), -extent(0.0f, -1.0f, 0.0f), -extent(0.0f, 0.0f, -1.0f) };
+			float centre[3];
+			float half[3];
 			for (int axis = 0; axis < 3; ++axis) {
 				centre[axis] = 0.5f * (high[axis] + low[axis]);
 				half[axis] = 0.5f * (high[axis] - low[axis]);
 			}
-		}
-		const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
-		const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
-		const float reach = std::max(half[longest] - radius, 0.0f);
+			const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
+			const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
+			const float reach = std::max(half[longest] - radius, 0.0f);
 
-		const auto endpoint = [&](float a_sign) {
-			float local[4] = { centre[0], centre[1], centre[2], 0.0f };
-			local[longest] += a_sign * reach;
-			return TransformHavokPoint(transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
-		};
-		a_capsule.pointA = endpoint(-1.0f);
-		a_capsule.pointB = endpoint(1.0f);
-		a_capsule.radius = radius * scale;
-		return IsCapsuleFinite(a_capsule);
+			const auto endpoint = [&](float a_sign) {
+				float local[4] = { centre[0], centre[1], centre[2], 0.0f };
+				local[longest] += a_sign * reach;
+				return TransformHavokPoint(a_transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
+			};
+			a_capsule.pointA = endpoint(-1.0f);
+			a_capsule.pointB = endpoint(1.0f);
+			a_capsule.radius = radius * scale;
+			return IsCapsuleFinite(a_capsule);
+		}
+	}
+
+	size_t GetRigidBodyCapsules(RE::bhkRigidBody* a_body, std::span<ShapeCollisionCapsule> a_capsules)
+	{
+		auto* rigid = a_body ? skyrim_cast<RE::hkpRigidBody*>(a_body->referencedObject.get()) : nullptr;
+		const auto* shape = rigid && rigid->world ? rigid->collidable.GetShape() : nullptr;
+		if (!shape || a_capsules.empty())
+			return 0;
+
+		RE::hkTransform transform;
+		a_body->GetTransform(transform);
+
+		if (const auto* list = skyrim_cast<const RE::hkpListShape*>(shape)) {
+			size_t count = 0;
+			const auto children = static_cast<size_t>(list->childInfo.size());
+			if (children > 0 && children <= a_capsules.size()) {
+				for (size_t index = 0; index < children; ++index) {
+					const auto* child = list->childInfo[static_cast<int>(index)].shape;
+					if (child && BoundShapeCapsule(child, transform, a_capsules[count]))
+						++count;
+				}
+				if (count > 0)
+					return count;
+			}
+
+			alignas(16) float centre[4];
+			alignas(16) float half[4];
+			_mm_store_ps(centre, list->aabbCenter.quad);
+			_mm_store_ps(half, list->aabbHalfExtents.quad);
+			const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
+			const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
+			const float reach = std::max(half[longest] - radius, 0.0f);
+			const auto endpoint = [&](float a_sign) {
+				float local[4] = { centre[0], centre[1], centre[2], 0.0f };
+				local[longest] += a_sign * reach;
+				return TransformHavokPoint(transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
+			};
+			a_capsules[0].pointA = endpoint(-1.0f);
+			a_capsules[0].pointB = endpoint(1.0f);
+			a_capsules[0].radius = radius * RE::bhkWorld::GetWorldScaleInverse();
+			return IsCapsuleFinite(a_capsules[0]) ? 1 : 0;
+		}
+		return BoundShapeCapsule(shape, transform, a_capsules[0]) ? 1 : 0;
 	}
 
 	bool GetShapeBound(RE::bhkNiCollisionObject* collisionObj, RE::NiPoint3& centerPos, float& radius)

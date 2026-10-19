@@ -178,7 +178,7 @@ namespace
 			size_t slot = 0;
 			for (const char* name : { "weapon", "grabbed", "hand" }) {
 				const auto report = a_tracker.GetHeldReport(left, slot++);
-				slots[name] = { { "interface", report.available }, { "body", report.body }, { "inWorld", report.inWorld }, { "shapeType", report.shapeType }, { "capsule", report.capsule } };
+				slots[name] = { { "interface", report.available }, { "body", report.body }, { "inWorld", report.inWorld }, { "shapeType", report.shapeType }, { "capsule", report.capsule }, { "children", report.children }, { "parts", report.parts } };
 			}
 			result[left ? "left" : "right"] = std::move(slots);
 		}

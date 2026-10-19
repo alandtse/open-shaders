@@ -35,6 +35,7 @@ namespace Util::BodyCapsules
 		constexpr uint64_t AppendageKeyBase = 0x100000000ull;
 		constexpr size_t RightHandKeyOffset = 64;
 		constexpr size_t HeldKeyOffset = 128;
+		constexpr size_t MaxPartsPerHeld = 4;
 
 		uint64_t MakeKey(RE::FormID a_owner, size_t a_index)
 		{
@@ -346,23 +347,30 @@ namespace Util::BodyCapsules
 				report.body = body != nullptr;
 				if (auto* rigid = body ? skyrim_cast<RE::hkpRigidBody*>(body->referencedObject.get()) : nullptr) {
 					report.inWorld = rigid->world != nullptr;
-					if (const auto* shape = rigid->collidable.GetShape())
+					if (const auto* shape = rigid->collidable.GetShape()) {
 						report.shapeType = static_cast<int>(shape->type);
+						if (const auto* list = skyrim_cast<const RE::hkpListShape*>(shape))
+							report.children = static_cast<int>(list->childInfo.size());
+					}
 				}
-				Util::ShapeCollisionCapsule shape;
-				if (!Util::GetRigidBodyCapsule(body, shape))
-					return;
-				report.capsule = true;
-				Capsule capsule;
-				capsule.pointA = ToFloat3(shape.pointA);
-				capsule.pointB = ToFloat3(shape.pointB);
-				capsule.radius = shape.radius;
-				capsule.owner = a_player->GetFormID();
-				capsule.appendage = true;
-				capsule.side = side;
-				Push(capsule, HeldKeyOffset + a_slot * 2 + static_cast<size_t>(side));
+				std::array<Util::ShapeCollisionCapsule, MaxPartsPerHeld> parts;
+				const size_t count = Util::GetRigidBodyCapsules(body, parts);
+				report.capsule = count > 0;
+				report.parts = static_cast<int>(count);
+				for (size_t part = 0; part < count; ++part) {
+					Capsule capsule;
+					capsule.pointA = ToFloat3(parts[part].pointA);
+					capsule.pointB = ToFloat3(parts[part].pointB);
+					capsule.radius = parts[part].radius;
+					capsule.owner = a_player->GetFormID();
+					capsule.appendage = true;
+					capsule.side = side;
+					Push(capsule, HeldKeyOffset + (a_slot * MaxPartsPerHeld + part) * 2 + static_cast<size_t>(side));
+				}
 			};
-			add(higgs->GetWeaponRigidBody(left), 0);
+			const auto* equipped = a_player->GetEquippedObject(left);
+			if (equipped && equipped->IsWeapon())
+				add(higgs->GetWeaponRigidBody(left), 0);
 			if (higgs->IsHoldingObject(left))
 				add(higgs->GetGrabbedRigidBody(left), 1);
 			if (handNodesFound == 0)

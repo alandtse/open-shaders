@@ -4,6 +4,7 @@
 #include "RE/Skyrim.h"
 #include "Utils/BoundPoints.h"
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -60,15 +61,16 @@ namespace Util
 	bool GetShapeCollisionCapsule(RE::bhkNiCollisionObject* collisionObj, ShapeCollisionCapsule& capsule);
 
 	/**
-	 * @brief Reduces a rigid body's shape to a world-space capsule along its longest axis.
+	 * @brief Reduces a rigid body's shape to world-space capsules, so each part of a weapon is covered by its own capsule.
 	 * @details A capsule shape is used as it is. Any other shape, such as a box or convex hull, becomes a capsule along the longest
-	 *          side of its bounds in the body's own frame, with the mean of the other two half sides as its radius, so a blade or a
-	 *          club stays long and thin. A shape list uses the bounding box it keeps of its children.
+	 *          side of its bounds in the body's own frame, with the mean of the other two half sides as its radius, so a haft or a
+	 *          blade stays long and thin. A shape list gives one capsule per child, such as one for an axe's haft and one for its
+	 *          head, or a single capsule from the bounding box it keeps when it has more children than a_capsules holds.
 	 * @param a_body Rigid body that is in a physics world.
-	 * @param a_capsule Receives the capsule.
-	 * @return True when the body has a supported shape and the capsule is finite.
+	 * @param a_capsules Receives the capsules.
+	 * @return How many entries of a_capsules were filled.
 	 */
-	bool GetRigidBodyCapsule(RE::bhkRigidBody* a_body, ShapeCollisionCapsule& a_capsule);
+	size_t GetRigidBodyCapsules(RE::bhkRigidBody* a_body, std::span<ShapeCollisionCapsule> a_capsules);
 
 	/**
 	 * @brief World-space points that bound an actor's current pose.
