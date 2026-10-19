@@ -215,7 +215,7 @@ namespace FurInteractors
 	{
 		const float3 center = (a_capsule.pointA + a_capsule.pointB) * 0.5f;
 		const uint64_t key = MakeKey(a_capsule.owner, a_index) + (a_capsule.appendage ? AppendageKeyBase : 0);
-		a_capsule.move = {};
+		a_capsule.move = float3{};
 		if (const auto previous = previousCenters.find(key); previous != previousCenters.end()) {
 			float3 move = center - previous->second;
 			const float length = move.Length();
