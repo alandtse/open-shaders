@@ -625,7 +625,7 @@ void FurShells::Reset()
 	lastTouchNearestGap = touchNearestGap;
 	touchNearestGap = FLT_MAX;
 	maxTouchPerPass = 0;
-	if (settings.TouchStrength <= 0.0f) {
+	if (!IsTouchActive()) {
 		dentMemory.Clear();
 	} else {
 		if (lastPassCount > 0)
@@ -877,12 +877,12 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 {
 	std::array<FurInteractors::Capsule, FurInteractors::MaxCapsulesPerPass> touches;
 	size_t count = 0;
-	if (settings.TouchStrength > 0.0f) {
+	if (IsTouchActive()) {
 		std::array<FurInteractors::Capsule, Util::BodyCapsules::MaxSelectedCapsules> candidates;
 		const size_t found = Util::BodyCapsules::GetTracker().Select(a_geometry->worldBound.center, a_geometry->worldBound.radius, TouchReach, GetWearer(a_geometry), candidates, touchNearestGap);
 		count = dentMemory.Nearest(a_geometry, std::span(candidates.data(), found), std::span(touches.data(), FurInteractors::MaxLiveCapsulesPerPass));
 	}
-	if (settings.TouchStrength > 0.0f)
+	if (IsTouchActive())
 		count = dentMemory.Remember(a_geometry, a_perPass.Length, count, touches);
 	if (touchSelections.size() < 8)
 		touchSelections.push_back({ a_geometry->name.c_str() ? a_geometry->name.c_str() : "", { touches.begin(), touches.begin() + static_cast<std::ptrdiff_t>(count) } });
