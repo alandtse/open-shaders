@@ -1,7 +1,10 @@
 # Native frame sequences
 
-`openshaders.screenshot` extends the existing DevBench bridge with bounded,
-lossless sequences for temporal image comparisons. It requires the
+The Screenshot feature saves bounded, lossless sequences for temporal image
+comparisons. DevBench reaches them through the `capture` tool's `burst` action
+(provider `openshaders`), not a tool of its own; the versioned request below is
+the engine's internal API, driven by the Screenshot menu and by that action. It
+requires the
 Screenshot feature to be loaded and a build with `DEVBENCH_BRIDGE=ON`.
 Ordinary menu sequences remain available with the bridge disabled. Burst
 acquisition and the reference provider are compiled only when
@@ -30,7 +33,7 @@ Sequence receipts retain the last eight requests. An expired sequence
 receipt produces `receipt_expired` on a retained command retry. New game
 processes have new `server.sessionId` values.
 
-Send this to the existing DevBench tool-call transport:
+A sequence start request looks like this:
 
 ```json
 {

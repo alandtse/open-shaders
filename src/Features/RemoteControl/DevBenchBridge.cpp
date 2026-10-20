@@ -1448,16 +1448,6 @@ namespace
 		}
 	}
 
-	json BuildScreenshotSequenceResult(const json& args)
-	{
-		return RunOnMainThread([args] { return globals::features::screenshotFeature.HandleSequenceRequest(args); });
-	}
-
-	void ScreenshotSequenceToolHandler(void*, const char* args, void* sink, DevBenchAPI::WriteFn write)
-	{
-		RunHandler(&BuildScreenshotSequenceResult, args, sink, write);
-	}
-
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
 
 	json BuildSettingsResult(const json& a_args)
@@ -1799,8 +1789,6 @@ namespace DevBenchBridge
 			}
 		});
 
-		dvb->RegisterTool("openshaders.screenshot", OS::Capture::SequenceToolDescription, &ScreenshotSequenceToolHandler, nullptr);
-
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL {brand} user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", BrandedDescription(settingsDesc), &SettingsToolHandler, nullptr);
@@ -1817,7 +1805,7 @@ namespace DevBenchBridge
 		// "CommunityShaders" matches the ImGui window id after `###`, so the menu name lines
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
-			static constexpr const char* referenceDesc = R"({"description":"Native SDR reference PNG from Screenshot (key openshaders.native): same-cycle side-by-side eyes in VR, desktop in SE/AE. Honors the host's absolute outputPath and requestId, never replaces files, and emits capture.ready after verified publication or asynchronous preparation failure. Identical terminal retries replay capture.ready without recapture. UI exclusion is not guaranteed. Use the base capture tool's golden/threshold/regions or replay goldens for scoring; temporal sequences use openshaders.screenshot.","inputSchema":{"type":"object","required":["outputPath","requestId"],"properties":{"outputPath":{"type":"string"},"requestId":{"type":"string","minLength":1,"maxLength":128}}}})";
+			static constexpr const char* referenceDesc = R"({"description":"Native SDR reference PNG from Screenshot (key openshaders.native): same-cycle side-by-side eyes in VR, desktop in SE/AE. Honors the host's absolute outputPath and requestId, never replaces files, and emits capture.ready after verified publication or asynchronous preparation failure. Identical terminal retries replay capture.ready without recapture. UI exclusion is not guaranteed. Use the base capture tool's golden/threshold/regions or replay goldens for scoring; temporal sequences use the openshaders provider's burst action.","inputSchema":{"type":"object","required":["outputPath","requestId"],"properties":{"outputPath":{"type":"string"},"requestId":{"type":"string","minLength":1,"maxLength":128}}}})";
 			dvb->RegisterToolExtension("capture", "openshaders.native", referenceDesc, &ScreenshotReferenceHandler, dvb);
 			static constexpr const char* menuDesc =
 				R"({"description":"Open, close, or toggle the {brand} in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. tab: OPTIONAL tab label, at most 128 characters (visible text such as \"Neural Rendering\", or the id after ### with or without the ###; case is ignored and so is any [Alpha]-style suffix on the visible text) to select in whichever tab bar the menu draws, same as clicking it; give page too, and a tab inside another tab is found once that one is selected (call again with the inner tab). A request that finds no such tab within 600 menu frames is dropped with a warning in the log; the call still reports queued. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,tab,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"tab":{"type":"string","maxLength":128},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
