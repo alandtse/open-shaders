@@ -141,16 +141,13 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 	float previousHeightCoordinate =
 		(worldHeight - (field.PreviousFieldHeight - heightHalfRange)) /
 		(2.0f * heightHalfRange) * (TreeWindSpring::TransientHeightCount - 1u);
-	// Each slice covers a height band, so vertical shifts retain its overlapping spring history.
-	float historyCoverage = saturate(min(
-		previousHeightCoordinate + 1.0f,
-		float(TreeWindSpring::TransientHeightCount) - previousHeightCoordinate));
-	bool transientHistoryValid = horizontalHistoryValid && historyCoverage > 0.0f;
+	bool transientHistoryValid = horizontalHistoryValid &&
+	                             previousHeightCoordinate >= 0.0f &&
+	                             previousHeightCoordinate <=
+	                                 float(TreeWindSpring::TransientHeightCount - 1u);
 	float2 transientResponse = 0.0f.xx;
 	float2 transientVelocity = 0.0f.xx;
 	if (transientHistoryValid) {
-		previousHeightCoordinate = clamp(
-			previousHeightCoordinate, 0.0f, float(TreeWindSpring::TransientHeightCount - 1u));
 		uint lowerHeight = min(
 			(uint)floor(previousHeightCoordinate), TreeWindSpring::TransientHeightCount - 1u);
 		uint upperHeight = min(lowerHeight + 1u, TreeWindSpring::TransientHeightCount - 1u);
@@ -159,12 +156,11 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 			PreviousTransientResponse.Load(int4(previousCell, lowerHeight, 0)),
 			PreviousTransientResponse.Load(int4(previousCell, upperHeight, 0)),
 			heightFraction);
-		transientResponse = previousTransientState.xy * historyCoverage;
+		transientResponse = previousTransientState.xy;
 		transientVelocity = lerp(
 			PreviousTransientVelocity.Load(int4(previousCell, lowerHeight, 0)),
 			PreviousTransientVelocity.Load(int4(previousCell, upperHeight, 0)),
 			heightFraction);
-		transientVelocity *= historyCoverage;
 	}
 	float2 immediateTransient = transientSample.velocity.xy;
 	float cancellationStrength = 1.0f - directionalCoherence;
