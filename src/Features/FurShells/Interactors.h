@@ -85,7 +85,8 @@ namespace FurInteractors
 		/**
 		 * @brief Fits each finger and palm capsule radius to the skinned vertices of the player's hand and armor meshes.
 		 * @details Reads the CPU copies of the vertices and skin weights. Each vertex goes to its dominant bone, and a bone's radius
-		 *          is a high percentile of its vertices' distances to the bone segment, taking the outermost mesh over the hand.
+		 *          is a high percentile of its vertices' distances to the bone segment, taking the outermost mesh over the hand. A fingertip is
+		 *          measured to the open ray past its last joint, so vertices beyond the joint set its length instead of widening its radius.
 		 */
 		void FitRadii(RE::Actor* a_player);
 

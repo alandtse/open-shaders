@@ -33,11 +33,6 @@ namespace FurInteractors
 		constexpr uint64_t AppendageKeyBase = 0x100000000ull;
 		constexpr size_t RightHandKeyOffset = 64;
 
-		float3 ToFloat3(const RE::NiPoint3& a_point)
-		{
-			return { a_point.x, a_point.y, a_point.z };
-		}
-
 		uint64_t MakeKey(RE::FormID a_owner, size_t a_index)
 		{
 			return (static_cast<uint64_t>(a_owner) << 8) ^ static_cast<uint64_t>(a_index);
@@ -62,8 +57,8 @@ namespace FurInteractors
 		const auto& finger = nodes[1 + 2 * JointsPerFinger + 2];
 		if (!hand || !finger || !hand->parent || !finger->parent)
 			return false;
-		a_hand = ToFloat3(hand->world.translate);
-		a_fingerJoint = ToFloat3(finger->world.translate);
+		a_hand = Util::ToFloat3(hand->world.translate);
+		a_fingerJoint = Util::ToFloat3(finger->world.translate);
 		return true;
 	}
 
@@ -83,7 +78,7 @@ namespace FurInteractors
 
 	void Tracker::FitRadii(RE::Actor* a_player)
 	{
-		// Which hand bone a skin bone is, matched by name because armor can be skinned to a different copy of the skeleton: side * HandNodeCount + node index.
+		// Matched by name because armor can be skinned to a different copy of the skeleton.
 		std::unordered_map<std::string, size_t> slotOfName;
 		for (size_t side = 0; side < handNodes.size(); ++side) {
 			for (size_t index = 0; index < HandNodeCount; ++index)
@@ -91,7 +86,6 @@ namespace FurInteractors
 		}
 
 		const auto segmentEnd = [&](size_t a_side, size_t a_index) -> std::optional<float3> {
-			// Bone-space end of the segment a bone's capsule covers: toward its child joint, or past the last joint for the fingertip.
 			const auto& nodes = handNodes[a_side].nodes;
 			const bool distal = a_index != 0 && (a_index - 1) % JointsPerFinger == JointsPerFinger - 1;
 			const RE::NiAVObject* source = nodes[a_index].get();
@@ -101,7 +95,7 @@ namespace FurInteractors
 				source = nodes[a_index + 1].get();
 			if (!source)
 				return std::nullopt;
-			const float3 translate = ToFloat3(source->local.translate);
+			const float3 translate = Util::ToFloat3(source->local.translate);
 			return distal ? translate * FingertipLengthScale : translate;
 		};
 
@@ -115,14 +109,13 @@ namespace FurInteractors
 				return;
 			const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 
-			// Per skin bone: the hand slot it drives, if any.
-			std::vector<std::optional<size_t>> slots(skin->numMatrices);
+			std::vector<std::optional<size_t>> handSlotOfBone(skin->numMatrices);
 			for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
 				const RE::NiAVObject* boneNode = skin->bones[bone];
 				if (!boneNode || !boneNode->name.c_str())
 					continue;
 				if (const auto found = slotOfName.find(boneNode->name.c_str()); found != slotOfName.end())
-					slots[bone] = found->second;
+					handSlotOfBone[bone] = found->second;
 			}
 
 			std::array<std::vector<float>, 2 * HandNodeCount> distances;
@@ -138,19 +131,18 @@ namespace FurInteractors
 					}
 				}
 				const uint16_t skinBone = vertex.bone[dominant];
-				if (dominantWeight < MinDominantWeight || skinBone == Util::InvalidSkinBone || !slots[skinBone])
+				if (dominantWeight < MinDominantWeight || skinBone == Util::InvalidSkinBone || !handSlotOfBone[skinBone])
 					continue;
 
-				const size_t handSlot = *slots[skinBone];
+				const size_t handSlot = *handSlotOfBone[skinBone];
 				const auto end = segmentEnd(handSlot / HandNodeCount, handSlot % HandNodeCount);
 				if (!end)
 					continue;
 
 				const RE::NiTransform skinToBone = skin->skinData->GetBoneDataSkinToBone(skinBone);
-				const float3 point = ToFloat3(skinToBone * vertex.position);
+				const float3 point = Util::ToFloat3(skinToBone * vertex.position);
 				const bool distal = handSlot % HandNodeCount != 0 && (handSlot % HandNodeCount - 1) % JointsPerFinger == JointsPerFinger - 1;
 				const float along = point.Dot(*end) / std::max(end->LengthSquared(), 1e-4f);
-				// A fingertip's radius is measured to the open ray, so vertices past the joint count toward its length instead.
 				const float t = distal ? std::max(along, 0.0f) : std::clamp(along, 0.0f, 1.0f);
 				distances[handSlot].push_back((point - *end * t).Length());
 				if (distal)
@@ -242,8 +234,8 @@ namespace FurInteractors
 
 		for (size_t index = 0; index < shapes.size(); ++index) {
 			Capsule capsule;
-			capsule.pointA = ToFloat3(shapes[index].pointA);
-			capsule.pointB = ToFloat3(shapes[index].pointB);
+			capsule.pointA = Util::ToFloat3(shapes[index].pointA);
+			capsule.pointB = Util::ToFloat3(shapes[index].pointB);
 			capsule.radius = shapes[index].radius;
 			capsule.owner = a_actor->GetFormID();
 			Push(capsule, index);
@@ -282,7 +274,7 @@ namespace FurInteractors
 			const auto& node = nodes[a_index];
 			if (!node || !node->parent)
 				return false;
-			a_out = ToFloat3(node->world.translate);
+			a_out = Util::ToFloat3(node->world.translate);
 			return true;
 		};
 
@@ -387,7 +379,7 @@ namespace FurInteractors
 		std::array<Scored, MaxCapsulesPerPass> best{};
 		size_t count = 0;
 
-		const float3 center = ToFloat3(a_center);
+		const float3 center = Util::ToFloat3(a_center);
 		for (const Capsule& capsule : capsules) {
 			if (a_wearer != 0 && capsule.owner == a_wearer && !capsule.appendage)
 				continue;
