@@ -82,25 +82,35 @@ namespace OS::Capture::Burst
 
 	void Adapter::Publish(json a_engineManifest, Request a_request)
 	{
-		auto converted = Convert(a_engineManifest, a_request);
-		auto result = converted.counts;
+		Status result;
 		result.requestId = a_request.requestId;
 		result.requested = a_request.count;
-		result.uiExcluded = false;
-		if (!a_engineManifest.value("error", std::string{}).empty())
-			result.error = a_engineManifest["error"].get<std::string>();
-		std::error_code error;
-		std::filesystem::create_directories(a_request.outputDir, error);
-		for (const auto& file : converted.files) {
-			if (!LinkFrame(file)) {
-				++result.failed;
-				--result.captured;
+		try {
+			auto converted = Convert(a_engineManifest, a_request);
+			result = converted.counts;
+			result.requestId = a_request.requestId;
+			result.requested = a_request.count;
+			result.uiExcluded = false;
+			if (!a_engineManifest.value("error", std::string{}).empty())
+				result.error = a_engineManifest["error"].get<std::string>();
+			std::error_code error;
+			std::filesystem::create_directories(a_request.outputDir, error);
+			for (const auto& file : converted.files) {
+				if (!LinkFrame(file)) {
+					++result.failed;
+					--result.captured;
+				}
 			}
+			if (WriteManifest(a_request.manifestPath, converted.manifest))
+				result.manifestPath = a_request.manifestPath;
+			else if (result.error.empty())
+				result.error = "the burst manifest could not be written";
+		} catch (const std::exception& failure) {
+			logger::warn("Screenshot burst publication failed: {}", failure.what());
+			result.error = failure.what();
+		} catch (...) {
+			result.error = "burst publication failed";
 		}
-		if (WriteManifest(a_request.manifestPath, converted.manifest))
-			result.manifestPath = a_request.manifestPath;
-		else if (result.error.empty())
-			result.error = "the burst manifest could not be written";
 		std::lock_guard lock(mutex);
 		publishResult = std::move(result);
 	}
@@ -125,38 +135,48 @@ namespace OS::Capture::Burst
 				snapshot = status;
 			} else if (status.active && !publishing && std::chrono::steady_clock::now() >= nextPoll) {
 				nextPoll = std::chrono::steady_clock::now() + kPollInterval;
-				const json poll = { { "contractMajor", 1 }, { "clientId", "devbench.capture.burst" },
-					{ "commandId", ServiceFoundation::NewId() }, { "action", "request_get" }, { "requestId", sequenceId } };
-				const auto response = a_dispatch(poll);
-				if (!response.value("ok", false))
-					return;
-				const auto& receipt = response.at("result");
-				const auto written = receipt.value("written", 0u);
-				const bool changed = written != status.captured;
-				status.captured = written;
-				status.dropped = receipt.value("dropped", 0u);
-				status.failed = receipt.value("failed", 0u);
-				if (changed && progress) {
-					progressed = true;
-					progressNotify = progress;
-					snapshot = status;
-				}
-				if (IsTerminalState(receipt.value("state", std::string{}))) {
-					json manifest = json::object();
-					std::ifstream file(std::filesystem::u8path(receipt.value("directory", std::string{})) / "manifest.json", std::ios::binary);
-					if (file) {
-						manifest = json::parse(file, nullptr, false);
-						if (manifest.is_discarded())
-							manifest = json::object();
+				try {
+					const json poll = { { "contractMajor", 1 }, { "clientId", "devbench.capture.burst" },
+						{ "commandId", ServiceFoundation::NewId() }, { "action", "request_get" }, { "requestId", sequenceId } };
+					const auto response = a_dispatch(poll);
+					if (!response.value("ok", false))
+						return;
+					const auto& receipt = response.at("result");
+					const auto written = receipt.value("written", 0u);
+					const bool changed = written != status.captured;
+					status.captured = written;
+					status.dropped = receipt.value("dropped", 0u);
+					status.failed = receipt.value("failed", 0u);
+					if (changed && progress) {
+						progressed = true;
+						progressNotify = progress;
+						snapshot = status;
 					}
-					if (manifest.empty())
-						manifest = { { "error", receipt.value("error", std::string("the frame sequence ended without a manifest")) } };
-					else if (!receipt.value("error", std::string{}).empty())
-						manifest["error"] = receipt["error"];
+					if (IsTerminalState(receipt.value("state", std::string{}))) {
+						json manifest = json::object();
+						std::ifstream file(std::filesystem::u8path(receipt.value("directory", std::string{})) / "manifest.json", std::ios::binary);
+						if (file) {
+							manifest = json::parse(file, nullptr, false);
+							if (manifest.is_discarded())
+								manifest = json::object();
+						}
+						if (manifest.empty())
+							manifest = { { "error", receipt.value("error", std::string("the frame sequence ended without a manifest")) } };
+						else if (!receipt.value("error", std::string{}).empty())
+							manifest["error"] = receipt["error"];
+						publishing = true;
+						if (worker.joinable())
+							worker.join();
+						worker = std::thread([this, manifest = std::move(manifest), burst = request]() mutable { Publish(std::move(manifest), std::move(burst)); });
+					}
+				} catch (const std::exception& failure) {
+					logger::warn("Screenshot burst polling failed: {}", failure.what());
+					Status failed;
+					failed.requestId = request.requestId;
+					failed.requested = request.count;
+					failed.error = failure.what();
 					publishing = true;
-					if (worker.joinable())
-						worker.join();
-					worker = std::thread([this, manifest = std::move(manifest), burst = request]() mutable { Publish(std::move(manifest), std::move(burst)); });
+					publishResult = std::move(failed);
 				}
 			}
 		}
