@@ -9,6 +9,7 @@ namespace Util::Higgs
 		constexpr std::uint32_t GetInterfaceMessage = 0xF9279A57;
 		constexpr unsigned int InterfaceRevision = 1;
 		constexpr const char* PluginName = "HIGGS";
+		constexpr unsigned int MinBuildNumber = 1060000;
 
 		struct Message
 		{
@@ -35,6 +36,10 @@ namespace Util::Higgs
 		}
 
 		higgs = static_cast<Interface001*>(message.GetApiFunction(InterfaceRevision));
+		if (higgs && higgs->GetBuildNumber() < MinBuildNumber) {
+			logger::warn("[BodyCapsules] HIGGS build {} is older than {}, so its held weapons and objects are not used", higgs->GetBuildNumber(), MinBuildNumber);
+			higgs = nullptr;
+		}
 		if (higgs)
 			logger::info("[BodyCapsules] Using HIGGS build {} for held weapons and objects", higgs->GetBuildNumber());
 		return higgs;

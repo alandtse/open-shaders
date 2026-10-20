@@ -47,6 +47,8 @@ namespace Util::Higgs
 	 * @brief The HIGGS interface, or null when HIGGS is not installed or does not answer.
 	 * @details Fetched once, on the first call, through the SKSE message HIGGS answers, so call it only after plugins have loaded
 	 *          and only in VR. A failed fetch is not retried.
+	 *          The virtual table here goes through IsHoldingObject, which older HIGGS builds lack, so a build below
+	 *          1.6.0 (1060000) is treated as unavailable.
 	 */
 	[[nodiscard]] Interface001* GetInterface();
 }

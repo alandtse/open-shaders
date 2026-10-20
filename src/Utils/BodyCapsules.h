@@ -24,11 +24,12 @@ namespace Util::BodyCapsules
 		float3 pointA;
 		float3 pointB;
 		float radius = 0.0f;
-		float3 move;             ///< How far the capsule centre moved since the previous Update, in world units per frame and capped at 8 units.
-		RE::FormID owner = 0;    ///< The actor whose body the capsule belongs to.
-		bool appendage = false;  ///< A hand, a finger or an item held in a hand, which also touches the owner's own gear.
-		int side = -1;           ///< For an appendage, 0 for the left hand and 1 for the right, which for a held item is the hand holding it.
-		float strength = 1.0f;   ///< How strongly the capsule acts, 1 for a live body part and lower for a contact that is fading.
+		float3 move;              ///< How far the capsule centre moved since the previous Update, in world units per frame and capped at 8 units.
+		RE::FormID owner = 0;     ///< The actor whose body the capsule belongs to.
+		bool appendage = false;   ///< A hand, a finger or an item held in a hand, which also touches the owner's own gear.
+		int side = -1;            ///< For an appendage, 0 for the left hand and 1 for the right, which for a held item is the hand holding it.
+		float strength = 1.0f;    ///< How strongly the capsule acts, 1 for a live body part and lower for a contact that is fading.
+		bool remembered = false;  ///< A contact kept after its source moved on, which fades through strength; false for a live body part.
 
 		/** @brief The point on the capsule's axis nearest a_point. */
 		[[nodiscard]] float3 ClosestPointOnAxis(const float3& a_point) const

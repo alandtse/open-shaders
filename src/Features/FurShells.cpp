@@ -908,6 +908,7 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 		a_perPass.TouchB[index][0] = touch.pointB.x;
 		a_perPass.TouchB[index][1] = touch.pointB.y;
 		a_perPass.TouchB[index][2] = touch.pointB.z;
+		a_perPass.TouchB[index][3] = touch.remembered ? 1.0f : 0.0f;
 		a_perPass.TouchMove[index][0] = touch.move.x;
 		a_perPass.TouchMove[index][1] = touch.move.y;
 		a_perPass.TouchMove[index][2] = touch.move.z;

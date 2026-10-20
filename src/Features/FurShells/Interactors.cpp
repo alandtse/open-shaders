@@ -212,6 +212,7 @@ namespace FurInteractors
 			ghost.pointA = ghost.pointB = Util::ToFloat3(position);
 			ghost.radius = dent.radius;
 			ghost.strength = std::clamp(dent.depth, 0.0f, 1.0f);
+			ghost.remembered = true;
 			a_capsules[count++] = ghost;
 		}
 		return count;

@@ -88,7 +88,7 @@ namespace FurShells
 	 * @brief World-space push of a shell layer away from, and along, the capsules touching the mesh.
 	 * @details Each capsule bends fur within one fur length of its surface and pushes fur that is inside it back out. Capsule movement drags the fur along, so a stroke combs it.
 	 *          The push grows with layer height squared so the root stays put, and is capped at TouchMaxPush. Near a capsule's axis, where the push direction is unstable, the sideways push fades out
-	 *          and the layers flatten toward the root along the surface normal instead, so a deep press squashes the fur. Remembered dents arrive as capsules whose strength fades as the fur recovers.
+	 *          and the layers flatten toward the root along the surface normal instead, so a deep press squashes the fur. Remembered dents arrive as capsules, flagged by TouchB.w, whose strength fades as the fur recovers.
 	 * @param a_absolutePosition World position of the layer, including the camera offset.
 	 * @param a_worldNormal World-space surface normal the layer grows along.
 	 * @param a_length The fur's current length, wet fur included, which sets the width of the zone before contact.
@@ -113,7 +113,7 @@ namespace FurShells
 			float reach = saturate((radius + margin - distance) / margin);
 			float influence = reach * strength;
 			float penetration = max(radius - distance, 0.0) * strength;
-			bool remembered = strength < 0.999;
+			bool remembered = TouchB[index].w > 0.5;
 			a_debug = float3(remembered ? a_debug.x : max(a_debug.x, influence), remembered ? a_debug.y : max(a_debug.y, step(0.0, radius - distance)), remembered && reach > 0.0 ? max(a_debug.z, strength) : a_debug.z);
 			float stable = saturate(distance / max(radius * TouchStableRadius, 1e-3));
 			total += direction * ((influence * a_length * TouchBend + penetration) * stable) + TouchMove[index].xyz * (influence * TouchDrag);
