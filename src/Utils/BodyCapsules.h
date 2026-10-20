@@ -56,7 +56,7 @@ namespace Util::BodyCapsules
 	/**
 	 * @brief Collects the collision capsules of nearby actors and the player's VR hands and fingers.
 	 * @details Actor capsules come from the same Havok collision objects Grass Collision reads. Finger capsules come from
-	 *          the player skeleton, so they work without HIGGS. When HIGGS is installed in VR, the weapon equipped in each hand and the object it holds
+	 *          the player skeleton, so they work without HIGGS. When HIGGS is installed in VR, the drawn weapon or shield in each hand and the object it holds
 	 *          are added too, as appendages of that hand, and its hand body stands in for the fingers until the skeleton nodes are found. Update rebuilds the list at most once per rendered frame,
 	 *          so every consumer can call it; read the list on the thread that calls Update, since nothing locks it.
 	 */
@@ -108,13 +108,15 @@ namespace Util::BodyCapsules
 		/** @brief What HIGGS gave for one hand's weapon (slot 0), grabbed object (slot 1) or hand body (slot 2) last frame, for diagnostics. */
 		struct HeldReport
 		{
-			bool available = false;  ///< HIGGS answered the interface fetch.
-			bool body = false;       ///< HIGGS returned a rigid body.
-			bool inWorld = false;    ///< The body is in a physics world.
-			int shapeType = -1;      ///< hkpShapeType of the body's shape, -1 when there is none.
-			bool capsule = false;    ///< The body was reduced to capsules and added.
-			int children = 0;        ///< Child shapes of a list shape, 0 for any other shape.
-			int parts = 0;           ///< Capsules the body became.
+			bool available = false;          ///< HIGGS answered the interface fetch.
+			bool body = false;               ///< HIGGS returned a rigid body.
+			bool inWorld = false;            ///< The body is in a physics world.
+			int shapeType = -1;              ///< hkpShapeType of the body's shape, -1 when there is none.
+			bool capsule = false;            ///< The body was reduced to capsules and added.
+			int children = 0;                ///< Child shapes of a list shape, 0 for any other shape.
+			int parts = 0;                   ///< Capsules the body became.
+			bool drawn = false;              ///< A weapon is drawn, which a held weapon or shield needs before it counts.
+			bool collisionDisabled = false;  ///< HIGGS has turned off collision for the weapon in this hand.
 		};
 		[[nodiscard]] HeldReport GetHeldReport(bool a_left, size_t a_slot) const { return heldReports[a_left ? 0 : 1][a_slot]; }
 

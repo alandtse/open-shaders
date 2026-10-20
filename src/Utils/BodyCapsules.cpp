@@ -366,7 +366,13 @@ namespace Util::BodyCapsules
 				}
 			};
 			const auto* equipped = a_player->GetEquippedObject(left);
-			if (equipped && equipped->IsWeapon())
+			const auto* armor = equipped ? equipped->As<RE::TESObjectARMO>() : nullptr;
+			const bool holdsWeapon = equipped && (equipped->IsWeapon() || (armor && armor->IsShield()));
+			const auto* state = a_player->AsActorState();
+			auto& weaponReport = heldReports[side][0];
+			weaponReport.drawn = state && state->IsWeaponDrawn();
+			weaponReport.collisionDisabled = higgs->IsWeaponCollisionDisabled(left);
+			if (holdsWeapon && weaponReport.drawn && !weaponReport.collisionDisabled)
 				add(higgs->GetWeaponRigidBody(left), 0);
 			if (higgs->IsHoldingObject(left))
 				add(higgs->GetGrabbedRigidBody(left), 1);
