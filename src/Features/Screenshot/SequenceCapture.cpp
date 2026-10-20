@@ -50,7 +50,8 @@ namespace
 	bool SupportedFormat(DXGI_FORMAT format)
 	{
 		return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
-		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
+		       format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 	}
 
 	void CheckResult(HRESULT result)
@@ -549,7 +550,7 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		}
 	}
 
-	bool StagePlane(Frame& frame, uint32_t eye, ID3D11Texture2D* texture, const std::array<float, 4>& bounds, vr::EColorSpace colorSpace)
+	bool StagePlane(Frame& frame, uint32_t eye, ID3D11Texture2D* texture, const std::array<float, 4>& bounds, vr::EColorSpace colorSpace, bool uiExcluded = false)
 	{
 		if (GetCurrentThreadId() != renderThread.load(std::memory_order_acquire))
 			throw std::runtime_error("capture callback is not on the observed render thread");
@@ -558,7 +559,7 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		const auto region = OS::Capture::ResolveBounds(source.Width, source.Height, bounds);
 		if (!region || !SupportedFormat(source.Format) || source.SampleDesc.Count != 1 || source.ArraySize != 1 ||
 			(colorSpace != vr::ColorSpace_Auto && colorSpace != vr::ColorSpace_Gamma))
-			throw std::runtime_error(std::format("source must be a single-sample SDR RGBA8/BGRA8 texture with valid eye bounds (format {}, {}x{}, samples {}, array {})", static_cast<int>(source.Format), source.Width, source.Height, source.SampleDesc.Count, source.ArraySize));
+			throw std::runtime_error(std::format("source must be a single-sample SDR RGBA8/BGRA8, R10G10B10A2 or half-float sRGB texture with valid eye bounds (format {}, {}x{}, samples {}, array {})", static_cast<int>(source.Format), source.Width, source.Height, source.SampleDesc.Count, source.ArraySize));
 #ifdef DEVBENCH_BRIDGE_ENABLED
 		const auto& burst = frame.session->schedule.plan.burst;
 		const auto copies = burst ? burst.Copies(region->width, region->height, region->flipX, region->flipY) : std::vector<ScreenshotBurst::Copy>{};
@@ -591,7 +592,7 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		plane.metadata = { { "eye", frame.requiredMask == 3 ? (eye == 0 ? "left" : "right") : "source" }, { "sourceWidth", source.Width },
 			{ "sourceHeight", source.Height }, { "width", region->width }, { "height", region->height },
 			{ "bounds", bounds }, { "flipX", region->flipX }, { "flipY", region->flipY },
-			{ "format", source.Format }, { "colourSpace", colorSpace }, { "monotonicTimestampUs", TimestampUs() } };
+			{ "format", source.Format }, { "colourSpace", colorSpace }, { "uiExcluded", uiExcluded }, { "monotonicTimestampUs", TimestampUs() } };
 #ifdef DEVBENCH_BRIDGE_ENABLED
 		if (burst) {
 			plane.metadata["regions"] = frame.session->requested.at("burst").at("regions");
@@ -725,13 +726,16 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 					~Unmap() { context->Unmap(texture, 0); }
 				} unmap{ context.get(), plane.staging.get() };
 				const auto& region = plane.bounds;
-				if (!mapped.pData || mapped.RowPitch < region.width * 4) {
+				const auto depth = plane.format == DXGI_FORMAT_R16G16B16A16_FLOAT ? OS::Capture::SourceDepth::Half :
+				                   plane.format == DXGI_FORMAT_R10G10B10A2_UNORM  ? OS::Capture::SourceDepth::Ten :
+				                                                                    OS::Capture::SourceDepth::Eight;
+				if (!mapped.pData || mapped.RowPitch < region.width * OS::Capture::SourceBytesPerPixel(depth)) {
 					failed = true;
 					break;
 				}
 				const bool bgra = plane.format == DXGI_FORMAT_B8G8R8A8_UNORM || plane.format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 				plane.pixels = OS::Capture::CopyPixels(
-					{ static_cast<const uint8_t*>(mapped.pData), uint64_t(mapped.RowPitch) * region.height }, mapped.RowPitch, region, bgra);
+					{ static_cast<const uint8_t*>(mapped.pData), uint64_t(mapped.RowPitch) * region.height }, mapped.RowPitch, region, bgra, depth);
 			}
 			if (failed) {
 				FinishFrameLocked(*it, "failed", "gpu_readback_failed");
@@ -756,12 +760,13 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		if (!frame)
 			return;
 		try {
-			auto texture = desktopSource ? desktopSource() : nullptr;
+			auto desktop = desktopSource ? desktopSource() : DesktopFrame{};
+			auto& texture = desktop.texture;
 			if (!texture) {
 				FinishFrameLocked(*frame, "failed", "desktop_source_unavailable");
 				return;
 			}
-			if (!StagePlane(*frame, 0, texture.get(), { 0.f, 0.f, 1.f, 1.f }, vr::ColorSpace_Gamma)) {
+			if (!StagePlane(*frame, 0, texture.get(), { 0.f, 0.f, 1.f, 1.f }, vr::ColorSpace_Gamma, desktop.uiExcluded)) {
 				FinishFrameLocked(*frame, "dropped", "readback_memory_limit");
 				return;
 			}

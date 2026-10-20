@@ -4,10 +4,12 @@
 #	include "Features/ScreenshotBurstPolicy.h"
 #endif
 #include "Utils/StringUtils.h"
+#include <DirectXPackedVector.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
@@ -237,20 +239,67 @@ namespace OS::Capture
 		return PixelBounds{ x, y, right - x, bottom - y, bounds[0] > bounds[2], bounds[1] > bounds[3] };
 	}
 
-	/** Copies a mapped native eye into opaque RGBA without changing its resolution. */
-	inline std::vector<uint8_t> CopyPixels(std::span<const uint8_t> source, uint32_t rowPitch, const PixelBounds& bounds, bool bgra)
+	/** How a source texel stores sRGB-encoded colour: 8 bits per channel, 10 bits packed R10G10B10A2, or half-float RGBA. */
+	enum class SourceDepth
+	{
+		Eight,
+		Ten,
+		Half
+	};
+
+	/** Texel size of the sources a sequence accepts: half-float RGBA is 8 bytes, every other accepted format is 4. */
+	inline uint32_t SourceBytesPerPixel(SourceDepth depth) { return depth == SourceDepth::Half ? 8u : 4u; }
+
+	/** The 8-bit value for every half-float code: clamped to 0..1, then scaled. NaN and negatives become 0. */
+	inline const std::array<uint8_t, 65536>& HalfToByteTable()
+	{
+		static const std::array<uint8_t, 65536> table = [] {
+			std::array<uint8_t, 65536> built{};
+			for (size_t code = 0; code < built.size(); ++code) {
+				const float value = DirectX::PackedVector::XMConvertHalfToFloat(static_cast<uint16_t>(code));
+				built[code] = std::isnan(value) ? uint8_t{ 0 } : static_cast<uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+			}
+			return built;
+		}();
+		return table;
+	}
+
+	/**
+	 * @brief Copies a mapped native eye into opaque RGBA without changing its resolution.
+	 * @param depth Ten and Half sources hold sRGB-encoded 0..1 colour, as the HDR Display's SDR output writes it.
+	 */
+	inline std::vector<uint8_t> CopyPixels(std::span<const uint8_t> source, uint32_t rowPitch, const PixelBounds& bounds, bool bgra, SourceDepth depth = SourceDepth::Eight)
 	{
 		const uint64_t rowBytes = uint64_t(bounds.width) * 4;
+		const uint64_t sourceRowBytes = uint64_t(bounds.width) * SourceBytesPerPixel(depth);
 		const uint64_t bytes = rowBytes * bounds.height;
-		if (!bounds.width || !bounds.height || bytes > MaximumFrameBytes || rowPitch < rowBytes ||
-			source.size() < uint64_t(bounds.height - 1) * rowPitch + rowBytes)
+		if (!bounds.width || !bounds.height || bytes > MaximumFrameBytes || rowPitch < sourceRowBytes ||
+			source.size() < uint64_t(bounds.height - 1) * rowPitch + sourceRowBytes)
 			throw std::invalid_argument("invalid mapped image layout");
 		std::vector<uint8_t> pixels(bytes);
 		for (uint32_t y = 0; y < bounds.height; ++y) {
 			const auto* row = source.data() + uint64_t(bounds.flipY ? bounds.height - 1 - y : y) * rowPitch;
 			for (uint32_t x = 0; x < bounds.width; ++x) {
-				const auto* pixel = row + uint64_t(bounds.flipX ? bounds.width - 1 - x : x) * 4;
+				const auto* pixel = row + uint64_t(bounds.flipX ? bounds.width - 1 - x : x) * SourceBytesPerPixel(depth);
 				auto* target = pixels.data() + (uint64_t(y) * bounds.width + x) * 4;
+				if (depth == SourceDepth::Ten) {
+					uint32_t packed;
+					std::memcpy(&packed, pixel, sizeof(packed));
+					for (uint32_t channel = 0; channel < 3; ++channel)
+						target[channel] = static_cast<uint8_t>((((packed >> (10 * channel)) & 0x3FFu) * 255u + 511u) / 1023u);
+					target[3] = 255;
+					continue;
+				}
+				if (depth == SourceDepth::Half) {
+					const auto& table = HalfToByteTable();
+					uint16_t texel[3];
+					std::memcpy(texel, pixel, sizeof(texel));
+					target[0] = table[texel[0]];
+					target[1] = table[texel[1]];
+					target[2] = table[texel[2]];
+					target[3] = 255;
+					continue;
+				}
 				target[0] = pixel[bgra ? 2 : 0];
 				target[1] = pixel[1];
 				target[2] = pixel[bgra ? 0 : 2];

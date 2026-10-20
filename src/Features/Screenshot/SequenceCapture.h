@@ -10,7 +10,13 @@
 class ScreenshotSequenceCapture
 {
 public:
-	using DesktopSource = std::function<winrt::com_ptr<ID3D11Texture2D>()>;
+	/** The flat-screen frame to capture and whether it was composed without UI. */
+	struct DesktopFrame
+	{
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		bool uiExcluded = false;
+	};
+	using DesktopSource = std::function<DesktopFrame()>;
 
 	/** Creates an idle controller using the feature's presented-buffer resolver. */
 	explicit ScreenshotSequenceCapture(DesktopSource desktopSource);

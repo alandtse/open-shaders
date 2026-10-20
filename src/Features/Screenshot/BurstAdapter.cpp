@@ -90,7 +90,7 @@ namespace OS::Capture::Burst
 			result = converted.counts;
 			result.requestId = a_request.requestId;
 			result.requested = a_request.count;
-			result.uiExcluded = false;
+			result.uiExcluded = converted.counts.uiExcluded;
 			if (!a_engineManifest.value("error", std::string{}).empty())
 				result.error = a_engineManifest["error"].get<std::string>();
 			std::error_code error;

@@ -628,9 +628,18 @@ namespace
 
 ScreenshotFeature::ScreenshotFeature() :
 	sequenceCapture(std::make_unique<ScreenshotSequenceCapture>([] {
-		winrt::com_ptr<ID3D11Texture2D> texture;
-		ResolveDisplayedBackBuffer(texture);
-		return texture;
+		ScreenshotSequenceCapture::DesktopFrame frame;
+		if (IsFlatHdrScreenshotCapture()) {
+			winrt::com_ptr<ID3D11Texture2D> holder;
+			const auto source = SelectCaptureSource(holder, /*forCapture=*/false, UiMode::Exclude);
+			if (source.uiExcluded) {
+				frame.texture.copy_from(source.texture);
+				frame.uiExcluded = true;
+			}
+			return frame;
+		}
+		ResolveDisplayedBackBuffer(frame.texture);
+		return frame;
 	})),
 	sequenceFrameCount(OS::Capture::SequencePlan{}.frameCount)
 {}
@@ -828,7 +837,7 @@ void ScreenshotFeature::DrawSequenceSettings()
 		return response;
 	};
 	try {
-		ImGui::BeginDisabled(active || !loaded || IsFlatHdrScreenshotCapture());
+		ImGui::BeginDisabled(active || !loaded);
 		const bool start = ImGui::Button(T(TKEY("sequence_start"), "Start sequence"));
 		ImGui::EndDisabled();
 		if (start) {

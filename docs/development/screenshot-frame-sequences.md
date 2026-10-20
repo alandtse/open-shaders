@@ -17,7 +17,10 @@ in the same successful `WaitGetPoses` cycle and engine frame. Submission
 bounds and orientation are applied at native resolution. SE/AE uses the
 displayed D3D11 desktop texture at the existing screenshot capture point,
 including the wrapped D3D12 swapchain resource when that bridge is active.
-The contract accepts single-sample RGBA8/BGRA8 SDR textures only. HDR,
+The contract accepts single-sample RGBA8/BGRA8 SDR textures. On a flat HDR
+display the frame comes from the HDR Display feature's clean-scene SDR output
+(sRGB colour in an R10G10B10A2 or half-float texture, converted to 8 bits), so it has no HUD
+or menu and the manifest records `uiExcluded`. Other HDR sources,
 linear-colour submissions, arrays, resizing, fallback sources and preview
 videos are rejected. This is a CSX-style request subset with an OS contract
 name, not a claim of complete CSX screenshot-API compatibility.

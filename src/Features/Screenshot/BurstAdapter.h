@@ -140,10 +140,13 @@ namespace OS::Capture::Burst
 			converted.files.push_back({ std::filesystem::u8path(artifact.value("path", std::string{})), a_request.outputDir / name });
 			converted.counts.width = artifact.value("width", 0u);
 			converted.counts.height = artifact.value("height", 0u);
+			if (converted.counts.captured == 0)
+				converted.counts.uiExcluded = artifact.contains("planes") && artifact["planes"].is_array() && !artifact["planes"].empty() &&
+				                              std::ranges::all_of(artifact["planes"], [](const json& a_plane) { return a_plane.value("uiExcluded", false); });
 			++converted.counts.captured;
 		}
 		converted.manifest = { { "requestId", a_request.requestId }, { "width", converted.counts.width }, { "height", converted.counts.height },
-			{ "format", "png" }, { "uiExcluded", false }, { "everyNFrames", a_request.everyNFrames },
+			{ "format", "png" }, { "uiExcluded", converted.counts.uiExcluded }, { "everyNFrames", a_request.everyNFrames },
 			{ "frames", std::move(frames) }, { "dropped", std::move(dropped) } };
 		return converted;
 	}
