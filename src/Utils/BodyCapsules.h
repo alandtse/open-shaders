@@ -2,8 +2,10 @@
 
 #include "Utils/FrameLatch.h"
 
+#include <algorithm>
 #include <array>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -27,7 +29,29 @@ namespace Util::BodyCapsules
 		bool appendage = false;  ///< A hand, a finger or an item held in a hand, which also touches the owner's own gear.
 		int side = -1;           ///< For an appendage, 0 for the left hand and 1 for the right, which for a held item is the hand holding it.
 		float strength = 1.0f;   ///< How strongly the capsule acts, 1 for a live body part and lower for a contact that is fading.
+
+		/** @brief The point on the capsule's axis nearest a_point. */
+		[[nodiscard]] float3 ClosestPointOnAxis(const float3& a_point) const
+		{
+			const float3 axis = pointB - pointA;
+			const float t = std::clamp((a_point - pointA).Dot(axis) / std::max(axis.LengthSquared(), 1e-4f), 0.0f, 1.0f);
+			return pointA + axis * t;
+		}
 	};
+
+	/** @brief True for a skeleton bone of a hand or a finger, such as "NPC L Finger12 [LF12]". */
+	[[nodiscard]] inline bool IsHandBone(std::string_view a_name)
+	{
+		return a_name.find("Hand [") != std::string_view::npos || a_name.find("Finger") != std::string_view::npos;
+	}
+
+	/** @brief 0 for a left and 1 for a right hand or finger bone, -1 for any other bone. */
+	[[nodiscard]] inline int HandBoneSide(std::string_view a_name)
+	{
+		if (!IsHandBone(a_name))
+			return -1;
+		return a_name.starts_with("NPC L ") ? 0 : (a_name.starts_with("NPC R ") ? 1 : -1);
+	}
 
 	/**
 	 * @brief Collects the collision capsules of nearby actors and the player's VR hands and fingers.

@@ -262,6 +262,24 @@ namespace Util
 
 	namespace
 	{
+		/** @brief A world-space capsule along the longest side of an axis-aligned box in the body's own frame, with the mean of the other two half sides as its radius. */
+		bool BoxCapsule(const float a_centre[3], const float a_half[3], const RE::hkTransform& a_transform, ShapeCollisionCapsule& a_capsule)
+		{
+			const int longest = a_half[0] >= a_half[1] && a_half[0] >= a_half[2] ? 0 : (a_half[1] >= a_half[2] ? 1 : 2);
+			const float radius = 0.5f * (a_half[(longest + 1) % 3] + a_half[(longest + 2) % 3]);
+			const float reach = std::max(a_half[longest] - radius, 0.0f);
+
+			const auto endpoint = [&](float a_sign) {
+				float local[4] = { a_centre[0], a_centre[1], a_centre[2], 0.0f };
+				local[longest] += a_sign * reach;
+				return TransformHavokPoint(a_transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
+			};
+			a_capsule.pointA = endpoint(-1.0f);
+			a_capsule.pointB = endpoint(1.0f);
+			a_capsule.radius = radius * RE::bhkWorld::GetWorldScaleInverse();
+			return IsCapsuleFinite(a_capsule);
+		}
+
 		/** @brief A world-space capsule along the longest side of a shape's bounds in the body's own frame, or false for a shape this cannot bound. */
 		bool BoundShapeCapsule(const RE::hkpShape* a_shape, const RE::hkTransform& a_transform, ShapeCollisionCapsule& a_capsule)
 		{
@@ -287,19 +305,7 @@ namespace Util
 				centre[axis] = 0.5f * (high[axis] + low[axis]);
 				half[axis] = 0.5f * (high[axis] - low[axis]);
 			}
-			const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
-			const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
-			const float reach = std::max(half[longest] - radius, 0.0f);
-
-			const auto endpoint = [&](float a_sign) {
-				float local[4] = { centre[0], centre[1], centre[2], 0.0f };
-				local[longest] += a_sign * reach;
-				return TransformHavokPoint(a_transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
-			};
-			a_capsule.pointA = endpoint(-1.0f);
-			a_capsule.pointB = endpoint(1.0f);
-			a_capsule.radius = radius * scale;
-			return IsCapsuleFinite(a_capsule);
+			return BoxCapsule(centre, half, a_transform, a_capsule);
 		}
 	}
 
@@ -330,18 +336,7 @@ namespace Util
 			alignas(16) float half[4];
 			_mm_store_ps(centre, list->aabbCenter.quad);
 			_mm_store_ps(half, list->aabbHalfExtents.quad);
-			const int longest = half[0] >= half[1] && half[0] >= half[2] ? 0 : (half[1] >= half[2] ? 1 : 2);
-			const float radius = 0.5f * (half[(longest + 1) % 3] + half[(longest + 2) % 3]);
-			const float reach = std::max(half[longest] - radius, 0.0f);
-			const auto endpoint = [&](float a_sign) {
-				float local[4] = { centre[0], centre[1], centre[2], 0.0f };
-				local[longest] += a_sign * reach;
-				return TransformHavokPoint(transform, RE::hkVector4{ local[0], local[1], local[2], 0.0f });
-			};
-			a_capsules[0].pointA = endpoint(-1.0f);
-			a_capsules[0].pointB = endpoint(1.0f);
-			a_capsules[0].radius = radius * RE::bhkWorld::GetWorldScaleInverse();
-			return IsCapsuleFinite(a_capsules[0]) ? 1 : 0;
+			return BoxCapsule(centre, half, transform, a_capsules[0]) ? 1 : 0;
 		}
 		return BoundShapeCapsule(shape, transform, a_capsules[0]) ? 1 : 0;
 	}

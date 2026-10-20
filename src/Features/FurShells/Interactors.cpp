@@ -73,8 +73,7 @@ namespace FurInteractors
 		for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
 			a_memory.bones.emplace_back(skin->bones[bone]);
 			const std::string_view name = skin->bones[bone] && skin->bones[bone]->name.c_str() ? skin->bones[bone]->name.c_str() : "";
-			if (name.find("Hand [") != std::string_view::npos || name.find("Finger") != std::string_view::npos)
-				boneSides[bone] = name.starts_with("NPC L ") ? 0 : (name.starts_with("NPC R ") ? 1 : -1);
+			boneSides[bone] = Util::BodyCapsules::HandBoneSide(name);
 		}
 
 		const size_t stride = std::max<size_t>(1, vertices.size() / MaxPressSamples);
@@ -126,15 +125,11 @@ namespace FurInteractors
 		gaps.reserve(a_candidates.size());
 		for (size_t index = 0; index < a_candidates.size(); ++index) {
 			const Capsule& capsule = a_candidates[index];
-			const float3 axis = capsule.pointB - capsule.pointA;
-			const float axisLengthSquared = std::max(axis.LengthSquared(), 1e-4f);
 			float nearest = FLT_MAX;
 			for (size_t sample = 0; sample < positions.size(); ++sample) {
 				if (capsule.side >= 0 && mesh.samples[sample].side == capsule.side)
 					continue;
-				const float3& position = positions[sample];
-				const float t = std::clamp((position - capsule.pointA).Dot(axis) / axisLengthSquared, 0.0f, 1.0f);
-				nearest = std::min(nearest, (position - (capsule.pointA + axis * t)).LengthSquared());
+				nearest = std::min(nearest, (positions[sample] - capsule.ClosestPointOnAxis(positions[sample])).LengthSquared());
 			}
 			gaps.emplace_back(std::sqrt(nearest) - capsule.radius, index);
 		}
@@ -159,8 +154,6 @@ namespace FurInteractors
 				if (!capsule.appendage || capsule.radius > MaxDentRadius)
 					continue;
 
-				const float3 axis = capsule.pointB - capsule.pointA;
-				const float axisLengthSquared = std::max(axis.LengthSquared(), 1e-4f);
 				float nearest = FLT_MAX;
 				const PressSample* nearestSample = nullptr;
 				float3 pressPoint;
@@ -168,8 +161,7 @@ namespace FurInteractors
 					if (capsule.side >= 0 && sample.side == capsule.side)
 						continue;
 					const float3 position = Util::ToFloat3(mesh.bones[sample.bone]->world * sample.local);
-					const float t = std::clamp((position - capsule.pointA).Dot(axis) / axisLengthSquared, 0.0f, 1.0f);
-					const float3 closest = capsule.pointA + axis * t;
+					const float3 closest = capsule.ClosestPointOnAxis(position);
 					const float gap = (position - closest).Length() - capsule.radius;
 					if (gap < nearest) {
 						nearest = gap;

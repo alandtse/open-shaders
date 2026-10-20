@@ -450,9 +450,7 @@ namespace Util::BodyCapsules
 		for (const Capsule& capsule : capsules) {
 			if (a_wearer != 0 && capsule.owner == a_wearer && !capsule.appendage)
 				continue;
-			const float3 axis = capsule.pointB - capsule.pointA;
-			const float t = std::clamp((center - capsule.pointA).Dot(axis) / std::max(axis.LengthSquared(), 1e-4f), 0.0f, 1.0f);
-			const float distance = (center - (capsule.pointA + axis * t)).Length() - capsule.radius;
+			const float distance = (center - capsule.ClosestPointOnAxis(center)).Length() - capsule.radius;
 			a_nearestGap = std::min(a_nearestGap, distance - a_radius);
 			if (distance > a_radius + a_reach)
 				continue;

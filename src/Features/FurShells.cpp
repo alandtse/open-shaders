@@ -96,7 +96,7 @@ namespace
 				for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
 					const char* boneName = skin->bones[bone] && skin->bones[bone]->name.c_str() ? skin->bones[bone]->name.c_str() : "";
 					const std::string_view view{ boneName };
-					if (view.find("Hand [") != std::string_view::npos || view.find("Finger") != std::string_view::npos) {
+					if (Util::BodyCapsules::IsHandBone(view)) {
 						++handBones;
 						inThirdPerson += skin->bones[bone] == findIn(thirdPersonRoot, boneName) ? 1u : 0u;
 						inFirstPerson += skin->bones[bone] == findIn(firstPersonRoot, boneName) ? 1u : 0u;
