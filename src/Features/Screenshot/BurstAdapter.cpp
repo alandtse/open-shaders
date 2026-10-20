@@ -95,12 +95,21 @@ namespace OS::Capture::Burst
 				result.error = a_engineManifest["error"].get<std::string>();
 			std::error_code error;
 			std::filesystem::create_directories(a_request.outputDir, error);
-			for (const auto& file : converted.files) {
-				if (!LinkFrame(file)) {
+			json linked = json::array();
+			auto& manifestFrames = converted.manifest["frames"];
+			uint32_t unlinked = 0;
+			for (size_t index = 0; index < converted.files.size(); ++index) {
+				if (LinkFrame(converted.files[index])) {
+					linked.push_back(std::move(manifestFrames[index]));
+				} else {
+					++unlinked;
 					++result.failed;
 					--result.captured;
 				}
 			}
+			manifestFrames = std::move(linked);
+			if (unlinked && result.error.empty())
+				result.error = std::format("{} frame(s) could not be written; an output file may already exist", unlinked);
 			if (WriteManifest(a_request.manifestPath, converted.manifest))
 				result.manifestPath = a_request.manifestPath;
 			else if (result.error.empty())
@@ -139,8 +148,12 @@ namespace OS::Capture::Burst
 					const json poll = { { "contractMajor", 1 }, { "clientId", "devbench.capture.burst" },
 						{ "commandId", ServiceFoundation::NewId() }, { "action", "request_get" }, { "requestId", sequenceId } };
 					const auto response = a_dispatch(poll);
-					if (!response.value("ok", false))
+					if (!response.value("ok", false)) {
+						const auto failure = response.value("error", json::object());
+						if (failure.value("code", std::string{}) == "unknown_request")
+							throw std::runtime_error(failure.value("message", std::string("the sequence receipt is no longer available")));
 						return;
+					}
 					const auto& receipt = response.at("result");
 					const auto written = receipt.value("written", 0u);
 					const bool changed = written != status.captured;

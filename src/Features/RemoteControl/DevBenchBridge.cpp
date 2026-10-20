@@ -1320,7 +1320,7 @@ namespace
 		request.excludeUi = a_args.value("excludeUi", true);
 		if (a_args.value("scale", 1.0f) != 1.0f)
 			return json{ { "error", "burst captures full native frames; scale is not supported" } };
-		if (a_args.contains("subrect") && a_args["subrect"].is_object())
+		if (a_args.contains("subrect") && !a_args["subrect"].is_null())
 			return json{ { "error", "burst captures full native frames; subrect is not supported" } };
 		const auto emit = [](const char* a_topic, const OS::Capture::Burst::Status& a_status) {
 			json payload{ { "requestId", a_status.requestId }, { "captured", a_status.captured }, { "dropped", a_status.dropped } };
