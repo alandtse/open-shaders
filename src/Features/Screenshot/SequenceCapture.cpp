@@ -47,11 +47,12 @@ namespace
 		return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 	}
 
-	bool SupportedFormat(DXGI_FORMAT format)
+	/** The 10-bit and half-float formats are accepted only from the flat source, which writes them as sRGB. */
+	bool SupportedFormat(DXGI_FORMAT format, bool flatSource)
 	{
 		return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
 		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ||
-		       format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+		       (flatSource && (format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R16G16B16A16_FLOAT));
 	}
 
 	void CheckResult(HRESULT result)
@@ -550,14 +551,14 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		}
 	}
 
-	bool StagePlane(Frame& frame, uint32_t eye, ID3D11Texture2D* texture, const std::array<float, 4>& bounds, vr::EColorSpace colorSpace, bool uiExcluded = false)
+	bool StagePlane(Frame& frame, uint32_t eye, ID3D11Texture2D* texture, const std::array<float, 4>& bounds, vr::EColorSpace colorSpace, bool flatSource = false, bool uiExcluded = false)
 	{
 		if (GetCurrentThreadId() != renderThread.load(std::memory_order_acquire))
 			throw std::runtime_error("capture callback is not on the observed render thread");
 		D3D11_TEXTURE2D_DESC source{};
 		texture->GetDesc(&source);
 		const auto region = OS::Capture::ResolveBounds(source.Width, source.Height, bounds);
-		if (!region || !SupportedFormat(source.Format) || source.SampleDesc.Count != 1 || source.ArraySize != 1 ||
+		if (!region || !SupportedFormat(source.Format, flatSource) || source.SampleDesc.Count != 1 || source.ArraySize != 1 ||
 			(colorSpace != vr::ColorSpace_Auto && colorSpace != vr::ColorSpace_Gamma))
 			throw std::runtime_error(std::format("source must be a single-sample SDR RGBA8/BGRA8, R10G10B10A2 or half-float sRGB texture with valid eye bounds (format {}, {}x{}, samples {}, array {})", static_cast<int>(source.Format), source.Width, source.Height, source.SampleDesc.Count, source.ArraySize));
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -766,7 +767,7 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 				FinishFrameLocked(*frame, "failed", "desktop_source_unavailable");
 				return;
 			}
-			if (!StagePlane(*frame, 0, texture.get(), { 0.f, 0.f, 1.f, 1.f }, vr::ColorSpace_Gamma, desktop.uiExcluded)) {
+			if (!StagePlane(*frame, 0, texture.get(), { 0.f, 0.f, 1.f, 1.f }, vr::ColorSpace_Gamma, true, desktop.uiExcluded)) {
 				FinishFrameLocked(*frame, "dropped", "readback_memory_limit");
 				return;
 			}
