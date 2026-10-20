@@ -188,6 +188,9 @@ private:
 	/** @brief Fills a pass's touch capsules with the interactors near a mesh, and the camera offsets the shader needs to place them. */
 	void FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry);
 
+	/** @brief True while touch deformation or the Show Touch Edges tint is on, so the capsules are gathered and selected for either. */
+	[[nodiscard]] bool IsTouchActive() const { return settings.TouchStrength > 0.0f || settings.ShowTouchEdges; }
+
 	void BeginOverlayPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, const FrameBody& a_body);
 	void BindPass(const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView);
 	const DepthStates* GetDepthStates(ID3D11DepthStencilState* a_source);

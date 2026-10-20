@@ -569,7 +569,7 @@ void FurShells::Reset()
 	lastTouchNearestGap = touchNearestGap;
 	touchNearestGap = FLT_MAX;
 	maxTouchPerPass = 0;
-	if (settings.TouchStrength > 0.0f && lastPassCount > 0)
+	if (IsTouchActive() && lastPassCount > 0)
 		interactors.Update(TouchActorRange);
 	else
 		interactors.Clear();
@@ -817,7 +817,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 {
 	std::array<FurInteractors::Capsule, FurInteractors::MaxCapsulesPerPass> touches;
-	const size_t count = settings.TouchStrength > 0.0f ?
+	const size_t count = IsTouchActive() ?
 	                         interactors.Select(a_geometry->worldBound.center, a_geometry->worldBound.radius, TouchReach, GetWearer(a_geometry), touches, touchNearestGap) :
 	                         0;
 	maxTouchPerPass = std::max(maxTouchPerPass, static_cast<uint32_t>(count));
