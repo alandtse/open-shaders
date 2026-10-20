@@ -7,6 +7,8 @@
 #include "Utils/HiggsInterface.h"
 #include "Utils/SkinnedMesh.h"
 
+#include <Tracy/Tracy.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -386,6 +388,7 @@ namespace Util::BodyCapsules
 		const uint32_t frame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		if (!updateLatch.TryAdvance(frame))
 			return;
+		ZoneScopedN("BodyCapsules::Update");
 		if (frame != lastUpdateFrame + 1)
 			previousCenters.clear();
 		lastUpdateFrame = frame;

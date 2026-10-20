@@ -4,6 +4,8 @@
 #include "Utils/ActorUtils.h"
 #include "Utils/SkinnedMesh.h"
 
+#include <Tracy/Tracy.hpp>
+
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -102,6 +104,7 @@ namespace FurInteractors
 
 	size_t Memory::Nearest(const RE::BSGeometry* a_geometry, std::span<const Capsule> a_candidates, std::span<Capsule> a_out)
 	{
+		ZoneScopedN("FurShells::Nearest");
 		const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 		if (!skin) {
 			const size_t keep = std::min(a_out.size(), a_candidates.size());
@@ -141,6 +144,7 @@ namespace FurInteractors
 
 	size_t Memory::Remember(const RE::BSGeometry* a_geometry, float a_furLength, size_t a_count, std::array<Capsule, MaxCapsulesPerPass>& a_capsules)
 	{
+		ZoneScopedN("FurShells::Remember");
 		const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 		if (!skin || a_furLength <= 0.0f)
 			return a_count;

@@ -12,6 +12,8 @@
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 
+#include <Tracy/Tracy.hpp>
+
 #define I18N_KEY_PREFIX "feature.fur_shells."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -875,6 +877,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 
 void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 {
+	ZoneScopedN("FurShells::FillTouch");
 	std::array<FurInteractors::Capsule, FurInteractors::MaxCapsulesPerPass> touches;
 	size_t count = 0;
 	if (IsTouchActive()) {
