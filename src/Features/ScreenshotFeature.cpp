@@ -932,6 +932,9 @@ void ScreenshotFeature::ProcessCaptureRequest()
 {
 	if (sequenceCapture)
 		sequenceCapture->Tick(loaded);
+#ifdef DEVBENCH_BRIDGE_ENABLED
+	burstAdapter.Tick([this](const json& a_request) { return HandleSequenceRequest(a_request); });
+#endif
 	std::optional<CaptureRequest> request;
 	bool stillRequested = false;
 	{
@@ -982,6 +985,18 @@ json ScreenshotFeature::HandleSequenceRequest(const json& request)
 }
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
+bool ScreenshotFeature::StartBurst(OS::Capture::Burst::Request request, OS::Capture::Burst::Adapter::Notify a_progress, OS::Capture::Burst::Adapter::Notify a_finished, uint64_t& a_runId, std::string& a_error)
+{
+	return burstAdapter.Start(
+		std::move(request), globals::game::isVR, [this](const json& a_request) { return HandleSequenceRequest(a_request); },
+		std::move(a_progress), std::move(a_finished), a_runId, a_error);
+}
+
+std::optional<OS::Capture::Burst::Status> ScreenshotFeature::GetBurstStatus(uint64_t a_runId) const
+{
+	return burstAdapter.GetStatus(a_runId);
+}
+
 json ScreenshotFeature::HandleReferenceCapture(const json& request, std::function<void(const json&)> completion)
 {
 	std::lock_guard lock(pendingRequestMutex);

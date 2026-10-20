@@ -2,6 +2,9 @@
 
 #include "Feature.h"
 #include "Utils/Subrect.h"
+#ifdef DEVBENCH_BRIDGE_ENABLED
+#	include "Features/Screenshot/BurstAdapter.h"
+#endif
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -78,6 +81,14 @@ struct ScreenshotFeature : public Feature
 #ifdef DEVBENCH_BRIDGE_ENABLED
 	/** Supplies DevBench's registered golden-reference capture provider. */
 	json HandleReferenceCapture(const json& request, std::function<void(const json&)> completion);
+	/**
+	 * @brief Starts a DevBench `capture` burst on the native sequence engine; the frames land as <prefix>_NNNN.png in
+	 *        request.outputDir with a manifest beside them. a_progress and a_finished run on the render thread.
+	 * @return False with a reason in a_error when the burst cannot start.
+	 */
+	bool StartBurst(OS::Capture::Burst::Request request, OS::Capture::Burst::Adapter::Notify a_progress, OS::Capture::Burst::Adapter::Notify a_finished, uint64_t& a_runId, std::string& a_error);
+	/** @return The latest burst's status when a_runId names it. */
+	[[nodiscard]] std::optional<OS::Capture::Burst::Status> GetBurstStatus(uint64_t a_runId) const;
 #endif
 	/** Stops frame scheduling when the feature is disabled. */
 	void OnRuntimeDisabled() override;
@@ -95,6 +106,9 @@ struct ScreenshotFeature : public Feature
 	std::atomic<bool> captureRequested{ false };
 
 private:
+#ifdef DEVBENCH_BRIDGE_ENABLED
+	OS::Capture::Burst::Adapter burstAdapter;
+#endif
 	const std::unique_ptr<ScreenshotSequenceCapture> sequenceCapture;
 	int sequenceFrameCount;
 	int sequenceIntervalFrames = 1;

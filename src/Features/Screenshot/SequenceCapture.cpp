@@ -558,7 +558,7 @@ struct ScreenshotSequenceCapture::Impl : std::enable_shared_from_this<Impl>
 		const auto region = OS::Capture::ResolveBounds(source.Width, source.Height, bounds);
 		if (!region || !SupportedFormat(source.Format) || source.SampleDesc.Count != 1 || source.ArraySize != 1 ||
 			(colorSpace != vr::ColorSpace_Auto && colorSpace != vr::ColorSpace_Gamma))
-			throw std::runtime_error("source must be a single-sample SDR RGBA8/BGRA8 texture with valid eye bounds");
+			throw std::runtime_error(std::format("source must be a single-sample SDR RGBA8/BGRA8 texture with valid eye bounds (format {}, {}x{}, samples {}, array {})", static_cast<int>(source.Format), source.Width, source.Height, source.SampleDesc.Count, source.ArraySize));
 #ifdef DEVBENCH_BRIDGE_ENABLED
 		const auto& burst = frame.session->schedule.plan.burst;
 		const auto copies = burst ? burst.Copies(region->width, region->height, region->flipX, region->flipY) : std::vector<ScreenshotBurst::Copy>{};
