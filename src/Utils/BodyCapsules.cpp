@@ -99,7 +99,7 @@ namespace Util::BodyCapsules
 
 	void Tracker::FitRadii(RE::Actor* a_player)
 	{
-		// Which hand bone a skin bone is, matched by name because armor can be skinned to a different copy of the skeleton: side * HandNodeCount + node index.
+		// Matched by name because armor can be skinned to a different copy of the skeleton.
 		std::unordered_map<std::string, size_t> slotOfName;
 		for (size_t side = 0; side < handNodes.size(); ++side) {
 			for (size_t index = 0; index < HandNodeCount; ++index)
@@ -107,7 +107,6 @@ namespace Util::BodyCapsules
 		}
 
 		const auto segmentEnd = [&](size_t a_side, size_t a_index) -> std::optional<float3> {
-			// Bone-space end of the segment a bone's capsule covers: toward its child joint, or past the last joint for the fingertip.
 			const auto& nodes = handNodes[a_side].nodes;
 			const bool distal = a_index != 0 && (a_index - 1) % JointsPerFinger == JointsPerFinger - 1;
 			const RE::NiAVObject* source = nodes[a_index].get();
@@ -131,14 +130,13 @@ namespace Util::BodyCapsules
 				return;
 			const auto* skin = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 
-			// Per skin bone: the hand slot it drives, if any.
-			std::vector<std::optional<size_t>> slots(skin->numMatrices);
+			std::vector<std::optional<size_t>> handSlotOfBone(skin->numMatrices);
 			for (uint32_t bone = 0; bone < skin->numMatrices; ++bone) {
 				const RE::NiAVObject* boneNode = skin->bones[bone];
 				if (!boneNode || !boneNode->name.c_str())
 					continue;
 				if (const auto found = slotOfName.find(boneNode->name.c_str()); found != slotOfName.end())
-					slots[bone] = found->second;
+					handSlotOfBone[bone] = found->second;
 			}
 
 			std::array<std::vector<float>, 2 * HandNodeCount> distances;
@@ -146,11 +144,11 @@ namespace Util::BodyCapsules
 			bool touched = false;
 			for (const Util::SkinnedVertex& vertex : vertices) {
 				const auto dominant = Util::DominantBone(vertex);
-				if (!dominant || !slots[*dominant])
+				if (!dominant || !handSlotOfBone[*dominant])
 					continue;
 				const uint16_t skinBone = *dominant;
 
-				const size_t handSlot = *slots[skinBone];
+				const size_t handSlot = *handSlotOfBone[skinBone];
 				const auto end = segmentEnd(handSlot / HandNodeCount, handSlot % HandNodeCount);
 				if (!end)
 					continue;
@@ -159,7 +157,6 @@ namespace Util::BodyCapsules
 				const float3 point = ToFloat3(skinToBone * vertex.position);
 				const bool distal = handSlot % HandNodeCount != 0 && (handSlot % HandNodeCount - 1) % JointsPerFinger == JointsPerFinger - 1;
 				const float along = point.Dot(*end) / std::max(end->LengthSquared(), 1e-4f);
-				// A fingertip's radius is measured to the open ray, so vertices past the joint count toward its length instead.
 				const float t = distal ? std::max(along, 0.0f) : std::clamp(along, 0.0f, 1.0f);
 				distances[handSlot].push_back((point - *end * t).Length());
 				if (distal)
