@@ -103,6 +103,7 @@ add_executable(cpp_tests
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
 	test_furshellassetscan.cpp
+	test_furinertiaspring.cpp
 	test_region.cpp
 	test_bound_points.cpp
 	test_region_overlay.cpp

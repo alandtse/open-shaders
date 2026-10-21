@@ -321,13 +321,16 @@ VS_OUTPUT main(VS_INPUT input)
 #	if defined(FUR_SHELLS)
 	const float furDroop = min(FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 #		if defined(SKINNED)
-	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
+	const float3 furWorldVector = mul((float3x3)worldMatrix, furNormal);
 #		else
-	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
+	const float3 furWorldVector = mul((float3x3)World[eyeIndex], furNormal);
 #		endif
+	const float furWorldScale = length(furWorldVector);
+	const float3 furWorldNormal = furWorldVector / max(furWorldScale, 1e-6);
 	float3 furTouchDebug;
 	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furWorldNormal, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
-	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell) + furTouch;
+	const float3 furBend = FurShells::LimitBend(FurShells::GetWindDisplacement(furWorldNormal, furShell) + FurShells::GetInertiaDisplacement(furShell, GetFurWet()), furShell, FurShells::GetWetLength(GetFurWet()), furWorldScale);
+	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + furBend + furTouch;
 	worldPosition.xyz += furDisplacement;
 	previousWorldPosition.xyz += furDisplacement;
 #		if defined(SKINNED)
