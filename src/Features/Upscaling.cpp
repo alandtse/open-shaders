@@ -657,6 +657,7 @@ namespace
 	}
 }
 
+/** @brief Registers upscaling, frame-generation, and input-pacing commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("setGameplayFPSLimit",
@@ -704,6 +705,7 @@ void Upscaling::RegisterUxActions()
 		CalibrateNeuralCrop);
 }
 
+/** @brief Applies the gameplay or menu Anti-Lag FPS limit immediately before input polling. */
 void Upscaling::OnBeforeInputPoll()
 {
 	if (!d3d12SwapChainActive || dx12SwapChain.useDLSSG)
@@ -717,6 +719,7 @@ void Upscaling::OnBeforeInputPoll()
 	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && frameGeneration);
 }
 
+/** @brief Draws upscaler selection, quality, sharpening, and restart-dependent configuration. */
 void Upscaling::DrawSettings()
 {
 	ApplyOpenCompositeUpscalingBlocker();
@@ -944,6 +947,7 @@ void Upscaling::DrawUpscalingSettings()
 	}
 }
 
+/** @brief Draws frame-generation controls, gameplay FPS limits, and menu-generation policy. */
 void Upscaling::DrawFrameGenerationSettings()
 {
 	ImGui::PushTextWrapPos(0.0f);
@@ -1252,6 +1256,7 @@ void Upscaling::SaveSettings(json& o_json)
 	}
 }
 
+/** @brief Loads upscaling settings, migrates legacy selections, and validates supported options. */
 void Upscaling::LoadSettings(json& o_json)
 {
 	// Pull FoveatedRender's nested block first so its absence doesn't fail the
@@ -2449,6 +2454,7 @@ bool Upscaling::CopySharedD3D12Resources()
 	return true;
 }
 
+/** @brief Prepares neutral guides and UI routing for eligible frames without a world pass. */
 void Upscaling::PrepareMenuFrameGeneration()
 {
 	if (frameGenerationSceneVisited || frameGenerationPrepared || !ShouldPrepareFrameGeneration() || UsesDLSSGFrameGen())
@@ -3443,6 +3449,7 @@ void Upscaling::MenuManagerDrawInterfaceStartHook::thunk(int64_t a1)
 	func(a1);
 }
 
+/** @brief Runs the upscaling postprocessing hook and records that the frame contains a world pass. */
 void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32_t a3, RE::RENDER_TARGET a_target, void* a_4, bool a_5)
 {
 	auto& postProcessing = globals::features::postProcessing;

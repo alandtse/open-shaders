@@ -515,6 +515,7 @@ void FeatureListRenderer::RenderEditorColumns(const std::vector<MenuFuncInfo>& m
 	ImGui::EndTable();
 }
 
+/** @brief Builds the feature navigation list, including available feature-provided upscaling tabs. */
 std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuList(
 	const std::function<void()>& drawGeneralSettings,
 	const std::function<void()>& drawAdvancedSettings)

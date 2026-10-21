@@ -7,6 +7,7 @@ struct ID3D11Texture2D;
 /** @brief Optional indirect-lighting reconstruction provider; callers retain ownership of inputs. */
 struct LightingReconstruction
 {
+	/** @brief Allows providers to release their own resources through the service interface. */
 	virtual ~LightingReconstruction() = default;
 	/** @brief Reports whether indirect-specular reconstruction is available. */
 	virtual bool CanDispatchRayRegeneration() const = 0;

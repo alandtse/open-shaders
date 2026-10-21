@@ -88,6 +88,7 @@ float GetVisibilityFunctionSmithJointApprox(float roughness, float NdotV, float 
 	return vis > 0 ? (0.5 / vis) : 0;
 }
 
+/** @brief Computes AO, indirect-lighting coefficients, and noisy specular radiance with RR hit distance. */
 void CalculateGI(
 	uint2 dtid, float2 uv, float viewspaceZ, float3 viewspaceNormal,
 	out float o_ao, out sh2 o_currY, out float2 o_currCoCg, out float4 o_currGIAOSpecular, out float4 o_rrSpecular)
@@ -398,6 +399,7 @@ void CalculateGI(
 	o_rrSpecular = float4(radianceSpecular, rrHitWeight > 1e-6 ? rrHitDistanceWeighted / rrHitWeight : -1.0);
 }
 
+/** @brief Evaluates screen-space ambient occlusion and enabled diffuse or specular indirect lighting. */
 [numthreads(8, 8, 1)] void main(const uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(OUT_FRAME_DIM)))
 		return;

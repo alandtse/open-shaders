@@ -11,6 +11,7 @@ extern ffxFunctions ffxModule;
 
 namespace
 {
+	/** @brief Builds a single-mip interop texture descriptor with the requested extent and bindings. */
 	D3D11_TEXTURE2D_DESC SharedDesc(ID3D11Texture2D* source, uint32_t width, uint32_t height, UINT bind)
 	{
 		D3D11_TEXTURE2D_DESC d{};
@@ -27,12 +28,14 @@ namespace
 		return d;
 	}
 
+	/** @brief Deletes an owned wrapped resource and clears its pointer. */
 	void DeleteWrapped(WrappedResource*& p)
 	{
 		delete p;
 		p = nullptr;
 	}
 
+	/** @brief Converts an engine shader matrix to FidelityFX row-major matrix storage. */
 	FfxApiMatrix4x4 ToFfxMatrix(const Matrix& source)
 	{
 		// Skyrim's frame CB is consumed by HLSL; transpose to the row-major/row-vector
@@ -44,6 +47,7 @@ namespace
 		return out;
 	}
 
+	/** @brief Calls the denoiser provider behind an SEH boundary and reports provider faults. */
 	ffxReturnCode_t DispatchDenoiserProtected(ffxContext* context, const ffxDispatchDescHeader* desc, bool& faulted)
 	{
 		// Keep SEH in a leaf function with no C++ objects requiring unwinding; MSVC
@@ -61,6 +65,7 @@ namespace
 
 namespace
 {
+	/** @brief Allocates a named default-heap NRC buffer with unordered-access support. */
 	bool CreateRadianceCacheBuffer(
 		ID3D12Device* device,
 		uint64_t elementCount,
@@ -108,6 +113,7 @@ namespace
 }
 namespace
 {
+	/** @brief Allocates and initializes the persistent upload buffer for NRC sample counters. */
 	bool CreateRadianceCacheUploadBuffer(
 		ID3D12Device* device,
 		winrt::com_ptr<ID3D12Resource>& resource)
@@ -159,6 +165,7 @@ namespace
 }
 namespace
 {
+	/** @brief Allocates a named NRC upload or readback buffer in the requested heap and state. */
 	bool CreateRadianceCacheStagingBuffer(
 		ID3D12Device* device,
 		uint64_t size,
@@ -201,6 +208,7 @@ namespace
 		return true;
 	}
 }
+/** @brief Allocates the bounded NRC buffer set while honoring the provider failure latch. */
 bool FidelityFX::EnsureRadianceCacheBuffers()
 {
 	if (radianceCacheFailureLatched)
@@ -328,6 +336,7 @@ bool FidelityFX::EnsureRadianceCacheBuffers()
 		return false;
 	}
 }
+/** @brief Polls NRC completion without waiting and submits new batches only after shared buffers are free. */
 bool FidelityFX::DispatchRadianceCacheCapturedInference(
 	const float* a_inputValues,
 	const uint32_t* a_sourceQueryIndices,
@@ -848,11 +857,13 @@ bool FidelityFX::DispatchRadianceCacheCapturedInference(
 		return false;
 	}
 }
+/** @brief Queues an NRC reset for the next successfully submitted cache batch. */
 void FidelityFX::RequestRadianceCacheReset()
 {
 	radianceCacheResetPending.store(true);
 }
 
+/** @brief Retires NRC GPU work before releasing provider resources, preserving them on timeout. */
 void FidelityFX::ResetRadianceCache()
 {
 	if (radianceCacheLastFenceValue != 0 && runtimeFence.fence12) {
@@ -892,6 +903,7 @@ void FidelityFX::ResetRadianceCache()
 	radianceCacheResetPending.store(false);
 }
 
+/** @brief Creates or reuses the NRC provider context unless its session failure latch is set. */
 bool FidelityFX::EnsureRadianceCacheContext()
 {
 	if (radianceCacheFailureLatched)
@@ -942,6 +954,7 @@ bool FidelityFX::EnsureRadianceCacheContext()
 	return true;
 }
 
+/** @brief Retires indirect-specular RR GPU work before releasing its context and wrapped textures. */
 void FidelityFX::ResetRayRegeneration()
 {
 	// Denoiser contexts own GPU resources referenced by the last dispatch.  AMD's
@@ -977,6 +990,7 @@ void FidelityFX::ResetRayRegeneration()
 	DeleteWrapped(rrSharedOutput);
 }
 
+/** @brief Ensures indirect-specular RR context and shared textures match the requested render extent. */
 bool FidelityFX::EnsureRayRegenerationResources(ID3D11Texture2D* signal, ID3D11Texture2D* depth, ID3D11Texture2D* motion,
 	ID3D11Texture2D* normal, ID3D11Texture2D* specAlbedo, ID3D11Texture2D* diffAlbedo, ID3D11Texture2D* output,
 	uint32_t width, uint32_t height)
@@ -1034,6 +1048,7 @@ bool FidelityFX::EnsureRayRegenerationResources(ID3D11Texture2D* signal, ID3D11T
 	}
 }
 
+/** @brief Reconstructs indirect specular and copies the synchronized result into the borrowed D3D11 output. */
 bool FidelityFX::DispatchRayRegeneration(ID3D11Texture2D* signal, ID3D11Texture2D* depth, ID3D11Texture2D* motion,
 	ID3D11Texture2D* normal, ID3D11Texture2D* specAlbedo, ID3D11Texture2D* diffAlbedo, ID3D11Texture2D* output,
 	uint32_t width, uint32_t height, bool resetHistory)
@@ -1152,6 +1167,7 @@ bool FidelityFX::DispatchRayRegeneration(ID3D11Texture2D* signal, ID3D11Texture2
 	}
 }
 
+/** @brief Retires reflection RR GPU work before releasing its dedicated context and wrapped textures. */
 void FidelityFX::ResetReflectionRayRegeneration()
 {
 	// Denoiser contexts own GPU resources referenced by the last dispatch.  AMD's
@@ -1187,6 +1203,7 @@ void FidelityFX::ResetReflectionRayRegeneration()
 	DeleteWrapped(reflectionRRSharedOutput);
 }
 
+/** @brief Ensures the dedicated reflection RR context and shared textures match the requested extent. */
 bool FidelityFX::EnsureReflectionRayRegenerationResources(ID3D11Texture2D* signal, ID3D11Texture2D* depth, ID3D11Texture2D* motion,
 	ID3D11Texture2D* normal, ID3D11Texture2D* specAlbedo, ID3D11Texture2D* diffAlbedo, ID3D11Texture2D* output,
 	uint32_t width, uint32_t height)
@@ -1244,6 +1261,7 @@ bool FidelityFX::EnsureReflectionRayRegenerationResources(ID3D11Texture2D* signa
 	}
 }
 
+/** @brief Reconstructs reflections with a dedicated RR context and copies the synchronized result to D3D11. */
 bool FidelityFX::DispatchReflectionRayRegeneration(ID3D11Texture2D* signal, ID3D11Texture2D* depth, ID3D11Texture2D* motion,
 	ID3D11Texture2D* normal, ID3D11Texture2D* specAlbedo, ID3D11Texture2D* diffAlbedo, ID3D11Texture2D* output,
 	uint32_t width, uint32_t height, bool resetHistory)

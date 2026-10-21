@@ -1737,6 +1737,7 @@ namespace
 
 namespace DevBenchBridge
 {
+	/** @brief Registers devbench tools and feature commands with the remote-control bridge. */
 	void Install()
 	{
 		auto* dvb = DevBenchAPI::GetDevBenchInterface001();

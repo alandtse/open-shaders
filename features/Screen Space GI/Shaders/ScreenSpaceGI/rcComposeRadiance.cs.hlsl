@@ -12,6 +12,7 @@ RWTexture2D<float4> outCombined : register(u0);
 static const uint RC_BACKING_GRID_SIZE = 64u;
 
 // Zero disables NRC contribution while preserving the selected output mode.
+/** @brief Interpolates valid NRC predictions and composes radiance while preserving RR hit distance. */
 [numthreads(8, 8, 1)] void main(uint3 dtid : SV_DispatchThreadID) {
 	uint2 frameDim = max(uint2(1u, 1u), uint2(OUT_FRAME_DIM));
 

@@ -14,6 +14,7 @@ RWTexture2D<float4> outNormalRoughness : register(u2);
 RWTexture2D<float4> outSpecularAlbedo : register(u3);
 RWTexture2D<float4> outDiffuseAlbedo : register(u4);
 
+/** @brief Builds current-frame RR depth, three-component motion, normals, and material feature maps. */
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(OUT_FRAME_DIM)))
 		return;

@@ -850,6 +850,7 @@ bool HDRDisplay::IsFGCompositingThisFrame() const
 	return upscaling.ShouldUseFrameGenerationThisFrame() && !upscaling.UsesDLSSGFrameGen();
 }
 
+/** @brief Selects UI-buffer routing for HDR and frame-generation presentation. */
 HDRDisplay::D3D12UIBufferMode HDRDisplay::GetD3D12UIBufferMode()
 {
 	D3D12UIBufferMode mode;

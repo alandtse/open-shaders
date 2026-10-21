@@ -671,6 +671,7 @@ struct BSShaderRenderTargets_Create
 
 struct BSInputDeviceManager_BeforeInputPoll
 {
+	/** @brief Invokes loaded features before polling engine input devices, then forwards to the engine. */
 	static void thunk(RE::BSInputDeviceManager* a_this, float a_secsSinceLastFrame)
 	{
 		Feature::ForEachLoadedFeature("OnBeforeInputPoll", [](Feature* feature) { feature->OnBeforeInputPoll(); });

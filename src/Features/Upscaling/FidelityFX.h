@@ -53,18 +53,28 @@ public:
 	bool featureRadianceCache = false;
 	bool radianceCacheFailureLatched = false;
 	bool rayRegenerationFailureLatched = false;
+	/** @brief Reports RR provider availability after accounting for its session failure latch. */
 	bool CanDispatchRayRegeneration() const override
 	{
 		return featureRayRegeneration && !rayRegenerationFailureLatched;
 	}
+	/** @brief Returns the number of successful RR dispatches recorded while diagnostics are enabled. */
 	uint64_t GetRayRegenerationSuccessfulDispatches() const { return rayRegenerationSuccessfulDispatches; }
+	/** @brief Returns the number of failed RR dispatches recorded while diagnostics are enabled. */
 	uint64_t GetRayRegenerationFailedDispatches() const { return rayRegenerationFailedDispatches; }
+	/** @brief Returns the RR history-reset count recorded while diagnostics are enabled. */
 	uint64_t GetRayRegenerationHistoryResets() const { return rayRegenerationHistoryResets; }
+	/** @brief Returns the width of the allocated indirect-specular RR context. */
 	uint32_t GetRayRegenerationWidth() const { return rayRegenerationWidth; }
+	/** @brief Returns the height of the allocated indirect-specular RR context. */
 	uint32_t GetRayRegenerationHeight() const { return rayRegenerationHeight; }
+	/** @brief Returns successful reflection RR dispatches recorded while diagnostics are enabled. */
 	uint64_t GetReflectionRayRegenerationSuccessfulDispatches() const { return reflectionRayRegenerationSuccessfulDispatches; }
+	/** @brief Returns failed reflection RR dispatches recorded while diagnostics are enabled. */
 	uint64_t GetReflectionRayRegenerationFailedDispatches() const { return reflectionRayRegenerationFailedDispatches; }
+	/** @brief Returns the width of the allocated reflection RR context. */
 	uint32_t GetReflectionRayRegenerationWidth() const { return reflectionRayRegenerationWidth; }
+	/** @brief Returns the height of the allocated reflection RR context. */
 	uint32_t GetReflectionRayRegenerationHeight() const { return reflectionRayRegenerationHeight; }
 	bool isFrameGenActive = false;
 
@@ -186,11 +196,14 @@ public:
 	bool DispatchRayRegeneration(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
 		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
 		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory) override;
+	/** @brief Retires pending GPU work before releasing the indirect-specular RR context and shared resources. */
 	void ResetRayRegeneration();
 
 	/** Create the FidelityFX Radiance Cache 0.9 context through the shared DX12 runtime bridge. */
 	bool EnsureRadianceCacheContext() override;
+	/** @brief Creates or reuses the NRC inference, training, upload, and readback buffers. */
 	bool EnsureRadianceCacheBuffers();
+	/** @brief Polls completed NRC output; a_outputSubmitted is true only when a new batch is submitted. */
 	bool DispatchRadianceCacheCapturedInference(
 		const float* a_inputValues,
 		const uint32_t* a_sourceQueryIndices,
@@ -203,18 +216,23 @@ public:
 		uint32_t* a_outputSampleCount,
 		bool* a_outputReady,
 		bool* a_outputSubmitted) override;
-	void RequestRadianceCacheReset() override;  // Reset NRC state on the next Radiance Cache dispatch.
+	/** @brief Requests an NRC reset on the next successfully submitted cache batch. */
+	void RequestRadianceCacheReset() override;
+	/** @brief Enables or disables RR and radiance-cache diagnostic counters. */
 	void SetRRDiagnosticsEnabled(bool a_enabled) override { rrDiagnosticsEnabled = a_enabled; }
+	/** @brief Sets the learning rate and weight smoothing used by subsequent NRC training batches. */
 	void SetRadianceCacheTrainingParameters(float a_learningRate, float a_weightSmoothing) override
 	{
 		radianceCacheLearningRate = a_learningRate;
 		radianceCacheWeightSmoothing = a_weightSmoothing;
 	}
+	/** @brief Releases NRC resources after GPU retirement, preserving them if retirement times out. */
 	void ResetRadianceCache();
 	/** @brief Dispatches a history-independent RR context dedicated to engine screen-space reflections. */
 	bool DispatchReflectionRayRegeneration(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
 		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
 		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory);
+	/** @brief Retires pending GPU work before releasing the reflection RR context and shared resources. */
 	void ResetReflectionRayRegeneration();
 	bool UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
@@ -222,12 +240,16 @@ public:
 		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness, bool a_forceHostPath = false);
 
 	// Asynchronous NRC inference diagnostics.
+	/** @brief Reports whether a submitted NRC batch still owns the shared upload and readback buffers. */
 	bool GetRadianceCacheCapturedInferencePending() const { return radianceCacheCapturedInferencePending; }
+	/** @brief Returns the fence value protecting the pending NRC inference batch. */
 	uint64_t GetRadianceCacheCapturedInferenceFence() const { return radianceCacheCapturedInferenceFence; }
+	/** @brief Polls the completed runtime fence value without waiting; returns zero if no fence exists. */
 	uint64_t GetRadianceCacheCompletedRuntimeFence() const
 	{
 		return runtimeFence.fence12 ? runtimeFence.fence12->GetCompletedValue() : 0;
 	}
+	/** @brief Returns diagnostic polls that observed the NRC batch still in flight. */
 	uint32_t GetRadianceCacheCapturedInferencePollCount() const { return radianceCacheCapturedInferencePollCount; }
 
 private:
@@ -348,6 +370,7 @@ private:
 	WrappedResource* rrSharedSpecularAlbedo = nullptr;
 	WrappedResource* rrSharedDiffuseAlbedo = nullptr;
 	WrappedResource* rrSharedOutput = nullptr;
+	/** @brief Creates or reuses indirect-specular RR context and interop textures for the requested extent. */
 	bool EnsureRayRegenerationResources(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
 		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
 		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height);
@@ -365,6 +388,7 @@ private:
 	WrappedResource* reflectionRRSharedSpecularAlbedo = nullptr;
 	WrappedResource* reflectionRRSharedDiffuseAlbedo = nullptr;
 	WrappedResource* reflectionRRSharedOutput = nullptr;
+	/** @brief Creates or reuses a dedicated reflection RR context and interop textures for the requested extent. */
 	bool EnsureReflectionRayRegenerationResources(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
 		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
 		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height);

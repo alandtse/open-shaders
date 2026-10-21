@@ -14,6 +14,7 @@
 
 namespace
 {
+	/** @brief Returns the first loaded feature offering a lighting-reconstruction provider, or nullptr. */
 	LightingReconstruction* GetLightingReconstructionProvider()
 	{
 		for (auto* feature : Feature::GetFeatureList()) {
@@ -105,6 +106,7 @@ bool ScreenSpaceGI::MatchesPerformanceProfile(PerfProfile profile) const
 	return settings.EnableExperimentalSpecularGI || settings.UseStereoReproject == ProfileEnablesReproject(profile);
 }
 
+/** @brief Draws RR and radiance-cache controls with their current runtime eligibility. */
 void ScreenSpaceGI::DrawRedstoneSettings()
 {
 	const auto& palette = globals::menu->GetTheme().StatusPalette;
@@ -650,6 +652,7 @@ void ScreenSpaceGI::DrawSettings()
 	}
 }
 
+/** @brief Loads SSGI settings, applies legacy migrations, and validates supported ranges. */
 void ScreenSpaceGI::LoadSettings(json& o_json)
 {
 	const auto previousShaderConfiguration = std::tuple{
@@ -707,6 +710,7 @@ void ScreenSpaceGI::PostPostLoad()
 	MenuOpenCloseEventHandler::Register();
 }
 
+/** @brief Allocates the active SSGI resource profile and compiles its compute shaders. */
 void ScreenSpaceGI::SetupResources()
 {
 	auto renderer = globals::game::renderer;
@@ -993,6 +997,7 @@ void ScreenSpaceGI::SetupResources()
 	CompileComputeShaders();
 }
 
+/** @brief Releases and recompiles SSGI compute shaders. */
 void ScreenSpaceGI::ClearShaderCache()
 {
 	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute, rrPrepareInputsCompute, rcCaptureInputCompute, rcComposeRadianceCompute, rrApplyOutputCompute });
@@ -1000,6 +1005,7 @@ void ScreenSpaceGI::ClearShaderCache()
 	CompileComputeShaders();
 }
 
+/** @brief Compiles SSGI passes for the active resolution, GI profile, and stereo mode. */
 void ScreenSpaceGI::CompileComputeShaders()
 {
 	struct ShaderCompileInfo
@@ -1066,6 +1072,7 @@ void ScreenSpaceGI::CompileComputeShaders()
 	recompileFlag = false;
 }
 
+/** @brief Reports whether every shader required by the active SSGI profile is available. */
 bool ScreenSpaceGI::ShadersOK()
 {
 	const bool baseShadersOK = texNoise &&
@@ -1084,6 +1091,7 @@ bool ScreenSpaceGI::ShadersOK()
 	return baseShadersOK && giShadersOK && vrShadersOK;
 }
 
+/** @brief Uploads current camera, GI, temporal-history, and radiance-cache domain constants. */
 void ScreenSpaceGI::UpdateSB()
 {
 	float2 res = HasGIResources() ?
@@ -1248,6 +1256,7 @@ void ScreenSpaceGI::UpdateSB()
 	ssgiCB->Update(data);
 }
 
+/** @brief Creates or reuses paired query and teacher staging resources for asynchronous capture. */
 bool ScreenSpaceGI::EnsureRadianceCacheCaptureResources()
 {
 	if (rcCaptureBuffer && rcCaptureUAV &&
@@ -1408,6 +1417,7 @@ bool ScreenSpaceGI::EnsureRadianceCacheCaptureResources()
 	return resourcesOK;
 }
 
+/** @brief Creates the sparse radiance-cache prediction texture when it is absent. */
 void ScreenSpaceGI::EnsureRadianceCacheOutputTexture()
 {
 	if (texRCRadiance)
@@ -1439,6 +1449,7 @@ void ScreenSpaceGI::EnsureRadianceCacheOutputTexture()
 	texRCRadiance->CreateSRV(rcRadianceSRVDesc);
 }
 
+/** @brief Polls or submits captured NRC batches and publishes predictions with their producing metadata. */
 void ScreenSpaceGI::ProcessRadianceCacheInference(
 	uint32_t a_gridSize,
 	uint32_t a_validCount,
@@ -1620,6 +1631,7 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 	ssgiCB->Update(*ssgiData);
 }
 
+/** @brief Runs SSGI reconstruction, asynchronous cache capture, optional RR, and output filtering. */
 void ScreenSpaceGI::DrawSSGI()
 {
 	auto context = globals::d3d::context;

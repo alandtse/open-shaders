@@ -11,6 +11,7 @@
 #include "Streamline.h"
 #include "Utils/D3D.h"
 
+/** @brief Drains queued presents before releasing Anti-Lag state, retaining it if draining fails. */
 DX12SwapChain::~DX12SwapChain()
 {
 	auto& fidelityFX = globals::features::upscaling.fidelityFX;
@@ -25,6 +26,7 @@ DX12SwapChain::~DX12SwapChain()
 	AMD::AntiLag2DX12::DeInitialize(&antiLag2Context);
 }
 
+/** @brief Initializes Anti-Lag on the persistent D3D12 device and records driver availability. */
 void DX12SwapChain::InitializeAntiLag2()
 {
 	const HRESULT hr = AMD::AntiLag2DX12::Initialize(&antiLag2Context, d3d12Device.get());
@@ -32,6 +34,7 @@ void DX12SwapChain::InitializeAntiLag2()
 	logger::info("[AntiLag2] Initialize hr=0x{:08X} available={}", static_cast<unsigned int>(hr), antiLag2Available);
 }
 
+/** @brief Updates Anti-Lag input pacing and applies the residual timer when required. */
 void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBackstop)
 {
 	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, true, fpsLimit) : E_NOINTERFACE;
@@ -46,6 +49,7 @@ void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBacks
 	}
 }
 
+/** @brief Publishes the Anti-Lag context and enabled state through the FSR swap-chain handshake. */
 void DX12SwapChain::PublishAntiLag2SwapChainData()
 {
 	struct AntiLag2Data
@@ -60,6 +64,7 @@ void DX12SwapChain::PublishAntiLag2SwapChainData()
 		logger::warn("[AntiLag2] FFX private-data handshake failed hr=0x{:08X}", static_cast<unsigned int>(hr));
 }
 
+/** @brief Marks rendering completion for Anti-Lag before the swap chain presents. */
 void DX12SwapChain::MarkAntiLag2EndOfFrame()
 {
 	if (!antiLag2Enabled)
@@ -69,6 +74,7 @@ void DX12SwapChain::MarkAntiLag2EndOfFrame()
 		logger::warn("[AntiLag2] End-of-frame marker failed hr=0x{:08X}", static_cast<unsigned int>(hr));
 }
 
+/** @brief Creates the presentation D3D12 device and queue, then initializes Anti-Lag. */
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
 	// Idempotent: the DLSS-G probe binds Streamline to this device; a second call from
@@ -259,6 +265,7 @@ void DX12SwapChain::CreateInterop()
 	RecreateWrappedResources(swapChainDesc);
 }
 
+/** @brief Recreates swap-chain interop resources and resets frame-generation guide state. */
 void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 {
 	D3D11_TEXTURE2D_DESC texDesc11{};
@@ -382,6 +389,7 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 	return S_OK;
 }
 
+/** @brief Presents through the active frame-generation backend with synchronized UI and Anti-Lag markers. */
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 {
 	auto& upscaling = globals::features::upscaling;

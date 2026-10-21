@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class RadianceCacheMetadataTests(unittest.TestCase):
     def test_delayed_capture_and_inference_ownership(self):
+        """Execute delayed readback, domain-reset, and batch-publication ownership scenarios."""
         source = (ROOT / "src/Features/ScreenSpaceGI.cpp").read_text(encoding="utf-8")
         backend = (ROOT / "src/Features/Upscaling/FidelityFX/RuntimeDenoiser.cpp").read_text(encoding="utf-8")
         dispatch = braced(backend, "bool FidelityFX::DispatchRadianceCacheCapturedInference(")
@@ -44,6 +45,7 @@ class RadianceCacheMetadataTests(unittest.TestCase):
         runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture)
 
     def test_backend_marks_submission_only_after_signal(self):
+        """Verify the submission flag is initialized before polling and set only after fence signaling."""
         backend = (ROOT / "src/Features/Upscaling/FidelityFX/RuntimeDenoiser.cpp").read_text(encoding="utf-8")
         dispatch = braced(backend, "bool FidelityFX::DispatchRadianceCacheCapturedInference(")
         self.assertEqual(dispatch.count("*a_outputSubmitted = true;"), 1)

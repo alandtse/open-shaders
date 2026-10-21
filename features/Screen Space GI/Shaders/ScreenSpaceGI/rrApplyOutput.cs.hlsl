@@ -1,6 +1,7 @@
 Texture2D<float4> RRDenoised : register(t0);
 RWTexture2D<float4> GiSpecular : register(u0);
 
+/** @brief Applies reconstructed specular radiance while retaining the SSGI visibility alpha. */
 [numthreads(8, 8, 1)] void main(uint3 dtid : SV_DispatchThreadID) {
 	uint w, h;
 	RRDenoised.GetDimensions(w, h);

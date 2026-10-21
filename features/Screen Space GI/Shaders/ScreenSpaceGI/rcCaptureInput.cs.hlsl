@@ -27,7 +27,7 @@ RWStructuredBuffer<RadianceCacheOutput> outRCTrainingTarget : register(u1);
 
 static const float PI = 3.14159265358979323846;
 
-// FidelityFX Radiance Cache spherical direction encoding.
+/** @brief Encodes a normalized world-space direction using the NRC spherical mapping. */
 float2 RCEncodeDirection(float3 v)
 {
 	v = normalize(v);
@@ -42,6 +42,7 @@ float2 RCEncodeDirection(float3 v)
 
 static const uint RC_CAPTURE_MAX_GRID_SIZE = 64u;
 
+/** @brief Captures normalized world-space NRC queries and their paired current-frame radiance targets. */
 [numthreads(8, 8, 1)] void main(uint3 dtid : SV_DispatchThreadID) {
 	uint gridSize = clamp(RadianceCacheGridSize, 1u, RC_CAPTURE_MAX_GRID_SIZE);
 

@@ -74,6 +74,7 @@ namespace
 	}
 }
 
+/** @brief Loads available FidelityFX runtime providers and records their supported capabilities. */
 void FidelityFX::LoadFFX()
 {
 	featureFSR3FG = false;

@@ -419,6 +419,7 @@ namespace
 	}
 }
 
+/** @brief Destroys FidelityFX contexts before releasing their shared runtime synchronization resources. */
 FidelityFX::~FidelityFX()
 {
 	// RR and Radiance Cache use the shared runtime D3D12 bridge.

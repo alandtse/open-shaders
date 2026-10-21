@@ -206,7 +206,10 @@ private:
 	bool antiLag2PrivateDataFailureLogged = false;
 	uint32_t antiLag2LastFPSLimit = UINT32_MAX;
 
+	/** @brief Initializes the Anti-Lag driver interface on the presentation device. */
 	void InitializeAntiLag2();
+	/** @brief Publishes the Anti-Lag context required by the FSR swap chain. */
 	void PublishAntiLag2SwapChainData();
+	/** @brief Signals the end of rendering to Anti-Lag before presentation. */
 	void MarkAntiLag2EndOfFrame();
 };

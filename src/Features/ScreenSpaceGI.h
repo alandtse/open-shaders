@@ -275,6 +275,7 @@ public:
 		return texRRSpecularInput ? texRRSpecularInput->resource.get() : nullptr;
 	}
 
+	/** @brief Returns the borrowed raw indirect-specular SRV, or nullptr when unavailable. */
 	inline ID3D11ShaderResourceView* GetRRSpecularInputSRV() const
 	{
 		return texRRSpecularInput ? texRRSpecularInput->srv.get() : nullptr;
@@ -290,6 +291,7 @@ public:
 		ID3D11Texture2D* diffuseAlbedo = nullptr;
 	};
 
+	/** @brief Returns borrowed RR inputs; linear depth refers to the recorded history slot. */
 	inline RRInputs GetRRInputs() const
 	{
 		return {
@@ -337,10 +339,14 @@ public:
 	// Automatic NRC inference cadence. Quality modes remain locked:
 	// Potato 16x16/2, Performance 32x32/2, Balanced 64x64/2, Quality 64x64/1.
 	uint32_t rcAutomaticFrameIndex = 0;
+	/** @brief Restarts the automatic radiance-cache capture frame counter. */
 	void ResetRadianceCacheAutomaticCadence() { rcAutomaticFrameIndex = 0; }
 
+	/** @brief Ensures paired query and teacher capture resources exist; returns false on allocation failure. */
 	bool EnsureRadianceCacheCaptureResources();
+	/** @brief Allocates the sparse radiance-cache prediction texture if needed. */
 	void EnsureRadianceCacheOutputTexture();
+	/** @brief Polls or submits captured NRC queries and publishes results with their producing grid and domain. */
 	void ProcessRadianceCacheInference(uint32_t a_gridSize, uint32_t a_validCount, uint32_t a_trainingCount);
 
 	// Persistent CPU working storage. Keeping this outside DrawSSGI avoids
