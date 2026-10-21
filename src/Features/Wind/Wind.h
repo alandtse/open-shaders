@@ -32,7 +32,6 @@ struct WindPermutationContribution
 	float treeLeafBaseWindFlutterGain;
 	uint32_t enableAmbientGrassWind;
 	float grassWindSensitivity;
-	float grassWindBendProfile;
 	float grassWindCompressionToBend;
 	float grassWindFlutterStrength;
 	float grassWindFlutterFrequency;

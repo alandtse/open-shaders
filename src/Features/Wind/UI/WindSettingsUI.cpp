@@ -489,7 +489,7 @@ void Wind::DrawGrassMeshRulesTable()
 	                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
 	                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
 	const float tableHeight = std::max(ImGui::GetContentRegionAvail().y, ImGui::GetTextLineHeightWithSpacing() * 5.0f);
-	if (!ImGui::BeginTable("##GrassMeshRules", 6, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 70.0f))
+	if (!ImGui::BeginTable("##GrassMeshRules", 5, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 70.0f))
 		return;
 	ImGui::TableSetupScrollFreeze(0, 1);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
@@ -497,7 +497,6 @@ void Wind::DrawGrassMeshRulesTable()
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_flutter"), "Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_flutter_tip_concentration"), "Flutter Tip Concentration"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
-	ImGui::TableSetupColumn(T(TKEY("grass_mesh_tip_flexibility"), "Tip Flexibility"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 18.0f);
 	ImGui::TableHeadersRow();
 
 	ImGuiListClipper clipper;
@@ -536,29 +535,6 @@ void Wind::DrawGrassMeshRulesTable()
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("grass_mesh_flutter_tip_concentration_tooltip"),
 					"Higher values concentrate flutter closer to the authored blade tip. This does not change broad wind bending."));
-			ImGui::TableSetColumnIndex(5);
-			bool useGlobalTipFlexibility = !behavior.tipFlexibility.has_value();
-			if (ImGui::Checkbox(T(TKEY("grass_mesh_use_global"), "Use Global"), &useGlobalTipFlexibility)) {
-				if (useGlobalTipFlexibility)
-					behavior.tipFlexibility.reset();
-				else
-					behavior.tipFlexibility = settings.grassWindBendProfile;
-				changed = true;
-			}
-			ImGui::SameLine();
-			ImGui::BeginDisabled(useGlobalTipFlexibility);
-			float tipFlexibility = behavior.tipFlexibility.value_or(settings.grassWindBendProfile);
-			ImGui::SetNextItemWidth(-1.0f);
-			if (ImGui::SliderFloat("##TipFlexibility", &tipFlexibility,
-					GrassWindSettings::kTipFlexibility.minimum, GrassWindSettings::kTipFlexibility.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp)) {
-				behavior.tipFlexibility = tipFlexibility;
-				changed = true;
-			}
-			ImGui::EndDisabled();
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_mesh_tip_flexibility_tooltip"),
-					"Uses the same broad-bend profile as global Tip Flexibility: zero follows vertex alpha linearly; one concentrates bending toward the tip using squared alpha. Use Global follows the overall grass setting."));
 			if (changed) {
 				(void)GrassWindPatcher::SetRule(ruleIndex, behavior);
 				uiState.grassWindSaveStatus.clear();
@@ -1012,7 +988,7 @@ void Wind::DrawGrassTransientSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_half_life_tooltip"),
 			"Time for the extra flutter amplitude to halve after an impulse stops driving it. This does not change the wind event's own duration."));
 	ImGui::TextWrapped("%s", T(TKEY("grass_transient_shared_settings"),
-								 "Maximum Bend Angle, Tip Flexibility, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
+		"Maximum Bend Angle, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
 }
 
 void Wind::DrawGrassWindSettings()
@@ -1062,10 +1038,6 @@ void Wind::DrawGrassWindSettings()
 		kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_maximum_tilt_tooltip"), "Limits how far a grass blade can lean from upright."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_bend_profile"), "Tip Flexibility"), &settings.grassWindBendProfile,
-		kGrassWindBendProfileMin, kGrassWindBendProfileMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero follows vertex alpha linearly; one concentrates bending toward the tip using squared alpha. Alpha-zero vertices always remain anchored."));
 	float compressionToBendPercent = settings.grassWindCompressionToBend * 100.0f;
 	if (ImGui::SliderFloat(T(TKEY("grass_wind_compression_to_bend"), "Downward Wind Bend Share"),
 			&compressionToBendPercent, kGrassWindCompressionToBendMin * 100.0f,
@@ -1145,7 +1117,7 @@ void Wind::DrawGrassWindSettings()
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
-			"Scales both ambient and transient blade flutter. Use Grass Impulse Flutter in Transients to adjust only the transient contribution."));
+			"Scales crosswind flutter carried by the spring bend. Motion smoothly approaches 10 degrees and fades near Maximum Bend Angle. Applies to ambient and transient flutter; Grass Impulse Flutter adjusts only impacts."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Travel Rate"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())

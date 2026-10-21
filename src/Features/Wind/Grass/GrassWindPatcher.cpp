@@ -69,10 +69,7 @@ namespace GrassWindPatcher
 		{
 			return ValuesDiffer(a_lhs.bendSensitivity, a_rhs.bendSensitivity) ||
 			       ValuesDiffer(a_lhs.flutterSensitivity, a_rhs.flutterSensitivity) ||
-			       ValuesDiffer(a_lhs.flutterTipConcentration, a_rhs.flutterTipConcentration) ||
-			       a_lhs.tipFlexibility.has_value() != a_rhs.tipFlexibility.has_value() ||
-			       (a_lhs.tipFlexibility && a_rhs.tipFlexibility &&
-					   ValuesDiffer(*a_lhs.tipFlexibility, *a_rhs.tipFlexibility));
+			       ValuesDiffer(a_lhs.flutterTipConcentration, a_rhs.flutterTipConcentration);
 		}
 
 		Behavior SanitizeBehavior(Behavior a_behavior)
@@ -83,13 +80,6 @@ namespace GrassWindPatcher
 				a_behavior.flutterSensitivity, GrassWindSettings::kFlutterSensitivity, 1.0f);
 			a_behavior.flutterTipConcentration = ClampFiniteOrDefault(
 				a_behavior.flutterTipConcentration, GrassWindSettings::kFlutterTipConcentration, 1.0f);
-			if (a_behavior.tipFlexibility) {
-				if (std::isfinite(*a_behavior.tipFlexibility))
-					a_behavior.tipFlexibility = std::clamp(*a_behavior.tipFlexibility,
-						GrassWindSettings::kTipFlexibility.minimum, GrassWindSettings::kTipFlexibility.maximum);
-				else
-					a_behavior.tipFlexibility.reset();
-			}
 			return a_behavior;
 		}
 
@@ -99,7 +89,7 @@ namespace GrassWindPatcher
 		}
 
 		void ReadBehavior(const nlohmann::json& a_json, Behavior& a_behavior,
-			const std::filesystem::path& a_path, std::string_view a_profile, int a_version)
+			const std::filesystem::path& a_path, std::string_view a_profile)
 		{
 			const auto read = [&](std::string_view a_key, float& a_value, const GrassWindSettings::Range& a_range) {
 				const auto it = a_json.find(a_key);
@@ -122,17 +112,8 @@ namespace GrassWindPatcher
 
 			read("bendSensitivity", a_behavior.bendSensitivity, GrassWindSettings::kBendSensitivity);
 			read("flutterSensitivity", a_behavior.flutterSensitivity, GrassWindSettings::kFlutterSensitivity);
-			read(a_version == kLegacySettingsVersion ? "tipFlexibility" : "flutterTipConcentration",
+			read("flutterTipConcentration",
 				a_behavior.flutterTipConcentration, GrassWindSettings::kFlutterTipConcentration);
-			if (a_version != kLegacySettingsVersion && a_json.contains("tipFlexibility")) {
-				if (a_json["tipFlexibility"].is_null()) {
-					a_behavior.tipFlexibility.reset();
-				} else {
-					float value = a_behavior.tipFlexibility.value_or(GrassWindSettings::kTipFlexibility.minimum);
-					if (read("tipFlexibility", value, GrassWindSettings::kTipFlexibility))
-						a_behavior.tipFlexibility = value;
-				}
-			}
 		}
 
 		void RebuildIndices()
@@ -216,7 +197,7 @@ namespace GrassWindPatcher
 						if (profileSources.contains(name) && Util::FixFilePath(path.filename().string()) != authoringName)
 							conflicts.insert(profileSources[name].filename().string()), conflicts.insert(path.filename().string());
 						Behavior behavior = mergedProfiles.contains(name) ? mergedProfiles[name] : Behavior{};
-						ReadBehavior(profileJson, behavior, path, name, version);
+						ReadBehavior(profileJson, behavior, path, name);
 						mergedProfiles[name] = SanitizeBehavior(behavior);
 						profileSources[name] = path;
 					}
@@ -420,25 +401,14 @@ namespace GrassWindPatcher
 			return result;
 		}
 
-		if (root["version"] == kLegacySettingsVersion) {
-			for (auto& profile : root["profiles"]) {
-				if (profile.is_object() && profile.contains("tipFlexibility")) {
-					profile["flutterTipConcentration"] = profile["tipFlexibility"];
-					profile.erase("tipFlexibility");
-				}
-			}
-			root["version"] = kSettingsVersion;
-		}
+		root["version"] = kSettingsVersion;
 
 		for (const auto& profile : snapshotProfiles) {
 			if (!profile.persistedDefinition || ValuesDiffer(profile.behavior, profile.persisted)) {
 				root["profiles"][profile.name] = {
 					{ "bendSensitivity", profile.behavior.bendSensitivity },
 					{ "flutterSensitivity", profile.behavior.flutterSensitivity },
-					{ "flutterTipConcentration", profile.behavior.flutterTipConcentration },
-					{ "tipFlexibility", profile.behavior.tipFlexibility ?
-											nlohmann::json(*profile.behavior.tipFlexibility) :
-											nlohmann::json(nullptr) }
+					{ "flutterTipConcentration", profile.behavior.flutterTipConcentration }
 				};
 				++result.savedProfileCount;
 			}

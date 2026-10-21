@@ -15,7 +15,7 @@ struct WindSettings
 	bool enableTrunkBend = true;
 	bool overrideTrunkWindIntensity = false;
 	float trunkWindIntensityOverride = 2.22f;
-	float trunkWindBendSensitivity = 2.03f;
+	float trunkWindBendSensitivity = 1.0f;
 	float treeLeafBaseWindFlutterGain = 1.2f;
 	float treeWindGustScale = 1.0f;
 	float treeWindGustSoftLimit = 0.75f;
@@ -42,28 +42,27 @@ struct WindSettings
 	float windFieldDirectionTransitionDuration = 15.0f;
 	bool processMidRangeTransients = true;
 	bool processFarRangeTransients = false;
-	float grassTransientBendStrength = 32.5f;
-	float grassTransientFlutterHalfLife = 0.15f;
-	float grassTransientFlutterStrength = 1.0f;
-	float grassTransientFlutterFrequency = 6.0f;
+	float grassTransientBendStrength = 60.6f;
+	float grassTransientFlutterHalfLife = 0.1f;
+	float grassTransientFlutterStrength = 1.01f;
+	float grassTransientFlutterFrequency = 2.99f;
 	bool enableAmbientGrassWind = true;
 	bool enableGrassWindSpring = true;
 	bool enableGrassWindSpringBend = true;
 	float grassWindResponse = 40.0f;
 	float grassWindSensitivity = 1.01f;
 	float grassWindMaximumTilt = 89.0f;
-	float grassWindBendProfile = 0.0f;
 	float grassWindCompressionToBend = 0.5f;
-	float grassWindSpringFrequency = 3.84f;
-	float grassWindSpringDamping = 1.0f;
+	float grassWindSpringFrequency = 2.9f;
+	float grassWindSpringDamping = 0.84f;
 	std::array<GrassWindSpringQualityRange, 3> grassWindSpringQuality{ { { 1024, 3000.0f },
 		{ 512, 6262.0f },
 		{ 256, 12000.0f } } };
-	float grassWindFlutterStrength = 1.01f;
+	float grassWindFlutterStrength = 1.0f;
 	float grassWindFlutterFrequency = 1.0f;
-	float grassWindFlutterGustInfluence = 1.0f;
-	float grassWindFlutterWaveScale = 1.0f;
-	std::array<float, 3> grassWindFlutterAmplitudeResponse{ 1.0f, 1.0f, 1.0f };
+	float grassWindFlutterGustInfluence = 2.0f;
+	float grassWindFlutterWaveScale = 0.5f;
+	std::array<float, 3> grassWindFlutterAmplitudeResponse{ 1.0f, 1.0f, 1.01f };
 };
 
 namespace WindSettingsLimits
@@ -123,8 +122,6 @@ namespace WindSettingsLimits
 	inline constexpr float kGrassWindSensitivityMax = 5.0f;
 	inline constexpr float kGrassWindMaximumTiltMin = 0.0f;
 	inline constexpr float kGrassWindMaximumTiltMax = 89.0f;
-	inline constexpr float kGrassWindBendProfileMin = 0.0f;
-	inline constexpr float kGrassWindBendProfileMax = 1.0f;
 	inline constexpr float kGrassWindCompressionToBendMin = 0.0f;
 	inline constexpr float kGrassWindCompressionToBendMax = 1.0f;
 	inline constexpr float kGrassWindSpringFrequencyMin = 0.25f;

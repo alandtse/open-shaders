@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Features/Wind/Settings/WindSettings.h"
-
 namespace GrassWindSettings
 {
 	struct Range
@@ -13,6 +11,4 @@ namespace GrassWindSettings
 	inline constexpr Range kBendSensitivity{ 0.0f, 4.0f };
 	inline constexpr Range kFlutterSensitivity{ 0.0f, 4.0f };
 	inline constexpr Range kFlutterTipConcentration{ 0.0f, 3.0f };
-	inline constexpr Range kTipFlexibility{ WindSettingsLimits::kGrassWindBendProfileMin,
-		WindSettingsLimits::kGrassWindBendProfileMax };
 }

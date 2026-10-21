@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -20,7 +19,6 @@ namespace GrassWindPatcher
 		float bendSensitivity = 1.0f;
 		float flutterSensitivity = 1.0f;
 		float flutterTipConcentration = 1.0f;
-		std::optional<float> tipFlexibility;
 	};
 
 	struct RuleSnapshot

@@ -60,7 +60,7 @@ struct alignas(16) GrassWindProfileData
 	float bendSensitivity = 1.0f;
 	float flutterSensitivity = 1.0f;
 	float flutterTipConcentration = 1.0f;
-	float tipFlexibility = WindSettings{}.grassWindBendProfile;
+	float padding = 0.0f;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindProfileData);

@@ -8,7 +8,7 @@ namespace GrassWindProfile
 		float BendSensitivity;
 		float FlutterSensitivity;
 		float FlutterTipConcentration;
-		float TipFlexibility;
+		float Padding;
 	};
 }
 

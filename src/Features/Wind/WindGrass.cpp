@@ -1,7 +1,6 @@
 #include "Wind.h"
 
 #include "Features/Wind/Grass/GrassWindPatcher.h"
-#include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "State.h"
@@ -112,14 +111,11 @@ void Wind::BindGrassWindProfile(const RE::BSGeometry* a_geometry, bool a_compute
 	const GrassWindProfileData data{
 		behavior.bendSensitivity,
 		behavior.flutterSensitivity,
-		behavior.flutterTipConcentration,
-		WindMath::ClampFiniteOrDefault(behavior.tipFlexibility.value_or(settings.grassWindBendProfile),
-			kGrassWindBendProfileMin, kGrassWindBendProfileMax, Settings{}.grassWindBendProfile)
+		behavior.flutterTipConcentration
 	};
 	if (!grassState.boundProfileValid || grassState.boundProfile.bendSensitivity != data.bendSensitivity ||
 		grassState.boundProfile.flutterSensitivity != data.flutterSensitivity ||
-		grassState.boundProfile.flutterTipConcentration != data.flutterTipConcentration ||
-		grassState.boundProfile.tipFlexibility != data.tipFlexibility) {
+		grassState.boundProfile.flutterTipConcentration != data.flutterTipConcentration) {
 		grassState.profileConstantBuffer->Update(data);
 		grassState.boundProfile = data;
 		grassState.boundProfileValid = true;

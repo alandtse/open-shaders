@@ -63,13 +63,6 @@
                     "default": 1.0,
                     "minimum": 0.0,
                     "maximum": 3.0
-                },
-                "tipFlexibility": {
-                    "type": ["number", "null"],
-                    "default": null,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "description": "Overrides global Tip Flexibility for broad wind bending; omitted or null inherits the global setting."
                 }
             }
         }

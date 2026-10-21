@@ -475,7 +475,7 @@ public:
 		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
 
-		float GrassWindBendProfile;
+		float PaddingGrassWind;
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		float GrassWindSensitivity;
@@ -513,7 +513,6 @@ public:
 			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
 			       GrassWindSensitivity == other.GrassWindSensitivity &&
-			       GrassWindBendProfile == other.GrassWindBendProfile &&
 			       GrassWindCompressionToBend == other.GrassWindCompressionToBend &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
 			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
