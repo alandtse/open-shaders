@@ -669,6 +669,17 @@ struct BSShaderRenderTargets_Create
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+struct BSInputDeviceManager_BeforeInputPoll
+{
+	/** @brief Invokes loaded features before polling engine input devices, then forwards to the engine. */
+	static void thunk(RE::BSInputDeviceManager* a_this, float a_secsSinceLastFrame)
+	{
+		Feature::ForEachLoadedFeature("OnBeforeInputPoll", [](Feature* feature) { feature->OnBeforeInputPoll(); });
+		func(a_this, a_secsSinceLastFrame);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
 struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
@@ -1273,6 +1284,9 @@ namespace Hooks
 			logger::info("Hooking BSImageSpace::Init::IBLF");
 			stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
 		}
+
+		logger::info("Hooking BSInputDeviceManager::PollInputDevices entry");
+		stl::detour_thunk<BSInputDeviceManager_BeforeInputPoll>(REL::RelocationID(67315, 68617));
 
 		// This input hook also drives per-frame Reflex update (see BSInputDeviceManager_PollInputDevices::thunk).
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");

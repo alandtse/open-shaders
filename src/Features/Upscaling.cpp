@@ -53,6 +53,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	upscaleMethodNoDLSS,
 	qualityMode,
 	frameLimitMode,
+	antiLag2FPSLimit,
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
@@ -655,8 +656,23 @@ namespace
 	}
 }
 
+/** @brief Registers upscaling, frame-generation, and input-pacing commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_COMMAND("setGameplayFPSLimit",
+		"Set the live AMD FSR gameplay FPS cap including fixed 2x generated frames. Params: displayedFPS (even integer 40-480). The saved antiLag2FPSLimit is rendered FPS (20-240); menus/loading stay at 60 rendered FPS. Anti-Lag 2 runs before input, then the residual timer enforces any remaining scene budget. No save is performed.",
+		[](Feature* self, const json& args) {
+			if (!args.contains("displayedFPS") || !args["displayedFPS"].is_number_integer()) {
+				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+				return;
+			}
+			const auto fps = args["displayedFPS"].get<int64_t>();
+			if (fps < kGameplayMinRenderedFPSLimit * 2 || fps > kGameplayMaxRenderedFPSLimit * 2 || fps % 2 != 0) {
+				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+				return;
+			}
+			static_cast<Upscaling*>(self)->settings.antiLag2FPSLimit = static_cast<uint>(fps / 2);
+		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
@@ -680,6 +696,20 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("calibrateNeuralCrop",
 		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
 		CalibrateNeuralCrop);
+}
+
+/** @brief Applies the gameplay or menu Anti-Lag FPS limit immediately before input polling. */
+void Upscaling::OnBeforeInputPoll()
+{
+	if (!d3d12SwapChainActive || dx12SwapChain.useDLSSG)
+		return;
+	auto* ui = globals::game::ui;
+	const bool gameplay = ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) &&
+	                      !ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
+	const bool frameGeneration = settings.frameGenerationMode != 0;
+	const auto gameplayLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
+	const auto fpsLimit = gameplay ? (frameGeneration ? gameplayLimit : gameplayLimit * 2) : kAntiLag2RenderedFPSLimit;
+	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && frameGeneration);
 }
 
 void Upscaling::DrawSettings()
@@ -900,6 +930,7 @@ void Upscaling::DrawUpscalingSettings()
 	}
 }
 
+/** @brief Draws frame-generation controls and gameplay FPS limits. */
 void Upscaling::DrawFrameGenerationSettings()
 {
 	ImGui::PushTextWrapPos(0.0f);
@@ -961,6 +992,13 @@ void Upscaling::DrawFrameGenerationSettings()
 		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
+
+		int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
+		if (ImGui::SliderInt("Gameplay FPS limit (including FG)", &displayedFPS,
+				static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+			settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted("Gameplay only, rounded to even displayed FPS with AMD FSR 2x generation. Anti-Lag 2 runs first; a pre-input timer supplies any remaining frame budget. Menus and loading screens use 60 rendered FPS. Without driver support, the timer enforces the cap.");
 
 		bool flEnabled = settings.frameLimitMode != 0;
 		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Limit FPS to display refresh rate"), &flEnabled))
@@ -1201,6 +1239,7 @@ void Upscaling::SaveSettings(json& o_json)
 	}
 }
 
+/** @brief Loads upscaling settings and validates supported options and FPS limits. */
 void Upscaling::LoadSettings(json& o_json)
 {
 	// Pull FoveatedRender's nested block first so its absence doesn't fail the
@@ -1217,6 +1256,7 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
+	settings.antiLag2FPSLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
 	neuralRendering.ResetHistory();

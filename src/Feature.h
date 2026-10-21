@@ -321,6 +321,9 @@ public:
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
 
+	/** @brief Runs immediately before the engine polls physical input devices. */
+	virtual void OnBeforeInputPoll() {}
+
 	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
 	virtual void OnWorldRenderBegin() {}
 
