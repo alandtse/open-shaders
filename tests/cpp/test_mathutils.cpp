@@ -4,7 +4,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <format>
 #include <limits>
+#include <string_view>
 
 using Catch::Approx;
 
@@ -90,4 +92,25 @@ TEST_CASE("Fnv1a matches the published test vectors and chains", "[utils][math]"
 	REQUIRE(Util::Fnv1a64("foobar") == 0x85944171F73967E8ull);
 	REQUIRE(Util::Fnv1a32("bar", Util::Fnv1a32("foo")) == Util::Fnv1a32("foobar"));
 	REQUIRE(Util::Fnv1a64("bar", Util::Fnv1a64("foo")) == Util::Fnv1a64("foobar"));
+}
+
+TEST_CASE("Fnv1a pins the cache file name and load-order hash inputs", "[utils][math][hash]")
+{
+	const auto suffix = [](std::string_view a_defines) {
+		return std::format("_{:08X}", Util::Fnv1a32(a_defines));
+	};
+	REQUIRE(suffix("LIGHTING VC DEFERRED SKINNED") == "_F62EFEAB");
+	REQUIRE(suffix("FUR_SHELLS FUR_SHELLS_DEPTH") == "_09127D93");
+	REQUIRE(suffix("A") == "_C40BF6CC");
+	REQUIRE(suffix("DEFINE_WITH_UNDERSCORES 1 2 3") == "_701DB32D");
+
+	std::uint64_t loadOrder = Util::kFnv1a64Basis;
+	for (const std::string_view name : { "Skyrim.esm", "Update.esm", "Dawnguard.esm", "Dragonborn.esm", "Plugin.esp", "2.19.0" })
+		loadOrder = Util::Fnv1a64(name, loadOrder);
+	REQUIRE(loadOrder == 0x9AC194451BE5CFBBull);
+
+	std::uint32_t waterNormals = Util::kFnv1a32Basis;
+	for (const std::string_view name : { "textures/water/a.dds", "textures/water/b.dds", "", "textures/water/c.dds" })
+		waterNormals = Util::Fnv1a32(name, waterNormals);
+	REQUIRE(waterNormals == 0x265DC651u);
 }
