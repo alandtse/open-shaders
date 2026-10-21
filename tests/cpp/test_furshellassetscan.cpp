@@ -85,3 +85,28 @@ TEST_CASE("Asset scan assumes shells for an archive without file names", "[fursh
 	WriteArchive(dir.path / "anonymous.bsa", { "plate.dds" }, 0x1);
 	REQUIRE(FurShellAssets::AnyShellTextures(dir.path));
 }
+
+TEST_CASE("Asset scan handles non-ANSI file names", "[furshells]")
+{
+	TempDir dir;
+	const auto folder = dir.path / "textures" / std::filesystem::path(L"毛皮");
+	std::filesystem::create_directories(folder);
+	std::ofstream(folder / std::filesystem::path(L"盔甲.dds")).put('x');
+	REQUIRE_FALSE(FurShellAssets::AnyShellTextures(dir.path));
+
+	std::ofstream(folder / std::filesystem::path(L"盔甲_shell.dds")).put('x');
+	REQUIRE(FurShellAssets::AnyShellTextures(dir.path));
+}
+
+TEST_CASE("Asset scan assumes shells for a corrupt archive header", "[furshells]")
+{
+	TempDir dir;
+	WriteArchive(dir.path / "corrupt.bsa", { "plate.dds" }, 0x3);
+	{
+		std::fstream file(dir.path / "corrupt.bsa", std::ios::binary | std::ios::in | std::ios::out);
+		file.seekp(4 + 6 * sizeof(uint32_t));
+		const uint32_t hugeNameBlock = 0xFFFFFFF0u;
+		file.write(reinterpret_cast<const char*>(&hugeNameBlock), sizeof(hugeNameBlock));
+	}
+	REQUIRE(FurShellAssets::AnyShellTextures(dir.path));
+}

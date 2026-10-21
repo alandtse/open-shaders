@@ -15,22 +15,33 @@ namespace FurShellAssets
 	{
 		constexpr std::string_view Suffix = "_shell.dds";
 
-		bool EndsWithShell(std::string_view a_name)
+		template <class Char>
+		bool EqualsLowerAscii(std::basic_string_view<Char> a_text, std::string_view a_lowerAscii)
 		{
-			return a_name.size() >= Suffix.size() && std::ranges::equal(a_name.substr(a_name.size() - Suffix.size()), Suffix, [](char a, char b) {
-				return std::tolower(static_cast<unsigned char>(a)) == b;
+			return a_text.size() == a_lowerAscii.size() && std::ranges::equal(a_text, a_lowerAscii, [](Char a, char b) {
+				return a < 0x80 && std::tolower(static_cast<unsigned char>(a)) == b;
 			});
 		}
 
-		bool LooseShellExists(const std::filesystem::path& a_dataDir)
+		template <class Char>
+		bool EndsWithShell(std::basic_string_view<Char> a_name)
+		{
+			return a_name.size() >= Suffix.size() && EqualsLowerAscii(a_name.substr(a_name.size() - Suffix.size()), Suffix);
+		}
+
+		/** @return True when a shell may exist or the tree could not be read in full; false only for a missing textures folder or a complete walk with none. */
+		bool LooseShellMayExist(const std::filesystem::path& a_dataDir)
 		{
 			std::error_code ec;
-			std::filesystem::recursive_directory_iterator it(a_dataDir / "textures", std::filesystem::directory_options::skip_permission_denied, ec);
+			std::filesystem::recursive_directory_iterator it(a_dataDir / "textures", ec);
+			if (ec == std::errc::no_such_file_or_directory)
+				return false;
 			for (const std::filesystem::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
-				if (it->is_regular_file(ec) && EndsWithShell(it->path().filename().string()))
+				const bool regular = it->is_regular_file(ec);
+				if (!ec && regular && EndsWithShell(std::basic_string_view<std::filesystem::path::value_type>(it->path().filename().native())))
 					return true;
 			}
-			return false;
+			return static_cast<bool>(ec);
 		}
 
 		struct Header
@@ -83,15 +94,19 @@ namespace FurShellAssets
 
 	bool AnyShellTextures(const std::filesystem::path& a_dataDir)
 	{
-		if (LooseShellExists(a_dataDir))
-			return true;
-
-		std::error_code ec;
-		for (std::filesystem::directory_iterator it(a_dataDir, ec), end; !ec && it != end; it.increment(ec)) {
-			const auto& path = it->path();
-			if (_stricmp(path.extension().string().c_str(), ".bsa") == 0 && ArchiveMayHoldShell(path))
+		try {
+			if (LooseShellMayExist(a_dataDir))
 				return true;
+
+			std::error_code ec;
+			for (std::filesystem::directory_iterator it(a_dataDir, ec), end; !ec && it != end; it.increment(ec)) {
+				const auto& path = it->path();
+				if (EqualsLowerAscii(std::basic_string_view<std::filesystem::path::value_type>(path.extension().native()), ".bsa") && ArchiveMayHoldShell(path))
+					return true;
+			}
+			return static_cast<bool>(ec);
+		} catch (...) {
+			return true;
 		}
-		return static_cast<bool>(ec);
 	}
 }
