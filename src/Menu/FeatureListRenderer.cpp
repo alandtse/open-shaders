@@ -18,6 +18,8 @@
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
 #include "Features/FeatureOverwrites.h"
+#include "Features/ScreenSpaceGI.h"
+#include "Features/Upscaling.h"
 #include "Features/SceneManagerUI.h"
 #include "Fonts.h"
 #include "Globals.h"
@@ -565,8 +567,10 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	});
 	menuList.push_back(CategoryHeader{ "Features", static_cast<int>(featureCount) });
 	for (Feature* feat : sortedFeatureList) {
-		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat))
+		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat)) {
 			menuList.push_back(feat);
+
+		}
 	}
 
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {

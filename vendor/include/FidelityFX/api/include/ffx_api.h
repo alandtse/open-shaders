@@ -158,3 +158,11 @@ typedef ffxReturnCode_t (*PfnFfxDispatch)(ffxContext* context, const ffxDispatch
 #if defined(__cplusplus)
 }
 #endif  // #if defined(__cplusplus)
+
+// Open Shaders RR integration: FidelityFX 2.3 effect IDs used by the Denoiser 1.2 provider.
+#ifndef FFX_API_EFFECT_ID_DENOISER
+#define FFX_API_EFFECT_ID_DENOISER 0x00050000u
+#endif
+#ifndef FFX_API_MAKE_EFFECT_SUB_ID
+#define FFX_API_MAKE_EFFECT_SUB_ID(effectId, subversion) ((effectId & 0x00ff0000u) | (subversion & ~0x00ff0000u))
+#endif

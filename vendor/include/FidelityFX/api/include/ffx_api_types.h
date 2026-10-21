@@ -196,3 +196,12 @@ typedef struct FfxApiEffectMemoryUsage
     uint64_t totalUsageInBytes;
     uint64_t aliasableUsageInBytes;
 } FfxApiEffectMemoryUsage;
+
+// Open Shaders RR integration: ABI-compatible types added by FidelityFX 2.3.
+#ifndef OPEN_SHADERS_FFX23_DENOISER_TYPES
+#define OPEN_SHADERS_FFX23_DENOISER_TYPES
+struct FfxApiFloatCoords3D { float x, y, z; };
+typedef struct FfxApiFloat4 { float x, y, z, w; } FfxApiFloat4;
+typedef struct FfxApiMatrix4x4 { FfxApiFloat4 rows[4]; } FfxApiMatrix4x4;
+typedef struct FfxApiFloatBounds { float min, max; } FfxApiFloatBounds;
+#endif

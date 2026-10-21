@@ -856,6 +856,7 @@ HDRDisplay::D3D12UIBufferMode HDRDisplay::GetD3D12UIBufferMode()
 	if (!globals::features::upscaling.d3d12SwapChainActive)
 		return mode;
 
+	globals::features::upscaling.PrepareMenuFrameGeneration();
 	const bool hdrReady = loaded && settings.enableHDR && hdrDataCB && outputTexture;
 	const bool hdrShaderAvailable = hdrReady && GetHDROutputCS() != nullptr;
 

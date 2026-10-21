@@ -235,6 +235,11 @@ public:
 	virtual void OnSceneTransitionReset(bool /*opening*/) {}
 	virtual void DrawSettings() {}
 
+	/** @brief Optional companion tab displayed alongside the upscaling controls. */
+	virtual const char* GetUpscalingTabName() const { return nullptr; }
+	/** @brief Draws the companion tab returned by GetUpscalingTabName(). */
+	virtual void DrawUpscalingTab() {}
+
 	/**
 	 * @brief Renders this feature's VR performance-relevant controls into the central
 	 * Performance panel. Default empty: features without VR perf knobs contribute
@@ -320,6 +325,9 @@ public:
 
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
+
+	/** @brief Runs immediately before the engine polls physical input devices. */
+	virtual void OnBeforeInputPoll() {}
 
 	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
 	virtual void OnWorldRenderBegin() {}

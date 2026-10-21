@@ -4,6 +4,7 @@
 #include "../I18n/I18n.h"
 #include "Deferred.h"
 #include "HDRDisplay.h"
+#include "ReverseZ.h"
 #include "Hooks.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
@@ -53,6 +54,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	upscaleMethodNoDLSS,
 	qualityMode,
 	frameLimitMode,
+	antiLag2FPSLimit,
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
@@ -657,6 +659,26 @@ namespace
 
 void Upscaling::RegisterUxActions()
 {
+	FEATURE_COMMAND("setGameplayFPSLimit",
+		"Set the live AMD FSR gameplay FPS cap including fixed 2x generated frames. Params: displayedFPS (even integer 40-480). The saved antiLag2FPSLimit is rendered FPS (20-240); menus/loading stay at 60 rendered FPS. Anti-Lag 2 runs before input, then the residual timer enforces any remaining scene budget. No save is performed.",
+		[](Feature* self, const json& args) {
+			if (!args.contains("displayedFPS") || !args["displayedFPS"].is_number_integer()) {
+				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+				return;
+			}
+			const auto fps = args["displayedFPS"].get<int64_t>();
+			if (fps < kGameplayMinRenderedFPSLimit * 2 || fps > kGameplayMaxRenderedFPSLimit * 2 || fps % 2 != 0) {
+				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+				return;
+			}
+			static_cast<Upscaling*>(self)->settings.antiLag2FPSLimit = static_cast<uint>(fps / 2);
+		});
+	FEATURE_COMMAND("setFrameGenerationInMenus",
+		"Set the live option to keep frame generation running in menus and loading screens. Params: enabled (boolean). Requires frame generation enabled at boot; no save is performed.",
+		[](Feature* self, const json& args) {
+			if (args.contains("enabled") && args["enabled"].is_boolean())
+				static_cast<Upscaling*>(self)->settings.frameGenerationAllowInMenus = args["enabled"].get<bool>();
+		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
@@ -682,6 +704,17 @@ void Upscaling::RegisterUxActions()
 		CalibrateNeuralCrop);
 }
 
+void Upscaling::OnBeforeInputPoll()
+{
+	if (!d3d12SwapChainActive || dx12SwapChain.useDLSSG)
+		return;
+	auto* ui = globals::game::ui;
+	const bool gameplay = ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) &&
+	                      !ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
+	const auto fpsLimit = gameplay ? std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit) : kAntiLag2RenderedFPSLimit;
+	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && settings.frameGenerationMode != 0);
+}
+
 void Upscaling::DrawSettings()
 {
 	ApplyOpenCompositeUpscalingBlocker();
@@ -696,6 +729,15 @@ void Upscaling::DrawSettings()
 	if (!globals::game::isVR && ImGui::BeginTabItem(T(TKEY("frame_generation"), "Frame Generation"))) {
 		DrawFrameGenerationSettings();
 		ImGui::EndTabItem();
+	}
+
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded)
+			continue;
+		if (const char* tabName = feature->GetUpscalingTabName(); tabName && ImGui::BeginTabItem(tabName)) {
+			feature->DrawUpscalingTab();
+			ImGui::EndTabItem();
+		}
 	}
 
 	const bool reflexSupported = streamline.reflexSupportedOnCurrentAdapter || streamlineDX12.reflexSupportedOnCurrentAdapter;
@@ -962,6 +1004,13 @@ void Upscaling::DrawFrameGenerationSettings()
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
 
+		int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
+		if (ImGui::SliderInt("Gameplay FPS limit (including FG)", &displayedFPS,
+			static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+			settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted("Gameplay only, rounded to even displayed FPS with AMD FSR 2x generation. Anti-Lag 2 runs first; a pre-input timer supplies any remaining frame budget. Menus and loading screens use 60 rendered FPS. Without driver support, the timer enforces the cap.");
+
 		bool flEnabled = settings.frameLimitMode != 0;
 		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Limit FPS to display refresh rate"), &flEnabled))
 			settings.frameLimitMode = flEnabled ? 1 : 0;
@@ -974,7 +1023,7 @@ void Upscaling::DrawFrameGenerationSettings()
 	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
 	{
 		Util::DisableGuard disabled(!fgEnabled);
-		ImGui::Checkbox(T(TKEY("frame_generation_in_menus"), "Frame Generation in Menus"), &settings.frameGenerationAllowInMenus);
+		ImGui::Checkbox(T(TKEY("frame_generation_always_running"), "Keep frame generation running in menus and loading screens"), &settings.frameGenerationAllowInMenus);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_1"), "Keeps frame generation active while game menus are open."));
 			ImGui::TextUnformatted(T(TKEY("frame_generation_in_menus_tooltip_2"), "May feel smoother, but increases menu input latency."));
@@ -1217,6 +1266,7 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
+	settings.antiLag2FPSLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
 	neuralRendering.ResetHistory();
@@ -2397,6 +2447,23 @@ bool Upscaling::CopySharedD3D12Resources()
 	return true;
 }
 
+void Upscaling::PrepareMenuFrameGeneration()
+{
+	if (frameGenerationSceneVisited || frameGenerationPrepared || !ShouldPrepareFrameGeneration() || UsesDLSSGFrameGen())
+		return;
+	auto* depth = dx12SwapChain.depthBufferShared12;
+	auto* motion = dx12SwapChain.motionVectorBufferShared12;
+	if (!depth || !motion || !depth->rtv || !motion->rtv)
+		return;
+	CS_GPU_PASS("Upscaling::MenuFrameGenerationGuides");
+	const float farDepth = globals::features::reverseZ.IsActive() ? 0.0f : 1.0f;
+	const float depthClear[4]{ farDepth, 0, 0, 0 }, motionClear[4]{};
+	globals::d3d::context->ClearRenderTargetView(depth->rtv, depthClear);
+	globals::d3d::context->ClearRenderTargetView(motion->rtv, motionClear);
+	frameGenerationNeutralGuides = true;
+	frameGenerationPrepared = true;
+}
+
 void UpdateCameraData()
 {
 	using func_t = decltype(&UpdateCameraData);
@@ -3387,6 +3454,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
+	upscaling.frameGenerationSceneVisited = true;
+	upscaling.frameGenerationNeutralGuides = false;
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
 		if (postProcessing.loaded)
