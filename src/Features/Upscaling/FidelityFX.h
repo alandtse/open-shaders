@@ -223,7 +223,7 @@ void SetRadianceCacheTrainingParameters(float a_learningRate, float a_weightSmoo
     uint64_t GetRadianceCacheCapturedInferenceFence() const { return radianceCacheCapturedInferenceFence; }
     uint64_t GetRadianceCacheCompletedRuntimeFence() const
     {
-        return runtimeD3D12Fence ? runtimeD3D12Fence->GetCompletedValue() : 0;
+        return runtimeFence.fence12 ? runtimeFence.fence12->GetCompletedValue() : 0;
     }
     uint32_t GetRadianceCacheCapturedInferencePollCount() const { return radianceCacheCapturedInferencePollCount; }
 private:

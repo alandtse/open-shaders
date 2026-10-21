@@ -355,14 +355,14 @@ bool FidelityFX::DispatchRadianceCacheCapturedInference(
 
     if (!ffxModule.Dispatch || !radianceCacheContext || !radianceCacheInputUpload ||
         !radianceCacheTrainingInputUpload || !radianceCacheTrainingTargetUpload ||
-        !radianceCacheOutputReadback || !runtimeD3D12Fence)
+        !radianceCacheOutputReadback || !runtimeFence.fence12)
         return false;
 
     // Collect the previous inference only when the GPU has already completed it.
     // GetCompletedValue() is a poll; unlike WaitForRuntimeD3D12Fence(), it never
     // blocks the render thread.
     if (radianceCacheCapturedInferencePending) {
-        const uint64_t completedFence = runtimeD3D12Fence->GetCompletedValue();
+        const uint64_t completedFence = runtimeFence.fence12->GetCompletedValue();
 
         if (completedFence < radianceCacheCapturedInferenceFence) {
             // One inference is already in flight. Do not overwrite the
@@ -796,11 +796,11 @@ begin.push_back(
         sc.commandQueue->ExecuteCommandLists(1, lists);
 
         const uint64_t fenceValue =
-            runtimeFenceValue++;
+            runtimeFence.Next();
 
         DX::ThrowIfFailed(
             sc.commandQueue->Signal(
-                runtimeD3D12Fence.get(),
+                runtimeFence.fence12.get(),
                 fenceValue));
 
         cc->fenceValue = fenceValue;
@@ -845,7 +845,7 @@ void FidelityFX::RequestRadianceCacheReset()
 
 void FidelityFX::ResetRadianceCache()
 {
-    if (radianceCacheLastFenceValue != 0 && runtimeD3D12Fence) {
+    if (radianceCacheLastFenceValue != 0 && runtimeFence.fence12) {
         if (!WaitForRuntimeD3D12Fence(radianceCacheLastFenceValue)) {
             logger::error(
                 "[RadianceCache] Timed out waiting for the last Radiance Cache dispatch; preserving context/resources");
@@ -937,7 +937,7 @@ void FidelityFX::ResetRayRegeneration()
     // dispatch signals the shared runtime fence after its command list, so waiting
     // for the newest RR command-context value is sufficient and avoids destroying
     // provider state while it is still in flight.
-    if (rayRegenerationContext && runtimeD3D12Fence) {
+    if (rayRegenerationContext && runtimeFence.fence12) {
     uint64_t newestFence = 0;
     for (const auto& commandContext : runtimeCommandContexts)
         newestFence = std::max(newestFence, commandContext.fenceValue);
@@ -1033,9 +1033,9 @@ bool FidelityFX::DispatchRayRegeneration(ID3D11Texture2D* signal, ID3D11Texture2
     try {
         copy11(signal, rrSharedSignal); copy11(depth, rrSharedDepth); copy11(motion, rrSharedMotion);
         copy11(normal, rrSharedNormal); copy11(specAlbedo, rrSharedSpecularAlbedo); copy11(diffAlbedo, rrSharedDiffuseAlbedo);
-        const uint64_t f11 = runtimeFenceValue++;
-        DX::ThrowIfFailed(sc.d3d11Context->Signal(runtimeD3D11Fence.get(), f11));
-        DX::ThrowIfFailed(sc.commandQueue->Wait(runtimeD3D12Fence.get(), f11));
+        const uint64_t f11 = runtimeFence.Next();
+        DX::ThrowIfFailed(sc.d3d11Context->Signal(runtimeFence.fence11.get(), f11));
+        DX::ThrowIfFailed(sc.commandQueue->Wait(runtimeFence.fence12.get(), f11));
 
         DX::ThrowIfFailed(cc->commandAllocator->Reset());
         DX::ThrowIfFailed(cc->commandList->Reset(cc->commandAllocator.get(), nullptr));
@@ -1102,10 +1102,10 @@ bool FidelityFX::DispatchRayRegeneration(ID3D11Texture2D* signal, ID3D11Texture2
         commandListRecording = false;
         ID3D12CommandList* lists[] = {cc->commandList.get()};
         sc.commandQueue->ExecuteCommandLists(1, lists);
-        const uint64_t f12 = runtimeFenceValue++;
-        DX::ThrowIfFailed(sc.commandQueue->Signal(runtimeD3D12Fence.get(), f12));
+        const uint64_t f12 = runtimeFence.Next();
+        DX::ThrowIfFailed(sc.commandQueue->Signal(runtimeFence.fence12.get(), f12));
         cc->fenceValue = f12;
-        DX::ThrowIfFailed(sc.d3d11Context->Wait(runtimeD3D11Fence.get(), f12));
+        DX::ThrowIfFailed(sc.d3d11Context->Wait(runtimeFence.fence11.get(), f12));
         sc.d3d11Context->CopySubresourceRegion(output, 0, 0, 0, 0, rrSharedOutput->resource11, 0, &box);
 
         if (rrDiagnosticsEnabled) {
@@ -1137,7 +1137,7 @@ void FidelityFX::ResetReflectionRayRegeneration()
     // dispatch signals the shared runtime fence after its command list, so waiting
     // for the newest RR command-context value is sufficient and avoids destroying
     // provider state while it is still in flight.
-    if (reflectionRayRegenerationContext && runtimeD3D12Fence) {
+    if (reflectionRayRegenerationContext && runtimeFence.fence12) {
     uint64_t newestFence = 0;
     for (const auto& commandContext : runtimeCommandContexts)
         newestFence = std::max(newestFence, commandContext.fenceValue);
@@ -1233,9 +1233,9 @@ bool FidelityFX::DispatchReflectionRayRegeneration(ID3D11Texture2D* signal, ID3D
     try {
         copy11(signal, reflectionRRSharedSignal); copy11(depth, reflectionRRSharedDepth); copy11(motion, reflectionRRSharedMotion);
         copy11(normal, reflectionRRSharedNormal); copy11(specAlbedo, reflectionRRSharedSpecularAlbedo); copy11(diffAlbedo, reflectionRRSharedDiffuseAlbedo);
-        const uint64_t f11 = runtimeFenceValue++;
-        DX::ThrowIfFailed(sc.d3d11Context->Signal(runtimeD3D11Fence.get(), f11));
-        DX::ThrowIfFailed(sc.commandQueue->Wait(runtimeD3D12Fence.get(), f11));
+        const uint64_t f11 = runtimeFence.Next();
+        DX::ThrowIfFailed(sc.d3d11Context->Signal(runtimeFence.fence11.get(), f11));
+        DX::ThrowIfFailed(sc.commandQueue->Wait(runtimeFence.fence12.get(), f11));
 
         DX::ThrowIfFailed(cc->commandAllocator->Reset());
         DX::ThrowIfFailed(cc->commandList->Reset(cc->commandAllocator.get(), nullptr));
@@ -1301,10 +1301,10 @@ bool FidelityFX::DispatchReflectionRayRegeneration(ID3D11Texture2D* signal, ID3D
         commandListRecording = false;
         ID3D12CommandList* lists[] = {cc->commandList.get()};
         sc.commandQueue->ExecuteCommandLists(1, lists);
-        const uint64_t f12 = runtimeFenceValue++;
-        DX::ThrowIfFailed(sc.commandQueue->Signal(runtimeD3D12Fence.get(), f12));
+        const uint64_t f12 = runtimeFence.Next();
+        DX::ThrowIfFailed(sc.commandQueue->Signal(runtimeFence.fence12.get(), f12));
         cc->fenceValue = f12;
-        DX::ThrowIfFailed(sc.d3d11Context->Wait(runtimeD3D11Fence.get(), f12));
+        DX::ThrowIfFailed(sc.d3d11Context->Wait(runtimeFence.fence11.get(), f12));
         sc.d3d11Context->CopySubresourceRegion(output, 0, 0, 0, 0, reflectionRRSharedOutput->resource11, 0, &box);
 
         ++reflectionRayRegenerationSuccessfulDispatches;
