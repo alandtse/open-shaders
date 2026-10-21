@@ -46,7 +46,7 @@ An example of this would look something as follows:
 
 ```C++
 // {5083ae5b-8070-4fca-8ee5-3582dd367d13}
-static const GUID IID_IFfxAntiLag2Data = 
+static const GUID IID_IFfxAntiLag2Data =
     {0x5083ae5b, 0x8070, 0x4fca, {0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13}};
 
 struct AntiLag2Data

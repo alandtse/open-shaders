@@ -4,8 +4,8 @@
 #include "../I18n/I18n.h"
 #include "Deferred.h"
 #include "HDRDisplay.h"
-#include "ReverseZ.h"
 #include "Hooks.h"
+#include "ReverseZ.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -1006,7 +1006,7 @@ void Upscaling::DrawFrameGenerationSettings()
 
 		int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
 		if (ImGui::SliderInt("Gameplay FPS limit (including FG)", &displayedFPS,
-			static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+				static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
 			settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted("Gameplay only, rounded to even displayed FPS with AMD FSR 2x generation. Anti-Lag 2 runs first; a pre-input timer supplies any remaining frame budget. Menus and loading screens use 60 rendered FPS. Without driver support, the timer enforces the cap.");

@@ -6,12 +6,12 @@
 #include <wrl\client.h>
 #include <wrl\wrappers\corewrappers.h>
 
+#include "RedstoneInputPacing.h"
+#include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <ffx_antilag2_dx12.h>
-#include "RedstoneInputPacing.h"
 #include <string>
-#include <cstdint>
 
 #include <directx/d3dx12.h>
 

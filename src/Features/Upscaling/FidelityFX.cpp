@@ -1,8 +1,8 @@
 #include "FidelityFX.h"
 #include "Features/ReverseZ.h"
 
-#include <directx/d3dx12.h>
 #include <chrono>
+#include <directx/d3dx12.h>
 
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"

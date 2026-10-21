@@ -18,9 +18,9 @@
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
 #include "Features/FeatureOverwrites.h"
+#include "Features/SceneManagerUI.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Upscaling.h"
-#include "Features/SceneManagerUI.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -569,7 +569,6 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	for (Feature* feat : sortedFeatureList) {
 		if (feat->IsInMenu() && feat->loaded && feat->GetCategory() != FeatureCategories::kUtility && !isFavorite(feat)) {
 			menuList.push_back(feat);
-
 		}
 	}
 

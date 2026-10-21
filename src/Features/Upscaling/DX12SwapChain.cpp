@@ -54,8 +54,7 @@ void DX12SwapChain::PublishAntiLag2SwapChainData()
 		bool enabled;
 	};
 	const AntiLag2Data data{ &antiLag2Context, antiLag2Enabled };
-	static constexpr GUID kFfxAntiLag2Data =
-		{ 0x5083ae5b, 0x8070, 0x4fca, { 0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13 } };
+	static constexpr GUID kFfxAntiLag2Data = { 0x5083ae5b, 0x8070, 0x4fca, { 0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13 } };
 	const HRESULT hr = swapChain->SetPrivateData(kFfxAntiLag2Data, sizeof(data), &data);
 	if (FAILED(hr) && !std::exchange(antiLag2PrivateDataFailureLogged, true))
 		logger::warn("[AntiLag2] FFX private-data handshake failed hr=0x{:08X}", static_cast<unsigned int>(hr));
