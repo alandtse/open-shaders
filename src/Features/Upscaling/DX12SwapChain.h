@@ -205,10 +205,6 @@ private:
 	bool antiLag2MarkFailureLogged = false;
 	bool antiLag2PrivateDataFailureLogged = false;
 	uint32_t antiLag2LastFPSLimit = UINT32_MAX;
-	uint32_t antiLag2WindowUpdates = 0;
-	uint32_t antiLag2WindowBackstopWaits = 0;
-	uint64_t antiLag2WindowBackstopUs = 0;
-	uint64_t antiLag2WindowStartedMs = 0;
 
 	void InitializeAntiLag2();
 	void PublishAntiLag2SwapChainData();
