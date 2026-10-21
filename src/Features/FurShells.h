@@ -252,6 +252,8 @@ private:
 	ankerl::unordered_dense::map<ID3D11DepthStencilState*, DepthStates> depthStates;
 	ankerl::unordered_dense::map<RE::NiSourceTexture*, Entry> entries;
 	ankerl::unordered_dense::set<std::string> missingShells;
+	/** @brief False once a background scan proves no `_shell.dds` exists, so passes skip shell lookups; true until then. */
+	std::atomic<bool> shellAssetsPresent{ true };
 	RE::NiSourceTexture* lastDiffuse = nullptr;
 	ShellLookup lastLookup;
 	PerPass lastPerPass{};

@@ -1,5 +1,6 @@
 #include "FurShells.h"
 
+#include "Features/FurShells/AssetScan.h"
 #include "Features/Wind/Wind.h"
 #include "Globals.h"
 #include "GpuPass.h"
@@ -783,7 +784,7 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	if (instanceCount != 0)
 		EndPass();
 
-	if (!settings.Enabled || !perPassCB || !noColorWrite || !a_pass || !globals::shaderCache->IsEnabled())
+	if (!settings.Enabled || !shellAssetsPresent.load(std::memory_order_relaxed) || !perPassCB || !noColorWrite || !a_pass || !globals::shaderCache->IsEnabled())
 		return;
 
 	auto* state = globals::state;
@@ -1343,6 +1344,13 @@ void FurShells::PostPostLoad()
 	stl::write_vfunc<0x7, Hooks::BSLightingShader_RestoreGeometry>(RE::VTABLE_BSLightingShader[0]);
 	stl::write_thunk_call<Hooks::BSBatchRenderer_RenderPassImmediately>(REL::RelocationID(100852, 107642).address() + REL::Relocate(0x29E, 0x28F));
 	logger::info("[Fur Shells] Installed hooks");
+
+	std::thread([this] {
+		const auto start = std::chrono::steady_clock::now();
+		const bool present = FurShellAssets::AnyShellTextures("Data");
+		shellAssetsPresent.store(present, std::memory_order_relaxed);
+		logger::info("[Fur Shells] Shell texture scan found {} in {} ms", present ? "shells (or an unreadable archive)" : "none, passes skipped", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+	}).detach();
 }
 
 #undef I18N_KEY_PREFIX

@@ -102,6 +102,7 @@ add_executable(cpp_tests
 	test_nr_eye_mode.cpp
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
+	test_furshellassetscan.cpp
 	test_region.cpp
 	test_bound_points.cpp
 	test_region_overlay.cpp
@@ -121,6 +122,7 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/FurShells/AssetScan.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
