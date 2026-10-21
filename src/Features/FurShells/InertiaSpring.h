@@ -160,7 +160,7 @@ namespace FurInertia
 			const float length = offset.Length();
 			if (length > a_maxOffset) {
 				offset *= a_maxOffset / length;
-				velocity = {};
+				velocity = float3{};
 			}
 		}
 	};

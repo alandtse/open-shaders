@@ -17,7 +17,7 @@ namespace
 
 	FurInertia::Spring Settled(float3& a_position)
 	{
-		a_position = {};
+		a_position = float3{};
 		return FurInertia::Spring::At(a_position);
 	}
 
