@@ -126,10 +126,15 @@ void ScreenSpaceGI::DrawRedstoneSettings()
 		"Ray Regeneration",
 		&settings.EnableRayRegeneration);
 
+	const auto* reconstruction = GetLightingReconstructionProvider();
 	const bool rrActive =
-		settings.Enabled &&
-		settings.EnableExperimentalSpecularGI &&
-		settings.EnableRayRegeneration;
+		settings.Enabled && ShadersOK() &&
+		IsSpecularGIActive() && settings.EnableRayRegeneration &&
+		reconstruction && reconstruction->CanDispatchRayRegeneration() &&
+		texRRSpecularInput && texRRSpecularOutput &&
+		texRRLinearDepth[0] && texRRLinearDepth[1] &&
+		texRRMotionVectors && texRRNormalRoughness &&
+		texRRSpecularAlbedo && texRRDiffuseAlbedo;
 
 	DrawState(
 		"Status##RR",
@@ -227,10 +232,9 @@ void ScreenSpaceGI::DrawRedstoneSettings()
 	}
 
 	const bool rcActive =
-		settings.Enabled &&
-		settings.EnableExperimentalSpecularGI &&
-		settings.EnableRadianceCache &&
-		HasGIResources();
+		settings.Enabled && ShadersOK() &&
+		settings.EnableRadianceCache && IsSpecularGIActive() &&
+		reconstruction;
 
 	DrawState(
 		"Radiance Cache##Status",
