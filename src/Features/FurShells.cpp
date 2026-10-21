@@ -10,6 +10,7 @@
 #include "TruePBR.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 
@@ -1347,7 +1348,7 @@ void FurShells::PostPostLoad()
 
 	std::thread([this] {
 		const auto start = std::chrono::steady_clock::now();
-		const bool present = FurShellAssets::AnyShellTextures("Data");
+		const bool present = FurShellAssets::AnyShellTextures(Util::PathHelpers::GetDataPath());
 		shellAssetsPresent.store(present, std::memory_order_relaxed);
 		logger::info("[Fur Shells] Shell texture scan found {} in {} ms", present ? "shells (or an unreadable archive)" : "none, passes skipped", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
 	}).detach();
