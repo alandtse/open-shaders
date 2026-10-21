@@ -85,4 +85,45 @@ namespace Util
 
 		return ToLowerAscii(stem);
 	}
+
+	/** @brief Uppercases the ASCII letters in @p a_str, returning a new string. */
+	inline std::string ToUpperAscii(std::string_view a_str)
+	{
+		std::string result;
+		result.reserve(a_str.size());
+		for (char c : a_str)
+			result.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+		return result;
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text begins with @p a_prefix. */
+	inline bool IStartsWith(std::string_view a_text, std::string_view a_prefix)
+	{
+		return a_text.size() >= a_prefix.size() && IEquals(a_text.substr(0, a_prefix.size()), a_prefix);
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text ends with @p a_suffix. */
+	inline bool IEndsWith(std::string_view a_text, std::string_view a_suffix)
+	{
+		return a_text.size() >= a_suffix.size() && IEquals(a_text.substr(a_text.size() - a_suffix.size()), a_suffix);
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text contains @p a_needle; an empty needle is always found. */
+	inline bool IContains(std::string_view a_text, std::string_view a_needle)
+	{
+		return std::search(a_text.begin(), a_text.end(), a_needle.begin(), a_needle.end(), [](char a, char b) {
+			return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+		}) != a_text.end() ||
+		       a_needle.empty();
+	}
+
+	/** @brief The part of @p a_text without leading and trailing ASCII whitespace (space, tab, CR, LF, FF, VT). */
+	inline std::string_view TrimAscii(std::string_view a_text)
+	{
+		constexpr std::string_view whitespace = " \t\r\n\f\v";
+		const auto first = a_text.find_first_not_of(whitespace);
+		if (first == std::string_view::npos)
+			return {};
+		return a_text.substr(first, a_text.find_last_not_of(whitespace) - first + 1);
+	}
 }
