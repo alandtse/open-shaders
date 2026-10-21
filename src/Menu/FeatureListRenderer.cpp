@@ -573,24 +573,6 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 		}
 	}
 
-	// FSR REDSTONE is a first-class companion page for Upscaling.
-	// Insert it after the actual Upscaling menu entry regardless of
-	// whether Upscaling is currently emitted under Favorites or Features.
-	const auto upscalingMenu = std::ranges::find_if(menuList, [](const auto& item) {
-		const auto* feature = std::get_if<Feature*>(&item);
-		return feature && *feature == static_cast<Feature*>(&globals::features::upscaling);
-	});
-
-	if (upscalingMenu != menuList.end()) {
-		menuList.insert(std::next(upscalingMenu), BuiltInMenu{
-			"FSR REDSTONE",
-			"FSRRedstone",
-			[]() {
-				globals::features::screenSpaceGI.DrawRedstoneSettings();
-			}
-		});
-	}
-
 	auto unloadedFeatures = sortedFeatureList | std::ranges::views::filter([](Feature* feat) {
 		return !feat->loaded && feat->IsInMenu() && !feat->IsHiddenUnreleased() && (!FeatureIssues::IsObsoleteFeature(feat->GetShortName()) || globals::state->IsDeveloperMode());
 	});

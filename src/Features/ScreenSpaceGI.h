@@ -46,7 +46,12 @@ public:
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings UI with quality presets, visual parameters, and denoising options. */
 	virtual void DrawSettings() override;
+	/** @brief Draws the Ray Regeneration and Radiance Cache controls. */
 	void DrawRedstoneSettings();
+	/** @brief Names the companion tab in the Upscaling settings. */
+	const char* GetUpscalingTabName() const override { return "FSR REDSTONE"; }
+	/** @brief Draws the companion tab in the Upscaling settings. */
+	void DrawUpscalingTab() override { DrawRedstoneSettings(); }
 	virtual void DrawPerformanceSettings() override;
 	/// @brief DrawPerformanceSettings() only draws the stereo reprojection toggle.
 	bool PerformanceSectionRequiresVR() const override { return true; }
@@ -116,8 +121,8 @@ public:
         // NRC learning can be paused without resetting learned weights.
         bool EnableRadianceCacheTraining = true;
         // Live AMD NRC training parameters.
-        float RadianceCacheLearningRate = 0.002f;
-        float RadianceCacheWeightSmoothing = 0.99f;
+        float RadianceCacheLearningRate = 0.020f;
+        float RadianceCacheWeightSmoothing = 1.00f;
 		bool EnableVanillaSSAO = false;
 		// performance/quality
 		uint NumSlices = REL::Module::IsVR() ? 3u : 4u;  // AO preset for VR

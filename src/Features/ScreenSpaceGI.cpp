@@ -93,7 +93,6 @@ bool ScreenSpaceGI::MatchesPerformanceProfile(PerfProfile profile) const
 
 void ScreenSpaceGI::DrawRedstoneSettings()
 {
-    auto& upscaling = globals::features::upscaling;
     const auto& palette = globals::menu->GetTheme().StatusPalette;
 
     const ImVec4 activeColor = palette.SuccessColor;
@@ -107,75 +106,6 @@ void ScreenSpaceGI::DrawRedstoneSettings()
             ImGui::TextColored(a_color, "%s", a_value);
         };
 
-    ImGui::SeparatorText("UPSCALING");
-
-    const auto upscaleMethod = upscaling.GetUpscaleMethod();
-    const bool fsrUpscaling =
-        upscaleMethod == Upscaling::UpscaleMethod::kFSR;
-
-    ImGui::Text("Upscaler");
-    ImGui::SameLine();
-    ImGui::TextUnformatted(
-        fsrUpscaling ? "FSR Super Resolution" : "Not FSR");
-
-    ImGui::Text("Selected Mode");
-    ImGui::SameLine();
-    ImGui::TextUnformatted(
-        upscaling.GetQualityModeName(upscaling.settings.qualityMode));
-
-    ImGui::Text("Render Ratio");
-    ImGui::SameLine();
-    ImGui::Text(
-        "%.1f",
-        Upscaling::GetQualityModeRatio(upscaling.settings.qualityMode));
-
-    const bool fsr4Enabled =
-        upscaling.settings.fsr4RuntimeEnable;
-
-    DrawState(
-        "FSR 4 Upgrade",
-        fsr4Enabled ? "ACTIVE" : "INACTIVE",
-        fsr4Enabled ? activeColor : inactiveColor);
-
-    ImGui::Spacing();
-    ImGui::SeparatorText("FRAME GENERATION");
-
-    const auto fgMethod =
-        upscaling.GetFrameGenMethod();
-
-    const bool fsrFGSelected =
-        fgMethod == Upscaling::FrameGenMethod::kFSR;
-
-    const bool fsrFGActive =
-        fsrFGSelected &&
-        upscaling.IsFrameGenerationActive();
-
-    DrawState(
-        "Frame Generation",
-        fsrFGActive ? "ACTIVE" : "INACTIVE",
-        fsrFGActive ? activeColor : inactiveColor);
-
-    ImGui::Text("FG ratio");
-    ImGui::SameLine();
-
-    if (fsrFGActive) {
-        ImGui::Text(
-            "x%u",
-            upscaling.GetFrameGenerationMultiplier());
-    }
-    else {
-        ImGui::TextUnformatted("noFG");
-    }
-
-    const bool fgFsr4Upgrade =
-        fsrFGActive && fsr4Enabled;
-
-    DrawState(
-        "FSR 4 Upgrade##FG",
-        fgFsr4Upgrade ? "ACTIVE" : "INACTIVE",
-        fgFsr4Upgrade ? activeColor : inactiveColor);
-
-    ImGui::Spacing();
     ImGui::SeparatorText("RAY REGENERATION");
 
     ImGui::Checkbox(

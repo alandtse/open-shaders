@@ -190,6 +190,7 @@ target_include_directories(
         ${CLIB_UTIL_INCLUDE_DIRS}
         "${CMAKE_SOURCE_DIR}/package/Shaders"
         "${CMAKE_SOURCE_DIR}/extern/stb_image_write_hdr_png"
+        "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK"
         ${DETOURS_INCLUDE_DIRS}
         ${EXPRTK_INCLUDE_DIRS}
 )

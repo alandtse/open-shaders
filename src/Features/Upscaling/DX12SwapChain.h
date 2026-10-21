@@ -8,7 +8,10 @@
 
 #include <d3d11_4.h>
 #include <d3d12.h>
+#include <ffx_antilag2_dx12.h>
+#include "RedstoneInputPacing.h"
 #include <string>
+#include <cstdint>
 
 #include <directx/d3dx12.h>
 
@@ -150,6 +153,11 @@ public:
 	// Returns the current frame time (in seconds) for accurate FPS calculation when frame generation is active
 	float GetFrameTime() const;
 
+	/** @brief Releases the Anti-Lag driver context before the D3D12 device. */
+	~DX12SwapChain();
+	/** @brief Runs Anti-Lag first, then fills any remaining pre-input frame budget. */
+	void UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBackstop);
+
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 	void CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
@@ -187,4 +195,22 @@ public:
 
 	// D3D12 interop resource management
 	void CreateSharedResources();
+
+private:
+	AMD::AntiLag2DX12::Context antiLag2Context{};
+	CS::Redstone::InputPacing antiLag2InputPacing;
+	bool antiLag2Available = false;
+	bool antiLag2Enabled = false;
+	bool antiLag2UpdateFailureLogged = false;
+	bool antiLag2MarkFailureLogged = false;
+	bool antiLag2PrivateDataFailureLogged = false;
+	uint32_t antiLag2LastFPSLimit = UINT32_MAX;
+	uint32_t antiLag2WindowUpdates = 0;
+	uint32_t antiLag2WindowBackstopWaits = 0;
+	uint64_t antiLag2WindowBackstopUs = 0;
+	uint64_t antiLag2WindowStartedMs = 0;
+
+	void InitializeAntiLag2();
+	void PublishAntiLag2SwapChainData();
+	void MarkAntiLag2EndOfFrame();
 };

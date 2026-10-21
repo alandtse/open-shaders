@@ -80,6 +80,9 @@ public:
 	};
 
 	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 1;
+	static constexpr uint32_t kAntiLag2RenderedFPSLimit = 60;
+	static constexpr uint32_t kGameplayMinRenderedFPSLimit = 20;
+	static constexpr uint32_t kGameplayMaxRenderedFPSLimit = 240;
 
 	struct Settings
 	{
@@ -87,6 +90,7 @@ public:
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
 		uint qualityMode = (uint)QualityMode::kQuality;
 		uint frameLimitMode = 1;
+		uint antiLag2FPSLimit = kAntiLag2RenderedFPSLimit;
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
 		bool frameGenerationAllowInMenus = false;
@@ -192,6 +196,8 @@ public:
 	bool fidelityFXMissing = false;
 	bool d3d12SwapChainActive = false;
 	bool frameGenerationPrepared = false;
+	bool frameGenerationSceneVisited = false;
+	bool frameGenerationNeutralGuides = false;
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
@@ -203,6 +209,8 @@ public:
 	bool IsFrameGenerationActive() const;
 	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
 	bool ShouldPrepareFrameGeneration() const;
+	/** @brief Supplies neutral guides when menus present without a world render pass. */
+	void PrepareMenuFrameGeneration();
 	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */
 	bool ShouldUseFrameGenerationThisFrame() const;
 	bool IsUpscalingActive() const;
@@ -245,6 +253,8 @@ public:
 	// class's boot-vs-live blob diff can never see it.
 	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
+	/** @copydoc Feature::OnBeforeInputPoll */
+	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
 	void DrawPerformancePresets() override;
