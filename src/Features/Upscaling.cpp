@@ -711,8 +711,10 @@ void Upscaling::OnBeforeInputPoll()
 	auto* ui = globals::game::ui;
 	const bool gameplay = ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) &&
 	                      !ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
-	const auto fpsLimit = gameplay ? std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit) : kAntiLag2RenderedFPSLimit;
-	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && settings.frameGenerationMode != 0);
+	const bool frameGeneration = settings.frameGenerationMode != 0;
+	const auto gameplayLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
+	const auto fpsLimit = gameplay ? (frameGeneration ? gameplayLimit : gameplayLimit * 2) : kAntiLag2RenderedFPSLimit;
+	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && frameGeneration);
 }
 
 void Upscaling::DrawSettings()

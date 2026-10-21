@@ -7,10 +7,24 @@
 #include "Deferred.h"
 #include "Features/ReverseZ.h"
 #include "Features/VR.h"
+#include "LightingReconstruction.h"
 #include "State.h"
-#include "Upscaling.h"
 #include "Util.h"
 #include "Utils/Game.h"
+
+namespace
+{
+	LightingReconstruction* GetLightingReconstructionProvider()
+	{
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (feature->loaded) {
+				if (auto* provider = feature->GetLightingReconstruction())
+					return provider;
+			}
+		}
+		return nullptr;
+	}
+}
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -1216,7 +1230,8 @@ void ScreenSpaceGI::UpdateSB()
 				rcCurrentVolumeExtent.z != rcPreviousVolumeExtent.z;
 
 			if (rcOriginChanged || rcExtentChanged) {
-				globals::features::upscaling.fidelityFX.RequestRadianceCacheReset();
+				if (auto* provider = GetLightingReconstructionProvider())
+					provider->RequestRadianceCacheReset();
 				++rcAdaptiveDomainResetCount;
 				rcPreviousVolumeOrigin = rcCurrentVolumeOrigin;
 				rcPreviousVolumeExtent = rcCurrentVolumeExtent;
@@ -1427,7 +1442,10 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 
 	constexpr uint32_t kRCMaxCaptureSampleCount = 4096;
 
-	auto& ffx = globals::features::upscaling.fidelityFX;
+	auto* provider = GetLightingReconstructionProvider();
+	if (!provider)
+		return;
+	auto& ffx = *provider;
 	auto& predictedRadiance = rcScratch.predictedRadiance;
 	auto& predictedSourceQueryIndices = rcScratch.predictedSourceQueryIndices;
 	auto& compactedInputs = rcScratch.compactedInputs;
@@ -1437,6 +1455,7 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 
 	uint32_t predictedSampleCount = 0;
 	bool predictedOutputReady = false;
+	bool batchSubmitted = false;
 
 	if (settings.EnableRadianceCacheDiagnostics)
 		rcTelemetryValidQueries = a_validCount;
@@ -1470,12 +1489,13 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 			predictedRadiance,
 			predictedSourceQueryIndices,
 			&predictedSampleCount,
-			&predictedOutputReady);
+			&predictedOutputReady,
+			&batchSubmitted);
 
 	if (predictedOutputReady)
 		rcPendingInferenceGridSize = 0;
 
-	if (batchDispatchSucceeded && a_validCount > 0)
+	if (batchSubmitted)
 		rcPendingInferenceGridSize = a_gridSize;
 
 	if (!batchDispatchSucceeded) {
@@ -1603,6 +1623,7 @@ void ScreenSpaceGI::DrawSSGI()
 		sao->enableSAO = settings.EnableVanillaSSAO;
 
 	if (!(settings.Enabled && ShadersOK())) {
+		rrDepthHistoryValid = false;
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		if (texAo[outputAoIdx])
 			context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
@@ -1820,12 +1841,13 @@ void ScreenSpaceGI::DrawSSGI()
 
 	// Capture path: D3D11 UAV -> staging readback -> CPU -> D3D12 NRC upload.
 
+	auto* reconstruction = GetLightingReconstructionProvider();
 	bool rcAutomaticCaptureRequested = false;
 
 	if (settings.EnableRadianceCache &&
 		settings.Enabled &&
-		HasGIResources()) {
-		auto& rcFFX = globals::features::upscaling.fidelityFX;
+		HasGIResources() && IsSpecularGIActive() && reconstruction) {
+		auto& rcFFX = *reconstruction;
 
 		if (rcFFX.EnsureRadianceCacheContext()) {
 			// Capture NRC input every frame; quality controls grid size only.
@@ -2202,8 +2224,8 @@ void ScreenSpaceGI::DrawSSGI()
 	// Prepare AMD Ray Regeneration feature maps from the same frame that produced the
 	// raw pre-temporal indirect-specular signal. Depth is ping-ponged so motion.z can
 	// carry PreviousLinearDepth - CurrentLinearDepth for RR.
-	if (settings.EnableExperimentalSpecularGI && settings.EnableRayRegeneration &&
-		globals::features::upscaling.fidelityFX.CanDispatchRayRegeneration() &&
+	if (IsSpecularGIActive() && settings.EnableRayRegeneration && reconstruction &&
+		reconstruction->CanDispatchRayRegeneration() &&
 		texRRSpecularInput && texRRSpecularOutput &&
 		texRRLinearDepth[0] && texRRLinearDepth[1] &&
 		texRRMotionVectors && texRRNormalRoughness &&
@@ -2260,12 +2282,13 @@ void ScreenSpaceGI::DrawSSGI()
 		}
 
 		auto rr = GetRRInputs();
+		rr.linearDepth = texRRLinearDepth[currDepthIdx]->resource.get();
 		if (useRCCombinedSignal)
 			rr.signal = texRRCombinedInput->resource.get();
 		const bool resetRR = !rrDepthHistoryValid ||
 		                     (globals::state && globals::state->IsMainOrLoadingMenuOpen());
 
-		const bool rrOk = globals::features::upscaling.fidelityFX.DispatchRayRegeneration(
+		const bool rrOk = reconstruction->DispatchRayRegeneration(
 			rr.signal,
 			rr.linearDepth,
 			rr.motionVectors,
@@ -2292,6 +2315,8 @@ void ScreenSpaceGI::DrawSSGI()
 		// Preparation itself establishes the previous-depth source for the next frame.
 		rrDepthHistoryIdx = currDepthIdx;
 		rrDepthHistoryValid = true;
+	} else {
+		rrDepthHistoryValid = false;
 	}
 	// View-independent reproject: fill eye 1's diffuse GI from eye 0 before the blur, whose
 	// seam taps read across eyes. Replaces the tail bilateral stereo sync below.

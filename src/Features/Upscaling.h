@@ -430,6 +430,9 @@ public:
 
 	virtual void ClearShaderCache() override;
 
+	/** @brief Exposes the existing synchronized lighting backend to other features. */
+	LightingReconstruction* GetLightingReconstruction() override { return &fidelityFX; }
+
 	// Static instances instead of singletons
 	static inline Streamline streamline;      ///< DX11 instance: DLSS + Reflex + PCL
 	static inline Streamline streamlineDX12;  ///< DX12 instance: DLSS-G frame generation

@@ -22,7 +22,7 @@ RWTexture2D<float4> outDiffuseAlbedo : register(u4);
 	const float2 uv = (dtid + 0.5) * RCP_OUT_FRAME_DIM;
 
 	// SSGI working depth is already signed view-space linear depth.
-	const float depth = srcWorkingDepth.Load(uint3(dtid, 0));
+	const float depth = READ_DEPTH(srcWorkingDepth, dtid);
 	outLinearDepth[dtid] = depth;
 
 	// Skyrim/Open Shaders motion XY is PreviousUV - CurrentUV, matching RR.

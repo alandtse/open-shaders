@@ -16,6 +16,7 @@
 
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
+struct LightingReconstruction;
 
 namespace globals
 {
@@ -86,6 +87,9 @@ struct Feature
 	bool installed = false;
 	std::string version;
 	std::string failedLoadedMessage;
+
+	/** @brief Exposes an optional provider for indirect-lighting reconstruction. */
+	virtual LightingReconstruction* GetLightingReconstruction() { return nullptr; }
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;

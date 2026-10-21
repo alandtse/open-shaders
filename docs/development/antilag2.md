@@ -1,8 +1,8 @@
 # AMD Anti-Lag 2
 
 The DX12 SDK header, license and integration guide in
-`extern/AntiLag2-SDK/` are copied unchanged from the local RedstoneRT
-checkout at `D:/pcmaster/open-shaders-FSR-REDSTONE/extern/AntiLag2-SDK/`.
+`extern/AntiLag2-SDK/` are vendored from the upstream
+[AMD Anti-Lag 2 SDK](https://github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK/releases/tag/v2.0.0a).
 The header identifies AMD's 2024 Anti-Lag 2.0 SDK and carries its MIT
 license. This is a vendored, header-only dependency; no SDK binaries or
 sample applications are required by the integration.
@@ -15,11 +15,8 @@ Shutdown drains pending FSR presents before releasing the SDK interface;
 if that drain fails, process cleanup retains ownership of the interface.
 See the vendored README for AMD's API contract and latency monitor.
 
-This change is a source-only handoff. Compilation, driver initialization,
-FPS enforcement, menu/loading-screen frame generation and input latency
-remain unverified until the user builds and runs the game. Runtime
-acceptance requires VR plus one flat edition (SE or AE); report which
-editions actually ran. Skyrim launches remain user-controlled.
+Runtime acceptance requires VR plus one flat edition (SE or AE); report
+which editions actually ran. Skyrim launches remain user-controlled.
 
 The Frame Generation tab exposes the gameplay limit as displayed FPS with
 FSR's fixed 2x multiplier (40-480, default 120). Settings store rendered
@@ -41,9 +38,10 @@ Devbench commands under Upscaling: `setGameplayFPSLimit` accepts even
 Commands change live settings without saving automatically.
 
 For runtime acceptance, test the gameplay FPS control at multiple values
-with FSR frame generation enabled, compare rendered FPS against the
-requested cap and displayed FPS against FSR's fixed 2x multiplier, then
-toggle the option to retain frame generation in menus and loading screens.
+with FSR frame generation enabled and disabled. Verify the displayed FPS
+cap in both modes: rendered FPS is half the cap with FSR's fixed 2x
+multiplier, and equals the cap without frame generation. Then toggle the
+option to retain frame generation in menus and loading screens.
 Check an unavailable/failed Anti-Lag path as well as a supported AMD
 driver. An SDK success result or a timer wait alone does not establish
 latency reduction or displayed-frame behavior.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../../LightingReconstruction.h"
+
 #include <array>
 #include <atomic>
 #include <d3d11_4.h>
@@ -26,7 +28,7 @@
 #include "DX12SwapChain.h"
 
 /** @brief Manages AMD FidelityFX upscaling and frame generation, including the host FSR3 SDK and the runtime-loaded FSR4 provider. */
-class FidelityFX
+class FidelityFX : public LightingReconstruction
 {
 public:
 	static constexpr const wchar_t* PluginDir = L"Data\\Shaders\\Upscaling\\FidelityFX";
@@ -51,7 +53,7 @@ public:
 	bool featureRadianceCache = false;
 	bool radianceCacheFailureLatched = false;
 	bool rayRegenerationFailureLatched = false;
-	bool CanDispatchRayRegeneration() const
+	bool CanDispatchRayRegeneration() const override
 	{
 		return featureRayRegeneration && !rayRegenerationFailureLatched;
 	}
@@ -183,11 +185,11 @@ public:
 	/** Dispatch FidelityFX Denoiser 1.2 indirect-specular Ray Regeneration through the shared DX12 bridge. */
 	bool DispatchRayRegeneration(ID3D11Texture2D* a_signal, ID3D11Texture2D* a_linearDepth, ID3D11Texture2D* a_motionVectors,
 		ID3D11Texture2D* a_normalRoughness, ID3D11Texture2D* a_specularAlbedo, ID3D11Texture2D* a_diffuseAlbedo,
-		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory);
+		ID3D11Texture2D* a_output, uint32_t a_width, uint32_t a_height, bool a_resetHistory) override;
 	void ResetRayRegeneration();
 
 	/** Create the FidelityFX Radiance Cache 0.9 context through the shared DX12 runtime bridge. */
-	bool EnsureRadianceCacheContext();
+	bool EnsureRadianceCacheContext() override;
 	bool EnsureRadianceCacheBuffers();
 	bool DispatchRadianceCacheCapturedInference(
 		const float* a_inputValues,
@@ -199,10 +201,11 @@ public:
 		float* a_outputRadiance,
 		uint32_t* a_outputSourceQueryIndices,
 		uint32_t* a_outputSampleCount,
-		bool* a_outputReady);
-	void RequestRadianceCacheReset();  // Reset NRC state on the next Radiance Cache dispatch.
-	void SetRRDiagnosticsEnabled(bool a_enabled) { rrDiagnosticsEnabled = a_enabled; }
-	void SetRadianceCacheTrainingParameters(float a_learningRate, float a_weightSmoothing)
+		bool* a_outputReady,
+		bool* a_outputSubmitted) override;
+	void RequestRadianceCacheReset() override;  // Reset NRC state on the next Radiance Cache dispatch.
+	void SetRRDiagnosticsEnabled(bool a_enabled) override { rrDiagnosticsEnabled = a_enabled; }
+	void SetRadianceCacheTrainingParameters(float a_learningRate, float a_weightSmoothing) override
 	{
 		radianceCacheLearningRate = a_learningRate;
 		radianceCacheWeightSmoothing = a_weightSmoothing;

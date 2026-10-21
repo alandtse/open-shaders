@@ -59,7 +59,7 @@ static const uint RC_CAPTURE_MAX_GRID_SIZE = 64u;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	float2 screenPos = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
-	float depth = srcWorkingDepth.Load(uint3(pixel, 0));
+	float depth = READ_DEPTH(srcWorkingDepth, pixel);
 	float3 viewPos = ScreenToViewPosition(screenPos, depth, eyeIndex);
 
 	float4 nr = FULLRES_LOAD(
@@ -74,7 +74,7 @@ static const uint RC_CAPTURE_MAX_GRID_SIZE = 64u;
 	float3 viewDirection = normalize(-viewPos);
 
 	// Transform current-frame geometry into Skyrim world space.
-	float3 worldPos = ViewToWorldPosition(viewPos, InvViewMat[eyeIndex]);
+	float3 worldPos = ViewToWorldPosition(viewPos, InvViewMat[eyeIndex]) + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	float3 worldNormal = normalize(ViewToWorldVector(viewNormal, InvViewMat[eyeIndex]));
 	float3 worldViewDirection = normalize(ViewToWorldVector(viewDirection, InvViewMat[eyeIndex]));
 

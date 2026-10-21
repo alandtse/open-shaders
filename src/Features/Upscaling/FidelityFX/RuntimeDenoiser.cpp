@@ -203,6 +203,9 @@ namespace
 }
 bool FidelityFX::EnsureRadianceCacheBuffers()
 {
+	if (radianceCacheFailureLatched)
+		return false;
+
 	if (radianceCacheBuffersReady)
 		return true;
 
@@ -335,8 +338,11 @@ bool FidelityFX::DispatchRadianceCacheCapturedInference(
 	float* a_outputRadiance,
 	uint32_t* a_outputSourceQueryIndices,
 	uint32_t* a_outputSampleCount,
-	bool* a_outputReady)
+	bool* a_outputReady,
+	bool* a_outputSubmitted)
 {
+	if (a_outputSubmitted)
+		*a_outputSubmitted = false;
 	if (a_outputSampleCount)
 		*a_outputSampleCount = 0;
 	if (a_outputReady)
@@ -362,7 +368,8 @@ bool FidelityFX::DispatchRadianceCacheCapturedInference(
 	if (!EnsureRadianceCacheBuffers())
 		return false;
 
-	if (!ffxModule.Dispatch || !radianceCacheContext || !radianceCacheInputUpload ||
+	if (radianceCacheFailureLatched ||
+		!ffxModule.Dispatch || !radianceCacheContext || !radianceCacheInputUpload ||
 		!radianceCacheTrainingInputUpload || !radianceCacheTrainingTargetUpload ||
 		!radianceCacheOutputReadback || !runtimeFence.fence12)
 		return false;
@@ -811,6 +818,8 @@ bool FidelityFX::DispatchRadianceCacheCapturedInference(
 
 		// Ownership of the single upload/readback set now belongs
 		// to this fence until a later call observes GPU completion.
+		if (a_outputSubmitted)
+			*a_outputSubmitted = true;
 		radianceCacheCapturedInferencePending = true;
 		radianceCacheCapturedInferenceFence = fenceValue;
 		radianceCacheCapturedInferenceSampleCount = a_sampleCount;
@@ -885,11 +894,13 @@ void FidelityFX::ResetRadianceCache()
 
 bool FidelityFX::EnsureRadianceCacheContext()
 {
+	if (radianceCacheFailureLatched)
+		return false;
+
 	if (radianceCacheContext)
 		return true;
 
 	if (!featureRadianceCache ||
-		radianceCacheFailureLatched ||
 		!radianceCacheModule ||
 		!ffxModule.CreateContext ||
 		!ffxModule.DestroyContext)
