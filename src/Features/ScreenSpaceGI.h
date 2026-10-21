@@ -231,6 +231,7 @@ public:
 		uint RadianceCacheResultGridSize;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SSGICB);
+	eastl::unique_ptr<SSGICB> ssgiData;
 	eastl::unique_ptr<ConstantBuffer> ssgiCB;
 
 	/// Set once per frame by UpdateSB(); DrawSSGI() reuses it instead of re-checking
@@ -373,10 +374,15 @@ public:
 	winrt::com_ptr<ID3D11Buffer> rcCaptureReadbacks[kRCCaptureReadbackRingSize]{};
 	bool rcCaptureReadbackPending[kRCCaptureReadbackRingSize]{};
 	uint32_t rcCaptureReadbackGridSize[kRCCaptureReadbackRingSize]{};
+	float3 rcCaptureReadbackExtent[kRCCaptureReadbackRingSize]{};
+	uint64_t rcCaptureReadbackDomainGeneration[kRCCaptureReadbackRingSize]{};
 	uint32_t rcCaptureWriteSlot = 0;
 	uint32_t rcCaptureReadSlot = 0;
 
 	// Grid topology survives the asynchronous NRC inference boundary.
+	uint64_t rcVolumeDomainGeneration = 0;
+	uint64_t rcPendingInferenceDomainGeneration = 0;
+	uint64_t rcResultDomainGeneration = 0;
 	uint32_t rcPendingInferenceGridSize = 0;
 	uint32_t rcResultGridSize = 0;
 

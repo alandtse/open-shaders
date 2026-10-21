@@ -716,6 +716,7 @@ void ScreenSpaceGI::SetupResources()
 
 	logger::debug("Creating buffers...");
 	{
+		ssgiData = eastl::make_unique<SSGICB>();
 		ssgiCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SSGICB>(), "SSGI::CB");
 	}
 
@@ -1089,7 +1090,7 @@ void ScreenSpaceGI::UpdateSB()
 
 	static float4x4 prevInvView[2] = {};
 
-	SSGICB data;
+	auto& data = *ssgiData;
 	{
 		// The game's jittered TAA matrices make the depth reconstruction swim in VR.
 		const bool useUnjitteredCamera = globals::game::isVR && settings.DebugUseUnjitteredCameraReconstruction;
@@ -1230,6 +1231,7 @@ void ScreenSpaceGI::UpdateSB()
 				rcCurrentVolumeExtent.z != rcPreviousVolumeExtent.z;
 
 			if (rcOriginChanged || rcExtentChanged) {
+				++rcVolumeDomainGeneration;
 				if (auto* provider = GetLightingReconstructionProvider())
 					provider->RequestRadianceCacheReset();
 				++rcAdaptiveDomainResetCount;
@@ -1464,6 +1466,7 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 	// capture in the same call. Snapshot the previous topology first.
 	const uint32_t completedInferenceGridSize =
 		rcPendingInferenceGridSize;
+	const uint64_t completedDomainGeneration = rcPendingInferenceDomainGeneration;
 
 	// Push the live NRC training parameters into the FidelityFX runtime.
 	// Defaults and loaded configuration therefore apply even if
@@ -1495,8 +1498,10 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 	if (predictedOutputReady)
 		rcPendingInferenceGridSize = 0;
 
-	if (batchSubmitted)
+	if (batchSubmitted) {
 		rcPendingInferenceGridSize = a_gridSize;
+		rcPendingInferenceDomainGeneration = rcVolumeDomainGeneration;
+	}
 
 	if (!batchDispatchSucceeded) {
 		logger::error(
@@ -1505,7 +1510,7 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 		return;
 	}
 
-	if (!predictedOutputReady)
+	if (!predictedOutputReady || completedDomainGeneration != rcVolumeDomainGeneration)
 		return;
 
 	const uint32_t completedGridSize =
@@ -1606,6 +1611,9 @@ void ScreenSpaceGI::ProcessRadianceCacheInference(
 		0);
 
 	rcResultGridSize = completedGridSize;
+	rcResultDomainGeneration = completedDomainGeneration;
+	ssgiData->RadianceCacheResultGridSize = completedGridSize;
+	ssgiCB->Update(*ssgiData);
 }
 
 void ScreenSpaceGI::DrawSSGI()
@@ -1882,11 +1890,7 @@ void ScreenSpaceGI::DrawSSGI()
 				context->CSSetShaderResources(0, 4, srvs.data());
 				context->CSSetUnorderedAccessViews(0, 2, uavs.data(), nullptr);
 				context->CSSetShader(rcCaptureInputCompute.get(), nullptr, 0);
-				const int rcQuality = std::clamp(settings.RadianceCacheQuality, 0, 2);
-				const uint32_t rcGridSize =
-					(rcQuality == 0) ? 16u :
-					(rcQuality == 1) ? 32u :
-									   64u;
+				const uint32_t rcGridSize = ssgiData->RadianceCacheGridSize;
 				const uint32_t rcDispatchGroups = (rcGridSize + 7u) / 8u;
 
 				context->Dispatch(rcDispatchGroups, rcDispatchGroups, 1);
@@ -1905,6 +1909,12 @@ void ScreenSpaceGI::DrawSSGI()
 						rcTrainingTargetBuffer.get());
 
 					rcCaptureReadbackGridSize[rcCaptureWriteSlot] = rcGridSize;
+					rcCaptureReadbackExtent[rcCaptureWriteSlot] = float3{
+						ssgiData->RadianceCacheVolumeExtent.x,
+						ssgiData->RadianceCacheVolumeExtent.y,
+						ssgiData->RadianceCacheVolumeExtent.z
+					};
+					rcCaptureReadbackDomainGeneration[rcCaptureWriteSlot] = rcVolumeDomainGeneration;
 					rcCaptureReadbackPending[rcCaptureWriteSlot] = true;
 					rcCaptureWriteSlot = (rcCaptureWriteSlot + 1) % kRCCaptureReadbackRingSize;
 				}
@@ -1964,8 +1974,10 @@ void ScreenSpaceGI::DrawSSGI()
 					// Consume each asynchronous capture using the grid topology that produced it.
 					const uint32_t kRCActiveGridSize =
 						std::clamp(rcCaptureReadbackGridSize[readSlot], 16u, 64u);
+					const bool captureDomainCurrent =
+						rcCaptureReadbackDomainGeneration[readSlot] == rcVolumeDomainGeneration;
 					const uint32_t kRCCaptureSampleCount =
-						kRCActiveGridSize * kRCActiveGridSize;
+						captureDomainCurrent ? kRCActiveGridSize * kRCActiveGridSize : 0u;
 					constexpr uint32_t kRCInputFloatCount = 11;
 
 					const auto* capturedValues = static_cast<const float*>(mapped.pData);
@@ -2134,12 +2146,13 @@ void ScreenSpaceGI::DrawSSGI()
 						constexpr float kRCHeadroom = 1.25f;
 						constexpr uint32_t kRCShrinkObservationCount = 300;
 
+						const float3 captureExtent = rcCaptureReadbackExtent[readSlot];
 						const float worldP95X =
-							rcTelemetryPositionP95X * 2.0f * rcAdaptiveVolumeExtent.x;
+							rcTelemetryPositionP95X * 2.0f * captureExtent.x;
 						const float worldP95Y =
-							rcTelemetryPositionP95Y * 2.0f * rcAdaptiveVolumeExtent.y;
+							rcTelemetryPositionP95Y * 2.0f * captureExtent.y;
 						const float worldP95Z =
-							rcTelemetryPositionP95Z * 2.0f * rcAdaptiveVolumeExtent.z;
+							rcTelemetryPositionP95Z * 2.0f * captureExtent.z;
 
 						const auto selectExtentTier = [&](float requiredWorldExtent) {
 							const float required = std::clamp(
@@ -2260,6 +2273,7 @@ void ScreenSpaceGI::DrawSSGI()
 		// Compose the existing RR radiance with the reconstructed NRC field before RR dispatch.
 		const bool useRCCombinedSignal =
 			settings.EnableRadianceCache &&
+			rcResultGridSize != 0 && rcResultDomainGeneration == rcVolumeDomainGeneration &&
 			settings.RadianceCacheOutputMode != 0 &&
 			texRCRadiance &&
 			texRRCombinedInput &&
