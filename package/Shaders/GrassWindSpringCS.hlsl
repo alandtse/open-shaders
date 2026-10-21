@@ -14,6 +14,10 @@ groupshared uint RelevantSourceIndices[WindField::TransientImpulseCapacity];
 
 static const float TransientFlutterSpeedScale = 0.35f;
 static const float TransientFlutterMaximum = 1.0f;
+static const float TransientFlutterResponseRadians = 0.25f;
+static const float FlutterDetailFullResolution = 0.125f;
+static const float FlutterDetailMinimumResolution = 0.5f;
+static const float FlutterDetailTransitionStart = 0.75f;
 
 float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 {
@@ -26,14 +30,6 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 		velocity += sourceSample.velocity;
 	}
 	return velocity;
-}
-
-float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windField, float frequency)
-{
-	float phase = (dot(worldPosition, windField.direction.xy) * GrassWindSpring::FlutterWaveScale -
-					  windField.travelDistance) *
-	              GrassWindSpring::FlutterWorldPhaseScale * frequency;
-	return GrassWind::CalculateFlutterWave(phase);
 }
 
 [numthreads(8, 8, 1)] void main(
@@ -77,16 +73,7 @@ float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windFie
 	float3 samplePosition = float3(worldPosition, field.FieldHeight);
 	WindField::Components components = WindField::SampleCurrentComponents(samplePosition);
 	float3 ambientVelocity = components.baseAmbientVelocity + components.gustVelocity;
-	float horizontalSpeed = length(ambientVelocity.xy);
-	if (horizontalSpeed > EPSILON_WIND_RESPONSE) {
-		float2 ambientDirection = ambientVelocity.xy / horizontalSpeed;
-		float2 crosswindDirection = float2(-ambientDirection.y, ambientDirection.x);
-		float directionalTurbulence = components.ambientTurbulence *
-		                              max(SharedData::WindFieldTuning.turbulenceStrength, 0.0f);
-		ambientVelocity.xy = normalize(
-								 ambientDirection + crosswindDirection * directionalTurbulence) *
-		                     horizontalSpeed;
-	}
+	ambientVelocity += components.slowMicroVelocity;
 	float3 transientVelocity = SampleRelevantTransientVelocity(samplePosition, relevantSourceCount);
 	float3 target = GrassWindSpring::CalculateTarget(
 		ambientVelocity, transientVelocity, field);
@@ -132,27 +119,38 @@ float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windFie
 	float transientDrive = TransientFlutterMaximum *
 	                       transientSpeed / (transientSpeed + TransientFlutterSpeedScale);
 	transientFlutter = max(transientFlutter, transientDrive);
-	float flutterEnvelope = max(
-		1.0f + (components.ambientGust * 2.0f - 1.0f) *
-				   max(SharedData::WindFieldTuning.gustAmplitude, 0.0f) *
-				   max(GrassWindSpring::FlutterGustInfluence, 0.0f),
-		0.0f);
 	float flutterFrequency = max(GrassWindSpring::FlutterFrequency, 0.0f);
-	float flutter = 0.0f;
-	if (flutterFrequency > 0.0f) {
-		float currentWave = CalculateAmbientFlutterWave(
-			worldPosition, SharedData::WindFieldCurrent, flutterFrequency);
-		float transitionWave = CalculateAmbientFlutterWave(
-			worldPosition, SharedData::WindFieldTransition, flutterFrequency);
-		flutter = lerp(transitionWave, currentWave, saturate(SharedData::WindFieldTransitionData.x)) *
-		          flutterEnvelope;
+	float fieldDistance = length(worldPosition -
+								 (GrassWindSpring::Fields[0].FieldMinimum + GrassWindSpring::Fields[0].FieldSize * 0.5f));
+	float detailCellSize = GrassWindSpring::Fields[0].FieldSize / GrassWindSpring::Fields[0].TextureSize;
+	[unroll] for (uint index = 1u; index < GrassWindSpring::QualityRangeCount; ++index)
+	{
+		float transitionEnd = GrassWindSpring::Fields[index - 1u].MaxDistance;
+		float nextCellSize = GrassWindSpring::Fields[index].FieldSize / GrassWindSpring::Fields[index].TextureSize;
+		detailCellSize = lerp(detailCellSize, max(detailCellSize, nextCellSize),
+			smoothstep(transitionEnd * FlutterDetailTransitionStart, transitionEnd, fieldDistance));
 	}
-	flutter *= GrassWindSpring::EvaluateFlutterAmplitudeMultiplier(
-		horizontalSpeed * max(field.Sensitivity, 0.0f));
+	float spatialScale = max(GrassWindSpring::FlutterWaveScale, EPSILON_WIND_RESPONSE);
+	float detailFootprint = detailCellSize * spatialScale / WindField::Detail::MicroDetailSpatialScale;
+	float detailWeight = 1.0f - smoothstep(FlutterDetailFullResolution, FlutterDetailMinimumResolution, detailFootprint);
+	float flutter = 0.0f;
+	if (flutterFrequency > 0.0f && detailWeight > 0.0f) {
+		WindField::WindTuning flutterTuning = SharedData::WindFieldTuning;
+		flutterTuning.fineGustCoupling *= max(GrassWindSpring::FlutterGustInfluence, 0.0f);
+		WindField::FineSample fine = WindField::SampleFineVelocity(samplePosition,
+			components.baseAmbientVelocity, components.gustVelocity,
+			GrassWindSpring::FineTransport, flutterTuning, spatialScale, 1.0f);
+		float baseSpeed = length(components.baseAmbientVelocity.xy);
+		float2 flutterDirection = baseSpeed > EPSILON_WIND_RESPONSE ?
+		                              components.baseAmbientVelocity.xy / baseSpeed : float2(1.0f, 0.0f);
+		flutter = dot(fine.detailVelocity.xy, flutterDirection) * max(field.Sensitivity, 0.0f) * detailWeight;
+		flutter *= GrassWindSpring::EvaluateFlutterAmplitudeMultiplier(baseSpeed);
+	}
 	if (transientFlutter > EPSILON_WIND_RESPONSE && GrassWindSpring::TransientFlutterStrength > 0.0f) {
 		float transientPhase = SharedData::Timer * (Math::TAU * max(GrassWindSpring::TransientFlutterFrequency, 0.0f)) +
 		                       dot(worldPosition, float2(0.031f, 0.047f));
-		flutter += sin(transientPhase) * transientFlutter * GrassWindSpring::TransientFlutterStrength;
+		flutter += sin(transientPhase) * transientFlutter * GrassWindSpring::TransientFlutterStrength *
+		           (TransientFlutterResponseRadians / GrassWind::FlutterResponseRadians);
 	}
 
 	Response[dispatchThreadId.xy] = float4(response, flutter);

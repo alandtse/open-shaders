@@ -6,11 +6,13 @@
 
 namespace GrassWind
 {
-	static const float FlutterDisplacementRatio = 0.25f;
+	static const float FlutterResponseRadians = 1.5f;
+	static const float FlutterMaximumAngleRadians = Math::PI / 6.0f;
+	static const float FlutterPhaseScale = 0.4f;
 
 	float CalculateFlutterWave(float phase)
 	{
-		float windAngle = 0.4 * phase;
+		float windAngle = FlutterPhaseScale * phase;
 		float windAngleSin, windAngleCos;
 		sincos(windAngle, windAngleSin, windAngleCos);
 
@@ -48,15 +50,21 @@ namespace GrassWind
 	}
 
 	float3 CalculateFlutterDisplacement(
-		float flutterWeight, float bladeReach, float3 bendAxis, float flutter)
+		float flutterWeight, float3 relativePosition, float3 bendAxis, float flutter,
+		float maximumTiltRadians, out float flutterAngle)
 	{
+		flutterAngle = 0.0f;
 		float axisLength = length(bendAxis.xy);
-		if (axisLength <= EPSILON_WIND_RESPONSE)
+		if (flutterWeight <= 0.0f || abs(flutter) <= EPSILON_WIND_RESPONSE ||
+			axisLength <= EPSILON_WIND_RESPONSE || dot(relativePosition, relativePosition) <= EPSILON_WIND_LENGTH_SQ)
 			return 0.0f.xxx;
+		flutterAngle = FlutterMaximumAngleRadians * tanh(
+			flutter * flutterWeight * FlutterResponseRadians / FlutterMaximumAngleRadians);
 		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
-		float flutterDrive = flutter * flutterWeight;
-		float windPower = bladeReach * FlutterDisplacementRatio * flutterDrive;
-		return flutterDirection * windPower;
+		float currentTilt = atan2(dot(relativePosition, flutterDirection), relativePosition.z);
+		float maximumTilt = max(maximumTiltRadians, 0.0f);
+		flutterAngle = clamp(flutterAngle, -maximumTilt - currentTilt, maximumTilt - currentTilt);
+		return RotateVector(relativePosition, bendAxis / axisLength, flutterAngle) - relativePosition;
 	}
 
 	/** @brief Deforms a grass vertex from an already-resolved rigid bend. */

@@ -151,7 +151,7 @@ cbuffer cb8 : register(b8)
 }
 #	endif
 
-float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight, float bladeReach,
+float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight,
 	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
@@ -176,9 +176,13 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 		bendAngle = 0.0f;
 	}
 	if (Permutation::EnableAmbientGrassWind != 0 && response.w >= 0.0f) {
+		float flutterAngle;
+		float3 relativePosition = float3(0.0f, 0.0f, max(modelHeight - rootHeight, 0.0f)) + displacement;
 		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
-			flutterWeight, bladeReach, bendAxis, flutter);
-		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
+			flutterWeight, relativePosition, bendAxis, flutter,
+			GrassWindSpring::Fields[0].MaximumTiltRadians, flutterAngle);
+		bendAngle += flutterAngle;
+		return displacement + flutterDisplacement;
 	}
 	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
 	                             (WindVector.z * flutter * (0.5 * flutterWeight));
@@ -238,14 +242,13 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	msPosition.xyz += e0.xyz;
 
 	const float3 instanceRoot = input.InstanceData1.xyz + e0.xyz;
-	const float bladeReach = length(msPosition.xyz - instanceRoot);
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
 	float4 previousMsPosition = msPosition;
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z,
 		InstanceExtras[extrasSlot * 6 + 2], e1.x, bendAxis, bendAngle);
 #		if !defined(RENDER_DEPTH)
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z,
 		InstanceExtras[extrasSlot * 6 + 3], e1.y, previousBendAxis, previousBendAngle);
 #		endif
 
@@ -333,10 +336,9 @@ VS_OUTPUT main(VS_INPUT input)
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
 	float4 previousMsPosition = msPosition;
-	const float bladeReach = length(msPosition.xyz - input.InstanceData1.xyz);
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z, bladeReach,
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z,
 		currentResponse, flutter.x, bendAxis, bendAngle);
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z, bladeReach,
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z,
 		previousResponse, flutter.y, previousBendAxis, previousBendAngle);
 
 #		ifdef GRASS_COLLISION

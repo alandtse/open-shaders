@@ -58,14 +58,15 @@ namespace
 		}
 	}
 
-	std::unique_ptr<Texture2D> CreateTreeWindSpringTexture(uint32_t a_textureSize, const std::string& a_name)
+	std::unique_ptr<Texture2D> CreateTreeWindSpringTexture(uint32_t a_textureSize, const std::string& a_name,
+		DXGI_FORMAT a_format = DXGI_FORMAT_R16G16_FLOAT)
 	{
 		D3D11_TEXTURE2D_DESC textureDesc{
 			.Width = a_textureSize,
 			.Height = a_textureSize,
 			.MipLevels = 1,
 			.ArraySize = 1,
-			.Format = DXGI_FORMAT_R16G16_FLOAT,
+			.Format = a_format,
 			.SampleDesc = { .Count = 1 },
 			.Usage = D3D11_USAGE_DEFAULT,
 			.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS
@@ -241,7 +242,7 @@ void Wind::RecreateTreeWindSpringTextures(uint32_t a_qualityIndex)
 		const std::string responseName = std::format(
 			"Wind::TreeWindSpring{}Response{}", WindSettingsLimits::kGrassWindSpringQualityRangeNames[a_qualityIndex], textureIndex);
 		treeState.springResponseTextures[a_qualityIndex][textureIndex] =
-			CreateTreeWindSpringTexture(textureSize, responseName);
+			CreateTreeWindSpringTexture(textureSize, responseName, DXGI_FORMAT_R16G16B16A16_FLOAT);
 		const std::string velocityName = std::format(
 			"Wind::TreeWindSpring{}Velocity{}", WindSettingsLimits::kGrassWindSpringQualityRangeNames[a_qualityIndex], textureIndex);
 		treeState.springVelocityTextures[a_qualityIndex][textureIndex] =

@@ -209,6 +209,36 @@ void Wind::DrawWindFieldSettings()
 		settings.windFieldGustScale, settings.windFieldGustCrosswindScale);
 	ImGui::Text("%s: %.2fx", T(TKEY("wind_field_profile_advection"), "Advection"), settings.windFieldGustAdvectionMultiplier);
 	if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat(T(TKEY("wind_field_micro_turbulence_strength"), "Fine Wind Strength"),
+			&settings.windFieldMicroTurbulenceStrength, kWindFieldMicroTurbulenceStrengthMin,
+			kWindFieldMicroTurbulenceStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_micro_turbulence_strength_tooltip"),
+				"Scales continuous traveling fine wind: slow trunk sway and faster tree-detail and grass flutter. Zero disables both bands. Direction deviations stay within four degrees without regenerating the gust field."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_baseline"), "Fine Wind Baseline"),
+			&settings.windFieldFineBaselineAmplitude, kWindFieldFineBaselineAmplitudeMin,
+			kWindFieldFineBaselineAmplitudeMax, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_baseline_tooltip"),
+				"Adds fine motion in light sustained wind. All fine motion smoothly fades to zero in completely still air."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_wind_coupling"), "Fine Wind Ambient Coupling"),
+			&settings.windFieldFineWindCoupling, kWindFieldFineCouplingMin,
+			kWindFieldFineCouplingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_wind_coupling_tooltip"),
+				"Controls how much sustained ambient wind increases the fine-motion amplitude."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_gust_coupling"), "Fine Wind Gust Coupling"),
+			&settings.windFieldFineGustCoupling, kWindFieldFineCouplingMin,
+			kWindFieldFineCouplingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_gust_coupling_tooltip"),
+				"Adds fine-motion amplitude as the existing gust front passes, without restarting its phase. Transient impacts use their separate controls."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_frequency"), "Fine Wind Travel Rate"),
+			&settings.windFieldFineFrequency, kWindFieldFineFrequencyMin,
+			kWindFieldFineFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_frequency_tooltip"),
+				"Changes how quickly both noise bands travel with the wind. Rate and wind-speed changes preserve phase; zero freezes transport. Fine Wind Strength controls amplitude."));
 		ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
 			&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
 			kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
@@ -333,7 +363,7 @@ void Wind::DrawTreeSettings()
 void Wind::DrawSettings()
 {
 	if (ImGui::BeginTabBar("##WindTabs", ImGuiTabBarFlags_None)) {
-		if (globals::state->IsDeveloperMode() && ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
+		if (ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
 			uiState.activeSettingsPage = SettingsPage::WindField;
 			DrawWindFieldSettings();
 			ImGui::EndTabItem();
@@ -828,25 +858,40 @@ void Wind::DrawTreeMeshRulesTable()
 {
 	ImGui::Text("%s: %zu", T(TKEY("tree_mesh_search_results"), "Matches"), uiState.filteredTreeRuleIndices.size());
 	const auto& style = ImGui::GetStyle();
+	const auto meshFileName = [](std::string_view mesh) {
+		const auto separator = mesh.find_last_of("/\\");
+		return separator == std::string_view::npos ? mesh : mesh.substr(separator + 1);
+	};
+	const char* meshLabel = T(TKEY("tree_mesh_path"), "Mesh");
+	float meshWidth = ImGui::CalcTextSize(meshLabel).x;
+	for (const auto ruleIndex : uiState.filteredTreeRuleIndices) {
+		const auto fileName = meshFileName(TreeWindPatcher::GetRule(ruleIndex).mesh);
+		meshWidth = std::max(meshWidth, ImGui::CalcTextSize(fileName.data(), fileName.data() + fileName.size()).x);
+	}
+	const auto setupSettingColumn = [&style](const char* label, const char* maximumValue = "0.00") {
+		const float width = std::max(ImGui::CalcTextSize(label).x, ImGui::CalcTextSize(maximumValue).x) +
+		                    style.FramePadding.x * 2.0f;
+		ImGui::TableSetupColumn(label, ImGuiTableColumnFlags_WidthFixed, width);
+	};
 	const float tableBottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - style.WindowPadding.y - style.ItemSpacing.y;
 	const float visibleTableHeight = tableBottom - ImGui::GetCursorScreenPos().y;
 	const float minimumTableHeight = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
 	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
-	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-	                                   ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-	if (ImGui::BeginTable("##TreeMeshRules", 11, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
-		ImGui::TableSetupScrollFreeze(0, 1);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_gust"), "Leaf Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_upper_bend_range"), "Upper Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_influence"), "Trunk Transient"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_transient_influence"), "Leaf Transient"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_flutter_cap"), "Flutter Cap"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_bend"), "Transient Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_NoSavedSettings |
+	                                   ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingFixedFit;
+	if (ImGui::BeginTable("##TreeMeshRules", 11, tableFlags, ImVec2(0.0f, tableHeight))) {
+		ImGui::TableSetupScrollFreeze(1, 1);
+		ImGui::TableSetupColumn(meshLabel, ImGuiTableColumnFlags_WidthFixed, meshWidth + style.FramePadding.x * 2.0f);
+		setupSettingColumn(T(TKEY("tree_mesh_bend"), "Bend"));
+		setupSettingColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"));
+		setupSettingColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"));
+		setupSettingColumn(T(TKEY("tree_mesh_leaf_gust"), "Leaf Gust"));
+		setupSettingColumn(T(TKEY("tree_mesh_upper_bend_range"), "Upper Bend"), "100%");
+		setupSettingColumn(T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"), "10.00%");
+		setupSettingColumn(T(TKEY("tree_mesh_transient_influence"), "Trunk Transient"));
+		setupSettingColumn(T(TKEY("tree_mesh_leaf_transient_influence"), "Leaf Transient"));
+		setupSettingColumn(T(TKEY("tree_mesh_transient_flutter_cap"), "Flutter Cap"), "20.00");
+		setupSettingColumn(T(TKEY("tree_mesh_transient_bend"), "Transient Bend"));
 		ImGui::TableHeadersRow();
 
 		ImGuiListClipper clipper;
@@ -870,9 +915,9 @@ void Wind::DrawTreeMeshRulesTable()
 				ImGui::PushID(static_cast<int>(rule.id));
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
-				const std::string compactPath = CompactMeshPath(rule.mesh, ImGui::GetContentRegionAvail().x);
-				ImGui::TextUnformatted(compactPath.c_str());
-				if (compactPath != rule.mesh && ImGui::IsItemHovered())
+				const auto fileName = meshFileName(rule.mesh);
+				ImGui::TextUnformatted(fileName.data(), fileName.data() + fileName.size());
+				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("%.*s", static_cast<int>(rule.mesh.size()), rule.mesh.data());
 				ImGui::TableSetColumnIndex(1);
 				ImGui::SetNextItemWidth(-1.0f);
@@ -982,7 +1027,7 @@ void Wind::DrawGrassWindSettings()
 		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_tooltip"), "Adds spring inertia and rebound to the grass wind response. Disable for an immediate response while keeping bend and flutter active."));
 	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring_bend"), "Enable Wind Bend"), &settings.enableGrassWindSpringBend);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_bend_tooltip"), "Disable broad wind bending while keeping the custom gust-driven flutter active, so flutter can be tested by itself."));
+		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_bend_tooltip"), "Disable broad wind bending while keeping ambient and impulse flutter active, so flutter can be tested by itself."));
 	ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Vanilla Wind Intensity"), &settings.overrideTrunkWindIntensity);
 	ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
 	ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Vanilla Wind Intensity"), &settings.trunkWindIntensityOverride,
@@ -1089,33 +1134,33 @@ void Wind::DrawGrassWindSettings()
 				settings.grassWindSpringQuality[index - 1].maxDistance);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_quality_tooltip"),
-			"Each field covers a radial quality range. The next range begins where the previous range ends; grass beyond the far range uses Skyrim's vanilla wind."));
+			"Each field covers a radial quality range. Fine detail fades as resolution decreases. Near the far edge, local gusts, impacts, and flutter fade into a simple mean-wind bend."));
 
 	ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
 	ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Flutter Wind Sensitivity"), &settings.grassWindSensitivity,
 		kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales sampled wind speed before evaluating the low, medium, and high flutter response."));
+		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales the signed fine-wind response before converting it into grass motion. The low, medium, and high response curve uses ambient wind speed independently."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
 			"Scales both ambient and transient blade flutter. Use Grass Impulse Flutter in Transients to adjust only the transient contribution."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
+	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Travel Rate"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
-			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
+			"Scales grass detail travel relative to the shared fine wind. Rate changes preserve phase; zero disables ambient flutter. One uses the same travel speed as tree detail."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_gust_influence"), "Flutter Gust Influence"), &settings.grassWindFlutterGustInfluence,
 		kGrassWindFlutterGustInfluenceMin, kGrassWindFlutterGustInfluenceMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_gust_influence_tooltip"),
-			"Controls how strongly local peaks and troughs in the traveling gust field modulate flutter."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_wave_scale"), "Flutter Wave Scale"), &settings.grassWindFlutterWaveScale,
+			"Scales the additional fine-motion amplitude supplied by local positive gusts. Zero retains background flutter; it does not disable the shared wind field."));
+	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_wave_scale"), "Flutter Patch Density"), &settings.grassWindFlutterWaveScale,
 		kGrassWindFlutterWaveScaleMin, kGrassWindFlutterWaveScaleMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_wave_scale_tooltip"),
-			"Controls the spatial density of traveling flutter waves without changing gust travel distance. Lower values produce broader, more widely spaced waves so nearby grass flutters together; higher values produce smaller, more numerous waves that vary more rapidly across the landscape."));
+			"Higher values make smaller, faster-moving detail patches; lower values keep larger areas coherent. Fine detail fades on coarse fields to avoid undersampling."));
 	const char* flutterAmplitudeResponseLabels[]{
 		T(TKEY("grass_wind_flutter_amplitude_low"), "Low Wind Flutter (0.1)"),
 		T(TKEY("grass_wind_flutter_amplitude_medium"), "Medium Wind Flutter (0.5)"),
@@ -1127,7 +1172,7 @@ void Wind::DrawGrassWindSettings()
 			"%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_amplitude_response_tooltip"),
-			"Multiplies the existing flutter at low, medium, and high local wind without changing its waveform or gust motion."));
+			"Multiplies flutter at low, medium, and high ambient wind. Gust coupling is applied separately, so gust strength is not counted twice."));
 	std::array<double, kGrassWindSpringQualityRangeCount> springMemoryMiB{};
 	double totalSpringMemoryMiB = 0.0;
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {

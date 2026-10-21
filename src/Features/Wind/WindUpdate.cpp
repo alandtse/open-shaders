@@ -72,6 +72,7 @@ namespace
 
 void Wind::Reset()
 {
+	previousWindFieldTuning = windFieldTuning;
 	windFieldTuning.gustAmplitude = GetEffectiveWindGustAmplitude();
 	windFieldTuning.gustScale = GetEffectiveWindGustScale();
 	windFieldTuning.frontAspectRatio =
@@ -86,6 +87,13 @@ void Wind::Reset()
 	                                         0.0f;
 	windFieldTuning.distortionScale = settings.windFieldGustDistortionScale;
 	windFieldTuning.distortionSpeed = settings.windFieldGustDistortionSpeed;
+	windFieldTuning.microTurbulenceStrength = settings.windFieldMicroTurbulenceStrength;
+	windFieldTuning.fineBaselineAmplitude = settings.windFieldFineBaselineAmplitude;
+	windFieldTuning.fineWindCoupling = settings.windFieldFineWindCoupling;
+	windFieldTuning.fineGustCoupling = settings.windFieldFineGustCoupling;
+	windFieldTuning.fineFrequency = settings.windFieldFineFrequency;
+	if (!windFieldHasPreviousSample)
+		previousWindFieldTuning = windFieldTuning;
 	const bool gamePaused = globals::game::ui && globals::game::ui->GameIsPaused();
 	const float frameTime = gamePaused ? 0.0f : std::max(RE::GetSecondsSinceLastFrame(), 0.0f);
 	UpdateWindEffects(frameTime);
@@ -101,6 +109,7 @@ void Wind::Reset()
 void Wind::AdvanceWindHistory(float a_frameTime)
 {
 	windFieldFrameTime = a_frameTime;
+	previousWindFieldFine = windFieldFine;
 	UpdateTransientWindImpulses(a_frameTime);
 	previousWindFieldSelectedVelocity = windFieldSelectedVelocity;
 	previousWindFieldGustTravelDistance = windFieldGustTravelDistance;
@@ -180,6 +189,13 @@ void Wind::UpdateWindField(const float3& a_direction, float a_speed, float a_fra
 	windFieldGustTravelDistance = windFieldCurrent.travelDistance;
 	previousWindFieldSelectedVelocity = previousWindFieldCurrent.direction * previousWindFieldCurrent.speed;
 	previousWindFieldGustTravelDistance = previousWindFieldCurrent.travelDistance;
+	const float3 transitionVelocity = windFieldTransition.direction * windFieldTransition.speed;
+	const float3 blendedVelocity = transitionVelocity +
+	                               (windFieldSelectedVelocity - transitionVelocity) * windFieldTransitionBlend;
+	WindField::AdvanceFineState(windFieldFine, blendedVelocity, a_frameTime, windFieldTuning);
+	WindField::WindTuning grassFineTuning = windFieldTuning;
+	grassFineTuning.fineFrequency *= std::max(settings.grassWindFlutterFrequency, 0.0f);
+	WindField::AdvanceFineState(grassState.fineTransport, blendedVelocity, a_frameTime, grassFineTuning);
 }
 
 WindPermutationContribution Wind::GetPermutationContribution() const
@@ -193,7 +209,7 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 		treeDefaults.leafTransientWindInfluence,
 		treeDefaults.leafTransientFlutterMaximum,
 		treeDefaults.transientMaximumBendMultiplier,
-		settings.trunkWindBendSensitivity,
+		settings.enableTrunkBend ? settings.trunkWindBendSensitivity : 0.0f,
 		settings.treeLeafBaseWindFlutterGain,
 		static_cast<uint32_t>(loaded && settings.enableAmbientGrassWind),
 		settings.grassWindSensitivity,
@@ -208,6 +224,9 @@ WindSharedData Wind::GetSharedWindData() const
 {
 	WindSharedData data{};
 	data.tuning = windFieldTuning;
+	data.previousTuning = previousWindFieldTuning;
+	data.fine = windFieldFine;
+	data.previousFine = previousWindFieldFine;
 	const float3 transitionVelocity = windFieldTransition.direction * windFieldTransition.speed;
 	const float3 previousTransitionVelocity = previousWindFieldTransition.direction * previousWindFieldTransition.speed;
 	const float3 blendedVelocity = transitionVelocity +
@@ -259,6 +278,12 @@ WindField::WindSample Wind::SampleWind(const float3& a_worldPosition) const noex
 		sample.ambientGust = previousSample.ambientGust +
 		                     (sample.ambientGust - previousSample.ambientGust) * windFieldTransitionBlend;
 	}
+	const float3 transitionVelocity = windFieldTransition.direction * windFieldTransition.speed;
+	const float3 baseVelocity = transitionVelocity +
+	                            (windFieldSelectedVelocity - transitionVelocity) * windFieldTransitionBlend;
+	const auto fine = WindField::SampleFineVelocity(a_worldPosition, baseVelocity,
+		sample.velocity - baseVelocity, windFieldFine, windFieldTuning);
+	sample.velocity += fine.slowVelocity + fine.detailVelocity;
 	const auto transientSample = WindField::SampleTransientImpulses(a_worldPosition,
 		std::span{ transientWindImpulses }.first(activeTransientWindImpulseCount));
 	sample.velocity += transientSample.velocity;
@@ -271,6 +296,10 @@ WindField::WindSample Wind::SampleWind(const float3& a_worldPosition,
 {
 	const auto field = WindField::CreateField(a_windDirection, a_windSpeed, windFieldGustTravelDistance);
 	auto sample = WindField::SampleField(a_worldPosition, field, windFieldTuning);
+	const float3 baseVelocity = field.direction * field.speed;
+	const auto fine = WindField::SampleFineVelocity(a_worldPosition, baseVelocity,
+		sample.velocity - baseVelocity, windFieldFine, windFieldTuning);
+	sample.velocity += fine.slowVelocity + fine.detailVelocity;
 	const auto transientSample = WindField::SampleTransientImpulses(a_worldPosition,
 		std::span{ transientWindImpulses }.first(activeTransientWindImpulseCount));
 	sample.velocity += transientSample.velocity;
@@ -285,6 +314,7 @@ void Wind::PublishWindState() noexcept
 	publishedWindState.current = windFieldCurrent;
 	publishedWindState.transition = windFieldTransition;
 	publishedWindState.transitionBlend = windFieldTransitionBlend;
+	publishedWindState.fine = windFieldFine;
 	publishedWindState.transientCount = activeTransientWindImpulseCount;
 	std::copy_n(transientWindImpulses.begin(), activeTransientWindImpulseCount,
 		publishedWindState.transients.begin());
@@ -321,22 +351,29 @@ bool Wind::SamplePublishedWind(std::span<const float3> a_worldPositions,
 			ambientSample.ambientGust = transitionSample.ambientGust +
 			                            (ambientSample.ambientGust - transitionSample.ambientGust) * state.transitionBlend;
 		}
+		const float3 gustVelocity = ambientSample.velocity - baseVelocity;
+		const auto fine = WindField::SampleFineVelocity(a_worldPositions[index], baseVelocity,
+			gustVelocity, state.fine, state.tuning);
+		const float3 fineVelocity = fine.slowVelocity + fine.detailVelocity;
+		ambientSample.velocity += fineVelocity;
 		WindField::TransientImpulseSample transientSample{};
-		float3 windExcludingHavokImpulses = ambientSample.velocity;
+		float3 transientVelocityExcludingHavokImpulses{};
 		for (uint32_t sourceIndex = 0; sourceIndex < state.transientCount; ++sourceIndex) {
 			const auto sourceSample = WindField::SampleTransientImpulse(
 				a_worldPositions[index], state.transients[sourceIndex]);
 			transientSample.velocity += sourceSample.velocity;
 			transientSample.intensity = std::max(transientSample.intensity, sourceSample.intensity);
 			if (state.transientPhysics[sourceIndex] == TransientWindPhysics::Wind)
-				windExcludingHavokImpulses += sourceSample.velocity;
+				transientVelocityExcludingHavokImpulses += sourceSample.velocity;
 		}
 		a_samples[index] = {
 			baseVelocity,
-			ambientSample.velocity - baseVelocity,
+			gustVelocity,
+			fineVelocity,
 			transientSample.velocity,
+			transientVelocityExcludingHavokImpulses,
 			ambientSample.velocity + transientSample.velocity,
-			windExcludingHavokImpulses,
+			ambientSample.velocity + transientVelocityExcludingHavokImpulses,
 			ambientSample.ambientGust,
 			transientSample.intensity,
 			state.frameId

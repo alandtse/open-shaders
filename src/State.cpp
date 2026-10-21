@@ -1479,6 +1479,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		{
 			const auto windData = globals::features::wind.GetSharedWindData();
 			data.WindFieldTuning = windData.tuning;
+			data.WindFieldPreviousTuning = windData.previousTuning;
+			data.WindFieldFine = windData.fine;
+			data.WindFieldPreviousFine = windData.previousFine;
 			data.WindFieldAmbient = windData.ambient;
 			data.WindFieldPreviousAmbient = windData.previousAmbient;
 			data.WindFieldCurrent = windData.current;

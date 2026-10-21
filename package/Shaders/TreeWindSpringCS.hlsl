@@ -5,11 +5,11 @@
 #include "Common/TreeWindSpring.hlsli"
 #include "Common/WindField.hlsli"
 
-Texture2D<float2> PreviousResponse : register(t0);
+Texture2D<float4> PreviousResponse : register(t0);
 Texture2D<float2> PreviousVelocity : register(t1);
 Texture2DArray<float4> PreviousTransientResponse : register(t2);
 Texture2DArray<float2> PreviousTransientVelocity : register(t3);
-RWTexture2D<float2> Response : register(u0);
+RWTexture2D<float4> Response : register(u0);
 RWTexture2D<float2> Velocity : register(u1);
 RWTexture2DArray<float4> TransientField : register(u2);
 RWTexture2DArray<float2> TransientVelocity : register(u3);
@@ -62,7 +62,7 @@ float2 ApplyGustResponse(float2 gustVelocity)
 	return scaledGust * rsqrt(1.0f + speedSquared / (softLimit * softLimit));
 }
 
-void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool historyValid, float frameTime)
+void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, float2 gustVelocity, bool historyValid, float frameTime)
 {
 	float2 response = target;
 	float2 velocity = 0.0f.xx;
@@ -70,7 +70,7 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 		float2 nextResponse;
 		float2 nextVelocity;
 		DampedSpring::Advance(
-			PreviousResponse.Load(int3(previousCell, 0)),
+			PreviousResponse.Load(int3(previousCell, 0)).xy,
 			PreviousVelocity.Load(int3(previousCell, 0)),
 			target,
 			frameTime,
@@ -81,7 +81,7 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 		response = nextResponse;
 		velocity = nextVelocity;
 	}
-	Response[outputCell] = response;
+	Response[outputCell] = float4(response, gustVelocity);
 	Velocity[outputCell] = velocity;
 }
 
@@ -198,5 +198,5 @@ void AdvanceResponse(uint2 outputCell, int2 previousCell, float2 target, bool hi
 		float3(worldPosition, field.FieldHeight));
 	float2 target = components.baseAmbientVelocity.xy + ApplyGustResponse(components.gustVelocity.xy);
 	AdvanceResponse(
-		dispatchThreadId.xy, previousCell, target, horizontalHistoryValid, field.FrameTime);
+		dispatchThreadId.xy, previousCell, target, components.gustVelocity.xy, horizontalHistoryValid, field.FrameTime);
 }

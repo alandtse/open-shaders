@@ -159,6 +159,7 @@ VS_OUTPUT main(VS_INPUT input)
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
+	treeWindSample.leafFieldDisplacement = 0.0;
 	if (treeBendEnabled) {
 		TreeWind::SamplePositions treeSamplePositions = TreeWind::BuildSamplePositions(
 			World[eyeIndex], FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
@@ -194,6 +195,8 @@ VS_OUTPUT main(VS_INPUT input)
 	float2 treeTmp1 = SmoothSaturate(abs(2 * frac(leafPhase) - 1));
 	float normalMult = (treeTmp1.x + 0.1 * treeTmp1.y) * input.Color.w * leafAnimationStrength;
 	positionMS.xyz += normalMS.xyz * normalMult;
+	if (treeBendEnabled)
+		positionMS.xyz += TreeWind::GetLeafDisplacement(normalMS, input.Color.w, treeWindSample.leafFieldDisplacement);
 #		endif
 
 #		if defined(LOD_LANDSCAPE)

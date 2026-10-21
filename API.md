@@ -2,7 +2,7 @@
 
 This document explains how another SKSE plugin can talk to Open Shaders (plugin name
 `CommunityShaders`) at runtime. The interface is binary-compatible with the sibling
-Community Shaders fork's revision-3 API, extended by Open Shaders revision 4.
+Community Shaders fork's revision-3 API, extended by Open Shaders revision 5.
 Plugins compiled against that fork's `include/VRAPI/CSinterface001.h` work unchanged
 against this one.
 
@@ -10,7 +10,7 @@ against this one.
 
 -   Target plugin name: `CommunityShaders`
 -   Message type: `0x43534150` (`"CSAP"`, `CSMessage::kMessage_GetInterface`)
--   Supported revisions: `1`, `2`, `3`, `4` (and `0` for "latest")
+-   Supported revisions: `1`, `2`, `3`, `4`, `5` (and `0` for "latest")
 -   Build number: `getBuildNumber()` returns `9`
 
 To acquire the API interface:
@@ -105,7 +105,8 @@ source compatibility only; they have no meaning here.
     Samples multiple world positions from one immutable wind simulation snapshot. The
     call returns `false` until the first snapshot is available or when its arguments are
     invalid. `baseVelocity` is the weather-driven wind before procedural gusts;
-    `gustVelocity` is the local procedural delta; `transientVelocity` contains impacts,
+    `gustVelocity` is the combined broad-gust and fine-wind delta for compatibility;
+    `transientVelocity` contains impacts,
     shouts, wingbeats, and other transient forces; `finalVelocity` is their sum.
     `ambientGust` and `transientIntensity` expose normalized response values, and
     `frameId` identifies the shared snapshot used for the whole batch. Positions use
@@ -119,7 +120,7 @@ source compatibility only; they have no meaning here.
 
 -   `SampleWindExcludingHavokImpulses` (revision 4): Returns `wind`, the full visual sample,
     and `windExcludingHavokImpulses` from the same frame. The latter is base wind plus local
-    gusts plus only transients **not** marked as native physics. The velocity
+    gusts and fine wind plus only transients **not** marked as native physics. The velocity
     vectors encode normalized wind responses, not measured object velocities
     or forces.
 
@@ -137,6 +138,40 @@ source compatibility only; they have no meaning here.
     native. Other sources remain eligible for external physics pushes. The
     sampler does not automatically discover every Havok event. Both sampling
     methods are available in revision 4.
+
+-   `SampleWindComponents` (revision 5): Takes the same world-position batch and returns
+    `WindSampleComponents`. `baseVelocity`, `gustVelocity`, and `fineVelocity` are
+    independent contributions. `gustVelocity` contains only the broad gust delta;
+    `fineVelocity` contains the signed, continuously traveling slow and detail bands.
+    `transientVelocity` includes all visual impacts, while
+    `transientVelocityExcludingHavokImpulses` includes only non-native impacts.
+    `finalVelocity` is base + gust + fine + full transients;
+    `windExcludingHavokImpulses` uses the non-native transient contribution instead.
+    All values come from the same immutable frame, with the same units, batch limits,
+    thread safety, and failure behavior as the existing methods. `reserved` is zero.
+
+    A simple integration can replace its existing wind input with `finalVelocity`
+    (or its horizontal magnitude for a scalar input). An authored integration can use:
+
+    ```cpp
+    response = sample.baseVelocity * baseSensitivity
+             + sample.gustVelocity * gustSensitivity
+             + sample.fineVelocity * fineSensitivity
+             + sample.transientVelocityExcludingHavokImpulses * impactSensitivity;
+    ```
+
+    The expression illustrates component weighting; `WindVector` is a plain ABI
+    struct, so consumers use their own vector arithmetic. Visual consumers can select
+    the full transient component instead. Fine wind already receives ambient and
+    positive-gust amplitude coupling: do not multiply it by gust intensity again
+    unless that is an intentional material response. Gust deltas can be negative
+    during lulls; very large custom gains may require a consumer-specific bound.
+    This API supplies wind input for flags, signs, and other integrations; each mod
+    retains its own animation or physics response.
+
+    Request revision 5 before calling the appended method. Revisions 1–4 retain their
+    vtable slots and the 64-byte and 80-byte wind sample layouts; the new sample is
+    104 bytes. `openshaders.pluginapi` exposes all three samplers for devbench inspection.
 
 ## Compatibility Guidance
 

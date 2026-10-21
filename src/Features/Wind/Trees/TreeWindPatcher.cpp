@@ -37,13 +37,13 @@ namespace TreeWindPatcher
 		constexpr std::size_t kMaximumPatchFileSize = 1024 * 1024;
 		constexpr std::size_t kMaximumRulesPerFile = 4096;
 		constexpr float kDefaultUpperBendRange = 100.0f;
-		constexpr float kDefaultMaximumDisplacementPercent = 3.0f;
+		constexpr float kDefaultMaximumDisplacementPercent = 10.0f;
 		constexpr float kDefaultTrunkGustInfluence = 0.5f;
-		constexpr float kDefaultLeafGustInfluence = 0.99f;
-		constexpr float kDefaultTransientWindInfluence = 2.01f;
+		constexpr float kDefaultLeafGustInfluence = 1.0f;
+		constexpr float kDefaultTransientWindInfluence = 1.0f;
 		constexpr float kDefaultLeafTransientWindInfluence = 5.0f;
-		constexpr float kDefaultLeafTransientFlutterMaximum = 20.0f;
-		constexpr float kDefaultTransientMaximumBendMultiplier = 2.5f;
+		constexpr float kDefaultLeafTransientFlutterMaximum = 10.05f;
+		constexpr float kDefaultTransientMaximumBendMultiplier = 2.49f;
 		constexpr std::string_view kSchemaFileName = "WindSettings.schema.json";
 		const RE::BSFixedString kRuleIdName = "OS_TreeWindRule";
 		const RE::BSFixedString kTreeBoundsName = "OS_TreeWindBounds";
@@ -84,7 +84,7 @@ namespace TreeWindPatcher
 		struct LoadedRule
 		{
 			float bend = 1.0f;
-			float leafAmbient = 1.0f;
+			float leafAmbient = 2.01f;
 			float upperBendRange = kDefaultUpperBendRange;
 			float maximumDisplacementPercent = kDefaultMaximumDisplacementPercent;
 			float trunkGustInfluence = kDefaultTrunkGustInfluence;
@@ -102,7 +102,7 @@ namespace TreeWindPatcher
 			std::string mesh;
 			std::filesystem::path ownerPath;
 			std::atomic<float> bend{ 1.0f };
-			std::atomic<float> leafAmbient{ 1.0f };
+			std::atomic<float> leafAmbient{ 2.01f };
 			std::atomic<float> upperBendRange{ kDefaultUpperBendRange };
 			std::atomic<float> maximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> trunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -112,7 +112,7 @@ namespace TreeWindPatcher
 			std::atomic<float> leafTransientFlutterMaximum{ kDefaultLeafTransientFlutterMaximum };
 			std::atomic<float> transientMaximumBendMultiplier{ kDefaultTransientMaximumBendMultiplier };
 			std::atomic<float> persistedBend{ 1.0f };
-			std::atomic<float> persistedLeafAmbient{ 1.0f };
+			std::atomic<float> persistedLeafAmbient{ 2.01f };
 			std::atomic<float> persistedUpperBendRange{ kDefaultUpperBendRange };
 			std::atomic<float> persistedMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> persistedTrunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -129,7 +129,7 @@ namespace TreeWindPatcher
 		std::vector<std::string> conflictingFiles;
 		std::atomic<bool> universalOverrideEnabled{ false };
 		std::atomic<float> universalBend{ 1.0f };
-		std::atomic<float> universalLeafAmbient{ 1.0f };
+		std::atomic<float> universalLeafAmbient{ 2.01f };
 		std::atomic<float> universalUpperBendRange{ kDefaultUpperBendRange };
 		std::atomic<float> universalMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 		std::atomic<float> universalTrunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -849,7 +849,7 @@ namespace TreeWindPatcher
 		if (a_index >= runtimeRules.size())
 			return false;
 		a_bend = ClampFiniteOrDefault(a_bend, TreeWindSettings::kBend, 1.0f);
-		a_leafAmbient = ClampFiniteOrDefault(a_leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f);
+		a_leafAmbient = ClampFiniteOrDefault(a_leafAmbient, TreeWindSettings::kLeafAmbient, 2.01f);
 		a_upperBendRange = ClampFiniteOrDefault(
 			a_upperBendRange, TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange);
 		a_maximumDisplacementPercent = ClampFiniteOrDefault(a_maximumDisplacementPercent,
@@ -903,7 +903,7 @@ namespace TreeWindPatcher
 		universalBend.store(
 			ClampFiniteOrDefault(a_values.bend, TreeWindSettings::kBend, 1.0f), std::memory_order_relaxed);
 		universalLeafAmbient.store(
-			ClampFiniteOrDefault(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f), std::memory_order_relaxed);
+			ClampFiniteOrDefault(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 2.01f), std::memory_order_relaxed);
 		universalUpperBendRange.store(ClampFiniteOrDefault(a_values.upperBendRange,
 										  TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange),
 			std::memory_order_relaxed);

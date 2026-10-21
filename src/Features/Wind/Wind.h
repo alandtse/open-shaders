@@ -42,6 +42,9 @@ struct WindPermutationContribution
 struct WindSharedData
 {
 	WindField::WindTuning tuning;
+	WindField::WindTuning previousTuning;
+	WindField::FineState fine;
+	WindField::FineState previousFine;
 	float4 ambient;
 	float4 previousAmbient;
 	WindField::Field current;
@@ -62,7 +65,9 @@ struct Wind : Feature
 	{
 		float3 baseVelocity{};
 		float3 gustVelocity{};
+		float3 fineVelocity{};
 		float3 transientVelocity{};
+		float3 transientVelocityExcludingHavokImpulses{};
 		float3 finalVelocity{};
 		float3 windExcludingHavokImpulses{};
 		float ambientGust{};
@@ -144,6 +149,8 @@ struct Wind : Feature
 	std::vector<std::unique_ptr<WindEffect>> windEffects;
 
 	float windFieldFrameTime = 0.0f;
+	WindField::FineState windFieldFine{};
+	WindField::FineState previousWindFieldFine{};
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
 	float windFieldGustTravelDistance = 0.0f;
@@ -163,6 +170,7 @@ struct Wind : Feature
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
+	WindField::WindTuning previousWindFieldTuning{};
 
 	/** @copydoc Feature::DrawSettings */
 	virtual void DrawSettings() override;
@@ -261,6 +269,7 @@ private:
 		WindField::Field current{};
 		WindField::Field transition{};
 		float transitionBlend{ 1.0f };
+		WindField::FineState fine{};
 		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transients{};
 		std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientPhysics{};
 		uint32_t transientCount{};

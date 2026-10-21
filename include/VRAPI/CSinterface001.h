@@ -18,7 +18,8 @@ namespace CSPluginAPI
 	inline constexpr unsigned int CSInterfaceRevision002 = 2;
 	inline constexpr unsigned int CSInterfaceRevision003 = 3;
 	inline constexpr unsigned int CSInterfaceRevision004 = 4;
-	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision004;
+	inline constexpr unsigned int CSInterfaceRevision005 = 5;
+	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision005;
 	inline constexpr uint32_t CSWindMaximumBatchSize = 16384;
 	// Guidance for VR transition controllers that hide render-scale relatches
 	// behind a game fade. These constants are advisory only and do not change
@@ -120,6 +121,24 @@ namespace CSPluginAPI
 	static_assert(sizeof(WindSampleWithHavokExclusion) == 80);
 	static_assert(std::is_standard_layout_v<WindSampleWithHavokExclusion>);
 
+	/** @brief Revision-5 independent wind responses and both existing transient contracts. */
+	struct WindSampleComponents
+	{
+		WindVector baseVelocity{};
+		WindVector gustVelocity{};
+		WindVector fineVelocity{};
+		WindVector transientVelocity{};
+		WindVector transientVelocityExcludingHavokImpulses{};
+		WindVector finalVelocity{};
+		WindVector windExcludingHavokImpulses{};
+		float ambientGust{};
+		float transientIntensity{};
+		uint32_t reserved{};
+		uint64_t frameId{};
+	};
+	static_assert(sizeof(WindSampleComponents) == 104);
+	static_assert(std::is_standard_layout_v<WindSampleComponents>);
+
 	// This object provides access to Community Shaders' mod support API.
 	struct ICSInterface001
 	{
@@ -183,6 +202,9 @@ namespace CSPluginAPI
 
 		/** @brief Samples full visual wind and wind excluding native-force transients from one frame. */
 		virtual bool SampleWindExcludingHavokImpulses(const WindVector* positions, WindSampleWithHavokExclusion* samples, uint32_t count) = 0;
+
+		/** @brief Samples independent base, gust, fine, and transient responses at world positions; thread-safe. */
+		virtual bool SampleWindComponents(const WindVector* positions, WindSampleComponents* samples, uint32_t count) = 0;
 	};
 }  // namespace CSPluginAPI
 
