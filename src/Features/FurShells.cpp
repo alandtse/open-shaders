@@ -39,8 +39,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InertiaStrength,
 	InertiaPreset,
 	InertiaFrequency,
+	InertiaGain,
 	InertiaLengthExponent,
 	InertiaDroopExponent,
+	InertiaMaxBend,
 	TouchStrength,
 	ShowTouchEdges)
 
@@ -360,10 +362,12 @@ void FurShells::LoadSettings(json& o_json)
 {
 	settings = o_json;
 
-	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, FurInertia::Tuning{}.gain, settings.InertiaLengthExponent, settings.InertiaDroopExponent });
+	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent, settings.InertiaMaxBend });
 	settings.InertiaFrequency = tuning.frequencyHz;
+	settings.InertiaGain = tuning.gain;
 	settings.InertiaLengthExponent = tuning.lengthExponent;
 	settings.InertiaDroopExponent = tuning.droopExponent;
+	settings.InertiaMaxBend = tuning.maxBend;
 	settings.InertiaStrength = Util::ClampFinite(settings.InertiaStrength, 0.0f, FurInertia::MaxStrength, Settings{}.InertiaStrength);
 }
 
@@ -943,7 +947,7 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 
 FurInertia::Tuning FurShells::GetInertiaTuning() const
 {
-	const FurInertia::Tuning custom{ settings.InertiaFrequency, FurInertia::Tuning{}.gain, settings.InertiaLengthExponent, settings.InertiaDroopExponent };
+	const FurInertia::Tuning custom{ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent, settings.InertiaMaxBend };
 	return FurInertia::GetTuning(static_cast<FurInertia::Preset>(std::min(settings.InertiaPreset, static_cast<uint32_t>(FurInertia::Preset::Custom))), custom);
 }
 
@@ -963,8 +967,10 @@ void FurShells::DrawInertiaSettings()
 				if (i == static_cast<uint32_t>(Preset::Custom)) {
 					const auto tuning = GetInertiaTuning();
 					settings.InertiaFrequency = tuning.frequencyHz;
+					settings.InertiaGain = tuning.gain;
 					settings.InertiaLengthExponent = tuning.lengthExponent;
 					settings.InertiaDroopExponent = tuning.droopExponent;
+					settings.InertiaMaxBend = tuning.maxBend;
 				}
 				settings.InertiaPreset = i;
 			}
@@ -983,6 +989,14 @@ void FurShells::DrawInertiaSettings()
 
 	if (!ImGui::TreeNode(T(TKEY("inertia_advanced"), "Advanced Inertia")))
 		return;
+
+	ImGui::SliderFloat(T(TKEY("inertia_gain"), "Lag Gain"), &settings.InertiaGain, FurInertia::MinGain, FurInertia::MaxGain, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_gain_tooltip"), "Scales how far the tips lag for a given acceleration, before Inertia Strength. Stylized uses 2, Realistic uses 1."));
+
+	ImGui::SliderFloat(T(TKEY("inertia_max_bend"), "Maximum Bend"), &settings.InertiaMaxBend, FurInertia::MinBendLimit, FurInertia::MaxBendLimit, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_max_bend_tooltip"), "The furthest the tips may lag, as a fraction of the fur length."));
 
 	ImGui::SliderFloat(T(TKEY("inertia_length_exponent"), "Length Softening"), &settings.InertiaLengthExponent, 0.0f, FurInertia::MaxLengthExponent, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -1008,7 +1022,8 @@ float3 FurShells::GetInertia(const RE::BSGeometry* a_geometry, float a_length, f
 		const auto* skinInstance = a_geometry->GetGeometryRuntimeData().skinInstance.get();
 		const float scale = skinInstance && skinInstance->rootParent ? skinInstance->rootParent->world.scale : a_geometry->world.scale;
 		const float worldLength = FurInertia::GetWorldLength(a_length, scale);
-		state.spring.Step(position, globals::game::deltaTime ? *globals::game::deltaTime : 0.0f, FurInertia::MaxBend * worldLength, FurInertia::GetResponse(GetInertiaTuning(), worldLength, a_droop));
+		const auto tuning = GetInertiaTuning();
+		state.spring.Step(position, globals::game::deltaTime ? *globals::game::deltaTime : 0.0f, tuning.maxBend * worldLength, FurInertia::GetResponse(tuning, worldLength, a_droop));
 	}
 	const float3 inertia = state.spring.offset * settings.InertiaStrength;
 	maxInertia = std::max(maxInertia, inertia.Length());

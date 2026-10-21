@@ -17,8 +17,6 @@ namespace FurInertia
 	inline constexpr float MaxFrameSeconds = 1.0f / 20.0f;
 	/** @brief Movement in one frame, in game units, treated as a teleport that resets the spring. */
 	inline constexpr float TeleportDistance = 300.0f;
-	/** @brief Largest tip lag as a fraction of the fur length. */
-	inline constexpr float MaxBend = 1.0f;
 	/** @brief Spring frequency limits, in hertz. */
 	inline constexpr float MinFrequencyHz = 0.5f;
 	inline constexpr float MaxFrequencyHz = 400.0f;
@@ -28,6 +26,10 @@ namespace FurInertia
 	/** @brief Ranges the settings and their sliders accept. */
 	inline constexpr float MaxStrength = 2.0f;
 	inline constexpr float MaxTuningFrequencyHz = 100.0f;
+	inline constexpr float MinGain = 0.1f;
+	inline constexpr float MaxGain = 4.0f;
+	inline constexpr float MinBendLimit = 0.05f;
+	inline constexpr float MaxBendLimit = 2.0f;
 	inline constexpr float MaxLengthExponent = 2.5f;
 	inline constexpr float MaxDroopExponent = 1.5f;
 
@@ -49,6 +51,8 @@ namespace FurInertia
 		float lengthExponent = 0.5f;
 		/** @brief How much droop softens the fur: 0 ignores it. */
 		float droopExponent = 0.5f;
+		/** @brief Largest tip lag as a fraction of the fur length. */
+		float maxBend = 1.0f;
 	};
 
 	/** @brief Spring constants for one fur asset. */
@@ -58,15 +62,16 @@ namespace FurInertia
 		float gain = 2.0f;
 	};
 
-	/** @brief Brings a tuning read from a settings file into range, replacing values that are not finite with the Stylized ones. The gain is not a setting, so it passes through. */
+	/** @brief Brings a tuning read from a settings file into range, replacing values that are not finite with the Stylized ones. */
 	[[nodiscard]] inline Tuning Sanitize(const Tuning& a_tuning)
 	{
 		const Tuning stylized{};
 		return Tuning{
 			Util::ClampFinite(a_tuning.frequencyHz, MinFrequencyHz, MaxTuningFrequencyHz, stylized.frequencyHz),
-			a_tuning.gain,
+			Util::ClampFinite(a_tuning.gain, MinGain, MaxGain, stylized.gain),
 			Util::ClampFinite(a_tuning.lengthExponent, 0.0f, MaxLengthExponent, stylized.lengthExponent),
-			Util::ClampFinite(a_tuning.droopExponent, 0.0f, MaxDroopExponent, stylized.droopExponent)
+			Util::ClampFinite(a_tuning.droopExponent, 0.0f, MaxDroopExponent, stylized.droopExponent),
+			Util::ClampFinite(a_tuning.maxBend, MinBendLimit, MaxBendLimit, stylized.maxBend)
 		};
 	}
 
@@ -81,7 +86,7 @@ namespace FurInertia
 		case Preset::Stylized:
 			return Tuning{};
 		case Preset::Realistic:
-			return Tuning{ 63.8f, 1.0f, 2.0f, 0.0f };
+			return Tuning{ 63.8f, 1.0f, 2.0f, 0.0f, 1.0f };
 		default:
 			return a_custom;
 		}

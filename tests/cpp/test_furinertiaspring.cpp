@@ -186,17 +186,40 @@ TEST_CASE("Inertia tuning from a settings file is brought into range", "[furiner
 {
 	const float nan = std::numeric_limits<float>::quiet_NaN();
 	const float infinity = std::numeric_limits<float>::infinity();
-	const auto tuned = FurInertia::Sanitize({ nan, 1.5f, -5.0f, 99.0f });
+	const auto tuned = FurInertia::Sanitize({ nan, 99.0f, -5.0f, 99.0f, 0.0f });
 	REQUIRE(tuned.frequencyHz == FurInertia::Tuning{}.frequencyHz);
-	REQUIRE(tuned.gain == 1.5f);
+	REQUIRE(tuned.gain == FurInertia::MaxGain);
 	REQUIRE(tuned.lengthExponent == 0.0f);
 	REQUIRE(tuned.droopExponent == FurInertia::MaxDroopExponent);
+	REQUIRE(tuned.maxBend == FurInertia::MinBendLimit);
 
-	const auto infinite = FurInertia::Sanitize({ infinity, 1.5f, infinity, nan });
-	REQUIRE(infinite.frequencyHz == FurInertia::Tuning{}.frequencyHz);
-	REQUIRE(infinite.lengthExponent == FurInertia::Tuning{}.lengthExponent);
-	REQUIRE(infinite.droopExponent == FurInertia::Tuning{}.droopExponent);
+	const auto infinite = FurInertia::Sanitize({ infinity, nan, infinity, nan, infinity });
+	const FurInertia::Tuning stylized{};
+	REQUIRE(infinite.frequencyHz == stylized.frequencyHz);
+	REQUIRE(infinite.gain == stylized.gain);
+	REQUIRE(infinite.lengthExponent == stylized.lengthExponent);
+	REQUIRE(infinite.droopExponent == stylized.droopExponent);
+	REQUIRE(infinite.maxBend == stylized.maxBend);
 
-	const auto high = FurInertia::Sanitize({ 1000.0f, 1.5f, 0.5f, 0.5f });
+	const auto high = FurInertia::Sanitize({ 1000.0f, 0.0f, 0.5f, 0.5f, 99.0f });
 	REQUIRE(high.frequencyHz == FurInertia::MaxTuningFrequencyHz);
+	REQUIRE(high.gain == FurInertia::MinGain);
+	REQUIRE(high.maxBend == FurInertia::MaxBendLimit);
+}
+
+TEST_CASE("Every preset is a tuning the settings accept, so testers can share it as Custom", "[furinertia]")
+{
+	for (const auto preset : { FurInertia::Preset::Stylized, FurInertia::Preset::Realistic }) {
+		const auto tuning = FurInertia::GetTuning(preset, {});
+		const auto sanitized = FurInertia::Sanitize(tuning);
+		REQUIRE(sanitized.frequencyHz == tuning.frequencyHz);
+		REQUIRE(sanitized.gain == tuning.gain);
+		REQUIRE(sanitized.lengthExponent == tuning.lengthExponent);
+		REQUIRE(sanitized.droopExponent == tuning.droopExponent);
+		REQUIRE(sanitized.maxBend == tuning.maxBend);
+
+		const auto asCustom = FurInertia::GetTuning(FurInertia::Preset::Custom, tuning);
+		REQUIRE(FurInertia::GetResponse(asCustom, 1.8f, 0.45f).omega == FurInertia::GetResponse(tuning, 1.8f, 0.45f).omega);
+		REQUIRE(FurInertia::GetResponse(asCustom, 1.8f, 0.45f).gain == tuning.gain);
+	}
 }

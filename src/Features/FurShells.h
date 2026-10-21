@@ -41,8 +41,10 @@ struct FurShells : Feature
 		float InertiaStrength = 1.0f;
 		uint32_t InertiaPreset = static_cast<uint32_t>(FurInertia::Preset::Stylized);
 		float InertiaFrequency = FurInertia::Tuning{}.frequencyHz;
+		float InertiaGain = FurInertia::Tuning{}.gain;
 		float InertiaLengthExponent = FurInertia::Tuning{}.lengthExponent;
 		float InertiaDroopExponent = FurInertia::Tuning{}.droopExponent;
+		float InertiaMaxBend = FurInertia::Tuning{}.maxBend;
 		float TouchStrength = 1.0f;
 		bool ShowTouchEdges = false;
 	} settings;
