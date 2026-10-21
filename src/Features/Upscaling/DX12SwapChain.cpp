@@ -39,27 +39,10 @@ void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBacks
 	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
 		logger::warn("[AntiLag2] Update failed hr=0x{:08X}; using pre-input timer", static_cast<unsigned int>(hr));
 
-	const auto waited = antiLag2InputPacing.Apply(sceneBackstop || !antiLag2Enabled, fpsLimit);
-	if (waited.count() > 0) {
-		++antiLag2WindowBackstopWaits;
-		antiLag2WindowBackstopUs += static_cast<uint64_t>(waited.count());
-	}
+	(void)antiLag2InputPacing.Apply(sceneBackstop || !antiLag2Enabled, fpsLimit);
 	if (antiLag2LastFPSLimit != fpsLimit) {
 		antiLag2LastFPSLimit = fpsLimit;
 		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} sceneBackstop={}", fpsLimit, antiLag2Enabled, sceneBackstop);
-	}
-	const auto nowMs = GetTickCount64();
-	if (!antiLag2WindowStartedMs)
-		antiLag2WindowStartedMs = nowMs;
-	constexpr uint32_t kPacingWindowUpdates = 600;
-	if (++antiLag2WindowUpdates == kPacingWindowUpdates) {
-		logger::info("[AntiLag2] Pacing inputPolls={} elapsedMs={} targetRenderedFPS={} driverActive={} timerWaits={} timerMs={}",
-			antiLag2WindowUpdates, nowMs - antiLag2WindowStartedMs, fpsLimit, antiLag2Enabled,
-			antiLag2WindowBackstopWaits, antiLag2WindowBackstopUs / 1000.0);
-		antiLag2WindowUpdates = 0;
-		antiLag2WindowBackstopWaits = 0;
-		antiLag2WindowBackstopUs = 0;
-		antiLag2WindowStartedMs = nowMs;
 	}
 }
 
