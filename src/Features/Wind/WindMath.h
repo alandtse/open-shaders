@@ -11,14 +11,8 @@
 
 namespace WindMath
 {
-	inline float ClampFiniteOrDefault(float a_value, float a_minimum, float a_maximum,
-		float a_default) noexcept
-	{
-		return Util::ClampFinite(a_value, a_minimum, a_maximum, a_default);
-	}
-
 	template <class Range>
-	inline float ClampFiniteOrDefault(float a_value, const Range& a_range, float a_default) noexcept
+	inline float ClampToRange(float a_value, const Range& a_range, float a_default) noexcept
 	{
 		return Util::ClampFinite(a_value, a_range.minimum, a_range.maximum, a_default);
 	}

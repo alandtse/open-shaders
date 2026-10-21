@@ -27,8 +27,6 @@ namespace
 	constexpr std::size_t kMaximumObservedProjectiles = WindField::kTransientImpulseCapacity;
 }
 
-using WindMath::ClampFiniteOrDefault;
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	WeaponThrowVRWind::Settings,
 	enabled,
@@ -289,22 +287,22 @@ bool WeaponThrowVRWind::IsWeaponThrowProjectile(const RE::Projectile& a_projecti
 void WeaponThrowVRWind::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.strength = ClampFiniteOrDefault(
+	settings.strength = Util::ClampFinite(
 		settings.strength, kMinimumStrength, kMaximumStrength, defaults.strength);
-	settings.minimumSpeed = ClampFiniteOrDefault(
+	settings.minimumSpeed = Util::ClampFinite(
 		settings.minimumSpeed, kMinimumSpeed, kMaximumSpeed, defaults.minimumSpeed);
-	settings.fullStrengthSpeed = ClampFiniteOrDefault(
+	settings.fullStrengthSpeed = Util::ClampFinite(
 		settings.fullStrengthSpeed, settings.minimumSpeed, kMaximumSpeed, defaults.fullStrengthSpeed);
-	settings.radius = ClampFiniteOrDefault(
+	settings.radius = Util::ClampFinite(
 		settings.radius, kMinimumDistance, kMaximumDistance, defaults.radius);
-	settings.bowLength = ClampFiniteOrDefault(
+	settings.bowLength = Util::ClampFinite(
 		settings.bowLength, kMinimumDistance, kMaximumDistance, defaults.bowLength);
-	settings.wakeLength = ClampFiniteOrDefault(
+	settings.wakeLength = Util::ClampFinite(
 		settings.wakeLength, kMinimumDistance, kMaximumDistance, defaults.wakeLength);
-	settings.launchStrength = ClampFiniteOrDefault(
+	settings.launchStrength = Util::ClampFinite(
 		settings.launchStrength, kMinimumStrength, kMaximumStrength, defaults.launchStrength);
-	settings.impactStrength = ClampFiniteOrDefault(
+	settings.impactStrength = Util::ClampFinite(
 		settings.impactStrength, kMinimumStrength, kMaximumStrength, defaults.impactStrength);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime,
+	settings.decayTime = Util::ClampFinite(settings.decayTime,
 		0.0f, WindField::kTransientImpulseMaximumDecayTime, defaults.decayTime);
 }

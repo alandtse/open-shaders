@@ -117,7 +117,6 @@ namespace
 
 }
 
-using WindMath::ClampFiniteOrDefault;
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FusRoDahWind::Settings,
 	enabled,
@@ -195,13 +194,13 @@ void FusRoDahWind::RestoreDefaultSettings()
 void FusRoDahWind::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.intensity = ClampFiniteOrDefault(settings.intensity, kIntensityMin, kIntensityMax, defaults.intensity);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime, kDecayTimeMin, kDecayTimeMax, defaults.decayTime);
-	settings.distanceMultiplier = ClampFiniteOrDefault(settings.distanceMultiplier,
+	settings.intensity = Util::ClampFinite(settings.intensity, kIntensityMin, kIntensityMax, defaults.intensity);
+	settings.decayTime = Util::ClampFinite(settings.decayTime, kDecayTimeMin, kDecayTimeMax, defaults.decayTime);
+	settings.distanceMultiplier = Util::ClampFinite(settings.distanceMultiplier,
 		kDistanceMultiplierMin, kDistanceMultiplierMax, defaults.distanceMultiplier);
-	settings.widthMultiplier = ClampFiniteOrDefault(settings.widthMultiplier,
+	settings.widthMultiplier = Util::ClampFinite(settings.widthMultiplier,
 		kWidthMultiplierMin, kWidthMultiplierMax, defaults.widthMultiplier);
-	settings.speedMultiplier = ClampFiniteOrDefault(settings.speedMultiplier,
+	settings.speedMultiplier = Util::ClampFinite(settings.speedMultiplier,
 		kSpeedMultiplierMin, kSpeedMultiplierMax, defaults.speedMultiplier);
 }
 

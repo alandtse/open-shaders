@@ -27,7 +27,7 @@
 
 namespace TreeWindPatcher
 {
-	using WindMath::ClampFiniteOrDefault;
+	using WindMath::ClampToRange;
 
 	namespace
 	{
@@ -866,23 +866,23 @@ namespace TreeWindPatcher
 	{
 		if (a_index >= runtimeRules.size())
 			return false;
-		a_bend = ClampFiniteOrDefault(a_bend, TreeWindSettings::kBend, 1.0f);
-		a_leafAmbient = ClampFiniteOrDefault(a_leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f);
-		a_upperBendRange = ClampFiniteOrDefault(
+		a_bend = ClampToRange(a_bend, TreeWindSettings::kBend, 1.0f);
+		a_leafAmbient = ClampToRange(a_leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f);
+		a_upperBendRange = ClampToRange(
 			a_upperBendRange, TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange);
-		a_maximumDisplacementPercent = ClampFiniteOrDefault(a_maximumDisplacementPercent,
+		a_maximumDisplacementPercent = ClampToRange(a_maximumDisplacementPercent,
 			TreeWindSettings::kMaximumDisplacementPercent, kDefaultMaximumDisplacementPercent);
-		a_trunkGustInfluence = ClampFiniteOrDefault(
+		a_trunkGustInfluence = ClampToRange(
 			a_trunkGustInfluence, TreeWindSettings::kGustInfluence, kDefaultTrunkGustInfluence);
-		a_leafGustInfluence = ClampFiniteOrDefault(
+		a_leafGustInfluence = ClampToRange(
 			a_leafGustInfluence, TreeWindSettings::kGustInfluence, kDefaultLeafGustInfluence);
-		a_transientWindInfluence = ClampFiniteOrDefault(a_transientWindInfluence,
+		a_transientWindInfluence = ClampToRange(a_transientWindInfluence,
 			TreeWindSettings::kTransientInfluence, kDefaultTransientWindInfluence);
-		a_leafTransientWindInfluence = ClampFiniteOrDefault(a_leafTransientWindInfluence,
+		a_leafTransientWindInfluence = ClampToRange(a_leafTransientWindInfluence,
 			TreeWindSettings::kTransientInfluence, kDefaultLeafTransientWindInfluence);
-		a_leafTransientFlutterMaximum = ClampFiniteOrDefault(a_leafTransientFlutterMaximum,
+		a_leafTransientFlutterMaximum = ClampToRange(a_leafTransientFlutterMaximum,
 			TreeWindSettings::kLeafTransientFlutterMaximum, kDefaultLeafTransientFlutterMaximum);
-		a_transientMaximumBendMultiplier = ClampFiniteOrDefault(a_transientMaximumBendMultiplier,
+		a_transientMaximumBendMultiplier = ClampToRange(a_transientMaximumBendMultiplier,
 			TreeWindSettings::kTransientMaximumBendMultiplier, kDefaultTransientMaximumBendMultiplier);
 		runtimeRules[a_index]->bend.store(a_bend, std::memory_order_relaxed);
 		runtimeRules[a_index]->leafAmbient.store(a_leafAmbient, std::memory_order_relaxed);
@@ -919,31 +919,31 @@ namespace TreeWindPatcher
 	void SetUniversalOverride(bool a_enabled, const Sensitivities& a_values)
 	{
 		universalBend.store(
-			ClampFiniteOrDefault(a_values.bend, TreeWindSettings::kBend, 1.0f), std::memory_order_relaxed);
+			ClampToRange(a_values.bend, TreeWindSettings::kBend, 1.0f), std::memory_order_relaxed);
 		universalLeafAmbient.store(
-			ClampFiniteOrDefault(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f), std::memory_order_relaxed);
-		universalUpperBendRange.store(ClampFiniteOrDefault(a_values.upperBendRange,
+			ClampToRange(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f), std::memory_order_relaxed);
+		universalUpperBendRange.store(ClampToRange(a_values.upperBendRange,
 										  TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange),
 			std::memory_order_relaxed);
-		universalMaximumDisplacementPercent.store(ClampFiniteOrDefault(a_values.maximumDisplacementPercent,
+		universalMaximumDisplacementPercent.store(ClampToRange(a_values.maximumDisplacementPercent,
 													  TreeWindSettings::kMaximumDisplacementPercent, kDefaultMaximumDisplacementPercent),
 			std::memory_order_relaxed);
-		universalTrunkGustInfluence.store(ClampFiniteOrDefault(a_values.trunkGustInfluence,
+		universalTrunkGustInfluence.store(ClampToRange(a_values.trunkGustInfluence,
 											  TreeWindSettings::kGustInfluence, kDefaultTrunkGustInfluence),
 			std::memory_order_relaxed);
-		universalLeafGustInfluence.store(ClampFiniteOrDefault(a_values.leafGustInfluence,
+		universalLeafGustInfluence.store(ClampToRange(a_values.leafGustInfluence,
 											 TreeWindSettings::kGustInfluence, kDefaultLeafGustInfluence),
 			std::memory_order_relaxed);
-		universalTransientWindInfluence.store(ClampFiniteOrDefault(a_values.transientWindInfluence,
+		universalTransientWindInfluence.store(ClampToRange(a_values.transientWindInfluence,
 												  TreeWindSettings::kTransientInfluence, kDefaultTransientWindInfluence),
 			std::memory_order_relaxed);
-		universalLeafTransientWindInfluence.store(ClampFiniteOrDefault(a_values.leafTransientWindInfluence,
+		universalLeafTransientWindInfluence.store(ClampToRange(a_values.leafTransientWindInfluence,
 													  TreeWindSettings::kTransientInfluence, kDefaultLeafTransientWindInfluence),
 			std::memory_order_relaxed);
-		universalLeafTransientFlutterMaximum.store(ClampFiniteOrDefault(a_values.leafTransientFlutterMaximum,
+		universalLeafTransientFlutterMaximum.store(ClampToRange(a_values.leafTransientFlutterMaximum,
 													   TreeWindSettings::kLeafTransientFlutterMaximum, kDefaultLeafTransientFlutterMaximum),
 			std::memory_order_relaxed);
-		universalTransientMaximumBendMultiplier.store(ClampFiniteOrDefault(
+		universalTransientMaximumBendMultiplier.store(ClampToRange(
 														  a_values.transientMaximumBendMultiplier, TreeWindSettings::kTransientMaximumBendMultiplier,
 														  kDefaultTransientMaximumBendMultiplier),
 			std::memory_order_relaxed);

@@ -743,37 +743,37 @@ void DragonWind::SanitizeSettings()
 {
 	const Settings defaults{};
 	auto sanitizeImpact = [&](ImpactProfile& a_profile, const ImpactProfile& a_default) {
-		a_profile.strength = WindMath::ClampFiniteOrDefault(a_profile.strength,
+		a_profile.strength = Util::ClampFinite(a_profile.strength,
 			DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, a_default.strength);
-		a_profile.distance = WindMath::ClampFiniteOrDefault(a_profile.distance,
+		a_profile.distance = Util::ClampFinite(a_profile.distance,
 			DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, a_default.distance);
-		a_profile.waveHalfWidth = WindMath::ClampFiniteOrDefault(a_profile.waveHalfWidth,
+		a_profile.waveHalfWidth = Util::ClampFinite(a_profile.waveHalfWidth,
 			DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, a_default.waveHalfWidth);
-		a_profile.propagationSpeed = WindMath::ClampFiniteOrDefault(a_profile.propagationSpeed,
+		a_profile.propagationSpeed = Util::ClampFinite(a_profile.propagationSpeed,
 			DragonWindRuntime::kSpeedMin, DragonWindRuntime::kSpeedMax, a_default.propagationSpeed);
 	};
 
-	settings.strength = WindMath::ClampFiniteOrDefault(settings.strength,
+	settings.strength = Util::ClampFinite(settings.strength,
 		DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, defaults.strength);
-	settings.trackingDistance = WindMath::ClampFiniteOrDefault(settings.trackingDistance,
+	settings.trackingDistance = Util::ClampFinite(settings.trackingDistance,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.trackingDistance);
-	settings.wingbeatStrength = WindMath::ClampFiniteOrDefault(settings.wingbeatStrength,
+	settings.wingbeatStrength = Util::ClampFinite(settings.wingbeatStrength,
 		DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, defaults.wingbeatStrength);
-	settings.wingbeatDistance = WindMath::ClampFiniteOrDefault(settings.wingbeatDistance,
+	settings.wingbeatDistance = Util::ClampFinite(settings.wingbeatDistance,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.wingbeatDistance);
-	settings.wingbeatWaveHalfWidth = WindMath::ClampFiniteOrDefault(settings.wingbeatWaveHalfWidth,
+	settings.wingbeatWaveHalfWidth = Util::ClampFinite(settings.wingbeatWaveHalfWidth,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.wingbeatWaveHalfWidth);
-	settings.wingbeatPropagationSpeed = WindMath::ClampFiniteOrDefault(settings.wingbeatPropagationSpeed,
+	settings.wingbeatPropagationSpeed = Util::ClampFinite(settings.wingbeatPropagationSpeed,
 		DragonWindRuntime::kSpeedMin, DragonWindRuntime::kSpeedMax, defaults.wingbeatPropagationSpeed);
-	settings.wingbeatDecayTime = WindMath::ClampFiniteOrDefault(settings.wingbeatDecayTime,
+	settings.wingbeatDecayTime = Util::ClampFinite(settings.wingbeatDecayTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.wingbeatDecayTime);
-	settings.wingbeatFallbackCooldown = WindMath::ClampFiniteOrDefault(settings.wingbeatFallbackCooldown,
+	settings.wingbeatFallbackCooldown = Util::ClampFinite(settings.wingbeatFallbackCooldown,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.wingbeatFallbackCooldown);
 	sanitizeImpact(settings.normalImpact, defaults.normalImpact);
 	sanitizeImpact(settings.forcefulImpact, defaults.forcefulImpact);
 	sanitizeImpact(settings.crashImpact, defaults.crashImpact);
-	settings.impactDecayTime = WindMath::ClampFiniteOrDefault(settings.impactDecayTime,
+	settings.impactDecayTime = Util::ClampFinite(settings.impactDecayTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.impactDecayTime);
-	settings.impactDeduplicationTime = WindMath::ClampFiniteOrDefault(settings.impactDeduplicationTime,
+	settings.impactDeduplicationTime = Util::ClampFinite(settings.impactDeduplicationTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.impactDeduplicationTime);
 }
