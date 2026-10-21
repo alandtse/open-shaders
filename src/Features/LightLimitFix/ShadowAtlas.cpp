@@ -13,6 +13,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Util.h"
+#include "../../Utils/FileSystem.h"
 #include "../../Utils/LazyShader.h"
 #include "AtlasAllocator.h"
 #include "ShadowCasterInternal.h"
@@ -454,7 +455,7 @@ namespace ShadowCasterManager
 				return;
 
 			const auto stamp = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-			std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
+			const auto dir = Util::PathHelpers::GetCapturesPath();
 			std::error_code ec;
 			std::filesystem::create_directories(dir, ec);
 
@@ -1011,7 +1012,7 @@ namespace ShadowCasterManager
 		DirectX::ScratchImage image;
 		if (FAILED(DirectX::CaptureTexture(device, context, staging.get(), image)))
 			return;
-		std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
+		const auto dir = Util::PathHelpers::GetCapturesPath();
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
 		const auto path = dir / std::format("scm_rec_slot{}_f{}.dds", poolSlot, a_stamp);

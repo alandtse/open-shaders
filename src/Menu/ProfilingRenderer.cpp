@@ -14,6 +14,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "State.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 static constexpr uint32_t kDisplayedRollingFrameCount = 60;
@@ -113,12 +114,7 @@ static uint32_t FinalizeHash(uint32_t hash)
 
 static uint32_t StableHash(std::string_view value)
 {
-	uint32_t hash = 2166136261u;
-	for (const unsigned char c : value) {
-		hash ^= c;
-		hash *= 16777619u;
-	}
-	return FinalizeHash(hash);
+	return FinalizeHash(Util::Fnv1a32(value));
 }
 
 static uint32_t MixHash(uint32_t hash, uint32_t salt)

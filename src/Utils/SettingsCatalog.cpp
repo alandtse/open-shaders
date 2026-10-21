@@ -1,6 +1,7 @@
 #include "SettingsCatalog.h"
 
 #include "Utils/Format.h"
+#include "Utils/StringUtils.h"
 
 #include <map>
 
@@ -85,10 +86,7 @@ namespace Util::Settings
 
 	static bool EqualDisplayText(std::string_view lhs, std::string_view rhs)
 	{
-		return std::ranges::equal(lhs, rhs, [](const char a, const char b) {
-			return std::tolower(static_cast<unsigned char>(a)) ==
-			       std::tolower(static_cast<unsigned char>(b));
-		});
+		return IEquals(lhs, rhs);
 	}
 
 	std::vector<std::string> GetCatalogContextPath(const SceneSettingsCatalog::SettingMetadata& setting)

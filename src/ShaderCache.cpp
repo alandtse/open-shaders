@@ -27,6 +27,7 @@
 #include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
 #include "Utils/ShaderContentStore.h"
+#include "Utils/StringUtils.h"
 
 #include "Features/DynamicCubemaps.h"
 #include "Features/ReverseZ.h"
@@ -4285,8 +4286,7 @@ namespace SIE
 		const DWORD len = GetEnvironmentVariableA(a_name, buffer, sizeof(buffer));
 		if (len == 0 || len >= sizeof(buffer))
 			return false;
-		std::string value(buffer, len);
-		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		const std::string value = Util::ToLowerAscii(std::string_view(buffer, len));
 		return value == "1" || value == "true";
 	}
 
@@ -5747,9 +5747,7 @@ namespace SIE
 		}
 
 		// Ensure the file is not a directory and is a valid shader file (.hlsl)
-		std::string lowerExtension = extension;
-		std::transform(lowerExtension.begin(), lowerExtension.end(), lowerExtension.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		const std::string lowerExtension = Util::ToLowerAscii(extension);
 		if (!std::filesystem::is_directory(filePath) && lowerExtension == ".hlsl") {
 			// Update cache with the modified shader
 			cache->InsertModifiedShaderMap(shaderTypeString, modifiedTime);
@@ -5759,9 +5757,7 @@ namespace SIE
 
 			if (!foundPath) {
 				// File was not found in the the map so check its shader type
-				std::string parentDirName = filePath.parent_path().filename().string();
-				std::transform(parentDirName.begin(), parentDirName.end(), parentDirName.begin(),
-					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				const std::string parentDirName = Util::ToLowerAscii(filePath.parent_path().filename().string());
 
 				// Check if the parent directory name matches "shaders" in a case-insensitive way
 				if (lowerExtension == ".hlsl" && parentDirName == "shaders" && shaderType.has_value()) {

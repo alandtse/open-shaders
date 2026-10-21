@@ -2455,7 +2455,7 @@ void EditorWindow::HideGameMenus()
 	if (!globals::features::upscaling.d3d12SwapChainActive)
 		return;
 
-	if (auto ui = RE::UI::GetSingleton()) {
+	if (auto ui = GetUI()) {
 		ui->ShowMenus(false);
 		gameMenusHidden = true;
 		logger::info("Game menus hidden for CS editor");
@@ -2467,7 +2467,7 @@ void EditorWindow::ShowGameMenus()
 	if (!gameMenusHidden)
 		return;
 
-	if (auto ui = RE::UI::GetSingleton()) {
+	if (auto ui = GetUI()) {
 		ui->ShowMenus(true);
 		gameMenusHidden = false;
 		logger::info("Game menus restored after CS editor");

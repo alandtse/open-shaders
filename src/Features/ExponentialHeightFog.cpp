@@ -832,7 +832,7 @@ void ExponentialHeightFog::AdvanceMistShape(double elapsed)
 	if (std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]) > kMistMinimumTurnSpeed) {
 		const double targetAngle = std::atan2(mistDriftVelocity[1], mistDriftVelocity[0]);
 		const double delta = targetAngle - mistShapeAnimation[0];
-		const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * (1.0 - std::exp(-elapsed / kMistShapeResponseSeconds));
+		const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * Util::ExpBlend(elapsed, kMistShapeResponseSeconds);
 		if (globals::game::player) {
 			const auto anchor = globals::game::player->GetPosition();
 			const double relativeX = anchor.x - mistDriftOffset[0];
@@ -859,7 +859,7 @@ void ExponentialHeightFog::UpdateMistAnimation(const Settings& frameSettings)
 	if (consecutiveFrame && !paused && frameSettings.enabled && frameSettings.volumetricFogEnabled && frameSettings.mistsEnabled &&
 		elapsed >= 0.0 && elapsed <= kMaximumAnimationFrameSeconds) {
 		const auto targetVelocity = GetMistTargetVelocity(frameSettings);
-		const double response = 1.0 - std::exp(-elapsed / kWindResponseSeconds);
+		const double response = Util::ExpBlend(elapsed, kWindResponseSeconds);
 		for (size_t axis = 0; axis < mistDriftOffset.size(); ++axis) {
 			mistDriftVelocity[axis] += (targetVelocity[axis] - mistDriftVelocity[axis]) * response;
 			if (frameSettings.mistDriftSpeed == 0.0f)

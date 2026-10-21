@@ -9,12 +9,19 @@ using Catch::Approx;
 
 TEST_CASE("SmoothStep is a clamped Hermite ramp", "[isl]")
 {
-	REQUIRE(ISLMath::SmoothStep(0.0f, 1.0f, 0.0f) == Approx(0.0f));
-	REQUIRE(ISLMath::SmoothStep(0.0f, 1.0f, 1.0f) == Approx(1.0f));
-	REQUIRE(ISLMath::SmoothStep(0.0f, 1.0f, 0.5f) == Approx(0.5f));  // t^2(3-2t) at 0.5
+	REQUIRE(Util::Smoothstep(0.0f, 1.0f, 0.0f) == Approx(0.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 1.0f, 1.0f) == Approx(1.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 1.0f, 0.5f) == Approx(0.5f));  // t^2(3-2t) at 0.5
 	// Clamps outside [edge0, edge1].
-	REQUIRE(ISLMath::SmoothStep(0.0f, 1.0f, -1.0f) == Approx(0.0f));
-	REQUIRE(ISLMath::SmoothStep(0.0f, 1.0f, 2.0f) == Approx(1.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 1.0f, -1.0f) == Approx(0.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 1.0f, 2.0f) == Approx(1.0f));
+}
+
+TEST_CASE("Smoothstep with equal edges (fadeZone == 0) is a finite step", "[isl]")
+{
+	REQUIRE(Util::Smoothstep(0.0f, 0.0f, -1.0f) == Approx(0.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 0.0f, 0.0f) == Approx(0.0f));
+	REQUIRE(Util::Smoothstep(0.0f, 0.0f, 1.0f) == Approx(1.0f));
 }
 
 TEST_CASE("CalculateRadius matches the closed form for default cutoff", "[isl]")

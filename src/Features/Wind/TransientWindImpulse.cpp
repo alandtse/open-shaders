@@ -1,5 +1,7 @@
 #include "TransientWindImpulse.h"
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -9,18 +11,11 @@ namespace WindField
 	{
 		constexpr float kMinimumDivisor = 1e-4f;
 
-		float Smoothstep(float a_minimum, float a_maximum, float a_value) noexcept
-		{
-			const float range = std::max(a_maximum - a_minimum, kMinimumDivisor);
-			const float amount = std::clamp((a_value - a_minimum) / range, 0.0f, 1.0f);
-			return amount * amount * (3.0f - 2.0f * amount);
-		}
+		using Util::Smoothstep;
 
 		float3 NormalizeDirection(const float3& a_direction) noexcept
 		{
-			const float lengthSquared = a_direction.x * a_direction.x + a_direction.y * a_direction.y +
-			                            a_direction.z * a_direction.z;
-			return lengthSquared > 1e-6f ? a_direction / std::sqrt(lengthSquared) : float3{};
+			return Util::SafeNormalize(a_direction, 1e-3f);
 		}
 
 		float EvaluateWaveFalloff(float a_distance, const TransientWindSource& a_source) noexcept

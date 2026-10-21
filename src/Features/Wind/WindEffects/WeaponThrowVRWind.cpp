@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "ProjectileHookDispatcher.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -24,19 +25,6 @@ namespace
 	constexpr float kMaximumDistance = 3000.0f;
 	constexpr float kProjectileRetentionTime = 0.5f;
 	constexpr std::size_t kMaximumObservedProjectiles = WindField::kTransientImpulseCapacity;
-
-	float Length(const RE::NiPoint3& a_value)
-	{
-		return std::sqrt(a_value.x * a_value.x + a_value.y * a_value.y + a_value.z * a_value.z);
-	}
-
-	float3 Normalize(const RE::NiPoint3& a_value)
-	{
-		const float length = Length(a_value);
-		if (!std::isfinite(length) || length <= 1e-4f)
-			return {};
-		return { a_value.x / length, a_value.y / length, a_value.z / length };
-	}
 }
 
 using WindMath::ClampFiniteOrDefault;
@@ -192,10 +180,11 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 	std::vector<Wind::TransientWindSourceSubmission> attachedSources;
 	attachedSources.reserve(motion.size());
 	for (const auto& [identity, observation] : motion) {
-		const float speed = Length(observation.velocity);
+		const float speed = observation.velocity.Length();
 		if (!std::isfinite(speed) || speed < settings.minimumSpeed)
 			continue;
-		const float3 direction = Normalize(observation.velocity);
+		const float3 direction = Util::SafeNormalize(
+			{ observation.velocity.x, observation.velocity.y, observation.velocity.z });
 		if (direction.x == 0.0f && direction.y == 0.0f && direction.z == 0.0f)
 			continue;
 
@@ -228,7 +217,8 @@ void WeaponThrowVRWind::Update(float a_frameTime)
 		if (impactAges.contains(identity))
 			continue;
 		impactAges.emplace(identity, 0.0f);
-		auto fallbackDirection = Normalize(impact.velocity);
+		float3 fallbackDirection = Util::SafeNormalize(
+			{ impact.velocity.x, impact.velocity.y, impact.velocity.z });
 		if (fallbackDirection.x == 0.0f && fallbackDirection.y == 0.0f && fallbackDirection.z == 0.0f)
 			fallbackDirection = float3(1.0f, 0.0f, 0.0f);
 		const auto source = WindField::MakeRadialWave(
@@ -265,7 +255,7 @@ void WeaponThrowVRWind::ObserveMotion(RE::Projectile& a_projectile)
 		return;
 	const auto position = a_projectile.GetPosition();
 	const auto& runtimeData = a_projectile.GetProjectileRuntimeData();
-	const auto velocity = Length(runtimeData.linearVelocity) > 1e-4f ?
+	const auto velocity = runtimeData.linearVelocity.Length() > 1e-4f ?
 	                          runtimeData.linearVelocity :
 	                          runtimeData.velocity;
 	if (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||

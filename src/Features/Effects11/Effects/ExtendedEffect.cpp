@@ -1,5 +1,6 @@
 #include "ExtendedEffect.h"
 #include "../SettingValueParser.h"
+#include "Utils/StringUtils.h"
 
 #ifdef ENABLE_ENB_EXTENDER
 
@@ -206,8 +207,7 @@ void ExtendedEffect::LoadWeatherData()
 	weatherData.clear();
 	dirtyWeatherFiles.clear();
 
-	std::string section = GetName();
-	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
+	std::string section = Util::ToUpperAscii(GetName());
 
 	auto& weatherManager = WeatherManager::GetSingleton();
 	const auto& weatherEntries = weatherManager.GetWeatherEntries();
@@ -465,8 +465,7 @@ void ExtendedEffect::SaveWeatherOverrides()
 	if (dirtyWeatherFiles.empty())
 		return;
 
-	std::string section = GetName();
-	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
+	std::string section = Util::ToUpperAscii(GetName());
 
 	for (const auto& [fileName, dirtyKeys] : dirtyWeatherFiles) {
 		std::string filePath = (PresetManager::GetSingleton().GetENBSeriesPath() / fileName).string();
@@ -583,8 +582,7 @@ namespace
 			if (binding.inverted)
 				cond = !cond;
 
-			std::string prop = binding.property;
-			std::transform(prop.begin(), prop.end(), prop.begin(), ::tolower);
+			const std::string prop = Util::ToLowerAscii(binding.property);
 			if (prop == "hidden") {
 				if (cond)
 					visible = false;

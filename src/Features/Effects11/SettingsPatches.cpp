@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Features/Effects11/Effects/Effect.h"
+#include "Utils/StringUtils.h"
 
 namespace Util::SettingsPatches
 {
@@ -45,9 +46,7 @@ namespace Util::SettingsPatches
 
 	static bool FilenameMatches(const std::string& effectName, const std::string& pattern)
 	{
-		return std::equal(effectName.begin(), effectName.end(), pattern.begin(), pattern.end(), [](char a, char b) {
-			return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
-		});
+		return Util::IEquals(effectName, pattern);
 	}
 
 	void Apply(Effect& effect)
@@ -91,8 +90,7 @@ namespace Util::SettingsPatches
 						break;
 					case Effect::UIVariableType::Bool:
 						{
-							std::string lv = patch.value;
-							std::transform(lv.begin(), lv.end(), lv.begin(), ::tolower);
+							std::string lv = Util::ToLowerAscii(patch.value);
 							if (lv == "true" || lv == "1" || lv == "false" || lv == "0") {
 								bool val = (lv == "true" || lv == "1");
 								if (uiVar.effectVariable && SUCCEEDED(uiVar.effectVariable->AsScalar()->SetBool(val))) {

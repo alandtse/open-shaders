@@ -221,7 +221,7 @@ namespace ShadowCasterManager
 			const float a = 1.0f - dist2 / r2;
 			return a * a;
 		};
-		auto* plr = RE::PlayerCharacter::GetSingleton();
+		auto* plr = globals::game::player;
 		const float rawAttCam = camera ? computeAtt(camera->world.translate) : 0.0f;
 		const float rawAttPlr = plr ? computeAtt(plr->GetPosition()) : rawAttCam;
 		g.attCam = rawAttCam * coneFraction;
@@ -261,7 +261,7 @@ namespace ShadowCasterManager
 	{
 		if (!ni)
 			return false;
-		auto* plr = RE::PlayerCharacter::GetSingleton();
+		auto* plr = globals::game::player;
 		if (!plr)
 			return false;
 		// Both 3D roots: a held torch parents under the active person's
@@ -282,7 +282,7 @@ namespace ShadowCasterManager
 		}
 
 		FormulaHelper::SetParam(kFormulaParam_IsInterior, 0);
-		auto* plr = RE::PlayerCharacter::GetSingleton();
+		auto* plr = globals::game::player;
 		if (plr) {
 			auto* cell = plr->parentCell;
 			if (cell && cell->IsInteriorCell())
@@ -290,7 +290,7 @@ namespace ShadowCasterManager
 		}
 
 		// Time of day from GameHour global
-		auto* cal = RE::Calendar::GetSingleton();
+		auto* cal = globals::game::calendar;
 		if (cal)
 			FormulaHelper::SetParam(kFormulaParam_TimeOfDay, cal->GetHour());
 	}
@@ -415,7 +415,7 @@ namespace ShadowCasterManager
 		// Player-to-light distance: ensures third-person shadow maps redraw when the
 		// player character is inside a light's radius even if the camera is outside.
 		double playerLightDist = lightDistance;
-		auto* plr = RE::PlayerCharacter::GetSingleton();
+		auto* plr = globals::game::player;
 		if (plr) {
 			auto pp = plr->GetPosition();
 			float pdx = x - pp.x, pdy = y - pp.y, pdz = z - pp.z;

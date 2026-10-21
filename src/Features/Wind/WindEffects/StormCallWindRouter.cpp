@@ -29,7 +29,6 @@ namespace
 
 using WindMath::ClampFiniteOrDefault;
 using WindMath::GetHorizontalVelocityDirection;
-using WindMath::SquaredDistance;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StormCallWindRouter::Settings,

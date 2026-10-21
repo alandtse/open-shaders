@@ -139,7 +139,7 @@ void SkySync::DrawSettings()
 			UpdateWorldspaceDisabled();
 		}
 
-		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto player = globals::game::player;
 		const auto worldspace = player ? player->GetWorldspace() : nullptr;
 		const std::string editorID = worldspace && worldspace->GetFormEditorID() ? worldspace->GetFormEditorID() : "";
 		{
@@ -451,7 +451,7 @@ bool SkySync::Update(const RE::Sky* sky)
 
 	const auto sun = sky->sun;
 	const auto climate = sky->currentClimate;
-	const auto player = RE::PlayerCharacter::GetSingleton();
+	const auto player = globals::game::player;
 	if (!sun || !climate || !player)
 		return false;
 
@@ -687,7 +687,7 @@ std::pair<float, float> SkySync::GetSunHorizonHours(const RE::TESClimate::Timing
 // do not sit too high when the player gains altitude.
 float SkySync::GetPlayerAltitude()
 {
-	const auto player = RE::PlayerCharacter::GetSingleton();
+	const auto player = globals::game::player;
 	if (!player)
 		return 0.0f;
 	const auto worldSpace = player->GetWorldspace();

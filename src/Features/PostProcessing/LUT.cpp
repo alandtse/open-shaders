@@ -7,6 +7,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/StringUtils.h"
 
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
@@ -144,8 +145,7 @@ void LUT::ReadTexture(std::filesystem::path path)
 
 	Clear();
 
-	auto extension = path.extension().string();
-	std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	auto extension = Util::ToLowerAscii(path.extension().string());
 
 	if (extension != ".dds" && extension != ".png" && extension != ".bmp") {
 		errMsg = std::format("Invalid extension: {}! Only dds/png/bmp are supported.", path.extension().string());

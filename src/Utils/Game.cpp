@@ -153,7 +153,7 @@ namespace Util
 	float4 TryGetWaterData(float offsetX, float offsetY)
 	{
 		if (globals::game::shadowState) {
-			if (auto tes = RE::TES::GetSingleton()) {
+			if (auto tes = globals::game::tes) {
 				auto position = GetEyePosition(0);
 				position.x += offsetX;
 				position.y += offsetY;
@@ -399,7 +399,7 @@ namespace Util
 	float GetVerticalFOVRad()
 	{
 		static float& cameraFOVDeg = (*(float*)(REL::RelocationID(513786, 388785).address()));  // FOV degrees
-		float hFOVRad = cameraFOVDeg * (3.14159265359f / 180.0f);
+		float hFOVRad = DirectX::XMConvertToRadians(cameraFOVDeg);
 		float unitHalfWidth = tan(hFOVRad / 2);                                                                // This is same as camera frustum RL
 		float unitHalfHeight = unitHalfWidth / (globals::state->screenSize.x / globals::state->screenSize.y);  // frustum TB
 		float vFOVRad = 2.0f * atan(unitHalfHeight);

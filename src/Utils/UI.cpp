@@ -4,6 +4,7 @@
 #include "D3D.h"
 #include "Feature.h"
 #include "FileSystem.h"
+#include "MathUtils.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "Menu/IconLoader.h"
@@ -705,7 +706,7 @@ namespace Util
 		progress = std::clamp(progress + (hovered ? step : -step), 0.0f, 1.0f);
 		storage->SetFloat(progressId, progress);
 		storage->SetInt(frameId, frame);
-		const float expansionAlpha = progress * progress * (3.0f - 2.0f * progress);
+		const float expansionAlpha = Util::Smoothstep(0.0f, 1.0f, progress);
 		if (expansionAlpha <= 0.0f)
 			return false;
 		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * expansionAlpha);
@@ -1564,10 +1565,8 @@ namespace Util
 			return;
 		}
 
-		std::string lowerText = text;
-		std::string lowerSearch = searchTerm;
-		std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-		std::transform(lowerSearch.begin(), lowerSearch.end(), lowerSearch.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
+		const std::string lowerText = Util::ToLowerAscii(text);
+		const std::string lowerSearch = Util::ToLowerAscii(searchTerm);
 
 		size_t pos = 0;
 		size_t lastPos = 0;
@@ -1617,11 +1616,7 @@ namespace Util
 
 	bool StringMatchesSearch(std::string_view text, std::string_view searchQuery)
 	{
-		if (searchQuery.empty())
-			return true;
-		return std::search(text.begin(), text.end(), searchQuery.begin(), searchQuery.end(), [](unsigned char a, unsigned char b) {
-			return std::tolower(a) == std::tolower(b);
-		}) != text.end();
+		return Util::IContains(text, searchQuery);
 	}
 
 	void DrawModalBackground(uint8_t alpha)

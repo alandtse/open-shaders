@@ -1480,7 +1480,7 @@ void NeuralRendering::UpdateRegionOfInterest()
 			const bool group = regionGroup.load(std::memory_order_relaxed);
 			const auto camera = Util::GetEyePosition(0);
 			constexpr float maxSqDistance = NR::ActorRegion::kMaxActorDistance * NR::ActorRegion::kMaxActorDistance;
-			const auto* playerCamera = RE::PlayerCamera::GetSingleton();
+			const auto* playerCamera = globals::game::playerCamera;
 			const bool playerIsSeparateFromCamera = !globals::game::isVR && playerCamera && playerCamera->IsInThirdPerson();
 			std::vector<RegionCandidate> candidates;
 			Util::ForEachLoadedActor([&](RE::Actor* a_actor) {

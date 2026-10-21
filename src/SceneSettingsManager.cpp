@@ -11,6 +11,7 @@
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/SettingsCatalog.h"
+#include "Utils/StringUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -169,9 +170,7 @@ namespace
 		if (components.pluginName.empty())
 			return std::format("0x{:X}", components.localFormId);
 
-		auto pluginName = components.pluginName;
-		std::transform(pluginName.begin(), pluginName.end(), pluginName.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		const auto pluginName = Util::ToLowerAscii(components.pluginName);
 		return std::format("0x{:X}~{}", components.localFormId, pluginName);
 	}
 
@@ -236,9 +235,7 @@ namespace
 		                      Util::PrettifyIdentifier(token) :
 		                      std::string(token);
 		std::erase_if(normalized, [](unsigned char c) { return std::isspace(c); });
-		std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-		return normalized;
+		return Util::ToLowerAscii(normalized);
 	}
 
 	bool SceneSettingAddressTokensEqual(std::string_view lhs, std::string_view rhs)
@@ -2989,7 +2986,7 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 												   transition.duration,
 										0.0f, 1.0f) :
 			                        1.0f;
-			const auto smooth = linear * linear * (3.0f - 2.0f * linear);
+			const auto smooth = Util::Smoothstep(0.0f, 1.0f, linear);
 			resolved[address] = finished ? transition.targetValue :
 			                               transition.startValue + (transition.targetValue - transition.startValue) * smooth;
 		}
@@ -3096,7 +3093,7 @@ void SceneSettingsManager::StartLocationTransitions(
 			const float linear = transition.duration > 0.0f ?
 			                         std::clamp((now - transition.startTime) / transition.duration, 0.0f, 1.0f) :
 			                         1.0f;
-			const float progress = linear * linear * (3.0f - 2.0f * linear);
+			const float progress = Util::Smoothstep(0.0f, 1.0f, linear);
 			const auto blend = [progress](float from, float to) { return from + (to - from) * progress; };
 			for (int p = 0; p < kPeriodCount; ++p) {
 				const auto& from = transition.startLayers[p];
@@ -3183,7 +3180,7 @@ bool SceneSettingsManager::AdvanceLocationTransitions(float now)
 			const auto linear = transition.duration > 0.0f ?
 			                        std::clamp((now - transition.startTime) / transition.duration, 0.0f, 1.0f) :
 			                        1.0f;
-			const auto smooth = linear * linear * (3.0f - 2.0f * linear);
+			const auto smooth = Util::Smoothstep(0.0f, 1.0f, linear);
 			batch.updates[index].value = linear >= 1.0f ? transition.targetValue :
 			                                              transition.startValue + (transition.targetValue - transition.startValue) * smooth;
 		}

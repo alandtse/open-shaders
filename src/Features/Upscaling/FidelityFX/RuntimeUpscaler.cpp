@@ -20,6 +20,7 @@
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/SehGuard.h"
+#include "Utils/StringUtils.h"
 
 extern ffxFunctions ffxModule;
 
@@ -132,21 +133,13 @@ namespace
 		return true;
 	}
 
-	std::string ToUpperAscii(std::string a_value)
-	{
-		std::transform(a_value.begin(), a_value.end(), a_value.begin(), [](unsigned char c) {
-			return static_cast<char>(std::toupper(c));
-		});
-		return a_value;
-	}
-
 	FidelityFX::Fsr4AdapterSupport ClassifyFsr4AdapterSupport(const DXGI_ADAPTER_DESC& a_desc)
 	{
 		if (a_desc.VendorId != kAmdVendorId)
 			return FidelityFX::Fsr4AdapterSupport::Unsupported;
 
 		std::wstring wideDescription(a_desc.Description);
-		const std::string description = ToUpperAscii(stl::utf16_to_utf8(wideDescription).value_or(""));
+		const std::string description = Util::ToUpperAscii(stl::utf16_to_utf8(wideDescription).value_or(""));
 
 		// Pre-RDNA "HD"-branded GCN cards (e.g. "Radeon HD 7970") fall in the same 7000-7999
 		// numeric range as RX 7000 without being FSR 4.1.1-capable; reject them before the scan.

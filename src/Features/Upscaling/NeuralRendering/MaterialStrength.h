@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -39,7 +41,7 @@ namespace NR::MaterialStrength
 	inline Values Sanitize(Values values)
 	{
 		for (uint32_t i = 0; i < kCount; ++i)
-			values.strength[i] = std::isfinite(values.strength[i]) ? std::clamp(values.strength[i], kMinStrength, kMaxStrength) : kDefaults[i];
+			values.strength[i] = Util::ClampFinite(values.strength[i], kMinStrength, kMaxStrength, kDefaults[i]);
 		values.edgeSoftness = std::min(values.edgeSoftness, kMaxEdgeSoftness);
 		return values;
 	}

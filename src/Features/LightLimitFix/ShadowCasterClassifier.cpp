@@ -7,6 +7,7 @@
 
 #include "../../Globals.h"
 #include "../../State.h"
+#include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
 #include "ShadowCasterInternal.h"
 
@@ -157,7 +158,7 @@ namespace ShadowCasterManager
 		if (s_recLeft.fetch_sub(1, std::memory_order_relaxed) != 1)
 			return;
 
-		std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
+		const auto dir = Util::PathHelpers::GetCapturesPath();
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
 		if (ec) {

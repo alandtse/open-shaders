@@ -6,6 +6,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/StringUtils.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
 #include "../VR.h"
@@ -406,21 +407,17 @@ namespace ShadowCasterManager
 		if (s_filterText.empty()) {
 			filteredRows = rows;
 		} else {
-			std::string lower = s_filterText;
-			std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+			std::string lower = Util::ToLowerAscii(s_filterText);
 			char addrBuf[16];
 			for (auto& r : rows) {
-				std::string typeName = kShadowTypeNames[std::min(r.info.type, 2u)];
-				std::transform(typeName.begin(), typeName.end(), typeName.begin(), ::tolower);
+				std::string typeName = Util::ToLowerAscii(kShadowTypeNames[std::min(r.info.type, 2u)]);
 				// Range filter matches both raw units and rounded meters.
 				char rangeBuf[32];
 				snprintf(rangeBuf, sizeof(rangeBuf), "%.0f %.0f",
 					r.info.range, Util::Units::GameUnitsToMeters(r.info.range));
 				snprintf(addrBuf, sizeof(addrBuf), "%08x", static_cast<uint32_t>(r.info.lightKey & 0xFFFFFFFF));
 				const char* statusStr = r.inScene ? "yes" : (r.converted ? "conv" : "no");
-				std::string nameLower = r.info.name;
-				std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(),
-					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				std::string nameLower = Util::ToLowerAscii(r.info.name);
 				if (typeName.find(lower) != std::string::npos ||
 					nameLower.find(lower) != std::string::npos ||
 					std::string(rangeBuf).find(lower) != std::string::npos ||

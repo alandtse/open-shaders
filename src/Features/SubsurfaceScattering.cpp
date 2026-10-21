@@ -244,7 +244,7 @@ void SubsurfaceScattering::DrawSSS()
 	{
 		auto cameraData = Util::GetCameraData(0);
 
-		blurCBData.SSSS_FOVY = atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f * (180.0f / 3.14159265359f);
+		blurCBData.SSSS_FOVY = DirectX::XMConvertToDegrees(atan(1.0f / cameraData.projMat.m[0][0]) * 2.0f);
 
 		blurCBData.BaseProfile = float4{ settings.BaseProfile.BlurRadius, settings.BaseProfile.Thickness, 0, 0 };
 		blurCBData.HumanProfile = float4{ settings.HumanProfile.BlurRadius, settings.HumanProfile.Thickness, 0, 0 };

@@ -293,10 +293,9 @@ void FusRoDahWind::QueueEffect(RE::Actor& a_actor, const Route& a_route) const
 	const auto& profile = kRankProfiles[rank];
 	const auto [coneHalfAngle, collisionRadius] =
 		GetProjectileShape(a_route.canonicalSpell, profile);
-	const float coneHalfAngleRadians = coneHalfAngle * (std::numbers::pi_v<float> / 180.0f);
-	const float sideHalfAngleRadians =
-		std::min(coneHalfAngle * kSideSpreadMultiplier, kMaximumSideHalfAngle) *
-		(std::numbers::pi_v<float> / 180.0f);
+	const float coneHalfAngleRadians = DirectX::XMConvertToRadians(coneHalfAngle);
+	const float sideHalfAngleRadians = DirectX::XMConvertToRadians(
+		std::min(coneHalfAngle * kSideSpreadMultiplier, kMaximumSideHalfAngle));
 	const WindField::TransientWindSource source{ { origin.x, origin.y, origin.z },
 		0.0f,
 		{ forward.x, forward.y, forward.z },

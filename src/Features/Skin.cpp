@@ -482,7 +482,7 @@ void Skin::SetupExtraTexture(RE::BSLightingShaderMaterialBase const* material, R
 
 	auto findIgnoreCase = [](std::string_view str, std::string_view pattern) -> size_t {
 		auto it = std::search(str.begin(), str.end(), pattern.begin(), pattern.end(),
-			[](char ch1, char ch2) { return std::tolower(ch1) == std::tolower(ch2); });
+			[](unsigned char ch1, unsigned char ch2) { return std::tolower(ch1) == std::tolower(ch2); });
 		return it == str.end() ? std::string_view::npos : std::distance(str.begin(), it);
 	};
 

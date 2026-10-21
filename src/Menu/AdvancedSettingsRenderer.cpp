@@ -1135,7 +1135,7 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 		ImGui::Spacing();
 		// Test Conditions button - runs a set of console commands to prepare the player for testing
 		if (ImGui::Button(T("menu.advanced.test_conditions", "Test Conditions"), { -1, 0 })) {
-			if (auto ui = RE::UI::GetSingleton(); ui && !ui->menuStack.empty() && RE::PlayerCharacter::GetSingleton()) {
+			if (auto ui = globals::game::ui; ui && !ui->menuStack.empty() && globals::game::player) {
 				RE::Console::ExecuteCommand("player.setav speedmult 1000");
 				RE::Console::ExecuteCommand("tgm");
 				RE::Console::ExecuteCommand("tcl");

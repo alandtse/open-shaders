@@ -50,7 +50,6 @@ namespace
 }
 
 using WindMath::ClampFiniteOrDefault;
-using WindMath::SquaredDistance;
 
 ExplosionWindRouter::ExplosionWindRouter()
 {
@@ -428,7 +427,7 @@ bool ExplosionWindRouter::AcceptExplosion(const ExplosionProfile& a_profile,
 												  256.0f, kMaximumRadius) :
 		                                      std::clamp(std::max(recent.radius, effectiveRadius) * 0.2f,
 												  96.0f, 256.0f);
-		if (SquaredDistance(recent.position, a_position) <= deduplicationRadius * deduplicationRadius)
+		if (recent.position.GetSquaredDistance(a_position) <= deduplicationRadius * deduplicationRadius)
 			return false;
 	}
 

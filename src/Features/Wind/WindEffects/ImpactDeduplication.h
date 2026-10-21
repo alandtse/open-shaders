@@ -38,7 +38,7 @@ namespace WindImpactDedup
 			if (!sameProjectile && secondsSince(recent) > a_crossImpactWindow)
 				continue;
 			const float deduplicationRadius = sameProjectile ? 256.0f : 96.0f;
-			if (WindMath::SquaredDistance(recent.position, a_position) <= deduplicationRadius * deduplicationRadius)
+			if (recent.position.GetSquaredDistance(a_position) <= deduplicationRadius * deduplicationRadius)
 				return false;
 		}
 
