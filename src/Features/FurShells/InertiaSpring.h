@@ -28,8 +28,6 @@ namespace FurInertia
 	/** @brief Ranges the settings and their sliders accept. */
 	inline constexpr float MaxStrength = 2.0f;
 	inline constexpr float MaxTuningFrequencyHz = 100.0f;
-	inline constexpr float MinGain = 0.1f;
-	inline constexpr float MaxGain = 4.0f;
 	inline constexpr float MaxLengthExponent = 2.5f;
 	inline constexpr float MaxDroopExponent = 1.5f;
 
@@ -60,13 +58,13 @@ namespace FurInertia
 		float gain = 2.0f;
 	};
 
-	/** @brief Brings a tuning read from a settings file into range, replacing values that are not finite with the Stylized ones. */
+	/** @brief Brings a tuning read from a settings file into range, replacing values that are not finite with the Stylized ones. The gain is not a setting, so it passes through. */
 	[[nodiscard]] inline Tuning Sanitize(const Tuning& a_tuning)
 	{
 		const Tuning stylized{};
 		return Tuning{
 			Util::ClampFinite(a_tuning.frequencyHz, MinFrequencyHz, MaxTuningFrequencyHz, stylized.frequencyHz),
-			Util::ClampFinite(a_tuning.gain, MinGain, MaxGain, stylized.gain),
+			a_tuning.gain,
 			Util::ClampFinite(a_tuning.lengthExponent, 0.0f, MaxLengthExponent, stylized.lengthExponent),
 			Util::ClampFinite(a_tuning.droopExponent, 0.0f, MaxDroopExponent, stylized.droopExponent)
 		};

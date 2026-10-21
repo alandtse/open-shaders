@@ -39,7 +39,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InertiaStrength,
 	InertiaPreset,
 	InertiaFrequency,
-	InertiaGain,
 	InertiaLengthExponent,
 	InertiaDroopExponent,
 	TouchStrength,
@@ -361,9 +360,8 @@ void FurShells::LoadSettings(json& o_json)
 {
 	settings = o_json;
 
-	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent });
+	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, FurInertia::Tuning{}.gain, settings.InertiaLengthExponent, settings.InertiaDroopExponent });
 	settings.InertiaFrequency = tuning.frequencyHz;
-	settings.InertiaGain = tuning.gain;
 	settings.InertiaLengthExponent = tuning.lengthExponent;
 	settings.InertiaDroopExponent = tuning.droopExponent;
 	settings.InertiaStrength = Util::ClampFinite(settings.InertiaStrength, 0.0f, FurInertia::MaxStrength, Settings{}.InertiaStrength);
@@ -945,7 +943,7 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 
 FurInertia::Tuning FurShells::GetInertiaTuning() const
 {
-	const FurInertia::Tuning custom{ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent };
+	const FurInertia::Tuning custom{ settings.InertiaFrequency, FurInertia::Tuning{}.gain, settings.InertiaLengthExponent, settings.InertiaDroopExponent };
 	return FurInertia::GetTuning(static_cast<FurInertia::Preset>(std::min(settings.InertiaPreset, static_cast<uint32_t>(FurInertia::Preset::Custom))), custom);
 }
 
@@ -965,7 +963,6 @@ void FurShells::DrawInertiaSettings()
 				if (i == static_cast<uint32_t>(Preset::Custom)) {
 					const auto tuning = GetInertiaTuning();
 					settings.InertiaFrequency = tuning.frequencyHz;
-					settings.InertiaGain = tuning.gain;
 					settings.InertiaLengthExponent = tuning.lengthExponent;
 					settings.InertiaDroopExponent = tuning.droopExponent;
 				}
@@ -984,9 +981,8 @@ void FurShells::DrawInertiaSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("inertia_frequency_tooltip"), "How fast fur of the reference length and droop swings and settles. Higher is stiffer."));
 
-	ImGui::SliderFloat(T(TKEY("inertia_gain"), "Lag Gain"), &settings.InertiaGain, FurInertia::MinGain, FurInertia::MaxGain, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("inertia_gain_tooltip"), "Scales how far the tips lag for a given acceleration."));
+	if (!ImGui::TreeNode(T(TKEY("inertia_advanced"), "Advanced Inertia")))
+		return;
 
 	ImGui::SliderFloat(T(TKEY("inertia_length_exponent"), "Length Softening"), &settings.InertiaLengthExponent, 0.0f, FurInertia::MaxLengthExponent, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -995,6 +991,7 @@ void FurShells::DrawInertiaSettings()
 	ImGui::SliderFloat(T(TKEY("inertia_droop_exponent"), "Droop Softening"), &settings.InertiaDroopExponent, 0.0f, FurInertia::MaxDroopExponent, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("inertia_droop_exponent_tooltip"), "How much a droopier fur asset swings slower and lags more. 0 ignores droop."));
+	ImGui::TreePop();
 }
 
 float3 FurShells::GetInertia(const RE::BSGeometry* a_geometry, float a_length, float a_droop)

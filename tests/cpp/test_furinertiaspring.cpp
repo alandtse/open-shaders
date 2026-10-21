@@ -186,13 +186,17 @@ TEST_CASE("Inertia tuning from a settings file is brought into range", "[furiner
 {
 	const float nan = std::numeric_limits<float>::quiet_NaN();
 	const float infinity = std::numeric_limits<float>::infinity();
-	const auto tuned = FurInertia::Sanitize({ nan, infinity, -5.0f, 99.0f });
+	const auto tuned = FurInertia::Sanitize({ nan, 1.5f, -5.0f, 99.0f });
 	REQUIRE(tuned.frequencyHz == FurInertia::Tuning{}.frequencyHz);
-	REQUIRE(tuned.gain == FurInertia::Tuning{}.gain);
+	REQUIRE(tuned.gain == 1.5f);
 	REQUIRE(tuned.lengthExponent == 0.0f);
 	REQUIRE(tuned.droopExponent == FurInertia::MaxDroopExponent);
 
-	const auto high = FurInertia::Sanitize({ 1000.0f, 100.0f, 0.5f, 0.5f });
+	const auto infinite = FurInertia::Sanitize({ infinity, 1.5f, infinity, nan });
+	REQUIRE(infinite.frequencyHz == FurInertia::Tuning{}.frequencyHz);
+	REQUIRE(infinite.lengthExponent == FurInertia::Tuning{}.lengthExponent);
+	REQUIRE(infinite.droopExponent == FurInertia::Tuning{}.droopExponent);
+
+	const auto high = FurInertia::Sanitize({ 1000.0f, 1.5f, 0.5f, 0.5f });
 	REQUIRE(high.frequencyHz == FurInertia::MaxTuningFrequencyHz);
-	REQUIRE(high.gain == FurInertia::MaxGain);
 }
