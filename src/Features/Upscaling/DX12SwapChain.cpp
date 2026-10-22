@@ -39,7 +39,7 @@ void DX12SwapChain::UpdateAntiLag2BeforeInput(bool enabled, uint32_t fpsLimit)
 {
 	fpsLimit = enabled ? fpsLimit : 0u;
 	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, enabled, fpsLimit) : E_NOINTERFACE;
-	antiLag2Enabled = enabled && SUCCEEDED(hr);
+	antiLag2Enabled = antiLag2Available && antiLag2Context.m_enabled;
 	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
 		logger::warn("[AntiLag2] Update failed hr=0x{:08X} requestedEnabled={} fpsLimit={}", static_cast<unsigned int>(hr), enabled, fpsLimit);
 

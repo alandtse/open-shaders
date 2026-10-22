@@ -738,7 +738,7 @@ void Upscaling::OnBeforeInputPoll()
 {
 	if (UsesDLSSGFrameGen())
 		return;
-	const auto fpsLimit = IsAntiLag2FPSLimiterActive() ?
+	const auto fpsLimit = (!globals::game::isVR && IsAntiLag2FPSLimiterActive()) ?
 	                          std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit) :
 	                          0u;
 	if (d3d12SwapChainActive) {
