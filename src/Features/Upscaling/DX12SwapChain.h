@@ -6,7 +6,7 @@
 #include <wrl\client.h>
 #include <wrl\wrappers\corewrappers.h>
 
-#include "RedstoneInputPacing.h"
+#include "antilag2inputpacing.h"
 #include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
@@ -198,7 +198,7 @@ public:
 
 private:
 	AMD::AntiLag2DX12::Context antiLag2Context{};
-	CS::Redstone::InputPacing antiLag2InputPacing;
+	CS::AntiLag2::InputPacing antiLag2InputPacing;
 	bool antiLag2Available = false;
 	bool antiLag2Enabled = false;
 	bool antiLag2UpdateFailureLogged = false;

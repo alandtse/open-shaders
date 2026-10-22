@@ -5,7 +5,7 @@
 #include <thread>
 #include <wrl/wrappers/corewrappers.h>
 
-namespace CS::Redstone
+namespace CS::AntiLag2
 {
 	class InputPacing
 	{
