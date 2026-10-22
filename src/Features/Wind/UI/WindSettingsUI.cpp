@@ -19,7 +19,6 @@
 #define I18N_KEY_PREFIX "feature.wind."
 
 using namespace WindSettingsLimits;
-using WindMath::ClampFiniteOrDefault;
 
 namespace
 {
@@ -467,7 +466,7 @@ void Wind::SpawnDebugWindEffects()
 void Wind::DrawTreeWindTestSettings()
 {
 	if (!runtimeState.treeWindTest.enabled) {
-		runtimeState.treeWindTest.speed = ClampFiniteOrDefault(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
+		runtimeState.treeWindTest.speed = Util::ClampFinite(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
 		runtimeState.treeWindTest.gustScale = settings.windFieldGustScale;
 		runtimeState.treeWindTest.gustAmplitude = settings.windFieldGustAmplitude;
 		runtimeState.treeWindTest.gustAdvectionMultiplier = settings.windFieldGustAdvectionMultiplier;

@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Utils/StringUtils.h"
+
 namespace Util::ShaderPatches
 {
 	static std::vector<Entry> entries;
@@ -65,9 +67,7 @@ namespace Util::ShaderPatches
 		if (pathStart != path.begin() && *(pathStart - 1) != '\\')
 			return false;
 
-		return std::equal(pathStart, pathEnd, pat.begin(), pat.end(), [](char a, char b) {
-			return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
-		});
+		return Util::IEquals(std::string_view(path).substr(path.size() - pat.size()), pat);
 	}
 
 	bool Apply(const char* filename, std::string& content)

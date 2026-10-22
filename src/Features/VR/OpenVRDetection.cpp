@@ -1,4 +1,5 @@
 #include "OpenVRDetection.h"
+#include "Utils/StringUtils.h"
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -28,27 +29,9 @@ namespace
 		OpenCompositeSettingValue fsr3PostAAEnabled;
 	};
 
-	std::string_view TrimAsciiWhitespace(std::string_view value)
-	{
-		while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
-			value.remove_prefix(1);
-		while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
-			value.remove_suffix(1);
-		return value;
-	}
-
-	std::string ToLowerAscii(std::string_view value)
-	{
-		std::string result(value);
-		std::ranges::transform(result, result.begin(), [](unsigned char c) {
-			return static_cast<char>(std::tolower(c));
-		});
-		return result;
-	}
-
 	bool TryParseOpenCompositeBool(std::string value, bool& outValue)
 	{
-		value = ToLowerAscii(TrimAsciiWhitespace(value));
+		value = Util::ToLowerAscii(Util::TrimAscii(value));
 		if (value == "true" || value == "on" || value == "enabled" || value == "1") {
 			outValue = true;
 			return true;
@@ -296,9 +279,7 @@ namespace VRDetection
 			return RuntimeType::OpenComposite;
 
 		// Check path for OpenComposite indicators
-		std::string lowerPath = dllPath;
-		for (auto& c : lowerPath)
-			c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		const std::string lowerPath = Util::ToLowerAscii(dllPath);
 
 		if (lowerPath.find("opencomposite") != std::string::npos)
 			return RuntimeType::OpenComposite;

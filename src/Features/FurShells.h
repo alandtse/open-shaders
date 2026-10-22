@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FurShells/InertiaSpring.h"
 #include "FurShells/Interactors.h"
 
 struct FurShells : Feature
@@ -37,6 +38,13 @@ struct FurShells : Feature
 		float MinFurPixels = 0.0f;
 		float WindStrength = 1.0f;
 		float WetStrength = 1.0f;
+		float InertiaStrength = 1.0f;
+		uint32_t InertiaPreset = static_cast<uint32_t>(FurInertia::Preset::Stylized);
+		float InertiaFrequency = FurInertia::Tuning{}.frequencyHz;
+		float InertiaGain = FurInertia::Tuning{}.gain;
+		float InertiaLengthExponent = FurInertia::Tuning{}.lengthExponent;
+		float InertiaDroopExponent = FurInertia::Tuning{}.droopExponent;
+		float InertiaMaxBend = FurInertia::Tuning{}.maxBend;
 		float TouchStrength = 1.0f;
 		bool ShowTouchEdges = false;
 	} settings;
@@ -115,9 +123,7 @@ private:
 		float Pad1 = 0.0f;
 		float4 Wind;
 		float WetStrength;
-		float Pad2 = 0.0f;
-		float Pad3 = 0.0f;
-		float Pad4 = 0.0f;
+		float3 Inertia;
 		float TouchEye[2][4];
 		float TouchCount;
 		float TouchStrength;
@@ -184,6 +190,15 @@ private:
 	void RecordFrameBody(RE::NiSkinInstance* a_skinInstance, RE::BSGeometry* a_geometry, const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView, bool a_deferred);
 	/** @brief Wind pushing a mesh at a_position, scaled by Wind Strength; zero indoors or when the Wind feature has no sample. */
 	float3 GetWind(const RE::NiPoint3& a_position) const;
+
+	/** @brief Advances the geometry's inertia spring once per frame and returns the world-space tip lag in game units. */
+	float3 GetInertia(const RE::BSGeometry* a_geometry, float a_length, float a_droop);
+
+	/** @brief The spring tuning the selected inertia preset stands for; Custom uses the sliders. */
+	FurInertia::Tuning GetInertiaTuning() const;
+
+	/** @brief Draws the inertia preset selector and, for Custom, its tuning sliders. */
+	void DrawInertiaSettings();
 
 	/** @brief Fills a pass's touch capsules with the interactors near a mesh, and the camera offsets the shader needs to place them. */
 	void FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry);
@@ -254,6 +269,17 @@ private:
 	ankerl::unordered_dense::set<std::string> missingShells;
 	/** @brief False once a background scan proves no `_shell.dds` exists, so passes skip shell lookups; true until then. */
 	std::atomic<bool> shellAssetsPresent{ true };
+
+	/** @brief Inertia spring of one geometry and the last frame it was advanced. */
+	struct InertiaState
+	{
+		FurInertia::Spring spring;
+		uint32_t frame = 0;
+	};
+	ankerl::unordered_dense::map<const RE::BSGeometry*, InertiaState> inertiaStates;
+	uint32_t frameIndex = 0;
+	float maxInertia = 0.0f;
+	float lastMaxInertia = 0.0f;
 	RE::NiSourceTexture* lastDiffuse = nullptr;
 	ShellLookup lastLookup;
 	PerPass lastPerPass{};

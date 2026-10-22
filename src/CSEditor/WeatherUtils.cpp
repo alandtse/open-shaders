@@ -2,6 +2,7 @@
 #include "../I18n/I18n.h"
 #include "EditorWindow.h"
 #include "PaletteWindow.h"
+#include "Utils/StringUtils.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "cs_editor."
@@ -314,13 +315,7 @@ void PopInheritedStyle()
 
 bool ContainsStringIgnoreCase(const std::string_view a_string, const std::string_view a_substring)
 {
-	if (a_substring.empty())
-		return true;
-
-	const auto it = std::ranges::search(a_string, a_substring, [](const char a_a, const char a_b) {
-		return std::tolower(static_cast<unsigned char>(a_a)) == std::tolower(static_cast<unsigned char>(a_b));
-	});
-	return !it.empty();
+	return Util::IContains(a_string, a_substring);
 }
 
 float Int8ToFloat(const int8_t& value)

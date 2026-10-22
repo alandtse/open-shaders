@@ -96,8 +96,6 @@ namespace
 	}
 }
 
-using WindMath::ClampFiniteOrDefault;
-
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SpellShoutWindRouter::Settings,
 	enabled,
@@ -368,6 +366,6 @@ bool SpellShoutWindRouter::IsEnabled(SpellShoutWindEffect a_effect) const
 void SpellShoutWindRouter::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.strength = ClampFiniteOrDefault(
+	settings.strength = Util::ClampFinite(
 		settings.strength, kStrengthMinimum, kStrengthMaximum, defaults.strength);
 }

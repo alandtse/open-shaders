@@ -366,7 +366,12 @@ public:
 		IsCharacterRainSurface = 1u << 30,
 		IsHeldWeapon = 1u << 29,
 		TreeBend = 1u << 28,
-		GammaRenderTarget = 1u << 27
+		GammaRenderTarget = 1u << 27,
+		NoSnow = 1u << 25,
+		NoFoliageTint = 1u << 24,
+		SnowRooftop = 1u << 23,
+		SnowLODTree = 1u << 22,
+		SnowInactive = 1u << 21
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */

@@ -3,6 +3,7 @@
 
 #include "PresetManager.h"
 #include "Utils/FileSystem.h"
+#include "Utils/StringUtils.h"
 #include "WeatherManager.h"
 #include <Windows.h>
 #include <algorithm>
@@ -16,10 +17,7 @@ static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset"
 
 static bool TryParseBool(const std::string& a_value, bool& a_out)
 {
-	std::string s = a_value;
-	s.erase(0, s.find_first_not_of(" \t\r\n"));
-	s.erase(s.find_last_not_of(" \t\r\n") + 1);
-	std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+	const std::string s = Util::ToLowerAscii(Util::TrimAscii(a_value));
 	if (s == "true" || s == "1") {
 		a_out = true;
 		return true;

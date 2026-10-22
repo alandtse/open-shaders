@@ -52,18 +52,11 @@ namespace
 	constexpr float kMultiplierMin = 0.0f;
 	constexpr float kMultiplierMax = 5.0f;
 
-	float ClampFiniteOrDefault(float a_value, float a_default)
-	{
-		if (!std::isfinite(a_value))
-			return a_default;
-		return std::clamp(a_value, kMultiplierMin, kMultiplierMax);
-	}
-
 	void SanitizeSettings(LinearLighting::Settings& a_settings)
 	{
 		const LinearLighting::Settings defaults{};
 		a_settings.conversionSaturation = Util::ClampFiniteOrDefault(a_settings.conversionSaturation, kSaturationMin, kSaturationMax, defaults.conversionSaturation);
-		a_settings.ambientMult = ClampFiniteOrDefault(a_settings.ambientMult, defaults.ambientMult);
+		a_settings.ambientMult = Util::ClampFinite(a_settings.ambientMult, kMultiplierMin, kMultiplierMax, defaults.ambientMult);
 	}
 }
 

@@ -760,7 +760,7 @@ private:
 	static const LocationSceneConfig kEmptyLocationConfig;
 	json unresolvedLocationUserSettings = json::object();
 	bool locationDataLoaded = false;
-	bool gameDataReady = false;
+	std::atomic<bool> gameDataReady = false;
 
 	struct SettingAddress
 	{

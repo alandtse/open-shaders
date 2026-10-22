@@ -22,6 +22,7 @@ namespace FurShells
 		float TipWeight;
 		float4 Wind;
 		float WetStrength;
+		float3 Inertia;
 		float4 TouchEye[2];
 		float TouchCount;
 		float TouchStrength;
@@ -83,6 +84,8 @@ namespace FurShells
 	static const float TouchStableRadius = 0.5;
 	static const float WindMaxBend = 0.6;
 	static const float WindLeeShare = 0.25;
+	static const float InertiaWetCling = 0.6;
+	static const float WindInertiaMaxBend = 1.0;
 
 	/**
 	 * @brief World-space push of a shell layer away from, and along, the capsules touching the mesh.
@@ -138,6 +141,20 @@ namespace FurShells
 		float exposure = lerp(WindLeeShare, 1.0, saturate(-dot(a_worldNormal, direction)));
 		float bend = saturate(speed * speed) * exposure * WindMaxBend;
 		return direction * (bend * a_shell * a_shell * Length);
+	}
+
+	/** @brief World-space lag of the fur tips behind the mesh's motion, bending quadratically with layer height; wet fur clings and lags less. */
+	float3 GetInertiaDisplacement(float a_shell, float a_wet)
+	{
+		return Inertia * (a_shell * a_shell * (1.0 - InertiaWetCling * saturate(a_wet)));
+	}
+
+	/** @brief Limits the combined wind and inertia push of a layer to WindInertiaMaxBend of the layer's own wet-shortened height in world units, so layers never separate. */
+	float3 LimitBend(float3 a_bend, float a_shell, float a_wetLength, float a_worldScale)
+	{
+		float limit = WindInertiaMaxBend * Length * a_wetLength * a_worldScale * a_shell * a_shell;
+		float bendLength = length(a_bend);
+		return bendLength > limit ? a_bend * (limit / bendLength) : a_bend;
 	}
 
 	/** @brief Shell layer of an instance; VR packs both eyes into consecutive instances, so the layer is the pair index. */

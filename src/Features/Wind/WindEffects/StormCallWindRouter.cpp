@@ -27,9 +27,7 @@ namespace
 
 }
 
-using WindMath::ClampFiniteOrDefault;
 using WindMath::GetHorizontalVelocityDirection;
-using WindMath::SquaredDistance;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StormCallWindRouter::Settings,
@@ -207,10 +205,10 @@ bool StormCallWindRouter::AcceptImpactLocked(const RE::Projectile& a_projectile,
 void StormCallWindRouter::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.strength = ClampFiniteOrDefault(
+	settings.strength = Util::ClampFinite(
 		settings.strength, kMinimumStrength, kMaximumStrength, defaults.strength);
-	settings.radius = ClampFiniteOrDefault(
+	settings.radius = Util::ClampFinite(
 		settings.radius, kMinimumRadius, kMaximumRadius, defaults.radius);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime,
+	settings.decayTime = Util::ClampFinite(settings.decayTime,
 		0.0f, WindField::kTransientImpulseMaximumDecayTime, defaults.decayTime);
 }

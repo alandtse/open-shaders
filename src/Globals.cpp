@@ -42,6 +42,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowCover.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -126,6 +127,7 @@ namespace globals
 		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
+		SnowCover snowCover{};
 		Skin skin{};
 		ReverseZ reverseZ{};
 		PostProcessing postProcessing{};

@@ -92,6 +92,11 @@ namespace Util
 			return GetCommunityShaderPath() / "Translations";
 		}
 
+		std::filesystem::path GetCapturesPath()
+		{
+			return GetCommunityShaderPath() / "Captures";
+		}
+
 		std::filesystem::path GetOverridesPath()
 		{
 			return GetCommunityShaderPath() / "Overrides";

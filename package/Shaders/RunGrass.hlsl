@@ -490,6 +490,12 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
 
+#	if defined(SNOW_COVER)
+#		define BASIC_SNOW_COVER
+#		define SampColorSampler SampBaseSampler
+#		include "SnowCover/SnowCover.hlsli"
+#	endif
+
 #	ifdef GRASS_LIGHTING
 #		if defined(TRUE_PBR)
 cbuffer PerMaterial : register(b1)
@@ -620,6 +626,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 	dirDetailedShadow *= screenSpaceShadows.x;
 	dirSoftShadow *= dot(normal, SharedData::DirLightDirection.xyz) >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
+
+#				if defined(SNOW_COVER)
+	if (SnowCover::IsActive()) {
+#					if defined(SKYLIGHTING)
+		float snowSkyVisibility = SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1));
+#					else
+		float snowSkyVisibility = 1.0;
+#					endif
+		SnowCover::ApplyGrassSnow(material.BaseColor, normal, input.WorldPosition.xyz, input.TexCoord.xy, viewPosition.xyz, snowSkyVisibility, false, eyeIndex, TexBaseSampler);
+	}
+#				endif
 
 	DirectLightingOutput totalLighting = (DirectLightingOutput)0;
 	DirectContext dirContext = CreateDirectLightingContext(normal, normal, vertexNormal, viewDirection, viewDirection,
@@ -908,8 +925,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
-	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
+#				if defined(SNOW_COVER)
+	if (SnowCover::IsActive()) {
+#					if defined(SKYLIGHTING)
+		float snowSkyVisibility = skylightingDiffuse;
+#					else
+		float snowSkyVisibility = 1.0;
+#					endif
+		SnowCover::ApplyGrassSnow(albedo, normal, input.WorldPosition.xyz, input.TexCoord.xy, viewPosition.xyz, snowSkyVisibility, complex, eyeIndex, TexBaseSampler);
+	}
+#				endif
 
+	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
 	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
 	                              GrassLighting::GetTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *

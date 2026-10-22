@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -15,12 +17,6 @@ namespace ISLMath
 	inline constexpr float MetresToUnitsSq = MetresToUnits * MetresToUnits;
 	inline constexpr float ScaledUnitsSq = Scale * MetresToUnitsSq;
 	inline constexpr float FadeZoneBase = 4.5f * Scale * MetresToUnits;
-
-	inline float SmoothStep(float edge0, float edge1, float x)
-	{
-		const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-		return t * t * (3.0f - 2.0f * t);
-	}
 
 	// Radius at which the inverse-square falloff reaches `cutoff`. A cutoffOverride
 	// of exactly 1.0 means "use the default"; anything else overrides it. Any
@@ -40,7 +36,7 @@ namespace ISLMath
 	{
 		const float attenuation = ScaledUnitsSq / (distance * distance + ScaledUnitsSq * size * size / 2);
 		const float fadeZone = std::clamp(FadeZoneBase / radius, 0.0f, 1.0f);
-		const float fade = SmoothStep(0, radius * fadeZone, radius - distance);
+		const float fade = Util::Smoothstep(0.0f, radius * fadeZone, radius - distance);
 		return attenuation * fade;
 	}
 }

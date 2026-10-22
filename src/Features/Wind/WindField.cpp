@@ -1,5 +1,7 @@
 #include "WindField.h"
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -60,11 +62,6 @@ namespace WindField
 			return a_left.x * a_right.x + a_left.y * a_right.y;
 		}
 
-		float Lerp(float a_start, float a_end, float a_amount) noexcept
-		{
-			return a_start + (a_end - a_start) * a_amount;
-		}
-
 		float GradientNoise(const Scalar2& a_position, uint32_t a_seed, const WindTuning& a_tuning) noexcept
 		{
 			const Scalar2 latticePosition{ std::floor(a_position.x), std::floor(a_position.y) };
@@ -86,16 +83,11 @@ namespace WindField
 				offset.x * offset.x * offset.x * (offset.x * (offset.x * 6.0f - 15.0f) + 10.0f),
 				offset.y * offset.y * offset.y * (offset.y * (offset.y * 6.0f - 15.0f) + 10.0f)
 			};
-			return Lerp(Lerp(value00, value10, fade.x), Lerp(value01, value11, fade.x), fade.y) *
+			return std::lerp(std::lerp(value00, value10, fade.x), std::lerp(value01, value11, fade.x), fade.y) *
 			       kNoiseNormalization;
 		}
 
-		float Smoothstep(float a_minimum, float a_maximum, float a_value) noexcept
-		{
-			const float range = std::max(a_maximum - a_minimum, kMinimumDivisor);
-			const float amount = std::clamp((a_value - a_minimum) / range, 0.0f, 1.0f);
-			return amount * amount * (3.0f - 2.0f * amount);
-		}
+		using Util::Smoothstep;
 
 		float SampleAmbientGust(const float3& a_worldPosition, const Field& a_field,
 			const WindTuning& a_tuning) noexcept

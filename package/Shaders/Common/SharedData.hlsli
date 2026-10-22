@@ -701,6 +701,62 @@ namespace SharedData
 		float pad0;
 	};
 
+#if defined(SNOW_COVER) && defined(PSHADER)
+	struct SnowCoverSettings
+	{
+		float Month;
+		float TimeSnowing;
+		float SnowingDensity;
+		float SeasonalAltitude;
+
+		uint EnableExpensiveFoliage;
+		float SnowHeightOffset;
+		uint2 pad;
+
+		float RooftopSnow;
+		float RooftopHeight;
+		float RooftopExposure;
+		uint rooftopPad;
+
+		uint EnableSnowCover;
+		uint AffectGrassTint;
+		uint AffectTreeTint;
+		float FoliageHeightOffset;
+
+		float UVScale;
+		float peakMainAngle;
+		float peakAltAngle;
+		float minAngle;
+
+		float maxAngle;
+		float mainSpec;
+		float altSpec;
+		float mapZscale;
+
+		float2 mapScale;
+		float2 mapOffset;
+
+		float4 Glint;
+		float4 MainTint;
+		float4 AltTint;
+
+		float BlendSmoothness;
+		float WeatherFadeStart;
+		float WeatherFadeEnd;
+		float ObjectFadeStart;
+
+		float ObjectFadeEnd;
+		float ObjectFadeAmount;
+		uint2 pad2;
+
+		uint FireMeltCount;
+		float FireMeltStrength;
+		float FireMeltRadiusScale;
+		uint pad3;
+		float4 FireMeltSpheres[8];
+	};
+#endif
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -733,6 +789,9 @@ namespace SharedData
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
+#if defined(SNOW_COVER) && defined(PSHADER)
+		SnowCoverSettings snowCoverSettings;
+#endif
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

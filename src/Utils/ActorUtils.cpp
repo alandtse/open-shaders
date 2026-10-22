@@ -1,6 +1,7 @@
 #include "ActorUtils.h"
 
 #include "Globals.h"
+#include "Utils/StringUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -432,11 +433,7 @@ namespace Util
 			if (!model)
 				continue;
 			const std::string_view path(model);
-			const auto match = std::search(path.begin(), path.end(), dragonGraph.begin(), dragonGraph.end(),
-				[](unsigned char a_left, unsigned char a_right) {
-					return std::tolower(a_left) == std::tolower(a_right);
-				});
-			if (match != path.end())
+			if (Util::IContains(path, dragonGraph))
 				return true;
 		}
 		return false;

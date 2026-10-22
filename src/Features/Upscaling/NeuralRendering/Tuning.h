@@ -2,6 +2,8 @@
 
 #include "MaterialMap.h"
 #include "MaterialStrength.h"
+#include "Utils/MathUtils.h"
+#include "Utils/StringUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -28,8 +30,7 @@ namespace NR
 			return false;
 		if (std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 0x20; }))
 			return false;
-		std::string stem(name.substr(0, name.find('.')));
-		std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+		const std::string stem = Util::ToUpperAscii(name.substr(0, name.find('.')));
 		if (stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL")
 			return false;
 		return !(stem.size() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem[3] >= '1' && stem[3] <= '9');
@@ -208,10 +209,8 @@ namespace NR
 			regionFit = std::min(regionFit, kMaxRegionFit);
 			for (auto* strength : { &intensity, &localToneStrength, &localStructureStrength,
 					 &skinToneStrength, &hairToneStrength, &eyeToneStrength, &foliageToneStrength, &landscapeToneStrength })
-				*strength = std::isfinite(*strength) ? std::clamp(*strength, kMinStrength, kMaxStrength) : kDefaultStrength;
-			skinStructureStrength = std::isfinite(skinStructureStrength) ?
-			                            std::clamp(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength) :
-			                            kAutomaticSkinStructure;
+				*strength = Util::ClampFinite(*strength, kMinStrength, kMaxStrength, kDefaultStrength);
+			skinStructureStrength = Util::ClampFinite(skinStructureStrength, kAutomaticSkinStructure, kMaxStrength, kAutomaticSkinStructure);
 			const auto materialStrengths = MaterialStrengths();
 			strengthOther = materialStrengths.strength[MaterialStrength::kNone];
 			strengthSkin = materialStrengths.strength[MaterialStrength::kSkin];
@@ -228,7 +227,7 @@ namespace NR
 			modelPreset = std::min(modelPreset, kMaxModelPreset);
 			if (!IsValidRuntimeVariant(runtimeVariant))
 				runtimeVariant.clear();
-			modelScale = std::isfinite(modelScale) ? std::clamp(modelScale, kMinModelScale, kMaxModelScale) : kMaxModelScale;
+			modelScale = Util::ClampFinite(modelScale, kMinModelScale, kMaxModelScale, kMaxModelScale);
 			// The crop controls act only through a tracked crop, so none of them can stay set without
 			// it: a retained value reads as active while the pass ignores it, whether it came from a
 			// config file or from switching the crop off in the panel.

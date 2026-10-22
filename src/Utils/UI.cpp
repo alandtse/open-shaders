@@ -4,6 +4,7 @@
 #include "D3D.h"
 #include "Feature.h"
 #include "FileSystem.h"
+#include "MathUtils.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
 #include "Menu/IconLoader.h"
@@ -705,7 +706,7 @@ namespace Util
 		progress = std::clamp(progress + (hovered ? step : -step), 0.0f, 1.0f);
 		storage->SetFloat(progressId, progress);
 		storage->SetInt(frameId, frame);
-		const float expansionAlpha = progress * progress * (3.0f - 2.0f * progress);
+		const float expansionAlpha = Util::Smoothstep(0.0f, 1.0f, progress);
 		if (expansionAlpha <= 0.0f)
 			return false;
 		ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * expansionAlpha);
@@ -1564,10 +1565,8 @@ namespace Util
 			return;
 		}
 
-		std::string lowerText = text;
-		std::string lowerSearch = searchTerm;
-		std::transform(lowerText.begin(), lowerText.end(), lowerText.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-		std::transform(lowerSearch.begin(), lowerSearch.end(), lowerSearch.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
+		const std::string lowerText = Util::ToLowerAscii(text);
+		const std::string lowerSearch = Util::ToLowerAscii(searchTerm);
 
 		size_t pos = 0;
 		size_t lastPos = 0;
@@ -1617,11 +1616,7 @@ namespace Util
 
 	bool StringMatchesSearch(std::string_view text, std::string_view searchQuery)
 	{
-		if (searchQuery.empty())
-			return true;
-		return std::search(text.begin(), text.end(), searchQuery.begin(), searchQuery.end(), [](unsigned char a, unsigned char b) {
-			return std::tolower(a) == std::tolower(b);
-		}) != text.end();
+		return Util::IContains(text, searchQuery);
 	}
 
 	void DrawModalBackground(uint8_t alpha)
@@ -2744,7 +2739,8 @@ namespace Util
 	bool LoadDDSTextureFromFile(ID3D11Device* device,
 		const char* filename,
 		ID3D11ShaderResourceView** out_srv,
-		ImVec2& out_size)
+		ImVec2& out_size,
+		const char* resourceName)
 	{
 		if (!device || !out_srv) {
 			logger::warn("LoadDDSTextureFromFile: Invalid parameters");
@@ -2753,33 +2749,9 @@ namespace Util
 
 		*out_srv = nullptr;
 
-		// Try to load from BSA using Skyrim's resource system
-		RE::BSResourceNiBinaryStream bsaStream(filename);
-		if (!bsaStream.good()) {
-			logger::warn("LoadDDSTextureFromFile: Failed to open resource: {}", filename);
-			return false;
-		}
-
-		// Read entire DDS file into memory
-		std::vector<uint8_t> ddsData;
-		auto size = bsaStream.stream->totalSize;
-		if (size == 0) {
-			logger::warn("LoadDDSTextureFromFile: Resource has zero size: {}", filename);
-			return false;
-		}
-
-		ddsData.resize(size);
-		bsaStream.read(reinterpret_cast<char*>(ddsData.data()), size);
-
-		// Load DDS from memory
 		DirectX::ScratchImage image;
 		try {
-			DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(
-				ddsData.data(),
-				ddsData.size(),
-				DirectX::DDS_FLAGS_NONE,
-				nullptr,
-				image));
+			DX::ThrowIfFailed(LoadDDSImageFromResource(filename, image));
 		} catch (const DX::com_exception& e) {
 			logger::warn("LoadDDSTextureFromFile: Failed to load DDS data from {}: {}", filename, e.what());
 			return false;
@@ -2798,6 +2770,8 @@ namespace Util
 		ID3D11Texture2D* pTexture = reinterpret_cast<ID3D11Texture2D*>(pResource);
 		D3D11_TEXTURE2D_DESC desc;
 		pTexture->GetDesc(&desc);
+		if (resourceName)
+			SetResourceName(pTexture, "%s", resourceName);
 
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {
 			.Format = desc.Format,
@@ -2808,8 +2782,12 @@ namespace Util
 		};
 
 		HRESULT hr = device->CreateShaderResourceView(pTexture, &srvDesc, out_srv);
-		if (SUCCEEDED(hr) && *out_srv)
-			Util::SetResourceName(*out_srv, "UI::DDS:%s", filename);
+		if (SUCCEEDED(hr) && *out_srv) {
+			if (resourceName)
+				SetResourceName(*out_srv, "%s SRV", resourceName);
+			else
+				Util::SetResourceName(*out_srv, "UI::DDS:%s", filename);
+		}
 		pTexture->Release();
 
 		if (FAILED(hr) || !*out_srv) {
