@@ -156,6 +156,7 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	out float3 bendAxis, out float bendAngle, out float3 flutterAxis, out float flutterAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
+	bendAngle = 0.0f;
 	float ambientSpeed = length(ambientWind.xy);
 	flutterAxis = ambientSpeed > EPSILON_WIND_RESPONSE ?
 	                  float3(ambientWind.xy / ambientSpeed, 0.0f) :
@@ -171,8 +172,6 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	if (Permutation::EnableGrassWindSpringBend != 0u) {
 		displacement = GrassWind::CalculateAmbientDisplacement(
 			input.Color.w, modelHeight, rootHeight, bendAxis, bendResponse, compression, bendAngle);
-	} else {
-		bendAngle = 0.0f;
 	}
 	if (Permutation::EnableAmbientGrassWind != 0 && response.w >= 0.0f) {
 		float3 relativePosition = float3(0.0f, 0.0f, max(modelHeight - rootHeight, 0.0f));
