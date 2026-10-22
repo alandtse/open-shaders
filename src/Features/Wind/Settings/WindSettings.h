@@ -15,7 +15,7 @@ struct WindSettings
 	bool enableTrunkBend = true;
 	bool overrideTrunkWindIntensity = false;
 	float trunkWindIntensityOverride = 2.22f;
-	float trunkWindBendSensitivity = 1.0f;
+	float trunkWindBendSensitivity = 2.03f;
 	float treeLeafBaseWindFlutterGain = 1.2f;
 	float treeWindGustScale = 1.0f;
 	float treeWindGustSoftLimit = 0.75f;

@@ -136,10 +136,8 @@ void State::UpdatePermutationBuffer()
 	permutationData.TrunkWindBendSensitivity = windContribution.trunkWindBendSensitivity;
 	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
 	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
-	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
 	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
 	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
-	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;

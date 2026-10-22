@@ -103,28 +103,23 @@ void Wind::SetupGrassWindResources()
 	Util::SetResourceName(grassState.springSampler.get(), "Wind::GrassWindSpringSampler");
 }
 
-void Wind::BindGrassWindProfile(const RE::BSGeometry* a_geometry, bool a_compute)
+void Wind::BindGrassWindProfile(const RE::BSGeometry* a_geometry)
 {
 	if (!grassState.profileConstantBuffer)
 		return;
 	const auto behavior = GrassWindPatcher::GetBehavior(a_geometry);
 	const GrassWindProfileData data{
 		behavior.bendSensitivity,
-		behavior.flutterSensitivity,
-		behavior.flutterTipConcentration
+		behavior.flutterSensitivity
 	};
 	if (!grassState.boundProfileValid || grassState.boundProfile.bendSensitivity != data.bendSensitivity ||
-		grassState.boundProfile.flutterSensitivity != data.flutterSensitivity ||
-		grassState.boundProfile.flutterTipConcentration != data.flutterTipConcentration) {
+		grassState.boundProfile.flutterSensitivity != data.flutterSensitivity) {
 		grassState.profileConstantBuffer->Update(data);
 		grassState.boundProfile = data;
 		grassState.boundProfileValid = true;
 	}
 	ID3D11Buffer* buffer = grassState.profileConstantBuffer->CB();
-	if (a_compute)
-		globals::d3d::context->CSSetConstantBuffers(kGrassWindProfileConstantBufferSlot, 1, &buffer);
-	else
-		globals::d3d::context->VSSetConstantBuffers(kGrassWindProfileConstantBufferSlot, 1, &buffer);
+	globals::d3d::context->VSSetConstantBuffers(kGrassWindProfileConstantBufferSlot, 1, &buffer);
 }
 
 void Wind::OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath)

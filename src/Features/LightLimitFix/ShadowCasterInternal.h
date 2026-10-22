@@ -548,7 +548,6 @@ namespace ShadowCasterManager
 
 	extern bool s_bootAtlasEnabled;
 
-	inline constexpr int32_t kVanillaShadowSliceCount = 8;
 	inline constexpr uint32_t kAtlasMaxResolution = 16384;
 
 	/// Slot's atlas tile metadata in texels.

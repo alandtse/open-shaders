@@ -195,7 +195,7 @@ namespace ShadowCasterManager
 				"[SCM] Requested {} kSHADOWMAPS slots, GPU allocated {} -- "
 				"clamping scheduler to the actual count.",
 				s_requestedSlotCount, actual);
-			s_installedShadowLightCount = std::min(s_installedShadowLightCount, static_cast<int32_t>(actual));
+			s_installedShadowLightCount = SliceCappedLightCount(s_installedShadowLightCount, static_cast<int32_t>(actual));
 		} else {
 			logger::info("[SCM] kSHADOWMAPS array verified: {} slots allocated", actual);
 		}
@@ -298,7 +298,7 @@ namespace ShadowCasterManager
 
 		// INI-based fallback when the texture isn't readable yet (e.g.
 		// main menu, before BSShaderRenderTargets_Create). Resolution
-		// from SkyrimPrefs.ini, slot count from settings; assume the
+		// from SkyrimPrefs.ini, slice count from the boot request; assume the
 		// stock D32_FLOAT format (4 B/pixel).
 		if (info.bytesPerSlice == 0) {
 			std::uint32_t res = 4096;  // SkyrimPrefs.ini default
@@ -312,7 +312,7 @@ namespace ShadowCasterManager
 			info.shadowWidth = res;
 			info.shadowHeight = res;
 			info.bytesPerSlice = info.shadowWidth * info.shadowHeight * 4;
-			info.shadowSlices = static_cast<std::uint32_t>(s_settings.ShadowLightCount);
+			info.shadowSlices = s_requestedSlotCount;
 			info.shadowArrayBytes = static_cast<std::uint64_t>(info.bytesPerSlice) * info.shadowSlices;
 		}
 

@@ -315,14 +315,14 @@ namespace ShadowCasterManager
 		RefreshInstalledSlotCount();
 
 		Settings capped = settings;
-		if (s_installedShadowLightCount > 0)
+		if (s_installedShadowLightCount > 0 || s_installedSlotCount > 0)
 			capped.ShadowLightCount = std::min(settings.ShadowLightCount, s_installedShadowLightCount);
 
 		// Until the atlas resources exist (or if the probe failed), the
 		// vanilla 8-slice array is the only shadow storage; scheduling
 		// beyond it would index slices the engine never allocated.
 		if (s_bootAtlasEnabled && !AtlasActive())
-			capped.ShadowLightCount = std::min(capped.ShadowLightCount, kVanillaShadowSliceCount);
+			capped.ShadowLightCount = SliceCappedLightCount(capped.ShadowLightCount, kVanillaShadowSliceCount);
 
 		int newTotal = LightContainerSize(capped);
 		if (newTotal != s_lights.Size) {

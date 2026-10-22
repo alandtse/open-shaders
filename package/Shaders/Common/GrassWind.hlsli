@@ -63,12 +63,13 @@ namespace GrassWind
 		float verticalRadius = max(length(float2(bentUp.z, bentTangent.z)), EPSILON_WIND_RESPONSE);
 		// Symmetric headroom prevents the tilt limit from biasing flutter against the spring pose.
 		float angularHeadroom = max(acos(clamp(cos(max(maximumTiltRadians, 0.0f)) / verticalRadius, -1.0f, 1.0f)) -
-			atan2(abs(bentTangent.z), bentUp.z), 0.0f);
+										atan2(abs(bentTangent.z), bentUp.z),
+			0.0f);
 		float maximumFlutter = min(FlutterMaximumAngleRadians, angularHeadroom);
 		if (maximumFlutter <= EPSILON_WIND_RESPONSE)
 			return 0.0f.xxx;
 		flutterAngle = maximumFlutter * tanh(
-			flutter * flutterWeight * FlutterResponseRadians / maximumFlutter);
+											flutter * flutterWeight * FlutterResponseRadians / maximumFlutter);
 		float3 localDisplacement = RotateVector(relativePosition, flutterAxis, flutterAngle) - relativePosition;
 		return RotateVector(localDisplacement, bendAxis, bendAngle);
 	}

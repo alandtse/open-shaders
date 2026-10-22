@@ -223,7 +223,7 @@ namespace TreeWind
 			float baseSpeed = length(baseVelocity.xy);
 			float2 detailDirection = baseSpeed > EPSILON_WIND_RESPONSE ? baseVelocity.xy / baseSpeed : 0.0f.xx;
 			sample.leafFieldDisplacement = dot(detailFineVelocity.xy, detailDirection) *
-			                              TreeDetailDisplacementUnitsPerWind * GetLeafFlutterGain();
+			                               TreeDetailDisplacementUnitsPerWind * GetLeafFlutterGain();
 			return sample;
 		}
 

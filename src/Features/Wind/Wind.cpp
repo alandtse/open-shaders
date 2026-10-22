@@ -365,12 +365,11 @@ void Wind::RegisterUxActions()
 				kGrassTransientFlutterFrequencyMax, wind->settings.grassTransientFlutterFrequency);
 		});
 	FEATURE_COMMAND("setGrassWindRule",
-		"Apply live per-mesh grass response. Required args: mesh (full meshes/... nif path), bendSensitivity (0-4), flutterSensitivity (0-4), flutterTipConcentration (0-3). Broad bending follows authored vertex alpha directly. The mesh must already have a profile.",
+		"Apply live per-mesh grass response. Required args: mesh (full meshes/... nif path), bendSensitivity (0-4), flutterSensitivity (0-4). Broad bending follows authored vertex alpha directly. The mesh must already have a settings entry.",
 		[](Feature*, const json& args) {
 			if (!args.contains("mesh") || !args["mesh"].is_string() ||
 				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
-				!args.contains("flutterSensitivity") || !args["flutterSensitivity"].is_number() ||
-				!args.contains("flutterTipConcentration") || !args["flutterTipConcentration"].is_number()) {
+				!args.contains("flutterSensitivity") || !args["flutterSensitivity"].is_number()) {
 				logger::warn("[GrassWindPatcher] Devbench setGrassWindRule received invalid arguments");
 				return;
 			}
@@ -378,7 +377,6 @@ void Wind::RegisterUxActions()
 			GrassWindPatcher::Behavior behavior;
 			behavior.bendSensitivity = args["bendSensitivity"].get<float>();
 			behavior.flutterSensitivity = args["flutterSensitivity"].get<float>();
-			behavior.flutterTipConcentration = args["flutterTipConcentration"].get<float>();
 			for (std::size_t index = 0; index < GrassWindPatcher::GetRuleCount(); ++index) {
 				if (GrassWindPatcher::GetRule(index).mesh == mesh) {
 					(void)GrassWindPatcher::SetRule(index, behavior);
@@ -387,13 +385,13 @@ void Wind::RegisterUxActions()
 			}
 			logger::warn("[GrassWindPatcher] Devbench setGrassWindRule did not match mesh {}", mesh);
 		});
-	FEATURE_COMMAND("saveGrassWindRules", "Save edited grass profiles and bindings to the grass authoring JSON overlay.",
+	FEATURE_COMMAND("saveGrassWindRules", "Save edited per-mesh grass settings to the grass authoring JSON overlay.",
 		[](Feature*, const json&) {
 			const auto result = GrassWindPatcher::SaveRules();
 			if (!result.success)
 				logger::error("[GrassWindPatcher] Devbench save failed: {}", result.error);
 		});
-	FEATURE_COMMAND("revertGrassWindRules", "Revert grass profile edits and unsaved mesh bindings.",
+	FEATURE_COMMAND("revertGrassWindRules", "Revert grass settings edits and unsaved mesh entries.",
 		[](Feature*, const json&) { GrassWindPatcher::RevertUnsavedChanges(); });
 	FEATURE_COMMAND("setUniversalTreeResponse",
 		"Set the runtime-only response used for every tree. All response params and enabled are optional.",

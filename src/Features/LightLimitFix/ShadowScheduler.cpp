@@ -2022,6 +2022,10 @@ namespace ShadowCasterManager
 				}
 			}
 
+			// s_lights.Sun is synced after placement, so the point range follows this frame's sun.
+			const int32_t pointFirst = sunLight ? 1 : 0;
+			const int32_t pointEnd = pointFirst + s_settings.ShadowLightCount;
+
 			// Drop entries no longer chosen. Rank-drift suppression lives in
 			// CalculateLightScore's decay term; the slot pool is a dumb container
 			// that follows the chosen set. The atomic loop handles ConvertLight/
@@ -2030,7 +2034,8 @@ namespace ShadowCasterManager
 				if (!s_lights.Lights[i].Light)
 					continue;
 				bool stillChosen = (i == 0 && s_lights.Sun);  // sun slot
-				if (!stillChosen) {
+				// A light past the point range (count lowered, sun gone) never redraws; drop it to be re-placed.
+				if (!stillChosen && i < pointEnd) {
 					for (auto& c : candidates) {
 						if (c.light == s_lights.Lights[i].Light && c.chosen) {
 							stillChosen = true;
@@ -2062,7 +2067,8 @@ namespace ShadowCasterManager
 				bool reclaimed = false;
 				if (auto* ni = c.light->light.get()) {
 					const int ownerIdx = FindFreeSlotByOwner(ni);
-					if (ownerIdx >= 0 && !s_lights.Lights[ownerIdx].Light) {
+					// A tile can be parked at any light-free index; reclaim it only inside the point range.
+					if (ownerIdx >= pointFirst && ownerIdx < pointEnd && !s_lights.Lights[ownerIdx].Light) {
 						s_lights.Lights[ownerIdx].Light = c.light;
 						reclaimed = true;
 					}

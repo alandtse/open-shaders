@@ -31,10 +31,8 @@ struct WindPermutationContribution
 	float trunkWindBendSensitivity;
 	float treeLeafBaseWindFlutterGain;
 	uint32_t enableAmbientGrassWind;
-	float grassWindSensitivity;
 	float grassWindCompressionToBend;
 	float grassWindFlutterStrength;
-	float grassWindFlutterFrequency;
 };
 
 /** Per-frame contribution Wind makes to State::SharedDataCB; see State::UpdateSharedData. */
@@ -188,7 +186,7 @@ struct Wind : Feature
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
 	virtual bool WantsGrassMeshHooks() const override { return true; }
-	/** @brief Tracks a loaded grass type's source mesh for response profiles. */
+	/** @brief Tracks a loaded grass type's source mesh for per-mesh settings. */
 	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath) override;
 	/** @brief Drops a destroyed grass shape's source-mesh mapping. */
 	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* a_shape) override;
@@ -228,8 +226,8 @@ struct Wind : Feature
 	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
 	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
 	void UpdateGrassWindSpring(bool a_compute = false);
-	/** @brief Binds the source mesh's authored grass response to a vertex or culling shader. */
-	void BindGrassWindProfile(const RE::BSGeometry* a_geometry, bool a_compute = false);
+	/** @brief Binds the source mesh's authored grass response to the vertex shader. */
+	void BindGrassWindProfile(const RE::BSGeometry* a_geometry);
 	void UpdateTreeWindSpring();
 	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
 	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;

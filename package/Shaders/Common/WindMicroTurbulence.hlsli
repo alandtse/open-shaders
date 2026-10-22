@@ -33,8 +33,9 @@ namespace WindField
 			coarse -= floor(coarse / MicroNoisePeriod) * MicroNoisePeriod;
 			float2 coordinate = worldPosition * spatialScale - coarse - state.travel.zw * travelScale;
 			return clamp(2.0f * float2(
-				GradientNoise(coordinate, seed, tuning, MicroNoiseMask),
-				GradientNoise(coordinate + float2(17.0f, 31.0f), seed ^ MicroCrosswindSeed, tuning, MicroNoiseMask)), -1.0f, 1.0f);
+									GradientNoise(coordinate, seed, tuning, MicroNoiseMask),
+									GradientNoise(coordinate + float2(17.0f, 31.0f), seed ^ MicroCrosswindSeed, tuning, MicroNoiseMask)),
+				-1.0f, 1.0f);
 		}
 
 		float3 ResolveFineBand(float2 noise, float3 direction, float speed, float amplitude)
@@ -43,7 +44,8 @@ namespace WindField
 			float along = amplitude * noise.x;
 			float across = amplitude * MicroCrosswindFraction * noise.y;
 			float responseScale = along < -MicroMaximumNegativeResponse * budget ?
-			                          MicroMaximumNegativeResponse * budget / -along : 1.0f;
+			                          MicroMaximumNegativeResponse * budget / -along :
+			                          1.0f;
 			float crosswindDivisor = abs(across) - MicroCrosswindSlope * along;
 			if (crosswindDivisor > 0.0f)
 				responseScale = min(responseScale, MicroCrosswindSlope * budget / crosswindDivisor);
@@ -68,8 +70,8 @@ namespace WindField
 		float positiveGust = max(dot(gustVelocity.xy, baseDirection.xy), 0.0f);
 		float amplitude = strength * speed / (speed + Detail::MicroCalmSpeed) *
 		                  (max(tuning.fineBaselineAmplitude, 0.0f) +
-						  baseSpeed * max(tuning.fineWindCoupling, 0.0f) +
-						  positiveGust * max(tuning.fineGustCoupling, 0.0f));
+							  baseSpeed * max(tuning.fineWindCoupling, 0.0f) +
+							  positiveGust * max(tuning.fineGustCoupling, 0.0f));
 		float2 slow = Detail::SampleFineBand(worldPosition.xy, state, Detail::MicroSlowSpatialScale,
 			spatialScale, travelScale, tuning.broadGustSeed ^ Detail::MicroSlowSeed, tuning);
 		float2 detail = Detail::SampleFineBand(worldPosition.xy, state, Detail::MicroDetailSpatialScale,

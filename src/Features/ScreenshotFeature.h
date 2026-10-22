@@ -2,18 +2,27 @@
 
 #include "Feature.h"
 #include "Utils/Subrect.h"
+#ifdef DEVBENCH_BRIDGE_ENABLED
+#	include "Features/Screenshot/BurstAdapter.h"
+#endif
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <queue>
 #include <string>
 #include <thread>
 
+class ScreenshotSequenceCapture;
+
 struct ScreenshotFeature : public Feature
 {
+	/** Leaves the native sequence controller idle until capture is requested. */
+	ScreenshotFeature();
 	/** @brief Stops the background screenshot worker thread on destruction. */
 	virtual ~ScreenshotFeature();
 	virtual std::string GetName() override { return "Screenshot"; }
@@ -59,7 +68,7 @@ struct ScreenshotFeature : public Feature
 	 * @brief Queues one capture for the next present. The file is a PNG at request.outputPath and gets
 	 *        no crop preset, clipboard copy or HUD notice, so a tool can call it between user captures.
 	 *        A user capture requested in the same frame is served on the following frame.
-	 * @return False when another request is already waiting.
+	 * @return False when another request is already waiting or a frame sequence is active.
 	 */
 	bool RequestCapture(CaptureRequest request);
 
@@ -67,6 +76,22 @@ struct ScreenshotFeature : public Feature
 	void Capture(std::optional<CaptureRequest> request = std::nullopt);
 	/** @brief Checks for a pending capture request and executes Capture() if one is pending. Should be called before the wrapped buffers are cleared. */
 	void ProcessCaptureRequest();
+	/** Dispatches the explicit, versioned native frame-sequence API. */
+	json HandleSequenceRequest(const json& request);
+#ifdef DEVBENCH_BRIDGE_ENABLED
+	/** Supplies DevBench's registered golden-reference capture provider. */
+	json HandleReferenceCapture(const json& request, std::function<void(const json&)> completion);
+	/**
+	 * @brief Starts a DevBench `capture` burst on the native sequence engine; the frames land as <prefix>_NNNN.png in
+	 *        request.outputDir with a manifest beside them. a_progress and a_finished run on the render thread.
+	 * @return False with a reason in a_error when the burst cannot start.
+	 */
+	bool StartBurst(OS::Capture::Burst::Request request, OS::Capture::Burst::Adapter::Notify a_progress, OS::Capture::Burst::Adapter::Notify a_finished, uint64_t& a_runId, std::string& a_error);
+	/** @return The latest burst's status when a_runId names it. */
+	[[nodiscard]] std::optional<OS::Capture::Burst::Status> GetBurstStatus(uint64_t a_runId) const;
+#endif
+	/** Stops frame scheduling when the feature is disabled. */
+	void OnRuntimeDisabled() override;
 	bool applyCropToScreenshot = true;
 
 	// Settings
@@ -81,6 +106,18 @@ struct ScreenshotFeature : public Feature
 	std::atomic<bool> captureRequested{ false };
 
 private:
+#ifdef DEVBENCH_BRIDGE_ENABLED
+	OS::Capture::Burst::Adapter burstAdapter;
+#endif
+	const std::unique_ptr<ScreenshotSequenceCapture> sequenceCapture;
+	int sequenceFrameCount;
+	int sequenceIntervalFrames = 1;
+	int sequenceStartDelayFrames = 0;
+	bool uiSequencePending = false;
+	std::string uiSequenceId;
+	std::string uiSequenceMessage;
+	std::chrono::steady_clock::time_point nextSequencePoll{};
+	void DrawSequenceSettings();
 	struct PendingScreenshot
 	{
 		winrt::com_ptr<ID3D11Texture2D> stagingTexture;
@@ -105,6 +142,7 @@ private:
 	std::queue<PendingScreenshot> screenshotQueue;
 	std::thread screenshotWorker;
 	bool screenshotWorkerRunning = false;
+	std::atomic<uint32_t> screenshotsInFlight{ 0 };
 	Util::Subrect::Controller subrect;
 
 	// SRV-readable copy used when the capture source's own SRV can't be sampled

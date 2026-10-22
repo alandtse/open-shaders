@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FurShells/Interactors.h"
+
 struct FurShells : Feature
 {
 	virtual inline std::string GetName() override { return "Fur Shells"; }
@@ -34,6 +36,9 @@ struct FurShells : Feature
 		bool OverlayFur = true;
 		float MinFurPixels = 0.0f;
 		float WindStrength = 1.0f;
+		float WetStrength = 1.0f;
+		float TouchStrength = 1.0f;
+		bool ShowTouchEdges = false;
 	} settings;
 
 	/** @brief Per-shell-texture values, loaded from the .json beside the texture. */
@@ -109,8 +114,20 @@ private:
 		float Pad0 = 0.0f;
 		float Pad1 = 0.0f;
 		float4 Wind;
+		float WetStrength;
+		float Pad2 = 0.0f;
+		float Pad3 = 0.0f;
+		float Pad4 = 0.0f;
+		float TouchEye[2][4];
+		float TouchCount;
+		float TouchStrength;
+		float TouchDebug;
+		float TouchPad1 = 0.0f;
+		float TouchA[FurInteractors::MaxCapsulesPerPass][4];
+		float TouchB[FurInteractors::MaxCapsulesPerPass][4];
+		float TouchMove[FurInteractors::MaxCapsulesPerPass][4];
 	};
-	static_assert(sizeof(PerPass) == 64);
+	static_assert(sizeof(PerPass) == 704);
 
 	struct DeferredPass
 	{
@@ -168,6 +185,12 @@ private:
 	/** @brief Wind pushing a mesh at a_position, scaled by Wind Strength; zero indoors or when the Wind feature has no sample. */
 	float3 GetWind(const RE::NiPoint3& a_position) const;
 
+	/** @brief Fills a pass's touch capsules with the interactors near a mesh, and the camera offsets the shader needs to place them. */
+	void FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry);
+
+	/** @brief True while touch deformation or the Show Touch Edges tint is on, so the capsules are gathered and selected for either. */
+	[[nodiscard]] bool IsTouchActive() const { return settings.TouchStrength > 0.0f || settings.ShowTouchEdges; }
+
 	void BeginOverlayPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass, const FrameBody& a_body);
 	void BindPass(const PerPass& a_perPass, ID3D11ShaderResourceView* a_shellView, ID3D11ShaderResourceView* a_normalView);
 	const DepthStates* GetDepthStates(ID3D11DepthStencilState* a_source);
@@ -206,6 +229,21 @@ private:
 	uint32_t lastMaxShells = 0;
 	float minDensity = 1.0f;
 	float lastMinDensity = 1.0f;
+	FurInteractors::Memory dentMemory;
+	uint32_t touchCapsules = 0;
+	/** @brief The capsules each fur mesh took last frame, for diagnostics. */
+	struct TouchSelection
+	{
+		std::string mesh;
+		std::vector<FurInteractors::Capsule> capsules;
+	};
+	std::vector<TouchSelection> touchSelections;
+	std::vector<TouchSelection> lastTouchSelections;
+	uint32_t lastTouchCapsules = 0;
+	uint32_t maxTouchPerPass = 0;
+	uint32_t lastMaxTouchPerPass = 0;
+	float touchNearestGap = FLT_MAX;
+	float lastTouchNearestGap = FLT_MAX;
 	float windSpeed = 0.0f;
 	float lastWindSpeed = 0.0f;
 
@@ -214,6 +252,8 @@ private:
 	ankerl::unordered_dense::map<ID3D11DepthStencilState*, DepthStates> depthStates;
 	ankerl::unordered_dense::map<RE::NiSourceTexture*, Entry> entries;
 	ankerl::unordered_dense::set<std::string> missingShells;
+	/** @brief False once a background scan proves no `_shell.dds` exists, so passes skip shell lookups; true until then. */
+	std::atomic<bool> shellAssetsPresent{ true };
 	RE::NiSourceTexture* lastDiffuse = nullptr;
 	ShellLookup lastLookup;
 	PerPass lastPerPass{};

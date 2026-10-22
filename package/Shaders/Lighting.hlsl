@@ -20,6 +20,16 @@
 
 #if defined(FUR_SHELLS)
 #	include "FurShells/FurShells.hlsli"
+
+float GetFurWet()
+{
+#	if defined(WETNESS_EFFECTS) && !defined(HAIR) && !defined(EYE) && !defined(LANDSCAPE)
+	return FurShells::GetWetFactor(SharedData::wetnessEffectsSettings.CharacterRetainedWetness,
+		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsCharacterRainSurface) != 0);
+#	else
+	return 0.0;
+#	endif
+}
 #endif
 
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
@@ -110,6 +120,7 @@ struct VS_OUTPUT
 #if defined(FUR_SHELLS)
 	nointerpolation float FurShell: TEXCOORD13;
 	float4 FurRoot: TEXCOORD14;
+	float3 FurTouch: TEXCOORD15;
 #endif
 };
 #ifdef VSHADER
@@ -279,7 +290,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 	const float3 furNormal = input.Normal.xyz * 2.0 - 1.0;
 #		endif
-	const float3 furOffset = furNormal * (FurShells::Length * furShell);
+	const float3 furOffset = furNormal * (FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 	inputPosition.xyz += furOffset;
 	previousInputPosition.xyz += furOffset;
 #	endif
@@ -314,13 +325,15 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif  // SKINNED
 
 #	if defined(FUR_SHELLS)
-	const float furDroop = FurShells::Droop * furShell * furShell;
+	const float furDroop = min(FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 #		if defined(SKINNED)
 	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
 #		else
 	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
 #		endif
-	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell);
+	float3 furTouchDebug;
+	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furWorldNormal, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
+	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell) + furTouch;
 	worldPosition.xyz += furDisplacement;
 	previousWorldPosition.xyz += furDisplacement;
 #		if defined(SKINNED)
@@ -485,6 +498,7 @@ VS_OUTPUT main(VS_INPUT input)
 #	if defined(FUR_SHELLS)
 	vsout.FurShell = furShell;
 	vsout.FurRoot = furRootViewPos;
+	vsout.FurTouch = furTouchDebug;
 #	endif
 
 	return vsout;
@@ -1287,7 +1301,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float2 uvOriginal = uv;
 
 #	if defined(FUR_SHELLS)
-	float4 furSample = FurShells::TexShell.SampleBias(SampColorSampler, uv, SharedData::MipBias);
+	const float furMipScale = exp2(SharedData::MipBias);
+	float4 furSample = FurShells::TexShell.SampleGrad(SampColorSampler, FurShells::GetClumpedUv(uv, input.FurShell, GetFurWet()), ddx(uv) * furMipScale, ddy(uv) * furMipScale);
 	bool furRootCovered = FurShells::IsRootCovered(input.FurRoot, fwidth(input.FurRoot.w), eyeIndex);
 #		if defined(MODELSPACENORMALS)
 	float3 furFacingNormal = cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz));
@@ -1905,7 +1920,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(FUR_SHELLS)
 	if (input.FurShell > 0.0)
-		baseColor.xyz *= FurShells::GetDarkening(input.FurShell, furFacing);
+		baseColor.xyz *= FurShells::GetDarkening(input.FurShell, furFacing) * FurShells::GetWetDarkening(GetFurWet());
+	if (input.FurShell > 0.0 && FurShells::TouchDebug > 0.0) {
+		const float4 touchDebug = FurShells::GetTouchDebugColor(input.FurTouch);
+		baseColor.xyz = lerp(baseColor.xyz, touchDebug.rgb, touchDebug.a);
+	}
 #	endif
 
 #	if defined(CS_SKIN_SHADING)
@@ -2535,7 +2554,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsHeldWeapon) != 0;
 	float3 characterDrop = 0.0f;
 	float characterRainSkyVisibility = SharedData::InInterior ? 0.0f : wetnessOcclusion;
-	const bool evaluateCharacterDrops = characterRainSurface && inWorld && !SharedData::HideSky &&
+#			if defined(FUR_SHELLS)
+	const bool furDropLayer = input.FurShell <= 0.0 || input.FurShell >= FurShells::TipShell;
+#			else
+	const bool furDropLayer = true;
+#			endif
+	const bool evaluateCharacterDrops = characterRainSurface && furDropLayer && inWorld && !SharedData::HideSky &&
 	                                    max(SharedData::wetnessEffectsSettings.CharacterImpactIntensity,
 											SharedData::wetnessEffectsSettings.CharacterRetainedWetness) > 0.0f &&
 	                                    (!heldWeapon || SharedData::wetnessEffectsSettings.EnableWeaponRainDrops);

@@ -142,7 +142,8 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 			GrassWindSpring::FineTransport, flutterTuning, spatialScale, 1.0f);
 		float baseSpeed = length(components.baseAmbientVelocity.xy);
 		float2 flutterDirection = baseSpeed > EPSILON_WIND_RESPONSE ?
-		                              components.baseAmbientVelocity.xy / baseSpeed : float2(1.0f, 0.0f);
+		                              components.baseAmbientVelocity.xy / baseSpeed :
+		                              float2(1.0f, 0.0f);
 		flutter = dot(fine.detailVelocity.xy, flutterDirection) * max(field.Sensitivity, 0.0f) * detailWeight;
 		flutter *= GrassWindSpring::EvaluateFlutterAmplitudeMultiplier(baseSpeed);
 	}

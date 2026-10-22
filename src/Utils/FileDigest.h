@@ -17,4 +17,6 @@ namespace Util::FileDigest
 	 *         that as "digest unknown", never as "unchanged" or "validated".
 	 */
 	std::optional<std::string> Sha256FileHex(const std::filesystem::path& path);
+	/** SHA-256 of an owned synchronous Win32 file handle, uppercase hex; consumes its file position. */
+	std::optional<std::string> Sha256HandleHex(void* handle);
 }

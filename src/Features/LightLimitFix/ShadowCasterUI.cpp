@@ -1204,8 +1204,6 @@ namespace ShadowCasterManager
 		ImGui::SliderInt(T(TKEY("shadow_light_count"), "Shadow Light Count"), &settings.ShadowLightCount, 0, 127);
 		// Compute projected VRAM for the slider's current value so the user
 		// can see the cost of a higher count *before* committing the restart.
-		// kSHADOWMAPS holds exactly ShadowLightCount slices -- the sun lives
-		// in its own kSHADOWMAPS_ESRAM texture, so there's no +1.
 		auto sliderVram = GetVRAMInfo();
 		std::uint64_t projectedBytes = 0;
 		std::uint64_t projectedFreeBytes = 0;
@@ -1216,7 +1214,7 @@ namespace ShadowCasterManager
 		if (projectionValid) {
 			const auto projectedSlices = atlasSelected ?
 			                                 static_cast<std::uint32_t>(kVanillaShadowSliceCount) :
-			                                 static_cast<std::uint32_t>(settings.ShadowLightCount);
+			                                 static_cast<std::uint32_t>(EngineShadowSliceCount(settings.ShadowLightCount));
 			projectedBytes = ProjectShadowArrayBytes(projectedSlices);
 			if (atlasSelected && sliderVram.shadowWidth && sliderVram.shadowHeight) {
 				const std::uint64_t bpp = sliderVram.bytesPerSlice / (static_cast<std::uint64_t>(sliderVram.shadowWidth) * sliderVram.shadowHeight);

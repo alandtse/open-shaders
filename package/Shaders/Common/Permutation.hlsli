@@ -124,8 +124,7 @@ namespace Permutation
 
 		float PaddingGrassWind;
 		float GrassWindFlutterStrength;
-		float GrassWindFlutterFrequency;
-		float GrassWindSensitivity;
+		float2 PaddingGrassWindResponse;
 
 		float TreeWindBoundsBase;
 		float TreeWindBoundsHeight;

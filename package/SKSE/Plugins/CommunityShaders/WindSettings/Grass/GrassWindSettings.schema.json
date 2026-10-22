@@ -4,7 +4,7 @@
     "title": "Open Shaders Grass Wind Settings",
     "type": "object",
     "additionalProperties": false,
-    "required": ["version", "profiles", "grass"],
+    "required": ["version", "grass"],
     "properties": {
         "$schema": {
             "type": "string"
@@ -12,57 +12,31 @@
         "version": {
             "const": 2
         },
-        "profiles": {
-            "type": "object",
-            "maxProperties": 4096,
-            "additionalProperties": {
-                "$ref": "#/$defs/profile"
-            }
-        },
         "grass": {
             "type": "array",
             "maxItems": 4096,
             "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["mesh", "profile"],
+                "required": ["mesh"],
                 "properties": {
                     "mesh": {
                         "type": "string",
                         "maxLength": 260,
                         "pattern": "[.][nN][iI][fF]$"
                     },
-                    "profile": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 128
+                    "bendSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
+                    },
+                    "flutterSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
                     }
-                }
-            }
-        }
-    },
-    "$defs": {
-        "profile": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "bendSensitivity": {
-                    "type": "number",
-                    "default": 1.0,
-                    "minimum": 0.0,
-                    "maximum": 4.0
-                },
-                "flutterSensitivity": {
-                    "type": "number",
-                    "default": 1.0,
-                    "minimum": 0.0,
-                    "maximum": 4.0
-                },
-                "flutterTipConcentration": {
-                    "type": "number",
-                    "default": 1.0,
-                    "minimum": 0.0,
-                    "maximum": 3.0
                 }
             }
         }

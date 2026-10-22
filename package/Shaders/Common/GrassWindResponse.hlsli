@@ -35,7 +35,7 @@ namespace GrassWindResponse
 				GrassWindSpring::Contains(rootWorldPosition, GrassWindSpring::Fields[currentField])) {
 				float2 currentCenter = GrassWindSpring::Fields[0].FieldMinimum + GrassWindSpring::Fields[0].FieldSize * 0.5f;
 				currentFieldWeight = 1.0f - smoothstep(farDistance * FieldFadeStart, farDistance,
-					length(rootWorldPosition - currentCenter));
+												length(rootWorldPosition - currentCenter));
 				currentSample = GrassWindSpring::SampleCurrent(currentField, rootWorldPosition);
 			}
 			if (GrassWindSpring::Fields[previousField].FieldAvailable != 0u &&
@@ -44,19 +44,21 @@ namespace GrassWindResponse
 					GrassWindSpring::Fields[previousField].PreviousFieldMinimum, GrassWindSpring::Fields[previousField].FieldSize)) {
 				float2 previousCenter = GrassWindSpring::Fields[0].PreviousFieldMinimum + GrassWindSpring::Fields[0].FieldSize * 0.5f;
 				previousFieldWeight = 1.0f - smoothstep(farDistance * FieldFadeStart, farDistance,
-					length(previousRootWorldPosition - previousCenter));
+												 length(previousRootWorldPosition - previousCenter));
 				previousSample = GrassWindSpring::SamplePrevious(previousField, previousRootWorldPosition);
 			}
 			[branch] if (currentFieldWeight < 1.0f)
 			{
 				float4 fallback = float4(GrassWindSpring::CalculateTarget(
-					SharedData::WindFieldAmbient.xyz, 0.0f.xxx, GrassWindSpring::Fields[currentField]), 0.0f);
+											 SharedData::WindFieldAmbient.xyz, 0.0f.xxx, GrassWindSpring::Fields[currentField]),
+					0.0f);
 				currentSample = lerp(fallback, currentSample, currentFieldWeight);
 			}
 			[branch] if (previousFieldWeight < 1.0f)
 			{
 				float4 fallback = float4(GrassWindSpring::CalculateTarget(
-					SharedData::WindFieldPreviousAmbient.xyz, 0.0f.xxx, GrassWindSpring::Fields[previousField]), 0.0f);
+											 SharedData::WindFieldPreviousAmbient.xyz, 0.0f.xxx, GrassWindSpring::Fields[previousField]),
+					0.0f);
 				previousSample = lerp(fallback, previousSample, previousFieldWeight);
 			}
 			float responseScale = lerp(0.9, 1.1, Random::InterleavedGradientNoise(instanceCoordinates));

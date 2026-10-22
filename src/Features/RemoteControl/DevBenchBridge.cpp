@@ -1,4 +1,6 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
+#include "Features/Screenshot/BurstAdapter.h"
+#include "Features/Screenshot/SequenceContract.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1305,9 +1307,76 @@ namespace
 		RunHandler(&BuildNvPerfResult, a_argsJson, a_sink, a_write);
 	}
 
+	/** @brief Starts a frame-locked burst on the capture provider; completion is the capture.burst.ready event. */
+	json BuildBurstResult(const json& a_args)
+	{
+		OS::Capture::Burst::Request request;
+		request.requestId = a_args.value("requestId", std::string{});
+		request.prefix = a_args.value("prefix", std::string{});
+		request.outputDir = Util::PathHelpers::FromUtf8(a_args.value("outputDir", std::string{}));
+		request.manifestPath = Util::PathHelpers::FromUtf8(a_args.value("manifestPath", std::string{}));
+		request.count = a_args.value("count", 0u);
+		request.everyNFrames = a_args.value("everyNFrames", 1u);
+		request.excludeUi = a_args.value("excludeUi", true);
+		if (a_args.value("scale", 1.0f) != 1.0f)
+			return json{ { "error", "burst captures full native frames; scale is not supported" } };
+		if (a_args.contains("subrect") && !a_args["subrect"].is_null())
+			return json{ { "error", "burst captures full native frames; subrect is not supported" } };
+		const auto emit = [](const char* a_topic, const OS::Capture::Burst::Status& a_status) {
+			json payload{ { "requestId", a_status.requestId }, { "captured", a_status.captured }, { "dropped", a_status.dropped } };
+			if (std::string_view(a_topic) == "capture.burst.ready") {
+				payload["ok"] = a_status.failed == 0 && a_status.captured > 0 && !a_status.manifestPath.empty();
+				payload["width"] = a_status.width;
+				payload["height"] = a_status.height;
+				payload["uiExcluded"] = a_status.uiExcluded;
+				payload["manifestPath"] = Util::PathToUtf8(a_status.manifestPath);
+				if (!a_status.error.empty())
+					payload["error"] = a_status.error;
+				else if (a_status.failed)
+					payload["error"] = std::format("{} frame(s) could not be captured or written", a_status.failed);
+			}
+			const std::string text = payload.dump();
+			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001())
+				dvb->EmitEvent(a_topic, text.c_str());
+		};
+		const uint frame = EnqueuedFrame();
+		return RunOnMainThread([request = std::move(request), emit, frame]() mutable -> json {
+			auto* shot = &globals::features::screenshotFeature;
+			if (!shot->loaded)
+				return json{ { "error", "Screenshot feature is not loaded" } };
+			uint64_t runId = 0;
+			std::string error;
+			if (!shot->StartBurst(
+					std::move(request),
+					[emit](const OS::Capture::Burst::Status& a_status) { emit("capture.burst.progress", a_status); },
+					[emit](const OS::Capture::Burst::Status& a_status) { emit("capture.burst.ready", a_status); },
+					runId, error))
+				return json{ { "error", error } };
+			return json{ { "queued", true }, { "provider", "openshaders" }, { "runId", runId }, { "enqueued_at_frame", frame } };
+		});
+	}
+
+	json BuildBurstStatusResult(const json& a_args)
+	{
+		const auto runId = a_args.value("runId", uint64_t{ 0 });
+		return RunOnMainThread([runId]() -> json {
+			const auto status = globals::features::screenshotFeature.GetBurstStatus(runId);
+			if (!status)
+				return json{ { "error", "no such burst" } };
+			return json{ { "runId", status->runId }, { "active", status->active }, { "done", status->finished }, { "requested", status->requested },
+				{ "saved", status->captured }, { "failed", status->failed }, { "dropped", status->dropped }, { "manifest", Util::PathToUtf8(status->manifestPath) } };
+		});
+	}
+
 	// The file is written on the next present; completion is the capture.ready event, not this return.
 	json BuildCaptureProviderResult(const json& a_args)
 	{
+		const std::string action = a_args.value("action", std::string{});
+		if (action == "burst")
+			return BuildBurstResult(a_args);
+		if (action == "burstStatus")
+			return BuildBurstStatusResult(a_args);
+
 		const std::string outputPath = a_args.value("outputPath", std::string{});
 		const std::string requestId = a_args.value("requestId", std::string{});
 		if (outputPath.empty() || requestId.empty())
@@ -1342,7 +1411,7 @@ namespace
 			if (!shot->loaded)
 				return json{ { "error", "Screenshot feature is not loaded" } };
 			if (!shot->RequestCapture(std::move(request)))
-				return json{ { "error", "another capture is already waiting for the next frame" } };
+				return json{ { "error", "another capture is already waiting or a frame sequence is active" } };
 			return json{ { "queued", true }, { "provider", "openshaders" }, { "enqueued_at_frame", frame } };
 		});
 	}
@@ -1350,6 +1419,33 @@ namespace
 	void CaptureProviderHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildCaptureProviderResult, a_argsJson, a_sink, a_write);
+	}
+
+	void ScreenshotReferenceHandler(void* context, const char* args, void* sink, DevBenchAPI::WriteFn write) noexcept
+	{
+		json result;
+		try {
+			const auto request = json::parse(args ? args : "{}");
+			auto* host = static_cast<DevBenchAPI::IDevBenchInterface001*>(context);
+			result = RunOnMainThread([request, host] {
+				return globals::features::screenshotFeature.HandleReferenceCapture(request, [host](const json& completion) {
+					const auto text = completion.dump();
+					host->EmitEvent("capture.ready", text.c_str());
+				});
+			});
+			if (!result.value("ok", false))
+				result = { { "error", result.at("error").is_string() ? result.at("error").get<std::string>() : result.at("error").value("message", "Reference capture failed") } };
+		} catch (const std::exception& error) {
+			result = { { "error", error.what() } };
+		} catch (...) {
+			result = { { "error", "Reference capture failed" } };
+		}
+		try {
+			const auto text = result.dump();
+			write(sink, text.c_str());
+		} catch (...) {
+			write(sink, R"({"error":"Reference result serialization failed"})");
+		}
 	}
 
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
@@ -1730,6 +1826,8 @@ namespace DevBenchBridge
 		// "CommunityShaders" matches the ImGui window id after `###`, so the menu name lines
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
+			static constexpr const char* referenceDesc = R"({"description":"Native SDR reference PNG from Screenshot (key openshaders.native): same-cycle side-by-side eyes in VR, desktop in SE/AE. Honors the host's absolute outputPath and requestId, never replaces files, and emits capture.ready after verified publication or asynchronous preparation failure. Identical terminal retries replay capture.ready without recapture. UI exclusion is not guaranteed. Use the base capture tool's golden/threshold/regions or replay goldens for scoring; temporal sequences use the openshaders provider's burst action.","inputSchema":{"type":"object","required":["outputPath","requestId"],"properties":{"outputPath":{"type":"string"},"requestId":{"type":"string","minLength":1,"maxLength":128}}}})";
+			dvb->RegisterToolExtension("capture", "openshaders.native", referenceDesc, &ScreenshotReferenceHandler, dvb);
 			static constexpr const char* menuDesc =
 				R"({"description":"Open, close, or toggle the {brand} in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. tab: OPTIONAL tab label, at most 128 characters (visible text such as \"Neural Rendering\", or the id after ### with or without the ###; case is ignored and so is any [Alpha]-style suffix on the visible text) to select in whichever tab bar the menu draws, same as clicking it; give page too, and a tab inside another tab is found once that one is selected (call again with the inner tab). A request that finds no such tab within 600 menu frames is dropped with a warning in the log; the call still reports queued. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,tab,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"tab":{"type":"string","maxLength":128},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
 			dvb->RegisterToolExtension("menu", "CommunityShaders", BrandedDescription(menuDesc), &MenuHandler, nullptr);
@@ -1755,7 +1853,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "featureissues", BrandedDescription(inspectFeatureIssuesDesc), &InspectFeatureIssuesHandler, nullptr);
 
 			static constexpr const char* captureProviderDesc =
-				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; the crop preset, clipboard copy and HUD notice of a user screenshot do not apply.","inputSchema":{"type":"object"}})";
+				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; an active native frame sequence rejects still requests. The crop preset, clipboard copy and HUD notice of a user screenshot do not apply. Frame-locked burst: action=burst with requestId, outputDir (absolute), prefix, count (1..600), everyNFrames (1..600, default 1) and optional manifestPath runs the native frame-sequence engine and answers {queued,runId}; it saves whole native SDR PNG frames (subrect and scale are refused; VR saves both eyes side by side) as <prefix>_NNNN.png in outputDir, then writes the manifest {requestId,width,height,format,uiExcluded,everyNFrames,frames:[{index,file,gameFrame,gameTimeMs,wallMs}],dropped:[{index,gameFrame}]} (default <prefix>_manifest.json; gameTimeMs equals wallMs) and emits capture.burst.progress {requestId,captured,dropped} while it runs and capture.burst.ready {requestId,ok,error?,captured,dropped,width,height,uiExcluded,manifestPath} at the end. A frame the writer cannot keep up with is dropped and counted. action=burstStatus with runId answers {active,done,requested,saved,failed,dropped,manifest}. On a flat HDR display the frames come from the HDR Display feature's clean-scene SDR output, so they have no HUD or menu and uiExcluded is true.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["capture","burst","burstStatus"]},"requestId":{"type":"string","maxLength":128},"outputPath":{"type":"string"},"outputDir":{"type":"string"},"prefix":{"type":"string"},"manifestPath":{"type":"string"},"count":{"type":"integer","minimum":1,"maximum":600},"everyNFrames":{"type":"integer","minimum":1,"maximum":600},"excludeUi":{"type":"boolean"},"runId":{"type":"integer"},"subrect":{"type":"object"}}}})";
 			dvb->RegisterToolExtension("capture", "openshaders", BrandedDescription(captureProviderDesc), &CaptureProviderHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());

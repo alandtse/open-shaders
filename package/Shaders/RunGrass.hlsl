@@ -158,19 +158,14 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	bendAxis = float3(response.xy, 0.0);
 	float ambientSpeed = length(ambientWind.xy);
 	flutterAxis = ambientSpeed > EPSILON_WIND_RESPONSE ?
-		float3(ambientWind.xy / ambientSpeed, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+	                  float3(ambientWind.xy / ambientSpeed, 0.0f) :
+	                  float3(1.0f, 0.0f, 0.0f);
 	flutterAngle = 0.0f;
 	float bendResponse = min(response.z * GrassWindProfile::BendSensitivity,
 		GrassWindSpring::Fields[0].MaximumTiltRadians);
 	float compression = saturate(response.w * GrassWindProfile::BendSensitivity);
 	float tipWeight = saturate(input.Color.w);
-	float tipWeightSquared = tipWeight * tipWeight;
-	float flutterWeight = GrassWindProfile::FlutterTipConcentration < 1.0f ?
-	                          lerp(tipWeight, tipWeightSquared, GrassWindProfile::FlutterTipConcentration) :
-	                      GrassWindProfile::FlutterTipConcentration < 2.0f ?
-	                          lerp(tipWeightSquared, tipWeightSquared * tipWeight, GrassWindProfile::FlutterTipConcentration - 1.0f) :
-	                          lerp(tipWeightSquared * tipWeight, tipWeightSquared * tipWeightSquared,
-								  GrassWindProfile::FlutterTipConcentration - 2.0f);
+	float flutterWeight = tipWeight * tipWeight;
 	flutter *= GrassWindProfile::FlutterSensitivity;
 	float3 displacement = 0.0f.xxx;
 	if (Permutation::EnableGrassWindSpringBend != 0u) {

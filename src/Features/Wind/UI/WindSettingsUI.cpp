@@ -394,7 +394,7 @@ void Wind::DrawGrassMeshSettings()
 			fileList += file;
 		}
 		ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.25f, 1.0f), "%s: %s",
-			T(TKEY("grass_response_conflict_warning"), "Duplicate grass profiles or mesh bindings found"),
+			T(TKEY("grass_response_conflict_warning"), "Duplicate grass mesh rules found"),
 			fileList.c_str());
 	}
 	DrawGrassMeshRuleControls();
@@ -421,7 +421,7 @@ void Wind::DrawGrassMeshRuleControls()
 			ImGui::EndCombo();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T(TKEY("grass_mesh_add_profile"), "Add Mesh Profile"))) {
+		if (ImGui::Button(T(TKEY("grass_mesh_add_profile"), "Add Mesh Settings"))) {
 			if (GrassWindPatcher::AddRule(unconfiguredMeshes[uiState.selectedUnconfiguredGrassMesh])) {
 				uiState.grassWindSaveStatus.clear();
 				uiState.filteredGrassRuleCount = static_cast<std::size_t>(-1);
@@ -429,7 +429,7 @@ void Wind::DrawGrassMeshRuleControls()
 		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("grass_mesh_add_profile_tooltip"),
-				"Creates a reusable profile for a grass mesh detected in the current game session."));
+				"Creates settings for a grass mesh detected in the current game session."));
 	}
 
 	const std::size_t ruleCount = GrassWindPatcher::GetRuleCount();
@@ -441,7 +441,7 @@ void Wind::DrawGrassMeshRuleControls()
 
 	ImGui::SetNextItemWidth(-1.0f);
 	const bool searchChanged = ImGui::InputTextWithHint("##GrassMeshSearch",
-		T(TKEY("grass_mesh_search_hint"), "Search mesh paths or profiles..."),
+		T(TKEY("grass_mesh_search_hint"), "Search mesh paths..."),
 		uiState.grassMeshSearch.data(), uiState.grassMeshSearch.size());
 	const std::string normalizedSearch = Util::FixFilePath(std::string(uiState.grassMeshSearch.data()));
 	if (searchChanged || uiState.filteredGrassRuleCount != ruleCount ||
@@ -450,8 +450,7 @@ void Wind::DrawGrassMeshRuleControls()
 		uiState.filteredGrassRuleIndices.reserve(ruleCount);
 		for (std::size_t index = 0; index < ruleCount; ++index) {
 			const auto rule = GrassWindPatcher::GetRule(index);
-			if (normalizedSearch.empty() || Util::FixFilePath(rule.mesh).find(normalizedSearch) != std::string::npos ||
-				Util::FixFilePath(rule.profile).find(normalizedSearch) != std::string::npos)
+			if (normalizedSearch.empty() || Util::FixFilePath(rule.mesh).find(normalizedSearch) != std::string::npos)
 				uiState.filteredGrassRuleIndices.push_back(index);
 		}
 		uiState.filteredGrassRuleCount = ruleCount;
@@ -463,8 +462,8 @@ void Wind::DrawGrassMeshRuleControls()
 		const auto result = GrassWindPatcher::SaveRules();
 		uiState.grassWindSaveSucceeded = result.success;
 		uiState.grassWindSaveStatus = result.success ?
-		                                  std::format("Saved {} profiles and {} bindings to {}",
-											  result.savedProfileCount, result.savedBindingCount, result.path) :
+		                                  std::format("Saved {} mesh rules to {}",
+											  result.savedRuleCount, result.path) :
 		                                  std::format("Save failed: {}", result.error);
 	}
 	ImGui::SameLine();
@@ -489,14 +488,12 @@ void Wind::DrawGrassMeshRulesTable()
 	                                   ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollX |
 	                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
 	const float tableHeight = std::max(ImGui::GetContentRegionAvail().y, ImGui::GetTextLineHeightWithSpacing() * 5.0f);
-	if (!ImGui::BeginTable("##GrassMeshRules", 5, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 70.0f))
+	if (!ImGui::BeginTable("##GrassMeshRules", 3, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 70.0f))
 		return;
 	ImGui::TableSetupScrollFreeze(0, 1);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
-	ImGui::TableSetupColumn(T(TKEY("grass_mesh_profile"), "Profile"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 12.0f);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 	ImGui::TableSetupColumn(T(TKEY("grass_mesh_flutter"), "Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-	ImGui::TableSetupColumn(T(TKEY("grass_mesh_flutter_tip_concentration"), "Flutter Tip Concentration"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
 	ImGui::TableHeadersRow();
 
 	ImGuiListClipper clipper;
@@ -516,25 +513,15 @@ void Wind::DrawGrassMeshRulesTable()
 			if (compactPath != rule.mesh && ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", rule.mesh.c_str());
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(rule.profile.c_str());
-			ImGui::TableSetColumnIndex(2);
 			ImGui::SetNextItemWidth(-1.0f);
 			changed |= ImGui::SliderFloat("##Bend", &behavior.bendSensitivity,
 				GrassWindSettings::kBendSensitivity.minimum, GrassWindSettings::kBendSensitivity.maximum,
 				"%.2fx", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::TableSetColumnIndex(3);
+			ImGui::TableSetColumnIndex(2);
 			ImGui::SetNextItemWidth(-1.0f);
 			changed |= ImGui::SliderFloat("##Flutter", &behavior.flutterSensitivity,
 				GrassWindSettings::kFlutterSensitivity.minimum, GrassWindSettings::kFlutterSensitivity.maximum,
 				"%.2fx", ImGuiSliderFlags_AlwaysClamp);
-			ImGui::TableSetColumnIndex(4);
-			ImGui::SetNextItemWidth(-1.0f);
-			changed |= ImGui::SliderFloat("##FlutterTipConcentration", &behavior.flutterTipConcentration,
-				GrassWindSettings::kFlutterTipConcentration.minimum, GrassWindSettings::kFlutterTipConcentration.maximum,
-				"%.2f", ImGuiSliderFlags_AlwaysClamp);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(T(TKEY("grass_mesh_flutter_tip_concentration_tooltip"),
-					"Higher values concentrate flutter closer to the authored blade tip. This does not change broad wind bending."));
 			if (changed) {
 				(void)GrassWindPatcher::SetRule(ruleIndex, behavior);
 				uiState.grassWindSaveStatus.clear();
@@ -988,7 +975,7 @@ void Wind::DrawGrassTransientSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_half_life_tooltip"),
 			"Time for the extra flutter amplitude to halve after an impulse stops driving it. This does not change the wind event's own duration."));
 	ImGui::TextWrapped("%s", T(TKEY("grass_transient_shared_settings"),
-		"Maximum Bend Angle, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
+								 "Maximum Bend Angle, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
 }
 
 void Wind::DrawGrassWindSettings()

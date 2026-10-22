@@ -871,8 +871,6 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 
 	if (b.cullSlot == UINT32_MAX)
 		return;
-	if (globals::features::wind.loaded)
-		globals::features::wind.BindGrassWindProfile(b.slices.empty() ? nullptr : b.slices.front().shape, true);
 
 	// Reset only the instance-count dword(s): the args UAV spans CPU-set fields (StartInstanceLocation
 	// on VR) that must survive every frame, so a wholesale ClearUnorderedAccessView would corrupt them.

@@ -122,7 +122,8 @@ namespace WindField
 			return {
 				std::clamp(2.0f * GradientNoise(coordinate, a_seed, a_tuning, kMicroNoiseMask), -1.0f, 1.0f),
 				std::clamp(2.0f * GradientNoise({ coordinate.x + 17.0f, coordinate.y + 31.0f },
-					a_seed ^ kMicroCrosswindSeed, a_tuning, kMicroNoiseMask), -1.0f, 1.0f)
+									  a_seed ^ kMicroCrosswindSeed, a_tuning, kMicroNoiseMask),
+					-1.0f, 1.0f)
 			};
 		}
 
@@ -132,7 +133,8 @@ namespace WindField
 			const float along = a_amplitude * a_noise.x;
 			const float across = a_amplitude * kMicroCrosswindFraction * a_noise.y;
 			float responseScale = along < -kMicroMaximumNegativeResponse * budget ?
-			                          kMicroMaximumNegativeResponse * budget / -along : 1.0f;
+			                          kMicroMaximumNegativeResponse * budget / -along :
+			                          1.0f;
 			const float crosswindDivisor = std::abs(across) - kMicroCrosswindSlope * along;
 			if (crosswindDivisor > 0.0f)
 				responseScale = std::min(responseScale, kMicroCrosswindSlope * budget / crosswindDivisor);
@@ -264,8 +266,8 @@ namespace WindField
 		const float positiveGust = std::max(a_gustVelocity.x * baseDirection.x + a_gustVelocity.y * baseDirection.y, 0.0f);
 		const float amplitude = strength * speed / (speed + kMicroCalmSpeed) *
 		                        (std::max(a_tuning.fineBaselineAmplitude, 0.0f) +
-								baseSpeed * std::max(a_tuning.fineWindCoupling, 0.0f) +
-								positiveGust * std::max(a_tuning.fineGustCoupling, 0.0f));
+									baseSpeed * std::max(a_tuning.fineWindCoupling, 0.0f) +
+									positiveGust * std::max(a_tuning.fineGustCoupling, 0.0f));
 		const auto slow = SampleFineBand(a_worldPosition, a_state, kMicroSlowSpatialScale,
 			a_spatialScale, a_travelScale, a_tuning.broadGustSeed ^ kMicroSlowSeed, a_tuning);
 		const auto detail = SampleFineBand(a_worldPosition, a_state, kMicroDetailSpatialScale,

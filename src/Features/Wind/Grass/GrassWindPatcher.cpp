@@ -7,7 +7,6 @@
 #include "Utils/ModelPath.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <format>
@@ -28,31 +27,20 @@ namespace GrassWindPatcher
 	namespace
 	{
 		constexpr std::size_t kMaximumPatchFileSize = 1024 * 1024;
-		constexpr std::size_t kMaximumProfilesPerFile = 4096;
 		constexpr std::size_t kMaximumRulesPerFile = 4096;
-		constexpr int kLegacySettingsVersion = 1;
 		constexpr int kSettingsVersion = 2;
 		constexpr std::string_view kSchemaFileName = "GrassWindSettings.schema.json";
 		constexpr std::string_view kAuthoringFileName = "zz_OpenShadersGrassAuthoring.json";
 
-		struct RuntimeProfile
+		struct RuntimeRule
 		{
-			std::string name;
+			std::string mesh;
 			Behavior behavior{};
 			Behavior persisted{};
 			bool persistedDefinition = true;
 		};
 
-		struct RuntimeRule
-		{
-			std::string mesh;
-			std::uint32_t profileId = 0;
-			bool persisted = true;
-		};
-
-		std::vector<RuntimeProfile> runtimeProfiles;
 		std::vector<RuntimeRule> runtimeRules;
-		std::unordered_map<std::string, std::uint32_t> profileIds;
 		std::unordered_map<std::string, std::uint32_t> ruleIds;
 		std::unordered_map<const RE::BSGeometry*, std::string> meshByGeometry;
 		std::set<std::string> detectedMeshes;
@@ -68,8 +56,7 @@ namespace GrassWindPatcher
 		bool ValuesDiffer(const Behavior& a_lhs, const Behavior& a_rhs)
 		{
 			return ValuesDiffer(a_lhs.bendSensitivity, a_rhs.bendSensitivity) ||
-			       ValuesDiffer(a_lhs.flutterSensitivity, a_rhs.flutterSensitivity) ||
-			       ValuesDiffer(a_lhs.flutterTipConcentration, a_rhs.flutterTipConcentration);
+			       ValuesDiffer(a_lhs.flutterSensitivity, a_rhs.flutterSensitivity);
 		}
 
 		Behavior SanitizeBehavior(Behavior a_behavior)
@@ -78,8 +65,6 @@ namespace GrassWindPatcher
 				a_behavior.bendSensitivity, GrassWindSettings::kBendSensitivity, 1.0f);
 			a_behavior.flutterSensitivity = ClampFiniteOrDefault(
 				a_behavior.flutterSensitivity, GrassWindSettings::kFlutterSensitivity, 1.0f);
-			a_behavior.flutterTipConcentration = ClampFiniteOrDefault(
-				a_behavior.flutterTipConcentration, GrassWindSettings::kFlutterTipConcentration, 1.0f);
 			return a_behavior;
 		}
 
@@ -89,21 +74,21 @@ namespace GrassWindPatcher
 		}
 
 		void ReadBehavior(const nlohmann::json& a_json, Behavior& a_behavior,
-			const std::filesystem::path& a_path, std::string_view a_profile)
+			const std::filesystem::path& a_path, std::string_view a_mesh)
 		{
 			const auto read = [&](std::string_view a_key, float& a_value, const GrassWindSettings::Range& a_range) {
 				const auto it = a_json.find(a_key);
 				if (it == a_json.end())
 					return false;
 				if (!it->is_number()) {
-					logger::warn("[GrassWindPatcher] Ignoring non-numeric '{}' in profile '{}' from {}",
-						a_key, a_profile, a_path.string());
+					logger::warn("[GrassWindPatcher] Ignoring non-numeric '{}' for mesh '{}' from {}",
+						a_key, a_mesh, a_path.string());
 					return false;
 				}
 				const double value = it->get<double>();
 				if (!std::isfinite(value)) {
-					logger::warn("[GrassWindPatcher] Ignoring non-finite '{}' in profile '{}' from {}",
-						a_key, a_profile, a_path.string());
+					logger::warn("[GrassWindPatcher] Ignoring non-finite '{}' for mesh '{}' from {}",
+						a_key, a_mesh, a_path.string());
 					return false;
 				}
 				a_value = std::clamp(static_cast<float>(value), a_range.minimum, a_range.maximum);
@@ -112,16 +97,10 @@ namespace GrassWindPatcher
 
 			read("bendSensitivity", a_behavior.bendSensitivity, GrassWindSettings::kBendSensitivity);
 			read("flutterSensitivity", a_behavior.flutterSensitivity, GrassWindSettings::kFlutterSensitivity);
-			read("flutterTipConcentration",
-				a_behavior.flutterTipConcentration, GrassWindSettings::kFlutterTipConcentration);
 		}
 
 		void RebuildIndices()
 		{
-			profileIds.clear();
-			for (std::size_t index = 0; index < runtimeProfiles.size(); ++index)
-				profileIds.emplace(runtimeProfiles[index].name, static_cast<std::uint32_t>(index + 1));
-
 			ruleIds.clear();
 			for (std::size_t index = 0; index < runtimeRules.size(); ++index)
 				ruleIds.emplace(runtimeRules[index].mesh, static_cast<std::uint32_t>(index + 1));
@@ -130,9 +109,7 @@ namespace GrassWindPatcher
 		void LoadRules()
 		{
 			std::scoped_lock lock(runtimeMutex);
-			runtimeProfiles.clear();
 			runtimeRules.clear();
-			profileIds.clear();
 			ruleIds.clear();
 			conflictingFiles.clear();
 
@@ -160,10 +137,8 @@ namespace GrassWindPatcher
 				return lhsAuthoring != rhsAuthoring ? !lhsAuthoring : a_lhs < a_rhs;
 			});
 
-			std::map<std::string, Behavior> mergedProfiles;
-			std::map<std::string, std::string> mergedBindings;
-			std::map<std::string, std::filesystem::path> profileSources;
-			std::map<std::string, std::filesystem::path> bindingSources;
+			std::map<std::string, Behavior> mergedRules;
+			std::map<std::string, std::filesystem::path> ruleSources;
 			std::set<std::string> conflicts;
 
 			for (const auto& path : paths) {
@@ -180,77 +155,42 @@ namespace GrassWindPatcher
 				try {
 					const auto root = nlohmann::json::parse(input);
 					const auto version = root.is_object() ? root.value("version", 0) : 0;
-					if (!root.is_object() || (version != kLegacySettingsVersion && version != kSettingsVersion) ||
-						!root.contains("profiles") || !root["profiles"].is_object() ||
+					if (!root.is_object() || version != kSettingsVersion ||
 						!root.contains("grass") || !root["grass"].is_array()) {
-						logger::warn("[GrassWindPatcher] Invalid version, profiles, or grass data in {}", path.string());
+						logger::warn("[GrassWindPatcher] Invalid version or grass data in {}", path.string());
 						continue;
 					}
-					if (root["profiles"].size() > kMaximumProfilesPerFile || root["grass"].size() > kMaximumRulesPerFile) {
-						logger::warn("[GrassWindPatcher] Too many profiles or grass bindings in {}", path.string());
+					if (root["grass"].size() > kMaximumRulesPerFile) {
+						logger::warn("[GrassWindPatcher] Too many grass rules in {}", path.string());
 						continue;
 					}
 
-					for (const auto& [name, profileJson] : root["profiles"].items()) {
-						if (name.empty() || name.size() > 128 || !profileJson.is_object())
+					for (const auto& entry : root["grass"]) {
+						if (!entry.is_object() || !entry.contains("mesh") || !entry["mesh"].is_string())
 							continue;
-						if (profileSources.contains(name) && Util::FixFilePath(path.filename().string()) != authoringName)
-							conflicts.insert(profileSources[name].filename().string()), conflicts.insert(path.filename().string());
-						Behavior behavior = mergedProfiles.contains(name) ? mergedProfiles[name] : Behavior{};
-						ReadBehavior(profileJson, behavior, path, name);
-						mergedProfiles[name] = SanitizeBehavior(behavior);
-						profileSources[name] = path;
-					}
-
-					for (const auto& binding : root["grass"]) {
-						if (!binding.is_object() || !binding.contains("mesh") || !binding["mesh"].is_string() ||
-							!binding.contains("profile") || !binding["profile"].is_string())
+						const auto mesh = NormalizeModelPath(entry["mesh"].get<std::string>());
+						if (!IsSafeModelPath(mesh))
 							continue;
-						const auto mesh = NormalizeModelPath(binding["mesh"].get<std::string>());
-						const auto profile = binding["profile"].get<std::string>();
-						if (!IsSafeModelPath(mesh) || profile.empty() || profile.size() > 128)
-							continue;
-						if (bindingSources.contains(mesh) && Util::FixFilePath(path.filename().string()) != authoringName)
-							conflicts.insert(bindingSources[mesh].filename().string()), conflicts.insert(path.filename().string());
-						mergedBindings[mesh] = profile;
-						bindingSources[mesh] = path;
+						if (ruleSources.contains(mesh) && Util::FixFilePath(path.filename().string()) != authoringName)
+							conflicts.insert(ruleSources[mesh].filename().string()), conflicts.insert(path.filename().string());
+						auto& behavior = mergedRules[mesh];
+						ReadBehavior(entry, behavior, path, mesh);
+						behavior = SanitizeBehavior(behavior);
+						ruleSources[mesh] = path;
 					}
 				} catch (const nlohmann::json::exception& exception) {
 					logger::error("[GrassWindPatcher] Failed to parse {}: {}", path.string(), exception.what());
 				}
 			}
 
-			for (const auto& [name, behavior] : mergedProfiles)
-				runtimeProfiles.push_back({ name, behavior, behavior, true });
-			RebuildIndices();
-			for (const auto& [mesh, profile] : mergedBindings) {
-				const auto profileIt = profileIds.find(profile);
-				if (profileIt == profileIds.end()) {
-					logger::warn("[GrassWindPatcher] Mesh {} references missing profile '{}'", mesh, profile);
-					continue;
-				}
-				runtimeRules.push_back({ mesh, profileIt->second, true });
+			for (const auto& [mesh, behavior] : mergedRules) {
+				runtimeRules.push_back({ mesh, behavior, behavior, true });
 				detectedMeshes.insert(mesh);
 			}
 			RebuildIndices();
 			conflictingFiles.assign(conflicts.begin(), conflicts.end());
-			logger::info("[GrassWindPatcher] Loaded {} profiles and {} mesh bindings from {} JSON files",
-				runtimeProfiles.size(), runtimeRules.size(), paths.size());
-		}
-
-		std::string MakeProfileName(const std::string& a_mesh)
-		{
-			std::string name = std::filesystem::path(a_mesh).stem().string();
-			for (char& character : name) {
-				if (!std::isalnum(static_cast<unsigned char>(character)) && character != '_' && character != '-')
-					character = '_';
-			}
-			if (name.empty())
-				name = "grass";
-			std::string candidate = name;
-			for (std::uint32_t suffix = 2; profileIds.contains(candidate); ++suffix)
-				candidate = std::format("{}_{}", name, suffix);
-			return candidate;
+			logger::info("[GrassWindPatcher] Loaded {} mesh rules from {} JSON files",
+				runtimeRules.size(), paths.size());
 		}
 
 	}
@@ -287,10 +227,7 @@ namespace GrassWindPatcher
 		const auto ruleIt = ruleIds.find(meshIt->second);
 		if (ruleIt == ruleIds.end())
 			return {};
-		const auto& rule = runtimeRules[ruleIt->second - 1];
-		return rule.profileId > 0 && rule.profileId <= runtimeProfiles.size() ?
-		           runtimeProfiles[rule.profileId - 1].behavior :
-		           Behavior{};
+		return runtimeRules[ruleIt->second - 1].behavior;
 	}
 
 	std::size_t GetRuleCount()
@@ -305,11 +242,8 @@ namespace GrassWindPatcher
 		if (a_index >= runtimeRules.size())
 			return {};
 		const auto& rule = runtimeRules[a_index];
-		if (rule.profileId == 0 || rule.profileId > runtimeProfiles.size())
-			return {};
-		const auto& profile = runtimeProfiles[rule.profileId - 1];
-		return { static_cast<std::uint32_t>(a_index + 1), rule.mesh, profile.name, profile.behavior,
-			!rule.persisted || ValuesDiffer(profile.behavior, profile.persisted) };
+		return { static_cast<std::uint32_t>(a_index + 1), rule.mesh, rule.behavior,
+			!rule.persistedDefinition || ValuesDiffer(rule.behavior, rule.persisted) };
 	}
 
 	bool SetRule(std::size_t a_index, const Behavior& a_behavior)
@@ -317,10 +251,7 @@ namespace GrassWindPatcher
 		std::scoped_lock lock(runtimeMutex);
 		if (a_index >= runtimeRules.size())
 			return false;
-		const auto profileId = runtimeRules[a_index].profileId;
-		if (profileId == 0 || profileId > runtimeProfiles.size())
-			return false;
-		runtimeProfiles[profileId - 1].behavior = SanitizeBehavior(a_behavior);
+		runtimeRules[a_index].behavior = SanitizeBehavior(a_behavior);
 		return true;
 	}
 
@@ -328,10 +259,7 @@ namespace GrassWindPatcher
 	{
 		std::scoped_lock lock(runtimeMutex);
 		return static_cast<std::size_t>(std::ranges::count_if(runtimeRules, [](const RuntimeRule& a_rule) {
-			if (!a_rule.persisted || a_rule.profileId == 0 || a_rule.profileId > runtimeProfiles.size())
-				return !a_rule.persisted;
-			const auto& profile = runtimeProfiles[a_rule.profileId - 1];
-			return ValuesDiffer(profile.behavior, profile.persisted);
+			return !a_rule.persistedDefinition || ValuesDiffer(a_rule.behavior, a_rule.persisted);
 		}));
 	}
 
@@ -339,21 +267,18 @@ namespace GrassWindPatcher
 	{
 		std::scoped_lock saveLock(saveMutex);
 		std::scoped_lock lock(runtimeMutex);
-		std::erase_if(runtimeRules, [](const RuntimeRule& a_rule) { return !a_rule.persisted; });
-		std::erase_if(runtimeProfiles, [](const RuntimeProfile& a_profile) { return !a_profile.persistedDefinition; });
-		for (auto& profile : runtimeProfiles)
-			profile.behavior = profile.persisted;
+		std::erase_if(runtimeRules, [](const RuntimeRule& a_rule) { return !a_rule.persistedDefinition; });
+		for (auto& rule : runtimeRules)
+			rule.behavior = rule.persisted;
 		RebuildIndices();
 	}
 
 	SaveResult SaveRules()
 	{
 		std::scoped_lock saveLock(saveMutex);
-		std::vector<RuntimeProfile> snapshotProfiles;
 		std::vector<RuntimeRule> snapshotRules;
 		{
 			std::scoped_lock lock(runtimeMutex);
-			snapshotProfiles = runtimeProfiles;
 			snapshotRules = runtimeRules;
 		}
 		SaveResult result;
@@ -369,7 +294,6 @@ namespace GrassWindPatcher
 		nlohmann::json root{
 			{ "$schema", std::string(kSchemaFileName) },
 			{ "version", kSettingsVersion },
-			{ "profiles", nlohmann::json::object() },
 			{ "grass", nlohmann::json::array() }
 		};
 		const bool fileExists = std::filesystem::exists(path, filesystemError);
@@ -391,46 +315,35 @@ namespace GrassWindPatcher
 			}
 		}
 		if (!root.is_object() || !root.contains("version") ||
-			(root["version"] != kLegacySettingsVersion && root["version"] != kSettingsVersion)) {
+			root["version"] != kSettingsVersion) {
 			result.error = std::format("Invalid grass authoring JSON version in {}", path.string());
 			return result;
 		}
-		if (!root.contains("profiles") || !root["profiles"].is_object() ||
-			!root.contains("grass") || !root["grass"].is_array()) {
-			result.error = std::format("Invalid profiles or grass data in {}", path.string());
+		if (!root.contains("grass") || !root["grass"].is_array()) {
+			result.error = std::format("Invalid grass data in {}", path.string());
 			return result;
 		}
 
-		root["version"] = kSettingsVersion;
-
-		for (const auto& profile : snapshotProfiles) {
-			if (!profile.persistedDefinition || ValuesDiffer(profile.behavior, profile.persisted)) {
-				root["profiles"][profile.name] = {
-					{ "bendSensitivity", profile.behavior.bendSensitivity },
-					{ "flutterSensitivity", profile.behavior.flutterSensitivity },
-					{ "flutterTipConcentration", profile.behavior.flutterTipConcentration }
-				};
-				++result.savedProfileCount;
-			}
-		}
-
 		for (const auto& rule : snapshotRules) {
-			if (rule.persisted || rule.profileId == 0 || rule.profileId > snapshotProfiles.size())
+			if (rule.persistedDefinition && !ValuesDiffer(rule.behavior, rule.persisted))
 				continue;
-			const auto& profile = snapshotProfiles[rule.profileId - 1];
-			auto bindingIt = std::ranges::find_if(root["grass"], [&](const nlohmann::json& a_binding) {
-				return a_binding.is_object() && a_binding.contains("mesh") && a_binding["mesh"].is_string() &&
-				       NormalizeModelPath(a_binding["mesh"].get<std::string>()) == rule.mesh;
+			auto entryIt = std::ranges::find_if(root["grass"], [&](const nlohmann::json& a_entry) {
+				return a_entry.is_object() && a_entry.contains("mesh") && a_entry["mesh"].is_string() &&
+				       NormalizeModelPath(a_entry["mesh"].get<std::string>()) == rule.mesh;
 			});
-			const nlohmann::json binding{ { "mesh", rule.mesh }, { "profile", profile.name } };
-			if (bindingIt == root["grass"].end())
-				root["grass"].push_back(binding);
+			const nlohmann::json entry{
+				{ "mesh", rule.mesh },
+				{ "bendSensitivity", rule.behavior.bendSensitivity },
+				{ "flutterSensitivity", rule.behavior.flutterSensitivity }
+			};
+			if (entryIt == root["grass"].end())
+				root["grass"].push_back(entry);
 			else
-				*bindingIt = binding;
-			++result.savedBindingCount;
+				*entryIt = entry;
+			++result.savedRuleCount;
 		}
 
-		if (result.savedProfileCount == 0 && result.savedBindingCount == 0) {
+		if (result.savedRuleCount == 0) {
 			result.success = true;
 			return result;
 		}
@@ -441,22 +354,18 @@ namespace GrassWindPatcher
 
 		{
 			std::scoped_lock lock(runtimeMutex);
-			for (const auto& snapshot : snapshotProfiles) {
-				if (const auto it = profileIds.find(snapshot.name); it != profileIds.end()) {
-					auto& profile = runtimeProfiles[it->second - 1];
-					profile.persisted = snapshot.behavior;
-					profile.persistedDefinition = true;
-				}
-			}
 			for (const auto& snapshot : snapshotRules) {
-				if (const auto it = ruleIds.find(snapshot.mesh); it != ruleIds.end())
-					runtimeRules[it->second - 1].persisted = true;
+				if (const auto it = ruleIds.find(snapshot.mesh); it != ruleIds.end()) {
+					auto& rule = runtimeRules[it->second - 1];
+					rule.persisted = snapshot.behavior;
+					rule.persistedDefinition = true;
+				}
 			}
 		}
 		result.success = true;
 		result.path = path.string();
-		logger::info("[GrassWindPatcher] Saved {} profiles and {} mesh bindings to {}",
-			result.savedProfileCount, result.savedBindingCount, result.path);
+		logger::info("[GrassWindPatcher] Saved {} mesh rules to {}",
+			result.savedRuleCount, result.path);
 		return result;
 	}
 
@@ -479,10 +388,7 @@ namespace GrassWindPatcher
 		std::scoped_lock lock(runtimeMutex);
 		if (ruleIds.contains(mesh))
 			return false;
-		const auto profileName = MakeProfileName(mesh);
-		runtimeProfiles.push_back({ profileName, {}, {}, false });
-		const auto profileId = static_cast<std::uint32_t>(runtimeProfiles.size());
-		runtimeRules.push_back({ mesh, profileId, false });
+		runtimeRules.push_back({ mesh, {}, {}, false });
 		RebuildIndices();
 		return true;
 	}

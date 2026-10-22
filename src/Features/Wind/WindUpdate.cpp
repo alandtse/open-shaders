@@ -212,10 +212,8 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 		settings.enableTrunkBend ? settings.trunkWindBendSensitivity : 0.0f,
 		settings.treeLeafBaseWindFlutterGain,
 		static_cast<uint32_t>(loaded && settings.enableAmbientGrassWind),
-		settings.grassWindSensitivity,
 		settings.grassWindCompressionToBend,
-		settings.grassWindFlutterStrength,
-		settings.grassWindFlutterFrequency
+		settings.grassWindFlutterStrength
 	};
 }
 
