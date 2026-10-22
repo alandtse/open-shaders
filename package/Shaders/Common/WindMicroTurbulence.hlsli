@@ -20,9 +20,9 @@ namespace WindField
 		static const float MicroBandWindShare = 0.5f;
 		static const uint MicroNoiseMask = 255u;
 		static const float MicroNoisePeriod = 256.0f;
-		static const uint MicroSlowSeed = 0xA511E9B3u;
+		static const uint MicroSlowSeed = (1u << 31) | 0x2511E9B3u;
 		static const uint MicroDetailSeed = 0x63D83595u;
-		static const uint MicroCrosswindSeed = 0xB5297A4Du;
+		static const uint MicroCrosswindSeed = (1u << 31) | 0x35297A4Du;
 
 		float2 SampleFineBand(float2 worldPosition, FineState state, float scale,
 			float spatialScale, float travelScale, uint seed, WindTuning tuning)

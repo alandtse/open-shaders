@@ -64,7 +64,7 @@ namespace WindField
 
 		float GradientNoise(float2 position, uint seed, WindTuning tuning)
 		{
-			return GradientNoise(position, seed, tuning, 0xFFFFFFFFu);
+			return GradientNoise(position, seed, tuning, ~0u);
 		}
 
 		float Smoothstep(float minimum, float maximum, float value)
