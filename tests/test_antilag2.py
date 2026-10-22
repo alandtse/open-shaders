@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AntiLag2Tests(unittest.TestCase):
     def test_input_limits_and_backend_routing(self):
-        """Cover gameplay, paused/menu input, FG-off semantics, bounds, and DLSS-G bypass."""
+        """Enforce identical caps across menus, loading, native D3D11, and active/inactive FG."""
         source = (ROOT / "src/Features/Upscaling.cpp").read_text()
         body = braced(source, "void Upscaling::OnBeforeInputPoll()")
         fixture = r'''
@@ -30,11 +30,23 @@ struct UI {
     bool IsMenuOpen(int menu) { return (menus & menu) != 0; }
 };
 namespace globals::game { UI* ui = nullptr; }
+namespace CS::AntiLag2 {
+unsigned nativeCalls = 0, nativeLimit = 0;
+struct InputPacing {
+    int Apply(bool enabled, unsigned limit) {
+        assert(enabled); ++nativeCalls; nativeLimit = limit; return 0;
+    }
+};
+}
 struct Upscaling {
     static constexpr unsigned kGameplayMinRenderedFPSLimit = 20;
     static constexpr unsigned kGameplayMaxRenderedFPSLimit = 240;
     static constexpr unsigned kAntiLag2RenderedFPSLimit = 60;
-    bool d3d12SwapChainActive = true;
+    bool d3d12SwapChainActive = true, frameGenerationActive = false;
+    bool UsesDLSSGFrameGen() const { return d3d12SwapChainActive && dx12SwapChain.useDLSSG; }
+    bool IsFrameGenerationActive() const {
+        return d3d12SwapChainActive && settings.frameGenerationMode && frameGenerationActive;
+    }
     struct { unsigned frameGenerationMode = 1, antiLag2FPSLimit = 60; } settings;
     struct {
         bool useDLSSG = false, backstop = false;
@@ -52,10 +64,13 @@ int main() {
         for (bool active : {false, true})
             for (bool dlss : {false, true})
                 for (bool fg : {false, true})
+                  for (bool acceptedFG : {false, true})
                     for (bool present : {false, true})
                         for (bool paused : {false, true})
                             for (int menus = 0; menus != 8; ++menus) {
                                 Upscaling upscaling;
+                                CS::AntiLag2::nativeCalls = 0;
+                                upscaling.frameGenerationActive = acceptedFG;
                                 ui.paused = paused; ui.menus = menus;
                                 globals::game::ui = present ? &ui : nullptr;
                                 upscaling.d3d12SwapChainActive = active;
@@ -64,11 +79,16 @@ int main() {
                                 upscaling.settings.antiLag2FPSLimit = requested;
                                 upscaling.OnBeforeInputPoll();
                                 assert(upscaling.dx12SwapChain.calls == unsigned(active && !dlss));
-                                if (!active || dlss) continue;
-                                const bool gameplay = present && !paused && menus == 0;
+                                assert(CS::AntiLag2::nativeCalls == unsigned(!active));
+                                if (active && dlss) continue;
                                 const unsigned rendered = std::clamp(requested, 20u, 240u);
-                                assert(upscaling.dx12SwapChain.limit == (gameplay ? rendered * (fg ? 1u : 2u) : 60u));
-                                assert(upscaling.dx12SwapChain.backstop == (gameplay && fg));
+                                const unsigned limit = rendered * (active && fg && acceptedFG ? 1u : 2u);
+                                if (active) {
+                                    assert(upscaling.dx12SwapChain.limit == limit);
+                                    assert(upscaling.dx12SwapChain.backstop);
+                                } else {
+                                    assert(CS::AntiLag2::nativeLimit == limit);
+                                }
                             }
 }
 '''

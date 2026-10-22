@@ -660,7 +660,7 @@ namespace
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("setGameplayFPSLimit",
-		"Set the live AMD FSR gameplay FPS cap including fixed 2x generated frames. Params: displayedFPS (even integer 40-480). The saved antiLag2FPSLimit is rendered FPS (20-240); menus/loading stay at 60 rendered FPS. Anti-Lag 2 runs before input, then the residual timer enforces any remaining scene budget. No save is performed.",
+		"Set the live displayed FPS cap for gameplay, menus and loading screens. Params: displayedFPS (even integer 40-480). Saved antiLag2FPSLimit is half the displayed cap (20-240). The rendered cap halves only while FSR frame generation is active. Anti-Lag 2 runs before input when available; the residual timer always enforces the remaining budget, including on the native D3D11 path. DLSS-G retains Reflex pacing. No save is performed.",
 		[](Feature* self, const json& args) {
 			if (!args.contains("displayedFPS") || !args["displayedFPS"].is_number_integer()) {
 				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
@@ -698,18 +698,19 @@ void Upscaling::RegisterUxActions()
 		CalibrateNeuralCrop);
 }
 
-/** @brief Applies the gameplay or menu Anti-Lag FPS limit immediately before input polling. */
+/** @brief Enforces the selected displayed FPS limit before input in every game and menu state. */
 void Upscaling::OnBeforeInputPoll()
 {
-	if (!d3d12SwapChainActive || dx12SwapChain.useDLSSG)
+	if (UsesDLSSGFrameGen())
 		return;
-	auto* ui = globals::game::ui;
-	const bool gameplay = ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) &&
-	                      !ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
-	const bool frameGeneration = settings.frameGenerationMode != 0;
-	const auto gameplayLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
-	const auto fpsLimit = gameplay ? (frameGeneration ? gameplayLimit : gameplayLimit * 2) : kAntiLag2RenderedFPSLimit;
-	dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, gameplay && frameGeneration);
+	const auto renderedLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
+	const auto fpsLimit = IsFrameGenerationActive() ? renderedLimit : renderedLimit * 2;
+	if (d3d12SwapChainActive) {
+		dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, true);
+	} else {
+		static CS::AntiLag2::InputPacing inputPacing;
+		(void)inputPacing.Apply(true, fpsLimit);
+	}
 }
 
 void Upscaling::DrawSettings()
@@ -930,7 +931,7 @@ void Upscaling::DrawUpscalingSettings()
 	}
 }
 
-/** @brief Draws frame-generation controls and gameplay FPS limits. */
+/** @brief Draws frame-generation controls and the displayed FPS limit. */
 void Upscaling::DrawFrameGenerationSettings()
 {
 	ImGui::PushTextWrapPos(0.0f);
@@ -993,13 +994,6 @@ void Upscaling::DrawFrameGenerationSettings()
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
 
-		int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
-		if (ImGui::SliderInt("Gameplay FPS limit (including FG)", &displayedFPS,
-				static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
-			settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted("Gameplay only, rounded to even displayed FPS with AMD FSR 2x generation. Anti-Lag 2 runs first; a pre-input timer supplies any remaining frame budget. Menus and loading screens use 60 rendered FPS. Without driver support, the timer enforces the cap.");
-
 		bool flEnabled = settings.frameLimitMode != 0;
 		if (ImGui::Checkbox(T(TKEY("frame_limit_vrr"), "Limit FPS to display refresh rate"), &flEnabled))
 			settings.frameLimitMode = flEnabled ? 1 : 0;
@@ -1008,6 +1002,13 @@ void Upscaling::DrawFrameGenerationSettings()
 				"Caps FSR's total FPS to the display refresh rate.\n"
 				"When generation pauses, caps rendered FPS instead."));
 	}
+
+	int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
+	if (ImGui::SliderInt("FPS limit (including FG)", &displayedFPS,
+			static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+		settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted("Applies during gameplay, menus and loading screens. Rounded to even displayed FPS. The rendered cap halves only while FSR 2x generation is active. Anti-Lag 2 runs first when available; a pre-input timer always enforces the remaining budget. DLSS-G retains its own Reflex pacing.");
 
 	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
 	{
