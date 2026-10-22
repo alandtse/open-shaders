@@ -1,5 +1,6 @@
 """Execute the production Anti-Lag routing and driver-fallback paths with mocks."""
 
+import os
 import unittest
 from pathlib import Path
 
@@ -55,6 +56,7 @@ int main() {
 '''
         runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture.replace("PRODUCTION", command))
 
+    @unittest.skipUnless(os.name == "nt", "Requires Windows SDK headers")
     def test_native_timer_disable_and_reenable(self):
         """Reset the actual timer's deadline when disabled so re-enabling starts fresh."""
         header = (ROOT / "src/Features/Upscaling/antilag2inputpacing.h").as_posix()
