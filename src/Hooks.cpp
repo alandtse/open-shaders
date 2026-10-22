@@ -346,11 +346,12 @@ namespace WaterBlendHistory
 
 namespace WeatherExtensions
 {
-	struct Sky_UpdateColors
+	struct Sky_GetFog
 	{
-		static void thunk(RE::Sky* sky, float a_delta)
+		static void thunk(RE::Sky* sky)
 		{
-			func(sky, a_delta);
+			func(sky);
+			// Sky::Update runs SetSkyColors before GetFog, so the colour stages ride this hook.
 			Feature::ForEachLoadedFeature("OnBeforeWeatherColorGrading", [sky](Feature* feature) { feature->OnBeforeWeatherColorGrading(sky); });
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
@@ -1256,12 +1257,6 @@ namespace Hooks
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
-	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
-	{
-		func(sky, a_delta);
-		globals::features::skySync.OnSkyUpdateColors(sky);
-	}
-
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -1336,7 +1331,7 @@ namespace Hooks
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
 
 		logger::info("Hooking weather extensions");
-		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));
+		stl::detour_thunk<WeatherExtensions::Sky_GetFog>(REL::RelocationID(25686, 26233));
 		stl::detour_thunk<WeatherExtensions::Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
 		if (globals::game::isVR)
 			stl::write_vfunc<0x2A, WeatherExtensions::VRUIPassAmbientFix_Hook>(RE::VTABLE_BSShaderAccumulator[0]);
