@@ -38,7 +38,6 @@ void DX12SwapChain::InitializeAntiLag2()
 void DX12SwapChain::UpdateAntiLag2BeforeInput(bool enabled, uint32_t fpsLimit)
 {
 	fpsLimit = enabled ? fpsLimit : 0u;
-	const bool previousEnabled = antiLag2Enabled;
 	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, enabled, fpsLimit) : E_NOINTERFACE;
 	antiLag2Enabled = enabled && SUCCEEDED(hr);
 	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
@@ -46,10 +45,6 @@ void DX12SwapChain::UpdateAntiLag2BeforeInput(bool enabled, uint32_t fpsLimit)
 
 	const bool limiterActive = enabled && fpsLimit != 0;
 	(void)antiLag2InputPacing.Apply(limiterActive, fpsLimit);
-	if (antiLag2LastFPSLimit != fpsLimit || previousEnabled != antiLag2Enabled) {
-		antiLag2LastFPSLimit = fpsLimit;
-		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} timerBackstop={}", fpsLimit, antiLag2Enabled, limiterActive);
-	}
 }
 
 /** @brief Publishes the Anti-Lag context and enabled state through the FSR swap-chain handshake. */

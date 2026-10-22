@@ -204,7 +204,6 @@ private:
 	bool antiLag2UpdateFailureLogged = false;
 	bool antiLag2MarkFailureLogged = false;
 	bool antiLag2PrivateDataFailureLogged = false;
-	uint32_t antiLag2LastFPSLimit = UINT32_MAX;
 
 	/** @brief Initializes the Anti-Lag driver interface on the presentation device. */
 	void InitializeAntiLag2();
