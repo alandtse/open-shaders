@@ -34,18 +34,21 @@ void DX12SwapChain::InitializeAntiLag2()
 	logger::info("[AntiLag2] Initialize hr=0x{:08X} available={}", static_cast<unsigned int>(hr), antiLag2Available);
 }
 
-/** @brief Updates Anti-Lag input pacing and applies the residual timer when required. */
-void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool timerBackstop)
+/** @brief Applies explicit Anti-Lag enable state and clears disabled driver and CPU FPS caps. */
+void DX12SwapChain::UpdateAntiLag2BeforeInput(bool enabled, uint32_t fpsLimit)
 {
-	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, true, fpsLimit) : E_NOINTERFACE;
-	antiLag2Enabled = SUCCEEDED(hr);
+	fpsLimit = enabled ? fpsLimit : 0u;
+	const bool previousEnabled = antiLag2Enabled;
+	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, enabled, fpsLimit) : E_NOINTERFACE;
+	antiLag2Enabled = enabled && SUCCEEDED(hr);
 	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
-		logger::warn("[AntiLag2] Update failed hr=0x{:08X}; using pre-input timer", static_cast<unsigned int>(hr));
+		logger::warn("[AntiLag2] Update failed hr=0x{:08X} requestedEnabled={} fpsLimit={}", static_cast<unsigned int>(hr), enabled, fpsLimit);
 
-	(void)antiLag2InputPacing.Apply(timerBackstop || !antiLag2Enabled, fpsLimit);
-	if (antiLag2LastFPSLimit != fpsLimit) {
+	const bool limiterActive = enabled && fpsLimit != 0;
+	(void)antiLag2InputPacing.Apply(limiterActive, fpsLimit);
+	if (antiLag2LastFPSLimit != fpsLimit || previousEnabled != antiLag2Enabled) {
 		antiLag2LastFPSLimit = fpsLimit;
-		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} timerBackstop={}", fpsLimit, antiLag2Enabled, timerBackstop);
+		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} timerBackstop={}", fpsLimit, antiLag2Enabled, limiterActive);
 	}
 }
 

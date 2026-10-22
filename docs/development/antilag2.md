@@ -18,28 +18,46 @@ See the vendored README for AMD's API contract and latency monitor.
 Runtime acceptance requires VR plus one flat edition (SE or AE); report
 which editions actually ran. Skyrim launches remain user-controlled.
 
-The slider sets actual rendered FPS (20-240, default 60) in gameplay,
-menus and loading screens. `Upscaling.antiLag2FPSLimit` stores that value
-directly. The note below the slider shows estimated displayed FPS from the
-active FG multiplier: 60 rendered FPS means up to 120 displayed FPS with
-FSR 2x generation, or 60 displayed FPS without generation. It is an estimate,
-not a measurement. Display refresh-rate limiting is an additional ceiling.
+The controls remain in the Frame Generation tab:
 
-Anti-Lag runs before input when available, then the CPU timer enforces only
-the remaining frame budget in every game state. Native D3D11 uses the same
-timer without the driver API. `timerBackstop` names this CPU pacing safeguard;
-it is not a GPU fence wait or a frame-generation switch. DLSS-G retains its
-own Reflex pacing.
+-   **Anti-Lag 2** is the master switch, on by default. Off disables the driver
+    integration and our limiter; subordinate controls remain visible but disabled.
+-   **FPS limiter** is on by default. Off clears both the SDK FPS cap and the
+    CPU timer while leaving Anti-Lag latency management enabled.
+-   **Apply limiter** selects **Gameplay only** or **Always** (default). Gameplay
+    requires available UI state, an unpaused game and no main, loading or dialogue
+    menu. The selected scope affects the FPS cap, not Anti-Lag's enable state.
+-   **Rendered FPS limit** stores actual rendered FPS (20-240, default 60).
+    The note estimates displayed FPS from active FG: 60 rendered FPS means up
+    to 120 displayed FPS with FSR 2x FG, or 60 without FG. It reports disabled or
+    suspended limiting instead when appropriate; it is not an FPS measurement.
 
-The existing `setGameplayFPSLimit` devbench command now accepts
-`renderedFPS` from 20 to 240. For compatibility, even `displayedFPS` from
-40 to 480 still sets a rendered cap of `displayedFPS / 2`. No save occurs.
+The live settings are `Upscaling.antiLag2Enabled`,
+`antiLag2FPSLimiterEnabled`, `antiLag2FPSLimiterGameplayOnly` and
+`antiLag2FPSLimit`. Missing keys preserve the defaults above. No restart is
+required. The existing display refresh cap and other independent limiters
+remain separate ceilings.
+
+Anti-Lag runs before input when enabled and available. The CPU timer supplies
+only the remaining frame budget while the limiter applies, including on native
+D3D11 without the driver API. Disabling or suspending the cap resets its timer
+deadline; the SDK receives zero FPS to disable its explicit limiter. Master-off
+also explicitly disables the SDK. No context is destroyed during a live toggle.
+`timerBackstop` is CPU pacing, not a GPU fence wait or an FG switch. DLSS-G
+retains its own Reflex pacing and bypasses this integration.
+
+Devbench `setAntiLag2` accepts optional boolean `enabled`, `fpsLimiterEnabled`
+and `gameplayOnly` fields. `setGameplayFPSLimit` accepts `renderedFPS` from
+20 to 240; legacy even `displayedFPS` from 40 to 480 still sets a rendered cap
+of `displayedFPS / 2`. Commands apply live without automatically saving.
 
 Menu frame generation follows alandtse/dev's original resource preparation,
 UI routing and game-time delta behavior. The rendered FPS limiter remains
 active independently of whether menu frame generation runs.
 
-For acceptance, test the cap in gameplay, main/paused menus, dialogue and
-loading with menu FG on and off, and verify UI/HDR composition. Check native
+For acceptance, test each toggle and scope in gameplay, main/paused menus,
+dialogue and loading. Verify master-off and limiter-off remove only our cap,
+then re-enable and confirm pacing resumes without a stale timer deadline.
+Check old settings files retain on/on/Always and the saved rendered limit. Check native
 D3D11 and driver failure fallback separately. The user launches Skyrim;
 provider success alone does not establish generated-frame presentation.

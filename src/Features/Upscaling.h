@@ -90,6 +90,9 @@ public:
 		uint upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
 		uint qualityMode = (uint)QualityMode::kQuality;
 		uint frameLimitMode = 1;
+		bool antiLag2Enabled = true;
+		bool antiLag2FPSLimiterEnabled = true;
+		bool antiLag2FPSLimiterGameplayOnly = false;
 		uint antiLag2FPSLimit = kAntiLag2RenderedFPSLimit;
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
@@ -249,6 +252,8 @@ public:
 	// class's boot-vs-live blob diff can never see it.
 	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
+	/** @brief Reports whether the Anti-Lag FPS limiter applies to the current game state. */
+	bool IsAntiLag2FPSLimiterActive() const;
 	/** @copydoc Feature::OnBeforeInputPoll */
 	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
