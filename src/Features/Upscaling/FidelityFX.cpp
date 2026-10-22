@@ -1,7 +1,6 @@
 #include "FidelityFX.h"
 #include "Features/ReverseZ.h"
 
-#include <chrono>
 #include <directx/d3dx12.h>
 
 #include "../../State.h"
@@ -192,15 +191,6 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 {
 	auto& upscaling = globals::features::upscaling;
 	auto& swapChain = globals::features::upscaling.dx12SwapChain;
-	const auto now = std::chrono::steady_clock::now();
-	static auto previousPresent = now;
-	static constexpr float kMinimumFrameTimeMs = 0.1f;
-	static constexpr float kMaximumFrameTimeMs = 1000.0f;
-	const float frameTimeMs = std::clamp(std::chrono::duration<float, std::milli>(now - previousPresent).count(), kMinimumFrameTimeMs, kMaximumFrameTimeMs);
-	previousPresent = now;
-	static bool previousNeutralGuides = false;
-	const bool guidesChanged = previousNeutralGuides != upscaling.frameGenerationNeutralGuides;
-	previousNeutralGuides = upscaling.frameGenerationNeutralGuides;
 
 	// Cache peak nits first since we need HDR feature access
 	auto* hdr = globals::features::hdrDisplay.loaded ? &globals::features::hdrDisplay : nullptr;
@@ -222,8 +212,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	// Use seq_cst for both to ensure the callback sees both values consistently
 	hdrPeakNits.store(peakNits, std::memory_order_seq_cst);
 	isHDRActive.store(a_isHDR, std::memory_order_seq_cst);
-	if (hdrParamsChanged || guidesChanged)
-		needsReset.store(true, std::memory_order_seq_cst);
+	needsReset.store(hdrParamsChanged, std::memory_order_seq_cst);
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
@@ -269,7 +258,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	// If HDR parameters changed, skip a frame ID to force FidelityFX to reset its history
 	// This prevents interpolation artifacts when frames were encoded with different parameters
 	// Per FidelityFX docs: "Any non-exactly-one difference will reset the frame generation logic"
-	if ((hdrParamsChanged || guidesChanged) && a_useFrameGeneration) {
+	if (hdrParamsChanged && a_useFrameGeneration) {
 		frameID += 2;  // Skip one ID to trigger reset
 	}
 
@@ -288,8 +277,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	configParameters.generationRect.width = swapChain.swapChainDesc.Width;
 	configParameters.generationRect.height = swapChain.swapChainDesc.Height;
 
-	bool accepted = ffx::Configure(frameGenContext, configParameters) == ffx::ReturnCode::Ok;
-	if (!accepted) {
+	if (ffx::Configure(frameGenContext, configParameters) != ffx::ReturnCode::Ok) {
 		logger::critical("[FidelityFX] Failed to configure frame generation!");
 	}
 
@@ -308,7 +296,6 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	}
 
 	if (ffx::Configure(swapChainContext, uiConfig) != ffx::ReturnCode::Ok) {
-		accepted = false;
 		logger::critical("[FidelityFX] Failed to configure UI composition!");
 	}
 
@@ -322,18 +309,15 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 		dispatchParameters.renderSize.width = static_cast<uint32_t>(renderSize.x);
 		dispatchParameters.renderSize.height = static_cast<uint32_t>(renderSize.y);
 
-		dispatchParameters.jitterOffset.x = upscaling.frameGenerationNeutralGuides ? 0.0f : -upscaling.jitter.x;
-		dispatchParameters.jitterOffset.y = upscaling.frameGenerationNeutralGuides ? 0.0f : -upscaling.jitter.y;
+		dispatchParameters.jitterOffset.x = -upscaling.jitter.x;
+		dispatchParameters.jitterOffset.y = -upscaling.jitter.y;
 
-		dispatchParameters.frameTimeDelta = frameTimeMs;
+		dispatchParameters.frameTimeDelta = RE::GetSecondsSinceLastFrame() * 1000.f;
 
-		static constexpr float kNeutralCameraNear = 0.1f;
-		static constexpr float kNeutralCameraFar = 10000.0f;
-		static constexpr float kNeutralCameraFovRadians = 1.04719755f;
-		dispatchParameters.cameraFar = upscaling.frameGenerationNeutralGuides ? kNeutralCameraFar : *globals::game::cameraFar;
-		dispatchParameters.cameraNear = upscaling.frameGenerationNeutralGuides ? kNeutralCameraNear : *globals::game::cameraNear;
+		dispatchParameters.cameraFar = *globals::game::cameraFar;
+		dispatchParameters.cameraNear = *globals::game::cameraNear;
 
-		dispatchParameters.cameraFovAngleVertical = upscaling.frameGenerationNeutralGuides ? kNeutralCameraFovRadians : Util::GetVerticalFOVRad();
+		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 
 		dispatchParameters.frameID = frameID;
@@ -343,32 +327,25 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 
 		ffx::DispatchDescFrameGenerationPrepareCameraInfo cameraConfig{};
 
-		if (upscaling.frameGenerationNeutralGuides) {
-			cameraConfig.cameraRight[0] = 1.0f;
-			cameraConfig.cameraUp[1] = 1.0f;
-			cameraConfig.cameraForward[2] = 1.0f;
-		} else {
-			auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
+		auto viewMatrix = globals::game::frameBufferCached.GetCameraViewInverse().Transpose();
 
-			cameraConfig.cameraRight[0] = viewMatrix._11;
-			cameraConfig.cameraRight[1] = viewMatrix._12;
-			cameraConfig.cameraRight[2] = viewMatrix._13;
+		cameraConfig.cameraRight[0] = viewMatrix._11;
+		cameraConfig.cameraRight[1] = viewMatrix._12;
+		cameraConfig.cameraRight[2] = viewMatrix._13;
 
-			cameraConfig.cameraUp[0] = viewMatrix._21;
-			cameraConfig.cameraUp[1] = viewMatrix._22;
-			cameraConfig.cameraUp[2] = viewMatrix._23;
+		cameraConfig.cameraUp[0] = viewMatrix._21;
+		cameraConfig.cameraUp[1] = viewMatrix._22;
+		cameraConfig.cameraUp[2] = viewMatrix._23;
 
-			cameraConfig.cameraForward[0] = viewMatrix._31;
-			cameraConfig.cameraForward[1] = viewMatrix._32;
-			cameraConfig.cameraForward[2] = viewMatrix._33;
+		cameraConfig.cameraForward[0] = viewMatrix._31;
+		cameraConfig.cameraForward[1] = viewMatrix._32;
+		cameraConfig.cameraForward[2] = viewMatrix._33;
 
-			cameraConfig.cameraPosition[0] = globals::game::frameBufferCached.GetCameraPosAdjust().x;
-			cameraConfig.cameraPosition[1] = globals::game::frameBufferCached.GetCameraPosAdjust().y;
-			cameraConfig.cameraPosition[2] = globals::game::frameBufferCached.GetCameraPosAdjust().z;
-		}
+		cameraConfig.cameraPosition[0] = globals::game::frameBufferCached.GetCameraPosAdjust().x;
+		cameraConfig.cameraPosition[1] = globals::game::frameBufferCached.GetCameraPosAdjust().y;
+		cameraConfig.cameraPosition[2] = globals::game::frameBufferCached.GetCameraPosAdjust().z;
 
 		if (ffx::Dispatch(frameGenContext, dispatchParameters, cameraConfig) != ffx::ReturnCode::Ok) {
-			accepted = false;
 			logger::critical("[FidelityFX] Failed to dispatch frame generation!");
 		}
 	}
@@ -376,7 +353,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	frameID++;
 
 	// Set isFrameGenActive based on whether FSR3 frame generation is enabled
-	isFrameGenActive = a_useFrameGeneration && accepted;
+	isFrameGenActive = a_useFrameGeneration;
 }
 
 void FidelityFX::CreateFSRResources()

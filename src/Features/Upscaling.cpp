@@ -5,7 +5,6 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
-#include "ReverseZ.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -2449,24 +2448,6 @@ bool Upscaling::CopySharedD3D12Resources()
 	return true;
 }
 
-/** @brief Prepares neutral FG guides for eligible frames without a world pass. */
-void Upscaling::PrepareMenuFrameGeneration()
-{
-	if (frameGenerationSceneVisited || frameGenerationPrepared || !ShouldPrepareFrameGeneration() || UsesDLSSGFrameGen())
-		return;
-	auto* depth = dx12SwapChain.depthBufferShared12;
-	auto* motion = dx12SwapChain.motionVectorBufferShared12;
-	if (!depth || !motion || !depth->rtv || !motion->rtv)
-		return;
-	CS_GPU_PASS("Upscaling::MenuFrameGenerationGuides");
-	const float farDepth = globals::features::reverseZ.IsActive() ? 0.0f : 1.0f;
-	const float depthClear[4]{ farDepth, 0, 0, 0 }, motionClear[4]{};
-	globals::d3d::context->ClearRenderTargetView(depth->rtv, depthClear);
-	globals::d3d::context->ClearRenderTargetView(motion->rtv, motionClear);
-	frameGenerationNeutralGuides = true;
-	frameGenerationPrepared = true;
-}
-
 void UpdateCameraData()
 {
 	using func_t = decltype(&UpdateCameraData);
@@ -2492,7 +2473,6 @@ void Upscaling::PostDisplay()
 	globals::game::renderer->UpdateViewPort(0, 0, 1);
 	UpdateCameraData();
 
-	PrepareMenuFrameGeneration();
 	if (d3d12SwapChainActive)
 		globals::features::hdrDisplay.SetUIBuffer();
 
@@ -3458,8 +3438,6 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
-	upscaling.frameGenerationSceneVisited = true;
-	upscaling.frameGenerationNeutralGuides = false;
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
 		if (postProcessing.loaded)

@@ -55,65 +55,6 @@ int main() {
 '''
         runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture.replace("PRODUCTION", command))
 
-    def test_menu_frame_generation_guides(self):
-        """Prepare menu guides once, preserving world inputs and checking resource readiness."""
-        source = (ROOT / "src/Features/Upscaling.cpp").read_text(encoding="utf-8")
-        body = braced(source, "void Upscaling::PrepareMenuFrameGeneration()")
-        fixture = r'''
-#include <cassert>
-#define CS_GPU_PASS(name) (void)0
-struct Texture { void* rtv = nullptr; };
-struct Context {
-    unsigned clears = 0; float depth = -1;
-    void ClearRenderTargetView(void*, const float* value) {
-        if (clears++ == 0) depth = value[0];
-        else assert(value[0] == 0 && value[1] == 0 && value[2] == 0 && value[3] == 0);
-    }
-};
-namespace globals::d3d { Context* context; }
-namespace globals::features {
-struct { bool active = false; bool IsActive() { return active; } } reverseZ;
-}
-struct Upscaling {
-    bool frameGenerationSceneVisited = false, frameGenerationPrepared = false;
-    bool frameGenerationNeutralGuides = false, allowed = false, dlss = false;
-    struct { Texture* depthBufferShared12 = nullptr; Texture* motionVectorBufferShared12 = nullptr; } dx12SwapChain;
-    bool ShouldPrepareFrameGeneration() { return allowed; }
-    bool UsesDLSSGFrameGen() { return dlss; }
-    void PrepareMenuFrameGeneration();
-};
-PRODUCTION
-int main() {
-    for (unsigned flags = 0; flags != 512; ++flags) {
-        Upscaling u; Context context;
-        Texture depth, motion;
-        globals::d3d::context = &context;
-        globals::features::reverseZ.active = (flags & 256) != 0;
-        u.frameGenerationSceneVisited = (flags & 1) != 0;
-        u.frameGenerationPrepared = (flags & 2) != 0;
-        u.allowed = (flags & 4) != 0; u.dlss = (flags & 8) != 0;
-        u.dx12SwapChain.depthBufferShared12 = (flags & 16) ? &depth : nullptr;
-        u.dx12SwapChain.motionVectorBufferShared12 = (flags & 32) ? &motion : nullptr;
-        depth.rtv = (flags & 64) ? &depth : nullptr;
-        motion.rtv = (flags & 128) ? &motion : nullptr;
-        const bool expected = !(flags & 1) && !(flags & 2) && (flags & 4) && !(flags & 8) &&
-            (flags & 16) && (flags & 32) && (flags & 64) && (flags & 128);
-        u.PrepareMenuFrameGeneration();
-        assert(context.clears == (expected ? 2u : 0u));
-        assert(u.frameGenerationNeutralGuides == expected);
-        assert(u.frameGenerationPrepared == (expected || bool(flags & 2)));
-        if (expected) {
-            assert(context.depth == ((flags & 256) ? 0.0f : 1.0f));
-            u.PrepareMenuFrameGeneration();
-            assert(context.clears == 2);
-        }
-    }
-}
-'''
-        runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture.replace("PRODUCTION", body))
-        post = braced(source, "void Upscaling::PostDisplay()")
-        self.assertLess(post.index("PrepareMenuFrameGeneration();"), post.index("SetUIBuffer();"))
-
     def test_input_limits_and_backend_routing(self):
         """Enforce identical caps across menus, loading, native D3D11, and active/inactive FG."""
         source = (ROOT / "src/Features/Upscaling.cpp").read_text()

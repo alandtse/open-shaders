@@ -35,11 +35,9 @@ The existing `setGameplayFPSLimit` devbench command now accepts
 `renderedFPS` from 20 to 240. For compatibility, even `displayedFPS` from
 40 to 480 still sets a rendered cap of `displayedFPS / 2`. No save occurs.
 
-With Frame Generation in Menus enabled, frames without a world pass prepare
-neutral depth and motion guides before UI routing. World frames retain
-real scene guides. Steady-clock timing covers paused game time, and guide
-source transitions reset FG history. Configuration and dispatch failures
-prevent the active status from reporting a successful FG preparation.
+Menu frame generation follows alandtse/dev's original resource preparation,
+UI routing and game-time delta behavior. The rendered FPS limiter remains
+active independently of whether menu frame generation runs.
 
 For acceptance, test the cap in gameplay, main/paused menus, dialogue and
 loading with menu FG on and off, and verify UI/HDR composition. Check native
