@@ -196,6 +196,8 @@ public:
 	bool fidelityFXMissing = false;
 	bool d3d12SwapChainActive = false;
 	bool frameGenerationPrepared = false;
+	bool frameGenerationSceneVisited = false;
+	bool frameGenerationNeutralGuides = false;
 
 	// Timing and scaling
 	double refreshRate = 0.0f;
@@ -207,6 +209,8 @@ public:
 	bool IsFrameGenerationActive() const;
 	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
 	bool ShouldPrepareFrameGeneration() const;
+	/** @brief Supplies neutral guides to eligible menu frames without world rendering. */
+	void PrepareMenuFrameGeneration();
 	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */
 	bool ShouldUseFrameGenerationThisFrame() const;
 	bool IsUpscalingActive() const;

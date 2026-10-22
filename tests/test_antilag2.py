@@ -11,6 +11,109 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AntiLag2Tests(unittest.TestCase):
+    def test_rendered_fps_command_and_legacy_parameter(self):
+        """Validate rendered limits directly while preserving the legacy parameter conversion."""
+        source = (ROOT / "src/Features/Upscaling.cpp").read_text(encoding="utf-8")
+        command = braced(source, "[](Feature* self, const json& args)")
+        fixture = r'''
+#include <cassert>
+#include <cstdint>
+#include <map>
+#include <string>
+using uint = unsigned;
+namespace logger { void warn(const char*) {} }
+struct Value {
+    int64_t number; bool integer = true;
+    bool is_number_integer() const { return integer; }
+    template<class T> T get() const { return static_cast<T>(number); }
+};
+struct json {
+    std::map<std::string, Value> values;
+    bool contains(const char* key) const { return values.contains(key); }
+    const Value& operator[](const char* key) const { return values.at(key); }
+};
+struct Feature {};
+struct Upscaling : Feature { struct { unsigned antiLag2FPSLimit = 77; } settings; };
+constexpr unsigned kGameplayMinRenderedFPSLimit = 20, kGameplayMaxRenderedFPSLimit = 240;
+int main() {
+    const auto command = PRODUCTION;
+    for (const char* key : {"renderedFPS", "displayedFPS"})
+        for (int64_t fps : {-1, 0, 19, 20, 21, 39, 40, 60, 120, 239, 240, 241, 479, 480, 481}) {
+            Upscaling u;
+            json args{{{key, Value{fps}}}};
+            command(&u, args);
+            const int64_t scale = std::string(key) == "displayedFPS" ? 2 : 1;
+            const bool valid = fps >= 20 * scale && fps <= 240 * scale && fps % scale == 0;
+            assert(u.settings.antiLag2FPSLimit == (valid ? unsigned(fps / scale) : 77u));
+        }
+    Upscaling u;
+    command(&u, json{}); assert(u.settings.antiLag2FPSLimit == 77);
+    command(&u, json{{{"renderedFPS", Value{120, false}}}}); assert(u.settings.antiLag2FPSLimit == 77);
+    command(&u, json{{{"renderedFPS", Value{90}}, {"displayedFPS", Value{240}}}});
+    assert(u.settings.antiLag2FPSLimit == 90);
+}
+'''
+        runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture.replace("PRODUCTION", command))
+
+    def test_menu_frame_generation_guides(self):
+        """Prepare menu guides once, preserving world inputs and checking resource readiness."""
+        source = (ROOT / "src/Features/Upscaling.cpp").read_text(encoding="utf-8")
+        body = braced(source, "void Upscaling::PrepareMenuFrameGeneration()")
+        fixture = r'''
+#include <cassert>
+#define CS_GPU_PASS(name) (void)0
+struct Texture { void* rtv = nullptr; };
+struct Context {
+    unsigned clears = 0; float depth = -1;
+    void ClearRenderTargetView(void*, const float* value) {
+        if (clears++ == 0) depth = value[0];
+        else assert(value[0] == 0 && value[1] == 0 && value[2] == 0 && value[3] == 0);
+    }
+};
+namespace globals::d3d { Context* context; }
+namespace globals::features {
+struct { bool active = false; bool IsActive() { return active; } } reverseZ;
+}
+struct Upscaling {
+    bool frameGenerationSceneVisited = false, frameGenerationPrepared = false;
+    bool frameGenerationNeutralGuides = false, allowed = false, dlss = false;
+    struct { Texture* depthBufferShared12 = nullptr; Texture* motionVectorBufferShared12 = nullptr; } dx12SwapChain;
+    bool ShouldPrepareFrameGeneration() { return allowed; }
+    bool UsesDLSSGFrameGen() { return dlss; }
+    void PrepareMenuFrameGeneration();
+};
+PRODUCTION
+int main() {
+    for (unsigned flags = 0; flags != 512; ++flags) {
+        Upscaling u; Context context;
+        Texture depth, motion;
+        globals::d3d::context = &context;
+        globals::features::reverseZ.active = (flags & 256) != 0;
+        u.frameGenerationSceneVisited = (flags & 1) != 0;
+        u.frameGenerationPrepared = (flags & 2) != 0;
+        u.allowed = (flags & 4) != 0; u.dlss = (flags & 8) != 0;
+        u.dx12SwapChain.depthBufferShared12 = (flags & 16) ? &depth : nullptr;
+        u.dx12SwapChain.motionVectorBufferShared12 = (flags & 32) ? &motion : nullptr;
+        depth.rtv = (flags & 64) ? &depth : nullptr;
+        motion.rtv = (flags & 128) ? &motion : nullptr;
+        const bool expected = !(flags & 1) && !(flags & 2) && (flags & 4) && !(flags & 8) &&
+            (flags & 16) && (flags & 32) && (flags & 64) && (flags & 128);
+        u.PrepareMenuFrameGeneration();
+        assert(context.clears == (expected ? 2u : 0u));
+        assert(u.frameGenerationNeutralGuides == expected);
+        assert(u.frameGenerationPrepared == (expected || bool(flags & 2)));
+        if (expected) {
+            assert(context.depth == ((flags & 256) ? 0.0f : 1.0f));
+            u.PrepareMenuFrameGeneration();
+            assert(context.clears == 2);
+        }
+    }
+}
+'''
+        runtime.SceneSettingsRuntimeTests.compile_and_run(self, fixture.replace("PRODUCTION", body))
+        post = braced(source, "void Upscaling::PostDisplay()")
+        self.assertLess(post.index("PrepareMenuFrameGeneration();"), post.index("SetUIBuffer();"))
+
     def test_input_limits_and_backend_routing(self):
         """Enforce identical caps across menus, loading, native D3D11, and active/inactive FG."""
         source = (ROOT / "src/Features/Upscaling.cpp").read_text()
@@ -82,7 +185,7 @@ int main() {
                                 assert(CS::AntiLag2::nativeCalls == unsigned(!active));
                                 if (active && dlss) continue;
                                 const unsigned rendered = std::clamp(requested, 20u, 240u);
-                                const unsigned limit = rendered * (active && fg && acceptedFG ? 1u : 2u);
+                                const unsigned limit = rendered;
                                 if (active) {
                                     assert(upscaling.dx12SwapChain.limit == limit);
                                     assert(upscaling.dx12SwapChain.backstop);
@@ -136,7 +239,7 @@ struct DX12SwapChain {
         unsigned calls = 0; bool enabled = false;
         int Apply(bool active, unsigned fps) { assert(fps == 60); ++calls; enabled = active; return 0; }
     } antiLag2InputPacing;
-    void UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBackstop);
+    void UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool timerBackstop);
 };
 PRODUCTION
 int main() {

@@ -156,7 +156,7 @@ public:
 	/** @brief Releases the Anti-Lag driver context before the D3D12 device. */
 	~DX12SwapChain();
 	/** @brief Runs Anti-Lag first, then fills any remaining pre-input frame budget. */
-	void UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBackstop);
+	void UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool timerBackstop);
 
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);

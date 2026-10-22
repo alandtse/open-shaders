@@ -18,24 +18,30 @@ See the vendored README for AMD's API contract and latency monitor.
 Runtime acceptance requires VR plus one flat edition (SE or AE); report
 which editions actually ran. Skyrim launches remain user-controlled.
 
-The Frame Generation tab exposes a displayed FPS limit (40-480, default 120) that applies during gameplay, menus and loading screens. Settings
-retain `Upscaling.antiLag2FPSLimit` as half the displayed cap (20-240,
-default 60) for configuration compatibility. The rendered cap is half the
-displayed cap only while FSR frame generation is active, using its most recently
-reported state; otherwise it equals the displayed cap. Frame-generation
-transitions can therefore take one input poll to change pacing mode.
-The existing display refresh-rate cap remains an additional ceiling.
+The slider sets actual rendered FPS (20-240, default 60) in gameplay,
+menus and loading screens. `Upscaling.antiLag2FPSLimit` stores that value
+directly. The note below the slider shows estimated displayed FPS from the
+active FG multiplier: 60 rendered FPS means up to 120 displayed FPS with
+FSR 2x generation, or 60 displayed FPS without generation. It is an estimate,
+not a measurement. Display refresh-rate limiting is an additional ceiling.
 
-On the FSR DX12 path Anti-Lag runs first, followed by the residual pre-input
-timer on every frame, even if the driver reports success. Native D3D11 uses
-the same timer without the driver API. NVIDIA DLSS-G retains its own Reflex
-pacing. The existing `setGameplayFPSLimit` devbench command name is retained
-for compatibility; it now sets the all-state displayed cap, accepts even
-`displayedFPS` from 40 to 480, and does not save automatically.
+Anti-Lag runs before input when available, then the CPU timer enforces only
+the remaining frame budget in every game state. Native D3D11 uses the same
+timer without the driver API. `timerBackstop` names this CPU pacing safeguard;
+it is not a GPU fence wait or a frame-generation switch. DLSS-G retains its
+own Reflex pacing.
 
-For runtime acceptance, vary the cap during gameplay, the main menu, paused
-menus, dialogue and loading screens, with FSR frame generation enabled and
-disabled. Verify the displayed cap when menu frame generation is disabled,
-and test native D3D11 and an unavailable/failed Anti-Lag driver path. An SDK
-success result or timer wait alone does not establish latency reduction or
-displayed-frame behavior. Skyrim launches remain user-controlled.
+The existing `setGameplayFPSLimit` devbench command now accepts
+`renderedFPS` from 20 to 240. For compatibility, even `displayedFPS` from
+40 to 480 still sets a rendered cap of `displayedFPS / 2`. No save occurs.
+
+With Frame Generation in Menus enabled, frames without a world pass prepare
+neutral depth and motion guides before UI routing. World frames retain
+real scene guides. Steady-clock timing covers paused game time, and guide
+source transitions reset FG history. Configuration and dispatch failures
+prevent the active status from reporting a successful FG preparation.
+
+For acceptance, test the cap in gameplay, main/paused menus, dialogue and
+loading with menu FG on and off, and verify UI/HDR composition. Check native
+D3D11 and driver failure fallback separately. The user launches Skyrim;
+provider success alone does not establish generated-frame presentation.

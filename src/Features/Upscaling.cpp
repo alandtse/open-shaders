@@ -5,6 +5,7 @@
 #include "Deferred.h"
 #include "HDRDisplay.h"
 #include "Hooks.h"
+#include "ReverseZ.h"
 #include "State.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
@@ -660,18 +661,21 @@ namespace
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("setGameplayFPSLimit",
-		"Set the live displayed FPS cap for gameplay, menus and loading screens. Params: displayedFPS (even integer 40-480). Saved antiLag2FPSLimit is half the displayed cap (20-240). The rendered cap halves only while FSR frame generation is active. Anti-Lag 2 runs before input when available; the residual timer always enforces the remaining budget, including on the native D3D11 path. DLSS-G retains Reflex pacing. No save is performed.",
+		"Set the live rendered FPS cap in gameplay, menus and loading screens. Params: renderedFPS (integer 20-240). Legacy displayedFPS (even integer 40-480) sets renderedFPS to displayedFPS/2. FG does not change the rendered cap; the UI shows estimated displayed FPS from active FG. Anti-Lag runs first when available; the timer always enforces remaining budget. DLSS-G retains Reflex pacing. No save is performed.",
 		[](Feature* self, const json& args) {
-			if (!args.contains("displayedFPS") || !args["displayedFPS"].is_number_integer()) {
-				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+			const bool legacy = !args.contains("renderedFPS");
+			const char* key = legacy ? "displayedFPS" : "renderedFPS";
+			if (!args.contains(key) || !args[key].is_number_integer()) {
+				logger::warn("[AntiLag2] renderedFPS must be an integer from 20 to 240");
 				return;
 			}
-			const auto fps = args["displayedFPS"].get<int64_t>();
-			if (fps < kGameplayMinRenderedFPSLimit * 2 || fps > kGameplayMaxRenderedFPSLimit * 2 || fps % 2 != 0) {
-				logger::warn("[AntiLag2] displayedFPS must be an even integer from 40 to 480");
+			const auto fps = args[key].get<int64_t>();
+			const int64_t scale = legacy ? 2 : 1;
+			if (fps < kGameplayMinRenderedFPSLimit * scale || fps > kGameplayMaxRenderedFPSLimit * scale || fps % scale != 0) {
+				logger::warn("[AntiLag2] invalid FPS limit");
 				return;
 			}
-			static_cast<Upscaling*>(self)->settings.antiLag2FPSLimit = static_cast<uint>(fps / 2);
+			static_cast<Upscaling*>(self)->settings.antiLag2FPSLimit = static_cast<uint>(fps / scale);
 		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
@@ -698,13 +702,13 @@ void Upscaling::RegisterUxActions()
 		CalibrateNeuralCrop);
 }
 
-/** @brief Enforces the selected displayed FPS limit before input in every game and menu state. */
+/** @brief Enforces the selected rendered FPS limit before input in every game and menu state. */
 void Upscaling::OnBeforeInputPoll()
 {
 	if (UsesDLSSGFrameGen())
 		return;
 	const auto renderedLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
-	const auto fpsLimit = IsFrameGenerationActive() ? renderedLimit : renderedLimit * 2;
+	const auto fpsLimit = renderedLimit;
 	if (d3d12SwapChainActive) {
 		dx12SwapChain.UpdateAntiLag2BeforeInput(fpsLimit, true);
 	} else {
@@ -1003,12 +1007,19 @@ void Upscaling::DrawFrameGenerationSettings()
 				"When generation pauses, caps rendered FPS instead."));
 	}
 
-	int displayedFPS = static_cast<int>(settings.antiLag2FPSLimit * 2);
-	if (ImGui::SliderInt("FPS limit (including FG)", &displayedFPS,
-			static_cast<int>(kGameplayMinRenderedFPSLimit * 2), static_cast<int>(kGameplayMaxRenderedFPSLimit * 2), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
-		settings.antiLag2FPSLimit = static_cast<uint>((displayedFPS + 1) / 2);
+	int renderedFPS = static_cast<int>(settings.antiLag2FPSLimit);
+	if (ImGui::SliderInt("Rendered FPS limit", &renderedFPS,
+			static_cast<int>(kGameplayMinRenderedFPSLimit), static_cast<int>(kGameplayMaxRenderedFPSLimit), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
+		settings.antiLag2FPSLimit = static_cast<uint>(renderedFPS);
+	const bool fgActive = IsFrameGenerationActive();
+	const uint multiplier = fgActive ? GetFrameGenerationMultiplier() : 1u;
+	if (UsesDLSSGFrameGen())
+		ImGui::TextDisabled("DLSS-G uses its own Reflex pacing; this limit is not applied.");
+	else
+		ImGui::Text("Up to %u displayed FPS (%s, %ux)", settings.antiLag2FPSLimit * multiplier,
+			fgActive ? "FG active" : "FG inactive", multiplier);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted("Applies during gameplay, menus and loading screens. Rounded to even displayed FPS. The rendered cap halves only while FSR 2x generation is active. Anti-Lag 2 runs first when available; a pre-input timer always enforces the remaining budget. DLSS-G retains its own Reflex pacing.");
+		ImGui::TextUnformatted("Limits real rendered frames during gameplay, menus and loading screens. Frame generation adds frames without changing this render limit. Anti-Lag 2 runs first when available; the timer always enforces the remaining budget.");
 
 	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
 	{
@@ -2438,6 +2449,24 @@ bool Upscaling::CopySharedD3D12Resources()
 	return true;
 }
 
+/** @brief Prepares neutral FG guides for eligible frames without a world pass. */
+void Upscaling::PrepareMenuFrameGeneration()
+{
+	if (frameGenerationSceneVisited || frameGenerationPrepared || !ShouldPrepareFrameGeneration() || UsesDLSSGFrameGen())
+		return;
+	auto* depth = dx12SwapChain.depthBufferShared12;
+	auto* motion = dx12SwapChain.motionVectorBufferShared12;
+	if (!depth || !motion || !depth->rtv || !motion->rtv)
+		return;
+	CS_GPU_PASS("Upscaling::MenuFrameGenerationGuides");
+	const float farDepth = globals::features::reverseZ.IsActive() ? 0.0f : 1.0f;
+	const float depthClear[4]{ farDepth, 0, 0, 0 }, motionClear[4]{};
+	globals::d3d::context->ClearRenderTargetView(depth->rtv, depthClear);
+	globals::d3d::context->ClearRenderTargetView(motion->rtv, motionClear);
+	frameGenerationNeutralGuides = true;
+	frameGenerationPrepared = true;
+}
+
 void UpdateCameraData()
 {
 	using func_t = decltype(&UpdateCameraData);
@@ -2463,6 +2492,7 @@ void Upscaling::PostDisplay()
 	globals::game::renderer->UpdateViewPort(0, 0, 1);
 	UpdateCameraData();
 
+	PrepareMenuFrameGeneration();
 	if (d3d12SwapChainActive)
 		globals::features::hdrDisplay.SetUIBuffer();
 
@@ -3428,6 +3458,8 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingContexts, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
 	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
+	upscaling.frameGenerationSceneVisited = true;
+	upscaling.frameGenerationNeutralGuides = false;
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
 		if (postProcessing.loaded)

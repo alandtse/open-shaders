@@ -8,8 +8,8 @@ namespace DevBenchBridge::ToolSpecs
 		R"(All {brand} graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, )"
 		R"(read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; )"
 		R"(features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the )"
-		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes antiLag2FPSLimit (integer 20-240, default 60, half the displayed FPS cap; the rendered cap doubles whenever FSR FG is inactive, including menus/loading; enforced in every game state). )"
-		R"(The setGameplayFPSLimit command accepts even displayedFPS 40-480. )"
+		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes antiLag2FPSLimit (integer 20-240, default 60, rendered FPS cap, enforced in gameplay, menus and loading; FG adds displayed frames without changing this cap). )"
+		R"(The setGameplayFPSLimit command accepts renderedFPS 20-240; legacy displayedFPS 40-480 (even) sets half that value as rendered FPS. )"
 		R"(Anti-Lag 2 runs before input on the FSR DX12 path; a residual timer always enforces the remaining budget, including native D3D11. DLSS-G retains Reflex pacing. Upscaling exposes enableDLSSFrameGen (boolean, default false); )"
 		R"(existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; )"
 		R"(use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, )"
@@ -53,8 +53,8 @@ namespace DevBenchBridge::ToolSpecs
 		"settings": {
 			"type": "object",
 			"description": "Partial )"
-		R"(SaveSettings object from get. Upscaling exposes antiLag2FPSLimit (integer 20-240, default 60, live half-displayed FPS cap; the rendered cap doubles whenever FSR FG is inactive, including menus/loading; enforced in every game state). )"
-		R"(setGameplayFPSLimit accepts even displayedFPS 40-480 without saving. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
+		R"(SaveSettings object from get. Upscaling exposes antiLag2FPSLimit (integer 20-240, default 60, live rendered FPS cap, enforced in gameplay, menus and loading; FG adds displayed frames without changing this cap). )"
+		R"(setGameplayFPSLimit accepts renderedFPS 20-240 without saving; legacy even displayedFPS 40-480 sets rendered FPS to displayedFPS/2. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
 		R"(restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, )"
 		R"(strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); )"
 		R"(read the live state and the active strengths back with the neuralRenderingStatus query. The material map debug view adds settings.neuralRenderingTuning.showMaterialMap (boolean), )"

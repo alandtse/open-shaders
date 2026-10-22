@@ -18,12 +18,12 @@ namespace CS::AntiLag2
 
 	public:
 		/** @brief Wait only for the frame budget left after Anti-Lag, before engine input polling. */
-		[[nodiscard]] std::chrono::microseconds Apply(bool sceneBackstop, unsigned realFPS)
+		[[nodiscard]] std::chrono::microseconds Apply(bool enforceLimit, unsigned realFPS)
 		{
 			std::lock_guard lock(mutex_);
 			const auto start = Clock::now();
 			std::chrono::microseconds waited{};
-			if (!sceneBackstop || !realFPS) {
+			if (!enforceLimit || !realFPS) {
 				nextInput_ = {};
 				pacedFPS_ = 0;
 				return waited;

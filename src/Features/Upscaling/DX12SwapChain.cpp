@@ -35,17 +35,17 @@ void DX12SwapChain::InitializeAntiLag2()
 }
 
 /** @brief Updates Anti-Lag input pacing and applies the residual timer when required. */
-void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool sceneBackstop)
+void DX12SwapChain::UpdateAntiLag2BeforeInput(uint32_t fpsLimit, bool timerBackstop)
 {
 	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, true, fpsLimit) : E_NOINTERFACE;
 	antiLag2Enabled = SUCCEEDED(hr);
 	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
 		logger::warn("[AntiLag2] Update failed hr=0x{:08X}; using pre-input timer", static_cast<unsigned int>(hr));
 
-	(void)antiLag2InputPacing.Apply(sceneBackstop || !antiLag2Enabled, fpsLimit);
+	(void)antiLag2InputPacing.Apply(timerBackstop || !antiLag2Enabled, fpsLimit);
 	if (antiLag2LastFPSLimit != fpsLimit) {
 		antiLag2LastFPSLimit = fpsLimit;
-		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} sceneBackstop={}", fpsLimit, antiLag2Enabled, sceneBackstop);
+		logger::info("[AntiLag2] Pre-input rendered FPS limit={} driverActive={} timerBackstop={}", fpsLimit, antiLag2Enabled, timerBackstop);
 	}
 }
 
@@ -291,6 +291,8 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 	uiBufferWrapped = newUiBuffer.release();
 
 	globals::features::upscaling.frameGenerationPrepared = false;
+	globals::features::upscaling.frameGenerationSceneVisited = false;
+	globals::features::upscaling.frameGenerationNeutralGuides = false;
 
 	const float clearColor[4]{};
 	d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
@@ -389,6 +391,7 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 {
 	auto& upscaling = globals::features::upscaling;
+	upscaling.PrepareMenuFrameGeneration();
 
 	// Scale UI brightness BEFORE fence sync so the D3D11 UIBrightnessCS dispatch
 	// is covered by the D3D11→D3D12 fence. Without this, FidelityFX may read
@@ -510,6 +513,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// per-frame reset can't clear a stale true left over from the last gameplay
 	// frame; reset here too so frame-gen doesn't interpolate through a transition.
 	upscaling.frameGenerationPrepared = false;
+	upscaling.frameGenerationSceneVisited = false;
+	upscaling.frameGenerationNeutralGuides = false;
 
 	return S_OK;
 }
