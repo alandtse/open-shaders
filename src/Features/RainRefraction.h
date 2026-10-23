@@ -1,5 +1,9 @@
 #pragma once
 
+#include "Buffer.h"
+#include "GpuPass.h"
+#include "RainRefraction/TextureFootprint.h"
+
 #include <winrt/base.h>
 
 /**
@@ -33,7 +37,7 @@ public:
 	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. */
 	struct Settings
 	{
-		bool Enable = true;
+		bool Enable = false;
 		float MotionStretch = 2.0f;
 		float MotionTransparency = 0.91f;
 	} settings;
@@ -45,6 +49,9 @@ public:
 		float MotionStretch;
 		float MotionTransparency;
 		float pad0;
+		float4 TextureBounds{ 0, 0, 1, 1 };
+		float2 TextureRadiusScale{ 1, 1 };
+		float2 pad1{};
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
@@ -55,6 +62,7 @@ public:
 	struct RaindropTexture
 	{
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
+		RainRefractionTexture::Footprint footprint;
 		std::string status;  ///< Failure reason; empty when loaded
 	};
 
@@ -70,6 +78,10 @@ public:
 	virtual void DrawSettings() override;
 	/** @brief Loads the bundled default raindrop texture. */
 	virtual void SetupResources() override;
+	/** @brief Enables GPU timing around rain render passes. */
+	bool WantsRenderPassHook() const override { return true; }
+	/** @copydoc Feature::OnRenderPassBegin */
+	std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* a_pass) override;
 
 	/** @brief Lets a preset provider (Effects 11) take over the rain settings; this feature never reads that provider directly. */
 	void SetPresetResolver(PresetResolver a_resolver);
@@ -83,16 +95,39 @@ public:
 	/** @brief Loads enbraindrops.png from the Effects 11 preset folder; called whenever a preset is applied. */
 	void LoadPresetRaindrops(const std::filesystem::path& a_presetPath);
 
-	/** @brief Binds the raindrop texture and the vertex shader feature buffers for refractive rain passes. */
+	/** @brief Binds shared vertex buffers for rain and the normal map while refraction is active. */
 	void ModifyParticle();
 	/** @brief Switches refractive rain passes to alpha blending. */
 	void ParticleShaderHacks();
+	/** @brief Binds rain draw data; failure binds native defaults and returns false. */
+	bool BindRenderSpace(float2 a_rasterSize, float2 a_sourceScale, bool a_testDepth);
+	/** @brief Clears scene-copy and draw resources and their failure latches. */
+	void ClearShaderCache() override;
 
 private:
+	struct DrawData
+	{
+		float2 sourceScale{ 1, 1 };
+		float2 rasterSize{};
+		uint32_t testDepth = 0;
+		uint32_t sceneAvailable = 0;
+		float2 padding{};
+	};
+	STATIC_ASSERT_ALIGNAS_16(DrawData);
+
+	bool CaptureSceneColor();
+
 	/** @brief Returns true when the current particle pass is rain and refractive rain is active this frame. */
 	bool IsRefractiveRainPass();
 
 	winrt::com_ptr<ID3D11BlendState> alphaBlendState;
+	std::optional<ScopedGpuPass> particlePass;
+	std::unique_ptr<Texture2D> sceneColor;
+	std::array<std::unique_ptr<ConstantBuffer>, 2> drawCB;
+	std::array<DrawData, 2> drawData{};
+	uint32_t sceneFrame = UINT32_MAX;
+	bool sceneCopyFailed = false;
+	bool drawDataFailed = false;
 
 	// The feature buffer is rebuilt several times per frame and the particle hooks run per pass
 	PerFrame perFrameCache{};

@@ -7,6 +7,7 @@
 #include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
+#include "Upscaling/RainLayer.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/LazyShader.h"
@@ -278,6 +279,10 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	/** @brief Routes rain around temporal reconstruction for both vendor upscalers. */
+	bool WantsDrawHook() const override { return true; }
+	/** @copydoc Feature::OnDraw */
+	void OnDraw() override;
 	/** @brief Propagates frame inactivity to NR temporal history. */
 	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup, settings.neuralRenderingTuning.allowUnverifiedRuntime, settings.neuralRenderingTuning.runtimeVariant); }
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
@@ -429,6 +434,7 @@ public:
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 	NeuralRendering neuralRendering;
+	RainLayer rainLayer;
 
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

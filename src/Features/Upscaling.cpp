@@ -2316,6 +2316,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
+	rainLayer.ClearShaderCache();
 	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
 	vrClearHMDMaskCS.Reset();
@@ -2330,6 +2331,18 @@ void Upscaling::ClearShaderCache()
 	underwaterMaskUpscalePS.Reset();
 	cameraMotionVectorsPS.Reset();
 	upscaleVS.Reset();
+}
+
+void Upscaling::OnDraw()
+{
+	if (globals::state->currentShader->shaderType.get() != RE::BSShader::Type::Particle ||
+		globals::state->currentPixelDescriptor != static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain))
+		return;
+	const auto method = GetUpscaleMethod();
+	if (method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR)
+		rainLayer.CaptureDraw(perfMode.IsPresentingTestTexture() ?
+								  perfMode.GetTestTextureUAV() :
+								  Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN].UAV));
 }
 
 bool Upscaling::CopySharedD3D12Resources()
@@ -3417,6 +3430,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	}
 
 	upscaling.neuralRendering.RecordStage(false);
+	upscaling.rainLayer.Composite(upscaling.perfMode.IsPresentingTestTexture() ?
+									  upscaling.perfMode.GetTestTextureUAV() :
+									  Util::AsReal(globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGET::kMAIN].UAV));
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
