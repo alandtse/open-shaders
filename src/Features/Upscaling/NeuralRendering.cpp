@@ -1094,7 +1094,7 @@ struct NeuralRendering::Impl
 		} scope(context.get(), isolated.get());
 		// The stagger's own gain history would be blended into frame generation's interpolation, and a
 		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
-		const bool frameGeneration = globals::features::upscaling.IsFrameGenerationActive();
+		const bool frameGeneration = FrameGenerationActive();
 		if (frameGeneration != frameGenerationBlocked) {
 			if (frameGeneration)
 				logger::info("[NeuralRendering] eye-staggered gain reuse is off while frame generation is active");
@@ -1415,9 +1415,8 @@ void NeuralRendering::InstallHooks()
 
 void NeuralRendering::UpdateCalibration()
 {
-	auto& upscaling = globals::features::upscaling;
 	const auto resources = GetStatus();
-	if (upscaling.IsFrameGenerationActive()) {
+	if (FrameGenerationActive()) {
 		calibration.Fail(NR::CropCalibration::Failure::kFrameGeneration);
 	} else if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive || !resources.eyes || !resources.width || !resources.height) {
 		calibration.Fail(NR::CropCalibration::Failure::kNotActive);
@@ -1566,6 +1565,11 @@ const char* NeuralRendering::RegionSourceName(RegionSource a_source)
 	default:
 		return "none";
 	}
+}
+
+bool NeuralRendering::FrameGenerationActive()
+{
+	return Upscaling::FrameGenerationActive();
 }
 
 bool NeuralRendering::DialogueOpen()

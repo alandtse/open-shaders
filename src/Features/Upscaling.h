@@ -201,6 +201,8 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
+	/** @brief Frame generation state, forwarded so Neural Rendering never reaches into this feature. */
+	static bool FrameGenerationActive();
 	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
 	bool ShouldPrepareFrameGeneration() const;
 	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */

@@ -2539,6 +2539,11 @@ bool Upscaling::IsFrameGenerationDx12PathActive() const
 	return d3d12SwapChainActive && !globals::game::isVR;
 }
 
+bool Upscaling::FrameGenerationActive()
+{
+	return globals::features::upscaling.IsFrameGenerationActive();
+}
+
 bool Upscaling::IsFrameGenerationActive() const
 {
 	if (!IsFrameGenerationDx12PathActive() || !settings.frameGenerationMode)
