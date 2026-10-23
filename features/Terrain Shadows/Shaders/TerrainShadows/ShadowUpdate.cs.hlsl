@@ -65,7 +65,7 @@ uint GetWrappedCoord(int coord, uint dimension)
 		// fetch last dispatch
 		int previousMajorCoord = majorPxCoord - majorStep;
 		float previousMinorCoord = gid + 0.5 - minorDirection;
-		if (gtid == 0 && previousMajorCoord >= 0 && previousMajorCoord < int(majorDimension) && previousMinorCoord >= 0.0 && previousMinorCoord < minorDimension) {
+		if (gtid == 0 && previousMajorCoord >= 0 && previousMajorCoord < int(majorDimension) && previousMinorCoord >= 0.0 && previousMinorCoord < float(minorDimension)) {
 			float2 previousPxCoord = isVertical ? float2(previousMinorCoord, previousMajorCoord + 0.5) : float2(previousMajorCoord + 0.5, previousMinorCoord);
 			float2 sampleHeights = GetInterpolatedHeightRW(previousPxCoord, isVertical) + LightDeltaZ;
 			heights = max(heights, sampleHeights);

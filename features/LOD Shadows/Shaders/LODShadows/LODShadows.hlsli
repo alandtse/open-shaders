@@ -289,8 +289,9 @@ namespace LODShadows
 	float SampleRay(RayProjection ray, float t, float3 worldPosition, SamplerState linearSampler)
 	{
 		float visibility = 1.0;
-		[branch] if (ray.mode == RayOccluded) return 0.0;
-		[branch] if (ray.mode < MapCount)
+		[branch] if (ray.mode == RayOccluded)
+			visibility = 0.0;
+		else[branch] if (ray.mode < MapCount)
 		{
 			visibility = ray.visibility.x;
 			[branch] if (visibility < 0.0)
