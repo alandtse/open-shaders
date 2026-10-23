@@ -4,6 +4,7 @@
 
 #include "BackgroundBlur.h"
 #include "../Features/HDRDisplay.h"
+#include "../Features/PerformanceOverlay.h"
 #include "../Features/Upscaling.h"
 #include "../Globals.h"
 #include "../GpuPass.h"

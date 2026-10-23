@@ -1,6 +1,7 @@
 #ifndef __SKYLIGHTING_DEPENDENCY_HLSL__
 #define __SKYLIGHTING_DEPENDENCY_HLSL__
 
+#include "Common/ColorManagement.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Shading.hlsli"
 #include "Common/SharedData.hlsli"
@@ -85,9 +86,8 @@ namespace Skylighting
 
 		diffuseColor = max(0.0, diffuseColor - directionalAmbientColor);
 
-		float3 linAmbient = Color::IrradianceToLinear(directionalAmbientColor);
 		float3 multiBounceSkylighting = MultiBounceAO(albedo, skylightingDiffuse);
-		directionalAmbientColor = Color::IrradianceToGamma(linAmbient * multiBounceSkylighting);
+		directionalAmbientColor = ColorManagement::SceneColor::ScaleByLinear(directionalAmbientColor, multiBounceSkylighting);
 
 		diffuseColor += directionalAmbientColor;
 	}

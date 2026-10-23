@@ -1,4 +1,7 @@
-#include "Common/Color.hlsli"
+// SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
+// Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
+
+#include "Common/ColorManagement.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Math.hlsli"
@@ -278,7 +281,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float fogColorParam = min(FogParam.w,
 		exp2(FogParam.z * log2(saturate(length(FrameBuffer::ToStandardClip(viewPos, FrameBuffer::IsReverseProjection(Proj[eyeIndex]))) * FogParam.y - FogParam.x))));
 
-	vsout.FogParam.xyz = lerp(FogNearColor.xyz, FogFarColor.xyz, fogColorParam);
+	vsout.FogParam.xyz = lerp(ColorManagement::SRGBToWorking(FogNearColor.xyz), ColorManagement::SRGBToWorking(FogFarColor.xyz), fogColorParam);
 	vsout.FogParam.w = fogColorParam;
 #	endif
 
@@ -756,6 +759,9 @@ float3 GetLightingColor(
 	{
 		float4 lightDistanceSquared = (PLightPositionX[eyeIndex] - msPosition.xxxx) * (PLightPositionX[eyeIndex] - msPosition.xxxx) + (PLightPositionY[eyeIndex] - msPosition.yyyy) * (PLightPositionY[eyeIndex] - msPosition.yyyy) + (PLightPositionZ[eyeIndex] - msPosition.zzzz) * (PLightPositionZ[eyeIndex] - msPosition.zzzz);
 		float4 lightFadeMul = 1.0.xxxx - saturate(PLightingRadiusInverseSquared * lightDistanceSquared);
+#		if defined(ENABLE_LL)
+		lightFadeMul = pow(lightFadeMul, TransferFunctions::GAME_GAMMA);
+#		endif
 #		if defined(EFFECTS11)
 		float pointScale = SharedData::enbSettings.EnableParticle ? SharedData::enbSettings.ParticlePointLightingInfluence : 1.0;
 #		else
@@ -896,7 +902,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 #		endif
 	float NdotV = dot(normal, input.ViewVector.xyz);
 	float membraneColorMul = pow(saturate(1 - NdotV), MembraneVars.x);
-	float4 membraneColor = MembraneRimColor * membraneColorMul;
+	float4 membraneColor = ColorManagement::SRGBToWorking(MembraneRimColor) * membraneColorMul;
 #	elif defined(PROJECTED_UV) && defined(NORMALS)
 	float2 noiseTexCoord = 0.00333333341 * input.TexCoord0.xy;
 	float noise = TexNoiseSampler.Sample(SampNoiseSampler, noiseTexCoord).x * 0.2 + 0.4;
@@ -971,11 +977,11 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 
 #	if defined(EFFECTS11)
 	bool isFire = false;
-#		if defined(ADDBLEND)
-#			if defined(SOFT)
+#	if defined(ADDBLEND)
+#		if defined(SOFT)
 	if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToColor && Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha)
 		isFire = true;
-#			elif defined(PARTICLES) && defined(TEXCOORD_INDEX) && defined(INDEXED_TEXTURE)
+#		elif defined(PARTICLES) && defined(TEXCOORD_INDEX) && defined(INDEXED_TEXTURE)
 	isFire = true;
 #			endif
 #		endif
@@ -1094,6 +1100,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 		bloodMul *= (deltaY / AlphaTestRef.y);
 	}
 	baseColor.xyz = saturate(float3(2, 1, 1) - bloodMul.xxx) * (-bloodMul * AlphaTestRef.z + 1);
+	baseColor.xyz = ColorManagement::TextureToWorking(baseColor.xyz);
 #	endif
 
 	alpha *= PropertyColor.w;
@@ -1151,6 +1158,14 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 	}
 #	endif
 
+#	if defined(ENABLE_LL) && !defined(DEFERRED) && !defined(MEMBRANE) && !defined(BLOOD) && !defined(MULTBLEND) && !defined(MULTBLEND_DECAL)
+	if ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SourceAlphaBlend) &&
+		(!Permutation::RenderToUI || (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection))) {
+		// Preserve legacy fades without remapping linear medium transmittance.
+		alpha = pow(saturate(alpha), TransferFunctions::GAME_GAMMA);
+	}
+#	endif
+
 #	if !defined(LIGHTING) && defined(VC) && defined(TEXCOORD) && defined(NORMALS) && defined(TEXTURE) && defined(FALLOFF) && defined(SOFT)
 	const bool isSkyStatic = (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) && lightingInfluence == 1.0;
 #	else
@@ -1186,8 +1201,8 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 	}
 
 #	if !defined(MOTIONVECTORS_NORMALS)
-	float fogFactor = Color::FogAlpha(input.FogParam.w);
-	float3 fogColor = Color::Fog(input.FogParam.xyz);
+	float fogFactor = input.FogParam.w;
+	float3 fogColor = input.FogParam.xyz;
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
@@ -1223,14 +1238,7 @@ PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 #			else
 	float3 blendedColor = lightColor * (1 - fogFactor);
 #			endif
-#			if defined(EFFECTS11)
-	if (SharedData::enbSettings.Enable) {
-		if (isFire)
-			blendedColor = pow(abs(blendedColor), SharedData::enbSettings.FireCurve) * SharedData::enbSettings.FireIntensity;
-		else
-			blendedColor = pow(abs(blendedColor), SharedData::enbSettings.LightSpriteCurve) * SharedData::enbSettings.LightSpriteIntensity;
-	}
-#			endif
+	blendedColor = Color::AdditiveEffect(blendedColor, isFire);
 #		elif defined(MULTBLEND) || defined(MULTBLEND_DECAL)
 #			if defined(EXP_HEIGHT_FOG)
 	float3 blendedColor = lerp(lightColor, 1.0.xxx, saturate(1.5 * vanillaFogFactor).xxx);

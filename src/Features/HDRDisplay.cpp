@@ -11,6 +11,8 @@
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
 #include "Menu.h"
+#include "PostProcessing.h"
+#include "ScreenshotFeature.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling.h"
@@ -254,6 +256,25 @@ namespace
 		{
 			globals::features::hdrDisplay.SetUIBuffer();
 			func(a1);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	// Bink movies draw into kFRAMEBUFFER outside both redirects, so ApplyHDR would overwrite them.
+	// Route the draw into the UI buffer like the interface; the Present path undoes it.
+	struct HDR_Movie_Draw
+	{
+		static void thunk(void* a_movie)
+		{
+			auto& hdr = globals::features::hdrDisplay;
+			if (hdr.settings.enableHDR && !hdr.framebufferRedirected && hdr.hdrTexture && hdr.hdrTexture->rtv) {
+				const float clearColor[4]{};
+				globals::d3d::context->ClearRenderTargetView(hdr.hdrTexture->rtv.get(), clearColor);
+				hdr.movieDrawnFrame = globals::state->frameCount;
+				hdr.SetUIBuffer();
+			}
+
+			func(a_movie);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -636,6 +657,8 @@ void HDRDisplay::PostPostLoad()
 		stl::detour_thunk<HDR_MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 		stl::write_thunk_call<HDR_Main_PostProcessing>(REL::RelocationID(100430, 107148).address() + REL::Relocate(0x1F0, 0x1E7, 0x206));
 	}
+
+	stl::detour_thunk<HDR_Movie_Draw>(REL::RelocationID(87907, 90279));
 }
 
 void HDRDisplay::SetupResources()
@@ -968,6 +991,9 @@ namespace
 			if (globals::features::hdrDisplay.IsPresentSuppressed())
 				return S_OK;
 
+			if (!globals::features::upscaling.d3d12SwapChainActive)
+				globals::features::screenshotFeature.ProcessCaptureRequest();
+
 			return func(This, SyncInterval, Flags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -993,9 +1019,9 @@ namespace
 	};
 }
 
-void HDRDisplay::InstallSwapChainPresentHooks(IDXGISwapChain* swapChain)
+void HDRDisplay::InstallSwapChainPresentHooks(IDXGISwapChain* swapChain, std::uintptr_t originalPresent)
 {
-	stl::detour_vfunc<8, SwapChainPresentBottom>(swapChain);
+	stl::detour_vfunc<8, SwapChainPresentBottom>(swapChain, originalPresent);
 	stl::detour_vfunc<35, ID3D11DeviceContext_OMSetBlendState>(globals::d3d::context);
 }
 
@@ -1053,6 +1079,7 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 
 HRESULT HDRDisplay::PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags)
 {
+	globals::features::screenshotFeature.ProcessCaptureRequest();
 	return SwapChainPresentBottom::func(swapChain, syncInterval, flags);
 }
 
@@ -1532,6 +1559,7 @@ void HDRDisplay::RestoreLDRRenderTargets()
 
 void HDRDisplay::ClearShaderCache()
 {
+	patchedBlendStateCache.clear();
 	if (hdrOutputCS) {
 		hdrOutputCS->Release();
 		hdrOutputCS = nullptr;
@@ -1679,7 +1707,8 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
-	data.applyAutoHDR = applyAutoHDR ? 1.f : 0.f;
+	// Effects11 ENB presets are SDR; Jiaye SDR-only tonemappers opt in via Color Grading AutoHDR.
+	data.applyAutoHDR = (applyAutoHDR || globals::features::postProcessing.WantsAutoHDR()) ? 1.f : 0.f;
 	return data;
 }
 

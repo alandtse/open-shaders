@@ -2,6 +2,7 @@
 #define DYNAMICCUBEMAPS_HLSLI
 
 #include "Common/BRDF.hlsli"
+#include "Common/ColorManagement.hlsli"
 
 #if defined(SKYLIGHTING)
 #	include "Skylighting/Skylighting.hlsli"

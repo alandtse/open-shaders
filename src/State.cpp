@@ -2,9 +2,13 @@
 #include <algorithm>
 
 #include <codecvt>
+#include <unordered_set>
 
 #include <pystring/pystring.h>
 
+#include "BaselineManager.h"
+#include "CSEditor/SceneManager/SceneManager.h"
+#include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "Deferred.h"
 #include "EngineFixes/LODBlendRingFix.h"
 #include "EngineFixes/LandscapeSeamsFix.h"
@@ -40,8 +44,8 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/Wind/Wind.h"
 #include "Menu.h"
-#include "SceneSettingsManager.h"
-#include "SettingsOverrideManager.h"
+#include "PostProcessingMode.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
@@ -49,6 +53,7 @@
 #include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
+#include "VanillaBinding.h"
 
 #ifdef TRACY_ENABLE
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
@@ -91,11 +96,6 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_MOON)
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon);
-	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
-		// Sky binds the depth copy as its DSV, so sample main depth to avoid a read/write conflict.
-		auto* depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
-		globals::d3d::context->VSSetShaderResources(17, 1, &depthSRV);
-	}
 }
 
 void State::UpdateEffectShaderPermutation(RE::BSRenderPass* a_pass)
@@ -339,6 +339,7 @@ State::TonemapOwner State::GetTonemapOwner()
 	else
 		cachedOwner = TonemapOwner::kVanilla;
 
+	postProcessing.UpdateVanillaEffects(cachedOwner == TonemapOwner::kPostProcessing);
 	return cachedOwner;
 }
 
@@ -436,6 +437,7 @@ void State::Reset()
 	lastVertexDescriptor = 0;
 	std::memset(&permutationDataPrevious, 0xFF, sizeof(PermutationCB));
 	frameCount++;
+	tonemapOwner.reset();
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
@@ -572,14 +574,21 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	}
 	settings = defaultSettingsBaseline;
 
-	// Step 2: Apply user settings on top of defaults (user preferences)
-	if (a_configMode == ConfigMode::USER) {
-		json userSettings;
-		std::ifstream userFile(userConfigFilePath);
-		if (userFile.is_open()) {
-			try {
-				userFile >> userSettings;
-				userFile.close();
+	/** @brief Removes from edits every setting the pack data sets, and any group left empty. */
+	void RemoveSharedSettings(json& edits, const json& packData)
+	{
+		for (const auto& [key, value] : packData.items()) {
+			const auto found = edits.find(key);
+			if (found == edits.end())
+				continue;
+			if (value.is_object() && found->is_object()) {
+				RemoveSharedSettings(*found, value);
+				if (!found->empty())
+					continue;
+			}
+			edits.erase(found);
+		}
+	}
 
 				Util::Settings::OverlayRecognizedRootSettings(settings, userSettings);
 				if (const auto menu = userSettings.find("Menu"); menu != userSettings.end() && menu->is_object())
@@ -597,10 +606,17 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				logger::warn("Error parsing user config file: {}", e.what());
 				userFile.close();
 			}
-		} else {
-			logger::info("No user config file found at: {}", userConfigFilePath);
 		}
+		return diff;
 	}
+}
+
+void State::Load(bool a_allowReload)
+{
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	bool errorDetected = false;
+
+	const auto userConfigFilePath = Util::PathHelpers::GetSettingsUserPath();
 
 	// Step 3: Discover and prepare overrides (applied after user settings, so overrides take priority)
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
@@ -612,17 +628,58 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	if (overridesDiscovered > 0) {
 		logger::info("Discovered {} override files", overridesDiscovered);
 
-		// Apply global overrides to main settings
-		size_t globalOverrides = overrideManager->ApplyGlobalOverrides(settings);
-		if (globalOverrides > 0) {
-			logger::info("Applied {} global override(s)", globalOverrides);
-		}
-
-		// Apply global user overrides on top (if any)
-		if (overrideManager->LoadUserOverride("Global", settings)) {
-			logger::info("Applied global user override customizations");
+	// Step 1: The code's defaults. Captured on the first load, before any settings are applied, so later
+	// loads (Restore Saved Settings, A/B testing) don't take the user's values for defaults.
+	if (defaultSettings.is_null()) {
+		try {
+			SaveToJson(defaultSettings);
+		} catch (const std::exception& e) {
+			logger::error("Failed to capture default settings: {}", e.what());
+			defaultSettings = json::object();
 		}
 	}
+	json settings = defaultSettings;
+
+	// Step 2: Read the user's config
+	json userSettings = json::object();
+	if (auto loaded = Util::FileHelpers::ReadJsonObject(userConfigFilePath, "user config")) {
+		userSettings = std::move(*loaded);
+		logger::info("Applied user settings from: {}", userConfigFilePath.string());
+	} else {
+		logger::info("No usable user config at: {}", userConfigFilePath.string());
+	}
+
+	// Step 3: Layer each feature's settings; the user's edits win over Baseline packs
+	BaselineManager::GetSingleton()->DiscoverFiles();
+	featureBases.clear();
+	InvalidateEditsUnderBaselines();
+	userFeatureEdits.clear();
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->UsesMainSettings())
+			continue;
+		const auto name = feature->GetName();
+		json edits = json::object();
+		if (const auto found = userSettings.find(name); found != userSettings.end()) {
+			if (found->is_object())
+				edits = *found;
+			userSettings.erase(found);
+		}
+		json merged = BuildFeatureBase(feature);
+		// A value whose type changed between versions would make LoadSettings throw and lose every edit.
+		std::vector<std::string> mismatched;
+		Util::Settings::EraseMismatchedSettings(edits, merged, "", mismatched);
+		for (const auto& path : mismatched)
+			logger::warn("Dropped {} setting '{}': its saved type no longer matches", name, path);
+		featureBases[name] = merged;
+		Util::Settings::MergeSettings(merged, edits);
+		userFeatureEdits[name] = std::move(edits);
+		if (merged.empty())
+			settings.erase(name);
+		else
+			settings[name] = std::move(merged);
+	}
+	for (const auto& [key, value] : userSettings.items())
+		settings[key] = value;
 
 	try {
 		// Load core settings (Menu, Advanced, General, Replace Original Shaders)
@@ -643,7 +700,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
-					// Load base feature settings from merged config (default + user)
+					// Settings arrive already layered: defaults, Baseline packs, then the user's edits
 					feature->Load(settings);
 
 					// Apply feature-specific overrides on top (overrides take priority over user settings)
@@ -680,6 +737,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
+		// After feature settings, so they cannot overwrite the Linear Lighting a pack's pipeline turns on.
+		PostProcessingMode::ApplyReloaded();
 
 		json appliedSettings;
 		SaveToJson(appliedSettings);
@@ -709,12 +768,26 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		errorDetected = true;
 	}
 	if (errorDetected && a_allowReload)
-		Load(a_configMode, false);
+		Load(false);
 }
 
 void State::SaveToJson(nlohmann::json& settings)
 {
+	// Guard outlives the lock so its resolve-on-destruction does not run under m_mutex.
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	std::lock_guard<std::mutex> lock(m_mutex);
+	SaveCoreToJson(settings);
+
+	auto& upscaling = globals::features::upscaling;
+	auto& upscalingJson = settings[upscaling.GetShortName()];
+	upscaling.SaveSettings(upscalingJson);
+
+	for (auto* feature : Feature::GetFeatureList())
+		feature->Save(settings);
+}
+
+void State::SaveCoreToJson(json& settings)
+{
 	const auto shaderCache = globals::shaderCache;
 
 	globals::menu->Save(settings["Menu"]);
@@ -740,12 +813,9 @@ void State::SaveToJson(nlohmann::json& settings)
 	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
 	general["Language"] = I18n::GetSingleton()->GetCurrentLocale();
+	PostProcessingMode::Save(general);
 
 	settings["General"] = general;
-
-	auto& upscaling = globals::features::upscaling;
-	auto& upscalingJson = settings[upscaling.GetShortName()];
-	upscaling.SaveSettings(upscalingJson);
 
 	json originalShaders;
 	ForEachShaderTypeWithIndex([&](auto type, int classIndex) {
@@ -761,6 +831,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	settings["Favorites"] = favoriteFeatures;
 
 	settings["Version"] = Plugin::VERSION.string();
+}
 
 	// Save feature settings
 	for (auto* feature : Feature::GetFeatureList()) {
@@ -774,6 +845,8 @@ void State::SaveToJson(nlohmann::json& settings)
 
 void State::LoadFromJson(nlohmann::json& settings)
 {
+	// Guard outlives the lock so its resolve-on-destruction does not run under m_mutex.
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	std::lock_guard<std::mutex> lock(m_mutex);
 	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	const auto shaderCache = globals::shaderCache;
@@ -852,6 +925,7 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetSkipUnchangedShaders(general["Skip Unchanged Shaders"]);
 		if (general.contains("Enable Async") && general["Enable Async"].is_boolean())
 			shaderCache->SetAsync(general["Enable Async"]);
+		PostProcessingMode::Load(general);
 
 		// Load i18n locale preference
 		if (general.contains("Language") && general["Language"].is_string()) {
@@ -883,6 +957,14 @@ void State::LoadFromJson(nlohmann::json& settings)
 		});
 	}
 
+	if (settings.contains("Favorites") && settings["Favorites"].is_object()) {
+		favoriteFeatures.clear();
+		for (auto& [featureName, isFavorite] : settings["Favorites"].items()) {
+			if (isFavorite.is_boolean() && isFavorite.get<bool>())
+				favoriteFeatures[featureName] = true;
+		}
+	}
+
 	// Load feature settings (only for already-loaded features)
 	for (auto* feature : Feature::GetFeatureList()) {
 		if (feature->loaded) {
@@ -895,10 +977,16 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 {
 	std::string configPath = GetConfigPath(a_configMode);
 
+	// Serialize fully before touching the file: a throwing feature must not truncate the config.
+	json settings;
 	try {
-		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
-	} catch (const std::filesystem::filesystem_error& e) {
-		logger::warn("Error creating directory during Save ({}) : {}\n", Util::PathHelpers::GetCommunityShaderPath().string(), e.what());
+		SaveToJson(settings);
+		KeepOnlyUserEdits(settings);
+		// The catalog writes its own section whenever it changes; this keeps it from being dropped here.
+		const auto& catalog = UnifiedPresetCatalog::GetSingleton();
+		settings[UnifiedPresetCatalog::kUserSettingsKey] = catalog.SerializeActiveState();
+	} catch (const std::exception& e) {
+		logger::error("Failed to serialize settings, leaving {} untouched. Error: {}", configPath, e.what());
 		return;
 	}
 
@@ -1084,10 +1172,8 @@ std::shared_ptr<const std::vector<std::pair<std::string, std::string>>> State::G
 
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
-	if (a_type > RE::BSShader::Type::None && a_type < RE::BSShader::Type::Total) {
-		return enabledClasses[magic_enum::enum_integer(a_type) - 1];
-	}
-	return false;
+	return a_type > RE::BSShader::Type::None && a_type < RE::BSShader::Type::Total &&
+	       enabledClasses[static_cast<size_t>(a_type) - 1];
 }
 
 bool State::IsShaderEnabled(const RE::BSShader& a_shader)
@@ -1454,6 +1540,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 {
 	{
 		SharedDataCB data{};
+		SharedLighting lighting{};
 
 		const auto shaderManager = globals::game::smState;
 		const RE::NiTransform& dalcTransform = shaderManager->directionalAmbientTransform;
@@ -1496,6 +1583,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.FrameCount = frameCount * temporal;
 		data.FrameCountAlwaysActive = frameCount;
+		data.ResetHistory = ShouldResetHistory();
 
 		if (a_inWorld) {
 			for (int i = -2; i <= 2; i++) {
@@ -1575,14 +1663,14 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 				auto dir = Util::GetMoonDirection(masser);
 				data.MasserDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (masser->root && !masser->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
-					data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+					lighting.masser = getMoonColor(masser, Util::Moon::MasserBaseColor);
 			}
 
 			if (auto secunda = sky->secunda) {
 				auto dir = Util::GetMoonDirection(secunda);
 				data.SecundaDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (secunda->root && !secunda->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
-					data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
+					lighting.secunda = getMoonColor(secunda, Util::Moon::SecundaBaseColor);
 			}
 		}
 
@@ -1630,13 +1718,20 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			}
 		}
 
+		for (auto* feature : Feature::GetFeatureList())
+			if (feature->loaded)
+				feature->ModifySharedLighting(lighting);
+		data.DirLightColor = lighting.directional.GetColor();
+		data.SunColor = lighting.sun.GetColor();
+		data.MasserColor = lighting.masser.GetColor();
+		data.SecundaColor = lighting.secunda.GetColor();
+		data.TonemapOwner = static_cast<uint>(GetTonemapOwner());
 		sharedDataCB->Update(data);
 	}
 
 	UpdateFeatureData(a_inWorld);
 
-	auto* srv = Util::GetCurrentSceneDepthSRV(true);
-	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
+	VanillaBinding::BindSceneDepth();
 }
 
 void State::UpdateFeatureData(bool a_inWorld)
@@ -1648,6 +1743,19 @@ void State::UpdateFeatureData(bool a_inWorld)
 void State::ClearDisabledFeatures()
 {
 	disabledFeatures.clear();
+}
+
+/** @brief Whether a feature can never be disabled at boot. GetShortName() allocates, so the set is built once. */
+static bool IsAlwaysEnabledFeature(const std::string& featureName)
+{
+	static const auto alwaysEnabled = [] {
+		std::unordered_set<std::string> names;
+		for (auto* feature : Feature::GetFeatureList())
+			if (feature->IsAlwaysEnabled())
+				names.insert(feature->GetShortName());
+		return names;
+	}();
+	return alwaysEnabled.contains(featureName);
 }
 
 bool State::SetFeatureDisabled(const std::string& featureName, bool isDisabled)
@@ -1682,6 +1790,20 @@ bool State::IsFeatureDisabled(const std::string& featureName)
 std::unordered_map<std::string, bool>& State::GetDisabledFeatures()
 {
 	return disabledFeatures;
+}
+
+void State::SetFeatureFavorite(const std::string& featureName, bool isFavorite)
+{
+	if (isFavorite)
+		favoriteFeatures[featureName] = true;
+	else
+		favoriteFeatures.erase(featureName);  // only favorites are stored
+}
+
+bool State::IsFeatureFavorite(const std::string& featureName)
+{
+	const auto found = favoriteFeatures.find(featureName);
+	return found != favoriteFeatures.end() && found->second;
 }
 
 // --- Utility Method Implementations ---

@@ -143,6 +143,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(EASTL CONFIG REQUIRED)
 find_package(directxtk CONFIG REQUIRED)
 find_package(directxtex CONFIG REQUIRED)
+find_package(libavif 1.4.1 EXACT CONFIG REQUIRED)
 find_path(CLIB_UTIL_INCLUDE_DIRS "ClibUtil/utils.hpp")
 find_package(pystring CONFIG REQUIRED)
 find_package(cppwinrt CONFIG REQUIRED)
@@ -248,6 +249,7 @@ set_source_files_properties(
         COMPILE_OPTIONS
             "$<$<OR:$<C_COMPILER_ID:MSVC>,$<C_COMPILER_ID:Clang>>:/W0>"
 )
+target_compile_definitions(${PROJECT_NAME} PRIVATE SK_HDR_PNG_COMMUNITY_SHADERS)
 
 target_link_libraries(
     ${PROJECT_NAME}
@@ -260,6 +262,7 @@ target_link_libraries(
         EASTL
         Microsoft::DirectXTK
         Microsoft::DirectXTex
+        avif
         pystring::pystring
         unordered_dense::unordered_dense
         efsw::efsw
@@ -842,6 +845,18 @@ if(SKIP_RUNTIME_DOWNLOADS)
     endif()
 endif()
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
+
+# The rest of the Licenses folder lives in package/; these two sit at the repo root for GitHub.
+set(LICENSES_DESTINATION SKSE/Plugins/CommunityShaders/Licenses)
+set(ROOT_LICENSE_FILES
+    "${CMAKE_SOURCE_DIR}/COPYING.txt"
+    "${CMAKE_SOURCE_DIR}/EXCEPTIONS.md"
+)
+install(
+    FILES ${ROOT_LICENSE_FILES}
+    DESTINATION ${LICENSES_DESTINATION}
+    COMPONENT SKSE
+)
 if(NVPERF_SUPPORT)
     install(
         FILES "${NVPERF_DLL}"
@@ -898,6 +913,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
+    list(APPEND _AIO_PACKAGE_FILES ${CS_ICON_FONT_FILES})
+    list(APPEND _AIO_PACKAGE_FILES ${ROOT_LICENSE_FILES})
 
     # Prepare AIO by copying files only when different. This avoids updating
     # timestamps for unchanged files and prevents downstream incremental
@@ -948,6 +965,29 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Tests/")
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
+    append_copy_if_different(_prepare_aio_cmds ROOT_LICENSE_FILES "${CMAKE_SOURCE_DIR}" "${AIO_DIR}/${LICENSES_DESTINATION}")
+
+    # Icon fonts are sourced from src/Menu/Icons/glyphs (CS_ICON_FONT_FILES glob).
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        make_directory
+        "${AIO_DIR}/${CS_ICON_FONT_DST_REL}"
+    )
+    foreach(_icon_font_src IN LISTS CS_ICON_FONT_FILES)
+        get_filename_component(_icon_font_name "${_icon_font_src}" NAME)
+        list(
+            APPEND _prepare_aio_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            copy_if_different
+            "${_icon_font_src}"
+            "${AIO_DIR}/${CS_ICON_FONT_DST_REL}/${_icon_font_name}"
+        )
+    endforeach()
 
     # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
     # to avoid racing). All features copied — autoupload filter applies
@@ -1471,6 +1511,9 @@ if(ZIP_TO_DIST)
             ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/package
             "${ZIP_DIR}"
         COMMAND
+            ${CMAKE_COMMAND} -E copy ${ROOT_LICENSE_FILES}
+            "${ZIP_DIR}/${LICENSES_DESTINATION}/"
+        COMMAND
             ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}>
             "${ZIP_DIR}/SKSE/Plugins/"
         COMMAND
@@ -1673,12 +1716,10 @@ file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
 
 set(CORE_PACKAGE "${DIST_PATH}/${PROJECT_NAME}-${UTC_NOW}.7z")
 
-# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll
-file(
-    GLOB_RECURSE CORE_SOURCES
-    CONFIGURE_DEPENDS
-    "${CMAKE_SOURCE_DIR}/package/*"
-)
+# CORE_SOURCES = all content copied to the AIO directory + the SKSE plugin dll.
+# No CONFIGURE_DEPENDS: packaging runs from a fresh CI configure, and omitting
+# it keeps these globs out of the VS generator's per-build VerifyGlobs walk.
+file(GLOB_RECURSE CORE_SOURCES "${CMAKE_SOURCE_DIR}/package/*")
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
 list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>")
@@ -1700,8 +1741,8 @@ add_custom_command(
     OUTPUT ${CORE_PACKAGE}
     DEPENDS ${CORE_SOURCES}
     COMMAND
-        ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${FEATURE_PATH}
-        --component SKSE
+        ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG>
+        --prefix ${FEATURE_PATH} --component SKSE
     COMMAND
         ${CMAKE_COMMAND} -E copy_directory ${CORE_FEATURE_PATHS} ${FEATURE_PATH}
     COMMAND ${CMAKE_COMMAND} -E rm -f -- ${FEATURE_PATH}/Core
@@ -1749,13 +1790,24 @@ foreach(FEATURE_PATH ${FEATURE_PATHS})
 endforeach()
 
 # AIO Folder target
-add_custom_command(
-    OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
-    DEPENDS ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
-    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --prefix ${AIO_DIR}
-    COMMENT "Installing to AIO folder"
-)
-add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+# When the incremental AIO system (PREPARE_AIO) is active, reuse it instead
+# of running a full cmake --install (which does REMOVE_RECURSE + full copy).
+if(TARGET PREPARE_AIO)
+    add_custom_target(
+        "AIO"
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp copy_shaders.stamp
+    )
+else()
+    add_custom_command(
+        OUTPUT ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll
+        DEPENDS ${PROJECT_NAME} ${CORE_SOURCES} ${FFX_RUNTIME_FILES}
+        COMMAND
+            ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG>
+            --prefix ${AIO_DIR}
+        COMMENT "Installing to AIO folder"
+    )
+    add_custom_target("AIO" DEPENDS ${AIO_DIR}/SKSE/Plugins/${PROJECT_NAME}.dll)
+endif()
 
 # Manual AIO package target. Strips non-autoupload features at archive
 # time (mirroring AIO_ZIP_PACKAGE) so the manual path produces the same

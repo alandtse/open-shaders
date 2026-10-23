@@ -9,6 +9,7 @@ Texture2D<float4> NormalTexture : register(t4);
 SamplerState PointSampler : register(s0);
 
 #include "Common/Color.hlsli"
+#include "Common/ColorManagement.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
 #include "SubsurfaceScattering/SSSCommon.hlsli"

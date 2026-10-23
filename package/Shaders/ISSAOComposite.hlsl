@@ -1,4 +1,4 @@
-#include "Common/Color.hlsli"
+#include "Common/ColorManagement.hlsli"
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Permutation.hlsli"
@@ -174,9 +174,10 @@ PS_OUTPUT main(PS_INPUT input)
 	if (EyePosition.w != 0 && 1e-5 < snowMask) {
 		ao = min(1, SparklesParameters3.x + ao);
 	}
-	composedColor.xyz = Color::IrradianceToLinear(composedColor.xyz);
-	composedColor.xyz *= Color::IrradianceToLinear(ao);
-	composedColor.xyz = Color::IrradianceToGamma(composedColor.xyz);
+	composedColor.xyz *= ao;
+#		if !defined(ENABLE_LL)
+	composedColor.xyz = abs(composedColor.xyz);
+#		endif
 #	endif
 
 	float nativeDepth = depthTex.SampleLevel(depthSampler, screenPosition, 0).x;
@@ -187,7 +188,8 @@ PS_OUTPUT main(PS_INPUT input)
 #	if defined(APPLY_FOG)
 	float fogDistanceFactor = (2 * CameraNearFar.x * CameraNearFar.y) / ((CameraNearFar.y + CameraNearFar.x) - (2 * (1.01 * depth - 0.01) - 1) * (CameraNearFar.y - CameraNearFar.x));
 	float fogFactor = min(FogParam.w, pow(saturate(fogDistanceFactor * FogParam.y - FogParam.x), FogParam.z));
-	float3 fogColor = Color::Fog(lerp(FogNearColor.xyz, FogFarColor.xyz, fogFactor));
+	// The engine writes these constants straight into the buffer, bypassing any C++ conversion hook.
+	float3 fogColor = lerp(ColorManagement::SRGBToWorking(FogNearColor.xyz), ColorManagement::SRGBToWorking(FogFarColor.xyz), fogFactor);
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);

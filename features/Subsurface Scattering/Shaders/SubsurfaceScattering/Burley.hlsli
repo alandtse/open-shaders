@@ -1,3 +1,4 @@
+#include "Common/ColorManagement.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Game.hlsli"
 #include "Common/Math.hlsli"
@@ -80,6 +81,8 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 	float3 colorSum = 0.0f;
 
 	float2 uvScale = (GAME_UNIT_TO_CM * 0.1f * (0.5f / tan(0.5 * radians(SSSS_FOVY)))) / centerDepth;  // Scale in mm
+	uvScale *= FrameBuffer::DynamicResolutionParams1.xy;
+	float2 texCoordNonDR = FrameBuffer::GetDynamicResolutionUnadjustedScreenPosition(texCoord);
 
 	// center sample weight
 	float centerRadius = 0.5f * (SharedData::BufferDim.z / uvScale.x + SharedData::BufferDim.w / uvScale.y);
@@ -107,10 +110,9 @@ float4 BurleyNormalizedSS(uint2 DTid, float2 texCoord, uint eyeIndex, float sssA
 		uvOffset.y *= sin(theta);
 
 		float2 sampleUV = texCoord + uvOffset;
-		// Keep the diffusion sample inside this eye's SBS half (VR); saturate also bounds Y
-		// for the integer texel index. Flat builds clamp X to [0,1] (no seam).
-		float2 clampedUV = saturate(Stereo::ClampToEyeUV(sampleUV, eyeIndex));
-		uint2 samplePixcoord = uint2(clampedUV * SharedData::BufferDim.xy);
+		// Keep diffusion samples inside this eye and the dynamic-resolution render region.
+		float2 clampedUV = FrameBuffer::ClampDynamicResolutionAdjustedScreenPosition(sampleUV, texCoordNonDR);
+		uint2 samplePixcoord = (uint2)Stereo::ClampToEyeBounds(int2(clampedUV * SharedData::BufferDim.xy), eyeIndex, max(1.0, SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy));
 		float maskSample = MaskTexture[samplePixcoord].x;
 		bool mask = maskSample > 1e-5f;
 

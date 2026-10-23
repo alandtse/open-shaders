@@ -23,6 +23,9 @@ using json = nlohmann::json;
 #include "Features/Wind/WindField.h"
 #include <Hooks.h>
 #include <mutex>
+#include <unordered_map>
+
+struct Feature;
 
 class State
 {
@@ -56,6 +59,8 @@ public:
 
 	bool updateShader = true;
 	bool settingCustomShader = false;
+	RE::BSGraphics::VertexShader* customVertexShader = nullptr;
+	RE::BSGraphics::PixelShader* customPixelShader = nullptr;
 	RE::BSShader* currentShader = nullptr;
 	std::string adapterDescription = "";
 
@@ -83,14 +88,6 @@ public:
 	bool frameTimingActive = false;
 	// Member-variable lifetime: must open with GpuPassSpan::Spanning, not Scoped.
 	std::optional<ScopedGpuPass> grassGpuPass;
-
-	enum ConfigMode
-	{
-		DEFAULT,
-		USER,
-		TEST,
-		THEME
-	};
 
 	/** @brief Per-draw-call hook: updates feature state, constant buffers, and overlay. */
 	void Draw();
@@ -120,11 +117,13 @@ public:
 	void SetOutputRenderTarget(RE::RENDER_TARGET a_output);
 
 	/**
-	 * @brief Loads settings from disk (default, then user, then overrides).
-	 * @param a_configMode Which config file to load.
+	 * @brief Loads settings: the code's defaults, then enabled Baseline packs, then the user's edits
+	 *        from SettingsUser.json.
 	 * @param a_allowReload If true, retries once after a parse error.
 	 */
-	void Load(ConfigMode a_configMode = ConfigMode::USER, bool a_allowReload = true);
+	void Load(bool a_allowReload = true);
+	/** @brief Writes the user's edits and the core settings to SettingsUser.json. */
+	void Save();
 	/**
 	 * @brief Persists current settings to the config file for the given mode.
 	 * @param a_configMode Which config file to write.
@@ -150,6 +149,74 @@ public:
 	 * @param i_json Input JSON object to read from.
 	 */
 	void LoadFromJson(nlohmann::json& i_json);
+
+	/**
+	 * @brief Recombines defaults and the enabled Baseline packs under every loaded feature, keeping the
+	 *        user's edits on top. Call after the set of Baseline packs, or their files, changes.
+	 */
+	void ReapplySettingsLayers();
+
+	/**
+	 * @brief Clears the user's edits to one feature, so it shows what defaults and Baseline packs give it.
+	 * @param feature A loaded feature.
+	 */
+	void RestoreFeatureLayers(Feature* feature);
+
+	/** @brief Loaded features whose user edits change settings a Baseline pack also sets. */
+	std::vector<Feature*> FindEditsUnderPack(const std::string& packId);
+
+	/** @brief Drops the user's edits to every setting a Baseline pack sets, so the pack shows as authored. */
+	void ClearEditsUnderPack(const std::string& packId);
+
+	/**
+	 * @brief Whether the user's edits to a feature override settings an enabled Baseline pack sets.
+	 * @details Cached per feature; InvalidateEditsUnderBaselines marks the answer stale after an edit.
+	 */
+	bool HasEditsUnderBaselines(Feature* feature);
+
+	/** @brief Forgets the cached HasEditsUnderBaselines answer for one feature, or every feature when null. */
+	void InvalidateEditsUnderBaselines(Feature* feature = nullptr);
+
+	/** @brief Drops the user's edits to every setting an enabled Baseline pack sets on one feature. */
+	void ClearFeatureEditsUnderBaselines(Feature* feature);
+
+	/** @brief Notes that feature settings were edited, so the main menu's Save shows them as unsaved. */
+	void MarkSettingsChanged() { settingsChanged = true; }
+
+	/**
+	 * @brief Marks the settings changed if a feature's settings now differ from what was last saved or
+	 *        loaded. For actions ImGui does not flag as edits, such as a button that resets or applies a preset.
+	 */
+	void CheckFeatureSettingsChanged(Feature* feature);
+
+	/** @brief Re-checks the sections that are not feature settings (Menu, General, ...) against the last save or
+	 *  load. Cheap enough to call on any frame the main menu edited something. */
+	void CheckCoreSettingsChanged();
+
+	/**
+	 * @brief A feature's settings in the layers beneath the user's edits: defaults with the enabled Baseline packs applied.
+	 * @param featureName The feature's GetName().
+	 * @return Null when the feature has no settings layers.
+	 */
+	const nlohmann::json* GetFeatureBase(const std::string& featureName) const
+	{
+		const auto found = featureBases.find(featureName);
+		return found != featureBases.end() ? &found->second : nullptr;
+	}
+
+	/**
+	 * @brief A feature's code defaults, captured on the first load before any settings layer applies.
+	 * @param featureName The feature's GetName().
+	 * @return Null before the first load or when the feature has no settings.
+	 */
+	const nlohmann::json* GetFeatureDefaults(const std::string& featureName) const
+	{
+		const auto found = defaultSettings.find(featureName);
+		return found != defaultSettings.end() && found->is_object() ? &*found : nullptr;
+	}
+
+	/** @brief True when the user config has changes not yet saved. */
+	bool HasUnsavedChanges() const { return settingsChanged || coreSettingsChanged; }
 
 	/** @brief Loads the active theme preset from the menu settings. */
 	void LoadTheme();
@@ -358,8 +425,9 @@ public:
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
-		IsAurora = 1 << 7,
-		IsMoon = 1 << 8,
+		IsAurora = 1 << 10,
+		IsMoon = 1 << 11,
+		ProjectedTextureIsSRGB = 1 << 12,
 		NoSkyScattering = 1 << 9,  ///< Cloud layer drawn without Effects11 cloud scattering
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
@@ -501,7 +569,8 @@ public:
 
 		bool operator==(const PermutationCB& other) const
 		{
-			return VertexShaderDescriptor == other.VertexShaderDescriptor && PixelShaderDescriptor == other.PixelShaderDescriptor &&
+			return VertexShaderDescriptor == other.VertexShaderDescriptor &&
+			       PixelShaderDescriptor == other.PixelShaderDescriptor &&
 			       ExtraShaderDescriptor == other.ExtraShaderDescriptor &&
 			       ExtraFeatureDescriptor == other.ExtraFeatureDescriptor && EffectRadius == other.EffectRadius &&
 			       WindIntensityOverride == other.WindIntensityOverride &&
@@ -618,6 +687,9 @@ public:
 	PermutationCB permutationDataPrevious{};
 
 	Util::FrameChecker frameChecker;
+	void RequestHistoryReset() { historyResetFrame = frameCount + 1u; }
+	bool ShouldResetHistory() const { return frameCount == historyResetFrame; }
+
 	uint frameCount = 0;
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
@@ -634,6 +706,8 @@ public:
 	bool SetFeatureDisabled(const std::string& featureName, bool isDisabled);
 	bool IsFeatureDisabled(const std::string& featureName);
 	std::unordered_map<std::string, bool>& GetDisabledFeatures();
+	void SetFeatureFavorite(const std::string& featureName, bool isFavorite);
+	bool IsFeatureFavorite(const std::string& featureName);
 
 	bool useFrameAnnotations = false;
 
@@ -691,6 +765,7 @@ public:
 	}
 
 	std::unordered_map<std::string, bool> disabledFeatures;
+	std::unordered_map<std::string, bool> favoriteFeatures;
 	std::mutex m_mutex;
 
 	inline ~State()

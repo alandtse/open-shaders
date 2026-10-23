@@ -6,6 +6,7 @@
 #include "Fonts.h"
 #include "I18n/I18n.h"
 #include "IconsFontAwesome5.h"
+#include "IconsTabler.h"
 
 #include <algorithm>
 #include <array>

@@ -21,7 +21,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include "IconsFontAwesome5.h"
+#include "IconsTabler.h"
+#include "Menu/Icons/helpers/IconFonts.h"
 
 #define I18N_KEY_PREFIX "feature.post_processing.color_grading."
 
@@ -309,8 +310,9 @@ void drawHDRStatus()
 {
 	auto& hdr = globals::features::hdrDisplay;
 	if (hdr.loaded && hdr.settings.enableHDR) {
-		auto hdrOutputActive = std::format("{} {}", ICON_FA_CHECK, T("feature.post_processing.color_grading.hdr_output_active", "HDR Output Active"));
-		ImGui::TextColored(Util::Colors::GetSuccess(), "%s", hdrOutputActive.c_str());
+		Icons::Text(Icons::TI(ICON_TI_CHECK));
+		ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T("feature.post_processing.color_grading.hdr_output_active", "HDR Output Active"));
 		ImGui::Text(T("feature.post_processing.color_grading.paper_white_nits_from_hdr_settings", "Paper White: %.0f nits (from HDR settings)"), static_cast<float>(hdr.settings.hdrPaperWhite));
 		ImGui::Text(T("feature.post_processing.color_grading.peak_brightness_nits_from_hdr_settings", "Peak Brightness: %.0f nits (from HDR settings)"), static_cast<float>(hdr.settings.hdrPeakNits));
 	} else {

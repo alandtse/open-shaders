@@ -1,6 +1,10 @@
-#include "Common/Color.hlsli"
+// SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
+// Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
+
+#include "Common/ColorManagement.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
+#include "Common/GrassInstance.hlsli"
 #include "Common/GrassWind.hlsli"
 #include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
@@ -38,7 +42,7 @@ struct VS_INPUT
 };
 #endif
 
-// Both paths use upstream's vertex inputs. Only outputs consumed by this pass are interpolated.
+// Both draw paths share the engine vertex layout and interpolate only the outputs needed by this pass.
 struct VS_OUTPUT
 {
 	float4 HPosition: SV_POSITION0;
@@ -126,18 +130,26 @@ cbuffer PerGeometry : register(b2)
 #	endif  // GRASS_COLLISION
 
 #	ifdef GRASS_OPTIMIZATIONS
-// Six float4s per instance: origin/flags, flutter/fade/LOD, two wind responses, two collision samples.
-StructuredBuffer<float4> InstanceExtras : register(t2);
+ByteAddressBuffer InstanceRecords : register(t2);
+ByteAddressBuffer GrassInstances : register(t3);
+StructuredBuffer<GrassInstance::CullGroup> GrassGroups : register(t4);
+StructuredBuffer<float> GrassTextureNormalLength : register(t5);
 
-// EyeSlotBase must be added to instanceID manually: StartInstanceLocation advances the per-instance
-// vertex stream but not SV_InstanceID, so InstanceExtras (an SRV, not a vertex stream) needs it explicit.
-cbuffer GrassOptimizationsEyeCB : register(b7)
+cbuffer GrassBucket : register(b10)
+{
+	uint GrassBucketGroupCount : packoffset(c0.x);
+	uint GrassOutputOffset : packoffset(c1.y);
+	float GrassComplexThreshold : packoffset(c3.z);
+};
+
+cbuffer GrassOptimizationsEyeCB : register(b9)
 {
 	uint CurrentEyeIndex;
 	uint EyeSlotBase;
 	float2 _padEye;
 }
-#	else
+#	endif
+
 cbuffer cb7 : register(b7)
 {
 	float4 cb7[1];
@@ -147,7 +159,6 @@ cbuffer cb8 : register(b8)
 {
 	float4 cb8[240];
 }
-#	endif
 
 float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight, float bladeReach,
 	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
@@ -197,101 +208,10 @@ float4 GetMSPosition(VS_INPUT input)
 	return msPosition;
 }
 
-#	ifdef GRASS_OPTIMIZATIONS
-// Captured instances retain upstream's vertex input layout.
-VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
+// Engine draws use the instance stream and PerGeometry transforms, including grass not yet resident in a bucket.
+VS_OUTPUT VanillaVertex(VS_INPUT input)
 {
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
-
-	const uint extrasSlot = instanceID + EyeSlotBase;
-	const float4 e0 = InstanceExtras[extrasSlot * 6 + 0];
-	const float4 e1 = InstanceExtras[extrasSlot * 6 + 1];
-	vsout.IsComplex = e0.w;
-	vsout.TexCoord = input.TexCoord.xy;
-
-	// e1.w packs 4.0 per LOD tier and 2.0 = far.
-	const float lodTier = floor(e1.w * 0.25);
-	const float packedFlags = e1.w - 4.0 * lodTier;
-	const float isFarFlag = (packedFlags >= 2.0) ? 1.0 : 0.0;
-
-#		ifdef GRASS_LIGHTING
-	float3x3 world3x3 = float3x3(input.InstanceData2.xyz, input.InstanceData3.xyz, float3(input.InstanceData4.x, input.InstanceData2.w, input.InstanceData3.w));
-	float4 msPosition = GetMSPosition(input, world3x3);
-#		else
-	float4 msPosition = GetMSPosition(input);
-#		endif
-	msPosition.xyz += e0.xyz;
-
-	const float3 instanceRoot = input.InstanceData1.xyz + e0.xyz;
-	const float bladeReach = length(msPosition.xyz - instanceRoot);
-	float3 bendAxis, previousBendAxis;
-	float bendAngle, previousBendAngle;
-	float4 previousMsPosition = msPosition;
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
-		InstanceExtras[extrasSlot * 6 + 2], e1.x, bendAxis, bendAngle);
-#		if !defined(RENDER_DEPTH)
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
-		InstanceExtras[extrasSlot * 6 + 3], e1.y, previousBendAxis, previousBendAngle);
-#		endif
-
-#		ifdef GRASS_COLLISION
-	float3 collisionBendAxis;
-	float collisionBendAngle;
-	float3 displacement, previousDisplacement;
-	GrassCollision::ApplySampledDeformation(
-		input, msPosition.xyz, previousMsPosition.xyz, instanceRoot,
-		InstanceExtras[extrasSlot * 6 + 4], InstanceExtras[extrasSlot * 6 + 5],
-		Math::IdentityMatrix, Math::IdentityMatrix,
-		displacement, previousDisplacement, collisionBendAxis, collisionBendAngle);
-	msPosition.xyz += displacement;
-#			if !defined(RENDER_DEPTH)
-	previousMsPosition.xyz += previousDisplacement;
-#			endif
-#		endif
-
-	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
-	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[CurrentEyeIndex], float4(eyeRel, 1.0));
-#		if !defined(VR)
-	vsout.HPosition = projSpacePosition;
-#		endif  // !VR
-
-#		if defined(RENDER_DEPTH)
-	vsout.Fade = e1.z;
-#		else
-	vsout.Color = float4(input.InstanceData1.www * input.Color.xyz, e1.z);
-#			ifndef GRASS_LIGHTING
-	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
-	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
-#			endif
-	vsout.WorldPosition = eyeRel;
-	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[CurrentEyeIndex].xyz;
-	vsout.IsFar = isFarFlag;
-	vsout.LodTier = lodTier;
-#			ifdef GRASS_LIGHTING
-	vsout.VertexNormal.xyz = GrassWind::RotateVector(
-		mul(world3x3, input.Normal.xyz * 2.0 - 1.0), bendAxis, bendAngle);
-#				ifdef GRASS_COLLISION
-	vsout.VertexNormal.xyz = GrassWind::RotateVector(
-		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
-#				endif
-	vsout.VertexNormal.w = input.Color.w;
-#			endif
-#		endif
-
-#		if defined(VR)
-	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, CurrentEyeIndex);
-	vsout.HPosition = VRout.VRPosition;
-	vsout.ClipDistance.x = VRout.ClipDistance;
-	vsout.CullDistance.x = VRout.CullDistance;
-#		endif  // VR
-
-	return vsout;
-}
-#	else  // GRASS_OPTIMIZATIONS
-
-VS_OUTPUT main(VS_INPUT input)
-{
-	VS_OUTPUT vsout;
 
 	uint eyeIndex = Stereo::GetEyeIndexVS(
 #		if defined(VR)
@@ -339,7 +259,11 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif  // !VR
 	vsout.TexCoord = input.TexCoord.xy;
 
+#		ifdef GRASS_OPTIMIZATIONS
+	float perInstanceFade = 1.0;
+#		else
 	float perInstanceFade = dot(cb8[(asuint(cb7[0].x) >> 2)].xyzw, Math::IdentityMatrix[(asint(cb7[0].x) & 3)].xyzw);
+#		endif
 #		if defined(VR)
 	float distanceFade = 1 - saturate((length(mul(World[0], msPosition).xyz) - AlphaParam1) / AlphaParam2);
 #		else
@@ -347,7 +271,9 @@ VS_OUTPUT main(VS_INPUT input)
 #		endif
 
 #		if defined(RENDER_DEPTH)
+#		ifndef GRASS_OPTIMIZATIONS
 	vsout.Depth = projSpacePosition.zw;
+#		endif
 	vsout.Fade = distanceFade * perInstanceFade;
 #		else
 	vsout.Color = float4(input.InstanceData1.www * input.Color.xyz, distanceFade * perInstanceFade);
@@ -367,7 +293,9 @@ VS_OUTPUT main(VS_INPUT input)
 #			else
 	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
 	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
+#		ifndef GRASS_OPTIMIZATIONS
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
+#		endif
 #			endif
 #		endif
 
@@ -378,7 +306,112 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.CullDistance.x = VRout.CullDistance;
 #		endif  // VR
 
+#	ifdef GRASS_OPTIMIZATIONS
+	vsout.IsComplex = -1.0;
+#	endif
 	return vsout;
+}
+
+#	ifdef GRASS_OPTIMIZATIONS
+// Captured instances retain upstream's vertex input layout.
+VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
+{
+	[branch] if (GrassBucketGroupCount == GrassInstance::VanillaDrawMarker) return VanillaVertex(input);
+
+	VS_OUTPUT vsout = (VS_OUTPUT)0;
+
+	const uint recordOffset = (GrassOutputOffset + EyeSlotBase + instanceID) * GrassInstance::RecordStride;
+	const uint4 record = InstanceRecords.Load4(recordOffset);
+	GrassInstance::Decode(GrassInstances.Load4(record.x * GrassInstance::Stride), input.InstanceData1, input.InstanceData2, input.InstanceData3, input.InstanceData4);
+	uint groupIndex, flags;
+	float fade;
+	GrassInstance::UnpackRecord(record.y, groupIndex, fade, flags);
+	const float2 flutter = asfloat(record.zw);
+	const float3 origin = GrassGroups[groupIndex].Origin;
+	const float normalLength = GrassTextureNormalLength[0];
+	vsout.IsComplex = normalLength > 0.0 ? (float)(abs(normalLength - 1.0) < GrassComplexThreshold) : -1.0;
+	vsout.TexCoord = input.TexCoord.xy;
+	const float lodTier = (float)(flags >> GrassInstance::FlagTierShift);
+	const float isFarFlag = (flags & GrassInstance::FlagSimpleShading) ? 1.0 : 0.0;
+
+#		ifdef GRASS_LIGHTING
+	float3x3 world3x3 = float3x3(input.InstanceData2.xyz, input.InstanceData3.xyz, float3(input.InstanceData4.x, input.InstanceData2.w, input.InstanceData3.w));
+	float4 msPosition = GetMSPosition(input, world3x3);
+#		else
+	float4 msPosition = GetMSPosition(input);
+#		endif
+	msPosition.xyz += origin;
+
+	const float3 instanceRoot = input.InstanceData1.xyz + origin;
+	const float bladeReach = length(msPosition.xyz - instanceRoot);
+	float3 bendAxis, previousBendAxis;
+	float bendAngle, previousBendAngle;
+	float4 previousMsPosition = msPosition;
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
+		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::CurrentWindOffset)), flutter.x, bendAxis, bendAngle);
+#		if !defined(RENDER_DEPTH)
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
+		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::PreviousWindOffset)), flutter.y, previousBendAxis, previousBendAngle);
+#		endif
+
+#		ifdef GRASS_COLLISION
+	float3 collisionBendAxis;
+	float collisionBendAngle;
+	float3 displacement, previousDisplacement;
+	GrassCollision::ApplySampledDeformation(
+		input, msPosition.xyz, previousMsPosition.xyz, instanceRoot,
+		asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::CurrentCollisionOffset)), asfloat(InstanceRecords.Load4(recordOffset + GrassInstance::PreviousCollisionOffset)),
+		Math::IdentityMatrix, Math::IdentityMatrix,
+		displacement, previousDisplacement, collisionBendAxis, collisionBendAngle);
+	msPosition.xyz += displacement;
+#			if !defined(RENDER_DEPTH)
+	previousMsPosition.xyz += previousDisplacement;
+#			endif
+#		endif
+
+	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[CurrentEyeIndex], float4(eyeRel, 1.0));
+#		if !defined(VR)
+	vsout.HPosition = projSpacePosition;
+#		endif  // !VR
+
+#		if defined(RENDER_DEPTH)
+	vsout.Fade = fade;
+#		else
+	vsout.Color = float4(input.InstanceData1.www * input.Color.xyz, fade);
+#			ifndef GRASS_LIGHTING
+	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
+	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
+#			endif
+	vsout.WorldPosition = eyeRel;
+	vsout.PreviousWorldPosition = previousMsPosition.xyz - FrameBuffer::CameraPreviousPosAdjust[CurrentEyeIndex].xyz;
+	vsout.IsFar = isFarFlag;
+	vsout.LodTier = lodTier;
+#			ifdef GRASS_LIGHTING
+	vsout.VertexNormal.xyz = GrassWind::RotateVector(
+		mul(world3x3, input.Normal.xyz * 2.0 - 1.0), bendAxis, bendAngle);
+#				ifdef GRASS_COLLISION
+	vsout.VertexNormal.xyz = GrassWind::RotateVector(
+		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
+#				endif
+	vsout.VertexNormal.w = input.Color.w;
+#			endif
+#		endif
+
+#		if defined(VR)
+	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, CurrentEyeIndex);
+	vsout.HPosition = VRout.VRPosition;
+	vsout.ClipDistance.x = VRout.ClipDistance;
+	vsout.CullDistance.x = VRout.CullDistance;
+#		endif  // VR
+
+	return vsout;
+}
+#	else  // GRASS_OPTIMIZATIONS
+
+VS_OUTPUT main(VS_INPUT input)
+{
+	return VanillaVertex(input);
 }
 
 #	endif  // GRASS_OPTIMIZATIONS
@@ -486,6 +519,10 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "IBL/IBL.hlsli"
 #	endif
 
+#	if defined(WATER_EFFECTS)
+#		include "WaterEffects/WaterCaustics.hlsli"
+#	endif
+
 #	if defined(EXP_HEIGHT_FOG)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
@@ -514,7 +551,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout = (PS_OUTPUT)0;
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
-	baseColor.xyz = Color::Diffuse(baseColor.xyz);
+	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz, true));
 
 #			if defined(RENDER_DEPTH)
 	float diffuseAlpha = input.Fade * baseColor.w;
@@ -587,7 +624,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	[branch] if (pbrDetail && (PBRFlags & PBR::Flags::HasFeatureTexture0) != 0)
 	{
 		float4 subsurface = TexSubsurfaceSampler.Sample(SampSubsurfaceSampler, input.TexCoord.xy);
-		material.SubsurfaceColor *= Color::Diffuse(subsurface.xyz);
+		material.SubsurfaceColor *= Color::Albedo(Color::LinearSRGBToWorking(subsurface.xyz));
 		material.Thickness *= subsurface.w;
 	}
 
@@ -602,6 +639,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
+#				if defined(WATER_EFFECTS)
+	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
+#				endif
 
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
 	float dirDetailedShadow = 1.0;
@@ -626,6 +666,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float skylightingShadowVisibility = 1.0;
 #				if defined(SKYLIGHTING)
 	sh2 skylightingSH = Skylighting::Sample(input.WorldPosition.xyz, normal, skylightingShadowVisibility);
+	if (!SharedData::InInterior)
+		dirSoftShadow = skylightingShadowVisibility;
 #				endif
 	dirDetailedShadow *= screenSpaceShadows.x;
 	dirSoftShadow *= dot(normal, SharedData::DirLightDirection.xyz) >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
@@ -742,15 +784,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 #			ifdef GRASS_OPTIMIZATIONS
 	bool complex = input.IsComplex > 0.5;
+	[branch] if (input.IsComplex < 0.0)
 #			else
-	float x;
-	float y;
-	TexBaseSampler.GetDimensions(x, y);
-
-	float3 complexTest = TexBaseSampler.Load(int3(0, int(y) - 1, 0)).xyz * 2.0 - 1.0;
-	float complexLength = length(complexTest);
-	bool complex = abs(complexLength - 1.0) < SharedData::grassLightingSettings.ComplexGrassThreshold;
+	bool complex;
 #			endif
+	{
+		float x, y;
+		TexBaseSampler.GetDimensions(x, y);
+		const float3 complexTest = TexBaseSampler.Load(int3(0, (int)y - 1, 0)).xyz * 2.0 - 1.0;
+		complex = abs(length(complexTest) - 1.0) < SharedData::grassLightingSettings.ComplexGrassThreshold;
+	}
 
 #			if defined(RENDER_DEPTH)
 	// Alpha is the only texture channel needed here; select the atlas half without a sample branch.
@@ -782,7 +825,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #				endif
 
-	baseColor.xyz = Color::Diffuse(baseColor.xyz);
+	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz));
 
 	if (SharedData::lodBlendingSettings.DisableTerrainVertexColors)
 		input.Color.xyz = 1;
@@ -842,8 +885,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	baseColor.xyz *= lerp(1.0, lodBrightness, saturate(input.LodTier));
 #				endif
 
-	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
-	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
+	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz);
 	float3 dirLightColorMultiplier = 1;
 
 #				if defined(EXP_HEIGHT_FOG)
@@ -859,6 +901,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
+#				if defined(WATER_EFFECTS)
+	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
+#				endif
 
 	float dirDetailedShadow = 1.0;
 	float grassDirectionalShadowScale = 1.0;
@@ -874,7 +919,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		grassDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, directionalCoverage);
 #				endif
 	}
-	float dirTransmissionShadow = dirDetailedShadow;
+	float dirTransmissionShadow = 1.0;
+	float dirTransmissionShadowMask = dirDetailedShadow;
 
 #				if defined(SCREEN_SPACE_SHADOWS)
 #					ifdef GRASS_OPTIMIZATIONS
@@ -908,8 +954,6 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		// Original Standard Model
 		lightsDiffuseColor += dirLightColor * dirDetailedShadow * saturate(dirNdotL) * Color::VanillaNormalization();
 	}
-	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
-		lightsDiffuseColor += dirLightColor * dirTransmissionShadow * grassDirectionalShadowScale * GetFoliageTransmission(dirNdotL, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 
 	float3 vertexColor = Color::AuthoredColor(input.Color.xyz);
 	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
@@ -927,6 +971,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 	);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
+#					if defined(SKYLIGHTING_SHADOW_VIS)
+	if (!SharedData::InInterior)
+		dirTransmissionShadowMask = skylightingShadowVisibility;
+#					endif
 #				endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
@@ -943,9 +991,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
-	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
+	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow * dirTransmissionShadowMask *
 	                              GrassLighting::GetTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
-	                              Color::VanillaNormalization();
+	                              Color::BRDFScale;
 
 #				ifdef GRASS_OPTIMIZATIONS
 	if (complexDetail)
@@ -1013,9 +1061,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float VdotL = dot(viewDirection, normalizedLightDirection);
 				transmissionRadiance += lightColor *
 				                        GrassLighting::GetTransmissionFactor(NdotL, VdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
-				                        Color::VanillaNormalization();
+				                        Color::BRDFScale;
 
-				lightsDiffuseColor += lightDiffuseColor * Color::VanillaNormalization();
+				lightsDiffuseColor += lightDiffuseColor * Color::BRDFScale;
 
 #					ifdef GRASS_OPTIMIZATIONS
 				if (complexDetail)
@@ -1120,6 +1168,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.PS.w = diffuseAlpha;
 #		else
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
+	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz));
 #			if defined(DO_ALPHA_TEST)
 	const float diffuseAlpha = input.Color.w * baseColor.w;
 	if ((diffuseAlpha - AlphaTestRefRS) < 0)
@@ -1148,6 +1197,9 @@ PS_OUTPUT main(PS_INPUT input)
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
+#				if defined(WATER_EFFECTS)
+	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
+#				endif
 
 	float dirDetailedShadow = 1.0;
 	float nativeContactWeight = 1.0;
@@ -1242,7 +1294,7 @@ PS_OUTPUT main(PS_INPUT input)
 	sh2 skylightingSH = Skylighting::Sample(positionMSSkylight, normal
 #				if defined(SKYLIGHTING_SHADOW_VIS)
 		,
-		skylightingShadowVisibility
+		skylightingShadowVisibility, false
 #				endif
 	);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);

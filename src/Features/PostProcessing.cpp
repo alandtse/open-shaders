@@ -4,7 +4,7 @@
 #include "LinearLighting.h"
 #include "PostProcessing/RasterPass.h"
 
-#include "IconsFontAwesome5.h"
+#include "IconsTabler.h"
 #include "imgui_stdlib.h"
 
 #include "Globals.h"
@@ -23,6 +23,35 @@
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PostProcessing::Settings,
 	DisableVanillaTonemapping)
+
+namespace
+{
+	bool skipVanillaDoF = false;
+	bool skipVanillaBloom = false;
+	std::optional<bool> savedVanillaLensFlare;
+
+	struct VanillaDoF_IsActive
+	{
+		static bool thunk(RE::ImageSpaceEffectDepthOfField* effect)
+		{
+			return !skipVanillaDoF && func(effect);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct VanillaBlur_Render
+	{
+		static void thunk(RE::ImageSpaceEffect* effect, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
+		{
+			if (skipVanillaBloom &&
+				effect->effectTextures.capacity() > 0 && effect->effectTextures[0] &&
+				effect->effectTextures[0]->renderTarget == RE::RENDER_TARGETS::kHDR_BLOOM)
+				return;
+			func(effect, shape, param);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+}
 
 namespace
 {
@@ -156,7 +185,7 @@ void PostProcessing::DrawSettings()
 				ImGui::PushID(feat->GetType().c_str());
 				drawEnabled("##Enabled", *feat);
 				ImGui::SameLine();
-				if (PostProcessingUI::IconButton(ICON_FA_BARS)) {
+				if (PostProcessingUI::IconButton(ICON_TI_MENU_2)) {
 					activePipelineFeature = i;
 					activeSettingsPage = SettingsPage::SubFeature;
 				}
@@ -170,7 +199,7 @@ void PostProcessing::DrawSettings()
 			}
 		}
 	} else if (activeSettingsPage == SettingsPage::SubFeature) {
-		auto backLabel = std::format("{} {}", ICON_FA_ARROW_LEFT, T("feature.post_processing.back_to_pipeline", "Back to Pipeline"));
+		auto backLabel = std::format("{} {}", ICON_TI_ARROW_LEFT, T("feature.post_processing.back_to_pipeline", "Back to Pipeline"));
 		if (PostProcessingUI::ActionButton(backLabel.c_str())) {
 			activeSettingsPage = SettingsPage::Pipeline;
 		}
@@ -186,7 +215,7 @@ void PostProcessing::DrawSettings()
 				ImGui::TextWrapped("%s", description.c_str());
 
 				ImGui::Spacing();
-				auto recompileLabel = std::format("{} {}", ICON_FA_SYNC, T("feature.post_processing.recompile_shaders", "Recompile Shaders"));
+				auto recompileLabel = std::format("{} {}", ICON_TI_REFRESH, T("feature.post_processing.recompile_shaders", "Recompile Shaders"));
 				if (PostProcessingUI::ActionButton(recompileLabel.c_str())) {
 					feat->ClearShaderCache();
 				}
@@ -848,6 +877,8 @@ bool PostProcessing::SelectPipelineResources(ID3D11Texture2D* texture)
 
 void PostProcessing::Reset()
 {
+	skipVanillaDoF = false;
+	skipVanillaBloom = false;
 	postProcessingOutput = nullptr;
 	// PreProcess may not run while bypassed or owned by Effects11, so clear refraction each frame.
 	isrefraction = false;
@@ -1109,6 +1140,44 @@ PostProcessing::Settings PostProcessing::GetCommonBufferData() const
 	return data;
 }
 
+void PostProcessing::UpdateVanillaEffects(bool active)
+{
+	const bool runnable = active && loaded && !bypass && settings.DisableVanillaTonemapping != 0 && IsPipelineReady() && globals::shaderCache->IsEnabled();
+	const bool inMainLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
+	const bool linear = globals::features::linearLighting.IsLinearLightingActive();
+	const auto replaces = [&](FeaturePipelineIndex idx) {
+		const auto& feature = pipeline[static_cast<size_t>(idx)];
+		return runnable && feature && feature->IsActive() &&
+		       (!inMainLoadingMenu || (!linear && !feature->DisableInMainLoadingMenu()));
+	};
+
+	skipVanillaDoF = replaces(FeaturePipelineIndex::DoF);
+	skipVanillaBloom = globals::state->enablePShaders && globals::state->ShaderEnabled(RE::BSShader::Type::ImageSpace) &&
+	                   (replaces(FeaturePipelineIndex::PhysicalGlare) || replaces(FeaturePipelineIndex::CODBloom));
+	if (skipVanillaBloom) {
+		using enum RE::ImageSpaceManager::ImageSpaceEffectEnum;
+		static const std::array<uint32_t, 2> tonemapShaders{
+			RE::ImageSpaceManager::GetCurrentIndex(ISHDRTonemapBlendCinematic),
+			RE::ImageSpaceManager::GetCurrentIndex(ISHDRTonemapBlendCinematicFade)
+		};
+		skipVanillaBloom = globals::shaderCache->blockedKeyIndex == -1 &&
+		                   globals::shaderCache->HasPixelShaders(RE::BSShader::Type::ImageSpace, tonemapShaders);
+	}
+
+	static auto* lensFlare = RE::GetINISetting("bLensFlare:ImageSpace");
+	if (lensFlare) {
+		if (replaces(FeaturePipelineIndex::LensFlare)) {
+			if (!savedVanillaLensFlare) {
+				savedVanillaLensFlare = lensFlare->data.b;
+				lensFlare->data.b = false;
+			}
+		} else if (savedVanillaLensFlare) {
+			lensFlare->data.b = *savedVanillaLensFlare;
+			savedVanillaLensFlare.reset();
+		}
+	}
+}
+
 bool PostProcessing::GetSceneExposure(SceneExposure& a_out) const
 {
 	if (!loaded || bypass || IsTonemapOwnedByEffects11() || !IsPipelineReady())
@@ -1140,8 +1209,10 @@ json PostProcessing::GetDiagnostics()
 
 void PostProcessing::Prepass()
 {
-	if (!pendingSettings.empty())
+	if (!pendingSettings.empty()) {
 		ApplyPendingSettings();
+		UpdateVanillaEffects(globals::state->GetTonemapOwner() == State::TonemapOwner::kPostProcessing);
+	}
 
 	// globals::game::imageSpaceManager isn't cached until OnDataLoaded(); skip
 	// the update rather than crash if Prepass() runs before that.
@@ -1177,5 +1248,7 @@ void PostProcessing::Prepass()
 void PostProcessing::PostPostLoad()
 {
 	logger::info("Hooking preprocess passes");
+	stl::write_vfunc<0x6, VanillaDoF_IsActive>(RE::VTABLE_ImageSpaceEffectDepthOfField[0]);
+	stl::write_vfunc<0x1, VanillaBlur_Render>(RE::VTABLE_ImageSpaceEffectBlur[0]);
 	stl::write_vfunc<0x2, BSImagespaceShaderRefraction_SetupTechnique>(RE::VTABLE_BSImagespaceShaderRefraction[0]);
 }

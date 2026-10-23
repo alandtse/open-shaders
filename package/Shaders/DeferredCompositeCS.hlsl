@@ -1,6 +1,6 @@
 
 #include "Common/BRDF.hlsli"
-#include "Common/Color.hlsli"
+#include "Common/ColorManagement.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Math.hlsli"
@@ -146,7 +146,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float vertexAO = 1.0 - Masks2Texture[dispatchID.xy].x;
 	ssgiAo = saturate(ssgiAo / max(vertexAO, EPSILON_DIVISION));
 
-	float3 linAlbedo = Color::IrradianceToLinear(albedo / Color::PBRLightingScale);
+	float3 linAlbedo = ColorManagement::SceneToLinear(albedo / Color::PBRLightingScale);
 	float3 multiBounceSSGIAo = MultiBounceAO(linAlbedo, ssgiAo);
 
 	float3 directionalAmbientColor = 0;
@@ -195,11 +195,11 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 		directionalAmbientColor *= maxScale;
 
 		diffuseColor = max(0.0, diffuseColor - directionalAmbientColor);
-		linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
-		linDiffuseColor *= sqrt(multiBounceSSGIAo);
-		diffuseColor = Color::IrradianceToGamma(linDiffuseColor);
-		diffuseColor += Color::IrradianceToGamma(Color::IrradianceToLinear(directionalAmbientColor) * multiBounceSSGIAo);
-		linDiffuseColor = Color::IrradianceToLinear(diffuseColor);
+		diffuseColor = ColorManagement::SceneColor::ScaleByLinear(diffuseColor, sqrt(multiBounceSSGIAo));
+
+		directionalAmbientColor = ColorManagement::SceneColor::ScaleByLinear(directionalAmbientColor, multiBounceSSGIAo);
+		diffuseColor += directionalAmbientColor;
+		linDiffuseColor = ColorManagement::SceneToLinear(diffuseColor);
 	}
 
 	linDiffuseColor += ssgiIl * linAlbedo;
@@ -265,29 +265,29 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 			float3 specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level);
 			float specularIrradianceLuminance = Color::RGBToLuminance(EnvTexture.SampleLevel(LinearSampler, R, 15));
 			specularIrradiance = (specularIrradiance / max(specularIrradianceLuminance, 0.001)) * directionalAmbientColorSpecular;
-			finalIrradiance = Color::IrradianceToLinear(specularIrradiance);
+			finalIrradiance = ColorManagement::SceneToLinear(specularIrradiance);
 #	elif defined(SKYLIGHTING)
 			float3 specularIrradianceReflections = 0.0;
 			if (skylightingSpecular > 0.0) {
 				specularIrradianceReflections = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level);
 				float lum = Color::RGBToLuminance(EnvReflectionsTexture.SampleLevel(LinearSampler, R, 15));
 				specularIrradianceReflections = (specularIrradianceReflections / max(lum, 0.001)) * directionalAmbientColorSpecular;
-				specularIrradianceReflections = Color::IrradianceToLinear(specularIrradianceReflections);
+				specularIrradianceReflections = ColorManagement::SceneToLinear(specularIrradianceReflections);
 			}
 			float3 specularIrradiance = 0.0;
 			if (skylightingSpecular < 1.0) {
 				specularIrradiance = EnvTexture.SampleLevel(LinearSampler, R, level);
 				float lum = Color::RGBToLuminance(EnvTexture.SampleLevel(LinearSampler, R, 15));
-				float dalcScaled = Color::IrradianceToGamma(Color::IrradianceToLinear(directionalAmbientColorSpecular) * skylightingSpecular);
+				float dalcScaled = ColorManagement::SceneColor::ScaleByLinear(directionalAmbientColorSpecular, skylightingSpecular);
 				specularIrradiance = (specularIrradiance / max(lum, 0.001)) * dalcScaled;
-				specularIrradiance = Color::IrradianceToLinear(specularIrradiance);
+				specularIrradiance = ColorManagement::SceneToLinear(specularIrradiance);
 			}
 			finalIrradiance = lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular);
 #	else
 			float3 specularIrradiance = EnvReflectionsTexture.SampleLevel(LinearSampler, R, level);
 			float specularIrradianceLuminance = Color::RGBToLuminance(EnvReflectionsTexture.SampleLevel(LinearSampler, R, 15));
 			specularIrradiance = (specularIrradiance / max(specularIrradianceLuminance, 0.001)) * directionalAmbientColorSpecular;
-			finalIrradiance = Color::IrradianceToLinear(specularIrradiance);
+			finalIrradiance = ColorManagement::SceneToLinear(specularIrradiance);
 #	endif
 		}
 

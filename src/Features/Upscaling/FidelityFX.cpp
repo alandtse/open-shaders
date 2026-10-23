@@ -212,7 +212,8 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	// Use seq_cst for both to ensure the callback sees both values consistently
 	hdrPeakNits.store(peakNits, std::memory_order_seq_cst);
 	isHDRActive.store(a_isHDR, std::memory_order_seq_cst);
-	needsReset.store(hdrParamsChanged, std::memory_order_seq_cst);
+	if (hdrParamsChanged || globals::state->ShouldResetHistory())
+		needsReset.store(true, std::memory_order_seq_cst);
 
 	ffx::ConfigureDescFrameGeneration configParameters{};
 
@@ -258,7 +259,7 @@ void FidelityFX::Present(bool a_useFrameGeneration, bool a_isHDR)
 	// If HDR parameters changed, skip a frame ID to force FidelityFX to reset its history
 	// This prevents interpolation artifacts when frames were encoded with different parameters
 	// Per FidelityFX docs: "Any non-exactly-one difference will reset the frame generation logic"
-	if (hdrParamsChanged && a_useFrameGeneration) {
+	if ((hdrParamsChanged || globals::state->ShouldResetHistory()) && a_useFrameGeneration) {
 		frameID += 2;  // Skip one ID to trigger reset
 	}
 

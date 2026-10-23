@@ -358,7 +358,7 @@ void PerformanceOverlay::DrawOverlay()
 	this->resizeWindowHeight = false;
 
 	// Create the window
-	Util::BeginWithRoundedClose(T(TKEY("overlay_title"), "Performance Overlay"), nullptr, windowFlags);
+	Util::BeginWithRoundedClose(std::format("{}{}", T(TKEY("overlay_title"), "Performance Overlay"), kWindowId).c_str(), nullptr, windowFlags);
 	this->currentWindowWidth = ImGui::GetWindowWidth();
 	this->resetWindowSize = false;
 
@@ -834,7 +834,7 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 					row.tooltip = T(TKEY("tip_other_abtest"), "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.");
 					break;
 				case SpecialShaderType::CSPasses:
-					row.tooltip = T(TKEY("tip_cs_passes"), "Total time spent in compute shader passes.");
+					row.tooltip = T(TKEY("tip_cs_passes"), "GPU time spent in {brand} compute passes (profiled).");
 					break;
 				}
 			}
@@ -2060,22 +2060,22 @@ void PerformanceOverlay::UpdateGraphValues()
 	                  static_cast<float>(state.overlayTimingFrequency.QuadPart);
 	state.lastUpdateTime = now;
 
-	if (!state.graphSampleGate.ShouldSample())
-		return;
+	const bool sampleGraph = state.graphSampleGate.ShouldSample();
 
-	// Insert latest frame time into circular buffer
-	float oldFrameTime = state.frameTimeHistory.GetData()[state.frameTimeHistory.GetHeadIdx()];  // what is the point of oldFrameTime?
-	state.frameTimeHistory.Push(state.frameTimeMs);
+	if (sampleGraph) {
+		const float oldFrameTime = state.frameTimeHistory.GetData()[state.frameTimeHistory.GetHeadIdx()];
+		state.frameTimeHistory.Push(state.frameTimeMs);
 
-	// Maintain instantaneous min/max tracking
-	if (state.frameTimeMs > state.maxFrameTime) {
-		state.maxFrameTime = state.frameTimeMs;
-	} else if (state.frameTimeMs < state.minFrameTime) {
-		state.minFrameTime = state.frameTimeMs;
-	} else if (oldFrameTime == state.minFrameTime) {
-		state.minFrameTime = *std::ranges::min_element(state.frameTimeHistory.GetData());
-	} else if (oldFrameTime == state.maxFrameTime) {
-		state.maxFrameTime = *std::ranges::max_element(state.frameTimeHistory.GetData());
+		// Maintain instantaneous min/max tracking
+		if (state.frameTimeMs > state.maxFrameTime) {
+			state.maxFrameTime = state.frameTimeMs;
+		} else if (state.frameTimeMs < state.minFrameTime) {
+			state.minFrameTime = state.frameTimeMs;
+		} else if (oldFrameTime == state.minFrameTime) {
+			state.minFrameTime = *std::ranges::min_element(state.frameTimeHistory.GetData());
+		} else if (oldFrameTime == state.maxFrameTime) {
+			state.maxFrameTime = *std::ranges::max_element(state.frameTimeHistory.GetData());
+		}
 	}
 
 	float avgFrameTime = kDefaultFrameTimeMs,
@@ -2127,7 +2127,8 @@ void PerformanceOverlay::UpdateGraphValues()
 		}
 
 		// Update post-FG frametime history
-		state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
+		if (sampleGraph)
+			state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
 	}
 
 	// Update smooth values with user-specified interval
@@ -2135,6 +2136,10 @@ void PerformanceOverlay::UpdateGraphValues()
 	if (state.updateTimer >= settings.UpdateInterval) {
 		state.smoothFps = state.fps;  // Sampling white noise won't give you smoothed noise. This is useless.
 		state.smoothFrameTimeMs = state.frameTimeMs;
+		if (state.isFrameGenerationActive) {
+			state.postFGSmoothFps = state.postFGFps;
+			state.postFGSmoothFrameTimeMs = state.postFGFrameTimeMs;
+		}
 		state.updateTimer = 0.0f;
 	}
 }

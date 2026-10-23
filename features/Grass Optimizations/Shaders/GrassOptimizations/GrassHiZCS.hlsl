@@ -1,5 +1,3 @@
-// Always kPOST_ZPREPASS_COPY, never TerrainBlending's blendedDepthTexture: that one is produced at
-// end of frame and would be a frame stale here, which made grass flicker on fast camera movement.
 #include "Common/ReverseZ.hlsli"
 
 Texture2D<SCENE_DEPTH_FORMAT> SrcDepth : register(t0);

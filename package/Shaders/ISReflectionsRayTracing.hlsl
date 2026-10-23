@@ -26,6 +26,7 @@ Texture2D<float4> NormalTex : register(t0);
 Texture2D<float4> ColorTex : register(t1);
 Texture2D<float4> DepthTex : register(t2);
 Texture2D<float4> AlphaTex : register(t3);
+TextureCube<float4> SkyReflectionTex : register(t4);
 
 cbuffer PerGeometry : register(b2)
 {
@@ -37,7 +38,10 @@ static const int iterations = 64.0;
 static const int binaryIterations = ceil(log2(iterations));
 
 static const float rayLength = 1.0;
-#	ifndef UNIFIED_WATER
+static const float skyDepth = 1.0 - 1e-6;
+#	ifdef UNIFIED_WATER
+static const float maxValidDepth = skyDepth;
+#	else
 static const float maxValidDepth = 0.9999;
 #	endif
 
@@ -104,6 +108,7 @@ float2 ConvertRaySamplePrevious(float2 raySample, uint eyeIndex)
 float4 GetReflectionColor(
 	float3 projReflectionDirection,
 	float3 projPosition,
+	float3 reflectionDirection,
 	uint eyeIndex,
 	uint2 depthTextureDimensions
 #	if defined(VR)
@@ -142,10 +147,8 @@ float4 GetReflectionColor(
 			return 0.0;
 
 		float iterationDepth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, sampleEyeIndex, depthTextureDimensions), 0).x);
-#	ifndef UNIFIED_WATER
-		if (iterationDepth > maxValidDepth)
+		if (iterationDepth > maxValidDepth && iterationDepth <= skyDepth)
 			continue;
-#	endif
 
 		if (saturate((raySample.z - iterationDepth) / SSRParams.y) > 0.0) {
 			float3 binaryMinRaySample = prevRaySample;
@@ -164,8 +167,7 @@ float4 GetReflectionColor(
 
 				Stereo::ResolveMonoUVForEye(float3(binaryRaySample.xy, FrameBuffer::ToNativeDepth(binaryRaySample.z)), eyeIndex, sampleUV, hitEyeIndex);
 				iterationDepth = FrameBuffer::ToStandardDepth(DepthTex.SampleLevel(DepthSampler, ConvertRaySample(sampleUV, hitEyeIndex, depthTextureDimensions), 0).x);
-#	ifndef UNIFIED_WATER
-				if (iterationDepth > maxValidDepth) {
+				if (iterationDepth > maxValidDepth && iterationDepth <= skyDepth) {
 					if (iterationDepth < binaryRaySample.z)
 						binaryMaxRaySample = binaryRaySample;
 					else
@@ -173,7 +175,6 @@ float4 GetReflectionColor(
 					depthThicknessFactor = 0.0;
 					continue;
 				}
-#	endif
 
 				// Compute expected depth vs actual depth
 				depthThicknessFactor = 1.0 - saturate(abs(binaryRaySample.z - iterationDepth) / SSRParams.y);
@@ -209,6 +210,13 @@ float4 GetReflectionColor(
 			float fadeFactor = depthThicknessFactor * ssrMarchingRadiusFadeFactor * centerDistanceFadeFactorX * centerDistanceFadeFactorY;
 
 			if (fadeFactor > 0.0) {
+				if (iterationDepth > skyDepth) {
+					if (SharedData::InInterior || SharedData::HideSky)
+						return 0.0;
+					float3 reflectionDirectionWS = FrameBuffer::ViewToWorld(reflectionDirection, false, eyeIndex);
+					return float4(SkyReflectionTex.SampleLevel(ColorSampler, reflectionDirectionWS, 0).xyz, fadeFactor * fovWeight);
+				}
+
 				// Resolve final UV in the eye that owns the hit
 				float2 finalSampleUV;
 				uint finalEyeIndex;
@@ -287,12 +295,10 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float nativeDepth = DepthTex.SampleLevel(DepthSampler, depthScreenPosition, 0).x;
 	float depth = FrameBuffer::ToStandardDepth(nativeDepth);
-#	ifndef UNIFIED_WATER
 	[branch] if (depth > maxValidDepth)
 	{
 		return psout;
 	}
-#	endif
 
 #	if defined(VR)
 	float ssrFoveationWeight = 1.0;
@@ -354,10 +360,10 @@ PS_OUTPUT main(PS_INPUT input)
 		binaryIterationsCount = GetSSRBinaryIterations(raymarchIterations);
 	}
 	psout.Color = GetReflectionColor(
-		projReflectionDirection, projPosition, eyeIndex, depthTextureDimensions,
+		projReflectionDirection, projPosition, reflectionDirection, eyeIndex, depthTextureDimensions,
 		raymarchIterations, binaryIterationsCount, ssrFoveationWeight);
 #	else
-	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, eyeIndex, uint2(1, 1));
+	psout.Color = GetReflectionColor(projReflectionDirection, projPosition, reflectionDirection, eyeIndex, uint2(1, 1));
 #	endif
 
 	return psout;

@@ -10,6 +10,10 @@
 
 namespace SharedData
 {
+	static const uint TonemapOwnerVanilla = 0;
+	static const uint TonemapOwnerPostProcessing = 1;
+	static const uint TonemapOwnerEffects11 = 2;
+
 	cbuffer SharedData : register(b5)
 	{
 		float4 WaterData[25];
@@ -293,9 +297,9 @@ namespace SharedData
 		float EnvIBLSaturation;
 		float SkyIBLSaturation;
 		float FogAmount;
-		uint DALCMode;  // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint DALCMode;       // 0: Luminance Ratio, 1: Color Ratio, 2: DALC + Sky, 3: DALC + Sky (Directional)
+		uint ENBSkyFalloff;  // Effects 11 owns IBL: darken sky irradiance from below
 		float pad0;
-		float pad1;
 	};
 
 	struct ExtendedTranslucencySettings

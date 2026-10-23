@@ -357,6 +357,9 @@ namespace CinematicCamera
 
 	void Controller::DrawSettings()
 	{
+		if (!settings.Enabled)
+			return;
+
 		auto& fb = settings.Filmback;
 		auto& lens = settings.Lens;
 		auto& focus = settings.Focus;

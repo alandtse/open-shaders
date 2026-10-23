@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
+// Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
+
 #define DISTANT_TREE
 
 #include "Common/Color.hlsli"
@@ -242,11 +245,22 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	psout.Diffuse.w = 0;
 #	else
 	float4 baseColor = TexDiffuse.SampleBias(SampDiffuse, input.TexCoord.xy, SharedData::MipBias);
-	baseColor.xyz = Color::Diffuse(baseColor.xyz);
+	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz));
 
 	if ((baseColor.w - AlphaTestRefRS) < 0) {
 		discard;
 	}
+
+	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
+	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
+	float3 normal = -normalize(cross(ddx, ddy));
+
+	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
+#		if defined(IBL)
+	if (SharedData::iblSettings.EnableIBL) {
+		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
+	}
+#		endif
 
 #		if defined(DEFERRED)
 	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true, sampleDistantShadow);
@@ -265,19 +279,8 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	}
 #			endif
 
-	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
-	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
-	float3 normal = -normalize(cross(ddx, ddy));
-
 #			if defined(SNOW_COVER)
 	SnowCover::ApplyDistantTreeSnow(baseColor.xyz, normal, input.WorldPosition.xyz, input.TexCoord.xy, eyeIndex, TexDiffuse);
-#			endif
-
-	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
-#			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
-	}
 #			endif
 	diffuseColor += directionalAmbientColor;
 
@@ -300,8 +303,7 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 #		else
 	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true, sampleDistantShadow);
 
-	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
-	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
+	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz) * dirShadow * 0.5 * Color::BRDFScale;
 
 #			if defined(EXP_HEIGHT_FOG)
 	if (SharedData::exponentialHeightFogSettings.enabled) {
@@ -309,19 +311,8 @@ PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 	}
 #			endif
 
-	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
-	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
-	float3 normal = normalize(cross(ddx, ddy));
-
 #			if defined(SNOW_COVER)
 	SnowCover::ApplyDistantTreeSnow(baseColor.xyz, normal, input.WorldPosition.xyz, input.TexCoord.xy, eyeIndex, TexDiffuse);
-#			endif
-
-	float3 directionalAmbientColor = Color::Ambient(SharedData::GetAmbient(normal));
-#			if defined(IBL)
-	if (SharedData::iblSettings.EnableIBL) {
-		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
-	}
 #			endif
 	diffuseColor += directionalAmbientColor;
 

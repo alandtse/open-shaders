@@ -696,8 +696,8 @@ void Effects11::ClearShaderCache()
 	sunRaysBlurPS = nullptr;
 	sunRaysCompositePS = nullptr;
 
-	auto& effectManager = EffectManager::GetSingleton();
-	effectManager.ReloadShaders();
+	if (EffectManager::GetSingleton().IsInitialized())
+		EffectManager::GetSingleton().ReloadShaders();
 }
 
 float3 Curve(float3 color, float power)

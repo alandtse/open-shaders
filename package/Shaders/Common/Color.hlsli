@@ -108,12 +108,22 @@ namespace Color
 
 	float RGBToLuminanceAlternative(float3 color)
 	{
+#if defined(ENABLE_ACESCG)
+		// For ACEScg, fall back to the accurate AP1 luminance
+		return dot(color, float3(0.2722287168, 0.6740817658, 0.0536895174));
+#else
 		return dot(color, float3(0.3, 0.59, 0.11));
+#endif
 	}
 
 	float RGBToLuminance2(float3 color)
 	{
+#if defined(ENABLE_ACESCG)
+		// For ACEScg, fall back to the accurate AP1 luminance
+		return dot(color, float3(0.2722287168, 0.6740817658, 0.0536895174));
+#else
 		return dot(color, float3(0.299, 0.587, 0.114));
+#endif
 	}
 #endif
 
@@ -278,7 +288,6 @@ namespace Color
 
 	}  // namespace pq
 
-#if defined(PSHADER) || defined(CSHADER) || defined(COMPUTESHADER)
 	// Attempt to match vanilla materials that are darker than PBR
 	const static float PBRLightingScale = ENABLE_LL ? 1.0 : 0.65;
 
@@ -426,10 +435,12 @@ namespace Color
 #	endif
 	}
 
-	float3 ProjectedDiffuse(float3 color, float3 tint, float3 materialColorScale)
+	float3 ProjectedDiffuse(float3 color, float3 tint, float3 materialColorScale, bool linearInput = false)
 	{
+		if (linearInput)
+			color = LinearToSrgb(color);
 #	if defined(TRUE_PBR)
-		// The shared UNORM projection texture enters PBR in its legacy gamma space.
+		// Preserve the authored projection tint when the texture view already decodes sRGB.
 		float3 projectedColor = max(0, color * tint * materialColorScale);
 		return ENABLE_LL ? GamutTransform(CompensateConvertedColor(SrgbToLinear(projectedColor))) : projectedColor;
 #	else
@@ -688,27 +699,23 @@ namespace Color
 	}
 #else
 	const static float PBRLightingScale = 1.0;
-	const static float ReflectionNormalisationScale = 1.0;
+	const static float ReflectionNormalisationScale = 1.0;  // Attempt to normalise reflection brightness against DALC
+	const static float PBRLightingCompensation = 1.0;
+#else
+	const static float PBRLightingScale = 0.65;
+	const static float ReflectionNormalisationScale = 0.65;
 	const static float PBRLightingCompensation = Math::PI;
-
-	float3 Diffuse(float3 color)
-	{
-#	if defined(TRUE_PBR)
-		return LinearToSrgb(color);
-#	else
-		return color;
-#	endif
-	}
-
-	float3 Light(float3 color)
-	{
-#	if defined(TRUE_PBR)
-		return color * Math::PI;  // Compensate for traditional Lambertian diffuse
-#	else
-		return color;
-#	endif
-	}
 #endif
+
+	// Gamut transform: converts linear sRGB-gamut color to ACEScg when enabled
+	float3 LinearSRGBToWorking(float3 linearSRGB)
+	{
+#if defined(ENABLE_ACESCG)
+		return sRGBToAP1(linearSRGB);
+#else
+		return linearSRGB;
+#endif
+	}
 
 	namespace Correct
 	{

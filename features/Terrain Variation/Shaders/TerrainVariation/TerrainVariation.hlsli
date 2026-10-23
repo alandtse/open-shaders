@@ -160,7 +160,7 @@ inline float4 StochasticBlendTwoSamples(float4 s1, float4 s2, float tap1Weight, 
 }
 
 // Stochastic sampling function for Terrain LOD & LOD Mask.
-inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, float2 uv)
+inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, float2 uv, out float4 sampledColor)
 {
 	float2 cellID = floor(uv * 255437.0);
 	float2 offset1 = hashLOD(cellID) * 0.08;
@@ -172,6 +172,10 @@ inline float4 StochasticSampleLOD(float rnd, Texture2D tex, SamplerState samp, f
 	float2 j2 = (offset2 + float2(jitter.y, -jitter.x)) * 0.01;
 	float4 s1 = Color::DiffuseToWorking(tex.SampleBias(samp, uv + j1, SharedData::MipBias));
 	float4 s2 = Color::DiffuseToWorking(tex.SampleBias(samp, uv + j2, SharedData::MipBias));
+
+	sampledColor = lerp(s2, s1, STOCHASTIC_LOD_BLEND);
+	s1 = ColorManagement::DiffuseToWorking(s1);
+	s2 = ColorManagement::DiffuseToWorking(s2);
 
 	// Simple 2-sample blend weighted toward first sample
 	return lerp(s2, s1, STOCHASTIC_LOD_BLEND);

@@ -642,7 +642,8 @@ namespace Util
 	{
 		float percentageData = (*data) * 1e2f;
 		bool retval = ImGui::SliderFloat(label, &percentageData, lb, ub, format);
-		(*data) = percentageData * 1e-2f;
+		if (retval)
+			(*data) = percentageData * 1e-2f;
 		return retval;
 	}
 

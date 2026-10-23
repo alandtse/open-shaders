@@ -77,9 +77,10 @@ namespace Permutation
 		static const uint IsSun = (1 << 4);
 		static const uint SuppressExternalEmittance = (1 << 5);
 		static const uint AdditiveLighting = (1 << 6);
-		static const uint IsAurora = (1 << 7);
-		static const uint IsMoon = (1 << 8);
+		static const uint IsEye = (1 << 7);
+		static const uint SourceAlphaBlend = (1 << 8);
 		static const uint NoSkyScattering = (1 << 9);
+		static const uint ProjectedTextureIsSRGB = (1 << 12);
 		// Fork-only flags reserve the high end so upstream's next sequential flag never collides.
 		static const uint TreeBend = (1u << 28);
 		static const uint IsEye = (1u << 31);

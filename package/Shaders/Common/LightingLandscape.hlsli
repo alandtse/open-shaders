@@ -14,6 +14,11 @@
 #	if defined(TRUE_PBR)
 namespace LandscapeLayers
 {
+#		if defined(ENABLE_LL)
+	static const bool LinearLighting = true;
+#		else
+	static const bool LinearLighting = false;
+#		endif
 	inline bool PbrTileUsesFullPBR(uint tileIndex)
 	{
 		return (PBRFlags & (1u << tileIndex)) != 0;
@@ -34,7 +39,7 @@ namespace LandscapeLayers
 				float3 landColorRGB = landColor.rgb;                                                                                                               \
 				[branch] if (!LandscapeLayers::PbrTileUsesFullPBR(TILE) && !ENABLE_LL)                                                                             \
 				{                                                                                                                                                  \
-					landColorRGB = Color::SrgbToLinear(landColorRGB / Color::PBRLightingScale);                                                                    \
+					landColorRGB = TransferFunctions::Gamma22ToLinear(landColorRGB / Color::PBRLightingScale);                                                     \
 				}                                                                                                                                                  \
 				float landAlpha = landColor.a;                                                                                                                     \
 				float4 landNormal = SampleTerrain(NORM_TEX, NORM_SAMP, uv, sharedOffset);                                                                          \
