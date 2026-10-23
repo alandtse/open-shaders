@@ -44,6 +44,10 @@ namespace NR
 
 		/** @brief Returns the device used by NGX. */
 		ID3D12Device* Device() const { return device.get(); }
+		/** @brief The D3D11.1 device the interop already holds; a derived type satisfies base-interface needs. */
+		ID3D11Device1* Device1() const { return device11.get(); }
+		/** @brief The D3D11.1 context the interop already holds; a derived type satisfies base-interface needs. */
+		ID3D11DeviceContext1* Context1() const { return context.get(); }
 		/** @brief LUID of the adapter that device was created on, for the caller's success log. */
 		[[nodiscard]] LUID AdapterLuid() const { return adapterLuid; }
 		/** @brief Asks the device whether it was removed, so a caller can release instead of waiting. */

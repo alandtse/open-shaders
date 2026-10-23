@@ -388,9 +388,13 @@ struct NeuralRendering::Impl
 	void Initialize()
 	{
 		interop.Initialize();
-		winrt::com_ptr<ID3D11Device1> device;
-		DX::ThrowIfFailed(globals::d3d::device->QueryInterface(device.put()));
-		DX::ThrowIfFailed(globals::d3d::context->QueryInterface(context.put()));
+		// Reuse the interfaces the interop already queried: they are the same device and context, and
+		// the derived types satisfy the context-state and sampler calls below. Re-querying for the
+		// base interfaces fails with E_NOINTERFACE on a device a Streamline wrapper fronts.
+		auto* device = interop.Device1();
+		if (!device || !interop.Context1())
+			throw std::runtime_error("NR needs a D3D11.1 device and immediate context");
+		context.copy_from(interop.Context1());
 		const auto level = globals::d3d::device->GetFeatureLevel();
 		DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
