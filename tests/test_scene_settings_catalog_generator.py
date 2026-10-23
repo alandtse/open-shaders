@@ -261,6 +261,39 @@ def write_synthetic_source(root: Path) -> None:
 
 
 class SceneSettingsCatalogGeneratorTests(unittest.TestCase):
+    def test_private_persisted_state_uses_json_without_native_member_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_synthetic_source(root)
+            header = SYNTHETIC_HEADER.replace(
+                '    std::string GetShortName()',
+                'private:\n    bool hiddenToggle = false;\n'
+                'protected:\n    float protectedAmount = 0.0f;\n'
+                'public:\n    std::string GetShortName()')
+            source = SYNTHETIC_SOURCE.replace(
+                '    output = settings;',
+                '    output = settings;\n'
+                '    output["Hidden"] = hiddenToggle;\n'
+                '    output["Protected"] = protectedAmount;')
+            (root / 'src/SyntheticFeature.h').write_text(header, encoding='utf-8')
+            (root / 'src/SyntheticFeature.cpp').write_text(source, encoding='utf-8')
+            entries = GENERATOR.build_entries(root)
+            private_entries = [entry for entry in entries if entry['key'] in ('Hidden', 'Protected')]
+            self.assertEqual(len(private_entries), 2)
+            self.assertTrue(all(not entry['addressable'] for entry in private_entries))
+            self.assertTrue(next(entry for entry in entries if entry['key'] == 'regular')['addressable'])
+            GENERATOR.write_catalog(entries, root / 'generated')
+            adapters = (root / 'generated/FeatureSceneSettingsAdapters.generated.cpp').read_text(encoding='utf-8')
+            self.assertNotIn('typedFeature->hiddenToggle', adapters)
+            self.assertNotIn('typedFeature->protectedAmount', adapters)
+
+    def test_class_default_visibility_is_private(self):
+        fields = GENERATOR.parse_top_level_fields(
+            'bool hidden; public: float visible; private: int secret; '
+            'public: struct Payload { int count; } payload;',
+            public_only=True, default_access='private')
+        self.assertEqual(fields, {'visible': 'float', 'payload': 'Payload'})
+
     @classmethod
     def setUpClass(cls):
         cls.temp_directory = tempfile.TemporaryDirectory()

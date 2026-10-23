@@ -459,6 +459,9 @@ struct PS_OUTPUT
 struct PS_OUTPUT
 {
 	float4 Diffuse: SV_Target0;
+#	if defined(IBL)
+	float4 ReflectionRadiance: SV_Target7;
+#	endif
 #	if defined(MOTIONVECTORS_NORMALS)
 	float2 MotionVectors: SV_Target1;
 	float4 ScreenSpaceNormals: SV_Target2;
@@ -610,7 +613,8 @@ float3 GetLightingColor(
 	out float3 shadowedWeatherReference,
 	out float3 shadowedInfluencedWeatherReference,
 	out bool applyWeatherInfluenceToShadows,
-	inout float shadowVariance)
+	inout float shadowVariance,
+	bool sampleDistantShadow)
 {
 	const bool isSkyObject = Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject;
 	float3 color = GetWeatherEffectLighting(isSkyObject);
@@ -694,9 +698,9 @@ float3 GetLightingColor(
 		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 		float3 worldPositionWS = worldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		dirShadow = LightLimitFix::GetDirectionalShadow(worldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex);
-		dirShadow *= ShadowSampling::GetWorldShadow(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		dirShadow *= ShadowSampling::GetWorldShadow(worldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false, sampleDistantShadow);
 #		else
-		dirShadow = ShadowSampling::Get3DFilteredShadow(worldPosition.xyz, viewDirection, screenPosition, eyeIndex, unusedSurfaceShadow);
+		dirShadow = ShadowSampling::Get3DFilteredShadow(worldPosition.xyz, viewDirection, screenPosition, eyeIndex, unusedSurfaceShadow, sampleDistantShadow);
 #		endif
 	}
 
@@ -767,7 +771,7 @@ float3 GetLightingColor(
 	return color;
 }
 #	else
-float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float noise)
+float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float noise, bool sampleDistantShadow)
 {
 	static const uint sampleCount = 8;
 	static const float rcpSampleCount = 1.0 / float(sampleCount);
@@ -785,10 +789,21 @@ float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float n
 
 	if (inWorld && !SharedData::InInterior) {
 		shadow = 0.0;
+#		if defined(LOD_SHADOWS)
+		LODShadows::RayProjection lodRay = LODShadows::PrepareRay(startPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz,
+			endPosition + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, sampleDistantShadow && ShadowSampling::HasDistantShadows());
+		[branch] if (lodRay.mode == LODShadows::RayOccluded) return 0.0;
+#		endif
 		for (uint i = 0; i < sampleCount; i++) {
 			float t = (float(i) + noise) * rcpSampleCount;
 			float3 samplePositionWS = lerp(startPosition, endPosition, t);
-			shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+#		if defined(LOD_SHADOWS)
+			float visibility = LODShadows::SampleRay(lodRay, t, samplePositionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, LinearSampler);
+			[branch] if (visibility > 0.0)
+				shadow += ShadowSampling::GetTerrainCloudShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex) * visibility;
+#		else
+			shadow += ShadowSampling::GetWorldShadow(samplePositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false, sampleDistantShadow);
+#		endif
 		}
 		shadow *= rcpSampleCount;
 	}
@@ -796,7 +811,7 @@ float GetViewRayShadow(float3 worldPosition, float depth, uint eyeIndex, float n
 	return shadow;
 }
 
-float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise, bool isSkyObject)
+float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPosition, float2 screenPosition, float depth, uint eyeIndex, inout float shadowVariance, float noise, bool isSkyObject, bool sampleDistantShadow)
 {
 	color = Color::EffectLight(color);
 	if (isSkyObject)
@@ -817,8 +832,8 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 		ExtractEffectLighting(isSkyObject ? color : GetWeatherEffectLighting(false), ambientLighting, dirColor, ambientColor);
 	}
 
-	float shadow = isSkyObject ? GetViewRayShadow(worldPosition, depth, eyeIndex, noise) :
-	                             ShadowSampling::GetWorldShadow(worldPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+	float shadow = isSkyObject ? GetViewRayShadow(worldPosition, depth, eyeIndex, noise, sampleDistantShadow) :
+	                             ShadowSampling::GetWorldShadow(worldPosition, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false, sampleDistantShadow);
 
 	shadowVariance = 1.0 - sqrt(saturate(fwidth(shadow)));
 
@@ -843,7 +858,7 @@ float3 GetLightingShadow(float3 color, float3 materialColor, float3 worldPositio
 }
 #	endif
 
-PS_OUTPUT main(PS_INPUT input)
+PS_OUTPUT ShadeEffect(PS_INPUT input, bool sampleDistantShadow)
 {
 	PS_OUTPUT psout = (PS_OUTPUT)0;
 
@@ -901,6 +916,43 @@ PS_OUTPUT main(PS_INPUT input)
 	softMul = saturate(-input.TexCoord0.w + LightingInfluence.y / ((1 - depth) * CameraDataEffect.z + CameraDataEffect.y));
 #	endif
 
+	float4 baseTexColor = float4(1, 1, 1, 1);
+	float4 baseColor = float4(1, 1, 1, 1);
+#	if !defined(TEXTURE)
+	[branch] if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToColor || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha)
+#	endif
+	{
+		baseTexColor = TexBaseSampler.Sample(SampBaseSampler, input.TexCoord0.xy);
+		baseColor *= baseTexColor;
+		if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::IgnoreTexAlpha || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) {
+			baseColor.w = 1;
+		}
+	}
+
+#	if defined(MEMBRANE)
+	float4 baseColorMul = float4(1, 1, 1, 1);
+#	else
+	float4 baseColorMul = BaseColor;
+#		if defined(VC) && !defined(PROJECTED_UV)
+	baseColorMul *= input.Color;
+#		endif
+#	endif
+
+#	if defined(MEMBRANE)
+	baseColor.w *= input.ViewVector.w;
+#	else
+	baseColor.w *= input.TexCoord0.z;
+#	endif
+
+	baseColor = baseColorMul * baseColor;
+	baseColor.w *= softMul;
+
+#	if defined(SOFT) && !(defined(FALLOFF) && defined(MULTBLEND))
+	if (baseColor.w - 0.003 < 0) {
+		discard;
+	}
+#	endif
+
 	float lightingInfluence = LightingInfluence.x;
 	float3 propertyColor = PropertyColor.xyz;
 #	if !defined(LIGHTING) && !defined(MEMBRANE)
@@ -949,7 +1001,8 @@ PS_OUTPUT main(PS_INPUT input)
 		shadowedWeatherReference,
 		shadowedInfluencedWeatherReference,
 		applyWeatherInfluenceToShadows,
-		shadowVariance);
+		shadowVariance,
+		sampleDistantShadow);
 
 #		if defined(LIGHT_LIMIT_FIX)
 	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
@@ -1028,43 +1081,6 @@ PS_OUTPUT main(PS_INPUT input)
 	lightingInfluence = 0;
 #	endif
 
-	float4 baseTexColor = float4(1, 1, 1, 1);
-	float4 baseColor = float4(1, 1, 1, 1);
-#	if !defined(TEXTURE)
-	[branch] if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToColor || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha)
-#	endif
-	{
-		baseTexColor = TexBaseSampler.Sample(SampBaseSampler, input.TexCoord0.xy);
-		baseColor *= baseTexColor;
-		if (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::IgnoreTexAlpha || Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToAlpha) {
-			baseColor.w = 1;
-		}
-	}
-
-#	if defined(MEMBRANE)
-	float4 baseColorMul = float4(1, 1, 1, 1);
-#	else
-	float4 baseColorMul = BaseColor;
-#		if defined(VC) && !defined(PROJECTED_UV)
-	baseColorMul *= input.Color;
-#		endif
-#	endif
-
-#	if defined(MEMBRANE)
-	baseColor.w *= input.ViewVector.w;
-#	else
-	baseColor.w *= input.TexCoord0.z;
-#	endif
-
-	baseColor = baseColorMul * baseColor;
-	baseColor.w *= softMul;
-
-#	if defined(SOFT) && !(defined(FALLOFF) && defined(MULTBLEND))
-	if (baseColor.w - 0.003 < 0) {
-		discard;
-	}
-#	endif
-
 	float alpha = baseColor.w;
 
 #	if defined(BLOOD)
@@ -1108,7 +1124,7 @@ PS_OUTPUT main(PS_INPUT input)
 		alpha = saturate(alpha * SharedData::enbSettings.VolumetricFogOpacity);
 		float volumetricFogShadow = 1.0;
 		[branch] if (SharedData::enbSettings.VolumetricFogEnableShadows)
-			volumetricFogShadow = GetViewRayShadow(input.WorldPosition.xyz, depth, eyeIndex, screenNoise);
+			volumetricFogShadow = GetViewRayShadow(input.WorldPosition.xyz, depth, eyeIndex, screenNoise, sampleDistantShadow);
 		float3 volumetricFogScale = SharedData::enbSettings.VolumetricFogIntensity * SharedData::enbSettings.VolumetricFogColorFilter;
 		[branch] if (SharedData::enbSettings.VolumetricFogEnableLighting)
 		{
@@ -1156,7 +1172,7 @@ PS_OUTPUT main(PS_INPUT input)
 	if (applyLighting) {
 		float3 unlitColor = useAmbientLighting || !isSkyObject ? baseColor.xyz : lightColor;
 		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
-		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject), lightingInfluence);
+		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject, sampleDistantShadow), lightingInfluence);
 	}
 #	endif
 
@@ -1343,4 +1359,15 @@ PS_OUTPUT main(PS_INPUT input)
 
 	return psout;
 }
+PS_OUTPUT main(PS_INPUT input)
+{
+	PS_OUTPUT output = ShadeEffect(input, true);
+#	if defined(IBL) && !defined(DEFERRED)
+	output.ReflectionRadiance = output.Diffuse;
+	[branch] if (Permutation::IsReflectionRadianceCapture() && ShadowSampling::HasDistantShadows())
+		output.ReflectionRadiance = ShadeEffect(input, false).Diffuse;
+#	endif
+	return output;
+}
+
 #endif

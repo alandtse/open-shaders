@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
+#include <vector>
 
 /**
  @def GET_INSTANCE_MEMBER
@@ -367,6 +369,26 @@ namespace Util
 	std::string FormatWeather(const RE::TESWeather* weather);
 
 	bool IsInterior();
+	/** @brief Returns the active interior cell or exterior worldspace's editor ID, or an empty view. */
+	std::string_view GetCurrentWorldspaceOrCellEditorID();
+	/** @brief Identifies object LOD tree geometry from its name and shader flags. */
+	bool IsObjectLODTree(const char* name, const RE::BSShaderProperty* property);
+	/** @brief Returns whether a reference is flora or a tree with a harvestable item. */
+	bool IsHarvestableFlora(RE::TESObjectREFR* a_ref);
+	/** @brief Returns the smallest sphere enclosing both bounds. */
+	RE::NiBound MergeBounds(const RE::NiBound& a_lhs, const RE::NiBound& a_rhs);
+	/** @brief Returns the calendar's zero-based month including the elapsed fraction of that month. */
+	float GetFractionalGameMonth(const RE::Calendar& calendar);
+	/** @brief Returns finite particle density times gravity velocity, or zero without precipitation data. */
+	float GetPrecipitationIntensity(const RE::TESWeather* weather);
+	/** @brief Identifies models under the architecture or dungeons asset directories. */
+	bool IsArchitecturalModel(const RE::TESModel* model);
+	/** @brief Returns whether a base form is a supported placed-fire candidate. */
+	bool IsPlacedFireCandidate(RE::TESBoundObject* a_base);
+	/** @brief Identifies additive fire geometry from effect material and particle data. */
+	bool IsFireGeometry(RE::BSGeometry* a_geometry);
+	/** @brief Finds fire geometry and appends visible positive-radius bounds, preserving ancestor culling. */
+	void CollectFireGeometry(RE::NiAVObject* a_object, bool a_hidden, bool& a_hasFire, std::vector<RE::NiBound>& a_samples);
 
 	/**
 	 * @brief Converts a 2D world position to cell coordinates.

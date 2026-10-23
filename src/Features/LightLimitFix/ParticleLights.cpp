@@ -1,5 +1,6 @@
 #include "Features/LightLimitFix/ParticleLights.h"
 
+#include "Utils/MathUtils.h"
 #include "Utils/StringUtils.h"
 
 #include <algorithm>
@@ -12,10 +13,7 @@ namespace
 	// clamp to a sane range so a malformed entry can't destabilize the pipeline.
 	float SanitizeIniFloat(double a_value, float a_min, float a_max, float a_default)
 	{
-		const float f = static_cast<float>(a_value);
-		if (!std::isfinite(f))
-			return a_default;
-		return std::clamp(f, a_min, a_max);
+		return Util::ClampFinite(static_cast<float>(a_value), a_min, a_max, a_default);
 	}
 }
 

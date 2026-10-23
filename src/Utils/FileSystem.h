@@ -104,6 +104,12 @@ namespace Util
 		std::filesystem::path GetTranslationsPath();
 
 		/**
+		 * Gets the directory shadow and frame captures are written to
+		 * @return CommunityShaderPath / "Captures"
+		 */
+		std::filesystem::path GetCapturesPath();
+
+		/**
 		 * Gets the Overrides directory path
 		 * @return CommunityShaderPath / "Overrides"
 		 */

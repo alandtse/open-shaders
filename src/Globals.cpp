@@ -25,6 +25,7 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/LODBlending.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
@@ -42,6 +43,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowCover.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -80,6 +82,7 @@ namespace globals
 		ProceduralSun proceduralSun{};
 		DynamicCubemaps dynamicCubemaps{};
 		VolumetricShadows volumetricShadows{};
+		LODShadows lodShadows{};
 		ExtendedMaterials extendedMaterials{};
 		GrassCollision grassCollision{};
 		GrassLighting grassLighting{};
@@ -126,6 +129,7 @@ namespace globals
 		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
+		SnowCover snowCover{};
 		Skin skin{};
 		ReverseZ reverseZ{};
 		PostProcessing postProcessing{};

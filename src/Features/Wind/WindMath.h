@@ -2,6 +2,8 @@
 
 #include "RE/Skyrim.h"
 
+#include "Utils/MathUtils.h"
+
 #include <SimpleMath.h>
 
 #include <algorithm>
@@ -9,22 +11,10 @@
 
 namespace WindMath
 {
-	inline float ClampFiniteOrDefault(float a_value, float a_minimum, float a_maximum,
-		float a_default) noexcept
-	{
-		return std::isfinite(a_value) ? std::clamp(a_value, a_minimum, a_maximum) : a_default;
-	}
-
 	template <class Range>
-	inline float ClampFiniteOrDefault(float a_value, const Range& a_range, float a_default) noexcept
+	inline float ClampToRange(float a_value, const Range& a_range, float a_default) noexcept
 	{
-		return ClampFiniteOrDefault(a_value, a_range.minimum, a_range.maximum, a_default);
-	}
-
-	inline float SquaredDistance(const RE::NiPoint3& a_left, const RE::NiPoint3& a_right) noexcept
-	{
-		const auto difference = a_left - a_right;
-		return difference.x * difference.x + difference.y * difference.y + difference.z * difference.z;
+		return Util::ClampFinite(a_value, a_range.minimum, a_range.maximum, a_default);
 	}
 
 	[[nodiscard]] inline DirectX::SimpleMath::Vector3 GetHorizontalVelocityDirection(

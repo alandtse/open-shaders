@@ -10,8 +10,14 @@
 #include <type_traits>
 #include <winrt/base.h>
 
+namespace DirectX
+{
+	class ScratchImage;
+}
+
 namespace Util
 {
+	class HeightMap;
 	// The REX::W32 <-> SDK pairings live in CommonLib so every consumer shares one
 	// table; re-exported here to keep this codebase's Util:: call sites.
 	using REX::W32::AsReal;
@@ -201,6 +207,12 @@ namespace Util
 	 * @return S_OK on success, or an error HRESULT.
 	 */
 	HRESULT LoadTextureFromFile(ID3D11Device* device, const std::filesystem::path& path, ID3D11Texture2D** outTex, ID3D11ShaderResourceView** outSRV);
+	/** @brief Decodes a Data-relative DDS through the engine's loose-file and archive resource system. */
+	HRESULT LoadDDSImageFromResource(const char* filename, DirectX::ScratchImage& image);
+	/** @brief Loads an R8 or BC4 DDS into a CPU height map, clearing the destination on failure. */
+	bool LoadR8HeightMapFromDDS(const std::filesystem::path& path, HeightMap& map);
+	/** @brief Creates a named immutable 1x1 R32_FLOAT texture and shader resource view. */
+	winrt::com_ptr<ID3D11ShaderResourceView> CreateConstantFloatTexture(ID3D11Device* device, float value, const char* name);
 
 	/**
 	 * @brief Get the current scene depth SRV, preferring terrain-blended depth when active.

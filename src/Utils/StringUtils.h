@@ -8,12 +8,44 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <istream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace Util
 {
+	/** @brief Checks for one nonempty path component without separators, a drive prefix, or dot navigation. */
+	inline bool IsSinglePathComponent(std::string_view name)
+	{
+		return !name.empty() && name.find_first_of("/\\:") == std::string_view::npos && name != "." && name != "..";
+	}
+
+	/** @brief Joins a relative path to a base, rejecting roots and parent navigation. */
+	inline std::filesystem::path JoinRelativePath(const std::filesystem::path& base, const std::filesystem::path& path)
+	{
+		if (path.is_absolute() || path.has_root_path())
+			throw std::invalid_argument("Path must be relative");
+		for (const auto& part : path)
+			if (part == "..")
+				throw std::invalid_argument("Parent path components are not allowed");
+		return base / path;
+	}
+
+	/** @brief Appends trimmed, nonempty lines after removing hash comments. */
+	inline void ReadConfigLines(std::istream& stream, std::vector<std::string>& lines)
+	{
+		std::string line;
+		while (std::getline(stream, line)) {
+			line = line.substr(0, line.find('#'));
+			const auto begin = line.find_first_not_of(" \t\r\n");
+			if (begin != std::string::npos)
+				lines.push_back(line.substr(begin, line.find_last_not_of(" \t\r\n") - begin + 1));
+		}
+	}
+
 	/** Encodes a filesystem path as UTF-8 without narrowing Unicode filenames. */
 	inline std::string PathToUtf8(const std::filesystem::path& path)
 	{
@@ -84,5 +116,46 @@ namespace Util
 			return std::nullopt;
 
 		return ToLowerAscii(stem);
+	}
+
+	/** @brief Uppercases the ASCII letters in @p a_str, returning a new string. */
+	inline std::string ToUpperAscii(std::string_view a_str)
+	{
+		std::string result;
+		result.reserve(a_str.size());
+		for (char c : a_str)
+			result.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+		return result;
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text begins with @p a_prefix. */
+	inline bool IStartsWith(std::string_view a_text, std::string_view a_prefix)
+	{
+		return a_text.size() >= a_prefix.size() && IEquals(a_text.substr(0, a_prefix.size()), a_prefix);
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text ends with @p a_suffix. */
+	inline bool IEndsWith(std::string_view a_text, std::string_view a_suffix)
+	{
+		return a_text.size() >= a_suffix.size() && IEquals(a_text.substr(a_text.size() - a_suffix.size()), a_suffix);
+	}
+
+	/** @brief Case-insensitive (ASCII) test that @p a_text contains @p a_needle; an empty needle is always found. */
+	inline bool IContains(std::string_view a_text, std::string_view a_needle)
+	{
+		return std::search(a_text.begin(), a_text.end(), a_needle.begin(), a_needle.end(), [](char a, char b) {
+			return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+		}) != a_text.end() ||
+		       a_needle.empty();
+	}
+
+	/** @brief The part of @p a_text without leading and trailing ASCII whitespace (space, tab, CR, LF, FF, VT). */
+	inline std::string_view TrimAscii(std::string_view a_text)
+	{
+		constexpr std::string_view whitespace = " \t\r\n\f\v";
+		const auto first = a_text.find_first_not_of(whitespace);
+		if (first == std::string_view::npos)
+			return {};
+		return a_text.substr(first, a_text.find_last_not_of(whitespace) - first + 1);
 	}
 }

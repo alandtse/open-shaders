@@ -13,11 +13,29 @@ namespace SharedData
 
 static float emissiveMult = 1.0;
 
+#define COLOR_HSV
 #include "/Shaders/Common/Color.hlsli"
 #include "/Test/STF/ShaderTestFramework.hlsli"
 
-/// @tags color, gamma, lighting
-[numthreads(1, 1, 1)] void TestAuthoredGammaOffsetContinuity() {
+/// @tags color, hsv
+[numthreads(1, 1, 1)] void TestHSVConversion() {
+	const float3 samples[8] = {
+		float3(0, 0, 0), float3(1, 1, 1), float3(0.2, 0.2, 0.2),
+		float3(1, 0, 0), float3(0, 1, 0), float3(0, 0, 1),
+		float3(0.07, 0.6, 0.18), float3(2.0, 0.1, 0.7)
+	};
+	for (uint i = 0; i < 8; ++i) {
+		float3 hsv = Color::RGBtoHSV(samples[i]);
+		ASSERT(IsTrue, all(isfinite(hsv)));
+		ASSERT(IsTrue, all(abs(Color::HSVtoRGB(hsv) - samples[i]) < 0.000001));
+	}
+	ASSERT(IsTrue, abs(Color::RGBtoHSV(float3(0, 1, 0)).x - 1.0 / 3.0) < 0.000001);
+	ASSERT(IsTrue, abs(Color::RGBtoHSV(float3(0, 0, 1)).x - 2.0 / 3.0) < 0.000001);
+}
+
+	/// @tags color, gamma, lighting
+	[numthreads(1, 1, 1)] void TestAuthoredGammaOffsetContinuity()
+{
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::linearLightingSettings.conversionSaturation = 1.0;
 	const float samples[6] = { 0.001, 0.02, 0.04045, 0.18, 0.5, 0.99 };
@@ -41,9 +59,8 @@ static float emissiveMult = 1.0;
 	ASSERT(IsTrue, all(abs(adjusted - signedReference) < 0.001 * max(abs(signedReference), 0.00001)));
 }
 
-	/// @tags color, gamma, lighting
-	[numthreads(1, 1, 1)] void TestVolumetricGammaConsistency()
-{
+/// @tags color, gamma, lighting
+[numthreads(1, 1, 1)] void TestVolumetricGammaConsistency() {
 	SharedData::linearLightingSettings.conversionSaturation = 1.0;
 	SharedData::csUtilitySettings.vlIntensity = 1.5;
 	const float offsets[3] = { -0.01, 0.0, 0.01 };
@@ -60,8 +77,9 @@ static float emissiveMult = 1.0;
 	}
 }
 
-/// @tags color, lighting, effects11
-[numthreads(1, 1, 1)] void TestProjectedDiffuseEffects11() {
+	/// @tags color, lighting, effects11
+	[numthreads(1, 1, 1)] void TestProjectedDiffuseEffects11()
+{
 	SharedData::enbSettings.Enable = true;
 	const float powers[3] = { 1.0, 1.5, 2.2 };
 	const float3 textureColor = float3(0.2, 0.5, 0.8);
@@ -76,9 +94,8 @@ static float emissiveMult = 1.0;
 	ASSERT(IsTrue, all(abs(Color::ProjectedDiffuse(textureColor, tint, 1.0.xxx) - textureColor * tint) < 0.000001));
 }
 
-	/// @tags color, lighting, particles
-	[numthreads(1, 1, 1)] void TestParticleAuthoredTint()
-{
+/// @tags color, lighting, particles
+[numthreads(1, 1, 1)] void TestParticleAuthoredTint() {
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::linearLightingSettings.conversionSaturation = 1.0;
 	float3 neutral = Color::TextureToWorking(0.5.xxx, 0.5.xxx);
@@ -102,8 +119,9 @@ static float emissiveMult = 1.0;
 	ASSERT(IsTrue, all(abs(legacy - 0.0625.xxx) < 0.000001));
 }
 
-/// @tags color, gamma, effects
-[numthreads(1, 1, 1)] void TestEffectSceneTransfer() {
+	/// @tags color, gamma, effects
+	[numthreads(1, 1, 1)] void TestEffectSceneTransfer()
+{
 	SharedData::linearLightingSettings.conversionSaturation = 0.92;
 	const float3 samples[4] = { 0.0.xxx, 0.18.xxx, float3(0.8, 0.3, 0.02), float3(-0.02, 0.0, 4.0) };
 	for (uint enabled = 0; enabled < 2; enabled++) {
@@ -125,9 +143,8 @@ static float emissiveMult = 1.0;
 	}
 }
 
-	/// @tags color, gamma, effects
-	[numthreads(1, 1, 1)] void TestEffectLightingGain()
-{
+/// @tags color, gamma, effects
+[numthreads(1, 1, 1)] void TestEffectLightingGain() {
 	SharedData::csUtilitySettings.effectLightingColor = float2(1.0, 0.0);
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	const float gains[4] = { 0.0, 0.25, 1.0, 4.0 };
@@ -147,8 +164,9 @@ static float emissiveMult = 1.0;
 	}
 }
 
-/// @tags color, colorspace, lighting
-[numthreads(1, 1, 1)] void TestProjectedTintGamut() {
+	/// @tags color, colorspace, lighting
+	[numthreads(1, 1, 1)] void TestProjectedTintGamut()
+{
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::linearLightingSettings.diffuseGamma = 2.2;
 	SharedData::linearLightingSettings.diffuseCurve = 3.59479342;
@@ -168,9 +186,8 @@ static float emissiveMult = 1.0;
 	}
 }
 
-	/// @tags color, utility
-	[numthreads(1, 1, 1)] void TestUtilityColorNeutralAndGamma()
-{
+/// @tags color, utility
+[numthreads(1, 1, 1)] void TestUtilityColorNeutralAndGamma() {
 	const float3 colors[4] = { 0.0.xxx, 1.0.xxx, float3(0.2, 0.5, 4.0), float3(-0.02, 0.0, 2.0) };
 	for (uint enabled = 0; enabled < 2; enabled++) {
 		SharedData::linearLightingSettings.enableLinearLighting = enabled;
@@ -189,8 +206,9 @@ static float emissiveMult = 1.0;
 	}
 }
 
-/// @tags color, utility
-[numthreads(1, 1, 1)] void TestUtilitySaturationAndGamut() {
+	/// @tags color, utility
+	[numthreads(1, 1, 1)] void TestUtilitySaturationAndGamut()
+{
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	const float3 input = float3(0.2, 0.5, 4.0);
 	const float2 adjustments[4] = { float2(0.0, 0.0), float2(0.5, 0.0), float2(1.5, 0.3), float2(1.0, -0.5) };
@@ -207,9 +225,8 @@ static float emissiveMult = 1.0;
 	}
 }
 
-	/// @tags color, utility, lighting
-	[numthreads(1, 1, 1)] void TestUtilityPointLightIsolation()
-{
+/// @tags color, utility, lighting
+[numthreads(1, 1, 1)] void TestUtilityPointLightIsolation() {
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::csUtilitySettings.pointLightColor = float2(0.0, 0.0);
 	SharedData::csUtilitySettings.linearPointLightColor = float2(1.0, 0.0);
@@ -228,8 +245,9 @@ static float emissiveMult = 1.0;
 	ASSERT(IsTrue, all(Color::AdjustUtilityColor(input, Color::GetPointLightColorAdjustment(true, Color::PointLightFlagSpot)) == converted));
 }
 
-/// @tags color, utility, effects
-[numthreads(1, 1, 1)] void TestUtilityWeatherSceneAdjustment() {
+	/// @tags color, utility, effects
+	[numthreads(1, 1, 1)] void TestUtilityWeatherSceneAdjustment()
+{
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::csUtilitySettings.sceneColor = float2(0.0, -0.25);
 	SharedData::csUtilitySettings.effectColor = float2(1.0, 0.0);
@@ -245,9 +263,8 @@ static float emissiveMult = 1.0;
 	}
 }
 
-	/// @tags color, utility, materials
-	[numthreads(1, 1, 1)] void TestUtilityEmissiveIntensity()
-{
+/// @tags color, utility, materials
+[numthreads(1, 1, 1)] void TestUtilityEmissiveIntensity() {
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	SharedData::linearLightingSettings.conversionSaturation = 0.92;
 	SharedData::csUtilitySettings.emitColor = float2(0.5, -0.5);
@@ -265,8 +282,9 @@ static float emissiveMult = 1.0;
 	}
 }
 
-/// @tags color, utility, effects
-[numthreads(1, 1, 1)] void TestUtilityEffectAdjustmentDomain() {
+	/// @tags color, utility, effects
+	[numthreads(1, 1, 1)] void TestUtilityEffectAdjustmentDomain()
+{
 	SharedData::linearLightingSettings.enableLinearLighting = true;
 	const float2 adjustment = float2(0.5, -0.25);
 	const float3 input = float3(0.03, 0.7, 3.0);

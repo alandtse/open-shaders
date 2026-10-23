@@ -844,7 +844,7 @@ void LensFlare::Draw(TextureInfo& inout_tex)
 	data.KernelScale = settings.KernelScale;
 	data.AspectRatio = (float)fullW / (float)fullH;
 	data.ApertureBlades = apertureBlades;
-	data.ApertureRotation = apertureRotationDeg * 3.14159265358979323846f / 180.0f;  // degrees → radians
+	data.ApertureRotation = DirectX::XMConvertToRadians(apertureRotationDeg);
 	data.ApertureSize = 1.0f / std::max(fStop, 1.0f);
 
 	// Compute PadScale based on mode

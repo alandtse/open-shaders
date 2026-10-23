@@ -117,7 +117,6 @@ namespace
 
 }
 
-using WindMath::ClampFiniteOrDefault;
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FusRoDahWind::Settings,
 	enabled,
@@ -195,13 +194,13 @@ void FusRoDahWind::RestoreDefaultSettings()
 void FusRoDahWind::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.intensity = ClampFiniteOrDefault(settings.intensity, kIntensityMin, kIntensityMax, defaults.intensity);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime, kDecayTimeMin, kDecayTimeMax, defaults.decayTime);
-	settings.distanceMultiplier = ClampFiniteOrDefault(settings.distanceMultiplier,
+	settings.intensity = Util::ClampFinite(settings.intensity, kIntensityMin, kIntensityMax, defaults.intensity);
+	settings.decayTime = Util::ClampFinite(settings.decayTime, kDecayTimeMin, kDecayTimeMax, defaults.decayTime);
+	settings.distanceMultiplier = Util::ClampFinite(settings.distanceMultiplier,
 		kDistanceMultiplierMin, kDistanceMultiplierMax, defaults.distanceMultiplier);
-	settings.widthMultiplier = ClampFiniteOrDefault(settings.widthMultiplier,
+	settings.widthMultiplier = Util::ClampFinite(settings.widthMultiplier,
 		kWidthMultiplierMin, kWidthMultiplierMax, defaults.widthMultiplier);
-	settings.speedMultiplier = ClampFiniteOrDefault(settings.speedMultiplier,
+	settings.speedMultiplier = Util::ClampFinite(settings.speedMultiplier,
 		kSpeedMultiplierMin, kSpeedMultiplierMax, defaults.speedMultiplier);
 }
 
@@ -293,10 +292,9 @@ void FusRoDahWind::QueueEffect(RE::Actor& a_actor, const Route& a_route) const
 	const auto& profile = kRankProfiles[rank];
 	const auto [coneHalfAngle, collisionRadius] =
 		GetProjectileShape(a_route.canonicalSpell, profile);
-	const float coneHalfAngleRadians = coneHalfAngle * (std::numbers::pi_v<float> / 180.0f);
-	const float sideHalfAngleRadians =
-		std::min(coneHalfAngle * kSideSpreadMultiplier, kMaximumSideHalfAngle) *
-		(std::numbers::pi_v<float> / 180.0f);
+	const float coneHalfAngleRadians = DirectX::XMConvertToRadians(coneHalfAngle);
+	const float sideHalfAngleRadians = DirectX::XMConvertToRadians(
+		std::min(coneHalfAngle * kSideSpreadMultiplier, kMaximumSideHalfAngle));
 	const WindField::TransientWindSource source{ { origin.x, origin.y, origin.z },
 		0.0f,
 		{ forward.x, forward.y, forward.z },

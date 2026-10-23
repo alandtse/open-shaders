@@ -19,6 +19,7 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/ShaderInclude.h"
+#include "Utils/StringUtils.h"
 
 std::filesystem::path Effect::GetFilePath() const
 {
@@ -36,8 +37,7 @@ bool Effect::Load()
 		return true;
 	}
 
-	std::string section = GetName();
-	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
+	std::string section = Util::ToUpperAscii(GetName());
 
 	// D3DPreprocess and ENB stringify dots differently, so saved keys need normalized spacing.
 	std::unordered_map<std::string, std::string> normalizedIniKeys;
@@ -189,8 +189,7 @@ void Effect::Save()
 
 	std::filesystem::path iniPath = PresetManager::GetSingleton().GetENBSeriesPath() / (GetName() + ".ini");
 
-	std::string section = GetName();
-	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
+	std::string section = Util::ToUpperAscii(GetName());
 
 	for (const auto& uiVar : uiVariables) {
 		if (uiVar.isLabel || uiVar.isPatched)
@@ -374,8 +373,7 @@ bool Effect::LoadFXFile()
 	auto enbseriesPath = filePath.parent_path();
 	auto iniFilePath = enbseriesPath / (GetName() + ".ini");
 	std::string iniPathStr = iniFilePath.string();
-	std::string iniSection = GetName();
-	std::transform(iniSection.begin(), iniSection.end(), iniSection.begin(), ::toupper);
+	std::string iniSection = Util::ToUpperAscii(GetName());
 
 	uiDefines.clear();
 	Util::ShaderPatches::Apply(GetName().c_str(), sourceCode);
@@ -951,8 +949,7 @@ void Effect::LoadVariableFromString(UIVariable& uiVar, const std::string& value)
 			break;
 		case UIVariableType::Bool:
 			{
-				std::string lowerValue = value;
-				std::transform(lowerValue.begin(), lowerValue.end(), lowerValue.begin(), ::tolower);
+				const std::string lowerValue = Util::ToLowerAscii(value);
 				if (lowerValue == "true" || lowerValue == "1" || lowerValue == "yes" || lowerValue == "on")
 					uiVar.boolValue = true;
 				else if (lowerValue == "false" || lowerValue == "0" || lowerValue == "no" || lowerValue == "off")

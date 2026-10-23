@@ -497,12 +497,21 @@ def parse_field_statement(raw_statement: str) -> tuple[str, str] | None:
     return match.group(2), clean_type(match.group(1))
 
 
-def parse_top_level_fields(body: str) -> dict[str, str]:
+def parse_top_level_fields(body: str, public_only: bool = False,
+                           default_access: str = "public") -> dict[str, str]:
     fields: dict[str, str] = {}
     masked = mask_cpp_source(body)
     statement_start = 0
     index = 0
+    access = default_access
+    access_pattern = re.compile(r"\b(public|private|protected)\s*:")
     while index < len(masked):
+        access_label = access_pattern.match(masked, index)
+        if access_label:
+            access = access_label.group(1)
+            index = access_label.end()
+            statement_start = index
+            continue
         if masked[index] == "{":
             end = find_matching_brace(masked, index)
             if end < 0:
@@ -510,14 +519,22 @@ def parse_top_level_fields(body: str) -> dict[str, str]:
             prefix = masked[statement_start:index]
             if not re.search(r"\b(struct|class|enum)\b", prefix):
                 parsed = parse_field_statement(prefix)
-                if parsed:
+                if parsed and (not public_only or access == "public"):
                     fields[parsed[0]] = parsed[1]
+            elif public_only and access == "public":
+                declaration = re.search(r"\b(?:struct|class)\s+(\w+)", prefix)
+                tail_end = masked.find(";", end)
+                if declaration and tail_end >= 0:
+                    parsed = parse_field_statement(
+                        declaration.group(1) + " " + masked[end + 1:tail_end])
+                    if parsed:
+                        fields[parsed[0]] = parsed[1]
             statement_start = end + 1
             index = end + 1
             continue
         if masked[index] == ";":
             parsed = parse_field_statement(masked[statement_start:index])
-            if parsed:
+            if parsed and (not public_only or access == "public"):
                 fields[parsed[0]] = parsed[1]
             statement_start = index + 1
         index += 1
@@ -585,7 +602,8 @@ def collect_feature_struct_fields(paths: list[Path], features: dict[str, dict[st
     return feature_fields
 
 
-def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[str, str]],
+                                  public_only: bool = False) -> dict[str, dict[str, str]]:
     feature_members: dict[str, dict[str, str]] = {}
     for path in paths:
         text = read_text(path)
@@ -598,7 +616,12 @@ def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[st
                 continue
 
             raw_feature_body = text[feature_match.end():feature_end]
-            members = parse_top_level_fields(raw_feature_body)
+            members = parse_top_level_fields(
+                raw_feature_body, public_only,
+                "private" if feature_match.group().startswith("class") else "public")
+            if public_only:
+                feature_members[feature_class] = members
+                continue
             for struct_match in re.finditer(STRUCT_DECL_RE, raw_feature_body):
                 body_end = find_matching_brace(raw_feature_body, struct_match.end() - 1)
                 if body_end < 0:
@@ -4320,6 +4343,10 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         [p for p in src_paths if p.suffix == ".h"],
         {child_class: {} for child_class in settings_component_classes})
     catalog_class_fields = feature_fields | component_fields
+    public_members = collect_feature_member_fields(
+        [p for p in src_paths if p.suffix == ".h"],
+        features | {child_class: {} for child_class in settings_component_classes},
+        public_only=True)
     catalog_class_aliases = collect_feature_type_aliases(
         [p for p in src_paths if p.suffix == ".h"],
         features | {child_class: {} for child_class in settings_component_classes})
@@ -4526,7 +4553,8 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "componentClass": context.component_class,
             "componentType": context.component_type,
             "componentContainer": context.component_container,
-            "addressable": context.addressable,
+            "addressable": context.addressable and
+                access.split(".")[0].split("[")[0] in public_members.get(context.field_class, {}),
             "controlScope": context.control_scope,
             "virtualControls": virtual_controls,
             "navigationControls": navigation_controls.get(context.feature_class, ()),

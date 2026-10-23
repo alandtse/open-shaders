@@ -5,6 +5,7 @@
 
 namespace LodLandscape
 {
+	static const float DepthBiasStart = 70000.0;
 	float4 AdjustLodLandscapeVertexPositionMS(float4 positionMS, row_major float4x4 world, float4 cellParams)
 	{
 		float4 positionWS = mul(world, positionMS);
@@ -18,7 +19,7 @@ namespace LodLandscape
 
 	float4 AdjustLodLandscapeVertexPositionCS(float4 positionCS, bool reverseProjection)
 	{
-		float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(positionCS, reverseProjection) - 70000)) * 0.5;
+		float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(positionCS, reverseProjection) - DepthBiasStart)) * 0.5;
 		return FrameBuffer::OffsetClipDepth(positionCS, lodDepthBias, reverseProjection);
 	}
 

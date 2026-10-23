@@ -26,7 +26,7 @@
 class Profiler
 {
 public:
-	static constexpr uint32_t kMaxTimers = 256;
+	static constexpr uint32_t kMaxTimers = 1024;
 	static constexpr uint32_t kFrameLatency = 3;
 	static constexpr uint32_t kHistorySize = 300;
 	/** @brief Collection-cycle gap before retiring an inactive timer.

@@ -1,3 +1,7 @@
+#if defined(SKINNED) || defined(SKIN) || defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE) || defined(HAIR)
+#	undef SNOW_COVER
+#endif
+
 #define LIGHTING
 
 #include "Common/Color.hlsli"
@@ -40,12 +44,23 @@ float GetFurWet()
 #	undef IBL
 #endif
 
+#if defined(IBL) && !defined(DEFERRED)
+#	define CAPTURE_REFLECTION_RADIANCE
+#endif
+
 #if (defined(TREE_ANIM) || defined(LANDSCAPE)) && !defined(VC)
 #	define VC
 #endif  // TREE_ANIM || LANDSCAPE || !VC
 
 #if defined(LODOBJECTS) || defined(LODOBJECTSHD) || defined(LODLANDNOISE) || defined(WORLD_MAP)
 #	define LOD
+#endif
+
+#if defined(SNOW_COVER)
+#	if defined(TRUE_PBR) && !defined(GLINT)
+#		define SNOW_COVER_GLINT
+#		define GLINT
+#	endif
 #endif
 
 #if defined(VSHADER)
@@ -327,13 +342,16 @@ VS_OUTPUT main(VS_INPUT input)
 #	if defined(FUR_SHELLS)
 	const float furDroop = min(FurShells::Droop * FurShells::GetWetDroop(GetFurWet()) * furShell * furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()) * furShell);
 #		if defined(SKINNED)
-	const float3 furWorldNormal = normalize(mul((float3x3)worldMatrix, furNormal));
+	const float3 furWorldVector = mul((float3x3)worldMatrix, furNormal);
 #		else
-	const float3 furWorldNormal = normalize(mul((float3x3)World[eyeIndex], furNormal));
+	const float3 furWorldVector = mul((float3x3)World[eyeIndex], furNormal);
 #		endif
+	const float furWorldScale = length(furWorldVector);
+	const float3 furWorldNormal = furWorldVector / max(furWorldScale, 1e-6);
 	float3 furTouchDebug;
 	const float3 furTouch = FurShells::GetTouchDisplacement(worldPosition.xyz + FurShells::TouchEye[eyeIndex].xyz, furWorldNormal, furShell, FurShells::Length * FurShells::GetWetLength(GetFurWet()), furTouchDebug);
-	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + FurShells::GetWindDisplacement(furWorldNormal, furShell) + furTouch;
+	const float3 furBend = FurShells::LimitBend(FurShells::GetWindDisplacement(furWorldNormal, furShell) + FurShells::GetInertiaDisplacement(furShell, GetFurWet()), furShell, FurShells::GetWetLength(GetFurWet()), furWorldScale);
+	const float3 furDisplacement = float3(0.0, 0.0, -furDroop) + furBend + furTouch;
 	worldPosition.xyz += furDisplacement;
 	previousWorldPosition.xyz += furDisplacement;
 #		if defined(SKINNED)
@@ -381,7 +399,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.Position = viewPos;
 
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
-	float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(viewPos, reverseProjection) - 70000)) * 0.5;
+	float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(viewPos, reverseProjection) - LodLandscape::DepthBiasStart)) * 0.5;
 	vsout.Position = FrameBuffer::OffsetClipDepth(vsout.Position, lodDepthBias, reverseProjection);
 #	endif
 
@@ -529,6 +547,9 @@ struct PS_OUTPUT
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
 	float4 NormalGlossiness: SV_Target2;
+#	if defined(IBL)
+	float4 ReflectionRadiance: SV_Target7;
+#	endif
 #	if defined(EYE)
 	float4 Masks2: SV_Target3;
 #	endif
@@ -1171,6 +1192,11 @@ bool UseSkylightingShadowVisibility()
 #		include "Skylighting/Skylighting.hlsli"
 #	endif
 
+#	if defined(SNOW_COVER)
+#		undef SNOW
+#		include "SnowCover/SnowCover.hlsli"
+#	endif
+
 #	if defined(CS_HAIR_SHADING)
 #		include "Hair/Hair.hlsli"
 #	endif
@@ -1421,6 +1447,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float mipLevel = 0;
 #	endif  // LANDSCAPE
 	float sh0 = 0;
+#	if defined(SNOW_COVER) && defined(EMAT)
+	bool snowHeightSampled = false;
+#	endif
 	float pixelOffset = 0;
 
 #	if defined(EMAT)
@@ -1494,6 +1523,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		uv = ExtendedMaterials::GetParallaxCoords(viewPosition.z, uv, mipLevel, viewDirection, tbnTr, screenNoise, TexParallaxSampler, SampParallaxSampler, 0, displacementParams, applyMeshTV, meshOffset, pixelOffset);
 		if (SharedData::extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0) {
 			MESH_TV_HEIGHT(sh0, TexParallaxSampler, SampParallaxSampler, uv, mipLevel, 0);
+#			if defined(SNOW_COVER)
+			snowHeightSampled = true;
+#			endif
 		}
 	}
 #		endif  // defined(PARALLAX) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
@@ -1529,6 +1561,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 				uv = ExtendedMaterials::GetParallaxCoords(viewPosition.z, uv, mipLevel, viewDirection, tbnTr, screenNoise, TexEnvMaskSampler, SampTerrainParallaxSampler, 3, displacementParams, applyMeshTV, meshOffset, pixelOffset);
 				if (SharedData::extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0) {
 					MESH_TV_HEIGHT(sh0, TexEnvMaskSampler, SampEnvMaskSampler, uv, mipLevel, 3);
+#			if defined(SNOW_COVER)
+					snowHeightSampled = true;
+#			endif
 				}
 				MESH_TV_SAMPLE(complexMaterialColor, TexEnvMaskSampler, SampEnvMaskSampler, uv);
 			} else {
@@ -1578,6 +1613,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		uv = ExtendedMaterials::GetParallaxCoords(viewPosition.z, uv, mipLevel, refractedViewDirection, tbnTr, screenNoise, TexParallaxSampler, SampParallaxSampler, 0, displacementParams, applyMeshTV, meshOffset, pixelOffset);
 		if (SharedData::extendedMaterialSettings.EnableShadows && parallaxShadowQuality > 0.0) {
 			MESH_TV_HEIGHT(sh0, TexParallaxSampler, SampParallaxSampler, uv, mipLevel, 0);
+#				if defined(SNOW_COVER)
+			snowHeightSampled = true;
+#				endif
 		}
 	}
 #			endif  // !FACEGEN
@@ -1859,7 +1897,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float lodLandNoiseParameter = GetLodLandBlendParameter(baseColor.xyz);
 	float noise = TexLandLodNoiseSampler.Sample(SampLandLodNoiseSampler, uv * 3.0.xx).x;
 	float lodLandNoiseMultiplier = GetLodLandBlendMultiplier(lodLandNoiseParameter, noise);
-	baseColor.xyz *= lodLandNoiseMultiplier;
+#			if defined(SNOW_COVER)
+	if (!SnowCover::IsActive())
+#			endif
+		baseColor.xyz *= lodLandNoiseMultiplier;
 	normal.xyz *= 2;
 	normal.w = 1;
 	glossiness = 0;
@@ -2218,11 +2259,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 
 	material.GlintScreenSpaceScale = max(1, glintParameters.x);
+#		if defined(SNOW_COVER_GLINT)
+	material.GlintLogMicrofacetDensity = SnowCover::DisabledGlintDensity;
+#		else
 	material.GlintLogMicrofacetDensity = clamp(PBR::Constants::MaxGlintDensity - glintParameters.y, PBR::Constants::MinGlintDensity, PBR::Constants::MaxGlintDensity);
+#		endif
 	material.GlintMicrofacetRoughness = clamp(glintParameters.z, PBR::Constants::MinGlintRoughness, PBR::Constants::MaxGlintRoughness);
 	material.GlintDensityRandomization = clamp(glintParameters.w, PBR::Constants::MinGlintDensityRandomization, PBR::Constants::MaxGlintDensityRandomization);
 
-#		if defined(GLINT)
+#		if defined(GLINT) && !defined(SNOW_COVER)
 	float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(input.Position.xy)) / 4294967296.0).x);
 	Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
 #		endif
@@ -2525,6 +2570,128 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	float4 waterData = SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex);
 	float waterHeight = waterData.w;
 
+#	if defined(SNOW_COVER)
+	bool snowActive = SnowCover::IsActive() && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SnowInactive);
+#		if defined(SKYLIGHTING)
+	float snowSkyVisibility = (inWorld || inReflection) ? SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1)) : 0;
+	float snowOcclusion = smoothstep(0, SnowCover::SkyVisibilityThreshold, snowSkyVisibility);
+#		else
+	float snowSkyVisibility = inWorld || inReflection;
+	float snowOcclusion = inWorld || inReflection;
+#		endif
+
+#		if !defined(TREE_ANIM)
+	bool snowBillboard = false;
+#		endif
+#		if defined(DO_ALPHA_TEST) && defined(LOD_BLENDING) && !defined(TREE_ANIM)  // should only match object lod trees (ultra trees), they have no special define
+	float3 snowCardNormal = normalize(cross(ddx(input.WorldPosition.xyz), ddy(input.WorldPosition.xyz)));
+	if (snowActive && HasSoftLighting()) {
+		float rx;
+		float ry;
+		TexColorSampler.GetDimensions(rx, ry);
+		snowBillboard = abs(dot(snowCardNormal, vertexNormal)) < 0.5;
+		float hasAlpha = 1 - TexColorSampler.SampleLevel(SampColorSampler, uv, 6).a;
+		if (snowBillboard || hasAlpha > 0.001) {
+			snowOcclusion = 1 - TexColorSampler.Sample(SampColorSampler, uv - float2(0, 2. / ry)).a;
+		}
+	}
+#		endif
+
+	float3 adjustedWorldPos = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
+	float snowFactor = 0;
+	if (snowActive
+#		if !defined(TREE_ANIM)
+		&& !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoSnow)
+#		endif
+	) {
+#		if defined(TRUE_PBR)
+#			if defined(TREE_ANIM)
+		float disp = 0;
+#			elif defined(LANDSCAPE)
+		float disp = sh0;  // GetTerrainHeight is already (raw - 0.5) * HeightScale
+#			elif defined(EMAT)
+		float disp = snowHeightSampled ? (sh0 - 0.5) * displacementParams.HeightScale : 0;
+#			else
+	float disp = 0;
+#			endif
+#		elif defined(LANDSCAPE) && defined(EMAT)
+		float disp = sh0;  // GetTerrainHeight is already (raw - 0.5) * HeightScale
+#		elif defined(EMAT) && !defined(TREE_ANIM)
+		float disp = snowHeightSampled ? (sh0 - 0.5) : 0;
+#		else
+		float disp = 0;
+#		endif
+		float3 snowNormal = worldNormal;
+#		if defined(TREE_ANIM)
+		snowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
+		float3 treeSnowNormal = snowNormal;
+		if (SharedData::snowCoverSettings.AffectTreeTint && !(Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::NoFoliageTint))
+			SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
+#		elif defined(DO_ALPHA_TEST)
+		const bool snowLODTree = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SnowLODTree) != 0;
+		float3 treeSnowNormal = snowNormal;
+		if (snowLODTree) {
+			treeSnowNormal = normalize(snowNormal + float3(0, 0, SnowCover::FoliageNormalBias));
+			snowNormal = treeSnowNormal;
+			if (SharedData::snowCoverSettings.AffectTreeTint)
+				SnowCover::ApplyFoliageColor(material.BaseColor, SnowCover::GetEnvironmentalMultiplier(adjustedWorldPos));
+#			if defined(LOD)
+			snowOcclusion *= SnowCover::GetObjectFade(length(viewPosition.xyz));
+#			endif
+		}
+#		endif
+#		if defined(DO_ALPHA_TEST) && defined(LOD_BLENDING) && !defined(TREE_ANIM)
+		if (snowBillboard)
+			snowNormal = normalize(float3(snowCardNormal.xy, abs(snowCardNormal.z) + SnowCover::FoliageNormalBias));
+#		endif
+#		if defined(LODLANDSCAPE) || defined(LODLANDNOISE)
+		snowNormal = normalize(lerp(snowNormal, float3(0, 0, 1), 0.5));
+#		endif
+		float rooftopLift = 0;
+#		if !defined(LANDSCAPE) && !defined(LOD) && !defined(TREE_ANIM) && !defined(LODLANDSCAPE) && !defined(LODLANDNOISE)
+		if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SnowRooftop)
+			rooftopLift = SnowCover::GetRooftopLift(input.ModelPosition.z, snowSkyVisibility);
+#		endif
+#		if defined(TRUE_PBR)
+		snowFactor = SnowCover::ApplySnowPBR(material, snowNormal, disp, adjustedWorldPos, snowOcclusion, input.WorldPosition.z - waterHeight, length(viewPosition.xyz), uv - uvOriginal, rooftopLift);
+#		else
+		snowFactor = SnowCover::ApplySnow(material, snowNormal, disp, adjustedWorldPos, snowOcclusion, input.WorldPosition.z - waterHeight, length(viewPosition.xyz), uv - uvOriginal, rooftopLift);
+#		endif
+		if (snowFactor > 0) {
+#		if defined(MODELSPACENORMALS) && !defined(SKINNED)
+			float3 sd = FrameBuffer::ViewToWorld(-float3(ddx_fine(snowFactor), ddy_fine(snowFactor), 0), false, eyeIndex);
+			worldNormal = normalize(lerp(worldNormal, snowNormal, snowFactor * SnowCover::NormalBlendStrength) + sd);
+#		elif defined(TREE_ANIM)
+			worldNormal = normalize(lerp(worldNormal, treeSnowNormal, snowFactor * SnowCover::NormalBlendStrength));
+#		else
+			if (!snowBillboard) {
+#			if defined(DO_ALPHA_TEST)
+				float3 snowShadingNormal = snowLODTree ? treeSnowNormal : normalize(mul(tbn, snowNormal));
+#			else
+				float3 snowShadingNormal = normalize(mul(tbn, snowNormal));
+#			endif
+				worldNormal = normalize(lerp(worldNormal, snowShadingNormal, snowFactor * SnowCover::NormalBlendStrength));
+			}
+#		endif
+		}
+#		if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
+		lodLandFadeFactor = snowFactor + (1 - snowFactor) * lodLandFadeFactor;
+		lodLandColor.rgb = lerp(lodLandColor.rgb, material.BaseColor * Color::PBRLightingScale, snowFactor);
+#		endif
+	}
+#		if defined(LODLANDNOISE)
+	if (snowActive)
+		material.BaseColor *= snowFactor + (1 - snowFactor) * lodLandNoiseMultiplier;
+#		endif
+#	endif  // SNOW_COVER
+#	if defined(GLINT) && defined(SNOW_COVER)
+	if (material.GlintLogMicrofacetDensity > SnowCover::GlintEnableThreshold) {
+		float glintNoise = Random::R1Modified(float(SharedData::FrameCount), (Random::pcg2d(uint2(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy))) / 4294967296.0).x);
+		Glints::PrecomputeGlints(glintNoise, uvOriginal, ddx(uvOriginal), ddy(uvOriginal), material.GlintScreenSpaceScale, material.GlintCache);
+	}
+#	endif
+
 	float waterRoughnessSpecular = 1;
 
 #	if defined(WETNESS_EFFECTS)
@@ -2746,9 +2913,17 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		dirLightColor *= WaterEffects::ComputeCaustics(waterData, input.WorldPosition.xyz, eyeIndex);
 #	endif
 
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	const bool captureRadiance = Permutation::IsReflectionRadianceCapture() && ShadowSampling::HasDistantShadows();
+	float3 radianceDirLightColor = dirLightColor;
+	[branch] if (captureRadiance)
+		radianceDirLightColor *= ShadowSampling::GetTerrainCloudShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+#	endif
+
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
-	if (inWorld || inReflection)
-		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+	if (inWorld || inReflection) {
+		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
+	}
 
 	float dirLightAngle = dot(worldNormal.xyz, DirLightDirection.xyz);
 
@@ -2777,6 +2952,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 	float dirDetailedShadow = 1.0;
+#	if defined(LOD)
+	float nativeContactWeight = ShadowSampling::HasDistantShadows() ? 0.0 : 1.0;
+#	else
+	float nativeContactWeight = 1.0;
+#	endif
 #	if defined(TREE_ANIM) && defined(LIGHT_LIMIT_FIX) && defined(DEFERRED)
 	float foliageDirectionalShadowScale = 1.0;
 #	endif
@@ -2796,8 +2976,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 	// Engine pre-renders the directional shadow into a screen-space mask at
 	// t14. Under LLF this mask can be stale or zeroed, so LLF treats pixels
-	// past its cascade data as lit and reports coverage for VSM merging.
+	// past its cascade data as lit instead of sampling this mask.
+#	if !defined(LIGHT_LIMIT_FIX)
 	float4 shadowColor = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) ? TexShadowMaskSampler.Load(int3(input.Position.xy, 0)) : 1.0;
+#	endif
 
 	// Use HasDirectionalShadows() (= !IsInterior() || InteriorSun::IsActive) instead of
 	// the bare !InInterior gate, so Interior Sun cells reach the LLF cascade + engine-mask
@@ -2809,15 +2991,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(LIGHT_LIMIT_FIX) && (defined(DEFERRED) || !defined(VOLUMETRIC_SHADOWS))
 #			if defined(DEFERRED) && (defined(VOLUMETRIC_SHADOWS) || defined(TREE_ANIM))
 		float llfDirectionalCoverage = 0.0;
-		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
-			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0,
-			llfDirectionalCoverage);
+		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex, llfDirectionalCoverage, nativeContactWeight);
 #				if defined(TREE_ANIM)
 		foliageDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, llfDirectionalCoverage);
 #				endif
 #			else
-		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
-			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0);
+		float llfDirectionalCoverage;
+		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex, llfDirectionalCoverage, nativeContactWeight);
 #			endif
 #		elif !defined(LIGHT_LIMIT_FIX)
 		dirDetailedShadow = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0;
@@ -2854,6 +3034,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
 	if (!SharedData::InInterior) {
 		float2 screenSpaceShadows = ScreenSpaceShadows::GetScreenSpaceShadows(input.Position.xyz, screenUV, screenNoise);
+		screenSpaceShadows = lerp(1.0, screenSpaceShadows, nativeContactWeight);
 		if (dirLightAngle >= 0.0)
 			dirDetailedShadow *= screenSpaceShadows.x;
 		dirTransmissionContactShadow = dirLightAngle >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
@@ -2940,6 +3121,40 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #		endif
+#	endif
+
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	DirectLightingOutput radianceLightDifference = (DirectLightingOutput)0;
+#		if defined(CHARACTER_RAIN_SURFACE)
+	float3 radianceRainDifference = 0.0;
+#		endif
+	[branch] if (captureRadiance)
+	{
+		DirectContext radianceContext = dirLightContext;
+		radianceContext.lightColor = radianceDirLightColor;
+#		if defined(TRUE_PBR)
+		radianceContext.coatLightColor = radianceDirLightColor * ((PBRFlags & PBR::Flags::InterlayerParallax) != 0 ? dirSoftShadow : dirDetailedShadow);
+#		endif
+		DirectLightingOutput radianceLightOutput;
+		EvaluateLighting(radianceContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, radianceLightOutput);
+		radianceLightOutput.transmission *= dirTransmissionContactShadow;
+#		if defined(WETNESS_EFFECTS)
+		if (waterRoughnessSpecular < 1)
+			EvaluateWetnessLighting(wetnessNormal, radianceContext, waterRoughnessSpecular, radianceLightOutput);
+#			if defined(CHARACTER_RAIN_SURFACE)
+		if (characterCoatMask > 0.0f)
+			radianceRainDifference = CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, radianceContext,
+										 characterSpotRoughness, characterCoatMask, characterCoatIntensity) -
+			                         characterRainSpecular;
+#			endif
+#		endif
+		radianceLightDifference.diffuse = radianceLightOutput.diffuse - dirLightOutput.diffuse;
+		radianceLightDifference.specular = radianceLightOutput.specular - dirLightOutput.specular;
+		radianceLightDifference.transmission = radianceLightOutput.transmission - dirLightOutput.transmission;
+#		if defined(TRUE_PBR)
+		radianceLightDifference.coatDiffuse = radianceLightOutput.coatDiffuse - dirLightOutput.coatDiffuse;
+#		endif
+	}
 #	endif
 
 	lightsDiffuseColor += dirLightOutput.diffuse;
@@ -3373,6 +3588,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #	endif
 
+#	if defined(SNOW_COVER) && !defined(MODELSPACENORMALS)
+	vertexColor.rgb = snowFactor + (1 - snowFactor) * vertexColor.rgb;
+#	endif
+
 	float3 reflectionDiffuseColor = diffuseColor + directionalAmbientColor;
 
 #	if defined(TRUE_PBR) && defined(LOD_LAND_BLEND) && !defined(DEFERRED)
@@ -3434,8 +3653,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 #	if !defined(TRUE_PBR)
-	if (HasSpecular())
+	if (HasSpecular()) {
 		specularColor *= MaterialData.yyy;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceLightDifference.specular *= MaterialData.yyy;
+#		endif
+	}
+#	endif
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceSpecularColor = specularColor + radianceLightDifference.specular;
 #	endif
 
 #	if defined(TRUE_PBR)
@@ -3462,10 +3688,22 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	color.xyz += transmissionColor;
 
 	color.xyz *= vertexColor;
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceDiffuseDifference = radianceLightDifference.diffuse * material.BaseColor;
+#		if defined(TRUE_PBR)
+	if ((PBRFlags & PBR::Flags::ColoredCoat) != 0)
+		radianceDiffuseDifference = lerp(radianceDiffuseDifference, material.CoatColor * radianceLightDifference.coatDiffuse, material.CoatStrength);
+#		endif
+	float3 radianceColor = color.xyz + (radianceDiffuseDifference + radianceLightDifference.transmission) * vertexColor;
+#	endif
 
 #	if defined(SNOW)
-	if (useSnowSpecular)
+	if (useSnowSpecular) {
 		specularColor = 0;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceSpecularColor = 0;
+#		endif
+	}
 #	endif
 
 	diffuseColor = reflectionDiffuseColor;
@@ -3477,7 +3715,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(VANILLA_FRESNEL)
 		if (!(enableVanillaFresnel && SharedData::vanillaFresnelSettings.EnableDynamicCubemapsConversion))
 #		endif
+		{
 			specularColor += envColor * Color::IrradianceToLinear(diffuseColor);
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceSpecularColor += envColor * Color::IrradianceToLinear(diffuseColor + radianceLightDifference.diffuse);
+#		endif
+		}
 	indirectLobeWeights.diffuse += envColor;
 #	endif
 
@@ -3485,12 +3728,20 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(VANILLA_FRESNEL)
 	if (!(enableVanillaFresnel && SharedData::vanillaFresnelSettings.EnableGGX))
 #		endif
+	{
 		specularColor *= complexSpecular;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceSpecularColor *= complexSpecular;
+#		endif
+	}
 #	endif  // defined (EMAT) && defined(ENVMAP)
 
 #	if defined(CHARACTER_RAIN_SURFACE)
 	// Water reflects independently of skin specular strength and the clothing material's masks.
 	specularColor += characterRainSpecular;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceSpecularColor += characterRainSpecular + radianceRainDifference;
+#		endif
 #	endif
 
 #	if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
@@ -3498,6 +3749,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		lodLandDiffuseColor += directionalAmbientColor;
 		float3 litLodLandColor = vertexColor * lodLandColor.xyz * lodLandFadeFactor * lodLandDiffuseColor;
 		color.xyz = lerp(color.xyz * Color::PBRLightingScale, litLodLandColor, lodLandBlendFactor);
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		float3 radianceLandDifference = (radianceDirLightColor - dirLightColor) / Math::PI * saturate(dirLightAngle) * dirDetailedShadow;
+		float3 radianceLitLandColor = litLodLandColor + vertexColor * lodLandColor.xyz * lodLandFadeFactor * radianceLandDifference;
+		radianceColor = lerp(radianceColor * Color::PBRLightingScale, radianceLitLandColor, lodLandBlendFactor);
+		radianceSpecularColor = lerp(radianceSpecularColor * Color::PBRLightingScale, 0, lodLandBlendFactor);
+#		endif
 
 		specularColor = lerp(specularColor * Color::PBRLightingScale, 0, lodLandBlendFactor);
 		indirectLobeWeights.diffuse = lerp(indirectLobeWeights.diffuse * Color::PBRLightingScale, vertexColor * lodLandColor.xyz * lodLandFadeFactor, lodLandBlendFactor);
@@ -3507,6 +3764,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	elif defined(TRUE_PBR)
 	color.xyz *= Color::PBRLightingScale;
 	specularColor *= Color::PBRLightingScale;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceColor *= Color::PBRLightingScale;
+	radianceSpecularColor *= Color::PBRLightingScale;
+#		endif
 	indirectLobeWeights.diffuse *= Color::PBRLightingScale;
 #	endif
 
@@ -3519,6 +3780,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	if (!SharedData::iblSettings.EnableIBL)
 #		endif
 	{
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		float3 radianceAmbientColor = directionalAmbientColor;
+		Skylighting::ApplySkylighting(radianceColor, radianceAmbientColor, outputAlbedo, skylightingDiffuse);
+#		endif
 		Skylighting::ApplySkylighting(color.xyz, directionalAmbientColor, outputAlbedo, skylightingDiffuse);
 	}
 #	endif
@@ -3526,6 +3791,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if !defined(DEFERRED)
 	color.xyz = Color::IrradianceToLinear(color.xyz);
 	color.xyz += specularColor;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceLinearColor = Color::IrradianceToLinear(radianceColor) + radianceSpecularColor;
+	float3 directLinearColor = color.xyz;
+#		endif
 
 	if (any(indirectLobeWeights.specular > 0)
 #		if defined(WETNESS_EFFECTS)
@@ -3564,6 +3833,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			endif
 	}
 #		endif
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceColor = Color::IrradianceToGamma(radianceLinearColor + (color.xyz - directLinearColor));
+#		endif
 	color.xyz = Color::IrradianceToGamma(color.xyz);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 	float fogFactor = input.FogParam.w;
@@ -3597,13 +3869,25 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		if (SharedData::exponentialHeightFogSettings.enabled) {
 			if (!ExponentialHeightFog::ShouldDisableVanillaFog()) {
 				color.xyz = Color::BlendFog(color.xyz, vanillaFogColor, vanillaFogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+				radianceColor = Color::BlendFog(radianceColor, vanillaFogColor, vanillaFogFactor);
+#			endif
 			}
 			color.xyz = lerp(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceColor = lerp(radianceColor, fogColor, fogFactor);
+#			endif
 		} else {
 			color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceColor = Color::BlendFog(radianceColor, fogColor, fogFactor);
+#			endif
 		}
 #		else
 		color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceColor = Color::BlendFog(radianceColor, fogColor, fogFactor);
+#			endif
 #		endif
 	}
 #	endif
@@ -3835,6 +4119,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	const bool gammaRenderTarget = ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget);
 	if (gammaRenderTarget) {
 		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceColor = Color::SceneLinearToGamma(radianceColor);
+#	endif
 	}
 
 #	if !defined(HDR_OUTPUT)  // Do not apply gamma correction before we pass to ISHDR.
@@ -3885,10 +4172,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		undef LANDSCAPE_PARALLAX_ENABLED
 #	endif
 
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	psout.ReflectionRadiance = captureRadiance ? float4(radianceColor, psout.Diffuse.w) : psout.Diffuse;
+#	endif
+
 #	if defined(FUR_SHELLS_DEPTH)
 	psout = (PS_OUTPUT)0;
 #	endif
 
 	return psout;
 }
+
 #endif  // PSHADER

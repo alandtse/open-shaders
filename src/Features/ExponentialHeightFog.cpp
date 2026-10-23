@@ -5,6 +5,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/Skylighting.h"
@@ -194,6 +195,8 @@ namespace
 			defines.emplace_back("LIGHT_LIMIT_FIX", "");
 		if (globals::features::terrainShadows.loaded)
 			defines.emplace_back("TERRAIN_SHADOWS", "");
+		if (globals::features::lodShadows.loaded)
+			defines.emplace_back("LOD_SHADOWS", "");
 		if (globals::features::cloudShadows.loaded)
 			defines.emplace_back("CLOUD_SHADOWS", "");
 		return defines;
@@ -832,7 +835,7 @@ void ExponentialHeightFog::AdvanceMistShape(double elapsed)
 	if (std::hypot(mistDriftVelocity[0], mistDriftVelocity[1]) > kMistMinimumTurnSpeed) {
 		const double targetAngle = std::atan2(mistDriftVelocity[1], mistDriftVelocity[0]);
 		const double delta = targetAngle - mistShapeAnimation[0];
-		const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * (1.0 - std::exp(-elapsed / kMistShapeResponseSeconds));
+		const double rotation = std::atan2(std::sin(delta), std::cos(delta)) * Util::ExpBlend(elapsed, kMistShapeResponseSeconds);
 		if (globals::game::player) {
 			const auto anchor = globals::game::player->GetPosition();
 			const double relativeX = anchor.x - mistDriftOffset[0];
@@ -859,7 +862,7 @@ void ExponentialHeightFog::UpdateMistAnimation(const Settings& frameSettings)
 	if (consecutiveFrame && !paused && frameSettings.enabled && frameSettings.volumetricFogEnabled && frameSettings.mistsEnabled &&
 		elapsed >= 0.0 && elapsed <= kMaximumAnimationFrameSeconds) {
 		const auto targetVelocity = GetMistTargetVelocity(frameSettings);
-		const double response = 1.0 - std::exp(-elapsed / kWindResponseSeconds);
+		const double response = Util::ExpBlend(elapsed, kWindResponseSeconds);
 		for (size_t axis = 0; axis < mistDriftOffset.size(); ++axis) {
 			mistDriftVelocity[axis] += (targetVelocity[axis] - mistDriftVelocity[axis]) * response;
 			if (frameSettings.mistDriftSpeed == 0.0f)

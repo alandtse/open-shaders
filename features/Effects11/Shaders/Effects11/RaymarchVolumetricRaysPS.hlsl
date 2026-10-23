@@ -29,7 +29,7 @@ static const float MaxRayLength = 154117.64;
 static const float RcpShadowCoverageRadiusSq = 1.0 / (262000.0 * 262000.0);
 
 /** @brief Lit fraction of the view ray up to the pixel, scaled by how much of MaxRayLength it covers. */
-float GetVolumetricRaysScattering(float3 positionMS, float noise, float3 cameraOffset)
+float GetVolumetricRaysScattering(float3 positionMS, float noise, uint eyeIndex)
 {
 	float pixelDistance = length(positionMS);
 	float3 rayDirection = positionMS / max(pixelDistance, 1e-4);
@@ -45,15 +45,7 @@ float GetVolumetricRaysScattering(float3 positionMS, float noise, float3 cameraO
 	{
 		float3 samplePos = rayDirection * ((float(i) + noise) * rcpSampleCount * rayLength);
 
-		float shadow = 1.0;
-
-#if defined(TERRAIN_SHADOWS)
-		shadow = TerrainShadows::GetTerrainShadow(samplePos + cameraOffset, LinearSampler);
-#endif
-
-#if defined(CLOUD_SHADOWS)
-		shadow *= CloudShadows::GetCloudShadowMult(samplePos, LinearSampler);
-#endif
+		float shadow = ShadowSampling::GetWorldShadow(samplePos, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 		float alongSun = dot(samplePos, sunDirection);
 		float offsetSq = max(dot(samplePos, samplePos) - alongSun * alongSun, 0.0);
@@ -74,10 +66,8 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 	positionMS.xyz /= positionMS.w;
 
 	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.pos.xy, ScreenSize), SharedData::FrameCount);
-	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eye.index].xyz;
-
 	PS_OUTPUT output;
-	output.Scattering = GetVolumetricRaysScattering(positionMS.xyz, noise, cameraOffset);
+	output.Scattering = GetVolumetricRaysScattering(positionMS.xyz, noise, eye.index);
 	output.Depth = SharedData::GetScreenDepth(depth);
 	return output;
 }

@@ -36,9 +36,7 @@ namespace
 
 }
 
-using WindMath::ClampFiniteOrDefault;
 using WindMath::GetHorizontalVelocityDirection;
-using WindMath::SquaredDistance;
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ProjectileMagicWindRouter::Settings,
@@ -252,14 +250,14 @@ std::optional<ProjectileMagicWindRouter::ProjectileProfile> ProjectileMagicWindR
 {
 	if (!a_projectile)
 		return std::nullopt;
-	const float range = ClampFiniteOrDefault(a_projectile->data.range, kMinimumRange, kMaximumRange, 2000.0f);
-	const float collisionRadius = ClampFiniteOrDefault(
+	const float range = Util::ClampFinite(a_projectile->data.range, kMinimumRange, kMaximumRange, 2000.0f);
+	const float collisionRadius = Util::ClampFinite(
 		a_projectile->data.collisionRadius * 4.0f, kMinimumRadius, kMaximumRadius, kMinimumRadius);
 	const float radius = std::clamp(std::max(collisionRadius, a_area), kMinimumRadius, kMaximumRadius);
 	const float force = std::isfinite(a_projectile->data.force) ? std::max(a_projectile->data.force, 0.0f) : 0.0f;
 	const float strength = std::clamp(0.45f + radius / 1200.0f + std::sqrt(std::min(force, 5000.0f) / 5000.0f),
 		0.5f, 2.5f);
-	const float speed = ClampFiniteOrDefault(a_projectile->data.speed, 400.0f, 5000.0f, 1800.0f);
+	const float speed = Util::ClampFinite(a_projectile->data.speed, 400.0f, 5000.0f, 1800.0f);
 	const float coneHalfAngle = std::clamp(10.0f + radius / std::max(range, 1.0f) * 180.0f, 10.0f, 40.0f);
 	const bool explosive = a_projectile->data.explosionType ||
 	                       a_projectile->data.flags.all(RE::BGSProjectileData::BGSProjectileFlags::kExplosion);
@@ -405,14 +403,14 @@ bool ProjectileMagicWindRouter::AcceptImpactLocked(const RE::Projectile& a_proje
 void ProjectileMagicWindRouter::SanitizeSettings()
 {
 	const Settings defaults{};
-	settings.launchStrength = ClampFiniteOrDefault(
+	settings.launchStrength = Util::ClampFinite(
 		settings.launchStrength, kMinimumStrength, kMaximumStrength, defaults.launchStrength);
-	settings.impactStrength = ClampFiniteOrDefault(
+	settings.impactStrength = Util::ClampFinite(
 		settings.impactStrength, kMinimumStrength, kMaximumStrength, defaults.impactStrength);
-	settings.dragonStrength = ClampFiniteOrDefault(
+	settings.dragonStrength = Util::ClampFinite(
 		settings.dragonStrength, kMinimumStrength, kMaximumStrength, defaults.dragonStrength);
-	settings.radiusMultiplier = ClampFiniteOrDefault(settings.radiusMultiplier,
+	settings.radiusMultiplier = Util::ClampFinite(settings.radiusMultiplier,
 		kMinimumRadiusMultiplier, kMaximumRadiusMultiplier, defaults.radiusMultiplier);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime,
+	settings.decayTime = Util::ClampFinite(settings.decayTime,
 		0.0f, WindField::kTransientImpulseMaximumDecayTime, defaults.decayTime);
 }

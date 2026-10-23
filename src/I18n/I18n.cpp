@@ -5,6 +5,7 @@
 #include <regex>
 
 #include "Utils/FileSystem.h"
+#include "Utils/StringUtils.h"
 
 namespace
 {
@@ -213,9 +214,7 @@ void I18n::DiscoverLocales()
 	for (const auto& entry : std::filesystem::directory_iterator(translationsPath)) {
 		if (!entry.is_regular_file())
 			continue;
-		auto ext = entry.path().extension().string();
-		// Case-insensitive extension check
-		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+		auto ext = Util::ToLowerAscii(entry.path().extension().string());
 		if (ext != ".json")
 			continue;
 

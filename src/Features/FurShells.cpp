@@ -36,6 +36,13 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MinFurPixels,
 	WindStrength,
 	WetStrength,
+	InertiaStrength,
+	InertiaPreset,
+	InertiaFrequency,
+	InertiaGain,
+	InertiaLengthExponent,
+	InertiaDroopExponent,
+	InertiaMaxBend,
 	TouchStrength,
 	ShowTouchEdges)
 
@@ -68,6 +75,7 @@ namespace
 	constexpr uint32_t ResolvesPerFrame = 16;
 	constexpr size_t MaxEntries = 8192;
 	constexpr size_t MaxMissingShells = 65536;
+	constexpr uint32_t InertiaExpireFrames = 120;
 	constexpr uint32_t MaxOverrideSize = 65536;
 	constexpr float PixelsPerShell = 1.0f;
 	constexpr float MaxWindSpeed = 1.5f;
@@ -353,6 +361,14 @@ void FurShells::RestoreDefaultSettings()
 void FurShells::LoadSettings(json& o_json)
 {
 	settings = o_json;
+
+	const auto tuning = FurInertia::Sanitize({ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent, settings.InertiaMaxBend });
+	settings.InertiaFrequency = tuning.frequencyHz;
+	settings.InertiaGain = tuning.gain;
+	settings.InertiaLengthExponent = tuning.lengthExponent;
+	settings.InertiaDroopExponent = tuning.droopExponent;
+	settings.InertiaMaxBend = tuning.maxBend;
+	settings.InertiaStrength = Util::ClampFinite(settings.InertiaStrength, 0.0f, FurInertia::MaxStrength, Settings{}.InertiaStrength);
 }
 
 void FurShells::SaveSettings(json& o_json)
@@ -420,6 +436,8 @@ void FurShells::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("wet_strength"), "Wet Fur Strength"), &settings.WetStrength, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("wet_strength_tooltip"), "How much rain mats the fur: wet fur thins into clumps, darkens and hangs heavier. Water beads and drips on the outer layer come from Wetness Effects. 0 disables wet fur."));
+
+	DrawInertiaSettings();
 
 	ImGui::SliderFloat(T(TKEY("touch_strength"), "Touch Strength"), &settings.TouchStrength, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -613,6 +631,13 @@ void FurShells::UpdateOverrideFadeEnd()
 void FurShells::Reset()
 {
 	resolveBudget = ResolvesPerFrame;
+	++frameIndex;
+	lastMaxInertia = maxInertia;
+	maxInertia = 0.0f;
+	if (globals::state->IsMainOrLoadingMenuOpen())
+		inertiaStates.clear();
+	else
+		std::erase_if(inertiaStates, [this](const auto& a_state) { return frameIndex - a_state.second.frame > InertiaExpireFrames; });
 	lastPassCount = passCount;
 	passCount = 0;
 	lastStereoDraws = stereoDraws;
@@ -861,6 +886,8 @@ void FurShells::BeginPass(RE::BSShader* a_shader, RE::BSRenderPass* a_pass)
 	PerPass perPass{ values.Length, static_cast<float>(shells), values.Droop, values.RootThreshold, values.TipThreshold, values.RootDarkening, values.ShellColor, 0.0f, density, tipWeight };
 	perPass.Wind = float4(wind.x, wind.y, wind.z, 0.0f);
 	perPass.WetStrength = settings.WetStrength;
+	const float3 inertia = GetInertia(geometry, values.Length, values.Droop);
+	perPass.Inertia = inertia;
 	FillTouch(perPass, geometry);
 	if (skinInstance && settings.OverlayFur)
 		RecordFrameBody(skinInstance, geometry, perPass, shellView, normalView, defer || replaying);
@@ -916,6 +943,91 @@ void FurShells::FillTouch(PerPass& a_perPass, const RE::BSGeometry* a_geometry)
 		a_perPass.TouchMove[index][2] = touch.move.z;
 		a_perPass.TouchMove[index][3] = touch.strength;
 	}
+}
+
+FurInertia::Tuning FurShells::GetInertiaTuning() const
+{
+	const FurInertia::Tuning custom{ settings.InertiaFrequency, settings.InertiaGain, settings.InertiaLengthExponent, settings.InertiaDroopExponent, settings.InertiaMaxBend };
+	return FurInertia::GetTuning(static_cast<FurInertia::Preset>(std::min(settings.InertiaPreset, static_cast<uint32_t>(FurInertia::Preset::Custom))), custom);
+}
+
+void FurShells::DrawInertiaSettings()
+{
+	using FurInertia::Preset;
+
+	ImGui::SliderFloat(T(TKEY("inertia_strength"), "Inertia Strength"), &settings.InertiaStrength, 0.0f, FurInertia::MaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_strength_tooltip"), "How far the fur tips lag behind a moving mesh before springing back, so fur trails when the wearer starts, stops or turns. 0 disables inertia."));
+
+	const std::array<std::string, 3> names{ T(TKEY("inertia_preset_stylized"), "Stylized"), T(TKEY("inertia_preset_realistic"), "Realistic"), T(TKEY("inertia_preset_custom"), "Custom") };
+	const auto selected = std::min(settings.InertiaPreset, static_cast<uint32_t>(Preset::Custom));
+	if (ImGui::BeginCombo(T(TKEY("inertia_preset"), "Inertia Preset"), names[selected].c_str())) {
+		for (uint32_t i = 0; i < names.size(); ++i) {
+			if (ImGui::Selectable(names[i].c_str(), i == selected) && i != selected) {
+				if (i == static_cast<uint32_t>(Preset::Custom)) {
+					const auto tuning = GetInertiaTuning();
+					settings.InertiaFrequency = tuning.frequencyHz;
+					settings.InertiaGain = tuning.gain;
+					settings.InertiaLengthExponent = tuning.lengthExponent;
+					settings.InertiaDroopExponent = tuning.droopExponent;
+					settings.InertiaMaxBend = tuning.maxBend;
+				}
+				settings.InertiaPreset = i;
+			}
+		}
+		ImGui::EndCombo();
+	}
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_preset_tooltip"), "Stylized is the tuned-by-eye look. Realistic uses the physics of a real hair, so short fur barely moves and long fur swings. Custom exposes the spring."));
+
+	if (settings.InertiaPreset != static_cast<uint32_t>(Preset::Custom))
+		return;
+
+	ImGui::SliderFloat(T(TKEY("inertia_frequency"), "Spring Frequency (Hz)"), &settings.InertiaFrequency, FurInertia::MinFrequencyHz, FurInertia::MaxTuningFrequencyHz, "%.1f", ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_frequency_tooltip"), "How fast fur of the reference length and droop swings and settles. Higher is stiffer."));
+
+	if (!ImGui::TreeNode(T(TKEY("inertia_advanced"), "Advanced Inertia")))
+		return;
+
+	ImGui::SliderFloat(T(TKEY("inertia_gain"), "Lag Gain"), &settings.InertiaGain, FurInertia::MinGain, FurInertia::MaxGain, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_gain_tooltip"), "Scales how far the tips lag for a given acceleration, before Inertia Strength. Stylized uses 2, Realistic uses 1."));
+
+	ImGui::SliderFloat(T(TKEY("inertia_max_bend"), "Maximum Bend"), &settings.InertiaMaxBend, FurInertia::MinBendLimit, FurInertia::MaxBendLimit, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_max_bend_tooltip"), "The furthest the tips may lag, as a fraction of the fur length."));
+
+	ImGui::SliderFloat(T(TKEY("inertia_length_exponent"), "Length Softening"), &settings.InertiaLengthExponent, 0.0f, FurInertia::MaxLengthExponent, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_length_exponent_tooltip"), "How much longer fur swings slower and lags more. 0 ignores length; 2 follows a real hair."));
+
+	ImGui::SliderFloat(T(TKEY("inertia_droop_exponent"), "Droop Softening"), &settings.InertiaDroopExponent, 0.0f, FurInertia::MaxDroopExponent, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("inertia_droop_exponent_tooltip"), "How much a droopier fur asset swings slower and lags more. 0 ignores droop."));
+	ImGui::TreePop();
+}
+
+float3 FurShells::GetInertia(const RE::BSGeometry* a_geometry, float a_length, float a_droop)
+{
+	if (settings.InertiaStrength <= 0.0f)
+		return {};
+
+	const auto& center = a_geometry->worldBound.center;
+	const float3 position{ center.x, center.y, center.z };
+	auto [it, inserted] = inertiaStates.try_emplace(a_geometry, InertiaState{ FurInertia::Spring::At(position), frameIndex });
+	auto& state = it->second;
+	if (state.frame != frameIndex) {
+		state.frame = frameIndex;
+		const auto* skinInstance = a_geometry->GetGeometryRuntimeData().skinInstance.get();
+		const float scale = skinInstance && skinInstance->rootParent ? skinInstance->rootParent->world.scale : a_geometry->world.scale;
+		const float worldLength = FurInertia::GetWorldLength(a_length, scale);
+		const auto tuning = GetInertiaTuning();
+		state.spring.Step(position, globals::game::deltaTime ? *globals::game::deltaTime : 0.0f, tuning.maxBend * worldLength, FurInertia::GetResponse(tuning, worldLength, a_droop));
+	}
+	const float3 inertia = state.spring.offset * settings.InertiaStrength;
+	maxInertia = std::max(maxInertia, inertia.Length());
+	return inertia;
 }
 
 float3 FurShells::GetWind(const RE::NiPoint3& a_position) const
@@ -1284,6 +1396,8 @@ json FurShells::GetDiagnostics()
 		{ "stereoDrawsLastFrame", lastStereoDraws },
 		{ "monoDrawsLastFrame", lastMonoDraws },
 		{ "maxShellsLastFrame", lastMaxShells },
+		{ "inertiaMaxOffsetLastFrame", lastMaxInertia },
+		{ "inertiaTracked", inertiaStates.size() },
 		{ "minDensityLastFrame", lastMinDensity },
 		{ "windSpeedLastFrame", lastWindSpeed },
 		{ "touchCapsulesLastFrame", lastTouchCapsules },

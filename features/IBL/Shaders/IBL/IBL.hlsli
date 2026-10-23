@@ -35,7 +35,7 @@ namespace ImageBasedLighting
 		return float3(colorR, colorG, colorB) / Math::PI;
 	}
 
-	/// Get Sky-only IBL color from game's native reflections cubemap SH
+	/// Get sky IBL from the full, unshadowed reflection radiance.
 	float3 GetSkyIBL(float3 rayDir)
 	{
 		sh2 shR = SkyIBLTexture.Load(int3(0, 0, 0));

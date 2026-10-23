@@ -22,7 +22,7 @@ namespace GrassWindPatcher
 {
 	using Util::IsSafeModelPath;
 	using Util::NormalizeModelPath;
-	using WindMath::ClampFiniteOrDefault;
+	using WindMath::ClampToRange;
 
 	namespace
 	{
@@ -61,9 +61,9 @@ namespace GrassWindPatcher
 
 		Behavior SanitizeBehavior(Behavior a_behavior)
 		{
-			a_behavior.bendSensitivity = ClampFiniteOrDefault(
+			a_behavior.bendSensitivity = ClampToRange(
 				a_behavior.bendSensitivity, GrassWindSettings::kBendSensitivity, 1.0f);
-			a_behavior.flutterSensitivity = ClampFiniteOrDefault(
+			a_behavior.flutterSensitivity = ClampToRange(
 				a_behavior.flutterSensitivity, GrassWindSettings::kFlutterSensitivity, 1.0f);
 			return a_behavior;
 		}

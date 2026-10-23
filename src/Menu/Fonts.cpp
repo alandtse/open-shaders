@@ -3,6 +3,7 @@
 #include "../Globals.h"
 #include "../I18n/I18n.h"
 #include "../Utils/FileSystem.h"
+#include "../Utils/StringUtils.h"
 #include "ThemeManager.h"
 
 #include <algorithm>
@@ -373,12 +374,6 @@ namespace Util
 			return normalized;
 		}
 
-		std::string ToLowerCopy(std::string value)
-		{
-			std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-			return value;
-		}
-
 		// Font width variants that should be part of the style, not the family name
 		bool IsWidthVariant(const std::string& token)
 		{
@@ -387,7 +382,7 @@ namespace Util
 				"extended", "expanded", "wide",
 				"ultracompressed", "ultracondensed", "ultraexpanded"
 			};
-			std::string lower = ToLowerCopy(token);
+			std::string lower = Util::ToLowerAscii(token);
 			return std::find(widthVariants.begin(), widthVariants.end(), lower) != widthVariants.end();
 		}
 
@@ -442,8 +437,8 @@ namespace Util
 		std::string ExtractStyleName(const std::filesystem::path& relativePath, const std::string& family)
 		{
 			std::string stem = relativePath.stem().string();
-			std::string lowerStem = ToLowerCopy(stem);
-			std::string lowerFamily = ToLowerCopy(family);
+			std::string lowerStem = Util::ToLowerAscii(stem);
+			std::string lowerFamily = Util::ToLowerAscii(family);
 
 			// Remove family prefix if present
 			if (!lowerFamily.empty()) {
@@ -485,7 +480,7 @@ namespace Util
 				style += t;
 			}
 
-			if (style.empty() || ToLowerCopy(style) == lowerFamily) {
+			if (style.empty() || Util::ToLowerAscii(style) == lowerFamily) {
 				style = "Regular";
 			}
 			return style;
@@ -521,7 +516,7 @@ namespace Util
 
 		int StyleRank(const std::string& style)
 		{
-			std::string lower = ToLowerCopy(style);
+			std::string lower = Util::ToLowerAscii(style);
 			struct WeightRank
 			{
 				const char* token;
@@ -593,8 +588,7 @@ namespace Util
 						continue;
 					}
 
-					auto extension = entry.path().extension().string();
-					std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+					const auto extension = Util::ToLowerAscii(entry.path().extension().string());
 					if (extension != ".ttf" && extension != ".otf") {
 						continue;
 					}
@@ -613,7 +607,7 @@ namespace Util
 						family = relPath.stem().string();
 					}
 					std::string style = ExtractStyleName(relPath, family);
-					std::string familyKey = ToLowerCopy(family);
+					std::string familyKey = Util::ToLowerAscii(family);
 					size_t familyIdx;
 					auto found = familyIndex.find(familyKey);
 					if (found == familyIndex.end()) {
@@ -753,8 +747,7 @@ namespace Util
 			}
 
 			auto isValidExtension = [](const std::filesystem::path& candidate) {
-				auto extension = candidate.extension().string();
-				std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+				const auto extension = Util::ToLowerAscii(candidate.extension().string());
 				return extension == ".ttf" || extension == ".otf";
 			};
 
@@ -764,13 +757,13 @@ namespace Util
 
 			// Performance: Use cached catalog for case-insensitive search instead of scanning filesystem
 			auto catalog = Fonts::DiscoverFontCatalog();  // Uses cache
-			std::string targetNormalized = ToLowerCopy(relative.generic_string());
-			std::string targetFilename = ToLowerCopy(relative.filename().string());
+			std::string targetNormalized = Util::ToLowerAscii(relative.generic_string());
+			std::string targetFilename = Util::ToLowerAscii(relative.filename().string());
 
 			for (const auto& family : catalog.families) {
 				for (const auto& style : family.styles) {
-					std::string fileLower = ToLowerCopy(style.file);
-					std::string filenameLower = ToLowerCopy(std::filesystem::path(style.file).filename().string());
+					std::string fileLower = Util::ToLowerAscii(style.file);
+					std::string filenameLower = Util::ToLowerAscii(std::filesystem::path(style.file).filename().string());
 
 					if (fileLower == targetNormalized || filenameLower == targetFilename) {
 						return true;

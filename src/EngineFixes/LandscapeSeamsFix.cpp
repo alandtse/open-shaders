@@ -6,6 +6,7 @@
 #include "TruePBR.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 
 namespace
 {
@@ -263,7 +264,7 @@ void LandscapeSeamsFix::Heal(const QuadKey& a_key, const Quad& a_quad, Healed& a
 	std::array<float, GridSize> falloff{};
 	for (int distance = 0; distance <= GridMax; ++distance) {
 		const float t = std::min(1.0f, static_cast<float>(distance) / static_cast<float>(BlendRadius));
-		falloff[distance] = 1.0f - t * t * (3.0f - 2.0f * t);
+		falloff[distance] = 1.0f - Util::Smoothstep(0.0f, 1.0f, t);
 	}
 
 	std::vector<std::array<float, GridVertices>> fields(textures.count);

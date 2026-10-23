@@ -1,5 +1,6 @@
 
 #include "Common/Game.hlsli"
+#include "Common/ShadowCoverage.hlsli"
 #include "LightLimitFix/Attenuation.hlsli"
 
 namespace LightLimitFix
@@ -278,19 +279,13 @@ namespace LightLimitFix
 
 	// LLF has directional data only for cascades 0/1. The engine mask can be
 	// stale or zeroed under LLF, so pixels past cascade 1 must fade to lit.
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow, out float llfCoverage)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, out float llfCoverage, out float nativeContactWeight)
 	{
+		llfCoverage = 0.0;
+		nativeContactWeight = 1.0;
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));
-		const float farFallbackShadow = 1.0;
-
-		// Past cascade 1 there is no LLF cascade data.
-		if (shadowMapDepth > shadowLightData.EndSplitDistances.y) {
-			llfCoverage = 0.0;
-			return farFallbackShadow;
-		}
-
 		// Blend from LLF PCF deep in cascade 1 toward lit as we approach
 		// cascade 1's far edge, avoiding a hard discontinuity.
 		//
@@ -303,9 +298,16 @@ namespace LightLimitFix
 		// HMD-tracked artifact in VR. Switching to linear `shadowMapDepth`
 		// and reversing the blend direction makes the handoff a smooth
 		// world-anchored transition at the cascade boundary.
-		float fadeFactor = smoothstep(shadowLightData.EndSplitDistances.y * 0.8,
-			shadowLightData.EndSplitDistances.y,
-			shadowMapDepth);
+		float fadeFactor = smoothstep(shadowLightData.EndSplitDistances.y * ShadowCoverage::NativeFadeStartFraction,
+			shadowLightData.EndSplitDistances.y, shadowMapDepth);
+		if (ShadowSampling::HasDistantShadows())
+			nativeContactWeight = 1.0 - fadeFactor;
+
+		// Past cascade 1 there is no LLF cascade data.
+		if (shadowMapDepth > shadowLightData.EndSplitDistances.y) {
+			return 1.0;
+		}
+
 		llfCoverage = 1.0 - fadeFactor;
 
 		// Compute cascade blend factor
@@ -353,9 +355,6 @@ namespace LightLimitFix
 			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
 
-		// Within cascade 1's far edge, fade LLF's PCF out before data ends.
-		shadow = lerp(shadow, farFallbackShadow, fadeFactor);
-
 		// Focus shadows: high-resolution actor shadows the engine renders to
 		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).
 		// Each focus matrix projects worldPositionWS into the actor's clip
@@ -398,26 +397,24 @@ namespace LightLimitFix
 			}
 		}
 
-		return shadow;
+		// Within cascade 1's far edge, fade LLF's PCF out before data ends.
+		return lerp(shadow, 1.0, fadeFactor);
 	}
 
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, out float llfCoverage)
 	{
-		float llfCoverage;
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, engineMaskShadow, llfCoverage);
+		float nativeContactWeight;
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, llfCoverage, nativeContactWeight);
 	}
 
 	// Convenience overload: callers without TexShadowMaskSampler bound
 	// (e.g. Particle.hlsl) get the lit-fallback behaviour (1.0) past
 	// cascade 1, matching the pre-engine-mask behaviour for those paths.
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex)
+	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex = 0)
 	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, 1.0);
-	}
-
-	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix)
-	{
-		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, 0, 1.0);
+		float llfCoverage;
+		float nativeContactWeight;
+		return GetDirectionalShadow(worldPosition, worldPositionWS, rotationMatrix, eyeIndex, llfCoverage, nativeContactWeight);
 	}
 
 	float SampleShadowGather(uint shadowIndex, float2 uv, float receiverDepth)
