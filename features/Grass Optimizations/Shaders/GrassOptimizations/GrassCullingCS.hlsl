@@ -128,7 +128,6 @@ uint CullInstance(float4 data1, float4 data4, GrassInstance::CullGroup group, ui
 	fade = 0.0;
 	flags = 0;
 
-
 	const float2 localXY = data1.xy;
 	const float localZ = data1.z;
 

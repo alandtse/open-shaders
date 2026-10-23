@@ -211,17 +211,17 @@ VS_OUTPUT VanillaVertex(VS_INPUT input)
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
 
 	uint eyeIndex = Stereo::GetEyeIndexVS(
-#		if defined(VR)
+#	if defined(VR)
 		input.InstanceID
-#		endif  // VR
+#	endif  // VR
 	);
 
-#		ifdef GRASS_LIGHTING
+#	ifdef GRASS_LIGHTING
 	float3x3 world3x3 = float3x3(input.InstanceData2.xyz, input.InstanceData3.xyz, float3(input.InstanceData4.x, input.InstanceData2.w, input.InstanceData3.w));
 	float4 msPosition = GetMSPosition(input, world3x3);
-#		else
+#	else
 	float4 msPosition = GetMSPosition(input);
-#		endif
+#	endif
 
 	float3 rootWorldPosition = mul(World[eyeIndex], float4(input.InstanceData1.xyz, 1.0)).xyz +
 	                           FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
@@ -241,67 +241,67 @@ VS_OUTPUT VanillaVertex(VS_INPUT input)
 	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z, bladeReach,
 		previousResponse, flutter.y, previousBendAxis, previousBendAngle);
 
-#		ifdef GRASS_COLLISION
+#	ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement, collisionBendAxis;
 	float collisionBendAngle;
 	GrassCollision::ApplyDeformation(input, msPosition.xyz, previousMsPosition.xyz,
 		displacement, previousDisplacement, collisionBendAxis, collisionBendAngle);
 	msPosition.xyz += displacement;
 	previousMsPosition.xyz += previousDisplacement;
-#		endif
+#	endif
 
 	float4 projSpacePosition = mul(WorldViewProj[eyeIndex], msPosition);
-#		if !defined(VR)
+#	if !defined(VR)
 	vsout.HPosition = projSpacePosition;
-#		endif  // !VR
+#	endif  // !VR
 	vsout.TexCoord = input.TexCoord.xy;
 
-#		ifdef GRASS_OPTIMIZATIONS
+#	ifdef GRASS_OPTIMIZATIONS
 	float perInstanceFade = 1.0;
-#		else
+#	else
 	float perInstanceFade = dot(cb8[(asuint(cb7[0].x) >> 2)].xyzw, Math::IdentityMatrix[(asint(cb7[0].x) & 3)].xyzw);
-#		endif
-#		if defined(VR)
+#	endif
+#	if defined(VR)
 	float distanceFade = 1 - saturate((length(mul(World[0], msPosition).xyz) - AlphaParam1) / AlphaParam2);
-#		else
+#	else
 	float distanceFade = 1 - saturate((length(FrameBuffer::ToStandardClip(projSpacePosition)) - AlphaParam1) / AlphaParam2);
-#		endif
+#	endif
 
-#		if defined(RENDER_DEPTH)
+#	if defined(RENDER_DEPTH)
 #		ifndef GRASS_OPTIMIZATIONS
 	vsout.Depth = projSpacePosition.zw;
 #		endif
 	vsout.Fade = distanceFade * perInstanceFade;
-#		else
+#	else
 	vsout.Color = float4(input.InstanceData1.www * input.Color.xyz, distanceFade * perInstanceFade);
 	vsout.WorldPosition = mul(World[eyeIndex], msPosition).xyz;
 
 	vsout.PreviousWorldPosition = mul(PreviousWorld[eyeIndex], previousMsPosition).xyz;
 
-#			ifdef GRASS_LIGHTING
+#		ifdef GRASS_LIGHTING
 	// Vertex normal needs to be transformed to world-space for lighting calculations.
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
 		mul(world3x3, input.Normal.xyz * 2.0 - 1.0), bendAxis, bendAngle);
-#				ifdef GRASS_COLLISION
+#			ifdef GRASS_COLLISION
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
 		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
-#				endif
+#			endif
 	vsout.VertexNormal.w = input.Color.w;
-#			else
+#		else
 	float3 instanceNormal = float3(input.InstanceData2.z, input.InstanceData3.zw);
 	vsout.DirLightAngle = saturate(dot(DirLightDirection.xyz, instanceNormal));
-#		ifndef GRASS_OPTIMIZATIONS
+#			ifndef GRASS_OPTIMIZATIONS
 	vsout.ViewSpacePosition = mul(WorldView[eyeIndex], msPosition).xyz;
-#		endif
 #			endif
 #		endif
+#	endif
 
-#		if defined(VR)
+#	if defined(VR)
 	Stereo::VR_OUTPUT VRout = Stereo::GetVRVSOutput(projSpacePosition, eyeIndex);
 	vsout.HPosition = VRout.VRPosition;
 	vsout.ClipDistance.x = VRout.ClipDistance;
 	vsout.CullDistance.x = VRout.CullDistance;
-#		endif  // VR
+#	endif  // VR
 
 #	ifdef GRASS_OPTIMIZATIONS
 	vsout.IsComplex = -1.0;
@@ -1197,9 +1197,9 @@ PS_OUTPUT main(PS_INPUT input)
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
 	if (!SharedData::InInterior)
 		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
-#				if defined(WATER_EFFECTS)
+#			if defined(WATER_EFFECTS)
 	dirLightColor *= WaterEffects::ComputeCaustics(SharedData::GetWaterData(input.WorldPosition.xyz, eyeIndex), input.WorldPosition.xyz, eyeIndex);
-#				endif
+#			endif
 
 	float dirDetailedShadow = 1.0;
 	float nativeContactWeight = 1.0;

@@ -213,7 +213,6 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 		ctx->CSSetShaderResources(0, 1, &nullSRV);
 	}
 
-
 	valid = true;
 	return true;
 }
