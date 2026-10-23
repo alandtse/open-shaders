@@ -2,42 +2,32 @@
 
 #include "../Streamline.h"
 #include "Globals.h"
-#include "Runtime.h"
 
 #include <format>
 
 namespace NR
 {
-	void D3D12Interop::Check(HRESULT result)
-	{
-		if (SUCCEEDED(result))
-			return;
-		if (DeviceRemoved())
-			throw std::runtime_error(std::format("NR D3D12 device removed (0x{:08X})", static_cast<uint32_t>(device->GetDeviceRemovedReason())));
-		throw std::runtime_error(std::format("{}D3D12 call failed (HRESULT 0x{:08X})", kInitializationPrefix, static_cast<uint32_t>(result)));
-	}
-
 	void D3D12Interop::Initialize()
 	{
 		if (device)
 			return;
 		try {
-			Check(globals::d3d::device->QueryInterface(device11.put()));
-			Check(globals::d3d::context->QueryInterface(context.put()));
+			DX::ThrowIfFailed(globals::d3d::device->QueryInterface(device11.put()));
+			DX::ThrowIfFailed(globals::d3d::context->QueryInterface(context.put()));
 			winrt::com_ptr<IDXGIDevice> dxgi;
-			Check(device11->QueryInterface(dxgi.put()));
+			DX::ThrowIfFailed(device11->QueryInterface(dxgi.put()));
 			winrt::com_ptr<IDXGIAdapter> adapter;
-			Check(dxgi->GetAdapter(adapter.put()));
+			DX::ThrowIfFailed(dxgi->GetAdapter(adapter.put()));
 			DXGI_ADAPTER_DESC desc{};
-			Check(adapter->GetDesc(&desc));
+			DX::ThrowIfFailed(adapter->GetDesc(&desc));
 			if (desc.VendorId != Streamline::kNvidiaVendorId)
 				throw std::runtime_error("requires an NVIDIA RTX GPU");
 			// The level is a minimum: the runtime hands back the adapter's existing device.
-			Check(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.put())));
+			DX::ThrowIfFailed(D3D12CreateDevice(adapter.get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(device.put())));
 			D3D12_COMMAND_QUEUE_DESC queueDesc{};
 			queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-			Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));
-			Check(queue->SetName(L"NeuralRendering::Queue"));
+			DX::ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(queue.put())));
+			DX::ThrowIfFailed(queue->SetName(L"NeuralRendering::Queue"));
 			CreateRing(commands, D3D12_COMMAND_LIST_TYPE_DIRECT, L"NeuralRendering::Allocator", L"NeuralRendering::Commands");
 			fence.Create(device.get(), device11.get(), "NeuralRendering::Fence");
 			adapterLuid = desc.AdapterLuid;
@@ -51,11 +41,11 @@ namespace NR
 	void D3D12Interop::CreateRing(std::array<Commands, kFramesInFlight>& ring, D3D12_COMMAND_LIST_TYPE type, const wchar_t* allocatorName, const wchar_t* listName)
 	{
 		for (auto& slot : ring) {
-			Check(device->CreateCommandAllocator(type, IID_PPV_ARGS(slot.allocator.put())));
-			Check(device->CreateCommandList(0, type, slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
-			Check(slot.allocator->SetName(allocatorName));
-			Check(slot.list->SetName(listName));
-			Check(slot.list->Close());
+			DX::ThrowIfFailed(device->CreateCommandAllocator(type, IID_PPV_ARGS(slot.allocator.put())));
+			DX::ThrowIfFailed(device->CreateCommandList(0, type, slot.allocator.get(), nullptr, IID_PPV_ARGS(slot.list.put())));
+			DX::ThrowIfFailed(slot.allocator->SetName(allocatorName));
+			DX::ThrowIfFailed(slot.list->SetName(listName));
+			DX::ThrowIfFailed(slot.list->Close());
 		}
 	}
 
@@ -90,12 +80,12 @@ namespace NR
 	{
 		if (!target.fence12)
 			return;
-		Check(device->GetDeviceRemovedReason());
+		DX::ThrowIfFailed(device->GetDeviceRemovedReason());
 		DWORD waitError = 0;
 		const auto outcome = target.CpuWaitOutcome(completion, SharedFence::kFenceTimeoutMs, &waitError);
 		if (outcome == SharedFence::WaitOutcome::kComplete)
 			return;
-		Check(device->GetDeviceRemovedReason());
+		DX::ThrowIfFailed(device->GetDeviceRemovedReason());
 		if (outcome == SharedFence::WaitOutcome::kFailed)
 			throw std::runtime_error(std::format("NR GPU fence {} wait failed (error 0x{:08X})", completion, waitError));
 		throw std::runtime_error(std::format("NR GPU fence {} did not retire within {} ms", completion, SharedFence::kFenceTimeoutMs));
@@ -105,38 +95,38 @@ namespace NR
 	{
 		auto& slot = commands[cursor];
 		Wait(fence, slot.completion);
-		winrt::check_hresult(slot.allocator->Reset());
-		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
+		DX::ThrowIfFailed(slot.allocator->Reset());
+		DX::ThrowIfFailed(slot.list->Reset(slot.allocator.get(), nullptr));
 		const auto ready = fence.Next();
 		inputReady = ready;
-		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
+		DX::ThrowIfFailed(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
-		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
+		DX::ThrowIfFailed(queue->Wait(fence.fence12.get(), ready));
 		return slot.list.get();
 	}
 
 	void D3D12Interop::End()
 	{
 		auto& slot = commands[cursor];
-		winrt::check_hresult(slot.list->Close());
+		DX::ThrowIfFailed(slot.list->Close());
 		ID3D12CommandList* lists[]{ slot.list.get() };
 		queue->ExecuteCommandLists(1, lists);
 		parallelSubmitted = parallelUsed;
 		if (parallelUsed) {
 			auto& parallel = parallelCommands[cursor];
-			winrt::check_hresult(parallel.list->Close());
+			DX::ThrowIfFailed(parallel.list->Close());
 			ID3D12CommandList* parallelLists[]{ parallel.list.get() };
 			parallelQueue->ExecuteCommandLists(1, parallelLists);
 			const auto parallelDone = parallelFence.Next();
 			parallel.completion = parallelDone;
-			winrt::check_hresult(parallelQueue->Signal(parallelFence.fence12.get(), parallelDone));
-			winrt::check_hresult(queue->Wait(parallelFence.fence12.get(), parallelDone));
+			DX::ThrowIfFailed(parallelQueue->Signal(parallelFence.fence12.get(), parallelDone));
+			DX::ThrowIfFailed(queue->Wait(parallelFence.fence12.get(), parallelDone));
 			parallelUsed = false;
 		}
 		const auto complete = fence.Next();
-		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
+		DX::ThrowIfFailed(queue->Signal(fence.fence12.get(), complete));
 		slot.completion = complete;
-		winrt::check_hresult(context->Wait(fence.fence11.get(), complete));
+		DX::ThrowIfFailed(context->Wait(fence.fence11.get(), complete));
 		cursor = (cursor + 1) % static_cast<uint32_t>(commands.size());
 	}
 
@@ -148,8 +138,8 @@ namespace NR
 			try {
 				D3D12_COMMAND_QUEUE_DESC queueDesc{};
 				queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
-				Check(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(parallelQueue.put())));
-				Check(parallelQueue->SetName(L"NeuralRendering::ParallelQueue"));
+				DX::ThrowIfFailed(device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(parallelQueue.put())));
+				DX::ThrowIfFailed(parallelQueue->SetName(L"NeuralRendering::ParallelQueue"));
 				CreateRing(parallelCommands, D3D12_COMMAND_LIST_TYPE_COMPUTE, L"NeuralRendering::ParallelAllocator", L"NeuralRendering::ParallelCommands");
 				parallelFence.Create(device.get(), device11.get(), "NeuralRendering::ParallelFence");
 			} catch (const winrt::hresult_error& error) {
@@ -170,10 +160,10 @@ namespace NR
 		}
 		auto& slot = parallelCommands[cursor];
 		Wait(parallelFence, slot.completion);
-		winrt::check_hresult(slot.allocator->Reset());
-		winrt::check_hresult(slot.list->Reset(slot.allocator.get(), nullptr));
+		DX::ThrowIfFailed(slot.allocator->Reset());
+		DX::ThrowIfFailed(slot.list->Reset(slot.allocator.get(), nullptr));
 		if (!parallelUsed)
-			winrt::check_hresult(parallelQueue->Wait(fence.fence12.get(), inputReady));
+			DX::ThrowIfFailed(parallelQueue->Wait(fence.fence12.get(), inputReady));
 		parallelUsed = true;
 		return slot.list.get();
 	}
@@ -183,17 +173,17 @@ namespace NR
 		if (!fence.fence12 || !fence.fence11)
 			return;
 		const auto ready = fence.Next();
-		winrt::check_hresult(context->Signal(fence.fence11.get(), ready));
+		DX::ThrowIfFailed(context->Signal(fence.fence11.get(), ready));
 		context->Flush();
-		winrt::check_hresult(queue->Wait(fence.fence12.get(), ready));
+		DX::ThrowIfFailed(queue->Wait(fence.fence12.get(), ready));
 		if (parallelQueue) {
 			// End may fail after parallel submission but before joining it.
 			const auto parallelComplete = parallelFence.Next();
-			winrt::check_hresult(parallelQueue->Signal(parallelFence.fence12.get(), parallelComplete));
-			winrt::check_hresult(queue->Wait(parallelFence.fence12.get(), parallelComplete));
+			DX::ThrowIfFailed(parallelQueue->Signal(parallelFence.fence12.get(), parallelComplete));
+			DX::ThrowIfFailed(queue->Wait(parallelFence.fence12.get(), parallelComplete));
 		}
 		const auto complete = fence.Next();
-		winrt::check_hresult(queue->Signal(fence.fence12.get(), complete));
+		DX::ThrowIfFailed(queue->Signal(fence.fence12.get(), complete));
 		Wait(fence, complete);
 	}
 }

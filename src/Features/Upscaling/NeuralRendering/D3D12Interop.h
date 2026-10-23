@@ -61,8 +61,6 @@ namespace NR
 			uint64_t completion = 0;
 		};
 
-		/** @brief Throws for a failed HRESULT, naming device removal when the device reports it. */
-		void Check(HRESULT result);
 		/** @brief Creates a named allocator and closed command list of one type for every slot of a ring. */
 		void CreateRing(std::array<Commands, kFramesInFlight>& ring, D3D12_COMMAND_LIST_TYPE type, const wchar_t* allocatorName, const wchar_t* listName);
 		/** @brief Blocks the CPU until completion retires; throws on a timeout or a removed device. */
