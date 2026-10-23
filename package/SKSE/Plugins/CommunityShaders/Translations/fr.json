@@ -4030,6 +4030,7 @@
     "ui.input.indicator_secondary": "",
     "ui.input.record_hint": "",
     "ui.input.recording": "",
+    "ui.reset_setting_default": "Cliquez avec le bouton central pour rétablir la valeur par défaut.",
     "ui.search": "",
     "ui.search_features": "",
     "ui.smart_clear_cache_desc": "",

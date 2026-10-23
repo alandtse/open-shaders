@@ -6,7 +6,11 @@
 namespace GrassInstance
 {
 	static const uint Stride = 16;
-	static const uint RecordStride = 16;
+	static const uint RecordStride = 80;
+	static const uint CurrentWindOffset = 16;
+	static const uint PreviousWindOffset = 32;
+	static const uint CurrentCollisionOffset = 48;
+	static const uint PreviousCollisionOffset = 64;
 
 	// The packed word contains a 19-bit group index, 9-bit fade and 4-bit flags.
 	static const uint RecordGroupBits = 19;

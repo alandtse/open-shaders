@@ -1,6 +1,6 @@
 /**
  * @file HDROutputCS.hlsl
- * @brief HDR: gamma 2.2 decode, paper-white × (nits/203), BT.2020, PQ. SDR: passthrough + UI.
+ * @brief HDR: gamma decode, paper-white × (nits/203), BT.2020, PQ. SDR: passthrough + UI.
  */
 
 #include "Common/Color.hlsli"
@@ -22,8 +22,8 @@ cbuffer PerFrame : register(b0)
 	float isSceneLinear : packoffset(c1.y);
 	float isMainOrLoadingMenu : packoffset(c1.z);
 	float fgTweenMenuMidAlphaBoost : packoffset(c1.w);  ///< TweenMenu: soften AA band when compositing here (UIBrightnessCS skips while paused)
-	float previewSDR : packoffset(c2.x);                ///< 1.0 = emit gamma 2.2 SDR (crop preview) instead of PQ HDR10
-	float applyAutoHDR : packoffset(c2.y);              ///< 1.0 = expand SDR tonemap (Effects11 or PP SDR+AutoHDR) into HDR
+	float previewSDR : packoffset(c2.x);                ///< 1.0 = emit sRGB SDR (crop preview) instead of PQ HDR10
+	float applyAutoHDR : packoffset(c2.y);              ///< 1.0 = Effects11 replaced ISHDR, so expand its SDR result into HDR
 }
 
 [numthreads(8, 8, 1)] void main(uint3 dispatchID : SV_DispatchThreadID) {
@@ -46,9 +46,9 @@ cbuffer PerFrame : register(b0)
 		bool sceneIsLinear = isSceneLinear > 0.5 || postProcessOutput;
 
 		if (applyAutoHDR > 0.5) {
-			float3 outputColor = sceneIsLinear ? scene.xyz : TransferFunctions::SignedGamma22ToLinear(scene.xyz);
+			float3 outputColor = sceneIsLinear ? scene.xyz : Color::GammaToLinearSafe(scene.xyz);
 			outputColor = DisplayMapping::PumboAutoHDR(outputColor, peakNits, paperWhite, 2.75, 1.0);
-			scene.xyz = sceneIsLinear ? outputColor : TransferFunctions::LinearToSignedGamma22(outputColor);
+			scene.xyz = sceneIsLinear ? outputColor : Color::LinearToGammaSafe(outputColor);
 		}
 
 		float3 compositedColor = sceneIsLinear ? max(0.0, scene.rgb) : scene.rgb;
@@ -69,12 +69,12 @@ cbuffer PerFrame : register(b0)
 			finalColor = saturate(finalColor);
 		}
 	} else {
-		float3 sceneGamma22 = scene.rgb;
+		float3 sceneGamma = scene.rgb;
 
 		if (skipUI) {
-			finalColor = sceneGamma22;
+			finalColor = sceneGamma;
 		} else {
-			finalColor = ui.rgb + sceneGamma22 * (1.0 - ui.a);
+			finalColor = ui.rgb + sceneGamma * (1.0 - ui.a);
 		}
 
 		finalColor = saturate(finalColor);

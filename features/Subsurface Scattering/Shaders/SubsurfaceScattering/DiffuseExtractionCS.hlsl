@@ -4,7 +4,6 @@ Texture2D<float4> ColorTexture : register(t0);
 Texture2D<float4> AlbedoTexture : register(t3);
 
 #include "Common/Color.hlsli"
-#include "Common/ColorManagement.hlsli"
 #include "Common/SharedData.hlsli"
 #include "SubsurfaceScattering/SSSCommon.hlsli"
 

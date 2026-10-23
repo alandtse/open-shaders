@@ -192,8 +192,8 @@ std::optional<PendingCapture> GrassBucketStore::CaptureMetadata(RE::BSMultiStrea
 	PendingCapture capture;
 	auto& asset = capture.asset;
 	auto& draw = asset.key.draw;
-	asset.vertexBuffer.copy_from(reinterpret_cast<ID3D11Buffer*>(rendererData->vertexBuffer));
-	asset.indexBuffer.copy_from(reinterpret_cast<ID3D11Buffer*>(rendererData->indexBuffer));
+	asset.vertexBuffer.copy_from(Util::AsReal(rendererData->vertexBuffer));
+	asset.indexBuffer.copy_from(Util::AsReal(rendererData->indexBuffer));
 
 	asset.material.reset(material);
 	// TruePBR marks converted grass properties with kMenuScreen.

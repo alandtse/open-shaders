@@ -5316,6 +5316,7 @@
     "ui.input.indicator_secondary": "(Secondary)",
     "ui.input.record_hint": "Press any key combination.\nModifiers (Ctrl, Shift, Alt) are supported.\nPress Escape to cancel.",
     "ui.input.recording": "Recording... (Esc to cancel)",
+    "ui.reset_setting_default": "Middle-click to restore the default.",
     "ui.search": "Search...",
     "ui.search_features": "Search Features...",
     "ui.smart_clear_cache_desc": "Watches the next second of rendering and clears only the shaders drawing this scene, twice - once now, and once after this menu closes to catch what it was covering. Everything else stays cached.\n\nThe cleared shaders recompile in the background as the scene redraws, so expect a brief stutter and some surfaces reverting to their vanilla appearance until it finishes. That is expected - this clears far less than a full wipe, it does not make the recompile invisible.\n\nKeep the broken area visible while it captures. If the problem persists, use a full clear.",

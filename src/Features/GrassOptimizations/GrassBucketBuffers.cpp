@@ -5,6 +5,7 @@
 
 void GrassOptimizations::SetupResources()
 {
+	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((globals::game::isVR ? 2u : 1u) * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
 	cullParamsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CullParamsCB>(), "GrassOptimizations::CullParamsCB");
 	{
 		// The marker selects the engine instance stream in the optimized shader permutation.
@@ -17,7 +18,7 @@ void GrassOptimizations::SetupResources()
 	hiZ.SetupResources();
 
 	if (FAILED(globals::d3d::context->QueryInterface(__uuidof(ID3D11DeviceContext1), ctx1.put_void())) || !ctx1) {
-		logger::error("[GRASS OPTIMIZATIONS] ID3D11DeviceContext1 unavailable — feature disabled");
+		logger::error("[GRASS OPTIMIZATIONS] ID3D11DeviceContext1 unavailable ; feature disabled");
 		ctx1 = nullptr;
 	}
 }
@@ -56,9 +57,9 @@ bool GrassOptimizations::UploadCullBucketConstants(ID3D11DeviceContext* ctx)
 		return false;
 
 	// SetupTechnique has already populated the fog color used at c16 in PerGeometry.
-	static const auto* fogNearColor = reinterpret_cast<const float*>(REL::RelocationID(527805, 414756).address() + 0x100);
-	static const auto* grassWindAmount = reinterpret_cast<const float*>(REL::RelocationID(527802, 414753).address());
-	static const auto* windGrassMultiplier = reinterpret_cast<const float*>(REL::RelocationID(513337, 391112).address());
+	static const auto* fogNearColor = reinterpret_cast<const float*>(REL::VariantID(527805, 414756, 0x34240D0).address() + (globals::game::isVR ? 0x200 : 0x100));
+	static const auto* grassWindAmount = reinterpret_cast<const float*>(REL::VariantID(527802, 414753, 0x34240B8).address());
+	static const auto* windGrassMultiplier = reinterpret_cast<const float*>(REL::VariantID(513337, 391112, 0x1ED3E48).address());
 
 	GrassPerGeometry geometry{};
 	std::memcpy(geometry.fogNearColor, fogNearColor, sizeof(geometry.fogNearColor));
@@ -90,6 +91,7 @@ bool GrassOptimizations::UploadCullBucketConstants(ID3D11DeviceContext* ctx)
 		data.geometry.windVector[0] = draw.windDirection[0];
 		data.geometry.windVector[1] = draw.windDirection[1];
 		data.geometry.scaleMask[0] = data.geometry.scaleMask[1] = draw.uniformScale ? 1.0f : 0.0f;
+		data.geometryVR = data.geometry;
 		data.material = bucket->asset.key.material.constants;
 		const auto lodMeshCost = [bucket](size_t tier) {
 			const auto* lod = bucket->lodMeshes[tier];
@@ -102,7 +104,7 @@ bool GrassOptimizations::UploadCullBucketConstants(ID3D11DeviceContext* ctx)
 			.dispatchWidth = DispatchWidth(bucket->groupCount),
 			.tierStride = bucket->output->capacity,
 			.outputOffset = bucket->outputOffset,
-			.argsOffset = slot * kTierCount * kArgsStride,
+			.argsOffset = slot * (globals::game::isVR ? 2u : 1u) * kTierCount * kArgsStride,
 			.boundExtent = bucket->boundExtent,
 			.modelRadius = draw.modelRadius,
 			.distScale = bucket->distScale,
@@ -293,13 +295,13 @@ bool GrassBucketStore::CreateBucketSourceBuffers(GrassSourceBuffers& buffers, ui
 bool GrassBucketStore::CreateBucketCullScratch(GrassCullBuffers& buffers, uint32_t capacity, uint32_t tiers)
 {
 	try {
-		buffers.records = CreateRawBuffer((uint64_t)capacity * tiers * kCullRecordStride, D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE, 0, "GrassOptimizations::CompactedBuf");
+		buffers.records = CreateRawBuffer((uint64_t)capacity * (globals::game::isVR ? 2u : 1u) * tiers * kCullRecordStride, D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE, 0, "GrassOptimizations::CompactedBuf");
 		for (uint32_t tier = 0; tier < tiers; ++tier) {
 			D3D11_SHADER_RESOURCE_VIEW_DESC srv{};
 			srv.Format = DXGI_FORMAT_R32_TYPELESS;
 			srv.ViewDimension = D3D11_SRV_DIMENSION_BUFFEREX;
-			srv.BufferEx.FirstElement = tier * capacity * kCullRecordStride / 4;
-			srv.BufferEx.NumElements = capacity * kCullRecordStride / 4;
+			srv.BufferEx.FirstElement = tier * capacity * (globals::game::isVR ? 2u : 1u) * kCullRecordStride / 4;
+			srv.BufferEx.NumElements = capacity * (globals::game::isVR ? 2u : 1u) * kCullRecordStride / 4;
 			srv.BufferEx.Flags = D3D11_BUFFEREX_SRV_FLAG_RAW;
 
 			buffers.records->CreateSRV(srv);
@@ -325,7 +327,7 @@ bool GrassBucketStore::EnsureArgsCapacity(uint32_t count)
 	const uint64_t capacity = std::max<uint64_t>(count, 2ull * argsCapacity);
 
 	try {
-		auto buffer = CreateRawBuffer(capacity * kTierCount * kArgsStride, D3D11_BIND_UNORDERED_ACCESS, D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS, "GrassOptimizations::ArgsBuf");
+		auto buffer = CreateRawBuffer(capacity * (globals::game::isVR ? 2u : 1u) * kTierCount * kArgsStride, D3D11_BIND_UNORDERED_ACCESS, D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS, "GrassOptimizations::ArgsBuf");
 		arguments = std::move(buffer);
 		argsCapacity = (uint32_t)capacity;
 
@@ -375,7 +377,7 @@ bool GrassBucketStore::PrepareCullOutputs(std::span<GrassBucket*> visible)
 		}
 
 		if (!selectedPage) {
-			const uint32_t maxCapacity = UINT32_MAX / (tiers * kCullRecordStride);
+			const uint32_t maxCapacity = UINT32_MAX / (tiers * (globals::game::isVR ? 2u : 1u) * kCullRecordStride);
 			if (instanceCount > maxCapacity)
 				return false;
 
@@ -404,7 +406,7 @@ bool GrassBucketStore::PrepareCullOutputs(std::span<GrassBucket*> visible)
 	uint64_t activeBytes = 0;
 	for (const auto& page : outputPages) {
 		if (page->used)
-			activeBytes += (uint64_t)page->capacity * page->tiers * kCullRecordStride;
+			activeBytes += (uint64_t)page->capacity * (globals::game::isVR ? 2u : 1u) * page->tiers * kCullRecordStride;
 	}
 
 	// Retain the recent working set through camera turns, then trim it after 600 smaller frames.
@@ -420,7 +422,7 @@ bool GrassBucketStore::PrepareCullOutputs(std::span<GrassBucket*> visible)
 		if (page->used)
 			return false;
 
-		const uint64_t bytes = (uint64_t)page->capacity * page->tiers * kCullRecordStride;
+		const uint64_t bytes = (uint64_t)page->capacity * (globals::game::isVR ? 2u : 1u) * page->tiers * kCullRecordStride;
 		if (page.get() == pageToShrink || page->idleFrames >= kRetentionFrames || retainedBytes + bytes > spareBudgetBytes)
 			return true;
 		retainedBytes += bytes;

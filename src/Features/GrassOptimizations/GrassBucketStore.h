@@ -106,9 +106,6 @@ public:
 	/** @brief Resolves LODs and refreshes conservative bounds before CPU culling. */
 	void PrepareBucket(GrassBucket& bucket);
 
-	/** @brief Returns true when captures or removals are staged for the next ApplyPending. */
-	bool HasPending();
-
 	/** @brief Recomputes a bucket's padded union AABB over all of its slices. */
 	void UpdateCoarseBounds(GrassBucket& b);
 
@@ -147,7 +144,7 @@ private:
 		EngineGroupLock& operator=(const EngineGroupLock&) = delete;
 
 	private:
-		inline static REL::Relocation<volatile long*> word{ REL::RelocationID(524610, 411250) };
+		inline static REL::Relocation<volatile long*> word{ REL::VariantID(524610, 411250, 0x317C990) };
 	};
 
 	static void PackInstances(GrassChunk& slice, const void* sourceData);

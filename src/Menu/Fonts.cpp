@@ -19,6 +19,12 @@
 
 namespace MenuFonts
 {
+	IconFonts& GetIconFonts()
+	{
+		static IconFonts fonts;
+		return fonts;
+	}
+
 	namespace
 	{
 		constexpr size_t RoleIndex(Menu::FontRole role)

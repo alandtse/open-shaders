@@ -119,6 +119,6 @@ bool Screenshot::SaveHdrAvif(const DirectX::Image& source, const std::filesystem
 		std::filesystem::remove(outputPath, ec);
 		return false;
 	}
-	logger::info("Community Shaders HDR AVIF: libavif {}, AOM, {}-bit lossless 4:4:4", avifVersion(), depth);
+	logger::info("{} HDR AVIF: libavif {}, AOM, {}-bit lossless 4:4:4", Plugin::DISPLAY_NAME, avifVersion(), depth);
 	return true;
 }

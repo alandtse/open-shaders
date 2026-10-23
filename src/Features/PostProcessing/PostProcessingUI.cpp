@@ -2,7 +2,8 @@
 
 #include "Util.h"
 
-#include "IconsFontAwesome5.h"
+#include "IconsTabler.h"
+#include "Menu/Fonts.h"
 
 #include <algorithm>
 #include <array>
@@ -33,6 +34,7 @@ namespace PostProcessingUI
 		struct LeadingIcon
 		{
 			ImWchar codepoint;
+			ImFont* font;
 			const ImFontGlyph* glyph;
 			float scale;
 			float fontSize;
@@ -57,10 +59,12 @@ namespace PostProcessingUI
 		{
 			unsigned int codepoint = 0;
 			const int byteCount = ImTextCharFromUtf8(&codepoint, label, nullptr);
-			if (byteCount <= 0 || codepoint < ICON_MIN_FA || codepoint > ICON_MAX_FA)
+			if (byteCount <= 0 || codepoint < ICON_MIN_TI || codepoint > ICON_MAX_TI)
 				return false;
 
-			auto* font = ImGui::GetFont();
+			auto* font = MenuFonts::GetIconFonts().tabler;
+			if (!font)
+				return false;
 			const float fontSize = ImGui::GetFontSize() * ButtonIconScale;
 			font->CalcTextSizeA(fontSize, FLT_MAX, 0.f, label, label + byteCount);
 			auto* fontBaked = font->GetFontBaked(fontSize);
@@ -74,6 +78,7 @@ namespace PostProcessingUI
 
 			icon = {
 				.codepoint = static_cast<ImWchar>(codepoint),
+				.font = font,
 				.glyph = glyph,
 				.scale = fontSize / fontBaked->Size,
 				.fontSize = fontSize,
@@ -120,7 +125,7 @@ namespace PostProcessingUI
 				ImTrunc(contentStartX - icon.glyph->X0 * icon.scale),
 				ImTrunc(itemCenter.y - (icon.glyph->Y0 + icon.glyph->Y1) * icon.scale * 0.5f)
 			};
-			ImGui::GetFont()->RenderChar(ImGui::GetWindowDrawList(), icon.fontSize, iconPos, textColor, icon.codepoint);
+			icon.font->RenderChar(ImGui::GetWindowDrawList(), icon.fontSize, iconPos, textColor, icon.codepoint);
 
 			if (icon.text != icon.textEnd) {
 				const ImVec2 textPos{

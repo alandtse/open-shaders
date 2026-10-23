@@ -18,7 +18,6 @@
 
 #include "Features/CSUtility.h"
 #include "Features/Effects11.h"
-#include "Features/GrassOptimizations.h"
 #include "Features/HDRDisplay.h"
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
@@ -210,8 +209,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	bool shaderFound = func(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 
 	const auto type = shader->shaderType.get();
-	if (!shaderFound && shaderCache->IsEnabled() && type > 0 && type < RE::BSShader::Type::Total &&
-		state->enabledClasses[type - 1] && type != RE::BSShader::Type::Effect) {
+	if (!shaderFound && shaderCache->IsEnabled() && state->ShaderEnabled(type) && type != RE::BSShader::Type::Effect) {
 		RE::BSGraphics::VertexShader* vertexShader = shaderCache->GetVertexShader(*shader, state->modifiedVertexDescriptor);
 		RE::BSGraphics::PixelShader* pixelShader = shaderCache->GetPixelShader(*shader, state->modifiedPixelDescriptor);
 		if (vertexShader == nullptr || (!skipPixelShader && pixelShader == nullptr)) {
@@ -368,17 +366,6 @@ namespace WeatherExtensions
 #endif
 			globals::features::skySync.OnSkyUpdateColors(sky);
 			Feature::ForEachLoadedFeature("OnWeatherColorsUpdated", [sky](Feature* feature) { feature->OnWeatherColorsUpdated(sky); });
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct Sky_UpdateWeather
-	{
-		static void thunk(RE::Sky* sky)
-		{
-			WeatherTransition::BeforeUpdate(sky);
-			func(sky);
-			WeatherTransition::AfterUpdate(sky);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

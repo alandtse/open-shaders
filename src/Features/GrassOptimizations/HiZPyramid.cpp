@@ -2,7 +2,6 @@
 
 #include "Features/TerrainBlending.h"
 #include "GpuPass.h"
-#include "Profiler.h"
 #include "State.h"
 
 void HiZPyramid::SetupResources()
@@ -107,8 +106,6 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 	if (!paramsCB || !globals::game::renderer)
 		return false;
 
-	// globals::game::graphicsState->screenWidth/Height is the desktop preview window's resolution on
-	// VR, not the HMD's -- use the same nominal size UpdateGrass derives from the live render target.
 	float2 screenSize = globals::state->screenSize;
 	auto renderSize = Util::ConvertToDynamic(screenSize);
 
@@ -144,7 +141,7 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassHiZCS.hlsl", {}, "cs_5_0")));
 		if (!baseCS) {
 			baseCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] HiZ CS load failed — occlusion culling disabled");
+			logger::error("[GRASS OPTIMIZATIONS] HiZ CS load failed ; occlusion culling disabled");
 			return false;
 		}
 	}
@@ -154,7 +151,7 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 			Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\SPD\\SPD.hlsl", {}, "cs_5_0")));
 		if (!spdCS) {
 			spdCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] SPD load failed — large instances will not be occlusion culled");
+			logger::error("[GRASS OPTIMIZATIONS] SPD load failed ; large instances will not be occlusion culled");
 		}
 	}
 
@@ -193,6 +190,7 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 
 	// Reduce the max-depth mip chain in one dispatch, with each group processing one tile in shared memory.
 	if (spdCS && GetMipCount() > 1) {
+		CS_GPU_PASS("GrassOptimizations::HiZMips");
 		const uint32_t outputMips = GetMipCount() - 1;
 		const uint32_t groupsX = padW / tileSize;
 		const uint32_t groupsY = padH / tileSize;
@@ -215,7 +213,6 @@ bool HiZPyramid::Build(ID3D11Device* device, ID3D11DeviceContext* ctx)
 		ctx->CSSetShaderResources(0, 1, &nullSRV);
 	}
 
-	globals::profiler->EndPass();
 
 	valid = true;
 	return true;

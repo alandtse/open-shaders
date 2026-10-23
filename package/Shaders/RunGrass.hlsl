@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
 // Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
 
-#include "Common/ColorManagement.hlsli"
+#include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/GrassInstance.hlsli"
@@ -42,7 +42,7 @@ struct VS_INPUT
 };
 #endif
 
-// Both draw paths share the engine vertex layout and interpolate only the outputs needed by this pass.
+// Both paths use upstream's vertex inputs. Only outputs consumed by this pass are interpolated.
 struct VS_OUTPUT
 {
 	float4 HPosition: SV_POSITION0;
@@ -121,9 +121,7 @@ cbuffer PerGeometry : register(b2)
 
 #ifdef VSHADER
 
-#	ifndef GRASS_OPTIMIZATIONS
-#		include "Common/GrassWindResponse.hlsli"
-#	endif
+#	include "Common/GrassWindResponse.hlsli"
 
 #	ifdef GRASS_COLLISION
 #		include "GrassCollision\\GrassCollision.hlsli"
@@ -208,7 +206,6 @@ float4 GetMSPosition(VS_INPUT input)
 	return msPosition;
 }
 
-// Engine draws use the instance stream and PerGeometry transforms, including grass not yet resident in a bucket.
 VS_OUTPUT VanillaVertex(VS_INPUT input)
 {
 	VS_OUTPUT vsout = (VS_OUTPUT)0;
@@ -551,7 +548,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout = (PS_OUTPUT)0;
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
-	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz, true));
+	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
 #			if defined(RENDER_DEPTH)
 	float diffuseAlpha = input.Fade * baseColor.w;
@@ -624,7 +621,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	[branch] if (pbrDetail && (PBRFlags & PBR::Flags::HasFeatureTexture0) != 0)
 	{
 		float4 subsurface = TexSubsurfaceSampler.Sample(SampSubsurfaceSampler, input.TexCoord.xy);
-		material.SubsurfaceColor *= Color::Albedo(Color::LinearSRGBToWorking(subsurface.xyz));
+		material.SubsurfaceColor *= Color::Diffuse(subsurface.xyz);
 		material.Thickness *= subsurface.w;
 	}
 
@@ -825,7 +822,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #				endif
 
-	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz));
+	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
 	if (SharedData::lodBlendingSettings.DisableTerrainVertexColors)
 		input.Color.xyz = 1;
@@ -885,7 +882,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	baseColor.xyz *= lerp(1.0, lodBrightness, saturate(input.LodTier));
 #				endif
 
-	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz);
+	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
+	float3 dirLightColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * llDirLightMult;
 	float3 dirLightColorMultiplier = 1;
 
 #				if defined(EXP_HEIGHT_FOG)
@@ -971,11 +969,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 	);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
-#					if defined(SKYLIGHTING_SHADOW_VIS)
+#				endif  // SKYLIGHTING
+
+#				if defined(SKYLIGHTING_SHADOW_VIS)
 	if (!SharedData::InInterior)
 		dirTransmissionShadowMask = skylightingShadowVisibility;
-#					endif
-#				endif  // SKYLIGHTING
+#				endif
+	[branch] if (SharedData::foliageLightingSettings.EnableGrassScattering != 0)
+		lightsDiffuseColor += dirLightColor * dirTransmissionShadow * dirTransmissionShadowMask * grassDirectionalShadowScale * GetFoliageTransmission(dirNdotL, dot(viewDirection, SharedData::DirLightDirection.xyz)) * Color::VanillaNormalization();
 
 	float3 albedo = baseColor.xyz * vertexColor;
 #				if defined(SNOW_COVER)
@@ -991,9 +992,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
-	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow * dirTransmissionShadowMask *
+	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
 	                              GrassLighting::GetTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
-	                              Color::BRDFScale;
+	                              Color::VanillaNormalization();
 
 #				ifdef GRASS_OPTIMIZATIONS
 	if (complexDetail)
@@ -1061,9 +1062,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				float VdotL = dot(viewDirection, normalizedLightDirection);
 				transmissionRadiance += lightColor *
 				                        GrassLighting::GetTransmissionFactor(NdotL, VdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
-				                        Color::BRDFScale;
+				                        Color::VanillaNormalization();
 
-				lightsDiffuseColor += lightDiffuseColor * Color::BRDFScale;
+				lightsDiffuseColor += lightDiffuseColor * Color::VanillaNormalization();
 
 #					ifdef GRASS_OPTIMIZATIONS
 				if (complexDetail)
@@ -1168,7 +1169,6 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.PS.w = diffuseAlpha;
 #		else
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
-	baseColor.xyz = Color::Albedo(ColorManagement::DiffuseToWorking(baseColor.xyz));
 #			if defined(DO_ALPHA_TEST)
 	const float diffuseAlpha = input.Color.w * baseColor.w;
 	if ((diffuseAlpha - AlphaTestRefRS) < 0)

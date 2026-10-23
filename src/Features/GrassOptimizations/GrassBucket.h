@@ -13,7 +13,7 @@ inline constexpr uint32_t kMaxRecordGroups = 1u << 19;
 
 // Draw tiers use the full mesh followed by the middle and far LOD meshes.
 inline constexpr uint32_t kTierCount = 1 + (uint32_t)GrassMeshLibrary::LODTier::kCount;
-inline constexpr uint32_t kCullRecordStride = 16;
+inline constexpr uint32_t kCullRecordStride = 80;
 // Each indirect draw stores five DWORDs, with the instance count second.
 inline constexpr uint32_t kArgsStride = 5 * sizeof(uint32_t);
 

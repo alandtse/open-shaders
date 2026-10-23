@@ -181,7 +181,7 @@ void GrassOptimizations::DrawSettings()
 
 bool GrassOptimizations::HasShaderDefine(RE::BSShader::Type shaderType)
 {
-	return shaderType == RE::BSShader::Type::Grass;
+	return active && shaderType == RE::BSShader::Type::Grass;
 }
 
 void GrassOptimizations::PostPostLoad()
@@ -201,8 +201,7 @@ void GrassOptimizations::Reset()
 
 void GrassOptimizations::ClearShaderCache()
 {
-	cullCS = nullptr;
-	cullCSFailed = false;
+	cullCS.Reset();
 	hiZ.ClearShaderCache();
 	bucketStore.meshLibrary.ClearShaderCache();
 }
@@ -287,7 +286,6 @@ void GrassOptimizations::SetupOptimizedPass(const GrassBucket& b)
 
 	ctx1->VSSetConstantBuffers1(2, 1, &bucketCB, &windowFirst, &geometryNum);
 	ctx1->PSSetConstantBuffers1(2, 1, &bucketCB, &windowFirst, &geometryNum);
-	// BSGrassShader_SetupGeometry sets this texture's address and filter modes once the hook chain returns.
 	globals::game::shadowState->SetPSTexture(0, b.asset.diffuseTexture->rendererTexture);
 	if (b.asset.key.draw.pbrMaterial) {
 		TruePBR::SetGrassPBRTextures(static_cast<const BSLightingShaderMaterialPBR*>(b.asset.material.get()));
@@ -483,7 +481,7 @@ void GrassOptimizations::Hooks::NiNode_OnVisible::thunk(RE::NiNode* This, RE::Ni
 		return;
 
 	// Queue optimized buckets for the main view, or for any view after two frames without a main-view visit.
-	const auto frame = globals::game::graphicsState->frameCount;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
 	const bool mainView = process->camera && process->camera == RE::Main::WorldRootCamera();
 	if (mainView)
 		mainViewVisitFrame.store(frame, std::memory_order_relaxed);
@@ -538,24 +536,23 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 	}
 
 	func(This, a2, flags);
+	self.SetupGrassPass(This, a2);
 
-	if (self.active) {
-		auto* shadowState = globals::game::shadowState;
-		shadowState->SetPSTextureAddressMode(0, RE::BSGraphics::TextureAddressMode::kClampSClampT);
-		shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kAnisotropic);
-	}
+	auto* shadowState = globals::game::shadowState;
+	shadowState->SetPSTextureAddressMode(0, RE::BSGraphics::TextureAddressMode::kClampSClampT);
+	shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kAnisotropic);
 }
 
 void GrassOptimizations::Hooks::BSGrassShader_SetupMaterial::thunk(RE::BSShader* This, const RE::BSLightingShaderMaterialBase* material)
 {
-	if (!globals::features::grassOptimizations.loaded)
+	if (!globals::features::grassOptimizations.loaded || !globals::features::grassOptimizations.active)
 		func(This, material);
 }
 
 void GrassOptimizations::Hooks::DrawVanilla(RE::BSMultiStreamInstanceTriShape* geometry)
 {
 	auto& self = globals::features::grassOptimizations;
-	const bool optimized = self.loaded && self.HasCurrentCull();
+	const bool optimized = self.loaded && self.active && self.HasCurrentCull();
 	const auto shape = optimized ? self.bucketStore.FindRenderedShape(geometry) : nullptr;
 	if (shape && self.bucketStore.IsShapeOptimized(*shape))
 		return;
@@ -564,11 +561,11 @@ void GrassOptimizations::Hooks::DrawVanilla(RE::BSMultiStreamInstanceTriShape* g
 	auto& groups = geometry->GetMultiStreamTrishapeRuntimeData().instanceGroups;
 
 	const auto snapshot = self.bucketStore.AcquireCullSnapshot();
-	const bool direct = self.loaded && snapshot && snapshot->IsDirect(geometry);
+	const bool direct = self.loaded && self.active && snapshot && snapshot->IsDirect(geometry);
 
 	if (auto& cb = globals::features::grassOptimizations.vanillaDrawCB) {
 		ID3D11Buffer* marker = cb->CB();
-		ctx->VSSetConstantBuffers(13, 1, &marker);
+		ctx->VSSetConstantBuffers(kBucketConstantSlot, 1, &marker);
 	}
 
 	for (uint32_t i = 0; i < groups.size(); ++i) {
@@ -666,12 +663,17 @@ void GrassOptimizations::Hooks::Install()
 
 	// Skip mapping the vanilla dynamic fade buffer.
 	if (REL::Module::IsAE()) {
+		fadeBufferPatch.CaptureVanilla(REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2), 5);
+		// 1.7.99 uploads PS PerGeometry at +0x66C..+0x69C; retain it before bypassing fade work.
 		trampoline.write_branch<5>(
 			REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x595, 0x595, 0x6A2),
 			REL::RelocationID(99996, 106685).address() + Util::VersionedRelocation::Select(0x6C6, 0x6C6, 0x7D6));
 	} else {
-		REL::safe_write(REL::RelocationID(99996, 106685).address() + 0x54D, REL::NOP5);
+		fadeBufferPatch.CaptureVanilla(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), 5);
+		// VR's compiled function has an extra per-frame buffer-cache check SE doesn't have.
+		REL::safe_write(REL::RelocationID(99996, 106685).address() + REL::Relocate(0x54D, 0x54D, 0x563), REL::NOP5);
 	}
+	fadeBufferPatch.CaptureOptimized();
 
 	logger::info("[GRASS OPTIMIZATIONS] Installed hooks");
 }

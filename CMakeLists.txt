@@ -848,10 +848,7 @@ install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # The rest of the Licenses folder lives in package/; these two sit at the repo root for GitHub.
 set(LICENSES_DESTINATION SKSE/Plugins/CommunityShaders/Licenses)
-set(ROOT_LICENSE_FILES
-    "${CMAKE_SOURCE_DIR}/COPYING.txt"
-    "${CMAKE_SOURCE_DIR}/EXCEPTIONS.md"
-)
+set(ROOT_LICENSE_FILES "${CMAKE_SOURCE_DIR}/COPYING.txt" "${CMAKE_SOURCE_DIR}/EXCEPTIONS.md")
 install(
     FILES ${ROOT_LICENSE_FILES}
     DESTINATION ${LICENSES_DESTINATION}
@@ -913,7 +910,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
-    list(APPEND _AIO_PACKAGE_FILES ${CS_ICON_FONT_FILES})
     list(APPEND _AIO_PACKAGE_FILES ${ROOT_LICENSE_FILES})
 
     # Prepare AIO by copying files only when different. This avoids updating
@@ -966,28 +962,6 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
     append_copy_if_different(_prepare_aio_cmds ROOT_LICENSE_FILES "${CMAKE_SOURCE_DIR}" "${AIO_DIR}/${LICENSES_DESTINATION}")
-
-    # Icon fonts are sourced from src/Menu/Icons/glyphs (CS_ICON_FONT_FILES glob).
-    list(
-        APPEND _prepare_aio_cmds
-        COMMAND
-        ${CMAKE_COMMAND}
-        -E
-        make_directory
-        "${AIO_DIR}/${CS_ICON_FONT_DST_REL}"
-    )
-    foreach(_icon_font_src IN LISTS CS_ICON_FONT_FILES)
-        get_filename_component(_icon_font_name "${_icon_font_src}" NAME)
-        list(
-            APPEND _prepare_aio_cmds
-            COMMAND
-            ${CMAKE_COMMAND}
-            -E
-            copy_if_different
-            "${_icon_font_src}"
-            "${AIO_DIR}/${CS_ICON_FONT_DST_REL}/${_icon_font_name}"
-        )
-    endforeach()
 
     # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
     # to avoid racing). All features copied — autoupload filter applies

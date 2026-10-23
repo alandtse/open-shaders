@@ -11,7 +11,6 @@
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
 #include "Menu.h"
-#include "PostProcessing.h"
 #include "ScreenshotFeature.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -260,8 +259,7 @@ namespace
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Bink movies draw into kFRAMEBUFFER outside both redirects, so ApplyHDR would overwrite them.
-	// Route the draw into the UI buffer like the interface; the Present path undoes it.
+	// Bink draws outside both redirects, so route its frame into the UI buffer before HDR compositing.
 	struct HDR_Movie_Draw
 	{
 		static void thunk(void* a_movie)
@@ -1682,7 +1680,7 @@ float4 HDRDisplay::GetSharedDataHDR() const
 HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 {
 	auto* ui = globals::game::ui;
-	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen(ui);
+	bool isMainOrLoadingMenu = globals::state->IsMainOrLoadingMenuOpen(ui) || movieDrawnFrame == globals::state->frameCount;
 	bool skipUIComposite = IsFGCompositingThisFrame();
 
 	// Linear Lighting keeps the pipeline linear throughout.
@@ -1707,8 +1705,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
-	// Effects11 ENB presets are SDR; Jiaye SDR-only tonemappers opt in via Color Grading AutoHDR.
-	data.applyAutoHDR = (applyAutoHDR || globals::features::postProcessing.WantsAutoHDR()) ? 1.f : 0.f;
+	data.applyAutoHDR = applyAutoHDR ? 1.f : 0.f;
 	return data;
 }
 

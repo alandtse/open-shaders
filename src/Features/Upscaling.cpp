@@ -19,6 +19,7 @@
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
+#include "Utils/VersionedRelocation.h"
 #include <Windows.h>
 #include <algorithm>
 #include <cfloat>
@@ -26,8 +27,6 @@
 #include <directx/d3dx12.h>
 #include <format>
 #include <mutex>
-
-#include "Features/PostProcessing.h"
 
 #include "Features/PostProcessing.h"
 
@@ -1481,7 +1480,7 @@ void Upscaling::PostPostLoad()
 	// Patches facegen texture generation to not use dynamic resolution
 	const auto faceGenUpdate = REL::RelocationID(26455, 27041).address();
 	const auto faceGenCopy = faceGenUpdate + Util::VersionedRelocation::Select(0x119, 0x187, 0x19E);
-	if (Util::VersionedRelocation::IsCallTo(faceGenCopy, REL::RelocationID(75524, 77318).address())) {
+	if (Util::VersionedRelocation::IsCallTo(faceGenCopy, REL::VariantID(75524, 77318, 0xDC08A0).address())) {
 		stl::write_thunk_call<FaceGen_CopyRenderTarget>(faceGenCopy);
 	} else {
 		logger::warn("[Upscaling] FaceGen texture allocation guard not installed: unexpected copy call");

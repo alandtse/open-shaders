@@ -2,7 +2,6 @@
 #define DYNAMIC_CUBEMAPS_CAPTURE_COMMON_HLSLI
 
 #include "Common/Color.hlsli"
-#include "Common/ColorManagement.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"

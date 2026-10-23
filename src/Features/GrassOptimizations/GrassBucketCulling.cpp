@@ -1,24 +1,60 @@
+#include "Features/GrassCollision.h"
 #include "Features/GrassOptimizations.h"
-#include "Profiler.h"
+#include "Features/Wind/Wind.h"
+#include "GpuPass.h"
+#include "State.h"
+#include "Utils/Game.h"
+
+static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& viewProj)
+{
+	// Matches GrassCullingCS.hlsl's divide-by-zero guard convention (e.g. max(length(dvC), 1e-4)).
+	constexpr float kPlaneNormalizeEpsilon = 1e-4f;
+
+	const float rows[4][4] = {
+		{ viewProj._11, viewProj._12, viewProj._13, viewProj._14 },
+		{ viewProj._21, viewProj._22, viewProj._23, viewProj._24 },
+		{ viewProj._31, viewProj._32, viewProj._33, viewProj._34 },
+		{ viewProj._41, viewProj._42, viewProj._43, viewProj._44 }
+	};
+
+	const auto setPlane = [&](uint32_t index, uint32_t rowA, float signA, uint32_t rowB, float signB) {
+		float plane[4];
+		for (uint32_t component = 0; component < 4; ++component)
+			plane[component] = rows[rowA][component] * signA + rows[rowB][component] * signB;
+		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), kPlaneNormalizeEpsilon);
+		out[index][0] = plane[0] * invLength;
+		out[index][1] = plane[1] * invLength;
+		out[index][2] = plane[2] * invLength;
+		out[index][3] = -plane[3] * invLength;
+	};
+
+	setPlane(0, 2, 1.0f, 2, 0.0f);
+	setPlane(1, 3, 1.0f, 2, -1.0f);
+	setPlane(2, 3, 1.0f, 0, 1.0f);
+	setPlane(3, 3, 1.0f, 0, -1.0f);
+	setPlane(4, 3, 1.0f, 1, -1.0f);
+	setPlane(5, 3, 1.0f, 1, 1.0f);
+}
 
 void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 {
 	auto* device = globals::d3d::device;
 	auto* ctx = globals::d3d::context;
 
-	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, camera->GetRuntimeData2().viewFrustum, camera->world);
-
+	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	RE::NiFrustumPlanes frustums[2]{};
+	FrustumSoA frustumSoAs[2];
+	for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+		auto transform = camera->world;
+		if (globals::game::isVR)
+			transform.translate = Util::GetEyePosition(eye);
+		const auto& viewFrustum = globals::game::isVR ? camera->GetVRRuntimeData().viewFrustumArray[eye] : camera->GetRuntimeData2().viewFrustum;
+		ComputeFrustumPlanes(frustums[eye], viewFrustum, transform);
+		BuildFrustumSoA(frustumSoAs[eye], frustums[eye]);
+	}
 	const RE::NiPoint3 cameraTranslation = camera->world.translate;
 	const __m128 cameraPosition = _mm_setr_ps(cameraTranslation.x, cameraTranslation.y, cameraTranslation.z, 0.0f);
-
-	FrustumSoA frustumSoA;
-	BuildFrustumSoA(frustumSoA, frustum);
-
-	// The setup hook calls this update only when PerFrame contains the main camera.
 	const auto& frameBuffer = globals::game::frameBufferCached;
-	const auto& mainCameraViewProj = frameBuffer.GetCameraViewProjUnjittered();
-	const auto& mainCameraPos = frameBuffer.GetCameraPosAdjust();
 
 	if (settings.EnableOcclusionCulling)
 		hiZ.Build(device, ctx);
@@ -28,25 +64,36 @@ void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 	{
 		CullParamsCB params{};
 
-		for (int i = 0; i < 6; ++i) {
-			params.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
-			params.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
-			params.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
-			params.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
+		params.eyeCount = eyeCount;
+		for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+			const auto& viewProj = frameBuffer.GetCameraViewProjUnjittered(eye);
+			const auto& position = frameBuffer.GetCameraPosAdjust(eye);
+			std::memcpy(params.cameraViewProj[eye], &viewProj, sizeof(params.cameraViewProj[eye]));
+			params.cameraPos[eye][0] = position.x;
+			params.cameraPos[eye][1] = position.y;
+			params.cameraPos[eye][2] = position.z;
+			if (globals::game::isVR) {
+				ComputeCameraRelativeFrustumPlanes(params.frustumPlanes + eye * 6, viewProj);
+			} else {
+				for (uint32_t plane = 0; plane < 6; ++plane) {
+					const auto& source = frustums[eye].cullingPlanes[plane];
+					params.frustumPlanes[plane][0] = source.normal.x;
+					params.frustumPlanes[plane][1] = source.normal.y;
+					params.frustumPlanes[plane][2] = source.normal.z;
+					params.frustumPlanes[plane][3] = source.constant;
+				}
+			}
+			const auto* rowW = params.cameraViewProj[eye][3];
+			params.projectionWLength[eye] = std::sqrt(rowW[0] * rowW[0] + rowW[1] * rowW[1] + rowW[2] * rowW[2]);
 		}
-
-		std::memcpy(params.cameraViewProj, &mainCameraViewProj, sizeof(params.cameraViewProj));
-		params.cameraPos[0] = mainCameraPos.x;
-		params.cameraPos[1] = mainCameraPos.y;
-		params.cameraPos[2] = mainCameraPos.z;
 
 		params.minPixelSize = settings.MinPixelSize;
 		params.fullDetailPixelSize = settings.FullDetailPixelSize;
 		params.lodMinKeep = settings.MinDensity;
 		params.lodFadeBand = 0.15f;
 
-		const auto& viewFrustum = camera->GetRuntimeData2().viewFrustum;
-		const auto [screenWidth, screenHeight] = globals::game::renderer->GetScreenSize();
+		const auto& viewFrustum = globals::game::isVR ? camera->GetVRRuntimeData().viewFrustumArray[0] : camera->GetRuntimeData2().viewFrustum;
+		const float screenHeight = Util::ConvertToDynamic(globals::state->screenSize).y;
 		params.meshCostBias = settings.MeshCostBias;
 		params.projScale = screenHeight / (2.0f * std::abs(viewFrustum.fTop));
 		params.maxDistSq = maxDistSq;
@@ -57,10 +104,10 @@ void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 		params.fadeNow = timeAccum;
 		params.fadeInTimeRcp = fadeInTimeRcp;
 
-		const float collisionDistance = std::max(0.0f, settings.CollisionDistance);
 		params.invisibleFadeCull = settings.InvisibleFadeCull;
 		params.simpleShadingPixelSize = std::max(0.0f, settings.SimpleShadingPixelSize);
-		params.collisionDistSq = collisionDistance * collisionDistance;
+		const auto& projection = frameBuffer.GetCameraProj();
+		params.reverseProjection = projection._33 * projection._43 < 0.0f ? 1.0f : 0.0f;
 		params.midLODPixelSize = settings.MidLODPixelSize;
 		params.farLODPixelSize = settings.EnableMidLOD ? std::min(settings.FarLODPixelSize, settings.MidLODPixelSize) : settings.FarLODPixelSize;
 		params.densityDistanceRcp = 1.0f / std::max(vanillaMaxDistance, 1e-4f);
@@ -70,8 +117,6 @@ void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 		params.hiZSizeX = (float)hiZ.GetWidth();
 		params.hiZSizeY = (float)hiZ.GetHeight();
 
-		const auto* rowW = params.cameraViewProj[3];
-		params.projectionWLength = std::sqrt(rowW[0] * rowW[0] + rowW[1] * rowW[1] + rowW[2] * rowW[2]);
 		params.hiZMipCount = (float)hiZ.GetMipCount();
 		params.occlusionBias = std::max(0.0f, settings.OcclusionBias);
 		params.costBiasStartDist = std::max(0.0f, settings.CostBiasStartDistance);
@@ -82,55 +127,50 @@ void GrassOptimizations::CullGrass(const RE::NiCamera* camera)
 	visibleBuckets.clear();
 	sliceTableCPU.clear();
 
-	globals::profiler->BeginPass("GrassOptimizations::SliceCull");
-	for (auto& [key, bucket] : bucketStore.buckets) {
-		bucket.ResetCullState();
-		const auto* texture = bucket.asset.diffuseTexture.get();
-		if (!bucket.totalInstances || !bucket.source.instances || !bucket.uploadedSlices || !texture || !texture->rendererTexture) {
-			bucketStore.SetOptimizedReady(bucket, false);
-			continue;
+	{
+		CS_GPU_PASS("GrassOptimizations::SliceCull");
+		for (auto& [key, bucket] : bucketStore.buckets) {
+			bucket.ResetCullState();
+			const auto* texture = bucket.asset.diffuseTexture.get();
+			if (!bucket.totalInstances || !bucket.source.instances || !bucket.uploadedSlices || !texture || !texture->rendererTexture) {
+				bucketStore.SetOptimizedReady(bucket, false);
+				continue;
+			}
+
+			bucketStore.PrepareBucket(bucket);
+
+			CullBucketStereoSlices(bucket, frustumSoAs, eyeCount, cameraPosition);
+			if (bucket.sliceTableCount)
+				visibleBuckets.push_back(&bucket);
+			else
+				bucketStore.SetOptimizedReady(bucket, true);
 		}
 
-		bucketStore.PrepareBucket(bucket);
+		std::erase_if(visibleBuckets, [&](GrassBucket* bucket) {
+			bucket->complexSRV = bucketStore.meshLibrary.GetComplexGrass(bucket->asset.diffuseTexture.get(), ctx);
 
-		CullBucketSlices(bucket, frustumSoA, cameraPosition);
-		if (bucket.sliceTableCount)
-			visibleBuckets.push_back(&bucket);
-		else
-			bucketStore.SetOptimizedReady(bucket, true);
+			if (bucket->cullGroups.size() <= kMaxRecordGroups && bucketStore.UploadCullGroups(*bucket, ctx))
+				return false;
+
+			// Use engine draws if the bucket cannot supply valid cull resources.
+			bucket->ResetCullState();
+			bucketStore.SetOptimizedReady(*bucket, false);
+
+			return true;
+		});
 	}
 
-	std::erase_if(visibleBuckets, [&](GrassBucket* bucket) {
-		bucket->complexSRV = bucketStore.meshLibrary.GetComplexGrass(bucket->asset.diffuseTexture.get(), ctx);
-
-		if (bucket->cullGroups.size() <= kMaxRecordGroups && bucketStore.UploadCullGroups(*bucket, ctx))
-			return false;
-
-		// Use engine draws if the bucket cannot supply valid cull resources.
-		bucket->ResetCullState();
-		bucketStore.SetOptimizedReady(*bucket, false);
-
-		return true;
-	});
-
-	globals::profiler->EndPass();
-
-	globals::profiler->BeginPass("GrassOptimizations::InstanceCull");
+	CS_GPU_PASS("GrassOptimizations::InstanceCull");
 	UploadCullState(ctx);
-	globals::profiler->EndPass();
 }
 
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 {
-	if (!cullCS && !cullCSFailed) {
-		cullCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0")));
-		if (!cullCS) {
-			cullCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] cull CS load failed; optimized drawing disabled");
-		}
-	}
-
-	return cullCS.get();
+	std::vector<std::pair<const char*, const char*>> defines;
+	if (globals::features::grassCollision.loaded)
+		defines.emplace_back("GRASS_COLLISION", "1");
+	return cullCS.Get(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", defines,
+		"cs_5_0", "main", "GrassOptimizations::CullCS");
 }
 
 bool GrassOptimizations::IsMainCameraPerFrame(const RE::NiPoint3& mainCameraPos)
@@ -143,7 +183,7 @@ bool GrassOptimizations::IsMainCameraPerFrame(const RE::NiPoint3& mainCameraPos)
 
 bool GrassOptimizations::HasCurrentCull() const
 {
-	return lastFrame == globals::game::graphicsState->frameCount;
+	return lastFrame == globals::game::graphicsState->GetFrameCount();
 }
 
 void GrassOptimizations::ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform)
@@ -274,6 +314,40 @@ bool GrassOptimizations::ClassifyAabb(const FrustumSoA& frustum, __m128 minimum,
 uint32_t GrassOptimizations::LaneMask(uint32_t remaining)
 {
 	return (1u << std::min(4u, remaining)) - 1u;
+}
+
+void GrassOptimizations::CullBucketStereoSlices(GrassBucket& bucket, const FrustumSoA* frustums, uint32_t eyeCount, __m128 cameraPosition)
+{
+	if (eyeCount == 1) {
+		CullBucketSlices(bucket, frustums[0], cameraPosition);
+		return;
+	}
+
+	static thread_local std::vector<std::pair<uint32_t, uint32_t>> ranges;
+	ranges.clear();
+	const auto tableStart = sliceTableCPU.size();
+	for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+		bucket.sliceTableCount = 0;
+		bucket.groupCount = 0;
+		CullBucketSlices(bucket, frustums[eye], cameraPosition);
+		for (uint32_t run = 0; run < bucket.sliceTableCount; ++run) {
+			const auto [source, visible] = sliceTableCPU[bucket.sliceTableOffset + run];
+			const uint32_t end = run + 1 < bucket.sliceTableCount ? sliceTableCPU[bucket.sliceTableOffset + run + 1].second : bucket.groupCount;
+			ranges.emplace_back(source, source + end - visible);
+		}
+		sliceTableCPU.resize(tableStart);
+	}
+	bucket.sliceTableOffset = (uint32_t)tableStart;
+	bucket.sliceTableCount = 0;
+	bucket.groupCount = 0;
+	std::sort(ranges.begin(), ranges.end());
+	for (size_t i = 0; i < ranges.size();) {
+		const uint32_t first = ranges[i].first;
+		uint32_t end = ranges[i++].second;
+		while (i < ranges.size() && ranges[i].first <= end)
+			end = std::max(end, ranges[i++].second);
+		AppendVisibleGroups(bucket, first, end - first);
+	}
 }
 
 void GrassOptimizations::CullBucketSlices(GrassBucket& bucket, const FrustumSoA& frustumSoA, __m128 cameraPosition)
@@ -428,19 +502,38 @@ void GrassOptimizations::UploadCullState(ID3D11DeviceContext* ctx)
 		return;
 	}
 
+	// These fields must be updated before culling, regardless of SetupGeometry hook order.
+	if (globals::features::grassCollision.loaded) {
+		globals::features::grassCollision.Update();
+		globals::features::grassCollision.BindDeformationResources(true);
+	}
+	if (globals::features::wind.loaded)
+		globals::features::wind.UpdateGrassWindSpring(true);
+	globals::state->UpdatePermutationBuffer();
+	ID3D11Buffer* deformationBuffers[] = {
+		globals::state->permutationCB->CB(), globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB()
+	};
+	ctx->CSSetConstantBuffers(4, ARRAYSIZE(deformationBuffers), deformationBuffers);
+
+	ID3D11Buffer* frameBuffers[1]{ *globals::game::perFrame.get() };
+	ctx->CSSetConstantBuffers(12, 1, frameBuffers);
+
 	ID3D11Buffer* paramsCB = cullParamsCB->CB();
 	ctx->CSSetConstantBuffers(0, 1, &paramsCB);
 	ctx->CSSetShader(cullCS.get(), nullptr, 0);
 
 	// Reset all bucket arguments with one upload before dispatching.
-	const uint32_t argumentCount = (uint32_t)visibleBuckets.size() * kTierCount * kArgsStride / sizeof(uint32_t);
+	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	const uint32_t argumentCount = (uint32_t)visibleBuckets.size() * eyeCount * kTierCount * kArgsStride / sizeof(uint32_t);
 	cullArguments.assign(argumentCount, 0);
 	for (const GrassBucket* bucket : visibleBuckets) {
-		auto* arguments = cullArguments.data() + bucket->cullSlot * kTierCount * kArgsStride / sizeof(uint32_t);
-		arguments[0] = 3u * bucket->asset.key.triCount;
-		for (uint32_t tier = 1; tier < kTierCount; ++tier) {
-			if (const auto* lod = bucket->lodMeshes[tier - 1])
-				arguments[tier * kArgsStride / sizeof(uint32_t)] = lod->indexCount;
+		for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+			auto* arguments = cullArguments.data() + (bucket->cullSlot * eyeCount + eye) * kTierCount * kArgsStride / sizeof(uint32_t);
+			arguments[0] = 3u * bucket->asset.key.triCount;
+			for (uint32_t tier = 1; tier < kTierCount; ++tier) {
+				if (const auto* lod = bucket->lodMeshes[tier - 1])
+					arguments[tier * kArgsStride / sizeof(uint32_t)] = lod->indexCount;
+			}
 		}
 	}
 	const D3D11_BOX argumentBox{ 0, 0, 0, argumentCount * (UINT)sizeof(uint32_t), 1, 1 };
@@ -457,6 +550,13 @@ void GrassOptimizations::UploadCullState(ID3D11DeviceContext* ctx)
 	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(nullUAVs), nullUAVs, nullptr);
 	ID3D11ShaderResourceView* nullSRVs[4] = {};
 	ctx->CSSetShaderResources(0, 4, nullSRVs);
+	ID3D11ShaderResourceView* nullDeformationSRVs[11] = {};
+	ctx->CSSetShaderResources(100, ARRAYSIZE(nullDeformationSRVs), nullDeformationSRVs);
+	// Shared b5/b6 must stay bound for subsequent compute passes.
+	ID3D11Buffer* nullDeformationBuffers[2] = {};
+	ctx->CSSetConstantBuffers(3, ARRAYSIZE(nullDeformationBuffers), nullDeformationBuffers);
+	ID3D11SamplerState* nullDeformationSamplers[2] = {};
+	ctx->CSSetSamplers(14, ARRAYSIZE(nullDeformationSamplers), nullDeformationSamplers);
 	ctx->CSSetShader(nullptr, nullptr, 0);
 
 	// Removals at Present may destroy these buckets before the next frame.

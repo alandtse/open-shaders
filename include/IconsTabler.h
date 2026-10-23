@@ -129,4 +129,3 @@ inline constexpr unsigned short ICON_TI_GLYPH_RANGES[] = {
 	0xfea8, 0xfea8,
 	0
 };
-

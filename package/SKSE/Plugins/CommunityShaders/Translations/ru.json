@@ -4030,6 +4030,7 @@
     "ui.input.indicator_secondary": "",
     "ui.input.record_hint": "",
     "ui.input.recording": "",
+    "ui.reset_setting_default": "Нажмите среднюю кнопку мыши, чтобы восстановить значение по умолчанию.",
     "ui.search": "Поиск...",
     "ui.search_features": "Поиск функций...",
     "ui.smart_clear_cache_desc": "",

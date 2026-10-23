@@ -831,7 +831,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	elif defined(RENDER_BASE_TEXTURE)
 	psout.Color.xyzw = baseColor;
 #		if defined(TRUE_PBR)
-	psout.Color.xyz = TransferFunctions::LinearToGamma22(baseColor.xyz);
+	psout.Color.xyz = Color::LinearToSrgb(baseColor.xyz);
 #		endif
 #	elif defined(LOCALMAP_FOGOFWAR)
 	psout.Color = float4(0, 0, 0, input.Alpha);

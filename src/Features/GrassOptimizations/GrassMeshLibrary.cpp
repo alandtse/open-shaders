@@ -1,6 +1,6 @@
 #include "GrassMeshLibrary.h"
+#include "GpuPass.h"
 #include "TruePBR/BSLightingShaderMaterialPBR.h"
-
 #include "Utils/D3D.h"
 
 GrassMeshLibrary::~GrassMeshLibrary()
@@ -106,7 +106,7 @@ ID3D11ShaderResourceView* GrassMeshLibrary::GetComplexGrass(RE::NiSourceTexture*
 
 	auto& entry = found->second;
 	auto* rt = tex ? tex->rendererTexture : nullptr;
-	auto* resourceView = rt ? rt->resourceView : nullptr;
+	auto* resourceView = rt ? Util::AsReal(rt->resourceView) : nullptr;
 	if (entry.normalLength && entry.resourceView == resourceView) {
 		return entry.normalLength->srv.get();
 	}
@@ -136,6 +136,7 @@ ID3D11ShaderResourceView* GrassMeshLibrary::GetComplexGrass(RE::NiSourceTexture*
 			return nullptr;
 		}
 	}
+	CS_GPU_PASS("GrassOptimizations::DetectComplex");
 	// The previous grass draw may still have this result bound for reading.
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 	ctx->VSSetShaderResources(5, 1, &nullSRV);
@@ -162,7 +163,7 @@ ID3D11ComputeShader* GrassMeshLibrary::GetDetectCS()
 
 		if (!detectCS) {
 			detectCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] detect CS load failed — complex detection disabled");
+			logger::error("[GRASS OPTIMIZATIONS] detect CS load failed â€” complex detection disabled");
 		}
 	}
 

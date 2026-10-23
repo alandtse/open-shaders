@@ -1,7 +1,6 @@
 #include "LinearLighting.h"
 
 #include <DirectXTex.h>
-#include <cmath>
 
 #include "../I18n/I18n.h"
 #include "Features/PostProcessing.h"
@@ -263,25 +262,11 @@ std::function<void()> LinearLighting::OnReflectionsRenderBegin()
 	};
 }
 
-void LinearLighting::Reset()
+void LinearLighting::Prepass()
 {
 	dirLightMult = 1.0f;
 	if (!IsLinearLightingActive())
 		return;
-	if (applyGameGamma && !IsLinearLightingActive())
-		ApplyGameGamma();
-	// Needs Post Processing's display transform, so Vanilla mode turns it off; Effects 11 gates it separately via IsActive.
-	const bool linearLighting = settings.enableLinearLighting && globals::features::postProcessing.loaded &&
-	                            PostProcessingMode::Get() != PostProcessingMode::Mode::Vanilla;
-	const bool acescg = linearLighting && settings.enableACEScg;
-	if (linearLighting != configuredLinearLighting || acescg != configuredACEScg || applyGameGamma)
-		globals::shaderCache->Reload([this, linearLighting, acescg] {
-			configuredLinearLighting = linearLighting;
-			configuredACEScg = acescg;
-			if (applyGameGamma)
-				ApplyGameGamma();
-		});
-}
 
 	lodProjectedMaterialColorScales.fill(kNoProjectedMaterialColorScale);
 	if (auto* defaultObjects = RE::BGSDefaultObjectManager::GetSingleton(); defaultObjects && globals::features::truePBR.loaded) {
@@ -333,10 +318,9 @@ struct LinearLighting::Hooks
 	}
 };
 
-void LinearLighting::RestoreDefaultSettings()
+void LinearLighting::PostPostLoad()
 {
-	settings = {};
-	applyGameGamma = settings.gameGamma != configuredGameGamma;
+	LinearLighting::Hooks::Install();
 }
 
 LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
@@ -372,21 +356,6 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 			data.ambientMult = 1.0f;
 			data.dirLightMult = 1.0f;
 		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	float* PixelConstant(Group group, uint index)
-	{
-		auto& ll = globals::features::linearLighting;
-		if (!ll.IsLinearLightingActive() || !globals::state->customPixelShader)
-			return nullptr;
-		auto* shader = *globals::game::currentPixelShader;
-		if (!shader)
-			return nullptr;
-		auto& buffer = shader->constantBuffers[static_cast<uint>(group)];
-		if (!buffer.buffer || !buffer.data)
-			return nullptr;
-		return reinterpret_cast<float*>(buffer.data) + static_cast<uint8_t>(shader->constantTable[index]);
 	}
 #endif
 	return data;
@@ -452,7 +421,7 @@ RE::NiColor LinearLighting::DecodeAuthoredColor(RE::NiColor inColor, float satur
 	return outColor;
 }
 
-void LinearLighting::Load()
+void LinearLighting::BSLightingShader_SetupGeometry(RE::BSRenderPass* a_pass)
 {
 	if (!IsLinearLightingActive() || !PerGeometryCB || !globals::d3d::context)
 		return;

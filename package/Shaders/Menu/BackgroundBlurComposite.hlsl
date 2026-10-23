@@ -4,9 +4,6 @@
 #include "Menu/BackgroundBlur.hlsli"
 
 static const float CLIP_EPSILON = 0.001f;
-// Soft-knee: leave dark/mid backdrop alone, compress bright peaks under UI windows
-static const float BRIGHT_KNEE = 0.25f;
-static const float BRIGHT_COMPRESS = 4.0f;
 
 float4 SampleBicubic(float2 uv)
 {

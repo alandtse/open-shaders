@@ -12,6 +12,14 @@
 
 namespace MenuFonts
 {
+	/** @brief Standalone icon faces share the menu font atlas lifetime. */
+	struct IconFonts
+	{
+		ImFont* tabler = nullptr;
+	};
+	/** @brief Returns the icon faces populated when the menu font atlas reloads. */
+	IconFonts& GetIconFonts();
+
 	using FontRole = Menu::FontRole;
 	using FontRoleSettings = Menu::ThemeSettings::FontRoleSettings;
 

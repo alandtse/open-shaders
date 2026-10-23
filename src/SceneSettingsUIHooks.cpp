@@ -4,6 +4,8 @@
 #include "I18n/I18n.h"
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsManager.h"
+#include "State.h"
+#include "Utils/SettingsCatalog.h"
 #include "Utils/UI.h"
 
 #include <imgui_internal.h>
@@ -126,6 +128,12 @@ namespace
 	thread_local bool g_allowSceneSettingTooltip = false;
 	thread_local unsigned int g_controlDetourDepth = 0;
 	thread_local bool g_featureSettingMutation = false;
+	struct DefaultResetRequest
+	{
+		const SceneSettingsCatalog::SettingMetadata* setting;
+		int components;
+	};
+	thread_local std::vector<DefaultResetRequest> g_defaultResetRequests;
 	struct ControlDetourScope
 	{
 		ControlDetourScope() { ++g_controlDetourDepth; }
@@ -146,6 +154,7 @@ namespace
 		std::vector<bool> groups;
 		const BlockedFeatureSceneEditSettings* blockedEditSettings = nullptr;
 		bool featureSettingMutation = false;
+		std::vector<DefaultResetRequest> defaultResetRequests;
 	};
 	thread_local std::vector<SceneControlFrame> g_sceneControlFrames;
 	bool g_installed = false;
@@ -511,8 +520,74 @@ namespace
 		return changed;
 	}
 
+	void RequestControlDefault(const void* valueAddress, int components)
+	{
+		if (!g_currentFeature || g_sceneSettingsActive || g_featureSceneEditing ||
+			!valueAddress || (ImGui::GetItemFlags() & ImGuiItemFlags_Disabled) || ImGui::IsAnyItemActive() ||
+			!g_isItemHovered(ImGuiHoveredFlags_None))
+			return;
+		const auto* address = Util::GetActiveControlStorageAddress();
+		const auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, address ? address : valueAddress);
+		if (!setting)
+			return;
+		const auto lastItem = GImGui->LastItemData;
+		if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+			g_defaultResetRequests.push_back({ setting, components });
+			if (lastItem.ID)
+				g_markItemEdited(lastItem.ID);
+		}
+		Util::AddTooltip(T("ui.reset_setting_default", "Middle-click to restore the default."));
+		GImGui->LastItemData = lastItem;
+	}
+
+	void ApplyControlDefaults()
+	{
+		if (!g_currentFeature || g_defaultResetRequests.empty())
+			return;
+		const auto* defaults = globals::state->GetFeatureDefaults(g_currentFeature->GetName());
+		if (!defaults)
+			return;
+		nlohmann::json previous;
+		g_currentFeature->SaveSettings(previous);
+		auto updated = previous;
+		for (const auto& request : g_defaultResetRequests) {
+			const auto& setting = *request.setting;
+			nlohmann::json::json_pointer path;
+			for (const auto& part : Util::Settings::SplitCatalogPath(setting.serializedPath))
+				path /= part;
+			path /= std::string(setting.serializedKey);
+			if (!defaults->contains(path) || !updated.contains(path))
+				continue;
+			const auto& source = defaults->at(path);
+			auto& destination = updated.at(path);
+			if (setting.serializedComponent >= 0 || request.components > 1) {
+				const auto start = setting.serializedComponent >= 0 ? static_cast<size_t>(setting.serializedComponent) : 0;
+				const auto count = static_cast<size_t>(request.components);
+				if (!source.is_array() || !destination.is_array() || start + count > source.size() || start + count > destination.size())
+					continue;
+				for (size_t index = start; index < start + count; ++index)
+					destination[index] = source[index];
+			} else {
+				destination = source;
+			}
+		}
+		if (updated == previous)
+			return;
+		try {
+			g_currentFeature->LoadSettings(updated);
+			g_featureSettingMutation = true;
+		} catch (const std::exception& error) {
+			logger::warn("Could not restore setting default for {}: {}", g_currentFeature->GetName(), error.what());
+			try {
+				g_currentFeature->LoadSettings(previous);
+			} catch (const std::exception& restoreError) {
+				logger::error("Could not restore settings for {}: {}", g_currentFeature->GetName(), restoreError.what());
+			}
+		}
+	}
+
 	template <class Draw>
-	bool DrawControl(const char* label, const void* valueAddress, Draw draw)
+	bool DrawControl(const char* label, const void* valueAddress, Draw draw, int components = 1)
 	{
 		if (g_controlDetourDepth > 0)
 			return draw();
@@ -522,7 +597,9 @@ namespace
 		SettingOutlineGuard outline(setting);
 		if (setting ? !ShouldBlockSetting(*setting) : !g_featureSceneEditing || metadataMatched) {
 			ControlDetourScope detourScope;
-			return TrackFeatureSettingMutation(draw());
+			const bool changed = draw();
+			RequestControlDefault(valueAddress, components);
+			return TrackFeatureSettingMutation(changed);
 		}
 
 		ImGui::BeginDisabled();
@@ -654,17 +731,17 @@ namespace
 
 	bool DragFloat2Detour(const char* label, float* value, float speed, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragFloat2(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragFloat2(label, value, speed, min, max, format, flags); }, 2);
 	}
 
 	bool DragFloat3Detour(const char* label, float* value, float speed, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragFloat3(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragFloat3(label, value, speed, min, max, format, flags); }, 3);
 	}
 
 	bool DragFloat4Detour(const char* label, float* value, float speed, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragFloat4(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragFloat4(label, value, speed, min, max, format, flags); }, 4);
 	}
 
 	bool DragIntDetour(const char* label, int* value, float speed, int min, int max, const char* format, ImGuiSliderFlags flags)
@@ -674,17 +751,17 @@ namespace
 
 	bool DragInt2Detour(const char* label, int* value, float speed, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragInt2(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragInt2(label, value, speed, min, max, format, flags); }, 2);
 	}
 
 	bool DragInt3Detour(const char* label, int* value, float speed, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragInt3(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragInt3(label, value, speed, min, max, format, flags); }, 3);
 	}
 
 	bool DragInt4Detour(const char* label, int* value, float speed, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_dragInt4(label, value, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragInt4(label, value, speed, min, max, format, flags); }, 4);
 	}
 
 	bool DragScalarDetour(const char* label, ImGuiDataType dataType, void* value, float speed,
@@ -697,8 +774,7 @@ namespace
 	bool DragScalarNDetour(const char* label, ImGuiDataType dataType, void* value, int components,
 		float speed, const void* min, const void* max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value,
-			[&] { return g_dragScalarN(label, dataType, value, components, speed, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_dragScalarN(label, dataType, value, components, speed, min, max, format, flags); }, components);
 	}
 
 	bool SliderFloatDetour(const char* label, float* value, float min, float max, const char* format, ImGuiSliderFlags flags)
@@ -708,17 +784,17 @@ namespace
 
 	bool SliderFloat2Detour(const char* label, float* value, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderFloat2(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderFloat2(label, value, min, max, format, flags); }, 2);
 	}
 
 	bool SliderFloat3Detour(const char* label, float* value, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderFloat3(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderFloat3(label, value, min, max, format, flags); }, 3);
 	}
 
 	bool SliderFloat4Detour(const char* label, float* value, float min, float max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderFloat4(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderFloat4(label, value, min, max, format, flags); }, 4);
 	}
 
 	bool SliderIntDetour(const char* label, int* value, int min, int max, const char* format, ImGuiSliderFlags flags)
@@ -728,17 +804,17 @@ namespace
 
 	bool SliderInt2Detour(const char* label, int* value, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderInt2(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderInt2(label, value, min, max, format, flags); }, 2);
 	}
 
 	bool SliderInt3Detour(const char* label, int* value, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderInt3(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderInt3(label, value, min, max, format, flags); }, 3);
 	}
 
 	bool SliderInt4Detour(const char* label, int* value, int min, int max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_sliderInt4(label, value, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderInt4(label, value, min, max, format, flags); }, 4);
 	}
 
 	bool SliderScalarDetour(const char* label, ImGuiDataType dataType, void* value,
@@ -751,8 +827,7 @@ namespace
 	bool SliderScalarNDetour(const char* label, ImGuiDataType dataType, void* value, int components,
 		const void* min, const void* max, const char* format, ImGuiSliderFlags flags)
 	{
-		return DrawControl(label, value,
-			[&] { return g_sliderScalarN(label, dataType, value, components, min, max, format, flags); });
+		return DrawControl(label, value, [&] { return g_sliderScalarN(label, dataType, value, components, min, max, format, flags); }, components);
 	}
 
 	bool SliderAngleDetour(const char* label, float* value, float minDegrees, float maxDegrees,
@@ -776,17 +851,17 @@ namespace
 
 	bool InputFloat2Detour(const char* label, float* value, const char* format, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputFloat2(label, value, format, flags); });
+		return DrawControl(label, value, [&] { return g_inputFloat2(label, value, format, flags); }, 2);
 	}
 
 	bool InputFloat3Detour(const char* label, float* value, const char* format, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputFloat3(label, value, format, flags); });
+		return DrawControl(label, value, [&] { return g_inputFloat3(label, value, format, flags); }, 3);
 	}
 
 	bool InputFloat4Detour(const char* label, float* value, const char* format, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputFloat4(label, value, format, flags); });
+		return DrawControl(label, value, [&] { return g_inputFloat4(label, value, format, flags); }, 4);
 	}
 
 	bool InputIntDetour(const char* label, int* value, int step, int stepFast, ImGuiInputTextFlags flags)
@@ -796,17 +871,17 @@ namespace
 
 	bool InputInt2Detour(const char* label, int* value, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputInt2(label, value, flags); });
+		return DrawControl(label, value, [&] { return g_inputInt2(label, value, flags); }, 2);
 	}
 
 	bool InputInt3Detour(const char* label, int* value, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputInt3(label, value, flags); });
+		return DrawControl(label, value, [&] { return g_inputInt3(label, value, flags); }, 3);
 	}
 
 	bool InputInt4Detour(const char* label, int* value, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value, [&] { return g_inputInt4(label, value, flags); });
+		return DrawControl(label, value, [&] { return g_inputInt4(label, value, flags); }, 4);
 	}
 
 	bool InputScalarDetour(const char* label, ImGuiDataType dataType, void* value,
@@ -819,18 +894,17 @@ namespace
 	bool InputScalarNDetour(const char* label, ImGuiDataType dataType, void* value, int components,
 		const void* step, const void* stepFast, const char* format, ImGuiInputTextFlags flags)
 	{
-		return DrawControl(label, value,
-			[&] { return g_inputScalarN(label, dataType, value, components, step, stepFast, format, flags); });
+		return DrawControl(label, value, [&] { return g_inputScalarN(label, dataType, value, components, step, stepFast, format, flags); }, components);
 	}
 
 	bool ColorEdit3Detour(const char* label, float* color, ImGuiColorEditFlags flags)
 	{
-		return DrawControl(label, color, [&] { return g_colorEdit3(label, color, flags); });
+		return DrawControl(label, color, [&] { return g_colorEdit3(label, color, flags); }, 3);
 	}
 
 	bool ColorEdit4Detour(const char* label, float* color, ImGuiColorEditFlags flags)
 	{
-		return DrawControl(label, color, [&] { return g_colorEdit4(label, color, flags); });
+		return DrawControl(label, color, [&] { return g_colorEdit4(label, color, flags); }, 4);
 	}
 
 	bool BeginComboDetour(const char* label, const char* previewValue, ImGuiComboFlags flags)
@@ -869,10 +943,12 @@ namespace SceneSettingsUIHooks
 		g_sceneControlFrames.push_back({ g_sceneControlledItem,
 			std::move(g_sceneControlledGroupStack),
 			g_blockedFeatureSceneEditSettings,
-			g_featureSettingMutation });
+			g_featureSettingMutation,
+			std::move(g_defaultResetRequests) });
 		g_sceneControlledGroupStack.clear();
 		g_blockedFeatureSceneEditSettings = nullptr;
 		g_featureSettingMutation = false;
+		g_defaultResetRequests.clear();
 		g_currentFeature = feature;
 		if (previousSceneEditing && feature != previousFeature)
 			ImGui::BeginDisabled();
@@ -887,6 +963,7 @@ namespace SceneSettingsUIHooks
 
 	FeatureDrawGuard::~FeatureDrawGuard()
 	{
+		ApplyControlDefaults();
 		if (previousSceneEditing && g_currentFeature != previousFeature)
 			ImGui::EndDisabled();
 		if (g_currentFeature && g_featureSettingMutation) {
@@ -900,12 +977,14 @@ namespace SceneSettingsUIHooks
 			g_sceneControlledGroupStack = std::move(g_sceneControlFrames.back().groups);
 			g_blockedFeatureSceneEditSettings = g_sceneControlFrames.back().blockedEditSettings;
 			g_featureSettingMutation = g_sceneControlFrames.back().featureSettingMutation;
+			g_defaultResetRequests = std::move(g_sceneControlFrames.back().defaultResetRequests);
 			g_sceneControlFrames.pop_back();
 		} else {
 			ClearControlledItem();
 			g_sceneControlledGroupStack.clear();
 			g_blockedFeatureSceneEditSettings = nullptr;
 			g_featureSettingMutation = false;
+			g_defaultResetRequests.clear();
 		}
 		g_currentFeature = previousFeature;
 		g_sceneSettingsActive = previousSceneControlled;

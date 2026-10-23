@@ -812,6 +812,7 @@
     "ui.input.indicator_secondary": "(Sekundär)",
     "ui.input.record_hint": "Tryck på valfri tangentkombination.\nModifierartangenterna Ctrl, Skift och Alt stöds.\nTryck på Escape för att avbryta.",
     "ui.input.recording": "Registrerar… (Esc för att avbryta)",
+    "ui.reset_setting_default": "Klicka med mittenknappen för att återställa standardvärdet.",
     "ui.search": "Sök…",
     "ui.search_features": "Sök funktioner…",
     "ui.smart_clear_cache_desc": "Övervakar nästa sekunds rendering och tar bara bort shaders som ritar den här scenen, två gånger: nu och efter att menyn har stängts, för att fånga det den täckte. Allt annat ligger kvar i cachen.\n\nDe borttagna shaders kompileras om i bakgrunden när scenen ritas om. Räkna därför med en kort hackning och att vissa ytor tillfälligt återgår till sitt ursprungliga utseende. Det är väntat. Funktionen tar bort betydligt mindre än en fullständig rensning, men gör inte omkompileringen osynlig.\n\nLåt det felaktiga området vara synligt medan det fångas. Om problemet kvarstår använder du en fullständig rensning.",

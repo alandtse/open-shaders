@@ -178,6 +178,19 @@ namespace
 			iconPathCandidates[1].string());
 		return false;
 	}
+
+	void LoadIconFonts(ImFontAtlas* atlas, float fontSize)
+	{
+		auto& fonts = MenuFonts::GetIconFonts();
+		const auto root = Util::PathHelpers::GetFontsPath();
+		ImFontConfig config;
+		config.PixelSnapH = true;
+		const auto load = [&](const char* fileName, const ImWchar* ranges) -> ImFont* {
+			const auto path = root / fileName;
+			return std::filesystem::exists(path) ? atlas->AddFontFromFileTTF(path.string().c_str(), fontSize, &config, ranges) : nullptr;
+		};
+		fonts.tabler = load(FONT_ICON_FILE_NAME_TI, reinterpret_cast<const ImWchar*>(ICON_TI_GLYPH_RANGES));
+	}
 }
 
 // Static UI helper methods
@@ -401,6 +414,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 	// Clear existing fonts from the atlas
 	io.Fonts->Clear();
 	MenuFonts::InvalidatePreviewFonts();
+	MenuFonts::GetIconFonts() = {};
 	io.Fonts->TexGlyphPadding = 1;
 
 	ImFontConfig font_config;
@@ -570,6 +584,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 			} else {
 				io.Fonts->Clear();
 				MenuFonts::InvalidatePreviewFonts();
+				MenuFonts::GetIconFonts() = {};
 
 				std::unordered_map<std::string, ImFont*> cjkAtlasCache;
 				bool mergedAnyCJKFont = false;
@@ -659,6 +674,8 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		MenuFonts::AddPreviewFontsToAtlas(previewFontSize);
 	}
 
+	LoadIconFonts(io.Fonts, fontSize);
+
 	// Build the font atlas - this bakes all fonts into the texture
 	if (!io.Fonts->Build()) {
 		logger::error("ReloadFont: Failed to build font atlas");
@@ -666,6 +683,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		// Emergency fallback: try to restore with default font before giving up
 		io.Fonts->Clear();
 		MenuFonts::InvalidatePreviewFonts();
+		MenuFonts::GetIconFonts() = {};
 		ImFont* fallbackFont = io.Fonts->AddFontDefault();
 		MergeFontAwesome5(io.Fonts, fallbackFont, fontSize);
 		if (fallbackFont && io.Fonts->Build()) {
@@ -701,6 +719,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		// Emergency fallback: restore with default font and retry device objects
 		io.Fonts->Clear();
 		MenuFonts::InvalidatePreviewFonts();
+		MenuFonts::GetIconFonts() = {};
 		ImFont* fallbackFont = io.Fonts->AddFontDefault();
 		MergeFontAwesome5(io.Fonts, fallbackFont, fontSize);
 

@@ -2,8 +2,6 @@
 
 #include <d3d11_1.h>
 
-#include <unordered_map>
-
 #include "Buffer.h"
 #include "GrassOptimizations/GrassBucketStore.h"
 #include "GrassOptimizations/HiZPyramid.h"
@@ -18,6 +16,7 @@ public:
 	virtual inline std::string GetShortName() override { return "GrassOptimizations"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "GRASS_OPTIMIZATIONS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
+
 	virtual bool SupportsVR() override { return true; }
 
 	/** @brief Returns true only for the Grass shader type. */
@@ -72,31 +71,29 @@ public:
 	/** @brief Processes lifecycle events and completed LOD loads at Present. */
 	virtual void Reset() override;
 
-	/** @brief Reverts to the vanilla grass path before the feature is unloaded at runtime. */
+	/** @brief Restores the vanilla path before runtime unloading. */
 	virtual void OnRuntimeDisabled() override;
 
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
 
-	/** @brief Applies owned proxy setup or native coverage setup and returns whether to skip engine geometry setup. */
-	bool SetupGrassPass(RE::BSShader* shader, RE::BSRenderPass* pass);
+	/** @brief Restores native coverage material after engine geometry setup. */
+	void SetupGrassPass(RE::BSShader* shader, RE::BSRenderPass* pass);
 
 private:
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
-
-	ID3D11InputLayout* GetOptimizedInputLayout(uint64_t a_descVal);
 
 	struct alignas(16) CullParamsCB
 	{
 		float frustumPlanes[12][4];
 
 		uint32_t eyeCount;
-		float pad1[3];
+		float padEye[3];
 
 		// Preserve the main camera's camera-relative view-projection rows from PerFrame.
-		float cameraViewProj[4][4];
-		float cameraPos[4];
+		float cameraViewProj[2][4][4];
+		float cameraPos[2][4];
 
 		float minPixelSize;
 		float fullDetailPixelSize;
@@ -115,7 +112,7 @@ private:
 
 		float invisibleFadeCull;
 		float simpleShadingPixelSize;
-		float hiZProjScale;
+		float reverseProjection;
 		float midLODPixelSize;
 
 		float meshLODBandPx;
@@ -123,16 +120,17 @@ private:
 		float hiZSizeX;
 		float hiZSizeY;
 
-		float projectionWLength;
+		float projectionWLength[2];
 		float hiZMipCount;
 		float occlusionBias;
 		float costBiasStartDist;
 
 		float farLODPixelSize;
 		float densityDistanceRcp;
-		float pad0[2];
+		float pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(CullParamsCB);
+	static_assert(sizeof(CullParamsCB) == 480);
 
 	struct alignas(16) CullBucketCB
 	{
@@ -167,6 +165,18 @@ private:
 				  offsetof(CullBucketCB, outputOffset) == 20 && offsetof(CullBucketCB, argsOffset) == 24 &&
 				  offsetof(CullBucketCB, midLODMeshCost) == 60 && offsetof(CullBucketCB, farLODMeshCost) == 76);
 
+	struct alignas(16) EyeIndexCB
+	{
+		uint32_t eyeIndex;
+		uint32_t eyeSlotBase;
+		float pad[2];
+	};
+	STATIC_ASSERT_ALIGNAS_16(EyeIndexCB);
+	static constexpr uint32_t kEyeConstantSlot = 9;
+	static constexpr uint32_t kBucketConstantSlot = 10;
+	static_assert(kBucketConstantSlot == kEyeConstantSlot + 1);
+	static constexpr uint32_t kEyeSlotBytes = 256;
+
 	// Match the c16-c21 fields read by GRASS_OPTIMIZATIONS in RunGrass.hlsl.
 	struct alignas(16) GrassPerGeometry
 	{
@@ -188,6 +198,8 @@ private:
 		std::array<std::byte, 256 - sizeof(TruePBR::GrassPBRConstants)> materialPadding;
 		GrassPerGeometry geometry;
 		std::array<std::byte, 256 - sizeof(GrassPerGeometry)> geometryPadding;
+		GrassPerGeometry geometryVR;
+		std::array<std::byte, 256 - sizeof(GrassPerGeometry)> geometryVRPadding;
 	};
 
 	/** @brief Stores six frustum planes in two padded SSE vectors. */
@@ -262,9 +274,6 @@ private:
 
 	/** @brief Test a coarse AABB and return the planes its children still need to test. */
 	static bool ClassifyAabb(const FrustumSoA& f, __m128 lo, __m128 hi, uint32_t& intersectingPlanes);
-
-	/** @brief AABB vs any of the given frustums (VR tests both eyes; a slice visible in either eye must not be dropped). */
-	static bool AnyFrustumVisible(const FrustumSoA* frustums, uint32_t frustumCount, __m128 lo, __m128 hi);
 
 	/** @brief Derives world-space frustum planes from the camera frustum and transform. */
 	static void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform);
@@ -346,8 +355,8 @@ private:
 	uint32_t cullBucketCBSlots = 0;
 	inline static constexpr uint32_t kSlotBytes = sizeof(CullBucketSlot);
 	inline static constexpr uint32_t kSlotMaterialOffset = offsetof(CullBucketSlot, material);
-	static_assert(sizeof(CullBucketSlot) == 768 && offsetof(CullBucketSlot, cull) == 0 &&
-				  kSlotMaterialOffset == 256 && offsetof(CullBucketSlot, geometry) == 512);
+	static_assert(sizeof(CullBucketSlot) == 1024 && offsetof(CullBucketSlot, cull) == 0 &&
+				  kSlotMaterialOffset == 256 && offsetof(CullBucketSlot, geometry) == 512 && offsetof(CullBucketSlot, geometryVR) == 768);
 
 	std::unique_ptr<ConstantBuffer> vanillaDrawCB;
 

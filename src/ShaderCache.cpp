@@ -2959,28 +2959,6 @@ namespace SIE
 		}
 	}
 
-	void ShaderCache::Reload(const std::function<void()>& activate)
-	{
-		const bool watch = UseFileWatcher();
-		if (watch)
-			StopFileWatcher();
-		managementJthread.request_stop();
-		if (managementJthread.joinable())
-			managementJthread.join();
-		compilationPool.wait();
-		activate();
-		{
-			preserveStandaloneCache = true;
-			const SKSE::stl::scope_exit restore([this]() noexcept { preserveStandaloneCache = false; });
-			Clear();
-		}
-		managementJthread = std::jthread([this](std::stop_token token) { ManageCompilationSet(token); });
-		if (watch) {
-			useFileWatcher = true;
-			StartFileWatcher();
-		}
-	}
-
 	void ShaderCache::Clear()
 	{
 		compilationSet.BumpGeneration();
@@ -5130,7 +5108,7 @@ namespace SIE
 			info.shaderType = shader.shaderType.get();
 			info.shaderClass = shaderClass;
 			info.descriptor = descriptor;
-			info.diskPath = SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
+			info.diskPath = SIE::SShaderCache::GetDiskPath(shader, descriptor, shaderClass);
 		};
 
 		if (globals::state->IsDeveloperMode()) {

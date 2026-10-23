@@ -1,4 +1,4 @@
-#include "Common/ColorManagement.hlsli"
+#include "Common/Color.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 
@@ -66,6 +66,6 @@ float4 main(VS_OUTPUT_POST input) : SV_Target0
 	float3 skyColor = max(SharedData::enbSettings.VolumetricRaysSkyColor, 0.0) * (sunColor + 1e-5) / sunPeak;
 	float skyAmount = SharedData::enbSettings.VolumetricRaysSkyColorAmount * saturate(dot(sunColor, 1.0) * 3.0);
 
-	float3 lightColor = sunColor + ColorManagement::SRGBToWorking(skyColor) * skyAmount;
+	float3 lightColor = Color::Sky(sunColor) + Color::Sky(skyColor) * skyAmount;
 	return float4(rays * lightColor * SharedData::enbSettings.VolumetricRaysIntensity, 0);
 }

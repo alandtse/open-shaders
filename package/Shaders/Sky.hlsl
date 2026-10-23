@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
 // Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
 
-#include "Common/ColorManagement.hlsli"
+#include "Common/Color.hlsli"
 #include "Common/FlareOcclusion.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Math.hlsli"
@@ -173,7 +173,7 @@ VS_OUTPUT main(VS_INPUT input)
 
 	vsout.TexCoord0.xy = input.TexCoord;
 	vsout.TexCoord2.x = saturate((1.0 / 17.0) * eyeHeightDelta);
-	vsout.Color.xyz = ColorManagement::SRGBToWorking(BlendColor[0].xyz) * VParams;
+	vsout.Color.xyz = BlendColor[0].xyz * VParams;
 	vsout.Color.w = BlendColor[0].w;
 
 #	else  // MOONMASK HORIZFADE
@@ -203,7 +203,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float3 skyColor = BlendColor[0].xyz * input.Color.xxx + BlendColor[1].xyz * input.Color.yyy +
 	                  BlendColor[2].xyz * input.Color.zzz;
 
-	vsout.Color.xyz = VParams * ColorManagement::SRGBToWorking(skyColor);
+	vsout.Color.xyz = VParams * skyColor;
 	vsout.Color.w = BlendColor[0].w * input.Color.w;
 	vsout.SkyBlendColor0 = float4(BlendColor[0].xyz * VParams, 0);
 	vsout.SkyBlendColor2 = float4(BlendColor[2].xyz * VParams, 0);
@@ -576,8 +576,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	if defined(EXP_HEIGHT_FOG)
 	const bool inReflection = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection) != 0;
-
-#	if defined(EXP_HEIGHT_FOG)
 	if (inReflection && SharedData::exponentialHeightFogSettings.enabled) {
 		float skyFogDistance = SharedData::CameraData.x;
 #		if defined(HORIZON_FIX)
@@ -595,8 +593,8 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float2 screenMotionVector = MotionBlur::GetSSMotionVector(input.WorldPosition, input.PreviousWorldPosition, eyeIndex);
 
-	psout.MotionVectors = float4(screenMotionVector, 0, psout.Color.w * alphaTransmittance);
-	psout.Normal = float4(0.5, 0.5, 0, psout.Color.w * alphaTransmittance);
+	psout.MotionVectors = float4(screenMotionVector, 0, psout.Color.w);
+	psout.Normal = float4(0.5, 0.5, 0, psout.Color.w);
 
 #	if defined(CLOUD_SHADOWS) && defined(CLOUDS) && !defined(DEFERRED)
 	psout.CloudShadows = float4(1.0, 1.0, 1.0, psout.Color.w);

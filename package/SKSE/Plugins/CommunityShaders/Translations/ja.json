@@ -4030,6 +4030,7 @@
     "ui.input.indicator_secondary": "",
     "ui.input.record_hint": "",
     "ui.input.recording": "",
+    "ui.reset_setting_default": "マウスの中ボタンで既定値に戻します。",
     "ui.search": "検索…",
     "ui.search_features": "機能を検索…",
     "ui.smart_clear_cache_desc": "",

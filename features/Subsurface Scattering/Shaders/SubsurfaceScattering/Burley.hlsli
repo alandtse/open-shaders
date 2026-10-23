@@ -1,4 +1,3 @@
-#include "Common/ColorManagement.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/Game.hlsli"
 #include "Common/Math.hlsli"

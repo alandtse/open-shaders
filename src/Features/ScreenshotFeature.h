@@ -173,6 +173,7 @@ private:
 	void EnqueueScreenshot(PendingScreenshot&& screenshot);
 	void ScreenshotWorkerLoop();
 	void EnsurePreviewCache(ID3D11Texture2D* sourceTexture);
+	/** @brief Combines frame-generation scene and UI buffers for a displayed-frame capture. */
 	ID3D11Texture2D* CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV);
 	static void ShowInGameNotification(std::string message);
 };

@@ -85,7 +85,7 @@ float3 GetTonemapFactorReinhard(float3 luminance, bool isHDR = false)
 float3 GetTonemapFactorHejlBurgessDawson(float3 luminance, bool isHDR = false)
 {
 	float3 tmp = max(0, luminance - 0.004);
-	float3 color = TransferFunctions::Gamma22ToLinear(((tmp * 6.2 + 0.5) * tmp) / (tmp * (tmp * 6.2 + 1.7) + 0.06));
+	float3 color = Color::SrgbToLinear(((tmp * 6.2 + 0.5) * tmp) / (tmp * (tmp * 6.2 + 1.7) + 0.06));
 
 	if (isHDR)  // branch before shoulder (f''(x) = 0)
 	{
@@ -243,27 +243,6 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
 
-#		if defined(POSTPROCESS)
-	if (SharedData::TonemapOwner == SharedData::TonemapOwnerPostProcessing) {
-		if (!isHDR) {
-			inputColor = TransferFunctions::LinearToGamma22(inputColor);
-		}
-
-		psout.Color = float4(inputColor, 1.0);
-
-		return psout;
-	}
-#		endif
-
-	float3 bloomColor = 0;
-	if (Flags.x > 0.5) {
-		bloomColor = ImageTex.Sample(ImageSampler, uv).xyz;
-	} else {
-		bloomColor = ImageTex.Sample(ImageSampler, input.TexCoord.xy).xyz;
-	}
-
-	float2 avgValue = AvgTex.Sample(AvgSampler, input.TexCoord.xy).xy;
-
 	float3 outputColor = 0.0;
 
 	if (avgValue.x != 0 && avgValue.y != 0)
@@ -306,9 +285,8 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 
 	if (isHDR) {
-#		if !defined(ENABLE_LL)
-		outputColor = TransferFunctions::SignedGamma22ToLinear(outputColor);
-#		endif
+		if (!ENABLE_LL)
+			outputColor = Color::GammaToLinearSafe(outputColor);
 		float paperWhiteNits = max(hdrShared.y, 1e-6);
 		float peakWhiteRatio = max(hdrShared.z / paperWhiteNits, 1.0);  // peakNits / paperWhite
 
@@ -328,14 +306,12 @@ PS_OUTPUT main(PS_INPUT input)
 		outputColor = Color::BT709ToBT2020(outputColor);
 		outputColor = exp2(DisplayMapping::RangeCompress(log2(max(0, outputColor)), log2(0.4 * peakWhiteRatio), log2(peakWhiteRatio), log2(100.f)));
 		outputColor = Color::BT2020ToBT709(outputColor);
-#		if !defined(ENABLE_LL)
-		outputColor = TransferFunctions::LinearToSignedGamma22(outputColor);
-#		endif
+		if (!ENABLE_LL)
+			outputColor = Color::LinearToGammaSafe(outputColor);
 	} else {
 		outputColor = max(0, outputColor);
-#		if defined(ENABLE_LL)
-		outputColor = TransferFunctions::LinearToSignedGamma22(outputColor);
-#		endif
+		if (ENABLE_LL)
+			outputColor = Color::LinearToGammaSafe(outputColor);
 		outputColor = FrameBuffer::ToSRGBColor(outputColor);
 	}
 

@@ -172,24 +172,74 @@ namespace
 		return S_OK;
 	}
 
-	const DirectX::Image* PrepareSdrImage(const DirectX::ScratchImage& sourceImage, DirectX::ScratchImage& convertedImage)
+	void StripAlphaForBmp(DirectX::ScratchImage& image)
 	{
-		if (sourceImage.GetMetadata().format == DXGI_FORMAT_B8G8R8X8_UNORM) {
-			return sourceImage.GetImage(0, 0, 0);
+		const DirectX::Image* firstImage = image.GetImage(0, 0, 0);
+		if (!firstImage || firstImage->pixels == nullptr) {
+			return;
+		}
+
+		const DXGI_FORMAT format = firstImage->format;
+		if (format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+			format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
+			format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+			format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB) {
+			return;
+		}
+
+		auto* pixels = image.GetPixels();
+		const size_t rowPitch = firstImage->rowPitch;
+		for (size_t y = 0; y < firstImage->height; ++y) {
+			uint8_t* row = pixels + y * rowPitch;
+			for (size_t x = 0; x < firstImage->width; ++x) {
+				row[x * 4 + 3] = 0xFF;
+			}
+		}
+	}
+
+	// Tonemaps a linear RGB ScratchImage in-place: Reinhard c/(1+c), then gamma-2.2.
+	void TonemapHdrToSrgb(DirectX::ScratchImage& image)
+	{
+		using namespace DirectX;
+		DirectX::ScratchImage tonemapped;
+		const HRESULT hr = TransformImage(
+			image.GetImages(),
+			image.GetImageCount(),
+			image.GetMetadata(),
+			[](XMVECTOR* outPixels, const XMVECTOR* inPixels, size_t width, size_t /*y*/) {
+				const XMVECTOR one = XMVectorSplatOne();
+				const XMVECTOR invGamma = XMVectorReplicate(1.0f / 2.2f);
+				for (size_t i = 0; i < width; ++i) {
+					XMVECTOR c = XMVectorMax(inPixels[i], XMVectorZero());
+					const XMVECTOR rgb = XMVectorDivide(c, XMVectorAdd(c, one));
+					const XMVECTOR gammaCorrected = XMVectorPow(rgb, invGamma);
+					outPixels[i] = XMVectorSelect(gammaCorrected, c, g_XMSelect1110);
+				}
+			},
+			tonemapped);
+		if (SUCCEEDED(hr)) {
+			image = std::move(tonemapped);
+		}
+	}
+
+	const DirectX::Image* PrepareBmpImage(DirectX::ScratchImage& sourceImage, DirectX::ScratchImage& convertedImage)
+	{
+		if (sourceImage.GetMetadata().format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+			TonemapHdrToSrgb(sourceImage);
 		}
 
 		if (SUCCEEDED(DirectX::Convert(
 				sourceImage.GetImages(),
 				sourceImage.GetImageCount(),
 				sourceImage.GetMetadata(),
-				DXGI_FORMAT_B8G8R8X8_UNORM,
+				DXGI_FORMAT_B8G8R8X8_UNORM_SRGB,
 				DirectX::TEX_FILTER_SRGB,
 				0.0f,
 				convertedImage))) {
 			return convertedImage.GetImage(0, 0, 0);
 		}
 
-		return nullptr;
+		return sourceImage.GetImage(0, 0, 0);
 	}
 
 	// Game-root-relative paths (e.g. "Screenshots") must be absolute for CF_HDROP / Discord.
@@ -600,8 +650,9 @@ namespace
 		const std::filesystem::path& outputPath,
 		bool saveAsPng)
 	{
+		StripAlphaForBmp(image);
 		DirectX::ScratchImage convertedImage;
-		const DirectX::Image* saveImage = PrepareSdrImage(image, convertedImage);
+		const DirectX::Image* saveImage = PrepareBmpImage(image, convertedImage);
 		if (!saveImage) {
 			return false;
 		}
@@ -1170,7 +1221,6 @@ void ScreenshotFeature::EnqueueScreenshot(PendingScreenshot&& screenshot)
 	{
 		std::lock_guard<std::mutex> lock(screenshotQueueMutex);
 		screenshotQueue.push(std::move(screenshot));
-		++screenshotsInFlight;
 	}
 	screenshotQueueCV.notify_one();
 }
@@ -1206,14 +1256,14 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 		const SKSE::stl::scope_exit complete([this] { --screenshotsInFlight; });
 		Util::FileHelpers::EnsureDirectoryExists(screenshot.outputPath.parent_path());
 
-		const bool saveOk = SaveScreenshotToDisk(
-			screenshot.image,
-			screenshot.outputPath,
-			screenshot.format,
-			screenshot.hdrPngBitDepth,
-			screenshot.saveAsHdrPng,
-			screenshot.saveAsHdrAvif,
-			screenshot.saveAsSdrPng);
+		const bool saveOk = screenshot.image.GetImageCount() != 0 && SaveScreenshotToDisk(
+																		 screenshot.image,
+																		 screenshot.outputPath,
+																		 screenshot.format,
+																		 screenshot.hdrPngBitDepth,
+																		 screenshot.saveAsHdrPng,
+																		 screenshot.saveAsHdrAvif,
+																		 screenshot.saveAsSdrPng);
 		if (!saveOk) {
 			logger::error(
 				"Failed to save {} screenshot.",
@@ -1276,6 +1326,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	ID3D11Texture2D* sourceTexture = src.uiSRV ? CompositeCapture(src.texture, src.srv, src.uiSRV) : src.texture;
 	if (!sourceTexture) {
 		logger::error("Failed to composite screenshot UI.");
+		fail();
 		return;
 	}
 
