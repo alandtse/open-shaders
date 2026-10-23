@@ -2,6 +2,8 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
 #include "Common/GrassWind.hlsli"
+#include "Common/GrassWindProfile.hlsli"
+#include "Common/GrassWindSpring.hlsli"
 #include "Common/LightingCommon.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/MotionBlur.hlsli"
@@ -149,25 +151,42 @@ cbuffer cb8 : register(b8)
 }
 #	endif
 
-float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight, float bladeReach,
-	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
+float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeight,
+	float4 response, float flutter, float3 ambientWind,
+	out float3 bendAxis, out float bendAngle, out float3 flutterAxis, out float flutterAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
+	bendAngle = 0.0f;
+	float ambientSpeed = length(ambientWind.xy);
+	flutterAxis = ambientSpeed > EPSILON_WIND_RESPONSE ?
+	                  float3(ambientWind.xy / ambientSpeed, 0.0f) :
+	                  float3(1.0f, 0.0f, 0.0f);
+	flutterAngle = 0.0f;
+	float bendResponse = min(response.z * GrassWindProfile::BendSensitivity,
+		GrassWindSpring::Fields[0].MaximumTiltRadians);
+	float compression = saturate(response.w * GrassWindProfile::BendSensitivity);
+	float tipWeight = saturate(input.Color.w);
+	float flutterWeight = tipWeight * tipWeight;
+	flutter *= GrassWindProfile::FlutterSensitivity;
 	float3 displacement = 0.0f.xxx;
 	if (Permutation::EnableGrassWindSpringBend != 0u) {
 		displacement = GrassWind::CalculateAmbientDisplacement(
-			input.Color.w, modelHeight, rootHeight, bendAxis, response.z, response.w, bendAngle);
-	} else {
-		bendAngle = 0.0f;
+			input.Color.w, modelHeight, rootHeight, bendAxis, bendResponse, compression, bendAngle);
 	}
 	if (Permutation::EnableAmbientGrassWind != 0 && response.w >= 0.0f) {
+		float3 relativePosition = float3(0.0f, 0.0f, max(modelHeight - rootHeight, 0.0f));
 		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
-			input.Color.w, bladeReach, bendAxis, flutter);
-		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
+			flutterWeight, relativePosition, bendAxis, bendAngle, flutterAxis, flutter,
+			GrassWindSpring::Fields[0].MaximumTiltRadians, flutterAngle);
+		if (Permutation::EnableGrassWindSpringBend != 0u)
+			flutterDisplacement.z *= 1.0f - saturate(compression * tipWeight);
+		displacement += flutterDisplacement;
+	} else {
+		float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
+		                             (WindVector.z * flutter * (0.5 * flutterWeight));
+		displacement += GrassWind::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
 	}
-	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
-	                             (WindVector.z * flutter * (0.5 * input.Color.w * input.Color.w));
-	return displacement + GrassWind::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
+	return displacement;
 }
 
 #	ifdef GRASS_LIGHTING
@@ -223,15 +242,18 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	msPosition.xyz += e0.xyz;
 
 	const float3 instanceRoot = input.InstanceData1.xyz + e0.xyz;
-	const float bladeReach = length(msPosition.xyz - instanceRoot);
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
+	float3 flutterAxis, previousFlutterAxis;
+	float flutterAngle, previousFlutterAngle;
 	float4 previousMsPosition = msPosition;
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z, bladeReach,
-		InstanceExtras[extrasSlot * 6 + 2], e1.x, bendAxis, bendAngle);
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, instanceRoot.z,
+		InstanceExtras[extrasSlot * 6 + 2], e1.x, SharedData::WindFieldAmbient.xyz,
+		bendAxis, bendAngle, flutterAxis, flutterAngle);
 #		if !defined(RENDER_DEPTH)
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z, bladeReach,
-		InstanceExtras[extrasSlot * 6 + 3], e1.y, previousBendAxis, previousBendAngle);
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, instanceRoot.z,
+		InstanceExtras[extrasSlot * 6 + 3], e1.y, SharedData::WindFieldPreviousAmbient.xyz,
+		previousBendAxis, previousBendAngle, previousFlutterAxis, previousFlutterAngle);
 #		endif
 
 #		ifdef GRASS_COLLISION
@@ -269,7 +291,7 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 	vsout.LodTier = lodTier;
 #			ifdef GRASS_LIGHTING
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
-		mul(world3x3, input.Normal.xyz * 2.0 - 1.0), bendAxis, bendAngle);
+		GrassWind::RotateVector(mul(world3x3, input.Normal.xyz * 2.0 - 1.0), flutterAxis, flutterAngle), bendAxis, bendAngle);
 #				ifdef GRASS_COLLISION
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
 		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);
@@ -317,12 +339,15 @@ VS_OUTPUT main(VS_INPUT input)
 		currentResponse, previousResponse, flutter);
 	float3 bendAxis, previousBendAxis;
 	float bendAngle, previousBendAngle;
+	float3 flutterAxis, previousFlutterAxis;
+	float flutterAngle, previousFlutterAngle;
 	float4 previousMsPosition = msPosition;
-	const float bladeReach = length(msPosition.xyz - input.InstanceData1.xyz);
-	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z, bladeReach,
-		currentResponse, flutter.x, bendAxis, bendAngle);
-	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z, bladeReach,
-		previousResponse, flutter.y, previousBendAxis, previousBendAngle);
+	msPosition.xyz += ApplyGrassWindResponse(input, msPosition.z, input.InstanceData1.z,
+		currentResponse, flutter.x, mul(transpose((float3x3)World[eyeIndex]), SharedData::WindFieldAmbient.xyz),
+		bendAxis, bendAngle, flutterAxis, flutterAngle);
+	previousMsPosition.xyz += ApplyGrassWindResponse(input, previousMsPosition.z, input.InstanceData1.z,
+		previousResponse, flutter.y, mul(transpose((float3x3)PreviousWorld[eyeIndex]), SharedData::WindFieldPreviousAmbient.xyz),
+		previousBendAxis, previousBendAngle, previousFlutterAxis, previousFlutterAngle);
 
 #		ifdef GRASS_COLLISION
 	float3 displacement, previousDisplacement, collisionBendAxis;
@@ -358,7 +383,7 @@ VS_OUTPUT main(VS_INPUT input)
 #			ifdef GRASS_LIGHTING
 	// Vertex normal needs to be transformed to world-space for lighting calculations.
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
-		mul(world3x3, input.Normal.xyz * 2.0 - 1.0), bendAxis, bendAngle);
+		GrassWind::RotateVector(mul(world3x3, input.Normal.xyz * 2.0 - 1.0), flutterAxis, flutterAngle), bendAxis, bendAngle);
 #				ifdef GRASS_COLLISION
 	vsout.VertexNormal.xyz = GrassWind::RotateVector(
 		vsout.VertexNormal.xyz, collisionBendAxis, collisionBendAngle);

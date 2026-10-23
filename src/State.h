@@ -481,10 +481,9 @@ public:
 		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
 
-		float GrassWindBendProfile;
+		float PaddingGrassWind;
 		float GrassWindFlutterStrength;
-		float GrassWindFlutterFrequency;
-		float GrassWindSensitivity;
+		float2 PaddingGrassWindResponse;
 
 		float TreeWindBoundsBase;
 		float TreeWindBoundsHeight;
@@ -518,11 +517,8 @@ public:
 			       TrunkWindBendSensitivity == other.TrunkWindBendSensitivity &&
 			       TreeLeafBaseWindFlutterGain == other.TreeLeafBaseWindFlutterGain &&
 			       EnableAmbientGrassWind == other.EnableAmbientGrassWind &&
-			       GrassWindSensitivity == other.GrassWindSensitivity &&
-			       GrassWindBendProfile == other.GrassWindBendProfile &&
 			       GrassWindCompressionToBend == other.GrassWindCompressionToBend &&
 			       GrassWindFlutterStrength == other.GrassWindFlutterStrength &&
-			       GrassWindFlutterFrequency == other.GrassWindFlutterFrequency &&
 			       TreeWindBoundsBase == other.TreeWindBoundsBase &&
 			       TreeWindBoundsHeight == other.TreeWindBoundsHeight &&
 			       TreeWindTrunkGustInfluence == other.TreeWindTrunkGustInfluence &&
@@ -579,6 +575,9 @@ public:
 		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
 		float3 pad1;
 		WindField::WindTuning WindFieldTuning;
+		WindField::WindTuning WindFieldPreviousTuning;
+		WindField::FineState WindFieldFine;
+		WindField::FineState WindFieldPreviousFine;
 		float4 WindFieldAmbient;  // xyz: selected mean weather velocity, w: accumulated gust travel
 		float4 WindFieldPreviousAmbient;
 		WindField::Field WindFieldCurrent;
@@ -598,6 +597,9 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldTuning) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousTuning) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldFine) % 16 == 0);
+	static_assert(offsetof(SharedDataCB, WindFieldPreviousFine) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousAmbient) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, WindFieldCurrent) % 16 == 0);

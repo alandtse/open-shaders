@@ -1729,6 +1729,27 @@ namespace
 				 result["windExcludingHavokImpulses"] = WindVectorToJson(sample.windExcludingHavokImpulses);
 				 return result;
 			 } },
+			{ "SampleWindComponents", [](auto* i, const json& p) {
+				 const CSPluginAPI::WindVector position{
+					 p.value("x", 0.0f), p.value("y", 0.0f), p.value("z", 0.0f)
+				 };
+				 CSPluginAPI::WindSampleComponents sample;
+				 if (!i->SampleWindComponents(&position, &sample, 1))
+					 return json{ { "available", false } };
+				 return json{
+					 { "available", true },
+					 { "baseVelocity", WindVectorToJson(sample.baseVelocity) },
+					 { "gustVelocity", WindVectorToJson(sample.gustVelocity) },
+					 { "fineVelocity", WindVectorToJson(sample.fineVelocity) },
+					 { "transientVelocity", WindVectorToJson(sample.transientVelocity) },
+					 { "transientVelocityExcludingHavokImpulses", WindVectorToJson(sample.transientVelocityExcludingHavokImpulses) },
+					 { "finalVelocity", WindVectorToJson(sample.finalVelocity) },
+					 { "windExcludingHavokImpulses", WindVectorToJson(sample.windExcludingHavokImpulses) },
+					 { "ambientGust", sample.ambientGust },
+					 { "transientIntensity", sample.transientIntensity },
+					 { "frameId", sample.frameId }
+				 };
+			 } },
 		};
 
 		const auto it = kMethods.find(method);

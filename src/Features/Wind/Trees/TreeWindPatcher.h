@@ -17,15 +17,15 @@ namespace TreeWindPatcher
 	struct Sensitivities
 	{
 		float bend = 1.0f;
-		float leafAmbient = 1.0f;
+		float leafAmbient = 2.01f;
 		float upperBendRange = 100.0f;
-		float maximumDisplacementPercent = 3.0f;
+		float maximumDisplacementPercent = 10.0f;
 		float trunkGustInfluence = 0.5f;
-		float leafGustInfluence = 0.99f;
-		float transientWindInfluence = 2.01f;
+		float leafGustInfluence = 1.0f;
+		float transientWindInfluence = 1.0f;
 		float leafTransientWindInfluence = 5.0f;
-		float leafTransientFlutterMaximum = 20.0f;
-		float transientMaximumBendMultiplier = 2.5f;
+		float leafTransientFlutterMaximum = 10.05f;
+		float transientMaximumBendMultiplier = 2.49f;
 		float boundMinimumZ = 0.0f;
 		float boundHeight = 0.0f;
 		float3 probeBase{};
@@ -38,15 +38,15 @@ namespace TreeWindPatcher
 		std::uint32_t id = 0;
 		std::string_view mesh;
 		float bend = 1.0f;
-		float leafAmbient = 1.0f;
+		float leafAmbient = 2.01f;
 		float upperBendRange = 100.0f;
-		float maximumDisplacementPercent = 3.0f;
+		float maximumDisplacementPercent = 10.0f;
 		float trunkGustInfluence = 0.5f;
-		float leafGustInfluence = 0.99f;
-		float transientWindInfluence = 2.01f;
+		float leafGustInfluence = 1.0f;
+		float transientWindInfluence = 1.0f;
 		float leafTransientWindInfluence = 5.0f;
-		float leafTransientFlutterMaximum = 20.0f;
-		float transientMaximumBendMultiplier = 2.5f;
+		float leafTransientFlutterMaximum = 10.05f;
+		float transientMaximumBendMultiplier = 2.49f;
 		bool unsaved = false;
 	};
 

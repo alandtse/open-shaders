@@ -12,6 +12,7 @@ namespace TreeWind
 	{
 		static const float TRANSIENT_LEAF_FLUTTER_GAIN = 3.0;
 		static const float TRANSIENT_LEAF_STRUCTURAL_COUPLING = 0.75;
+		static const float TreeDetailDisplacementUnitsPerWind = 4.0;
 
 		float GetLeafFlutterGain()
 		{
@@ -177,7 +178,14 @@ namespace TreeWind
 	{
 		float3 trunkVelocity;
 		float leafAnimationStrength;
+		float leafFieldDisplacement;
 	};
+
+	/** @brief Applies the signed fine field using the mesh's existing animation weights and normals. */
+	float3 GetLeafDisplacement(float3 normal, float vertexAlpha, float fieldDisplacement)
+	{
+		return normal * saturate(vertexAlpha) * fieldDisplacement;
+	}
 
 	namespace Detail
 	{
@@ -196,10 +204,11 @@ namespace TreeWind
 		Sample ResolveSample(
 			WindField::TransientImpulseSample trunkTransientSample,
 			WindField::TransientImpulseSample leafTransientSample,
-			float2 filteredAmbientVelocity, float2 transientInfluence)
+			float4 filteredAmbientVelocity, float3 baseVelocity,
+			float3 slowFineVelocity, float3 detailFineVelocity, float2 transientInfluence)
 		{
 			Sample sample;
-			float3 trunkAmbientVelocity = float3(filteredAmbientVelocity, 0.0f);
+			float3 trunkAmbientVelocity = float3(filteredAmbientVelocity.xy, 0.0f) + slowFineVelocity;
 			float3 trunkTransientVelocity = LimitTrunkTransientVelocity(
 				trunkTransientSample.velocity * max(transientInfluence.x, 0.0f));
 			float leafTransientInfluence = max(transientInfluence.y, 0.0f);
@@ -210,9 +219,11 @@ namespace TreeWind
 				transientLeafSpeed * TRANSIENT_LEAF_FLUTTER_GAIN * leafTransientInfluence,
 				max(Permutation::TreeLeafTransientFlutterMaximum, 0.0f));
 			sample.trunkVelocity = trunkAmbientVelocity + trunkTransientVelocity;
-			sample.leafAnimationStrength =
-				length(filteredAmbientVelocity) * GetLeafFlutterGain() +
-				transientLeafAnimationStrength;
+			sample.leafAnimationStrength = transientLeafAnimationStrength;
+			float baseSpeed = length(baseVelocity.xy);
+			float2 detailDirection = baseSpeed > EPSILON_WIND_RESPONSE ? baseVelocity.xy / baseSpeed : 0.0f.xx;
+			sample.leafFieldDisplacement = dot(detailFineVelocity.xy, detailDirection) *
+			                               TreeDetailDisplacementUnitsPerWind * GetLeafFlutterGain();
 			return sample;
 		}
 
@@ -255,38 +266,64 @@ namespace TreeWind
 
 	Sample SampleCurrent(SamplePositions positions, float2 transientInfluence)
 	{
+		float4 filteredAmbientVelocity = TreeWindSpring::SampleCurrent(positions.root.xy);
+		float3 baseVelocity = SharedData::WindFieldAmbient.xyz;
+		WindField::FineSample fine = WindField::SampleCurrentFine(
+			positions.middle, baseVelocity,
+			float3(filteredAmbientVelocity.zw, 0.0f), 1.0f, 1.0f, max(Permutation::TreeWindTrunkGustInfluence, 0.0f));
 		return Detail::ResolveSample(
 			Detail::SampleCurrentTransient(positions),
 			Detail::SampleCurrentImmediateTransient(positions),
-			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
+			filteredAmbientVelocity, baseVelocity, fine.slowVelocity, 0.0f.xxx, transientInfluence);
 	}
 
 	Sample SampleCurrent(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)
 	{
+		float4 filteredAmbientVelocity = TreeWindSpring::SampleCurrent(positions.root.xy);
+		float3 baseVelocity = SharedData::WindFieldAmbient.xyz;
+		float3 gustVelocity = float3(filteredAmbientVelocity.zw, 0.0f);
+		float3 leafGustVelocity = float3(TreeWindSpring::SampleCurrent(leafWorldPosition.xy).zw, 0.0f);
+		WindField::FineSample fine = WindField::SampleCurrentFine(positions.middle, baseVelocity,
+			gustVelocity, 1.0f, 1.0f, max(Permutation::TreeWindTrunkGustInfluence, 0.0f));
+		WindField::FineSample leafFine = WindField::SampleCurrentFine(leafWorldPosition, baseVelocity,
+			leafGustVelocity, 1.0f, 1.0f, max(Permutation::TreeLeafGustInfluence, 0.0f));
 		return Detail::ResolveSample(
 			Detail::SampleCurrentTransient(positions),
 			Detail::SampleCurrentImmediateTransientAt(leafWorldPosition),
-			TreeWindSpring::SampleCurrent(positions.root.xy), transientInfluence);
+			filteredAmbientVelocity, baseVelocity, fine.slowVelocity, leafFine.detailVelocity, transientInfluence);
 	}
 
 	Sample SamplePrevious(SamplePositions positions, float2 transientInfluence)
 	{
+		float4 filteredAmbientVelocity = TreeWindSpring::SamplePrevious(positions.root.xy);
+		float3 baseVelocity = SharedData::WindFieldPreviousAmbient.xyz;
+		WindField::FineSample fine = WindField::SamplePreviousFine(
+			positions.middle, baseVelocity,
+			float3(filteredAmbientVelocity.zw, 0.0f), 1.0f, 1.0f, max(Permutation::TreeWindTrunkGustInfluence, 0.0f));
 		return Detail::ResolveSample(
 			Detail::SamplePreviousTransient(positions),
 			Detail::SamplePreviousImmediateTransient(positions),
-			TreeWindSpring::SamplePrevious(positions.root.xy), transientInfluence);
+			filteredAmbientVelocity, baseVelocity, fine.slowVelocity, 0.0f.xxx, transientInfluence);
 	}
 
 	Sample SamplePrevious(
 		SamplePositions positions, float3 leafWorldPosition,
 		float2 transientInfluence)
 	{
+		float4 filteredAmbientVelocity = TreeWindSpring::SamplePrevious(positions.root.xy);
+		float3 baseVelocity = SharedData::WindFieldPreviousAmbient.xyz;
+		float3 gustVelocity = float3(filteredAmbientVelocity.zw, 0.0f);
+		float3 leafGustVelocity = float3(TreeWindSpring::SamplePrevious(leafWorldPosition.xy).zw, 0.0f);
+		WindField::FineSample fine = WindField::SamplePreviousFine(positions.middle, baseVelocity,
+			gustVelocity, 1.0f, 1.0f, max(Permutation::TreeWindTrunkGustInfluence, 0.0f));
+		WindField::FineSample leafFine = WindField::SamplePreviousFine(leafWorldPosition, baseVelocity,
+			leafGustVelocity, 1.0f, 1.0f, max(Permutation::TreeLeafGustInfluence, 0.0f));
 		return Detail::ResolveSample(
 			Detail::SamplePreviousTransient(positions),
 			Detail::SamplePreviousImmediateTransientAt(leafWorldPosition),
-			TreeWindSpring::SamplePrevious(positions.root.xy), transientInfluence);
+			filteredAmbientVelocity, baseVelocity, fine.slowVelocity, leafFine.detailVelocity, transientInfluence);
 	}
 }
 

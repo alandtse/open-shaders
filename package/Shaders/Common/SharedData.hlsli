@@ -42,6 +42,9 @@ namespace SharedData
 		float RefractionScale;
 		float3 pad1;
 		WindField::WindTuning WindFieldTuning;
+		WindField::WindTuning WindFieldPreviousTuning;
+		WindField::FineState WindFieldFine;
+		WindField::FineState WindFieldPreviousFine;
 		float4 WindFieldAmbient;
 		float4 WindFieldPreviousAmbient;
 		WindField::Field WindFieldCurrent;

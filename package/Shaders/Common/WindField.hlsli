@@ -5,13 +5,14 @@
 #include "Common/SharedData.hlsli"
 #include "Common/TransientWindImpulse.hlsli"
 #include "Common/WindFieldTypes.hlsli"
+#include "Common/WindMicroTurbulence.hlsli"
 
 namespace WindField
 {
 	WindSample ResolveSample(Components components, float gustInfluence, float transientInfluence)
 	{
 		float3 ambientVelocity = components.baseAmbientVelocity +
-		                         components.gustVelocity * max(gustInfluence, 0.0f);
+		                         components.gustVelocity * max(gustInfluence, 0.0f) + components.microVelocity;
 		float3 transientVelocity = components.transientVelocity * max(transientInfluence, 0.0f);
 		WindSample sample;
 		sample.velocity = ambientVelocity + transientVelocity;
@@ -43,22 +44,27 @@ namespace WindField
 			return gradient * rsqrt(max(dot(gradient, gradient), MinimumDivisor));
 		}
 
-		float GradientNoise(float2 position, uint seed, WindTuning tuning)
+		float GradientNoise(float2 position, uint seed, WindTuning tuning, uint latticeMask)
 		{
 			float2 latticePosition = floor(position);
 			float2 offset = position - latticePosition;
 			uint2 lattice = asuint(int2(latticePosition));
 
-			float value00 = dot(GetGradient(lattice, seed, tuning), offset);
+			float value00 = dot(GetGradient(lattice & latticeMask, seed, tuning), offset);
 			float value10 = dot(
-				GetGradient(lattice + uint2(1u, 0u), seed, tuning), offset - float2(1.0f, 0.0f));
+				GetGradient((lattice + uint2(1u, 0u)) & latticeMask, seed, tuning), offset - float2(1.0f, 0.0f));
 			float value01 = dot(
-				GetGradient(lattice + uint2(0u, 1u), seed, tuning), offset - float2(0.0f, 1.0f));
+				GetGradient((lattice + uint2(0u, 1u)) & latticeMask, seed, tuning), offset - float2(0.0f, 1.0f));
 			float value11 = dot(
-				GetGradient(lattice + uint2(1u, 1u), seed, tuning), offset - float2(1.0f, 1.0f));
+				GetGradient((lattice + uint2(1u, 1u)) & latticeMask, seed, tuning), offset - float2(1.0f, 1.0f));
 
 			float2 fade = offset * offset * offset * (offset * (offset * 6.0f - 15.0f) + 10.0f);
 			return lerp(lerp(value00, value10, fade.x), lerp(value01, value11, fade.x), fade.y) * 0.70710678f;
+		}
+
+		float GradientNoise(float2 position, uint seed, WindTuning tuning)
+		{
+			return GradientNoise(position, seed, tuning, ~0u);
 		}
 
 		float Smoothstep(float minimum, float maximum, float value)
@@ -145,9 +151,9 @@ namespace WindField
 		}
 
 		Components SampleBlendedComponents(
-			float3 worldPosition, Field currentField, Field previousField, float blend)
+			float3 worldPosition, Field currentField, Field previousField, float blend, FineState fineState, WindTuning tuning)
 		{
-			WindSample currentSample = SampleField(worldPosition, currentField, SharedData::WindFieldTuning);
+			WindSample currentSample = SampleField(worldPosition, currentField, tuning);
 			float3 currentBaseVelocity = currentField.direction * max(currentField.speed, 0.0f);
 			Components components;
 			if (blend >= 1.0f) {
@@ -156,7 +162,7 @@ namespace WindField
 				components.ambientGust = currentSample.ambientGust;
 				components.ambientTurbulence = currentSample.ambientTurbulence;
 			} else {
-				WindSample previousSample = SampleField(worldPosition, previousField, SharedData::WindFieldTuning);
+				WindSample previousSample = SampleField(worldPosition, previousField, tuning);
 				float3 previousBaseVelocity = previousField.direction * max(previousField.speed, 0.0f);
 				float transition = saturate(blend);
 				components.baseAmbientVelocity = lerp(previousBaseVelocity, currentBaseVelocity, transition);
@@ -167,6 +173,11 @@ namespace WindField
 				components.ambientTurbulence = lerp(
 					previousSample.ambientTurbulence, currentSample.ambientTurbulence, transition);
 			}
+			FineSample fine = SampleFineVelocity(worldPosition, components.baseAmbientVelocity,
+				components.gustVelocity, fineState, tuning, 1.0f, 1.0f);
+			components.slowMicroVelocity = fine.slowVelocity;
+			components.detailMicroVelocity = fine.detailVelocity;
+			components.microVelocity = fine.slowVelocity + fine.detailVelocity;
 			components.transientVelocity = 0.0f;
 			components.transientImpulse = 0.0f;
 			return components;
@@ -177,14 +188,44 @@ namespace WindField
 	{
 		return Detail::SampleBlendedComponents(
 			worldPosition, SharedData::WindFieldCurrent, SharedData::WindFieldTransition,
-			SharedData::WindFieldTransitionData.x);
+			SharedData::WindFieldTransitionData.x, SharedData::WindFieldFine, SharedData::WindFieldTuning);
 	}
 
 	Components SamplePreviousComponents(float3 worldPosition)
 	{
 		return Detail::SampleBlendedComponents(
 			worldPosition, SharedData::WindFieldPrevious, SharedData::WindFieldPreviousTransition,
-			SharedData::WindFieldTransitionData.y);
+			SharedData::WindFieldTransitionData.y, SharedData::WindFieldPreviousFine, SharedData::WindFieldPreviousTuning);
+	}
+
+	FineSample SampleCurrentFine(float3 worldPosition, float3 baseVelocity, float3 gustVelocity,
+		float spatialScale, float travelScale, float gustInfluence)
+	{
+		WindTuning tuning = SharedData::WindFieldTuning;
+		tuning.fineGustCoupling *= max(gustInfluence, 0.0f);
+		return SampleFineVelocity(worldPosition, baseVelocity, gustVelocity,
+			SharedData::WindFieldFine, tuning, spatialScale, travelScale);
+	}
+
+	FineSample SamplePreviousFine(float3 worldPosition, float3 baseVelocity, float3 gustVelocity,
+		float spatialScale, float travelScale, float gustInfluence)
+	{
+		WindTuning tuning = SharedData::WindFieldPreviousTuning;
+		tuning.fineGustCoupling *= max(gustInfluence, 0.0f);
+		return SampleFineVelocity(worldPosition, baseVelocity, gustVelocity,
+			SharedData::WindFieldPreviousFine, tuning, spatialScale, travelScale);
+	}
+
+	FineSample SampleCurrentFine(float3 worldPosition, float3 baseVelocity, float3 gustVelocity,
+		float spatialScale, float travelScale)
+	{
+		return SampleCurrentFine(worldPosition, baseVelocity, gustVelocity, spatialScale, travelScale, 1.0f);
+	}
+
+	FineSample SamplePreviousFine(float3 worldPosition, float3 baseVelocity, float3 gustVelocity,
+		float spatialScale, float travelScale)
+	{
+		return SamplePreviousFine(worldPosition, baseVelocity, gustVelocity, spatialScale, travelScale, 1.0f);
 	}
 
 	TransientImpulseSample SampleCurrentTransientImpulses(float3 worldPosition)
@@ -205,6 +246,13 @@ namespace WindField
 	{
 		return Detail::ResolveWithTransient(
 			SampleCurrentComponents(worldPosition), SampleCurrentTransientImpulses(worldPosition),
+			gustInfluence, transientInfluence);
+	}
+
+	WindSample SamplePrevious(float3 worldPosition, float gustInfluence, float transientInfluence)
+	{
+		return Detail::ResolveWithTransient(
+			SamplePreviousComponents(worldPosition), SamplePreviousTransientImpulses(worldPosition),
 			gustInfluence, transientInfluence);
 	}
 

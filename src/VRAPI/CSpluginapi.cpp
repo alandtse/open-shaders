@@ -176,6 +176,7 @@ namespace CSPluginAPI
 			revisionNumber != CSInterfaceRevision001 &&
 			revisionNumber != CSInterfaceRevision002 &&
 			revisionNumber != CSInterfaceRevision003 &&
+			revisionNumber != CSInterfaceRevision004 &&
 			revisionNumber != CSInterfaceRevision) {
 			return nullptr;
 		}
@@ -399,7 +400,9 @@ namespace CSPluginAPI
 		{
 			return {
 				CopyWindVector(source.baseVelocity),
-				CopyWindVector(source.gustVelocity),
+				{ source.gustVelocity.x + source.fineVelocity.x,
+					source.gustVelocity.y + source.fineVelocity.y,
+					source.gustVelocity.z + source.fineVelocity.z },
 				CopyWindVector(source.transientVelocity),
 				CopyWindVector(source.finalVelocity),
 				source.ambientGust,
@@ -441,6 +444,37 @@ namespace CSPluginAPI
 			samples[index] = {
 				CopyWindSample(windSamples[index]),
 				CopyWindVector(windSamples[index].windExcludingHavokImpulses)
+			};
+		}
+		return true;
+	}
+
+	bool CSInterface001::SampleWindComponents(const WindVector* positions,
+		WindSampleComponents* samples, uint32_t count)
+	{
+		if (count > CSWindMaximumBatchSize || ((!positions || !samples) && count != 0))
+			return false;
+		if (count == 0)
+			return true;
+
+		thread_local std::vector<Wind::PublishedWindSample> windSamples;
+		if (!SampleWindBatch(positions, count, windSamples))
+			return false;
+
+		for (uint32_t index = 0; index < count; ++index) {
+			const auto& source = windSamples[index];
+			samples[index] = {
+				CopyWindVector(source.baseVelocity),
+				CopyWindVector(source.gustVelocity),
+				CopyWindVector(source.fineVelocity),
+				CopyWindVector(source.transientVelocity),
+				CopyWindVector(source.transientVelocityExcludingHavokImpulses),
+				CopyWindVector(source.finalVelocity),
+				CopyWindVector(source.windExcludingHavokImpulses),
+				source.ambientGust,
+				source.transientIntensity,
+				0u,
+				source.frameId
 			};
 		}
 		return true;

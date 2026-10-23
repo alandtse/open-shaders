@@ -136,11 +136,8 @@ void State::UpdatePermutationBuffer()
 	permutationData.TrunkWindBendSensitivity = windContribution.trunkWindBendSensitivity;
 	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
 	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
-	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
-	permutationData.GrassWindBendProfile = windContribution.grassWindBendProfile;
 	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
 	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
-	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
 	if (permutationData != permutationDataPrevious) {
 		permutationCB->Update(permutationData);
 		permutationDataPrevious = permutationData;
@@ -1479,6 +1476,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		{
 			const auto windData = globals::features::wind.GetSharedWindData();
 			data.WindFieldTuning = windData.tuning;
+			data.WindFieldPreviousTuning = windData.previousTuning;
+			data.WindFieldFine = windData.fine;
+			data.WindFieldPreviousFine = windData.previousFine;
 			data.WindFieldAmbient = windData.ambient;
 			data.WindFieldPreviousAmbient = windData.previousAmbient;
 			data.WindFieldCurrent = windData.current;

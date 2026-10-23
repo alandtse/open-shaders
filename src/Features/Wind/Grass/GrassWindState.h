@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Features/Wind/Settings/WindSettings.h"
+#include "Features/Wind/WindField.h"
 #include "Utils/LazyShader.h"
 
 #include <array>
@@ -42,21 +43,37 @@ struct alignas(16) GrassWindSpringData
 	float flutterWaveScale;
 	float transientResponseRadians;
 	float transientFlutterHalfLife;
+	WindField::FineState fineTransport;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
-static_assert(sizeof(GrassWindSpringData) == 240);
+static_assert(sizeof(GrassWindSpringData) == 256);
 static_assert(offsetof(GrassWindSpringData, transientFieldMask) == 196);
 static_assert(offsetof(GrassWindSpringData, flutterAmplitudeResponse) == 208);
 static_assert(offsetof(GrassWindSpringData, flutterGustInfluence) == 224);
 static_assert(offsetof(GrassWindSpringData, transientResponseRadians) == 232);
 static_assert(offsetof(GrassWindSpringData, transientFlutterHalfLife) == 236);
+static_assert(offsetof(GrassWindSpringData, fineTransport) == 240);
+
+struct alignas(16) GrassWindProfileData
+{
+	float bendSensitivity = 1.0f;
+	float flutterSensitivity = 1.0f;
+	float padding[2]{};
+};
+
+STATIC_ASSERT_ALIGNAS_16(GrassWindProfileData);
+static_assert(sizeof(GrassWindProfileData) == 16);
 
 struct GrassWindState
 {
 	using TexturePair = std::array<std::unique_ptr<Texture2D>, 2>;
 
 	std::unique_ptr<ConstantBuffer> springConstantBuffer;
+	std::unique_ptr<ConstantBuffer> profileConstantBuffer;
+	GrassWindProfileData boundProfile{};
+	bool boundProfileValid = false;
+	WindField::FineState fineTransport{};
 	std::array<TexturePair, WindSettingsLimits::kGrassWindSpringQualityRangeCount> springResponseTextures;
 	std::array<TexturePair, WindSettingsLimits::kGrassWindSpringQualityRangeCount> springVelocityTextures;
 	winrt::com_ptr<ID3D11SamplerState> springSampler;

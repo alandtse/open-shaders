@@ -58,5 +58,6 @@ namespace CSPluginAPI
 
 		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) override;
 		virtual bool SampleWindExcludingHavokImpulses(const WindVector* positions, WindSampleWithHavokExclusion* samples, uint32_t count) override;
+		virtual bool SampleWindComponents(const WindVector* positions, WindSampleComponents* samples, uint32_t count) override;
 	};
 }  // namespace CSPluginAPI

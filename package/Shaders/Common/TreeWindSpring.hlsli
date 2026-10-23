@@ -45,8 +45,8 @@ namespace TreeWindSpring
 	}
 
 #if !defined(TREE_WIND_SPRING_COMPUTE)
-	Texture2D<float2> ResponseFields[FieldCount] : register(t111);
-	Texture2D<float2> PreviousResponseFields[FieldCount] : register(t114);
+	Texture2D<float4> ResponseFields[FieldCount] : register(t111);
+	Texture2D<float4> PreviousResponseFields[FieldCount] : register(t114);
 	Texture2DArray<float4> TransientFields[FieldCount] : register(t119);
 	Texture2DArray<float4> PreviousTransientFields[FieldCount] : register(t122);
 	SamplerState ResponseSampler : register(s14);
@@ -88,9 +88,9 @@ namespace TreeWindSpring
 		return distance >= minimumDistance && distance < Fields[fieldIndex].MaxDistance;
 	}
 
-	float2 SampleCurrentResponseField(uint fieldIndex, float2 uv)
+	float4 SampleCurrentResponseField(uint fieldIndex, float2 uv)
 	{
-		float2 response = 0.0f.xx;
+		float4 response = 0.0f.xxxx;
 		if (fieldIndex == 0u)
 			response = ResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
 		else if (fieldIndex == 1u)
@@ -100,9 +100,9 @@ namespace TreeWindSpring
 		return response;
 	}
 
-	float2 SamplePreviousResponseField(uint fieldIndex, float2 uv)
+	float4 SamplePreviousResponseField(uint fieldIndex, float2 uv)
 	{
-		float2 response = 0.0f.xx;
+		float4 response = 0.0f.xxxx;
 		if (fieldIndex == 0u)
 			response = PreviousResponseFields[0].SampleLevel(ResponseSampler, uv, 0.0f);
 		else if (fieldIndex == 1u)
@@ -198,28 +198,28 @@ namespace TreeWindSpring
 		return true;
 	}
 
-	/** @brief Returns the combined current tree response or the mean wind outside the cache. */
-	float2 SampleCurrent(float2 worldPosition)
+	/** @brief Returns current structural XY and broad gust ZW velocities. */
+	float4 SampleCurrent(float2 worldPosition)
 	{
 		uint fieldIndex = SelectCurrentField(worldPosition);
 		FieldData field = Fields[fieldIndex];
 		if (field.FieldAvailable == 0u ||
 			!IsInQualityRange(fieldIndex, worldPosition, false) ||
 			!Contains(worldPosition, field.FieldMinimum, field.FieldSize))
-			return SharedData::WindFieldAmbient.xy;
+			return float4(SharedData::WindFieldAmbient.xy, 0.0f.xx);
 		float2 uv = saturate((worldPosition - field.FieldMinimum) / field.FieldSize);
 		return SampleCurrentResponseField(fieldIndex, uv);
 	}
 
-	/** @brief Returns the combined previous tree response or the prior mean wind outside the cache. */
-	float2 SamplePrevious(float2 worldPosition)
+	/** @brief Returns previous structural XY and broad gust ZW velocities. */
+	float4 SamplePrevious(float2 worldPosition)
 	{
 		uint fieldIndex = SelectPreviousField(worldPosition);
 		FieldData field = Fields[fieldIndex];
 		if (field.FieldAvailable == 0u ||
 			!IsInQualityRange(fieldIndex, worldPosition, true) ||
 			!Contains(worldPosition, field.PreviousFieldMinimum, field.FieldSize))
-			return SharedData::WindFieldPreviousAmbient.xy;
+			return float4(SharedData::WindFieldPreviousAmbient.xy, 0.0f.xx);
 		float2 uv = saturate((worldPosition - field.PreviousFieldMinimum) / field.FieldSize);
 		return SamplePreviousResponseField(fieldIndex, uv);
 	}

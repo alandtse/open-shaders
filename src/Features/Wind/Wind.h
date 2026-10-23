@@ -31,17 +31,17 @@ struct WindPermutationContribution
 	float trunkWindBendSensitivity;
 	float treeLeafBaseWindFlutterGain;
 	uint32_t enableAmbientGrassWind;
-	float grassWindSensitivity;
-	float grassWindBendProfile;
 	float grassWindCompressionToBend;
 	float grassWindFlutterStrength;
-	float grassWindFlutterFrequency;
 };
 
 /** Per-frame contribution Wind makes to State::SharedDataCB; see State::UpdateSharedData. */
 struct WindSharedData
 {
 	WindField::WindTuning tuning;
+	WindField::WindTuning previousTuning;
+	WindField::FineState fine;
+	WindField::FineState previousFine;
 	float4 ambient;
 	float4 previousAmbient;
 	WindField::Field current;
@@ -62,7 +62,9 @@ struct Wind : Feature
 	{
 		float3 baseVelocity{};
 		float3 gustVelocity{};
+		float3 fineVelocity{};
 		float3 transientVelocity{};
+		float3 transientVelocityExcludingHavokImpulses{};
 		float3 finalVelocity{};
 		float3 windExcludingHavokImpulses{};
 		float ambientGust{};
@@ -92,6 +94,7 @@ struct Wind : Feature
 	using PerFrameData = WindPerFrameData;
 	using GrassWindSpringFieldData = ::GrassWindSpringFieldData;
 	using GrassWindSpringData = ::GrassWindSpringData;
+	using GrassWindProfileData = ::GrassWindProfileData;
 	using WindFieldDebugView = ::WindFieldDebugView;
 	using RuntimeWindTest = ::RuntimeWindTest;
 
@@ -143,6 +146,8 @@ struct Wind : Feature
 	std::vector<std::unique_ptr<WindEffect>> windEffects;
 
 	float windFieldFrameTime = 0.0f;
+	WindField::FineState windFieldFine{};
+	WindField::FineState previousWindFieldFine{};
 	float windFieldAmbientSpeed = 0.0f;
 	float windFieldAdvectionSpeed = 0.0f;
 	float windFieldGustTravelDistance = 0.0f;
@@ -162,6 +167,7 @@ struct Wind : Feature
 	float windFieldSelectedSpeed = 0.0f;
 	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
+	WindField::WindTuning previousWindFieldTuning{};
 
 	/** @copydoc Feature::DrawSettings */
 	virtual void DrawSettings() override;
@@ -179,6 +185,13 @@ struct Wind : Feature
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
+	virtual bool WantsGrassMeshHooks() const override { return true; }
+	/** @brief Tracks a loaded grass type's source mesh for per-mesh settings. */
+	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath) override;
+	/** @brief Drops a destroyed grass shape's source-mesh mapping. */
+	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* a_shape) override;
+	/** @brief Binds the shared field and mesh response before a grass draw. */
+	virtual void OnGrassGeometrySetup(RE::BSGeometry* a_geometry) override;
 	virtual void DataLoaded() override;
 	virtual void OnSceneTransitionReset(bool a_opening) override;
 	virtual bool WantsRenderPassHook() const override { return true; }
@@ -213,6 +226,8 @@ struct Wind : Feature
 	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
 	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
 	void UpdateGrassWindSpring(bool a_compute = false);
+	/** @brief Binds the source mesh's authored grass response to the vertex shader. */
+	void BindGrassWindProfile(const RE::BSGeometry* a_geometry);
 	void UpdateTreeWindSpring();
 	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
 	[[nodiscard]] ID3D11ShaderResourceView* GetGrassWindSpringDebugSRV() const;
@@ -251,6 +266,7 @@ private:
 		WindField::Field current{};
 		WindField::Field transition{};
 		float transitionBlend{ 1.0f };
+		WindField::FineState fine{};
 		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transients{};
 		std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientPhysics{};
 		uint32_t transientCount{};
@@ -274,6 +290,9 @@ private:
 	void DrawTreeGlobalOverrideSettings();
 	void DrawTreeMeshRuleControls();
 	void DrawTreeMeshRulesTable();
+	void DrawGrassMeshSettings();
+	void DrawGrassMeshRuleControls();
+	void DrawGrassMeshRulesTable();
 	void ResetGrassWindSettings();
 	void DrawGrassTransientSettings();
 	void DrawGrassWindSettings();

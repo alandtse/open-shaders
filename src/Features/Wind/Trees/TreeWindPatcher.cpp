@@ -4,6 +4,7 @@
 #include "Features/Wind/WindMath.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
+#include "Utils/ModelPath.h"
 
 #include <Windows.h>
 
@@ -27,21 +28,22 @@
 
 namespace TreeWindPatcher
 {
+	using Util::IsSafeModelPath;
+	using Util::NormalizeModelPath;
 	using WindMath::ClampToRange;
 
 	namespace
 	{
 		constexpr std::size_t kMaximumPatchFileSize = 1024 * 1024;
 		constexpr std::size_t kMaximumRulesPerFile = 4096;
-		constexpr std::size_t kMaximumModelPathLength = 260;
 		constexpr float kDefaultUpperBendRange = 100.0f;
-		constexpr float kDefaultMaximumDisplacementPercent = 3.0f;
+		constexpr float kDefaultMaximumDisplacementPercent = 10.0f;
 		constexpr float kDefaultTrunkGustInfluence = 0.5f;
-		constexpr float kDefaultLeafGustInfluence = 0.99f;
-		constexpr float kDefaultTransientWindInfluence = 2.01f;
+		constexpr float kDefaultLeafGustInfluence = 1.0f;
+		constexpr float kDefaultTransientWindInfluence = 1.0f;
 		constexpr float kDefaultLeafTransientWindInfluence = 5.0f;
-		constexpr float kDefaultLeafTransientFlutterMaximum = 20.0f;
-		constexpr float kDefaultTransientMaximumBendMultiplier = 2.5f;
+		constexpr float kDefaultLeafTransientFlutterMaximum = 10.05f;
+		constexpr float kDefaultTransientMaximumBendMultiplier = 2.49f;
 		constexpr std::string_view kSchemaFileName = "WindSettings.schema.json";
 		const RE::BSFixedString kRuleIdName = "OS_TreeWindRule";
 		const RE::BSFixedString kTreeBoundsName = "OS_TreeWindBounds";
@@ -82,7 +84,7 @@ namespace TreeWindPatcher
 		struct LoadedRule
 		{
 			float bend = 1.0f;
-			float leafAmbient = 1.0f;
+			float leafAmbient = 2.01f;
 			float upperBendRange = kDefaultUpperBendRange;
 			float maximumDisplacementPercent = kDefaultMaximumDisplacementPercent;
 			float trunkGustInfluence = kDefaultTrunkGustInfluence;
@@ -100,7 +102,7 @@ namespace TreeWindPatcher
 			std::string mesh;
 			std::filesystem::path ownerPath;
 			std::atomic<float> bend{ 1.0f };
-			std::atomic<float> leafAmbient{ 1.0f };
+			std::atomic<float> leafAmbient{ 2.01f };
 			std::atomic<float> upperBendRange{ kDefaultUpperBendRange };
 			std::atomic<float> maximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> trunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -110,7 +112,7 @@ namespace TreeWindPatcher
 			std::atomic<float> leafTransientFlutterMaximum{ kDefaultLeafTransientFlutterMaximum };
 			std::atomic<float> transientMaximumBendMultiplier{ kDefaultTransientMaximumBendMultiplier };
 			std::atomic<float> persistedBend{ 1.0f };
-			std::atomic<float> persistedLeafAmbient{ 1.0f };
+			std::atomic<float> persistedLeafAmbient{ 2.01f };
 			std::atomic<float> persistedUpperBendRange{ kDefaultUpperBendRange };
 			std::atomic<float> persistedMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 			std::atomic<float> persistedTrunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -127,7 +129,7 @@ namespace TreeWindPatcher
 		std::vector<std::string> conflictingFiles;
 		std::atomic<bool> universalOverrideEnabled{ false };
 		std::atomic<float> universalBend{ 1.0f };
-		std::atomic<float> universalLeafAmbient{ 1.0f };
+		std::atomic<float> universalLeafAmbient{ 2.01f };
 		std::atomic<float> universalUpperBendRange{ kDefaultUpperBendRange };
 		std::atomic<float> universalMaximumDisplacementPercent{ kDefaultMaximumDisplacementPercent };
 		std::atomic<float> universalTrunkGustInfluence{ kDefaultTrunkGustInfluence };
@@ -141,8 +143,6 @@ namespace TreeWindPatcher
 		{
 			return std::abs(a_lhs - a_rhs) > 0.0001f;
 		}
-
-		std::string NormalizeModelPath(std::string a_path);
 
 		bool WriteJsonAtomically(const std::filesystem::path& a_path, const nlohmann::json& a_root, std::string& a_error)
 		{
@@ -211,24 +211,6 @@ namespace TreeWindPatcher
 				a_rule.leafTransientFlutterMaximum.load(std::memory_order_relaxed), std::memory_order_relaxed);
 			a_rule.persistedTransientMaximumBendMultiplier.store(
 				a_rule.transientMaximumBendMultiplier.load(std::memory_order_relaxed), std::memory_order_relaxed);
-		}
-
-		std::string NormalizeModelPath(std::string a_path)
-		{
-			a_path = Util::FixFilePath(a_path);
-			while (a_path.starts_with("./"))
-				a_path.erase(0, 2);
-			if (const auto meshesPosition = a_path.find("meshes/"); meshesPosition != std::string::npos)
-				a_path.erase(0, meshesPosition);
-			else
-				a_path.insert(0, "meshes/");
-			return a_path;
-		}
-
-		bool IsSafeModelPath(const std::string& a_path)
-		{
-			return a_path.size() <= kMaximumModelPathLength && a_path.starts_with("meshes/") && a_path.ends_with(".nif") &&
-			       a_path.find("../") == std::string::npos && a_path.find(':') == std::string::npos;
 		}
 
 		std::optional<float> ReadFloat(
@@ -867,7 +849,7 @@ namespace TreeWindPatcher
 		if (a_index >= runtimeRules.size())
 			return false;
 		a_bend = ClampToRange(a_bend, TreeWindSettings::kBend, 1.0f);
-		a_leafAmbient = ClampToRange(a_leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f);
+		a_leafAmbient = ClampToRange(a_leafAmbient, TreeWindSettings::kLeafAmbient, 2.01f);
 		a_upperBendRange = ClampToRange(
 			a_upperBendRange, TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange);
 		a_maximumDisplacementPercent = ClampToRange(a_maximumDisplacementPercent,
@@ -921,7 +903,7 @@ namespace TreeWindPatcher
 		universalBend.store(
 			ClampToRange(a_values.bend, TreeWindSettings::kBend, 1.0f), std::memory_order_relaxed);
 		universalLeafAmbient.store(
-			ClampToRange(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 1.0f), std::memory_order_relaxed);
+			ClampToRange(a_values.leafAmbient, TreeWindSettings::kLeafAmbient, 2.01f), std::memory_order_relaxed);
 		universalUpperBendRange.store(ClampToRange(a_values.upperBendRange,
 										  TreeWindSettings::kUpperBendPercent, kDefaultUpperBendRange),
 			std::memory_order_relaxed);

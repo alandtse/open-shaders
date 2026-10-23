@@ -1,0 +1,44 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://open-shaders.org/schemas/grass-wind-settings-v2.json",
+    "title": "Open Shaders Grass Wind Settings",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["version", "grass"],
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "version": {
+            "const": 2
+        },
+        "grass": {
+            "type": "array",
+            "maxItems": 4096,
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mesh"],
+                "properties": {
+                    "mesh": {
+                        "type": "string",
+                        "maxLength": 260,
+                        "pattern": "[.][nN][iI][fF]$"
+                    },
+                    "bendSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
+                    },
+                    "flutterSensitivity": {
+                        "type": "number",
+                        "default": 1.0,
+                        "minimum": 0.0,
+                        "maximum": 4.0
+                    }
+                }
+            }
+        }
+    }
+}

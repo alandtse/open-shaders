@@ -1,5 +1,6 @@
 #include "Wind.h"
 
+#include "Features/Wind/Grass/GrassWindPatcher.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/WindEffects/DragonWind.h"
 #include "Features/Wind/WindEffects/ExplosionWindRouter.h"
@@ -128,6 +129,16 @@ void Wind::SanitizeSettings(Settings& a_settings)
 		kWindFieldGustCrosswindScaleMin, kWindFieldGustCrosswindScaleMax, defaults.windFieldGustCrosswindScale);
 	a_settings.windFieldGustAmplitude = Util::ClampFinite(a_settings.windFieldGustAmplitude,
 		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
+	a_settings.windFieldMicroTurbulenceStrength = Util::ClampFinite(a_settings.windFieldMicroTurbulenceStrength,
+		kWindFieldMicroTurbulenceStrengthMin, kWindFieldMicroTurbulenceStrengthMax, defaults.windFieldMicroTurbulenceStrength);
+	a_settings.windFieldFineBaselineAmplitude = Util::ClampFinite(a_settings.windFieldFineBaselineAmplitude,
+		kWindFieldFineBaselineAmplitudeMin, kWindFieldFineBaselineAmplitudeMax, defaults.windFieldFineBaselineAmplitude);
+	a_settings.windFieldFineWindCoupling = Util::ClampFinite(a_settings.windFieldFineWindCoupling,
+		kWindFieldFineCouplingMin, kWindFieldFineCouplingMax, defaults.windFieldFineWindCoupling);
+	a_settings.windFieldFineGustCoupling = Util::ClampFinite(a_settings.windFieldFineGustCoupling,
+		kWindFieldFineCouplingMin, kWindFieldFineCouplingMax, defaults.windFieldFineGustCoupling);
+	a_settings.windFieldFineFrequency = Util::ClampFinite(a_settings.windFieldFineFrequency,
+		kWindFieldFineFrequencyMin, kWindFieldFineFrequencyMax, defaults.windFieldFineFrequency);
 	a_settings.windFieldGustAdvectionMultiplier = Util::ClampFinite(a_settings.windFieldGustAdvectionMultiplier,
 		kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
 	a_settings.windFieldGustCoverage = Util::ClampFinite(a_settings.windFieldGustCoverage,
@@ -184,6 +195,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustScale,
 	windFieldGustCrosswindScale,
 	windFieldGustAmplitude,
+	windFieldMicroTurbulenceStrength,
+	windFieldFineBaselineAmplitude,
+	windFieldFineWindCoupling,
+	windFieldFineGustCoupling,
+	windFieldFineFrequency,
 	windFieldGustAdvectionMultiplier,
 	windFieldGustAdvectionResponse,
 	windFieldGustCoverage,
@@ -205,7 +221,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindResponse,
 	grassWindSensitivity,
 	grassWindMaximumTilt,
-	grassWindBendProfile,
 	grassWindCompressionToBend,
 	grassWindSpringFrequency,
 	grassWindSpringDamping,
@@ -238,6 +253,13 @@ json Wind::GetDiagnostics()
 {
 	const auto [universalOverrideEnabled, universalValues] = TreeWindPatcher::GetUniversalOverride();
 	return json{
+		{ "grassWindRuleCount", GrassWindPatcher::GetRuleCount() },
+		{ "windFieldMicroTurbulenceStrength", settings.windFieldMicroTurbulenceStrength },
+		{ "windFieldFineBaselineAmplitude", settings.windFieldFineBaselineAmplitude },
+		{ "windFieldFineWindCoupling", settings.windFieldFineWindCoupling },
+		{ "windFieldFineGustCoupling", settings.windFieldFineGustCoupling },
+		{ "windFieldFineFrequency", settings.windFieldFineFrequency },
+		{ "grassWindUnsavedRuleCount", GrassWindPatcher::GetUnsavedRuleCount() },
 		{ "treeWindRuleCount", TreeWindPatcher::GetRuleCount() },
 		{ "treeWindUnsavedRuleCount", TreeWindPatcher::GetUnsavedRuleCount() },
 		{ "treeWindConflictingFiles", TreeWindPatcher::GetConflictingFiles() },
@@ -277,6 +299,30 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("setMicroTurbulenceStrength",
+		"Set traveling fine wind strength for trees and grass from 0 to 4. Args: strength (number). Zero disables both fine bands; direction deviations stay within four degrees without restarting the gust field.",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("strength") || !args["strength"].is_number())
+				return;
+			auto* wind = static_cast<Wind*>(feature);
+			wind->settings.windFieldMicroTurbulenceStrength = Util::ClampFinite(
+				args["strength"].get<float>(), kWindFieldMicroTurbulenceStrengthMin,
+				kWindFieldMicroTurbulenceStrengthMax, wind->settings.windFieldMicroTurbulenceStrength);
+		});
+	FEATURE_COMMAND("setFineWind",
+		"Tune the continuous traveling fine wind field. Optional numeric args: baseline (0..0.25), windCoupling (0..4), gustCoupling (0..4), frequency (0..4 transport multiplier). Zero frequency freezes transport without resetting phase. Zero strength via setMicroTurbulenceStrength disables fine wind.",
+		[](Feature* feature, const json& args) {
+			auto* wind = static_cast<Wind*>(feature);
+			auto apply = [&](const char* key, float& value, float minimum, float maximum) {
+				if (args.contains(key) && args[key].is_number())
+					value = Util::ClampFinite(args[key].get<float>(), minimum, maximum, value);
+			};
+			apply("baseline", wind->settings.windFieldFineBaselineAmplitude,
+				kWindFieldFineBaselineAmplitudeMin, kWindFieldFineBaselineAmplitudeMax);
+			apply("windCoupling", wind->settings.windFieldFineWindCoupling, kWindFieldFineCouplingMin, kWindFieldFineCouplingMax);
+			apply("gustCoupling", wind->settings.windFieldFineGustCoupling, kWindFieldFineCouplingMin, kWindFieldFineCouplingMax);
+			apply("frequency", wind->settings.windFieldFineFrequency, kWindFieldFineFrequencyMin, kWindFieldFineFrequencyMax);
+		});
 	FEATURE_COMMAND("setGrassTransientBendStrength",
 		"Set grass transient bend strength from 0 to 180 degrees per unit, independently of ambient bending. Args: strength (number).",
 		[](Feature* feature, const json& args) {
@@ -317,6 +363,35 @@ void Wind::RegisterUxActions()
 				args["frequency"].get<float>(), kGrassTransientFlutterFrequencyMin,
 				kGrassTransientFlutterFrequencyMax, wind->settings.grassTransientFlutterFrequency);
 		});
+	FEATURE_COMMAND("setGrassWindRule",
+		"Apply live per-mesh grass response. Required args: mesh (full meshes/... nif path), bendSensitivity (0-4), flutterSensitivity (0-4). Broad bending follows authored vertex alpha directly. The mesh must already have a settings entry.",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
+				!args.contains("flutterSensitivity") || !args["flutterSensitivity"].is_number()) {
+				logger::warn("[GrassWindPatcher] Devbench setGrassWindRule received invalid arguments");
+				return;
+			}
+			const auto mesh = Util::FixFilePath(args["mesh"].get<std::string>());
+			GrassWindPatcher::Behavior behavior;
+			behavior.bendSensitivity = args["bendSensitivity"].get<float>();
+			behavior.flutterSensitivity = args["flutterSensitivity"].get<float>();
+			for (std::size_t index = 0; index < GrassWindPatcher::GetRuleCount(); ++index) {
+				if (GrassWindPatcher::GetRule(index).mesh == mesh) {
+					(void)GrassWindPatcher::SetRule(index, behavior);
+					return;
+				}
+			}
+			logger::warn("[GrassWindPatcher] Devbench setGrassWindRule did not match mesh {}", mesh);
+		});
+	FEATURE_COMMAND("saveGrassWindRules", "Save edited per-mesh grass settings to the grass authoring JSON overlay.",
+		[](Feature*, const json&) {
+			const auto result = GrassWindPatcher::SaveRules();
+			if (!result.success)
+				logger::error("[GrassWindPatcher] Devbench save failed: {}", result.error);
+		});
+	FEATURE_COMMAND("revertGrassWindRules", "Revert grass settings edits and unsaved mesh entries.",
+		[](Feature*, const json&) { GrassWindPatcher::RevertUnsavedChanges(); });
 	FEATURE_COMMAND("setUniversalTreeResponse",
 		"Set the runtime-only response used for every tree. All response params and enabled are optional.",
 		[](Feature*, const json& args) {
@@ -565,6 +640,11 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustScale = defaults.windFieldGustScale;
 		settings.windFieldGustCrosswindScale = defaults.windFieldGustCrosswindScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
+		settings.windFieldMicroTurbulenceStrength = defaults.windFieldMicroTurbulenceStrength;
+		settings.windFieldFineBaselineAmplitude = defaults.windFieldFineBaselineAmplitude;
+		settings.windFieldFineWindCoupling = defaults.windFieldFineWindCoupling;
+		settings.windFieldFineGustCoupling = defaults.windFieldFineGustCoupling;
+		settings.windFieldFineFrequency = defaults.windFieldFineFrequency;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
 		settings.windFieldGustAdvectionResponse = defaults.windFieldGustAdvectionResponse;
 		settings.windFieldGustCoverage = defaults.windFieldGustCoverage;
@@ -596,6 +676,9 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		TreeWindPatcher::RevertUnsavedChanges();
 		TreeWindPatcher::SetUniversalOverride(false, {});
 		break;
+	case SettingsPage::GrassMeshes:
+		GrassWindPatcher::RevertUnsavedChanges();
+		break;
 	case SettingsPage::Grass:
 		ResetGrassWindSettings();
 		break;
@@ -604,10 +687,15 @@ void Wind::RestoreCurrentPageDefaultSettings()
 
 bool Wind::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 12> windFieldKeys{
+	static constexpr std::array<std::string_view, 17> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustCrosswindScale",
 		"windFieldGustAmplitude",
+		"windFieldMicroTurbulenceStrength",
+		"windFieldFineBaselineAmplitude",
+		"windFieldFineWindCoupling",
+		"windFieldFineGustCoupling",
+		"windFieldFineFrequency",
 		"windFieldGustAdvectionMultiplier",
 		"windFieldGustAdvectionResponse",
 		"windFieldGustCoverage",
@@ -634,7 +722,7 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 22> grassKeys{
+	static constexpr std::array<std::string_view, 21> grassKeys{
 		"grassTransientBendStrength",
 		"grassTransientFlutterHalfLife",
 		"grassTransientFlutterStrength",
@@ -647,7 +735,6 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"grassWindResponse",
 		"grassWindSensitivity",
 		"grassWindMaximumTilt",
-		"grassWindBendProfile",
 		"grassWindCompressionToBend",
 		"grassWindSpringFrequency",
 		"grassWindSpringDamping",
@@ -670,6 +757,9 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		TreeWindPatcher::RevertUnsavedChanges();
 		TreeWindPatcher::SetUniversalOverride(false, {});
 		return true;
+	case SettingsPage::GrassMeshes:
+		GrassWindPatcher::RevertUnsavedChanges();
+		return true;
 	case SettingsPage::Grass:
 		return ReapplyOverrideSettingsForKeys(grassKeys);
 	}
@@ -684,7 +774,7 @@ void Wind::SetupResources()
 
 bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const
 {
-	if (!loaded || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
+	if (!loaded || !IsTreeRenderPass(a_pass) ||
 		!SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
 		return false;
 
@@ -759,6 +849,7 @@ Wind::PerFrameData Wind::GetCommonBufferData() const
 
 void Wind::PostPostLoad()
 {
+	GrassWindPatcher::LoadAndInstall();
 	TreeWindPatcher::LoadAndInstall();
 }
 

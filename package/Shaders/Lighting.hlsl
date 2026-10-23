@@ -247,9 +247,11 @@ VS_OUTPUT main(VS_INPUT input)
 	TreeWind::Sample treeWindSample;
 	treeWindSample.trunkVelocity = 0.0.xxx;
 	treeWindSample.leafAnimationStrength = 0.0;
+	treeWindSample.leafFieldDisplacement = 0.0;
 	TreeWind::Sample previousTreeWindSample;
 	previousTreeWindSample.trunkVelocity = 0.0.xxx;
 	previousTreeWindSample.leafAnimationStrength = 0.0;
+	previousTreeWindSample.leafFieldDisplacement = 0.0;
 	if (treeBendEnabled) {
 #	if defined(SKINNED)
 		float3 currentTreeWorldOffset = 0.0.xxx;
@@ -321,6 +323,10 @@ VS_OUTPUT main(VS_INPUT input)
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
 	previousInputPosition.xyz += normal.xyz * treeShiftVector.y;
+	if (treeBendEnabled) {
+		inputPosition.xyz += TreeWind::GetLeafDisplacement(normal, input.Color.w, treeWindSample.leafFieldDisplacement);
+		previousInputPosition.xyz += TreeWind::GetLeafDisplacement(normal, input.Color.w, previousTreeWindSample.leafFieldDisplacement);
+	}
 #	endif
 
 #	if defined(SKINNED)
