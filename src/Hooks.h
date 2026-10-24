@@ -40,4 +40,7 @@ namespace Hooks
 
 	/** @brief Installs early IAT hooks for D3D11 device/swapchain creation and DXGI factory, before the game initializes Direct3D. */
 	void InstallEarlyHooks();
+
+	/** @brief Installs the optional pre-input feature callback, returning false if attachment fails. */
+	bool InstallBeforeInputPoll();
 }

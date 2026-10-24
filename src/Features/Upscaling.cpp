@@ -53,10 +53,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	upscaleMethodNoDLSS,
 	qualityMode,
 	frameLimitMode,
-	antiLag2Enabled,
-	antiLag2FPSLimiterEnabled,
-	antiLag2FPSLimiterGameplayOnly,
-	antiLag2FPSLimit,
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
@@ -662,43 +658,9 @@ namespace
 	}
 }
 
-/** @brief Registers upscaling, frame-generation, and input-pacing commands for menu and devbench use. */
+/** @brief Registers upscaling and frame-generation commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
-	FEATURE_COMMAND("setGameplayFPSLimit",
-		"Set the saved rendered FPS value; the cap applies only when Anti-Lag and its FPS limiter are enabled in the selected scope. Params: renderedFPS (integer 20-240). Legacy displayedFPS (even integer 40-480) sets renderedFPS to displayedFPS/2. FG does not change the rendered cap; the UI shows estimated displayed FPS from active FG. Anti-Lag runs first when enabled and available; the timer enforces remaining budget only while the limiter applies. DLSS-G retains Reflex pacing. No save is performed.",
-		[](Feature* self, const json& args) {
-			const bool legacy = !args.contains("renderedFPS");
-			const char* key = legacy ? "displayedFPS" : "renderedFPS";
-			if (!args.contains(key) || !args[key].is_number_integer()) {
-				logger::warn("[AntiLag2] renderedFPS must be an integer from 20 to 240");
-				return;
-			}
-			const auto fps = args[key].get<int64_t>();
-			const int64_t scale = legacy ? 2 : 1;
-			if (fps < kGameplayMinRenderedFPSLimit * scale || fps > kGameplayMaxRenderedFPSLimit * scale || fps % scale != 0) {
-				logger::warn("[AntiLag2] invalid FPS limit");
-				return;
-			}
-			static_cast<Upscaling*>(self)->settings.antiLag2FPSLimit = static_cast<uint>(fps / scale);
-		});
-	FEATURE_COMMAND("setAntiLag2",
-		"Set live Anti-Lag controls. Params: enabled, fpsLimiterEnabled, gameplayOnly (optional booleans). Master off disables Anti-Lag and its limiter; limiter off removes the driver FPS cap and timer while retaining Anti-Lag. gameplayOnly false means Always. Defaults: true, true, false. No save is performed.",
-		[](Feature* self, const json& args) {
-			for (const auto* key : { "enabled", "fpsLimiterEnabled", "gameplayOnly" }) {
-				if (args.contains(key) && !args[key].is_boolean()) {
-					logger::warn("[AntiLag2] control values must be boolean");
-					return;
-				}
-			}
-			auto& selected = static_cast<Upscaling*>(self)->settings;
-			if (args.contains("enabled"))
-				selected.antiLag2Enabled = args["enabled"].get<bool>();
-			if (args.contains("fpsLimiterEnabled"))
-				selected.antiLag2FPSLimiterEnabled = args["fpsLimiterEnabled"].get<bool>();
-			if (args.contains("gameplayOnly"))
-				selected.antiLag2FPSLimiterGameplayOnly = args["gameplayOnly"].get<bool>();
-		});
 	FEATURE_COMMAND("applyFoveationPreset",
 		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
 		[](Feature*, const json& args) {
@@ -724,32 +686,10 @@ void Upscaling::RegisterUxActions()
 		CalibrateNeuralCrop);
 }
 
-/** @brief Reports whether the enabled FPS limiter applies to gameplay or every game state. */
-bool Upscaling::IsAntiLag2FPSLimiterActive() const
-{
-	if (!settings.antiLag2Enabled || !settings.antiLag2FPSLimiterEnabled)
-		return false;
-	if (!settings.antiLag2FPSLimiterGameplayOnly)
-		return true;
-	auto* ui = globals::game::ui;
-	return ui && !ui->GameIsPaused() && !ui->IsMenuOpen(RE::DialogueMenu::MENU_NAME) &&
-	       !ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) && !ui->IsMenuOpen(RE::MainMenu::MENU_NAME);
-}
-
-/** @brief Updates Anti-Lag and applies or clears its FPS cap according to the live controls. */
+/** @brief Updates session-enabled Anti-Lag before input without an explicit FPS cap. */
 void Upscaling::OnBeforeInputPoll()
 {
-	if (UsesDLSSGFrameGen())
-		return;
-	const auto fpsLimit = (!globals::game::isVR && IsAntiLag2FPSLimiterActive()) ?
-	                          std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit) :
-	                          0u;
-	if (d3d12SwapChainActive) {
-		dx12SwapChain.UpdateAntiLag2BeforeInput(settings.antiLag2Enabled, fpsLimit);
-	} else {
-		static CS::AntiLag2::InputPacing inputPacing;
-		(void)inputPacing.Apply(fpsLimit != 0, fpsLimit);
-	}
+	dx12SwapChain.UpdateAntiLag2BeforeInput();
 }
 
 void Upscaling::DrawSettings()
@@ -970,7 +910,6 @@ void Upscaling::DrawUpscalingSettings()
 	}
 }
 
-/** @brief Draws frame-generation controls and the displayed FPS limit. */
 void Upscaling::DrawFrameGenerationSettings()
 {
 	ImGui::PushTextWrapPos(0.0f);
@@ -1029,6 +968,10 @@ void Upscaling::DrawFrameGenerationSettings()
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
 	} else if (fgMethod == FrameGenMethod::kFSR) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
+		if (fgEnabled)
+			ImGui::TextUnformatted(dx12SwapChain.IsAntiLag2Active() ?
+				T(TKEY("antilag2_active"), "Anti-Lag 2: Active") :
+				T(TKEY("antilag2_unavailable"), "Anti-Lag 2: Unavailable"));
 		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
@@ -1041,40 +984,6 @@ void Upscaling::DrawFrameGenerationSettings()
 				"Caps FSR's total FPS to the display refresh rate.\n"
 				"When generation pauses, caps rendered FPS instead."));
 	}
-
-	ImGui::Checkbox("Anti-Lag 2", &settings.antiLag2Enabled);
-	ImGui::Indent();
-	{
-		Util::DisableGuard antiLagDisabled(!settings.antiLag2Enabled);
-		ImGui::Checkbox("FPS limiter", &settings.antiLag2FPSLimiterEnabled);
-		{
-			Util::DisableGuard limiterDisabled(!settings.antiLag2FPSLimiterEnabled);
-			static constexpr const char* limiterScopes[] = { "Gameplay only", "Always" };
-			int scope = settings.antiLag2FPSLimiterGameplayOnly ? 0 : 1;
-			if (ImGui::Combo("Apply limiter", &scope, limiterScopes, 2))
-				settings.antiLag2FPSLimiterGameplayOnly = scope == 0;
-			int renderedFPS = static_cast<int>(settings.antiLag2FPSLimit);
-			if (ImGui::SliderInt("Rendered FPS limit", &renderedFPS,
-					static_cast<int>(kGameplayMinRenderedFPSLimit), static_cast<int>(kGameplayMaxRenderedFPSLimit), "%d FPS", ImGuiSliderFlags_AlwaysClamp))
-				settings.antiLag2FPSLimit = static_cast<uint>(renderedFPS);
-			const bool fgActive = IsFrameGenerationActive();
-			const uint multiplier = fgActive ? GetFrameGenerationMultiplier() : 1u;
-			if (UsesDLSSGFrameGen())
-				ImGui::TextDisabled("DLSS-G uses its own Reflex pacing; this limit is not applied.");
-			else if (!settings.antiLag2Enabled)
-				ImGui::TextDisabled("Anti-Lag 2 disabled");
-			else if (!settings.antiLag2FPSLimiterEnabled)
-				ImGui::TextDisabled("FPS limiter disabled");
-			else if (!IsAntiLag2FPSLimiterActive())
-				ImGui::TextDisabled("Limiter inactive in menus");
-			else
-				ImGui::Text("Up to %u displayed FPS (%s, %ux)", settings.antiLag2FPSLimit * multiplier,
-					fgActive ? "FG active" : "FG inactive", multiplier);
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted("Limits real rendered frames in the selected scope. Frame generation adds displayed frames without changing this render limit. Disabling the limiter removes both the driver FPS cap and timer backstop; Anti-Lag latency management can remain enabled.");
-		}
-	}
-	ImGui::Unindent();
 
 	ImGui::SeparatorText(T(TKEY("fg_shared_options"), "Options"));
 	{
@@ -1323,7 +1232,6 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
-	settings.antiLag2FPSLimit = std::clamp(settings.antiLag2FPSLimit, kGameplayMinRenderedFPSLimit, kGameplayMaxRenderedFPSLimit);
 	settings.neuralRenderingTuning.Sanitize();
 	settings.neuralRenderingContexts.Sanitize();
 	neuralRendering.ResetHistory();
@@ -2793,6 +2701,8 @@ json Upscaling::GetDiagnostics()
 	                                                                   "None";
 	diagnostics["frameGenActive"] = IsFrameGenerationActive();
 	diagnostics["frameGenMultiplier"] = GetFrameGenerationMultiplier();
+	if (method == FrameGenMethod::kFSR)
+		diagnostics["antiLag2Active"] = dx12SwapChain.IsAntiLag2Active();
 	if (method == FrameGenMethod::kDLSSG) {
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;

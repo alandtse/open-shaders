@@ -1,63 +1,100 @@
 # AMD Anti-Lag 2
 
-The DX12 SDK header, license and integration guide in
-`extern/AntiLag2-SDK/` are vendored from the upstream
-[AMD Anti-Lag 2 SDK](https://github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK/releases/tag/v2.0.0a).
-The header identifies AMD's 2024 Anti-Lag 2.0 SDK and carries its MIT
-license. This is a vendored, header-only dependency; no SDK binaries or
-sample applications are required by the integration.
+`extern/AntiLag2-SDK/` is a Git submodule of the official
+[AMD Anti-Lag 2 SDK](https://github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK),
+pinned to `390aa4a8c8655d0ae6e90079db2c85e103a96da3` (`v2.0.0a`).
+Initialize it with `git submodule update --init extern/AntiLag2-SDK`, or
+clone Open Shaders with `--recurse-submodules`. CMake reports the initialization
+command if the header is missing. The dependency is header-only and MIT licensed;
+the upstream DX11 header and sample are present but are not compiled or packaged.
 
-The integration uses the persistent frame-generation DX12 device and calls
-Anti-Lag 2 immediately before engine input polling. The FSR swap chain
-receives the SDK's private-data handshake, and the end-of-frame marker
-belongs after main rendering submission and before swap-chain Present.
-Shutdown drains pending FSR presents before releasing the SDK interface;
-if that drain fails, process cleanup retains ownership of the interface.
-See the vendored README for AMD's API contract and latency monitor.
+## Upstream audit and local adaptation
 
-Runtime acceptance requires VR plus one flat edition (SE or AE); report
-which editions actually ran. Skyrim launches remain user-controlled.
+Compared on 2026-10-24 against the official repository's HEAD and `v2.0.0a`,
+both at the pinned commit above. The previous vendored license matches upstream.
+Its README differs only by trailing whitespace. The DX12 header has one
+functional change, plus a final newline: local `Update` returns state-setting
+errors and updates `m_enabled`/`m_maxFPS` only after a successful driver call.
+Upstream caches those fields before calling the driver and ignores the returned
+state-setting error. A rejected toggle or FPS change can therefore appear applied
+and suppress retries, even if the subsequent delay call succeeds.
 
-The controls remain in the Frame Generation tab:
+The submodule stays unmodified. `src/Features/Upscaling/antilag2sdk.h` retains
+the checked state transition in project-owned code, then calls upstream `Update`
+for its delay and HRESULT normalization. This adapter relies on the pinned SDK's
+`APIData_v1`, interface and context layout; review it and run the Anti-Lag tests
+when updating the submodule. FSR continues to receive the original SDK context,
+so its private-data ABI is unchanged.
 
--   **Anti-Lag 2** is the master switch, on by default. Off disables the driver
-    integration and our limiter; subordinate controls remain visible but disabled.
--   **FPS limiter** is on by default. Off clears both the SDK FPS cap and the
-    CPU timer while leaving Anti-Lag latency management enabled.
--   **Apply limiter** selects **Gameplay only** or **Always** (default). Gameplay
-    requires available UI state, an unpaused game and no main, loading or dialogue
-    menu. The selected scope affects the FPS cap, not Anti-Lag's enable state.
--   **Rendered FPS limit** stores actual rendered FPS (20-240, default 60).
-    The note estimates displayed FPS from active FG: 60 rendered FPS means up
-    to 120 displayed FPS with FSR 2x FG, or 60 without FG. It reports disabled or
-    suspended limiting instead when appropriate; it is not an FPS measurement.
+## Conditional session integration
 
-The live settings are `Upscaling.antiLag2Enabled`,
-`antiLag2FPSLimiterEnabled`, `antiLag2FPSLimiterGameplayOnly` and
-`antiLag2FPSLimit`. Missing keys preserve the defaults above. No restart is
-required. The existing display refresh cap and other independent limiters
-remain separate ceilings.
+Anti-Lag 2 is automatic when the existing startup path selects an available
+FSR Frame Generation proxy and the existing SDK initialization returns `S_OK`.
+No separate hardware probe, device or vendor-detection system is introduced.
 
-Anti-Lag runs before input when enabled and available. The CPU timer supplies
-only the remaining frame budget while the limiter applies, including on native
-D3D11 without the driver API. Disabling or suspending the cap resets its timer
-deadline; the SDK receives zero FPS to disable its explicit limiter. Master-off
-also explicitly disables the SDK. No context is destroyed during a live toggle.
-`timerBackstop` is CPU pacing, not a GPU fence wait or an FG switch. DLSS-G
-retains its own Reflex pacing and bypasses this integration.
+`DX12SwapChain::CreateSwapChain` runs the SDK check immediately after obtaining
+the existing presentation device, before creating the FSR swap chain. Generic
+DX12 device creation and the direct DLSS-G swap-chain path do not call Anti-Lag.
+A failed check releases any returned interface and retains no context.
 
-Devbench `setAntiLag2` accepts optional boolean `enabled`, `fpsLimiterEnabled`
-and `gameplayOnly` fields. `setGameplayFPSLimit` accepts `renderedFPS` from
-20 to 240; legacy even `displayedFPS` from 40 to 480 still sets a rendered cap
-of `displayedFPS / 2`. Commands apply live without automatically saving.
+After FSR interop resources have been created, a successful check permits
+`Hooks::InstallBeforeInputPoll()` to attach the optional engine-entry detour.
+The general `Hooks::Install()` does not attach it. Hook failure releases the
+context and selects the ordinary proxy. Ineligible sessions therefore do not
+intercept input or invoke the added feature callbacks.
 
-Menu frame generation follows alandtse/dev's original resource preparation,
-UI routing and game-time delta behavior. The rendered FPS limiter remains
-active independently of whether menu frame generation runs.
+Eligible sessions receive `AntiLag2SwapChainProxy`, which uses
+`PresentImpl<true>`. Ordinary FSR and DLSS-G sessions use the existing proxy
+and `PresentImpl<false>`; `if constexpr` removes the Anti-Lag private-data and
+end-marker calls from that presentation path. There are no per-frame
+availability checks or no-op Anti-Lag notification callbacks on that path.
 
-For acceptance, test each toggle and scope in gameplay, main/paused menus,
-dialogue and loading. Verify master-off and limiter-off remove only our cap,
-then re-enable and confirm pacing resumes without a stale timer deadline.
-Check old settings files retain on/on/Always and the saved rendered limit. Check native
-D3D11 and driver failure fallback separately. The user launches Skyrim;
-provider success alone does not establish generated-frame presentation.
+The installed input callback always requests Anti-Lag latency reduction with
+zero FPS limit. There is no independent enable setting, checkbox or command.
+The temporary testing toggle, SDK limiter, status query and per-call diagnostic
+logging have been removed. Old saved Anti-Lag settings have no runtime effect
+and are not serialized. There is no CPU fallback timer.
+
+Frame Generation > Current session shows `Anti-Lag 2: Active` or
+`Anti-Lag 2: Unavailable` directly below `Method: AMD FSR`, only while FG is
+selected and the session uses FSR. Active requires an installed context and
+an accepted enabled driver state. Other backend views do not show this line.
+The same state is available as `antiLag2Active` in FSR-session devbench diagnostics.
+
+Eligibility is established for the selected session backend. Editing the
+restart-gated FG/backend selection does not install or remove this integration
+mid-session. Temporary menu/loading suspension is not an eligibility input.
+
+The FSR context handshake keeps the upstream context pointer and enabled-state
+layout. The rendering-end marker remains after command submission and before
+swap-chain Present. Shutdown first drains pending FSR presents, publishes the
+disabled handshake, then releases the interface. If draining fails, both the
+context allocation and interface remain alive for process cleanup, avoiding
+a dangling context pointer in a queued presentation. Ineligible teardown
+makes no SDK or FSR-drain calls.
+
+## Validation boundaries
+
+The existing display-refresh limiter, frame-generation pacing, VSync and Reflex
+behavior are preserved. See [the dev comparison](antilag2-dev-audit.md).
+The upstream SDK submodule and checked-state adapter are unchanged by the
+conditional-installation change; the FPS limit is fixed at zero.
+
+Targeted tests exercise production initialization, interop selection, update,
+optional-hook installation and teardown with mocks, plus the real upstream
+SDK interface for checked state changes and zero FPS limits. Source checks
+cover FSR-only initialization, removal of unconditional input installation,
+compile-time presentation selection and notification ordering.
+
+A Release build checks integration compilation. Runtime acceptance remains
+user-controlled, including supported FSR-FG, unsupported FSR-FG, FG-off and
+DLSS-G paths. No Skyrim launch or deployment is performed by this change.
+Initialization success alone does not establish measured latency improvement.
+
+## Production logging
+
+Initialization reports its HRESULT and availability once at FSR startup.
+Update, private-data and end-marker failures are reported once per category;
+shutdown-drain and hook-installation failures remain visible. Successful
+per-frame calls, skipped markers and testing-session status are not logged.
+Conditional installation and notification behavior are unchanged.

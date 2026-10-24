@@ -5,6 +5,7 @@
 #include <dxgi1_6.h>
 #include <utility>
 
+#include "Hooks.h"
 #include "../HDRDisplay.h"
 #include "../Upscaling.h"
 #include "FidelityFX.h"
@@ -14,37 +15,43 @@
 /** @brief Drains queued presents before releasing Anti-Lag state, retaining it if draining fails. */
 DX12SwapChain::~DX12SwapChain()
 {
+	if (!antiLag2Context)
+		return;
 	auto& fidelityFX = globals::features::upscaling.fidelityFX;
-	if (!useDLSSG && antiLag2Available && fidelityFX.swapChainContext) {
+	if (fidelityFX.swapChainContext) {
 		ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsDX12 wait{};
-		if (!ffxModule.Dispatch || ffx::Dispatch(fidelityFX.swapChainContext, wait) != ffx::ReturnCode::Ok)
+		if (!ffxModule.Dispatch || ffx::Dispatch(fidelityFX.swapChainContext, wait) != ffx::ReturnCode::Ok) {
+			logger::warn("[AntiLag2] Shutdown drain failed; retaining context and driver interface");
+			(void)antiLag2Context.release();
 			return;
+		}
 		antiLag2Enabled = false;
 		if (swapChain)
 			PublishAntiLag2SwapChainData();
 	}
-	AMD::AntiLag2DX12::DeInitialize(&antiLag2Context);
+	AMD::AntiLag2DX12::DeInitialize(antiLag2Context.get());
 }
 
 /** @brief Initializes Anti-Lag on the persistent D3D12 device and records driver availability. */
 void DX12SwapChain::InitializeAntiLag2()
 {
-	const HRESULT hr = AMD::AntiLag2DX12::Initialize(&antiLag2Context, d3d12Device.get());
-	antiLag2Available = hr == S_OK;
-	logger::info("[AntiLag2] Initialize hr=0x{:08X} available={}", static_cast<unsigned int>(hr), antiLag2Available);
+	auto context = std::make_unique<AMD::AntiLag2DX12::Context>();
+	const HRESULT hr = AMD::AntiLag2DX12::Initialize(context.get(), d3d12Device.get());
+	logger::info("[AntiLag2] Initialize hr=0x{:08X} available={}", static_cast<unsigned int>(hr), hr == S_OK);
+	if (hr == S_OK) {
+		antiLag2Context = std::move(context);
+	} else if (context->m_pAntiLagAPI) {
+		AMD::AntiLag2DX12::DeInitialize(context.get());
+	}
 }
 
-/** @brief Applies explicit Anti-Lag enable state and clears disabled driver and CPU FPS caps. */
-void DX12SwapChain::UpdateAntiLag2BeforeInput(bool enabled, uint32_t fpsLimit)
+/** @brief Applies session-enabled Anti-Lag latency reduction before input with FPS limiting disabled. */
+void DX12SwapChain::UpdateAntiLag2BeforeInput()
 {
-	fpsLimit = enabled ? fpsLimit : 0u;
-	const HRESULT hr = antiLag2Available ? AMD::AntiLag2DX12::Update(&antiLag2Context, enabled, fpsLimit) : E_NOINTERFACE;
-	antiLag2Enabled = antiLag2Available && antiLag2Context.m_enabled;
-	if (FAILED(hr) && antiLag2Available && !std::exchange(antiLag2UpdateFailureLogged, true))
-		logger::warn("[AntiLag2] Update failed hr=0x{:08X} requestedEnabled={} fpsLimit={}", static_cast<unsigned int>(hr), enabled, fpsLimit);
-
-	const bool limiterActive = enabled && fpsLimit != 0;
-	(void)antiLag2InputPacing.Apply(limiterActive, fpsLimit);
+	const HRESULT hr = CS::AntiLag2::Update(antiLag2Context.get(), true);
+	antiLag2Enabled = antiLag2Context->m_enabled;
+	if (FAILED(hr) && !std::exchange(antiLag2UpdateFailureLogged, true))
+		logger::warn("[AntiLag2] Update failed hr=0x{:08X}", static_cast<unsigned int>(hr));
 }
 
 /** @brief Publishes the Anti-Lag context and enabled state through the FSR swap-chain handshake. */
@@ -55,7 +62,7 @@ void DX12SwapChain::PublishAntiLag2SwapChainData()
 		AMD::AntiLag2DX12::Context* context;
 		bool enabled;
 	};
-	const AntiLag2Data data{ &antiLag2Context, antiLag2Enabled };
+	const AntiLag2Data data{ antiLag2Context.get(), antiLag2Enabled };
 	static constexpr GUID kFfxAntiLag2Data = { 0x5083ae5b, 0x8070, 0x4fca, { 0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13 } };
 	const HRESULT hr = swapChain->SetPrivateData(kFfxAntiLag2Data, sizeof(data), &data);
 	if (FAILED(hr) && !std::exchange(antiLag2PrivateDataFailureLogged, true))
@@ -67,12 +74,11 @@ void DX12SwapChain::MarkAntiLag2EndOfFrame()
 {
 	if (!antiLag2Enabled)
 		return;
-	const HRESULT hr = AMD::AntiLag2DX12::MarkEndOfFrameRendering(&antiLag2Context);
+	const HRESULT hr = AMD::AntiLag2DX12::MarkEndOfFrameRendering(antiLag2Context.get());
 	if (FAILED(hr) && !std::exchange(antiLag2MarkFailureLogged, true))
 		logger::warn("[AntiLag2] End-of-frame marker failed hr=0x{:08X}", static_cast<unsigned int>(hr));
 }
 
-/** @brief Creates the presentation D3D12 device and queue, then initializes Anti-Lag. */
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
 	// Idempotent: the DLSS-G probe binds Streamline to this device; a second call from
@@ -81,7 +87,6 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 		return;
 
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
-	InitializeAntiLag2();
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -102,6 +107,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC a_swapChainDesc)
 {
 	CreateD3D12Device(adapter);
+	InitializeAntiLag2();
 
 	winrt::com_ptr<IDXGIFactory4> dxgiFactory;
 	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(dxgiFactory.put())));
@@ -254,13 +260,32 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	logger::info("[DX12SwapChain] Created direct swap chain for DLSS-G ({}x{})", swapChainDesc.Width, swapChainDesc.Height);
 }
 
+namespace
+{
+	struct AntiLag2SwapChainProxy final : DXGISwapChainProxy
+	{
+		using DXGISwapChainProxy::DXGISwapChainProxy;
+		HRESULT STDMETHODCALLTYPE Present(UINT syncInterval, UINT flags) override
+		{
+			return globals::features::upscaling.dx12SwapChain.PresentWithAntiLag2(syncInterval, flags);
+		}
+	};
+}
+
 void DX12SwapChain::CreateInterop()
 {
 	interopFence.Create(d3d12Device.get(), d3d11Device.get(), "DX12SwapChain::InteropFence");
 
-	swapChainProxy = new DXGISwapChainProxy(swapChain);
-
 	RecreateWrappedResources(swapChainDesc);
+	if (antiLag2Context && !Hooks::InstallBeforeInputPoll()) {
+		AMD::AntiLag2DX12::DeInitialize(antiLag2Context.get());
+		antiLag2Context.reset();
+		logger::warn("[AntiLag2] Input hook installation failed; leaving Anti-Lag disabled");
+	}
+	if (antiLag2Context) {
+		swapChainProxy = new AntiLag2SwapChainProxy(swapChain);
+	} else
+		swapChainProxy = new DXGISwapChainProxy(swapChain);
 }
 
 void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
@@ -384,7 +409,8 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 	return S_OK;
 }
 
-HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
+template <bool WithAntiLag2>
+HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 {
 	auto& upscaling = globals::features::upscaling;
 
@@ -466,7 +492,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			streamlineDX12.ConfigureDLSSG(false);
 		}
 	} else {
-		PublishAntiLag2SwapChainData();
+		if constexpr (WithAntiLag2)
+			PublishAntiLag2SwapChainData();
 		upscaling.fidelityFX.Present(upscaling.ShouldUseFrameGenerationThisFrame(), isHDR);
 	}
 
@@ -474,7 +501,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
-	if (!useDLSSG)
+	if constexpr (WithAntiLag2)
 		MarkAntiLag2EndOfFrame();
 
 	if (useDLSSG) {
@@ -510,6 +537,16 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	upscaling.frameGenerationPrepared = false;
 
 	return S_OK;
+}
+
+HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
+{
+	return PresentImpl<false>(SyncInterval, Flags);
+}
+
+HRESULT DX12SwapChain::PresentWithAntiLag2(UINT SyncInterval, UINT Flags)
+{
+	return PresentImpl<true>(SyncInterval, Flags);
 }
 
 HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)

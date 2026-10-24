@@ -681,6 +681,14 @@ struct BSInputDeviceManager_BeforeInputPoll
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+bool Hooks::InstallBeforeInputPoll()
+{
+	if (BSInputDeviceManager_BeforeInputPoll::func.address())
+		return true;
+	logger::info("Hooking BSInputDeviceManager::PollInputDevices entry");
+	return stl::detour_thunk<BSInputDeviceManager_BeforeInputPoll>(REL::RelocationID(67315, 68617)) == NO_ERROR;
+}
+
 struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
@@ -1279,9 +1287,6 @@ namespace Hooks
 			logger::info("Hooking BSImageSpace::Init::IBLF");
 			stl::detour_thunk<BSImageSpace_Init_IBLF>(REL::RelocationID(100480, 107198));
 		}
-
-		logger::info("Hooking BSInputDeviceManager::PollInputDevices entry");
-		stl::detour_thunk<BSInputDeviceManager_BeforeInputPoll>(REL::RelocationID(67315, 68617));
 
 		// This input hook also drives per-frame Reflex update (see BSInputDeviceManager_PollInputDevices::thunk).
 		logger::info("Hooking BSInputDeviceManager::PollInputDevices");
