@@ -164,15 +164,15 @@ TEST_CASE("Anti-Lag initializes before installing optional input interception", 
 	CS::AntiLag2::ContextPtr context;
 	unsigned initializationCalls = 0;
 	CHECK(CS::AntiLag2::InitializeContext(context, nullptr,
-		[&](AMD::AntiLag2DX12::Context* candidate, ID3D12Device* device) {
-			++initializationCalls;
-			CHECK(device == nullptr);
-			CHECK_FALSE(candidate->m_enabled);
-			CHECK(candidate->m_maxFPS == 0);
-			if (result == S_OK || partial)
-				candidate->m_pAntiLagAPI = &driver;
-			return result;
-		}) == result);
+			  [&](AMD::AntiLag2DX12::Context* candidate, ID3D12Device* device) {
+				  ++initializationCalls;
+				  CHECK(device == nullptr);
+				  CHECK_FALSE(candidate->m_enabled);
+				  CHECK(candidate->m_maxFPS == 0);
+				  if (result == S_OK || partial)
+					  candidate->m_pAntiLagAPI = &driver;
+				  return result;
+			  }) == result);
 	CHECK(initializationCalls == 1);
 	CHECK(bool(context) == (result == S_OK));
 	CHECK(driver.releases == unsigned(result != S_OK && partial));
@@ -206,9 +206,7 @@ TEST_CASE("Anti-Lag drains before disabling the handshake and releasing its inte
 	std::vector<std::string> events;
 	driver.events = &events;
 	auto context = SupportedContext(driver);
-	CHECK(CS::AntiLag2::Shutdown(context,
-		[&] { events.emplace_back("drain"); return true; },
-		[&] { events.emplace_back("disable"); }));
+	CHECK(CS::AntiLag2::Shutdown(context, [&] { events.emplace_back("drain"); return true; }, [&] { events.emplace_back("disable"); }));
 	CHECK(events == std::vector<std::string>{ "drain", "disable", "release" });
 	CHECK_FALSE(context);
 	CHECK(driver.releases == 1);
