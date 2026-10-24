@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
@@ -36,6 +37,14 @@ class ShaderCacheManifestTests(unittest.TestCase):
         text = (self.cache / "Info.ini").read_bytes().decode("utf-8-sig")
         self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\n", text)
         self.assertIn("[Sample]\r\nEnabled = true\r\nVersion = 1-0-0", text)
+
+    def test_companion_disable_retains_the_loaded_version(self):
+        features = self.shaders / "Features"
+        features.mkdir()
+        (features / "HorizonFix.ini").write_text("[Info]\nVersion = 1-0-0\n", encoding="utf-8")
+        builder.write_info_ini(self.cache, self.shaders, "2-19-0-0", "SE", disabled_stems={"HorizonFix"})
+        self.assertIn("[HorizonFix]\r\nEnabled = false\r\nVersion = 1-0-0",
+                      (self.cache / "Info.ini").read_bytes().decode("utf-8-sig"))
 
     def test_key_matches_runtime_sort_values_and_trailing_space(self):
         self.write_config(common=["ZETA", "SHADOWSPLITCOUNT=3", "EMPTY=", "PSHADER", "VR",
@@ -91,13 +100,84 @@ class ShaderCacheManifestTests(unittest.TestCase):
         entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
         self.assertEqual(entries[0]["defines"], [])
 
+    def test_profile_adds_default_enabled_reverse_z_to_all_shader_types(self):
+        import yaml
+
+        headers = self.root / "src/Features"
+        headers.mkdir(parents=True)
+        (headers / "ReverseZ.h").write_text(
+            'std::string GetShortName() override { return "ReverseZ"; }\n'
+            'std::string_view GetShaderDefineName() override { return "REVERSE_Z"; }\n'
+            'bool EnableReverseZBuffer = true;\n', encoding="utf-8")
+        self.write_config(entries=[
+            {"entry": "Lighting:Pixel:1", "defines": []},
+            {"entry": "ImageSpace:Pixel:2", "defines": ["REVERSE_Z"]},
+            {"entry": "Utility:Pixel:3", "defines": []}])
+        original = self.config.read_bytes()
+        output = self.root / "profile.yaml"
+        builder.filter_profile_defines(self.config, output, set(), self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        for entry in entries:
+            self.assertEqual(entry["defines"], ["REVERSE_Z"], entry["entry"])
+        self.assertEqual(self.config.read_bytes(), original)
+        first = output.read_bytes()
+        builder.filter_profile_defines(output, output, set(), self.root)
+        self.assertEqual(output.read_bytes(), first)
+        builder.filter_profile_defines(output, output, {"REVERSE_Z"}, self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        for entry in entries:
+            self.assertEqual(entry["defines"], [], entry["entry"])
+
+    def test_profile_keeps_reverse_z_disabled_for_older_defaults(self):
+        import yaml
+
+        headers = self.root / "src/Features"
+        headers.mkdir(parents=True)
+        for setting in ("EnableReverseZ", "EnableReverseZBuffer"):
+            with self.subTest(setting=setting):
+                (headers / "ReverseZ.h").write_text(
+                    'std::string GetShortName() override { return "ReverseZ"; }\n'
+                    'std::string_view GetShaderDefineName() override { return "REVERSE_Z"; }\n'
+                    f'bool {setting} = false;\n', encoding="utf-8")
+                self.write_config(entries=[{"entry": "Lighting:Pixel:1", "defines": ["REVERSE_Z"]}])
+                output = self.root / "profile.yaml"
+                builder.filter_profile_defines(self.config, output, set(), self.root)
+                entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+                self.assertEqual(entries[0]["defines"], [])
+
+    def test_profile_adds_global_and_multiple_type_declarations(self):
+        import yaml
+
+        headers = self.root / "src/Features"
+        headers.mkdir(parents=True)
+        declarations = (("Global", "true"), ("Snow", "type == RE::BSShader::Type::Lighting || "
+                                           "type == RE::BSShader::Type::Grass || "
+                                           "type == RE::BSShader::Type::DistantTree"))
+        for short, expression in declarations:
+            (headers / f"{short}.h").write_text(
+                f'std::string GetShortName() override {{ return "{short}"; }}\n'
+                f'std::string_view GetShaderDefineName() override {{ return "{short.upper()}"; }}\n'
+                f'bool HasShaderDefine(RE::BSShader::Type type) override {{ return {expression}; }}\n',
+                encoding="utf-8")
+        families = ("Lighting", "Grass", "DistantTree", "BloodSplatter", "Utility")
+        self.write_config(entries=[{"entry": f"{family}:Pixel:1", "defines": []} for family in families])
+        output = self.root / "profile.yaml"
+        builder.filter_profile_defines(self.config, output, set(), self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        self.assertEqual([entry["defines"] for entry in entries],
+                         [["GLOBAL", "SNOW"], ["GLOBAL", "SNOW"], ["GLOBAL", "SNOW"], ["GLOBAL"], []])
+        builder.filter_profile_defines(output, output, {"GLOBAL"}, self.root)
+        entries = yaml.safe_load(output.read_text())["shaders"][0]["configs"]["PSHADER"]["entries"]
+        self.assertEqual([entry["defines"] for entry in entries], [["SNOW"], ["SNOW"], ["SNOW"], [], []])
+
     def test_profiles_follow_current_shader_declarations_and_boot_defaults(self):
         import yaml
 
-        declared = builder.single_shader_feature_defines(ROOT)
-        strip, _, _ = builder.profile_strip_defines(ROOT, "aio")
+        declared = builder.static_feature_defines(ROOT)
+        reverse_z_default = "REVERSE_Z" in builder.default_reverse_z_defines(ROOT)
         for runtime, config in builder.CONFIGS.items():
             with self.subTest(runtime=runtime):
+                strip, _, _ = builder.profile_strip_defines(ROOT, "aio", runtime)
                 output = self.root / f"profile-{runtime}.yaml"
                 builder.filter_profile_defines(config, output, strip)
                 for shader in yaml.safe_load(output.read_text())["shaders"]:
@@ -108,6 +188,138 @@ class ShaderCacheManifestTests(unittest.TestCase):
                                        stage.get("common_defines", []) + entry.get("defines", [])}
                             self.assertFalse(strip & present, entry["entry"])
                             self.assertLessEqual(declared.get(family, set()) - strip, present, entry["entry"])
+                            if family != "Utility":
+                                self.assertLessEqual(declared.get("*", set()) - strip, present, entry["entry"])
+                            self.assertEqual("REVERSE_Z" in present, reverse_z_default, entry["entry"])
+                permutations = builder.cache_shader_permutations(output, runtime)
+                self.assertTrue(permutations)
+                for path, (_, key) in permutations.items():
+                    self.assertEqual("REVERSE_Z " in key, reverse_z_default, path)
+
+    def write_extra_capture(self, requests):
+        (self.root / "features").mkdir(exist_ok=True)
+        headers = self.root / "src/Features"
+        headers.mkdir(parents=True, exist_ok=True)
+        (headers / "ReverseZ.h").write_text(
+            'std::string GetShortName() override { return "ReverseZ"; }\n'
+            'std::string_view GetShaderDefineName() override { return "REVERSE_Z"; }\n'
+            'bool EnableReverseZBuffer = true;\n', encoding="utf-8")
+        path = self.root / ".github/configs/shader-cache-inputs.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"schemaVersion": 1, "runtime": "SE", "requests": requests}))
+
+    def test_portable_standalone_key_matches_production_cpp_vector(self):
+        defines = [["VR", ""], ["REVERSE_Z", ""], ["VR", ""]]
+        self.assertEqual(builder.standalone_compile_key("Effects11/QuadVS.hlsl", "main", "vs_5_0", 34818, defines),
+                         "95db091fa85c9a6fb12d3f348b3fdd5e")
+
+    def test_captured_standalone_macros_target_each_runtime(self):
+        self.write_extra_capture([{"kind": "standalone", "source": "Feature/Main.hlsl", "runtime": "SE",
+                                   "entryPoint": "main", "profile": "cs_5_0", "flags": 34818,
+                                   "defines": [["COMPUTESHADER", ""], ["WINPC", ""], ["DX11", ""], ["REVERSE_Z", ""]]}])
+        se = builder.extra_shader_requests(self.root, "SE")
+        vr = builder.extra_shader_requests(self.root, "VR")
+        self.assertEqual(len(se), 1)
+        self.assertEqual(len(vr), 1)
+        se_request, vr_request = next(iter(se.values())), next(iter(vr.values()))
+        self.assertNotIn("VR", dict(se_request["defines"]))
+        self.assertEqual(dict(vr_request["defines"])["VR"], "")
+        self.assertNotEqual(se_request["key"], vr_request["key"])
+        self.assertTrue(next(iter(se)).startswith("Feature/Main.hlsl.main."))
+        self.assertTrue(next(iter(se)).endswith(".cso"))
+
+    def test_default_shadow_variants_cover_native_resolutions_and_both_vr_eyes(self):
+        self.write_extra_capture([{"kind": "standalone", "source": "ScreenSpaceShadows/RaymarchCS.hlsl",
+                                   "runtime": "SE", "entryPoint": "main", "profile": "cs_5_0", "flags": 34818,
+                                   "defines": [["COMPUTESHADER", ""], ["SAMPLE_COUNT", "80"]]}])
+        se = builder.extra_shader_requests(self.root, "SE")
+        self.assertLessEqual({"64", "80", "120"}, {dict(r["defines"])["SAMPLE_COUNT"] for r in se.values()})
+        vr = list(builder.extra_shader_requests(self.root, "VR").values())
+        self.assertEqual(len(vr), 2)
+        self.assertEqual({dict(r["defines"])["SAMPLE_COUNT"] for r in vr}, {"64"})
+        self.assertEqual(sum("RIGHT" in dict(r["defines"]) for r in vr), 1)
+
+    def test_captured_engine_alias_uses_runtime_descriptor(self):
+        self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "ISLensFlareVisibility.hlsl",
+                                   "shader": "LensFlareVisibility", "type": "ImageSpace", "descriptor": 101,
+                                   "stage": "Pixel", "key": "LensFlareVisibility:Pixel:REVERSE_Z ",
+                                   "path": "LensFlareVisibility/65.pso"}])
+        request = builder.extra_shader_requests(self.root, "VR")["LensFlareVisibility/68.pso"]
+        self.assertEqual(request["key"], "LensFlareVisibility:Pixel:REVERSE_Z ")
+        self.assertIn(("VR", None), request["defines"])
+
+    def test_captured_reverse_z_variants_follow_disabled_boot_default(self):
+        self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "Lighting.hlsl",
+                                   "shader": "Lighting", "type": "Lighting", "descriptor": 1,
+                                   "stage": "Pixel", "key": "Lighting:Pixel:REVERSE_Z ", "path": "Lighting/1.pso"},
+                                  {"kind": "standalone", "source": "Main.hlsl", "runtime": "SE",
+                                   "entryPoint": "main", "profile": "cs_5_0", "flags": 34818,
+                                   "defines": [["COMPUTESHADER", ""], ["REVERSE_Z", ""]]}])
+        header = self.root / "src/Features/ReverseZ.h"
+        header.write_text(header.read_text().replace("= true;", "= false;"))
+        requests = builder.extra_shader_requests(self.root, "SE")
+        self.assertEqual(requests["Lighting/1.pso"]["key"], "Lighting:Pixel:")
+        self.assertTrue(all("REVERSE_Z" not in dict(request["defines"]) for request in requests.values()))
+
+    def test_captured_descriptors_can_share_identical_disk_bytecode(self):
+        request = {"kind": "engine", "runtime": "SE", "source": "RunGrass.hlsl",
+                   "shader": "RunGrass", "type": "Grass", "descriptor": 8, "stage": "Pixel",
+                   "key": "RunGrass:Pixel:RENDER_DEPTH REVERSE_Z ", "path": "RunGrass/8.pso"}
+        self.write_extra_capture([request, {**request, "descriptor": 9}])
+        self.assertEqual(len(builder.extra_shader_requests(self.root, "SE")), 1)
+
+    def test_captured_cache_rejects_unsafe_sources_and_nonrelease_flags(self):
+        request = {"kind": "standalone", "runtime": "SE", "source": "../outside.hlsl", "entryPoint": "main",
+                   "profile": "cs_5_0", "flags": 34818, "defines": []}
+        self.write_extra_capture([request])
+        with self.assertRaisesRegex(ValueError, "Unsafe captured shader source"):
+            builder.extra_shader_requests(self.root, "SE")
+        self.write_extra_capture([{**request, "source": "Main.hlsl", "flags": 1}])
+        with self.assertRaisesRegex(ValueError, "default release"):
+            builder.extra_shader_requests(self.root, "SE")
+
+    def test_live_capture_normalizes_debug_flags_for_release(self):
+        self.write_config()
+        record = {"kind": "standalone", "runtime": "SE", "source": "Main.hlsl", "entryPoint": "main",
+                  "profile": "cs_5_0", "flags": 3,
+                  "defines": [["COMPUTESHADER", ""], ["D3DCOMPILE_DEBUG", ""], ["D3DCOMPILE_SKIP_OPTIMIZATION", ""]]}
+        log = self.root / "capture.log"
+        log.write_text("[D] ShaderCacheInput " + json.dumps(record))
+        output = self.root / "capture.json"
+        with patch.object(builder, "CONFIGS", {"SE": self.config}):
+            builder.capture_shader_inputs(log, output)
+        captured = json.loads(output.read_text())["requests"][0]
+        self.assertEqual(captured["flags"], builder.DEFAULT_STANDALONE_FLAGS)
+        self.assertEqual(captured["defines"], [["COMPUTESHADER", ""]])
+
+    def test_supplementary_compiler_preserves_empty_macro_values(self):
+        self.write_extra_capture([{"kind": "standalone", "runtime": "SE", "source": "Main.hlsl",
+                                   "entryPoint": "main", "profile": "cs_5_0", "flags": 34818,
+                                   "defines": [["EMPTY", ""]]}])
+        with patch.object(builder, "REPO", self.root), patch.object(builder.subprocess, "run",
+                return_value=Mock(returncode=0, stdout="", stderr="")) as compile_shader:
+            builder.compile_extra_shaders(self.cache, self.shaders, "SE", "fxc.exe", 1)
+        self.assertIn("/DEMPTY= ", compile_shader.call_args.args[0])
+
+    def test_supplementary_compiler_rejects_unsuppressed_warnings(self):
+        for source, warning, returncode, accepted in (
+                ("LightLimitFix/ClusterCullingCS.hlsl", "X4714", 0, False),
+                ("Other/ClusterCullingCS.hlsl", "X4714", 0, False),
+                ("LightLimitFix/ClusterCullingCS.hlsl", "X3206", 0, False),
+                ("Main.hlsl", "X1519", 0, True),
+                ("LightLimitFix/ClusterCullingCS.hlsl", "X1519", 1, False)):
+            with self.subTest(source=source, warning=warning, returncode=returncode):
+                self.write_extra_capture([{"kind": "standalone", "runtime": "SE", "source": source,
+                                           "entryPoint": "main", "profile": "cs_5_0", "flags": 34818,
+                                           "defines": []}])
+                diagnostics = f"warning {warning}: compiler diagnostic\n"
+                with patch.object(builder, "REPO", self.root), patch.object(builder.subprocess, "run",
+                        return_value=Mock(returncode=returncode, stdout="", stderr=diagnostics)):
+                    if accepted:
+                        builder.compile_extra_shaders(self.cache, self.shaders, "SE", "fxc.exe", 1)
+                    else:
+                        with self.assertRaisesRegex(ValueError, warning):
+                            builder.compile_extra_shaders(self.cache, self.shaders, "SE", "fxc.exe", 1)
 
     def test_finalize_requires_the_original_compile_config(self):
         with self.assertRaisesRegex(ValueError, "missing CompileConfig.yaml"):

@@ -65,7 +65,9 @@ runs:
                     - 'cmake/**/*.py'
                   build_ci:
                     - '.github/configs/shader-validation*.yaml'
+                    - '.github/configs/shader-cache-inputs.json'
                     - '.github/configs/generate-shader-configs.ps1'
+                    - 'tools/build-shader-cache.py'
                   hlsl:
                     - '**.hlsl'
                     - '**.hlsli'
