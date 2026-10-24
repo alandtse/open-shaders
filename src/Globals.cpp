@@ -60,7 +60,6 @@
 #include "Features/WetnessEffects.h"
 #include "Features/Wind/Wind.h"
 #include "Menu.h"
-#include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"

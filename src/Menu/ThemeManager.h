@@ -61,9 +61,9 @@ using json = nlohmann::json;
  *       "Disable": [0.5, 0.5, 0.5, 1.0],         // Disabled elements
  *       "Error": [1.0, 0.4, 0.4, 1.0],           // Error messages
  *       "Warning": [1.0, 0.6, 0.2, 1.0],         // Warning messages
- *       "RestartNeeded": [0.4, 1.0, 0.4, 1.0],   // Restart required indicator
+ *       "RestartNeeded": [0.45, 0.78, 0.48, 1.0], // Restart required indicator
  *       "CurrentHotkey": [1.0, 1.0, 0.0, 1.0],   // Active hotkey highlight
- *       "SuccessColor": [0.0, 1.0, 0.0, 1.0],    // Success messages
+ *       "SuccessColor": [0.32, 0.68, 0.42, 1.0], // Success / positive (muted for text & button contrast)
  *       "InfoColor": [0.2, 0.6, 1.0, 1.0]        // Info messages
  *     },
  *
@@ -107,7 +107,9 @@ using json = nlohmann::json;
  * - Role 3 (Subtitle):   Secondary text, descriptions
  *
  * Each role can have different font family, style, and size scale.
- * Fonts must exist in Data\SKSE\Plugins\CommunityShaders\Fonts\
+ * UI fonts live under Data\Interface\CommunityShaders\Fonts\
+ * Icon fonts (FA / Tabler / Game Icons) are standalone ImFonts under Icons\glyphs\
+ * (see Icons::FA / LC / TI helpers); they are not merged into UI role fonts.
  *
  * BLUR SHADER SYSTEM:
  * ===================
@@ -179,6 +181,11 @@ public:
 		// Header rendering constants
 		static constexpr float HEADER_BASE_TEXT_SCALE = 1.7f;
 		static constexpr float HEADER_BASE_ICON_MULTIPLIER = 1.85f;
+		static constexpr float CATEGORY_LABEL_GAP = 10.0f;
+		static constexpr float CATEGORY_ROW_PADDING = 4.0f;
+		static constexpr float CATEGORY_ROW_GAP = 8.0f;
+		static constexpr float CATEGORY_ICON_OFFSET = 2.0f;
+		static constexpr float FEATURE_ACTION_HINT_WIDTH_EM = 24.0f;
 		static constexpr float SIDEBAR_ICON_SIZE_MULTIPLIER = 1.6f;
 		static constexpr float HEADER_FALLBACK_TEXT_SCALE = 1.5f;
 		static constexpr float DOCKED_ICON_SIZE_MULTIPLIER = 1.5f;
@@ -247,6 +254,12 @@ public:
 
 		static float Em(float multiplier) { return multiplier * ImGui::GetFontSize(); }
 
+		static constexpr float SCENE_INDICATOR_RADIUS_RATIO = 0.25f;  // Scene indicator dot radius relative to the text line height
+
+		// Icon drawing constants
+		static constexpr int ICON_CIRCLE_SEGMENTS = 16;        // Segments for small icon circles
+		static constexpr float ICON_OUTLINE_THICKNESS = 1.5f;  // Outline stroke for hollow icons, before UI scale
+
 		// Search input constants
 		static constexpr float SEARCH_BASELINE_SCREEN_HEIGHT = 1440.0f;  // Search chrome is authored for 2K.
 		static constexpr float SEARCH_ICON_SIZE = 20.0f;                 // Default search icon size
@@ -260,6 +273,18 @@ public:
 		static constexpr float COMBO_SEARCH_ICON_ALPHA = 0.5f;     // Icon alpha for subtle appearance
 		static constexpr float COMBO_SEARCH_ICON_OFFSET_X = 5.0f;  // Icon horizontal offset from input edge
 		static constexpr float COMBO_SEARCH_PADDING_LEFT = 24.0f;  // Left padding to make room for icon
+
+		// Window overlap readability constants
+		static constexpr float OVERLAP_MIN_ALPHA = 0.85f;       // Background alpha when windows overlap
+		static constexpr float OVERLAP_FADEIN_SPEED = 8.0f;     // Fade-in speed (units/sec)
+		static constexpr float OVERLAP_FADEOUT_SPEED = 4.0f;    // Fade-out speed (units/sec)
+		static constexpr float OVERLAP_ALPHA_EPSILON = 0.005f;  // Below this alpha is clamped to zero
+
+		// Tinted control frame: marks where a value comes from (inherited, or a scene override's winning layer)
+		static constexpr float TINTED_FRAME_BG_ALPHA = 0.25f;
+		static constexpr float TINTED_FRAME_BG_HOVERED_ALPHA = 0.35f;
+		static constexpr float TINTED_FRAME_BG_ACTIVE_ALPHA = 0.45f;
+		static constexpr float TINTED_FRAME_BORDER_SIZE = 1.0f;
 
 		// Status button brightness adjustment offsets. Bright colors are darkened by the same amounts for contrast.
 		static constexpr float BUTTON_MIN_COLOR_CHANNEL = 0.0f;

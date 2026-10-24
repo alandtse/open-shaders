@@ -426,10 +426,12 @@ namespace Color
 #	endif
 	}
 
-	float3 ProjectedDiffuse(float3 color, float3 tint, float3 materialColorScale)
+	float3 ProjectedDiffuse(float3 color, float3 tint, float3 materialColorScale, bool linearInput = false)
 	{
+		if (linearInput)
+			color = LinearToSrgb(color);
 #	if defined(TRUE_PBR)
-		// The shared UNORM projection texture enters PBR in its legacy gamma space.
+		// Preserve the authored projection tint when the texture view already decodes sRGB.
 		float3 projectedColor = max(0, color * tint * materialColorScale);
 		return ENABLE_LL ? GamutTransform(CompensateConvertedColor(SrgbToLinear(projectedColor))) : projectedColor;
 #	else

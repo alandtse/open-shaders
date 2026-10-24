@@ -1,9 +1,11 @@
 #include "MotionBlur.h"
+
 #include "Features/PostProcessing.h"
 #include "Features/Upscaling.h"
 #include "GpuPass.h"
 #include "ShaderCache.h"
 #include "Util.h"
+#include "Utils/SettingsControl.h"
 
 #pragma warning(disable: 4324)
 
@@ -143,9 +145,12 @@ void MotionBlur::DrawSettings()
 
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	ImGui::BeginDisabled(cam != nullptr);
-	int preset = static_cast<int>(settings.ScalePreset);
-	if (ImGui::Combo("Motion Length", &preset, presets, IM_ARRAYSIZE(presets))) {
-		settings.ScalePreset = static_cast<MotionScale>(preset);
+
+	{
+		int preset = static_cast<int>(settings.ScalePreset);
+		const SettingsControl::ProxyScope proxy(&settings.ScalePreset, 1.0f);
+		if (ImGui::Combo("Motion Length", &preset, presets, IM_ARRAYSIZE(presets)) && !SettingsControl::IsReplicating())
+			settings.ScalePreset = static_cast<MotionScale>(preset);
 	}
 
 	ImGui::EndDisabled();

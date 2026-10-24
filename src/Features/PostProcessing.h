@@ -32,8 +32,6 @@ struct PostProcessing : Feature
 		uint pad[3];
 	} settings;
 
-	const std::string ppPresetPath = "Data\\SKSE\\Plugins\\CommunityShaders\\PostProcessing";
-
 	virtual inline std::string GetName() override { return "Post Processing"; }
 	virtual inline std::string GetDisplayName() override { return T("feature.post_processing.name", "Post Processing"); }
 	virtual inline std::string GetShortName() override { return "PostProcessing"; }
@@ -58,6 +56,8 @@ struct PostProcessing : Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
+	/** @brief Exposes dedicated portable Baseline authoring and legacy migration. */
+	PresetProvider* GetPresetProvider() override;
 	virtual void RestoreDefaultSettings() override;
 	/** @return true while viewing a pipeline subfeature. */
 	virtual bool HasScopedDefaultSettings() const override;
@@ -100,15 +100,22 @@ struct PostProcessing : Feature
 	/** @brief Publishes Composite's auto exposure whenever the Post Processing pipeline runs. */
 	virtual bool GetSceneExposure(SceneExposure& a_out) const override;
 
+	/**
+	 * @brief Whether Color Grading wants Pumbo AutoHDR this frame (SDR tonemapper + HDR Display).
+	 */
+	bool WantsAutoHDR() const;
+
+	/// Settings loaded before the pipeline exists.
 	json pendingSettings = {};
 
 	void ProcessSettings(json& o_json);
 
-	std::vector<std::string> presets = {};
-	std::vector<std::string> LoadPresets();
-	void SavePresetTo(std::string a_name);
-	/** Loads a named preset. @return true when parsing and application succeed. */
-	bool LoadPresetFrom(std::string a_name);
+	/// Sets each sub-feature's on/off state to the shipped default. Their values default to their
+	/// Settings initializers, so this and RestoreDefaultSettings need no defaults file.
+	void ApplyDefaultEnabledStates();
+
+	/** @brief Creates every sub-feature at its shipped defaults, without GPU resources. */
+	void BuildPipeline();
 
 	enum class FeaturePipelineIndex : size_t
 	{
@@ -128,14 +135,18 @@ struct PostProcessing : Feature
 		COUNT
 	};
 
+	/** @brief Suppresses vanilla effects only when their Post Processing replacements can render. */
+	void UpdateVanillaEffects(bool active);
+
 	/// shared_ptr, not unique_ptr: see PostProcessFeature's weak_ptr callback contract.
 	std::array<std::shared_ptr<PostProcessFeature>, static_cast<size_t>(FeaturePipelineIndex::COUNT)> pipeline;
 
 	/** Identifies the Post Processing page targeted by scoped restoration. */
 	enum class SettingsPage
 	{
-		Pipeline,   ///< Top-level pipeline controls.
-		SubFeature  ///< Settings for the selected pipeline feature.
+		Pipeline,        ///< Top-level pipeline controls.
+		SubFeature,      ///< Settings for the selected pipeline feature.
+		CinematicCamera  ///< Physical camera controls.
 	};
 	/** The visible page whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Pipeline;

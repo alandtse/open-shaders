@@ -20,6 +20,7 @@
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/Input.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/ShaderCacheClearScope.h"
 #include "Utils/StringUtils.h"
 
@@ -94,9 +95,11 @@ namespace Util
 	template <std::integral T>
 	inline bool CheckboxFlag(const char* a_label, T& a_value)
 	{
+		SettingsControl::ProxyScope sceneProxy(&a_value, 1.0f);
 		bool enabled = a_value != 0;
 		if (ImGui::Checkbox(a_label, &enabled)) {
-			a_value = enabled ? static_cast<T>(1) : static_cast<T>(0);
+			if (!SettingsControl::IsReplicating())
+				a_value = enabled ? static_cast<T>(1) : static_cast<T>(0);
 			return true;
 		}
 		return false;
@@ -203,11 +206,37 @@ namespace Util
 	};
 
 	/**
+	 * @brief Whether a mouse or keyboard interaction finished this frame: a click, drag or text entry was
+	 *        released, or focus moved on from it. Buttons, sliders and pickers all end this way, so it is
+	 *        the moment to check whether what they edit changed.
+	 */
+	bool InteractionEndedThisFrame();
+
+	/** @brief Hides feature Debug sections while alive (CS Editor Features window); restores the previous state. */
+	class HideDebugSectionsGuard
+	{
+	public:
+		explicit HideDebugSectionsGuard(bool hide);
+		~HideDebugSectionsGuard();
+
+		HideDebugSectionsGuard(const HideDebugSectionsGuard&) = delete;
+		HideDebugSectionsGuard& operator=(const HideDebugSectionsGuard&) = delete;
+
+	private:
+		bool previous;
+	};
+
+	/** @brief False while a HideDebugSectionsGuard hides them; gate each feature's Debug header on this. */
+	bool ShowDebugSections();
+
+	/**
 	 * Renders text using the disabled text color.
 	 * @param a_text Start of the text
 	 * @param a_textEnd Optional end pointer (nullptr for null-terminated strings)
 	 */
 	void TextUnformattedDisabled(const char* a_text, const char* a_textEnd = nullptr);
+	/** @brief Native selectable behavior with a rounded hover/selection background and unchanged item geometry. */
+	bool RoundedSelectable(const char* label, bool selected, ImGuiSelectableFlags flags = 0, const ImVec2& size = ImVec2(0, 0));
 
 	/**
 	 * Full-row hover/selection highlight for ImGui tables.
@@ -228,6 +257,10 @@ namespace Util
 	 */
 	void SetTooltipPositionNearMouse(float estimatedHeight, float estimatedWidth = 0.0f);
 
+	/** @brief Hover flags that still show tooltips on greyed controls, which must explain why they are greyed. */
+	inline constexpr ImGuiHoveredFlags kTooltipWhenDisabled =
+		ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled;
+
 	/**
 	 * Shows a positioned tooltip with wrapped text when the previous item is hovered.
 	 * Uses SetTooltipPositionNearMouse for viewport-aware placement.
@@ -235,6 +268,9 @@ namespace Util
 	 * @param a_flags Hover flags (default: ImGuiHoveredFlags_DelayNormal)
 	 */
 	void AddTooltip(const char* a_desc, ImGuiHoveredFlags a_flags = ImGuiHoveredFlags_DelayNormal);
+
+	/** @brief Text HelpMarker draws, exposed so callers can measure it. */
+	inline constexpr const char* kHelpMarkerLabel = "(?)";
 
 	/**
 	 * Draws a "(?)" help marker with a tooltip on hover.
@@ -248,6 +284,100 @@ namespace Util
 	/** @brief Tooltip body describing what a plain click currently resolves to, given
 	 *  the live Shift/default state - callers append their own modifier hint line. */
 	const char* GetClearShaderCacheTooltip();
+
+	/**
+	 * @brief Compact segmented control: one rounded track, label-sized segments, the selection in the accent colour.
+	 * @param a_selected In/out selected index
+	 * @param a_marked Index to flag with a dot when it is not the selection, or -1
+	 * @param a_muted Dims the selection so the bar still looks active while representing an off/flat mode
+	 * @return True on the frame a segment is clicked
+	 */
+	bool SegmentedControl(const char* a_id, const char* const* a_labels, int a_count, int& a_selected,
+		int a_marked = -1, bool a_muted = false);
+
+	/**
+	 * @brief Glass/mica pill tab bar: drop-in replacement for ImGui::BeginTabBar / BeginTabItem.
+	 * Draws a compact translucent track with a selected pill instead of classic folder tabs.
+	 * Nesting is supported (stack). Tab labels from the previous frame drive the strip layout.
+	 */
+	bool BeginPillTabBar(const char* str_id);
+	bool BeginPillTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0);
+	void EndPillTabItem();
+	void EndPillTabBar();
+	/** @brief True while a BeginPillTabBar has not yet been closed (for font helpers). */
+	bool IsInsidePillTabBar();
+
+	/** @brief Full-width tinted bar with an icon glyph, for a state that changes what the user can touch.
+	 *  @return True when the banner is left-clicked. */
+	bool StatusBanner(const char* a_icon, const char* a_message, const ImVec4& a_color);
+
+	/** @brief Side length of DrawLockStatusBadge's rounded chip (scales with UI). */
+	float GetLockStatusBadgeSize();
+
+	/**
+	 * @brief Pale green/red rounded lock/unlock chip used by the CS Editor action bar and weather headers.
+	 * @param a_min Top-left of the badge in screen space.
+	 * @param a_locked True draws a lock in SuccessColor; false draws unlock in Error.
+	 * @param a_drawList Optional; defaults to the current window draw list.
+	 */
+	void DrawLockStatusBadge(ImVec2 a_min, bool a_locked, ImDrawList* a_drawList = nullptr);
+
+	/**
+	 * @brief Interactive lock badge that toggles via ButtonBehavior.
+	 * @return True on the frame the badge is clicked.
+	 */
+	bool LockStatusBadgeButton(const char* a_id, bool a_locked, const char* a_tooltip = nullptr);
+
+	/** @brief Width of a DrawBadgeAt badge for the given label. */
+	float MeasureBadgeWidth(const char* a_label);
+
+	/**
+	 * @brief Soft rectangular label badge, vertically centred in a row.
+	 * @param a_min Top-left of the row in screen space.
+	 * @param a_rowHeight Height of the row the badge is centred in.
+	 * @param a_bg Badge fill; usually the tint at a low alpha.
+	 * @param a_fg Label colour.
+	 * @param a_drawList Optional; defaults to the current window draw list.
+	 * @return The badge width.
+	 */
+	float DrawBadgeAt(ImVec2 a_min, float a_rowHeight, const char* a_label, const ImVec4& a_bg, const ImVec4& a_fg,
+		ImDrawList* a_drawList = nullptr);
+
+	/** @brief Badge tinted from one colour (soft fill, readable label), drawn at the cursor; advances layout with Dummy. */
+	void Badge(const char* a_label, const ImVec4& a_tint);
+
+	/**
+	 * @brief Soft rectangular HDR/SDR capability pill (muted blue / muted red).
+	 * @param a_supportsHDR True draws "HDR"; false draws "SDR".
+	 */
+	float MeasureHdrSdrCapabilityPillWidth(bool a_supportsHDR);
+	void DrawHdrSdrCapabilityPillAt(ImVec2 a_min, float a_rowHeight, bool a_supportsHDR, ImDrawList* a_drawList = nullptr);
+	/** @brief Draws the pill at the current cursor and advances layout with Dummy. */
+	void DrawHdrSdrCapabilityPill(bool a_supportsHDR);
+
+	/** @brief When locked, draws a lock banner and greys every control until the scope ends.
+	 *  @param a_outBannerClicked Optional; set when the banner is left-clicked (e.g. to navigate). */
+	class LockedSection
+	{
+	public:
+		LockedSection(bool a_locked, const char* a_message, bool* a_outBannerClicked = nullptr);
+		~LockedSection();
+
+		LockedSection(const LockedSection&) = delete;
+		LockedSection& operator=(const LockedSection&) = delete;
+
+	private:
+		bool m_locked;
+	};
+
+	/** @brief Explainer text behind a collapsed-by-default disclosure row. */
+	void Explainer(const char* a_label, const char* a_text);
+
+	/**
+	 * @brief Thin vertical rule separating groups of related toolbar buttons, used in place of SameLine().
+	 * @param a_continueLine False when the next item calls SameLine() itself.
+	 */
+	void ToolbarDivider(bool a_continueLine = true);
 
 	/**
 	 * Confirmation popup for clearing shader cache.
@@ -264,12 +394,39 @@ namespace Util
 	 */
 	struct ConfirmationPopup
 	{
+		/** @brief The button pressed on a frame; Cancel also covers closing the popup. */
+		enum class Choice
+		{
+			None,
+			Confirm,
+			Alternate,
+			Cancel
+		};
+
+		/** @brief Which button keyboard navigation starts on, so Enter picks it. */
+		enum class Focus
+		{
+			None,
+			Confirm,
+			Cancel
+		};
+
 		std::string title;
 		std::string message;
+		/// Empty hides the button.
 		std::string confirmLabel = "Confirm";
 		std::string cancelLabel = "Cancel";
+		/// Optional destructive button between Confirm and Cancel; empty hides it.
+		std::string alternateLabel;
+		/// Styles Confirm as the primary action rather than a plain button.
+		bool primaryConfirm = false;
+		Focus focus = Focus::None;
 		bool showDontAskAgain = false;
 		bool* dontAskAgainPersist = nullptr;  // Optional external bool to persist preference
+		/// Empty uses the default "Don't ask me again".
+		std::string dontAskAgainLabel;
+		/// The button a ticked "Don't ask again" remembers; later requests answer with it without showing.
+		Choice rememberedChoice = Choice::Confirm;
 
 		ConfirmationPopup() = default;
 		ConfirmationPopup(std::string title, std::string message, std::string confirmLabel = "Confirm", std::string cancelLabel = "Cancel") :
@@ -277,17 +434,64 @@ namespace Util
 
 		void Request();
 		bool Draw();  // Returns true on confirm frame
+		/** @brief Draws the popup while requested. @return The button pressed this frame, else Choice::None. */
+		Choice DrawChoice();
 
 		bool IsOpen() const { return show; }
 
 	private:
 		bool show = false;
-		bool confirmed = false;
+		/// The remembered answer to a request that skipped the popup, returned by the next DrawChoice.
+		Choice pendingChoice = Choice::None;
 		bool dontAskCheckbox = false;
 	};
 
 	/** @brief Draws shared Select All/None buttons for a checkbox selection list. */
 	void DrawSelectionButtons(std::span<uint8_t> selected, const char* selectAll, const char* selectNone);
+
+	/**
+	 * @brief A fixed-width modal with a close button, asked for with Request() from anywhere and drawn each
+	 * frame with Draw() until it closes.
+	 */
+	class DeferredModal
+	{
+	public:
+		/** @brief Opens the modal on the next Draw. */
+		void Request() { active = pendingOpen = true; }
+
+		/** @brief Whether the modal is open or about to open. */
+		bool IsActive() const { return active; }
+
+		/**
+		 * @brief Opens the modal when requested, then calls drawContents inside it while it stays open.
+		 * @param title Visible title; give it a ### id so it survives a language switch.
+		 */
+		template <class DrawContents>
+		void Draw(const char* title, float width, DrawContents&& drawContents)
+		{
+			if (!active)
+				return;
+			const ImGuiID id = ImGui::GetID(title);
+			if (std::exchange(pendingOpen, false)) {
+				openedId = id;
+				ImGui::OpenPopup(title);
+			}
+			// Callers under another ID stack would see it as closed, so only the one that opened it draws it.
+			if (id != openedId)
+				return;
+			ImGui::SetNextWindowSizeConstraints(ImVec2(width, 0.0f), ImVec2(width, FLT_MAX));
+			bool open = true;
+			if (auto popup = CenteredPopupModal(title, &open))
+				drawContents();
+			if (!ImGui::IsPopupOpen(title))
+				active = false;
+		}
+
+	private:
+		ImGuiID openedId = 0;
+		bool active = false;
+		bool pendingOpen = false;
+	};
 
 	/**
 	 * RAII wrapper for styled ImGui buttons that automatically applies and restores styling.
@@ -429,9 +633,41 @@ namespace Util
 		float checkmarkLeftOffset = 0.0f,
 		IconDrawCallback selectedIcon = nullptr);
 
+	/** @brief Draws a circle icon, filled or outlined, on the window draw list. */
+	void DrawIconCircle(ImVec2 center, float radius, ImU32 color, bool filled);
+
+	/** @brief Reserves one text-line-high square and draws a dot centred in it, so callers can test ImGui::IsItemHovered(). */
+	void DrawInlineIndicatorDot(ImU32 color, bool filled);
+
 	/** @brief ImGui::Begin() wrappers that replace native title-bar button highlights with rounded ones. */
 	bool BeginWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags = 0);
 	bool BeginPopupModalWithRoundedClose(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0);
+
+	/**
+	 * @brief Like BeginWithRoundedClose, but floating windows get a flat custom header that doubles as the
+	 * drag handle; docked windows keep their native tab. Collapsing is always disabled.
+	 * @param p_open      Close flag cleared by the header's close button; nullptr omits the button.
+	 * @param drawExtras  Optional compact controls between the title and close button, floating only.
+	 * @param flags       Extra window flags; NoTitleBar is managed per dock state.
+	 * @param drawLeading Optional icon drawn left of the title (floating custom header only).
+	 *                    Receives the icon's top-left and the reserved square size (font size).
+	 */
+	bool BeginWithCustomHeader(const char* name, bool* p_open,
+		const std::function<void()>& drawExtras = nullptr, ImGuiWindowFlags flags = 0,
+		const std::function<void(ImVec2 iconMin, float iconSize)>& drawLeading = nullptr);
+
+	/**
+	 * @brief Shared height for CS Editor floating headers and the top action bar.
+	 * Native GetFrameHeight() is only FontSize + FramePadding.y*2, which makes glyphs look glued
+	 * to the top edge; this doubles the vertical pad so content sits dead-centre with equal air.
+	 */
+	float GetEditorChromeHeaderHeight();
+
+	/**
+	 * @brief Y offset from a chrome row's top to the ImGui text cursor so capital-letter ink is centred.
+	 * Uses FontBaked::Ascent (line-box top → bottom of 'A'), not the full FontSize em-box.
+	 */
+	float GetEditorChromeTextCursorOffsetY(float rowHeight);
 
 	/**
 	 * Button with simple flash feedback (matches action icon hover effect style)
@@ -489,7 +725,7 @@ namespace Util
 		bool m_treeNodeOpened;
 	};
 
-	bool PercentageSlider(const char* label, float* data, float lb = 0.f, float ub = 100.f, const char* format = "%.1f %%");
+	bool PercentageSlider(const char* label, float* data, float lb = 0.f, float ub = 100.f, const char* format = "%.1f %%", ImGuiSliderFlags flags = 0);
 
 	/**
 	 * Draws a 2-4 component float slider. Holding Shift edits all components from the first component.
@@ -608,6 +844,9 @@ namespace Util
 	 * @param isExpanded Reference to the expansion state (only used if collapsible)
 	 * @return true if the expansion state was toggled (only relevant if collapsible)
 	 */
+	/** @brief Draws a localized collapsible feature category. */
+	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount);
+
 	bool DrawSectionHeader(const char* sectionName, bool useWhiteText = false, bool isCollapsible = true, bool* isExpanded = nullptr, IconDrawCallback icon = nullptr);
 
 	/**
@@ -1095,6 +1334,12 @@ namespace Util
 	 */
 	ImVec4 GetPulsingColor(const ImVec4& baseColor, float speed = 4.0f, float minBrightness = 0.7f, float maxBrightness = 1.0f);
 
+	/** @brief Tints the next control's frame and border with an opaque marker color to show where its value comes from. */
+	void PushTintedFrameStyle(const ImVec4& color);
+
+	/** @brief Pops the style pushed by PushTintedFrameStyle. Always call after the corresponding push. */
+	void PopTintedFrameStyle();
+
 	/**
 	 * @brief Color for an [ALPHA]/[BETA] release-stage marker: Alpha (less stable) reads as an
 	 * error, Beta as a warning.
@@ -1146,6 +1391,12 @@ namespace Util
 		ImVec4 GetError();     // Red - error/negative (from theme Error)
 		ImVec4 GetInfo();      // Blue - informational (from theme InfoColor)
 		ImVec4 GetDisabled();  // Gray - disabled items (from theme Disable)
+		/** @brief Muted but legible text for live controls; inactive controls use GetDisabled() instead. */
+		ImVec4 GetSecondary();
+		/** @brief The shared "active/selected" colour for rows, segments, and tabs. */
+		ImVec4 GetAccent();
+		/** @brief Muted error colour for a save button whose target has unsaved changes. */
+		ImVec4 GetUnsaved();
 
 	}
 
@@ -1162,6 +1413,8 @@ namespace Util
 		void WrappedInfo(const char* fmt, ...) IM_FMTARGS(1);
 		void Disabled(const char* fmt, ...) IM_FMTARGS(1);
 		void WrappedDisabled(const char* fmt, ...) IM_FMTARGS(1);
+		void Secondary(const char* fmt, ...) IM_FMTARGS(1);
+		void WrappedSecondary(const char* fmt, ...) IM_FMTARGS(1);
 		void RestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
 		void WrappedRestartNeeded(const char* fmt, ...) IM_FMTARGS(1);
 	}
@@ -1357,6 +1610,9 @@ namespace Util
 		 * @endcode
 		 */
 		uint32_t DIKToVK(uint32_t dikKey);
+
+		/** @brief True when a typed character must be dropped because a slider/drag text entry is active and it isn't a digit, '.' or '-'. */
+		bool IsRejectedByNumericTextEntry(uint32_t character);
 
 		/**
 		 * @brief Converts key codes to human-readable string representations
@@ -1953,4 +2209,11 @@ namespace Util
 	 * @param pluginDir  Wide string path to the directory (opened on click).
 	 */
 	void DrawOpenFolderSelectable(const char* label, const wchar_t* pluginDir);
+
+	/**
+	 * @brief Down-arrow joined to the field just drawn that opens a popup anchored under both.
+	 * Call right after the field (leave GetFrameHeight() of room for the arrow), then BeginPopup(popupId) immediately.
+	 * @param disabledTooltip Shown instead of tooltip while disabled
+	 */
+	void DropdownArrowButton(const char* popupId, const char* tooltip, bool disabled = false, const char* disabledTooltip = nullptr);
 }  // namespace Util

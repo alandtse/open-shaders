@@ -1,5 +1,7 @@
 #include "Camera.h"
 
+#include "Utils/SettingsControl.h"
+
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -44,9 +46,12 @@ void Camera::DrawSettings()
 			const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 			float fov = camera ? camera->HorizontalFOVDeg : settings.FEFoV;
 			ImGui::BeginDisabled(camera != nullptr);
-			ImGui::SliderFloat(T("feature.post_processing.camera.fov", "FOV"), &fov, 20.0f, 180.0f, "%1.0f deg");
+			{
+				const SettingsControl::ProxyScope proxy(&settings.FEFoV, 1.0f);
+				ImGui::SliderFloat(T("feature.post_processing.camera.fov", "FOV"), &fov, 20.0f, 180.0f, "%1.0f deg");
+			}
 			ImGui::EndDisabled();
-			if (!camera)
+			if (!camera && !SettingsControl::IsReplicating())
 				settings.FEFoV = fov;
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip("%s", T("feature.post_processing.camera.fov_in_degrees_set_to_in_game_fov", "FOV in degrees.\n\nSet to in-game FOV."));

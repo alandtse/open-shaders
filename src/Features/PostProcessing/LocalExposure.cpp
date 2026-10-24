@@ -74,7 +74,7 @@ void LocalExposure::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.local_exposure.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.local_exposure.debug", "Debug"))) {
 		static float debugRescale = .3f;
 		const float debugTextureScale = debugRescale * Util::GetUIScale();
 		ImGui::SliderFloat(T("feature.post_processing.local_exposure.view_resize", "View Resize"), &debugRescale, 0.f, 1.f);

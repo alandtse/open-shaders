@@ -18,7 +18,11 @@
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/PerfUtils.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Effects11.h"
+#endif
 
 #include <numbers>
 
@@ -226,7 +230,7 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
-	data.enabled = data.enabled && !globals::state->isMapMenuOpen;
+	data.enabled = data.enabled && !IsSuppressed();
 	ClampDistanceHazeSettings(data);
 	ClampMistSettings(data);
 	data.vanillaFogDensity = 0.0f;
@@ -273,31 +277,44 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	return data;
 }
 
+bool ExponentialHeightFog::IsSuppressed() const
+{
+#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog))
+		return true;
+#endif
+	return globals::state->IsFlatWorldMapOpen();
+}
+
 void ExponentialHeightFog::DrawSettings()
 {
+#if defined(ENABLE_EFFECTS11)
+	const Util::LockedSection enbLock(globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog),
+		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
+#endif
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
-	if (!ImGui::BeginTabBar("##ExponentialHeightFogTabs"))
+	if (!Util::BeginPillTabBar("##ExponentialHeightFogTabs"))
 		return;
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_general"), "General"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_general"), "General"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawGeneralSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	if (ImGui::BeginTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
+	if (Util::BeginPillTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawVolumetricSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	if (ImGui::BeginTabItem(T(TKEY("tab_mists"), "Mists"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_mists"), "Mists"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawMistSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	ImGui::EndTabBar();
+	Util::EndPillTabBar();
 }
 
 void ExponentialHeightFog::DrawGeneralSettings()
@@ -509,7 +526,7 @@ void ExponentialHeightFog::DrawVolumetricSettings()
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
+	if (!SettingsControl::IsReplicating() && Util::ShowDebugSections() && ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
 		uint32_t minGridPixelSize = 4;
 		uint32_t maxGridPixelSize = 64;
 		uint32_t minGridSizeZ = 16;

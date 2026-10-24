@@ -6,6 +6,9 @@
 struct ExponentialHeightFog : Feature
 {
 private:
+	/** @brief Returns whether another pipeline or the flat map owns fog. */
+	bool IsSuppressed() const;
+
 	static constexpr std::string_view MOD_ID = "180146";
 
 public:

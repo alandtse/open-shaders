@@ -1,6 +1,8 @@
 
 #pragma once
 #include "Feature.h"
+#include "Menu/FontAtlasState.h"
+#include "Menu/IconLoader.h"
 #include "Menu/ThemeManager.h"
 #include "Utils/Input.h"
 #include "Utils/Serialize.h"
@@ -237,6 +239,8 @@ public:
 	void RecordDirectInputWheelDelta(std::int32_t delta);
 	/** @brief Returns true if the menu should consume all input (menu open or capturing hotkey) */
 	bool ShouldSwallowInput();
+	/** @brief Keeps Skyrim's AFK vanity camera off while any CS UI is open (settings, editor, first-time setup). */
+	void SyncVanityCamera();
 	/** @brief Returns true if the free camera preview is in flying mode */
 	bool IsPreviewFlying();
 	/**
@@ -256,33 +260,10 @@ public:
 	bool settingShaderBlockNextKey = false;  // Debug: capture shader block next key
 	bool settingCSEditorToggleKey = false;   // CS Editor toggle key
 	bool settingScreenshotKey = false;       // Screenshot capture key
-	bool settingEffects11EditorKey = false;
 	bool settingEffects11ToggleKey = false;  // Effects 11 toggle key
-
-	// Font caching (made public for ThemeManager and OverlayRenderer access)
-	// Marked mutable because they're cache fields that may be updated from const methods
-	float cachedFontSize = ThemeManager::Constants::DEFAULT_FONT_SIZE;  // Tracks whether font has been modified and may require reloading
-	mutable std::string cachedFontName = "Jost/Jost-Regular.ttf";       // Tracks whether font file has changed and may require reloading
-	std::array<std::string, static_cast<size_t>(FontRole::Count)> cachedFontFilesByRole = []() {
-		std::array<std::string, static_cast<size_t>(FontRole::Count)> files{};
-		auto setFile = [&files](FontRole role, std::string value) {
-			files[static_cast<size_t>(role)] = std::move(value);
-		};
-		setFile(FontRole::Body, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Title, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Heading, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Subheading, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Subtext, "Jost/Jost-Regular.ttf");
-		return files;
-	}();
-	mutable std::array<float, static_cast<size_t>(FontRole::Count)> cachedFontPixelSizesByRole = {};
-	std::string cachedFontSignature;
-	mutable std::array<ImFont*, static_cast<size_t>(FontRole::Count)> loadedFontRoles = {};
+	bool settingEffects11EditorKey = false;  // Effects 11 editor key
 
 	// Deferred reload systems (public for SettingsTabRenderer access)
-	bool pendingFontReload = false;
-	bool pendingIconReload = false;
-	bool wantsFontPreviewAtlas = false;  // Set when Fonts tab is opened; gates catalog preview font loading
 	bool pendingCursorReload = false;
 
 private:
@@ -319,50 +300,8 @@ public:
 	struct Constants
 	{
 		static constexpr std::uint16_t KEY_PRESSED_MASK = 0x8000;
+		static constexpr float VANITY_CAMERA_DELAY_SECONDS = 10000.0f;
 	};
-
-	// UI icon textures
-	struct UIIcon
-	{
-		ID3D11ShaderResourceView* texture = nullptr;
-		ImVec2 size = ImVec2(32.0f, 32.0f);
-
-		void Release()
-		{
-			if (texture) {
-				texture->Release();
-				texture = nullptr;
-			}
-		}
-	};
-	struct UIIcons
-	{
-		UIIcon sidebar;
-		UIIcon saveSettings;
-		UIIcon loadSettings;
-		UIIcon deleteSettings;
-		UIIcon clearCache;
-		UIIcon logo;                  // New logo icon
-		UIIcon search;                // Search icon for search bars
-		UIIcon featureSettingRevert;  // Feature revert settings icon
-		UIIcon applyToGame;           // Apply changes to game icon (CS editor)
-		UIIcon pauseTime;             // Pause time icon (CS editor)
-		UIIcon undo;                  // Undo icon (CS editor)
-		UIIcon freeCamera;            // Free camera preview icon (CS editor)
-		UIIcon playMode;              // Play mode preview icon (CS editor)
-
-		// Category icons
-		UIIcon characters;
-		UIIcon display;
-		UIIcon foliage;
-		UIIcon lighting;
-		UIIcon sky;
-		UIIcon landscape;
-		UIIcon water;
-		UIIcon debug;
-		UIIcon materials;
-		UIIcon postProcessing;
-	} uiIcons;
 
 	struct ThemeSettings
 	{
@@ -397,8 +336,9 @@ public:
 			return roles;
 		}();
 
-		bool UseSimplePalette = false;      // DEPRECATED: No longer affects behavior. UI now shows both Simple and Advanced controls.
-		bool UseMonochromeIcons = false;    // whether to use monochrome (white) action icons with text color tinting
+		bool UseSimplePalette = false;    // DEPRECATED: No longer affects behavior. UI now shows both Simple and Advanced controls.
+		bool UseMonochromeIcons = false;  // whether to use monochrome (white) action icons with text color tinting
+		bool ShowActionIcons = true;
 		bool UseMonochromeLogo = false;     // whether to use monochrome CS logo
 		bool ShowFooter = true;             // whether to show the footer with game version/GPU info
 		bool CenterHeader = false;          // whether to center the header title and logo
@@ -442,9 +382,9 @@ public:
 			ImVec4 Disable{ 0.5f, 0.5f, 0.5f, 1.0f };
 			ImVec4 Error{ 1.0f, 0.4f, 0.4f, 1.0f };
 			ImVec4 Warning{ 1.0f, 0.6f, 0.2f, 1.0f };
-			ImVec4 RestartNeeded{ 0.4f, 1.0f, 0.4f, 1.0f };
+			ImVec4 RestartNeeded{ 0.45f, 0.78f, 0.48f, 1.0f };
 			ImVec4 CurrentHotkey{ 1.0f, 1.0f, 0.0f, 1.0f };
-			ImVec4 SuccessColor{ 0.0f, 1.0f, 0.0f, 1.0f };
+			ImVec4 SuccessColor{ 0.32f, 0.68f, 0.42f, 1.0f };
 			ImVec4 InfoColor{ 0.2f, 0.6f, 1.0f, 1.0f };
 		} StatusPalette;
 		struct FeatureHeadingColors
@@ -558,6 +498,13 @@ public:
 	/** @brief Deserializes cursor settings from named-key or legacy sparse-array format */
 	static void CursorFromJson(const json& cursorJson, ThemeSettings::CursorSettings& cursor);
 
+	/** @brief Order of the feature list in the left menu column. */
+	enum class FeatureSortMode : std::uint8_t
+	{
+		Category = 0,  // Grouped under collapsible category headers
+		Alphabetical   // Flat A-Z list
+	};
+
 	struct Settings
 	{
 		std::vector<InputCombo> ToggleKey = { InputCombo::Keyboard(VK_END) };
@@ -576,10 +523,11 @@ public:
 		bool SmartClearShaderCacheDefault = false;       // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
 		bool BackgroundShaderCompilationOnBoot = false;  // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
 		bool HideCompilationHUDInVR = false;             // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
-		bool AutoHideFeatureList = false;                // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;              // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;                  // Require holding Shift to dock windows
-		bool UseResolutionFont = true;                   // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		FeatureSortMode FeatureListSort = FeatureSortMode::Category;
+		bool AutoHideFeatureList = false;    // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;  // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;      // Require holding Shift to dock windows
+		bool UseResolutionFont = true;       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};
@@ -596,13 +544,20 @@ public:
 	/** @brief Gets the font role settings for the given role */
 	const ThemeSettings::FontRoleSettings& GetFontRoleSettings(FontRole role) const { return settings.Theme.FontRoles[static_cast<size_t>(role)]; }
 	/** @brief Gets the loaded ImFont pointer for the given role */
-	ImFont* GetFont(FontRole role) const { return loadedFontRoles[static_cast<size_t>(role)]; }
+	ImFont* GetFont(FontRole role) const { return MenuFonts::GetAtlasState().GetFont(static_cast<size_t>(role)); }
+	/** @brief Texture icons loaded by IconLoader (save/load/logo/categories/…). */
+	Util::IconLoader::UIIcons& GetUIIcons() { return Util::IconLoader::GetIcons(); }
+	const Util::IconLoader::UIIcons& GetUIIcons() const { return Util::IconLoader::GetIcons(); }
 
 	/** @brief Queues a feature (by GetShortName()) or built-in page (by canonicalId, e.g.
 	 *  "Performance") to be selected in the left panel on the next frame.
 	 *  @param sectionAnchor Optional: an anchor id a feature's own DrawSettings can
 	 *  check (via pendingSectionAnchor) to scroll to a specific heading once selected,
 	 *  instead of leaving the panel at whatever scroll position it was last left at. */
+	/** @brief Opens Scene Manager in its standalone menu page. */
+	void OpenSceneManager();
+	/** @brief Opens a feature page after closing any editor tool safely. */
+	void OpenFeaturePage(const std::string& featureName);
 	void SelectFeatureMenu(const std::string& featureName, const std::string& sectionAnchor = "");
 
 	/** @brief Returns true and clears the pending section anchor if it matches @p anchor;
@@ -694,13 +649,16 @@ private:
 	// the modifier is released first.
 	std::unordered_set<uint32_t> _comboFiredKeys;
 
+	// Skyrim AFK vanity camera: delayed spin while idle. Held off while any CS UI is open.
+	bool vanityCameraDisabled = false;
+	float savedVanityCameraDelay = 180.0f;
+
 	Menu() = default;
 
 	void DrawGeneralSettings();
 	void DrawAdvancedSettings();
 	void DrawDisableAtBootSettings();
 	void DrawFooter();
-	void BuildCategoryCounts();
 
 	void addToEventQueue(KeyEvent e);
 	void ProcessInputEventQueue();

@@ -10,6 +10,7 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsControl.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -175,7 +176,7 @@ void ScreenSpaceGI::DrawSettings()
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
 
-		if (ImGui::BeginTable("Presets", 5)) {
+		if (!SettingsControl::IsReplicating() && ImGui::BeginTable("Presets", 5)) {
 			auto select = [](auto flatVal, auto vrVal) { return globals::game::isVR ? vrVal : flatVal; };
 
 			ImGui::TableNextColumn();
@@ -265,7 +266,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("adaptive_sampling_tooltip"), "Reduces steps on distant or flat surfaces. Adds a depth/normal variance pass; net cost depends on scene."));
 		}
 
-		if (ImGui::BeginTable("Less Work", 3)) {
+		if (ImGui::BeginTable("Less Work", 3, ImGuiTableFlags_SizingStretchSame)) {
 			ImGui::TableNextColumn();
 			recompileFlag |= ImGui::RadioButton(T(TKEY("full_res"), "Full Res"), &settings.ResolutionMode, 0);
 			ImGui::TableNextColumn();
@@ -415,6 +416,11 @@ void ScreenSpaceGI::DrawSettings()
 			}
 		}
 	}
+
+	// The buffer viewer has no scene-context meaning, so hide it while a Scene Manager replica
+	// is borrowing this panel to author overrides.
+	if (SettingsControl::IsReplicating())
+		return;
 
 	///////////////////////////////
 	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
@@ -734,6 +740,7 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::ClearShaderCache()
 {
+	queuedResetHistory = true;
 	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
 
 	CompileComputeShaders();

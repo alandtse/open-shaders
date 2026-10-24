@@ -9,6 +9,7 @@
 #include <atomic>
 #include <format>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -27,6 +28,20 @@ using json = nlohmann::json;
 class State
 {
 public:
+	/** @brief Scopes access to persistent settings beneath transient runtime layers. */
+	class SettingsLayerGuard
+	{
+	public:
+		SettingsLayerGuard();
+		~SettingsLayerGuard();
+		SettingsLayerGuard(const SettingsLayerGuard&) = delete;
+		SettingsLayerGuard& operator=(const SettingsLayerGuard&) = delete;
+
+	private:
+		struct Impl;
+		std::unique_ptr<Impl> impl;
+	};
+
 	State()
 	{
 		std::lock_guard<std::mutex> lock(statsMutex);
@@ -56,6 +71,8 @@ public:
 
 	bool updateShader = true;
 	bool settingCustomShader = false;
+	RE::BSGraphics::VertexShader* customVertexShader = nullptr;
+	RE::BSGraphics::PixelShader* customPixelShader = nullptr;
 	RE::BSShader* currentShader = nullptr;
 	std::string adapterDescription = "";
 
@@ -125,6 +142,8 @@ public:
 	 * @param a_allowReload If true, retries once after a parse error.
 	 */
 	void Load(ConfigMode a_configMode = ConfigMode::USER, bool a_allowReload = true);
+	/** @brief Reloads personal settings with the upstream retry control. */
+	void Load(bool allowReload) { Load(ConfigMode::USER, allowReload); }
 	/**
 	 * @brief Persists current settings to the config file for the given mode.
 	 * @param a_configMode Which config file to write.
@@ -132,6 +151,18 @@ public:
 	 *  re-saves, which must not also persist Effects11's separate ENB-side state.
 	 */
 	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
+	/** @brief Writes the running build's immutable feature defaults and returns the output path. */
+	std::filesystem::path DumpFeatureDefaults() const;
+	/** @brief Checks serialized settings against the last successful load or save after an interaction. */
+	void CheckSettingsChanged();
+	/** @brief Marks the personal configuration changed after a non-widget action. */
+	void MarkSettingsChanged() { settingsChanged = true; }
+	/** @brief Checks changed feature values after a settings interaction. */
+	void CheckFeatureSettingsChanged(Feature*) { CheckSettingsChanged(); }
+	/** @brief Checks core settings after an interaction. */
+	void CheckCoreSettingsChanged() { CheckSettingsChanged(); }
+	/** @brief Returns whether the user configuration has unsaved changes. */
+	bool HasUnsavedChanges() const { return settingsChanged; }
 
 	/** @brief Saves a feature's boot preference immediately; returns false on failure. */
 	bool SetFeatureBootEnabled(const std::string& featureName, bool enabled);
@@ -145,6 +176,26 @@ public:
 	 * @param o_json Output JSON object to populate.
 	 */
 	void SaveToJson(nlohmann::json& o_json);
+	/** @brief Returns a feature's generated startup defaults without exposing mutable baseline state. */
+	const json* GetFeatureDefaults(std::string_view featureName) const;
+	/** @brief Returns the merged code defaults and enabled preset Baselines for a settings root. */
+	const json* GetFeatureBase(std::string_view featureName) const;
+	/** @brief Rebuilds preset Baselines while retaining live personal edits and installed overwrites. */
+	bool ReapplyPresetLayers();
+	/** @brief Reapplies the enabled preset layers through the existing transaction. */
+	void ReapplySettingsLayers();
+	/** @brief Invalidates cached personal edits beneath enabled Baseline packs. */
+	void InvalidateEditsUnderBaselines(Feature* feature = nullptr);
+	/** @brief Restores one feature to its code defaults and enabled Baseline packs. */
+	void RestoreFeatureLayers(Feature* feature);
+	/** @brief Returns loaded features whose personal edits overlap one pack, or all enabled Baselines. */
+	std::vector<Feature*> FindEditsUnderPack(const std::string& packId);
+	/** @brief Returns the cached overlap status for a feature, refreshed after settings interactions. */
+	bool HasEditsUnderBaselines(Feature* feature);
+	/** @brief Drops only personal edits masked by this pack, retaining installed overwrite layers. */
+	bool ClearEditsUnderPack(const std::string& packId);
+	/** @brief Drops only this feature's personal edits masked by enabled Baselines. */
+	bool ClearFeatureEditsUnderBaselines(Feature* feature);
 	/**
 	 * @brief Restores settings from a JSON object (in-memory, no disk I/O).
 	 * @param i_json Input JSON object to read from.
@@ -358,8 +409,9 @@ public:
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
-		IsAurora = 1 << 7,
-		IsMoon = 1 << 8,
+		IsAurora = 1 << 10,
+		IsMoon = 1 << 11,
+		ProjectedTextureIsSRGB = 1 << 12,
 		NoSkyScattering = 1 << 9,  ///< Cloud layer drawn without Effects11 cloud scattering
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
@@ -702,9 +754,20 @@ public:
 	}
 
 private:
+	bool DropPresetEdits(const std::string& packId, Feature* onlyFeature);
+	std::unordered_map<std::string, bool> baselineOverlapCache;
+	std::uint64_t baselineOverlapCatalogRevision = UINT64_MAX;
+	void MarkSettingsSaved();
+	json BuildSettingsSnapshot();
+	json savedSettingsSnapshot;
+	bool settingsChanged = false;
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch);
 	json defaultSettingsBaseline;
+	json featureSettingsBases = json::object();
+	json userFeatureEdits = json::object();
+	json userBootPreferences = json::object();
+	bool featureResourcesReady = false;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

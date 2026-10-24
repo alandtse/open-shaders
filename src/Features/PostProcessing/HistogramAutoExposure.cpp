@@ -3,7 +3,6 @@
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
-#include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -329,14 +328,12 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 	context->CSSetConstantBuffers(1, 1, &cb);
 
 	const bool histogramReadbackActive =
-		globals::menu->IsEnabled &&
 		histogramReadbackRequested &&
 		ImGui::GetCurrentContext() &&
 		histogramReadbackRequestFrame >= ImGui::GetFrameCount() - 1;
 	if (!histogramReadbackActive)
 		histogramReadbackRequested = false;
 	const bool exposureReadbackActive =
-		globals::menu->IsEnabled &&
 		ImGui::GetCurrentContext() &&
 		exposureReadbackRequestFrame >= 0 &&
 		exposureReadbackRequestFrame >= ImGui::GetFrameCount() - 1;

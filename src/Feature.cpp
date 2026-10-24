@@ -176,7 +176,7 @@ void Feature::Load(json& o_json)
 			logger::error("Feature has empty short name, cannot add to feature issues list");
 		}
 	} else {
-		if (!UsesMainSettings())
+		if (!HasPersonalSettings())
 			return;
 
 		// No errors, load settings now
@@ -185,8 +185,17 @@ void Feature::Load(json& o_json)
 			try {
 				LoadSettings(o_json[GetName()]);
 			} catch (...) {
-				logger::warn("Invalid settings for {}, using default.", GetName());
+				logger::warn("Invalid settings for {}, using defaults and preset Baselines.", GetName());
 				RestoreDefaultSettings();
+				if (const auto* base = globals::state->GetFeatureBase(GetName())) {
+					try {
+						auto values = *base;
+						LoadSettings(values);
+					} catch (...) {
+						logger::warn("Invalid Baseline settings for {}, using default.", GetName());
+						RestoreDefaultSettings();
+					}
+				}
 			}
 		} else {
 			logger::info("Loading default settings for {}", GetName());
@@ -197,7 +206,7 @@ void Feature::Load(json& o_json)
 
 void Feature::Save(json& o_json)
 {
-	if (UsesMainSettings())
+	if (HasPersonalSettings())
 		SaveSettings(o_json[GetName()]);
 }
 
@@ -657,6 +666,12 @@ std::string Feature::GetReleaseStageTag(ReleaseStage stage)
 	default:
 		return {};
 	}
+}
+
+ImVec4 Feature::GetReleaseStageColor(ReleaseStage stage)
+{
+	const auto& status = globals::menu->GetTheme().StatusPalette;
+	return stage == ReleaseStage::Alpha ? status.Error : status.Warning;
 }
 
 void Feature::DrawUnloadedUI()

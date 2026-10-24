@@ -98,13 +98,13 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	// Remote Control = devbench bridge status and exposed tools
 	// RenderDoc = frame-capture configuration and capture management
 	// Testing   = A/B harness + dev-mode test scaffolding
-	if (ImGui::BeginTabBar("##AdvancedSettingsTabs", ImGuiTabBarFlags_None)) {
+	if (Util::BeginPillTabBar("##AdvancedSettingsTabs")) {
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_diagnostics", "Diagnostics"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##DiagnosticsContent", ImVec2(0, 0), false)) {
 				RenderDiagnosticsSection();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_disable_at_boot", "Disable at Boot"), Menu::FontRole::Subheading)) {
@@ -112,7 +112,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 				RenderDisableAtBootSection(drawDisableAtBootSettings);
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_remote_control", "Remote Control"), Menu::FontRole::Subheading)) {
@@ -120,7 +120,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 				globals::features::remoteControl.DrawSettings();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_renderdoc", "RenderDoc"), Menu::FontRole::Subheading)) {
@@ -128,7 +128,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 				globals::features::renderDoc.DrawSettings();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_shaders", "Shaders"), Menu::FontRole::Subheading)) {
@@ -136,7 +136,7 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 				RenderShadersSection();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
 		if (MenuFonts::BeginTabItemWithFont(T("menu.advanced.tab_testing", "Testing"), Menu::FontRole::Subheading)) {
@@ -144,10 +144,10 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 				RenderTestingSection();
 			}
 			ImGui::EndChild();
-			ImGui::EndTabItem();
+			MenuFonts::EndTabItem();
 		}
 
-		ImGui::EndTabBar();
+		Util::EndPillTabBar();
 	}
 }
 

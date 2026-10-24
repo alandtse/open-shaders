@@ -39,7 +39,7 @@ void CODBloom::DrawSettings()
 	}
 	ImGui::Unindent();
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.codbloom.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.codbloom.debug", "Debug"))) {
 		constexpr float kDebugMipPreviewScale = 0.2f;
 		const float previewScale = kDebugMipPreviewScale * Util::GetUIScale();
 		static int mip = 0;

@@ -68,6 +68,7 @@ public:
 
 	// Guards landscapeDiffusePaths, landscapeDiffuseFileNames, meshTextureCache and meshTextureKeepAlive.
 	std::shared_mutex meshTextureMutex;
+	// Canonical diffuse paths of every land texture record, relative to textures/.
 	std::unordered_set<std::string> landscapeDiffusePaths;
 	std::unordered_set<std::string> landscapeDiffuseFileNames;
 	// Keyed on the interned BSFixedString pointer of a diffuse texture name.

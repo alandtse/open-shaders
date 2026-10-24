@@ -1,5 +1,7 @@
 ﻿#include "DoF.h"
 
+#include "Utils/SettingsControl.h"
+
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "Menu.h"
@@ -11,6 +13,8 @@
 
 namespace
 {
+	constexpr float RaceMenuFocalLengthMM = 18.0f;
+
 	uint ReduceDoFWidth(uint width, bool roundUp = true)
 	{
 		const uint roundOffset = roundUp ? 1u : 0u;
@@ -110,8 +114,11 @@ void DoF::DrawSettings()
 			ImGui::TextDisabled("%s", T("feature.post_processing.do_f.procedural_requires_adaptive", "Procedural blades require Adaptive Gather; the compatibility path uses a circle."));
 	} else if (owner) {
 		const int shapeCount = owner->bokehResources.GetTotalShapeCount();
-		settings.HighlightShape = std::clamp(settings.HighlightShape, 1, std::max(shapeCount, 1));
-		const int selectedShape = settings.HighlightShape - 1;
+		const int shape = std::clamp(settings.HighlightShape, 1, std::max(shapeCount, 1));
+		if (!SettingsControl::IsReplicating())
+			settings.HighlightShape = shape;
+		const int selectedShape = shape - 1;
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
 		if (ImGui::BeginCombo(T("feature.post_processing.do_f.highlight_custom_shape", "Custom Aperture Texture"), owner->bokehResources.GetShapeName(selectedShape))) {
 			for (int i = 0; i < shapeCount; ++i) {
 				const bool selected = i == selectedShape;
@@ -122,6 +129,7 @@ void DoF::DrawSettings()
 			}
 			ImGui::EndCombo();
 		}
+		ImGui::EndDisabled();
 		ImGui::TextDisabled("%s", T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
 	}
 	ImGui::BeginDisabled(cam != nullptr);
@@ -134,7 +142,7 @@ void DoF::DrawSettings()
 		ImGui::Text(T("feature.post_processing.do_f.selected_reference", "Selected Reference: %08X"), currentRef);
 	}
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.do_f.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.do_f.debug", "Debug"))) {
 		const float uiScale = Util::GetUIScale();
 		const float focusPreviewScale = 64.0f * uiScale;
 		static float debugRescale = .3f;
@@ -456,6 +464,7 @@ void DoF::CompileComputeShaders()
 
 void DoF::Draw(TextureInfo& inout_tex)
 {
+	const Settings renderSettings = settings;
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 	auto* depthSRV = Util::AsReal(renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
@@ -464,19 +473,19 @@ void DoF::Draw(TextureInfo& inout_tex)
 	}
 
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
-
-	float focusLen = settings.FocalLength;
-	float fNumber = settings.FNumber;
-	float sensorWidthMM = settings.SensorWidthMM;
-	float transitionSpeed = settings.TransitionSpeed;
-	float nearBlur = settings.NearPlaneMaxBlur;
-	float manualFocus = settings.ManualFocusPlane / 1000.0f;
-	float2 focusCoord = settings.FocusCoord;
+	float focusLen = renderSettings.FocalLength;
+	float fNumber = renderSettings.FNumber;
+	float sensorWidthMM = renderSettings.SensorWidthMM;
+	float transitionSpeed = renderSettings.TransitionSpeed;
+	float nearBlur = renderSettings.NearPlaneMaxBlur;
+	float manualFocus = renderSettings.ManualFocusPlane / 1000.0f;
+	float2 focusCoord = renderSettings.FocusCoord;
 	debugFocusPlane = manualFocus;
-	bool autoFocus = settings.AutoFocus;
-	int bladeCount = settings.BokehBladeCount;
-	float bladeRoundness = settings.BokehBladeRoundness;
+	bool autoFocus = renderSettings.AutoFocus;
+	int bladeCount = renderSettings.BokehBladeCount;
+	float bladeRoundness = renderSettings.BokehBladeRoundness;
 
+	const bool inRaceMenu = globals::game::ui && globals::game::ui->IsMenuOpen(RE::RaceSexMenu::MENU_NAME);
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	CinematicCamera::FocusResolver* resolver = owner ? &owner->GetCinematicCamera().focusResolver : nullptr;
 	if (cam && resolver) {
@@ -498,7 +507,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 			break;
 		case CinematicCamera::FocusMode::Target:
 			{
-				auto result = resolver->ResolveTarget(settings.consoleSelection, currentRef);
+				auto result = resolver->ResolveTarget(renderSettings.consoleSelection, currentRef);
 				if (result.hasTarget) {
 					if (result.projected) {
 						autoFocus = true;
@@ -513,20 +522,20 @@ void DoF::Draw(TextureInfo& inout_tex)
 			break;
 		}
 		debugFocusPlane = manualFocus;
-	} else if (settings.targetFocus && resolver) {
+	} else if (renderSettings.targetFocus && resolver && !inRaceMenu) {
 		focusLen = 1.0f;
 		nearBlur = 0.0f;
 		float targetFocusDistanceGame = 0;
 		autoFocus = false;
 
-		RE::TESObjectREFR* target = resolver->FindTarget(settings.consoleSelection, currentRef);
+		RE::TESObjectREFR* target = resolver->FindTarget(renderSettings.consoleSelection, currentRef);
 		if (!target)
 			return;
 
 		targetFocusDistanceGame = Util::GetCameraDistanceToReference(target);
 		debugDistance = targetFocusDistanceGame;
-		nearBlur = settings.NearPlaneMaxBlur;
-		focusLen = settings.targetFocusFocalLength;
+		nearBlur = renderSettings.NearPlaneMaxBlur;
+		focusLen = renderSettings.targetFocusFocalLength;
 		if (Util::GetReferenceFocusCoord(target, focusCoord)) {
 			// Visible-surface depth avoids focusing behind the target face.
 			autoFocus = true;
@@ -535,9 +544,20 @@ void DoF::Draw(TextureInfo& inout_tex)
 		}
 		debugFocusPlane = manualFocus;
 	}
+	// RaceMenu always autofocuses the player, regardless of the configured mode.
+	auto* player = globals::game::player;
+	if (player && inRaceMenu) {
+		focusLen = RaceMenuFocalLengthMM;
+		autoFocus = Util::GetReferenceFocusCoord(player, focusCoord);
+		if (!autoFocus) {
+			manualFocus = Util::Units::GameUnitsToMeters(Util::GetCameraDistanceToReference(player)) * 0.001f;
+		}
+		debugFocusPlane = manualFocus;
+	}
+
 	// No-op the whole frame until the core kernels are ready -- a partial
 	// sequential pipeline would write garbage into the scene target.
-	const bool needPostSmoothing = settings.PostBlurSmoothing >= 0.01f;
+	const bool needPostSmoothing = renderSettings.PostBlurSmoothing >= 0.01f;
 	const bool coreReady = AllShadersReady({ &UpdateFocusCS, &CalculateCoCCS, &CoCTileFlattenCS,
 		&CoCTileDilateHCS, &CoCTileDilateVCS, &DownsampleLegacyCS, &FarBlurCS, &NearBlurCS,
 		&GatherPostfilterCS, &CombinerCS });
@@ -549,15 +569,15 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const uint halfResY = texPreBlurred->desc.Height;
 	const uint tileDimX = texCoCTile->desc.Width;
 	const uint tileDimY = texCoCTile->desc.Height;
-	const size_t gatherQuality = (size_t)std::clamp(settings.GatherQuality, 0, 1);
+	const size_t gatherQuality = (size_t)std::clamp(renderSettings.GatherQuality, 0, 1);
 	UpdateProceduralBokehSamples(bladeCount, bladeRoundness);
 
-	const int requestedBokehMode = std::clamp(settings.BokehMode, 0, 1);
+	const int requestedBokehMode = std::clamp(renderSettings.BokehMode, 0, 1);
 	int customShapeIndex = 0;
 	ID3D11ShaderResourceView* customShapeSRV = nullptr;
 	ID3D11ShaderResourceView* customShapeSampleSRV = nullptr;
 	if (owner && requestedBokehMode == 1) {
-		customShapeIndex = std::clamp(settings.HighlightShape - 1, 0, std::max(owner->bokehResources.GetTotalShapeCount() - 1, 0));
+		customShapeIndex = std::clamp(renderSettings.HighlightShape - 1, 0, std::max(owner->bokehResources.GetTotalShapeCount() - 1, 0));
 		customShapeSRV = owner->bokehResources.GetShapeSRV(customShapeIndex);
 		customShapeSampleSRV = owner->bokehResources.GetShapeSampleSRV(customShapeIndex);
 	}
@@ -568,11 +588,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 	const bool adaptiveGatherReady = bokehSampleSRV &&
 	                                 AllShadersReady({ &DownsampleCS, &ReduceColorCoCCS, &ReduceColorCS,
 										 &FarGatherCS[gatherQuality], &NearGatherCS[gatherQuality] });
-	const bool useAdaptiveGather = settings.UseAdaptiveGather && adaptiveGatherReady;
+	const bool useAdaptiveGather = renderSettings.UseAdaptiveGather && adaptiveGatherReady;
 
 	// Tile propagation carries the near disc reach itself, so the same low-resolution dilation used
 	// for group culling now replaces the two old half-resolution Gaussian passes.
-	const float wantNearRadiusPx = std::max(settings.MaxNearCoCRadius, 1e-4f) * res.x * std::max(nearBlur, 0.0f) * bokehMaxRadius;
+	const float wantNearRadiusPx = std::max(renderSettings.MaxNearCoCRadius, 1e-4f) * res.x * std::max(nearBlur, 0.0f) * bokehMaxRadius;
 	constexpr float conservativeTileStepPx = 16.0f * 0.70710678f;
 	const uint tileDilateRadius = wantNearRadiusPx > 0.0f ? std::min(48u, (uint)std::ceil(wantNearRadiusPx / conservativeTileStepPx) + 1u) : 0u;
 	const float nearMaxReachPx = tileDilateRadius > 0u ? std::min(wantNearRadiusPx, (float)(tileDilateRadius - 1u) * conservativeTileStepPx) : 0.0f;
@@ -583,19 +603,19 @@ void DoF::Draw(TextureInfo& inout_tex)
 		.ManualFocusPlane = manualFocus,
 		.FocalLength = focusLen,
 		.FNumber = fNumber,
-		.FarPlaneMaxBlur = settings.FarPlaneMaxBlur,
+		.FarPlaneMaxBlur = renderSettings.FarPlaneMaxBlur,
 		.NearPlaneMaxBlur = nearBlur,
-		.BlurQuality = settings.BlurQuality,
-		.NearFarDistanceCompensation = settings.NearFarDistanceCompensation,
-		.BokehBusyFactor = settings.BokehBusyFactor,
-		.HighlightBoost = settings.HighlightBoost,
-		.PostBlurSmoothing = settings.PostBlurSmoothing,
-		.HighlightShape = bokehMode == 1 ? (uint)settings.HighlightShape : 0u,
-		.HighlightShapeRotationAngle = cam ? std::fmod(cam->ApertureBladeRotationDeg, 360.0f) / 360.0f : settings.HighlightShapeRotationAngle,
-		.PetzvalStrength = settings.PetzvalStrength,
+		.BlurQuality = renderSettings.BlurQuality,
+		.NearFarDistanceCompensation = renderSettings.NearFarDistanceCompensation,
+		.BokehBusyFactor = renderSettings.BokehBusyFactor,
+		.HighlightBoost = renderSettings.HighlightBoost,
+		.PostBlurSmoothing = renderSettings.PostBlurSmoothing,
+		.HighlightShape = bokehMode == 1 ? (uint)renderSettings.HighlightShape : 0u,
+		.HighlightShapeRotationAngle = cam ? std::fmod(cam->ApertureBladeRotationDeg, 360.0f) / 360.0f : renderSettings.HighlightShapeRotationAngle,
+		.PetzvalStrength = renderSettings.PetzvalStrength,
 		.AutoFocus = autoFocus,
-		.MaxNearCoCRadius = std::max(settings.MaxNearCoCRadius, 1e-4f),
-		.MaxFarCoCRadius = std::max(settings.MaxFarCoCRadius, 1e-4f),
+		.MaxNearCoCRadius = std::max(renderSettings.MaxNearCoCRadius, 1e-4f),
+		.MaxFarCoCRadius = std::max(renderSettings.MaxFarCoCRadius, 1e-4f),
 		.TileDilateRadius = tileDilateRadius,
 		.CoCTileDimX = tileDimX,
 		.CoCTileDimY = tileDimY,

@@ -499,7 +499,6 @@ public:
 	// Unified interface methods - external code should use these instead of direct access
 	void LoadUpscalingSDKs();  // Loads all SDKs at once
 	HANDLE GetFrameLatencyWaitableObject() const;
-	float GetFrameTime() const;
 
 	// Backend interface methods
 	bool IsBackendInitialized() const;

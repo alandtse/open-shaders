@@ -2,6 +2,7 @@
 #include "Util.h"
 
 #include "I18n/I18n.h"
+#include "Utils/SettingsControl.h"
 #include <algorithm>
 
 namespace
@@ -846,11 +847,13 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 		ComboEnum(T("feature.post_processing.open_drt.look_preset", "Look Preset"), presets.lookPreset, kLookPresetLabels);
 		ComboEnum(T("feature.post_processing.open_drt.tonescale_preset", "Tonescale Preset"), presets.tonescalePreset, kTonescalePresetLabels);
 
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
 		if (ImGui::Button(T("feature.post_processing.open_drt.apply_preset", "Apply Preset"), { -FLT_MIN, 0 })) {
 			ApplyLookPreset(s, presets.lookPreset);
 			ApplyTonescalePreset(s, presets.tonescalePreset);
 			s.clamp = 1;
 		}
+		ImGui::EndDisabled();
 	}
 
 	if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.display", "Display"), ImGuiTreeNodeFlags_DefaultOpen)) {

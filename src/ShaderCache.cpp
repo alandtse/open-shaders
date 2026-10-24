@@ -739,6 +739,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Lighting)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -757,6 +764,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::BloodSplatter)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -781,6 +795,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::DistantTree)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -857,6 +878,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Sky)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -880,6 +908,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Grass)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -928,6 +963,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Particle)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -1024,6 +1066,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Effect)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -1089,6 +1138,13 @@ namespace SIE
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Water)) {
 					defines[lastIndex++] = { feature->GetShaderDefineName().data(), nullptr };
+					auto options = feature->GetShaderDefineOptions();
+					if (!options.empty()) {
+						for (auto& option : options) {
+							const char* definition = option.second.empty() ? nullptr : option.second.data();
+							defines[lastIndex++] = { option.first.data(), definition };
+						}
+					}
 				}
 			}
 
@@ -1931,18 +1987,21 @@ namespace SIE
 			mapBufferConsts("PerGeometry", bufferSizes[2]);
 		}
 
-		std::wstring GetDiskPath(const std::string_view& name, uint32_t descriptor, ShaderClass shaderClass)
+		std::wstring GetDiskPath(const RE::BSShader& shader, uint32_t descriptor, ShaderClass shaderClass)
 		{
+			const std::string_view name = shader.fxpFilename;
 			// Both grass depth techniques share bytecode and must use the same disk entry.
 			if (name == "RunGrass" &&
 				(descriptor & 0b1111) == static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepthStencil)) {
 				descriptor = (descriptor & ~0b1111u) | static_cast<uint32_t>(ShaderCache::GrassShaderTechniques::RenderDepth);
 			}
 
-			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->GetDefinesString());
+			std::array<D3D_SHADER_MACRO, 64> defines{};
+			GetShaderDefines(shader, descriptor, std::span{ defines });
+			const auto suffixNarrow = Util::GetShaderDefinesSuffix(globals::state->GetDefinesString() + ";" + MergeDefinesString(defines, true));
 			const std::wstring suffix(suffixNarrow.begin(), suffixNarrow.end());
 
-			const auto wname = std::wstring(name.begin(), name.end());
+			const std::wstring wname(name.begin(), name.end());
 			switch (shaderClass) {
 			case ShaderClass::Pixel:
 				return std::format(L"Data/ShaderCache/{}/{:X}{}.pso", wname, descriptor, suffix);
@@ -2083,7 +2142,7 @@ namespace SIE
 			const auto type = shader.shaderType.get();
 
 			// check diskcache
-			auto diskPath = GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
+			auto diskPath = GetDiskPath(shader, descriptor, shaderClass);
 			ID3DBlob* shaderBlob = nullptr;
 
 			// A failed filesystem probe is a cache miss, not a failed compilation task.
@@ -2355,7 +2414,10 @@ namespace SIE
 					try {
 						std::filesystem::create_directories(directoryPath);
 					} catch (std::filesystem::filesystem_error const& ex) {
-						logger::error("Failed to create folder: {}", ex.what());
+						// Concurrent compiles of one shader type race here; the folder existing afterwards is success.
+						std::error_code statusError;
+						if (!std::filesystem::is_directory(directoryPath, statusError) || statusError)
+							logger::error("Failed to create folder: {}", ex.what());
 					}
 				}
 
@@ -2824,6 +2886,18 @@ namespace SIE
 		return nullptr;
 	}
 
+	bool ShaderCache::HasPixelShaders(RE::BSShader::Type type, std::span<const uint32_t> descriptors)
+	{
+		if (type <= RE::BSShader::Type::None || type >= RE::BSShader::Type::Total)
+			return false;
+		std::lock_guard lockGuard(pixelShadersMutex);
+		const auto& typeCache = pixelShaders[static_cast<size_t>(type)];
+		return std::ranges::all_of(descriptors, [&](uint32_t descriptor) {
+			const auto it = typeCache.find(descriptor);
+			return it != typeCache.end() && it->second && it->second->shader;
+		});
+	}
+
 	RE::BSGraphics::ComputeShader* ShaderCache::GetComputeShader(const RE::BSShader& shader,
 		uint32_t descriptor)
 	{
@@ -2889,6 +2963,13 @@ namespace SIE
 	void ShaderCache::Clear()
 	{
 		compilationSet.BumpGeneration();
+		auto* state = globals::state;
+		if (globals::game::currentVertexShader && *globals::game::currentVertexShader == state->customVertexShader)
+			*globals::game::currentVertexShader = nullptr;
+		if (globals::game::currentPixelShader && *globals::game::currentPixelShader == state->customPixelShader)
+			*globals::game::currentPixelShader = nullptr;
+		state->customVertexShader = nullptr;
+		state->customPixelShader = nullptr;
 		{
 			std::lock_guard lockGuardV(vertexShadersMutex);
 			for (auto& shaders : vertexShaders) {
@@ -3072,7 +3153,7 @@ namespace SIE
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			auto it = hlslToShaderMap.find(lowerFilePath);
-			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass) };
+			hlslRecord newRecord{ key, shader.shaderType.get(), descriptor, shaderClass, SIE::SShaderCache::GetDiskPath(shader, descriptor, shaderClass) };
 
 			if (it != hlslToShaderMap.end()) {
 				auto& entries = it->second;
@@ -5015,7 +5096,7 @@ namespace SIE
 			info.shaderType = shader.shaderType.get();
 			info.shaderClass = shaderClass;
 			info.descriptor = descriptor;
-			info.diskPath = SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
+			info.diskPath = SIE::SShaderCache::GetDiskPath(shader, descriptor, shaderClass);
 		};
 
 		if (globals::state->IsDeveloperMode()) {
@@ -5207,7 +5288,7 @@ namespace SIE
 													 { "shader", std::string(shader.fxpFilename) }, { "type", magic_enum::enum_name(shader.shaderType.get()) },
 													 { "descriptor", aDescriptor }, { "stage", magic_enum::enum_name(shaderClass) },
 													 { "key", SShaderCache::GetShaderString(shaderClass, shader, aDescriptor, true) },
-													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader.fxpFilename, aDescriptor, shaderClass)) } }
+													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader, aDescriptor, shaderClass)) } }
 													 .dump());
 		}
 	}
@@ -5324,8 +5405,9 @@ namespace SIE
 		auto shaderCache = globals::shaderCache;
 		if (!conditionVariable.wait(
 				lock, stoken,
-				[this, &shaderCache]() { return (!availableTasks.empty() || !pendingAuxTasks.empty()) &&
-			                                    // Use < (not <=) so push_task() never exceeds the limit.
+				[this, &shaderCache]() { return (!availableTasks.empty() || !demandedTasks.empty() || !pendingAuxTasks.empty()) &&
+			                                    // Count matrix and auxiliary tasks; ReleaseDispatchSlot()
+			                                    // decrements under this mutex before notifying the waiter.
 			                                    static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) <
 			                                        (!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount); })) {
 			/*Woke up because of a stop request. */
@@ -5342,13 +5424,15 @@ namespace SIE
 
 		// Matrix tasks are checked before aux so queued shader work always wins
 		// admission over standalone compute-shader work when both are ready.
-		if (!availableTasks.empty()) {
+		if (!availableTasks.empty() || !demandedTasks.empty()) {
 			// Startup policy: keep dispatching the hardest queued work first.
 			// This preserves the existing priority score while preventing light tasks
 			// from bypassing queued heavy shaders and stretching the tail.
-			auto bestIt = std::prev(availableTasks.end());
+			// Shaders the game is already drawing with go first, or they stay black behind the heavy tail.
+			auto& queue = demandedTasks.empty() ? availableTasks : demandedTasks;
+			auto bestIt = std::prev(queue.end());
 			ShaderCompilationTask task = *bestIt;
-			availableTasks.erase(bestIt);
+			queue.erase(bestIt);
 
 			if (task.GetPriority() >= kHeavyPriorityThreshold) {
 				heavyTasksInFlight.fetch_add(1, std::memory_order_relaxed);
@@ -5394,13 +5478,24 @@ namespace SIE
 		auto inProgressIt = tasksInProgress.find(task);
 		auto processedIt = processedTasks.find(task);
 		// Shared bytecode still needs a runtime shader object for each descriptor.
-		if (inProgressIt == tasksInProgress.end() && processedIt == processedTasks.end()) {
+		if (inProgressIt == tasksInProgress.end() && processedIt == processedTasks.end() && !demandedTasks.contains(task)) {
 			LARGE_INTEGER now;
 			QueryPerformanceCounter(&now);
 			auto queuedTask = task;
 			queuedTask.SetEnqueuedQpc(now.QuadPart);
 			queuedTask.SetGeneration(generation.load(std::memory_order_relaxed));
-			auto [_, wasAdded] = availableTasks.insert(queuedTask);
+			bool wasAdded;
+			if (globals::shaderCache->backgroundCompilation) {
+				// Only the game's own draw requests reach Add, so anything queued now is demanded.
+				if (auto queued = availableTasks.extract(queuedTask)) {
+					demandedTasks.insert(std::move(queued));
+					wasAdded = false;
+				} else {
+					wasAdded = demandedTasks.insert(queuedTask).second;
+				}
+			} else {
+				wasAdded = availableTasks.insert(queuedTask).second;
+			}
 			if (wasAdded) {
 				// Increment counters inside the lock so that TryTakeNext, which reads
 				// IsCompiling() after waking up, sees the updated totalTasks and
@@ -5596,6 +5691,7 @@ namespace SIE
 	{
 		std::scoped_lock lock(compilationMutex);
 		availableTasks.clear();
+		demandedTasks.clear();
 		if (a_includeStandalone) {
 			standaloneGeneration.fetch_add(1, std::memory_order_release);
 			pendingAuxTasks.clear();

@@ -80,6 +80,8 @@ runs:
                     - 'tests/shaders/**'
                   cpp_tests:
                     - 'tests/cpp/**'
+                    - 'tests/test_scene_settings_catalog_generator.py'
+                    - 'tests/test_scene_settings_policy.py'
               base_sha: ${{ inputs.base-sha }}
               sha: ${{ inputs.head-sha }}
 

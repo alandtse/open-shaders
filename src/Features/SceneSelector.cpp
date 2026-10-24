@@ -107,7 +107,7 @@ void SceneSelector::DataLoaded()
 void SceneSelector::Prepass()
 {
 	if (!globals::features::csEditor.loaded)
-		CSEditor::UpdateWeatherLockAndTime();
+		EditorWindow::MaintainWeatherLock();
 }
 
 void SceneSelector::EnsureWeatherListLoaded()

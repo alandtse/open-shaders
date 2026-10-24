@@ -68,7 +68,7 @@ namespace CinematicCamera
 		float ExposureCompensationEV = 0.0f;
 	};
 
-	struct Settings
+	struct CameraSettings
 	{
 		bool Enabled = false;
 		FilmbackSettings Filmback;
@@ -136,7 +136,7 @@ namespace CinematicCamera
 
 	struct Controller
 	{
-		Settings settings;
+		CameraSettings settings;
 
 		FocusResolver focusResolver;
 
@@ -166,6 +166,9 @@ namespace CinematicCamera
 
 		/** @brief Returns active physical parameters or null while suspended. */
 		[[nodiscard]] const PhysicalCameraState* GetState() const { return stateValid ? &activeState : nullptr; }
+
+		/** @brief Returns the localized filmback preset name. */
+		[[nodiscard]] const char* GetFilmbackPresetName() const;
 
 		/** @brief Returns the localized projection ownership status. */
 		[[nodiscard]] const char* GetFovStateText() const;

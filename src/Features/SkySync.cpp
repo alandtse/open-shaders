@@ -2,6 +2,8 @@
 #include "../I18n/I18n.h"
 #include "RE/B/BSVolumetricLightingRenderData.h"
 
+#include "LinearLighting.h"
+#include "Utils/Climate.h"
 #include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.sky_sync."
@@ -154,7 +156,7 @@ void SkySync::DrawSettings()
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_None)) {
+	if (Util::ShowDebugSections() && ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_None)) {
 		const char* CasterNames[] = { T(TKEY("caster_sun"), "Sun"), T(TKEY("caster_masser"), "Masser"), T(TKEY("caster_secunda"), "Secunda"), T(TKEY("caster_zenith"), "Zenith") };
 		const char* PhaseNames[] = { T(TKEY("phase_full"), "Full"), T(TKEY("phase_waning_gibbous"), "Waning Gibbous"), T(TKEY("phase_waning_quarter"), "Waning Quarter"), T(TKEY("phase_waning_crescent"), "Waning Crescent"), T(TKEY("phase_new"), "New"), T(TKEY("phase_waxing_crescent"), "Waxing Crescent"), T(TKEY("phase_waxing_quarter"), "Waxing Quarter"), T(TKEY("phase_waxing_gibbous"), "Waxing Gibbous") };
 
@@ -411,9 +413,9 @@ RE::BSVolumetricLightingRenderData SkySync::BlendNightVolumetricLighting(const R
 	return result;
 }
 
-void SkySync::Sky_Update::thunk(RE::Sky* sky)
+void SkySync::Sky_Update::thunk(RE::Sky* sky, float deltaTime)
 {
-	func(sky);
+	func(sky, deltaTime);
 	auto& skySync = globals::features::skySync;
 	skySync.PreparePendingTransitions();
 	if (skySync.Update(sky))
@@ -669,17 +671,12 @@ bool SkySync::IsWorldspaceDisabled(const RE::TESWorldSpace* worldspace) const
 	return editorID && std::ranges::any_of(settings.DisabledWorldspaces, [editorID](const std::string& listed) { return !_stricmp(listed.c_str(), editorID); });
 }
 
-float SkySync::MiddleHour(const RE::TESClimate::Timing::Interval& interval)
-{
-	return (interval.end * HoursPerTimingUnit + interval.begin * HoursPerTimingUnit) * 0.5f;
-}
-
 std::pair<float, float> SkySync::GetSunHorizonHours(const RE::TESClimate::Timing& timing) const
 {
 	// Vanilla's sun touches the horizon where its alpha fade ends: the interval midpoint +- half fSunAlphaTransTime
 	const float halfTransition = settings.UseAlternateSunPath ? AlternateSunHorizonOffsetHours :
 	                                                            (gSunAlphaTransTime ? gSunAlphaTransTime->GetFloat() : DefaultSunAlphaTransTime) * 0.5f;
-	return { MiddleHour(timing.sunrise) - halfTransition, MiddleHour(timing.sunset) + halfTransition };
+	return { Util::Climate::GetMiddleHour(timing.sunrise) - halfTransition, Util::Climate::GetMiddleHour(timing.sunset) + halfTransition };
 }
 
 // Horizon-dip altitude correction, restored from the pre-#2408 Sky Sync: rotates a celestial direction down by the

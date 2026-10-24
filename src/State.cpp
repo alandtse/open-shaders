@@ -5,6 +5,8 @@
 
 #include <pystring/pystring.h>
 
+#include "BaselineManager.h"
+#include "CSEditor/FormEditSources.h"
 #include "Deferred.h"
 #include "EngineFixes/LODBlendRingFix.h"
 #include "EngineFixes/LandscapeSeamsFix.h"
@@ -40,6 +42,9 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/Wind/Wind.h"
 #include "Menu.h"
+#include "PostProcessingMode.h"
+#include "Presets/PresetState.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "ShaderCache.h"
@@ -49,6 +54,15 @@
 #include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
+#include "VanillaBinding.h"
+
+struct State::SettingsLayerGuard::Impl
+{
+	SceneSettingsManager::SceneLayerGuard guard;
+};
+
+State::SettingsLayerGuard::SettingsLayerGuard() : impl(std::make_unique<Impl>()) {}
+State::SettingsLayerGuard::~SettingsLayerGuard() = default;
 
 #ifdef TRACY_ENABLE
 static thread_local std::vector<TracyCZoneCtx> s_tracyPerfZones;
@@ -91,11 +105,6 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 	}
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_MOON)
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon);
-	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
-		// Sky binds the depth copy as its DSV, so sample main depth to avoid a read/write conflict.
-		auto* depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
-		globals::d3d::context->VSSetShaderResources(17, 1, &depthSRV);
-	}
 }
 
 void State::UpdateEffectShaderPermutation(RE::BSRenderPass* a_pass)
@@ -339,6 +348,7 @@ State::TonemapOwner State::GetTonemapOwner()
 	else
 		cachedOwner = TonemapOwner::kVanilla;
 
+	postProcessing.UpdateVanillaEffects(cachedOwner == TonemapOwner::kPostProcessing);
 	return cachedOwner;
 }
 
@@ -470,6 +480,9 @@ void State::Setup()
 
 	Feature::ForEachLoadedFeature("SetupResources", [](Feature* feature) { feature->SetupResources(); });
 	globals::deferred->SetupResources();
+	Feature::ForEachLoadedFeature("PostSetupResources", [](Feature* feature) { feature->PostSetupResources(); });
+	PostProcessingMode::ApplyPending();
+	featureResourcesReady = true;
 }
 
 static std::string GetConfigPath(State::ConfigMode a_configMode)
@@ -528,9 +541,53 @@ static bool WriteConfigAtomically(const std::filesystem::path& a_configPath, std
 	return true;
 }
 
+static json BuildPresetBootSettings(const json& defaults)
+{
+	auto result = defaults;
+	const auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	for (const auto& id : catalog.GetBaselinePackIds()) {
+		const auto* pack = catalog.FindPack(id);
+		if (!pack || !pack->valid)
+			continue;
+		for (auto* feature : Feature::GetFeatureList()) {
+			const auto preference = pack->disableAtBoot.find(feature->GetShortName());
+			if (!feature->IsAlwaysEnabled() && preference != pack->disableAtBoot.end())
+				result[feature->GetShortName()] = preference->second;
+		}
+	}
+	return result;
+}
+
 void State::Load(ConfigMode a_configMode, bool a_allowReload)
 {
-	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	const bool restoring = a_configMode == ConfigMode::USER && !defaultSettingsBaseline.is_null();
+	if (restoring && !FormEditSources::CanChangePacks()) {
+		logger::warn("Save pending scene and editor form edits before restoring settings");
+		return;
+	}
+	auto& catalog = UnifiedPresetCatalog::GetSingleton();
+	auto* overrideManager = SettingsOverrideManager::GetSingleton();
+	const json previousCatalog{ { UnifiedPresetCatalog::kUserSettingsKey, catalog.SerializeActiveState() } };
+	const auto previousFeatureBases = featureSettingsBases;
+	const auto previousUserEdits = userFeatureEdits;
+	const auto previousBootPreferences = userBootPreferences;
+	const auto previousOverrideBase = overrideManager->GetBaseSettings();
+	const auto previousApplied = overrideManager->GetAppliedSettings();
+	json previousSettings;
+	std::vector<std::pair<Feature*, bool>> previousFeatureLoadStates;
+	std::vector<std::pair<PresetProvider*, std::string>> previousPayloads;
+	const auto previousMode = PostProcessingMode::Get();
+	if (restoring) {
+		SaveToJson(previousSettings);
+		for (auto* feature : Feature::GetFeatureList()) {
+			previousFeatureLoadStates.emplace_back(feature, feature->loaded);
+			if (featureResourcesReady && feature->loaded)
+				if (auto* provider = feature->GetPresetProvider())
+					if (const auto selected = provider->GetActivePresetId())
+						previousPayloads.emplace_back(provider, *selected);
+		}
+	}
 	json settings;
 	bool errorDetected = false;
 
@@ -571,39 +628,74 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		}
 	}
 	settings = defaultSettingsBaseline;
-
-	// Step 2: Apply user settings on top of defaults (user preferences)
+	json userSettings = json::object();
 	if (a_configMode == ConfigMode::USER) {
-		json userSettings;
 		std::ifstream userFile(userConfigFilePath);
 		if (userFile.is_open()) {
 			try {
-				userFile >> userSettings;
-				userFile.close();
-
-				Util::Settings::OverlayRecognizedRootSettings(settings, userSettings);
-				if (const auto menu = userSettings.find("Menu"); menu != userSettings.end() && menu->is_object())
-					Menu::OverlayInputSettings(settings["Menu"], defaultSettingsBaseline["Menu"], *menu);
-				for (auto* feature : Feature::GetFeatureList()) {
-					const auto name = feature->GetName();
-					const auto userFeature = userSettings.find(name);
-					if (userFeature != userSettings.end() && userFeature->is_object() && settings.contains(name)) {
-						// Feature migrations must distinguish missing fields from explicit defaults.
-						settings[name] = Util::Settings::SelectSettings(settings[name], *userFeature);
-					}
-				}
-				logger::info("Applied user settings from: {}", userConfigFilePath);
-			} catch (const nlohmann::json::exception& e) {
+				json parsed;
+				userFile >> parsed;
+				if (!parsed.is_object()) {
+					if (restoring)
+						return;
+				} else
+					userSettings = std::move(parsed);
+			} catch (const json::exception& e) {
 				logger::warn("Error parsing user config file: {}", e.what());
-				userFile.close();
+				if (restoring)
+					return;
 			}
-		} else {
-			logger::info("No user config file found at: {}", userConfigFilePath);
+		}
+	}
+	if (a_configMode == ConfigMode::USER)
+		catalog.LoadActiveState(userSettings);
+	catalog.Discover();
+	auto* baselines = BaselineManager::GetSingleton();
+	baselines->DiscoverFiles();
+	featureSettingsBases = defaultSettingsBaseline;
+	userFeatureEdits = json::object();
+	userBootPreferences = json::object();
+	json baselineMasks = json::object();
+	if (a_configMode == ConfigMode::USER) {
+		settings["Disable at Boot"] = BuildPresetBootSettings(defaultSettingsBaseline["Disable at Boot"]);
+		featureSettingsBases["Disable at Boot"] = settings["Disable at Boot"];
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (!feature->UsesMainSettings())
+				continue;
+			const auto name = feature->GetName();
+			auto patch = baselines->BuildFeatureBaseline(feature->GetShortName(), settings[name]);
+			settings[name].update(patch, true);
+			featureSettingsBases[name] = settings[name];
+			baselineMasks[name] = std::move(patch);
 		}
 	}
 
+	// Step 2: Apply user settings on top of defaults (user preferences)
+	if (a_configMode == ConfigMode::USER) {
+		Util::Settings::OverlayRecognizedRootSettings(settings, userSettings);
+		if (const auto boot = userSettings.find("Disable at Boot"); boot != userSettings.end() && boot->is_object())
+			userBootPreferences = Util::Settings::SelectSettings(settings["Disable at Boot"], *boot);
+		if (const auto menu = userSettings.find("Menu"); menu != userSettings.end() && menu->is_object())
+			Menu::OverlayInputSettings(settings["Menu"], defaultSettingsBaseline["Menu"], *menu);
+		const auto presetState = catalog.SerializeActiveState();
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (!feature->HasPersonalSettings())
+				continue;
+			const auto name = feature->GetName();
+			const auto userFeature = userSettings.find(name);
+			if (userFeature != userSettings.end() && userFeature->is_object() && settings.contains(name)) {
+				// Feature migrations must distinguish missing fields from explicit defaults.
+				auto mask = baselineMasks.value(name, json::object());
+				mask.update(*userFeature, true);
+				if (!PresetState::HasNormalizedFeatureEdits(presetState, name))
+					settings[name] = Util::Settings::SelectSettings(settings[name], mask);
+				userFeatureEdits[name] = Util::Settings::SelectSettings(settings[name], *userFeature);
+			}
+		}
+		logger::info("Applied user settings from: {}", userConfigFilePath);
+	}
+
 	// Step 3: Discover and prepare overrides (applied after user settings, so overrides take priority)
-	auto overrideManager = SettingsOverrideManager::GetSingleton();
 	overrideManager->CaptureBaseSettings(settings);
 	size_t overridesDiscovered = overrideManager->DiscoverOverrides();
 	if (!overrideManager->CleanupStaleUserOverrides())
@@ -647,7 +739,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 					feature->Load(settings);
 
 					// Apply feature-specific overrides on top (overrides take priority over user settings)
-					if (feature->UsesMainSettings() && overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
+					if (feature->HasPersonalSettings() && overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
 						json featureJson;
 						feature->SaveSettings(featureJson);  // Get current settings as JSON
 
@@ -690,16 +782,84 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		}
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
-
+		FormEditSources::ReloadHistoryGuard reloadHistory;
+		bool payloadsLoaded = true;
+		if (restoring && featureResourcesReady) {
+			try {
+				for (auto* feature : Feature::GetFeatureList()) {
+					if (!feature->loaded)
+						continue;
+					if (auto* provider = feature->GetPresetProvider())
+						if (const auto selected = catalog.GetActivePayloadPresetId(*provider); selected && !provider->Apply(*selected, false)) {
+							payloadsLoaded = false;
+							break;
+						}
+				}
+			} catch (const std::exception& error) {
+				logger::error("Could not restore preset payload selection: {}", error.what());
+				payloadsLoaded = false;
+			} catch (...) {
+				logger::error("Could not restore preset payload selection after an unknown exception");
+				payloadsLoaded = false;
+			}
+		}
 #if defined(ENABLE_EFFECTS11)
 		// Effects11's ENB state lives in enbseries.ini, not the Settings JSON -- refresh
 		// it here too so a genuine reload picks up on-disk changes.
-		if (a_configMode == ConfigMode::USER && EffectManager::GetSingleton().IsPresetLoaded()) {
+		if (payloadsLoaded && a_configMode == ConfigMode::USER && EffectManager::GetSingleton().IsPresetLoaded()) {
 			SettingManager::GetSingleton().Load();
 			EffectManager::GetSingleton().Load();
 		}
 #endif
+		if (payloadsLoaded)
+			PostProcessingMode::ApplyReloaded();
 
+		if (a_configMode == ConfigMode::USER) {
+			try {
+				payloadsLoaded = payloadsLoaded && SceneSettingsManager::GetSingleton()->ReloadSceneSettings() && FormEditSources::ReloadActivePack();
+			} catch (const std::exception& error) {
+				logger::error("Could not reload preset payloads: {}", error.what());
+				payloadsLoaded = false;
+			} catch (...) {
+				logger::error("Could not reload preset payloads after an unknown exception");
+				payloadsLoaded = false;
+			}
+		}
+		if (!payloadsLoaded) {
+			logger::error("Preset payload reload failed; restoring the prior selection");
+			const auto restore = [](const char* layer, auto&& action) {
+				try {
+					if (!action())
+						logger::error("Could not restore previous {}", layer);
+				} catch (const std::exception& error) {
+					logger::error("Could not restore previous {}: {}", layer, error.what());
+				} catch (...) {
+					logger::error("Could not restore previous {} after an unknown exception", layer);
+				}
+			};
+			restore("preset selection", [&] { catalog.LoadActiveState(previousCatalog); return true; });
+			restore("personal preset layers", [&] {
+				featureSettingsBases = previousFeatureBases;
+				userFeatureEdits = previousUserEdits;
+				userBootPreferences = previousBootPreferences;
+				return true;
+			});
+			for (const auto& [feature, loaded] : previousFeatureLoadStates)
+				feature->loaded = loaded;
+			for (const auto& [provider, selected] : previousPayloads)
+				restore("preset payload", [&] { return provider->Apply(selected, false); });
+			if (restoring && featureResourcesReady)
+				restore("pipeline", [&] { return PostProcessingMode::Set(previousMode); });
+			if (restoring)
+				restore("live settings", [&] { LoadFromJson(previousSettings); return true; });
+			restore("overwrite bases", [&] { overrideManager->CaptureBaseSettings(previousOverrideBase); return true; });
+			restore("applied overwrites", [&] { overrideManager->CaptureAppliedSettings(previousApplied); return true; });
+			restore("scene settings", [] { return SceneSettingsManager::GetSingleton()->ReloadSceneSettings(); });
+			restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
+			return;
+		}
+		MarkSettingsSaved();
+		reloadHistory.Commit();
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
 		logger::warn("General JSON error accessing settings: {}", e.what());
@@ -712,8 +872,340 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		Load(a_configMode, false);
 }
 
+const json* State::GetFeatureDefaults(std::string_view featureName) const
+{
+	const auto found = defaultSettingsBaseline.find(featureName);
+	return found != defaultSettingsBaseline.end() && found->is_object() ? &*found : nullptr;
+}
+
+std::filesystem::path State::DumpFeatureDefaults() const
+{
+	json document = json::object();
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->HasPersonalSettings())
+			if (const auto* defaults = GetFeatureDefaults(feature->GetName()))
+				document[feature->GetName()] = *defaults;
+	}
+	const auto path = Util::PathHelpers::GetCommunityShaderPath() / "FeatureDefaults.json";
+	return Util::FileHelpers::WriteJsonAtomically(path, document, 2, "feature defaults") ? path : std::filesystem::path{};
+}
+
+const json* State::GetFeatureBase(std::string_view featureName) const
+{
+	const auto found = featureSettingsBases.find(featureName);
+	return found != featureSettingsBases.end() && found->is_object() ? &*found : nullptr;
+}
+
+json State::BuildSettingsSnapshot()
+{
+	json current;
+	SaveToJson(current);
+	auto* overrides = SettingsOverrideManager::GetSingleton();
+	const auto pending = overrides->GetPendingEdits(current);
+	auto personal = current;
+	overrides->RestoreBaselines(personal);
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->HasPersonalSettings())
+			continue;
+		const auto name = feature->GetName();
+		const auto* base = GetFeatureBase(name);
+		if (!base)
+			continue;
+		const auto saved = userFeatureEdits.find(name);
+		auto edits = Util::Settings::BuildUserOverride(personal[name], *base, saved != userFeatureEdits.end() ? *saved : json::object());
+		if (edits.empty())
+			personal.erase(name);
+		else
+			personal[name] = std::move(edits);
+	}
+	if (const auto base = featureSettingsBases.find("Disable at Boot"); base != featureSettingsBases.end()) {
+		auto edits = Util::Settings::BuildUserOverride(personal["Disable at Boot"], *base, userBootPreferences);
+		personal["Disable at Boot"] = std::move(edits);
+	}
+	personal.erase(UnifiedPresetCatalog::kUserSettingsKey);
+	return { { "personal", std::move(personal) }, { "pending", pending } };
+}
+
+void State::MarkSettingsSaved()
+{
+	baselineOverlapCache.clear();
+	try {
+		savedSettingsSnapshot = BuildSettingsSnapshot();
+		settingsChanged = false;
+	} catch (const std::exception& e) {
+		settingsChanged = true;
+		logger::error("Could not capture saved settings: {}", e.what());
+	}
+}
+
+void State::CheckSettingsChanged()
+{
+	baselineOverlapCache.clear();
+	try {
+		if (!savedSettingsSnapshot.is_null())
+			settingsChanged = BuildSettingsSnapshot() != savedSettingsSnapshot;
+	} catch (const std::exception& e) {
+		settingsChanged = true;
+		logger::error("Could not check unsaved settings: {}", e.what());
+	}
+}
+
+bool State::ReapplyPresetLayers()
+{
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	json previous;
+	SaveToJson(previous);
+	auto personal = previous;
+	auto* overrides = SettingsOverrideManager::GetSingleton();
+	const auto pending = overrides->GetPendingEdits(previous);
+	overrides->RestoreBaselines(personal);
+	auto next = personal;
+	auto nextBases = featureSettingsBases;
+	auto* baselines = BaselineManager::GetSingleton();
+	baselines->Refresh();
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->UsesMainSettings())
+			continue;
+		const auto name = feature->GetName();
+		const auto oldBase = featureSettingsBases.find(name);
+		const auto defaults = defaultSettingsBaseline.find(name);
+		if (oldBase == featureSettingsBases.end() || defaults == defaultSettingsBaseline.end())
+			continue;
+		auto base = *defaults;
+		baselines->ApplyBaselines(feature->GetShortName(), base);
+		auto layered = base;
+		const auto saved = userFeatureEdits.find(name);
+		auto edits = Util::Settings::BuildUserOverride(personal[name], *oldBase, saved != userFeatureEdits.end() ? *saved : json::object());
+		layered.update(edits, true);
+		next[name] = std::move(layered);
+		nextBases[name] = std::move(base);
+	}
+	auto bootBase = BuildPresetBootSettings(defaultSettingsBaseline["Disable at Boot"]);
+	auto bootEdits = Util::Settings::BuildUserOverride(personal["Disable at Boot"], featureSettingsBases["Disable at Boot"], userBootPreferences);
+	nextBases["Disable at Boot"] = bootBase;
+	bootBase.update(bootEdits, true);
+	next["Disable at Boot"] = std::move(bootBase);
+	const auto underlying = next;
+	overrides->ApplyGlobalOverrides(next);
+	overrides->LoadUserOverride("Global", next);
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->UsesMainSettings())
+			continue;
+		auto& values = next[feature->GetName()];
+		overrides->ApplyOverrides(feature->GetShortName(), values);
+		overrides->LoadUserOverride(feature->GetShortName(), values);
+	}
+	const auto appliedLayers = next;
+	next.update(pending, true);
+	json applied;
+	try {
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (!feature->loaded || !feature->UsesMainSettings())
+				continue;
+			const auto name = feature->GetName();
+			auto values = next[name];
+			feature->LoadSettings(values);
+		}
+		SaveToJson(applied);
+		applied["Disable at Boot"] = next["Disable at Boot"];
+		Util::Settings::RestoreSettings(applied, appliedLayers, pending);
+	} catch (const std::exception& e) {
+		logger::error("Could not apply preset Baselines: {}", e.what());
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (!feature->loaded || !feature->UsesMainSettings())
+				continue;
+			try {
+				feature->LoadSettings(previous[feature->GetName()]);
+			} catch (...) {
+				logger::error("Could not restore {} after a rejected preset", feature->GetShortName());
+			}
+		}
+		return false;
+	}
+	featureSettingsBases = std::move(nextBases);
+	bool bootChanged = false;
+	for (auto* feature : Feature::GetFeatureList()) {
+		const auto name = feature->GetShortName();
+		if (!feature->IsAlwaysEnabled() && next["Disable at Boot"].contains(name)) {
+			const bool disabled = next["Disable at Boot"][name].get<bool>();
+			bootChanged |= IsFeatureDisabled(name) != disabled;
+			SetFeatureDisabled(name, disabled);
+		}
+	}
+	if (bootChanged)
+		globals::shaderCache->MarkExpectedFeatureFlip();
+	overrides->CaptureBaseSettings(underlying);
+	overrides->CaptureAppliedSettings(applied);
+	baselineOverlapCache.clear();
+	return true;
+}
+
+void State::ReapplySettingsLayers()
+{
+	if (!ReapplyPresetLayers())
+		throw std::runtime_error("Could not apply preset settings layers");
+}
+
+void State::InvalidateEditsUnderBaselines(Feature* feature)
+{
+	if (feature)
+		baselineOverlapCache.erase(feature->GetName());
+	else
+		baselineOverlapCache.clear();
+}
+
+void State::RestoreFeatureLayers(Feature* feature)
+{
+	if (!feature || !feature->loaded || !feature->HasPersonalSettings())
+		return;
+	SceneSettingsManager::SceneLayerGuard guard;
+	json previous;
+	feature->SaveSettings(previous);
+	try {
+		feature->RestoreDefaultSettings();
+		if (const auto* base = GetFeatureBase(feature->GetName())) {
+			auto values = *base;
+			feature->LoadSettings(values);
+		}
+		userFeatureEdits[feature->GetName()] = json::object();
+	} catch (...) {
+		feature->LoadSettings(previous);
+		throw;
+	}
+	InvalidateEditsUnderBaselines(feature);
+	CheckSettingsChanged();
+}
+
+std::vector<Feature*> State::FindEditsUnderPack(const std::string& packId)
+{
+	std::vector<Feature*> result;
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	json current;
+	SaveToJson(current);
+	auto personal = current;
+	auto* overrides = SettingsOverrideManager::GetSingleton();
+	overrides->RestoreBaselines(personal);
+	const auto pending = overrides->GetPendingEdits(current);
+	auto* baselines = BaselineManager::GetSingleton();
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->UsesMainSettings())
+			continue;
+		const auto name = feature->GetName();
+		const auto* base = GetFeatureBase(name);
+		if (!base)
+			continue;
+		const auto mask = baselines->BuildFeatureBaseline(feature->GetShortName(), *base, packId);
+		const auto saved = userFeatureEdits.find(name);
+		auto edits = Util::Settings::BuildUserOverride(personal[name], *base, saved != userFeatureEdits.end() ? *saved : json::object());
+		if (const auto live = pending.find(name); live != pending.end())
+			edits.update(*live, true);
+		if (!Util::Settings::SelectSettings(edits, mask).empty())
+			result.push_back(feature);
+	}
+	return result;
+}
+
+bool State::HasEditsUnderBaselines(Feature* feature)
+{
+	if (!feature)
+		return false;
+	const auto revision = UnifiedPresetCatalog::GetSingleton().GetRevision();
+	if (baselineOverlapCatalogRevision != revision) {
+		baselineOverlapCache.clear();
+		baselineOverlapCatalogRevision = revision;
+	}
+	if (baselineOverlapCache.empty()) {
+		for (auto* candidate : Feature::GetFeatureList())
+			baselineOverlapCache[candidate->GetName()] = false;
+		try {
+			for (auto* candidate : FindEditsUnderPack({}))
+				baselineOverlapCache[candidate->GetName()] = true;
+		} catch (const std::exception& e) {
+			logger::error("Could not check personal edits under Baselines: {}", e.what());
+		}
+	}
+	return baselineOverlapCache[feature->GetName()];
+}
+
+bool State::ClearEditsUnderPack(const std::string& packId)
+{
+	return UnifiedPresetCatalog::GetSingleton().IsBaselineEnabled(packId) && DropPresetEdits(packId, nullptr);
+}
+
+bool State::ClearFeatureEditsUnderBaselines(Feature* feature)
+{
+	return feature && feature->loaded && feature->UsesMainSettings() && DropPresetEdits({}, feature);
+}
+
+bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature)
+{
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
+	json previous;
+	SaveToJson(previous);
+	auto* overrides = SettingsOverrideManager::GetSingleton();
+	auto underlying = previous;
+	overrides->RestoreBaselines(underlying);
+	auto pending = overrides->GetPendingEdits(previous);
+	auto savedEdits = userFeatureEdits;
+	std::vector<Feature*> changed;
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->UsesMainSettings() || (onlyFeature && onlyFeature != feature))
+			continue;
+		const auto name = feature->GetName();
+		const auto* base = GetFeatureBase(name);
+		if (!base)
+			continue;
+		const auto mask = BaselineManager::GetSingleton()->BuildFeatureBaseline(feature->GetShortName(), *base, packId);
+		if (mask.empty())
+			continue;
+		Util::Settings::RestoreSettings(underlying[name], *base, mask);
+		if (auto edits = pending.find(name); edits != pending.end())
+			Util::Settings::RestoreSettings(*edits, json::object(), mask);
+		if (auto edits = savedEdits.find(name); edits != savedEdits.end())
+			Util::Settings::RestoreSettings(*edits, json::object(), mask);
+		changed.push_back(feature);
+	}
+	if (changed.empty())
+		return true;
+	auto next = underlying;
+	overrides->ApplyGlobalOverrides(next);
+	overrides->LoadUserOverride("Global", next);
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (!feature->loaded || !feature->UsesMainSettings())
+			continue;
+		auto& values = next[feature->GetName()];
+		overrides->ApplyOverrides(feature->GetShortName(), values);
+		overrides->LoadUserOverride(feature->GetShortName(), values);
+	}
+	const auto appliedLayers = next;
+	next.update(pending, true);
+	json applied;
+	try {
+		for (auto* feature : changed)
+			feature->LoadSettings(next[feature->GetName()]);
+		SaveToJson(applied);
+		Util::Settings::RestoreSettings(applied, appliedLayers, pending);
+	} catch (const std::exception& e) {
+		logger::error("Could not restore preset values: {}", e.what());
+		for (auto* feature : changed) {
+			try {
+				feature->LoadSettings(previous[feature->GetName()]);
+			} catch (...) {
+				logger::error("Could not restore {} after rejected preset values", feature->GetShortName());
+			}
+		}
+		return false;
+	}
+	userFeatureEdits = std::move(savedEdits);
+	overrides->CaptureBaseSettings(underlying);
+	overrides->CaptureAppliedSettings(applied);
+	CheckSettingsChanged();
+	return true;
+}
+
 void State::SaveToJson(nlohmann::json& settings)
 {
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	std::lock_guard<std::mutex> lock(m_mutex);
 	const auto shaderCache = globals::shaderCache;
 
@@ -740,6 +1232,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	general["Skip Unchanged Shaders"] = shaderCache->IsSkipUnchangedShaders();
 	general["Enable Async"] = shaderCache->IsAsync();
 	general["Language"] = I18n::GetSingleton()->GetCurrentLocale();
+	PostProcessingMode::Save(general);
 
 	settings["General"] = general;
 
@@ -769,13 +1262,12 @@ void State::SaveToJson(nlohmann::json& settings)
 			feature->Save(settings);
 		}
 	}
-	SceneSettingsManager::GetSingleton()->RestoreBaselinesInSerializedSettings(settings);
 }
 
 void State::LoadFromJson(nlohmann::json& settings)
 {
+	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	std::lock_guard<std::mutex> lock(m_mutex);
-	SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 	const auto shaderCache = globals::shaderCache;
 
 	disabledFeatures.clear();
@@ -844,6 +1336,7 @@ void State::LoadFromJson(nlohmann::json& settings)
 
 	if (settings.contains("General") && settings["General"].is_object()) {
 		json& general = settings["General"];
+		PostProcessingMode::Load(general);
 		if (general.contains("Enable Shaders") && general["Enable Shaders"].is_boolean())
 			shaderCache->SetEnabled(general["Enable Shaders"]);
 		if (general.contains("Enable Disk Cache") && general["Enable Disk Cache"].is_boolean())
@@ -922,12 +1415,29 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 
 	std::string serializedSettings;
 	json effectiveSettings;
+	json userBaseSettings;
 	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	try {
 		SaveToJson(settings);
 		if (a_configMode == ConfigMode::USER) {
 			effectiveSettings = settings;
 			overrideManager->PrepareUserSettings(settings);
+			userBaseSettings = settings;
+			auto presetState = UnifiedPresetCatalog::GetSingleton().SerializeActiveState();
+			for (auto* feature : Feature::GetFeatureList()) {
+				const auto name = feature->GetName();
+				const auto base = featureSettingsBases.find(name);
+				if (!feature->loaded || !feature->HasPersonalSettings() || base == featureSettingsBases.end())
+					continue;
+				const auto saved = userFeatureEdits.find(name);
+				settings[name] = Util::Settings::BuildUserOverride(settings[name], *base, saved != userFeatureEdits.end() ? *saved : json::object());
+				if (settings[name].empty())
+					settings.erase(name);
+				PresetState::MarkNormalizedFeatureEdits(presetState, name);
+			}
+			settings[UnifiedPresetCatalog::kUserSettingsKey] = std::move(presetState);
+			if (const auto bootBase = featureSettingsBases.find("Disable at Boot"); bootBase != featureSettingsBases.end())
+				settings["Disable at Boot"] = Util::Settings::BuildUserOverride(settings["Disable at Boot"], *bootBase, userBootPreferences);
 		}
 		serializedSettings = settings.dump(1);
 	} catch (const std::exception& e) {
@@ -948,7 +1458,15 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	// gated) was actually intentional; record it so next boot's disk-cache mismatch
 	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
 	if (a_configMode == ConfigMode::USER) {
-		overrideManager->CaptureBaseSettings(settings);
+		UnifiedPresetCatalog::GetSingleton().LoadActiveState(settings);
+		overrideManager->CaptureBaseSettings(userBaseSettings);
+		userFeatureEdits = json::object();
+		userBootPreferences = settings.value("Disable at Boot", json::object());
+		for (auto* feature : Feature::GetFeatureList()) {
+			const auto name = feature->GetName();
+			if (const auto saved = settings.find(name); saved != settings.end() && saved->is_object())
+				userFeatureEdits[name] = *saved;
+		}
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
 
@@ -961,6 +1479,8 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 		}
 #endif
 	}
+	if (a_configMode == ConfigMode::USER)
+		MarkSettingsSaved();
 }
 
 bool State::SaveFeaturePreference(const json& patch)
@@ -981,6 +1501,10 @@ bool State::SaveFeaturePreference(const json& patch)
 		const auto serializedSettings = settings.dump(1);
 		if (!overrides->SaveUserEdits(patch, [&] { return WriteConfigAtomically(configPath, serializedSettings); }))
 			return false;
+		if (!savedSettingsSnapshot.is_null()) {
+			savedSettingsSnapshot["personal"].merge_patch(patch);
+			Util::Settings::RestoreSettings(savedSettingsSnapshot["pending"], json::object(), patch);
+		}
 		return true;
 	} catch (const std::exception& e) {
 		logger::error("Could not save feature preference to {}: {}", configPath, e.what());
@@ -992,6 +1516,7 @@ bool State::SetFeatureBootEnabled(const std::string& featureName, bool enabled)
 {
 	if (!SaveFeaturePreference(json{ { "Disable at Boot", { { featureName, !enabled } } } }))
 		return false;
+	userBootPreferences[featureName] = !enabled;
 	SetFeatureDisabled(featureName, !enabled);
 	globals::shaderCache->MarkExpectedFeatureFlip();
 	return true;
@@ -1635,8 +2160,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 	UpdateFeatureData(a_inWorld);
 
-	auto* srv = Util::GetCurrentSceneDepthSRV(true);
-	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
+	VanillaBinding::BindSceneDepth();
 }
 
 void State::UpdateFeatureData(bool a_inWorld)

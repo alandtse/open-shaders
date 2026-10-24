@@ -17,6 +17,8 @@
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
+#include "CSEditor/SceneManager/ScenePresetExport.h"
+#include "CSEditor/SceneManager/SceneSettingsUI.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
 #include "Features/VR.h"
@@ -24,6 +26,8 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
+#include "Menu/FontAtlasState.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -79,6 +83,10 @@ void OverlayRenderer::RenderOverlay(
 	// Apply the VR panel size before pumping input: PumpInput reads
 	// io.DisplaySize to map wand UV to pixels for this frame.
 	ApplyVRPanelDisplaySize();
+	// Always sync, including frames that skip drawing, so closing the last CS UI restores vanity.
+	menu.SyncVanityCamera();
+	SceneSettingsUI::SyncTimePause();
+
 	processInputEventQueue();
 
 	auto& io = ImGui::GetIO();
@@ -93,6 +101,15 @@ void OverlayRenderer::RenderOverlay(
 		ImGui::ClearActiveID();
 	}
 
+	// Before the skip check so the editor's close edge is never missed.
+	auto* editorWindow = EditorWindow::GetSingleton();
+	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
+		editorWindow->open = false;
+		if (editorWindow->IsInPreviewMode())
+			editorWindow->ExitPreviewMode();
+	}
+	editorWindow->UpdateOpenState();
+
 	if (ShouldSkipRendering()) {
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
 		io.ClearInputKeys();
@@ -103,20 +120,15 @@ void OverlayRenderer::RenderOverlay(
 
 	HandleFontReload(menu, cachedFontSize, currentFontSize);
 	InitializeImGuiFrame(menu);
+	if (menu.IsEnabled && !editorWindow->open)
+		editorWindow->HandleHistoryShortcuts();
 
 	RenderShaderCompilationStatus(keyIdToString);
 	RenderShaderBlockingStatus();
 
-	auto* editorWindow = EditorWindow::GetSingleton();
-	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
-		editorWindow->open = false;
-		if (editorWindow->IsInPreviewMode())
-			editorWindow->ExitPreviewMode();
-	}
-	editorWindow->UpdateOpenState();
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11Editor = Effects11Editor::GetSingleton();
-	if (effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
+	if (effects11Editor.IsOpen() && menu.IsEnabled)
 		effects11Editor.Close(false);
 #endif
 	if (editorWindow->open) {
@@ -138,16 +150,32 @@ void OverlayRenderer::RenderOverlay(
 		// been flipped by the local TAB hotkey. This honors the
 		// kClientFlag_RendersOnFocus contract we advertised at registration.
 		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
+			const auto& context = *ImGui::GetCurrentContext();
+			const bool editedBefore = context.ActiveIdHasBeenEditedThisFrame;
 			drawSettings();
+			// Only frames that edited something pay for the check; search boxes edit too, so it compares.
+			if (!editedBefore && context.ActiveIdHasBeenEditedThisFrame)
+				globals::state->CheckCoreSettingsChanged();
 		}
 	} else {
-		ImGui::GetIO().MouseDrawCursor = false;
+		ImGui::GetIO().MouseDrawCursor = ScenePresetExport::IsOpen();
 	}
 
+	// Enabling a Baseline pack can happen from either the menu or the CS editor, and the answer outlives the page.
+	if (editorWindow->open || menu.IsEnabled)
+		UnifiedPresetCatalog::GetSingleton().DrawBaselineOverlapPrompt();
+
+	// The editor draws its own notifications; while it is closed they still need a host, e.g. the
+	// "cannot open in a loading screen" warning raised by the toggle hotkey.
+	if (!editorWindow->open)
+		editorWindow->RenderNotifications();
+
+	ScenePresetExport::Draw();
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
 	editorWindow->FinishGameHourSliderFrame(true);
+	editorWindow->undoHistory.EndFrame(ImGui::GetFrameCount(), Util::InteractionEndedThisFrame());
 	FinalizeImGuiFrame();
 }
 
@@ -173,11 +201,14 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 Menu::GetSingleton()->IsEnabled ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
+			 EditorWindow::GetSingleton()->HasNotifications() ||
+			 ScenePresetExport::IsOpen() ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 globals::features::performanceOverlay.settings.ShowWeatherPicker ||
 			 renderDoc->IsAvailable() ||
 			 globals::features::vr.HelperRequestsRender());
 }
@@ -186,7 +217,7 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 {
 	bool fontSizeChanged = std::abs(cachedFontSize - currentFontSize) > ThemeManager::Constants::FONT_CACHE_EPSILON;
 	std::string desiredSignature = menu.BuildFontSignature(currentFontSize);
-	bool signatureChanged = desiredSignature != menu.cachedFontSignature;
+	bool signatureChanged = desiredSignature != MenuFonts::GetAtlasState().cachedFontSignature;
 
 	if (fontSizeChanged || signatureChanged) {
 		if (!ThemeManager::ReloadFont(menu, cachedFontSize)) {

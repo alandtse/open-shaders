@@ -131,18 +131,34 @@ std::string Util::GetFormEditorID(const RE::TESForm* form, FormEditorIDIndex* in
 	if (index)
 		return index->Find(form);
 
-	// Search the global EditorID map as fallback
+	// The global map is keyed by name, so it is inverted once and rebuilt only when its size changes.
+	static std::mutex reverseIndexMutex;
+	static std::unordered_map<const RE::TESForm*, RE::BSFixedString> reverseIndex;
+	static size_t indexedMapSize = 0;
+
 	auto [map, lock] = RE::TESForm::GetAllFormsByEditorID();
-	if (map) {
-		RE::BSReadLockGuard locker(lock);
-		for (const auto& [name, f] : *map) {
-			if (f == form) {
-				return std::string(name.c_str());
-			}
+	if (!map)
+		return "";
+	std::scoped_lock indexLock(reverseIndexMutex);
+	RE::BSReadLockGuard locker(lock);
+	const auto rebuild = [](const auto& forms) {
+		reverseIndex.clear();
+		reverseIndex.reserve(forms.size());
+		for (const auto& [name, mappedForm] : forms)
+			reverseIndex.emplace(mappedForm, name);
+		indexedMapSize = forms.size();
+	};
+	if (map->size() != indexedMapSize)
+		rebuild(*map);
+	auto entry = reverseIndex.find(form);
+	// A freed form's address can come back as another form without the map changing size.
+	if (entry != reverseIndex.end()) {
+		if (const auto mapped = map->find(entry->second); mapped == map->end() || mapped->second != form) {
+			rebuild(*map);
+			entry = reverseIndex.find(form);
 		}
 	}
-
-	return "";
+	return entry != reverseIndex.end() ? std::string(entry->second.c_str()) : "";
 }
 
 std::string Util::GetFormFileKey(const RE::TESForm* form)
