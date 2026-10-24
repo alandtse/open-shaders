@@ -11,6 +11,7 @@
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
 #include "Menu.h"
+#include "PostProcessing.h"
 #include "ScreenshotFeature.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -1688,9 +1689,9 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	bool isSceneLinear = globals::features::linearLighting.IsLinearLightingActive();
 
 #if defined(ENABLE_EFFECTS11)
-	const bool applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame();
+	const bool applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame() || globals::features::postProcessing.WantsAutoHDR();
 #else
-	const bool applyAutoHDR = false;
+	const bool applyAutoHDR = globals::features::postProcessing.WantsAutoHDR();
 #endif
 	float effectivePeakNits = static_cast<float>(applyAutoHDR ? std::min(settings.hdrPeakNits, kAutoHDRMaxNits) : settings.hdrPeakNits);
 
@@ -1705,6 +1706,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
+	// Effects11 ENB presets are SDR; Jiaye SDR-only tonemappers opt in via Color Grading AutoHDR.
 	data.applyAutoHDR = applyAutoHDR ? 1.f : 0.f;
 	return data;
 }

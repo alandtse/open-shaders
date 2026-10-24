@@ -260,6 +260,12 @@ namespace Util
 		return std::format("_{:08X}", Util::Fnv1a32(definesStr));
 	}
 
+	std::string ToLower(std::string text)
+	{
+		std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return text;
+	}
+
 	std::string PrettifyIdentifier(std::string_view id)
 	{
 		if (id.empty())
@@ -288,9 +294,8 @@ namespace Util
 					appendSpaceIfNeeded();
 			}
 
-			result += result.empty() || result.back() == ' ' ?
-			              static_cast<char>(std::toupper(static_cast<unsigned char>(character))) :
-			              character;
+			const bool startsWord = result.empty() || result.back() == ' ';
+			result += startsWord ? static_cast<char>(std::toupper(static_cast<unsigned char>(character))) : character;
 		}
 
 		return result;

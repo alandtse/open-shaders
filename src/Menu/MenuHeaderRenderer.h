@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Menu.h"
+#include "Menu/IconLoader.h"
 
 /**
  * @brief Renders the menu header bar with title, logo, and action icon buttons.
@@ -19,6 +20,7 @@ public:
 		ID3D11ShaderResourceView* texture; /**< @brief GPU texture for the icon image. */
 		const char* tooltip;               /**< @brief Tooltip text shown on hover. */
 		std::function<void()> callback;    /**< @brief Action invoked when the icon is clicked. */
+		bool unsaved = false;              /**< @brief Tints the icon as a save with unsaved changes. */
 	};
 
 	/**
@@ -34,17 +36,17 @@ public:
 	 * @param uiIcons Reference to the loaded icon textures and sizes.
 	 * @param sidebarVisible Sidebar visibility toggled by the top-left button.
 	 */
-	static void RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons, bool& sidebarVisible);
+	static void RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Util::IconLoader::UIIcons& uiIcons, bool& sidebarVisible);
 	/** @brief Returns the width of the compact Save, Restore, and Clear Cache buttons. */
-	static float GetCompactActionsWidth(const Menu::UIIcons& uiIcons);
+	static float GetCompactActionsWidth(const Util::IconLoader::UIIcons& uiIcons);
 	/** @brief Renders menu actions at the current cursor position using compact buttons. */
-	static void RenderCompactActions(const Menu::UIIcons& uiIcons);
+	static void RenderCompactActions(const Util::IconLoader::UIIcons& uiIcons);
 
 private:
-	static void RenderSidebarToggle(const ImVec2& buttonSize, const Menu::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible);
-	static std::vector<ActionIcon> BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons, bool includeMissing = false);
+	static void RenderSidebarToggle(const ImVec2& buttonSize, const Util::IconLoader::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible);
+	static std::vector<ActionIcon> BuildActionIcons(bool canShowIcons, const Util::IconLoader::UIIcons& uiIcons, bool includeMissing = false);
 	static void RenderActionIcons(const std::vector<ActionIcon>& actionIcons, bool isDocked, float uiScale);
 	static void RenderDockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale);
 	static void RenderUndockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale);
-	static void RenderWatermarkLogo(const Menu::UIIcons& uiIcons);
+	static void RenderWatermarkLogo(const Util::IconLoader::UIIcons& uiIcons);
 };

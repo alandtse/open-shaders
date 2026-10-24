@@ -91,10 +91,12 @@ add_executable(cpp_tests
 	test_shaderinclude.cpp
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
+	test_undohistory.cpp
 	test_effectsourcecompatibility.cpp
 	test_effects11_settings.cpp
 	test_versiongate.cpp
 	test_presetinclude.cpp
+	test_unifiedpresets.cpp
 	test_windfield.cpp
 	test_sehguard.cpp
 	test_nr_decisions.cpp
@@ -122,6 +124,7 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
+	"${CMAKE_SOURCE_DIR}/src/CSEditor/UndoHistory.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"

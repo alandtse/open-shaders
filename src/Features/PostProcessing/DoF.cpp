@@ -1,5 +1,7 @@
 ﻿#include "DoF.h"
 
+#include "Utils/SettingsControl.h"
+
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "Menu.h"
@@ -113,8 +115,10 @@ void DoF::DrawSettings()
 	} else if (owner) {
 		const int shapeCount = owner->bokehResources.GetTotalShapeCount();
 		const int shape = std::clamp(settings.HighlightShape, 1, std::max(shapeCount, 1));
-		settings.HighlightShape = shape;
+		if (!SettingsControl::IsReplicating())
+			settings.HighlightShape = shape;
 		const int selectedShape = shape - 1;
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
 		if (ImGui::BeginCombo(T("feature.post_processing.do_f.highlight_custom_shape", "Custom Aperture Texture"), owner->bokehResources.GetShapeName(selectedShape))) {
 			for (int i = 0; i < shapeCount; ++i) {
 				const bool selected = i == selectedShape;
@@ -125,6 +129,7 @@ void DoF::DrawSettings()
 			}
 			ImGui::EndCombo();
 		}
+		ImGui::EndDisabled();
 		ImGui::TextDisabled("%s", T("feature.post_processing.do_f.custom_shape_cost", "Custom textures preserve arbitrary silhouettes but add a texture lookup per gather tap."));
 	}
 	ImGui::BeginDisabled(cam != nullptr);
@@ -137,7 +142,7 @@ void DoF::DrawSettings()
 		ImGui::Text(T("feature.post_processing.do_f.selected_reference", "Selected Reference: %08X"), currentRef);
 	}
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.do_f.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.do_f.debug", "Debug"))) {
 		const float uiScale = Util::GetUIScale();
 		const float focusPreviewScale = 64.0f * uiScale;
 		static float debugRescale = .3f;

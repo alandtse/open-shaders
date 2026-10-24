@@ -22,104 +22,6 @@ class EditorWindow;
 bool ContainsStringIgnoreCase(const std::string_view a_string, const std::string_view a_substring);
 
 // ============================================================================
-// DebouncedTracker - Consolidates debounced value tracking with undo support
-// ============================================================================
-template <typename T>
-class DebouncedTracker
-{
-public:
-	static constexpr double DefaultDebounceDelay = 2.0;
-
-	/**
-	 * @brief Record that a tracked value has changed.
-	 * @param key         Unique identifier for the tracked value.
-	 * @param value       The new value.
-	 * @param currentTime Current time in seconds.
-	 * @return True if this is a new interaction session.
-	 */
-	bool OnValueChanged(const std::string& key, const T& value, double currentTime)
-	{
-		pendingValues[key] = value;
-		lastChangeTime[key] = currentTime;
-		return true;
-	}
-
-	/**
-	 * @brief Update active/inactive state for a tracked control. Returns true when an undo snapshot should be pushed.
-	 * @param key           Unique identifier for the tracked value.
-	 * @param isNowActive   Whether the control (e.g. slider) is currently being interacted with.
-	 * @param currentTime   Current time in seconds.
-	 * @param debounceDelay Idle time before resetting the undo session, in seconds.
-	 * @return True if undo state should be pushed (first activation of a new session).
-	 */
-	bool UpdateActiveState(const std::string& key, bool isNowActive, double currentTime, double debounceDelay = DefaultDebounceDelay)
-	{
-		bool isPreviouslyActive = wasActive[key];
-		wasActive[key] = isNowActive;
-
-		// Push undo state only once when slider becomes active
-		if (isNowActive && !isPreviouslyActive && !undoPushedForSession[key]) {
-			undoPushedForSession[key] = true;
-			return true;  // Signal to push undo
-		}
-
-		// Reset undo flag when slider is released and idle
-		if (!isNowActive && undoPushedForSession[key]) {
-			auto it = lastChangeTime.find(key);
-			if (it == lastChangeTime.end() || currentTime - it->second >= debounceDelay) {
-				undoPushedForSession[key] = false;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * @brief Retrieve values that have been idle for the debounce delay and are ready for tracking.
-	 * @param currentTime   Current time in seconds.
-	 * @param debounceDelay Minimum idle time before a value is considered complete.
-	 * @return Vector of (key, value) pairs that have settled.
-	 */
-	std::vector<std::pair<std::string, T>> GetCompletedEntries(double currentTime, double debounceDelay = DefaultDebounceDelay)
-	{
-		std::vector<std::pair<std::string, T>> completed;
-		std::vector<std::string> keysToRemove;
-
-		for (const auto& [key, changeTime] : lastChangeTime) {
-			if (currentTime - changeTime >= debounceDelay) {
-				auto it = pendingValues.find(key);
-				if (it != pendingValues.end()) {
-					completed.emplace_back(key, it->second);
-					keysToRemove.push_back(key);
-				}
-			}
-		}
-
-		for (const auto& key : keysToRemove) {
-			pendingValues.erase(key);
-			lastChangeTime.erase(key);
-		}
-
-		return completed;
-	}
-
-	/** @brief Discard all pending values, timestamps, and session state. */
-	void Clear()
-	{
-		pendingValues.clear();
-		lastChangeTime.clear();
-		wasActive.clear();
-		undoPushedForSession.clear();
-	}
-
-private:
-	std::map<std::string, T> pendingValues;
-	std::map<std::string, double> lastChangeTime;
-	std::map<std::string, bool> wasActive;
-	std::map<std::string, bool> undoPushedForSession;
-};
-
-// ============================================================================
 // Sticky Header Utilities - Keep widget headers fixed while content scrolls
 // ============================================================================
 
@@ -253,6 +155,8 @@ namespace PropertyDrawer
 // ============================================================================
 namespace WidgetFactory
 {
+	/** @brief Returns whether a record window or its child has keyboard focus. */
+	bool IsWidgetFocused(const Widget& widget);
 	/**
 	 * @brief Translate a widget type name to its localized display string.
 	 * @param widgetTypeName The internal widget type name (e.g. "Weather", "ImageSpace").
@@ -291,7 +195,7 @@ namespace WidgetFactory
 	 * @param  editorIDs  The editor-ID index shared by this initialization batch.
 	 */
 	template <typename WidgetType, typename FormType>
-	void PopulateWidgets(std::vector<std::unique_ptr<Widget>>& widgets, Util::FormEditorIDIndex& editorIDs)
+	void PopulateWidgets(std::vector<std::unique_ptr<Widget>>& widgets, Util::FormEditorIDIndex& editorIDs, bool loadSavedSettings = true)
 	{
 		auto dataHandler = RE::TESDataHandler::GetSingleton();
 		if (!dataHandler)
@@ -304,7 +208,8 @@ namespace WidgetFactory
 			if (form) {
 				auto widget = std::make_unique<WidgetType>(form);
 				widget->CacheFormData(&editorIDs);
-				widget->Load(false);
+				if (loadSavedSettings)
+					widget->Load(false);
 				widgets.push_back(std::move(widget));
 			}
 		}
@@ -348,7 +253,8 @@ namespace WidgetFactory
 		for (auto& widget : widgets) {
 			if (widget->IsOpen()) {
 				widget->DrawWidget();
-				if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+				widget->TrackEdits();
+				if (IsWidgetFocused(*widget)) {
 					lastFocusedWidget = widget.get();
 				}
 			}
@@ -368,32 +274,13 @@ namespace WidgetFactory
 		for (auto& widget : widgets) {
 			if (widget->IsOpen()) {
 				++count;
-				if (ImGui::MenuItem(std::format("{}: {}", TranslateWidgetTypeName(widget->GetWidgetTypeName()), widget->GetEditorID()).c_str()))
-					ImGui::SetWindowFocus(widget->GetWindowTitle().c_str());
+				if (ImGui::MenuItem(std::format("{}: {}", TranslateWidgetTypeName(widget->GetWidgetTypeName()), widget->GetEditorID()).c_str())) {
+					widget->SetOpen(true);
+					widget->RequestFocus();
+				}
 			}
 		}
 		return count;
-	}
-
-	/**
-	 * @brief Draw save menu items for each open widget in a container.
-	 * @tparam Container A range of unique_ptr<Widget>.
-	 * @param  widgets   The widget container to iterate.
-	 * @param  hasOpen   Accumulator flag; true if any previous container had open widgets.
-	 * @return True if any open widget exists across all calls.
-	 */
-	template <typename Container>
-	bool DrawSaveWidgetMenuItems(Container& widgets, bool hasOpen = false)
-	{
-		for (auto& widget : widgets) {
-			if (widget->IsOpen()) {
-				hasOpen = true;
-				auto editorId = widget->GetEditorID();
-				if (ImGui::MenuItem(std::vformat(T("cs_editor.save_widget", "Save {}"), std::make_format_args(editorId)).c_str()))
-					widget->Save();
-			}
-		}
-		return hasOpen;
 	}
 
 	/**
@@ -470,6 +357,23 @@ void PushInheritedStyle();
 /** @brief Pop the inherited style pushed by PushInheritedStyle. Always call after the corresponding push. */
 void PopInheritedStyle();
 
+/**
+ * @brief Draws a control, styled as inherited and explained by inheritedTooltip on hover while that is set.
+ * @return What draw returned.
+ */
+template <class Draw>
+bool DrawInherited(const char* inheritedTooltip, Draw&& draw)
+{
+	if (inheritedTooltip)
+		PushInheritedStyle();
+	const bool result = draw();
+	if (inheritedTooltip) {
+		Util::AddTooltip(inheritedTooltip);
+		PopInheritedStyle();
+	}
+	return result;
+}
+
 // Time of Day (TOD) helper functions
 namespace TOD
 {
@@ -494,7 +398,7 @@ namespace TOD
 	float GetCurrentGameTime();
 
 	/**
-	 * @brief Calculate blend factors for each time period based on current game time.
+	 * @brief Blend factors the sky applies to each weather colour time at the current hour, from the active climate.
 	 * @param outFactors Output array of 4 floats (Sunrise, Day, Sunset, Night), each in [0, 1].
 	 */
 	void GetTimeOfDayFactors(float outFactors[4]);
@@ -596,6 +500,11 @@ namespace TOD
 
 namespace WeatherUtils
 {
+	/** @brief Shared classification color for a weather record, in weather-flag priority order. */
+	ImVec4 GetWeatherTypeColor(const RE::TESWeather* weather);
+	/** @brief Shared display color for one weather classification flag. */
+	ImVec4 GetWeatherFlagColor(RE::TESWeather::WeatherDataFlag flag);
+
 	// Texture path helpers shared by precipitation and cloud layer widgets.
 	namespace TexturePath
 	{
@@ -649,6 +558,21 @@ namespace WeatherUtils
 	std::string FindEditorIDByForm(const RE::TESForm* form, const std::vector<std::unique_ptr<Widget>>& widgets);
 
 	/**
+	 * @brief Reads a form reference saved with FindEditorIDByForm; older saves' hex form IDs still read.
+	 * @return The form; null for a saved "" (none); fallback when the key is absent or names no known form.
+	 */
+	RE::TESForm* ReadFormRef(const json& saved, const std::string& key, const std::vector<std::unique_ptr<Widget>>& widgets,
+		RE::TESForm* fallback);
+
+	/** @copydoc ReadFormRef */
+	template <class T>
+	T* ReadFormRef(const json& saved, const std::string& key, const std::vector<std::unique_ptr<Widget>>& widgets, T* fallback)
+	{
+		auto* form = ReadFormRef(saved, key, widgets, static_cast<RE::TESForm*>(fallback));
+		return form ? form->As<T>() : nullptr;
+	}
+
+	/**
 	 * @brief Set the current widget context for undo tracking. Call at the start of widget Draw().
 	 * @param widget The widget being drawn.
 	 */
@@ -660,6 +584,12 @@ namespace WeatherUtils
 	 * @return Localized label string (stable pointer valid for the session).
 	 */
 	const char* TranslateControlLabel(std::string_view label);
+
+	/** @brief Setting ids per tab name, for ids that double as the English control label. */
+	using SearchTabs = std::vector<std::pair<std::string, std::vector<std::string>>>;
+
+	/** @brief One search result per setting id, shown under its translated label. */
+	std::vector<Widget::SearchResult> LabelSearchResults(const SearchTabs& tabs);
 
 	/**
 	 * @brief Draw an int8-range slider with undo and palette tracking.
@@ -824,3 +754,98 @@ namespace WeatherUtils
 			});
 	}
 }
+
+template <typename T>
+class DebouncedTracker
+{
+public:
+	static constexpr double DefaultDebounceDelay = 2.0;
+
+	/**
+	 * @brief Record that a tracked value has changed.
+	 * @param key         Unique identifier for the tracked value.
+	 * @param value       The new value.
+	 * @param currentTime Current time in seconds.
+	 * @return True if this is a new interaction session.
+	 */
+	bool OnValueChanged(const std::string& key, const T& value, double currentTime)
+	{
+		pendingValues[key] = value;
+		lastChangeTime[key] = currentTime;
+		return true;
+	}
+
+	/**
+	 * @brief Update active/inactive state for a tracked control. Returns true when an undo snapshot should be pushed.
+	 * @param key           Unique identifier for the tracked value.
+	 * @param isNowActive   Whether the control (e.g. slider) is currently being interacted with.
+	 * @param currentTime   Current time in seconds.
+	 * @param debounceDelay Idle time before resetting the undo session, in seconds.
+	 * @return True if undo state should be pushed (first activation of a new session).
+	 */
+	bool UpdateActiveState(const std::string& key, bool isNowActive, double currentTime, double debounceDelay = DefaultDebounceDelay)
+	{
+		bool isPreviouslyActive = wasActive[key];
+		wasActive[key] = isNowActive;
+
+		// Push undo state only once when slider becomes active
+		if (isNowActive && !isPreviouslyActive && !undoPushedForSession[key]) {
+			undoPushedForSession[key] = true;
+			return true;  // Signal to push undo
+		}
+
+		// Reset undo flag when slider is released and idle
+		if (!isNowActive && undoPushedForSession[key]) {
+			auto it = lastChangeTime.find(key);
+			if (it == lastChangeTime.end() || currentTime - it->second >= debounceDelay) {
+				undoPushedForSession[key] = false;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * @brief Retrieve values that have been idle for the debounce delay and are ready for tracking.
+	 * @param currentTime   Current time in seconds.
+	 * @param debounceDelay Minimum idle time before a value is considered complete.
+	 * @return Vector of (key, value) pairs that have settled.
+	 */
+	std::vector<std::pair<std::string, T>> GetCompletedEntries(double currentTime, double debounceDelay = DefaultDebounceDelay)
+	{
+		std::vector<std::pair<std::string, T>> completed;
+		std::vector<std::string> keysToRemove;
+
+		for (const auto& [key, changeTime] : lastChangeTime) {
+			if (currentTime - changeTime >= debounceDelay) {
+				auto it = pendingValues.find(key);
+				if (it != pendingValues.end()) {
+					completed.emplace_back(key, it->second);
+					keysToRemove.push_back(key);
+				}
+			}
+		}
+
+		for (const auto& key : keysToRemove) {
+			pendingValues.erase(key);
+			lastChangeTime.erase(key);
+		}
+
+		return completed;
+	}
+
+	/** @brief Discard all pending values, timestamps, and session state. */
+	void Clear()
+	{
+		pendingValues.clear();
+		lastChangeTime.clear();
+		wasActive.clear();
+		undoPushedForSession.clear();
+	}
+
+private:
+	std::map<std::string, T> pendingValues;
+	std::map<std::string, double> lastChangeTime;
+	std::map<std::string, bool> wasActive;
+	std::map<std::string, bool> undoPushedForSession;
+};

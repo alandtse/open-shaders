@@ -16,6 +16,8 @@
 
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
+struct ImVec4;
+class PresetProvider;
 
 namespace globals
 {
@@ -180,6 +182,8 @@ public:
 	 * it (see GetReleaseStage) avoid a redundant lookup.
 	 */
 	static std::string GetReleaseStageTag(ReleaseStage stage);
+	/** @brief Returns the active theme's color for a pre-release stage. */
+	static ImVec4 GetReleaseStageColor(ReleaseStage stage);
 
 	/**
 	 * Whether the feature is disabled at boot by default (before any user override).
@@ -189,6 +193,10 @@ public:
 	virtual bool IsDisabledByDefault() const { return GetReleaseStage() != ReleaseStage::Release; }
 	virtual bool IsAlwaysEnabled() const { return false; }
 	virtual bool UsesMainSettings() const { return true; }
+	/** @brief Whether personal settings are persisted independently of portable settings eligibility. */
+	virtual bool HasPersonalSettings() const { return UsesMainSettings(); }
+	/** @brief Returns this feature's optional preset payload integration. */
+	virtual PresetProvider* GetPresetProvider() { return nullptr; }
 	virtual bool HasRestoreDefaults() const { return true; }
 
 	/**
@@ -209,6 +217,8 @@ public:
 
 	/** @brief Allocates GPU resources (textures, buffers) needed by this feature. */
 	virtual void SetupResources() {}
+	/** @brief Finalizes resources after all features and the shared renderer are initialized. */
+	virtual void PostSetupResources() {}
 
 	/**
 	 * @brief Adjusts the engine's newly created render targets in place.

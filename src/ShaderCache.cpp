@@ -5288,7 +5288,7 @@ namespace SIE
 													 { "shader", std::string(shader.fxpFilename) }, { "type", magic_enum::enum_name(shader.shaderType.get()) },
 													 { "descriptor", aDescriptor }, { "stage", magic_enum::enum_name(shaderClass) },
 													 { "key", SShaderCache::GetShaderString(shaderClass, shader, aDescriptor, true) },
-													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader.fxpFilename, aDescriptor, shaderClass)) } }
+													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader, aDescriptor, shaderClass)) } }
 													 .dump());
 		}
 	}

@@ -2,16 +2,16 @@
 
 /**
  * @file IconFonts.h
- * @brief Family-tagged FA / Tabler glyph helpers.
+ * @brief Standalone FA / Tabler / Game Icons fonts + family-tagged glyph helpers.
  *
- * Tabler loads as a separate ImFont from the legacy FA body-font merge, so overlapping
- * PUA codepoints never steal each other's glyphs. Pass Icons::FA / TI
+ * Icon typefaces are loaded as separate ImFonts (not MergeMode) so overlapping
+ * PUA codepoints never steal each other's glyphs. Pass Icons::FA / TI / GI
  * wrappers (or GlyphRef) into the draw helpers so the right face is pushed.
  *
- * Use Tabler for UI. FA is for game-world icons (places, creatures, lore).
+ * Use Tabler for UI. FA and Game Icons are for game-world icons (places, creatures, lore).
  */
 
-#include "Menu/Fonts.h"
+#include "Menu/FontAtlasState.h"
 
 #include <format>
 #include <imgui.h>
@@ -24,7 +24,8 @@ namespace Icons
 	enum class Family : uint8_t
 	{
 		FontAwesome,
-		Tabler
+		Tabler,
+		GameIcons
 	};
 
 	/** @brief UTF-8 icon glyph tagged with its typeface. */
@@ -45,22 +46,25 @@ namespace Icons
 
 	[[nodiscard]] constexpr GlyphRef FA(const char* utf8) noexcept { return { Family::FontAwesome, utf8 }; }
 	[[nodiscard]] constexpr GlyphRef TI(const char* utf8) noexcept { return { Family::Tabler, utf8 }; }
+	[[nodiscard]] constexpr GlyphRef GI(const char* utf8) noexcept { return { Family::GameIcons, utf8 }; }
 
 	[[nodiscard]] inline ImFont* GetFont(Family family)
 	{
-		const auto& atlas = MenuFonts::GetIconFonts();
+		const auto& atlas = MenuFonts::GetAtlasState();
 		switch (family) {
 		case Family::FontAwesome:
-			return ImGui::GetFont();
+			return atlas.GetFontAwesomeIconFont();
 		case Family::Tabler:
-			return atlas.tabler;
+			return atlas.GetTablerIconFont();
+		case Family::GameIcons:
+			return atlas.GetGameIconsFont();
 		}
 		return nullptr;
 	}
 
 	[[nodiscard]] inline ImFont* GetFont(GlyphRef glyph) { return GetFont(glyph.family); }
 
-	/** @brief Push the glyph's font for the enclosing scope, optionally scaled from its loaded size. */
+	/** @brief Push the glyph's standalone icon font for the enclosing scope, optionally scaled from its loaded size. */
 	class FontGuard
 	{
 	public:
@@ -181,7 +185,7 @@ namespace Icons
 			btnSize.y = ImGui::GetFrameHeight();
 
 		ImGui::PushID(id);
-		const bool clicked = ImGui::InvisibleButton("##labeled", btnSize);
+		const bool clicked = ImGui::InvisibleButton("##labeled", btnSize, ImGuiButtonFlags_EnableNav);
 		const ImVec2 min = ImGui::GetItemRectMin();
 		const ImVec2 max = ImGui::GetItemRectMax();
 		ImDrawList* dl = ImGui::GetWindowDrawList();

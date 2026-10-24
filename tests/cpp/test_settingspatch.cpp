@@ -353,8 +353,10 @@ TEST_CASE("CollectUnknownSettingKeys reports nesting under a known scalar field"
 	// Inverse of the flattened-key case: a caller that nests under a field
 	// the feature defines as a scalar, not a group.
 	const json known{ { "A", 1 } };
+	const json originalKnown = known;
 	const json patch{ { "A", { { "B", 2 } } } };
 	std::vector<std::string> unknown;
 	Util::Settings::CollectUnknownSettingKeys(patch, known, "", unknown);
-	REQUIRE(unknown == std::vector<std::string>{ "A.B" });
+	REQUIRE(unknown == std::vector<std::string>{ "A (wrong type)" });
+	REQUIRE(known == originalKnown);
 }

@@ -3,9 +3,11 @@
 #include "Format.h"
 #include "WinApi.h"
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <imgui.h>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -25,6 +27,10 @@ namespace Util
 	 */
 	namespace PathHelpers
 	{
+		/** @brief Preset library folders, relative to the CommunityShaders plugin directory. */
+		constexpr const char* kUnifiedPresetsSubdir = "Presets";
+		constexpr const char* kEffects11PresetsSubdir = "Effects11/Presets";
+
 		/**
 		 * Gets the base Data directory path
 		 * @return Current working directory / "Data"
@@ -56,10 +62,17 @@ namespace Util
 		std::filesystem::path GetFontsPath();
 
 		/**
-		 * Gets the CommunityShaders Icons directory path
+		 * Gets the CommunityShaders Icons directory path (UI textures / glyphs).
 		 * @return Interface / "Icons"
 		 */
 		std::filesystem::path GetIconsPath();
+
+		/**
+		 * Gets the deployed icon-font directory (FA / Tabler / Game Icons + licenses).
+		 * Kept under Icons so it stays out of the user Fonts catalog.
+		 * @return Icons / "glyphs"
+		 */
+		std::filesystem::path GetIconFontsPath();
 
 		/**
 		 * Gets the CommunityShaders Cursors directory path
@@ -202,6 +215,46 @@ namespace Util
 		std::filesystem::path GetThemesRealPath();
 
 		/**
+		 * Returns the real path to the Effects11 presets library (for Explorer / create_directories).
+		 * @return  <mod_root> / "SKSE" / "Plugins" / "CommunityShaders" / "Effects11" / "Presets", or the in-game
+		 *          path when the mod root is unknown
+		 */
+		std::filesystem::path GetEffects11PresetsRealPath();
+
+		/**
+		 * Returns the real path to the unified presets library.
+		 * @return  <mod_root> / "SKSE" / "Plugins" / "CommunityShaders" / "Presets", or the in-game path when
+		 *          the mod root is unknown
+		 */
+		std::filesystem::path GetUnifiedPresetsRealPath();
+
+		/**
+		 * @brief Directories to scan for a CommunityShaders subfolder: the Data (VFS) path, then the mod's
+		 * real folder when distinct, since MO2 hides folders created there mid-session from the VFS.
+		 * @param relativePath Path under CommunityShaders, e.g. "Presets".
+		 */
+		std::vector<std::filesystem::path> GetCommunityShaderScanRoots(const std::filesystem::path& relativePath);
+
+		/** @brief ToUtf8 with '/' separators, for paths stored in JSON. */
+		std::string ToGenericUtf8(const std::filesystem::path& path);
+
+		/** @brief Whether a library folder or file is hidden from preset scans ('_' or '.' prefix). */
+		bool IsHiddenLibraryEntry(std::string_view name);
+		/** @brief Path overload: reads the native name, since path::string() throws outside the ANSI code page. */
+		bool IsHiddenLibraryEntry(const std::filesystem::path& name);
+
+		/** @brief Visible child folders (or files) of a CommunityShaders subfolder across every scan root; first root wins. */
+		std::vector<std::filesystem::path> ListCommunityShaderEntries(const std::filesystem::path& relativePath, bool directories);
+
+		/** @brief Folder of a unified preset pack: the first scan root holding it, else the Data (VFS) path,
+		 *  which MO2 routes to its overwrite folder. */
+		std::filesystem::path GetUnifiedPackPath(const std::string& packId);
+
+		/** @brief Every scan root's folder for a pack, Data (VFS) first. MO2 can split one pack across the
+		 *  overwrite folder and the mod's real folder, where exports land. */
+		std::vector<std::filesystem::path> GetUnifiedPackPaths(const std::string& packId);
+
+		/**
 		 * Returns the real path to the Features directory containing feature INI files.
 		 * @return  <mod_root> / "Shaders" / "Features"
 		 */
@@ -325,12 +378,35 @@ namespace Util
 		 */
 		void EnsureDirectoryExists(const std::filesystem::path& path);
 
+		/** @brief Opens a file, folder or URL with its default handler, Explorer for folders. @return Whether the shell accepted it. */
+		bool OpenWithShell(const std::filesystem::path& path);
+
 		/**
 		 * Replaces Windows-invalid filename characters with underscore.
 		 * @param name Filename or path component to sanitize
 		 * @return Sanitized string safe for use as a filename
 		 */
 		std::string SanitizeFileName(std::string name);
+
+		/**
+		 * @brief Writes to a sibling temporary, then replaces the target, so a failure never leaves a truncated file.
+		 * @param context Human-readable description used in log messages
+		 * @return true when the target now holds the new contents
+		 */
+		bool WriteFileAtomically(const std::filesystem::path& path, std::string_view content, std::string_view context);
+
+		/**
+		 * @brief Parses a JSON file (instantiated for nlohmann::json and nlohmann::ordered_json).
+		 * @param context Human-readable description used in the log message
+		 * @param maxBytes Larger files are rejected; 0 means unbounded
+		 * @param error Receives the reason when the file exists but is rejected; untouched when it cannot be opened
+		 * @return The document, or nullopt when the file cannot be opened, is too large, or cannot be parsed
+		 */
+		template <class Json = nlohmann::json>
+		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
+
+		/** @brief ReadJsonFile that also rejects documents whose root is not an object. */
+		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes = 0, std::string* error = nullptr);
 	}
 
 	/**
@@ -368,13 +444,5 @@ namespace Util
 		 */
 		std::vector<SettingsDiffEntry> DiffJson(const nlohmann::json& userJson, const nlohmann::json& testJson, float epsilon = 0.0001f);
 
-		/**
-		 * Loads and compares two JSON files, returning a list of differences
-		 * @param userPath Path to the first JSON file (USER variant)
-		 * @param testPath Path to the second JSON file (TEST variant)
-		 * @param epsilon Tolerance for floating-point comparisons (default: 0.0001f)
-		 * @return Vector of differences between the two JSON files
-		 */
-		std::vector<SettingsDiffEntry> LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath, float epsilon = 0.0001f);
 	}
 }

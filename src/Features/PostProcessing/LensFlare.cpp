@@ -6,6 +6,7 @@
 #include "PostProcessingUI.h"
 #include "ShaderCache.h"
 #include "Util.h"
+#include "Utils/SettingsControl.h"
 
 namespace
 {
@@ -126,30 +127,50 @@ void LensFlare::DrawSettings()
 	}
 
 	if (settings.GhostModeInt == static_cast<int>(GhostMode::Quality) || settings.GhostModeInt == static_cast<int>(GhostMode::Ultra)) {
-		const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr;
-		int apertureBlades = camera ? camera->ApertureBladeCount : settings.ApertureBlades;
-		float fStop = camera ? camera->FNumber : settings.FStop;
-		float apertureRotation = camera ? camera->ApertureBladeRotationDeg : settings.ApertureRotation;
+		// Procedural aperture settings. The Cinematic Camera owns the physical
+		// aperture while active; show the effective values read-only.
+		const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 
-		ImGui::BeginDisabled(camera != nullptr);
-		ImGui::SliderInt(T("feature.post_processing.lens_flare.aperture_blades", "Aperture Blades"), &apertureBlades, 3, 10);
+		int apertureBlades = settings.ApertureBlades;
+		if (cam)
+			apertureBlades = cam->ApertureBladeCount;
+		float fStop = settings.FStop;
+		if (cam)
+			fStop = cam->FNumber;
+		float apertureRotation = settings.ApertureRotation;
+		if (cam)
+			apertureRotation = cam->ApertureBladeRotationDeg;
+
+		ImGui::BeginDisabled(cam != nullptr);
+		{
+			const SettingsControl::ProxyScope proxy(&settings.ApertureBlades, 1.0f);
+			ImGui::SliderInt(T("feature.post_processing.lens_flare.aperture_blades", "Aperture Blades"), &apertureBlades, 3, 10);
+		}
 		tooltip("Number of aperture blades for the procedural bokeh shape.");
 
-		ImGui::SliderFloat(T("feature.post_processing.lens_flare.f_stop", "F-Stop"), &fStop, 1.0f, 22.0f, "F%.1f");
+		{
+			const SettingsControl::ProxyScope proxy(&settings.FStop, 1.0f);
+			ImGui::SliderFloat(T("feature.post_processing.lens_flare.f_stop", "F-Stop"), &fStop, 1.0f, 22.0f, "F%.1f");
+		}
 		tooltip("Aperture f-number (e.g. F2.8). Smaller = larger aperture.\nControls the bokeh shape characteristics.");
 
-		ImGui::SliderFloat(T("feature.post_processing.lens_flare.aperture_rotation", "Aperture Rotation"), &apertureRotation, -180.0f, 180.0f, "%.1f deg");
+		{
+			const SettingsControl::ProxyScope proxy(&settings.ApertureRotation, 1.0f);
+			ImGui::SliderFloat(T("feature.post_processing.lens_flare.aperture_rotation", "Aperture Rotation"), &apertureRotation, -180.0f, 180.0f, "%.1f deg");
+		}
 		tooltip("Rotation of the procedural aperture.");
 		ImGui::EndDisabled();
 
-		if (!camera) {
+		if (!cam && !SettingsControl::IsReplicating()) {
 			settings.ApertureBlades = apertureBlades;
 			settings.FStop = fStop;
 			settings.ApertureRotation = apertureRotation;
 		}
 
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
 		PostProcessingUI::FFTResolutionCombo(T("feature.post_processing.lens_flare.fft_resolution", "FFT Resolution"), settings.FFTResolution);
 		tooltip("Resolution of the FFT convolution. Higher = sharper bokeh ghost shapes but more expensive.");
+		ImGui::EndDisabled();
 
 		ImGui::SliderFloat(T("feature.post_processing.lens_flare.kernel_scale", "Kernel Scale"), &settings.KernelScale, 0.01f, 0.5f, "%.3f");
 		tooltip("Base size of the bokeh kernel relative to FFT resolution.\nPer-ghost scales multiply this value in Ultra mode.");
@@ -177,6 +198,7 @@ void LensFlare::DrawSettings()
 			}
 			ImGui::PopID();
 		}
+		ImGui::BeginDisabled(SettingsControl::IsReplicating());
 		if (ImGui::Button(T("feature.post_processing.lens_flare.reset_ghosts_to_default", "Reset Ghosts to Default"))) {
 			GhostSettings defaults[NUM_GHOSTS] = {
 				{ { { 1.0f, 0.8f, 0.4f, 1.0f } }, -1.5f, true, 1.0f },
@@ -190,6 +212,7 @@ void LensFlare::DrawSettings()
 			};
 			std::memcpy(settings.Ghosts.data(), defaults, sizeof(settings.Ghosts));
 		}
+		ImGui::EndDisabled();
 		ImGui::TreePop();
 	}
 
@@ -216,7 +239,7 @@ void LensFlare::DrawSettings()
 	ImGui::Separator();
 	ImGui::Spacing();
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.lens_flare.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.lens_flare.debug", "Debug"))) {
 		ImGui::Checkbox(T("feature.post_processing.lens_flare.disable_threshold", "Disable Threshold"), &debugsettings.disableThreshold);
 		ImGui::Checkbox(T("feature.post_processing.lens_flare.disable_ghosts", "Disable Ghosts"), &debugsettings.disableGhosts);
 		ImGui::Checkbox(T("feature.post_processing.lens_flare.disable_blur", "Disable Blur"), &debugsettings.disableBlur);

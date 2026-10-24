@@ -13,7 +13,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "ProfilingRenderer.h"
-#include "SceneSettingsManager.h"
+#include "State.h"
 #include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "menu.performance."
@@ -160,7 +160,7 @@ static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], 
 			ImGui::TableNextColumn();
 			ImGui::PushID(i);
 			if (DrawProfileCard(labels[i], descriptions[i], i == activeIdx, theme.StatusPalette.InfoColor)) {
-				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+				State::SettingsLayerGuard settingsLayerGuard;
 				Feature::ApplyPerformanceProfileToAll(profiles[i]);
 			}
 			ImGui::PopID();
@@ -279,7 +279,7 @@ static void RenderPresets(Feature* host)
 		}
 		DrawProfileButtonRow(profiles, labels, featureTooltips, featureActiveIdx,
 			[feature](Feature::PerfProfile p) {
-				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+				State::SettingsLayerGuard settingsLayerGuard;
 				feature->ApplyPerformanceProfile(p);
 			});
 		// Feature overrides stay visible beneath the global chooser.

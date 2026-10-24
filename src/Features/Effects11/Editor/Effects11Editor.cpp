@@ -6,6 +6,7 @@
 #include <format>
 #include <imgui_stdlib.h>
 
+#include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
 #include "EditorWidgets.h"
 #include "Features/Effects11.h"
@@ -21,6 +22,8 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "Menu/PresetsPageRenderer.h"
+#include "PostProcessingMode.h"
 #include "State.h"
 #include "Utils/UI.h"
 
@@ -297,13 +300,7 @@ namespace
 		ImGui::SetNextWindowSize(ImVec2(width, height), cond);
 	}
 
-	/** Puts the next item on the current line if it fits, otherwise on a new line. */
-	void SameLineIfFits(float a_width)
-	{
-		ImGui::SameLine();
-		if (ImGui::GetContentRegionAvail().x < a_width)
-			ImGui::NewLine();
-	}
+	using BrowserUI::SameLineIfFits;
 
 	bool MenuItemResetFloat(float& a_value, float a_default, int a_decimals)
 	{
@@ -461,7 +458,10 @@ void Effects11Editor::DrawNoPreset()
 			"enbseries folder (containing at least enbeffect.fx) are in the game folder or in Data, "
 			"then click Reload Shaders."));
 	}
+	ImGui::PopTextWrapPos();
+
 	ImGui::Spacing();
+	ImGui::PushTextWrapPos(0.0f);
 	Util::TextUnformattedDisabled(T(TKEY("looking_for"), "Looking for:"));
 	ImGui::TextUnformatted(presetPaths.mainEffect.c_str());
 	ImGui::PopTextWrapPos();
@@ -502,9 +502,20 @@ void Effects11Editor::DrawToolbar()
 	Util::AddTooltip(T(TKEY("shader_panel_tip"), "Show or hide the panel with the .fx shader parameters."));
 
 	const char* saveLabel = T(TKEY("save"), "Save");
-	if (HasUnsavedChanges() ? Util::SuccessButton(saveLabel) : ImGui::Button(saveLabel))
+	const bool wasDirty = HasUnsavedChanges();
+	const char* saveTip = wasDirty ?
+	                          T(TKEY("unsaved_changes_tooltip"), "There are unsaved changes. Click to save.") :
+	                          T(TKEY("save_tip"), "Write every change to enbseries.ini, the weather files and the shader .ini files.\nShortcut: Ctrl+S");
+	if (wasDirty) {
+		auto color = globals::menu->GetTheme().StatusPalette.Error;
+		color.w = 0.75f;
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+	}
+	if (ImGui::Button(saveLabel))
 		Save();
-	Util::AddTooltip(T(TKEY("save_tip"), "Write every change to enbseries.ini, the weather files and the shader .ini files.\nShortcut: Ctrl+S"));
+	if (wasDirty)
+		ImGui::PopStyleColor();
+	Util::AddTooltip(saveTip);
 
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("revert"), "Revert")))
@@ -518,15 +529,6 @@ void Effects11Editor::DrawToolbar()
 	Util::AddTooltip(T(TKEY("reload_shaders_tip"),
 		"Recompile the .fx files and reload everything from disk.\n"
 		"Use this after changing a compile-time option or editing a shader file."));
-
-	const bool hasUnsavedChanges = HasUnsavedChanges();
-	const char* stateText = hasUnsavedChanges ? T(TKEY("unsaved_changes"), "Unsaved changes") : T(TKEY("all_saved"), "All changes saved");
-	SameLineIfFits(ImGui::CalcTextSize(stateText).x);
-	ImGui::AlignTextToFramePadding();
-	if (hasUnsavedChanges)
-		Util::Text::Warning("%s", stateText);
-	else
-		Util::TextUnformattedDisabled(stateText);
 
 	if (shaderReloadNeeded)
 		Util::Text::WrappedWarning("%s", T(TKEY("reload_needed"), "Compile-time options changed. Save, then click Reload Shaders to apply them."));
@@ -561,6 +563,12 @@ void Effects11Editor::DrawStatus()
 			Util::Text::Error("%s", text.c_str());
 			Util::AddTooltip(T(TKEY("status_failed_files_tip"), "See the Shader Parameters panel for the compiler errors."));
 		}
+		// Switching presets happens on the Presets page; this leaves the editor for it.
+		ImGui::SameLine();
+		if (const float slack = ImGui::GetContentRegionAvail().x - PresetsPageRenderer::MeasureOpenButton(); slack > 0.0f)
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + slack);
+		PresetsPageRenderer::DrawOpenButton("##Effects11EditorOpenPresets",
+			T("feature.effects11.open_presets_tooltip", "Load and switch Effects 11 presets on the Presets page."));
 	}
 
 	// Time of day
@@ -759,6 +767,7 @@ void Effects11Editor::DrawCategory(const std::string& a_category, const char* a_
 	const bool weatherAware = settingManager.IsWeatherSystemEnabled() && settingManager.CategoryHasWeatherSupport(a_category);
 	const bool isParticle = a_category == "PARTICLE";
 	const bool handledByCS = isParticle && globals::features::effects11.settings.IgnorePresetParticles;
+	const bool handedOff = E11Handoff::IsE11SettingHandedOff(a_category);
 
 	if (!settingsFilter.empty())
 		ImGui::SetNextItemOpen(true, ImGuiCond_Always);
@@ -769,7 +778,9 @@ void Effects11Editor::DrawCategory(const std::string& a_category, const char* a_
 	const char* exteriorTag = exteriorOnly && IsInterior() ? T(TKEY("tag_exterior_only"), "Exterior only") : nullptr;
 	const char* offTag = active ? nullptr : T(TKEY("tag_off"), "Off");
 	const char* csTag = handledByCS ? T(TKEY("tag_handled_by_cs"), "Handled by CS") : nullptr;
-	Effects11UI::HeaderTags({ { weatherTag.empty() ? nullptr : weatherTag.c_str(), Util::Colors::GetInfo() },
+	const char* sceneTag = handedOff ? T(TKEY("tag_scene"), "Scene") : nullptr;
+	Effects11UI::HeaderTags({ { sceneTag, Util::Colors::GetInfo() },
+		{ weatherTag.empty() ? nullptr : weatherTag.c_str(), Util::Colors::GetInfo() },
 		{ exteriorTag, Util::Colors::GetWarning() },
 		{ offTag, Util::Colors::GetDisabled() },
 		{ csTag, Util::Colors::GetInfo() } });
@@ -792,9 +803,11 @@ void Effects11Editor::DrawCategory(const std::string& a_category, const char* a_
 		Util::TextUnformattedDisabled(a_description);
 	if (exteriorOnly && IsInterior())
 		Util::Text::WrappedWarning("%s", T(TKEY("exterior_only_note"), "These values only apply outdoors."));
+	if (handedOff)
+		Util::Text::WrappedWarning("%s", T(TKEY("handed_off_note"), "This preset hands this feature to Community Shaders scene settings, so these values have no effect."));
 	ImGui::PopTextWrapPos();
 
-	if (!active) {
+	if (!active && !handedOff) {
 		const auto [dependencyKey, dependencyCategory] = settingManager.GetCategoryDependency(a_category);
 		const uint32_t dependencyID = settingManager.GetSettingID(dependencyKey, dependencyCategory);
 		Util::Text::WrappedWarning("%s", T(TKEY("section_off"), "This section is switched off, so its values have no effect."));
@@ -828,7 +841,7 @@ void Effects11Editor::DrawCategory(const std::string& a_category, const char* a_
 
 	if (Effects11UI::BeginPropertyTable("##rows")) {
 		for (const auto* setting : a_rows)
-			DrawSettingRow(*setting, active && usable && !handledByCS);
+			DrawSettingRow(*setting, active && usable && !handledByCS && !handedOff);
 		Effects11UI::EndPropertyTable();
 	}
 
@@ -934,7 +947,7 @@ void Effects11Editor::DrawSettingRow(const Setting& a_setting, bool a_categoryAc
 	auto& settingManager = SettingManager::GetSingleton();
 	const std::string name = Effects11UI::PrettifyName(a_setting.key);
 	const bool dependencyMet = a_setting.dependsOnKey.empty() || settingManager.GetValue<bool>(a_setting.dependsOnKey, a_setting.dependsOnCategory);
-	const bool editable = a_categoryActive && dependencyMet;
+	const bool editable = a_categoryActive && dependencyMet && !E11Handoff::IsE11SettingHandedOff(a_setting.category, a_setting.key);
 
 	ImGui::PushID(static_cast<int>(a_setting.id));
 	bool labelHovered = false;
@@ -1533,6 +1546,8 @@ void Effects11Editor::DrawLauncher()
 		RefreshPresetPaths();
 	Util::TextUnformattedDisabled(presetPaths.iniDisplay.c_str());
 	Util::AddTooltip(presetPaths.iniFull.c_str());
+	PresetsPageRenderer::DrawOpenButton("##Effects11OpenPresets",
+		T("feature.effects11.open_presets_tooltip", "Load and switch Effects 11 presets on the Presets page."));
 
 	ImGui::Spacing();
 	const float scale = Util::GetUIScale();
@@ -1555,26 +1570,17 @@ void Effects11Editor::DrawLauncher()
 	ImGui::Spacing();
 	ImGui::Separator();
 
-	const uint32_t useEffectID = settingManager.GetSettingID("UseEffect", "GLOBAL");
-	bool enabled = presetLoaded && settingManager.GetValue<bool>(useEffectID);
-	ImGui::BeginDisabled(!presetLoaded);
-	if (ImGui::Checkbox(T(TKEY("enable_effects"), "Enable Effects 11"), &enabled)) {
-		settingManager.SetValue<bool>(useEffectID, enabled);
-	}
-	ImGui::EndDisabled();
-	{
-		const auto tip = I18n::GetSingleton()->Format(TKEY("enable_effects_tip"),
-			{ { "key", Util::Input::KeyIdToString(menuSettings.Effects11ToggleKey) } },
-			"Master switch for the whole preset.\nHotkey: {key}");
-		Util::AddTooltip(tip.c_str(), ImGuiHoveredFlags_AllowWhenDisabled);
-	}
+	// The shared selector drives UseEffect, which is saved to enbseries.ini with the rest of the preset
+	PostProcessingMode::DrawSelector();
 	if (HasUnsavedChanges()) {
-		SameLineIfFits(ImGui::CalcTextSize(T(TKEY("unsaved_changes"), "Unsaved changes")).x);
-		ImGui::AlignTextToFramePadding();
-		Util::Text::Warning("%s", T(TKEY("unsaved_changes"), "Unsaved changes"));
-		ImGui::SameLine();
-		if (Util::SuccessButton(T(TKEY("save"), "Save")))
+		SameLineIfFits(ImGui::CalcTextSize(T(TKEY("save"), "Save")).x);
+		auto color = globals::menu->GetTheme().StatusPalette.Error;
+		color.w = 0.75f;
+		ImGui::PushStyleColor(ImGuiCol_Text, color);
+		if (ImGui::Button(T(TKEY("save"), "Save")))
 			Save();
+		ImGui::PopStyleColor();
+		Util::AddTooltip(T(TKEY("unsaved_changes_tooltip"), "There are unsaved changes. Click to save."));
 		ImGui::SameLine();
 		if (ImGui::Button(T(TKEY("revert"), "Revert")))
 			RequestAction(PendingAction::Revert);

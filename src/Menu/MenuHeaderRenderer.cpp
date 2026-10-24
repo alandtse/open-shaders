@@ -1,4 +1,5 @@
 #include "MenuHeaderRenderer.h"
+#include "Menu/IconLoader.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -7,6 +8,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Plugin.h"
+#include "SaveManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "ThemeManager.h"
@@ -17,7 +19,7 @@ namespace
 	using RoleFontGuard = MenuFonts::FontRoleGuard;
 }
 
-void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons, bool& sidebarVisible)
+void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Util::IconLoader::UIIcons& uiIcons, bool& sidebarVisible)
 {
 	if (!globals::menu) {
 		logger::error("MenuHeaderRenderer::RenderHeader: globals::menu is null, cannot render header");
@@ -179,9 +181,14 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 		if (ImGui::BeginTable("##ActionButtons", 4, ImGuiTableFlags_SizingStretchSame)) {
 			// Save Settings Button
 			ImGui::TableNextColumn();
+			const bool unsaved = globals::state->HasUnsavedChanges();
+			if (unsaved)
+				ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetUnsaved());
 			if (Util::ButtonWithFlash(T("menu.save_settings", "Save Settings"), { -1, 0 })) {
-				globals::state->Save();
+				SaveManager::SaveAll();
 			}
+			if (unsaved)
+				ImGui::PopStyleColor();
 
 			// Restore Saved Settings Button
 			ImGui::TableNextColumn();
@@ -256,7 +263,7 @@ void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShow
 	}
 }
 
-void MenuHeaderRenderer::RenderSidebarToggle(const ImVec2& buttonSize, const Menu::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible)
+void MenuHeaderRenderer::RenderSidebarToggle(const ImVec2& buttonSize, const Util::IconLoader::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible)
 {
 	if (uiIcons.sidebar.texture) {
 		const ImVec2 padding = ImGui::GetStyle().FramePadding;
@@ -277,7 +284,7 @@ void MenuHeaderRenderer::RenderSidebarToggle(const ImVec2& buttonSize, const Men
 		ImGui::TextUnformatted(tooltip);
 }
 
-float MenuHeaderRenderer::GetCompactActionsWidth(const Menu::UIIcons& uiIcons)
+float MenuHeaderRenderer::GetCompactActionsWidth(const Util::IconLoader::UIIcons& uiIcons)
 {
 	const auto icons = BuildActionIcons(true, uiIcons, true);
 	float width = ImGui::GetStyle().ItemSpacing.x * static_cast<float>(icons.size() - 1);
@@ -286,7 +293,7 @@ float MenuHeaderRenderer::GetCompactActionsWidth(const Menu::UIIcons& uiIcons)
 	return width;
 }
 
-void MenuHeaderRenderer::RenderCompactActions(const Menu::UIIcons& uiIcons)
+void MenuHeaderRenderer::RenderCompactActions(const Util::IconLoader::UIIcons& uiIcons)
 {
 	const auto icons = BuildActionIcons(true, uiIcons, true);
 	const auto buttonStyle = Util::TransparentIconButtonStyle();
@@ -320,7 +327,7 @@ void MenuHeaderRenderer::RenderCompactActions(const Menu::UIIcons& uiIcons)
 	}
 }
 
-std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons, bool includeMissing)
+std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons(bool canShowIcons, const Util::IconLoader::UIIcons& uiIcons, bool includeMissing)
 {
 	std::vector<ActionIcon> actionIcons;
 
@@ -330,11 +337,13 @@ std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons
 
 	// Build list of available action icons (in display order)
 	if (uiIcons.saveSettings.texture || includeMissing) {
+		const bool unsaved = globals::state->HasUnsavedChanges();
 		actionIcons.push_back({ uiIcons.saveSettings.texture,
-			T("menu.save_settings", "Save Settings"),
+			unsaved ? T("menu.save_settings_unsaved", "Save Settings (unsaved changes)") : T("menu.save_settings", "Save Settings"),
 			[]() {
-				globals::state->Save();
-			} });
+				SaveManager::SaveAll();
+			},
+			unsaved });
 	}
 	if (uiIcons.loadSettings.texture || includeMissing) {
 		actionIcons.push_back({ uiIcons.loadSettings.texture,
@@ -419,6 +428,8 @@ void MenuHeaderRenderer::RenderDockedIcons(const std::vector<ActionIcon>& action
 				// Use white/gray tint for colored icons
 				tintColor = isHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 220);
 			}
+			if (it->unsaved)
+				tintColor = ImGui::GetColorU32(Util::Colors::GetUnsaved());
 			fgDrawList->AddImage(it->texture, iconMin, iconMax, ImVec2(0, 0), ImVec2(1, 1), tintColor);
 		}
 
@@ -471,7 +482,8 @@ void MenuHeaderRenderer::RenderUndockedIcons(const std::vector<ActionIcon>& acti
 		std::string buttonId = std::format("##ActionBtn{}", i);
 
 		// Use ImageButton with reduced image size to minimize padding
-		if (ImGui::ImageButton(buttonId.c_str(), icon.texture, imageSize, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), tintColor)) {
+		if (ImGui::ImageButton(buttonId.c_str(), icon.texture, imageSize, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0),
+				icon.unsaved ? Util::Colors::GetUnsaved() : tintColor)) {
 			icon.callback();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -489,7 +501,7 @@ void MenuHeaderRenderer::RenderUndockedIcons(const std::vector<ActionIcon>& acti
 	ImGui::PopStyleColor(2);  // Pop both style colors: Button and ButtonHovered
 }
 
-void MenuHeaderRenderer::RenderWatermarkLogo(const Menu::UIIcons& uiIcons)
+void MenuHeaderRenderer::RenderWatermarkLogo(const Util::IconLoader::UIIcons& uiIcons)
 {
 	// Get current window's drawable area (excluding title bar)
 	ImVec2 windowPos = ImGui::GetWindowPos();

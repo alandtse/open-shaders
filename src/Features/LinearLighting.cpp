@@ -5,6 +5,7 @@
 #include "../I18n/I18n.h"
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
+#include "PostProcessingMode.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
@@ -64,18 +65,17 @@ namespace
 
 void LinearLighting::DrawSettings()
 {
-#if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
-			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
-			return;
-		}
-	}
-#endif
+	const auto mode = PostProcessingMode::Get();
+	const bool overridden = mode != PostProcessingMode::Mode::PostProcessing;
+	const Util::LockedSection modeLock(overridden, mode == PostProcessingMode::Mode::Effects11 ?
+													   T(TKEY("overridden_by_effects11"), "Effects 11 overrides Linear Lighting.") :
+													   T(TKEY("off_in_vanilla"), "Vanilla post processing turns Linear Lighting off."));
 
-	if (Util::CheckboxFlag(T(TKEY("enable"), "Enable Linear Lighting"), settings.enableLinearLighting))
+	bool enabledDisplay = settings.enableLinearLighting && !overridden;
+	if (ImGui::Checkbox(T(TKEY("enable"), "Enable Linear Lighting"), &enabledDisplay)) {
+		settings.enableLinearLighting = enabledDisplay;
 		weatherLightingColorsInitialized = false;
+	}
 	Util::CheckboxFlag(T(TKEY("enable_acescg"), "Enable ACEScg Wide Gamut"), settings.enableACEScg);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("enable_acescg_tooltip"),
@@ -363,7 +363,7 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 
 bool LinearLighting::IsLinearLightingActive() const
 {
-	if (!loaded || !settings.enableLinearLighting || !sceneGammaDecodeCS || !globals::state || !globals::shaderCache ||
+	if (!loaded || !settings.enableLinearLighting || PostProcessingMode::Get() != PostProcessingMode::Mode::PostProcessing || !sceneGammaDecodeCS || !globals::state || !globals::shaderCache ||
 		!globals::shaderCache->IsEnabled() || globals::state->IsMainLoadingOrFlatMapOpen())
 		return false;
 

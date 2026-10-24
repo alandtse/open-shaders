@@ -12,7 +12,12 @@
 #include "Deferred.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "IBL.h"
 #include "LODShadows.h"
+#include "PostProcessing.h"
+#include "PostProcessingMode.h"
+#include "Presets/PresetProvider.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "SkySync.h"
 #include "State.h"
@@ -667,20 +672,70 @@ void Effects11::RestoreDefaultSettings()
 	settings = { .presetLocation = std::move(settings.presetLocation) };
 }
 
+bool Effects11::IsUseEffectEnabled() const
+{
+	return loaded && SettingManager::GetSingleton().GetValue<bool>("UseEffect", "GLOBAL");
+}
+
+bool Effects11::IsPresetEnabled() const
+{
+	auto& manager = EffectManager::GetSingleton();
+	return IsUseEffectEnabled() && manager.IsInitialized() && manager.IsPresetLoaded();
+}
+
 void Effects11::ToggleEnabled()
 {
-	if (!EffectManager::GetSingleton().IsPresetLoaded())
+	using PostProcessingMode::Mode;
+	// Effects 11 running since startup has no prior mode, so it falls back to Post Processing when installed.
+	static Mode modeBeforeEffects11 = Mode::PostProcessing;
+	const Mode current = PostProcessingMode::Get();
+	if (current == Mode::Effects11) {
+		if (!PostProcessingMode::Set(modeBeforeEffects11))
+			PostProcessingMode::Set(Mode::Vanilla);
 		return;
+	}
+	if (PostProcessingMode::Set(Mode::Effects11))
+		modeBeforeEffects11 = current;
+}
+
+void Effects11::SetUseEffect(bool enabled)
+{
 	auto& settingManager = SettingManager::GetSingleton();
-	const uint32_t id = settingManager.GetSettingID("UseEffect", "GLOBAL");
-	settingManager.SetValue<bool>(id, !settingManager.GetValue<bool>(id));
+	settingManager.SetValue<bool>(settingManager.GetSettingID("UseEffect", "GLOBAL"), enabled);
 }
 
 void Effects11::SetupResources()
 {
 	Initialize();
-
+	// The active preset pack decides the preset; without one, or when it is gone, the default stays.
+	auto& presetManager = PresetManager::GetSingleton();
+	presetManager.DiscoverPresets();
+	if (const auto presetId = UnifiedPresetCatalog::GetSingleton().GetActivePayloadPresetId(*GetPresetProvider()))
+		presetManager.SetActivePreset(*presetId);
 	EffectManager::GetSingleton().Initialize();
+}
+
+void Effects11::PostSetupResources()
+{
+	resourcesReady = true;
+	Reset();
+}
+
+void Effects11::Reset()
+{
+	if (!resourcesReady)
+		return;
+	PostProcessingMode::ApplyPending();
+	const bool enabled = IsPresetEnabled();
+	if (enabled != presetActive) {
+		// UseEffect can also turn on from an ini reload or preset switch; Post Processing must still yield.
+		if (enabled)
+			PostProcessingMode::Set(PostProcessingMode::Mode::Effects11);
+		presetActive = enabled;
+	} else if (!enabled && IsUseEffectEnabled() && EffectManager::GetSingleton().IsInitialized()) {
+		// UseEffect with no compiled preset has nothing to run, so fall back to the game's own post processing.
+		PostProcessingMode::Set(PostProcessingMode::Mode::Vanilla);
+	}
 }
 
 void Effects11::ClearShaderCache()
@@ -805,44 +860,47 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 		dirLightColor = F3ToNi(dirLightColorF3);
 	}
 
-	{
-		auto& fogFarColor = colors[(uint)RE::TESWeather::ColorTypes::kFogFar];
+	// A preset handing fog to CS leaves the vanilla fog values for Exponential Height Fog's scene settings
+	if (!IsHandedOff(E11Handoff::Feature::HeightFog)) {
+		{
+			auto& fogFarColor = colors[(uint)RE::TESWeather::ColorTypes::kFogFar];
 
-		auto fogFarColorF3 = NiToF3(fogFarColor);
+			auto fogFarColorF3 = NiToF3(fogFarColor);
 
-		auto fogColorCurve = settingManager.GetInterpolatedTimeOfDayValue("FogColorCurve", "ENVIRONMENT");
-		auto fogColorMultiplier = settingManager.GetInterpolatedTimeOfDayValue("FogColorMultiplier", "ENVIRONMENT");
+			auto fogColorCurve = settingManager.GetInterpolatedTimeOfDayValue("FogColorCurve", "ENVIRONMENT");
+			auto fogColorMultiplier = settingManager.GetInterpolatedTimeOfDayValue("FogColorMultiplier", "ENVIRONMENT");
 
-		auto fogColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("FogColorFilter", "ENVIRONMENT");
-		auto fogColorFilterAmount = settingManager.GetInterpolatedTimeOfDayValue("FogColorFilterAmount", "ENVIRONMENT");
+			auto fogColorFilter = settingManager.GetInterpolatedColorTimeOfDayValue("FogColorFilter", "ENVIRONMENT");
+			auto fogColorFilterAmount = settingManager.GetInterpolatedTimeOfDayValue("FogColorFilterAmount", "ENVIRONMENT");
 
-		fogFarColorF3 = Curve(fogFarColorF3, fogColorCurve);
-		fogFarColorF3 = ColorFilter(fogFarColorF3, fogColorFilter, fogColorFilterAmount);
-		fogFarColorF3 = Intensity(fogFarColorF3, fogColorMultiplier);
+			fogFarColorF3 = Curve(fogFarColorF3, fogColorCurve);
+			fogFarColorF3 = ColorFilter(fogFarColorF3, fogColorFilter, fogColorFilterAmount);
+			fogFarColorF3 = Intensity(fogFarColorF3, fogColorMultiplier);
 
-		fogFarColor = F3ToNi(fogFarColorF3);
+			fogFarColor = F3ToNi(fogFarColorF3);
 
-		auto& fogNearColor = colors[(uint)RE::TESWeather::ColorTypes::kFogNear];
+			auto& fogNearColor = colors[(uint)RE::TESWeather::ColorTypes::kFogNear];
 
-		auto fogNearColorF3 = NiToF3(fogNearColor);
+			auto fogNearColorF3 = NiToF3(fogNearColor);
 
-		fogNearColorF3 = Curve(fogNearColorF3, fogColorCurve);
-		fogNearColorF3 = ColorFilter(fogNearColorF3, fogColorFilter, fogColorFilterAmount);
-		fogNearColorF3 = Intensity(fogNearColorF3, fogColorMultiplier);
+			fogNearColorF3 = Curve(fogNearColorF3, fogColorCurve);
+			fogNearColorF3 = ColorFilter(fogNearColorF3, fogColorFilter, fogColorFilterAmount);
+			fogNearColorF3 = Intensity(fogNearColorF3, fogColorMultiplier);
 
-		fogNearColor = F3ToNi(fogNearColorF3);
-	}
+			fogNearColor = F3ToNi(fogNearColorF3);
+		}
 
-	{
-		a_sky->fogPower *= settingManager.GetInterpolatedTimeOfDayValue("FogCurveMultiplier", "ENVIRONMENT");
-	}
+		{
+			a_sky->fogPower *= settingManager.GetInterpolatedTimeOfDayValue("FogCurveMultiplier", "ENVIRONMENT");
+		}
 
-	{
-		auto fogAmountMultiplier = settingManager.GetInterpolatedTimeOfDayValue("FogAmountMultiplier", "ENVIRONMENT");
-		fogAmountMultiplier = std::max(fogAmountMultiplier, 1e-4f);
+		{
+			auto fogAmountMultiplier = settingManager.GetInterpolatedTimeOfDayValue("FogAmountMultiplier", "ENVIRONMENT");
+			fogAmountMultiplier = std::max(fogAmountMultiplier, 1e-4f);
 
-		a_sky->fogNear /= fogAmountMultiplier;
-		a_sky->fogFar /= fogAmountMultiplier;
+			a_sky->fogNear /= fogAmountMultiplier;
+			a_sky->fogFar /= fogAmountMultiplier;
+		}
 	}
 
 	if (enableEffect) {
@@ -1018,6 +1076,12 @@ bool Effects11::WantsTonemapOwnership()
 	// pipeline for that frame.
 	auto& effectManager = EffectManager::GetSingleton();
 	if (!effectManager.IsInitialized() || !effectManager.IsPresetLoaded())
+		return false;
+
+	// Post Processing tonemapping and Effects 11 tonemapping cannot share the frame; when PP
+	// wants ownership, this preset yields (avoids a black screen).
+	auto& postProcessing = globals::features::postProcessing;
+	if (postProcessing.loaded && postProcessing.WantsTonemapOwnership())
 		return false;
 
 	return enableEffect && !SettingManager::GetSingleton().GetValue<bool>("UseOriginalPostProcessing", "EFFECT");
@@ -1479,4 +1543,114 @@ void Effects11::DrawSunRays()
 
 	stateBackup.Restore(context);
 	stateBackup.Release();
+}
+
+namespace
+{
+	class EffectsPresetProvider final : public PresetProvider
+	{
+	public:
+		std::string_view GetBackendId() const override { return "effects11"; }
+		std::string_view GetManifestType() const override { return "E11"; }
+		std::filesystem::path ResolvePayloadRoot(const std::filesystem::path& root, const json& manifest) const override
+		{
+			return PresetManager::ResolvePackRoot(root, manifest);
+		}
+		std::vector<LibraryEntry> ScanLibrary() const override
+		{
+			std::vector<LibraryEntry> entries;
+			for (const auto& preset : PresetManager::GetSingleton().ScanPresets(false))
+				entries.push_back({ preset.isLegacy ? "legacy:effects11" : "e11:" + preset.id,
+					preset.displayName, preset.rootPath, preset.valid, preset.invalidReason, preset.isLegacy });
+			return entries;
+		}
+		std::string GetDefaultActivePackId() const override
+		{
+			return PresetManager::GetSingleton().IsLegacyActive() && globals::features::effects11.IsActive() ? "legacy:effects11" : "";
+		}
+		std::string GetPresetId(const std::string& id) const override
+		{
+			if (id == "legacy:effects11")
+				return PresetManager::kLegacyPresetId;
+			if (id.starts_with("e11:"))
+				return id.substr(4);
+			return PresetManager::MakeUnifiedPackPresetId(id);
+		}
+		std::optional<std::string> GetActivePresetId() const override
+		{
+			const auto& manager = PresetManager::GetSingleton();
+			const auto root = manager.GetActivePresetRoot();
+			for (const auto& preset : manager.GetPresets())
+				if (preset.id == manager.GetActivePresetId() && preset.rootPath == root)
+					return preset.id;
+			if (const auto key = manager.ToRelativeKey(root); !key.empty())
+				return std::string(kLocationPrefix) + key;
+			return std::nullopt;
+		}
+		bool Apply(const std::string& id, bool saveCurrent) override
+		{
+			auto& manager = PresetManager::GetSingleton();
+			manager.DiscoverPresets();
+			if (id.starts_with(kLocationPrefix)) {
+				const auto* location = manager.FindByRelativeKey(id.substr(kLocationPrefix.size()));
+				if (!location || !location->valid)
+					return false;
+				if (location->root == manager.GetActivePresetRoot())
+					return true;
+				if (saveCurrent && manager.CanExportActivePreset()) {
+					SettingManager::GetSingleton().Save();
+					EffectManager::GetSingleton().Save();
+				}
+				manager.SetActiveLocation(location->root);
+				manager.ReloadActive();
+				return true;
+			}
+			return manager.SwitchPreset(id, saveCurrent);
+		}
+		bool CanExport() const override
+		{
+			return globals::features::effects11.loaded && PresetManager::GetSingleton().CanExportActivePreset();
+		}
+		bool IsPipelineActive() const override { return globals::state->GetTonemapOwner() == State::TonemapOwner::kEffects11; }
+		bool SetPipelineActive(bool active) override
+		{
+			return PostProcessingMode::Set(active ? PostProcessingMode::Mode::Effects11 : PostProcessingMode::Mode::Vanilla);
+		}
+		std::filesystem::path GetActiveRoot() const override { return PresetManager::GetSingleton().GetActivePresetRoot(); }
+		bool ExportTo(const std::filesystem::path& root, json& manifest, bool saveCurrent) override
+		{
+			if (!CanExport() || !PresetManager::GetSingleton().ExportActivePresetTo(root / "effects11", saveCurrent))
+				return false;
+			if (!manifest.contains("backends") || !manifest["backends"].is_object())
+				manifest["backends"] = json::object();
+			manifest["backends"]["effects11"] = true;
+			manifest["effects11"] = json{ { "path", "effects11" } };
+			return true;
+		}
+		json CaptureSceneControl() const override { return E11Handoff::ToManifest(); }
+		void ApplySceneControl(const json& choices) override { E11Handoff::ApplyManifest(choices); }
+		bool HandlesFeature(std::string_view name) const override
+		{
+			return globals::features::effects11.loaded && globals::features::effects11.enableEffect && E11Handoff::FromShortName(name).has_value();
+		}
+		bool IsFeatureHandedOff(std::string_view name) const override
+		{
+			const auto feature = E11Handoff::FromShortName(name);
+			return feature && globals::features::effects11.IsHandedOff(*feature);
+		}
+		void SetFeatureHandedOff(std::string_view name, bool value) override
+		{
+			if (const auto feature = E11Handoff::FromShortName(name))
+				globals::features::effects11.SetHandedOff(*feature, value);
+		}
+
+	private:
+		static constexpr std::string_view kLocationPrefix = "location:";
+	};
+}
+
+PresetProvider* Effects11::GetPresetProvider()
+{
+	static EffectsPresetProvider provider;
+	return &provider;
 }

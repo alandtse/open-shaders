@@ -267,6 +267,7 @@ target_link_libraries(
         unordered_dense::unordered_dense
         efsw::efsw
         xxHash::xxhash
+        comdlg32
         Tracy::TracyClient
         Streamline
         d3d12.lib
@@ -513,17 +514,9 @@ target_sources(
 # # Scene settings catalog
 # #######################################################################################################################
 
-set(SCENE_SETTINGS_PYTHON_ARGS "")
-if(WIN32)
-    find_program(SCENE_SETTINGS_PYTHON_EXECUTABLE NAMES py.exe)
-    if(SCENE_SETTINGS_PYTHON_EXECUTABLE)
-        set(SCENE_SETTINGS_PYTHON_ARGS -3)
-    endif()
-endif()
-if(NOT SCENE_SETTINGS_PYTHON_EXECUTABLE)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-    set(SCENE_SETTINGS_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
-endif()
+# The generator's annotations (`str | None`) need 3.10.
+find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+set(SCENE_SETTINGS_PYTHON_EXECUTABLE "${Python3_EXECUTABLE}")
 
 set(SCENE_SETTINGS_CATALOG_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(SCENE_SETTINGS_CATALOG_HEADER
@@ -535,7 +528,9 @@ set(SCENE_SETTINGS_CATALOG_SOURCE
 set(SCENE_SETTINGS_ADAPTERS_SOURCE
     "${SCENE_SETTINGS_CATALOG_DIR}/FeatureSceneSettingsAdapters.generated.cpp"
 )
-
+set(SCENE_SETTINGS_CATALOG_STAMP
+    "${SCENE_SETTINGS_CATALOG_DIR}/SceneSettingsCatalog.stamp"
+)
 file(
     GLOB_RECURSE SCENE_SETTINGS_CATALOG_INPUTS
     LIST_DIRECTORIES false
@@ -546,16 +541,20 @@ file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cxx"
 )
 
+# The generator rewrites only outputs whose text changed, so their objects survive an unrelated edit. The
+# stamp is the output instead, or MSBuild would see them older than the sources and rerun every build.
 add_custom_command(
-    OUTPUT
+    OUTPUT "${SCENE_SETTINGS_CATALOG_STAMP}"
+    BYPRODUCTS
         "${SCENE_SETTINGS_CATALOG_HEADER}"
         "${SCENE_SETTINGS_CATALOG_SOURCE}"
         "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
     COMMAND
-        ${SCENE_SETTINGS_PYTHON_EXECUTABLE} ${SCENE_SETTINGS_PYTHON_ARGS}
+        ${SCENE_SETTINGS_PYTHON_EXECUTABLE}
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
         --source-dir "${CMAKE_CURRENT_SOURCE_DIR}" --out-dir
-        "${SCENE_SETTINGS_CATALOG_DIR}" --min-entries 250
+        "${SCENE_SETTINGS_CATALOG_DIR}" --min-entries 645 --min-controllable 538
+        --min-controllable-features 31 --stamp "${SCENE_SETTINGS_CATALOG_STAMP}"
     DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate_scene_settings_catalog.py"
         ${SCENE_SETTINGS_CATALOG_INPUTS}
@@ -571,6 +570,7 @@ target_include_directories(
 target_sources(
     "${PROJECT_NAME}"
     PRIVATE
+        "${SCENE_SETTINGS_CATALOG_STAMP}"
         "${SCENE_SETTINGS_CATALOG_HEADER}"
         "${SCENE_SETTINGS_CATALOG_SOURCE}"
         "${SCENE_SETTINGS_ADAPTERS_SOURCE}"
@@ -844,6 +844,22 @@ if(SKIP_RUNTIME_DOWNLOADS)
         )
     endif()
 endif()
+# Icon fonts + licenses live under src/Menu/Icons/glyphs; deploy under Icons/glyphs (not Fonts).
+# CONFIGURE_DEPENDS picks up new TTFs / LICENSE files without editing this list.
+set(CS_ICON_FONT_SRC_DIR "${CMAKE_SOURCE_DIR}/src/Menu/Icons/glyphs")
+set(CS_ICON_FONT_DST_REL "Interface/CommunityShaders/Icons/glyphs")
+file(
+    GLOB CS_ICON_FONT_FILES
+    CONFIGURE_DEPENDS
+    LIST_DIRECTORIES FALSE
+    "${CS_ICON_FONT_SRC_DIR}/*.ttf"
+    "${CS_ICON_FONT_SRC_DIR}/*LICENSE*.txt"
+)
+install(
+    FILES ${CS_ICON_FONT_FILES}
+    DESTINATION ${CS_ICON_FONT_DST_REL}
+    COMPONENT Shaders
+)
 install(CODE "file(REMOVE \${CMAKE_INSTALL_PREFIX}/Core)" COMPONENT Shaders)
 
 # The rest of the Licenses folder lives in package/; these two sit at the repo root for GitHub.
@@ -913,6 +929,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         list(FILTER _tmp EXCLUDE REGEX "/Shaders/")
         list(APPEND _AIO_PACKAGE_FILES ${_tmp})
     endforeach()
+    list(APPEND _AIO_PACKAGE_FILES ${CS_ICON_FONT_FILES})
     list(APPEND _AIO_PACKAGE_FILES ${ROOT_LICENSE_FILES})
 
     # Prepare AIO by copying files only when different. This avoids updating
@@ -965,6 +982,28 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     list(FILTER _AIO_PACKAGE_SOURCE_FILES EXCLUDE REGEX "/Shaders/")
     append_copy_if_different(_prepare_aio_cmds _AIO_PACKAGE_SOURCE_FILES "${CMAKE_SOURCE_DIR}/package" "${AIO_DIR}")
     append_copy_if_different(_prepare_aio_cmds ROOT_LICENSE_FILES "${CMAKE_SOURCE_DIR}" "${AIO_DIR}/${LICENSES_DESTINATION}")
+
+    # Icon fonts are sourced from src/Menu/Icons/glyphs (CS_ICON_FONT_FILES glob).
+    list(
+        APPEND _prepare_aio_cmds
+        COMMAND
+        ${CMAKE_COMMAND}
+        -E
+        make_directory
+        "${AIO_DIR}/${CS_ICON_FONT_DST_REL}"
+    )
+    foreach(_icon_font_src IN LISTS CS_ICON_FONT_FILES)
+        get_filename_component(_icon_font_name "${_icon_font_src}" NAME)
+        list(
+            APPEND _prepare_aio_cmds
+            COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            copy_if_different
+            "${_icon_font_src}"
+            "${AIO_DIR}/${CS_ICON_FONT_DST_REL}/${_icon_font_name}"
+        )
+    endforeach()
 
     # Copy feature folders (files only; copy_shaders.stamp owns Shaders/
     # to avoid racing). All features copied — autoupload filter applies

@@ -80,6 +80,12 @@ public:
 	void RestoreBaselines(json& settings) const;
 	/** @brief Captures scene-free values after loading and normalizing the applied layers. */
 	void CaptureAppliedSettings(const json& settings) { appliedSettings = settings; }
+	/** @brief Returns the underlying personal settings for reload rollback. */
+	const json& GetBaseSettings() const { return userBaseline; }
+	/** @brief Returns normalized applied values for reload rollback. */
+	const json& GetAppliedSettings() const { return appliedSettings; }
+	/** @brief Returns live edits relative to the last normalized applied layers. */
+	json GetPendingEdits(const json& settings);
 	/** @brief Excludes untouched overwrite values while retaining saved and pending user edits. */
 	void PrepareUserSettings(json& settings);
 	/** @brief Saves companion user files and normal settings without modifying installed overwrites. */
@@ -281,7 +287,6 @@ private:
 	std::vector<size_t> GetOrderedOverrides() const;
 	void RebuildOverrideIndex();
 	json ApplyLayers(json settings);
-	json GetPendingEdits(const json& settings);
 	void ReapplyChangedSettings(const json& current, const json& underlying, const json& mask, const json& pending);
 
 	std::vector<OverrideInfo> overrides;

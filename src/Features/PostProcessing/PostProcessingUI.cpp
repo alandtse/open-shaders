@@ -62,7 +62,7 @@ namespace PostProcessingUI
 			if (byteCount <= 0 || codepoint < ICON_MIN_TI || codepoint > ICON_MAX_TI)
 				return false;
 
-			auto* font = MenuFonts::GetIconFonts().tabler;
+			auto* font = MenuFonts::GetAtlasState().GetTablerIconFont();
 			if (!font)
 				return false;
 			const float fontSize = ImGui::GetFontSize() * ButtonIconScale;
