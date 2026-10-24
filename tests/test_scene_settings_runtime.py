@@ -2128,7 +2128,7 @@ int main() {
         source = source.replace("GETTER", getter).replace("PERIOD_LOOP", period_loop)
         self.compile_and_run(source)
 
-    def compile_and_run(self, source, imgui_root=None, include_dirs=()):
+    def compile_and_run(self, source, imgui_root=None):
         with tempfile.TemporaryDirectory(prefix="scene-settings-test-") as directory:
             directory = Path(directory)
             cpp = directory / "scene_runtime.cpp"
@@ -2137,7 +2137,6 @@ int main() {
             compiler = None if imgui_root else shutil.which("clang++") or shutil.which("g++")
             if compiler:
                 command = [compiler, "-std=c++20", str(cpp), "-o", str(executable)]
-                command += [f"-I{path}" for path in include_dirs]
             elif os.name == "nt":
                 vswhere = Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
                 if not vswhere.exists():
@@ -2149,7 +2148,6 @@ int main() {
                     self.skipTest("MSVC C++ compiler unavailable")
                 vcvars = Path(installation) / "VC/Auxiliary/Build/vcvars64.bat"
                 command = f'call "{vcvars}" >nul && cl /nologo /EHsc /std:c++20 "{cpp}" /Fe:"{executable}"'
-                command += "".join(f' /I"{path}"' for path in include_dirs)
                 if imgui_root:
                     command += f' /MD /I"{imgui_root / "include"}" "{imgui_root / "lib/imgui.lib"}" user32.lib gdi32.lib imm32.lib'
             else:

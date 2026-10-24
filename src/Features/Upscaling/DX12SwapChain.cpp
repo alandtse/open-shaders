@@ -15,34 +15,30 @@
 /** @brief Drains queued presents before releasing Anti-Lag state, retaining it if draining fails. */
 DX12SwapChain::~DX12SwapChain()
 {
-	if (!antiLag2Context)
-		return;
-	auto& fidelityFX = globals::features::upscaling.fidelityFX;
-	if (fidelityFX.swapChainContext) {
-		ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsDX12 wait{};
-		if (!ffxModule.Dispatch || ffx::Dispatch(fidelityFX.swapChainContext, wait) != ffx::ReturnCode::Ok) {
-			logger::warn("[AntiLag2] Shutdown drain failed; retaining context and driver interface");
-			(void)antiLag2Context.release();
-			return;
-		}
-		antiLag2Enabled = false;
-		if (swapChain)
-			PublishAntiLag2SwapChainData();
-	}
-	AMD::AntiLag2DX12::DeInitialize(antiLag2Context.get());
+	const bool released = CS::AntiLag2::Shutdown(antiLag2Context,
+		[] {
+			auto& fidelityFX = globals::features::upscaling.fidelityFX;
+			if (!fidelityFX.swapChainContext)
+				return true;
+			ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsDX12 wait{};
+			return ffxModule.Dispatch && ffx::Dispatch(fidelityFX.swapChainContext, wait) == ffx::ReturnCode::Ok;
+		},
+		[this] {
+			if (globals::features::upscaling.fidelityFX.swapChainContext) {
+				antiLag2Enabled = false;
+				if (swapChain)
+					PublishAntiLag2SwapChainData();
+			}
+		});
+	if (!released)
+		logger::warn("[AntiLag2] Shutdown drain failed; retaining context and driver interface");
 }
 
 /** @brief Initializes Anti-Lag on the persistent D3D12 device and records driver availability. */
 void DX12SwapChain::InitializeAntiLag2()
 {
-	auto context = std::make_unique<AMD::AntiLag2DX12::Context>();
-	const HRESULT hr = AMD::AntiLag2DX12::Initialize(context.get(), d3d12Device.get());
+	const HRESULT hr = CS::AntiLag2::InitializeContext(antiLag2Context, d3d12Device.get(), AMD::AntiLag2DX12::Initialize);
 	logger::info("[AntiLag2] Initialize hr=0x{:08X} available={}", static_cast<unsigned int>(hr), hr == S_OK);
-	if (hr == S_OK) {
-		antiLag2Context = std::move(context);
-	} else if (context->m_pAntiLagAPI) {
-		AMD::AntiLag2DX12::DeInitialize(context.get());
-	}
 }
 
 /** @brief Applies session-enabled Anti-Lag latency reduction before input with FPS limiting disabled. */
@@ -51,7 +47,7 @@ void DX12SwapChain::UpdateAntiLag2BeforeInput()
 	const HRESULT hr = CS::AntiLag2::Update(antiLag2Context.get(), true);
 	antiLag2Enabled = antiLag2Context->m_enabled;
 	if (FAILED(hr) && !std::exchange(antiLag2UpdateFailureLogged, true))
-		logger::warn("[AntiLag2] Update failed hr=0x{:08X}", static_cast<unsigned int>(hr));
+		logger::warn("[AntiLag2] Update failed: {}", DX::com_exception(hr).what());
 }
 
 /** @brief Publishes the Anti-Lag context and enabled state through the FSR swap-chain handshake. */
@@ -66,7 +62,7 @@ void DX12SwapChain::PublishAntiLag2SwapChainData()
 	static constexpr GUID kFfxAntiLag2Data = { 0x5083ae5b, 0x8070, 0x4fca, { 0x8e, 0xe5, 0x35, 0x82, 0xdd, 0x36, 0x7d, 0x13 } };
 	const HRESULT hr = swapChain->SetPrivateData(kFfxAntiLag2Data, sizeof(data), &data);
 	if (FAILED(hr) && !std::exchange(antiLag2PrivateDataFailureLogged, true))
-		logger::warn("[AntiLag2] FFX private-data handshake failed hr=0x{:08X}", static_cast<unsigned int>(hr));
+		logger::warn("[AntiLag2] FFX private-data handshake failed: {}", DX::com_exception(hr).what());
 }
 
 /** @brief Marks rendering completion for Anti-Lag before the swap chain presents. */
@@ -76,7 +72,7 @@ void DX12SwapChain::MarkAntiLag2EndOfFrame()
 		return;
 	const HRESULT hr = AMD::AntiLag2DX12::MarkEndOfFrameRendering(antiLag2Context.get());
 	if (FAILED(hr) && !std::exchange(antiLag2MarkFailureLogged, true))
-		logger::warn("[AntiLag2] End-of-frame marker failed hr=0x{:08X}", static_cast<unsigned int>(hr));
+		logger::warn("[AntiLag2] End-of-frame marker failed: {}", DX::com_exception(hr).what());
 }
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
@@ -277,9 +273,7 @@ void DX12SwapChain::CreateInterop()
 	interopFence.Create(d3d12Device.get(), d3d11Device.get(), "DX12SwapChain::InteropFence");
 
 	RecreateWrappedResources(swapChainDesc);
-	if (antiLag2Context && !Hooks::InstallBeforeInputPoll()) {
-		AMD::AntiLag2DX12::DeInitialize(antiLag2Context.get());
-		antiLag2Context.reset();
+	if (antiLag2Context && !CS::AntiLag2::InstallInputHook(antiLag2Context, Hooks::InstallBeforeInputPoll)) {
 		logger::warn("[AntiLag2] Input hook installation failed; leaving Anti-Lag disabled");
 	}
 	if (antiLag2Context) {
