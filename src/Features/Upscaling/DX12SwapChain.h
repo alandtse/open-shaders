@@ -8,9 +8,9 @@
 
 #include "antilag2sdk.h"
 #include <cstdint>
-#include <memory>
 #include <d3d11_4.h>
 #include <d3d12.h>
+#include <memory>
 #include <string>
 
 #include <directx/d3dx12.h>

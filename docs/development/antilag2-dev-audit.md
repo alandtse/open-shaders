@@ -10,23 +10,23 @@ The comparison includes the working tree and the earlier uncommitted SDK migrati
 
 All tracked differences were confined to the Anti-Lag integration:
 
-| Area | Difference from dev |
-| --- | --- |
-| `.gitmodules`, `CMakeLists.txt`, `extern/AntiLag2-SDK` | Official pinned AMD SDK submodule, include path and initialization diagnostic. |
-| `src/Feature.h`, `src/Hooks.cpp` | Generic feature callback before engine input polling. |
-| `Upscaling.cpp`, `Upscaling.h` | Anti-Lag settings/UI/commands, rendered-FPS cap, scope and native CPU fallback. |
-| `DX12SwapChain.cpp`, `.h` | SDK lifecycle/update, residual CPU timer, FSR handshake and end marker. |
-| `antilag2inputpacing.h` | Added CPU waitable-timer/sleep limiter, absent from dev. |
-| `antilag2sdk.h` | Checked SDK state adapter from the earlier migration, untracked before this task. |
-| `RemoteControl/ToolSpecs/FeatureTool.h` | Added settings and command descriptions/schema. |
-| Docs and tests | Anti-Lag documentation/regressions and shared test helper SDK include-path support. |
+| Area                                                   | Difference from dev                                                                 |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `.gitmodules`, `CMakeLists.txt`, `extern/AntiLag2-SDK` | Official pinned AMD SDK submodule, include path and initialization diagnostic.      |
+| `src/Feature.h`, `src/Hooks.cpp`                       | Generic feature callback before engine input polling.                               |
+| `Upscaling.cpp`, `Upscaling.h`                         | Anti-Lag settings/UI/commands, rendered-FPS cap, scope and native CPU fallback.     |
+| `DX12SwapChain.cpp`, `.h`                              | SDK lifecycle/update, residual CPU timer, FSR handshake and end marker.             |
+| `antilag2inputpacing.h`                                | Added CPU waitable-timer/sleep limiter, absent from dev.                            |
+| `antilag2sdk.h`                                        | Checked SDK state adapter from the earlier migration, untracked before this task.   |
+| `RemoteControl/ToolSpecs/FeatureTool.h`                | Added settings and command descriptions/schema.                                     |
+| Docs and tests                                         | Anti-Lag documentation/regressions and shared test helper SDK include-path support. |
 
 ## Removed
 
-- CPU fallback/backstop timer, header, member and native D3D11 call path.
-- Configurable SDK FPS cap: the adapter now accepts only enable state and always supplies `maxFPS = 0`.
-- Limiter settings/defaults/serialization/clamping, gameplay scope, FPS slider and limiter status UI.
-- `setGameplayFPSLimit` and limiter parameters in `setAntiLag2`, with related tool descriptions and tests updated.
+-   CPU fallback/backstop timer, header, member and native D3D11 call path.
+-   Configurable SDK FPS cap: the adapter now accepts only enable state and always supplies `maxFPS = 0`.
+-   Limiter settings/defaults/serialization/clamping, gameplay scope, FPS slider and limiter status UI.
+-   `setGameplayFPSLimit` and limiter parameters in `setAntiLag2`, with related tool descriptions and tests updated.
 
 Anti-Lag latency reduction, SDK submodule/checked-state adapter,
 FSR context handshake, rendering-end marker and shutdown drain remain.
@@ -37,11 +37,11 @@ Dev's VSync, display-refresh cap, Reflex and frame-generation pacing were not ed
 
 Source comparisons against the baseline passed:
 
-- `Upscaling::FrameLimiter()` and `LoadSettings()` match dev exactly.
-- Frame Generation UI retains dev's controls, with a read-only Anti-Lag Active/Unavailable line added below the current FSR method only; the independent Anti-Lag checkbox is removed.
-- `DX12SwapChain::PresentImpl<false>()` matches the dev presentation body after compile-time removal of the Anti-Lag-only blocks; eligible sessions select the specialization containing those notifications.
-- The existing `BSInputDeviceManager_PollInputDevices` Reflex thunk matches dev exactly.
-- `Streamline.cpp`, `Streamline.h` and `FidelityFX.cpp` match dev in full.
+-   `Upscaling::FrameLimiter()` and `LoadSettings()` match dev exactly.
+-   Frame Generation UI retains dev's controls, with a read-only Anti-Lag Active/Unavailable line added below the current FSR method only; the independent Anti-Lag checkbox is removed.
+-   `DX12SwapChain::PresentImpl<false>()` matches the dev presentation body after compile-time removal of the Anti-Lag-only blocks; eligible sessions select the specialization containing those notifications.
+-   The existing `BSInputDeviceManager_PollInputDevices` Reflex thunk matches dev exactly.
+-   `Streamline.cpp`, `Streamline.h` and `FidelityFX.cpp` match dev in full.
 
 The SDK's remaining pre-input delay provides Anti-Lag latency reduction;
 its optional explicit FPS limiter is disabled.

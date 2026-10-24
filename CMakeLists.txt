@@ -2,8 +2,11 @@ cmake_minimum_required(VERSION 4.2)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/AntiLag2-SDK/ffx_antilag2_dx12.h")
-    message(FATAL_ERROR
+if(
+    NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/AntiLag2-SDK/ffx_antilag2_dx12.h"
+)
+    message(
+        FATAL_ERROR
         "Anti-Lag 2 SDK submodule is missing. Run: git submodule update --init extern/AntiLag2-SDK"
     )
 endif()

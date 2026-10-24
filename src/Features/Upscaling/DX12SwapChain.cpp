@@ -5,10 +5,10 @@
 #include <dxgi1_6.h>
 #include <utility>
 
-#include "Hooks.h"
 #include "../HDRDisplay.h"
 #include "../Upscaling.h"
 #include "FidelityFX.h"
+#include "Hooks.h"
 #include "Streamline.h"
 #include "Utils/D3D.h"
 

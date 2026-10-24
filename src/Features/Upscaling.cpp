@@ -970,8 +970,8 @@ void Upscaling::DrawFrameGenerationSettings()
 		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
 		if (fgEnabled)
 			ImGui::TextUnformatted(dx12SwapChain.IsAntiLag2Active() ?
-				T(TKEY("antilag2_active"), "Anti-Lag 2: Active") :
-				T(TKEY("antilag2_unavailable"), "Anti-Lag 2: Unavailable"));
+									   T(TKEY("antilag2_active"), "Anti-Lag 2: Active") :
+									   T(TKEY("antilag2_unavailable"), "Anti-Lag 2: Unavailable"));
 		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
