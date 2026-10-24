@@ -247,6 +247,8 @@ public:
 	// class's boot-vs-live blob diff can never see it.
 	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
+	/** @copydoc Feature::OnBeforeInputPoll */
+	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
 	void DrawPerformancePresets() override;

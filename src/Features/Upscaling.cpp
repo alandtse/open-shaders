@@ -658,6 +658,7 @@ namespace
 	}
 }
 
+/** @brief Registers upscaling and frame-generation commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("applyFoveationPreset",
@@ -683,6 +684,12 @@ void Upscaling::RegisterUxActions()
 	FEATURE_COMMAND("calibrateNeuralCrop",
 		"Start the Neural Rendering crop cost sweep: centred crops of shrinking area are forced for about half a minute over four passes while NREvaluate GPU time is measured, and the result (per-step best low-percentile times, stability ratio, floor, and the largest crop still within 5% of the floor) appears under neuralCalibration in openshaders.feature diagnostics. Fails if frame generation is active or Neural Rendering is not running. Params: none.",
 		CalibrateNeuralCrop);
+}
+
+/** @brief Updates session-enabled Anti-Lag before input without an explicit FPS cap. */
+void Upscaling::OnBeforeInputPoll()
+{
+	dx12SwapChain.UpdateAntiLag2BeforeInput();
 }
 
 void Upscaling::DrawSettings()
@@ -961,6 +968,10 @@ void Upscaling::DrawFrameGenerationSettings()
 			ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
 	} else if (fgMethod == FrameGenMethod::kFSR) {
 		ImGui::TextUnformatted(T(TKEY("frame_generation_fsr_active"), "Method: AMD FSR"));
+		if (fgEnabled)
+			ImGui::TextUnformatted(dx12SwapChain.IsAntiLag2Active() ?
+									   T(TKEY("antilag2_active"), "Anti-Lag 2: Active") :
+									   T(TKEY("antilag2_unavailable"), "Anti-Lag 2: Unavailable"));
 		if (fgEnabled && settings.enableDLSSFrameGen && !streamlineDX12.featureDLSSG)
 			Util::Text::WrappedWarning("%s", T(TKEY("fg_dlssg_unavailable"), "DLSS-G is unavailable this session; AMD FSR is in use."));
 		ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
@@ -1204,6 +1215,7 @@ void Upscaling::SaveSettings(json& o_json)
 	}
 }
 
+/** @brief Loads upscaling settings and validates supported options and FPS limits. */
 void Upscaling::LoadSettings(json& o_json)
 {
 	// Pull FoveatedRender's nested block first so its absence doesn't fail the
@@ -2689,6 +2701,8 @@ json Upscaling::GetDiagnostics()
 	                                                                   "None";
 	diagnostics["frameGenActive"] = IsFrameGenerationActive();
 	diagnostics["frameGenMultiplier"] = GetFrameGenerationMultiplier();
+	if (method == FrameGenMethod::kFSR)
+		diagnostics["antiLag2Active"] = dx12SwapChain.IsAntiLag2Active();
 	if (method == FrameGenMethod::kDLSSG) {
 		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
 		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;

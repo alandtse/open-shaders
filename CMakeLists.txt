@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 4.2)
 cmake_policy(SET CMP0116 NEW)
 set(CMAKE_POLICY_WARNING_CMP0116 OFF)
 
+if(
+    NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/AntiLag2-SDK/ffx_antilag2_dx12.h"
+)
+    message(
+        FATAL_ERROR
+        "Anti-Lag 2 SDK submodule is missing. Run: git submodule update --init extern/AntiLag2-SDK"
+    )
+endif()
+
 # devbench bridge — declared before project() so the vcpkg toolchain (loaded at project())
 # sees the manifest-feature selection. The devbench-api dependency lives behind the
 # `devbench-bridge` vcpkg feature, so -DDEVBENCH_BRIDGE=OFF actually drops it (not just the
@@ -203,7 +212,9 @@ target_include_directories(
 target_include_directories(
     ${PROJECT_NAME}
     SYSTEM
-    PRIVATE "${CMAKE_SOURCE_DIR}/vendor/include"
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/vendor/include"
+        "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK"
 )
 
 # ImGuiVRHelper client API — fetched from upstream so the dependency and its

@@ -6,8 +6,11 @@
 #include <wrl\client.h>
 #include <wrl\wrappers\corewrappers.h>
 
+#include "antilag2sdk.h"
+#include <cstdint>
 #include <d3d11_4.h>
 #include <d3d12.h>
+#include <memory>
 #include <string>
 
 #include <directx/d3dx12.h>
@@ -150,6 +153,13 @@ public:
 	// Returns the current frame time (in seconds) for accurate FPS calculation when frame generation is active
 	float GetFrameTime() const;
 
+	/** @brief Releases the Anti-Lag driver context before the D3D12 device. */
+	~DX12SwapChain();
+	/** @brief Updates the installed Anti-Lag session before input with FPS limiting disabled. */
+	void UpdateAntiLag2BeforeInput();
+	/** @brief Reports whether the installed session's driver state has Anti-Lag enabled. */
+	bool IsAntiLag2Active() const { return antiLag2Context && antiLag2Enabled; }
+
 	void CreateD3D12Device(IDXGIAdapter* a_adapter);
 	void CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
 	void CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC swapChainDesc);
@@ -167,6 +177,8 @@ public:
 	/** @brief IDXGISwapChain::ResizeBuffers equivalent; rejects any bufferCount differing from the chain's own backBufferCount. */
 	HRESULT ResizeBuffers(UINT bufferCount, UINT width, UINT height, DXGI_FORMAT format, UINT flags);
 	HRESULT Present(UINT SyncInterval, UINT Flags);
+	/** @brief Presents through the session-enabled Anti-Lag path. */
+	HRESULT PresentWithAntiLag2(UINT SyncInterval, UINT Flags);
 	HRESULT GetDevice(_In_ REFIID riid, _COM_Outptr_ void** ppDevice);
 	HANDLE GetFrameLatencyWaitableObject();
 
@@ -187,4 +199,21 @@ public:
 
 	// D3D12 interop resource management
 	void CreateSharedResources();
+
+private:
+	std::unique_ptr<AMD::AntiLag2DX12::Context> antiLag2Context;
+	bool antiLag2Enabled = false;
+	bool antiLag2UpdateFailureLogged = false;
+	bool antiLag2MarkFailureLogged = false;
+	bool antiLag2PrivateDataFailureLogged = false;
+
+	/** @brief Initializes the Anti-Lag driver interface on the presentation device. */
+	void InitializeAntiLag2();
+	/** @brief Shares presentation logic while compiling Anti-Lag calls out of the ordinary path. */
+	template <bool WithAntiLag2>
+	HRESULT PresentImpl(UINT SyncInterval, UINT Flags);
+	/** @brief Publishes the Anti-Lag context required by the FSR swap chain. */
+	void PublishAntiLag2SwapChainData();
+	/** @brief Signals the end of rendering to Anti-Lag before presentation. */
+	void MarkAntiLag2EndOfFrame();
 };

@@ -670,6 +670,25 @@ struct BSShaderRenderTargets_Create
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+struct BSInputDeviceManager_BeforeInputPoll
+{
+	/** @brief Invokes loaded features before polling engine input devices, then forwards to the engine. */
+	static void thunk(RE::BSInputDeviceManager* a_this, float a_secsSinceLastFrame)
+	{
+		Feature::ForEachLoadedFeature("OnBeforeInputPoll", [](Feature* feature) { feature->OnBeforeInputPoll(); });
+		func(a_this, a_secsSinceLastFrame);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+bool Hooks::InstallBeforeInputPoll()
+{
+	if (BSInputDeviceManager_BeforeInputPoll::func.address())
+		return true;
+	logger::info("Hooking BSInputDeviceManager::PollInputDevices entry");
+	return stl::detour_thunk<BSInputDeviceManager_BeforeInputPoll>(REL::RelocationID(67315, 68617)) == NO_ERROR;
+}
+
 struct BSInputDeviceManager_PollInputDevices
 {
 	static void thunk(RE::BSTEventSource<RE::InputEvent*>* a_dispatcher, RE::InputEvent* const* a_events)
