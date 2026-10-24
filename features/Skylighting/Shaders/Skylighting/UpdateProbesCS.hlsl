@@ -75,8 +75,7 @@ static const float3 noise3D[32] = {
 	uint3 probeTexID = uint3(dtid.xy, settings.SliceStart + dtid.z);
 	if (dtid.z >= settings.SliceCount || any(probeTexID >= arrayDims))
 		return;
-	int3 cellID = (int3(probeTexID) - int3(settings.ArrayOrigin.xyz)) % int3(arrayDims);
-	cellID = (cellID + int3(arrayDims)) % int3(arrayDims);
+	int3 cellID = int3((probeTexID + arrayDims - settings.ArrayOrigin.xyz) % arrayDims);
 	int3 validMin = max(0, settings.ValidMargin.xyz);
 	int3 validMax = int3(arrayDims) - 1 + min(0, settings.ValidMargin.xyz);
 	bool isValid = all(cellID >= validMin) && all(cellID <= validMax);  // check if the cell is newly added

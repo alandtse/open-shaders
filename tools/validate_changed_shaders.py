@@ -58,6 +58,7 @@ _FEATURE_PREFIX = re.compile(r"^features/[^/]+/Shaders/(.+)$")
 # Changes that invalidate the dependency-graph assumption and force a full run.
 _FULL_TRIGGERS = (
     re.compile(r"^\.github/configs/"),  # validation configs define entries/defines
+    re.compile(r"^tools/build-shader-cache\.py$"),
     re.compile(r"^CMakeLists\.txt$"),
     re.compile(r"^CMakePresets\.json$"),
     re.compile(r"^cmake/"),

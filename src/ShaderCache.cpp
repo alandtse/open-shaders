@@ -27,6 +27,7 @@
 #include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
 #include "Utils/ShaderContentStore.h"
+#include "Utils/StandaloneShaderCacheKey.h"
 #include "Utils/StringUtils.h"
 
 #include "Features/DynamicCubemaps.h"
@@ -3284,21 +3285,8 @@ namespace SIE
 		// Keep standalone stages together so feature cache invalidation removes all of them.
 		std::wstring GetStandaloneCacheDir(const std::filesystem::path& sourcePath)
 		{
-			std::wstring rel;
-			bool pastShaders = false;
-			for (const auto& part : sourcePath.parent_path()) {
-				if (!pastShaders) {
-					if (part == L"Shaders")
-						pastShaders = true;
-					continue;
-				}
-				if (!rel.empty())
-					rel += L"/";
-				rel += part.wstring();
-			}
-			if (!pastShaders)
-				rel = sourcePath.parent_path().wstring();
-			return std::format(L"Data/ShaderCache/{}", rel);
+			const auto rel = Util::StandaloneShaderCacheKey::SourcePath(sourcePath).parent_path().generic_wstring();
+			return rel.empty() ? L"Data/ShaderCache" : std::format(L"Data/ShaderCache/{}", rel);
 		}
 
 		struct StandaloneCompileKey
@@ -3367,22 +3355,19 @@ namespace SIE
 				flags |= D3DCOMPILE_SKIP_VALIDATION;
 			key.flags = flags;
 
-			std::string compileKey = Util::WStringToString(srcPath.lexically_normal().generic_wstring());
-			const auto appendKey = [&compileKey](std::string_view value) {
-				compileKey.push_back('\0');
-				compileKey.append(value);
-			};
-			appendKey(entryPoint);
-			appendKey(profile);
-			appendKey(std::to_string(flags));
-			appendKey(GetCompilerIdentity());
-			for (const auto& [name, value] : ownedDefines) {
-				appendKey(name);
-				appendKey(value ? "1" : "0");
-				if (value)
-					appendKey(*value);
+			ownedDefines = Util::StandaloneShaderCacheKey::CanonicalDefines(ownedDefines);
+			const auto source = Util::StandaloneShaderCacheKey::SourceName(srcPath);
+			key.compileDigest = Util::StandaloneShaderCacheKey::MakeKey(source, entryPoint, profile, flags, ownedDefines);
+			if (spdlog::should_log(spdlog::level::debug)) {
+				json macros = json::array();
+				for (const auto& [name, value] : ownedDefines)
+					macros.push_back(json::array({ name, value ? json(*value) : json(nullptr) }));
+				logger::debug("ShaderCacheInput {}", json{
+														 { "kind", "standalone" }, { "runtime", globals::game::isVR ? "VR" : "SE" },
+														 { "source", source }, { "entryPoint", entryPoint }, { "profile", profile }, { "flags", flags },
+														 { "defines", macros } }
+														 .dump());
 			}
-			key.compileDigest = Util::ContentHash::HashString(compileKey);
 			const auto hash = key.compileDigest.ToHex();
 			key.diskPath = std::format(L"{}/{}.{}.{}{}", GetStandaloneCacheDir(srcPath), srcPath.filename().wstring(),
 				std::wstring(entryPoint.begin(), entryPoint.end()), std::wstring(hash.begin(), hash.end()), cacheExt);
@@ -3512,8 +3497,11 @@ namespace SIE
 				} else {
 					const auto digest = useDiskCache ? ComputeStandaloneDigest(srcPath, compileDigest, *this) : std::nullopt;
 					if (digest) {
-						if (const auto cached = ReadCachedStandaloneBlob(diskPath, manifestKey, *digest, *this))
+						if (const auto cached = ReadCachedStandaloneBlob(diskPath, manifestKey, *digest, *this)) {
 							createShader(cached.get());
+							if (shader)
+								++compilationSet.diskHitTasks;
+						}
 					}
 					if (!shader) {
 						winrt::com_ptr<ID3DBlob> shaderBlob;
@@ -5211,7 +5199,18 @@ namespace SIE
 		shaderClass(aShaderClass),
 		shader(aShader), descriptor(aDescriptor),
 		cachedPriority(ComputePriority(aShaderClass, aShader, aDescriptor))
-	{}
+	{
+		if (spdlog::should_log(spdlog::level::debug) && SShaderCache::ResolveImageSpaceDescriptor(shader, aDescriptor)) {
+			logger::debug("ShaderCacheInput {}", json{
+													 { "kind", "engine" }, { "runtime", globals::game::isVR ? "VR" : "SE" },
+													 { "source", Util::StandaloneShaderCacheKey::SourceName(GetSourcePath()) },
+													 { "shader", std::string(shader.fxpFilename) }, { "type", magic_enum::enum_name(shader.shaderType.get()) },
+													 { "descriptor", aDescriptor }, { "stage", magic_enum::enum_name(shaderClass) },
+													 { "key", SShaderCache::GetShaderString(shaderClass, shader, aDescriptor, true) },
+													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader.fxpFilename, aDescriptor, shaderClass)) } }
+													 .dump());
+		}
+	}
 
 	void ShaderCompilationTask::Perform() const
 	{

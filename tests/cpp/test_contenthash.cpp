@@ -4,6 +4,7 @@
 // collision behavior, which is out of scope for this repo to re-verify.
 
 #include "Utils/ContentHash.h"
+#include "Utils/StandaloneShaderCacheKey.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -102,4 +103,28 @@ TEST_CASE("HashFile returns nullopt for a missing file", "[ContentHash]")
 {
 	TempDir dir;
 	CHECK_FALSE(HashFile(dir.path / "does-not-exist.hlsl").has_value());
+}
+
+TEST_CASE("Standalone shader keys survive install paths and macro ordering", "[ContentHash][ShaderCache]")
+{
+	using namespace Util::StandaloneShaderCacheKey;
+	const auto first = SourceName(L"Data\\Shaders\\Effects11\\QuadVS.hlsl");
+	CHECK(first == "Effects11/QuadVS.hlsl");
+	CHECK(SourceName(L"D:\\Games\\Skyrim\\Data\\Shaders\\Effects11\\QuadVS.hlsl") == first);
+	CHECK(SourceName(L"Data/Shaders/Utility.hlsl") == "Utility.hlsl");
+	CHECK(SourcePath(L"Data/Shaders/Effects11/QuadVS.hlsl") == fs::path(L"Effects11/QuadVS.hlsl"));
+	CHECK(SourcePath(L"D:/Games/Skyrim/Data/Shaders/Effects11/../Utility.hlsl") == fs::path(L"Utility.hlsl"));
+	CHECK(SourcePath(L"Effects11/QuadVS.hlsl") == fs::path(L"Effects11/QuadVS.hlsl"));
+	CHECK(SourcePath(L"Data/Shaders/Utility.hlsl").parent_path().empty());
+	CHECK(SourceName(L"Data/Shaders/Effects11/../Utility.hlsl") == "Utility.hlsl");
+	const auto defines = CanonicalDefines({ { "VR", "" }, { "REVERSE_Z", "" }, { "VR", "" } });
+	CHECK(defines == CanonicalDefines({ { "REVERSE_Z", "" }, { "VR", "" } }));
+	const auto key = MakeKey(first, "main", "vs_5_0", 34818, defines);
+	CHECK(key.ToHex() == "95db091fa85c9a6fb12d3f348b3fdd5e");
+	CHECK_FALSE(key == MakeKey(first, "main", "ps_5_0", 34818, defines));
+	CHECK_FALSE(key == MakeKey(first, "main", "vs_5_0", 34816, defines));
+	CHECK_FALSE(key == MakeKey(first, "other", "vs_5_0", 34818, defines));
+	CHECK_FALSE(key == MakeKey(first, "main", "vs_5_0", 34818, CanonicalDefines({ { "VR", "" } })));
+	CHECK_FALSE(MakeKey(first, "main", "vs_5_0", 34818, { { "FLAG", std::nullopt } }) ==
+				MakeKey(first, "main", "vs_5_0", 34818, { { "FLAG", "" } }));
 }

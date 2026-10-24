@@ -24,7 +24,7 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ReverseZ::Settings,
-	EnableReverseZ)
+	EnableReverseZBuffer)
 
 namespace
 {
@@ -412,11 +412,20 @@ json ReverseZ::GetDiagnostics()
 
 void ReverseZ::DrawSettings()
 {
-	ImGui::Checkbox(T(TKEY("enabled"), "Enable Reverse Z-Buffer"), &settings.EnableReverseZ);
-	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::EnableReverseZ,
-		T(TKEY("enabled_tooltip"),
+	const auto* cacheRegeneration = T(TKEY("cache_regeneration"), "After restart, shaders rebuild as needed. Matching cached shaders are reused.");
+	ImGui::Checkbox(T(TKEY("enabled"), "Enable Reverse Z-Buffer"), &settings.EnableReverseZBuffer);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(T(TKEY("enabled_tooltip"),
+			"Requires a game restart to change.\n\n"
 			"Inverts the depth range so precision is spread evenly over the view distance.\n"
 			"Costs extra video memory and depth bandwidth."));
+	}
+	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::EnableReverseZBuffer);
+	if (bootSnapshot.HasPendingChange(settings, &Settings::EnableReverseZBuffer)) {
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextColored(ThemeManager::Constants::SHADER_CACHE_NOTICE_COLOR, "%s", cacheRegeneration);
+		ImGui::PopTextWrapPos();
+	}
 
 	if (activeThisBoot && !depthTargetsConverted)
 		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", T(TKEY("status_failed"), "The depth buffer could not be reallocated; see the log."));
@@ -427,7 +436,7 @@ void ReverseZ::LatchBootState()
 	if (bootLatched)
 		return;
 	bootLatched = true;
-	activeThisBoot = loaded && settings.EnableReverseZ;
+	activeThisBoot = loaded && settings.EnableReverseZBuffer;
 	logger::info("ReverseZ: {}", activeThisBoot ? "enabled" : "disabled");
 }
 

@@ -11,6 +11,7 @@ struct CloudRelight;
 struct ProceduralSun;
 struct DynamicCubemaps;
 struct VolumetricShadows;
+struct LODShadows;
 struct ExtendedMaterials;
 struct GrassCollision;
 struct GrassLighting;
@@ -116,6 +117,7 @@ namespace globals
 		extern ProceduralSun proceduralSun;
 		extern DynamicCubemaps dynamicCubemaps;
 		extern VolumetricShadows volumetricShadows;
+		extern LODShadows lodShadows;
 		extern ExtendedMaterials extendedMaterials;
 		extern GrassCollision grassCollision;
 		extern GrassLighting grassLighting;

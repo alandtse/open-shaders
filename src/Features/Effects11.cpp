@@ -12,6 +12,7 @@
 #include "Deferred.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "LODShadows.h"
 #include "ShaderCache.h"
 #include "SkySync.h"
 #include "State.h"
@@ -1120,6 +1121,8 @@ void Effects11::DrawVolumetricScattering()
 			defines.push_back({ "CLOUD_SHADOWS", nullptr });
 		if (globals::features::terrainShadows.loaded)
 			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
+		if (globals::features::lodShadows.loaded)
+			defines.push_back({ "LOD_SHADOWS", nullptr });
 
 		raymarchVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0")));
 		if (!raymarchVolumetricRaysPS) {
@@ -1219,6 +1222,14 @@ void Effects11::DrawVolumetricScattering()
 		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 		context->PSSetShader(raymarchVolumetricRaysPS.get(), nullptr, 0);
 		context->PSSetSamplers(0, 1, &sampler);
+		winrt::com_ptr<ID3D11SamplerState> savedShadowSampler;
+		context->PSGetSamplers(LODShadows::kComparisonSamplerSlot, 1, savedShadowSampler.put());
+		const SKSE::stl::scope_exit restoreShadowSampler([&]() noexcept {
+			auto* previous = savedShadowSampler.get();
+			context->PSSetSamplers(LODShadows::kComparisonSamplerSlot, 1, &previous);
+		});
+		auto* shadowSampler = globals::features::lodShadows.GetComparisonSampler();
+		context->PSSetSamplers(LODShadows::kComparisonSamplerSlot, 1, &shadowSampler);
 		context->PSSetConstantBuffers(1, 1, &vlDataCB);
 
 		context->Draw(4, 0);

@@ -367,6 +367,7 @@ public:
 		IsHeldWeapon = 1u << 29,
 		TreeBend = 1u << 28,
 		GammaRenderTarget = 1u << 27,
+		CaptureReflectionRadiance = 1u << 26,
 		NoSnow = 1u << 25,
 		NoFoliageTint = 1u << 24,
 		SnowRooftop = 1u << 23,

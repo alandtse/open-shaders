@@ -1,0 +1,1843 @@
+{
+    "schemaVersion": 1,
+    "runtime": "SE",
+    "requests": [
+        {
+            "defines": [
+                ["BLUR_HORIZONTAL", null],
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "VolumetricShadows/BlurShadowCS.hlsl"
+        },
+        {
+            "defines": [
+                ["BLUR_VERTICAL", null],
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "VolumetricShadows/BlurShadowCS.hlsl"
+        },
+        {
+            "defines": [
+                ["BURLEY", ""],
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "SubsurfaceScattering/SeparableSSSCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DLSS", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/EncodeTexturesCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DOWNSAMPLE_SHADOW_MIP0", null],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "VolumetricShadows/DownsampleShadowCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DOWNSAMPLE_SHADOW_MIP1", null],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "VolumetricShadows/DownsampleShadowCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["DYNAMIC_CUBEMAPS", null],
+                ["IBL", null],
+                ["REVERSE_Z", ""],
+                ["SKYLIGHTING", null],
+                ["SSGI", null],
+                ["TERRAIN_BLENDING", null],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DeferredCompositeCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["DYNAMIC_CUBEMAPS", null],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "IBL/DiffuseIBLCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["FILTER", "1"],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/FilterMask.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["LINEAR_FILTER", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/prefilterDepths.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/blur.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/gi.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/prefilterNormal.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/prefilterRadiance.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/radianceDisocc.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GI", ""],
+                ["HALF_RES", ""],
+                ["REVERSE_Z", ""],
+                ["TEMPORAL_DENOISER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceGI/upsample.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["GRASS_COLLISION", "1"],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassOptimizations/GrassCullingCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["OCCLUSION_ONLY", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Skylighting/UpdateProbesCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REDUCE", "1"],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/RayBounds.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REFLECTIONS", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/InferCubemapCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REFLECTIONS", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/UpdateCubemapCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["SAMPLE_COUNT", "80"],
+                ["TERRAIN_BLENDING", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "ScreenSpaceShadows/RaymarchCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Common/Glints/noisegen.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/BC6HEncodeCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/DetectCaptureLightingCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/InferCubemapCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/SpecularIrradianceCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "DynamicCubemaps/UpdateCubemapCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Effects11/ColorCorrectionCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Effects11/StandardDepthCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassCollision/CollisionUpdateCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassOptimizations/DetectComplexCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassOptimizations/GrassHiZCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassOptimizations/SPD/SPD.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "GrassWindSpringCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "HDRDisplay/HDROutputCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "HDRDisplay/UIBrightnessCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/FilterMask.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/RayBounds.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ClusterBuildingCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ClusterCullingCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ShadowDemandCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ShadowDepthPyramidCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "LinearLighting/SceneGammaDecodeCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Skylighting/UpdateProbesCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "SubsurfaceScattering/DiffuseExtractionCS.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "TerrainBlending/DepthBlend.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "TerrainShadows/ShadowUpdate.cs.hlsl"
+        },
+        {
+            "defines": [
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "cs_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/RCAS/RCAS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["INSTANCED_TREE", "1"],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/Caster.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["OFFSET_DEPTH", ""],
+                ["RENDER_DEPTH", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "Utility.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Clear",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurComposite.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Copy",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurHorizontal.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Downsample",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurHorizontal.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_HDRDownsample",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurHorizontal.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Layer",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurComposite.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurComposite.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurHorizontal.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurVertical.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "PS_Scene",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurComposite.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Effects11/CopyPS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Effects11/DownsamplePS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/Caster.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ShadowDepthCopy.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/CopyDepthToSharedBufferPS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/DepthRefractionUpscalePS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["PSHADER", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "ps_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/UnderwaterMaskUpscalePS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "VS_Main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "Menu/BackgroundBlurHorizontal.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_4_0",
+            "runtime": "SE",
+            "source": "Effects11/QuadVS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "Effects11/QuadVS.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "LODShadows/Caster.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "LightLimitFix/ShadowDepthCopy.hlsl"
+        },
+        {
+            "defines": [
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VSHADER", ""],
+                ["WINPC", ""]
+            ],
+            "entryPoint": "main",
+            "flags": 34818,
+            "kind": "standalone",
+            "profile": "vs_5_0",
+            "runtime": "SE",
+            "source": "Upscaling/UpscaleVS.hlsl"
+        },
+        {
+            "descriptor": 0,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/0.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 1,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/1.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 1,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/1.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 101,
+            "key": "LensFlareVisibility:Pixel:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VISIBILITY VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "LensFlareVisibility/65.pso",
+            "runtime": "SE",
+            "shader": "LensFlareVisibility",
+            "source": "LensFlare.hlsl",
+            "stage": "Pixel",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 101,
+            "key": "LensFlareVisibility:Vertex:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VISIBILITY VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "LensFlareVisibility/65.vso",
+            "runtime": "SE",
+            "shader": "LensFlareVisibility",
+            "source": "LensFlare.hlsl",
+            "stage": "Vertex",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 106,
+            "key": "ISVolumetricLightingBlurHCS:Compute:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISVolumetricLightingBlurHCS/6A.cso",
+            "runtime": "SE",
+            "shader": "ISVolumetricLightingBlurHCS",
+            "source": "ISVolumetricLightingBlurHCS.hlsl",
+            "stage": "Compute",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 107,
+            "key": "ISVolumetricLightingBlurVCS:Compute:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISVolumetricLightingBlurVCS/6B.cso",
+            "runtime": "SE",
+            "shader": "ISVolumetricLightingBlurVCS",
+            "source": "ISVolumetricLightingBlurVCS.hlsl",
+            "stage": "Compute",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 1073741824,
+            "key": "Lighting:Vertex:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000000.vso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Vertex",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741825,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741825,
+            "key": "Lighting:Vertex:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000001.vso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Vertex",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741827,
+            "key": "Lighting:Vertex:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKINNED SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000003.vso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Vertex",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741833,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000009.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741841,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000011.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1073741849,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40000019.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1074790401,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40100001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1074790409,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40100009.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1074790417,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40100011.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1074790425,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/40100019.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1090519040,
+            "key": "Lighting:Vertex:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENVMAP EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/41000000.vso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Vertex",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 1090519041,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENVMAP EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/41000001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 131074,
+            "key": "Utility:Pixel:DEBUG_COLOR REVERSE_Z SHADOWSPLITCOUNT=3 TEXTURE ",
+            "kind": "engine",
+            "path": "Utility/20002.pso",
+            "runtime": "SE",
+            "shader": "Utility",
+            "source": "Utility.hlsl",
+            "stage": "Pixel",
+            "type": "Utility"
+        },
+        {
+            "descriptor": 131075,
+            "key": "Utility:Pixel:DEBUG_COLOR REVERSE_Z SHADOWSPLITCOUNT=3 TEXTURE VC ",
+            "kind": "engine",
+            "path": "Utility/20003.pso",
+            "runtime": "SE",
+            "shader": "Utility",
+            "source": "Utility.hlsl",
+            "stage": "Pixel",
+            "type": "Utility"
+        },
+        {
+            "descriptor": 136,
+            "key": "ISSAOCameraZ:Pixel:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISSAOCameraZ/88.pso",
+            "runtime": "SE",
+            "shader": "ISSAOCameraZ",
+            "source": "ISSAOCameraZ.hlsl",
+            "stage": "Pixel",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 136,
+            "key": "ISSAOCameraZ:Vertex:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISSAOCameraZ/88.vso",
+            "runtime": "SE",
+            "shader": "ISSAOCameraZ",
+            "source": "ISSAOCameraZ.hlsl",
+            "stage": "Vertex",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 150,
+            "key": "ISSnowSSS:Pixel:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISSnowSSS/96.pso",
+            "runtime": "SE",
+            "shader": "ISSnowSSS",
+            "source": "ISSnowSSS.hlsl",
+            "stage": "Pixel",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 150,
+            "key": "ISSnowSSS:Vertex:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISSnowSSS/96.vso",
+            "runtime": "SE",
+            "shader": "ISSnowSSS",
+            "source": "ISSnowSSS.hlsl",
+            "stage": "Vertex",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 2,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/2.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 2,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/2.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 256,
+            "key": "ISVolumetricLightingRaymarchCS:Compute:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISVolumetricLightingRaymarchCS/100.cso",
+            "runtime": "SE",
+            "shader": "ISVolumetricLightingRaymarchCS",
+            "source": "ISVolumetricLightingRaymarchCS.hlsl",
+            "stage": "Compute",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 257,
+            "key": "ISVolumetricLightingGenerateCS:Compute:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "ISVolumetricLightingGenerateCS/101.cso",
+            "runtime": "SE",
+            "shader": "ISVolumetricLightingGenerateCS",
+            "source": "ISVolumetricLightingGenerateCS.hlsl",
+            "stage": "Compute",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 3,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/3.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 3,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/3.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 3221225473,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0000001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3221225481,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0000009.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3221225489,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0000011.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3221225497,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0000019.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3222274049,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0100001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3222274057,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0100009.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3222274065,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0100011.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3222274073,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DEFERRED DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION TRUE_PBR VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C0100019.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 3238002689,
+            "key": "Lighting:Pixel:CLOUD_SHADOWS CS_HAIR CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENVMAP EXP_HEIGHT_FOG EXTENDED_MATERIALS EXTENDED_TRANSLUCENCY FUR_SHELLS FUR_SHELLS_DEPTH IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS TERRAIN_VARIATION VANILLA_FRESNEL VC VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Lighting/C1000001.pso",
+            "runtime": "SE",
+            "shader": "Lighting",
+            "source": "Lighting.hlsl",
+            "stage": "Pixel",
+            "type": "Lighting"
+        },
+        {
+            "descriptor": 4,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/4.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 4,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/4.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 43,
+            "key": "ISWorldMap:Pixel:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS _NOTHING ",
+            "kind": "engine",
+            "path": "ISWorldMap/2B.pso",
+            "runtime": "SE",
+            "shader": "ISWorldMap",
+            "source": "ISWorldMap.hlsl",
+            "stage": "Pixel",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 43,
+            "key": "ISWorldMap:Vertex:CLOUD_SHADOWS CS_UTILITY DYNAMIC_CUBEMAPS EFFECTS11 ENABLESSR EXP_HEIGHT_FOG HDR_OUTPUT IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS _NOTHING ",
+            "kind": "engine",
+            "path": "ISWorldMap/2B.vso",
+            "runtime": "SE",
+            "shader": "ISWorldMap",
+            "source": "ISWorldMap.hlsl",
+            "stage": "Vertex",
+            "type": "ImageSpace"
+        },
+        {
+            "descriptor": 5,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/5.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 5,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/5.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 6,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/6.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65536,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10000.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65536,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10000.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65537,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10001.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65537,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10001.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65538,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10002.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65538,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10002.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65539,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10003.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65539,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10003.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65540,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10004.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65540,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10004.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65541,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10005.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65541,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10005.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65543,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10008.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65543,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10008.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65544,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10008.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 65544,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DO_ALPHA_TEST DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/10008.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 67110912,
+            "key": "Effect:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS MOTIONVECTORS_NORMALS MULTBLEND REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "Effect/4000800.vso",
+            "runtime": "SE",
+            "shader": "Effect",
+            "source": "Effect.hlsl",
+            "stage": "Vertex",
+            "type": "Effect"
+        },
+        {
+            "descriptor": 67117187,
+            "key": "Utility:Vertex:ALPHA_TEST RENDER_DEPTH REVERSE_Z SHADOWSPLITCOUNT=3 TEXTURE TREE_ANIM VC ",
+            "kind": "engine",
+            "path": "Utility/4002083.vso",
+            "runtime": "SE",
+            "shader": "Utility",
+            "source": "Utility.hlsl",
+            "stage": "Vertex",
+            "type": "Utility"
+        },
+        {
+            "descriptor": 7,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/8.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 7,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/8.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 8,
+            "key": "RunGrass:Pixel:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/8.pso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Pixel",
+            "type": "Grass"
+        },
+        {
+            "descriptor": 8,
+            "key": "RunGrass:Vertex:CLOUD_SHADOWS DYNAMIC_CUBEMAPS EFFECTS11 EXP_HEIGHT_FOG GRASS_COLLISION GRASS_LIGHTING GRASS_OPTIMIZATIONS IBL LIGHT_LIMIT_FIX LOD_BLENDING LOD_SHADOWS RENDER_DEPTH REVERSE_Z SCREEN_SPACE_SHADOWS SKYLIGHTING SNOW_COVER SSS TERRAIN_BLENDING TERRAIN_SHADOWS VANILLA_FRESNEL VOLUMETRIC_SHADOWS WATER_EFFECTS WETNESS_EFFECTS ",
+            "kind": "engine",
+            "path": "RunGrass/8.vso",
+            "runtime": "SE",
+            "shader": "RunGrass",
+            "source": "RunGrass.hlsl",
+            "stage": "Vertex",
+            "type": "Grass"
+        }
+    ]
+}

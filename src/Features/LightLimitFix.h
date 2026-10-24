@@ -251,7 +251,6 @@ public:
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
-	eastl::unique_ptr<Buffer> lightIndexCounter = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 

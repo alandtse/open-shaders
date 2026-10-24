@@ -14,6 +14,10 @@
 #	include "CloudShadows/CloudShadows.hlsli"
 #endif
 
+#if defined(LOD_SHADOWS)
+#	include "LODShadows/LODShadows.hlsli"
+#endif
+
 #if defined(IBL)
 #	include "IBL/IBL.hlsli"
 #elif defined(SKYLIGHTING)
@@ -54,14 +58,17 @@ namespace ShadowSampling
 		return SharedData::HasDirectionalShadows;
 	}
 
-	float GetWorldShadow(float3 positionWS, float3 offset, uint eyeIndex)
+	float GetTerrainCloudShadow(float3 positionWS, float3 offset, uint eyeIndex)
 	{
 		if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
 			return 1.0;
 
 		float worldShadow = 1.0;
 #if defined(TERRAIN_SHADOWS)
-		worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
+#	if defined(LOD_SHADOWS)
+		[branch] if (!LODShadows::ReplacesTerrainShadows())
+#	endif
+			worldShadow = TerrainShadows::GetTerrainShadow(positionWS + offset, LinearSampler);
 #endif
 
 #if defined(CLOUD_SHADOWS)
@@ -71,7 +78,34 @@ namespace ShadowSampling
 		return worldShadow;
 	}
 
-	float Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 screenPosition, uint eyeIndex, out float surfaceShadow)
+	bool HasDistantShadows()
+	{
+#if defined(LOD_SHADOWS)
+		return !SharedData::InInterior && !SharedData::HideSky && !SharedData::InMapMenu && LODShadows::ReplacesTerrainShadows();
+#else
+		return false;
+#endif
+	}
+
+	float GetDistantShadow(float3 positionWS, uint eyeIndex, bool surface = true)
+	{
+		float shadow = 1.0;
+#if defined(LOD_SHADOWS)
+		[branch] if (HasDistantShadows())
+		{
+			float coverage = 0.0;
+			shadow = LODShadows::GetShadow(positionWS, LinearSampler, eyeIndex, surface, coverage);
+		}
+#endif
+		return shadow;
+	}
+
+	float GetWorldShadow(float3 positionWS, float3 offset, uint eyeIndex, bool surface = false, bool sampleDistantShadow = true)
+	{
+		return GetTerrainCloudShadow(positionWS, offset, eyeIndex) * (sampleDistantShadow ? GetDistantShadow(positionWS + offset, eyeIndex, surface) : 1.0);
+	}
+
+	float Get3DFilteredShadow(float3 positionWS, float3 viewDirection, float2 screenPosition, uint eyeIndex, out float surfaceShadow, bool sampleDistantShadow = true)
 	{
 #if defined(EFFECT)
 		float viewRayLength = min(Permutation::EffectRadius * 0.2, 256);
@@ -100,7 +134,7 @@ namespace ShadowSampling
 		for (uint i = 0; i < sampleCount; i++) {
 			float t = (float(i) + noise) * rcpSampleCount;
 			float3 sampledPositionWS = lerp(endPosition, startPosition, t);
-			float worldShadowSample = ShadowSampling::GetWorldShadow(sampledPositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+			float worldShadowSample = ShadowSampling::GetWorldShadow(sampledPositionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, false, sampleDistantShadow);
 			surfaceShadow = worldShadowSample;
 			worldShadow += worldShadowSample;
 		}

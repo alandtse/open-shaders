@@ -388,9 +388,13 @@ struct NeuralRendering::Impl
 	void Initialize()
 	{
 		interop.Initialize();
-		winrt::com_ptr<ID3D11Device1> device;
-		DX::ThrowIfFailed(globals::d3d::device->QueryInterface(device.put()));
-		DX::ThrowIfFailed(globals::d3d::context->QueryInterface(context.put()));
+		// Reuse the interfaces the interop already queried: they are the same device and context, and
+		// the derived types satisfy the context-state and sampler calls below. Re-querying for the
+		// base interfaces fails with E_NOINTERFACE on a device a Streamline wrapper fronts.
+		auto* device = interop.Device1();
+		if (!device || !interop.Context1())
+			throw std::runtime_error("NR needs a D3D11.1 device and immediate context");
+		context.copy_from(interop.Context1());
 		const auto level = globals::d3d::device->GetFeatureLevel();
 		DX::ThrowIfFailed(device->CreateDeviceContextState(0, &level, 1, D3D11_SDK_VERSION,
 			__uuidof(ID3D11Device), nullptr, isolated.put()));
@@ -1094,7 +1098,7 @@ struct NeuralRendering::Impl
 		} scope(context.get(), isolated.get());
 		// The stagger's own gain history would be blended into frame generation's interpolation, and a
 		// second eye's evaluation is what frame generation expects, so it is off whenever it is active.
-		const bool frameGeneration = globals::features::upscaling.IsFrameGenerationActive();
+		const bool frameGeneration = FrameGenerationActive();
 		if (frameGeneration != frameGenerationBlocked) {
 			if (frameGeneration)
 				logger::info("[NeuralRendering] eye-staggered gain reuse is off while frame generation is active");
@@ -1415,9 +1419,8 @@ void NeuralRendering::InstallHooks()
 
 void NeuralRendering::UpdateCalibration()
 {
-	auto& upscaling = globals::features::upscaling;
 	const auto resources = GetStatus();
-	if (upscaling.IsFrameGenerationActive()) {
+	if (FrameGenerationActive()) {
 		calibration.Fail(NR::CropCalibration::Failure::kFrameGeneration);
 	} else if (publishedState.load(std::memory_order_relaxed) != Status::State::kActive || !resources.eyes || !resources.width || !resources.height) {
 		calibration.Fail(NR::CropCalibration::Failure::kNotActive);
@@ -1566,6 +1569,11 @@ const char* NeuralRendering::RegionSourceName(RegionSource a_source)
 	default:
 		return "none";
 	}
+}
+
+bool NeuralRendering::FrameGenerationActive()
+{
+	return Upscaling::FrameGenerationActive();
 }
 
 bool NeuralRendering::DialogueOpen()

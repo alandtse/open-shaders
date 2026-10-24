@@ -87,7 +87,7 @@ std::pair<unsigned char*, size_t> GetFeatureBufferData(bool a_inWorld)
 		globals::features::terrainBlending.settings,
 		globals::features::exponentialHeightFog.GetCommonBufferData(),
 		globals::features::truePBR.settings,
-		globals::features::foliageLighting.settings,
+		globals::features::foliageLighting.GetCommonBufferData(),
 		globals::features::skin.GetCommonBufferData(),
 		globals::features::vanillaFresnel.settings,
 		Bloom::GetCommonBufferData(bloomSettings),

@@ -4,11 +4,13 @@
 
 #include "I18n/I18n.h"
 #include "Util.h"
+#include "Utils/UI.h"
 
 #define I18N_KEY_PREFIX "feature.foliage_lighting."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	FoliageLighting::Settings,
+	Enable,
 	EnableFoliageScattering,
 	EnableFoliageAmbientBoost,
 	EnableFoliageAmbientFlip,
@@ -17,6 +19,12 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void FoliageLighting::DrawSettings()
 {
+	Util::CheckboxFlag(T(TKEY("master_enabled"), "Enable Foliage Lighting"), settings.Enable);
+	if (auto tooltip = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("master_enabled_tip"), "Enables tree and grass scattering and tree ambient controls. All other settings are ignored when disabled."));
+	ImGui::Indent();
+	auto enabledGuard = Util::DisableGuard(!settings.Enable);
+
 	bool enableFoliageScattering = settings.EnableFoliageScattering != 0;
 	if (ImGui::Checkbox(T(TKEY("enable_foliage_scattering"), "Tree Foliage Scattering"), &enableFoliageScattering)) {
 		settings.EnableFoliageScattering = enableFoliageScattering;
@@ -53,6 +61,7 @@ void FoliageLighting::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("foliage_ambient_amount_tooltip"), "Amount added to the diffuse indirect ambient response for animated trees."));
 	}
+	ImGui::Unindent();
 }
 
 void FoliageLighting::SaveSettings(json& o_json)
@@ -69,6 +78,18 @@ void FoliageLighting::LoadSettings(json& o_json)
 void FoliageLighting::RestoreDefaultSettings()
 {
 	settings = {};
+}
+
+FoliageLighting::Settings FoliageLighting::GetCommonBufferData() const
+{
+	auto data = settings;
+	if (!settings.Enable) {
+		data.EnableFoliageScattering = 0;
+		data.EnableFoliageAmbientBoost = 0;
+		data.EnableFoliageAmbientFlip = 0;
+		data.EnableGrassScattering = 0;
+	}
+	return data;
 }
 
 #undef I18N_KEY_PREFIX

@@ -79,6 +79,8 @@ struct NeuralRendering
 
 	/** @brief True while the dialogue menu is open; dialogue-only gating evaluates NR only then. */
 	static bool DialogueOpen();
+	/** @brief Frame generation state: the one Upscaling value Neural Rendering reads. */
+	static bool FrameGenerationActive();
 
 	NeuralRendering();
 	~NeuralRendering();

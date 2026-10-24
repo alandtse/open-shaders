@@ -44,6 +44,10 @@ float GetFurWet()
 #	undef IBL
 #endif
 
+#if defined(IBL) && !defined(DEFERRED)
+#	define CAPTURE_REFLECTION_RADIANCE
+#endif
+
 #if (defined(TREE_ANIM) || defined(LANDSCAPE)) && !defined(VC)
 #	define VC
 #endif  // TREE_ANIM || LANDSCAPE || !VC
@@ -389,7 +393,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.Position = viewPos;
 
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
-	float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(viewPos, reverseProjection) - 70000)) * 0.5;
+	float lodDepthBias = min(1, 1e-4 * max(0, FrameBuffer::ToStandardClipZ(viewPos, reverseProjection) - LodLandscape::DepthBiasStart)) * 0.5;
 	vsout.Position = FrameBuffer::OffsetClipDepth(vsout.Position, lodDepthBias, reverseProjection);
 #	endif
 
@@ -537,6 +541,9 @@ struct PS_OUTPUT
 	float4 Diffuse: SV_Target0;
 	float4 MotionVectors: SV_Target1;
 	float4 NormalGlossiness: SV_Target2;
+#	if defined(IBL)
+	float4 ReflectionRadiance: SV_Target7;
+#	endif
 #	if defined(EYE)
 	float4 Masks2: SV_Target3;
 #	endif
@@ -1341,8 +1348,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
-		InitializeTerrainStochasticGradients(uvOriginal);
-		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal);
+		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal, input.Position.xy);
 	}
 #		else
 	const bool applyMeshTV = false;
@@ -1361,18 +1367,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 					DEST = TEX.Sample(SAMP, UV);                        \
 				}                                                       \
 			}
-#		define MESH_TV_SAMPLE_BIAS(DEST, TEX, SAMP, UV, COLOR)                             \
-			{                                                                               \
-				[branch] if (applyMeshTV)                                                   \
-				{                                                                           \
-					DEST = StochasticEffect(TEX, SAMP, UV, meshOffset, COLOR, pbrTextures); \
-				}                                                                           \
-				else                                                                        \
-				{                                                                           \
-					DEST = TEX.SampleBias(SAMP, UV, SharedData::MipBias);                   \
-					if (COLOR)                                                              \
-						DEST = Color::DiffuseToWorking(DEST, pbrTextures);                  \
-				}                                                                           \
+#		define MESH_TV_SAMPLE_BIAS(DEST, TEX, SAMP, UV, COLOR)                                                      \
+			{                                                                                                        \
+				[branch] if (applyMeshTV)                                                                            \
+				{                                                                                                    \
+					DEST = StochasticEffectBias(TEX, SAMP, UV, meshOffset, SharedData::MipBias, COLOR, pbrTextures); \
+				}                                                                                                    \
+				else                                                                                                 \
+				{                                                                                                    \
+					DEST = TEX.SampleBias(SAMP, UV, SharedData::MipBias);                                            \
+					if (COLOR)                                                                                       \
+						DEST = Color::DiffuseToWorking(DEST, pbrTextures);                                           \
+				}                                                                                                    \
 			}
 #		define MESH_TV_HEIGHT(DEST, TEX, SAMP, UV, MIP, CHANNEL)                            \
 			{                                                                                \
@@ -1416,8 +1422,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// SampleTerrain (LightingLandscape.hlsli) reads this for any LANDSCAPE
 	// permutation, not just EMAT.
 #		if defined(TERRAIN_VARIATION)
-	InitializeTerrainStochasticGradients(uvOriginal);
-	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
+	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw, input.Position.xy);
 #		endif
 #		if defined(EMAT)
 	float mipLevels[6];
@@ -1762,8 +1767,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(LANDSCAPE)
 #		if defined(TERRAIN_VARIATION)
-#			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffect(TEX, SAMP, UV, OFFSET)
-#			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffect(TEX, SAMP, UV, OFFSET, true, PBR)
+#			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffectBias(TEX, SAMP, UV, OFFSET, SharedData::MipBias)
+#			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffectBias(TEX, SAMP, UV, OFFSET, SharedData::MipBias, true, PBR)
 #		else
 #			define SampleTerrain(TEX, SAMP, UV, OFFSET) TEX.SampleBias(SAMP, UV, SharedData::MipBias)
 #			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) Color::DiffuseToWorking(TEX.SampleBias(SAMP, UV, SharedData::MipBias), PBR)
@@ -2900,9 +2905,17 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		dirLightColor *= WaterEffects::ComputeCaustics(waterData, input.WorldPosition.xyz, eyeIndex);
 #	endif
 
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	const bool captureRadiance = Permutation::IsReflectionRadianceCapture() && ShadowSampling::HasDistantShadows();
+	float3 radianceDirLightColor = dirLightColor;
+	[branch] if (captureRadiance)
+		radianceDirLightColor *= ShadowSampling::GetTerrainCloudShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+#	endif
+
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
-	if (inWorld || inReflection)
-		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+	if (inWorld || inReflection) {
+		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
+	}
 
 	float dirLightAngle = dot(worldNormal.xyz, DirLightDirection.xyz);
 
@@ -2931,6 +2944,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 	float dirDetailedShadow = 1.0;
+#	if defined(LOD)
+	float nativeContactWeight = ShadowSampling::HasDistantShadows() ? 0.0 : 1.0;
+#	else
+	float nativeContactWeight = 1.0;
+#	endif
 #	if defined(TREE_ANIM) && defined(LIGHT_LIMIT_FIX) && defined(DEFERRED)
 	float foliageDirectionalShadowScale = 1.0;
 #	endif
@@ -2950,8 +2968,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 	// Engine pre-renders the directional shadow into a screen-space mask at
 	// t14. Under LLF this mask can be stale or zeroed, so LLF treats pixels
-	// past its cascade data as lit and reports coverage for VSM merging.
+	// past its cascade data as lit instead of sampling this mask.
+#	if !defined(LIGHT_LIMIT_FIX)
 	float4 shadowColor = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::DefShadow) ? TexShadowMaskSampler.Load(int3(input.Position.xy, 0)) : 1.0;
+#	endif
 
 	// Use HasDirectionalShadows() (= !IsInterior() || InteriorSun::IsActive) instead of
 	// the bare !InInterior gate, so Interior Sun cells reach the LLF cascade + engine-mask
@@ -2963,15 +2983,13 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(LIGHT_LIMIT_FIX) && (defined(DEFERRED) || !defined(VOLUMETRIC_SHADOWS))
 #			if defined(DEFERRED) && (defined(VOLUMETRIC_SHADOWS) || defined(TREE_ANIM))
 		float llfDirectionalCoverage = 0.0;
-		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
-			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0,
-			llfDirectionalCoverage);
+		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex, llfDirectionalCoverage, nativeContactWeight);
 #				if defined(TREE_ANIM)
 		foliageDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, llfDirectionalCoverage);
 #				endif
 #			else
-		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex,
-			(Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0);
+		float llfDirectionalCoverage;
+		dirDetailedShadow = LightLimitFix::GetDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, rotationMatrix, eyeIndex, llfDirectionalCoverage, nativeContactWeight);
 #			endif
 #		elif !defined(LIGHT_LIMIT_FIX)
 		dirDetailedShadow = (Permutation::PixelShaderDescriptor & Permutation::LightingFlags::ShadowDir) ? shadowColor.x : 1.0;
@@ -3008,6 +3026,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
 	if (!SharedData::InInterior) {
 		float2 screenSpaceShadows = ScreenSpaceShadows::GetScreenSpaceShadows(input.Position.xyz, screenUV, screenNoise);
+		screenSpaceShadows = lerp(1.0, screenSpaceShadows, nativeContactWeight);
 		if (dirLightAngle >= 0.0)
 			dirDetailedShadow *= screenSpaceShadows.x;
 		dirTransmissionContactShadow = dirLightAngle >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
@@ -3094,6 +3113,40 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		characterRainSpecular += CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, dirLightContext,
 			characterSpotRoughness, characterCoatMask, characterCoatIntensity);
 #		endif
+#	endif
+
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	DirectLightingOutput radianceLightDifference = (DirectLightingOutput)0;
+#		if defined(CHARACTER_RAIN_SURFACE)
+	float3 radianceRainDifference = 0.0;
+#		endif
+	[branch] if (captureRadiance)
+	{
+		DirectContext radianceContext = dirLightContext;
+		radianceContext.lightColor = radianceDirLightColor;
+#		if defined(TRUE_PBR)
+		radianceContext.coatLightColor = radianceDirLightColor * ((PBRFlags & PBR::Flags::InterlayerParallax) != 0 ? dirSoftShadow : dirDetailedShadow);
+#		endif
+		DirectLightingOutput radianceLightOutput;
+		EvaluateLighting(radianceContext, material, tbnTr, uvOriginal, uvOriginal_ddx, uvOriginal_ddy, radianceLightOutput);
+		radianceLightOutput.transmission *= dirTransmissionContactShadow;
+#		if defined(WETNESS_EFFECTS)
+		if (waterRoughnessSpecular < 1)
+			EvaluateWetnessLighting(wetnessNormal, radianceContext, waterRoughnessSpecular, radianceLightOutput);
+#			if defined(CHARACTER_RAIN_SURFACE)
+		if (characterCoatMask > 0.0f)
+			radianceRainDifference = CharacterRainSpots::EvaluateLighting(characterSpotSurfaceNormal, radianceContext,
+										 characterSpotRoughness, characterCoatMask, characterCoatIntensity) -
+			                         characterRainSpecular;
+#			endif
+#		endif
+		radianceLightDifference.diffuse = radianceLightOutput.diffuse - dirLightOutput.diffuse;
+		radianceLightDifference.specular = radianceLightOutput.specular - dirLightOutput.specular;
+		radianceLightDifference.transmission = radianceLightOutput.transmission - dirLightOutput.transmission;
+#		if defined(TRUE_PBR)
+		radianceLightDifference.coatDiffuse = radianceLightOutput.coatDiffuse - dirLightOutput.coatDiffuse;
+#		endif
+	}
 #	endif
 
 	lightsDiffuseColor += dirLightOutput.diffuse;
@@ -3592,8 +3645,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	endif
 
 #	if !defined(TRUE_PBR)
-	if (HasSpecular())
+	if (HasSpecular()) {
 		specularColor *= MaterialData.yyy;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceLightDifference.specular *= MaterialData.yyy;
+#		endif
+	}
+#	endif
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceSpecularColor = specularColor + radianceLightDifference.specular;
 #	endif
 
 #	if defined(TRUE_PBR)
@@ -3620,10 +3680,22 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	color.xyz += transmissionColor;
 
 	color.xyz *= vertexColor;
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceDiffuseDifference = radianceLightDifference.diffuse * material.BaseColor;
+#		if defined(TRUE_PBR)
+	if ((PBRFlags & PBR::Flags::ColoredCoat) != 0)
+		radianceDiffuseDifference = lerp(radianceDiffuseDifference, material.CoatColor * radianceLightDifference.coatDiffuse, material.CoatStrength);
+#		endif
+	float3 radianceColor = color.xyz + (radianceDiffuseDifference + radianceLightDifference.transmission) * vertexColor;
+#	endif
 
 #	if defined(SNOW)
-	if (useSnowSpecular)
+	if (useSnowSpecular) {
 		specularColor = 0;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceSpecularColor = 0;
+#		endif
+	}
 #	endif
 
 	diffuseColor = reflectionDiffuseColor;
@@ -3635,7 +3707,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(VANILLA_FRESNEL)
 		if (!(enableVanillaFresnel && SharedData::vanillaFresnelSettings.EnableDynamicCubemapsConversion))
 #		endif
+		{
 			specularColor += envColor * Color::IrradianceToLinear(diffuseColor);
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceSpecularColor += envColor * Color::IrradianceToLinear(diffuseColor + radianceLightDifference.diffuse);
+#		endif
+		}
 	indirectLobeWeights.diffuse += envColor;
 #	endif
 
@@ -3643,12 +3720,20 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		if defined(VANILLA_FRESNEL)
 	if (!(enableVanillaFresnel && SharedData::vanillaFresnelSettings.EnableGGX))
 #		endif
+	{
 		specularColor *= complexSpecular;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceSpecularColor *= complexSpecular;
+#		endif
+	}
 #	endif  // defined (EMAT) && defined(ENVMAP)
 
 #	if defined(CHARACTER_RAIN_SURFACE)
 	// Water reflects independently of skin specular strength and the clothing material's masks.
 	specularColor += characterRainSpecular;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceSpecularColor += characterRainSpecular + radianceRainDifference;
+#		endif
 #	endif
 
 #	if defined(LOD_LAND_BLEND) && defined(TRUE_PBR)
@@ -3656,6 +3741,12 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		lodLandDiffuseColor += directionalAmbientColor;
 		float3 litLodLandColor = vertexColor * lodLandColor.xyz * lodLandFadeFactor * lodLandDiffuseColor;
 		color.xyz = lerp(color.xyz * Color::PBRLightingScale, litLodLandColor, lodLandBlendFactor);
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		float3 radianceLandDifference = (radianceDirLightColor - dirLightColor) / Math::PI * saturate(dirLightAngle) * dirDetailedShadow;
+		float3 radianceLitLandColor = litLodLandColor + vertexColor * lodLandColor.xyz * lodLandFadeFactor * radianceLandDifference;
+		radianceColor = lerp(radianceColor * Color::PBRLightingScale, radianceLitLandColor, lodLandBlendFactor);
+		radianceSpecularColor = lerp(radianceSpecularColor * Color::PBRLightingScale, 0, lodLandBlendFactor);
+#		endif
 
 		specularColor = lerp(specularColor * Color::PBRLightingScale, 0, lodLandBlendFactor);
 		indirectLobeWeights.diffuse = lerp(indirectLobeWeights.diffuse * Color::PBRLightingScale, vertexColor * lodLandColor.xyz * lodLandFadeFactor, lodLandBlendFactor);
@@ -3665,6 +3756,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	elif defined(TRUE_PBR)
 	color.xyz *= Color::PBRLightingScale;
 	specularColor *= Color::PBRLightingScale;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceColor *= Color::PBRLightingScale;
+	radianceSpecularColor *= Color::PBRLightingScale;
+#		endif
 	indirectLobeWeights.diffuse *= Color::PBRLightingScale;
 #	endif
 
@@ -3677,6 +3772,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	if (!SharedData::iblSettings.EnableIBL)
 #		endif
 	{
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+		float3 radianceAmbientColor = directionalAmbientColor;
+		Skylighting::ApplySkylighting(radianceColor, radianceAmbientColor, outputAlbedo, skylightingDiffuse);
+#		endif
 		Skylighting::ApplySkylighting(color.xyz, directionalAmbientColor, outputAlbedo, skylightingDiffuse);
 	}
 #	endif
@@ -3684,6 +3783,10 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #	if !defined(DEFERRED)
 	color.xyz = Color::IrradianceToLinear(color.xyz);
 	color.xyz += specularColor;
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	float3 radianceLinearColor = Color::IrradianceToLinear(radianceColor) + radianceSpecularColor;
+	float3 directLinearColor = color.xyz;
+#		endif
 
 	if (any(indirectLobeWeights.specular > 0)
 #		if defined(WETNESS_EFFECTS)
@@ -3722,6 +3825,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			endif
 	}
 #		endif
+#		if defined(CAPTURE_REFLECTION_RADIANCE)
+	radianceColor = Color::IrradianceToGamma(radianceLinearColor + (color.xyz - directLinearColor));
+#		endif
 	color.xyz = Color::IrradianceToGamma(color.xyz);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
 	float fogFactor = input.FogParam.w;
@@ -3755,13 +3861,25 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 		if (SharedData::exponentialHeightFogSettings.enabled) {
 			if (!ExponentialHeightFog::ShouldDisableVanillaFog()) {
 				color.xyz = Color::BlendFog(color.xyz, vanillaFogColor, vanillaFogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+				radianceColor = Color::BlendFog(radianceColor, vanillaFogColor, vanillaFogFactor);
+#			endif
 			}
 			color.xyz = lerp(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceColor = lerp(radianceColor, fogColor, fogFactor);
+#			endif
 		} else {
 			color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+			radianceColor = Color::BlendFog(radianceColor, fogColor, fogFactor);
+#			endif
 		}
 #		else
 		color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
+#			if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceColor = Color::BlendFog(radianceColor, fogColor, fogFactor);
+#			endif
 #		endif
 	}
 #	endif
@@ -3993,6 +4111,9 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	const bool gammaRenderTarget = ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget);
 	if (gammaRenderTarget) {
 		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+		radianceColor = Color::SceneLinearToGamma(radianceColor);
+#	endif
 	}
 
 #	if !defined(HDR_OUTPUT)  // Do not apply gamma correction before we pass to ISHDR.
@@ -4043,10 +4164,15 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		undef LANDSCAPE_PARALLAX_ENABLED
 #	endif
 
+#	if defined(CAPTURE_REFLECTION_RADIANCE)
+	psout.ReflectionRadiance = captureRadiance ? float4(radianceColor, psout.Diffuse.w) : psout.Diffuse;
+#	endif
+
 #	if defined(FUR_SHELLS_DEPTH)
 	psout = (PS_OUTPUT)0;
 #	endif
 
 	return psout;
 }
+
 #endif  // PSHADER

@@ -5,6 +5,7 @@
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/Skylighting.h"
@@ -194,6 +195,8 @@ namespace
 			defines.emplace_back("LIGHT_LIMIT_FIX", "");
 		if (globals::features::terrainShadows.loaded)
 			defines.emplace_back("TERRAIN_SHADOWS", "");
+		if (globals::features::lodShadows.loaded)
+			defines.emplace_back("LOD_SHADOWS", "");
 		if (globals::features::cloudShadows.loaded)
 			defines.emplace_back("CLOUD_SHADOWS", "");
 		return defines;

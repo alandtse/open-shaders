@@ -1,4 +1,5 @@
 #include "ScreenSpaceShadows.h"
+#include "Features/LODShadows.h"
 #include "Features/ReverseZ.h"
 
 #include "Features/TerrainBlending.h"
@@ -306,6 +307,16 @@ void ScreenSpaceShadows::DrawShadows()
 
 	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
 
+	float2 nativeEndSplitDistances{};
+	const bool limitToNativeShadows = globals::features::lodShadows.ReplacesTerrainShadows();
+	if (limitToNativeShadows) {
+		const auto* scene = accumulator->GetRuntimeData().activeShadowSceneNode;
+		if (const auto* shadowLight = scene ? scene->GetRuntimeData().sunShadowDirLight : nullptr) {
+			const auto& shadowData = shadowLight->GetShadowDirectionalLightRuntimeData();
+			nativeEndSplitDistances = float2{ shadowData.endSplitDistances[0], shadowData.endSplitDistances[1] };
+		}
+	}
+
 	// Setup common render state.
 	// SSS always uses 24/32-bit depth, never the R16_UNORM half-precision path.
 	// With TerrainBlending loaded the SRV is R32_FLOAT (blendedDepthTexture);
@@ -322,6 +333,7 @@ void ScreenSpaceShadows::DrawShadows()
 
 	auto buffer = raymarchCB->CB();
 	context->CSSetConstantBuffers(1, 1, &buffer);
+	globals::state->BindSharedDataCS(context, false);
 
 	auto viewport = globals::game::graphicsState;
 
@@ -387,6 +399,8 @@ void ScreenSpaceShadows::DrawShadows()
 				data.InvDepthTextureSize[1] = invTexSizeY;
 
 				data.settings = bendSettings;
+				data.nativeEndSplitDistances = nativeEndSplitDistances;
+				data.limitToNativeShadows = limitToNativeShadows;
 
 				raymarchCB->Update(data);
 			}

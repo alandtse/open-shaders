@@ -47,7 +47,7 @@ groupshared float depth[TG_DIM];
 	int y = groupId.y;
 
 #if defined(VR)
-	int eyeIndex = min(int(groupId.x) / horizontalGroupsPerEye, 1);
+	int eyeIndex = int(min(groupId.x / uint(horizontalGroupsPerEye), 1u));
 	int eyeGroup = int(groupId.x) - eyeIndex * horizontalGroupsPerEye;
 	int eyeStart = eyeIndex * eyeWidth;
 	int eyeEnd = eyeIndex == 0 ? eyeWidth : screenSize.x;

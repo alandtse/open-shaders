@@ -25,6 +25,7 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/LODBlending.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
@@ -81,6 +82,7 @@ namespace globals
 		ProceduralSun proceduralSun{};
 		DynamicCubemaps dynamicCubemaps{};
 		VolumetricShadows volumetricShadows{};
+		LODShadows lodShadows{};
 		ExtendedMaterials extendedMaterials{};
 		GrassCollision grassCollision{};
 		GrassLighting grassLighting{};

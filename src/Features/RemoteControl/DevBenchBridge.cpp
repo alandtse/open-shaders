@@ -1416,6 +1416,8 @@ namespace
 		request.onComplete = [requestId](const ScreenshotFeature::CaptureResult& a_result) {
 			json payload{ { "requestId", requestId }, { "ok", a_result.ok }, { "uiExcluded", a_result.uiExcluded },
 				{ "width", a_result.width }, { "height", a_result.height } };
+			if (a_result.ok)
+				payload["renderFrame"] = a_result.renderFrame;
 			if (!a_result.ok)
 				payload["error"] = "the screenshot could not be captured or written";
 			const std::string text = payload.dump();

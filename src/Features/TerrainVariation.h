@@ -1,7 +1,5 @@
 #pragma once
 
-#include "TerrainVariation/MeshRules.h"
-
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -68,17 +66,17 @@ public:
 	/** @brief Initializes the feature and applies shader settings after plugin load. */
 	virtual void PostPostLoad() override;
 
-	// Guards meshRules, landscapeDiffusePaths, meshTextureCache and meshTextureKeepAlive.
+	// Guards landscapeDiffusePaths, landscapeDiffuseFileNames, meshTextureCache and meshTextureKeepAlive.
 	std::shared_mutex meshTextureMutex;
-	TerrainVariationTextures::MeshRules meshRules;
 	std::unordered_set<std::string> landscapeDiffusePaths;
+	std::unordered_set<std::string> landscapeDiffuseFileNames;
 	// Keyed on the interned BSFixedString pointer of a diffuse texture name.
 	std::unordered_map<const char*, bool> meshTextureCache;
 	// Keeps every cached key interned so its pointer cannot be recycled.
 	std::vector<RE::BSFixedString> meshTextureKeepAlive;
 
 	/**
-	 * @brief Resolves whether a diffuse texture name belongs to a landscape texture, memoising the result.
+	 * @brief Matches landscape diffuse paths or landscape copies with a matching file name, memoising the result.
 	 * @param a_name The interned diffuse texture name from the shader property.
 	 * @return True if the texture qualifies for mesh stochastic variation.
 	 */

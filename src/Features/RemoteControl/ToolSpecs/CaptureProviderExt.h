@@ -7,7 +7,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"({"description":")"
 		R"({brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The )"
 		R"(Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, )"
-		R"(height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, )"
+		R"(height, renderFrame). renderFrame is the engine graphics frame copied on the render thread, not the request frame. subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, )"
 		R"(both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; )"
 		R"(every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; )"
 		R"(an active native frame sequence rejects still requests. The crop preset, clipboard copy and HUD notice of a user screenshot do not apply. Frame-locked burst: action=burst with requestId, )"

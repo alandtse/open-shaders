@@ -1075,7 +1075,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 			if (!screenshot.onComplete)
 				return;
 			try {
-				screenshot.onComplete({ ok, screenshot.width, screenshot.height, screenshot.uiExcluded });
+				screenshot.onComplete({ ok, screenshot.width, screenshot.height, screenshot.uiExcluded, screenshot.renderFrame });
 			} catch (const std::exception& e) {
 				logger::error("Screenshot completion callback threw: {}", e.what());
 			}
@@ -1239,6 +1239,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	screenshot.copyToClipboard = copyToClipboard && !request;
 	screenshot.silent = request.has_value();
 	screenshot.uiExcluded = src.uiExcluded;
+	screenshot.renderFrame = globals::game::graphicsState->GetFrameCount();
 	if (request)
 		screenshot.onComplete = std::move(request->onComplete);
 	EnqueueScreenshot(std::move(screenshot));
