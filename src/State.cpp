@@ -639,7 +639,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (ec)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
-				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+				bool isDisabled = !feature->IsAlwaysEnabled() && ((disabledFeatures.contains(featureName) && disabledFeatures[featureName]) || !feature->conflictMessage.empty());
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
