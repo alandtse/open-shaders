@@ -288,8 +288,8 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		// blocking-compile path and anything exceptional still show below.
 		const bool hideRoutineHud = globals::game::isVR && shaderCache->backgroundCompilation &&
 		                            Menu::GetSingleton()->GetSettings().HideCompilationHUDInVR;
-		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || FeatureIssues::CountLoadFailures() > 0 ||
-		                                (failed && !hide) || renderDocAvailable || state->IsDeveloperMode();
+		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || shaderCache->HasFeatureSetChanges() || FeatureIssues::CountLoadFailures() > 0 ||
+		                                (failed && !hide) || effectFailed || renderDocAvailable || state->IsDeveloperMode();
 		if (hideRoutineHud && !hasExceptionalInfo)
 			return;
 
