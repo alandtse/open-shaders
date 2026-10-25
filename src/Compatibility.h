@@ -34,7 +34,6 @@ namespace Compatibility
 			"superseded by Sky Reflection and Light Limit Fix" },
 		{ L"Data/SKSE/Plugins/intellightent-ng.dll" },
 		{ L"Data/SKSE/Plugins/DynamicWetness.dll" },
-		{ L"Data/SKSE/Plugins/NMN_DeformableTerrain.dll" },
 		{ L"Data/SKSE/Plugins/ShadowFixes.dll", "superseded by the built-in shadow engine fixes" }
 	};
 

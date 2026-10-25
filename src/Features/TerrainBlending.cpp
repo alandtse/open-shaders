@@ -720,6 +720,11 @@ void TerrainBlending::SetupResources()
 
 void TerrainBlending::PostPostLoad()
 {
+	// NMN_DeformableTerrain tessellates terrain from clip depth and cannot undo the depth offset this feature adds, so its terrain is displaced wrongly.
+	if (GetModuleHandleW(L"NMN_DeformableTerrain.dll")) {
+		DisableForConflict("NMN_DeformableTerrain.dll");
+		return;
+	}
 	Hooks::Install();
 }
 
