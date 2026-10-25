@@ -274,6 +274,8 @@ namespace SIE
 		void SetGeneration(uint64_t gen) { generation = gen; }
 		/** @brief Gets the batch generation this task was enqueued under, for staleness checks against a later Clear(). */
 		uint64_t GetGeneration() const { return generation; }
+		/** @brief Shader type this task compiles for, which selects the per-type epoch its generation embeds. */
+		RE::BSShader::Type GetType() const { return shader.shaderType.get(); }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -367,6 +369,19 @@ namespace SIE
 		 *  Call before ShaderCache::Clear()'s map-wipe locks so a worker's write-site check
 		 *  (see MakeAndAdd*Shader) sees the new value once it can observe the wipe. */
 		void BumpGeneration() { generation.fetch_add(1, std::memory_order_release); }
+		/** @brief Generation a task of a_type must carry to be current: the global generation
+		 *  with a_type's epoch folded in, so a scoped Clear(a_type) stales only that type. */
+		uint64_t LiveGeneration(RE::BSShader::Type a_type) const
+		{
+			return (generation.load(std::memory_order_acquire) << kTypeEpochBits) |
+			       (typeEpoch[static_cast<size_t>(a_type)].load(std::memory_order_acquire) & kTypeEpochMask);
+		}
+		/** @brief Stales every in-flight and queued task of a_type without touching other types.
+		 *  Call before the type's map-wipe locks, as for BumpGeneration(). */
+		void BumpTypeEpoch(RE::BSShader::Type a_type) { typeEpoch[static_cast<size_t>(a_type)].fetch_add(1, std::memory_order_release); }
+		/** @brief Drops a_type's queued, running and finished tasks from the bookkeeping so they can be
+		 *  re-enqueued, and takes the unfinished ones out of the progress totals. Other types are untouched. */
+		void ClearType(RE::BSShader::Type a_type);
 		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
 		 *  scoped cache evict can re-enqueue them. Leaves queued work in availableTasks
 		 *  and does not touch progress counters. */
@@ -400,6 +415,9 @@ namespace SIE
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::atomic<uint64_t> generation = 0;               // bumped by Clear(); tags tasks so a post-Clear() Complete() can detect staleness
+		static constexpr unsigned kTypeEpochBits = 24;
+		static constexpr uint64_t kTypeEpochMask = (uint64_t{ 1 } << kTypeEpochBits) - 1;
+		std::array<std::atomic<uint64_t>, RE::BSShader::Type::Total> typeEpoch{};  // bumped by ShaderCache::Clear(Type)
 		std::atomic<uint64_t> standaloneGeneration = 0;
 		std::mutex compilationMutex;
 
@@ -525,6 +543,8 @@ namespace SIE
 		/** @brief True if a_taskGeneration is set and predates the live generation -- mirrors
 		 * Util::GenerationClaim::TryPublish's own staleness rule (see AddCompletedShader). */
 		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration) const;
+		/** @brief As above for a task of a_type, whose generation also embeds that type's epoch. */
+		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration, RE::BSShader::Type a_type) const;
 		/** Gets whether the shader cache is enabled. */
 		bool IsEnabled() const;
 		/** Sets whether the shader cache is enabled. */
@@ -695,7 +715,7 @@ namespace SIE
 			Claimed,   // Claimed as Pending; caller must compile and call AddCompletedShader
 			Failed     // Previous attempt failed; skipped until invalidation drops the entry
 		};
-		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration = std::nullopt);
+		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, RE::BSShader::Type a_type, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		void ResolvePendingFailure(const std::string& key);
 
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
@@ -1183,9 +1203,9 @@ namespace SIE
 	private:
 		/** @brief True when a_taskGeneration is set and no longer matches the live
 		 *  generation; a Clear() invalidated this task while it was compiling. */
-		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration) const
+		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration, RE::BSShader::Type a_type) const
 		{
-			return a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire);
+			return a_taskGeneration && *a_taskGeneration != compilationSet.LiveGeneration(a_type);
 		}
 
 		void StartActiveShaderCaptureWindow(ActiveShaderCaptureStage a_stage);
