@@ -86,8 +86,8 @@ struct Feature
 	bool installed = false;
 	std::string version;
 	std::string failedLoadedMessage;
-	/// Name of the mod that keeps this feature off, empty when none does; see DisableForConflict().
-	std::string conflictingMod;
+	/// Why a conflicting mod keeps this feature off, empty when none does; see DisableForConflict().
+	std::string conflictMessage;
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
@@ -532,7 +532,7 @@ public:
 	virtual void RegisterUxActions() {}
 
 	/**
-	 * @brief Turns the feature off because a_conflict cannot coexist with it and records why for the menu.
+	 * @brief Turns the feature off because a_conflict cannot coexist with it, and lists it in the feature issues.
 	 * Leaves failedLoadedMessage unset: an expected conflict is not a load failure, and a failure would hold the disk cache.
 	 */
 	void DisableForConflict(std::string_view a_conflict);

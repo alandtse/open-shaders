@@ -288,7 +288,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		// blocking-compile path and anything exceptional still show below.
 		const bool hideRoutineHud = globals::game::isVR && shaderCache->backgroundCompilation &&
 		                            Menu::GetSingleton()->GetSettings().HideCompilationHUDInVR;
-		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || FeatureIssues::HasFeatureIssues() ||
+		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || FeatureIssues::CountLoadFailures() > 0 ||
 		                                (failed && !hide) || renderDocAvailable || state->IsDeveloperMode();
 		if (hideRoutineHud && !hasExceptionalInfo)
 			return;
@@ -327,8 +327,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		}
 		// Surface bad-install feature problems during the compile itself; otherwise
 		// the user only learns from the Feature Issues tab after baking the wrong set.
-		if (FeatureIssues::HasFeatureIssues()) {
-			const size_t issueCount = FeatureIssues::GetFeatureIssues().size();
+		if (const size_t issueCount = FeatureIssues::CountLoadFailures()) {
 			ImGui::TextColored(themeSettings.StatusPalette.Error,
 				T("overlay.feature_issues_compiling",
 					"WARNING: %zu feature(s) failed to load (bad install or version mismatch).\n"

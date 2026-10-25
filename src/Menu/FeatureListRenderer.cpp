@@ -731,7 +731,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		textColor = feat->HasAnyPendingRestart() ? themeSettings.StatusPalette.RestartNeeded : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	} else if (hasFailedMessage) {
 		textColor = feat->version.empty() ? themeSettings.StatusPalette.Disable : themeSettings.StatusPalette.Error;
-	} else if (!feat->conflictingMod.empty()) {
+	} else if (!feat->conflictMessage.empty()) {
 		textColor = themeSettings.StatusPalette.Warning;
 	} else {
 		// Installed but not loaded means the feature is only pending a restart (green),
@@ -1238,10 +1238,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 		} else {
 			if (FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 				feat->DrawUnloadedUI();
-			} else if (!feat->conflictingMod.empty()) {
-				const auto conflictText = std::vformat(
-					T("menu.features.disabled_by_conflict", "This feature is disabled because {} was detected. They cannot be used together."), std::make_format_args(feat->conflictingMod));
-				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", conflictText.c_str());
+			} else if (!feat->conflictMessage.empty()) {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", feat->conflictMessage.c_str());
 			} else if (feat->installed) {
 				ImGui::Text("%s", T("menu.features.available_after_restart", "This feature will be available after restart."));
 			} else {
