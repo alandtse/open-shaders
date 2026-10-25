@@ -640,9 +640,10 @@ void Wind::DrawTreeMeshRulesTable()
 	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
 	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
 	                                   ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-	if (ImGui::BeginTable("##TreeMeshRules", 11, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
+	if (ImGui::BeginTable("##TreeMeshRules", 12, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend_enabled"), "Enable Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
 		ImGui::TableSetupColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
@@ -681,51 +682,57 @@ void Wind::DrawTreeMeshRulesTable()
 				if (compactPath != rule.mesh && ImGui::IsItemHovered())
 					ImGui::SetTooltip("%.*s", static_cast<int>(rule.mesh.size()), rule.mesh.data());
 				ImGui::TableSetColumnIndex(1);
+				bool bendEnabled = rule.bendEnabled;
+				if (ImGui::Checkbox("##BendEnabled", &bendEnabled)) {
+					(void)TreeWindPatcher::SetBendEnabled(ruleIndex, bendEnabled);
+					uiState.treeWindSaveStatus.clear();
+				}
+				ImGui::TableSetColumnIndex(2);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##Bend", &bend, TreeWindSettings::kBend.minimum,
 					TreeWindSettings::kBend.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(2);
+				ImGui::TableSetColumnIndex(3);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##Leaf", &leafAmbient, TreeWindSettings::kLeafAmbient.minimum,
 					TreeWindSettings::kLeafAmbient.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(3);
+				ImGui::TableSetColumnIndex(4);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TrunkGust", &trunkGustInfluence,
 					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(4);
+				ImGui::TableSetColumnIndex(5);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##LeafGust", &leafGustInfluence,
 					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(5);
+				ImGui::TableSetColumnIndex(6);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##UpperBend", &upperBendRange,
 					TreeWindSettings::kUpperBendPercent.minimum, TreeWindSettings::kUpperBendPercent.maximum,
 					"%.0f%%", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(6);
+				ImGui::TableSetColumnIndex(7);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##MaximumDisplacement", &maximumDisplacementPercent,
 					TreeWindSettings::kMaximumDisplacementPercent.minimum,
 					TreeWindSettings::kMaximumDisplacementPercent.maximum, "%.2f%%",
 					ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(7);
+				ImGui::TableSetColumnIndex(8);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TrunkTransientInfluence", &transientWindInfluence,
 					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(8);
+				ImGui::TableSetColumnIndex(9);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##LeafTransientInfluence", &leafTransientWindInfluence,
 					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(9);
+				ImGui::TableSetColumnIndex(10);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TransientFlutterCap", &leafTransientFlutterMaximum,
 					TreeWindSettings::kLeafTransientFlutterMaximum.minimum,
 					TreeWindSettings::kLeafTransientFlutterMaximum.maximum,
 					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(10);
+				ImGui::TableSetColumnIndex(11);
 				ImGui::SetNextItemWidth(-1.0f);
 				changed |= ImGui::SliderFloat("##TransientBend", &transientMaximumBendMultiplier,
 					TreeWindSettings::kTransientMaximumBendMultiplier.minimum,

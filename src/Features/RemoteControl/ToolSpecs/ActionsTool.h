@@ -10,7 +10,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, )"
 		R"(returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, )"
 		R"(same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, )"
-		R"(so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.")"
+		R"(so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash. Wind command setTreeBendEnabled takes mesh (string) and enabled (boolean), changing broad bending independently of leaf flutter.")"
 		R"(,"inputSchema":{
 	"type": "object",
 	"properties": {
@@ -20,7 +20,7 @@ namespace DevBenchBridge::ToolSpecs
 		},
 		"shortName": {"type":"string"},
 		"name": {"type":"string"},
-		"args": {"type":"object"}
+		"args": {"type":"object","properties":{"mesh":{"type":"string","description":"Mesh path for Wind setTreeBendEnabled."},"enabled":{"type":"boolean","description":"Broad bending enabled for Wind setTreeBendEnabled."}}}
 	}
 })"
 		R"(})";

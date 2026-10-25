@@ -377,6 +377,16 @@ void Wind::RegisterUxActions()
 				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
 			}
 		});
+	FEATURE_COMMAND("setTreeBendEnabled", "Enable or disable broad bending for one tree mesh, retaining its sensitivity and leaf flutter. Required args: mesh (string), enabled (boolean). Global Override temporarily supersedes per-mesh settings.",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("enabled") || !args["enabled"].is_boolean()) {
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled received invalid arguments");
+				return;
+			}
+			if (!TreeWindPatcher::SetBendEnabled(args["mesh"].get<std::string>(), args["enabled"].get<bool>()))
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled did not match mesh {}", args["mesh"].get<std::string>());
+		});
 	FEATURE_COMMAND("saveTreeWindRules", "Write changed tree response values to each tree's last-scanned source JSON.",
 		[](Feature*, const json&) {
 			const auto result = TreeWindPatcher::SaveRules();
@@ -420,6 +430,7 @@ void Wind::RegisterUxActions()
 				if (matchIndex++ >= offset && matches.size() < limit) {
 					matches.push_back({
 						{ "mesh", rule.mesh },
+						{ "bendEnabled", rule.bendEnabled },
 						{ "bendSensitivity", rule.bend },
 						{ "leafAmbientSensitivity", rule.leafAmbient },
 						{ "upperBendRange", rule.upperBendRange },

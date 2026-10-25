@@ -32,6 +32,7 @@ Every response property is optional. Omit any property to use its coded default;
 
 The coded defaults are:
 
+-   `bendEnabled`: `true`; disable broad ambient and transient bending while retaining leaf flutter and the stored bend sensitivity
 -   `bendSensitivity`: `1.0` (`0.0`–`4.0`)
 -   `leafAmbientSensitivity`: `1.0` (`0.0`–`4.0`)
 -   `upperBendRange`: `100` (`5`–`100` percent of measured height)
