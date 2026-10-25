@@ -673,8 +673,9 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 	const auto label = fmt::format(" {} ", menu.name);
+	const auto& statusPalette = globals::menu->GetSettings().Theme.StatusPalette;
 	const ImVec4 textColor = menu.name == T("menu.features.feature_issues", "Feature Issues") ?
-	                             globals::menu->GetSettings().Theme.StatusPalette.Error :
+	                             (FeatureIssues::CountLoadFailures() ? statusPalette.Error : statusPalette.Warning) :
 	                             ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	if (DrawSidebarRow({ .label = label, .textColor = textColor }, selectedMenuRef == listId, editorLayout))
 		selectedMenuRef = listId;

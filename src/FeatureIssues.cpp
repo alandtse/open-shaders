@@ -916,6 +916,9 @@ namespace FeatureIssues
 					AddFeatureIssue(feature->GetShortName(), feature->version, feature->failedLoadedMessage,
 						FeatureIssueInfo::IssueType::VERSION_MISMATCH, fileInfo);
 				}
+				if (!feature->loaded && !feature->conflictMessage.empty()) {
+					AddFeatureIssue(feature->GetShortName(), feature->version, feature->conflictMessage, FeatureIssueInfo::IssueType::CONFLICT);
+				}
 			}
 		}
 
