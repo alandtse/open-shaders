@@ -499,6 +499,13 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 	return names;
 }
 
+void Feature::DisableForConflict(std::string_view a_conflict)
+{
+	loaded = false;
+	conflictingMod = a_conflict;
+	logger::warn("[{}] Disabled as {} has been detected, both cannot be used together", GetDisplayName(), a_conflict);
+}
+
 bool Feature::ToggleAtBootSetting()
 {
 	if (IsAlwaysEnabled())

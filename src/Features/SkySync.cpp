@@ -269,12 +269,9 @@ void SkySync::GameLoaded()
 
 void SkySync::DisableOnConflict(std::string_view conflictName)
 {
-	// A conflicting mod is an expected, benign disable, not a load failure --
-	// leave failedLoadedMessage unset so the cache classifier treats it as such.
-	loaded = false;
+	DisableForConflict(conflictName);
 	settings.Enabled = false;
 	Util::SetCelestialTransitionHandlerAvailable(false);
-	logger::warn("[Sky Sync] Disabled as {} has been detected, both cannot be used together", conflictName);
 }
 
 void SkySync::OnSkyUpdateColors(RE::Sky* sky)
