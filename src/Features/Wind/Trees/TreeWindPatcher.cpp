@@ -148,6 +148,24 @@ namespace TreeWindPatcher
 
 		std::string NormalizeModelPath(std::string a_path);
 
+		const RuntimeRule* FindRule(const RE::BSGeometry* a_geometry)
+		{
+			for (const auto* ancestor = a_geometry->parent; ancestor; ancestor = ancestor->parent) {
+				const auto* leafParent = netimmerse_cast<const RE::BSLeafAnimNode*>(ancestor);
+				if (!leafParent)
+					continue;
+				static REL::Relocation<const RE::NiRTTI*> integerExtraDataRTTI{ RE::NiIntegerExtraData::Ni_RTTI };
+				if (const auto* data = leafParent->GetExtraData(kRuleIdName);
+					data && data->GetRTTI() == integerExtraDataRTTI.get()) {
+					const auto id = static_cast<const RE::NiIntegerExtraData*>(data)->value;
+					if (id > 0 && static_cast<std::size_t>(id) <= runtimeRules.size())
+						return runtimeRules[static_cast<std::size_t>(id) - 1].get();
+				}
+				break;
+			}
+			return nullptr;
+		}
+
 		bool WriteJsonAtomically(const std::filesystem::path& a_path, const nlohmann::json& a_root, std::string& a_error)
 		{
 			auto temporaryPath = a_path;
@@ -767,6 +785,11 @@ namespace TreeWindPatcher
 		Sensitivities sensitivities;
 		if (!a_geometry)
 			return sensitivities;
+		const auto* meshRule = FindRule(a_geometry);
+		if (meshRule && !meshRule->bendEnabled.load(std::memory_order_relaxed)) {
+			sensitivities.bendEnabled = false;
+			return sensitivities;
+		}
 		ReadTreeBoundsExtraData(*a_geometry, sensitivities);
 		if (universalOverrideEnabled.load(std::memory_order_acquire)) {
 			sensitivities.bend = universalBend.load(std::memory_order_relaxed);
@@ -785,37 +808,22 @@ namespace TreeWindPatcher
 			return sensitivities;
 		}
 
-		const RE::BSLeafAnimNode* leafParent = nullptr;
-		for (const auto* ancestor = a_geometry->parent; ancestor; ancestor = ancestor->parent) {
-			if (const auto* candidate = netimmerse_cast<const RE::BSLeafAnimNode*>(ancestor)) {
-				leafParent = candidate;
-				break;
-			}
-		}
-		if (!leafParent)
+		if (meshRule) {
+			const auto& rule = *meshRule;
+			sensitivities.bend = rule.bend.load(std::memory_order_relaxed);
+			sensitivities.leafAmbient = rule.leafAmbient.load(std::memory_order_relaxed);
+			sensitivities.upperBendRange = rule.upperBendRange.load(std::memory_order_relaxed);
+			sensitivities.maximumDisplacementPercent = rule.maximumDisplacementPercent.load(std::memory_order_relaxed);
+			sensitivities.trunkGustInfluence = rule.trunkGustInfluence.load(std::memory_order_relaxed);
+			sensitivities.leafGustInfluence = rule.leafGustInfluence.load(std::memory_order_relaxed);
+			sensitivities.transientWindInfluence = rule.transientWindInfluence.load(std::memory_order_relaxed);
+			sensitivities.leafTransientWindInfluence =
+				rule.leafTransientWindInfluence.load(std::memory_order_relaxed);
+			sensitivities.leafTransientFlutterMaximum =
+				rule.leafTransientFlutterMaximum.load(std::memory_order_relaxed);
+			sensitivities.transientMaximumBendMultiplier =
+				rule.transientMaximumBendMultiplier.load(std::memory_order_relaxed);
 			return sensitivities;
-
-		static REL::Relocation<const RE::NiRTTI*> integerExtraDataRTTI{ RE::NiIntegerExtraData::Ni_RTTI };
-		if (const auto* data = leafParent->GetExtraData(kRuleIdName);
-			data && data->GetRTTI() == integerExtraDataRTTI.get()) {
-			const auto id = static_cast<const RE::NiIntegerExtraData*>(data)->value;
-			if (id > 0 && static_cast<std::size_t>(id) <= runtimeRules.size()) {
-				const auto& rule = *runtimeRules[static_cast<std::size_t>(id) - 1];
-				sensitivities.bend = rule.bendEnabled.load(std::memory_order_relaxed) ? rule.bend.load(std::memory_order_relaxed) : 0.0f;
-				sensitivities.leafAmbient = rule.leafAmbient.load(std::memory_order_relaxed);
-				sensitivities.upperBendRange = rule.upperBendRange.load(std::memory_order_relaxed);
-				sensitivities.maximumDisplacementPercent = rule.maximumDisplacementPercent.load(std::memory_order_relaxed);
-				sensitivities.trunkGustInfluence = rule.trunkGustInfluence.load(std::memory_order_relaxed);
-				sensitivities.leafGustInfluence = rule.leafGustInfluence.load(std::memory_order_relaxed);
-				sensitivities.transientWindInfluence = rule.transientWindInfluence.load(std::memory_order_relaxed);
-				sensitivities.leafTransientWindInfluence =
-					rule.leafTransientWindInfluence.load(std::memory_order_relaxed);
-				sensitivities.leafTransientFlutterMaximum =
-					rule.leafTransientFlutterMaximum.load(std::memory_order_relaxed);
-				sensitivities.transientMaximumBendMultiplier =
-					rule.transientMaximumBendMultiplier.load(std::memory_order_relaxed);
-				return sensitivities;
-			}
 		}
 
 		return sensitivities;

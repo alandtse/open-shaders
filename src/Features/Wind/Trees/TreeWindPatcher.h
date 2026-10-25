@@ -16,6 +16,7 @@ namespace TreeWindPatcher
 {
 	struct Sensitivities
 	{
+		bool bendEnabled = true;
 		float bend = 1.0f;
 		float leafAmbient = 1.0f;
 		float upperBendRange = 100.0f;
