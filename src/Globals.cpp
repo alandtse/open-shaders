@@ -8,7 +8,7 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
-#include "Features/DeveloperTools.h"
+#include "Features/DetailMaps.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
@@ -134,6 +134,12 @@ namespace globals
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		SnowCover snowCover{};
+		FootstepParticles footstepParticles{};
+		HairBacklighting hairBacklighting{};
+		NightEye nightEye{};
+		FurShells furShells{};
+		DetailMaps detailMaps{};
+		LandscapeSeams landscapeSeams{};
 		SnowDeformation snowDeformation{};
 		Skin skin{};
 		ReverseZ reverseZ{};
