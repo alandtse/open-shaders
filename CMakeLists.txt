@@ -295,6 +295,10 @@ if(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
 endif()
 
+# No source uses C++ modules, and the VS scan names its output by file name only,
+# so the two Core.cpp files overwrite each other's result (warning MSB8074).
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_SCAN_FOR_MODULES OFF)
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     # A designated initializer that intentionally sets only some fields
     # (the rest correctly zero-init) is idiomatic C++20, not an omission;
