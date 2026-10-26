@@ -173,14 +173,10 @@ namespace stl
 			return;
 		T::func = original;
 		const auto result = detour_attach(reinterpret_cast<PVOID*>(&T::func), reinterpret_cast<PVOID>(T::thunk));
-		auto hooked = result == NO_ERROR;
-		if (!hooked) {
-			const auto fallback = Util::VTableHookFallback(target, idx, reinterpret_cast<PVOID>(T::thunk), result);
-			T::func = fallback;
-			hooked = fallback != 0;
-		}
-		if (hooked)
+		if (result == NO_ERROR)
 			detour_record_installed(original, reinterpret_cast<PVOID>(T::thunk));
+		else
+			T::func = Util::VTableHookFallback(target, idx, reinterpret_cast<PVOID>(T::thunk), result);
 	}
 }
 
