@@ -5015,6 +5015,11 @@ namespace SIE
 
 		std::lock_guard lock(activeShadersMutex);
 
+		if (const auto definesVersion = globals::state->GetDefinesVersion(); definesVersion != activeShaderKeysDefinesVersion) {
+			activeShaderKeys.clear();
+			activeShaderKeysDefinesVersion = definesVersion;
+		}
+
 		const auto taskId = ShaderCompilationTask::MakeId(shaderClass, shader.shaderType.get(), descriptor);
 		auto keyIt = activeShaderKeys.find(taskId);
 		if (keyIt == activeShaderKeys.end())
@@ -5074,11 +5079,6 @@ namespace SIE
 			} else {
 				++it;
 			}
-		}
-
-		if (now - activeShaderKeysStamp > timeout) {
-			activeShaderKeys.clear();
-			activeShaderKeysStamp = now;
 		}
 	}
 

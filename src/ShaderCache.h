@@ -1153,9 +1153,9 @@ namespace SIE
 		};
 
 		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> activeShaders;
-		/// Shader key per task id so TrackActiveShader builds it once; cleared every second because the key embeds the active feature defines.
+		/// Shader key per task id so TrackActiveShader builds it once; dropped when the global shader defines change, since the key embeds them.
 		ankerl::unordered_dense::map<size_t, std::string> activeShaderKeys;
-		std::chrono::steady_clock::time_point activeShaderKeysStamp;
+		uint32_t activeShaderKeysDefinesVersion = 0;
 		mutable std::mutex activeShadersMutex;
 
 		void TrackActiveShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
