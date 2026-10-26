@@ -2747,9 +2747,9 @@ namespace SIE
 			TrackActiveShader(ShaderClass::Vertex, shader, descriptor);
 		}
 
-		if (state->IsDeveloperMode()) {
+		if (state->IsDeveloperMode() && blockedKeyIndex != -1 && !blockedKey.empty()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Vertex, shader, descriptor, true);
-			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
+			if (key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
 					blockedIDs.push_back(descriptor);
 					logger::debug("Skipping blocked shader {:X}:{} total: {}", descriptor, blockedKey, blockedIDs.size());
@@ -2796,9 +2796,9 @@ namespace SIE
 			TrackActiveShader(ShaderClass::Pixel, shader, descriptor);
 		}
 
-		if (state->IsDeveloperMode()) {
+		if (state->IsDeveloperMode() && blockedKeyIndex != -1 && !blockedKey.empty()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Pixel, shader, descriptor, true);
-			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
+			if (key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
 					blockedIDs.push_back(descriptor);
 					logger::debug("Skipping blocked shader {:X}:{} total: {}", descriptor, blockedKey, blockedIDs.size());
@@ -2841,9 +2841,9 @@ namespace SIE
 			TrackActiveShader(ShaderClass::Compute, shader, descriptor);
 		}
 
-		if (state->IsDeveloperMode()) {
+		if (state->IsDeveloperMode() && blockedKeyIndex != -1 && !blockedKey.empty()) {
 			auto key = SIE::SShaderCache::GetShaderString(ShaderClass::Compute, shader, descriptor, true);
-			if (blockedKeyIndex != -1 && !blockedKey.empty() && key == blockedKey) {
+			if (key == blockedKey) {
 				if (std::find(blockedIDs.begin(), blockedIDs.end(), descriptor) == blockedIDs.end()) {
 					blockedIDs.push_back(descriptor);
 					logger::debug("Skipping blocked shader {:X}:{} total: {}", descriptor, blockedKey, blockedIDs.size());
@@ -5205,15 +5205,19 @@ namespace SIE
 		shaderClass(aShaderClass),
 		shader(aShader), descriptor(aDescriptor),
 		cachedPriority(ComputePriority(aShaderClass, aShader, aDescriptor))
+	{}
+
+	void ShaderCompilationTask::LogCacheInput() const
 	{
-		if (spdlog::should_log(spdlog::level::debug) && SShaderCache::ResolveImageSpaceDescriptor(shader, aDescriptor)) {
+		auto resolvedDescriptor = descriptor;
+		if (spdlog::should_log(spdlog::level::debug) && SShaderCache::ResolveImageSpaceDescriptor(shader, resolvedDescriptor)) {
 			logger::debug("ShaderCacheInput {}", json{
 													 { "kind", "engine" }, { "runtime", globals::game::isVR ? "VR" : "SE" },
 													 { "source", Util::StandaloneShaderCacheKey::SourceName(GetSourcePath()) },
 													 { "shader", std::string(shader.fxpFilename) }, { "type", magic_enum::enum_name(shader.shaderType.get()) },
-													 { "descriptor", aDescriptor }, { "stage", magic_enum::enum_name(shaderClass) },
-													 { "key", SShaderCache::GetShaderString(shaderClass, shader, aDescriptor, true) },
-													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader.fxpFilename, aDescriptor, shaderClass)) } }
+													 { "descriptor", resolvedDescriptor }, { "stage", magic_enum::enum_name(shaderClass) },
+													 { "key", SShaderCache::GetShaderString(shaderClass, shader, resolvedDescriptor, true) },
+													 { "path", GetManifestKey(SShaderCache::GetDiskPath(shader.fxpFilename, resolvedDescriptor, shaderClass)) } }
 													 .dump());
 		}
 	}
@@ -5428,6 +5432,7 @@ namespace SIE
 			lock.unlock();
 			if (wasAdded) {
 				conditionVariable.notify_one();
+				task.LogCacheInput();
 			}
 		}
 	}

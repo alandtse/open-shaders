@@ -258,6 +258,8 @@ namespace SIE
 		std::string GetString() const;
 		/** @brief Path to the actual HLSL source this task compiles from (not always fxpFilename -- see ImageSpace shaders). */
 		std::wstring GetSourcePath() const;
+		/** @brief At debug level, logs the inputs that identify this task's cached shader; called once when the task is first queued. */
+		void LogCacheInput() const;
 
 		/**
 		 * LPT scheduling score: higher = more expensive = should be dispatched first.
