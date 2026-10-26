@@ -301,7 +301,7 @@ template<class T> const SceneSettingsCatalog::SettingMetadata* FindBlockedAggreg
 }
 void ClearControlledItem() {}
 void FinishControlledItem() { ++finished; }
-void DrawResetToDefaultMenu(const void*) {}
+bool DrawResetToDefaultMenu(const void*) { return false; }
 bool TrackFeatureSettingMutation(bool changed) { mutations += changed; return changed; }
 auto g_checkbox = static_cast<bool(*)(const char*, bool*)>(&ImGui::Checkbox);
 auto g_button = static_cast<bool(*)(const char*, const ImVec2&)>(&ImGui::Button);

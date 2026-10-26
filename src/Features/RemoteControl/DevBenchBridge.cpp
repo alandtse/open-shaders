@@ -403,6 +403,8 @@ namespace
 		if (action == "reset") {
 			const std::string settingPath = a_args.value("path", std::string{});
 			const std::string settingKey = a_args.value("key", std::string{});
+			if (!settingPath.empty() && settingKey.empty())
+				return json{ { "error", "path requires key" }, { "shortName", shortName }, { "path", settingPath } };
 			return RunOnMainThread([shortName, settingPath, settingKey]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)

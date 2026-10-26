@@ -534,16 +534,16 @@ namespace
 		return {};
 	}
 
-	void DrawResetToDefaultMenu(const void* valueAddress)
+	bool DrawResetToDefaultMenu(const void* valueAddress)
 	{
 		if (!g_currentFeature || g_featureSceneEditing || !ImGui::BeginPopupContextItem())
-			return;
+			return false;
 
 		const auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, GetControlStorageAddress(valueAddress));
 		if (!setting) {
 			ImGui::CloseCurrentPopup();
 			ImGui::EndPopup();
-			return;
+			return false;
 		}
 
 		const auto defaultValue = Util::Settings::GetSettingDefault(*g_currentFeature, *setting);
@@ -557,10 +557,12 @@ namespace
 			if (const auto text = FormatSettingValue(*setting, *defaultValue); !text.empty())
 				label += std::format(" ({})", text);
 		}
-		if (ImGui::MenuItem(label.c_str(), nullptr, false, canReset) &&
-			Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting))
+		const bool reset = ImGui::MenuItem(label.c_str(), nullptr, false, canReset) &&
+		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
+		if (reset)
 			g_featureSettingMutation = true;
 		ImGui::EndPopup();
+		return reset;
 	}
 
 	template <class Draw>
@@ -575,8 +577,8 @@ namespace
 		if (setting ? !ShouldBlockSetting(*setting) : !g_featureSceneEditing || metadataMatched) {
 			ControlDetourScope detourScope;
 			const bool changed = TrackFeatureSettingMutation(draw());
-			DrawResetToDefaultMenu(valueAddress);
-			return changed;
+			const bool reset = DrawResetToDefaultMenu(valueAddress);
+			return changed || reset;
 		}
 
 		ImGui::BeginDisabled();
