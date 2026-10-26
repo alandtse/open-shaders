@@ -5013,8 +5013,13 @@ namespace SIE
 		if (!IsTrackingActiveShaders())
 			return;
 
-		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		std::lock_guard lock(activeShadersMutex);
+
+		const auto taskId = ShaderCompilationTask::MakeId(shaderClass, shader.shaderType.get(), descriptor);
+		auto keyIt = activeShaderKeys.find(taskId);
+		if (keyIt == activeShaderKeys.end())
+			keyIt = activeShaderKeys.emplace(taskId, SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true)).first;
+		const auto& key = keyIt->second;
 
 		const auto initializeInfo = [&](ActiveShaderInfo& info) {
 			info.key = key;
@@ -5039,7 +5044,6 @@ namespace SIE
 		// would balloon a scene-scoped capture into a near-full clear.
 		if (activeShaderCaptureFramesRemaining.load(std::memory_order_relaxed) > 0 &&
 			std::this_thread::get_id() == activeShaderCaptureThread.load(std::memory_order_relaxed)) {
-			const auto taskId = ShaderCompilationTask::MakeId(shaderClass, shader.shaderType.get(), descriptor);
 			auto [captured, wasAdded] = capturedShaders.try_emplace(taskId);
 			if (wasAdded) {
 				initializeInfo(captured->second);
@@ -5070,6 +5074,11 @@ namespace SIE
 			} else {
 				++it;
 			}
+		}
+
+		if (now - activeShaderKeysStamp > timeout) {
+			activeShaderKeys.clear();
+			activeShaderKeysStamp = now;
 		}
 	}
 
