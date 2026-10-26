@@ -733,6 +733,9 @@ public:
 	/** @brief Writes "<a_shortName>::<a_method>" into a_buffer without allocating, truncating to fit; returns a_buffer. */
 	static const char* FormatZoneName(std::span<char> a_buffer, std::string_view a_shortName, std::string_view a_method) noexcept
 	{
+		if (a_buffer.empty())
+			return a_buffer.data();
+
 		std::size_t length = 0;
 		for (const auto part : { a_shortName, std::string_view("::"), a_method }) {
 			const auto count = std::min(part.size(), a_buffer.size() - 1 - length);
