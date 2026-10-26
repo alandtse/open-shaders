@@ -29,7 +29,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(its flicker-shadow keys are TolerantSplitCache, FlickerShadowMode (0 live, 1 pinned, 2 warped), WarpVisibilityGate, WarpZeroDemandSkip, )"
 		R"(SpotLitRegion (scores spot lights by the frustum they light) and DemandTileCap (holds weakly lit lights at a quarter-size tile)). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; )"
 		R"(call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, )"
-		R"(so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, )"
+		R"(so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings; with key (and path, empty for a top-level setting) it restores only that one catalogued setting, the same as the right-click Reset to default in the menu. toggle: params shortName, enabled (boolean, )"
 		R"(OPTIONAL — omit to flip the current loaded state); )"
 		R"(flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, )"
 		R"(which force-enables it with a logged warning instead. Rejects enabling a feature that was not loaded at boot or turned itself off during boot (a missing companion plugin or a conflicting mod), )"
@@ -48,6 +48,8 @@ namespace DevBenchBridge::ToolSpecs
 			"enum": ["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]
 		},
 		"shortName": {"type":"string"},
+		"path": {"type":"string", "description":"reset only: catalogue settingPath of the setting to restore, empty for a top-level one"},
+		"key": {"type":"string", "description":"reset only: catalogue settingKey; restores just that setting instead of the whole feature"},
 		"settings": {
 			"type": "object",
 			"description": "Partial )"

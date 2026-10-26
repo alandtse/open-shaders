@@ -3,6 +3,7 @@
 #include "Utils/Format.h"
 #include "Utils/StringUtils.h"
 
+#include <charconv>
 #include <map>
 
 namespace Util::Settings
@@ -176,5 +177,74 @@ namespace Util::Settings
 			return a.label == b.label ? a.path < b.path : a.label < b.label;
 		});
 		return result;
+	}
+
+	namespace
+	{
+		bool ParseCatalogArrayIndex(std::string_view value, size_t& index)
+		{
+			const auto result = std::from_chars(value.data(), value.data() + value.size(), index);
+			return result.ec == std::errc{} && result.ptr == value.data() + value.size();
+		}
+
+		template <class Json>
+		Json* GetCatalogNodeAtPath(Json& data, const std::vector<std::string>& path)
+		{
+			auto* node = &data;
+			for (const auto& segment : path) {
+				if (node->is_object()) {
+					auto it = node->find(segment);
+					if (it == node->end())
+						return nullptr;
+					node = &*it;
+					continue;
+				}
+
+				size_t index = 0;
+				if (!node->is_array() || !ParseCatalogArrayIndex(segment, index) || index >= node->size())
+					return nullptr;
+				node = &(*node)[index];
+			}
+			return node;
+		}
+
+		template <class Json>
+		Json* GetCatalogSerializedValueImpl(Json& data, const SceneSettingsCatalog::SettingMetadata& setting)
+		{
+			auto* parent = GetCatalogNodeAtPath(data, SplitCatalogPath(setting.serializedPath));
+			if (!parent)
+				return nullptr;
+
+			Json* value = nullptr;
+			if (parent->is_object()) {
+				auto valueIt = parent->find(setting.serializedKey);
+				if (valueIt == parent->end())
+					return nullptr;
+				value = &*valueIt;
+			} else {
+				size_t index = 0;
+				if (!parent->is_array() || !ParseCatalogArrayIndex(setting.serializedKey, index) ||
+					index >= parent->size())
+					return nullptr;
+				value = &(*parent)[index];
+			}
+
+			if (setting.serializedComponent < 0)
+				return value;
+			const auto component = static_cast<size_t>(setting.serializedComponent);
+			if (!value->is_array() || component >= value->size())
+				return nullptr;
+			return &(*value)[component];
+		}
+	}
+
+	nlohmann::json* GetCatalogSerializedValue(nlohmann::json& data, const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		return GetCatalogSerializedValueImpl(data, setting);
+	}
+
+	const nlohmann::json* GetCatalogSerializedValue(const nlohmann::json& data, const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		return GetCatalogSerializedValueImpl(data, setting);
 	}
 }

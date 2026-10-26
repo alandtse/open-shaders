@@ -25,6 +25,11 @@ namespace Util::Settings
 	/** @brief Returns the translated setting label shared by settings selectors. */
 	std::string GetCatalogLeafDisplayName(const SceneSettingsCatalog::SettingMetadata& setting);
 
+	/** @brief Locates a catalogued setting (and its array component) in a serialized feature blob; null when absent. */
+	nlohmann::json* GetCatalogSerializedValue(nlohmann::json& data, const SceneSettingsCatalog::SettingMetadata& setting);
+	/** @copydoc GetCatalogSerializedValue(nlohmann::json&, const SceneSettingsCatalog::SettingMetadata&) */
+	const nlohmann::json* GetCatalogSerializedValue(const nlohmann::json& data, const SceneSettingsCatalog::SettingMetadata& setting);
+
 	struct ExportSetting
 	{
 		std::string path;

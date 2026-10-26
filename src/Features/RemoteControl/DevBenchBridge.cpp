@@ -52,6 +52,8 @@
 #	include "ShaderCache.h"
 #	include "State.h"
 #	include "Utils/DevBenchUx.h"
+#	include "Utils/SettingsCatalog.h"
+#	include "Utils/SettingsDefaults.h"
 #	include "Utils/SettingsPatch.h"
 #	include "VRAPI/CSpluginapi.h"
 
@@ -399,13 +401,22 @@ namespace
 		}
 
 		if (action == "reset") {
-			return RunOnMainThread([shortName]() -> json {
+			const std::string settingPath = a_args.value("path", std::string{});
+			const std::string settingKey = a_args.value("key", std::string{});
+			return RunOnMainThread([shortName, settingPath, settingKey]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
 					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
 						*SceneSettingsManager::GetSingleton());
+					if (!settingKey.empty()) {
+						const auto* setting = SceneSettingsCatalog::FindSetting(shortName, settingPath, settingKey);
+						if (!setting || !Util::Settings::ResetSettingToDefault(*feature, *setting))
+							return json{ { "error", "setting not found or has no default" }, { "shortName", shortName }, { "path", settingPath }, { "key", settingKey } };
+						logger::info("DevBenchBridge: feature(reset, {}, {}/{}) applied", shortName, settingPath, settingKey);
+						return json{ { "action", "reset" }, { "shortName", shortName }, { "key", settingKey }, { "applied", true } };
+					}
 					feature->RestoreDefaultSettings();
 					logger::info("DevBenchBridge: feature(reset, {}) applied", shortName);
 					return json{ { "action", "reset" }, { "shortName", shortName }, { "applied", true } };
