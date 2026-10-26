@@ -729,6 +729,21 @@ public:
 	static void SetTracyCtx(TracyD3D11Ctx ctx) noexcept { s_tracyCtx = ctx; }
 #endif
 
+#ifdef TRACY_ENABLE
+	/** @brief Writes "<a_shortName>::<a_method>" into a_buffer without allocating, truncating to fit; returns a_buffer. */
+	static const char* FormatZoneName(std::span<char> a_buffer, std::string_view a_shortName, std::string_view a_method) noexcept
+	{
+		std::size_t length = 0;
+		for (const auto part : { a_shortName, std::string_view("::"), a_method }) {
+			const auto count = std::min(part.size(), a_buffer.size() - 1 - length);
+			std::memcpy(a_buffer.data() + length, part.data(), count);
+			length += count;
+		}
+		a_buffer[length] = '\0';
+		return a_buffer.data();
+	}
+#endif
+
 	/**
 	 * @brief Invokes a callback on every loaded feature with optional Tracy profiling.
 	 * @param methodName Label for the Tracy zone (e.g. "Reset", "Prepass").
@@ -761,10 +776,11 @@ public:
 					continue;
 				}
 				{
-					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
-					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);
+					char zoneNameBuffer[128];
+					const auto* zoneName = FormatZoneName(zoneNameBuffer, feature->GetShortName(), methodName);
+					ZoneTransientN(___tracy_feature_zone, zoneName, true);
 					if (emitGpuZone) {
-						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName.c_str(), 0, s_tracyCtx != nullptr);
+						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName, 0, s_tracyCtx != nullptr);
 						callback(feature);
 					} else {
 						callback(feature);
