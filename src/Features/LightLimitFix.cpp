@@ -746,6 +746,7 @@ void LightLimitFix::OnSceneTransitionReset(bool opening)
 	// the settings-menu table iteration that reads the same caches instead of racing it.
 	if (opening) {
 		ShadowCasterManager::ResetSession();
+		LightAttach::ResetTracking();
 		// Slots are reassigned to different lights across a cell transition;
 		// an old occupant's decaying EMA must not read as a new light's demand.
 		shadowDemandEMA.fill(0.0f);

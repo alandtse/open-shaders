@@ -15,6 +15,9 @@ namespace LightAttach
 	/** @brief Replaces the per-frame dynamic light enable call so unchanged lights skip their attach walk. */
 	void Install();
 
+	/** @brief Drops every tracked light so each is walked on its next visit; call when the scene is torn down and light addresses may be reused. */
+	void ResetTracking();
+
 	/** @brief Whether the audit also lists every non-shadow light's rooms, portals and position. Runtime only, never saved. */
 	[[nodiscard]] bool GetAuditDetail();
 	void SetAuditDetail(bool a_enabled);

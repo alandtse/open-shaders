@@ -231,6 +231,12 @@ namespace LightAttach
 		logger::info("[LLF] Installed light attach gate");
 	}
 
+	void ResetTracking()
+	{
+		std::lock_guard lock(trackerLock);
+		tracker.Clear();
+	}
+
 	bool GetAuditDetail()
 	{
 		return auditDetail.load(std::memory_order_relaxed);
