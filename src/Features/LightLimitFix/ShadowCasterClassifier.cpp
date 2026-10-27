@@ -233,6 +233,7 @@ namespace ShadowCasterManager
 	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	constexpr int kAncestryRecheckEpochs = 16;
+	constexpr int kAncestryStale = -kAncestryRecheckEpochs;
 	std::atomic<bool> s_actorAttachedDynamic{ true };
 	// Open-addressing map: probed once per appended caster by the cull-walk
 	// hook, so lookup cost lands directly on EnableLight's accumulate time.
@@ -248,7 +249,7 @@ namespace ShadowCasterManager
 	static bool IsActorAttached(const RE::BSGeometry& geom)
 	{
 		return Util::IsActorAttached(Util::ClassifyOwnerAncestry(static_cast<const RE::NiAVObject*>(&geom), [](const RE::NiAVObject& a_node) {
-			const auto* owner = a_node.GetUserData();
+			const auto* owner = REL::RelocateMember<RE::TESObjectREFR*>(&a_node, 0x0F8, 0x110);
 			if (!owner)
 				return Util::OwnerKind::None;
 			return owner->formType == RE::FormType::ActorCharacter ? Util::OwnerKind::Actor : Util::OwnerKind::Reference;
@@ -298,14 +299,19 @@ namespace ShadowCasterManager
 		r.lastVerifyEpoch = s_casterClassEpoch;
 		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
 		r.dynamic = r.framesSinceMove < promoteAt;
-		if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
-			r.actorAttached = IsActorAttached(geom);
-			r.ancestryEpoch = s_casterClassEpoch;
+		if (s_actorAttachedDynamic.load(std::memory_order_relaxed)) {
+			if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
+				r.actorAttached = IsActorAttached(geom);
+				r.ancestryEpoch = s_casterClassEpoch;
+			}
+			// Parented under an actor: it rests and moves with the actor, so each pause would
+			// promote it into the static set and force a rebake when it moves again.
+			if (r.actorAttached)
+				r.dynamic = true;
+		} else {
+			r.actorAttached = false;
+			r.ancestryEpoch = kAncestryStale;
 		}
-		// Parented under an actor: it rests and moves with the actor, so each pause would
-		// promote it into the static set and force a rebake when it moves again.
-		if (r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed))
-			r.dynamic = true;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
