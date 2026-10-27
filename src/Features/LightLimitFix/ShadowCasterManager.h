@@ -802,6 +802,7 @@ namespace ShadowCasterManager
 		/// Cumulative permanent split exclusions by trigger, and bakes retired before any cache reuse.
 		uint64_t splitLatchMismatchTotal = 0;
 		uint64_t splitLatchWindowTotal = 0;
+		uint64_t splitLatchRetryTotal = 0;
 		uint64_t splitWastedBakesTotal = 0;
 
 		/// Redraws a resolution promotion forced, and demotions skipped because the
