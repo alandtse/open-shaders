@@ -108,6 +108,7 @@ add_executable(cpp_tests
 	test_nr_eye_mode.cpp
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
+	test_desktop_mirror.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp
@@ -122,6 +123,7 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/RegionOverlay.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Menu/DesktopMirrorDrawData.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
