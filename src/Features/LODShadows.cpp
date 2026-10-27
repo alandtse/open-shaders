@@ -26,6 +26,7 @@ namespace
 	constexpr float kMinimumDepthPadding = 1.0f;
 	constexpr int kRasterDepthBias = 1;
 	constexpr float kTerrainSlopeScaledDepthBias = 1.0f;
+	constexpr uint32_t kCollectIntervalFrames = 4;
 	constexpr uint64_t kHashSeed = 14695981039346656037ull;
 	constexpr uint64_t kHashPrime = 1099511628211ull;
 
@@ -101,11 +102,15 @@ void LODShadows::SaveSettings(json& a_json) { a_json = settings; }
 
 json LODShadows::GetRuntimeFlags()
 {
-	return json{ { "RefreshEveryFrame", refreshEveryFrame }, { "HistoryInterpolation", interpolateHistory }, { "HardwareComparison", hardwareComparison }, { "RayBounds", rayBounds } };
+	return json{ { "RefreshEveryFrame", refreshEveryFrame }, { "HistoryInterpolation", interpolateHistory }, { "HardwareComparison", hardwareComparison }, { "RayBounds", rayBounds }, { "ThrottleCollect", throttleCollect } };
 }
 
 bool LODShadows::SetRuntimeFlag(std::string_view a_name, bool a_value)
 {
+	if (a_name == "ThrottleCollect") {
+		throttleCollect = a_value;
+		return true;
+	}
 	if (a_name == "RayBounds") {
 		rayBounds = a_value;
 		return true;
@@ -1193,6 +1198,40 @@ void LODShadows::ReflectionsPrepass()
 	Publish();
 }
 
+void LODShadows::CollectScene(bool a_refreshLoaded)
+{
+	std::vector<RE::NiPointer<RE::BSGeometry>> loadedGeometry;
+	if (!a_refreshLoaded && geometryCounts[3] <= visibleGeometry.size())
+		loadedGeometry.assign(std::make_move_iterator(visibleGeometry.end() - geometryCounts[3]), std::make_move_iterator(visibleGeometry.end()));
+	sceneHash = kHashSeed;
+	visibleGeometry.clear();
+	{
+		RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
+		CollectTerrain();
+		sourceHashes[0] = sceneHash;
+		geometryCounts[0] = uint32_t(visibleGeometry.size());
+		sceneHash = kHashSeed;
+		Collect(RE::BGSTerrainManager::GetLODObjectRoot().get(), true);
+		sourceHashes[1] = sceneHash;
+		geometryCounts[1] = uint32_t(visibleGeometry.size()) - geometryCounts[0];
+		sceneHash = kHashSeed;
+		Collect(RE::BGSTerrainManager::GetTreeNode().get(), true);
+		sourceHashes[2] = sceneHash;
+		geometryCounts[2] = uint32_t(visibleGeometry.size()) - geometryCounts[0] - geometryCounts[1];
+	}
+	if (a_refreshLoaded) {
+		sceneHash = kHashSeed;
+		const auto lodGeometryCount = visibleGeometry.size();
+		CollectLoadedObjects();
+		sourceHashes[3] = sceneHash;
+		geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
+	} else {
+		visibleGeometry.insert(visibleGeometry.end(), std::make_move_iterator(loadedGeometry.begin()), std::make_move_iterator(loadedGeometry.end()));
+	}
+	sceneHash = kHashSeed;
+	HashBytes(sceneHash, sourceHashes.data(), sizeof(sourceHashes));
+}
+
 void LODShadows::EarlyPrepass()
 {
 	const double nowMs = Util::GetNowSecs() * 1000.0;
@@ -1246,29 +1285,17 @@ void LODShadows::EarlyPrepass()
 			Invalidate();
 		worldSpaceID = worldID;
 		transitionGeneration = generation;
-		sceneHash = kHashSeed;
-		visibleGeometry.clear();
-		{
-			RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
-			CollectTerrain();
-			sourceHashes[0] = sceneHash;
-			geometryCounts[0] = uint32_t(visibleGeometry.size());
-			sceneHash = kHashSeed;
-			Collect(RE::BGSTerrainManager::GetLODObjectRoot().get(), true);
-			sourceHashes[1] = sceneHash;
-			geometryCounts[1] = uint32_t(visibleGeometry.size()) - geometryCounts[0];
-			sceneHash = kHashSeed;
-			Collect(RE::BGSTerrainManager::GetTreeNode().get(), true);
-			sourceHashes[2] = sceneHash;
-			geometryCounts[2] = uint32_t(visibleGeometry.size()) - geometryCounts[0] - geometryCounts[1];
+		const auto* tes = globals::game::tes;
+		const int32_t gridX = tes ? tes->currentGridX : 0;
+		const int32_t gridY = tes ? tes->currentGridY : 0;
+		const bool refreshLoaded = !throttleCollect || refreshImmediately || visibleGeometry.empty() || gridX != collectedGridX ||
+		                           gridY != collectedGridY || ++framesSinceCollect >= kCollectIntervalFrames;
+		CollectScene(refreshLoaded);
+		if (refreshLoaded) {
+			framesSinceCollect = 0;
+			collectedGridX = gridX;
+			collectedGridY = gridY;
 		}
-		sceneHash = kHashSeed;
-		const auto lodGeometryCount = visibleGeometry.size();
-		CollectLoadedObjects();
-		sourceHashes[3] = sceneHash;
-		geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
-		sceneHash = kHashSeed;
-		HashBytes(sceneHash, sourceHashes.data(), sizeof(sourceHashes));
 		UpdateMaps(Util::GetCameraPosition(), direction, refreshImmediately);
 	} catch (const std::exception& error) {
 		logger::error("LOD Shadows disabled after rendering failure: {}", error.what());
