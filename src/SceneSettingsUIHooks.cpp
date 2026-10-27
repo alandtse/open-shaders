@@ -586,7 +586,7 @@ namespace
 		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
 		if (reset)
 			g_featureSettingMutation = true;
-		else if (globals::game::isVR && !SettingsBenchmark::IsRunning() && currentValue)
+		else if (!SettingsBenchmark::IsRunning() && currentValue)
 			DrawBenchmarkMenuItem(*setting, *currentValue, defaultValue);
 		ImGui::EndPopup();
 		return reset;

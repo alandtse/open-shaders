@@ -2274,7 +2274,7 @@ void PerformanceOverlay::RegisterUxActions()
 		});
 
 	FEATURE_COMMAND("startSettingsBenchmark",
-		"Start the VR settings benchmark: each variant is applied over the current settings, measured against bracketing baselines from the SteamVR compositor's application GPU time, then the original settings are restored. VR only. Params: variants (array of variant ids from settingsBenchmarkStatus.variants; omit for all), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). Poll settingsBenchmarkStatus (its error field says why a start was refused); cancel with cancelSettingsBenchmark. Close the menu first: measurement pauses while it is open.",
+		"Start the settings benchmark: each variant is applied over the current settings and measured against bracketing baselines, then the original settings are restored. Timing is the SteamVR compositor's application GPU time in VR, or the profiler's GPU total of Open Shaders' own passes on flat (the game's passes are not included). Params: variants (array of variant ids from settingsBenchmarkStatus.variants; omit for all), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). Poll settingsBenchmarkStatus (its error field says why a start was refused); cancel with cancelSettingsBenchmark. Close the menu first: measurement pauses while it is open.",
 		[](Feature*, const json& args) {
 			auto& config = SettingsBenchmark::Configuration();
 			config.warmupFrames = args.value("warmupFrames", config.warmupFrames);
@@ -2287,7 +2287,7 @@ void PerformanceOverlay::RegisterUxActions()
 		});
 
 	FEATURE_COMMAND("startSettingBenchmark",
-		"Start a VR benchmark of one catalogued setting: the current settings against the same settings with that one value changed (the setting the right-click menu offers 'Benchmark vs' on). Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). VR only; poll settingsBenchmarkStatus (its error field says why a start was refused).",
+		"Start a benchmark of one catalogued setting: the current settings against the same settings with that one value changed (the setting the right-click menu offers 'Benchmark vs' on). Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). Poll settingsBenchmarkStatus (its error field says why a start was refused).",
 		[](Feature*, const json& args) {
 			auto& config = SettingsBenchmark::Configuration();
 			config.warmupFrames = args.value("warmupFrames", config.warmupFrames);
@@ -2305,7 +2305,7 @@ void PerformanceOverlay::RegisterUxActions()
 		[](Feature*, const json&) { SettingsBenchmark::Cancel(); });
 
 	FEATURE_QUERY("settingsBenchmarkStatus",
-		"Settings benchmark state: phase, running, block, blockCount, framesInBlock, framesNeeded, countdownRemaining, currentVariant (baseline or a variant id), error, resultPath (the results JSON next to the log), config, the built-in variants[] (id, label, group, note) and results[] (gpuDeltaMs, gpuUncertaintyMs against the bracketing baselines, gpuBaselineMs, gpuVariantMs, gpuDeltaPercentOfBudget, cpuDeltaMs, repeats). Params: none.",
+		"Settings benchmark state: phase, running, block, blockCount, framesInBlock, framesNeeded, countdownRemaining, currentVariant (baseline or a variant id), timingSource (compositor in VR, profiler on flat), frameBudgetMs (11.1 in VR, 16.7 on flat), error, resultPath (the results JSON next to the log), config, the built-in variants[] (id, label, group, note) and results[] (gpuDeltaMs, gpuUncertaintyMs against the bracketing baselines, gpuBaselineMs, gpuVariantMs, gpuDeltaPercentOfBudget, cpuDeltaMs, repeats). Params: none.",
 		[](const Feature*, const json&) -> json { return SettingsBenchmark::StatusJson(); });
 
 	FEATURE_QUERY("abTestStatus",

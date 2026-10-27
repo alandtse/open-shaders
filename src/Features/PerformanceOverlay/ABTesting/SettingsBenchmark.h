@@ -11,12 +11,13 @@
 struct Feature;
 
 /**
- * @brief In-headset A/B benchmark for renderer settings.
+ * @brief In-game A/B benchmark for renderer settings, in VR and on flat.
  *
  * Applies each selected variant (a partial settings patch) over the user's current settings, measures
- * the SteamVR compositor's application GPU time between baseline blocks, and restores the original
- * settings when the run finishes, is cancelled or fails. Nothing is saved to disk except the results file
- * written next to the log. VR only: the timing comes from the compositor.
+ * GPU time between baseline blocks, and restores the original settings when the run finishes, is cancelled
+ * or fails. Nothing is saved to disk except the results file written next to the log. In VR the timing is the
+ * SteamVR compositor's application GPU time; on flat it is the profiler's GPU and CPU total for Open Shaders'
+ * own passes, which is enabled for the run and restored afterwards.
  */
 namespace SettingsBenchmark
 {
@@ -36,10 +37,14 @@ namespace SettingsBenchmark
 		std::string group;
 		std::string note;
 		std::vector<Patch> patches;
+		bool vrOnly = false;  ///< Changes a setting that only exists or only matters in VR.
 	};
 
 	/** @brief The built-in variants. */
 	const std::vector<Variant>& Variants();
+
+	/** @brief False for a VR-only variant when running on flat. */
+	bool Available(const Variant& variant);
 
 	/** @brief Run settings the menu and devbench edit before a start. */
 	Config& Configuration();

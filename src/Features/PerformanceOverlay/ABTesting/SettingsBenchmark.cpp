@@ -25,10 +25,28 @@ namespace SettingsBenchmark
 	namespace
 	{
 		constexpr float kVrFrameBudgetMs = 1000.0f / 90.0f;
+		constexpr float kFlatFrameBudgetMs = 1000.0f / 60.0f;
 		constexpr uint32_t kMaxWarmupFrames = 600;
 		constexpr uint32_t kMaxMeasureFrames = 1800;
 		constexpr uint32_t kMaxRepeats = 10;
 		constexpr float kMaxCountdownSeconds = 30.0f;
+
+		/** @brief Where a run takes its per-frame timing: the SteamVR compositor in VR, the profiler on flat. */
+		enum class TimingSource
+		{
+			Compositor,
+			Profiler,
+		};
+
+		TimingSource CurrentSource()
+		{
+			return globals::game::isVR ? TimingSource::Compositor : TimingSource::Profiler;
+		}
+
+		float BudgetMs(TimingSource source)
+		{
+			return source == TimingSource::Compositor ? kVrFrameBudgetMs : kFlatFrameBudgetMs;
+		}
 
 		struct Run
 		{
@@ -40,6 +58,9 @@ namespace SettingsBenchmark
 			std::filesystem::path resultPath;
 			std::chrono::steady_clock::time_point lastTick;
 			uint32_t lastCompositorFrame = UINT32_MAX;
+			TimingSource source = TimingSource::Compositor;
+			bool profilerWasEnabled = false;
+			uint32_t lastProfilerFrame = UINT32_MAX;
 		};
 
 		Run run;
@@ -51,23 +72,23 @@ namespace SettingsBenchmark
 			return json::parse(text);
 		}
 
-		Variant NrVariant(std::string id, std::string label, const char* tuning, std::string note)
+		Variant NrVariant(std::string id, std::string label, const char* tuning, std::string note, bool vrOnly = false)
 		{
 			return { std::move(id), std::move(label), "Neural Rendering", std::move(note),
-				{ { "Upscaling", json{ { "neuralRenderingTuning", Settings(tuning) } } } } };
+				{ { "Upscaling", json{ { "neuralRenderingTuning", Settings(tuning) } } } }, vrOnly };
 		}
 
 		std::vector<Variant> BuildVariants()
 		{
 			return {
 				NrVariant("nr-eye-stagger-on", "Eye-staggered reuse on", R"({"skipFrameReuse":true})",
-					"Evaluates the model for one eye per frame and reuses the other eye's reprojected gain."),
+					"Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.", true),
 				NrVariant("nr-eye-stagger-off", "Eye-staggered reuse off", R"({"skipFrameReuse":false})",
-					"Evaluates the model for both eyes every frame."),
+					"Evaluates the model for both eyes every frame.", true),
 				NrVariant("nr-parallel-eyes-off", "Parallel eye queue off", R"({"parallelEyes":false})",
-					"Runs both eyes' model evaluations on one queue."),
+					"Runs both eyes' model evaluations on one queue.", true),
 				NrVariant("nr-follow-foveation-off", "Follow foveation off", R"({"regionFollowFoveation":false})",
-					"Evaluates the whole eye instead of only the foveated region."),
+					"Evaluates the whole eye instead of only the foveated region.", true),
 				NrVariant("nr-actor-crop-on", "Actor crop on", R"({"regionOfInterest":true})",
 					"Restricts evaluation to a crop around the most prominent visible actor."),
 				NrVariant("nr-model-preset-newest", "Newest model preset", R"({"modelPreset":1})",
@@ -138,7 +159,7 @@ namespace SettingsBenchmark
 				{ "gpuUncertaintyMs", result.gpuUncertaintyMs },
 				{ "gpuVariantMs", result.gpuVariantMs },
 				{ "gpuBaselineMs", result.gpuBaselineMs },
-				{ "gpuDeltaPercentOfBudget", result.gpuDeltaMs / kVrFrameBudgetMs * 100.0f },
+				{ "gpuDeltaPercentOfBudget", result.gpuDeltaMs / BudgetMs(run.source) * 100.0f },
 				{ "cpuDeltaMs", result.cpuDeltaMs },
 				{ "repeats", result.repeats } };
 		}
@@ -153,8 +174,9 @@ namespace SettingsBenchmark
 
 		void WriteResults()
 		{
-			json out{ { "runtime", "vr" },
-				{ "frameBudgetMs", kVrFrameBudgetMs },
+			json out{ { "runtime", globals::game::isVR ? "vr" : "flat" },
+				{ "timingSource", run.source == TimingSource::Compositor ? "compositor" : "profiler" },
+				{ "frameBudgetMs", BudgetMs(run.source) },
 				{ "config", ConfigJson() },
 				{ "results", json::array() } };
 			for (const auto& result : run.results)
@@ -175,6 +197,8 @@ namespace SettingsBenchmark
 				return;
 
 			ApplySettings(run.original);
+			if (run.source == TimingSource::Profiler && !run.profilerWasEnabled && globals::profiler)
+				globals::profiler->SetUserEnabled(false);
 			const auto phase = run.engine.GetPhase();
 			if (phase == Phase::Finished) {
 				run.results = run.engine.Results();
@@ -193,6 +217,11 @@ namespace SettingsBenchmark
 			auto* menu = Menu::GetSingleton();
 			return !globals::state->IsMainOrLoadingMenuOpen() && !(menu && menu->IsEnabled);
 		}
+	}
+
+	bool Available(const Variant& variant)
+	{
+		return globals::game::isVR || !variant.vrOnly;
 	}
 
 	const std::vector<Variant>& Variants()
@@ -224,8 +253,8 @@ namespace SettingsBenchmark
 
 		bool StartVariants(std::vector<Variant> variants, std::string* error)
 		{
-			if (!globals::game::isVR)
-				return Fail(error, "The settings benchmark needs VR: it reads the SteamVR compositor's frame timing.");
+			if (!globals::game::isVR && !globals::profiler)
+				return Fail(error, "The profiler is not available.");
 			if (IsRunning())
 				return Fail(error, "A settings benchmark is already running.");
 			if (ABTestingManager::GetSingleton()->IsEnabled())
@@ -257,6 +286,11 @@ namespace SettingsBenchmark
 			if (!run.engine.Start(std::move(infos), effective))
 				return Fail(error, "There is nothing to run.");
 
+			run.source = CurrentSource();
+			if (run.source == TimingSource::Profiler) {
+				run.profilerWasEnabled = globals::profiler->IsUserEnabled();
+				globals::profiler->SetUserEnabled(true);
+			}
 			run.lastTick = std::chrono::steady_clock::now();
 			logger::info("[SettingsBenchmark] Started {} variants, {} frames each, {} repeats", run.variants.size(), effective.measureFrames, effective.repeats);
 			return true;
@@ -268,12 +302,14 @@ namespace SettingsBenchmark
 		const auto& builtIn = Variants();
 		std::vector<Variant> chosen;
 		if (variantIds.empty()) {
-			chosen = builtIn;
+			std::ranges::copy_if(builtIn, std::back_inserter(chosen), Available);
 		} else {
 			for (const auto& id : variantIds) {
 				const auto it = std::ranges::find(builtIn, id, &Variant::id);
 				if (it == builtIn.end())
 					return Fail(error, "Unknown variant: " + id);
+				if (!Available(*it))
+					return Fail(error, "Variant " + id + " needs VR.");
 				chosen.push_back(*it);
 			}
 		}
@@ -325,9 +361,24 @@ namespace SettingsBenchmark
 		const float delta = std::chrono::duration<float>(now - run.lastTick).count();
 		run.lastTick = now;
 
-		CompositorSample frame;
-		const bool hasSample = ReadLatestCompositorSample(frame, run.lastCompositorFrame);
-		const auto directive = run.engine.Tick({ frame.totalRenderGpuMs, frame.compositorRenderCpuMs }, hasSample, delta, CanMeasure());
+		Sample sample;
+		bool hasSample = false;
+		if (run.source == TimingSource::Compositor) {
+			CompositorSample frame;
+			hasSample = ReadLatestCompositorSample(frame, run.lastCompositorFrame);
+			sample = { frame.totalRenderGpuMs, frame.compositorRenderCpuMs };
+		} else {
+			// Profiler capture is request-driven and its GPU result arrives a few frames late.
+			auto* profiler = globals::profiler;
+			profiler->RequestCapture(Profiler::CaptureMode::Both);
+			const uint32_t captured = profiler->GetCapturedGpuFrameCount();
+			if (captured != 0 && captured != run.lastProfilerFrame) {
+				run.lastProfilerFrame = captured;
+				hasSample = true;
+				sample = { profiler->GetResolvedTotalTimeMs(), profiler->GetResolvedCpuTotalTimeMs() };
+			}
+		}
+		const auto directive = run.engine.Tick(sample, hasSample, delta, CanMeasure());
 		if (directive.apply)
 			ApplyVariant(directive.variant);
 		Conclude(directive);
@@ -342,7 +393,7 @@ namespace SettingsBenchmark
 
 		json variants = json::array();
 		for (const auto& variant : Variants())
-			variants.push_back({ { "id", variant.id }, { "label", variant.label }, { "group", variant.group }, { "note", variant.note } });
+			variants.push_back({ { "id", variant.id }, { "label", variant.label }, { "group", variant.group }, { "note", variant.note }, { "vrOnly", variant.vrOnly }, { "available", Available(variant) } });
 
 		return { { "phase", PhaseName(progress.phase) },
 			{ "running", run.engine.IsRunning() },
@@ -352,6 +403,8 @@ namespace SettingsBenchmark
 			{ "framesNeeded", progress.framesNeeded },
 			{ "countdownRemaining", progress.countdownRemaining },
 			{ "currentVariant", progress.currentVariant == kBaseline ? json("baseline") : json(run.variants[progress.currentVariant].id) },
+			{ "timingSource", (run.engine.IsRunning() ? run.source : CurrentSource()) == TimingSource::Compositor ? "compositor" : "profiler" },
+			{ "frameBudgetMs", BudgetMs(run.engine.IsRunning() ? run.source : CurrentSource()) },
 			{ "error", run.error },
 			{ "resultPath", run.resultPath.string() },
 			{ "config", ConfigJson() },
@@ -395,18 +448,18 @@ namespace SettingsBenchmark
 		ImGui::Spacing();
 		ImGui::SeparatorText(T(TKEY("title"), "Settings Benchmark"));
 
-		if (!globals::game::isVR) {
-			ImGui::TextDisabled("%s", T(TKEY("vr_only"), "VR only: the benchmark reads the SteamVR compositor's frame timing."));
-			return;
-		}
-
 		ImGui::TextWrapped("%s", T(TKEY("description"),
 									 "Applies each selected variant over your current settings, measures the application GPU time between baseline blocks, then restores your settings. Close the menu while it runs."));
+		ImGui::TextDisabled("%s", CurrentSource() == TimingSource::Compositor ?
+									  T(TKEY("source_compositor"), "Timing: SteamVR compositor application GPU time.") :
+									  T(TKEY("source_profiler"), "Timing: GPU time of Open Shaders' own passes (the profiler total); the game's own passes are not included."));
 
 		const bool running = IsRunning();
 		ImGui::BeginDisabled(running);
 		std::string group;
 		for (size_t i = 0; i < variants.size(); ++i) {
+			if (!Available(variants[i]))
+				continue;
 			if (variants[i].group != group) {
 				group = variants[i].group;
 				ImGui::TextUnformatted(group.c_str());
@@ -434,7 +487,7 @@ namespace SettingsBenchmark
 			if (ImGui::Button(T(TKEY("start"), "Start Benchmark"))) {
 				std::vector<std::string> ids;
 				for (size_t i = 0; i < variants.size(); ++i) {
-					if (selected[i])
+					if (selected[i] && Available(variants[i]))
 						ids.push_back(variants[i].id);
 				}
 				if (ids.empty())
@@ -469,8 +522,8 @@ namespace SettingsBenchmark
 		if (ImGui::BeginTable("##SettingsBenchmarkResults", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 			ImGui::TableSetupColumn(T(TKEY("col_variant"), "Variant"));
 			ImGui::TableSetupColumn(T(TKEY("col_gpu_delta"), "GPU delta (ms)"));
-			ImGui::TableSetupColumn(T(TKEY("col_budget"), "% of 11.1 ms"));
-			ImGui::TableSetupColumn(T(TKEY("col_cpu_delta"), "Compositor CPU delta (ms)"));
+			ImGui::TableSetupColumn(T(TKEY("col_budget"), "% of frame budget"));
+			ImGui::TableSetupColumn(T(TKEY("col_cpu_delta"), "CPU delta (ms)"));
 			ImGui::TableSetupColumn(T(TKEY("col_baseline"), "Baseline (ms)"));
 			ImGui::TableHeadersRow();
 			for (const auto& result : run.results) {
@@ -485,7 +538,7 @@ namespace SettingsBenchmark
 				ImGui::TableNextColumn();
 				ImGui::Text("%+.2f +/- %.2f", result.gpuDeltaMs, result.gpuUncertaintyMs);
 				ImGui::TableNextColumn();
-				ImGui::Text("%+.1f%%", result.gpuDeltaMs / kVrFrameBudgetMs * 100.0f);
+				ImGui::Text("%+.1f%%", result.gpuDeltaMs / BudgetMs(run.source) * 100.0f);
 				ImGui::TableNextColumn();
 				ImGui::Text("%+.2f", result.cpuDeltaMs);
 				ImGui::TableNextColumn();
@@ -494,6 +547,7 @@ namespace SettingsBenchmark
 			ImGui::EndTable();
 		}
 
+		ImGui::TextDisabled(T(TKEY("budget_note"), "Frame budget: %.1f ms"), BudgetMs(run.source));
 		if (!run.resultPath.empty())
 			ImGui::TextDisabled("%s", run.resultPath.string().c_str());
 	}
