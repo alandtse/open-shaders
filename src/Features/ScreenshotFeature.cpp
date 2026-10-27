@@ -1,5 +1,5 @@
 // Screenshot Feature
-// Non-blocking screenshot tool. GPU copy runs on the
+// Non-blocking screenshot tool. GPU copy and readback run on the
 // render thread; encoding and disk I/O run on a dedicated worker thread so
 // capture does not stall the frame.
 
@@ -59,7 +59,9 @@ namespace
 		Exclude
 	};
 
-	bool PopulateScratchImageFromStagingTexture(
+	// Render thread only: the immediate context is not thread-safe. Never waits for the
+	// GPU; DXGI_ERROR_WAS_STILL_DRAWING means poll again next frame.
+	HRESULT PopulateScratchImageFromStagingTexture(
 		ID3D11DeviceContext* context,
 		ID3D11Texture2D* stagingTexture,
 		DXGI_FORMAT format,
@@ -67,27 +69,25 @@ namespace
 		uint32_t height,
 		DirectX::ScratchImage& image)
 	{
-		Util::MultithreadScope guard(context);
-
 		D3D11_MAPPED_SUBRESOURCE mapped{};
-		if (FAILED(context->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &mapped))) {
-			return false;
+		if (const HRESULT mapHr = context->Map(stagingTexture, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped); FAILED(mapHr)) {
+			return mapHr;
 		}
 		if (!mapped.pData || mapped.RowPitch == 0) {
 			context->Unmap(stagingTexture, 0);
-			return false;
+			return E_FAIL;
 		}
 
 		const HRESULT initHr = image.Initialize2D(format, width, height, 1, 1);
 		if (FAILED(initHr)) {
 			context->Unmap(stagingTexture, 0);
-			return false;
+			return initHr;
 		}
 
 		const auto* destImage = image.GetImage(0, 0, 0);
 		if (!destImage) {
 			context->Unmap(stagingTexture, 0);
-			return false;
+			return E_FAIL;
 		}
 
 		// Driver-mapped region can be smaller than height * mapped.RowPitch
@@ -119,7 +119,7 @@ namespace
 		}
 
 		context->Unmap(stagingTexture, 0);
-		return true;
+		return S_OK;
 	}
 
 	void StripAlphaForBmp(DirectX::ScratchImage& image)
@@ -939,6 +939,8 @@ bool ScreenshotFeature::RequestCapture(CaptureRequest request)
 
 void ScreenshotFeature::ProcessCaptureRequest()
 {
+	EnqueueFinishedCopies();
+
 	if (sequenceCapture)
 		sequenceCapture->Tick(loaded);
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -1052,10 +1054,38 @@ void ScreenshotFeature::EnqueueScreenshot(PendingScreenshot&& screenshot)
 	screenshotQueueCV.notify_one();
 }
 
+void ScreenshotFeature::EnqueueFinishedCopies()
+{
+	for (auto it = copiesInFlight.begin(); it != copiesInFlight.end();) {
+		const HRESULT hr = PopulateScratchImageFromStagingTexture(
+			globals::d3d::context,
+			it->stagingTexture.get(),
+			it->format,
+			it->width,
+			it->height,
+			*it->image);
+		if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
+			++it;
+			continue;
+		}
+		if (FAILED(hr)) {
+			logger::error("Screenshot readback of the GPU copy failed: {:#010x}", static_cast<uint32_t>(hr));
+			it->image = nullptr;
+		}
+		it->stagingTexture = nullptr;
+		try {
+			EnqueueScreenshot(std::move(*it));
+		} catch (const std::exception& e) {
+			logger::error("Screenshot hand-off to the save worker failed: {}", e.what());
+		}
+		--screenshotsInFlight;
+		it = copiesInFlight.erase(it);
+	}
+}
+
 void ScreenshotFeature::ScreenshotWorkerLoop()
 {
 	CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-	auto* context = globals::d3d::context;
 	while (true) {
 		PendingScreenshot screenshot;
 		{
@@ -1082,15 +1112,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 		};
 
 		const SKSE::stl::scope_exit complete([this] { --screenshotsInFlight; });
-		DirectX::ScratchImage image;
-		if (!PopulateScratchImageFromStagingTexture(
-				context,
-				screenshot.stagingTexture.get(),
-				screenshot.format,
-				screenshot.width,
-				screenshot.height,
-				image)) {
-			logger::error("Failed to map screenshot staging texture.");
+		if (!screenshot.image) {
 			finish(false);
 			continue;
 		}
@@ -1098,7 +1120,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 		Util::FileHelpers::EnsureDirectoryExists(screenshot.outputPath.parent_path());
 
 		const bool saveOk = SaveScreenshotToDisk(
-			image,
+			*screenshot.image,
 			screenshot.outputPath,
 			screenshot.format,
 			screenshot.hdrPngBitDepth,
@@ -1229,6 +1251,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	EnsureWorkerThread();
 	PendingScreenshot screenshot;
 	screenshot.stagingTexture = std::move(stagingTexture);
+	screenshot.image = std::make_shared<DirectX::ScratchImage>();
 	screenshot.format = srcDesc.Format;
 	screenshot.width = copyW;
 	screenshot.height = copyH;
@@ -1242,6 +1265,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	screenshot.renderFrame = globals::game::graphicsState->GetFrameCount();
 	if (request)
 		screenshot.onComplete = std::move(request->onComplete);
-	EnqueueScreenshot(std::move(screenshot));
+	copiesInFlight.push_back(std::move(screenshot));
+	++screenshotsInFlight;
 }
 #undef I18N_KEY_PREFIX
