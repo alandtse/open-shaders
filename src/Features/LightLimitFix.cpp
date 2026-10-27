@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "CSEditor/EditorWindow.h"
 #include "Features/LightLimitFix/Common.h"
+#include "Features/LightLimitFix/LightAttach.h"
 #include "Features/LightLimitFix/LightReadSafety.h"
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
@@ -49,6 +50,8 @@ namespace
 	constexpr float kMaxParticleDistanceMax = 20000.0f;
 	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
+	constexpr int kLightAttachRefreshFramesMin = 1;
+	constexpr int kLightAttachRefreshFramesMax = 600;
 
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
@@ -69,6 +72,7 @@ namespace
 			Util::ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
 		a_settings.JsonPlacedLightIntensity =
 			Util::ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
+		a_settings.LightAttachRefreshFrames = std::clamp(a_settings.LightAttachRefreshFrames, kLightAttachRefreshFramesMin, kLightAttachRefreshFramesMax);
 	}
 
 	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
@@ -140,10 +144,33 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticleDistance,
 	JsonPlacedLightIntensity,
 	JsonPlacedLightsInteriorsOnly,
-	JsonPlacedLightsPortalStrictOnly)
+	JsonPlacedLightsPortalStrictOnly,
+	SkipRedundantLightAttach,
+	LightAttachRefreshFrames)
+
+void LightLimitFix::DrawLightAttachSettings()
+{
+	ImGui::BeginDisabled(!LightAttach::IsSupported());
+	ImGui::Checkbox(T("feature.light_limit_fix.skip_redundant_light_attach", "Skip Redundant Light Updates"), &settings.SkipRedundantLightAttach);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s",
+			T("feature.light_limit_fix.skip_redundant_light_attach_tooltip",
+				"The game re-checks every dynamic light's nearby geometry each frame, which costs milliseconds in scenes with hundreds of lights. "
+				"With this on, a light that has not moved or changed is only re-checked at the interval below."));
+	}
+
+	ImGui::BeginDisabled(!settings.SkipRedundantLightAttach);
+	ImGui::SliderInt(T("feature.light_limit_fix.light_attach_refresh_frames", "Light Update Interval (frames)"), &settings.LightAttachRefreshFrames, kLightAttachRefreshFramesMin, kLightAttachRefreshFramesMax, "%d", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("feature.light_limit_fix.light_attach_refresh_frames_tooltip", "How many frames an unchanged light may go without being re-checked. Lower values track scene changes sooner at a small cost; a light that moves is always re-checked immediately."));
+	}
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+}
 
 void LightLimitFix::DrawPerformanceSettings()
 {
+	DrawLightAttachSettings();
 	if (!settings.ShadowSettings.Enabled)
 		return;
 	ShadowCasterManager::DrawImpactCullSliders(settings.ShadowSettings);
@@ -765,17 +792,20 @@ void LightLimitFix::RestoreDefaultSettings()
 
 json LightLimitFix::GetDiagnostics()
 {
-	return json{
+	json diagnostics{
 		{ "particleLightCount", particleLightCount.load(std::memory_order_relaxed) },
 		{ "lightCount", clusteredLightCount.load(std::memory_order_relaxed) },
 		{ "maxLights", MAX_LIGHTS },
 	};
+	diagnostics.update(LightAttach::GetDiagnostics());
+	return diagnostics;
 }
 
 json LightLimitFix::GetRuntimeFlags()
 {
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
+		{ "LightAttachAuditDetail", LightAttach::GetAuditDetail() },
 	};
 }
 
@@ -783,6 +813,10 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 {
 	if (name == "ShadowDemandInstrumentation") {
 		ShadowDemandInstrumentation = value;
+		return true;
+	}
+	if (name == "LightAttachAuditDetail") {
+		LightAttach::SetAuditDetail(value);
 		return true;
 	}
 	return false;
@@ -1075,6 +1109,7 @@ void LightLimitFix::PostPostLoad()
 {
 	particleLights.GetConfigs();
 	Hooks::Install();
+	LightAttach::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
 	ShadowCasterManager::Install(settings.ShadowSettings);
 

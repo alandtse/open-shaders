@@ -16,6 +16,7 @@ struct LightLimitFix : OverlayFeature
 {
 private:
 	void DrawContactShadowSettings();
+	void DrawLightAttachSettings();
 	void DrawParticleLightSettings();
 	void DrawPlacedLightSettings();
 	void DrawLightStatistics();
@@ -527,6 +528,10 @@ public:
 		float JsonPlacedLightIntensity = 1.0f;
 		bool JsonPlacedLightsInteriorsOnly = false;
 		bool JsonPlacedLightsPortalStrictOnly = false;
+
+		// Light attach gate: skips the engine's per-frame attach walk for unchanged dynamic lights.
+		bool SkipRedundantLightAttach = true;
+		int LightAttachRefreshFrames = 60;
 	};
 
 	uint clusterSize[3] = { 16 };

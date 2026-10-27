@@ -89,6 +89,7 @@ add_executable(cpp_tests
     test_shadercacheclear.cpp
 	test_generationclaim.cpp
 	test_framelatch.cpp
+	test_lightattachgate.cpp
 	test_shaderinclude.cpp
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
