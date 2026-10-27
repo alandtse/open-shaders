@@ -240,8 +240,8 @@ namespace LightingExtensions
 		static void thunk(RE::BSShader* shader, RE::BSRenderPass* pass, uint32_t renderFlags)
 		{
 			globals::state->UpdateLightingShaderPermutation(pass);
-			globals::deferred->BindForwardHairMasks();
 			func(shader, pass, renderFlags);
+			globals::deferred->BindForwardHairMasks();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

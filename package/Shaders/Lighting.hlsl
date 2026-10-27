@@ -3042,7 +3042,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	if (SharedData::lightLimitFixSettings.SunLitHair != 0 && inWorld && !inReflection) {
 		const int3 gbufferPixel = int3(input.Position.xy, 0);
 		if (NeuralRenderingCategory::Decode(TexDeferredMasks2.Load(gbufferPixel).y) == NeuralRenderingCategory::Hair) {
-			dirDetailedShadow = TexDeferredMasks.Load(gbufferPixel).y;
+			dirDetailedShadow = saturate(TexDeferredMasks.Load(gbufferPixel).y);
 			dirSoftShadow = max(dirSoftShadow, dirDetailedShadow);
 		}
 	}
@@ -4083,7 +4083,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #		else
 	psout.Masks = float4(0, 0, masksZ, psout.Diffuse.w);
 #			if defined(HAIR)
-	psout.Masks.y = dirDetailedShadow;
+	// Masks blends with SrcAlpha, so dividing by alpha stores the full shadow over an empty target.
+	psout.Masks.y = dirDetailedShadow / max(psout.Diffuse.w, 1.0 / 255.0);
 #			endif
 #		endif
 
