@@ -11,6 +11,7 @@
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
 #include "Features/IBL.h"
+#include "Features/LightLimitFix.h"
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
@@ -32,6 +33,12 @@
 static constexpr tracy::SourceLocationData kDeferredGeoSrcLoc{ "Deferred Geometry", "Deferred::StartDeferred", __FILE__, (uint32_t)__LINE__, 0 };
 static std::optional<tracy::D3D11ZoneScope> g_deferredGeoZone;
 #endif
+
+namespace
+{
+	/** First of two pixel shader slots holding Masks and Masks2 for the forward hair pass; Lighting.hlsl declares the same registers. */
+	constexpr UINT kForwardHairMasksSlot = 124;
+}
 
 struct DepthStates
 {
@@ -550,6 +557,19 @@ bool Deferred::ForwardMasks2Available() const
 	auto shadowState = globals::game::shadowState;
 	GET_INSTANCE_MEMBER(renderTargets, shadowState)
 	return renderTargets[0] == RE::RENDER_TARGET::kMAIN;
+}
+
+void Deferred::BindForwardHairMasks()
+{
+	const std::uint32_t descriptor = globals::state->modifiedPixelDescriptor;
+	const auto technique = static_cast<SIE::ShaderCache::LightingShaderTechniques>((descriptor >> 24) & 0x3F);
+	const bool deferredDraw = (descriptor & static_cast<std::uint32_t>(SIE::ShaderCache::LightingShaderFlags::Deferred)) != 0;
+	if (!globals::features::lightLimitFix.settings.SunLitHair || deferredPass || !globals::state->inWorld || technique != SIE::ShaderCache::LightingShaderTechniques::Hair || deferredDraw)
+		return;
+
+	auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
+	ID3D11ShaderResourceView* views[2]{ Util::AsReal(targets[MASKS].SRV), Util::AsReal(targets[MASKS2].SRV) };
+	globals::d3d::context->PSSetShaderResources(kForwardHairMasksSlot, ARRAYSIZE(views), views);
 }
 
 void Deferred::SetForwardMasks2Target(bool a_bind)
