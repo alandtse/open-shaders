@@ -109,6 +109,8 @@ add_executable(cpp_tests
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
 	test_abcompositorstats.cpp
+	test_settingsbenchmarkengine.cpp
+	test_benchmarkpatch.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp
@@ -124,6 +126,8 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/RegionOverlay.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABCompositorStats.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/SettingsBenchmarkEngine.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/SettingsPatch.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"

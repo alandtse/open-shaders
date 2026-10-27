@@ -30,6 +30,7 @@
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
+#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
 
 namespace
 {
@@ -417,6 +418,7 @@ void OverlayRenderer::HandleABTesting()
 	// A/B Testing management
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	abTestingManager->Update();
+	SettingsBenchmark::Tick();
 
 	// Always update test data during TEST phase, regardless of overlay visibility
 	if (abTestingManager->IsEnabled()) {
@@ -435,6 +437,7 @@ void OverlayRenderer::HandleABTesting()
 
 	// Draw A/B testing overlay
 	abTestingManager->DrawOverlayUI();
+	SettingsBenchmark::DrawOverlayUI();
 }
 
 void OverlayRenderer::FinalizeImGuiFrame()

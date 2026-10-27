@@ -1,6 +1,7 @@
 #include "SceneSettingsUIHooks.h"
 
 #include "Feature.h"
+#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
 #include "I18n/I18n.h"
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsManager.h"
@@ -534,6 +535,30 @@ namespace
 		return {};
 	}
 
+	/** @brief Offers a one-setting VR benchmark: a boolean against its opposite, anything else against its default. */
+	void DrawBenchmarkMenuItem(const SceneSettingsCatalog::SettingMetadata& setting, const json& currentValue, const std::optional<json>& defaultValue)
+	{
+		std::optional<json> target;
+		if (currentValue.is_boolean())
+			target = !currentValue.get<bool>();
+		else if (defaultValue && *defaultValue != currentValue)
+			target = defaultValue;
+		if (!target)
+			return;
+
+		auto valueText = FormatSettingValue(setting, *target);
+		if (valueText.empty())
+			valueText = target->dump();
+		const auto label = std::string(T("menu.settings.benchmark_vs", "Benchmark vs")) + " " + valueText;
+		if (!ImGui::MenuItem(label.c_str()))
+			return;
+
+		std::string error;
+		const auto variantLabel = Util::Settings::GetCatalogLeafDisplayName(setting) + " = " + valueText;
+		if (!SettingsBenchmark::StartForSetting(*g_currentFeature, setting, *target, variantLabel, &error))
+			logger::warn("[SettingsBenchmark] {}", error);
+	}
+
 	bool DrawResetToDefaultMenu(const void* valueAddress)
 	{
 		if (!g_currentFeature || g_featureSceneEditing || !ImGui::BeginPopupContextItem())
@@ -561,6 +586,8 @@ namespace
 		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
 		if (reset)
 			g_featureSettingMutation = true;
+		else if (globals::game::isVR && !SettingsBenchmark::IsRunning() && currentValue)
+			DrawBenchmarkMenuItem(*setting, *currentValue, defaultValue);
 		ImGui::EndPopup();
 		return reset;
 	}

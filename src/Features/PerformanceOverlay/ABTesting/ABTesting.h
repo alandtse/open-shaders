@@ -12,6 +12,15 @@
  * configurable interval, collecting per-frame draw call timing data through the
  * ABTestAggregator. Both snapshots are held in memory to avoid disk I/O during swaps.
  */
+/**
+ * @brief Reads the newest completed SteamVR compositor frame.
+ *
+ * @param sample Receives the frame when one is new.
+ * @param lastFrameIndex Compositor frame index already consumed; updated on success.
+ * @return True when a frame newer than lastFrameIndex was read. Always false outside VR.
+ */
+bool ReadLatestCompositorSample(CompositorSample& sample, uint32_t& lastFrameIndex, bool* timingAvailable = nullptr);
+
 class ABTestingManager
 {
 public:

@@ -21,6 +21,7 @@
 #include "Feature.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTestAggregator.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
+#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -675,6 +676,52 @@ ABTestAggregator& PerformanceOverlay::GetABTestAggregator()
 	return abTestingManager->GetAggregator();
 }
 
+namespace
+{
+	/** @brief Draws the SteamVR compositor comparison for the A/B test; VR only. */
+	void DrawABTestCompositorTable(const ABTestingManager& manager)
+	{
+		const auto& stats = manager.GetCompositorStats();
+		const auto a = stats.Summarize(ABVariant::A);
+		const auto b = stats.Summarize(ABVariant::B);
+
+		ImGui::Spacing();
+		ImGui::SeparatorText(T(TKEY("abtest_compositor"), "SteamVR Compositor"));
+		if (!manager.IsCompositorTimingAvailable() || (a.frames == 0 && b.frames == 0)) {
+			ImGui::TextDisabled("%s", T(TKEY("abtest_compositor_none"), "No compositor frame timing was reported yet."));
+			return;
+		}
+
+		if (!ImGui::BeginTable("ABTestCompositorTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+			return;
+		ImGui::TableSetupColumn(T(TKEY("abtest_compositor_metric"), "Metric"));
+		ImGui::TableSetupColumn("A");
+		ImGui::TableSetupColumn("B");
+		ImGui::TableSetupColumn(T(TKEY("abtest_compositor_delta"), "B - A"));
+		ImGui::TableHeadersRow();
+
+		const auto row = [](const char* label, float valueA, float valueB, const char* format) {
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+			ImGui::TextUnformatted(label);
+			ImGui::TableNextColumn();
+			ImGui::Text(format, valueA);
+			ImGui::TableNextColumn();
+			ImGui::Text(format, valueB);
+			ImGui::TableNextColumn();
+			ImGui::Text("%+.2f", valueB - valueA);
+		};
+		row(T(TKEY("abtest_compositor_app_gpu"), "Application GPU (ms)"), a.meanTotalRenderGpuMs, b.meanTotalRenderGpuMs, "%.2f");
+		row(T(TKEY("abtest_compositor_gpu"), "Compositor GPU (ms)"), a.meanCompositorRenderGpuMs, b.meanCompositorRenderGpuMs, "%.2f");
+		row(T(TKEY("abtest_compositor_cpu"), "Compositor CPU (ms)"), a.meanCompositorRenderCpuMs, b.meanCompositorRenderCpuMs, "%.2f");
+		row(T(TKEY("abtest_compositor_interval"), "Frame interval (ms)"), a.meanClientFrameIntervalMs, b.meanClientFrameIntervalMs, "%.2f");
+		row(T(TKEY("abtest_compositor_dropped"), "Dropped frames"), static_cast<float>(a.droppedFrames), static_cast<float>(b.droppedFrames), "%.0f");
+		row(T(TKEY("abtest_compositor_reprojected"), "Reprojected frames"), static_cast<float>(a.reprojectedFrames), static_cast<float>(b.reprojectedFrames), "%.0f");
+		row(T(TKEY("abtest_compositor_frames"), "Frames sampled"), static_cast<float>(a.frames), static_cast<float>(b.frames), "%.0f");
+		ImGui::EndTable();
+	}
+}
+
 /**
   * @brief Draws the A/B test results table with comprehensive performance comparison
   *
@@ -727,6 +774,9 @@ void PerformanceOverlay::DrawABTestResultsTable()
 			columns[colIdx].cellRender(row, colIdx);
 		},
 		summaryRowsCopy);
+
+	if (globals::game::isVR)
+		DrawABTestCompositorTable(*abTestingManager);
 }
 
 /**
@@ -2222,6 +2272,41 @@ void PerformanceOverlay::RegisterUxActions()
 			manager->SetTestInterval(0);
 			manager->Disable();
 		});
+
+	FEATURE_COMMAND("startSettingsBenchmark",
+		"Start the VR settings benchmark: each variant is applied over the current settings, measured against bracketing baselines from the SteamVR compositor's application GPU time, then the original settings are restored. VR only. Params: variants (array of variant ids from settingsBenchmarkStatus.variants; omit for all), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). Poll settingsBenchmarkStatus (its error field says why a start was refused); cancel with cancelSettingsBenchmark. Close the menu first: measurement pauses while it is open.",
+		[](Feature*, const json& args) {
+			auto& config = SettingsBenchmark::Configuration();
+			config.warmupFrames = args.value("warmupFrames", config.warmupFrames);
+			config.measureFrames = args.value("measureFrames", config.measureFrames);
+			config.repeats = args.value("repeats", config.repeats);
+			config.countdownSeconds = args.value("countdownSeconds", 2.0f);
+			std::string error;
+			if (!SettingsBenchmark::Start(args.value("variants", std::vector<std::string>{}), &error))
+				throw std::runtime_error(error);
+		});
+
+	FEATURE_COMMAND("startSettingBenchmark",
+		"Start a VR benchmark of one catalogued setting: the current settings against the same settings with that one value changed (the setting the right-click menu offers 'Benchmark vs' on). Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), warmupFrames, measureFrames, repeats, countdownSeconds (default 2). VR only; poll settingsBenchmarkStatus (its error field says why a start was refused).",
+		[](Feature*, const json& args) {
+			auto& config = SettingsBenchmark::Configuration();
+			config.warmupFrames = args.value("warmupFrames", config.warmupFrames);
+			config.measureFrames = args.value("measureFrames", config.measureFrames);
+			config.repeats = args.value("repeats", config.repeats);
+			config.countdownSeconds = args.value("countdownSeconds", 2.0f);
+			std::string error;
+			if (!SettingsBenchmark::StartForSettingKey(args.value("shortName", std::string{}), args.value("key", std::string{}),
+					args.value("path", std::string{}), args.value("value", json{}), &error))
+				throw std::runtime_error(error);
+		});
+
+	FEATURE_COMMAND("cancelSettingsBenchmark",
+		"Cancel a running settings benchmark and restore the original settings. Params: none.",
+		[](Feature*, const json&) { SettingsBenchmark::Cancel(); });
+
+	FEATURE_QUERY("settingsBenchmarkStatus",
+		"Settings benchmark state: phase, running, block, blockCount, framesInBlock, framesNeeded, countdownRemaining, currentVariant (baseline or a variant id), error, resultPath (the results JSON next to the log), config, the built-in variants[] (id, label, group, note) and results[] (gpuDeltaMs, gpuUncertaintyMs against the bracketing baselines, gpuBaselineMs, gpuVariantMs, gpuDeltaPercentOfBudget, cpuDeltaMs, repeats). Params: none.",
+		[](const Feature*, const json&) -> json { return SettingsBenchmark::StatusJson(); });
 
 	FEATURE_QUERY("abTestStatus",
 		"A/B test state and results: enabled, intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU, compositor GPU and CPU, client frame interval, dropped and reprojected frames) plus deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
