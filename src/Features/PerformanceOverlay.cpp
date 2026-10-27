@@ -27,6 +27,7 @@
 #include "Menu.h"
 #include "Menu/ProfilingRenderer.h"
 #include "State.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
@@ -2137,5 +2138,93 @@ void PerformanceOverlay::UpdateGraphValues()
 		state.smoothFrameTimeMs = state.frameTimeMs;
 		state.updateTimer = 0.0f;
 	}
+}
+namespace
+{
+	constexpr uint32_t kMaxABTestIntervalSeconds = 10;
+
+	json CompositorSummaryJson(const CompositorVariantSummary& summary)
+	{
+		return { { "frames", summary.frames },
+			{ "droppedFrames", summary.droppedFrames },
+			{ "reprojectedFrames", summary.reprojectedFrames },
+			{ "meanTotalRenderGpuMs", summary.meanTotalRenderGpuMs },
+			{ "meanCompositorRenderGpuMs", summary.meanCompositorRenderGpuMs },
+			{ "meanCompositorRenderCpuMs", summary.meanCompositorRenderCpuMs },
+			{ "meanClientFrameIntervalMs", summary.meanClientFrameIntervalMs } };
+	}
+
+	json ABTestStatus(const Feature*, const json&)
+	{
+		auto* manager = ABTestingManager::GetSingleton();
+		const auto& aggregator = manager->GetAggregator();
+
+		json drawCalls = json::array();
+		for (const auto& row : aggregator.GetAggregatedResults()) {
+			drawCalls.push_back({ { "label", row.label },
+				{ "shaderType", row.shaderType },
+				{ "meanAMs", row.meanA },
+				{ "meanBMs", row.meanB },
+				{ "deltaMs", row.delta },
+				{ "medianAMs", row.medianA },
+				{ "medianBMs", row.medianB },
+				{ "framesA", row.frameCountA },
+				{ "framesB", row.frameCountB } });
+		}
+
+		json settingsDiff = json::array();
+		for (const auto& entry : manager->GetConfigDiffEntries()) {
+			settingsDiff.push_back({ { "path", ABTestingManager::GetSettingsPathDisplayName(entry.path) },
+				{ "a", entry.aValue },
+				{ "b", entry.bValue } });
+		}
+
+		json status{ { "enabled", manager->IsEnabled() },
+			{ "intervalSeconds", manager->GetTestInterval() },
+			{ "usingTestConfig", manager->IsUsingTestConfig() },
+			{ "warmingUp", aggregator.IsWarmingUp() },
+			{ "durationSeconds", aggregator.GetTotalTestDuration() },
+			{ "frames", aggregator.GetTotalFrameCount() },
+			{ "intervals", aggregator.GetIntervals().size() },
+			{ "drawCalls", std::move(drawCalls) },
+			{ "settingsDiff", std::move(settingsDiff) } };
+
+		if (globals::game::isVR) {
+			const auto& stats = manager->GetCompositorStats();
+			status["compositor"] = { { "available", manager->IsCompositorTimingAvailable() },
+				{ "rejectedFrames", stats.RejectedFrames() },
+				{ "A", CompositorSummaryJson(stats.Summarize(ABVariant::A)) },
+				{ "B", CompositorSummaryJson(stats.Summarize(ABVariant::B)) },
+				{ "deltaTotalRenderGpuMs", stats.DeltaTotalRenderGpuMs() } };
+		}
+		return status;
+	}
+}
+
+/** @brief Registers A/B test start, stop and status for devbench. */
+void PerformanceOverlay::RegisterUxActions()
+{
+	FEATURE_COMMAND("startABTest",
+		"Start the in-game A/B test, the same as moving Advanced > A/B Test Interval above 0. Variant B (TEST) is the settings active right now (set them first with openshaders.feature set, unsaved); variant A (USER) is the saved settings. Variants swap every intervalSeconds (1-10, default 3); the first B interval is an unmeasured warm-up. Calling it while a test runs only changes the interval. Params: intervalSeconds (integer). Read results with the abTestStatus query; stop with stopABTest.",
+		[](Feature*, const json& args) {
+			const auto interval = args.value("intervalSeconds", 3u);
+			if (interval < 1 || interval > kMaxABTestIntervalSeconds)
+				throw std::runtime_error("intervalSeconds must be 1-10");
+			auto* manager = ABTestingManager::GetSingleton();
+			manager->SetTestInterval(interval);
+			manager->Enable();
+		});
+
+	FEATURE_COMMAND("stopABTest",
+		"Stop the A/B test and restore the variant B (TEST) settings, the same as setting Advanced > A/B Test Interval to 0. Results stay readable through abTestStatus until the next start. Params: none.",
+		[](Feature*, const json&) {
+			auto* manager = ABTestingManager::GetSingleton();
+			manager->SetTestInterval(0);
+			manager->Disable();
+		});
+
+	FEATURE_QUERY("abTestStatus",
+		"A/B test state and results: enabled, intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU, compositor GPU and CPU, client frame interval, dropped and reprojected frames) plus deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
+		ABTestStatus);
 }
 #undef I18N_KEY_PREFIX

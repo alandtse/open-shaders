@@ -86,6 +86,11 @@ void ABTestingManager::Enable()
 
 		abTestingEnabled = true;
 
+		aggregator.Clear();
+		aggregator.OnABSwitch(ABVariant::B);
+		compositorStats.Reset();
+		lastCompositorFrameIndex = UINT32_MAX;
+
 		// Initialize QueryPerformanceCounter timing
 		if (timingFrequency.QuadPart == 0) {
 			QueryPerformanceFrequency(&timingFrequency);
@@ -169,6 +174,35 @@ void ABTestingManager::Update()
 		// Notify the A/B test aggregator of the variant switch
 		aggregator.OnABSwitch(usingTestConfig ? ABVariant::B : ABVariant::A);
 	}
+}
+
+void ABTestingManager::SampleCompositor()
+{
+	if (!abTestingEnabled || !globals::game::isVR || aggregator.IsWarmingUp())
+		return;
+
+	auto* compositor = RE::BSOpenVR::GetIVRCompositor();
+	if (!compositor)
+		return;
+
+	// One frame back: the newest frame is still in flight and reports zero GPU time.
+	vr::Compositor_FrameTiming timing{};
+	timing.m_nSize = sizeof(timing);
+	if (!compositor->GetFrameTiming(&timing, 1))
+		return;
+
+	compositorTimingAvailable = true;
+	if (timing.m_nFrameIndex == lastCompositorFrameIndex)
+		return;
+	lastCompositorFrameIndex = timing.m_nFrameIndex;
+
+	compositorStats.Add(usingTestConfig ? ABVariant::B : ABVariant::A,
+		{ .totalRenderGpuMs = timing.m_flTotalRenderGpuMs,
+			.compositorRenderGpuMs = timing.m_flCompositorRenderGpuMs,
+			.compositorRenderCpuMs = timing.m_flCompositorRenderCpuMs,
+			.clientFrameIntervalMs = timing.m_flClientFrameIntervalMs,
+			.droppedFrames = timing.m_nNumDroppedFrames,
+			.reprojected = timing.m_nReprojectionFlags != 0 });
 }
 
 void ABTestingManager::DrawSettingsUI()

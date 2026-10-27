@@ -1,4 +1,5 @@
 #pragma once
+#include "ABCompositorStats.h"
 #include "ABTestAggregator.h"
 #include "Utils/FileSystem.h"
 #include <nlohmann/json.hpp>
@@ -66,6 +67,20 @@ public:
 	/** @brief Returns a mutable reference to the underlying test data aggregator. */
 	ABTestAggregator& GetAggregator() { return aggregator; }
 
+	/**
+	 * @brief Records the newest completed SteamVR compositor frame for the active variant.
+	 *
+	 * Does nothing outside VR, while disabled, during the unmeasured warm-up interval, or when the
+	 * runtime reports no frame timing. Call once per frame.
+	 */
+	void SampleCompositor();
+
+	/** @brief Returns the SteamVR compositor timing gathered for variants A and B. */
+	const CompositorStatsAccumulator& GetCompositorStats() const { return compositorStats; }
+
+	/** @brief Returns true once the runtime has returned at least one compositor frame timing. */
+	bool IsCompositorTimingAvailable() const { return compositorTimingAvailable; }
+
 	/** @brief Returns true if both USER and TEST configuration snapshots are available. */
 	bool HasCachedSnapshots() const { return hasTestSnapshot && hasUserSnapshot; }
 
@@ -101,6 +116,9 @@ private:
 	LARGE_INTEGER timingFrequency{};
 	LARGE_INTEGER lastTestSwitch{};
 	ABTestAggregator aggregator;
+	CompositorStatsAccumulator compositorStats;
+	uint32_t lastCompositorFrameIndex = UINT32_MAX;
+	bool compositorTimingAvailable = false;
 
 	// In-memory storage for both variants to avoid disk I/O during swapping
 	nlohmann::json testConfigSnapshot;

@@ -144,6 +144,7 @@ struct PerformanceOverlay : OverlayFeature
 	virtual void DataLoaded() override;
 	void DrawOverlay() override;
 	virtual json GetDiagnostics() override;
+	void RegisterUxActions() override;
 	virtual bool WantsDrawHook() const override { return true; }
 	virtual void OnDraw() override;
 	virtual void Reset() override;

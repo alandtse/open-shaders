@@ -430,6 +430,7 @@ void OverlayRenderer::HandleABTesting()
 
 		// Update the A/B test aggregator with current frame data
 		abTestingManager->GetAggregator().OnFrame(allRows);
+		abTestingManager->SampleCompositor();
 	}
 
 	// Draw A/B testing overlay
