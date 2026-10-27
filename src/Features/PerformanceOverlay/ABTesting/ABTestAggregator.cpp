@@ -1,5 +1,6 @@
 #include "ABTestAggregator.h"
 #include "Features/PerformanceOverlay.h"
+#include "Utils/PerfUtils.h"
 #include <algorithm>
 #include <map>
 #include <numeric>
@@ -101,13 +102,6 @@ void ABTestAggregator::Clear()
 	initialBWarmupPending = true;
 }
 
-static float mean(const std::vector<float>& v)
-{
-	if (v.empty())
-		return 0.0f;
-	return std::accumulate(v.begin(), v.end(), 0.0f) / v.size();
-}
-
 static float median(std::vector<float> v)
 {
 	if (v.empty())
@@ -147,8 +141,8 @@ std::vector<AggregatedDrawCallStats> ABTestAggregator::GetAggregatedResults() co
 		AggregatedDrawCallStats stats;
 		stats.label = label;
 		stats.shaderType = shaderType;
-		stats.meanA = mean(aFrameTimes[shaderType]);
-		stats.meanB = mean(bFrameTimes[shaderType]);
+		stats.meanA = Util::Mean(aFrameTimes[shaderType]);
+		stats.meanB = Util::Mean(bFrameTimes[shaderType]);
 		stats.medianA = median(aFrameTimes[shaderType]);
 		stats.medianB = median(bFrameTimes[shaderType]);
 		stats.delta = stats.meanB - stats.meanA;

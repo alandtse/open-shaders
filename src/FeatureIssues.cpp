@@ -153,6 +153,11 @@ namespace FeatureIssues
 		return !s_featureIssues.empty();
 	}
 
+	size_t CountLoadFailures()
+	{
+		return static_cast<size_t>(std::ranges::count_if(s_featureIssues, [](const FeatureIssueInfo& i) { return !i.IsConflict(); }));
+	}
+
 	bool HasObsoleteShaderModifyingFeatures()
 	{
 		return std::any_of(s_featureIssues.begin(), s_featureIssues.end(),
@@ -413,6 +418,7 @@ namespace FeatureIssues
 		std::vector<const FeatureIssueInfo*> obsoleteIssues;
 		std::vector<const FeatureIssueInfo*> versionIssues;
 		std::vector<const FeatureIssueInfo*> overrideIssues;
+		std::vector<const FeatureIssueInfo*> conflictIssues;
 
 		for (const auto& issue : featureIssues) {
 			if (issue.IsObsolete() && issue.ModifiedShaderDirectory()) {
@@ -427,6 +433,8 @@ namespace FeatureIssues
 				versionIssues.push_back(&issue);
 			} else if (issue.IsOverrideFailed()) {
 				overrideIssues.push_back(&issue);
+			} else if (issue.IsConflict()) {
+				conflictIssues.push_back(&issue);
 			}
 		}
 		// Shader Breaking Features Section (most critical)
@@ -467,6 +475,18 @@ namespace FeatureIssues
 				theme.StatusPalette.Warning, !versionIssues.empty())) {
 			for (const auto* issue : versionIssues) {
 				DrawFeatureIssue(*issue, theme.StatusPalette.Warning);
+			}
+		}
+		if (auto section = Util::SectionWrapper(T("menu.issues.conflicts_header", "Conflicting Mods"),
+				T("menu.issues.conflicts_desc",
+					"The following features were disabled because a mod that cannot be used with them was detected. "
+					"Disable the feature to keep using the mod, or remove the mod and restart to use the feature."),
+				theme.StatusPalette.Warning, !conflictIssues.empty())) {
+			for (const auto* issue : conflictIssues) {
+				DrawFeatureIssue(*issue, theme.StatusPalette.Warning);
+				ImGui::Indent();
+				ImGui::TextWrapped("%s", issue->rejectionReason.c_str());
+				ImGui::Unindent();
 			}
 		}
 		// Override Failures Section
@@ -759,7 +779,7 @@ namespace FeatureIssues
 		// Show delete button for:
 		// 1. Features that don't modify shader directories (safe to delete)
 		// 2. Obsolete features with replacements (user can install replacement after deletion)
-		bool canSafelyDelete = (!issue.ModifiedShaderDirectory() || (issue.IsObsolete() && !issue.replacementFeature.empty())) && !IsVersionMismatchForCoreFeature(issue);
+		bool canSafelyDelete = !issue.IsConflict() && (!issue.ModifiedShaderDirectory() || (issue.IsObsolete() && !issue.replacementFeature.empty())) && !IsVersionMismatchForCoreFeature(issue);
 		if (canSafelyDelete) {
 			ImGui::SameLine();
 			std::string deleteButtonId = "Delete##" + issue.shortName;
@@ -829,6 +849,15 @@ namespace FeatureIssues
 				}
 			}
 		}
+		if (issue.IsConflict()) {
+			ImGui::SameLine();
+			if (ImGui::SmallButton(T("menu.issues.disable_at_boot", "Disable at Boot")) && globals::state->SetFeatureBootEnabled(issue.shortName, false)) {
+				s_pendingIssueRemoval = issue.shortName;
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T("menu.issues.disable_at_boot_tooltip", "Keep this feature off at boot so the conflicting mod can be used. You can enable it again from its page."));
+			}
+		}
 		ImGui::PopID();
 	}
 
@@ -886,6 +915,9 @@ namespace FeatureIssues
 					// The original error message and details were already constructed during initial loading
 					AddFeatureIssue(feature->GetShortName(), feature->version, feature->failedLoadedMessage,
 						FeatureIssueInfo::IssueType::VERSION_MISMATCH, fileInfo);
+				}
+				if (!feature->loaded && !feature->conflictMessage.empty()) {
+					AddFeatureIssue(feature->GetShortName(), feature->version, feature->conflictMessage, FeatureIssueInfo::IssueType::CONFLICT);
 				}
 			}
 		}

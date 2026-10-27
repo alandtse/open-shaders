@@ -1,5 +1,7 @@
 #include "GrassBucketStore.h"
 
+#include <bit>
+
 void GrassBucketStore::SetupResources()
 {
 	{
@@ -611,7 +613,7 @@ bool GrassBucketStore::EnsureBucketCapacity(GrassBucket& b, uint32_t needed, ID3
 		return false;
 	}
 
-	uint32_t cap = b.capacityInstances ? b.capacityInstances : 4096;
+	uint32_t cap = b.capacityInstances ? b.capacityInstances : std::clamp(std::bit_ceil(needed), 256u, maxInstances);
 	while (cap < needed)
 		cap = std::min(cap * 2, maxInstances);
 
@@ -879,7 +881,8 @@ bool GrassBucketStore::DetectComplexGrass(RE::NiSourceTexture* tex, ID3D11Device
 {
 	auto* rt = tex ? tex->rendererTexture : nullptr;
 	auto* resourceView = rt ? Util::AsReal(rt->resourceView) : nullptr;
-	if (auto it = complexCache.find(tex); it != complexCache.end() && it->second.resourceView == resourceView) {
+	std::string key = tex && !tex->name.empty() ? std::string(tex->name.c_str()) : std::string{};
+	if (auto it = key.empty() ? complexCache.end() : complexCache.find(key); it != complexCache.end()) {
 		it->second.complex = std::abs(it->second.normalLength - 1.0f) < cachedComplexThreshold;
 		return it->second.complex;
 	}
@@ -911,7 +914,8 @@ bool GrassBucketStore::DetectComplexGrass(RE::NiSourceTexture* tex, ID3D11Device
 		}
 	}
 
-	complexCache.insert_or_assign(tex, ComplexEntry{ RE::NiPointer<RE::NiSourceTexture>(tex), resourceView, normalLength, complex });
+	if (!key.empty() && resourceView)
+		complexCache.insert_or_assign(std::move(key), ComplexEntry{ normalLength, complex });
 	return complex;
 }
 

@@ -1,6 +1,7 @@
 #include "BokehResources.h"
 #include "Util.h"
 #include "Utils/FileSystem.h"
+#include "Utils/StringUtils.h"
 
 #include <DirectXTex.h>
 
@@ -74,8 +75,7 @@ bool BokehResources::LoadTextureFromFile(const std::filesystem::path& path, int 
 
 	DirectX::ScratchImage image;
 	try {
-		auto extension = path.extension().string();
-		std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+		const auto extension = Util::ToLowerAscii(path.extension().string());
 		if (extension == ".dds")
 			DX::ThrowIfFailed(DirectX::LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image));
 		else if (extension == ".tga")
@@ -272,8 +272,7 @@ bool BokehResources::LoadCustomShape(const std::string& filePath, int slotIndex)
 		return false;
 
 	// Validate file extension
-	auto ext = std::filesystem::path(filePath).extension().string();
-	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+	const auto ext = Util::ToLowerAscii(std::filesystem::path(filePath).extension().string());
 	if (ext != ".png" && ext != ".dds" && ext != ".jpg" && ext != ".jpeg" && ext != ".bmp" && ext != ".tga") {
 		logger::warn("BokehResources: Unsupported file format: {}", ext);
 		return false;

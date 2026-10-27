@@ -92,6 +92,11 @@ namespace Util
 			return GetCommunityShaderPath() / "Translations";
 		}
 
+		std::filesystem::path GetCapturesPath()
+		{
+			return GetCommunityShaderPath() / "Captures";
+		}
+
 		std::filesystem::path GetOverridesPath()
 		{
 			return GetCommunityShaderPath() / "Overrides";
@@ -258,6 +263,17 @@ namespace Util
 			return result;
 		}
 
+		std::vector<std::filesystem::path> SafeChildDirectories(const std::filesystem::path& root)
+		{
+			std::vector<std::filesystem::path> children;
+			std::error_code ec;
+			for (auto it = std::filesystem::directory_iterator(root, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+				if (it->is_directory(ec))
+					children.push_back(SafeAbsolute(it->path()));
+			}
+			return children;
+		}
+
 		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path)
 		{
 			if (directory.empty() || path.empty())
@@ -273,6 +289,20 @@ namespace Util
 
 			const auto relative = absolutePath.lexically_normal().lexically_relative(absoluteDirectory.lexically_normal());
 			return !relative.empty() && *relative.begin() != "..";
+		}
+
+		std::string ToUtf8(const std::filesystem::path& path)
+		{
+			if (path.empty())
+				return {};
+			return stl::utf16_to_utf8(path.native()).value_or("<unprintable path>");
+		}
+
+		std::filesystem::path FromUtf8(std::string_view utf8)
+		{
+			if (utf8.empty())
+				return {};
+			return stl::utf8_to_utf16(utf8).value_or(std::wstring{});
 		}
 	}
 

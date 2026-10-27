@@ -21,7 +21,7 @@ void InteriorSun::DrawSettings()
 	}
 	if (ImGui::SliderFloat(T(TKEY("interior_shadow_distance"), "Interior Shadow Distance"), &settings.InteriorShadowDistance, 1000.0f, 8000.0f)) {
 		*gInteriorShadowDistance = settings.InteriorShadowDistance;
-		auto tes = RE::TES::GetSingleton();
+		auto tes = globals::game::tes;
 		SetShadowDistance(tes && tes->interiorCell);
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -85,6 +85,11 @@ void InteriorSun::PostPostLoad()
 void InteriorSun::EarlyPrepass()
 {
 	isInteriorWithSun = IsInteriorWithSun(RE::TES::GetSingleton()->interiorCell);
+	if (!isInteriorWithSun && !arraysCleared) {
+		ClearArrays();
+		currentCell = nullptr;
+		currentPortalGraph = nullptr;
+	}
 }
 
 bool InteriorSun::IsInteriorWithSun(const RE::TESObjectCELL* cell)

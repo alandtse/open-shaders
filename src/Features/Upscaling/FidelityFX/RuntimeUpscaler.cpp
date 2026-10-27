@@ -20,6 +20,7 @@
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/SehGuard.h"
+#include "Utils/StringUtils.h"
 
 extern ffxFunctions ffxModule;
 
@@ -132,26 +133,29 @@ namespace
 		return true;
 	}
 
-	std::string ToUpperAscii(std::string a_value)
-	{
-		std::transform(a_value.begin(), a_value.end(), a_value.begin(), [](unsigned char c) {
-			return static_cast<char>(std::toupper(c));
-		});
-		return a_value;
-	}
-
 	FidelityFX::Fsr4AdapterSupport ClassifyFsr4AdapterSupport(const DXGI_ADAPTER_DESC& a_desc)
 	{
 		if (a_desc.VendorId != kAmdVendorId)
 			return FidelityFX::Fsr4AdapterSupport::Unsupported;
 
 		std::wstring wideDescription(a_desc.Description);
-		const std::string description = ToUpperAscii(stl::utf16_to_utf8(wideDescription).value_or(""));
+		const std::string description = Util::ToUpperAscii(stl::utf16_to_utf8(wideDescription).value_or(""));
 
 		// Pre-RDNA "HD"-branded GCN cards (e.g. "Radeon HD 7970") fall in the same 7000-7999
 		// numeric range as RX 7000 without being FSR 4.1.1-capable; reject them before the scan.
 		if (description.find("RADEON HD") != std::string::npos)
 			return FidelityFX::Fsr4AdapterSupport::Unsupported;
+
+		if (description.find("NAVI21") != std::string::npos ||
+			description.find("NAVI 21") != std::string::npos ||
+			description.find("NAVI22") != std::string::npos ||
+			description.find("NAVI 22") != std::string::npos ||
+			description.find("NAVI23") != std::string::npos ||
+			description.find("NAVI 23") != std::string::npos ||
+			description.find("NAVI24") != std::string::npos ||
+			description.find("NAVI 24") != std::string::npos) {
+			return FidelityFX::Fsr4AdapterSupport::RadeonRx6000;
+		}
 
 		// Only accept explicit discrete RDNA3 dies here, never a bare "RDNA 3"/"RDNA3" marker --
 		// that also matches RDNA3 integrated GPUs, which FSR 4.1.1 does not support.
@@ -185,6 +189,8 @@ namespace
 				char* parseEnd = nullptr;
 				const unsigned long modelNumber = std::strtoul(modelText.c_str(), &parseEnd, 10);
 				if (parseEnd != modelText.c_str()) {
+					if (modelNumber >= 6000ul && modelNumber < 7000ul)
+						return FidelityFX::Fsr4AdapterSupport::RadeonRx6000;
 					if (modelNumber >= 7000ul && modelNumber < 8000ul)
 						return FidelityFX::Fsr4AdapterSupport::RadeonRx7000;
 					if (modelNumber >= 9000ul && modelNumber < 10000ul)
@@ -194,6 +200,11 @@ namespace
 		}
 
 		// Keep fallbacks for abbreviated naming variants that don't include full numeric model text.
+		if (description.find("RX 60") != std::string::npos ||
+			description.find("RX60") != std::string::npos ||
+			description.find("RADEON 60") != std::string::npos) {
+			return FidelityFX::Fsr4AdapterSupport::RadeonRx6000;
+		}
 		if (description.find("RX 70") != std::string::npos ||
 			description.find("RX70") != std::string::npos ||
 			description.find("RADEON 70") != std::string::npos) {

@@ -47,9 +47,7 @@ public:
 		float FireIntensity;
 
 		float FireCurve;
-		uint EnableRain;
-		float RainMotionStretch;
-		float RainMotionTransparency;
+		float pad0[3];
 
 		float CloudsCurve;
 		float CloudsDesaturation;
@@ -63,7 +61,8 @@ public:
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
-		float ProceduralSunPad[2];
+		float SkyScaleMultiplier = 1.0f;
+		float ProceduralSunPad;
 
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
@@ -77,7 +76,7 @@ public:
 
 		uint EnableVolumetricRays;
 		float VolumetricRaysIntensity;
-		float VolumetricRaysExtinction;
+		float VolumetricRaysDensity;
 		float VolumetricRaysSkyColorAmount;
 
 		float VolumetricRaysDesaturation;
@@ -153,8 +152,8 @@ public:
 		float VolumetricFogShadowAmount;
 		uint VolumetricFogEnableLighting;
 
-		float3 VolumetricRaysSkyColor;
-		float VolumetricRaysPad0;
+		float3 VolumetricRaysSkyColor;  ///< The weather's horizon colour
+		uint VolumetricFogEnableShadows;
 
 		float StarsCurve;
 		float StarsIntensity;
@@ -168,11 +167,24 @@ public:
 
 		float AuroraCurve;
 		float3 NightSkyPad;
+
+		uint VolumetricRaysSampleCount;
+		uint GameVolumetricRaysDisableDithering;
+		float2 GameVolumetricRaysPad0;
+
+		float3 GameVolumetricRaysLightScale;  ///< Ungraded over graded sunlight, so game VL stays lit by the weather's own sunlight
+		float GameVolumetricRaysCustomContribution;
+
+		float3 GameVolumetricRaysCustomColor;
+		float GameVolumetricRaysPad1;
 	};
 	static_assert(sizeof(PerFrame) % 16 == 0);
 	static_assert(offsetof(PerFrame, StarsCurve) % 16 == 0);
 	static_assert(offsetof(PerFrame, VolumetricFogColorFilter) % 16 == 0);
 	static_assert(offsetof(PerFrame, VolumetricRaysSkyColor) % 16 == 0);
+	static_assert(offsetof(PerFrame, VolumetricRaysSampleCount) % 16 == 0);
+	static_assert(offsetof(PerFrame, GameVolumetricRaysLightScale) % 16 == 0);
+	static_assert(offsetof(PerFrame, GameVolumetricRaysCustomColor) % 16 == 0);
 	static_assert(offsetof(PerFrame, EnableCloudsScattering) % 16 == 0);
 	static_assert(offsetof(PerFrame, SkyScatteringColor) % 16 == 0);
 	static_assert(offsetof(PerFrame, SkyScatteringDustTint) % 16 == 0);
@@ -191,7 +203,6 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> blurHCS;
 	winrt::com_ptr<ID3D11ComputeShader> blurVCS;
 	winrt::com_ptr<ID3D11BlendState> scatteringBlendState;
-	winrt::com_ptr<ID3D11BlendState> alphaBlendState;
 
 	std::unique_ptr<Texture2D> vlTexA;
 	std::unique_ptr<Texture2D> vlTexB;
@@ -205,15 +216,12 @@ public:
 	std::unique_ptr<Texture2D> sunRaysTexB;
 	std::unique_ptr<ConstantBuffer> sunRaysCB;
 
-	winrt::com_ptr<ID3D11Texture2D> raindropTexture;
-	winrt::com_ptr<ID3D11ShaderResourceView> raindropSRV;
-	std::string raindropStatus;
-	void LoadRaindropTexture();
-
 	/** @brief Sun color after the preset's sun desaturation and filter, normalized to a peak of 1; tints the sky scattering. */
 	float3 scatteringSunColor = { 1.0f, 1.0f, 1.0f };
 	/** @brief Sun direction used for sky scattering; mirrored below the horizon while the sun disc is hidden. */
 	float3 scatteringSunDirection = { 0.0f, 0.0f, 1.0f };
+	/** @brief Per-channel sunlight before over after the [ENVIRONMENT] direct lighting grade, from the last OverrideWeather. */
+	float3 directLightingUngradeScale = { 1.0f, 1.0f, 1.0f };
 
 	PerFrame GetCommonBufferData();
 	void UpdateSkyScattering(PerFrame& a_data);
@@ -223,7 +231,6 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
-	virtual void Prepass() override;
 	virtual void ClearShaderCache() override;
 
 	/** @brief Resolves settings.presetLocation against PresetManager's freshly rescanned
@@ -243,7 +250,7 @@ public:
 
 	void DrawVolumetricRays();
 
-	/** @brief Draws the ENB [RAYS] screen-space sun (or Masser) shafts additively onto the main target. */
+	/** @brief Draws the ENB [RAYS] screen-space shafts from the sun, or from a moon at night, additively onto the main target. */
 	void DrawSunRays();
 	/** @brief Raymarches and composites preset volumetric scattering. */
 	void DrawVolumetricScattering();
@@ -270,10 +277,6 @@ public:
 	bool ambientGradeCacheValid = false;
 
 	void ModifySky(RE::BSRenderPass* Pass);
-	__declspec(noinline) void ModifyParticle(RE::BSRenderPass* Pass);
-	void ParticleShaderHacks();
-	/** @brief Whether the current preset enables rain rendering. */
-	bool IsRainEnabled();
 
 	/** @brief Whether Effects11 wants to replace the vanilla tonemap this frame. */
 	bool WantsTonemapOwnership();
@@ -283,7 +286,9 @@ public:
 	bool ReplacedTonemapperThisFrame() const;
 
 private:
+	/** @brief Creates the scattering blend state shared by the ray passes on first use; false if creation failed. */
 	bool EnsureScatteringBlendState();
+	/** @brief Compiles the sun ray shaders and (re)creates their half-res targets; false if anything failed. */
 	bool EnsureSunRaysResources(uint32_t a_width, uint32_t a_height);
 
 	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount at which the effect chain's last tonemap output gets presented

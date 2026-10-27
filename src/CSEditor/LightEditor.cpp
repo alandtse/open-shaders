@@ -4,6 +4,7 @@
 #include "../I18n/I18n.h"
 #include "../Menu.h"
 #include "../Utils/Game.h"
+#include "../Utils/StringUtils.h"
 #include "../Utils/UI.h"
 #include "EditorWindow.h"
 #include "RE/B/BSLight.h"
@@ -235,7 +236,7 @@ static bool LoadConfigArray(const std::string& configPath, nlohmann::ordered_jso
 /** @brief Lower-cases and forward-slashes a model path so casing/separator variants compare equal. */
 static std::string NormalizeModelPath(std::string path)
 {
-	std::transform(path.begin(), path.end(), path.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	path = Util::ToLowerAscii(path);
 	std::replace(path.begin(), path.end(), '\\', '/');
 	return path;
 }
@@ -283,11 +284,6 @@ void LightEditor::EnsureEmittanceFormListBuilt()
 	auto* dh = RE::TESDataHandler::GetSingleton();
 	if (!dh)
 		return;
-	auto containsCaseInsensitive = [](const std::string& str, std::string_view needle) {
-		return std::ranges::search(str, needle, [](char a, char b) {
-			return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
-		}).begin() != str.end();
-	};
 
 	auto addForms = [&](auto& formArray, RE::FormType expectedType) {
 		for (auto* form : formArray) {
@@ -296,7 +292,7 @@ void LightEditor::EnsureEmittanceFormListBuilt()
 			std::string edid = clib_util::editorID::get_editorID(form);
 			if (edid.empty())
 				continue;
-			if (!containsCaseInsensitive(edid, "fx") && !containsCaseInsensitive(edid, "weather"))
+			if (!Util::IContains(edid, "fx") && !Util::IContains(edid, "weather"))
 				continue;
 			s_emittanceFormList.emplace_back(std::move(edid), static_cast<RE::TESForm*>(form));
 		}

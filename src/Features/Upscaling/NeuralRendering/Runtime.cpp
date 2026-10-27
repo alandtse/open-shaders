@@ -1,6 +1,7 @@
 #include "Runtime.h"
 
 #include "Utils/FileDigest.h"
+#include "Utils/FileSystem.h"
 #include "Utils/SehGuard.h"
 #include "Utils/WinApi.h"
 
@@ -8,6 +9,8 @@
 #include <nvsdk_ngx.h>
 #include <nvsdk_ngx_defs_dlssd.h>
 
+#include <algorithm>
+#include <map>
 #include <mutex>
 
 namespace NR
@@ -297,6 +300,7 @@ namespace NR
 		NR::Evaluate evaluate = nullptr;
 		Release release = nullptr;
 		std::string version;
+		bool modelPresets = false;
 		int floatSlot = -1;
 		bool initialized = false;
 		struct FeatureDeleter
@@ -420,6 +424,7 @@ namespace NR
 		}
 		// A forced build may carry no version resource, which would otherwise read as an empty runtime.
 		state.version = availability.version.empty() ? std::string{ "unknown" } : availability.version;
+		state.modelPresets = availability.modelPresets;
 		logger::debug("[NeuralRendering] Feature 18 runtime initialized ({})", state.version);
 		impl = std::move(pending);
 	}
@@ -437,19 +442,32 @@ namespace NR
 		if (error)
 			return InspectRuntimeFile(directory);
 
+		struct Cached
+		{
+			std::uintmax_t size = 0;
+			std::filesystem::file_time_type written;
+			RuntimeAvailability availability;
+		};
 		static std::mutex mutex;
-		static std::filesystem::path cachedPath;
-		static std::uintmax_t cachedSize = 0;
-		static std::filesystem::file_time_type cachedWritten;
-		static RuntimeAvailability cached;
+		static std::map<std::filesystem::path, Cached> cache;
 		std::scoped_lock lock(mutex);
-		if (cachedPath != path || cachedSize != size || cachedWritten != written) {
-			cachedPath = path;
-			cachedSize = size;
-			cachedWritten = written;
-			cached = InspectRuntimeFile(directory);
+		auto& entry = cache[path];
+		if (entry.size != size || entry.written != written) {
+			entry = { size, written, InspectRuntimeFile(directory) };
 		}
-		return cached;
+		return entry.availability;
+	}
+
+	std::vector<std::string> DiscoverRuntimeVariants(const std::filesystem::path& directory)
+	{
+		std::vector<std::string> names;
+		for (const auto& child : Util::PathHelpers::SafeChildDirectories(directory)) {
+			const auto name = RuntimeVariantName(child);
+			if (IsValidRuntimeVariant(name) && Util::PathHelpers::SafeExists(child / kRuntimeFileName))
+				names.push_back(name);
+		}
+		std::sort(names.begin(), names.end());
+		return names;
 	}
 
 	void Runtime::ResetFeatures()
@@ -517,7 +535,7 @@ namespace NR
 			writer.SetFloat("DLSSNR.Scale", 1.0f);
 			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
 			writer.SetUInt("DLSSNR.Upscaling", 0u);
-			writer.SetUInt("DLSSNR.Hint.Render.Preset", 0u);
+			writer.SetUInt("DLSSNR.Hint.Render.Preset", state.modelPresets ? kRuntimeModelPreset[std::min(tuning.modelPreset, Tuning::kMaxModelPreset)] : 0u);
 			const auto flags = static_cast<unsigned int>(
 				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
 			writer.SetUInt("Feature_Flags", flags);

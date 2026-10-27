@@ -44,11 +44,13 @@ import argparse
 import configparser
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -75,6 +77,11 @@ def stage_merged_shaders(stage: Path) -> None:
 # for them at all on the other (verified against live SE and VR installs).
 RUNTIME_EXCLUDED_FEATURES = {"SE": {"VR"}, "VR": set()}
 
+# Must match Util::CacheInvalidation::BuildCompileFlagsTag(false, false): the shipped cache is built with default flags.
+DEFAULT_COMPILE_FLAGS_TAG = "pp=0;afc=0"
+DEFAULT_STANDALONE_FLAGS = 34818  # Strictness, optimization level 3 and skip validation.
+D3D11_MAX_TEXTURE_DIMENSION = 16384
+
 # Features whose required companion DLL is not bundled with the AIO.
 DEFAULT_DISABLED_COMPANION_FEATURES = {"HorizonFix"}
 
@@ -95,17 +102,45 @@ def feature_define_map(source_root: Path) -> dict:
     return {short: define for short, define, _ in feature_declarations(source_root)}
 
 
-def single_shader_feature_defines(source_root: Path) -> dict:
-    """Discover feature defines with an unconditional single-shader-type declaration."""
+def static_feature_defines(source_root: Path) -> dict:
+    """Discover feature defines with static all-type or shader-type predicates."""
     predicate = re.compile(
-        r'HasShaderDefine\(RE::BSShader::Type\s+(\w+)\)\s+override\s*'
-        r'\{\s*return\s+\1\s*==\s*RE::BSShader::Type::(\w+)\s*;\s*\}')
+        r'HasShaderDefine\(RE::BSShader::Type\s*(\w*)\)\s+override\s*'
+        r'\{\s*return\s+([^;]+);\s*\}')
     defines = {}
     for _, define, text in feature_declarations(source_root):
         match = predicate.search(text)
-        if define and match:
-            defines.setdefault(match.group(2), set()).add(define)
+        if not define or not match:
+            continue
+        variable, expression = match.groups()
+        if expression.strip() == "true":
+            defines.setdefault("*", set()).add(define)
+            continue
+        terms = expression.split("||")
+        shader_types = [re.fullmatch(
+            rf'\s*{re.escape(variable)}\s*==\s*RE::BSShader::Type::(\w+)\s*', term)
+            for term in terms]
+        if variable and all(shader_types):
+            for shader_type in shader_types:
+                defines.setdefault(shader_type.group(1), set()).add(define)
     return defines
+
+
+def default_reverse_z_defines(source_root: Path) -> set:
+    """Reverse Z's all-shader define when its boot setting defaults to enabled."""
+    for short, define, text in feature_declarations(source_root):
+        if short == "ReverseZ" and define and re.search(
+                r"\bbool\s+EnableReverseZ(?:Buffer)?\s*=\s*true\s*;", text):
+            return {define}
+    return set()
+
+
+def unsupported_runtime_features(source_root: Path, runtime: str) -> set:
+    """Features the production loader refuses in a non-developer VR session."""
+    if runtime != "VR":
+        return set()
+    return {short for short, _, text in feature_declarations(source_root)
+            if re.search(r'SupportsVR\(\)\s+override\s*\{\s*return\s+false\s*;', text)}
 
 
 def default_disabled_features(source_root: Path) -> set:
@@ -463,8 +498,8 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     include_stems limits sections to the target profile (AIO default install);
     disabled_stems (default-disabled stages plus required external dependencies) marks
     which of those sections a default install actually loads with Enabled=false."""
-    disabled_stems = disabled_stems or set()
-    lines = ["[Cache]", f"PluginVersion = {plugin_version}", "", ""]
+    disabled_stems = (disabled_stems or set()) | unsupported_runtime_features(REPO, runtime)
+    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
         if ini_path.stem in RUNTIME_EXCLUDED_FEATURES[runtime]:
@@ -478,7 +513,8 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
             print(f"WARN: {ini_path.name} has no Info/Version; skipped", file=sys.stderr)
             continue
         if ini_path.stem in disabled_stems:
-            lines += [f"[{ini_path.stem}]", "Enabled = false", "Version = ", "", ""]
+            retained_version = version if ini_path.stem in DEFAULT_DISABLED_COMPANION_FEATURES else ""
+            lines += [f"[{ini_path.stem}]", "Enabled = false", f"Version = {retained_version}", "", ""]
         else:
             lines += [f"[{ini_path.stem}]", "Enabled = true", f"Version = {version}", "", ""]
         count += 1
@@ -494,6 +530,15 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
     import yaml
 
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    source_root = source_root or REPO
+    runtime = "VR" if "VR" in cfg.get("common_defines", []) else "SE"
+    feature_names = feature_define_map(source_root)
+    global_defines = default_reverse_z_defines(source_root)
+    reverse_z = feature_names.get("ReverseZ")
+    if reverse_z and reverse_z not in global_defines:
+        drop = drop | {reverse_z}
+    drop = drop | {feature_names[name] for name in unsupported_runtime_features(source_root, runtime)
+                   if feature_names.get(name)}
 
     def scrub(node):
         if isinstance(node, dict):
@@ -507,7 +552,8 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
                 scrub(v)
 
     scrub(cfg)
-    feature_defines = single_shader_feature_defines(source_root or REPO)
+    source_root = source_root or REPO
+    feature_defines = static_feature_defines(source_root)
     for shader in cfg["shaders"]:
         for stage in shader["configs"].values():
             common = {define.split("=", 1)[0] for define in stage.get("common_defines", [])}
@@ -515,7 +561,11 @@ def filter_profile_defines(config: Path, out: Path, drop: set, source_root: Path
                 shader_type = entry["entry"].split(":", 1)[0]
                 defines = entry.get("defines", [])
                 present = common | {define.split("=", 1)[0] for define in defines}
-                added = feature_defines.get(shader_type, set()) - drop - present
+                declared = feature_defines.get(shader_type, set())
+                # Utility's separate define builder only injects Reverse Z.
+                if shader_type != "Utility":
+                    declared = declared | feature_defines.get("*", set())
+                added = (global_defines | declared) - drop - present
                 if added:
                     entry["defines"] = defines + sorted(added)
     out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
@@ -590,13 +640,207 @@ def cache_shader_permutations(config: Path, runtime: str) -> dict:
     return permutations
 
 
+def standalone_compile_key(source: str, entry: str, profile: str, flags: int, defines: list) -> str:
+    """Match Util::StandaloneShaderCacheKey's portable, canonical bytecode key."""
+    from hlslkit.shader_digest import hash_string, to_hex
+
+    parts = ["standalone-v1", source, entry, profile, str(flags)]
+    for name, value in sorted(dict(defines).items()):
+        parts.extend((name, "0" if value is None else "1"))
+        if value is not None:
+            parts.append(value)
+    return to_hex(hash_string("\0".join(parts)))
+
+
+def default_standalone_requests(requests: list, runtime: str, source_root: Path) -> list:
+    """Expand resolution-dependent default shadows and the VR-only standalone paths."""
+    result = []
+    for request in requests:
+        if request["kind"] != "standalone" or request["source"] != "ScreenSpaceShadows/RaymarchCS.hlsl":
+            result.append(request)
+            continue
+        maximum = math.ceil(60 * D3D11_MAX_TEXTURE_DIMENSION / math.sqrt(1920 * 1080) / 8) * 8
+        sample_counts = [64] if runtime == "VR" else range(8, maximum + 1, 8)
+        for count in sample_counts:
+            for right in ([False, True] if runtime == "VR" else [False]):
+                defines = dict(request["defines"])
+                defines["SAMPLE_COUNT"] = str(count)
+                if right:
+                    defines["RIGHT"] = ""
+                result.append({**request, "defines": sorted(defines.items())})
+    additional = {"Upscaling/CameraMotionVectorsPS.hlsl": ("ps_5_0", {})}
+    if runtime == "VR":
+        additional.update({
+            "ScreenSpaceShadows/StereoSyncCS.hlsl": ("cs_5_0", {"FRAMEBUFFER": "", "TERRAIN_BLENDING": ""}),
+            "Upscaling/ClearHMDMaskCS.hlsl": ("cs_5_0", {}),
+        })
+    for source, (profile, defines) in additional.items():
+        if not (source_root / "package/Shaders" / source).is_file() and not any(
+                (directory / "Shaders" / source).is_file() for directory in (source_root / "features").iterdir()):
+            continue
+        stage = "PSHADER" if profile.startswith("ps_") else "COMPUTESHADER"
+        defines.update({stage: "", "WINPC": "", "DX11": ""})
+        result.append({"kind": "standalone", "runtime": runtime, "source": source, "profile": profile,
+                       "entryPoint": "main", "flags": DEFAULT_STANDALONE_FLAGS, "defines": sorted(defines.items())})
+    return result
+
+
+def extra_shader_requests(source_root: Path, runtime: str) -> dict:
+    """Resolve live-captured additional engine and standalone requests for the default profile."""
+    path = source_root / ".github/configs/shader-cache-inputs.json"
+    if not path.is_file():
+        return {}
+    capture = json.loads(path.read_text(encoding="utf-8"))
+    if capture.get("schemaVersion") != 1 or capture.get("runtime") not in ("SE", "VR"):
+        raise ValueError("Invalid shader-cache input capture")
+    captured_runtime = capture["runtime"]
+    strip, _, _ = profile_strip_defines(source_root, "aio", runtime)
+    static = static_feature_defines(source_root)
+    global_defines = default_reverse_z_defines(source_root)
+    excluded_sources = set()
+    unsupported = unsupported_runtime_features(source_root, runtime)
+    for directory in (source_root / "features").iterdir():
+        if any(ini.stem in unsupported for ini in directory.glob("Shaders/Features/*.ini")):
+            excluded_sources.update(file.relative_to(directory / "Shaders").as_posix()
+                                    for file in (directory / "Shaders").rglob("*.hlsl"))
+    requests = {}
+    for original in default_standalone_requests(capture["requests"], runtime, source_root):
+        request = dict(original)
+        source = request["source"]
+        if Path(source).is_absolute() or ":" in source or ".." in Path(source).parts or "\\" in source:
+            raise ValueError(f"Unsafe captured shader source: {source}")
+        if source in excluded_sources:
+            continue
+        if request["kind"] == "standalone":
+            if request["flags"] != DEFAULT_STANDALONE_FLAGS:
+                raise ValueError("Captured standalone shaders must use default release disk-cache flags")
+            defines = {name: value for name, value in request["defines"]
+                       if name not in {"VR", "REVERSE_Z"} and name not in _COMPILE_ONLY_DEFINES - {"PSHADER", "VSHADER"}}
+            if runtime == "VR":
+                defines["VR"] = ""
+            defines.update(dict.fromkeys(global_defines, ""))
+            request["defines"] = sorted(defines.items())
+            digest = standalone_compile_key(source, request["entryPoint"], request["profile"],
+                                            request["flags"], request["defines"])
+            suffix = ".vso" if request["profile"].startswith("vs_") else ".pso" if request["profile"].startswith("ps_") else ".cso"
+            relative = (Path(source).parent / f"{Path(source).name}.{request['entryPoint']}.{digest}{suffix}").as_posix()
+            request["key"] = "standalone:" + digest
+        elif request["kind"] == "engine":
+            stage = request["stage"]
+            stage_define = {"Vertex": "VSHADER", "Pixel": "PSHADER", "Compute": "CSHADER"}[stage]
+            names = {define.partition("=")[0]: define.partition("=")[2] or None
+                     for define in request["key"].split(":", 2)[2].split()}
+            names.pop("REVERSE_Z", None)
+            for name in strip:
+                names.pop(name, None)
+            declared = global_defines | static.get(request["type"], set())
+            if request["type"] != "Utility":
+                declared |= static.get("*", set())
+            names.update({name: None for name in declared - strip if name not in names})
+            request["key"] = f"{request['shader']}:{stage}:" + "".join(
+                name + (f"={value}" if value else "") + " " for name, value in sorted(names.items()))
+            request["defines"] = sorted(names.items()) + [(stage_define, None)]
+            if runtime == "VR":
+                request["defines"].append(("VR", None))
+            request["entryPoint"] = "main"
+            request["profile"] = {"Vertex": "vs_5_0", "Pixel": "ps_5_0", "Compute": "cs_5_0"}[stage]
+            relative = request["path"]
+            if runtime != captured_runtime and request["type"] == "ImageSpace":
+                descriptor = int(Path(relative).stem, 16)
+                source_index, target_index = (0, 1) if captured_runtime == "SE" else (1, 0)
+                mapped = next((pair[target_index] for pair in IMAGESPACE_DIRS if pair[source_index] == descriptor), None)
+                if mapped is None and descriptor < 256:
+                    raise ValueError(f"No runtime descriptor mapping for captured shader {relative}")
+                if mapped is not None:
+                    relative = f"{request['shader']}/{mapped:X}{Path(relative).suffix}"
+        else:
+            raise ValueError("Unknown captured shader request kind")
+        if Path(relative).is_absolute() or ":" in relative or ".." in Path(relative).parts:
+            raise ValueError(f"Unsafe captured shader cache path: {relative}")
+        if relative in requests:
+            inputs = ("source", "entryPoint", "profile", "flags", "defines", "key")
+            if any(requests[relative].get(field) != request.get(field) for field in inputs):
+                raise ValueError(f"Conflicting captured shader requests: {relative}")
+        requests[relative] = request
+    return requests
+
+
+def release_shader_permutations(config: Path, runtime: str, source_root: Path) -> dict:
+    """Combine the validation matrix with separately captured cache coverage."""
+    permutations = cache_shader_permutations(config, runtime)
+    for relative, request in extra_shader_requests(source_root, runtime).items():
+        permutation = (request["source"], request["key"])
+        if relative in permutations and permutations[relative] != permutation:
+            raise ValueError(f"Captured shader conflicts with validation matrix: {relative}")
+        permutations[relative] = permutation
+    return permutations
+
+
+def capture_shader_inputs(log: Path, output: Path) -> None:
+    """Generate supplementary cache coverage from the runtime's structured debug records."""
+    records = [json.loads(line.split("ShaderCacheInput ", 1)[1]) for line in
+               log.read_text(encoding="utf-8-sig", errors="replace").splitlines() if "ShaderCacheInput " in line]
+    runtimes = {record["runtime"] for record in records}
+    if len(runtimes) != 1:
+        raise ValueError("Capture must contain exactly one live runtime")
+    runtime = runtimes.pop()
+    strip, _, _ = profile_strip_defines(REPO, "aio", runtime)
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        config = filter_profile_defines(CONFIGS[runtime], Path(directory) / "profile.yaml", strip)
+        base = cache_shader_permutations(config, runtime)
+    requests = {}
+    for record in records:
+        if record["kind"] == "standalone":
+            if record["flags"] not in (3, DEFAULT_STANDALONE_FLAGS):
+                raise ValueError("Capture uses nondefault compiler flags or has disk caching disabled")
+            record["flags"] = DEFAULT_STANDALONE_FLAGS
+            record["defines"] = [[name, value] for name, value in record["defines"]
+                                 if name not in _COMPILE_ONLY_DEFINES - {"PSHADER", "VSHADER"}]
+        if record["kind"] == "engine" and record["path"] in base:
+            if base[record["path"]] != (record["source"], record["key"]):
+                raise ValueError(f"Live feature profile differs from the release profile: {record['path']}")
+            continue
+        identity = json.dumps(record, sort_keys=True)
+        requests[identity] = record
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({"schemaVersion": 1, "runtime": runtime,
+                                 "requests": [requests[key] for key in sorted(requests)]}, indent=2) + "\n", encoding="utf-8")
+    print(f"Captured {len(requests)} supplementary shader requests -> {output}")
+
+
+def compile_extra_shaders(cache: Path, shaders: Path, runtime: str, fxc: str, jobs: int) -> None:
+    """Compile the missing engine permutations and standalone feature shaders with release flags."""
+    requests = extra_shader_requests(REPO, runtime)
+    def compile_one(item):
+        relative, request = item
+        destination = cache / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        command = [fxc, "/nologo", "/T", request["profile"], "/E", request["entryPoint"],
+                   "/O3", "/Ges", "/Vd", "/I", str(shaders), "/Fo", str(destination)]
+        for name, value in request["defines"]:
+            # FXC consumes the next argument when an empty macro ends immediately after '='.
+            command.append("/D" + (name if value is None else f"{name}={value or ' '}"))
+        result = subprocess.run(command + [str(shaders / request["source"])], capture_output=True, text=True)
+        diagnostics = result.stdout + result.stderr
+        warnings = re.findall(r"^.*warning (X\d+):.*$", diagnostics, re.MULTILINE)
+        if result.returncode or any(code != "X1519" for code in warnings):
+            return f"Supplementary shader failed release validation: {relative}\n{diagnostics}"
+        return None
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        failures = [failure for failure in pool.map(compile_one, requests.items()) if failure]
+    if failures:
+        raise ValueError("\n".join(failures))
+    print(f"{runtime}: compiled {len(requests)} supplementary cache shaders")
+
+
 def shader_cache_manifest_entries(cache_dir: Path, shader_root: Path, runtime: str, config: Path) -> dict:
     """Hash remapped blobs using the release-profile config that compiled them."""
     from hlslkit.shader_digest import combine_hashes, compute_shader_content_digest, hash_string, to_hex
 
     if sys.platform != "win32":
         raise RuntimeError("Shader cache manifests require Windows to match the runtime's include sort order")
-    permutations = cache_shader_permutations(config, runtime)
+    permutations = release_shader_permutations(config, runtime, REPO)
     global_digest = hash_string("VR;" if runtime == "VR" else "")
     source_digests = {}
     entries = {}
@@ -612,7 +856,11 @@ def shader_cache_manifest_entries(cache_dir: Path, shader_root: Path, runtime: s
             if digest is None:
                 raise ValueError(f"Cannot hash shader source {source}")
             source_digests[source] = combine_hashes(digest, global_digest)
-        entries[relative_path] = to_hex(combine_hashes(source_digests[source], hash_string(key)))
+        if key.startswith("standalone:"):
+            digest = compute_shader_content_digest(shader_root / source, shader_root)
+            entries[relative_path] = to_hex(combine_hashes(digest, int(key.split(":", 1)[1], 16)))
+        else:
+            entries[relative_path] = to_hex(combine_hashes(source_digests[source], hash_string(key)))
     return entries
 
 
@@ -647,12 +895,12 @@ def record_compile_inputs(cache_dir: Path, shaders: Path, runtime: str) -> None:
     print(f"{runtime}: recorded compile inputs for {len(record['entries'])} blobs")
 
 
-def profile_strip_defines(source_root: Path, profile: str) -> tuple:
+def profile_strip_defines(source_root: Path, profile: str, runtime: str = "SE") -> tuple:
     """(strip_defines, include_stems, disabled_stems): defines absent from the target
     profile's runtime (non-AIO features + default-disabled), the manifest stems, and
     which of those stems a default install ships Enabled=false for (see write_info_ini)."""
     defines = feature_define_map(source_root)
-    disabled = default_disabled_features(source_root) | DEFAULT_DISABLED_COMPANION_FEATURES
+    disabled = default_disabled_features(source_root) | DEFAULT_DISABLED_COMPANION_FEATURES | unsupported_runtime_features(source_root, runtime)
     all_stems = {p.stem for p in (source_root / "features").glob("*/Shaders/Features/*.ini")}
     include = aio_feature_stems(source_root) if profile == "aio" else all_stems
     excluded = (all_stems - include) | disabled
@@ -687,7 +935,7 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
     """Turn a validation-produced compile dir into a shippable cache. The compile
     itself must have used the profile config (--emit-profile-config), so this only
     prunes sidecars, remaps ImageSpace dirs, and writes the profile manifest."""
-    _, include, disabled = profile_strip_defines(REPO, profile)
+    _, include, disabled = profile_strip_defines(REPO, profile, runtime)
     config = cache_dir / "CompileConfig.yaml"
     if not config.is_file():
         raise ValueError("Compiled cache is missing CompileConfig.yaml; rebuild it with its compile configuration")
@@ -718,6 +966,11 @@ def main() -> int:
         help="feature profile the cache targets; aio = default install (the cache is INVALID once any extra feature is added)")
     ap.add_argument("--emit-profile-config", nargs=2, metavar=("IN", "OUT"),
         help="write a compile config with the profile's current feature defines and exit")
+    ap.add_argument("--capture-inputs", nargs=2, metavar=("LOG", "OUT"),
+        help="capture supplementary engine and standalone cache requests from a live debug log")
+    ap.add_argument("--compile-extra", metavar="CACHE",
+        help="compile captured supplementary cache requests into an existing release cache")
+    ap.add_argument("--fxc", help="fxc.exe used for supplementary release shader compilation")
     ap.add_argument("--source-root", help="repo checkout to take shaders/configs/version from (default: this repo; use a release-tag checkout to seed an old release)")
     ap.add_argument("--out", default="dist/shader-cache", help="output root")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -750,6 +1003,14 @@ def main() -> int:
     if args.check_is_disabled_by_default_formula:
         return check_is_disabled_by_default_formula(REPO)
     plugin_version = args.plugin_version or default_plugin_version()
+    if args.capture_inputs:
+        capture_shader_inputs(Path(args.capture_inputs[0]), Path(args.capture_inputs[1]))
+        return 0
+    if args.compile_extra:
+        if not args.shader_dir or not args.fxc or args.runtime == "both":
+            raise SystemExit("--compile-extra requires --shader-dir, --fxc and a single --runtime")
+        compile_extra_shaders(Path(args.compile_extra), Path(args.shader_dir), args.runtime, args.fxc, args.jobs)
+        return 0
     if args.emit_profile_config:
         strip, _, _ = profile_strip_defines(REPO, args.profile)
         filter_profile_defines(Path(args.emit_profile_config[0]), Path(args.emit_profile_config[1]), strip)
@@ -774,7 +1035,7 @@ def main() -> int:
         cache_dir = out_root / rt / "ShaderCache"
         cache_dir.mkdir(parents=True, exist_ok=True)
         if not args.skip_compile:
-            strip, _, _ = profile_strip_defines(REPO, args.profile)
+            strip, _, _ = profile_strip_defines(REPO, args.profile, rt)
             config = filter_profile_defines(CONFIGS[rt], out_root / f"config-{rt}.yaml", strip)
             cmd = [
                 "hlslkit-compile",
@@ -783,21 +1044,26 @@ def main() -> int:
                 "--config", str(config),
                 "--strip-debug-defines",
                 "--optimization-level", "3",
-                # Cache build, not validation: known-benign warnings must not fail the job
-                # (X1519 WATER macro redefinition is long-standing and suppressed in CI validation).
                 "--suppress-warnings", "X1519",
-                "--max-warnings", "999999",
+                "--max-warnings", "0",
                 "--jobs", str(args.jobs),
             ]
+            if args.fxc:
+                cmd.extend(("--fxc", args.fxc))
             print("run:", " ".join(cmd))
             r = subprocess.run(cmd)
             if r.returncode != 0:
                 print(f"hlslkit-compile failed for {rt} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
+            compiler = args.fxc or shutil.which("fxc")
+            if extra_shader_requests(REPO, rt):
+                if not compiler:
+                    raise ValueError("Supplementary release cache compilation requires --fxc")
+                compile_extra_shaders(cache_dir, stage, rt, compiler, args.jobs)
             prune_non_cache_files(cache_dir)
             remap_imagespace_dirs(cache_dir, rt)
             write_shader_cache_manifest(cache_dir, stage, rt, config)
-        _, include, disabled = profile_strip_defines(REPO, args.profile)
+        _, include, disabled = profile_strip_defines(REPO, args.profile, rt)
         n = write_info_ini(cache_dir, stage, plugin_version, rt, include, disabled)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
         print(f"{rt}: {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")

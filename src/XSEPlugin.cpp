@@ -165,7 +165,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* message)
 bool Load()
 {
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.269.0", true);
+		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.281.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");

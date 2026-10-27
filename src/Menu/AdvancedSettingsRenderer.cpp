@@ -199,10 +199,13 @@ void AdvancedSettingsRenderer::RenderShaderCompileFlags()
 	Util::DrawSectionHeader(T("menu.advanced.compile_flags_header", "Compile Flags"));
 
 	// Shader Defines input
-	auto shaderDefines = globals::state->GetDefinesString();
-	if (ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines)) {
-		globals::state->SetDefines(shaderDefines);
-	}
+	// SetDefines normalizes the string, so the buffer is only reloaded while the input is idle.
+	static std::string shaderDefines;
+	static bool editingDefines = false;
+	if (!editingDefines)
+		shaderDefines = globals::state->GetDefinesString();
+	ImGui::InputText(T("menu.advanced.shader_defines", "Shader Defines"), &shaderDefines);
+	editingDefines = ImGui::IsItemActive();
 	if (ImGui::IsItemDeactivatedAfterEdit() || (ImGui::IsItemActive() &&
 												   (ImGui::IsKeyPressed(ImGuiKey_Enter) ||
 													   ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)))) {
@@ -1132,7 +1135,7 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 		ImGui::Spacing();
 		// Test Conditions button - runs a set of console commands to prepare the player for testing
 		if (ImGui::Button(T("menu.advanced.test_conditions", "Test Conditions"), { -1, 0 })) {
-			if (auto ui = RE::UI::GetSingleton(); ui && !ui->menuStack.empty() && RE::PlayerCharacter::GetSingleton()) {
+			if (auto ui = globals::game::ui; ui && !ui->menuStack.empty() && globals::game::player) {
 				RE::Console::ExecuteCommand("player.setav speedmult 1000");
 				RE::Console::ExecuteCommand("tgm");
 				RE::Console::ExecuteCommand("tcl");

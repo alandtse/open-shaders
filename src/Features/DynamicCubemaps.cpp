@@ -128,11 +128,12 @@ void DynamicCubemaps::DrawSettings()
 
 void DynamicCubemaps::LoadSettings(json& o_json)
 {
+	const auto previousSSR = settings.EnabledSSR;
 	settings = o_json;
 	if (globals::game::isVR) {
 		Util::LoadGameSettings(iniVRCubeMapSettings);
 	}
-	recompileFlag = true;
+	recompileFlag |= bootSnapshot.IsLatched() && previousSSR != settings.EnabledSSR;
 }
 
 void DynamicCubemaps::SaveSettings(json& o_json)
@@ -145,12 +146,13 @@ void DynamicCubemaps::SaveSettings(json& o_json)
 
 void DynamicCubemaps::RestoreDefaultSettings()
 {
+	const auto previousSSR = settings.EnabledSSR;
 	settings = {};
 	if (globals::game::isVR) {
 		Util::ResetGameSettingsToDefaults(iniVRCubeMapSettings);
 		Util::ResetGameSettingsToDefaults(hiddenVRCubeMapSettings);
 	}
-	recompileFlag = true;
+	recompileFlag |= bootSnapshot.IsLatched() && previousSSR != settings.EnabledSSR;
 }
 
 void DynamicCubemaps::DataLoaded()

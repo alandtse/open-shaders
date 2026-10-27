@@ -1,30 +1,61 @@
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
+#include "Common/Game.hlsli"
 #include "Common/Permutation.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
+
+#if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_REFRACTION)
+cbuffer RainDrawData : register(b7)
+{
+	float2 RainSourceScale;
+	float2 RainRasterSize;
+	uint RainTestDepth;
+	uint RainSceneAvailable;
+	float2 RainDrawPadding;
+};
+
+float2 GetRainProjectionJitter(uint eyeIndex)
+{
+	float4 probe = mul(FrameBuffer::CameraProj[eyeIndex], float4(0, 0, 1, 0));
+	float4 stableProbe = mul(FrameBuffer::CameraProjUnjittered[eyeIndex], float4(0, 0, 1, 0));
+	return probe.xy / probe.w - stableProbe.xy / stableProbe.w;
+}
+#endif
 
 #if !defined(DYNAMIC_CUBEMAPS) && defined(IBL)
 #	undef IBL
 #endif
 
+#if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_REFRACTION) && defined(DYNAMIC_CUBEMAPS)
+#	define REFRACTIVE_RAIN
+namespace Raindrop
+{
+	static const float Radius = 0.003 / GAME_UNIT_TO_M;
+	static const float MinimumRadiusPixels = 1.0;
+}
+#endif
+
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
-#if !defined(ENVCUBE)
+#	if !defined(ENVCUBE)
 	float4 Normal: NORMAL0;
-#endif
+#	endif
 	float4 TexCoord0: TEXCOORD0;
-#if defined(ENVCUBE)
+#	if defined(ENVCUBE)
 	float4
-#else
+#	else
 	int4
-#endif
+#	endif
 		TexCoord1: TEXCOORD1;
-#if defined(VR)
+#	if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 struct VS_OUTPUT
 {
@@ -39,8 +70,8 @@ struct VS_OUTPUT
 	float CullDistance: SV_CullDistance0;  // p11
 	uint EyeIndex: EYEIDX0;
 #endif  // VR
-#if defined(ENVCUBE) && defined(RAIN) && defined(EFFECTS11)
-	float2 RaindropData: TEXCOORD2;
+#if defined(REFRACTIVE_RAIN)
+	float3 RaindropData: TEXCOORD2;
 #endif
 };
 
@@ -109,27 +140,46 @@ VS_OUTPUT main(VS_INPUT input)
 	msPosition.xyz = normalizedPosition * fVars2.xxx + (-(fVars2.x * 0.5).xxx + fVars1.xyz);
 	msPosition.w = 1;
 
-	float4 viewPosition = mul(WorldViewProj[eyeIndex], msPosition);
-#		if defined(RAIN)
-	float3 rainVelocity = Velocity.xyz;
-#			if defined(EFFECTS11)
-	if (SharedData::enbSettings.EnableRain) {
-		float velLen = length(rainVelocity);
-		if (velLen > 0) {
-			float3 normVel = rainVelocity / velLen;
-			rainVelocity = lerp(normVel, rainVelocity, SharedData::enbSettings.RainMotionStretch);
-		}
-	}
+#		if defined(REFRACTIVE_RAIN)
+	vsout.RaindropData.z = 1.0;
+	if (SharedData::rainRefractionSettings.Enable) {
+		float2 corner = sign(input.TexCoord1.xy);
+		float3 motion = Velocity.xyz * abs(input.TexCoord1.y) * SharedData::rainRefractionSettings.MotionStretch;
+		float4 center = msPosition - float4(Velocity.xyz * 0.5, 0);
+		float4 leading = mul(WorldViewProj[eyeIndex], center + float4(motion * 0.5, 0));
+		float4 trailing = mul(WorldViewProj[eyeIndex], center - float4(motion * 0.5, 0));
+		float4 dropPosition = lerp(trailing, leading, corner.y * 0.5 + 0.5);
+		float2 renderSize = any(RainRasterSize <= 0.0) ? SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy : RainRasterSize;
+#			if defined(VR)
+		renderSize.x *= 0.5;
 #			endif
-	float4 adjustedMsPosition = msPosition - float4(rainVelocity, 0);
-	float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
-	float4 adjustedViewPosition = mul(WorldViewProj[eyeIndex], adjustedMsPosition);
-	float4 finalViewPosition = lerp(adjustedViewPosition, viewPosition, positionBlendParam);
-#		else
-	float4 finalViewPosition = viewPosition;
+		float2 radiusClip = Raindrop::Radius * SharedData::rainRefractionSettings.TextureRadiusScale * abs(float2(FrameBuffer::CameraProj[eyeIndex][0][0], FrameBuffer::CameraProj[eyeIndex][1][1]));
+		float2 radiusPixels = radiusClip * renderSize * 0.5 / max(abs(dropPosition.w), EPSILON_DIVISION);
+		float rasterScale = max(1.0, Raindrop::MinimumRadiusPixels / max(min(radiusPixels.x, radiusPixels.y), EPSILON_DIVISION));
+		float2 motionPixels = (leading.xy / max(abs(leading.w), EPSILON_DIVISION) - trailing.xy / max(abs(trailing.w), EPSILON_DIVISION)) * renderSize * 0.5;
+		float radius = sqrt(radiusPixels.x * radiusPixels.y);
+		float rasterRadius = radius * rasterScale;
+		float motionLength = length(motionPixels);
+		float dropArea = Math::PI * radius * radius + 2.0 * radius * motionLength;
+		float rasterArea = Math::PI * rasterRadius * rasterRadius + 2.0 * rasterRadius * motionLength;
+		vsout.RaindropData.z = saturate(dropArea / max(rasterArea, EPSILON_DIVISION));
+		vsout.Position = dropPosition;
+		vsout.Position.xy += corner * radiusClip * rasterScale;
+	} else
 #		endif
-	vsout.Position.xy = positionOffset + finalViewPosition.xy;
-	vsout.Position.zw = finalViewPosition.zw;
+	{
+		float4 viewPosition = mul(WorldViewProj[eyeIndex], msPosition);
+#		if defined(RAIN)
+		float4 adjustedMsPosition = msPosition - float4(Velocity.xyz, 0);
+		float positionBlendParam = 0.5 * (1 + input.TexCoord1.y);
+		float4 adjustedViewPosition = mul(WorldViewProj[eyeIndex], adjustedMsPosition);
+		float4 finalViewPosition = lerp(adjustedViewPosition, viewPosition, positionBlendParam);
+#		else
+		float4 finalViewPosition = viewPosition;
+#		endif
+		vsout.Position.xy = positionOffset + finalViewPosition.xy;
+		vsout.Position.zw = finalViewPosition.zw;
+	}
 	vsout.Color.xyz = 1.0.xxx;
 	vsout.Color.w = fVars1.w;
 
@@ -212,8 +262,13 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.Color.xyz = color.xyz;
 #	endif
 
-#	if defined(ENVCUBE) && defined(RAIN) && defined(EFFECTS11)
-	vsout.RaindropData.xy = step(0.0, input.TexCoord1.xy);
+#	if defined(REFRACTIVE_RAIN)
+	// Atlas coordinates vary per streak; corner signs identify the full normal map within each drop.
+	vsout.RaindropData.xy = lerp(SharedData::rainRefractionSettings.TextureBounds.xy, SharedData::rainRefractionSettings.TextureBounds.zw, step(0, input.TexCoord1.xy));
+#	endif
+#	if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_REFRACTION)
+	if (RainTestDepth)
+		vsout.Position.xy -= GetRainProjectionJitter(eyeIndex) * vsout.Position.w;
 #	endif
 
 #	ifdef VR
@@ -254,8 +309,10 @@ Texture2D<float4> TexGrayscaleTexture : register(t1);
 Texture2D<float4> TexPrecipitationOcclusionTexture : register(t2);
 Texture2D<float4> TexUnderwaterMask : register(t3);
 #	endif
-#	if defined(ENVCUBE) && defined(RAIN) && defined(EFFECTS11)
+#	if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_REFRACTION)
 Texture2D<float4> TexRaindropNormals : register(t80);
+Texture2D<float4> TexRainScene : register(t81);
+Texture2D<float> TexRainDepth : register(t82);
 #	endif
 
 cbuffer PerGeometry : register(b2)
@@ -286,10 +343,6 @@ cbuffer PerGeometry : register(b2)
 #	if defined(LIGHT_LIMIT_FIX)
 static const float ParticleLightDirectionEpsilon = 1e-5;
 static const float ParticleLightIntensityCutoff = 1e-5;
-static const float RainForwardScatterFloor = 0.3;
-static const float RainForwardScatterPower = 4.0;
-static const float RainGlintPower = 48.0;
-static const float RainHalfVectorEpsilon = 1e-8;
 
 bool GetLightCluster(float3 positionWS, uint eyeIndex, out uint lightOffset, out uint lightCount)
 {
@@ -328,6 +381,110 @@ float GetPointLightIntensity(LightLimitFix::Light light, float3 positionWS, uint
 }
 #	endif
 
+#	if defined(REFRACTIVE_RAIN)
+#		include "Common/BRDF.hlsli"
+
+namespace Raindrop
+{
+	static const float WaterF0 = 0.02;
+	static const float Roughness = 0.3;              // Perceptual roughness of the drop's surface highlight
+	static const float TransmissionExponent = 32.0;  // Tightness of the glow of a light seen through a drop
+	static const float HalfVectorEpsilon = 1e-8;     // Keeps the half vector finite when the light is opposite the view
+}
+#	endif
+
+/** @brief What a light shades: an unlit particle that takes light as-is, or a raindrop surface. */
+struct ParticleSurface
+{
+	bool isRaindrop;
+	float3 normal;
+	float3 view;
+	float3 refractDir;  ///< View ray continued through the drop
+};
+
+/** @brief Light a particle sends toward the viewer from lightColor scaled by intensity, arriving along L (toward the light). */
+float3 ShadeLight(ParticleSurface surface, float3 lightColor, float intensity, float3 L)
+{
+#	if defined(REFRACTIVE_RAIN)
+	if (surface.isRaindrop) {
+		if (intensity <= 0.0)
+			return 0.0;
+
+		float3 H = (surface.view + L) * rsqrt(max(dot(surface.view + L, surface.view + L), Raindrop::HalfVectorEpsilon));
+		float NdotL = saturate(dot(surface.normal, L));
+		float NdotV = saturate(dot(surface.normal, surface.view));
+		float NdotH = saturate(dot(surface.normal, H));
+		float VdotH = saturate(dot(surface.view, H));
+		float3 specular = BRDF::D_GGX(Raindrop::Roughness, NdotH) * BRDF::Vis_SmithJointApprox(Raindrop::Roughness, NdotV, NdotL) *
+		                  BRDF::F_Schlick(Raindrop::WaterF0, VdotH) * NdotL;
+
+		// A light behind the drop is seen through it along the refracted view ray; normalized Phong lobe
+		float transmissionLobe = pow(saturate(dot(surface.refractDir, L)), Raindrop::TransmissionExponent) * (Raindrop::TransmissionExponent + 2.0) / Math::TAU;
+		float3 transmission = transmissionLobe * (1.0 - BRDF::F_Schlick(Raindrop::WaterF0, NdotV));
+
+		return Color::IrradianceToLinear(lightColor) * intensity * (specular + transmission);
+	}
+#	endif
+	return lightColor * intensity;
+}
+
+/** @brief Sun color at positionWS after the world shadow; shadow is the directional and cloud shadow term still to apply. */
+float3 GetDirLightColor(float3 positionWS, float2 screenPosition, uint eyeIndex, out float shadow)
+{
+	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(screenPosition, SharedData::BufferDim.xy), SharedData::FrameCount);
+
+	float3 worldPositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
+	float dirSoftShadow = 1.0;
+	float dirDetailedShadow = 1.0;
+
+	float3 dirLightColor = Color::GamutTransform(SharedData::DirLightColor.xyz);
+	dirLightColor = Color::AdjustUtilityColor(dirLightColor, SharedData::csUtilitySettings.directionalLightColor);
+	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)
+		dirLightColor *= ShadowSampling::GetWorldShadow(positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+
+	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
+	// sampling path (matching Lighting.hlsl).
+	if (ShadowSampling::HasDirectionalShadows()) {
+		// Use the cheaper VSM shadows if available; otherwise route through the
+		// shared SLF-vs-vanilla helper (LLF cascades under SLF, else lit).
+#	if defined(VOLUMETRIC_SHADOWS)
+		dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS, worldPositionWS, eyeIndex, dirDetailedShadow);
+#	else
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS, worldPositionWS, eyeIndex, screenNoise, 1.0);
+#	endif
+	}
+
+	// Exactly one of dirSoftShadow / dirDetailedShadow is < 1.0 (the two paths
+	// above are mutually exclusive); the other stays at its default 1.0.
+	shadow = dirSoftShadow * dirDetailedShadow;
+	return dirLightColor;
+}
+
+/** @brief Adds the clustered point lights at positionWS, each shaded by ShadeLight, to lighting in light order. */
+void AddPointLighting(float3 positionWS, uint eyeIndex, ParticleSurface surface, float scale, inout float3 lighting)
+{
+#	if defined(LIGHT_LIMIT_FIX)
+	uint lightOffset, lightCount;
+	[branch] if (scale > 0.0 && GetLightCluster(positionWS, eyeIndex, lightOffset, lightCount))
+	{
+		float3 pointLighting = 0.0;
+		[loop] for (uint i = 0; i < lightCount; i++)
+		{
+			LightLimitFix::Light light = LightLimitFix::lights[LightLimitFix::lightList[lightOffset + i]];
+			if (LightLimitFix::IsLightIgnored(light))
+				continue;
+
+			float3 lightDirection;
+			float intensity = GetPointLightIntensity(light, positionWS, eyeIndex, lightDirection);
+			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
+			pointLighting += ShadeLight(surface, Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags), intensity, lightDirection);
+		}
+		lighting += pointLighting * scale;
+	}
+#	endif
+}
+
 PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 {
 	PS_OUTPUT psout;
@@ -337,6 +494,19 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	else
 	uint eyeIndex = input.EyeIndex;
 #	endif  // !VR
+	float2 screenPosition = input.Position.xy;
+#	if defined(ENVCUBE) && defined(RAIN) && defined(RAIN_REFRACTION)
+	screenPosition *= any(RainRasterSize <= 0.0) ? 1.0 : RainSourceScale;
+	if (RainTestDepth) {
+		float2 eyeSize = RainRasterSize * RainSourceScale;
+#		if defined(VR)
+		eyeSize.x *= 0.5;
+#		endif
+		screenPosition += GetRainProjectionJitter(eyeIndex) * float2(1, -1) * eyeSize * 0.5;
+	}
+	if (RainTestDepth && FrameBuffer::IsNearerDepth(TexRainDepth.Load(int3(screenPosition, 0)), input.Position.z))
+		discard;
+#	endif
 
 #	if defined(ENVCUBE)
 	float2 precipitationOcclusionUV = (input.PrecipitationOcclusionTexCoord.xy * 0.5 + 0.5) * TextureSize.x;
@@ -344,22 +514,22 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	precipitationOcclusionUV *= FrameBuffer::DynamicResolutionParams1.x;  // only difference in VR
 #		endif
 	float precipitationOcclusion = -input.PrecipitationOcclusionTexCoord.z + TexPrecipitationOcclusionTexture.Load(float3(precipitationOcclusionUV, 0)).x;
-	float2 underwaterMaskUv = TextureSize.yz * input.Position.xy;
+	float2 underwaterMaskUv = TextureSize.yz * screenPosition;
 	float underwaterMask = TexUnderwaterMask.Sample(SampUnderwaterMask, underwaterMaskUv).x;
 	if (precipitationOcclusion - underwaterMask < 0) {
 		discard;
 	}
 #	endif
 
-#	if defined(ENVCUBE) && defined(RAIN) && defined(DYNAMIC_CUBEMAPS) && defined(EFFECTS11)
-	if (SharedData::enbSettings.EnableRain) {
+#	if defined(REFRACTIVE_RAIN)
+	if (SharedData::rainRefractionSettings.Enable) {
 		float4 raindropNormal = TexRaindropNormals.Sample(SampSourceTexture, input.RaindropData.xy);
-		float alpha = saturate(raindropNormal.w * (1.0 - SharedData::enbSettings.RainMotionTransparency));
-		clip(alpha - (4.0 / 255.0));
+		float alpha = saturate(raindropNormal.w * input.RaindropData.z * (1.0 - SharedData::rainRefractionSettings.MotionTransparency));
 		raindropNormal.y = 1.0 - raindropNormal.y;
 
 		// Reconstruct camera-relative worldspace position (camera at origin).
-		float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
+		float2 uv = FrameBuffer::GetDynamicResolutionUnadjustedScreenPosition(screenPosition * SharedData::BufferDim.zw);
+		uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 		float4 posCS = float4(2.0 * float2(uv.x, 1.0 - uv.y) - 1.0, input.Position.z, 1.0);
 		float4 posWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], posCS);
 		posWS.xyz /= posWS.w;
@@ -373,6 +543,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 		float3 normalTS = normalize(raindropNormal.xyz * 2.0 - 1.0);
 		float3 normalWS = normalize(mul(normalTS, TBN));
+		float2 dropUV = (input.RaindropData.xy - SharedData::rainRefractionSettings.TextureBounds.xy) /
+		                (SharedData::rainRefractionSettings.TextureBounds.zw - SharedData::rainRefractionSettings.TextureBounds.xy);
+		float2 edgeCoverage = saturate(min(dropUV, 1.0 - dropUV) / max(fwidth(dropUV), EPSILON_DIVISION));
+		alpha *= edgeCoverage.x * edgeCoverage.y;
+		if (alpha <= 0.0)
+			discard;
 
 		if (frontFace)
 			normalWS = -normalWS;
@@ -387,38 +563,38 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 			refractDir = -V;
 
 		float3 reflectColor = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, reflectDir, 0).xyz);
-		float3 refractColor = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 0).xyz);
-
-		float3 raindropColor = lerp(refractColor, reflectColor, fresnel);
-
-#		if defined(LIGHT_LIMIT_FIX)
-		float pointLightingScale = SharedData::enbSettings.EnableParticle ? SharedData::enbSettings.ParticlePointLightingInfluence : 1.0;
-		uint lightOffset, lightCount;
-		[branch] if (pointLightingScale > 0.0 && GetLightCluster(posWS.xyz, eyeIndex, lightOffset, lightCount))
-		{
-			float3 pointLighting = 0.0;
-			[loop] for (uint i = 0; i < lightCount; i++)
-			{
-				LightLimitFix::Light light = LightLimitFix::lights[LightLimitFix::lightList[lightOffset + i]];
-				if (LightLimitFix::IsLightIgnored(light))
-					continue;
-
-				float3 lightDirection;
-				float intensity = GetPointLightIntensity(light, posWS.xyz, eyeIndex, lightDirection);
-				[branch] if (intensity > 0.0)
-				{
-					float forwardScatter = lerp(RainForwardScatterFloor, 1.0, pow(saturate(dot(-lightDirection, V) * 0.5 + 0.5), RainForwardScatterPower));
-					float3 halfVector = lightDirection + V;
-					float glint = pow(saturate(dot(normalWS, halfVector) * rsqrt(max(dot(halfVector, halfVector), RainHalfVectorEpsilon))), RainGlintPower);
-					const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-					pointLighting += Color::IrradianceToLinear(Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags)) * intensity * ((1.0 - fresnel) * forwardScatter + glint);
-				}
-			}
-			raindropColor += pointLighting * pointLightingScale;
+		float3 refractColor;
+		if (RainSceneAvailable) {
+			float3 positionVS = FrameBuffer::WorldToView(posWS.xyz, true, eyeIndex);
+			float3 refractVS = FrameBuffer::WorldToView(refractDir, false, eyeIndex);
+			float backgroundDepth = SharedData::GetScreenDepth(uv, eyeIndex);
+			float rayDistance = max(backgroundDepth - positionVS.z, 0.0) / max(refractVS.z, EPSILON_DIVISION);
+			float2 refractedUV = FrameBuffer::ViewToUV(positionVS + refractVS * rayDistance, true, eyeIndex);
+			if (refractVS.z <= 0.0 || FrameBuffer::IsOutsideFrame(refractedUV))
+				refractedUV = uv;
+			refractedUV = SharedData::ConvertUVToSampleUV(refractedUV, eyeIndex);
+			float depth = SharedData::DepthTexture.Load(int3(refractedUV * SharedData::BufferDim.xy, 0)).x;
+			if (FrameBuffer::IsNearerDepth(depth, input.Position.z))
+				refractedUV = screenPosition * SharedData::BufferDim.zw;
+			float3 scene = TexRainScene.SampleLevel(SampSourceTexture, refractedUV, 0).rgb;
+			refractColor = ENABLE_LL ? ((Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) ? Color::SceneGammaToLinear(scene) : scene) : Color::IrradianceToLinear(scene);
+		} else {
+			refractColor = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(SampSourceTexture, refractDir, 0).xyz);
 		}
-#		endif
 
-		psout.Color.xyz = Color::IrradianceToGamma(raindropColor);
+		// The env cubemap only carries faint bounce light, so lights are shaded on the drop directly
+		ParticleSurface drop = { true, normalWS, V, refractDir };
+		float dirShadow;
+		float3 dirLightColor = GetDirLightColor(posWS.xyz, screenPosition, eyeIndex, dirShadow);
+		float3 directLighting = ShadeLight(drop, dirLightColor, dirShadow, SharedData::DirLightDirection.xyz);
+#		if defined(EFFECTS11)
+		float pointLightingScale = SharedData::enbSettings.EnableParticle ? SharedData::enbSettings.ParticlePointLightingInfluence : 1.0;
+#		else
+		float pointLightingScale = 1.0;
+#		endif
+		AddPointLighting(posWS.xyz, eyeIndex, drop, pointLightingScale, directLighting);
+
+		psout.Color.xyz = Color::IrradianceToGamma(lerp(refractColor, reflectColor, fresnel) + directLighting);
 		psout.Color.w = alpha;
 		psout.Normal = float4(0, 1, 0, alpha);
 		if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
@@ -444,36 +620,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 propertyColor = 0.0;
 
-	float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
+	float2 uv = FrameBuffer::GetDynamicResolutionUnadjustedScreenPosition(screenPosition * SharedData::BufferDim.zw);
+	uv = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
 	float4 positionWS = float4(2 * float2(uv.x, -uv.y + 1) - 1, input.Position.z, 1);
 	positionWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionWS);
 	positionWS.xyz = positionWS.xyz / positionWS.w;
 
-	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
-
-	float3 worldPositionWS = positionWS.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-
-	float dirSoftShadow = 1.0;
-	float dirDetailedShadow = 1.0;
-
-	float3 dirLightColor = Color::GamutTransform(SharedData::DirLightColor.xyz);
-	dirLightColor = Color::AdjustUtilityColor(dirLightColor, SharedData::csUtilitySettings.directionalLightColor);
-	if (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld)
-		dirLightColor *= ShadowSampling::GetWorldShadow(positionWS.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
-
-	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
-	// sampling path (matching Lighting.hlsl).
-	if (ShadowSampling::HasDirectionalShadows()) {
-		// Use the cheaper VSM shadows if available; otherwise route through the
-		// shared SLF-vs-vanilla helper (LLF cascades under SLF, else lit).
-#	if defined(VOLUMETRIC_SHADOWS)
-		dirSoftShadow = VolumetricShadows::GetVSMShadow2D(positionWS.xyz, worldPositionWS, eyeIndex, dirDetailedShadow);
-#	else
-		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(positionWS.xyz, worldPositionWS, eyeIndex, screenNoise, 1.0);
-#	endif
-	}
-
+	float dirShadow;
+	float3 dirLightColor = GetDirLightColor(positionWS.xyz, screenPosition, eyeIndex, dirShadow);
 	float3 ambientColor = Color::Ambient(max(0, SharedData::GetAmbient(float3(0, 0, 1))));
 #	if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
@@ -481,27 +636,10 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	}
 #	endif
 
-	// Exactly one of dirSoftShadow / dirDetailedShadow is < 1.0 (the two paths
-	// above are mutually exclusive); the other stays at its default 1.0.
-	propertyColor += dirLightColor * dirSoftShadow * dirDetailedShadow;
+	const ParticleSurface unlit = (ParticleSurface)0;
+	propertyColor += dirLightColor * dirShadow;
 	propertyColor += ambientColor;
-
-#	if defined(LIGHT_LIMIT_FIX)
-	uint lightOffset, lightCount;
-	if (GetLightCluster(positionWS.xyz, eyeIndex, lightOffset, lightCount)) {
-		[loop] for (uint i = 0; i < lightCount; i++)
-		{
-			LightLimitFix::Light light = LightLimitFix::lights[LightLimitFix::lightList[lightOffset + i]];
-			if (LightLimitFix::IsLightIgnored(light))
-				continue;
-
-			float3 lightDirection;
-			float intensity = GetPointLightIntensity(light, positionWS.xyz, eyeIndex, lightDirection);
-			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
-			propertyColor += Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * intensity;
-		}
-	}
-#	endif
+	AddPointLighting(positionWS.xyz, eyeIndex, unlit, 1.0, propertyColor);
 
 	psout.Color.xyz = propertyColor * baseColor.xyz;
 	psout.Color.w = baseColor.w;

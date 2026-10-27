@@ -1,7 +1,5 @@
 #include "Effects11.h"
 
-#include <DirectXTex.h>
-
 #include "Effects11/D3D11StateBackup.h"
 #include "Effects11/ENBHelper.h"
 #include "Effects11/Editor/Effects11Editor.h"
@@ -14,7 +12,7 @@
 #include "Deferred.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "IBL.h"
+#include "LODShadows.h"
 #include "ShaderCache.h"
 #include "SkySync.h"
 #include "State.h"
@@ -27,6 +25,14 @@
 
 namespace
 {
+	/** @brief The game's volumetric lighting settings, blended by Sky::Update for the current weather and time. */
+	RE::BSVolumetricLightingRenderData& GetGameVolumetricLighting()
+	{
+		static auto& volumetricLighting = *reinterpret_cast<RE::BSVolumetricLightingRenderData*>(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, color));
+		return volumetricLighting;
+	}
+
+	/** @brief Angular half-size of a sky billboard as seen from the viewer, as tan(angle); a_fallback when it has no usable bound. */
 	float GetBillboardHalfTan(const RE::NiAVObject* a_billboard, const RE::NiPoint3& a_viewer, float a_fallback)
 	{
 		if (!a_billboard)
@@ -40,6 +46,7 @@ namespace
 		return bound.radius * 0.70710678f / distance;
 	}
 
+	/** @brief A screen-sized 2D texture with an SRV, plus an RTV and/or UAV on request. */
 	std::unique_ptr<Texture2D> CreateScreenTexture(uint32_t a_width, uint32_t a_height, DXGI_FORMAT a_format, bool a_renderTarget, bool a_unorderedAccess, const char* a_name)
 	{
 		D3D11_TEXTURE2D_DESC desc{};
@@ -81,6 +88,7 @@ namespace
 		return texture;
 	}
 
+	/** @brief Binds the effect manager's fullscreen quad, copy vertex shader and default raster/depth state. */
 	void BindFullscreenQuad(ID3D11DeviceContext* a_context, EffectManager& a_effectManager)
 	{
 		UINT stride = sizeof(float) * 5;
@@ -94,6 +102,7 @@ namespace
 		a_context->OMSetDepthStencilState(nullptr, 0);
 	}
 
+	/** @brief The sky body the sun rays stream from this frame. */
 	struct SunRaysLight
 	{
 		float3 color;
@@ -103,6 +112,7 @@ namespace
 		bool isSun = false;
 	};
 
+	/** @brief Mirrors cbuffer SunRaysData in SunRaysPS.hlsl. */
 	struct SunRaysData
 	{
 		float4 lightUV;
@@ -122,14 +132,18 @@ namespace
 	};
 	static_assert(sizeof(SunRaysData) == 96);
 
+	/** @brief Picks the visible sun, else the Sky Sync moon when moon rays are on; false when neither qualifies. */
 	bool SelectSunRaysLight(RE::Sky* a_sky, const Effects11::PerFrame& a_perFrame, bool a_sunRays, bool a_moonRays, SunRaysLight& a_light)
 	{
+		// The sun disc's mask falls off much more sharply than the larger, softer moon discs
+		static constexpr float sunMaskExponent = 32.0f;
+		static constexpr float moonMaskExponent = 4.0f;
 		const auto& skySync = globals::features::skySync;
 
 		if (a_sunRays && Util::GetSunVisibility() > 0.0f && a_sky->sun && a_sky->sun->sunBase) {
 			if (const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(a_sky->sun->sunBase->GetGeometryRuntimeData().shaderProperty.get())) {
 				const auto& blend = prop->kBlendColor;
-				a_light = { float3(blend.red, blend.green, blend.blue) * blend.alpha, Util::GetSunDirection(), a_perFrame.SunBillboardTan, 32.0f, true };
+				a_light = { float3(blend.red, blend.green, blend.blue) * blend.alpha, Util::GetSunDirection(), a_perFrame.SunBillboardTan, sunMaskExponent, true };
 				return true;
 			}
 		}
@@ -144,12 +158,17 @@ namespace
 		const bool masser = moon == a_sky->masser;
 		const auto moonColor = Util::Moon::GetBlendColor(masser ? a_sky->masser : a_sky->secunda, masser ? Util::Moon::MasserBaseColor : Util::Moon::SecundaBaseColor,
 			skySync.settings.NewMoonIntensity, skySync.settings.CrescentMoonIntensity, skySync.settings.FullMoonIntensity);
-		a_light = { float3(moonColor.x, moonColor.y, moonColor.z), Util::GetMoonDirection(masser ? a_sky->masser : a_sky->secunda), masser ? a_perFrame.MasserBillboardTan : a_perFrame.SecundaBillboardTan, 4.0f, false };
+		a_light = { float3(moonColor.x, moonColor.y, moonColor.z), Util::GetMoonDirection(masser ? a_sky->masser : a_sky->secunda), masser ? a_perFrame.MasserBillboardTan : a_perFrame.SecundaBillboardTan, moonMaskExponent, false };
 		return true;
 	}
 
+	/** @brief Ray colour from the [RAYS] multipliers; sun rays also pick up a_skyColor, tinted by the sun. */
 	float3 GetSunRaysColor(const SunRaysLight& a_light, float a_lightPeak, const float3& a_skyColor)
 	{
+		static constexpr float sunGain = 1.5f;
+		static constexpr float skyGain = 0.5f;
+		static constexpr float sunAmountScale = 3.0f;  // a sun summing to 1/3 or more lends the sky colour in full
+
 		auto& settingManager = SettingManager::GetSingleton();
 		if (!a_light.isSun)
 			return a_light.color * settingManager.GetInterpolatedTimeOfDayValue("MoonRaysMultiplier", "RAYS");
@@ -160,8 +179,8 @@ namespace
 		if (settingManager.GetValue<bool>("UseLinearMath", "RAYS"))
 			return tint * multiplier + a_skyColor * skyAmount;
 
-		const float sunAmount = std::clamp((a_light.color.x + a_light.color.y + a_light.color.z) * 3.0f, 0.0f, 1.0f);
-		return a_light.color * tint * (1.5f * multiplier) + a_skyColor * tint * (sunAmount * skyAmount * 0.5f);
+		const float sunAmount = std::clamp((a_light.color.x + a_light.color.y + a_light.color.z) * sunAmountScale, 0.0f, 1.0f);
+		return a_light.color * tint * (sunGain * multiplier) + a_skyColor * tint * (sunAmount * skyAmount * skyGain);
 	}
 }
 
@@ -535,10 +554,12 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 
 	data.Enable = enableEffect;
 	data.ColorPow = settingManager.GetInterpolatedTimeOfDayValue("ColorPow", "ENVIRONMENT");
+	if (enableEffect)
+		data.SkyScaleMultiplier = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 
 	data.CloudsCurve = settingManager.GetInterpolatedTimeOfDayValue("CloudsCurve", "SKY");
 	data.CloudsDesaturation = settingManager.GetInterpolatedTimeOfDayValue("CloudsDesaturation", "SKY");
-	data.CloudsEdgeIntensity = settingManager.GetValue<float>("CloudsEdgeIntensity", "SKY");
+	data.CloudsEdgeIntensity = settingManager.GetValue<bool>("EnableCloudsEdge", "SKYSCATTERING") ? settingManager.GetValue<float>("CloudsEdgeIntensity", "SKY") : 0.0f;
 	data.CloudsEdgeMoonMultiplier = settingManager.GetInterpolatedTimeOfDayValue("CloudsEdgeMoonMultiplier", "SKY");
 
 	data.StarsCurve = std::max((settingManager.GetInterpolatedTimeOfDayValue("StarsCurve", "SKY") - 1.0f) / 3.0f, 0.0f);
@@ -562,6 +583,14 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 	data.LightSpriteCurve = settingManager.GetInterpolatedTimeOfDayValue("Curve", "LIGHTSPRITE");
 
 	data.EnableParticle = enableEffect && !settings.IgnorePresetParticles;
+
+	data.GameVolumetricRaysDisableDithering = settingManager.GetValue<bool>("DisableGameDithering", "GAMEVOLUMETRICRAYS");
+	const auto& gameVolumetricLighting = GetGameVolumetricLighting();
+	// Interiors light VL from the lighting template, which the sunlight grade never touched
+	data.GameVolumetricRaysLightScale = Util::IsInterior() ? float3{ 1.0f, 1.0f, 1.0f } : directLightingUngradeScale;
+	data.GameVolumetricRaysCustomContribution = gameVolumetricLighting.customColor.contribution;
+	data.GameVolumetricRaysCustomColor = float3{ gameVolumetricLighting.color.red, gameVolumetricLighting.color.green, gameVolumetricLighting.color.blue };
+
 	data.ParticleIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "PARTICLE");
 	data.ParticleLightingInfluence = settingManager.GetInterpolatedTimeOfDayValue("LightingInfluence", "PARTICLE");
 	data.ParticleAmbientInfluence = settingManager.GetInterpolatedTimeOfDayValue("AmbientInfluence", "PARTICLE");
@@ -569,13 +598,11 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 
 	data.EnableVolumetricRays = enableEffect && settingManager.GetValue<bool>("EnableVolumetricRays", "EFFECT");
 	data.VolumetricRaysIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "VOLUMETRICRAYS");
-	{
-		constexpr float minimumDensity = 0.1f;
-		constexpr float referenceExtinction = 0.000003f;
-		const float density = std::max(minimumDensity, settingManager.GetInterpolatedTimeOfDayValue("Density", "VOLUMETRICRAYS"));
-		data.VolumetricRaysExtinction = referenceExtinction / density;
-	}
+	data.VolumetricRaysDensity = settingManager.GetInterpolatedTimeOfDayValue("Density", "VOLUMETRICRAYS");
 	data.VolumetricRaysSkyColorAmount = settingManager.GetInterpolatedTimeOfDayValue("SkyColorAmount", "VOLUMETRICRAYS");
+	// Indexed by [VOLUMETRICRAYS] Quality + 1; lower Quality values are finer.
+	static constexpr uint32_t volumetricRaysSamples[4] = { 24, 16, 12, 8 };
+	data.VolumetricRaysSampleCount = volumetricRaysSamples[std::clamp(static_cast<int>(std::lround(settingManager.GetValue<float>("Quality", "VOLUMETRICRAYS"))) + 1, 0, 3)];
 	if (const auto sky = globals::game::sky) {
 		const auto& horizonColor = sky->skyColor[RE::TESWeather::ColorTypes::kHorizon];
 		data.VolumetricRaysSkyColor = float3{ horizonColor.red, horizonColor.green, horizonColor.blue };
@@ -583,10 +610,6 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 
 	data.EnableCloudsScattering = enableEffect && settingManager.GetValue<bool>("EnableCloudsScattering", "EFFECT");
 	UpdateSkyScattering(data);
-
-	data.EnableRain = IsRainEnabled();
-	data.RainMotionStretch = settingManager.GetInterpolatedTimeOfDayValue("MotionStretch", "RAIN");
-	data.RainMotionTransparency = settingManager.GetInterpolatedTimeOfDayValue("MotionTransparency", "RAIN");
 
 	data.FireIntensity = settingManager.GetInterpolatedTimeOfDayValue("Intensity", "FIRE");
 	data.FireCurve = settingManager.GetInterpolatedTimeOfDayValue("Curve", "FIRE");
@@ -598,6 +621,7 @@ Effects11::PerFrame Effects11::GetCommonBufferData()
 	data.VolumetricFogOpacity = settingManager.GetInterpolatedTimeOfDayValue("Opacity", "VOLUMETRICFOG");
 	data.VolumetricFogShadowAmount = settingManager.GetInterpolatedTimeOfDayValue("ShadowAmount", "VOLUMETRICFOG");
 	data.VolumetricFogEnableLighting = settingManager.GetValue<bool>("EnableLighting", "VOLUMETRICFOG");
+	data.VolumetricFogEnableShadows = settingManager.GetValue<bool>("EnableShadows", "VOLUMETRICFOG");
 
 	data.EnableWater = enableEffect && settingManager.GetValue<bool>("EnableWater", "EFFECT");
 	data.WaterWavesAmplitude = settingManager.GetInterpolatedTimeOfDayValue("WavesAmplitude", "WATER");
@@ -652,90 +676,10 @@ void Effects11::ToggleEnabled()
 	settingManager.SetValue<bool>(id, !settingManager.GetValue<bool>(id));
 }
 
-void Effects11::LoadRaindropTexture()
-{
-	raindropTexture = nullptr;
-	raindropSRV = nullptr;
-	raindropStatus.clear();
-
-	auto& presetManager = PresetManager::GetSingleton();
-	auto enbPath = presetManager.GetENBSeriesPath();
-	auto raindropPath = enbPath / "enbraindrops.png";
-
-	if (!std::filesystem::exists(raindropPath)) {
-		raindropStatus = T("feature.effects11.error.raindrop_missing", "Texture not found: enbraindrops.png");
-		logger::debug("[Effects11] Raindrop texture not found: {}", raindropPath.string());
-		return;
-	}
-
-	std::wstring widePath = raindropPath.wstring();
-
-	DirectX::ScratchImage image;
-	HRESULT hr = DirectX::LoadFromWICFile(widePath.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
-	if (FAILED(hr)) {
-		raindropStatus = I18n::GetSingleton()->Format("feature.effects11.error.raindrop_load", { { "code", std::format("0x{:08X}", static_cast<uint32_t>(hr)) } }, "Failed to load texture (invalid image, HRESULT {code})");
-		logger::error("[Effects11] Failed to load raindrop texture: {}", raindropPath.string());
-		return;
-	}
-
-	DirectX::ScratchImage mipImage;
-	hr = DirectX::GenerateMipMaps(image.GetImages(), image.GetImageCount(), image.GetMetadata(),
-		DirectX::TEX_FILTER_DEFAULT, 0, mipImage);
-	if (FAILED(hr)) {
-		raindropStatus = I18n::GetSingleton()->Format("feature.effects11.error.raindrop_mips", { { "code", std::format("0x{:08X}", static_cast<uint32_t>(hr)) } }, "Failed to generate mipmaps (HRESULT {code})");
-		logger::error("[Effects11] Failed to generate mipmaps for raindrop texture");
-		return;
-	}
-
-	DirectX::ScratchImage bc7Image;
-	hr = DirectX::Compress(mipImage.GetImages(), mipImage.GetImageCount(), mipImage.GetMetadata(),
-		DXGI_FORMAT_BC7_UNORM, DirectX::TEX_COMPRESS_BC7_QUICK, 1.0f, bc7Image);
-	if (FAILED(hr)) {
-		raindropStatus = I18n::GetSingleton()->Format("feature.effects11.error.raindrop_compress", { { "code", std::format("0x{:08X}", static_cast<uint32_t>(hr)) } }, "Failed to compress texture (HRESULT {code})");
-		logger::error("[Effects11] Failed to compress raindrop texture to BC7");
-		return;
-	}
-
-	auto device = globals::d3d::device;
-	hr = DirectX::CreateTexture(device,
-		bc7Image.GetImages(), bc7Image.GetImageCount(), bc7Image.GetMetadata(),
-		reinterpret_cast<ID3D11Resource**>(raindropTexture.put()));
-	if (FAILED(hr)) {
-		raindropStatus = I18n::GetSingleton()->Format("feature.effects11.error.raindrop_texture", { { "code", std::format("0x{:08X}", static_cast<uint32_t>(hr)) } }, "Failed to create GPU texture (HRESULT {code})");
-		logger::error("[Effects11] Failed to create raindrop GPU texture");
-		return;
-	}
-
-	Util::SetResourceName(raindropTexture.get(), "Effects11::RaindropTexture");
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-	srvDesc.Format = DXGI_FORMAT_BC7_UNORM;
-	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = static_cast<UINT>(bc7Image.GetMetadata().mipLevels);
-	srvDesc.Texture2D.MostDetailedMip = 0;
-
-	hr = device->CreateShaderResourceView(raindropTexture.get(), &srvDesc, raindropSRV.put());
-	if (FAILED(hr)) {
-		raindropStatus = I18n::GetSingleton()->Format("feature.effects11.error.raindrop_view", { { "code", std::format("0x{:08X}", static_cast<uint32_t>(hr)) } }, "Failed to create shader resource view (HRESULT {code})");
-		logger::error("[Effects11] Failed to create raindrop SRV");
-		raindropTexture = nullptr;
-		return;
-	}
-
-	Util::SetResourceName(raindropSRV.get(), "Effects11::RaindropTexture SRV");
-
-	logger::info("[Effects11] Loaded raindrop texture: {} ({}x{}, BC7, {} mips)",
-		raindropPath.string(),
-		bc7Image.GetMetadata().width,
-		bc7Image.GetMetadata().height,
-		bc7Image.GetMetadata().mipLevels);
-}
-
 void Effects11::SetupResources()
 {
 	Initialize();
 
-	// Initialize() -> Apply() already loads the raindrop texture; do not load it again here.
 	EffectManager::GetSingleton().Initialize();
 }
 
@@ -754,27 +698,6 @@ void Effects11::ClearShaderCache()
 
 	auto& effectManager = EffectManager::GetSingleton();
 	effectManager.ReloadShaders();
-}
-
-void Effects11::Prepass()
-{
-	if (!enableEffect) {
-		return;
-	}
-
-	auto& settingManager = SettingManager::GetSingleton();
-
-	auto imageSpaceManager = globals::game::imageSpaceManager;
-	if (!imageSpaceManager) {
-		return;
-	}
-
-	GET_INSTANCE_MEMBER_VRPTR(data, imageSpaceManager);
-
-	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
-	float skyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
-
-	data.baseData.hdr.skyScale *= skyScaleIntensity;
 }
 
 float3 Curve(float3 color, float power)
@@ -821,6 +744,20 @@ RE::NiColor F3ToNi(float3 color)
 	return { color.x, color.y, color.z };
 }
 
+/** @brief A time-of-day setting moved from its interpolated value towards its Night value by nightWeight. */
+static float GetNightWeightedValue(SettingManager& settingManager, std::string_view key, std::string_view category, float nightWeight)
+{
+	const float value = settingManager.GetInterpolatedTimeOfDayValue(key, category);
+	return nightWeight > 0.0f ? std::lerp(value, settingManager.GetValue<TimeOfDayValue>(key, category)[TimeOfDayValue::Night], nightWeight) : value;
+}
+
+/** @brief Colour counterpart of GetNightWeightedValue. */
+static float3 GetNightWeightedColor(SettingManager& settingManager, std::string_view key, std::string_view category, float nightWeight)
+{
+	const float3 value = settingManager.GetInterpolatedColorTimeOfDayValue(key, category);
+	return nightWeight > 0.0f ? float3::Lerp(value, settingManager.GetValue<ColorTimeOfDayValue>(key, category)[ColorTimeOfDayValue::Night], nightWeight) : value;
+}
+
 void Effects11::OverrideWeather(RE::Sky* a_sky)
 {
 	if (!a_sky) {
@@ -835,6 +772,7 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 		auto& dirLightColor = colors[(uint)RE::TESWeather::ColorTypes::kSunlight];
 
 		auto dirLightColorF3 = NiToF3(dirLightColor);
+		const float3 ungradedDirLightColor = dirLightColorF3;
 
 		// A near-zero scale would blow up the divide below, so treat it as unset
 		static constexpr float minSunlightScale = 1e-3f;
@@ -847,12 +785,22 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 		}
 		dirLightColorF3 *= sunlightScale;
 
-		dirLightColorF3 = Curve(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingCurve", "ENVIRONMENT"));
-		dirLightColorF3 = Desaturation(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingDesaturation", "ENVIRONMENT"));
-		dirLightColorF3 = ColorFilter(dirLightColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("DirectLightingColorFilter", "ENVIRONMENT"), settingManager.GetInterpolatedTimeOfDayValue("DirectLightingColorFilterAmount", "ENVIRONMENT"));
-		dirLightColorF3 = Intensity(dirLightColorF3, settingManager.GetInterpolatedTimeOfDayValue("DirectLightingIntensity", "ENVIRONMENT"));
+		// Sky Sync lights from the night sunlight colour once the sun sets, so grade it as night too
+		const float nightWeight = globals::features::skySync.GetLightNightWeight();
+		auto lightingValue = [&](std::string_view key) { return GetNightWeightedValue(settingManager, key, "ENVIRONMENT", nightWeight); };
+
+		dirLightColorF3 = Curve(dirLightColorF3, lightingValue("DirectLightingCurve"));
+		dirLightColorF3 = Desaturation(dirLightColorF3, lightingValue("DirectLightingDesaturation"));
+		dirLightColorF3 = ColorFilter(dirLightColorF3, GetNightWeightedColor(settingManager, "DirectLightingColorFilter", "ENVIRONMENT", nightWeight), lightingValue("DirectLightingColorFilterAmount"));
+		dirLightColorF3 = Intensity(dirLightColorF3, lightingValue("DirectLightingIntensity"));
 
 		dirLightColorF3 /= sunlightScale;
+
+		// The game lights its VL with this colour too, but ENB presets tune [GAMEVOLUMETRICRAYS] against the ungraded sunlight
+		static constexpr float minGradedChannel = 1e-6f;
+		auto ungradeScale = [](float a_ungraded, float a_graded) { return a_graded > minGradedChannel ? a_ungraded / a_graded : 1.0f; };
+		directLightingUngradeScale = float3{ ungradeScale(ungradedDirLightColor.x, dirLightColorF3.x), ungradeScale(ungradedDirLightColor.y, dirLightColorF3.y),
+			ungradeScale(ungradedDirLightColor.z, dirLightColorF3.z) };
 
 		dirLightColor = F3ToNi(dirLightColorF3);
 	}
@@ -917,12 +865,16 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 		{
 			auto& moonColor = colors[(uint)RE::TESWeather::ColorTypes::kMoonGlare];
 
+			// Sky Sync tints the moons from night colours once the sun sets, so grade them towards night by the same weight
+			const float nightWeight = globals::features::skySync.GetMoonNightWeight();
+			auto moonValue = [&](std::string_view key) { return GetNightWeightedValue(settingManager, key, "SKY", nightWeight); };
+
 			auto moonColorF3 = NiToF3(moonColor);
 
-			moonColorF3 = Curve(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonCurve", "SKY"));
-			moonColorF3 = Desaturation(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonDesaturation", "SKY"));
-			moonColorF3 = ColorFilter(moonColorF3, settingManager.GetInterpolatedColorTimeOfDayValue("MoonColorFilter", "SKY"), 0.0f);
-			moonColorF3 = Intensity(moonColorF3, settingManager.GetInterpolatedTimeOfDayValue("MoonIntensity", "SKY"));
+			moonColorF3 = Curve(moonColorF3, moonValue("MoonCurve"));
+			moonColorF3 = Desaturation(moonColorF3, moonValue("MoonDesaturation"));
+			moonColorF3 = ColorFilter(moonColorF3, GetNightWeightedColor(settingManager, "MoonColorFilter", "SKY", nightWeight), 0.0f);
+			moonColorF3 = Intensity(moonColorF3, moonValue("MoonIntensity"));
 
 			moonColor = F3ToNi(moonColorF3);
 		}
@@ -995,7 +947,7 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 	}
 
 	{
-		static auto& volumetricLighting = (*(RE::BSVolumetricLightingRenderData*)(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, color)));
+		auto& volumetricLighting = GetGameVolumetricLighting();
 		volumetricLighting.intensity *= settingManager.GetInterpolatedTimeOfDayValue("Intensity", "GAMEVOLUMETRICRAYS");
 		volumetricLighting.samplingRepartition.rangeFactor *= settingManager.GetInterpolatedTimeOfDayValue("RangeFactor", "GAMEVOLUMETRICRAYS");
 	}
@@ -1097,12 +1049,6 @@ bool Effects11::ReplacedTonemapperThisFrame() const
 	return tonemapReplacedFrame == globals::state->frameCount;
 }
 
-bool Effects11::IsRainEnabled()
-{
-	// Queried for every rain particle pass, so the cached id skips the string-keyed lookup
-	return enableEffect && raindropSRV && SettingManager::GetSingleton().GetValue<bool>(EffectManager::GetSingleton().ids.enableRain);
-}
-
 void Effects11::ModifySky(RE::BSRenderPass* Pass)
 {
 	// State::UpdateSkyShaderPermutation ran first and already flagged both the sun disc and its
@@ -1123,64 +1069,6 @@ void Effects11::ModifySky(RE::BSRenderPass* Pass)
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN) {
 		state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
 	}
-}
-
-void Effects11::ModifyParticle(RE::BSRenderPass* Pass)
-{
-	if (!enableEffect || !raindropSRV)
-		return;
-
-	if (!Pass)
-		return;
-
-	auto state = globals::state;
-	if (state->currentPixelDescriptor != static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain))
-		return;
-
-	if (!IsRainEnabled())
-		return;
-
-	auto context = globals::d3d::context;
-	ID3D11ShaderResourceView* srv = raindropSRV.get();
-	context->PSSetShaderResources(80, 1, &srv);
-
-	ID3D11Buffer* cbs[] = { globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
-	context->VSSetConstantBuffers(5, 2, cbs);
-}
-
-void Effects11::ParticleShaderHacks()
-{
-	if (!enableEffect || !raindropSRV)
-		return;
-
-	auto state = globals::state;
-	if (!state->currentShader || state->currentShader->shaderType.get() != RE::BSShader::Type::Particle)
-		return;
-	if (state->currentPixelDescriptor != static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain))
-		return;
-	if (!IsRainEnabled())
-		return;
-
-	auto context = globals::d3d::context;
-
-	if (!alphaBlendState) {
-		D3D11_BLEND_DESC blendDesc{};
-		blendDesc.RenderTarget[0].BlendEnable = TRUE;
-		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-		if (FAILED(globals::d3d::device->CreateBlendState(&blendDesc, alphaBlendState.put())))
-			return;
-		Util::SetResourceName(alphaBlendState.get(), "Effects11::RainAlphaBlendState");
-	}
-
-	float blendFactor[4] = { 0, 0, 0, 0 };
-	context->OMSetBlendState(alphaBlendState.get(), blendFactor, 0xFFFFFFFF);
-	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_ALPHA_BLEND);
 }
 
 void Effects11::DrawVolumetricRays()
@@ -1207,7 +1095,8 @@ void Effects11::DrawVolumetricScattering()
 	if (Util::IsInterior())
 		return;
 
-	if (globals::game::sky && globals::game::sky->flags.any(RE::Sky::Flags::kHideSky))
+	auto sky = globals::game::sky;
+	if (!sky || sky->flags.any(RE::Sky::Flags::kHideSky))
 		return;
 
 	if (globals::state->IsFullScreenMenuOpen() || globals::state->isMapMenuOpen)
@@ -1232,6 +1121,8 @@ void Effects11::DrawVolumetricScattering()
 			defines.push_back({ "CLOUD_SHADOWS", nullptr });
 		if (globals::features::terrainShadows.loaded)
 			defines.push_back({ "TERRAIN_SHADOWS", nullptr });
+		if (globals::features::lodShadows.loaded)
+			defines.push_back({ "LOD_SHADOWS", nullptr });
 
 		raymarchVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\RaymarchVolumetricRaysPS.hlsl", defines, "ps_5_0")));
 		if (!raymarchVolumetricRaysPS) {
@@ -1241,10 +1132,7 @@ void Effects11::DrawVolumetricScattering()
 	}
 
 	if (!applyVolumetricRaysPS) {
-		std::vector<std::pair<const char*, const char*>> defines;
-		if (globals::features::ibl.loaded)
-			defines.push_back({ "IBL", nullptr });
-		applyVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\ApplyVolumetricRaysPS.hlsl", defines, "ps_5_0")));
+		applyVolumetricRaysPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\Effects11\\ApplyVolumetricRaysPS.hlsl", {}, "ps_5_0")));
 		if (!applyVolumetricRaysPS) {
 			volumetricRaysFailed = true;
 			return;
@@ -1334,6 +1222,14 @@ void Effects11::DrawVolumetricScattering()
 		context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 		context->PSSetShader(raymarchVolumetricRaysPS.get(), nullptr, 0);
 		context->PSSetSamplers(0, 1, &sampler);
+		winrt::com_ptr<ID3D11SamplerState> savedShadowSampler;
+		context->PSGetSamplers(LODShadows::kComparisonSamplerSlot, 1, savedShadowSampler.put());
+		const SKSE::stl::scope_exit restoreShadowSampler([&]() noexcept {
+			auto* previous = savedShadowSampler.get();
+			context->PSSetSamplers(LODShadows::kComparisonSamplerSlot, 1, &previous);
+		});
+		auto* shadowSampler = globals::features::lodShadows.GetComparisonSampler();
+		context->PSSetSamplers(LODShadows::kComparisonSamplerSlot, 1, &shadowSampler);
 		context->PSSetConstantBuffers(1, 1, &vlDataCB);
 
 		context->Draw(4, 0);
@@ -1386,14 +1282,6 @@ void Effects11::DrawVolumetricScattering()
 
 		ID3D11ShaderResourceView* srvs[2] = { vlTexA->srv.get(), vlDepthHalf->srv.get() };
 		context->PSSetShaderResources(0, 2, srvs);
-		auto& ibl = globals::features::ibl;
-		if (ibl.loaded) {
-			ID3D11ShaderResourceView* iblSRVs[2] = {
-				ibl.envIBLTexture ? ibl.envIBLTexture->srv.get() : nullptr,
-				ibl.skyIBLTexture ? ibl.skyIBLTexture->srv.get() : nullptr
-			};
-			context->PSSetShaderResources(14, 2, iblSRVs);
-		}
 		context->PSSetSamplers(0, 1, &sampler);
 
 		// Half-res dimensions for the bilateral upsample.
@@ -1414,7 +1302,7 @@ bool Effects11::EnsureScatteringBlendState()
 	D3D11_BLEND_DESC blendDesc{};
 	blendDesc.RenderTarget[0].BlendEnable = TRUE;
 	blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
-	blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
 	blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
 	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
 	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
@@ -1491,6 +1379,8 @@ void Effects11::DrawSunRays()
 	if (lightPeak <= 1e-4f || light.billboardTan <= 0.0f)
 		return;
 
+	// Past this the blur no longer reaches the screen from the light's projected position
+	static constexpr float maxLightNdcOffset = 2.5f;
 	float2 lightUV[2]{};
 	bool lightInView = false;
 	for (int eye = 0; eye < (globals::game::isVR ? 2 : 1); ++eye) {
@@ -1499,7 +1389,7 @@ void Effects11::DrawSunRays()
 		if (clip.w <= 1e-6f)
 			return;
 		const float2 ndc = { clip.x / clip.w, clip.y / clip.w };
-		lightInView |= std::max(std::abs(ndc.x), std::abs(ndc.y)) * 0.4f < 0.99999f;
+		lightInView |= std::max(std::abs(ndc.x), std::abs(ndc.y)) < maxLightNdcOffset;
 		lightUV[eye] = float2{ ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f };
 	}
 	if (!lightInView)
@@ -1521,12 +1411,13 @@ void Effects11::DrawSunRays()
 	if (!EnsureSunRaysResources(halfTexWidth, halfTexHeight))
 		return;
 
+	// Step counts are indexed by [RAYS] Quality + 2, blur factors by Type, or MoonType for moon rays
 	static constexpr uint32_t blurSteps[3][5] = { { 7, 6, 5, 4, 4 }, { 7, 6, 6, 5, 4 }, { 7, 7, 6, 5, 4 } };
 	static constexpr uint32_t compositeSteps[5] = { 8, 8, 7, 6, 4 };
 	static constexpr float shortBlur[5] = { 0.15f, 0.3f, 0.6f, 0.3f, 0.9f };
 	static constexpr float longBlur[5] = { 0.4f, 0.7f, 0.6f, 1.0f, 0.9f };
 	const int qualityIndex = std::clamp(static_cast<int>(std::lround(settingManager.GetValue<float>("Quality", "RAYS"))) + 2, 0, 4);
-	const int type = std::clamp(static_cast<int>(std::lround(settingManager.GetValue<float>("Type", "RAYS"))), 0, 4);
+	const int type = std::clamp(static_cast<int>(std::lround(settingManager.GetValue<float>(light.isSun ? "Type" : "MoonType", "RAYS"))), 0, 4);
 
 	SunRaysData data{};
 	data.lightUV = float4{ lightUV[0].x, lightUV[0].y, lightUV[1].x, lightUV[1].y };
@@ -1554,6 +1445,7 @@ void Effects11::DrawSunRays()
 		sunRaysCB->Update(data);
 		ID3D11Buffer* cb = sunRaysCB->CB();
 		context->PSSetConstantBuffers(1, 1, &cb);
+		// Unbind the previous pass's input before it becomes this pass's target
 		ID3D11ShaderResourceView* nullSRV = nullptr;
 		context->PSSetShaderResources(0, 1, &nullSRV);
 		context->OMSetRenderTargets(1, &a_rtv, nullptr);

@@ -258,6 +258,8 @@ namespace SIE
 		std::string GetString() const;
 		/** @brief Path to the actual HLSL source this task compiles from (not always fxpFilename -- see ImageSpace shaders). */
 		std::wstring GetSourcePath() const;
+		/** @brief At debug level, logs the inputs that identify this task's cached shader; called once when the task is first queued. */
+		void LogCacheInput() const;
 
 		/**
 		 * LPT scheduling score: higher = more expensive = should be dispatched first.
@@ -274,6 +276,8 @@ namespace SIE
 		void SetGeneration(uint64_t gen) { generation = gen; }
 		/** @brief Gets the batch generation this task was enqueued under, for staleness checks against a later Clear(). */
 		uint64_t GetGeneration() const { return generation; }
+		/** @brief Shader type this task compiles for, which selects the per-type epoch its generation embeds. */
+		RE::BSShader::Type GetType() const { return shader.shaderType.get(); }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -367,6 +371,19 @@ namespace SIE
 		 *  Call before ShaderCache::Clear()'s map-wipe locks so a worker's write-site check
 		 *  (see MakeAndAdd*Shader) sees the new value once it can observe the wipe. */
 		void BumpGeneration() { generation.fetch_add(1, std::memory_order_release); }
+		/** @brief Generation a task of a_type must carry to be current: the global generation
+		 *  with a_type's epoch folded in, so a scoped Clear(a_type) stales only that type. */
+		uint64_t LiveGeneration(RE::BSShader::Type a_type) const
+		{
+			return (generation.load(std::memory_order_acquire) << kTypeEpochBits) |
+			       (typeEpoch[static_cast<size_t>(a_type)].load(std::memory_order_acquire) & kTypeEpochMask);
+		}
+		/** @brief Stales every in-flight and queued task of a_type without touching other types.
+		 *  Call before the type's map-wipe locks, as for BumpGeneration(). */
+		void BumpTypeEpoch(RE::BSShader::Type a_type) { typeEpoch[static_cast<size_t>(a_type)].fetch_add(1, std::memory_order_release); }
+		/** @brief Drops a_type's queued, running and finished tasks from the bookkeeping so they can be
+		 *  re-enqueued, and takes the unfinished ones out of the progress totals. Other types are untouched. */
+		void ClearType(RE::BSShader::Type a_type);
 		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
 		 *  scoped cache evict can re-enqueue them. Leaves queued work in availableTasks
 		 *  and does not touch progress counters. */
@@ -400,6 +417,9 @@ namespace SIE
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
 		std::atomic<uint64_t> generation = 0;               // bumped by Clear(); tags tasks so a post-Clear() Complete() can detect staleness
+		static constexpr unsigned kTypeEpochBits = 24;
+		static constexpr uint64_t kTypeEpochMask = (uint64_t{ 1 } << kTypeEpochBits) - 1;
+		std::array<std::atomic<uint64_t>, RE::BSShader::Type::Total> typeEpoch{};  // bumped by ShaderCache::Clear(Type)
 		std::atomic<uint64_t> standaloneGeneration = 0;
 		std::mutex compilationMutex;
 
@@ -525,6 +545,8 @@ namespace SIE
 		/** @brief True if a_taskGeneration is set and predates the live generation -- mirrors
 		 * Util::GenerationClaim::TryPublish's own staleness rule (see AddCompletedShader). */
 		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration) const;
+		/** @brief As above for a task of a_type, whose generation also embeds that type's epoch. */
+		bool IsGenerationStale(std::optional<uint64_t> a_taskGeneration, RE::BSShader::Type a_type) const;
 		/** Gets whether the shader cache is enabled. */
 		bool IsEnabled() const;
 		/** Sets whether the shader cache is enabled. */
@@ -557,6 +579,8 @@ namespace SIE
 		void CommitFeatureSetChange();
 		/** @brief Swaps the rollback cache back into use and matches boot toggles to it. Restart required. */
 		bool RestorePreviousDiskCache();
+		/** @brief Deletes the rollback cache so the current one is kept and the mismatch notice clears. Refused while a feature-set change awaits commit or a restore is pending. */
+		bool DiscardPreviousDiskCache();
 		/** @brief Writes cache metadata (version, feature list) to the disk cache directory. */
 		void WriteDiskCacheInfo();
 		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
@@ -592,6 +616,8 @@ namespace SIE
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
 		/// fix-setup-and-restart (after a fix the cache revalidates untouched).
 		bool IsDiskCacheHeld() const { return diskCacheHeld; }
+		/// True when the cache was kept across a version change, so a blob without a recorded digest must recompile.
+		bool RequiresDigestForReuse() const { return requireDigestForReuse; }
 
 		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
 		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
@@ -691,7 +717,7 @@ namespace SIE
 			Claimed,   // Claimed as Pending; caller must compile and call AddCompletedShader
 			Failed     // Previous attempt failed; skipped until invalidation drops the entry
 		};
-		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration = std::nullopt);
+		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, RE::BSShader::Type a_type, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		void ResolvePendingFailure(const std::string& key);
 
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
@@ -930,7 +956,7 @@ namespace SIE
 			MTLandLODBlend = 19,
 		};
 
-		enum class LightingShaderFlags
+		enum class LightingShaderFlags : uint32_t
 		{
 			VC = 1 << 0,
 			Skinned = 1 << 1,
@@ -955,7 +981,10 @@ namespace SIE
 			DoAlphaTest = 1 << 20,
 			Snow = 1 << 21,
 			CharacterLight = 1 << 22,
-			AdditionalAlphaMask = 1 << 23
+			AdditionalAlphaMask = 1 << 23,
+			// Open Shaders fork-only flags: bits 30 and 31 sit above the technique bits (24-29) and away from the low bits upstream claims.
+			FurShells = 1u << 30,
+			FurShellsDepth = 1u << 31
 		};
 
 		enum class BloodSplatterShaderTechniques
@@ -1124,6 +1153,9 @@ namespace SIE
 		};
 
 		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> activeShaders;
+		/// Shader key per task id so TrackActiveShader builds it once; dropped when the global shader defines change, since the key embeds them.
+		ankerl::unordered_dense::map<size_t, std::string> activeShaderKeys;
+		uint32_t activeShaderKeysDefinesVersion = 0;
 		mutable std::mutex activeShadersMutex;
 
 		void TrackActiveShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
@@ -1176,9 +1208,9 @@ namespace SIE
 	private:
 		/** @brief True when a_taskGeneration is set and no longer matches the live
 		 *  generation; a Clear() invalidated this task while it was compiling. */
-		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration) const
+		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration, RE::BSShader::Type a_type) const
 		{
-			return a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire);
+			return a_taskGeneration && *a_taskGeneration != compilationSet.LiveGeneration(a_type);
 		}
 
 		void StartActiveShaderCaptureWindow(ActiveShaderCaptureStage a_stage);
@@ -1239,6 +1271,7 @@ namespace SIE
 		bool isEnabled = true;
 		bool isDiskCache = true;
 		bool diskCacheHeld = false;
+		bool requireDigestForReuse = false;
 		bool featureSetChanged = false;
 		bool featureSetRevertPending = false;
 		bool featureSetCacheBackedUp = false;

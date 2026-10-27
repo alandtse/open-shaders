@@ -5,6 +5,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Utils/ActorUtils.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -64,11 +65,7 @@ namespace
 
 	[[nodiscard]] bool ContainsInsensitive(std::string_view a_value, std::string_view a_needle)
 	{
-		return std::search(a_value.begin(), a_value.end(), a_needle.begin(), a_needle.end(),
-				   [](unsigned char a_left, unsigned char a_right) {
-					   return static_cast<unsigned char>(std::tolower(a_left)) ==
-			                  static_cast<unsigned char>(std::tolower(a_right));
-				   }) != a_value.end();
+		return Util::IContains(a_value, a_needle);
 	}
 
 	[[nodiscard]] ActorClass ClassifyActor(const RE::Actor& a_actor)
@@ -249,8 +246,7 @@ namespace
 		bool a_horizontal)
 	{
 		const float3 direction = a_horizontal ? HorizontalAimDirection(a_actor) : Util::GetAimDirection(a_actor);
-		const float halfAngle = std::clamp(a_profile.coneHalfAngle, 5.0f, 90.0f) *
-		                        (std::numbers::pi_v<float> / 180.0f);
+		const float halfAngle = DirectX::XMConvertToRadians(std::clamp(a_profile.coneHalfAngle, 5.0f, 90.0f));
 		const float3 origin = a_horizontal ? Util::GetVisualOrigin(a_actor) : Util::GetMagicOrigin(a_actor);
 		return WindField::MakeDirectionalWave(origin, direction,
 			std::clamp(a_profile.strength * a_masterStrength, 0.0f, kMaximumStrength),
@@ -735,52 +731,30 @@ void HeavyImpactWindRouter::QueueImpact(RE::Actor& a_actor, ImpactKind a_kind)
 
 void HeavyImpactWindRouter::SanitizeSettings()
 {
-	settings.strength = std::isfinite(settings.strength) ? std::clamp(settings.strength, 0.0f, kMaximumStrength) : 1.0f;
-	settings.trackingDistance = std::isfinite(settings.trackingDistance) ?
-	                                std::clamp(settings.trackingDistance, kMinimumDistance, kMaximumDistance) :
-	                                12000.0f;
-	settings.deduplicationTime = std::isfinite(settings.deduplicationTime) ?
-	                                 std::clamp(settings.deduplicationTime, 0.0f, kMaximumTime) :
-	                                 0.35f;
+	settings.strength = Util::ClampFinite(settings.strength, 0.0f, kMaximumStrength, 1.0f);
+	settings.trackingDistance = Util::ClampFinite(settings.trackingDistance, kMinimumDistance, kMaximumDistance, 12000.0f);
+	settings.deduplicationTime = Util::ClampFinite(settings.deduplicationTime, 0.0f, kMaximumTime, 0.35f);
 
 	const auto sanitizeRadial = [](RadialProfile& a_profile, const RadialProfile& a_defaults) {
-		a_profile.strength = std::isfinite(a_profile.strength) ?
-		                         std::clamp(a_profile.strength, 0.0f, kMaximumStrength) :
-		                         a_defaults.strength;
-		a_profile.distance = std::isfinite(a_profile.distance) ?
-		                         std::clamp(a_profile.distance, kMinimumDistance, kMaximumDistance) :
-		                         a_defaults.distance;
-		a_profile.waveHalfWidth = std::isfinite(a_profile.waveHalfWidth) ?
-		                              std::clamp(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance) :
-		                              a_defaults.waveHalfWidth;
+		a_profile.strength = Util::ClampFinite(a_profile.strength, 0.0f, kMaximumStrength, a_defaults.strength);
+		a_profile.distance = Util::ClampFinite(a_profile.distance, kMinimumDistance, kMaximumDistance, a_defaults.distance);
+		a_profile.waveHalfWidth = Util::ClampFinite(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance, a_defaults.waveHalfWidth);
 		a_profile.propagationSpeed =
 			std::isfinite(a_profile.propagationSpeed) && a_profile.propagationSpeed > kMinimumPropagationSpeed ?
 				std::min(a_profile.propagationSpeed, kMaximumSpeed) :
 				a_defaults.propagationSpeed;
-		a_profile.decayTime = std::isfinite(a_profile.decayTime) ?
-		                          std::clamp(a_profile.decayTime, 0.0f, kMaximumTime) :
-		                          a_defaults.decayTime;
+		a_profile.decayTime = Util::ClampFinite(a_profile.decayTime, 0.0f, kMaximumTime, a_defaults.decayTime);
 	};
 	const auto sanitizeDirectional = [&](DirectionalProfile& a_profile, const DirectionalProfile& a_defaults) {
-		a_profile.strength = std::isfinite(a_profile.strength) ?
-		                         std::clamp(a_profile.strength, 0.0f, kMaximumStrength) :
-		                         a_defaults.strength;
-		a_profile.distance = std::isfinite(a_profile.distance) ?
-		                         std::clamp(a_profile.distance, kMinimumDistance, kMaximumDistance) :
-		                         a_defaults.distance;
-		a_profile.waveHalfWidth = std::isfinite(a_profile.waveHalfWidth) ?
-		                              std::clamp(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance) :
-		                              a_defaults.waveHalfWidth;
+		a_profile.strength = Util::ClampFinite(a_profile.strength, 0.0f, kMaximumStrength, a_defaults.strength);
+		a_profile.distance = Util::ClampFinite(a_profile.distance, kMinimumDistance, kMaximumDistance, a_defaults.distance);
+		a_profile.waveHalfWidth = Util::ClampFinite(a_profile.waveHalfWidth, kMinimumDistance, kMaximumDistance, a_defaults.waveHalfWidth);
 		a_profile.propagationSpeed =
 			std::isfinite(a_profile.propagationSpeed) && a_profile.propagationSpeed > kMinimumPropagationSpeed ?
 				std::min(a_profile.propagationSpeed, kMaximumSpeed) :
 				a_defaults.propagationSpeed;
-		a_profile.coneHalfAngle = std::isfinite(a_profile.coneHalfAngle) ?
-		                              std::clamp(a_profile.coneHalfAngle, 5.0f, 90.0f) :
-		                              a_defaults.coneHalfAngle;
-		a_profile.decayTime = std::isfinite(a_profile.decayTime) ?
-		                          std::clamp(a_profile.decayTime, 0.0f, kMaximumTime) :
-		                          a_defaults.decayTime;
+		a_profile.coneHalfAngle = Util::ClampFinite(a_profile.coneHalfAngle, 5.0f, 90.0f, a_defaults.coneHalfAngle);
+		a_profile.decayTime = Util::ClampFinite(a_profile.decayTime, 0.0f, kMaximumTime, a_defaults.decayTime);
 	};
 	const Settings defaults;
 	sanitizeDirectional(settings.powerAttack, defaults.powerAttack);

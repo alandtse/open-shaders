@@ -12,13 +12,15 @@ struct FoliageLighting : Feature
 		uint EnableFoliageAmbientFlip = 1;
 		float FoliageAmbientAmount = 0.25f;
 		uint EnableGrassScattering = 1;
-		uint pad[3];
+		uint Enable = 0;
+		uint pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, EnableFoliageAmbientBoost) == sizeof(uint));
 	static_assert(offsetof(Settings, EnableFoliageAmbientFlip) == sizeof(uint) * 2);
 	static_assert(offsetof(Settings, FoliageAmbientAmount) == sizeof(uint) * 3);
 	static_assert(offsetof(Settings, EnableGrassScattering) == sizeof(uint) * 4);
+	static_assert(offsetof(Settings, Enable) == sizeof(uint) * 5);
 	static_assert(sizeof(Settings) == 32);
 
 	virtual std::string GetName() override { return "Foliage Lighting"; }
@@ -44,6 +46,8 @@ struct FoliageLighting : Feature
 	virtual void LoadSettings(json& o_json) override;
 	/** @brief Restores default foliage lighting settings. */
 	virtual void RestoreDefaultSettings() override;
+	/** @brief Returns shader settings with foliage lighting disabled by the master toggle. */
+	Settings GetCommonBufferData() const;
 
 	Settings settings;
 };

@@ -24,5 +24,5 @@ runs:
               python-version: "3.11"
 
         - name: Install hlslkit
-          run: pip install git+https://github.com/alandtse/hlslkit.git
+          run: pip install git+https://github.com/alandtse/hlslkit.git@d0ed83ab12fc48b9ee03ddf61b21e80bfa5c3778
           shell: bash

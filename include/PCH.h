@@ -1,7 +1,13 @@
 #pragma once
 
+#include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <new>
+#include <format>
+#include <source_location>
+#include <string_view>
+#include <system_error>
 void* operator new[](size_t size, const char* pName, int flags, unsigned debugFlags, const char* file, int line);
 void* operator new[](size_t size, size_t alignment, size_t alignmentOffset, const char* pName, int flags,
 	unsigned debugFlags, const char* file, int line);
@@ -101,15 +107,41 @@ namespace stl
 		return result;
 	}
 
+	// Attaching the same thunk to the same function twice chains the thunk into itself and recurses forever.
+	inline bool detour_registry(std::uintptr_t a_target, PVOID a_thunk, bool a_record)
+	{
+		static std::mutex lock;
+		static std::set<std::pair<std::uintptr_t, std::uintptr_t>> installed;
+		const std::pair key{ a_target, reinterpret_cast<std::uintptr_t>(a_thunk) };
+		std::scoped_lock guard(lock);
+		if (a_record)
+			installed.insert(key);
+		return installed.contains(key);
+	}
+
+	inline bool detour_is_installed(std::uintptr_t a_target, PVOID a_thunk)
+	{
+		return detour_registry(a_target, a_thunk, false);
+	}
+
+	inline void detour_record_installed(std::uintptr_t a_target, PVOID a_thunk)
+	{
+		detour_registry(a_target, a_thunk, true);
+	}
+
 	template <class T>
 	long detour_thunk(std::uintptr_t a_address)
 	{
+		if (detour_is_installed(a_address, reinterpret_cast<PVOID>(T::thunk)))
+			return NO_ERROR;
 		T::func = a_address;
 		const auto result = detour_attach(reinterpret_cast<PVOID*>(&T::func), reinterpret_cast<PVOID>(T::thunk));
 		if (result != NO_ERROR) {
 			SKSE::log::error("Detour attach failed at 0x{:X} (error {})", a_address, result);
 			// Leave func null so callers checking it see the hook is not installed.
 			T::func = 0;
+		} else {
+			detour_record_installed(a_address, reinterpret_cast<PVOID>(T::thunk));
 		}
 		return result;
 	}
@@ -123,18 +155,27 @@ namespace stl
 	template <class T>
 	void detour_thunk_ignore_func(REL::RelocationID a_relId)
 	{
+		if (detour_is_installed(a_relId.address(), reinterpret_cast<PVOID>(T::thunk)))
+			return;
 		auto target = reinterpret_cast<PVOID>(a_relId.address());
 		if (const auto result = detour_attach(&target, reinterpret_cast<PVOID>(T::thunk)); result != NO_ERROR)
 			SKSE::log::error("Detour attach failed at 0x{:X} (error {})", a_relId.address(), result);
+		else
+			detour_record_installed(a_relId.address(), reinterpret_cast<PVOID>(T::thunk));
 	}
 
 	template <std::size_t idx, class T>
 	void detour_vfunc(void* target)
 	{
 		auto vtable = *reinterpret_cast<uintptr_t**>(target);
-		T::func = vtable[idx];
+		const auto original = vtable[idx];
+		if (original == reinterpret_cast<std::uintptr_t>(T::thunk) || detour_is_installed(original, reinterpret_cast<PVOID>(T::thunk)))
+			return;
+		T::func = original;
 		const auto result = detour_attach(reinterpret_cast<PVOID*>(&T::func), reinterpret_cast<PVOID>(T::thunk));
-		if (result != NO_ERROR)
+		if (result == NO_ERROR)
+			detour_record_installed(original, reinterpret_cast<PVOID>(T::thunk));
+		else
 			T::func = Util::VTableHookFallback(target, idx, reinterpret_cast<PVOID>(T::thunk), result);
 	}
 }
@@ -158,25 +199,26 @@ namespace DX
 	class com_exception : public std::exception
 	{
 	public:
-		explicit com_exception(HRESULT hr) noexcept :
-			result(hr) {}
-
-		const char* what() const override
+		explicit com_exception(HRESULT hr, const std::source_location& where = std::source_location::current()) :
+			result(hr)
 		{
-			static char s_str[64] = {};
-			sprintf_s(s_str, "Failure with HRESULT of %08X", static_cast<unsigned int>(result));
-			return s_str;
+			std::string_view file = where.file_name();
+			file.remove_prefix(file.find_last_of("\\/") == std::string_view::npos ? 0 : file.find_last_of("\\/") + 1);
+			message = std::format("{} (HRESULT 0x{:08X}) at {}:{}", std::system_category().message(hr), static_cast<uint32_t>(hr), file, where.line());
 		}
+
+		const char* what() const noexcept override { return message.c_str(); }
 
 	private:
 		HRESULT result;
+		std::string message;
 	};
 
-	// Helper utility converts D3D API failures into exceptions.
-	inline void ThrowIfFailed(HRESULT hr)
+	// Helper utility converts D3D API failures into exceptions that name the failing call site.
+	inline void ThrowIfFailed(HRESULT hr, const std::source_location& where = std::source_location::current())
 	{
 		if (FAILED(hr)) {
-			throw com_exception(hr);
+			throw com_exception(hr, where);
 		}
 	}
 }

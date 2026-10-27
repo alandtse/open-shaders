@@ -140,6 +140,12 @@ The release attach job (`_attach-release-artifacts.yaml`) wraps the AIO in a FOM
 
 A release with a dropped cache is still valid; look for these warnings in the attach job when a cache option is unexpectedly missing.
 
+Release caches combine the validation matrix with the live-captured engine variants and standalone feature shaders in `.github/configs/shader-cache-inputs.json`. To refresh that supplementary capture, run the default AIO profile with Debug logging, load an outdoor scene, and run `python tools/build-shader-cache.py --capture-inputs <OpenShaders.log> .github/configs/shader-cache-inputs.json`. The builder checks the captured feature profile, removes debug compiler flags, and maps engine descriptors and macros to SE or VR. Standalone cache names use relative shader paths, so the installed game location does not change them. VR caches exclude features that do not support VR.
+
+Both the local builder and release CI require zero shader warnings except the existing X1519 suppression. Verify extracted caches with `tools/verify_shader_cache.py artifact`, then use its `snapshot` and `session` commands for the live reuse check. A matching default installation must leave the cache unchanged and load every queued shader from disk; changing shader defines or installing shader overrides can require additional variants.
+
+The builder expands Screen Space Shadows' default sample counts across supported flat resolutions and supplies both VR eye variants and the VR-only synchronization and HMD-mask shaders. This coverage is generated from the captured request and the runtime's default rules rather than assuming the capture machine's resolution or upscaler.
+
 ## Manual Packaging Targets
 
 These targets are defined in `CMakeLists.txt` and are useful when you want precise control over packaging (CI artifacts, local QA, or manual deployment):

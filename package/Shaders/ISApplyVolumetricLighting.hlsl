@@ -1,6 +1,7 @@
 #include "Common/DummyVSTexCoord.hlsl"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/ReverseZ.hlsli"
+#include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRStereoEffects.hlsli"
 
@@ -60,7 +61,8 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 	float vl = g_IntensityX_TemporalY.x * VLTex.SampleLevel(VLSampler, float3(volumeUV, repartition), 0).x;
 
-	float noiseGrad = 0.03125 * NoiseGradSamplerTex.Sample(NoiseGradSamplerSampler, 0.125 * input.Position.xy).x;
+	const bool dither = !SharedData::enbSettings.Enable || !SharedData::enbSettings.GameVolumetricRaysDisableDithering;
+	float noiseGrad = dither ? 0.03125 * NoiseGradSamplerTex.Sample(NoiseGradSamplerSampler, 0.125 * input.Position.xy).x : 0.0;
 
 	float adjustedVl = max(0.0, noiseGrad + vl - kVLThresholdBias);
 

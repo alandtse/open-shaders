@@ -402,9 +402,7 @@ namespace SharedData
 		float FireIntensity;
 
 		float FireCurve;
-		uint EnableRain;
-		float RainMotionStretch;
-		float RainMotionTransparency;
+		float3 pad0;
 
 		float CloudsCurve;
 		float CloudsDesaturation;
@@ -418,7 +416,8 @@ namespace SharedData
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
-		float2 ProceduralSunPad;
+		float SkyScaleMultiplier;
+		float ProceduralSunPad;
 
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
@@ -432,7 +431,7 @@ namespace SharedData
 
 		uint EnableVolumetricRays;
 		float VolumetricRaysIntensity;
-		float VolumetricRaysExtinction;
+		float VolumetricRaysDensity;
 		float VolumetricRaysSkyColorAmount;
 
 		float VolumetricRaysDesaturation;
@@ -509,7 +508,7 @@ namespace SharedData
 		uint VolumetricFogEnableLighting;
 
 		float3 VolumetricRaysSkyColor;
-		float VolumetricRaysPad0;
+		uint VolumetricFogEnableShadows;
 
 		float StarsCurve;
 		float StarsIntensity;
@@ -523,6 +522,16 @@ namespace SharedData
 
 		float AuroraCurve;
 		float3 NightSkyPad;
+
+		uint VolumetricRaysSampleCount;
+		uint GameVolumetricRaysDisableDithering;
+		float2 GameVolumetricRaysPad0;
+
+		float3 GameVolumetricRaysLightScale;
+		float GameVolumetricRaysCustomContribution;
+
+		float3 GameVolumetricRaysCustomColor;
+		float GameVolumetricRaysPad1;
 	};
 	struct TerrainBlendingSettings
 	{
@@ -591,7 +600,15 @@ namespace SharedData
 		float volumetricFogNoiseThreshold;
 		float2 pad3;
 		float3 volumetricFogNoiseVelocity;
-		float pad4;
+		uint volumetricFogNoiseType;
+		uint mistsEnabled;
+		float mistStrength;
+		float mistRange;
+		float mistSize;
+		float mistDriftSpeed;
+		uint mistFollowWind;
+		float mistWindMultiplier;
+		float pad5;
 	};
 
 	struct TruePBRSettings
@@ -676,6 +693,73 @@ namespace SharedData
 		float3 pad;
 	};
 
+	struct RainRefractionSettings
+	{
+		uint Enable;
+		float MotionStretch;
+		float MotionTransparency;
+		float pad0;
+		float4 TextureBounds;
+		float2 TextureRadiusScale;
+		float2 pad1;
+	};
+
+#if defined(SNOW_COVER) && defined(PSHADER)
+	struct SnowCoverSettings
+	{
+		float Month;
+		float TimeSnowing;
+		float SnowingDensity;
+		float SeasonalAltitude;
+
+		uint EnableExpensiveFoliage;
+		float SnowHeightOffset;
+		uint2 pad;
+
+		float RooftopSnow;
+		float RooftopHeight;
+		float RooftopExposure;
+		uint rooftopPad;
+
+		uint EnableSnowCover;
+		uint AffectGrassTint;
+		uint AffectTreeTint;
+		float FoliageHeightOffset;
+
+		float UVScale;
+		float peakMainAngle;
+		float peakAltAngle;
+		float minAngle;
+
+		float maxAngle;
+		float mainSpec;
+		float altSpec;
+		float mapZscale;
+
+		float2 mapScale;
+		float2 mapOffset;
+
+		float4 Glint;
+		float4 MainTint;
+		float4 AltTint;
+
+		float BlendSmoothness;
+		float WeatherFadeStart;
+		float WeatherFadeEnd;
+		float ObjectFadeStart;
+
+		float ObjectFadeEnd;
+		float ObjectFadeAmount;
+		uint2 pad2;
+
+		uint FireMeltCount;
+		float FireMeltStrength;
+		float FireMeltRadiusScale;
+		uint pad3;
+		float4 FireMeltSpheres[8];
+	};
+#endif
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -707,6 +791,10 @@ namespace SharedData
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
+		RainRefractionSettings rainRefractionSettings;
+#if defined(SNOW_COVER) && defined(PSHADER)
+		SnowCoverSettings snowCoverSettings;
+#endif
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

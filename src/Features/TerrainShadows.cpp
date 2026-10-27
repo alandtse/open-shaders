@@ -10,9 +10,11 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
+#include "LODShadows.h"
 #include "SkySync.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/StringUtils.h"
 
 #define I18N_KEY_PREFIX "feature.terrain_shadows."
 
@@ -70,9 +72,7 @@ namespace
 
 				const auto tokenEnd = a_command.find_first_of(" \t\r\n");
 				const auto token = a_command.substr(0, tokenEnd);
-				if (!std::ranges::equal(token, a_token, [](char a_lhs, char a_rhs) {
-						return std::tolower(static_cast<unsigned char>(a_lhs)) == std::tolower(static_cast<unsigned char>(a_rhs));
-					})) {
+				if (!Util::IEquals(token, a_token)) {
 					return false;
 				}
 
@@ -164,6 +164,16 @@ namespace
 
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
+
+	// Heightmaps are keyed by the worldspace that provides the land data.
+	RE::TESWorldSpace* GetLandWorldspace()
+	{
+		auto tes = globals::game::tes;
+		auto worldspace = tes ? tes->GetRuntimeData2().worldSpace : nullptr;
+		while (worldspace && worldspace->parentWorld && worldspace->parentUseFlags.any(RE::TESWorldSpace::ParentUseFlag::kUseLandData))
+			worldspace = worldspace->parentWorld;
+		return worldspace;
+	}
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -325,18 +335,18 @@ ID3D11ComputeShader* TerrainShadows::GetShadowUpdateProgram()
 
 bool TerrainShadows::IsHeightMapReady()
 {
-	if (auto tes = RE::TES::GetSingleton())
-		if (auto worldspace = tes->GetRuntimeData2().worldSpace)
-			return cachedHeightmap && cachedHeightmap->worldspace == worldspace->GetFormEditorID();
-	return false;
+	auto worldspace = GetLandWorldspace();
+	return worldspace && cachedHeightmap && cachedHeightmap->worldspace == worldspace->GetFormEditorID();
 }
 
 TerrainShadows::PerFrame TerrainShadows::GetCommonBufferData()
 {
+	if (globals::features::lodShadows.ReplacesTerrainShadows())
+		return {};
 	bool isHeightmapReady = IsHeightMapReady();
 
 	PerFrame data = {
-		.EnableTerrainShadow = settings.EnableTerrainShadow && isHeightmapReady,
+		.EnableTerrainShadow = settings.EnableTerrainShadow && isHeightmapReady && shadowHeightValid,
 	};
 
 	if (isHeightmapReady) {
@@ -357,14 +367,7 @@ TerrainShadows::PerFrame TerrainShadows::GetCommonBufferData()
 
 void TerrainShadows::LoadHeightmap()
 {
-	auto tes = globals::game::tes;
-	if (!tes)
-		return;
-
-	auto worldspace = tes->GetRuntimeData2().worldSpace;
-	while (worldspace && worldspace->parentWorld && worldspace->parentUseFlags.any(RE::TESWorldSpace::ParentUseFlag::kUseLandData))
-		worldspace = worldspace->parentWorld;
-
+	auto worldspace = GetLandWorldspace();
 	if (!worldspace)
 		return;
 
@@ -475,7 +478,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 {
 	ZoneScoped;
 
-	if (!IsHeightMapReady())
+	if (!IsHeightMapReady() || !texShadowHeight)
 		return false;
 
 	if (!GetShadowUpdateProgram())
@@ -497,7 +500,8 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 	auto shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode)
 		return false;
-	auto sunLight = skyrim_cast<RE::NiDirectionalLight*>(shadowSceneNode->GetRuntimeData().sunLight->light.get());
+	const auto sun = shadowSceneNode->GetRuntimeData().sunLight;
+	auto sunLight = sun ? skyrim_cast<RE::NiDirectionalLight*>(sun->light.get()) : nullptr;
 	if (!sunLight)
 		return false;
 
@@ -614,6 +618,17 @@ void TerrainShadows::ReflectionsPrepass()
 
 void TerrainShadows::EarlyPrepass()
 {
+	if (globals::features::lodShadows.ReplacesTerrainShadows()) {
+		if (texShadowHeight) {
+			ID3D11ShaderResourceView* nullView = nullptr;
+			globals::d3d::context->PSSetShaderResources(60, 1, &nullView);
+			globals::d3d::context->CSSetShaderResources(60, 1, &nullView);
+			texShadowHeight.reset();
+			shadowHeightValid = false;
+			needPrecompute = true;
+		}
+		return;
+	}
 	LoadHeightmap();
 
 	const auto requestedRefreshGeneration = Util::GetCompletedCelestialTransitionGeneration();
@@ -621,12 +636,20 @@ void TerrainShadows::EarlyPrepass()
 	if (!settings.EnableTerrainShadow)
 		return;
 
-	const bool refreshImmediately = needPrecompute || timeJumpRefresh;
-	if (needPrecompute)
-		Precompute();
-
-	if (UpdateShadow(refreshImmediately) && timeJumpRefresh)
-		handledTimeJumpRefreshGeneration = requestedRefreshGeneration;
+	const bool refreshImmediately = needPrecompute || timeJumpRefresh || !shadowHeightValid;
+	try {
+		if (needPrecompute)
+			Precompute();
+		if (UpdateShadow(refreshImmediately) && timeJumpRefresh)
+			handledTimeJumpRefreshGeneration = requestedRefreshGeneration;
+	} catch (const std::exception& error) {
+		logger::error("Terrain Shadows resource update failed: {}", error.what());
+		shadowHeightValid = false;
+		needPrecompute = false;
+		texShadowHeight.reset();
+		globals::state->UpdateFeatureData(false);
+		return;
+	}
 
 	if (texShadowHeight && shadowHeightValid) {
 		auto context = globals::d3d::context;

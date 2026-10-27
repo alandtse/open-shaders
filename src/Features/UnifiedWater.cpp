@@ -4,6 +4,7 @@
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
 #include "Util.h"
+#include "Utils/MathUtils.h"
 #include "Utils/VersionedRelocation.h"
 
 #define I18N_KEY_PREFIX "feature.unified_water."
@@ -19,12 +20,12 @@ namespace
 {
 	bool IsInteriorCellActive()
 	{
-		const auto tes = RE::TES::GetSingleton();
+		const auto tes = globals::game::tes;
 		if (tes && tes->interiorCell)
 			return true;
 
 		// TES::interiorCell can lag behind during load transitions
-		const auto player = RE::PlayerCharacter::GetSingleton();
+		const auto player = globals::game::player;
 		const auto cell = player ? player->GetParentCell() : nullptr;
 		return cell && cell->IsInteriorCell();
 	}
@@ -375,19 +376,12 @@ bool UnifiedWater::LoadOrderChanged()
 	if (!dataHandler)
 		return false;
 
-	uint64_t hash = 14695981039346656037ull;
-
-	auto addBytes = [&](const unsigned char* p) {
-		for (; *p; ++p) {
-			hash ^= *p;
-			hash *= 1099511628211ull;
-		}
-	};
+	uint64_t hash = Util::kFnv1a64Basis;
 
 	auto addToHash = [&](const RE::TESFile* file) {
 		if (!file || file->fileName[0] == '\0')
 			return;
-		addBytes(reinterpret_cast<const unsigned char*>(file->fileName));
+		hash = Util::Fnv1a64(file->fileName, hash);
 	};
 
 	if (const auto mods = dataHandler->GetLoadedMods()) {
@@ -402,7 +396,7 @@ bool UnifiedWater::LoadOrderChanged()
 			addToHash(lightMods[i]);
 	}
 
-	addBytes(reinterpret_cast<const unsigned char*>(Plugin::VERSION.string().c_str()));
+	hash = Util::Fnv1a64(Plugin::VERSION.string(), hash);
 
 	// Data/ root is subject to a persistent external lock while the game runs (reproduced:
 	// writes fail with ERROR_SHARING_VIOLATION for the whole session, unrelated to our own
@@ -487,12 +481,9 @@ void UnifiedWater::TESWaterSystem_InitializeWater_SetWaterShaderMaterialParams::
 
 	func(form, material);
 
-	uint32_t hash = 2166136261u;
+	uint32_t hash = Util::kFnv1a32Basis;
 	auto addStrToHash = [&](const char* str) {
-		for (auto p = reinterpret_cast<const unsigned char*>(str); *p; ++p) {
-			hash ^= *p;
-			hash *= 16777619u;
-		}
+		hash = Util::Fnv1a32(str, hash);
 	};
 
 	addStrToHash(form->noiseTextures[0].textureName.c_str());

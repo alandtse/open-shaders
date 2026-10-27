@@ -21,6 +21,7 @@
 #	undef IBL
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
@@ -31,10 +32,11 @@ struct VS_INPUT
 	float4 InstanceData2: TEXCOORD5;
 	float4 InstanceData3: TEXCOORD6;
 	float4 InstanceData4: TEXCOORD7;
-#ifdef VR
+#	ifdef VR
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 // Both paths use upstream's vertex inputs. Only outputs consumed by this pass are interpolated.
 struct VS_OUTPUT
@@ -488,6 +490,12 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
 
+#	if defined(SNOW_COVER)
+#		define BASIC_SNOW_COVER
+#		define SampColorSampler SampBaseSampler
+#		include "SnowCover/SnowCover.hlsli"
+#	endif
+
 #	ifdef GRASS_LIGHTING
 #		if defined(TRUE_PBR)
 cbuffer PerMaterial : register(b1)
@@ -593,13 +601,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		dirLightColor *= ExponentialHeightFog::GetSunlightFogAttenuation(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
 #				endif
 	if (!SharedData::InInterior)
-		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 
 	float4 shadowColor = TexShadowMaskSampler.Load(int3(input.HPosition.xy, 0));
 	float dirDetailedShadow = 1.0;
+	float nativeContactWeight = 1.0;
 	if (ShadowSampling::HasDirectionalShadows()) {
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x);
+		float directionalCoverage;
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
 	}
 	float2 screenSpaceShadows = 1.0;
 #				if defined(SCREEN_SPACE_SHADOWS)
@@ -610,6 +620,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 		screenSpaceShadows = ScreenSpaceShadows::GetScreenSpaceShadows(input.HPosition.xyz, screenUV, screenNoise);
 #				endif  // SCREEN_SPACE_SHADOWS
+	screenSpaceShadows = lerp(1.0, screenSpaceShadows, nativeContactWeight);
 
 	float dirSoftShadow = dirDetailedShadow;
 	float skylightingShadowVisibility = 1.0;
@@ -618,6 +629,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 	dirDetailedShadow *= screenSpaceShadows.x;
 	dirSoftShadow *= dot(normal, SharedData::DirLightDirection.xyz) >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
+
+#				if defined(SNOW_COVER)
+	if (SnowCover::IsActive()) {
+#					if defined(SKYLIGHTING)
+		float snowSkyVisibility = SphericalHarmonics::Unproject(skylightingSH, float3(0, 0, 1));
+#					else
+		float snowSkyVisibility = 1.0;
+#					endif
+		SnowCover::ApplyGrassSnow(material.BaseColor, normal, input.WorldPosition.xyz, input.TexCoord.xy, viewPosition.xyz, snowSkyVisibility, false, eyeIndex, TexBaseSampler);
+	}
+#				endif
 
 	DirectLightingOutput totalLighting = (DirectLightingOutput)0;
 	DirectContext dirContext = CreateDirectLightingContext(normal, normal, vertexNormal, viewDirection, viewDirection,
@@ -836,17 +858,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
 	if (!SharedData::InInterior)
-		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 
 	float dirDetailedShadow = 1.0;
 	float grassDirectionalShadowScale = 1.0;
+	float nativeContactWeight = 1.0;
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
 	if (ShadowSampling::HasDirectionalShadows()) {
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		float directionalCoverage;
-		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage);
+		dirDetailedShadow *= DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
 #				if defined(LIGHT_LIMIT_FIX)
 		grassDirectionalShadowScale = Foliage::GetDirectionalShadowScale(dirDetailedShadow, directionalCoverage);
 #				endif
@@ -861,6 +884,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 	{
 		float2 screenSpaceShadows = ScreenSpaceShadows::GetScreenSpaceShadows(input.HPosition.xyz, screenUV, screenNoise);
+		screenSpaceShadows = lerp(1.0, screenSpaceShadows, nativeContactWeight);
 		if (dirNdotL >= 0.0)
 			dirDetailedShadow *= screenSpaceShadows.x;
 		dirTransmissionShadow *= dirNdotL >= 0.0 ? screenSpaceShadows.x : screenSpaceShadows.y;
@@ -906,8 +930,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
-	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
+#				if defined(SNOW_COVER)
+	if (SnowCover::IsActive()) {
+#					if defined(SKYLIGHTING)
+		float snowSkyVisibility = skylightingDiffuse;
+#					else
+		float snowSkyVisibility = 1.0;
+#					endif
+		SnowCover::ApplyGrassSnow(albedo, normal, input.WorldPosition.xyz, input.TexCoord.xy, viewPosition.xyz, snowSkyVisibility, complex, eyeIndex, TexBaseSampler);
+	}
+#				endif
 
+	float3 transmissionTint = GrassLighting::GetTransmissionTint(albedo);
 	float dirVdotL = dot(viewDirection, SharedData::DirLightDirection.xyz);
 	float3 transmissionRadiance = dirLightColor * dirTransmissionShadow *
 	                              GrassLighting::GetTransmissionFactor(dirNdotL, dirVdotL, SharedData::grassLightingSettings.SubsurfaceScatteringAmount) *
@@ -1113,15 +1147,17 @@ PS_OUTPUT main(PS_INPUT input)
 
 	// Apply world shadow (terrain shadows, cloud shadows) directly to light color
 	if (!SharedData::InInterior)
-		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+		dirLightColor *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true);
 
 	float dirDetailedShadow = 1.0;
+	float nativeContactWeight = 1.0;
 
 	// HasDirectionalShadows() admits Interior Sun cells; mirrors the
 	// same swap in Lighting.hlsl / Particle.hlsl.
 	if (ShadowSampling::HasDirectionalShadows()) {
 		float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
-		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x);
+		float directionalCoverage;
+		dirDetailedShadow = DirectionalShadow::GetSceneDirectionalShadow(input.WorldPosition.xyz, worldPositionWS, eyeIndex, screenNoise, shadowColor.x, directionalCoverage, nativeContactWeight);
 	}
 
 #			if defined(SCREEN_SPACE_SHADOWS)
@@ -1130,7 +1166,7 @@ PS_OUTPUT main(PS_INPUT input)
 #				else
 	if (ShadowSampling::HasDirectionalShadows())
 #				endif
-		dirDetailedShadow *= ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex);
+		dirDetailedShadow *= lerp(1.0, ScreenSpaceShadows::GetScreenSpaceShadow(input.HPosition.xyz, screenUV, screenNoise, eyeIndex), nativeContactWeight);
 #			endif  // SCREEN_SPACE_SHADOWS
 
 	float3 diffuseColor = dirLightColor * dirDetailedShadow * input.DirLightAngle;

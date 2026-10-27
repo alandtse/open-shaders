@@ -4,6 +4,7 @@
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
 #include "Utils/ExternalEmittance.h"
 
+#include "EngineFix.h"
 #include "Feature.h"
 #include "Globals.h"
 #include "Menu.h"
@@ -12,6 +13,7 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Util.h"
+#include "Utils/ShaderDescriptor.h"
 
 #include "Features/CSUtility.h"
 #include "Features/Effects11.h"
@@ -19,6 +21,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
 #include "Features/RemoteControl/NvPerf.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
@@ -115,6 +118,7 @@ struct BSShader_LoadShaders
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
 				});
+				EngineFix::GenerateAllShaderPermutations(shader);
 			}
 
 			for (const auto& entry : shader->vertexShaders) {
@@ -197,7 +201,7 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 	state->ModifyShaderLookup(*shader, state->modifiedVertexDescriptor, state->modifiedPixelDescriptor);
 
 	// Only check against non-shader bits
-	state->permutationData.PixelShaderDescriptor &= ~state->modifiedPixelDescriptor;
+	state->permutationData.PixelShaderDescriptor = Util::ShaderDescriptor::UploadedPixelDescriptor(state->permutationData.PixelShaderDescriptor, state->modifiedPixelDescriptor, State::GetRuntimePixelBits(*shader));
 
 	bool shaderFound = func(shader, vertexDescriptor, pixelDescriptor, skipPixelShader);
 
@@ -342,11 +346,13 @@ namespace WaterBlendHistory
 
 namespace WeatherExtensions
 {
-	struct Sky_UpdateColors
+	struct Sky_GetFog
 	{
-		static void thunk(RE::Sky* sky, float a_delta)
+		static void thunk(RE::Sky* sky)
 		{
-			func(sky, a_delta);
+			func(sky);
+			// Sky::Update runs SetSkyColors before GetFog, so the colour stages ride this hook.
+			Feature::ForEachLoadedFeature("OnBeforeWeatherColorGrading", [sky](Feature* feature) { feature->OnBeforeWeatherColorGrading(sky); });
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
 				globals::features::effects11.OnSkyUpdateColors(sky);
@@ -445,10 +451,8 @@ namespace PostProcessingExtensions
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 		{
 			func(This, Pass, RenderFlags);
-#if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded)
-				globals::features::effects11.ModifyParticle(Pass);
-#endif
+			if (globals::features::rainRefraction.loaded)
+				globals::features::rainRefraction.ModifyParticle();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -665,6 +669,25 @@ struct BSShaderRenderTargets_Create
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
+
+struct BSInputDeviceManager_BeforeInputPoll
+{
+	/** @brief Invokes loaded features before polling engine input devices, then forwards to the engine. */
+	static void thunk(RE::BSInputDeviceManager* a_this, float a_secsSinceLastFrame)
+	{
+		Feature::ForEachLoadedFeature("OnBeforeInputPoll", [](Feature* feature) { feature->OnBeforeInputPoll(); });
+		func(a_this, a_secsSinceLastFrame);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+bool Hooks::InstallBeforeInputPoll()
+{
+	if (BSInputDeviceManager_BeforeInputPoll::func.address())
+		return true;
+	logger::info("Hooking BSInputDeviceManager::PollInputDevices entry");
+	return stl::detour_thunk<BSInputDeviceManager_BeforeInputPoll>(REL::RelocationID(67315, 68617)) == NO_ERROR;
+}
 
 struct BSInputDeviceManager_PollInputDevices
 {
@@ -1253,12 +1276,6 @@ namespace Hooks
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
-	void Sky_UpdateColors::thunk(RE::Sky* sky, float a_delta)
-	{
-		func(sky, a_delta);
-		globals::features::skySync.OnSkyUpdateColors(sky);
-	}
-
 	/**
 	 * @brief Installs hooks, detours, and memory patches for graphics, input, and rendering subsystems.
 	 *
@@ -1333,7 +1350,7 @@ namespace Hooks
 		stl::write_thunk_call<TESWaterReflections_Update_Actor_GetLOSPosition>(REL::RelocationID(31373, 32160).address() + REL::Relocate(0x1AD, 0x1CA, 0x1ed));
 
 		logger::info("Hooking weather extensions");
-		stl::detour_thunk<WeatherExtensions::Sky_UpdateColors>(REL::RelocationID(25686, 26233));
+		stl::detour_thunk<WeatherExtensions::Sky_GetFog>(REL::RelocationID(25686, 26233));
 		stl::detour_thunk<WeatherExtensions::Sky_SetDirectionalAmbientColors>(REL::RelocationID(98989, 105643));
 		if (globals::game::isVR)
 			stl::write_vfunc<0x2A, WeatherExtensions::VRUIPassAmbientFix_Hook>(RE::VTABLE_BSShaderAccumulator[0]);

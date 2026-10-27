@@ -17,6 +17,7 @@
 #include "Features/Effects11/ShaderPatches.h"
 #include "Features/Effects11/UITree.h"
 #include "Features/Effects11/WeatherManager.h"
+#include "Features/RainRefraction.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -150,7 +151,7 @@ namespace
 		if (a_category == "VOLUMETRICRAYS")
 			return { T("feature.effects11.category.volumetricrays", "Volumetric Rays"), T("feature.effects11.category.volumetricrays_desc", "Effects 11 sun rays.") };
 		if (a_category == "RAYS")
-			return { T("feature.effects11.category.rays", "Sun Rays"), T("feature.effects11.category.rays_desc", "Screen-space light shafts streaming from the sun, or from Masser at night.") };
+			return { T("feature.effects11.category.rays", "Sun Rays"), T("feature.effects11.category.rays_desc", "Screen-space light shafts streaming from the sun, or from a moon at night.") };
 		if (a_category == "GAMEVOLUMETRICRAYS")
 			return { T("feature.effects11.category.gamevolumetricrays", "Game Volumetric Rays"), T("feature.effects11.category.gamevolumetricrays_desc", "Adjustments to the game's own god rays.") };
 		if (a_category == "ADAPTATION")
@@ -807,12 +808,16 @@ void Effects11Editor::DrawCategory(const std::string& a_category, const char* a_
 		}
 	}
 
-	// Rain needs enbraindrops.png; without it the section cannot do anything
-	const auto& raindropStatus = globals::features::effects11.raindropStatus;
-	const bool usable = a_category != "RAIN" || raindropStatus.empty();
+	// Rain is drawn by Rain Refraction, which needs a raindrop texture from the preset or its own default
+	const auto& rainRefraction = globals::features::rainRefraction;
+	const bool usable = a_category != "RAIN" || (rainRefraction.loaded && rainRefraction.GetRaindropSRV());
 	if (!usable) {
-		const auto unavailable = I18n::GetSingleton()->Format(TKEY("rain_unavailable"), { { "reason", raindropStatus } }, "Rain is unavailable: {reason}");
+		const std::string reason = rainRefraction.loaded ? rainRefraction.defaultRaindrops.status : T(TKEY("rain_refraction_disabled"), "Rain Refraction is disabled");
+		const auto unavailable = I18n::GetSingleton()->Format(TKEY("rain_unavailable"), { { "reason", reason } }, "Rain is unavailable: {reason}");
 		Util::Text::WrappedWarning("%s", unavailable.c_str());
+	} else if (a_category == "RAIN" && !rainRefraction.presetRaindrops.status.empty()) {
+		const auto fallback = I18n::GetSingleton()->Format(TKEY("rain_bundled_texture"), { { "reason", rainRefraction.presetRaindrops.status } }, "Using the bundled raindrop texture: {reason}");
+		Util::Text::WrappedInfo("%s", fallback.c_str());
 	}
 
 	if (isParticle)

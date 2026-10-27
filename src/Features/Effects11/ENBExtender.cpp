@@ -3,6 +3,7 @@
 #include "I18n/I18n.h"
 #include "SettingValueParser.h"
 #include "Utils/ShaderInclude.h"
+#include "Utils/StringUtils.h"
 
 #include <d3dcompiler.h>
 #include <fstream>
@@ -92,8 +93,7 @@ namespace ENBExtender
 
 	static Effect::UIWidgetType ParseWidgetType(const std::string& widget)
 	{
-		std::string lower = widget;
-		std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+		const std::string lower = Util::ToLowerAscii(widget);
 		if (lower == "dropdown")
 			return Effect::UIWidgetType::Dropdown;
 		if (lower == "vector")

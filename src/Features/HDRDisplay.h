@@ -54,6 +54,7 @@ public:
 	static constexpr float kHdrMenuScenePauseOrMap = 0.58f;
 	static constexpr float kHdrMenuSceneMainOrLoading = 1.f;
 
+	static constexpr uint kHdrPaperWhiteMin = 80;
 	static constexpr uint kHdrPeakNitsMin = 400;
 	static constexpr uint kHdrPeakNitsMax = 10000;
 	static constexpr uint kAutoHDRMaxNits = 500;
@@ -249,7 +250,12 @@ private:
 	bool showHDRWarningPopup = false;
 	bool pendingHDREnable = false;
 	bool presentSuppressed = false;
-	std::unordered_map<ID3D11BlendState*, winrt::com_ptr<ID3D11BlendState>> patchedBlendStateCache;
+	struct PatchedBlendState
+	{
+		winrt::com_ptr<ID3D11BlendState> original;
+		winrt::com_ptr<ID3D11BlendState> patched;
+	};
+	std::unordered_map<ID3D11BlendState*, PatchedBlendState> patchedBlendStateCache;
 
 	HRESULT PresentToSwapChain(IDXGISwapChain* swapChain, UINT syncInterval, UINT flags);
 	void DrawImGuiForPresent(bool frameGenActive, bool hdrReady);

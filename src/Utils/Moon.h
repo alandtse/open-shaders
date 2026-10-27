@@ -1,6 +1,8 @@
 // Shared moon processing utilities
 #pragma once
 
+#include "Utils/StringUtils.h"
+
 namespace Util::Moon
 {
 	/** @brief Intensity factor for a new (invisible) moon. */
@@ -63,12 +65,7 @@ namespace Util::Moon
 		if (!textureName)
 			return RE::Moon::Phases::Phase::kFull;
 
-		const size_t len = std::strlen(textureName);
-		std::string lower;
-		lower.reserve(len);
-		for (size_t i = 0; i < len; ++i) {
-			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(textureName[i]))));
-		}
+		const std::string lower = Util::ToLowerAscii(textureName);
 
 		for (auto& [suffix, id] : PhaseLookup) {
 			if (lower.find(suffix) != std::string::npos) {

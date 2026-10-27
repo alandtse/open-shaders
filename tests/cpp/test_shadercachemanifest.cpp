@@ -43,6 +43,7 @@ TEST_CASE("Load on a missing file leaves the manifest empty", "[ShaderCacheManif
 	Manifest m;
 	m.Load(dir.path / "Manifest.json");
 	CHECK_FALSE(m.Get("Lighting/1A2B.pso").has_value());
+	CHECK(m.Empty());
 }
 
 TEST_CASE("Load on a corrupt file leaves the manifest empty, not an error", "[ShaderCacheManifest]")
@@ -53,6 +54,7 @@ TEST_CASE("Load on a corrupt file leaves the manifest empty, not an error", "[Sh
 	Manifest m;
 	m.Load(path);
 	CHECK_FALSE(m.Get("Lighting/1A2B.pso").has_value());
+	CHECK(m.Empty());
 }
 
 TEST_CASE("Set then Save then Load round-trips an entry", "[ShaderCacheManifest]")
@@ -71,6 +73,7 @@ TEST_CASE("Set then Save then Load round-trips an entry", "[ShaderCacheManifest]
 	const auto v = m2.Get("Lighting/1A2B.pso");
 	REQUIRE(v.has_value());
 	CHECK(*v == "deadbeefdeadbeefdeadbeefdeadbeef");
+	CHECK_FALSE(m2.Empty());
 }
 
 TEST_CASE("Save with no changes since Load is a no-op that still reports success", "[ShaderCacheManifest]")

@@ -11,6 +11,7 @@
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/SettingsCatalog.h"
+#include "Utils/StringUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -169,9 +170,7 @@ namespace
 		if (components.pluginName.empty())
 			return std::format("0x{:X}", components.localFormId);
 
-		auto pluginName = components.pluginName;
-		std::transform(pluginName.begin(), pluginName.end(), pluginName.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		const auto pluginName = Util::ToLowerAscii(components.pluginName);
 		return std::format("0x{:X}~{}", components.localFormId, pluginName);
 	}
 
@@ -236,9 +235,7 @@ namespace
 		                      Util::PrettifyIdentifier(token) :
 		                      std::string(token);
 		std::erase_if(normalized, [](unsigned char c) { return std::isspace(c); });
-		std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-		return normalized;
+		return Util::ToLowerAscii(normalized);
 	}
 
 	bool SceneSettingAddressTokensEqual(std::string_view lhs, std::string_view rhs)
@@ -320,6 +317,7 @@ namespace
 		return displayName;
 	}
 
+	using Util::Settings::GetCatalogSerializedValue;
 	using Util::Settings::SplitCatalogPath;
 	std::string ToCatalogPath(const std::vector<std::string>& path)
 	{
@@ -638,62 +636,6 @@ namespace
 			node = &*it;
 		}
 		return node->is_object() ? node : nullptr;
-	}
-
-	bool ParseCatalogArrayIndex(std::string_view value, size_t& index)
-	{
-		const auto result = std::from_chars(value.data(), value.data() + value.size(), index);
-		return result.ec == std::errc{} && result.ptr == value.data() + value.size();
-	}
-
-	template <class Json>
-	Json* GetCatalogNodeAtPath(Json& data, const std::vector<std::string>& path)
-	{
-		auto* node = &data;
-		for (const auto& segment : path) {
-			if (node->is_object()) {
-				auto it = node->find(segment);
-				if (it == node->end())
-					return nullptr;
-				node = &*it;
-				continue;
-			}
-
-			size_t index = 0;
-			if (!node->is_array() || !ParseCatalogArrayIndex(segment, index) || index >= node->size())
-				return nullptr;
-			node = &(*node)[index];
-		}
-		return node;
-	}
-
-	template <class Json>
-	Json* GetCatalogSerializedValue(Json& data, const SceneSettingsCatalog::SettingMetadata& setting)
-	{
-		auto* parent = GetCatalogNodeAtPath(data, SplitCatalogPath(setting.serializedPath));
-		if (!parent)
-			return nullptr;
-
-		Json* value = nullptr;
-		if (parent->is_object()) {
-			auto valueIt = parent->find(setting.serializedKey);
-			if (valueIt == parent->end())
-				return nullptr;
-			value = &*valueIt;
-		} else {
-			size_t index = 0;
-			if (!parent->is_array() || !ParseCatalogArrayIndex(setting.serializedKey, index) ||
-				index >= parent->size())
-				return nullptr;
-			value = &(*parent)[index];
-		}
-
-		if (setting.serializedComponent < 0)
-			return value;
-		const auto component = static_cast<size_t>(setting.serializedComponent);
-		if (!value->is_array() || component >= value->size())
-			return nullptr;
-		return &(*value)[component];
 	}
 
 	void CollectOverwriteEntries(const json& data, const std::vector<std::string>& settingPath,
@@ -2989,7 +2931,7 @@ void SceneSettingsManager::ResolveAndApply(bool force, bool allowLocationTransit
 												   transition.duration,
 										0.0f, 1.0f) :
 			                        1.0f;
-			const auto smooth = linear * linear * (3.0f - 2.0f * linear);
+			const auto smooth = Util::Smoothstep(0.0f, 1.0f, linear);
 			resolved[address] = finished ? transition.targetValue :
 			                               transition.startValue + (transition.targetValue - transition.startValue) * smooth;
 		}
@@ -3096,7 +3038,7 @@ void SceneSettingsManager::StartLocationTransitions(
 			const float linear = transition.duration > 0.0f ?
 			                         std::clamp((now - transition.startTime) / transition.duration, 0.0f, 1.0f) :
 			                         1.0f;
-			const float progress = linear * linear * (3.0f - 2.0f * linear);
+			const float progress = Util::Smoothstep(0.0f, 1.0f, linear);
 			const auto blend = [progress](float from, float to) { return from + (to - from) * progress; };
 			for (int p = 0; p < kPeriodCount; ++p) {
 				const auto& from = transition.startLayers[p];
@@ -3183,7 +3125,7 @@ bool SceneSettingsManager::AdvanceLocationTransitions(float now)
 			const auto linear = transition.duration > 0.0f ?
 			                        std::clamp((now - transition.startTime) / transition.duration, 0.0f, 1.0f) :
 			                        1.0f;
-			const auto smooth = linear * linear * (3.0f - 2.0f * linear);
+			const auto smooth = Util::Smoothstep(0.0f, 1.0f, linear);
 			batch.updates[index].value = linear >= 1.0f ? transition.targetValue :
 			                                              transition.startValue + (transition.targetValue - transition.startValue) * smooth;
 		}
@@ -4872,16 +4814,15 @@ bool SceneSettingsManager::ReloadSceneSettings()
 
 void SceneSettingsManager::OnDataLoaded()
 {
-	gameDataReady = true;
-	if (dataLoaded)
-		TryEnsureLocationDataLoaded();
+	// Loading location JSON here races render-thread discovery.
+	gameDataReady.store(true, std::memory_order_release);
 }
 
 bool SceneSettingsManager::TryEnsureLocationDataLoaded()
 {
 	if (locationDataLoaded)
 		return true;
-	if (!gameDataReady || !RE::TESDataHandler::GetSingleton())
+	if (!gameDataReady.load(std::memory_order_acquire) || !RE::TESDataHandler::GetSingleton())
 		return false;
 	if (!userSettingsDocumentLoaded)
 		LoadAllUserSettings();

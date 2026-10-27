@@ -6,6 +6,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/StringUtils.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
 #include "../VR.h"
@@ -406,21 +407,17 @@ namespace ShadowCasterManager
 		if (s_filterText.empty()) {
 			filteredRows = rows;
 		} else {
-			std::string lower = s_filterText;
-			std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+			std::string lower = Util::ToLowerAscii(s_filterText);
 			char addrBuf[16];
 			for (auto& r : rows) {
-				std::string typeName = kShadowTypeNames[std::min(r.info.type, 2u)];
-				std::transform(typeName.begin(), typeName.end(), typeName.begin(), ::tolower);
+				std::string typeName = Util::ToLowerAscii(kShadowTypeNames[std::min(r.info.type, 2u)]);
 				// Range filter matches both raw units and rounded meters.
 				char rangeBuf[32];
 				snprintf(rangeBuf, sizeof(rangeBuf), "%.0f %.0f",
 					r.info.range, Util::Units::GameUnitsToMeters(r.info.range));
 				snprintf(addrBuf, sizeof(addrBuf), "%08x", static_cast<uint32_t>(r.info.lightKey & 0xFFFFFFFF));
 				const char* statusStr = r.inScene ? "yes" : (r.converted ? "conv" : "no");
-				std::string nameLower = r.info.name;
-				std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(),
-					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+				std::string nameLower = Util::ToLowerAscii(r.info.name);
 				if (typeName.find(lower) != std::string::npos ||
 					nameLower.find(lower) != std::string::npos ||
 					std::string(rangeBuf).find(lower) != std::string::npos ||
@@ -667,6 +664,18 @@ namespace ShadowCasterManager
 						ImGui::Text(T(TKEY("status_slot"), "Slot %u"), row.idx);
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip(T(TKEY("status_slot_tooltip"), "Casting shadows this frame in slot %u."), row.idx);
+						if (float pinDrift = 0.0f; GetOriginPinState(row.info.lightKey, pinDrift)) {
+							ImGui::SameLine();
+							const bool warped = GetFlickerMode() == 2;
+							if (GetFlickerMode() != 0)
+								ImGui::TextColored(warped ? ImVec4(0.55f, 0.95f, 0.45f, 1) : ImVec4(0.35f, 0.8f, 0.95f, 1), "%c %.1f", warped ? 'W' : 'P', pinDrift);
+							if (ImGui::IsItemHovered())
+								ImGui::SetTooltip("%s", T(TKEY("status_pin_tooltip"),
+															"P: shadow origin pinned at the cached bake pose. W: cached shadow\n"
+															"reprojected to the live origin. The light itself always flickers.\n"
+															"The number is how far the live light has drifted from the bake\n"
+															"pose, in world units."));
+						}
 					} else if (row.converted) {
 						ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1), "%s", T(TKEY("status_conv"), "Conv"));
 						if (ImGui::IsItemHovered()) {
@@ -1192,8 +1201,6 @@ namespace ShadowCasterManager
 		ImGui::SliderInt(T(TKEY("shadow_light_count"), "Shadow Light Count"), &settings.ShadowLightCount, 0, 127);
 		// Compute projected VRAM for the slider's current value so the user
 		// can see the cost of a higher count *before* committing the restart.
-		// kSHADOWMAPS holds exactly ShadowLightCount slices -- the sun lives
-		// in its own kSHADOWMAPS_ESRAM texture, so there's no +1.
 		auto sliderVram = GetVRAMInfo();
 		std::uint64_t projectedBytes = 0;
 		std::uint64_t projectedFreeBytes = 0;
@@ -1204,7 +1211,7 @@ namespace ShadowCasterManager
 		if (projectionValid) {
 			const auto projectedSlices = atlasSelected ?
 			                                 static_cast<std::uint32_t>(kVanillaShadowSliceCount) :
-			                                 static_cast<std::uint32_t>(settings.ShadowLightCount);
+			                                 static_cast<std::uint32_t>(EngineShadowSliceCount(settings.ShadowLightCount));
 			projectedBytes = ProjectShadowArrayBytes(projectedSlices);
 			if (atlasSelected && sliderVram.shadowWidth && sliderVram.shadowHeight) {
 				const std::uint64_t bpp = sliderVram.bytesPerSlice / (static_cast<std::uint64_t>(sliderVram.shadowWidth) * sliderVram.shadowHeight);
@@ -1619,6 +1626,67 @@ namespace ShadowCasterManager
 											"Reduces GPU cost the most in scenes with many lights but few that are\n"
 											"actually changing (e.g. a lit interior with the player standing still).\n"
 											"Worst-case staleness stays bounded by Shadow Staleness Ceiling above."));
+
+			ImGui::Checkbox(T(TKEY("demand_tile_cap"), "Shrink Tiles of Blocked Lights"), &settings.DemandTileCap);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("demand_tile_cap_tooltip"),
+											"Gives a light the GPU measures as lit on screen far less than the\n"
+											"best-lit light a small shadow tile, so blocked lights stop taking large tiles."));
+
+			ImGui::TreePop();
+		}
+
+		// ---- Spot lights ----------------------------------------------------
+		if (ImGui::TreeNode(T(TKEY("spot_lights"), "Spot Lights##SpotLights"))) {
+			ImGui::Checkbox(T(TKEY("spot_lit_region"), "Score Spot Lights by Their Lit Area"), &settings.SpotLitRegion);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("spot_lit_region_tooltip"),
+											"Measures a spot light's distance to the camera and player from the\n"
+											"frustum it lights instead of from its emitter, which can be far from\n"
+											"the lit area, and wakes its shadow for the player only inside that\n"
+											"frustum."));
+
+			ImGui::TreePop();
+		}
+
+		// ---- Flicker shadows ------------------------------------------------
+		if (ImGui::TreeNode(T(TKEY("flicker_shadows"), "Flicker Shadows##FlickerShadows"))) {
+			ImGui::Checkbox(T(TKEY("tolerant_split_cache"), "Keep Cached Shadows Across Flicker"), &settings.TolerantSplitCache);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("tolerant_split_cache_tooltip"),
+											"Keeps a light's baked static shadow while the light only drifts a few\n"
+											"units or a few percent in radius (flame flicker), instead of rebaking\n"
+											"it every time. Removes the static redraw work of flickering lights."));
+
+			ImGui::BeginDisabled(!settings.TolerantSplitCache);
+			const char* modeNames[3] = { T(TKEY("flicker_live"), "Live"), T(TKEY("flicker_pinned"), "Pinned"), T(TKEY("flicker_warped"), "Warped") };
+			int flickerMode = static_cast<int>(settings.FlickerShadowMode);
+			if (ImGui::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &flickerMode, modeNames, 3))
+				settings.FlickerShadowMode = static_cast<FlickerShadowModeEnum>(std::clamp(flickerMode, 0, 2));
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("flicker_tooltip"),
+											"How a cached shadow follows a flickering light:\n"
+											"Live: the shadow origin follows the light and the cached depth is\n"
+											"copied unmoved, which leaves a small mismatch near occluders.\n"
+											"Pinned: the shadow origin stays at the bake pose, so the shadow\n"
+											"does not move with the flame.\n"
+											"Warped: the cached depth is reprojected to the live origin on the\n"
+											"GPU, so the shadow moves with the flame.\n"
+											"P / W in the shadow light table marks lights using Pinned / Warped."));
+
+			ImGui::Checkbox(T(TKEY("warp_visibility_gate"), "Skip Warp When Not Visible"), &settings.WarpVisibilityGate);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("warp_visibility_gate_tooltip"),
+											"Skips the Warped reprojection for a light that is off screen or whose\n"
+											"shadow edge would move by under a pixel, and copies the cached depth\n"
+											"instead."));
+
+			ImGui::Checkbox(T(TKEY("warp_zero_demand_skip"), "Skip Warp for Unseen Lights"), &settings.WarpZeroDemandSkip);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("warp_zero_demand_skip_tooltip"),
+											"Skips the Warped reprojection for a light the GPU measures as lighting\n"
+											"nothing on screen across many samples. Requires the Shadow Atlas."));
+			ImGui::EndDisabled();
 
 			ImGui::TreePop();
 		}

@@ -1,3 +1,5 @@
+#define DISTANT_TREE
+
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
@@ -11,6 +13,7 @@
 #	undef IBL
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float3 Position: POSITION0;
@@ -19,10 +22,11 @@ struct VS_INPUT
 	float4 InstanceData2: TEXCOORD5;
 	float4 InstanceData3: TEXCOORD6;
 	float4 InstanceData4: TEXCOORD7;
-#if defined(VR)
+#	if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 struct VS_OUTPUT
 {
@@ -111,6 +115,9 @@ struct PS_OUTPUT
 	float4 Diffuse: SV_Target0;
 
 #if !defined(RENDER_DEPTH)
+#	if defined(IBL) && !defined(DEFERRED)
+	float4 ReflectionRadiance: SV_Target7;
+#	endif
 #	if defined(DEFERRED)
 	float2 MotionVector: SV_Target1;
 	float4 Normal: SV_Target2;
@@ -124,6 +131,12 @@ struct PS_OUTPUT
 SamplerState SampDiffuse : register(s0);
 
 Texture2D<float4> TexDiffuse : register(t0);
+
+#	if defined(SCREEN_SPACE_SHADOWS) && defined(DEFERRED)
+#		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
+
+static const float ScreenSpaceShadowStrength = 0.8;
+#	endif
 
 #	if !defined(VR)
 cbuffer AlphaTestRefCB : register(b11)
@@ -164,12 +177,17 @@ const static float DepthOffsets[16] = {
 	0.333333343
 };
 
-#	if defined(SCREEN_SPACE_SHADOWS)
-#		include "ScreenSpaceShadows/ScreenSpaceShadows.hlsli"
-#	endif
-
 #	if defined(IBL)
 #		include "IBL/IBL.hlsli"
+#	endif
+
+#	if defined(SNOW_COVER)
+#		undef SNOW
+#		undef PROJECTED_UV
+#		undef SPARKLE
+#		define BASIC_SNOW_COVER
+#		define SampColorSampler SampDiffuse
+#		include "SnowCover/SnowCover.hlsli"
 #	endif
 
 #	if defined(EXP_HEIGHT_FOG)
@@ -190,7 +208,7 @@ void ApplyReflectionExponentialHeightFog(inout float3 color, float3 positionWS, 
 }
 #	endif
 
-PS_OUTPUT main(PS_INPUT input)
+PS_OUTPUT ShadeDistantTree(PS_INPUT input, bool sampleDistantShadow)
 {
 	PS_OUTPUT psout;
 
@@ -231,18 +249,12 @@ PS_OUTPUT main(PS_INPUT input)
 	}
 
 #		if defined(DEFERRED)
-	float3 viewPosition = mul(FrameBuffer::CameraView[eyeIndex], float4(input.WorldPosition.xyz, 1)).xyz;
-	float2 screenUV = FrameBuffer::ViewToUV(viewPosition, true, eyeIndex);
-	float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.Position.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
-
-	float dirShadow = 1;
+	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true, sampleDistantShadow);
 
 #			if defined(SCREEN_SPACE_SHADOWS)
-	dirShadow = lerp(1.0, ScreenSpaceShadows::GetScreenSpaceShadow(input.Position.xyz, screenUV, screenNoise, eyeIndex), 0.8);
+	[branch] if (!ShadowSampling::HasDistantShadows())
+		dirShadow *= lerp(1.0, ScreenSpaceShadows::GetScreenSpaceShadow(input.Position.xyz, 0.0.xx, 0.0, eyeIndex), ScreenSpaceShadowStrength);
 #			endif
-
-	if (dirShadow != 0.0)
-		dirShadow *= ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
@@ -256,6 +268,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = -normalize(cross(ddx, ddy));
+
+#			if defined(SNOW_COVER)
+	SnowCover::ApplyDistantTreeSnow(baseColor.xyz, normal, input.WorldPosition.xyz, input.TexCoord.xy, eyeIndex, TexDiffuse);
+#			endif
 
 	float3 directionalAmbientColor = max(0, Color::Ambient(SharedData::GetAmbient(normal)));
 #			if defined(IBL)
@@ -282,7 +298,7 @@ PS_OUTPUT main(PS_INPUT input)
 	psout.Albedo = float4(baseColor.xyz, 1);
 	psout.Masks = float4(0, 0, 1, 0);
 #		else
-	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
+	float dirShadow = ShadowSampling::GetWorldShadow(input.WorldPosition.xyz, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex, true, sampleDistantShadow);
 
 	float llDirLightMult = (SharedData::linearLightingSettings.enableLinearLighting && !SharedData::linearLightingSettings.isDirLightLinear) ? SharedData::linearLightingSettings.dirLightMult : 1.0f;
 	float3 diffuseColor = Color::DirectionalLight(SharedData::DirLightColor.xyz / max(llDirLightMult, 1e-5), SharedData::linearLightingSettings.isDirLightLinear) * dirShadow * 0.5 * llDirLightMult * Color::VanillaNormalization();
@@ -296,6 +312,10 @@ PS_OUTPUT main(PS_INPUT input)
 	float3 ddx = ddx_coarse(input.WorldPosition.xyz);
 	float3 ddy = ddy_coarse(input.WorldPosition.xyz);
 	float3 normal = normalize(cross(ddx, ddy));
+
+#			if defined(SNOW_COVER)
+	SnowCover::ApplyDistantTreeSnow(baseColor.xyz, normal, input.WorldPosition.xyz, input.TexCoord.xy, eyeIndex, TexDiffuse);
+#			endif
 
 	float3 directionalAmbientColor = Color::Ambient(SharedData::GetAmbient(normal));
 #			if defined(IBL)
@@ -322,4 +342,15 @@ PS_OUTPUT main(PS_INPUT input)
 
 	return psout;
 }
+PS_OUTPUT main(PS_INPUT input)
+{
+	PS_OUTPUT output = ShadeDistantTree(input, true);
+#	if defined(IBL) && !defined(DEFERRED) && !defined(RENDER_DEPTH)
+	output.ReflectionRadiance = output.Diffuse;
+	[branch] if (Permutation::IsReflectionRadianceCapture() && ShadowSampling::HasDistantShadows())
+		output.ReflectionRadiance = ShadeDistantTree(input, false).Diffuse;
+#	endif
+	return output;
+}
+
 #endif  // PSHADER

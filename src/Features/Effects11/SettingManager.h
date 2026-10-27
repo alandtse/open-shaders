@@ -116,6 +116,7 @@ struct Setting
 	std::string dependsOnKey;
 	std::string dependsOnCategory;
 	std::vector<std::string> legacyKeys;
+	uint32_t hdrWeightingID = 0xFFFFFFFF;  ///< Colour time-of-day only: ID of its ENB "<key>HDRWeighting" bool
 };
 
 class SettingManager
@@ -241,7 +242,8 @@ private:
 
 	SettingValue InterpolateValues(const SettingValue& a, const SettingValue& b, float t) const;
 	float ComputeTimeOfDayInterpolation(const TimeOfDayValue& value) const;
-	float3 ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value) const;
+	/** @brief Blends the periods by time-of-day weight; hdrWeighting also scales each weight by the period colour's luminance. */
+	float3 ComputeColorTimeOfDayInterpolation(const ColorTimeOfDayValue& value, bool hdrWeighting) const;
 	/** @return Bitmask of the periods the file set under any of its keys; scalars set every bit. */
 	uint8_t LoadSettingFromFile(const std::string& filePath, const std::string& section, const std::string& key, Setting& setting);
 	/** @brief Writes the setting; time-of-day types write only the periods in periodMask. */

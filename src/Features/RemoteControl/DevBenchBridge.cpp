@@ -1,4 +1,6 @@
 #include "Features/RemoteControl/DevBenchBridge.h"
+#include "Features/Screenshot/BurstAdapter.h"
+#include "Features/Screenshot/SequenceContract.h"
 
 #include <algorithm>
 #include <cmath>
@@ -23,6 +25,23 @@
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
 #	include "Features/RemoteControl/NvPerf.h"
+#	include "Features/RemoteControl/ToolSpecs/ActionsTool.h"
+#	include "Features/RemoteControl/ToolSpecs/CaptureNativeExt.h"
+#	include "Features/RemoteControl/ToolSpecs/CaptureProviderExt.h"
+#	include "Features/RemoteControl/ToolSpecs/CaptureTool.h"
+#	include "Features/RemoteControl/ToolSpecs/FeatureTool.h"
+#	include "Features/RemoteControl/ToolSpecs/InspectFeatureIssuesExt.h"
+#	include "Features/RemoteControl/ToolSpecs/InspectLlfShadowsExt.h"
+#	include "Features/RemoteControl/ToolSpecs/InspectProfilerExt.h"
+#	include "Features/RemoteControl/ToolSpecs/InspectShadercacheExt.h"
+#	include "Features/RemoteControl/ToolSpecs/InspectStateExt.h"
+#	include "Features/RemoteControl/ToolSpecs/LightHighlightTool.h"
+#	include "Features/RemoteControl/ToolSpecs/MenuExt.h"
+#	include "Features/RemoteControl/ToolSpecs/NvPerfTool.h"
+#	include "Features/RemoteControl/ToolSpecs/PluginApiTool.h"
+#	include "Features/RemoteControl/ToolSpecs/ProfilerTool.h"
+#	include "Features/RemoteControl/ToolSpecs/SettingsTool.h"
+#	include "Features/RemoteControl/ToolSpecs/ShadercacheTool.h"
 #	include "Features/RenderDoc.h"
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
@@ -33,6 +52,8 @@
 #	include "ShaderCache.h"
 #	include "State.h"
 #	include "Utils/DevBenchUx.h"
+#	include "Utils/SettingsCatalog.h"
+#	include "Utils/SettingsDefaults.h"
 #	include "Utils/SettingsPatch.h"
 #	include "VRAPI/CSpluginapi.h"
 
@@ -63,7 +84,9 @@ namespace
 		return storage.emplace_back(I18n::ExpandBrand(a_template)).c_str();
 	}
 
-	std::unordered_set<Feature*> g_bootLoadedFeatures;
+	// Main thread only: the only features toggle may switch back on. One off for any other
+	// reason was never loaded, or turned itself off during boot, and must stay off.
+	std::unordered_set<Feature*> g_toggledOffFeatures;
 
 	// Current render frame, used as a coarse "enqueued at" stamp so callers can poll
 	// `inspect kind=openshaders` until frame_count advances past it (i.e. a queued
@@ -245,7 +268,7 @@ namespace
 			const bool explicitVal = a_args.value("enabled", false);
 			task->AddTask([target, hasExplicit, explicitVal, shortName]() {
 				const bool applied = hasExplicit ? explicitVal : !target->loaded;
-				if (applied && !target->loaded && !g_bootLoadedFeatures.contains(target)) {
+				if (applied && !target->loaded && !g_toggledOffFeatures.contains(target)) {
 					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 						const std::string payload = json{ { "shortName", shortName }, { "error", "feature was not loaded at boot; enable it at boot and restart" } }.dump();
 						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
@@ -267,8 +290,10 @@ namespace
 				}
 				if (wantsUnsupportedRuntime)
 					logger::warn("DevBenchBridge: enabling '{}' via Developer Mode override despite being unsupported on the current runtime", shortName);
-				if (target->loaded && !applied)
+				if (target->loaded && !applied) {
 					target->OnRuntimeDisabled();
+					g_toggledOffFeatures.insert(target);
+				}
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
@@ -376,13 +401,24 @@ namespace
 		}
 
 		if (action == "reset") {
-			return RunOnMainThread([shortName]() -> json {
+			const std::string settingPath = a_args.value("path", std::string{});
+			const std::string settingKey = a_args.value("key", std::string{});
+			if (!settingPath.empty() && settingKey.empty())
+				return json{ { "error", "path requires key" }, { "shortName", shortName }, { "path", settingPath } };
+			return RunOnMainThread([shortName, settingPath, settingKey]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
 					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
 						*SceneSettingsManager::GetSingleton());
+					if (!settingKey.empty()) {
+						const auto* setting = SceneSettingsCatalog::FindSetting(shortName, settingPath, settingKey);
+						if (!setting || !Util::Settings::ResetSettingToDefault(*feature, *setting))
+							return json{ { "error", "setting not found or has no default" }, { "shortName", shortName }, { "path", settingPath }, { "key", settingKey } };
+						logger::info("DevBenchBridge: feature(reset, {}, {}/{}) applied", shortName, settingPath, settingKey);
+						return json{ { "action", "reset" }, { "shortName", shortName }, { "key", settingKey }, { "applied", true } };
+					}
 					feature->RestoreDefaultSettings();
 					logger::info("DevBenchBridge: feature(reset, {}) applied", shortName);
 					return json{ { "action", "reset" }, { "shortName", shortName }, { "applied", true } };
@@ -655,6 +691,31 @@ namespace
 				{ "ptr", std::format("{:#018x}", ptr) },
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
+		json visibility = json::array();
+		int visEngineOutOursIn = 0;
+		int visEngineInOursOut = 0;
+		for (const auto& v : snap.visibility) {
+			visEngineOutOursIn += (v.engineCulled && v.ownInFrustum) ? 1 : 0;
+			visEngineInOursOut += (!v.engineCulled && !v.ownInFrustum) ? 1 : 0;
+			visibility.push_back(json{
+				{ "ptr", std::format("{:#018x}", v.light) },
+				{ "chosen", v.chosen },
+				{ "engineCulled", v.engineCulled },
+				{ "frustrumCull", v.frustrumCull },
+				{ "lodDimmer", v.lodDimmer },
+				{ "distance", v.distance },
+				{ "radius", v.radius },
+				{ "ownInFrustum", v.ownInFrustum },
+				{ "cameraHold", v.cameraHold },
+				{ "hidden", v.hidden },
+				{ "shadowDistanceCulled", v.shadowDistanceCulled },
+				{ "frustumCulled", v.frustumCulled },
+				{ "name", v.name },
+				{ "x", v.x },
+				{ "y", v.y },
+				{ "z", v.z },
+			});
+		}
 		json slots = json::array();
 		// Bucketed from tile.size, not renderedScale, which reflects the requested
 		// scale -- a starved light can request full and get only the smallest tile.
@@ -680,6 +741,14 @@ namespace
 				{ "budgetScale", s.budgetScale },
 				{ "pendingScale", s.pendingScale },
 				{ "renderedScale", s.renderedScale },
+				{ "demandMax", s.demandMax },
+				{ "untouchedSamples", s.untouchedSamples },
+				{ "litMax", s.litMax },
+				{ "litReason", s.litReason },
+				{ "litTile", s.litTile },
+				{ "litSum", s.litSum },
+				{ "litSmoothed", s.litSmoothed },
+				{ "litCapped", s.litCapped },
 				{ "tile", json{ { "x", s.tileX }, { "y", s.tileY }, { "size", s.tileSize }, { "contentValid", s.tileContentValid } } },
 				{ "geomListSize", s.geomListSize },
 				{ "staticValid", s.staticValid },
@@ -708,6 +777,9 @@ namespace
 			{ "invalidOther", snap.invalidOther },
 			{ "slotsInUse", snap.slotsInUse },
 			{ "lights", lights },
+			{ "visibility", visibility },
+			{ "visEngineOutOursIn", visEngineOutOursIn },
+			{ "visEngineInOursOut", visEngineInOursOut },
 			{ "slots", slots },
 			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] }, { "none", classNone } } },
 			{ "atlas", json{
@@ -751,6 +823,19 @@ namespace
 							{ "splitLatchMismatchTotal", snap.splitLatchMismatchTotal },
 							{ "splitLatchWindowTotal", snap.splitLatchWindowTotal },
 							{ "splitWastedBakesTotal", snap.splitWastedBakesTotal },
+							{ "scalePromotionRedraws", snap.scalePromotionRedraws },
+							{ "scaleDemotionRedrawsAvoided", snap.scaleDemotionRedrawsAvoided },
+							{ "scalePromotionRedundantAvoided", snap.scalePromotionRedundantAvoided },
+							{ "convertReEnableRun", snap.convertReEnableRun },
+							{ "convertReEnableSkipped", snap.convertReEnableSkipped },
+							{ "convertReEnableToleranceSkipped", snap.convertReEnableToleranceSkipped },
+							{ "originPinnedLights", snap.originPinnedLights },
+							{ "warpsRun", snap.warpsRun },
+							{ "warpsSkippedSubPixel", snap.warpsSkippedSubPixel },
+							{ "warpsSkippedOffscreen", snap.warpsSkippedOffscreen },
+							{ "warpsSkippedNoDemand", snap.warpsSkippedNoDemand },
+							{ "convertedLights", snap.convertedLights },
+							{ "convertedStrictLights", snap.convertedStrictLights },
 							{ "cellResetsTotal", snap.cellResetsTotal },
 							{ "cullPoolDropsTotal", snap.cullPoolDropsTotal },
 							{ "casterCullDropsTotal", snap.casterCullDropsTotal },
@@ -758,6 +843,11 @@ namespace
 							{ "frontAppendTotal", snap.frontAppendTotal },
 							{ "backOnlyAppendTotal", snap.backOnlyAppendTotal },
 							{ "hemisphereDropTotal", snap.hemisphereDropTotal },
+							{ "passlessCasterSkipTotal", snap.passlessCasterSkipTotal },
+							{ "passlessSkipNoShadowShader", snap.passlessCasterSkipByReason[1] },
+							{ "passlessSkipRefraction", snap.passlessCasterSkipByReason[2] },
+							{ "passlessSkipAlphaBlend", snap.passlessCasterSkipByReason[3] },
+							{ "passlessSkipFaded", snap.passlessCasterSkipByReason[4] },
 							{ "sleepSkips", snap.sleepSkips },
 							{ "sleepSkipsTotal", snap.sleepSkipsTotal },
 							{ "demandSkips", snap.demandSkips },
@@ -936,13 +1026,18 @@ namespace
 			task->AddTask([cache]() { cache->RestorePreviousDiskCache(); });
 			return json{ { "action", "restorePrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "cancels any in-progress compile and needs a compatible previous cache; check OpenShaders.log or inspect(kind=shadercache).featureSetRevertPending for the outcome, then restart to load it" } };
 		}
+		if (action == "discardPrevious") {
+			// Mirrors the in-game "keep current cache" button: drops the rollback cache so the mismatch notice clears.
+			task->AddTask([cache]() { cache->DiscardPreviousDiskCache(); });
+			return json{ { "action", "discardPrevious" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "refused while a feature-set change awaits commit or a restore is pending; check inspect(kind=shadercache).featureSetChanged and OpenShaders.log for the outcome" } };
+		}
 		if (action == "exportTrace") {
 			// Only reads records (mutex-guarded) and writes a file -- safe off-thread. Don't
 			// add render/UI-state access here without marshalling like the actions above.
 			const auto logDir = Util::PathHelpers::GetLogPath().parent_path();
 			std::filesystem::path path = logDir / "compile-trace.json";
 			if (a_args.contains("path")) {
-				const std::filesystem::path requested(a_args.value("path", std::string{}));
+				const std::filesystem::path requested = Util::PathHelpers::FromUtf8(a_args.value("path", std::string{}));
 				if (requested.is_absolute()) {
 					return json{ { "action", "exportTrace" }, { "success", false }, { "error", "path must be relative to the log directory, not absolute" } };
 				}
@@ -958,9 +1053,26 @@ namespace
 			if (!ok) {
 				return json{ { "action", "exportTrace" }, { "success", false }, { "error", "export failed or no task records for the current build; see OpenShaders.log" } };
 			}
-			return json{ { "action", "exportTrace" }, { "success", true }, { "path", path.string() } };
+			return json{ { "action", "exportTrace" }, { "success", true }, { "path", Util::PathHelpers::ToUtf8(path) } };
 		}
-		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|contentStore|acceptRebuild|restorePrevious|exportTrace)" }, { "action", action } };
+		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile|contentStore|acceptRebuild|restorePrevious|discardPrevious|exportTrace)" }, { "action", action } };
+	}
+
+	json BuildLightHighlightResult(const json& a_args)
+	{
+		uintptr_t key = 0;
+		if (a_args.contains("ptr") && a_args["ptr"].is_string()) {
+			const std::string text = a_args["ptr"].get<std::string>();
+			if (text != "none")
+				key = static_cast<uintptr_t>(std::stoull(text, nullptr, 16));
+		}
+		ShadowCasterManager::SetDebugHighlightLight(key);
+		return json{ { "ptr", std::format("{:#018x}", key) } };
+	}
+
+	void LightHighlightToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildLightHighlightResult, a_argsJson, a_sink, a_write);
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -1127,7 +1239,7 @@ namespace
 			{ "startFrame", a_result.startFrame }, { "endFrame", a_result.endFrame }, { "samples", a_result.samples },
 			{ "passesPerSample", a_result.passesPerSample }, { "droppedRanges", a_result.droppedRanges },
 			{ "droppedTraceBytes", a_result.droppedTraceBytes }, { "ranges", a_result.ranges }, { "metrics", std::move(metrics) },
-			{ "unsupportedMetrics", std::move(unsupported) }, { "summary", std::move(summary) }, { "csvPath", a_result.csvPath.string() } };
+			{ "unsupportedMetrics", std::move(unsupported) }, { "summary", std::move(summary) }, { "csvPath", Util::PathHelpers::ToUtf8(a_result.csvPath) } };
 		if (a_detail) {
 			json ranges = json::array();
 			for (const auto& range : a_result.rangeResults)
@@ -1156,7 +1268,7 @@ namespace
 			const auto device = NvPerf::GetDeviceInfo();
 			return json{ { "built", device.built }, { "available", device.available }, { "gpuSupported", device.gpuSupported },
 				{ "device", device.deviceName }, { "chip", device.chipName }, { "deviceError", device.error },
-				{ "library", device.libraryPath.string() }, { "capture", StatusJson(NvPerf::GetStatus()) } };
+				{ "library", Util::PathHelpers::ToUtf8(device.libraryPath) }, { "capture", StatusJson(NvPerf::GetStatus()) } };
 		}
 
 		if (action == "metrics") {
@@ -1225,16 +1337,83 @@ namespace
 		RunHandler(&BuildNvPerfResult, a_argsJson, a_sink, a_write);
 	}
 
+	/** @brief Starts a frame-locked burst on the capture provider; completion is the capture.burst.ready event. */
+	json BuildBurstResult(const json& a_args)
+	{
+		OS::Capture::Burst::Request request;
+		request.requestId = a_args.value("requestId", std::string{});
+		request.prefix = a_args.value("prefix", std::string{});
+		request.outputDir = Util::PathHelpers::FromUtf8(a_args.value("outputDir", std::string{}));
+		request.manifestPath = Util::PathHelpers::FromUtf8(a_args.value("manifestPath", std::string{}));
+		request.count = a_args.value("count", 0u);
+		request.everyNFrames = a_args.value("everyNFrames", 1u);
+		request.excludeUi = a_args.value("excludeUi", true);
+		if (a_args.value("scale", 1.0f) != 1.0f)
+			return json{ { "error", "burst captures full native frames; scale is not supported" } };
+		if (a_args.contains("subrect") && !a_args["subrect"].is_null())
+			return json{ { "error", "burst captures full native frames; subrect is not supported" } };
+		const auto emit = [](const char* a_topic, const OS::Capture::Burst::Status& a_status) {
+			json payload{ { "requestId", a_status.requestId }, { "captured", a_status.captured }, { "dropped", a_status.dropped } };
+			if (std::string_view(a_topic) == "capture.burst.ready") {
+				payload["ok"] = a_status.failed == 0 && a_status.captured > 0 && !a_status.manifestPath.empty();
+				payload["width"] = a_status.width;
+				payload["height"] = a_status.height;
+				payload["uiExcluded"] = a_status.uiExcluded;
+				payload["manifestPath"] = Util::PathToUtf8(a_status.manifestPath);
+				if (!a_status.error.empty())
+					payload["error"] = a_status.error;
+				else if (a_status.failed)
+					payload["error"] = std::format("{} frame(s) could not be captured or written", a_status.failed);
+			}
+			const std::string text = payload.dump();
+			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001())
+				dvb->EmitEvent(a_topic, text.c_str());
+		};
+		const uint frame = EnqueuedFrame();
+		return RunOnMainThread([request = std::move(request), emit, frame]() mutable -> json {
+			auto* shot = &globals::features::screenshotFeature;
+			if (!shot->loaded)
+				return json{ { "error", "Screenshot feature is not loaded" } };
+			uint64_t runId = 0;
+			std::string error;
+			if (!shot->StartBurst(
+					std::move(request),
+					[emit](const OS::Capture::Burst::Status& a_status) { emit("capture.burst.progress", a_status); },
+					[emit](const OS::Capture::Burst::Status& a_status) { emit("capture.burst.ready", a_status); },
+					runId, error))
+				return json{ { "error", error } };
+			return json{ { "queued", true }, { "provider", "openshaders" }, { "runId", runId }, { "enqueued_at_frame", frame } };
+		});
+	}
+
+	json BuildBurstStatusResult(const json& a_args)
+	{
+		const auto runId = a_args.value("runId", uint64_t{ 0 });
+		return RunOnMainThread([runId]() -> json {
+			const auto status = globals::features::screenshotFeature.GetBurstStatus(runId);
+			if (!status)
+				return json{ { "error", "no such burst" } };
+			return json{ { "runId", status->runId }, { "active", status->active }, { "done", status->finished }, { "requested", status->requested },
+				{ "saved", status->captured }, { "failed", status->failed }, { "dropped", status->dropped }, { "manifest", Util::PathToUtf8(status->manifestPath) } };
+		});
+	}
+
 	// The file is written on the next present; completion is the capture.ready event, not this return.
 	json BuildCaptureProviderResult(const json& a_args)
 	{
+		const std::string action = a_args.value("action", std::string{});
+		if (action == "burst")
+			return BuildBurstResult(a_args);
+		if (action == "burstStatus")
+			return BuildBurstStatusResult(a_args);
+
 		const std::string outputPath = a_args.value("outputPath", std::string{});
 		const std::string requestId = a_args.value("requestId", std::string{});
 		if (outputPath.empty() || requestId.empty())
 			return json{ { "error", "capture provider needs outputPath and requestId" } };
 
 		ScreenshotFeature::CaptureRequest request;
-		request.outputPath = std::filesystem::path(outputPath);
+		request.outputPath = Util::PathHelpers::FromUtf8(outputPath);
 		if (!request.outputPath.is_absolute() || request.outputPath.extension() != ".png")
 			return json{ { "error", "outputPath must be an absolute .png path" } };
 		request.excludeUi = a_args.value("excludeUi", true);
@@ -1250,6 +1429,8 @@ namespace
 		request.onComplete = [requestId](const ScreenshotFeature::CaptureResult& a_result) {
 			json payload{ { "requestId", requestId }, { "ok", a_result.ok }, { "uiExcluded", a_result.uiExcluded },
 				{ "width", a_result.width }, { "height", a_result.height } };
+			if (a_result.ok)
+				payload["renderFrame"] = a_result.renderFrame;
 			if (!a_result.ok)
 				payload["error"] = "the screenshot could not be captured or written";
 			const std::string text = payload.dump();
@@ -1262,7 +1443,7 @@ namespace
 			if (!shot->loaded)
 				return json{ { "error", "Screenshot feature is not loaded" } };
 			if (!shot->RequestCapture(std::move(request)))
-				return json{ { "error", "another capture is already waiting for the next frame" } };
+				return json{ { "error", "another capture is already waiting or a frame sequence is active" } };
 			return json{ { "queued", true }, { "provider", "openshaders" }, { "enqueued_at_frame", frame } };
 		});
 	}
@@ -1270,6 +1451,33 @@ namespace
 	void CaptureProviderHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildCaptureProviderResult, a_argsJson, a_sink, a_write);
+	}
+
+	void ScreenshotReferenceHandler(void* context, const char* args, void* sink, DevBenchAPI::WriteFn write) noexcept
+	{
+		json result;
+		try {
+			const auto request = json::parse(args ? args : "{}");
+			auto* host = static_cast<DevBenchAPI::IDevBenchInterface001*>(context);
+			result = RunOnMainThread([request, host] {
+				return globals::features::screenshotFeature.HandleReferenceCapture(request, [host](const json& completion) {
+					const auto text = completion.dump();
+					host->EmitEvent("capture.ready", text.c_str());
+				});
+			});
+			if (!result.value("ok", false))
+				result = { { "error", result.at("error").is_string() ? result.at("error").get<std::string>() : result.at("error").value("message", "Reference capture failed") } };
+		} catch (const std::exception& error) {
+			result = { { "error", error.what() } };
+		} catch (...) {
+			result = { { "error", "Reference capture failed" } };
+		}
+		try {
+			const auto text = result.dump();
+			write(sink, text.c_str());
+		} catch (...) {
+			write(sink, R"({"error":"Reference result serialization failed"})");
+		}
 	}
 
 	// ---- settings: save / load / reset the GLOBAL CS config ---------------------------
@@ -1386,11 +1594,17 @@ namespace
 
 	// ---- menu handler: open / close / toggle the Community Shaders settings menu -------
 
+	/** @brief Longest tab label the menu call accepts; real tab names are far shorter. */
+	constexpr size_t kMaxTabLabelLength = 128;
+
 	json BuildMenuResult(const json& a_args)
 	{
 		const auto editorMode = a_args.find("editorMode");
 		if (editorMode != a_args.end() && (!editorMode->is_string() || (*editorMode != "browser" && *editorMode != "menu")))
 			return json{ { "error", "editorMode must be browser or menu" } };
+		const auto tabArg = a_args.find("tab");
+		if (tabArg != a_args.end() && (!tabArg->is_string() || tabArg->get_ref<const std::string&>().size() > kMaxTabLabelLength))
+			return json{ { "error", std::format("tab must be a string of at most {} characters", kMaxTabLabelLength) } };
 		const auto sidebarVisibility = a_args.find("sidebarVisible");
 		if (sidebarVisibility != a_args.end() && !sidebarVisibility->is_boolean())
 			return json{ { "error", "sidebarVisible must be a boolean" } };
@@ -1414,6 +1628,9 @@ namespace
 			page = it->get<std::string>();
 		if (!page.empty())
 			Menu::GetSingleton()->RequestFeatureMenu(page);
+		const std::string tab = tabArg != a_args.end() ? tabArg->get<std::string>() : std::string{};
+		if (!tab.empty())
+			Menu::GetSingleton()->RequestTab(tab);
 
 		// SetVisible touches the ImGui context and the IsEnabled flag the render thread owns, so
 		// it can't run on this listener thread (nor on the SKSE main thread). Enqueue an atomic
@@ -1423,7 +1640,7 @@ namespace
 			Menu::GetSingleton()->RequestSidebarVisibility(sidebarVisibility->get<bool>());
 		if (editorMode != a_args.end())
 			EditorWindow::GetSingleton()->RequestBrowserMode(*editorMode == "menu" ? EditorWindow::BrowserMode::Menu : EditorWindow::BrowserMode::Editor);
-		return json{ { "op", op }, { "page", page }, { "queued", true } };
+		return json{ { "op", op }, { "page", page }, { "tab", tab }, { "queued", true } };
 	}
 
 	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -1554,10 +1771,6 @@ namespace DevBenchBridge
 {
 	void Install()
 	{
-		for (auto* feature : Feature::GetFeatureList())
-			if (feature->loaded)
-				g_bootLoadedFeatures.insert(feature);
-
 		auto* dvb = DevBenchAPI::GetDevBenchInterface001();
 		if (!dvb) {
 			logger::info("DevBenchBridge: devbench not present; CS tools not registered");
@@ -1570,33 +1783,23 @@ namespace DevBenchBridge
 		// Descriptors preserve the actions/kinds/inputSchema of CS's former embedded server
 		// so existing MCP clients keep working under the new prefix.
 
-		static constexpr const char* featureDesc =
-			R"({"description":"All {brand} graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes enableDLSSFrameGen (boolean, default false); existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, and white reflectance 1.0. These calibration values are not settings. PBR texture inputs bypass calibration. Scene storage gamma is fixed at 1.6. conversionSaturation (0-1, default 0.92) compensates gamma-authored inputs entering linear lighting, including diffuse, tint, glow, lights, effects, sky, fog, water and cached weather colors. It preserves linear-sRGB luminance and neutral colors; 1 is unchanged. Already-linear material and light inputs bypass it; converted shared lighting still affects PBR surfaces. Scene storage and gamma round trips do not apply compensation again. ambientMult (0-5, default 0.32) scales ambient lighting. CSUtility atmosphere settings include independent sky/cloud brightness, saturation and gamma, vanilla fog intensity (opacity multiplier), volumetric lighting intensity and sun glare intensity (0 off, 1 unchanged), useAmbientEffectLighting (boolean, default false; replaces weather Effect Lighting and Sky Statics lighting with ambient/IBL plus shadowed directional light), effect brightness and sky static brightness (0-2, scale their respective weather or ambient/directional lighting; 1 unchanged at the center) and sky static transparency (0 unchanged, 1 fully transparent). CSUtility Light and Materials color controls are nested objects containing saturation (0-2, default 1) and gammaOffset (-1 to 1, default 0): sceneColor, ambientLightColor, directionalLightColor, pointLightColor, linearPointLightColor, spotlightColor, linearSpotlightColor, omnidirectionalBulbColor, linearOmnidirectionalBulbColor, emitColor, glowmapColor and effectLightingColor. Existing multiplier keys remain unchanged. sceneColor adjusts the lighting and atmosphere inputs, not the finished image. The atmosphere adds effectColor, skyStaticColor and sunGlareColor with the same object shape, plus fogSaturation and vlSaturation (0-2, default 1). Existing sky/cloud saturation, gamma offsets and opacity controls retain their meanings. set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. Rejects enabling a feature that was not loaded at boot, since its resources were never set up; enable it with boot and restart. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); automatically saves whether the feature loads next launch, without changing its current loaded state. Both actions persist only the selected preference and preserve unrelated unsaved settings; failures return an error.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]},"shortName":{"type":"string"},"settings":{"type":"object","description":"Partial SaveSettings object from get. Upscaling exposes enableDLSSFrameGen (boolean, default false, restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); read the live state and the active strengths back with the neuralRenderingStatus query. The material map debug view adds settings.neuralRenderingTuning.showMaterialMap (boolean), materialMapMode (0 category colours, 1 strength ramp) and materialMapFilter (bitmask of the categories it draws: bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth, 7 Metal; the low eight bits only). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (boolean, default false; VR only, on in the Performance profile, and forced off while frame generation is active) with settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model, 1 reset the eye's history); read the live state and the per-eye reuse from the neuralRenderingStatus query. PostProcessing exposes cinematic_camera including Enabled, Lens.FocalLengthMM, Lens.FNumber and Exposure.ISO. LinearLighting keys: enableLinearLighting (integer, 0/1), enableACEScg (integer, 0/1), conversionSaturation (number, 0-1, default 0.92), ambientMult (number, 0-5, default 0.32). CSUtility atmosphere keys: useAmbientEffectLighting (boolean), skyBrightness, cloudBrightness, skySaturation, cloudSaturation, skyGammaOffset, cloudGammaOffset, effectBrightness, skyStaticBrightness, skyStaticTransparency, fogGammaOffset, fogAlphaGammaOffset, fogIntensity, vlGammaOffset, vlIntensity, sunGlareIntensity. CSUtility Light and Materials color controls are nested objects containing saturation (0-2, default 1) and gammaOffset (-1 to 1, default 0): sceneColor, ambientLightColor, directionalLightColor, pointLightColor, linearPointLightColor, spotlightColor, linearSpotlightColor, omnidirectionalBulbColor, linearOmnidirectionalBulbColor, emitColor, glowmapColor and effectLightingColor. Existing multiplier keys remain unchanged. sceneColor adjusts the lighting and atmosphere inputs, not the finished image. The atmosphere adds effectColor, skyStaticColor and sunGlareColor with the same object shape, plus fogSaturation and vlSaturation (0-2, default 1). Existing sky/cloud saturation, gamma offsets and opacity controls retain their meanings."},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}},"oneOf":[{"properties":{"action":{"enum":["favorite","boot"]},"shortName":{"minLength":1}},"required":["action","shortName","enabled"]},{"properties":{"action":{"not":{"enum":["favorite","boot"]}}}}]}})";
-		dvb->RegisterTool("openshaders.feature", BrandedDescription(featureDesc), &FeatureToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.feature", BrandedDescription(ToolSpecs::kFeatureTool), &FeatureToolHandler, nullptr);
 
 		// One-time: builds Util::DevBenchUx::Registry from every feature's
 		// RegisterUxActions() override, so openshaders.actions below has something to dispatch.
 		RegisterDevBenchUx();
 
-		static constexpr const char* actionsDesc =
-			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
-		dvb->RegisterTool("openshaders.actions", BrandedDescription(actionsDesc), &ActionsToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.actions", BrandedDescription(ToolSpecs::kActionsTool), &ActionsToolHandler, nullptr);
 
-		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage {brand}' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and restorePrevious are queued onto the main thread, fire-and-forget. backgroundCompile and contentStore are immediate atomic state changes made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), accept it and rebuild for the current setup -- mirrors the in-game prompt's 'rebuild' button. restorePrevious: swap the rollback slot (the pre-change cache) back into the active slot -- mirrors the in-game prompt's 'restore previous' button; cancels an in-progress compile if one is running, only takes effect after a restart, check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. contentStore (param enabled: bool): toggle the developer/tester Advanced setting that persists compiled blobs keyed by the preprocessed source, entry, profile, flags and compiler; the store lives in Data/ShaderCache/ContentStore and survives invalidation, rotation and file-watcher wipes, but deleteDisk removes it too. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache. exportTrace: write every task record from the current build to a Chrome Trace Event Format JSON file (importable at ui.perfetto.dev or chrome://tracing) -- a timeline can localize external CPU contention during a build in a way aggregate stats can't. Runs synchronously on the calling thread (read-only over the record set plus a file write). Optional 'path' overrides the default (next to OpenShaders.log); fails if the current build has no recorded tasks yet.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile","contentStore","acceptRebuild","restorePrevious","exportTrace"]},"enabled":{"type":"boolean","description":"contentStore only: turn the content-addressed compile store on or off."},"path":{"type":"string","description":"exportTrace only: destination file path; defaults to OpenShaders.log's directory."}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.shadercache", BrandedDescription(shadercacheDesc), &ShadercacheToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.shadercache", BrandedDescription(ToolSpecs::kShadercacheTool), &ShadercacheToolHandler, nullptr);
 
-		static constexpr const char* profilerDesc =
-			R"({"description":"Enable or disable {brand}' runtime GPU/CPU profiler capture. Action-dispatched. enable/disable: SetUserEnabled(true/false) -- the same flag the in-game Profiling page's checkbox drives, so this is the one state transition (off->on) a script can reach no other way. Read timing data via inspect kind=profiler; that tool also requests a capture on its own, so a script doesn't need to enable AND separately request one, only enable if disabled.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["enable","disable"]}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.profiler", BrandedDescription(profilerDesc), &ProfilerToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.lighthighlight", BrandedDescription(ToolSpecs::kLightHighlightTool), &LightHighlightToolHandler, nullptr);
 
-		static constexpr const char* captureDesc =
-			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. With kind=shadowmaps and frames=N it records N shadow frames, and slot (an integer light index, default -1 for none) adds that light's caster set. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"},"slot":{"type":"integer"}},"required":["kind"]}})";
-		dvb->RegisterTool("openshaders.capture", BrandedDescription(captureDesc), &CaptureToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.profiler", BrandedDescription(ToolSpecs::kProfilerTool), &ProfilerToolHandler, nullptr);
 
-		static constexpr const char* nvperfDesc =
-			R"({"description":"NVIDIA Nsight Perf GPU hardware counters per render pass (D3D11; builds with NVPERF_SUPPORT, NVIDIA GPUs only). Ranges are the perf events {brand} emits (engine passes need Frame Annotations enabled at startup). Action-dispatched. status -> {built,available,gpuSupported,device,chip,deviceError,library,capture:{state,captureId,sample,samples,pass,passes,error}}. metrics -> {defaults:[{metric,label}],kinds}. capture: optional metrics (array of name[:counter|ratio|throughput|active|elapsed|percycle] strings, default the defaults), ranges (array of names, trailing * = prefix; default every outermost range), samples (1-64, default 1), delayFrames (default 0), nestingLevels (1-8, default 1; each level multiplies the passes) -> {queued,captureId}; runs over the next frames, one profiler pass per frame. cancel: stop the running capture. result: optional captureId (default latest), detail (boolean: include every range of every sample) -> {pending,capture} while running, else {captureId,success,error,chip,startFrame,endFrame,samples,passesPerSample,metrics:[{metric,label}],unsupportedMetrics,summary:[{range,perFrame,incomplete,values:{label:value}}],csvPath}. Summary values are per frame: counters summed (gpu__time_duration in ns), rates weighted by range time. Event openshaders.nvperf.completed {captureId,success,error} fires when a capture ends.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["status","metrics","capture","cancel","result"]},"metrics":{"type":"array","items":{"type":"string"}},"ranges":{"type":"array","items":{"type":"string"}},"samples":{"type":"number"},"delayFrames":{"type":"number"},"nestingLevels":{"type":"number"},"captureId":{"type":"number"},"detail":{"type":"boolean"}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.nvperf", BrandedDescription(nvperfDesc), &NvPerfToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.capture", BrandedDescription(ToolSpecs::kCaptureTool), &CaptureToolHandler, nullptr);
+
+		dvb->RegisterTool("openshaders.nvperf", BrandedDescription(ToolSpecs::kNvPerfTool), &NvPerfToolHandler, nullptr);
 		NvPerf::SetCompletionCallback([](const NvPerf::CaptureResult& a_result) {
 			if (auto* host = DevBenchAPI::GetDevBenchInterface001()) {
 				const std::string payload = json{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error } }.dump();
@@ -1604,13 +1807,9 @@ namespace DevBenchBridge
 			}
 		});
 
-		static constexpr const char* settingsDesc =
-			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL {brand} user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
-		dvb->RegisterTool("openshaders.settings", BrandedDescription(settingsDesc), &SettingsToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.settings", BrandedDescription(ToolSpecs::kSettingsTool), &SettingsToolHandler, nullptr);
 
-		static constexpr const char* pluginApiDesc =
-			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed, SampleWind, SampleWindExcludingHavokImpulses. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool); wind sampling takes x, y, z world coordinates and returns the decomposed wind sample; SampleWindExcludingHavokImpulses also returns windExcludingHavokImpulses, which excludes native physics effects. Omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. Every method is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
-		dvb->RegisterTool("openshaders.pluginapi", BrandedDescription(pluginApiDesc), &PluginApiHandler, nullptr);
+		dvb->RegisterTool("openshaders.pluginapi", BrandedDescription(ToolSpecs::kPluginApiTool), &PluginApiHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the
 		// non-feature reads UNDER the base `menu` / `inspect` tools (menu invoke name=…,
@@ -1620,33 +1819,20 @@ namespace DevBenchBridge
 		// "CommunityShaders" matches the ImGui window id after `###`, so the menu name lines
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
-			static constexpr const char* menuDesc =
-				R"({"description":"Open, close, or toggle the {brand} in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
-			dvb->RegisterToolExtension("menu", "CommunityShaders", BrandedDescription(menuDesc), &MenuHandler, nullptr);
+			dvb->RegisterToolExtension("capture", "openshaders.native", ToolSpecs::kCaptureNativeExt, &ScreenshotReferenceHandler, dvb);
+			dvb->RegisterToolExtension("menu", "CommunityShaders", BrandedDescription(ToolSpecs::kMenuExt), &MenuHandler, nullptr);
 
-			static constexpr const char* inspectStateDesc =
-				R"({"description":"{brand} engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.","readOnly":true,"inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("inspect", "openshaders", BrandedDescription(inspectStateDesc), &InspectStateHandler, nullptr);
+			dvb->RegisterToolExtension("inspect", "openshaders", BrandedDescription(ToolSpecs::kInspectStateExt), &InspectStateHandler, nullptr);
 
-			static constexpr const char* inspectCacheDesc =
-				R"({"description":"{brand} shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,recentFailures,diskHitTasks,digestHitTasks,digestMissTasks,contentStoreHitTasks,digestComputeCount,digestComputeTimeUs,frame_count,diskCacheHeld,featureSetChanged,featureSetRevertPending,featureSetCacheBackedUp,previousDiskCacheAvailable,cacheMismatches,previousCacheMismatches}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. recentFailures is the last 32 compile failures this session, each {key,path,error,epoch,frame} -- key is GetShaderString's cache key (shader class + merged feature #defines, identifying WHICH feature's shader broke without a separate lookup; for ImageSpace shaders the filename embedded in key can differ from path), path is the actual source file that was compiled, error is the compiler's own message (truncated to 2000 chars). digestHitTasks/digestMissTasks count disk-cache validity checks where the content-digest manifest matched (hit) or differed (miss); the later blob load or recompilation can still fail; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session; contentDedupeTasks counts compiles skipped because an identical-bytecode task had already compiled the blob this session; contentStoreHitTasks counts compiles satisfied by the persistent content store; activeReuseTasks and previousReuseTasks count blobs kept from the active or previous cache because their recorded content key matched the current code. diskCacheHeld true means a feature-set mismatch (see cacheMismatches, each {kind,shortName,feature,detail,nowPresent}) is holding the whole disk cache this session -- resolve with openshaders.shadercache acceptRebuild or restorePrevious. previousDiskCacheAvailable/previousCacheMismatches describe the rollback slot (the pre-change cache) a restorePrevious call would swap back in.","readOnly":true,"inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("inspect", "shadercache", BrandedDescription(inspectCacheDesc), &InspectShadercacheHandler, nullptr);
+			dvb->RegisterToolExtension("inspect", "shadercache", BrandedDescription(ToolSpecs::kInspectShadercacheExt), &InspectShadercacheHandler, nullptr);
 
-			static constexpr const char* inspectShadowsDesc =
-				R"({"description":"{brand} Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,frontAppendTotal,backOnlyAppendTotal,hemisphereReassignTotal,hemisphereDropTotal,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,passGuardChecksTotal,passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, *Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). frontAppendTotal/backOnlyAppendTotal/hemisphereReassignTotal/hemisphereDropTotal count caster appends by destination list plus the wholly-behind casters the back-side fix reassigns to the back map or drops outright, and accumulate only across primed windows rather than the whole session. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("inspect", "llfshadows", BrandedDescription(inspectShadowsDesc), &InspectShadowsHandler, nullptr);
+			dvb->RegisterToolExtension("inspect", "llfshadows", BrandedDescription(ToolSpecs::kInspectLlfShadowsExt), &InspectShadowsHandler, nullptr);
 
-			static constexpr const char* inspectProfilerDesc =
-				R"({"description":"{brand} GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,capturedGpuFrameCount,capturedCpuFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes the next capture, so an idle first call may show stale data. CPU samples publish at their engine-frame boundary and pair with capturedCpuFrameCount, resolvedCpuTotalMs, cpuMs, and CPU history. GPU samples resolve independently through a three-slot query ring and pair with capturedGpuFrameCount, resolvedTotalMs, gpuMs, topLevelMs, and GPU history. gpuMs and its rolling statistics report self time with directly nested GPU passes removed. topLevelMs is the inclusive contribution from top-level intervals; resolvedTotalMs equals the sum of topLevelMs across timers. capturedFrameCount is a compatibility summary containing the newest frame published by either source; do not use it to pair both sources. totalMs and cpuTotalMs are live menu values that zero while idle. activeGpu and activeCpu describe the latest published frame for their own source. Each valid filtered capture cycle contributes exactly one history sample per matching known timer, including zero when that timer did not run. Same-name intervals are summed before one sample is pushed. acquiredSlots is the last completed GPU cycle's slot count; peakAcquiredSlots is its session high-water mark. slotRefusals is cumulative, and any nonzero value means a GPU interval lacked a slot, although a requested CPU sample is still retained. Enable or disable capture via openshaders.profiler.","readOnly":true,"inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("inspect", "profiler", BrandedDescription(inspectProfilerDesc), &InspectProfilerHandler, nullptr);
+			dvb->RegisterToolExtension("inspect", "profiler", BrandedDescription(ToolSpecs::kInspectProfilerExt), &InspectProfilerHandler, nullptr);
 
-			static constexpr const char* inspectFeatureIssuesDesc =
-				R"({"description":"{brand} feature-issue tracking -> {featureIssues:[{shortName,displayName,version,issueType,rejectionReason,replacementFeature,replacementFeatureDisplayName,replacementFeatureInstalled,replacementFeatureModLink,userMessage,minimumVersionRequired,modifiedShaderDirectory,iniPath,removedInVersion}],hasIssues,hasObsoleteShaderModifyingFeatures,hasPotentialShaderModifyingFeatures}. Surfaces the same detection FeatureIssues.h already does at boot for the in-menu warning banner -- obsolete features with a known replacement, INI version mismatches, override files that failed to apply, and unrecognized/unknown feature INIs left in Data/Shaders/Features. issueType: OBSOLETE|VERSION_MISMATCH|OVERRIDE_FAILED|UNKNOWN. modifiedShaderDirectory/hasObsoleteShaderModifyingFeatures flag features whose obsolete files could still be holding stale shader source -- the more likely of the two shader-modifying flags to explain an otherwise-unexplained compile problem elsewhere.","readOnly":true,"inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("inspect", "featureissues", BrandedDescription(inspectFeatureIssuesDesc), &InspectFeatureIssuesHandler, nullptr);
+			dvb->RegisterToolExtension("inspect", "featureissues", BrandedDescription(ToolSpecs::kInspectFeatureIssuesExt), &InspectFeatureIssuesHandler, nullptr);
 
-			static constexpr const char* captureProviderDesc =
-				R"({"description":"{brand} lossless screenshot as a devbench capture provider (key openshaders), so `capture`, `record replay` checkpoints and goldens work without the low-fidelity native fallback. The Screenshot feature writes a PNG to the outputPath devbench supplies on the next present and answers with a capture.ready event (width, height). subrect is an optional {x,y,w,h} in 0..1 UV of the capture source. The source is the final VR composite on VR (both eyes unless subrect crops one) and the framebuffer on flat, both of which include the HUD. Only flat HDR can draw without the HUD, so excludeUi (default true) is honored there alone; every other capture still includes the HUD and the event reports uiExcluded false, which devbench marks degraded. One request at a time; the crop preset, clipboard copy and HUD notice of a user screenshot do not apply.","inputSchema":{"type":"object"}})";
-			dvb->RegisterToolExtension("capture", "openshaders", BrandedDescription(captureProviderDesc), &CaptureProviderHandler, nullptr);
+			dvb->RegisterToolExtension("capture", "openshaders", BrandedDescription(ToolSpecs::kCaptureProviderExt), &CaptureProviderHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}

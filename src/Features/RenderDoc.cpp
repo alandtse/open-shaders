@@ -19,6 +19,7 @@
 #include <Renderdoc/renderdoc_app.h>
 #include <algorithm>
 #include <chrono>
+#include <cwchar>
 #include <dxgi.h>
 #include <filesystem>
 #include <format>
@@ -27,10 +28,25 @@
 #include <vector>
 #include <windows.h>
 
+namespace
+{
+	bool IsCaptureFile(const std::filesystem::directory_entry& a_entry)
+	{
+		return a_entry.is_regular_file() && _wcsicmp(a_entry.path().extension().c_str(), L".rdc") == 0;
+	}
+}
+
 // Global feature instance implementation
 RenderDoc* RenderDoc::GetSingleton()
 {
 	return &globals::features::renderDoc;
+}
+
+bool RenderDoc::IsLoaded()
+{
+	// Cached on first use, which is after Load(); RenderDoc cannot attach later anyway
+	static const bool loaded = GetModuleHandleW(L"renderdoc.dll") != nullptr;
+	return loaded;
 }
 
 void RenderDoc::Load()
@@ -506,7 +522,7 @@ uint32_t RenderDoc::CalculateCapturesDiskUsage()
 				break;
 			}
 
-			if (entry.is_regular_file()) {
+			if (IsCaptureFile(entry)) {
 				totalSize += entry.file_size(ec);
 				if (ec) {
 					logger::warn("[RenderDoc] Failed to get file size for '{}': {}", entry.path().string(), ec.message());
@@ -529,7 +545,7 @@ void RenderDoc::ClearFrameCaptures()
 		// Clear previous failed deletion tracking for a fresh start
 		failedDeletions.clear();
 
-		// Remove all files in the captures directory using safe deletion
+		// Remove capture files in the captures directory using safe deletion
 		std::error_code ec;
 		for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
 			if (ec) {
@@ -537,7 +553,7 @@ void RenderDoc::ClearFrameCaptures()
 				break;
 			}
 
-			if (entry.is_regular_file()) {
+			if (IsCaptureFile(entry)) {
 				// Use safe delete with proper error handling and logging
 				auto deleteResult = Util::FileHelpers::SafeDelete(entry.path().string(), "capture file");
 				if (!deleteResult.success) {
@@ -567,9 +583,26 @@ std::filesystem::path RenderDoc::GetRenderDocDllPath() const
 	return Util::PathHelpers::GetDataPath() / "Renderdoc" / "renderdoc.dll";
 }
 
+namespace
+{
+	/** @brief Nulls the output buffer on failure like the native runtime; RenderDoc leaves it untouched and the game uses it unchecked (e.g. zero-triangle skin partitions). */
+	struct ID3D11Device_CreateBuffer
+	{
+		static HRESULT STDMETHODCALLTYPE thunk(ID3D11Device* This, const D3D11_BUFFER_DESC* pDesc, const D3D11_SUBRESOURCE_DATA* pInitialData, ID3D11Buffer** ppBuffer)
+		{
+			const HRESULT hr = func(This, pDesc, pInitialData, ppBuffer);
+			if (FAILED(hr) && ppBuffer)
+				*ppBuffer = nullptr;
+			return hr;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+}
+
 void RenderDoc::SetupResources()
 {
-	// RenderDoc doesn't need any D3D resources
+	if (IsLoaded())
+		stl::detour_vfunc<3, ID3D11Device_CreateBuffer>(globals::d3d::device);
 }
 
 void RenderDoc::SaveSettings(json& o_json)
@@ -618,7 +651,7 @@ void RenderDoc::RefreshCaptureFileCache()
 		auto capturesPath = GetCapturesPath();
 		std::error_code ec;
 		for (const auto& entry : std::filesystem::directory_iterator(capturesPath, ec)) {
-			if (ec || !entry.is_regular_file())
+			if (ec || !IsCaptureFile(entry))
 				continue;
 
 			CaptureFileInfo info;
@@ -807,15 +840,6 @@ void RenderDoc::SetCaptureFilePathTemplate(const std::string& a_template)
 	logger::info("[RenderDoc] Set capture file path template to: {}", a_template);
 }
 
-bool RenderDoc::IsCapturing() const
-{
-	if (!renderDocApi)
-		return false;
-
-	// RenderDoc API doesn't have a direct IsCapturing method, but we can check if captures are enabled
-	return settings.enableCapture && renderDocApi != nullptr;
-}
-
 std::string RenderDoc::GetCapturePath(uint32_t a_index)
 {
 	if (!renderDocApi) {
@@ -951,31 +975,23 @@ void RenderDoc::ApplyAutomaticCommentsToNewCaptures()
 		return;  // No new captures
 	}
 
-	// Check for pending user comments and apply them to the first new capture
-	std::string userComments;
-	{
-		std::lock_guard<std::mutex> lock(pendingCommentsMutex);
-		if (!pendingCaptureComments.empty()) {
-			userComments = std::move(pendingCaptureComments);
-			pendingCaptureComments.clear();
-		}
-	}
-
 	// Build automatic comments for new captures
 	std::string automaticComments = BuildAutomaticCaptureComments("");
 
 	// Apply comments to new captures: user comments to first capture, automatic to others
+	std::lock_guard<std::mutex> lock(pendingCommentsMutex);
 	for (uint32_t i = lastCaptureCount; i < numCaptures; ++i) {
 		std::string capturePath = GetCapturePath(i);
-		if (!capturePath.empty()) {
-			// Use user comments for the first new capture, automatic for subsequent ones
-			const std::string& commentsToApply = (i == lastCaptureCount && !userComments.empty()) ? userComments : automaticComments;
-			renderDocApi->SetCaptureFileComments(capturePath.c_str(), commentsToApply.c_str());
-			logger::info("[RenderDoc] Applied comments to capture {}: {}", i, commentsToApply);
+		if (capturePath.empty()) {
+			break;
 		}
-	}
 
-	lastCaptureCount = numCaptures;
+		const std::string& commentsToApply = !pendingCaptureComments.empty() ? pendingCaptureComments : automaticComments;
+		renderDocApi->SetCaptureFileComments(capturePath.c_str(), commentsToApply.c_str());
+		logger::info("[RenderDoc] Applied comments to capture {}: {}", i, commentsToApply);
+		pendingCaptureComments.clear();
+		lastCaptureCount = i + 1;
+	}
 }
 
 std::string RenderDoc::GetOverlayWarningMessage() const

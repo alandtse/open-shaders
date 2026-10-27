@@ -6,6 +6,8 @@
 #include "Menu/Fonts.h"
 #include "State.h"
 
+#include <cctype>
+
 #define I18N_KEY_PREFIX "feature.terrain_variation."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -40,33 +42,61 @@ void TerrainVariation::DrawSettings()
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_mesh_support_tooltip"),
-							  "Applies the tiling fix to meshes that use landscape textures, such as dirt cliffs and mountain slabs.\nAlpha tested meshes like foliage and decals are never affected."));
+							  "Applies terrain variation to meshes whose diffuse texture is referenced by a landscape texture record.\nCopies in landscape folders also qualify when their filenames match a referenced texture.\nOther textures, alpha-tested meshes, decals and materials without texture wrapping are excluded."));
 	}
 }
 
 #undef I18N_KEY_PREFIX
 
+namespace
+{
+	constexpr std::string_view LandscapeDirectory = "landscape/";
+
+	std::string CanonicaliseTexturePath(std::string_view a_path)
+	{
+		std::string canonical(a_path);
+		for (auto& character : canonical) {
+			character = character == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+		}
+
+		if (canonical.starts_with("data/")) {
+			canonical.erase(0, 5);
+		}
+		if (canonical.starts_with("textures/")) {
+			canonical.erase(0, 9);
+		}
+
+		return canonical;
+	}
+
+	bool IsInLandscapeDirectory(std::string_view a_canonical)
+	{
+		return a_canonical.starts_with(LandscapeDirectory) || a_canonical.find("/landscape/") != std::string_view::npos;
+	}
+
+	std::string_view GetFileName(std::string_view a_canonical)
+	{
+		const auto separator = a_canonical.rfind('/');
+		return separator == std::string_view::npos ? a_canonical : a_canonical.substr(separator + 1);
+	}
+}
+
 void TerrainVariation::DataLoaded()
 {
-	const std::unique_lock lock(meshTextureMutex);
-
-	landscapeDiffusePaths.clear();
-	meshTextureCache.clear();
-	meshTextureKeepAlive.clear();
-	const auto rulesDirectory = Util::PathHelpers::GetCommunityShaderPath() / "TerrainVariation" / "MeshRules";
-	const auto rulesResult = meshRules.Load(rulesDirectory);
-	for (const auto& error : rulesResult.errors) {
-		logger::warn("TerrainVariation: {}", error);
-	}
-	logger::info("TerrainVariation: Loaded {} mesh rule files from {}", rulesResult.loadedFiles, rulesDirectory.string());
-
 	auto dataHandler = RE::TESDataHandler::GetSingleton();
 	if (dataHandler == nullptr) {
-		logger::warn("TerrainVariation: No data handler, mesh support will use direct landscape/ children and JSON rules only");
+		logger::warn("TerrainVariation: No data handler, landscape texture path list unavailable; mesh support will not match any meshes");
 		return;
 	}
 
 	const auto& landTextures = dataHandler->GetFormArray<RE::TESLandTexture>();
+
+	const std::unique_lock lock(meshTextureMutex);
+
+	landscapeDiffusePaths.clear();
+	landscapeDiffuseFileNames.clear();
+	meshTextureCache.clear();
+	meshTextureKeepAlive.clear();
 
 	auto addTextureSet = [this](RE::BGSTextureSet* textureSet) {
 		if (textureSet == nullptr) {
@@ -74,9 +104,13 @@ void TerrainVariation::DataLoaded()
 		}
 
 		const auto path = textureSet->GetTexturePath(RE::BSTextureSet::Texture::kDiffuse);
-		if (path != nullptr && *path != '\0') {
-			landscapeDiffusePaths.insert(TerrainVariationTextures::CanonicaliseTexturePath(path));
+		if (path == nullptr || *path == '\0') {
+			return;
 		}
+
+		auto canonical = CanonicaliseTexturePath(path);
+		landscapeDiffuseFileNames.emplace(GetFileName(canonical));
+		landscapeDiffusePaths.insert(std::move(canonical));
 	};
 
 	for (auto landTexture : landTextures) {
@@ -88,7 +122,7 @@ void TerrainVariation::DataLoaded()
 		addTextureSet(Util::GetSeasonalSwap(landTexture->textureSet));
 	}
 
-	logger::info("TerrainVariation: Collected {} landscape diffuse texture paths from {} land texture records", landscapeDiffusePaths.size(), landTextures.size());
+	logger::info("TerrainVariation: Collected {} landscape diffuse texture paths ({} file names) from {} land texture records", landscapeDiffusePaths.size(), landscapeDiffuseFileNames.size(), landTextures.size());
 }
 
 bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name)
@@ -108,9 +142,13 @@ bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name
 	const std::unique_lock lock(meshTextureMutex);
 	auto [it, inserted] = meshTextureCache.try_emplace(key, false);
 	if (inserted) {
-		const auto canonical = TerrainVariationTextures::CanonicaliseTexturePath(key);
-		it->second = meshRules.IsEligible(canonical, landscapeDiffusePaths.contains(canonical));
+		const auto canonical = CanonicaliseTexturePath(key);
+		it->second = landscapeDiffusePaths.contains(canonical) ||
+		             (IsInLandscapeDirectory(canonical) && landscapeDiffuseFileNames.contains(std::string(GetFileName(canonical))));
 		meshTextureKeepAlive.push_back(a_name);
+		if (it->second) {
+			logger::debug("TerrainVariation: Mesh variation enabled for texture {}", key);
+		}
 	}
 
 	return it->second;

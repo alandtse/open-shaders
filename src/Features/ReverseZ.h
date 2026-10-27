@@ -42,13 +42,13 @@ struct ReverseZ : Feature
 
 	struct Settings
 	{
-		bool EnableReverseZ = false;
+		bool EnableReverseZBuffer = true;
 	};
 
 	Settings settings;
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
-		UTIL_RESTART_FIELD(Settings, EnableReverseZ, "Reverse Z-Buffer"),
+		UTIL_RESTART_FIELD(Settings, EnableReverseZBuffer, "Reverse Z-Buffer"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 

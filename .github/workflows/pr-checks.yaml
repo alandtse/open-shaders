@@ -29,7 +29,9 @@ on:
             - "package/Shaders/**"
             - "tests/shaders/**"
             - ".github/configs/shader-validation*.yaml"
+            - ".github/configs/shader-cache-inputs.json"
             - ".github/configs/generate-shader-configs.ps1"
+            - "tools/build-shader-cache.py"
 
 # Least-privilege defaults; individual jobs override where needed.
 permissions:

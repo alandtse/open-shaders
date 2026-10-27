@@ -77,10 +77,11 @@ TEST_CASE("Key depends on which field text lives in", "[CompileDedupe]")
 	CHECK_FALSE(MakeKey(a) == MakeKey(b));
 }
 
-TEST_CASE("StripLineDirectives drops only #line lines", "[CompileDedupe]")
+TEST_CASE("StripLineDirectives drops only #line and blank lines", "[CompileDedupe]")
 {
 	CHECK(StripLineDirectives("#line 1 \"C:/a/b.hlsl\"\nfloat x;\n#line 7\r\nfloat y;") == "float x;\nfloat y;");
 	CHECK(StripLineDirectives("#pragma line\nx = 1; // #line 3\n") == "#pragma line\nx = 1; // #line 3\n");
+	CHECK(StripLineDirectives("a;\n\n  \t\r\nb;\n") == "a;\nb;\n");
 	CHECK(StripLineDirectives("") == "");
 }
 

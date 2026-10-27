@@ -30,10 +30,12 @@ namespace HorizonFix
 
 #if defined(UNDERWATERMASK)
 
+#	if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
 };
+#	endif
 
 struct VS_OUTPUT
 {
@@ -87,30 +89,40 @@ PS_OUTPUT main(PS_INPUT input)
 
 #	define WATER
 
+#	if defined(SPECULAR) || defined(UNDERWATER)
+// WADING is undefined in pixel builds (read from the descriptor): `defined(WADING)` there is always false.
+#		define WADING_RT
+#		if defined(PSHADER)
+#			undef WADING
+#		endif
+#	endif
+
 #	include "Common/SharedData.hlsli"
 
+#	if defined(VSHADER)
 struct VS_INPUT
 {
-#	if defined(SPECULAR) || defined(UNDERWATER) || defined(STENCIL) || defined(SIMPLE)
+#		if defined(SPECULAR) || defined(UNDERWATER) || defined(STENCIL) || defined(SIMPLE)
 	float4 Position: POSITION0;
-#		if defined(NORMAL_TEXCOORD)
+#			if defined(NORMAL_TEXCOORD)
 	float2 TexCoord0: TEXCOORD0;
-#		endif
-#		if defined(VC)
+#			endif
+#			if defined(VC)
 	float4 Color: COLOR0;
+#			endif
 #		endif
-#	endif
 
-#	if defined(LOD)
+#		if defined(LOD)
 	float4 Position: POSITION0;
-#		if defined(VC)
+#			if defined(VC)
 	float4 Color: COLOR0;
+#			endif
 #		endif
-#	endif
-#	if defined(VR)
+#		if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#	endif  // VR
+#		endif  // VR
 };
+#	endif
 
 struct VS_OUTPUT
 {
@@ -122,7 +134,7 @@ struct VS_OUTPUT
 	float4 WPosition: TEXCOORD0;
 	float4 TexCoord1: TEXCOORD1;
 	float4 TexCoord2: TEXCOORD2;
-#		if defined(WADING) || (defined(FLOWMAP) && (defined(REFRACTIONS) || defined(BLEND_NORMALS))) || (defined(VERTEX_ALPHA_DEPTH) && defined(VC)) || ((defined(SPECULAR) && NUM_SPECULAR_LIGHTS == 0) && defined(FLOWMAP) /*!defined(NORMAL_TEXCOORD) && !defined(BLEND_NORMALS) && !defined(VC)*/)
+#		if defined(WADING_RT) || defined(WADING) || (defined(FLOWMAP) && (defined(REFRACTIONS) || defined(BLEND_NORMALS))) || (defined(VERTEX_ALPHA_DEPTH) && defined(VC)) || ((defined(SPECULAR) && NUM_SPECULAR_LIGHTS == 0) && defined(FLOWMAP) /*!defined(NORMAL_TEXCOORD) && !defined(BLEND_NORMALS) && !defined(VC)*/)
 	float4 TexCoord3: TEXCOORD3;
 #		endif
 #		if defined(FLOWMAP)
@@ -280,6 +292,9 @@ VS_OUTPUT main(VS_INPUT input)
 
 	vsout.TexCoord1 = 0.0;
 	vsout.TexCoord2 = 0.0;
+#				if defined(WADING_RT)
+	vsout.TexCoord3 = 0.0;
+#				endif
 #				if defined(FLOWMAP)
 #					if !(((defined(SPECULAR) || NUM_SPECULAR_LIGHTS == 0) || (defined(UNDERWATER) && defined(REFRACTIONS))) && !defined(NORMAL_TEXCOORD))
 #						if defined(BLEND_NORMALS)
@@ -822,15 +837,22 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 		normalize(float3(0, 0, 1) + normalsAmplitude.xxx * normals1);
 #			endif
 
-#			if defined(WADING)
-#				if defined(FLOWMAP)
-	float2 displacementUv = input.TexCoord3.zw;
+#			if defined(WADING_RT) || defined(WADING)
+#				if defined(WADING_RT)
+	const bool isWading = Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Wading;
 #				else
-	float2 displacementUv = input.TexCoord3.xy;
+	const bool isWading = true;
 #				endif
-	float3 displacement = normalize(float3(normalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
-		0.04));
-	finalNormal = lerp(displacement, finalNormal, displacement.z);
+	if (isWading) {
+#				if defined(FLOWMAP)
+		float2 displacementUv = input.TexCoord3.zw;
+#				else
+		float2 displacementUv = input.TexCoord3.xy;
+#				endif
+		float3 displacement = normalize(float3(normalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
+			0.04));
+		finalNormal = lerp(displacement, finalNormal, displacement.z);
+	}
 #			endif
 
 #			if defined(WETNESS_EFFECTS)
@@ -886,39 +908,39 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 
 float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection, float distanceFactor, float skylightingSpecular)
 {
+#			if !defined(DYNAMIC_CUBEMAPS)
 	if (!(Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Reflections))
 		return ReflectionColor.xyz * VarAmounts.y * SharedData::csUtilitySettings.waterReflectionAmount;
+#			endif
 
 	float3 R = reflect(viewDirection, WaterParams.y * normal + float3(0, 0, 1 - WaterParams.y));
-	float3 reflectionColor = CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz;
 
 #			if defined(DYNAMIC_CUBEMAPS)
-	float3 dynamicCubemap;
-	if (SharedData::InInterior) {
-		dynamicCubemap = DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz;
-	} else {
-		float3 specularIrradiance = 1.0;
-		if (skylightingSpecular < 1.0)
-			specularIrradiance = Color::IrradianceToLinear(DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
+	// [flatten] keeps fxc from raising X4000 on this early return
+	[flatten] if (SharedData::InInterior) return DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz * SharedData::csUtilitySettings.waterReflectionAmount;
 
-		float3 specularIrradianceReflections = 1.0;
-		if (skylightingSpecular > 0.0)
-			specularIrradianceReflections = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
+	float3 specularIrradiance = 0.0;
+	if (skylightingSpecular < 1.0)
+		specularIrradiance = Color::IrradianceToLinear(DynamicCubemaps::EnvTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
 
-		dynamicCubemap = Color::IrradianceToGamma(lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular));
-	}
+	float3 specularIrradianceReflections = 0.0;
+	if (skylightingSpecular > 0.0)
+		specularIrradianceReflections = Color::IrradianceToLinear(DynamicCubemaps::EnvReflectionsTexture.SampleLevel(CubeMapSampler, R, 0).xyz);
 
-	float reflectionAmount = saturate(length(input.WPosition.xyz) / 1024.0);
+	float3 dynamicCubemap = Color::IrradianceToGamma(lerp(specularIrradiance, specularIrradianceReflections, skylightingSpecular));
 
+	float3 reflectionColor = dynamicCubemap;
+	if ((Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Reflections) && !SharedData::HideSky) {
+		float reflectionAmount = saturate(length(input.WPosition.xyz) / 1024.0);
 #				if defined(VR)
-	// Reflection cubemap is incorrect for interiors in VR, ignore it
-	if (Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Interior || SharedData::HideSky)
-		reflectionAmount = 0.0;
-#				else
-	if (SharedData::HideSky)
-		reflectionAmount = 0.0;
+		// Reflection cubemap is incorrect for interiors in VR, ignore it
+		if (Permutation::PixelShaderDescriptor & Permutation::WaterFlags::Interior)
+			reflectionAmount = 0.0;
 #				endif
-	reflectionColor = lerp(dynamicCubemap, reflectionColor, reflectionAmount);
+		reflectionColor = lerp(dynamicCubemap, CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz, reflectionAmount);
+	}
+#			else
+	float3 reflectionColor = CubeMapTex.SampleLevel(CubeMapSampler, R, 0).xyz;
 #			endif
 
 #			if !defined(LOD) && NUM_SPECULAR_LIGHTS == 0
@@ -1296,7 +1318,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 #				if !defined(UNDERWATER)
 	if (SharedData::enbSettings.EnableWater) {
-		float3 dirScatter = saturate(dot(normal.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * saturate(dot(viewDirection.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * SharedData::DirLightColor.xyz;
+		float3 dirScatter = saturate(dot(normal.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * saturate(dot(viewDirection.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * ShadowSampling::GetDirectionalLighting();
 		diffuseOutput.refractionDiffuseColor += DeepColor.xyz * dirScatter * surfaceShadow * SharedData::enbSettings.WaterSunLightingMultiplier;
 	}
 #				endif

@@ -27,7 +27,6 @@
 #include <string_view>
 
 using namespace WindSettingsLimits;
-using WindMath::ClampFiniteOrDefault;
 
 namespace
 {
@@ -48,11 +47,12 @@ namespace
 
 	bool IsExplicitTreeLeavesGeometry(const RE::BSGeometry* a_geometry)
 	{
-		if (!a_geometry || !netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent))
+		if (!a_geometry)
 			return false;
 
 		const char* geometryName = a_geometry->name.c_str();
-		return geometryName && std::strcmp(geometryName, "leaves") == 0;
+		return geometryName && std::strcmp(geometryName, "leaves") == 0 &&
+		       netimmerse_cast<RE::BSLeafAnimNode*>(a_geometry->parent);
 	}
 
 	bool IsTreeGeometry(const RE::BSGeometry* a_geometry)
@@ -106,51 +106,51 @@ Wind::Wind()
 void Wind::SanitizeSettings(Settings& a_settings)
 {
 	const Settings defaults{};
-	a_settings.trunkWindBendSensitivity = ClampFiniteOrDefault(a_settings.trunkWindBendSensitivity,
+	a_settings.trunkWindBendSensitivity = Util::ClampFinite(a_settings.trunkWindBendSensitivity,
 		kTrunkWindSensitivityMin, kTrunkWindSensitivityMax, defaults.trunkWindBendSensitivity);
-	a_settings.treeLeafBaseWindFlutterGain = ClampFiniteOrDefault(a_settings.treeLeafBaseWindFlutterGain,
+	a_settings.treeLeafBaseWindFlutterGain = Util::ClampFinite(a_settings.treeLeafBaseWindFlutterGain,
 		kTreeLeafBaseWindFlutterGainMin, kTreeLeafBaseWindFlutterGainMax, defaults.treeLeafBaseWindFlutterGain);
-	a_settings.treeWindGustScale = ClampFiniteOrDefault(a_settings.treeWindGustScale,
+	a_settings.treeWindGustScale = Util::ClampFinite(a_settings.treeWindGustScale,
 		kTreeWindGustScaleMin, kTreeWindGustScaleMax, defaults.treeWindGustScale);
-	a_settings.treeWindGustSoftLimit = ClampFiniteOrDefault(a_settings.treeWindGustSoftLimit,
+	a_settings.treeWindGustSoftLimit = Util::ClampFinite(a_settings.treeWindGustSoftLimit,
 		kTreeWindGustSoftLimitMin, kTreeWindGustSoftLimitMax, defaults.treeWindGustSoftLimit);
-	a_settings.treeWindSpringFrequency = ClampFiniteOrDefault(a_settings.treeWindSpringFrequency,
+	a_settings.treeWindSpringFrequency = Util::ClampFinite(a_settings.treeWindSpringFrequency,
 		kTreeWindSpringFrequencyMin, kTreeWindSpringFrequencyMax, defaults.treeWindSpringFrequency);
-	a_settings.treeWindSpringDamping = ClampFiniteOrDefault(a_settings.treeWindSpringDamping,
+	a_settings.treeWindSpringDamping = Util::ClampFinite(a_settings.treeWindSpringDamping,
 		kTreeWindSpringDampingMin, kTreeWindSpringDampingMax, defaults.treeWindSpringDamping);
-	a_settings.treeTransientSpringFrequency = ClampFiniteOrDefault(a_settings.treeTransientSpringFrequency,
+	a_settings.treeTransientSpringFrequency = Util::ClampFinite(a_settings.treeTransientSpringFrequency,
 		kTreeTransientSpringFrequencyMin, kTreeTransientSpringFrequencyMax, defaults.treeTransientSpringFrequency);
-	a_settings.treeTransientSpringDamping = ClampFiniteOrDefault(a_settings.treeTransientSpringDamping,
+	a_settings.treeTransientSpringDamping = Util::ClampFinite(a_settings.treeTransientSpringDamping,
 		kTreeTransientSpringDampingMin, kTreeTransientSpringDampingMax, defaults.treeTransientSpringDamping);
-	a_settings.windFieldGustScale = ClampFiniteOrDefault(a_settings.windFieldGustScale,
+	a_settings.windFieldGustScale = Util::ClampFinite(a_settings.windFieldGustScale,
 		kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
-	a_settings.windFieldGustCrosswindScale = ClampFiniteOrDefault(a_settings.windFieldGustCrosswindScale,
+	a_settings.windFieldGustCrosswindScale = Util::ClampFinite(a_settings.windFieldGustCrosswindScale,
 		kWindFieldGustCrosswindScaleMin, kWindFieldGustCrosswindScaleMax, defaults.windFieldGustCrosswindScale);
-	a_settings.windFieldGustAmplitude = ClampFiniteOrDefault(a_settings.windFieldGustAmplitude,
+	a_settings.windFieldGustAmplitude = Util::ClampFinite(a_settings.windFieldGustAmplitude,
 		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
-	a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier,
+	a_settings.windFieldGustAdvectionMultiplier = Util::ClampFinite(a_settings.windFieldGustAdvectionMultiplier,
 		kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
-	a_settings.windFieldGustCoverage = ClampFiniteOrDefault(a_settings.windFieldGustCoverage,
+	a_settings.windFieldGustCoverage = Util::ClampFinite(a_settings.windFieldGustCoverage,
 		kWindFieldGustCoverageMin, kWindFieldGustCoverageMax, defaults.windFieldGustCoverage);
-	a_settings.windFieldGustEdgeSoftness = ClampFiniteOrDefault(a_settings.windFieldGustEdgeSoftness,
+	a_settings.windFieldGustEdgeSoftness = Util::ClampFinite(a_settings.windFieldGustEdgeSoftness,
 		kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax, defaults.windFieldGustEdgeSoftness);
-	a_settings.windFieldGustDistortionStrength = ClampFiniteOrDefault(a_settings.windFieldGustDistortionStrength,
+	a_settings.windFieldGustDistortionStrength = Util::ClampFinite(a_settings.windFieldGustDistortionStrength,
 		kWindFieldGustDistortionStrengthMin, kWindFieldGustDistortionStrengthMax, defaults.windFieldGustDistortionStrength);
-	a_settings.windFieldGustDistortionScale = ClampFiniteOrDefault(a_settings.windFieldGustDistortionScale,
+	a_settings.windFieldGustDistortionScale = Util::ClampFinite(a_settings.windFieldGustDistortionScale,
 		kWindFieldGustDistortionScaleMin, kWindFieldGustDistortionScaleMax, defaults.windFieldGustDistortionScale);
-	a_settings.windFieldGustDistortionSpeed = ClampFiniteOrDefault(a_settings.windFieldGustDistortionSpeed,
+	a_settings.windFieldGustDistortionSpeed = Util::ClampFinite(a_settings.windFieldGustDistortionSpeed,
 		kWindFieldGustDistortionSpeedMin, kWindFieldGustDistortionSpeedMax, defaults.windFieldGustDistortionSpeed);
 	for (uint32_t index = 0; index < a_settings.windFieldGustAdvectionResponse.size(); ++index)
-		a_settings.windFieldGustAdvectionResponse[index] = ClampFiniteOrDefault(
+		a_settings.windFieldGustAdvectionResponse[index] = Util::ClampFinite(
 			a_settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
 			defaults.windFieldGustAdvectionResponse[index]);
-	a_settings.windFieldDirectionTransitionDuration = ClampFiniteOrDefault(a_settings.windFieldDirectionTransitionDuration,
+	a_settings.windFieldDirectionTransitionDuration = Util::ClampFinite(a_settings.windFieldDirectionTransitionDuration,
 		kWindFieldDirectionTransitionDurationMin, kWindFieldDirectionTransitionDurationMax,
 		defaults.windFieldDirectionTransitionDuration);
-	a_settings.grassTransientFlutterStrength = ClampFiniteOrDefault(a_settings.grassTransientFlutterStrength,
+	a_settings.grassTransientFlutterStrength = Util::ClampFinite(a_settings.grassTransientFlutterStrength,
 		kGrassTransientFlutterStrengthMin, kGrassTransientFlutterStrengthMax,
 		defaults.grassTransientFlutterStrength);
-	a_settings.grassTransientFlutterFrequency = ClampFiniteOrDefault(a_settings.grassTransientFlutterFrequency,
+	a_settings.grassTransientFlutterFrequency = Util::ClampFinite(a_settings.grassTransientFlutterFrequency,
 		kGrassTransientFlutterFrequencyMin, kGrassTransientFlutterFrequencyMax,
 		defaults.grassTransientFlutterFrequency);
 	SanitizeGrassWindSettings(a_settings);
@@ -222,12 +222,12 @@ void Wind::SetTreeWindTestEnabled(bool a_enabled)
 		return;
 
 	if (a_enabled) {
-		runtimeState.treeWindTest.speed = ClampFiniteOrDefault(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
-		runtimeState.treeWindTest.gustScale = ClampFiniteOrDefault(windFieldTuning.gustScale,
+		runtimeState.treeWindTest.speed = Util::ClampFinite(windFieldSelectedSpeed, 0.0f, 2.0f, 1.0f);
+		runtimeState.treeWindTest.gustScale = Util::ClampFinite(windFieldTuning.gustScale,
 			kWindFieldGustScaleMin, kWindFieldGustScaleMax, settings.windFieldGustScale);
-		runtimeState.treeWindTest.gustAmplitude = ClampFiniteOrDefault(windFieldTuning.gustAmplitude,
+		runtimeState.treeWindTest.gustAmplitude = Util::ClampFinite(windFieldTuning.gustAmplitude,
 			kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, settings.windFieldGustAmplitude);
-		runtimeState.treeWindTest.gustAdvectionMultiplier = ClampFiniteOrDefault(
+		runtimeState.treeWindTest.gustAdvectionMultiplier = Util::ClampFinite(
 			windFieldTuning.gustAdvectionMultiplier,
 			kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, settings.windFieldGustAdvectionMultiplier);
 	}
@@ -283,7 +283,7 @@ void Wind::RegisterUxActions()
 			if (!args.contains("strength") || !args["strength"].is_number())
 				return;
 			auto* wind = static_cast<Wind*>(feature);
-			wind->settings.grassTransientBendStrength = ClampFiniteOrDefault(
+			wind->settings.grassTransientBendStrength = Util::ClampFinite(
 				args["strength"].get<float>(), kGrassWindResponseMin, kGrassWindResponseMax,
 				wind->settings.grassTransientBendStrength);
 		});
@@ -293,7 +293,7 @@ void Wind::RegisterUxActions()
 			if (!args.contains("halfLife") || !args["halfLife"].is_number())
 				return;
 			auto* wind = static_cast<Wind*>(feature);
-			wind->settings.grassTransientFlutterHalfLife = ClampFiniteOrDefault(
+			wind->settings.grassTransientFlutterHalfLife = Util::ClampFinite(
 				args["halfLife"].get<float>(), kGrassTransientFlutterHalfLifeMin, kGrassTransientFlutterHalfLifeMax,
 				wind->settings.grassTransientFlutterHalfLife);
 		});
@@ -303,7 +303,7 @@ void Wind::RegisterUxActions()
 			if (!args.contains("strength") || !args["strength"].is_number())
 				return;
 			auto* wind = static_cast<Wind*>(feature);
-			wind->settings.grassTransientFlutterStrength = ClampFiniteOrDefault(
+			wind->settings.grassTransientFlutterStrength = Util::ClampFinite(
 				args["strength"].get<float>(), kGrassTransientFlutterStrengthMin,
 				kGrassTransientFlutterStrengthMax, wind->settings.grassTransientFlutterStrength);
 		});
@@ -313,7 +313,7 @@ void Wind::RegisterUxActions()
 			if (!args.contains("frequency") || !args["frequency"].is_number())
 				return;
 			auto* wind = static_cast<Wind*>(feature);
-			wind->settings.grassTransientFlutterFrequency = ClampFiniteOrDefault(
+			wind->settings.grassTransientFlutterFrequency = Util::ClampFinite(
 				args["frequency"].get<float>(), kGrassTransientFlutterFrequencyMin,
 				kGrassTransientFlutterFrequencyMax, wind->settings.grassTransientFlutterFrequency);
 		});
@@ -377,6 +377,16 @@ void Wind::RegisterUxActions()
 				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
 			}
 		});
+	FEATURE_COMMAND("setTreeBendEnabled", "Enable or disable the tree-bending render path for one mesh, retaining its saved sensitivity and normal TreeAnim animation. Required args: mesh (string), enabled (boolean). Disabled meshes remain excluded under Global Override.",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("enabled") || !args["enabled"].is_boolean()) {
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled received invalid arguments");
+				return;
+			}
+			if (!TreeWindPatcher::SetBendEnabled(args["mesh"].get<std::string>(), args["enabled"].get<bool>()))
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled did not match mesh {}", args["mesh"].get<std::string>());
+		});
 	FEATURE_COMMAND("saveTreeWindRules", "Write changed tree response values to each tree's last-scanned source JSON.",
 		[](Feature*, const json&) {
 			const auto result = TreeWindPatcher::SaveRules();
@@ -392,15 +402,15 @@ void Wind::RegisterUxActions()
 			if (args.contains("enabled") && args["enabled"].is_boolean())
 				utility->SetTreeWindTestEnabled(args["enabled"].get<bool>());
 			if (args.contains("speed") && args["speed"].is_number())
-				utility->runtimeState.treeWindTest.speed = ClampFiniteOrDefault(args["speed"].get<float>(), 0.0f, 2.0f, utility->runtimeState.treeWindTest.speed);
+				utility->runtimeState.treeWindTest.speed = Util::ClampFinite(args["speed"].get<float>(), 0.0f, 2.0f, utility->runtimeState.treeWindTest.speed);
 			if (args.contains("gustScale") && args["gustScale"].is_number())
-				utility->runtimeState.treeWindTest.gustScale = ClampFiniteOrDefault(args["gustScale"].get<float>(),
+				utility->runtimeState.treeWindTest.gustScale = Util::ClampFinite(args["gustScale"].get<float>(),
 					kWindFieldGustScaleMin, kWindFieldGustScaleMax, utility->runtimeState.treeWindTest.gustScale);
 			if (args.contains("gustAmplitude") && args["gustAmplitude"].is_number())
-				utility->runtimeState.treeWindTest.gustAmplitude = ClampFiniteOrDefault(args["gustAmplitude"].get<float>(),
+				utility->runtimeState.treeWindTest.gustAmplitude = Util::ClampFinite(args["gustAmplitude"].get<float>(),
 					kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, utility->runtimeState.treeWindTest.gustAmplitude);
 			if (args.contains("gustAdvectionMultiplier") && args["gustAdvectionMultiplier"].is_number())
-				utility->runtimeState.treeWindTest.gustAdvectionMultiplier = ClampFiniteOrDefault(args["gustAdvectionMultiplier"].get<float>(),
+				utility->runtimeState.treeWindTest.gustAdvectionMultiplier = Util::ClampFinite(args["gustAdvectionMultiplier"].get<float>(),
 					kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax,
 					utility->runtimeState.treeWindTest.gustAdvectionMultiplier);
 		});
@@ -420,6 +430,7 @@ void Wind::RegisterUxActions()
 				if (matchIndex++ >= offset && matches.size() < limit) {
 					matches.push_back({
 						{ "mesh", rule.mesh },
+						{ "bendEnabled", rule.bendEnabled },
 						{ "bendSensitivity", rule.bend },
 						{ "leafAmbientSensitivity", rule.leafAmbient },
 						{ "upperBendRange", rule.upperBendRange },
@@ -488,7 +499,7 @@ void Wind::LoadSettings(json& o_json)
 	const Settings defaults{};
 	settings = o_json;
 	if (!o_json.contains("windFieldGustCrosswindScale")) {
-		const float legacyGustScale = ClampFiniteOrDefault(settings.windFieldGustScale,
+		const float legacyGustScale = Util::ClampFinite(settings.windFieldGustScale,
 			kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 		settings.windFieldGustCrosswindScale = legacyGustScale * WindField::WindTuning{}.frontAspectRatio;
 	}
@@ -701,6 +712,8 @@ std::function<void()> Wind::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
 	const auto previous = permutationData;
 
 	const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
+	if (!sensitivities.bendEnabled)
+		return nullptr;
 	permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 	permutationData.TreeBendModelSensitivity = sensitivities.bend;
 	permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;

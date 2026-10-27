@@ -198,6 +198,15 @@ public:
 		offThreadFeatureSelection = std::move(a_featureName);
 	}
 
+	/** @brief Thread-safe request to select a tab by its label (see Util::SelectTabByLabel) once the
+	 *  menu draws it; ProcessInputEventQueue hands it to the render thread. A request that finds no
+	 *  tab within kPendingTabFrames menu frames is dropped with a warning. */
+	void RequestTab(std::string a_label)
+	{
+		std::lock_guard<std::mutex> lock(offThreadTabMutex);
+		offThreadTab = std::move(a_label);
+	}
+
 	/** @brief Queues sidebar visibility for the render thread without saving settings. */
 	void RequestSidebarVisibility(bool visible)
 	{
@@ -289,6 +298,13 @@ private:
 	// pendingFeatureSelection on the render thread in ProcessInputEventQueue.
 	std::mutex offThreadFeatureSelectionMutex;
 	std::string offThreadFeatureSelection;
+
+	std::mutex offThreadTabMutex;
+	std::string offThreadTab;
+	std::string pendingTab;
+	uint32_t pendingTabFramesLeft = 0;
+	/** @brief Frames a RequestTab keeps looking for its tab: a tab inside another tab only draws once that one is selected. */
+	static constexpr uint32_t kPendingTabFrames = 600;
 
 public:
 	// Display size tracking for cross-session resolution change detection

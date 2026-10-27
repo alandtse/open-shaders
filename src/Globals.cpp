@@ -15,6 +15,7 @@
 #include "Features/ExtendedTranslucency.h"
 #include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
+#include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/GrassOptimizations.h"
@@ -24,11 +25,13 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/LODBlending.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/ProceduralSun.h"
+#include "Features/RainRefraction.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
@@ -40,6 +43,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowCover.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -78,6 +82,7 @@ namespace globals
 		ProceduralSun proceduralSun{};
 		DynamicCubemaps dynamicCubemaps{};
 		VolumetricShadows volumetricShadows{};
+		LODShadows lodShadows{};
 		ExtendedMaterials extendedMaterials{};
 		GrassCollision grassCollision{};
 		GrassLighting grassLighting{};
@@ -90,6 +95,8 @@ namespace globals
 		HairSpecular hairSpecular{};
 		HorizonFix horizonFix{};
 		InteriorSun interiorSun{};
+		FurShells furShells{};
+		RainRefraction rainRefraction{};
 		ScreenSpaceGI screenSpaceGI{};
 		ScreenSpaceShadows screenSpaceShadows{};
 		Skylighting skylighting{};
@@ -122,6 +129,7 @@ namespace globals
 		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
+		SnowCover snowCover{};
 		Skin skin{};
 		ReverseZ reverseZ{};
 		PostProcessing postProcessing{};

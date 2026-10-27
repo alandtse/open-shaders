@@ -4,7 +4,9 @@
 #include "Features/TerrainBlending.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Format.h"
+#include "Utils/HeightMap.h"
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 #include <cassert>
@@ -532,6 +534,70 @@ namespace Util
 		}
 
 		return S_OK;
+	}
+
+	HRESULT LoadDDSImageFromResource(const char* filename, DirectX::ScratchImage& image)
+	{
+		if (!filename || !*filename)
+			return E_INVALIDARG;
+		// Try to load from BSA using Skyrim's resource system
+		RE::BSResourceNiBinaryStream bsaStream(filename);
+		if (!bsaStream.good())
+			return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+
+		// Read entire DDS file into memory
+		const auto size = bsaStream.stream->totalSize;
+		if (!size)
+			return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+		std::vector<uint8_t> ddsData(size);
+		if (!bsaStream.read(ddsData.data(), size))
+			return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
+
+		// Load DDS from memory
+		return DirectX::LoadFromDDSMemory(ddsData.data(), ddsData.size(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+	}
+
+	bool LoadR8HeightMapFromDDS(const std::filesystem::path& path, HeightMap& map)
+	{
+		map = {};
+		DirectX::ScratchImage image;
+		HRESULT result = DirectX::LoadFromDDSFile(path.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+		if (FAILED(result)) {
+			const auto resourcePath = path.lexically_relative(PathHelpers::GetDataPath()).make_preferred().string();
+			result = LoadDDSImageFromResource(resourcePath.c_str(), image);
+		}
+		if (FAILED(result))
+			return false;
+		const auto* source = image.GetImage(0, 0, 0);
+		DirectX::ScratchImage decoded;
+		if (source && source->format == DXGI_FORMAT_BC4_UNORM) {
+			if (SUCCEEDED(DirectX::Decompress(*source, DXGI_FORMAT_R8_UNORM, decoded)))
+				source = decoded.GetImage(0, 0, 0);
+		}
+		if (source && source->format == DXGI_FORMAT_R8_UNORM)
+			return map.Load(static_cast<uint32_t>(source->width), static_cast<uint32_t>(source->height), { source->pixels, source->slicePitch }, source->rowPitch);
+		logger::warn("CPU height maps require R8_UNORM or BC4_UNORM: {}", path.generic_string());
+		return false;
+	}
+
+	winrt::com_ptr<ID3D11ShaderResourceView> CreateConstantFloatTexture(ID3D11Device* device, float value, const char* name)
+	{
+		if (!device || !name)
+			throw std::invalid_argument("A device and resource name are required");
+		D3D11_TEXTURE2D_DESC desc{};
+		desc.Width = desc.Height = desc.MipLevels = desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R32_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_IMMUTABLE;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		const D3D11_SUBRESOURCE_DATA data{ &value, sizeof(value), 0 };
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		DX::ThrowIfFailed(device->CreateTexture2D(&desc, &data, texture.put()));
+		SetResourceName(texture.get(), "%s", name);
+		winrt::com_ptr<ID3D11ShaderResourceView> view;
+		DX::ThrowIfFailed(device->CreateShaderResourceView(texture.get(), nullptr, view.put()));
+		SetResourceName(view.get(), "%s SRV", name);
+		return view;
 	}
 
 	FullscreenPassScope::FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount, UINT a_psCBStart, UINT a_psCBCount) :

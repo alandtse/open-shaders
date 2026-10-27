@@ -6,7 +6,9 @@
 #include <pystring/pystring.h>
 
 #include "Deferred.h"
+#include "EngineFixes/LODBlendRingFix.h"
 #include "EngineFixes/LandscapeSeamsFix.h"
+#include "EngineFixes/SunShadowMaskFix.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
@@ -23,6 +25,7 @@
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
 #include "Features/RemoteControl/NvPerf.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
@@ -200,12 +203,10 @@ void State::Draw()
 			cloudShadows.SkyShaderHacks();
 		}
 
-#if defined(ENABLE_EFFECTS11)
-		if (globals::features::effects11.loaded) {
-			ZoneScopedN("Effects11::ParticleShaderHacks");
-			globals::features::effects11.ParticleShaderHacks();
+		if (globals::features::rainRefraction.loaded) {
+			ZoneScopedN("RainRefraction::ParticleShaderHacks");
+			globals::features::rainRefraction.ParticleShaderHacks();
 		}
-#endif
 
 		if (terrainHelper.loaded) {
 			ZoneScopedN("TerrainHelper::SetShaderResources");
@@ -237,6 +238,9 @@ void State::Draw()
 				}
 			}
 		}
+
+		if (currentShader)
+			Feature::ApplyDrawHooks();
 
 		if (globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible())
 			Debug();
@@ -404,6 +408,8 @@ void State::Reset()
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	LandscapeSeamsFix::GetInstance().Reset();
+	LODBlendRingFix::GetInstance().Update();
+	SunShadowMaskFix::Update();
 
 	worldRenderedThisFrame = false;
 
@@ -633,7 +639,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (ec)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
-				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+				bool isDisabled = !feature->IsAlwaysEnabled() && ((disabledFeatures.contains(featureName) && disabledFeatures[featureName]) || !feature->conflictMessage.empty());
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
@@ -1335,6 +1341,12 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 	} else if (a_shader.shaderType.get() == RE::BSShader::Type::Utility) {
 		a_vertexDescriptor &= ~(uint32_t)SIE::ShaderCache::UtilityShaderFlags::TruePbr;
 	}
+}
+
+uint32_t State::GetRuntimePixelBits(const RE::BSShader& a_shader)
+{
+	// Water's pixel stage branches on Wading at runtime; losing the bit skips the wading displacement without any error.
+	return a_shader.shaderType.get() == RE::BSShader::Type::Water ? static_cast<uint32_t>(SIE::ShaderCache::WaterShaderFlags::Wading) : 0u;
 }
 
 // Widens a narrow annotation title into a reused wide buffer (per-byte char->wchar_t,

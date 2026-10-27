@@ -109,6 +109,7 @@ namespace ShadowCasterManager
 	std::unordered_set<uintptr_t> s_pinConvert;
 	uintptr_t s_soloLight = 0;
 	uintptr_t s_hoverLightKey = 0;
+	std::atomic<uintptr_t> s_debugHighlightKey{ 0 };
 
 	// =========================================================================
 	// Public API
@@ -314,14 +315,14 @@ namespace ShadowCasterManager
 		RefreshInstalledSlotCount();
 
 		Settings capped = settings;
-		if (s_installedShadowLightCount > 0)
+		if (s_installedShadowLightCount > 0 || s_installedSlotCount > 0)
 			capped.ShadowLightCount = std::min(settings.ShadowLightCount, s_installedShadowLightCount);
 
 		// Until the atlas resources exist (or if the probe failed), the
 		// vanilla 8-slice array is the only shadow storage; scheduling
 		// beyond it would index slices the engine never allocated.
 		if (s_bootAtlasEnabled && !AtlasActive())
-			capped.ShadowLightCount = std::min(capped.ShadowLightCount, kVanillaShadowSliceCount);
+			capped.ShadowLightCount = SliceCappedLightCount(capped.ShadowLightCount, kVanillaShadowSliceCount);
 
 		int newTotal = LightContainerSize(capped);
 		if (newTotal != s_lights.Size) {
@@ -591,6 +592,9 @@ namespace ShadowCasterManager
 
 	uintptr_t GetSoloLight() { return s_soloLight; }
 	void SetSoloLight(uintptr_t lightKey) { s_soloLight = lightKey; }
+
+	uintptr_t GetDebugHighlightLight() { return s_debugHighlightKey.load(std::memory_order_relaxed); }
+	void SetDebugHighlightLight(uintptr_t lightKey) { s_debugHighlightKey.store(lightKey, std::memory_order_relaxed); }
 
 	uintptr_t GetHoveredLight() { return s_hoverLightKey; }
 	void SetHoveredLight(uintptr_t lightKey) { s_hoverLightKey = lightKey; }

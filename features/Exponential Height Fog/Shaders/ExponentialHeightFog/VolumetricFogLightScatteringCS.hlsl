@@ -11,30 +11,9 @@ RWTexture3D<float4> LightScattering : register(u0);
 #include "Common/Random.hlsli"
 #include "ExponentialHeightFog/VolumetricFogCSCommon.hlsli"
 
-// Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli -- a
-// StructuredBuffer bind requires matching element stride, not just a matching prefix.
-// Declared before the LightLimitFix include below: LightLimitFix.hlsli's
-// GetDirectionalShadow references these at global scope.
-struct DirectionalShadowLightData
-{
-	column_major float4x4 ShadowProj[2];
-	column_major float4x4 InvShadowProj[2];
-	float2 EndSplitDistances;
-	float2 StartSplitDistances;
-	column_major float4x4 FocusShadowProj[4];
-	uint FocusShadowCount;
-	uint3 _pad0;
-};
-
-StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
+#include "Common/ShadowSampling.hlsli"
 
 #include "IBL/IBL.hlsli"
-#if defined(TERRAIN_SHADOWS)
-#	include "TerrainShadows/TerrainShadows.hlsli"
-#endif
-#if defined(CLOUD_SHADOWS)
-#	include "CloudShadows/CloudShadows.hlsli"
-#endif
 #if defined(LIGHT_LIMIT_FIX)
 #	include "LightLimitFix/LightLimitFix.hlsli"
 #endif
@@ -213,17 +192,7 @@ float SampleDirectionalShadow(float3 positionWS, uint eyeIndex)
 
 float SampleDirectionalWorldShadow(float3 positionWS, uint eyeIndex)
 {
-	if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
-		return 1.0f;
-
-	float worldShadow = 1.0f;
-#if defined(TERRAIN_SHADOWS)
-	worldShadow *= TerrainShadows::GetTerrainShadow(positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz, LinearSampler);
-#endif
-#if defined(CLOUD_SHADOWS)
-	worldShadow *= CloudShadows::GetCloudShadowMult(positionWS, LinearSampler);
-#endif
-	return worldShadow;
+	return ShadowSampling::GetWorldShadow(positionWS, FrameBuffer::CameraPosAdjust[eyeIndex].xyz, eyeIndex);
 }
 
 float3 ComputeSkyLightScattering(float3 positionWS, float3 viewDirection, uint eyeIndex, out float3 unoccludedLighting)
@@ -258,6 +227,19 @@ float3 ComputeSkyLightScattering(float3 positionWS, float3 viewDirection, uint e
 }
 
 #if defined(LIGHT_LIMIT_FIX)
+float SampleLocalLightShadow(LightLimitFix::Light light, float3 positionWS, uint eyeIndex)
+{
+	float shadow = 1.0f;
+	[branch] if (VolumetricFogHasLocalShadows && (light.lightFlags & LightLimitFix::LightFlags::Shadow) && light.shadowMapIndex < SharedData::lightLimitFixSettings.ShadowMapSlots)
+	{
+		bool shadowCoverage;
+		float3 worldPositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		// One tap per cell: the fog volume's temporal history does the filtering the surface passes get from 8 taps.
+		shadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, float2x2(1, 0, 0, 1), 1u, shadowCoverage);
+	}
+	return shadow;
+}
+
 float ComputeLocalLightAttenuation(float distanceSqr, float cellRadius, LightLimitFix::Light light)
 {
 	float distance = sqrt(max(distanceSqr, 1e-6f));
@@ -313,6 +295,10 @@ float3 AccumulateLocalLightScattering(
 			continue;
 
 		float attenuation = ComputeLocalLightAttenuation(distanceSqr, cellRadius, light);
+		if (attenuation < 1e-5f)
+			continue;
+
+		attenuation *= SampleLocalLightShadow(light, positionWS, eyeIndex);
 		if (attenuation < 1e-5f)
 			continue;
 

@@ -39,15 +39,19 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 	float volumetricLightingPower = VLSourceTex.Sample(VLSourceSampler, screenPosition).x;
 	float3 volumetricLightingColor = VolumetricLightingColor.xyz;
-	volumetricLightingPower = Color::VolumetricLighting(volumetricLightingPower);
 #		if defined(EFFECTS11)
 	if (SharedData::enbSettings.Enable) {
+		// Preset intensities are far above vanilla, so the accumulated power must be capped or the rays become a flat veil
+		volumetricLightingPower = saturate(volumetricLightingPower);
+		// The game blends the custom colour with the sunlight, which Effects 11 has graded as direct lighting; undo that grade on the sunlight share
+		float3 customColorShare = SharedData::enbSettings.GameVolumetricRaysCustomColor * SharedData::enbSettings.GameVolumetricRaysCustomContribution;
+		volumetricLightingColor = (volumetricLightingColor - customColorShare) * SharedData::enbSettings.GameVolumetricRaysLightScale + customColorShare;
 		volumetricLightingColor = lerp(volumetricLightingColor, dot(volumetricLightingColor, 1.0 / 3.0), SharedData::enbSettings.VolumetricRaysDesaturation);
 		volumetricLightingColor *= SharedData::enbSettings.VolumetricRaysColorFilter;
 	}
 #		endif
 	volumetricLightingColor = Color::AdjustUtilityColor(volumetricLightingColor, float2(SharedData::csUtilitySettings.vlSaturation, 0.0));
-	color += volumetricLightingColor * volumetricLightingPower;
+	color += volumetricLightingColor * Color::VolumetricLighting(volumetricLightingPower);
 #	endif
 
 #	if defined(LENS_FLARE)

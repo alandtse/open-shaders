@@ -4,6 +4,7 @@
 #include "Common/Color.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/ValueNoise.hlsli"
 
 namespace ExponentialHeightFog
 {
@@ -217,9 +218,15 @@ namespace ExponentialHeightFog
 			worldPosition * noiseScale -
 			SharedData::exponentialHeightFogSettings.volumetricFogNoiseVelocity * SharedData::Timer;
 
-		float noise = ValueNoise3D(noisePos);
-		// detail octave
-		noise = lerp(noise, ValueNoise3D(noisePos * 4.17f + 71.3f), 0.35f);
+		float noise;
+		if (SharedData::exponentialHeightFogSettings.volumetricFogNoiseType == 1u) {
+			noise = ValueNoise::Evaluate3(noisePos).x;
+			noise = lerp(noise, ValueNoise::Evaluate3(noisePos * 4.17f + 71.3f).x, 0.35f);
+		} else {
+			noise = ValueNoise3D(noisePos);
+			// detail octave
+			noise = lerp(noise, ValueNoise3D(noisePos * 4.17f + 71.3f), 0.35f);
+		}
 
 		const float threshold = saturate(SharedData::exponentialHeightFogSettings.volumetricFogNoiseThreshold);
 		float t = saturate((noise - threshold) / max(1.0f - threshold, 1e-4f));

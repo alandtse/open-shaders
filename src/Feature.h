@@ -86,6 +86,8 @@ struct Feature
 	bool installed = false;
 	std::string version;
 	std::string failedLoadedMessage;
+	/// Why a conflicting mod keeps this feature off, empty when none does; see DisableForConflict().
+	std::string conflictMessage;
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
@@ -321,6 +323,9 @@ public:
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
 
+	/** @brief Runs immediately before the engine polls physical input devices. */
+	virtual void OnBeforeInputPoll() {}
+
 	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
 	virtual void OnWorldRenderBegin() {}
 
@@ -329,6 +334,9 @@ public:
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Called in the main world pass just before the engine renders blended decals, after terrain blending's deferred passes. */
+	virtual void OnBeforeBlendedDecals() {}
 
 	/** @brief Replacement scene in engine color encoding, with borrowed resources valid during the post-processing pass. */
 	struct PostProcessingInput
@@ -385,6 +393,9 @@ public:
 	/** @brief Called after engine weather colors and weather extensions have finished updating. */
 	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
 
+	/** @brief Called after the sky's weather colors update and before Effects11 grades them; for features that rewrite colors the grading reads. */
+	virtual void OnBeforeWeatherColorGrading(RE::Sky* /*a_sky*/) {}
+
 	/** @brief Opts into point-light color processing before opacity and brightness scaling. */
 	virtual bool WantsPointLightColorOverride() const { return false; }
 	/** @brief Adjusts an unscaled point-light color on the render thread. */
@@ -398,6 +409,18 @@ public:
 	 * the common case (a feature with no render-pass-scoped state) off that hot path entirely.
 	 */
 	virtual bool WantsRenderPassHook() const { return false; }
+
+	/**
+	 * @brief Opt-in flag checked once, when the draw hook's feature list is built: return true to
+	 * have OnDraw() visited for every draw the shader cache sets up.
+	 */
+	virtual bool WantsDrawHook() const { return false; }
+
+	/**
+	 * @brief Called on the render thread for every draw the shader cache sets up, for every loaded
+	 * feature that opted in via WantsDrawHook(). Runs thousands of times a frame.
+	 */
+	virtual void OnDraw() {}
 
 	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
@@ -512,6 +535,12 @@ public:
 	virtual void RegisterUxActions() {}
 
 	/**
+	 * @brief Turns the feature off because a_conflict cannot coexist with it, and lists it in the feature issues.
+	 * Leaves failedLoadedMessage unset: an expected conflict is not a load failure, and a failure would hold the disk cache.
+	 */
+	void DisableForConflict(std::string_view a_conflict);
+
+	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
 	 * @return The new disabled state (true = disabled at boot).
 	 */
@@ -595,6 +624,9 @@ public:
 	 * rather than calling GetFeatureList() and filtering it themselves each time.
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
+
+	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
+	static void ApplyDrawHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
@@ -700,6 +732,24 @@ public:
 	static void SetTracyCtx(TracyD3D11Ctx ctx) noexcept { s_tracyCtx = ctx; }
 #endif
 
+#ifdef TRACY_ENABLE
+	/** @brief Writes "<a_shortName>::<a_method>" into a_buffer without allocating, truncating to fit; returns a_buffer. */
+	static const char* FormatZoneName(std::span<char> a_buffer, std::string_view a_shortName, std::string_view a_method) noexcept
+	{
+		if (a_buffer.empty())
+			return a_buffer.data();
+
+		std::size_t length = 0;
+		for (const auto part : { a_shortName, std::string_view("::"), a_method }) {
+			const auto count = std::min(part.size(), a_buffer.size() - 1 - length);
+			std::memcpy(a_buffer.data() + length, part.data(), count);
+			length += count;
+		}
+		a_buffer[length] = '\0';
+		return a_buffer.data();
+	}
+#endif
+
 	/**
 	 * @brief Invokes a callback on every loaded feature with optional Tracy profiling.
 	 * @param methodName Label for the Tracy zone (e.g. "Reset", "Prepass").
@@ -732,10 +782,11 @@ public:
 					continue;
 				}
 				{
-					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
-					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);
+					char zoneNameBuffer[128];
+					const auto* zoneName = FormatZoneName(zoneNameBuffer, feature->GetShortName(), methodName);
+					ZoneTransientN(___tracy_feature_zone, zoneName, true);
 					if (emitGpuZone) {
-						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName.c_str(), 0, s_tracyCtx != nullptr);
+						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName, 0, s_tracyCtx != nullptr);
 						callback(feature);
 					} else {
 						callback(feature);

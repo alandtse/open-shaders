@@ -8,6 +8,7 @@
 #include "I18n/I18n.h"
 #include "ShoutWindProfiles.h"
 #include "Utils/ActorUtils.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #include <algorithm>
@@ -46,26 +47,8 @@ namespace DragonWindRuntime
 		constexpr float kWingbeatConeHalfAngle = 50.0f;
 		constexpr float kWingbeatHorizontalDrift = 0.35f;
 
-		float LengthSquared(const float3& a_value) noexcept
-		{
-			return a_value.x * a_value.x + a_value.y * a_value.y + a_value.z * a_value.z;
-		}
-
-		float Length(const float3& a_value) noexcept
-		{
-			return std::sqrt(std::max(LengthSquared(a_value), 0.0f));
-		}
-
-		float3 Normalize(const float3& a_value) noexcept
-		{
-			const float length = Length(a_value);
-			return std::isfinite(length) && length > 1e-4f ? a_value / length : float3{};
-		}
-
-		bool IsFinite(const float3& a_value) noexcept
-		{
-			return std::isfinite(a_value.x) && std::isfinite(a_value.y) && std::isfinite(a_value.z);
-		}
+		using Util::IsFinite;
+		using Util::SafeNormalize;
 
 		bool IsHovering(RE::Actor& a_actor)
 		{
@@ -493,22 +476,22 @@ namespace DragonWindRuntime
 				RE::NiPoint3 linearVelocity{};
 				a_actor.GetLinearVelocity(linearVelocity);
 				const float3 engineVelocity{ linearVelocity.x, linearVelocity.y, linearVelocity.z };
-				if (IsFinite(engineVelocity) && Length(engineVelocity) <= kMaximumTrackedVelocity)
+				if (IsFinite(engineVelocity) && engineVelocity.Length() <= kMaximumTrackedVelocity)
 					sampledVelocity = engineVelocity;
 
 				if (a_state.hasPreviousPosition && a_frameTime > 1e-4f) {
 					const float3 positionDelta = position - a_state.previousPosition;
-					const float deltaLength = Length(positionDelta);
+					const float deltaLength = positionDelta.Length();
 					if (std::isfinite(deltaLength) && deltaLength <= kTeleportDistance) {
 						const float3 positionVelocity = positionDelta / a_frameTime;
-						if (IsFinite(positionVelocity) && Length(positionVelocity) <= kMaximumTrackedVelocity)
+						if (IsFinite(positionVelocity) && positionVelocity.Length() <= kMaximumTrackedVelocity)
 							sampledVelocity = positionVelocity;
 					} else {
 						a_state.filteredVelocity = float3{};
 					}
 				}
 				if (a_frameTime > 0.0f) {
-					const float blend = 1.0f - std::exp(-a_frameTime / kVelocitySmoothingTime);
+					const float blend = Util::ExpBlend(a_frameTime, kVelocitySmoothingTime);
 					a_state.filteredVelocity += (sampledVelocity - a_state.filteredVelocity) * blend;
 				}
 				a_state.previousPosition = position;
@@ -518,17 +501,16 @@ namespace DragonWindRuntime
 			void QueueWingbeat(RE::Actor& a_actor, const DragonState& a_state,
 				const DragonWind::Settings& a_settings)
 			{
-				float3 horizontalDirection = Normalize(
+				float3 horizontalDirection = SafeNormalize(
 					{ a_state.filteredVelocity.x, a_state.filteredVelocity.y, 0.0f });
-				if (LengthSquared(horizontalDirection) <= 1e-6f) {
+				if (horizontalDirection.LengthSquared() <= 1e-6f) {
 					const auto aimDirection = Util::GetAimDirection(a_actor);
-					horizontalDirection = Normalize({ aimDirection.x, aimDirection.y, 0.0f });
+					horizontalDirection = SafeNormalize({ aimDirection.x, aimDirection.y, 0.0f });
 				}
-				const float3 downwashDirection = Normalize({ horizontalDirection.x * kWingbeatHorizontalDrift,
+				const float3 downwashDirection = SafeNormalize({ horizontalDirection.x * kWingbeatHorizontalDrift,
 					horizontalDirection.y * kWingbeatHorizontalDrift,
 					-1.0f });
-				const float coneHalfAngleRadians = kWingbeatConeHalfAngle *
-				                                   (std::numbers::pi_v<float> / 180.0f);
+				const float coneHalfAngleRadians = DirectX::XMConvertToRadians(kWingbeatConeHalfAngle);
 				const auto source = WindField::MakeDirectionalWave(
 					Util::GetVisualOrigin(a_actor), downwashDirection,
 					a_settings.strength * a_settings.wingbeatStrength,
@@ -547,7 +529,7 @@ namespace DragonWindRuntime
 				if (a_state.impactElapsed < a_settings.impactDeduplicationTime)
 					return;
 				const auto actorPosition = a_actor.GetPosition();
-				float3 fallbackDirection = Normalize(
+				float3 fallbackDirection = SafeNormalize(
 					{ a_state.filteredVelocity.x, a_state.filteredVelocity.y, 0.0f });
 				const auto source = WindField::MakeRadialWave(
 					{ actorPosition.x, actorPosition.y, actorPosition.z }, fallbackDirection,
@@ -569,7 +551,7 @@ namespace DragonWindRuntime
 				const std::size_t rank = std::min<std::size_t>(
 					route->second.rank, ShoutWindProfiles::kGenericDragonShoutProfiles.size() - 1);
 				const auto& profile = ShoutWindProfiles::kGenericDragonShoutProfiles[rank];
-				const float coneRadians = profile.coneHalfAngle * (std::numbers::pi_v<float> / 180.0f);
+				const float coneRadians = DirectX::XMConvertToRadians(profile.coneHalfAngle);
 				const auto source = WindField::MakeDirectionalWave(
 					Util::GetMagicOrigin(a_actor), Util::GetAimDirection(a_actor),
 					a_settings.strength * profile.strength, profile.distance, profile.waveHalfWidth,
@@ -761,37 +743,37 @@ void DragonWind::SanitizeSettings()
 {
 	const Settings defaults{};
 	auto sanitizeImpact = [&](ImpactProfile& a_profile, const ImpactProfile& a_default) {
-		a_profile.strength = WindMath::ClampFiniteOrDefault(a_profile.strength,
+		a_profile.strength = Util::ClampFinite(a_profile.strength,
 			DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, a_default.strength);
-		a_profile.distance = WindMath::ClampFiniteOrDefault(a_profile.distance,
+		a_profile.distance = Util::ClampFinite(a_profile.distance,
 			DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, a_default.distance);
-		a_profile.waveHalfWidth = WindMath::ClampFiniteOrDefault(a_profile.waveHalfWidth,
+		a_profile.waveHalfWidth = Util::ClampFinite(a_profile.waveHalfWidth,
 			DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, a_default.waveHalfWidth);
-		a_profile.propagationSpeed = WindMath::ClampFiniteOrDefault(a_profile.propagationSpeed,
+		a_profile.propagationSpeed = Util::ClampFinite(a_profile.propagationSpeed,
 			DragonWindRuntime::kSpeedMin, DragonWindRuntime::kSpeedMax, a_default.propagationSpeed);
 	};
 
-	settings.strength = WindMath::ClampFiniteOrDefault(settings.strength,
+	settings.strength = Util::ClampFinite(settings.strength,
 		DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, defaults.strength);
-	settings.trackingDistance = WindMath::ClampFiniteOrDefault(settings.trackingDistance,
+	settings.trackingDistance = Util::ClampFinite(settings.trackingDistance,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.trackingDistance);
-	settings.wingbeatStrength = WindMath::ClampFiniteOrDefault(settings.wingbeatStrength,
+	settings.wingbeatStrength = Util::ClampFinite(settings.wingbeatStrength,
 		DragonWindRuntime::kStrengthMin, DragonWindRuntime::kStrengthMax, defaults.wingbeatStrength);
-	settings.wingbeatDistance = WindMath::ClampFiniteOrDefault(settings.wingbeatDistance,
+	settings.wingbeatDistance = Util::ClampFinite(settings.wingbeatDistance,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.wingbeatDistance);
-	settings.wingbeatWaveHalfWidth = WindMath::ClampFiniteOrDefault(settings.wingbeatWaveHalfWidth,
+	settings.wingbeatWaveHalfWidth = Util::ClampFinite(settings.wingbeatWaveHalfWidth,
 		DragonWindRuntime::kDistanceMin, DragonWindRuntime::kDistanceMax, defaults.wingbeatWaveHalfWidth);
-	settings.wingbeatPropagationSpeed = WindMath::ClampFiniteOrDefault(settings.wingbeatPropagationSpeed,
+	settings.wingbeatPropagationSpeed = Util::ClampFinite(settings.wingbeatPropagationSpeed,
 		DragonWindRuntime::kSpeedMin, DragonWindRuntime::kSpeedMax, defaults.wingbeatPropagationSpeed);
-	settings.wingbeatDecayTime = WindMath::ClampFiniteOrDefault(settings.wingbeatDecayTime,
+	settings.wingbeatDecayTime = Util::ClampFinite(settings.wingbeatDecayTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.wingbeatDecayTime);
-	settings.wingbeatFallbackCooldown = WindMath::ClampFiniteOrDefault(settings.wingbeatFallbackCooldown,
+	settings.wingbeatFallbackCooldown = Util::ClampFinite(settings.wingbeatFallbackCooldown,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.wingbeatFallbackCooldown);
 	sanitizeImpact(settings.normalImpact, defaults.normalImpact);
 	sanitizeImpact(settings.forcefulImpact, defaults.forcefulImpact);
 	sanitizeImpact(settings.crashImpact, defaults.crashImpact);
-	settings.impactDecayTime = WindMath::ClampFiniteOrDefault(settings.impactDecayTime,
+	settings.impactDecayTime = Util::ClampFinite(settings.impactDecayTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.impactDecayTime);
-	settings.impactDeduplicationTime = WindMath::ClampFiniteOrDefault(settings.impactDeduplicationTime,
+	settings.impactDeduplicationTime = Util::ClampFinite(settings.impactDeduplicationTime,
 		DragonWindRuntime::kTimeMin, DragonWindRuntime::kTimeMax, defaults.impactDeduplicationTime);
 }

@@ -243,6 +243,7 @@ std::span<const SettingMetadata> GetSettings() {
 }
 }
 CATALOGUE
+using Util::Settings::GetCatalogSerializedValue;
 using Util::Settings::SplitCatalogPath;
 const SceneSettingsCatalog::SettingMetadata* FindAllowedCatalogSetting(const std::string& feature,
     const std::vector<std::string>&, const std::string& key) {
@@ -438,10 +439,7 @@ int main() {
         source = source.replace("SANITIZE", filesystem[sanitize_start:sanitize_end])
         source = source.replace("WITHIN", braced(filesystem, "bool IsPathLexicallyWithinDirectory("))
         source = source.replace("KEYS", without_includes(keys))
-        scene_helpers = "\n".join(braced(scene, declaration) for declaration in (
-            "bool IsCompatibleSceneSettingValue(", "bool ParseCatalogArrayIndex("))
-        for declaration in ("Json* GetCatalogNodeAtPath(", "Json* GetCatalogSerializedValue("):
-            scene_helpers += "\ntemplate<class Json>\n" + braced(scene, declaration)
+        scene_helpers = braced(scene, "bool IsCompatibleSceneSettingValue(")
         scene_helpers += "\n" + braced(scene, "void SceneSettingsManager::RestoreBaselinesInSerializedSettings(")
         source = source.replace("SCENE_HELPERS", scene_helpers).replace("BOOT_PREFERENCES", boot_preferences)
         source = source.replace("METHODS", methods).replace("PERSISTENCE", without_includes(persistence))

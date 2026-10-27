@@ -7,6 +7,7 @@
 #include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
+#include "Upscaling/RainLayer.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/LazyShader.h"
@@ -118,7 +119,7 @@ public:
 		// Boot-locked; the preset is inert while set. DLSS clamps into NGX range.
 		float vrRenderScale = 0.0f;
 
-		// Opt in to AMD's runtime FSR4 upscaler DLL on eligible RDNA4 hardware instead of the
+		// Opt in to AMD's runtime FSR4 upscaler DLL on eligible AMD hardware instead of the
 		// host-linked FSR3 SDK; falls back to FSR3 on any failure.
 		bool fsr4RuntimeEnable = false;
 
@@ -201,6 +202,8 @@ public:
 	// FG FPS Measurement for Overlay
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
+	/** @brief Frame generation state, forwarded so Neural Rendering never reaches into this feature. */
+	static bool FrameGenerationActive();
 	/** @brief Returns whether settings and menu state permit preparing frame-generation inputs. */
 	bool ShouldPrepareFrameGeneration() const;
 	/** @brief Returns the prepared frame's generation decision until its buffers are cleared after Present. */
@@ -245,6 +248,8 @@ public:
 	// class's boot-vs-live blob diff can never see it.
 	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
+	/** @copydoc Feature::OnBeforeInputPoll */
+	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
 	void DrawPerformancePresets() override;
@@ -278,8 +283,12 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	/** @brief Routes rain around temporal reconstruction for both vendor upscalers. */
+	bool WantsDrawHook() const override { return true; }
+	/** @copydoc Feature::OnDraw */
+	void OnDraw() override;
 	/** @brief Propagates frame inactivity to NR temporal history. */
-	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup, settings.neuralRenderingTuning.allowUnverifiedRuntime); }
+	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup, settings.neuralRenderingTuning.allowUnverifiedRuntime, settings.neuralRenderingTuning.runtimeVariant); }
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
 	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
@@ -429,6 +438,7 @@ public:
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 	NeuralRendering neuralRendering;
+	RainLayer rainLayer;
 
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

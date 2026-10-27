@@ -1,5 +1,6 @@
 #include "Format.h"
 #include "Globals.h"
+#include "MathUtils.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -256,12 +257,7 @@ namespace Util
 	{
 		if (definesStr.empty())
 			return {};
-		uint32_t h = 2166136261u;  // FNV-1a 32-bit offset basis
-		for (unsigned char c : definesStr) {
-			h ^= c;
-			h *= 16777619u;  // FNV prime
-		}
-		return std::format("_{:08X}", h);
+		return std::format("_{:08X}", Util::Fnv1a32(definesStr));
 	}
 
 	std::string PrettifyIdentifier(std::string_view id)

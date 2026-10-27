@@ -8,6 +8,7 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/Game.h"
+#include "Utils/StringUtils.h"
 #include "Utils/UI.h"
 
 #include "CSEditor.h"
@@ -213,7 +214,7 @@ void SceneSelector::RenderWeatherDetailsWindow(bool* open)
 	if (!open || !*open)
 		return;
 
-	auto player = RE::PlayerCharacter::GetSingleton();
+	auto player = globals::game::player;
 	if (!player || !player->parentCell)
 		return;
 
@@ -436,7 +437,7 @@ void SceneSelector::DisplayWindInfo(RE::TESWeather* weather)
 	float weatherWindRangeDegrees = Util::Units::DirectionRangeToDegrees(weather->data.windDirectionRange);
 	ImGui::BulletText(T(TKEY("wind_direction_range"), "Wind Direction Range: %.1f\xc2\xb0 (raw %d)"), weatherWindRangeDegrees, weather->data.windDirectionRange);
 
-	if (auto player = RE::PlayerCharacter::GetSingleton()) {
+	if (auto player = globals::game::player) {
 		float playerAngleZ = player->GetAngleZ();
 		float playerAngleDegrees = Util::Units::NormalizeDegrees0To360(Util::Units::RadiansToDegrees(playerAngleZ));
 		ImGui::BulletText(T(TKEY("player_direction"), "Player Direction: %.1f\xc2\xb0"), playerAngleDegrees);
@@ -932,8 +933,7 @@ bool SceneSelector::RenderMultiColorWeatherName(RE::TESWeather* weather, const s
 		ImVec4 flagColor = GetWeatherFlagColorByName(flagNames[i]);
 		ImGui::PushStyleColor(ImGuiCol_Text, flagColor);
 		// Translate canonical flag name for display
-		std::string flagKey = std::string(TKEY("flag_")) + flagNames[i];
-		std::transform(flagKey.begin(), flagKey.end(), flagKey.begin(), ::tolower);
+		const std::string flagKey = Util::ToLowerAscii(std::string(TKEY("flag_")) + flagNames[i]);
 		const char* displayFlag = T(flagKey.c_str(), flagNames[i].c_str());
 		ImGui::Text("[%s]", displayFlag);
 		ImGui::PopStyleColor();
@@ -997,7 +997,7 @@ std::string SceneSelector::GetDisplayName(const RE::TESWeather* weather)
 
 void SceneSelector::DrawOverlay()
 {
-	auto player = RE::PlayerCharacter::GetSingleton();
+	auto player = globals::game::player;
 	if (!player || !player->parentCell)
 		return;
 

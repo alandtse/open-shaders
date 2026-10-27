@@ -493,7 +493,7 @@ void HDRDisplay::DrawSettings()
 			currentPeakNits = settings.hdrPeakNits;
 		}
 
-		ImGui::SliderInt(T(TKEY("paper_white_nits"), "Paper White (nits)"), reinterpret_cast<int*>(&currentPaperWhite), 80, 500);
+		ImGui::SliderInt(T(TKEY("paper_white_nits"), "Paper White (nits)"), reinterpret_cast<int*>(&currentPaperWhite), kHdrPaperWhiteMin, 500);
 		{
 			std::lock_guard<std::mutex> lock(settingsMutex);
 			if (currentPaperWhite >= settings.hdrPeakNits) {
@@ -517,8 +517,8 @@ void HDRDisplay::DrawSettings()
 		const uint peakSliderMax = autoHDRActive ? kAutoHDRMaxNits : kHdrPeakNitsMax;
 		int displayedPeakNits = static_cast<int>(std::min(currentPeakNits, peakSliderMax));
 		if (ImGui::SliderInt(T(TKEY("peak_brightness_nits"), "Peak Brightness (nits)"), &displayedPeakNits, kHdrPeakNitsMin, peakSliderMax, "%d",
-				ImGuiSliderFlags_AlwaysClamp | (autoHDRActive ? ImGuiSliderFlags_None : ImGuiSliderFlags_Logarithmic)))
-			currentPeakNits = static_cast<uint>(displayedPeakNits);
+				autoHDRActive ? ImGuiSliderFlags_None : ImGuiSliderFlags_Logarithmic))
+			currentPeakNits = static_cast<uint>(std::clamp(displayedPeakNits, 0, static_cast<int>(kHdrPeakNitsMax)));
 		{
 			std::lock_guard<std::mutex> lock(settingsMutex);
 			if (currentPeakNits <= settings.hdrPaperWhite) {
@@ -582,8 +582,8 @@ void HDRDisplay::LoadSettings(json& o_json)
 	bool oldEnableHDR = settings.enableHDR;
 
 	settings = o_json;
-	settings.hdrPeakNits = std::clamp(settings.hdrPeakNits, kHdrPeakNitsMin, kHdrPeakNitsMax);
-	settings.hdrPaperWhite = std::clamp(settings.hdrPaperWhite, 80u, settings.hdrPeakNits - 1);
+	settings.hdrPeakNits = std::clamp(settings.hdrPeakNits, kHdrPaperWhiteMin + 1, kHdrPeakNitsMax);
+	settings.hdrPaperWhite = std::clamp(settings.hdrPaperWhite, kHdrPaperWhiteMin, settings.hdrPeakNits - 1);
 	if (!std::isfinite(settings.hdrUIBrightness))
 		settings.hdrUIBrightness = 1.0f;
 
@@ -1004,7 +1004,10 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 {
 	auto it = patchedBlendStateCache.find(original);
 	if (it != patchedBlendStateCache.end())
-		return it->second ? it->second.get() : original;
+		return it->second.patched ? it->second.patched.get() : original;
+
+	auto& entry = patchedBlendStateCache[original];
+	entry.original.copy_from(original);
 
 	D3D11_BLEND_DESC desc{};
 	original->GetDesc(&desc);
@@ -1023,7 +1026,6 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 	}
 
 	if (!needsPatch) {
-		patchedBlendStateCache[original] = nullptr;
 		return original;
 	}
 
@@ -1042,12 +1044,11 @@ ID3D11BlendState* HDRDisplay::GetPatchedAlphaBlendState(ID3D11BlendState* origin
 
 	winrt::com_ptr<ID3D11BlendState> patched;
 	if (FAILED(globals::d3d::device->CreateBlendState(&desc, patched.put()))) {
-		patchedBlendStateCache[original] = nullptr;
 		return original;
 	}
 
 	auto* raw = patched.get();
-	patchedBlendStateCache[original] = std::move(patched);
+	entry.patched = std::move(patched);
 	return raw;
 }
 

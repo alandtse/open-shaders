@@ -16,6 +16,7 @@ namespace TreeWindPatcher
 {
 	struct Sensitivities
 	{
+		bool bendEnabled = true;
 		float bend = 1.0f;
 		float leafAmbient = 1.0f;
 		float upperBendRange = 100.0f;
@@ -47,6 +48,7 @@ namespace TreeWindPatcher
 		float leafTransientWindInfluence = 5.0f;
 		float leafTransientFlutterMaximum = 20.0f;
 		float transientMaximumBendMultiplier = 2.5f;
+		bool bendEnabled = true;
 		bool unsaved = false;
 	};
 
@@ -65,6 +67,11 @@ namespace TreeWindPatcher
 
 	[[nodiscard]] std::size_t GetRuleCount();
 	[[nodiscard]] RuleSnapshot GetRule(std::size_t a_index);
+
+	/** @brief Enables broad bending without changing the saved bend sensitivity or leaf response. */
+	[[nodiscard]] bool SetBendEnabled(std::size_t a_index, bool a_enabled);
+	/** @brief Enables broad bending for the matching normalized mesh path. */
+	[[nodiscard]] bool SetBendEnabled(std::string_view a_mesh, bool a_enabled);
 
 	[[nodiscard]] bool SetRule(std::size_t a_index, float a_bend, float a_leafAmbient,
 		float a_upperBendRange, float a_maximumDisplacementPercent,

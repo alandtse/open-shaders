@@ -40,41 +40,63 @@ cbuffer GainReuse : register(b1)
 	DepthHistoryOutput[id.xy] = GuideDepth[id.xy];
 }
 
-	[numthreads(8, 8, 1)] void ReuseGain(uint3 id : SV_DispatchThreadID)
+// Four bilinear taps, each kept only where it agrees on surface and lighting; the kept weights are renormalised.
+bool SampleGain(Texture2D<float2> gains, Texture2D<float> depths, float2 uv, float currentDepth, float currentLogLuma, out float toneDelta)
 {
+	const float2 position = uv * float2(Width, Height) - 0.5;
+	const int2 base = int2(floor(position));
+	const float2 fraction = position - float2(base);
+	const int2 last = int2(int(Width) - 1, int(Height) - 1);
+	float weightedDelta = 0.0;
+	float weightSum = 0.0;
+	[unroll] for (int k = 0; k < 4; ++k)
+	{
+		const int2 offset = int2(k & 1, k >> 1);
+		const int3 tap = int3(clamp(base + offset, int2(0, 0), last), 0);
+		const float weight = (offset.x ? fraction.x : 1.0 - fraction.x) * (offset.y ? fraction.y : 1.0 - fraction.y);
+		const float2 history = gains.Load(tap);
+		if (NeuralRenderingReuse::SampleAgrees(true, currentDepth, depths.Load(tap), CameraData, DepthReversed != 0, currentLogLuma, history.x)) {
+			weightedDelta += weight * history.y;
+			weightSum += weight;
+		}
+	}
+	const bool found = weightSum > NeuralRenderingReuse::kReuseMinimumWeight;
+	toneDelta = found ? weightedDelta / weightSum : 0.0;
+	return found;
+}
+
+[numthreads(8, 8, 1)] void ReuseGain(uint3 id : SV_DispatchThreadID) {
 	if (id.x >= Width || id.y >= Height)
 		return;
 	const float3 currentProxy = ProxyInput[id.xy].rgb;
 	const float3 currentLinear = ProxySrgbToLinear(currentProxy);
 	const float currentLogLuma = log2(max(Color::RGBToLuminance(currentLinear, Luma), kLumaEpsilon));
+	const float currentDepth = GuideDepth[id.xy];
 	// The guide holds the engine's per-eye normalized UV displacement, current to previous, so adding it
 	// to the current UV lands on the pixel the gain was stored at.
 	const float2 uv = (float2(id.xy) + 0.5) / float2(Width, Height);
 	const float2 previousUV = uv + MotionGuide[id.xy];
 	float toneDelta = 0.0;
-	bool found = false;
-	if (all(previousUV > 0.0) && all(previousUV < 1.0)) {
-		const int2 previousPixel = clamp(int2(previousUV * float2(Width, Height)), int2(0, 0), int2(int(Width) - 1, int(Height) - 1));
-		const float2 history = GainHistory.Load(int3(previousPixel, 0));
-		const float historyDepth = DepthHistory.Load(int3(previousPixel, 0));
-		found = NeuralRenderingReuse::SampleAgrees(true, GuideDepth[id.xy], historyDepth, CameraData, DepthReversed != 0, currentLogLuma, history.x);
-		if (found)
-			toneDelta = history.y;
-	}
+	bool resolved = false;
+	if (all(previousUV > 0.0) && all(previousUV < 1.0))
+		resolved = SampleGain(GainHistory, DepthHistory, previousUV, currentDepth, currentLogLuma, toneDelta);
 #ifdef VR
 	// A surface that just came into view has no earlier gain, but the other eye's model frame saw it this frame.
-	if (!found && CrossEye != 0) {
-		const float4 clip = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), GuideDepth[id.xy], 1.0);
+	if (!resolved && CrossEye != 0) {
+		const float4 clip = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), currentDepth, 1.0);
 		float4 other = mul(StereoMap, clip);
 		other /= other.w;
 		const float2 otherUV = other.xy * float2(0.5, -0.5) + 0.5;
-		if (all(otherUV > 0.0) && all(otherUV < 1.0)) {
-			const int3 otherPixel = int3(clamp(int2(otherUV * float2(Width, Height)), int2(0, 0), int2(int(Width) - 1, int(Height) - 1)), 0);
-			const float2 otherGain = OtherGainHistory.Load(otherPixel);
-			if (NeuralRenderingReuse::SampleAgrees(true, other.z, OtherDepthHistory.Load(otherPixel), CameraData, DepthReversed != 0, currentLogLuma, otherGain.x))
-				toneDelta = otherGain.y;
-		}
+		if (all(otherUV > 0.0) && all(otherUV < 1.0))
+			resolved = SampleGain(OtherGainHistory, OtherDepthHistory, otherUV, other.z, currentLogLuma, toneDelta);
 	}
 #endif
+	// With no tap and no other-eye sample agreeing, the gain stored at this pixel still applies at reduced strength where its depth agrees.
+	if (!resolved) {
+		const int3 inPlace = int3(id.xy, 0);
+		const float2 history = GainHistory.Load(inPlace);
+		if (NeuralRenderingReuse::SampleAgrees(true, currentDepth, DepthHistory.Load(inPlace), CameraData, DepthReversed != 0, currentLogLuma, history.x))
+			toneDelta = NeuralRenderingReuse::kReuseFallbackStrength * history.y;
+	}
 	ReuseOutput[id.xy] = float4(ProxyLinearToSrgb(NeuralRenderingReuse::ApplyGainLinear(currentLinear, toneDelta)), 1.0);
 }

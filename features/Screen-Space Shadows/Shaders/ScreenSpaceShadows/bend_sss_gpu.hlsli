@@ -44,6 +44,7 @@
 // Wherever possible, it is highly recommended to have these values be compile-time constants
 struct DispatchParameters
 {
+	float ContactMaxDistance;
 	// Visual configuration:
 	// These values will require manual tuning.
 	// All shadow computation is performed in non-linear depth space (not in world space), so tuned value choices will depend on scene depth distribution (as determined by the Projection Matrix setup).
@@ -96,6 +97,7 @@ struct DispatchParameters
 	// Set sensible starting tuning values
 	void SetDefaults()
 	{
+		ContactMaxDistance = 0.0;
 		SurfaceThickness = 0.005;
 		BilinearThreshold = 0.02;
 		ShadowContrast = 4;
@@ -380,6 +382,9 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	if (start_depth == 0.0 || start_depth == 1.0)
 		return;
 
+	if (inParameters.ContactMaxDistance > 0.0 && SharedData::GetScreenDepth(start_depth) >= inParameters.ContactMaxDistance)
+		return;
+
 	// lerp away from far depth by a tiny fraction?
 	if (inParameters.UsePrecisionOffset)
 		start_depth = lerp(start_depth, inParameters.FarDepthValue, -1.0 / 0xFFFF);
@@ -409,16 +414,28 @@ void WriteScreenSpaceShadow(DispatchParameters inParameters, int3 inGroupID, int
 	half front_start_depth = scaled_start_depth - z_sign;
 	half back_start_depth = scaled_start_depth + z_sign;
 
-	[unroll] for (i = 0; i < SAMPLE_COUNT; i++)
+#if (SAMPLE_COUNT / 4) * 4 != SAMPLE_COUNT
+#	error SAMPLE_COUNT must be a multiple of 4
+#endif
+#if SAMPLE_COUNT > 128
+#	define SSS_MARCH_ATTRIBUTE [loop]
+#else
+#	define SSS_MARCH_ATTRIBUTE [unroll]
+#endif
+	SSS_MARCH_ATTRIBUTE for (i = 0; i < SAMPLE_COUNT; i += 4)
 	{
-		half shadow_depth = DepthData[sample_index + i] * depth_scale;
-		half front_depth_delta = abs(front_start_depth - shadow_depth);
-		half back_depth_delta = abs(back_start_depth - shadow_depth);
+		[unroll] for (int j = 0; j < 4; j++)
+		{
+			half shadow_depth = DepthData[sample_index + i + j] * depth_scale;
+			half front_depth_delta = abs(front_start_depth - shadow_depth);
+			half back_depth_delta = abs(back_start_depth - shadow_depth);
 
-		// By using 4 values, the average shadow can be taken, which can help soften single-pixel shadows.
-		front_shadow_value[i & 3] = min(front_shadow_value[i & 3], front_depth_delta);
-		back_shadow_value[i & 3] = min(back_shadow_value[i & 3], back_depth_delta);
+			// By using 4 values, the average shadow can be taken, which can help soften single-pixel shadows.
+			front_shadow_value[j] = min(front_shadow_value[j], front_depth_delta);
+			back_shadow_value[j] = min(back_shadow_value[j], back_depth_delta);
+		}
 	}
+#undef SSS_MARCH_ATTRIBUTE
 
 	// Apply the contrast value.
 	// A value of 0 indicates a sample was exactly matched to the reference depth (and the result is fully shadowed)

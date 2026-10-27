@@ -1,0 +1,48 @@
+#pragma once
+
+namespace DevBenchBridge::ToolSpecs
+{
+	/** Devbench descriptor JSON for inspect extension llfshadows. {brand} is expanded at registration. */
+	inline constexpr const char* kInspectLlfShadowsExt =
+		R"({"description":")"
+		R"({brand} Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],visibility:[{ptr,chosen,engineCulled,frustrumCull,lodDimmer,distance,)"
+		R"(radius,ownInFrustum,cameraHold,hidden,shadowDistanceCulled,frustumCulled,name,x,y,z}],visEngineOutOursIn,visEngineInOursOut,slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,)"
+		R"(renderedScale,demandMax,untouchedSamples,litMax,litTile,litSum,litReason,litSmoothed,litCapped,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,)"
+		R"(occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,frontAppendTotal,backOnlyAppendTotal,hemisphereReassignTotal,hemisphereDropTotal,passlessCasterSkipTotal,)"
+		R"(passlessSkipNoShadowShader,passlessSkipRefraction,passlessSkipAlphaBlend,passlessSkipFaded,staticBakesTotal,splitAccumAllTotal,splitAccumStaticOnlyTotal,splitAccumDynamicOnlyTotal,)"
+		R"(splitLatchMismatchTotal,splitLatchWindowTotal,splitWastedBakesTotal,scalePromotionRedraws,scaleDemotionRedrawsAvoided,scalePromotionRedundantAvoided,convertReEnableRun,convertReEnableSkipped,)"
+		R"(convertReEnableToleranceSkipped,originPinnedLights,warpsRun,warpsSkippedSubPixel,warpsSkippedOffscreen,warpsSkippedNoDemand,convertedLights,convertedStrictLights,passGuardChecksTotal,)"
+		R"(passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,)"
+		R"(renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,)"
+		R"(passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. visibility audits every candidate light: engineCulled is the UpdateCamera verdict (frustrumCull reads 0xff for every rejection) split into exclusive causes hidden,)"
+		R"( )"
+		R"(shadowDistanceCulled and frustumCulled; )"
+		R"(ownInFrustum is an independent sphere-versus-side-planes test from the published view-projection (any eye in VR) that ignores the far plane; distance is the light centre to the nearest eye; )"
+		R"(visEngineOutOursIn counts lights the engine culled although their sphere touches the view frustum, visEngineInOursOut the reverse. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); )"
+		R"(demandMax and untouchedSamples are the GPU screen-demand reading and its zero streak; litSum is that demand weighted by the light's own shadow test, summed over the taps (lit area x brightness); )"
+		R"(litReason ORs 1 no shadow projection, 2 spot, 4 no tile yet, 8 fading in, 16 behind a hemisphere, 32 lit, 64 blocked; )"
+		R"(litSmoothed is litSum after the release filter and litCapped is the DemandTileCap latch holding the tile class at a quarter size; litMax and litTile are the best lit tap and its tile id and stay zero unless )"
+		R"(Shadow Demand Instrumentation is on; classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; passGuard* count pass-chain guard activity during )"
+		R"(SCM shadow renders (cycles repaired in place, calls skipped when a repair failed or a link was unreadable, chains too long to prove); )"
+		R"(staleAccumulatesTotal counts lights accumulated in an earlier frame and never rendered since (staleAfterRenderSkipTotal: those whose accumulate frame was a render-function early exit; )"
+		R"(stalePassClearsTotal: times such a light's pass groups were unlinked before re-accumulating), renderSkip*Total count RenderScheduledShadowLights early exits by reason, )"
+		R"(*Promoted* count the subset of stale accumulates, in-place repairs and registration rings that involved a promoted (normal->shadow) light; )"
+		R"(passReg* count pass registrations checked and rings they closed (only while LightLimitFix tracePassRegistration is on); )"
+		R"(budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). scalePromotionRedraws counts tile-class promotions that alone forced a redraw, scaleDemotionRedrawsAvoided the demotions skipped because the retained larger tile already held that content; )"
+		R"(scalePromotionRedundantAvoided counts the promotions the previous pendingScale > renderedScale rule would have dirtied although the retained tile already held that class; )"
+		R"(convertReEnableRun counts engine EnableLight calls on converted (normal) lights and convertReEnableSkipped the calls skipped because pose, radius, fade, )"
+		R"(hidden state and portal graph were unchanged since the last enable, or (convertReEnableToleranceSkipped) because only flicker-scale drift occurred (position within 1 unit, radius within 2 percent, )"
+		R"(fade on the same side of the engine's 0.05 on/off threshold) and the staggered 8 to 15 frame refresh was not yet due; )"
+		R"(originPinnedLights counts lights currently rendering from their bake pose instead of the live pose (Pinned and Warped modes); )"
+		R"(warpsRun counts warped-mode static-tile seeds that passed the visibility gate and reprojected on the GPU, warpsSkippedOffscreen those skipped because the light's sphere is outside every eye frustum, )"
+		R"(warpsSkippedNoDemand those skipped because the light's measured screen demand stayed zero for 30 samples and warpsSkippedSubPixel those skipped because the projected edge error stayed under a pixel; )"
+		R"(convertedLights and convertedStrictLights count the lights currently converted to normal lights and how many of them use strict portal membership (the case where the re-enable also keys on rotation); )"
+		R"(passlessCasterSkipTotal counts casters dropped from the cull walk because the engine registers no shadow-map pass for them, split into effect/particle/water shader properties (passlessSkipNoShadowShader), refraction, alpha-blended lit meshes and faded (fade x material alpha below 1) meshes; )"
+		R"(each scale counter counts once per scale-change event, )"
+		R"(not once per frame the change stays pending. frontAppendTotal/backOnlyAppendTotal/hemisphereReassignTotal/hemisphereDropTotal count caster appends by destination list plus the wholly-behind casters the back-side fix reassigns to the back map or drops outright, )"
+		R"(and accumulate only across primed windows rather than the whole session. The scheduler fills this only while the settings menu is open or a dump was recently requested; )"
+		R"(calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).")"
+		R"(,"readOnly":true)"
+		R"(,"inputSchema":{"type":"object"})"
+		R"(})";
+}

@@ -150,6 +150,34 @@ namespace Util::CacheInvalidation
 		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasFailedFeature(mismatches);
 	}
 
+	/// True when a version change or feature toggle can be left to each shader's content digest:
+	/// the digest already covers a shader's source closure and its defines, so nothing needs a wipe.
+	inline bool AreMismatchesDigestResolvable(const std::vector<CacheMismatch>& mismatches)
+	{
+		return !mismatches.empty() && !HasFailedFeature(mismatches);
+	}
+
+	/// Compile settings that change bytecode without touching a shader's source or defines.
+	inline std::string BuildCompileFlagsTag(bool partialPrecision, bool avoidFlowControl)
+	{
+		return std::format("pp={};afc={}", partialPrecision ? 1 : 0, avoidFlowControl ? 1 : 0);
+	}
+
+	enum class CompileFlagsCheck
+	{
+		Adopt,         ///< no flags recorded (an older cache) and the current ones are the defaults it was built with
+		Match,         ///< recorded flags equal the current ones
+		Mismatch,      ///< the cache was built with different flags
+		Unestablished  ///< no flags recorded and the current ones are not the defaults, so the cache's flags are unknown
+	};
+
+	inline CompileFlagsCheck CheckCompileFlags(const std::optional<std::string>& recorded, const std::string& current)
+	{
+		if (!recorded)
+			return current == BuildCompileFlagsTag(false, false) ? CompileFlagsCheck::Adopt : CompileFlagsCheck::Unestablished;
+		return *recorded == current ? CompileFlagsCheck::Match : CompileFlagsCheck::Mismatch;
+	}
+
 	/// Decide whether `mismatches` (current state vs. the rollback slot's
 	/// manifest) qualify as a restore candidate, and if so record them. Whether
 	/// the rollback slot's Info.ini actually exists on disk is the caller's

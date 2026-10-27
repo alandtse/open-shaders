@@ -4,6 +4,8 @@
 #include "I18n/I18n.h"
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsManager.h"
+#include "Utils/SettingsCatalog.h"
+#include "Utils/SettingsDefaults.h"
 #include "Utils/UI.h"
 
 #include <imgui_internal.h>
@@ -450,6 +452,12 @@ namespace
 		return FindUniqueBlockedSettingForLabel(label, choiceLabelsOnly, metadataMatched);
 	}
 
+	const void* GetControlStorageAddress(const void* valueAddress)
+	{
+		const void* settingAddress = Util::GetActiveControlStorageAddress();
+		return settingAddress ? settingAddress : valueAddress;
+	}
+
 	const SceneSettingsCatalog::SettingMetadata* FindControlSetting(
 		const char* label, const void* valueAddress, bool choiceLabelsOnly = false, bool* metadataMatched = nullptr)
 	{
@@ -458,10 +466,7 @@ namespace
 		if (!IsSceneControlGuardActive() || !g_currentFeature)
 			return nullptr;
 
-		const void* settingAddress = Util::GetActiveControlStorageAddress();
-		if (!settingAddress)
-			settingAddress = valueAddress;
-		auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, settingAddress);
+		auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, GetControlStorageAddress(valueAddress));
 		if (!setting)
 			return FindVirtualControlSetting(label, choiceLabelsOnly, metadataMatched);
 		if (metadataMatched)
@@ -511,6 +516,55 @@ namespace
 		return changed;
 	}
 
+	std::string FormatSettingValue(const SceneSettingsCatalog::SettingMetadata& setting, const json& value)
+	{
+		if (value.is_boolean())
+			return value.get<bool>() ? T("menu.settings.value_on", "On") : T("menu.settings.value_off", "Off");
+		if (value.is_number_integer()) {
+			for (std::size_t i = 0; i < setting.choiceCount; ++i) {
+				const auto& choice = setting.choices[i];
+				if (choice.value == value.get<std::int64_t>()) {
+					const std::string fallback(choice.displayName);
+					return T(choice.displayNameKey, fallback.c_str());
+				}
+			}
+		}
+		if (value.is_number() && setting.numericTransform == SceneSettingsCatalog::NumericTransform::Identity)
+			return std::format("{:.4g}", value.get<double>() * setting.displayScale);
+		return {};
+	}
+
+	bool DrawResetToDefaultMenu(const void* valueAddress)
+	{
+		if (!g_currentFeature || g_featureSceneEditing || !ImGui::BeginPopupContextItem())
+			return false;
+
+		const auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, GetControlStorageAddress(valueAddress));
+		if (!setting) {
+			ImGui::CloseCurrentPopup();
+			ImGui::EndPopup();
+			return false;
+		}
+
+		const auto defaultValue = Util::Settings::GetSettingDefault(*g_currentFeature, *setting);
+		json current;
+		g_currentFeature->SaveSettings(current);
+		const auto* currentValue = Util::Settings::GetCatalogSerializedValue(current, *setting);
+		const bool canReset = defaultValue && currentValue && *currentValue != *defaultValue;
+
+		auto label = std::string(T("menu.settings.reset_to_default", "Reset to default"));
+		if (defaultValue) {
+			if (const auto text = FormatSettingValue(*setting, *defaultValue); !text.empty())
+				label += std::format(" ({})", text);
+		}
+		const bool reset = ImGui::MenuItem(label.c_str(), nullptr, false, canReset) &&
+		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
+		if (reset)
+			g_featureSettingMutation = true;
+		ImGui::EndPopup();
+		return reset;
+	}
+
 	template <class Draw>
 	bool DrawControl(const char* label, const void* valueAddress, Draw draw)
 	{
@@ -522,7 +576,9 @@ namespace
 		SettingOutlineGuard outline(setting);
 		if (setting ? !ShouldBlockSetting(*setting) : !g_featureSceneEditing || metadataMatched) {
 			ControlDetourScope detourScope;
-			return TrackFeatureSettingMutation(draw());
+			const bool changed = TrackFeatureSettingMutation(draw());
+			const bool reset = DrawResetToDefaultMenu(valueAddress);
+			return changed || reset;
 		}
 
 		ImGui::BeginDisabled();

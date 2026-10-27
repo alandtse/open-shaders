@@ -16,6 +16,7 @@
 #include "Features/ExtendedTranslucency.h"
 #include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
+#include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
 #include "Features/GrassLighting.h"
 #include "Features/GrassOptimizations.h"
@@ -25,10 +26,12 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/LODBlending.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
@@ -40,6 +43,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowCover.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -262,6 +266,7 @@ namespace
 			&globals::features::waterEffects,
 			&globals::features::performanceOverlay,
 			&globals::features::subsurfaceScattering,
+			&globals::features::lodShadows,
 			&globals::features::terrainShadows,
 			&globals::features::screenSpaceGI,
 			&globals::features::skylighting,
@@ -273,6 +278,7 @@ namespace
 			&globals::features::lodBlending,
 			&globals::features::hairSpecular,
 			&globals::features::interiorSun,
+			&globals::features::furShells,
 			&globals::features::terrainVariation,
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
@@ -290,10 +296,12 @@ namespace
 #if defined(ENABLE_EFFECTS11)
 			&globals::features::effects11,
 #endif
+			&globals::features::rainRefraction,
 			&globals::features::unifiedWater,
 			&globals::features::horizonFix,
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
+			&globals::features::snowCover,
 			&globals::features::skin,
 			&globals::features::reverseZ,
 			&globals::features::postProcessing
@@ -358,6 +366,15 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
 	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassHook(); });
 	return hookFeatures;
+}
+
+void Feature::ApplyDrawHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDrawHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->OnDraw();
+	}
 }
 
 void Feature::ApplyPointLightColorOverrides(float3& a_color)
@@ -480,6 +497,15 @@ std::vector<std::string> Feature::GetLoadedFeatureNames()
 	}
 	std::sort(names.begin(), names.end());
 	return names;
+}
+
+void Feature::DisableForConflict(std::string_view a_conflict)
+{
+	loaded = false;
+	const std::string conflict(a_conflict);
+	conflictMessage = std::vformat(T("menu.features.disabled_by_conflict", "This feature is disabled because {} was detected. They cannot be used together."), std::make_format_args(conflict));
+	FeatureIssues::AddFeatureIssue(GetShortName(), version, conflictMessage, FeatureIssues::FeatureIssueInfo::IssueType::CONFLICT);
+	logger::warn("[{}] {}", GetDisplayName(), conflictMessage);
 }
 
 bool Feature::ToggleAtBootSetting()

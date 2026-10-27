@@ -632,3 +632,34 @@ TEST_CASE("Content store survives partial invalidation, rotation and wipes", "[c
 		CHECK_FALSE(fs::exists(previous / store));
 	}
 }
+
+TEST_CASE("BuildCompileFlagsTag: encodes both flags", "[cacheinvalidation]")
+{
+	CHECK(BuildCompileFlagsTag(false, false) == "pp=0;afc=0");
+	CHECK(BuildCompileFlagsTag(true, false) == "pp=1;afc=0");
+	CHECK(BuildCompileFlagsTag(false, true) == "pp=0;afc=1");
+	CHECK(BuildCompileFlagsTag(true, true) == "pp=1;afc=1");
+}
+
+TEST_CASE("CheckCompileFlags: older caches adopt only under default flags, differing flags mismatch", "[cacheinvalidation]")
+{
+	CHECK(CheckCompileFlags(std::nullopt, "pp=0;afc=0") == CompileFlagsCheck::Adopt);
+	CHECK(CheckCompileFlags(std::nullopt, "pp=1;afc=0") == CompileFlagsCheck::Unestablished);
+	CHECK(CheckCompileFlags(std::nullopt, "pp=0;afc=1") == CompileFlagsCheck::Unestablished);
+	CHECK(CheckCompileFlags(std::string("pp=0;afc=0"), "pp=0;afc=0") == CompileFlagsCheck::Match);
+	CHECK(CheckCompileFlags(std::string("pp=1;afc=0"), "pp=0;afc=0") == CompileFlagsCheck::Mismatch);
+}
+
+TEST_CASE("AreMismatchesDigestResolvable: version bumps and toggles keep the cache", "[cacheinvalidation]")
+{
+	const CacheMismatch plugin{ CacheMismatch::Kind::PluginVersion, "Plugin", "Plugin", "version changed" };
+	const CacheMismatch featureVersion{ CacheMismatch::Kind::FeatureVersion, "A", "A", "version changed" };
+	const CacheMismatch added{ CacheMismatch::Kind::EnabledFlip, "B", "B", "added", true, false };
+	const CacheMismatch failed{ CacheMismatch::Kind::EnabledFlip, "C", "C", "failed to load", false, true };
+
+	CHECK_FALSE(AreMismatchesDigestResolvable({}));
+	CHECK(AreMismatchesDigestResolvable({ plugin }));
+	CHECK(AreMismatchesDigestResolvable({ featureVersion }));
+	CHECK(AreMismatchesDigestResolvable({ plugin, featureVersion, added }));
+	CHECK_FALSE(AreMismatchesDigestResolvable({ plugin, featureVersion, failed }));
+}

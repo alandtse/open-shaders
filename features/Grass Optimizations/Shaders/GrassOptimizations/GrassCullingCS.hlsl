@@ -182,7 +182,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 				const float rTL = rT / scale;
 				const int2 dimL = max(int2(ceil(HiZSize / scale)), int2(1, 1));
 				// Clamp the footprint to the active eye's half so taps near the stereo seam don't sample the other eye.
-				const int eyeHalf = dimL.x / 2;
+				const int eyeHalf = (uint)dimL.x / 2u;
 				const int xMin = (EyeCount > 1 && eyeHalf > 0) ? (int(eyeIndex) * eyeHalf) : 0;
 				const int xMax = (EyeCount > 1 && eyeHalf > 0) ? (xMin + eyeHalf - 1) : (dimL.x - 1);
 

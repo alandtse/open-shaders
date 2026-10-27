@@ -5,6 +5,7 @@
 #include "Menu.h"
 #include "SceneSelector.h"
 #include "State.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #include <array>
@@ -1158,7 +1159,7 @@ void WetnessEffects::UpdateCharacterRainData(PerFrame& a_data) const
 	                                         std::min(settings.CharacterSpotDebug, kMaximumCharacterRainDebugMode) :
 	                                         0u;
 	float weatherIntensity = std::sqrt(std::clamp(a_data.Wetness, 0.0f, 1.0f));
-	weatherIntensity = std::isfinite(weatherIntensity) ? std::clamp(weatherIntensity, 0.0f, 1.0f) : 0.0f;
+	weatherIntensity = Util::ClampFinite(weatherIntensity, 0.0f, 1.0f, 0.0f);
 
 	const std::uint32_t currentFrame = globals::state ? globals::state->frameCount : 0u;
 	const bool updateState = characterWetnessFrame.TryAdvance(currentFrame);

@@ -104,6 +104,12 @@ namespace Util
 		std::filesystem::path GetTranslationsPath();
 
 		/**
+		 * Gets the directory shadow and frame captures are written to
+		 * @return CommunityShaderPath / "Captures"
+		 */
+		std::filesystem::path GetCapturesPath();
+
+		/**
 		 * Gets the Overrides directory path
 		 * @return CommunityShaderPath / "Overrides"
 		 */
@@ -251,12 +257,36 @@ namespace Util
 		std::filesystem::path SafeRelative(const std::filesystem::path& path, const std::filesystem::path& base);
 
 		/**
+		 * Lists the immediate subdirectories of a directory without throwing. Entries are stepped
+		 * with an error code because a file removed mid-scan makes the throwing increment abort
+		 * the process.
+		 * @param root The directory to list
+		 * @return Absolute paths of the child directories, in directory order; empty if the scan fails
+		 */
+		std::vector<std::filesystem::path> SafeChildDirectories(const std::filesystem::path& root);
+
+		/**
 		 * Checks logical containment without resolving virtual filesystem mappings or symlinks.
 		 * @param directory The containing directory
 		 * @param path The path to validate
 		 * @return true when the normalized absolute path is the directory or one of its descendants
 		 */
 		bool IsPathLexicallyWithinDirectory(const std::filesystem::path& directory, const std::filesystem::path& path);
+
+		/**
+		 * UTF-8 text of a path for JSON, ImGui and logs, without throwing.
+		 * path::string() uses the ANSI code page and throws on characters it cannot map.
+		 * @param path The path to convert
+		 * @return UTF-8 text; an unpaired surrogate becomes U+FFFD
+		 */
+		std::string ToUtf8(const std::filesystem::path& path);
+
+		/**
+		 * Path from UTF-8 text (path(std::string) reads it as ANSI), without throwing.
+		 * @param utf8 UTF-8 text, e.g. a JSON string
+		 * @return The path; invalid sequences become U+FFFD
+		 */
+		std::filesystem::path FromUtf8(std::string_view utf8);
 
 	}
 

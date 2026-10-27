@@ -16,6 +16,7 @@ struct LightLimitFix : OverlayFeature
 {
 private:
 	void DrawContactShadowSettings();
+	void DrawLightAttachSettings();
 	void DrawParticleLightSettings();
 	void DrawPlacedLightSettings();
 	void DrawLightStatistics();
@@ -115,7 +116,8 @@ public:
 		uint FrameIndex;  ///< 0 = jitter disabled (unjittered centre tap)
 		uint ClusterSize[4];
 		uint TapCount;  ///< Spatial samples per tile per frame; forced to 1 when FrameIndex == 0.
-		uint pad[3];
+		uint DebugLit;  ///< Nonzero records each light's best lit tap and its tile.
+		uint pad[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
 
@@ -250,7 +252,6 @@ public:
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
-	eastl::unique_ptr<Buffer> lightIndexCounter = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 
@@ -263,7 +264,12 @@ public:
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
 	// magnitude signal a hard skip needs, which the sum conflates away.
-	static constexpr uint32_t kShadowDemandMaxElements = MAX_SHADOW_DEMAND_SLOTS + 1;
+	// Per-slot lit blocks follow the saturation flag; match LIT_*_BASE in ShadowDemandCS.hlsl.
+	static constexpr uint32_t kShadowDemandLitMaxBase = MAX_SHADOW_DEMAND_SLOTS + 1;
+	static constexpr uint32_t kShadowDemandLitReasonBase = kShadowDemandLitMaxBase + MAX_SHADOW_DEMAND_SLOTS;
+	static constexpr uint32_t kShadowDemandLitSumBase = kShadowDemandLitReasonBase + MAX_SHADOW_DEMAND_SLOTS;
+	static constexpr uint32_t kShadowDemandLitTileBits = 11;
+	static constexpr uint32_t kShadowDemandMaxElements = kShadowDemandLitSumBase + MAX_SHADOW_DEMAND_SLOTS;
 	eastl::unique_ptr<Buffer> shadowDemandMax = nullptr;  // RWStructuredBuffer<uint>[kShadowDemandMaxElements], DEFAULT+UAV
 	// Spatial taps per tile per frame. Shipped at 1: more taps made the demand
 	// signal more sensitive to a flame's own flicker, worsening false skips --
@@ -297,6 +303,10 @@ public:
 	// Unlike the EMA: raw last-drained reading, no temporal filter -- the streak
 	// filter needs each sample distinct (hence the serial) and needs to detect stalls.
 	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandMaxLatest{};
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandLitLatest{};
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandLitTile{};
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandLitReason{};
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandLitSum{};
 	bool shadowDemandClusterSaturated = false;
 	uint32_t shadowDemandSampleSerial = 0;
 	uint64_t shadowDemandLastDrainFrame = 0;
@@ -323,6 +333,7 @@ public:
 	bool wasEmpty = false;
 	bool wasWorld = false;
 	bool wasFirstPerson = false;
+	RE::NiPoint3 previousWorldEyePosition{};
 	int previousRoomIndex = -1;
 
 	Util::FrameChecker frameChecker;
@@ -434,6 +445,10 @@ public:
 	/** @brief Runs the light update and binds clustered light SRVs for the frame. */
 	virtual void Prepass() override;
 	void CopyShadowLightData();
+	/** @brief Binds this frame's point and spot light shadow data (t102-t104) to the compute stage; false when there is none to sample. */
+	bool BindShadowResourcesCS() const;
+	/** @brief Unbinds the compute-stage slots bound by BindShadowResourcesCS. */
+	void UnbindShadowResourcesCS() const;
 
 	// Shadow rendering helpers (implemented in LightLimitFix/ShadowRenderer.cpp)
 
@@ -513,6 +528,10 @@ public:
 		float JsonPlacedLightIntensity = 1.0f;
 		bool JsonPlacedLightsInteriorsOnly = false;
 		bool JsonPlacedLightsPortalStrictOnly = false;
+
+		// Light attach gate: skips the engine's per-frame attach walk for unchanged dynamic lights.
+		bool SkipRedundantLightAttach = true;
+		int LightAttachRefreshFrames = 60;
 	};
 
 	uint clusterSize[3] = { 16 };

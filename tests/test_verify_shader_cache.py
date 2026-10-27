@@ -70,7 +70,7 @@ class ArtifactTests(unittest.TestCase):
 
     def test_feature_without_shader_predicate_does_not_inject_a_macro(self):
         self.add_feature("RuntimeOnlyFeature", "RUNTIME_ONLY_FEATURE", has_shader=False)
-        self.assertNotIn("RUNTIME_ONLY_FEATURE", builder.single_shader_feature_defines(self.root).get("Sky", set()))
+        self.assertNotIn("RUNTIME_ONLY_FEATURE", builder.static_feature_defines(self.root).get("Sky", set()))
 
     @unittest.skipUnless(sys.platform == "win32", "Windows digest ordering")
     def test_valid_artifact_and_dynamic_disabled_profile(self):
@@ -204,7 +204,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.snapshot = {"created_ns": 100, "previousLogStart": "old session",
                          "cache": {"info": {"Cache": {"pluginversion": "2-13-0-0"}}}}
-        self.log = "[19:00:00] [I] CommunityShaders v2-13-0-0\n[I] Using disk cache\n"
+        self.log = "[19:00:00] [I] [XSEPlugin.cpp:55] Loaded CommunityShaders 2-13-0-0\n[I] Using disk cache\n"
         self.status = {"compiling": False, "failedTasks": 0, "currentFailedCount": 0,
                        "digestMissTasks": 0, "totalTasks": 10, "completedTasks": 10,
                        "diskHitTasks": 10, "digestHitTasks": 10, "cacheMismatches": [],
@@ -213,6 +213,9 @@ class RuntimeTests(unittest.TestCase):
     def test_clean_session_and_unrelated_effect_error(self):
         verifier.verify_log(self.log + "[EFFECTS11] Required effect file not found: 'enbeffect.fx'\n", self.snapshot, 101)
         verifier.check_runtime_status(self.status)
+
+    def test_legacy_log_header_remains_supported(self):
+        verifier.verify_log(self.log.replace("Loaded CommunityShaders ", "CommunityShaders v"), self.snapshot, 101)
 
     def test_no_fresh_session_cannot_pass(self):
         with self.assertRaisesRegex(ValueError, "predates"):

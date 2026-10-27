@@ -51,6 +51,20 @@ class FeatureFlipImpactTests(unittest.TestCase):
         self.assertEqual(means[("Lighting.hlsl", "PSHADER")], 15.0)
         self.assertEqual(means[("Lighting.hlsl", "VSHADER")], 1.0)
 
+    def test_deduped_zero_durations_do_not_zero_a_group_or_skew_the_mean(self):
+        report = [
+            {"file": "L.hlsl", "entry": "a", "type": "PSHADER", "duration_seconds": 30.0},
+            {"file": "L.hlsl", "entry": "b", "type": "PSHADER", "duration_seconds": 0.0},
+            {"file": "L.hlsl", "entry": "c", "type": "PSHADER", "duration_seconds": 2.0},
+        ]
+        means = tool.mean_by_file_and_type(report)
+        self.assertEqual(means[("L.hlsl", "PSHADER")], 16.0)
+        variants = [("L.hlsl", "a", "PSHADER"), ("L.hlsl", "b", "PSHADER"), ("L.hlsl", "c", "PSHADER")]
+        timings = {("L.hlsl", t["entry"]): t["duration_seconds"] for t in report}
+        share, changed = tool.group_share(variants, ["x", "x", "y"], ["z", "z", "y"], timings, means)
+        self.assertEqual((share, changed), (30.0 / 32.0, 1))
+
+
     def test_group_is_changed_when_any_member_changes(self):
         variants = [("L.hlsl", "a", "PSHADER"), ("L.hlsl", "b", "PSHADER")]
         timings = {("L.hlsl", "a"): 10.0, ("L.hlsl", "b"): 12.0}

@@ -246,6 +246,7 @@ namespace Util { float GetUIScale() { return 1.0f; } }
 unsigned int g_controlDetourDepth = 0;
 void ClearControlledItem() {}
 void FinishControlledItem() {}
+bool DrawResetToDefaultMenu(const void*) { return false; }
 bool TrackFeatureSettingMutation(bool changed) { return changed; }
 MATCHING
 const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*, bool choices, bool* metadataMatched) {
@@ -369,6 +370,7 @@ const Setting* FindControlSetting(const char*, const void*, bool, bool* metadata
 bool ShouldBlockSetting(const Setting&) { return blocked; }
 void ClearControlledItem() {}
 void FinishControlledItem() {}
+bool DrawResetToDefaultMenu(const void*) { return false; }
 bool TrackFeatureSettingMutation(bool changed) { return changed; }
 SHOULD_OUTLINE
 OUTLINE_GUARD;

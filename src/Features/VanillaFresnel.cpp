@@ -29,13 +29,7 @@ namespace
 
 	bool ContainsEye(std::string_view a_name)
 	{
-		constexpr std::string_view eye = "eye";
-		return std::search(
-				   a_name.begin(), a_name.end(),
-				   eye.begin(), eye.end(),
-				   [](char a_lhs, char a_rhs) {
-					   return static_cast<char>(std::tolower(static_cast<unsigned char>(a_lhs))) == a_rhs;
-				   }) != a_name.end();
+		return Util::IContains(a_name, "eye");
 	}
 
 	bool IsEyeTechnique(const RE::BSLightingShader* a_shader)

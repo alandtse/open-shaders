@@ -58,8 +58,12 @@ public:
 		float FoveatedCenterOffset[4];  // xy=current eye's center offset (selected per-eye at dispatch), zw=padding
 
 		BendSettings settings;
+		float2 nativeEndSplitDistances{};
+		uint32_t limitToNativeShadows = 0;
+		uint32_t padding = 0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(RaymarchCB);
+	static_assert(sizeof(RaymarchCB) == 128);
 
 	bool enableStereoSync = true;
 

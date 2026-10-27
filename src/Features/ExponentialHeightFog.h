@@ -9,6 +9,10 @@ private:
 	static constexpr std::string_view MOD_ID = "180146";
 
 public:
+	static constexpr float kMaxMistDriftSpeed = 2000.0f;
+	/** @brief Initial pattern angle (radians), the heading of the manual drift direction (0.8, 0.6). */
+	static constexpr double kMistInitialShapeAngle = 0.6435011088;
+
 	virtual bool SupportsVR() override { return true; };
 	virtual inline std::string GetName() override { return "Exponential Height Fog"; }
 	virtual std::string GetDisplayName() override { return T("feature.exponential_height_fog.name", "Exponential Height Fog"); }
@@ -108,23 +112,40 @@ public:
 		float volumetricFogNoiseThreshold = 0.5f;
 		float2 pad3 = {};
 		float3 volumetricFogNoiseVelocity = { 0.0f, 0.0f, 0.0f };
-		float pad4 = 0.0f;
+		uint volumetricFogNoiseType = 0;  // 0 = hash value noise, 1 = PCG value noise with a quintic fade
+		uint mistsEnabled = 0;
+		float mistStrength = 0.1f;
+		float mistRange = 8192.0f;
+		float mistSize = 4096.0f;
+		float mistDriftSpeed = 1000.0f;
+		uint mistFollowWind = 1;
+		float mistWindMultiplier = 1.0f;
+		float pad5 = 0.0f;
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, vanillaFogNearColor) == 256);
 	static_assert(offsetof(Settings, fogLightingInfluence) == 288);
 	static_assert(offsetof(Settings, distanceHazeMaxOpacity) == 292);
 	static_assert(offsetof(Settings, volumetricFogNoiseVelocity) == 320);
-	static_assert(sizeof(Settings) == 336);
+	static_assert(offsetof(Settings, mistsEnabled) == 336);
+	static_assert(offsetof(Settings, mistDriftSpeed) == 352);
+	static_assert(sizeof(Settings) == 368);
 
 	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;
 
 private:
 	void DrawGeneralSettings();
+	void DrawMistSettings();
 	void DrawVolumetricSettings();
 
 	Settings previousFogSettings = {};
+	double previousMistTime = 0.0;
+	double mistDriftDistance = 0.0;
+	std::array<double, 2> mistDriftOffset = {};
+	std::array<double, 2> mistDriftVelocity = {};
+	std::array<double, 2> mistShapeAnimation = { kMistInitialShapeAngle, 0.0 };
+	uint32_t lastMistAnimationFrame = UINT32_MAX;
 
 	struct VolumetricFogCB
 	{
@@ -134,14 +155,23 @@ private:
 		float4x4 clipToWorld[2] = {};
 		float4 frameJitterOffsets[16] = {};
 		float4 historyParameters = {};  // x = near weight, y = miss sample count, z = far weight, w = unused
-		float4 jitterParameters = {};   // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = unused
+		float4 jitterParameters = {};   // x = LightScatteringSampleJitterMultiplier, y = StateFrameIndexMod8, zw = mist world-space drift
 		// Far volume grid (starts where the near volume ends, runs to volumetricFogDistance).
 		DirectX::XMUINT4 farGridSizeAndFlags = {};
 		float4 farInvGridSizeAndNearFade = {};
 		float4 farGridZParams = {};
 		float4 farRange = {};  // x = far start depth, y = far end depth, zw = unused
+		float4 mistShapeParameters = {};
 	};
 	STATIC_ASSERT_ALIGNAS_16(VolumetricFogCB);
+	static_assert(offsetof(VolumetricFogCB, mistShapeParameters) == 528);
+	static_assert(sizeof(VolumetricFogCB) == 544);
+
+	/** @brief Mist drift velocity the animation eases toward: outdoor wind when followed, else the manual direction. */
+	std::array<double, 2> GetMistTargetVelocity(const Settings& frameSettings) const;
+	/** @brief Turns the pattern toward the drift direction around the player and advances its slow evolution. */
+	void AdvanceMistShape(double elapsed);
+	void UpdateMistAnimation(const Settings& frameSettings);
 
 	void EnsureVolumetricResources();
 	void ReleaseVolumetricResources();

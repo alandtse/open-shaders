@@ -49,9 +49,6 @@ namespace
 	}
 }
 
-using WindMath::ClampFiniteOrDefault;
-using WindMath::SquaredDistance;
-
 ExplosionWindRouter::ExplosionWindRouter()
 {
 	ProjectileHookDispatcher::GetSingleton().AddImpactObserver(this, ObserveImpactCallback);
@@ -350,7 +347,7 @@ std::optional<ExplosionWindRouter::ExplosionProfile> ExplosionWindRouter::Classi
 		if (!profile)
 			continue;
 		profile->radius = std::max(profile->radius,
-			ClampFiniteOrDefault(static_cast<float>(effect->effectItem.area), 0.0f, kMaximumRadius, 0.0f));
+			Util::ClampFinite(static_cast<float>(effect->effectItem.area), 0.0f, kMaximumRadius, 0.0f));
 		profile->strength = std::max(profile->strength,
 			std::clamp(0.65f + profile->radius / 900.0f, 0.65f, 3.0f));
 		const bool nativePhysics = (result && result->nativePhysics) || profile->nativePhysics;
@@ -364,7 +361,7 @@ std::optional<ExplosionWindRouter::ExplosionProfile> ExplosionWindRouter::Classi
 ExplosionWindRouter::ExplosionProfile ExplosionWindRouter::CreateProfile(
 	RE::FormID a_identity, float a_radius, float a_force)
 {
-	const float radius = ClampFiniteOrDefault(a_radius,
+	const float radius = Util::ClampFinite(a_radius,
 		kMinimumRadius, kMaximumRadius, kMinimumRadius);
 	const float force = std::isfinite(a_force) ? std::max(a_force, 0.0f) : 0.0f;
 	const float radiusScale = std::clamp(radius / 900.0f, 0.0f, 2.0f);
@@ -428,7 +425,7 @@ bool ExplosionWindRouter::AcceptExplosion(const ExplosionProfile& a_profile,
 												  256.0f, kMaximumRadius) :
 		                                      std::clamp(std::max(recent.radius, effectiveRadius) * 0.2f,
 												  96.0f, 256.0f);
-		if (SquaredDistance(recent.position, a_position) <= deduplicationRadius * deduplicationRadius)
+		if (recent.position.GetSquaredDistance(a_position) <= deduplicationRadius * deduplicationRadius)
 			return false;
 	}
 
@@ -480,10 +477,10 @@ void ExplosionWindRouter::EmitExplosion(const ExplosionObservation& a_observatio
 void ExplosionWindRouter::SanitizeSettings()
 {
 	const Settings defaults;
-	settings.intensity = ClampFiniteOrDefault(settings.intensity,
+	settings.intensity = Util::ClampFinite(settings.intensity,
 		kIntensityMinimum, kIntensityMaximum, defaults.intensity);
-	settings.radiusMultiplier = ClampFiniteOrDefault(settings.radiusMultiplier,
+	settings.radiusMultiplier = Util::ClampFinite(settings.radiusMultiplier,
 		kRadiusMultiplierMinimum, kRadiusMultiplierMaximum, defaults.radiusMultiplier);
-	settings.decayTime = ClampFiniteOrDefault(settings.decayTime,
+	settings.decayTime = Util::ClampFinite(settings.decayTime,
 		0.0f, WindField::kTransientImpulseMaximumDecayTime, defaults.decayTime);
 }

@@ -23,19 +23,21 @@ bool IsProceduralSunActive()
 }
 #endif
 
+#if defined(VSHADER)
 struct VS_INPUT
 {
 	float4 Position: POSITION0;
 
-#if defined(TEX) || defined(HORIZFADE)
+#	if defined(TEX) || defined(HORIZFADE)
 	float2 TexCoord: TEXCOORD0;
-#endif
+#	endif
 
 	float4 Color: COLOR0;
-#if defined(VR)
+#	if defined(VR)
 	uint InstanceID: SV_INSTANCEID;
-#endif  // VR
+#	endif  // VR
 };
+#endif
 
 struct VS_OUTPUT
 {
@@ -234,6 +236,9 @@ typedef VS_OUTPUT PS_INPUT;
 struct PS_OUTPUT
 {
 	float4 Color: SV_Target0;
+#if defined(IBL) && !defined(DEFERRED)
+	float4 ReflectionRadiance: SV_Target7;
+#endif
 	float4 MotionVectors: SV_Target1;
 	float4 Normal: SV_Target2;
 #if defined(CLOUD_SHADOWS) && defined(CLOUDS) && !defined(DEFERRED)
@@ -351,6 +356,9 @@ PS_OUTPUT main(PS_INPUT input)
 	PS_OUTPUT psout;
 	const bool gammaRenderTarget = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget) != 0;
 	float3 skyScale = PParams.yyy;
+#	if defined(EFFECTS11)
+	skyScale *= SharedData::enbSettings.SkyScaleMultiplier;
+#	endif
 	bool composeAuthoredSky = ENABLE_LL;
 #	if !defined(VR)
 	uint eyeIndex = 0;
@@ -610,6 +618,10 @@ PS_OUTPUT main(PS_INPUT input)
 #		endif
 			psout.Color.w = 0;
 	}
+#	endif
+
+#	if defined(IBL) && !defined(DEFERRED)
+	psout.ReflectionRadiance = psout.Color;
 #	endif
 
 	return psout;

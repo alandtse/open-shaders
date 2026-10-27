@@ -11,6 +11,50 @@
 #include "Util.h"
 #include "Utils/D3D.h"
 
+template <typename T>
+static bool ReadLightTransform(T& lightData, float* projOut, float* invOut)
+{
+	if (lightData.shadowmapDescriptors.empty())
+		return false;
+	const DirectX::XMMATRIX proj = DirectX::XMLoadFloat4x4(Util::AsReal(&lightData.shadowmapDescriptors[0].lightTransform));
+	DirectX::XMFLOAT4X4 out;
+	DirectX::XMStoreFloat4x4(&out, proj);
+	std::memcpy(projOut, &out, sizeof(out));
+	DirectX::XMStoreFloat4x4(&out, DirectX::XMMatrixInverse(nullptr, proj));
+	std::memcpy(invOut, &out, sizeof(out));
+	return true;
+}
+
+bool ShadowCasterManager::GetLightProjection(RE::BSShadowLight* light, float* projOut, float* invOut)
+{
+	return globals::game::isVR ? ReadLightTransform(light->GetVRRuntimeData(), projOut, invOut) :
+	                             ReadLightTransform(light->GetRuntimeData(), projOut, invOut);
+}
+
+template <typename T>
+static bool ReadShadowCameraPos(T& lightData, RE::NiPoint3& posOut)
+{
+	if (lightData.shadowmapDescriptors.empty())
+		return false;
+	auto& desc = lightData.shadowmapDescriptors[0];
+	// The VR descriptor carries a camera pair; the first one holds the light-space pose.
+	const RE::NiCamera* camera = nullptr;
+	if constexpr (std::is_array_v<std::remove_reference_t<decltype(desc.camera)>>)
+		camera = desc.camera[0].get();
+	else
+		camera = desc.camera.get();
+	if (!camera)
+		return false;
+	posOut = camera->world.translate;
+	return true;
+}
+
+bool ShadowCasterManager::GetShadowCameraPos(RE::BSShadowLight* light, RE::NiPoint3& posOut)
+{
+	return globals::game::isVR ? ReadShadowCameraPos(light->GetVRRuntimeData(), posOut) :
+	                             ReadShadowCameraPos(light->GetRuntimeData(), posOut);
+}
+
 // False means no usable descriptors; see the ShadowParam.y sentinel contract
 // below (CopyShadowLightData) for what the caller must do with that.
 template <typename T>
@@ -42,14 +86,17 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
-	// Shared by every early-out below: clears slot state and unbinds t102 so
+	// Shared by every early-out below: clears slot state and unbinds t102-t104 so
 	// overlay/shaders degrade to unshadowed instead of stale prior-frame data.
-	auto degradeToUnshadowed = [this]() {
+	auto unbindShadowSRVs = []() {
+		ID3D11ShaderResourceView* nullSRVs[3]{ nullptr, nullptr, nullptr };
+		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+	};
+	auto degradeToUnshadowed = [this, &unbindShadowSRVs]() {
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		unbindShadowSRVs();
 	};
 
 	// A pending teardown (ClearLightArrays) frees shadow lights/GPU resources;
@@ -74,6 +121,9 @@ void LightLimitFix::CopyShadowLightData()
 
 	// Lazy (re)allocation when slot count changes (e.g. on resolution change).
 	if (!shadowLights || shadowLightsCapacity != slots) {
+		// The context pins the buffer through t102 until it is unbound.
+		if (shadowLights)
+			unbindShadowSRVs();
 		delete shadowLights;
 		shadowLights = nullptr;
 
@@ -277,6 +327,30 @@ void LightLimitFix::CopyShadowLightData()
 
 	ID3D11ShaderResourceView* atlasSRV = ShadowCasterManager::AtlasSRV();
 	context->PSSetShaderResources(104, 1, &atlasSRV);
+}
+
+bool LightLimitFix::BindShadowResourcesCS() const
+{
+	if (!loaded || !shadowLights || !shadowLights->srv || shadowLightCount == 0 || ShadowCasterManager::IsSessionResetPending())
+		return false;
+
+	auto* shadowMapSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS].depthSRV);
+	if (!shadowMapSRV)
+		return false;
+
+	ID3D11ShaderResourceView* srvs[3]{
+		shadowLights->srv.get(),
+		shadowMapSRV,
+		ShadowCasterManager::AtlasSRV()
+	};
+	globals::d3d::context->CSSetShaderResources(102, ARRAYSIZE(srvs), srvs);
+	return true;
+}
+
+void LightLimitFix::UnbindShadowResourcesCS() const
+{
+	ID3D11ShaderResourceView* nullSrvs[3]{};
+	globals::d3d::context->CSSetShaderResources(102, ARRAYSIZE(nullSrvs), nullSrvs);
 }
 
 // ─── Debug helpers ────────────────────────────────────────────────────────────

@@ -105,9 +105,14 @@ def candidate_defines(config):
 
 
 def mean_by_file_and_type(report):
-    """Average compile seconds per (file, shader type), for entries the report has no timing for."""
+    """Average compile seconds per (file, shader type), for entries the report has no timing for.
+
+    hlslkit --dedupe reports 0.0 for variants it skipped; those are not compiles and are left out.
+    """
     sums = {}
     for t in report:
+        if t["duration_seconds"] <= 0:
+            continue
         total, count = sums.get((t["file"], t["type"]), (0.0, 0))
         sums[(t["file"], t["type"])] = (total + t["duration_seconds"], count + 1)
     return {key: total / count for key, (total, count) in sums.items()}
@@ -120,9 +125,15 @@ def group_share(variants, before_hashes, after_hashes, timings, type_means):
         seconds = timings.get((variant[0], variant[1]), type_means.get((variant[0], variant[2])))
         if before is None or after is None or seconds is None:
             continue
-        group = groups.setdefault(variant[2] + ":" + before, {"cost": seconds, "changed": False})
-        group["cost"] = min(group["cost"], seconds)
+        group = groups.setdefault(variant[2] + ":" + before, {"cost": None, "estimate": seconds, "changed": False})
+        if seconds > 0:
+            group["cost"] = seconds if group["cost"] is None else min(group["cost"], seconds)
+        else:
+            group["estimate"] = type_means.get((variant[0], variant[2]), 0.0)
         group["changed"] = group["changed"] or before != after
+    for group in groups.values():
+        if group["cost"] is None:
+            group["cost"] = group["estimate"]
     total = sum(g["cost"] for g in groups.values())
     changed = [g for g in groups.values() if g["changed"]]
     return (sum(g["cost"] for g in changed) / total if total > 0 else None), len(changed)

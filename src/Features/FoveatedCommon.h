@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Utils/MathUtils.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -45,9 +47,7 @@ namespace FoveatedCommon
 
 	inline float ClampCenterScale(float a_value)
 	{
-		if (!std::isfinite(a_value))
-			return kCenterScaleMax;
-		return std::clamp(a_value, kCenterScaleMin, kCenterScaleMax);
+		return Util::ClampFinite(a_value, kCenterScaleMin, kCenterScaleMax, kCenterScaleMax);
 	}
 
 	// A near-full center means foveation does nothing useful — callers skip the
@@ -59,9 +59,7 @@ namespace FoveatedCommon
 
 	inline float ClampCenterHorizontalScale(float a_value)
 	{
-		if (!std::isfinite(a_value))
-			return 1.0f;
-		return std::clamp(a_value, kCenterHorizontalScaleMin, kCenterHorizontalScaleMax);
+		return Util::ClampFinite(a_value, kCenterHorizontalScaleMin, kCenterHorizontalScaleMax, 1.0f);
 	}
 
 	struct DispatchBounds

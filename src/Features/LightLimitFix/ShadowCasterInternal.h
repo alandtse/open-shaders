@@ -35,6 +35,9 @@ namespace ShadowCasterManager
 	extern LightContainer s_lights;
 	extern BudgetTracker s_budget;
 
+	/// True while a flickering light keeps its baked static shadow across small pose drift.
+	inline bool TolerantSplit() { return s_settings.TolerantSplitCache; }
+
 	// External conflict detection
 	extern bool s_externalConflict;
 	extern std::string s_conflictMessage;
@@ -162,11 +165,31 @@ namespace ShadowCasterManager
 	extern std::unique_ptr<FormulaHelper> s_formulaRedrawInterval;
 	extern std::unique_ptr<FormulaHelper> s_formulaRedrawBudget;
 
+	/// Every input the engine's non-shadow EnableLight walk reads for one light;
+	/// an unchanged snapshot means a repeat call would reproduce the same state.
+	struct EnableInputs
+	{
+		RE::NiPoint3 translate;
+		RE::NiMatrix3 rotate;
+		float radius{ 0.0f };
+		float fade{ 0.0f };
+		bool hidden{ false };
+		bool dynamic{ false };
+		bool portalStrict{ false };
+		const void* portalGraph{ nullptr };
+		std::uint32_t roomCount{ 0 };
+
+		bool operator==(const EnableInputs& o) const;
+	};
+
 	// Lights converted to normal (non-shadow) lights for diffuse rendering
 	struct ConvertedLight
 	{
 		RE::BSShadowLight* light;
 		bool isNS;
+		bool enableValid{ false };
+		EnableInputs lastEnable{};
+		std::uint32_t lastEnableFrame{ 0 };
 	};
 	extern std::vector<ConvertedLight> s_normalConvert;
 	extern std::set<RE::NiLight*> s_shadowConvert;
@@ -330,6 +353,9 @@ namespace ShadowCasterManager
 	extern std::atomic<uint64_t> s_hemisphereReassignTotal;
 	extern std::atomic<uint32_t> s_hemisphereDropCount;
 	extern std::atomic<uint64_t> s_hemisphereDropTotal;
+	extern std::atomic<uint64_t> s_passlessCasterSkipTotal;
+	/// Indexed by the classifier's PasslessReason (0 unused).
+	extern std::atomic<uint64_t> s_passlessCasterSkipByReason[5];
 	extern std::atomic<uint32_t> s_frontAppendCount;
 	extern std::atomic<uint32_t> s_backOnlyAppendCount;
 	extern std::atomic<uint64_t> s_frontAppendTotal;
@@ -522,7 +548,6 @@ namespace ShadowCasterManager
 
 	extern bool s_bootAtlasEnabled;
 
-	inline constexpr int32_t kVanillaShadowSliceCount = 8;
 	inline constexpr uint32_t kAtlasMaxResolution = 16384;
 
 	/// Slot's atlas tile metadata in texels.
@@ -595,6 +620,9 @@ namespace ShadowCasterManager
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
+	/// True when the slot's rendered tile already covers `scale`'s class, so a redraw
+	/// would refill the same rect: a staged promotion is not a fit.
+	bool SlotTileFits(int32_t poolSlot, float scale);
 	int32_t FindFreeSlotByOwner(const void* a_owner);
 	void DumpSlotTileRegion(int32_t poolSlot, uint32_t a_stamp);
 
@@ -630,8 +658,14 @@ namespace ShadowCasterManager
 	/// Clears slot static-cache tile to far depth.
 	void ClearStaticSlotTile(int32_t poolSlot);
 
-	/// Copies slot's static tile into live atlas tile.
-	void CopyStaticTileToLive(int32_t poolSlot);
+	/// Copies slot's static tile into live atlas tile, multiplying baked depth by
+	/// depthScale (bake radius / live radius) so it stays valid under radius flicker.
+	void CopyStaticTileToLive(int32_t poolSlot, float depthScale);
+
+	/// Reprojects the slot's static tile (baked at the pose given by invBake, normalised by
+	/// bakeRadius) onto the light's current pose (liveProj, liveRadius) and writes it into the
+	/// live tile. isOmni: 2 = dual paraboloid, 1 = hemisphere. Returns false when unavailable.
+	bool WarpStaticTileToLive(int32_t poolSlot, const float* invBake, const float* liveProj, float bakeRadius, float liveRadius, uint32_t isOmni);
 
 	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
 	/// the baked tile captured zero casters (a blank bake latched valid).
