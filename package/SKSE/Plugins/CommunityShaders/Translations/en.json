@@ -3586,6 +3586,8 @@
     "feature.unified_water.name": "Unified Water",
     "feature.unified_water.regenerate_caches": "Regenerate Caches",
     "feature.unified_water.regenerate_flowmap": "Regenerate Flowmap",
+    "feature.upscaling.antilag2_active": "Anti-Lag 2: Active",
+    "feature.upscaling.antilag2_unavailable": "Anti-Lag 2: Unavailable",
     "feature.upscaling.backend_diagnostics": "Backend Diagnostics",
     "feature.upscaling.description": "Advanced upscaling and frame generation technologies for improved performance",
     "feature.upscaling.dlss_model_preset": "DLSS Model Preset",

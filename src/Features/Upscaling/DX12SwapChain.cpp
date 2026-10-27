@@ -40,6 +40,8 @@ void DX12SwapChain::InitializeAntiLag2()
 /** @brief Applies session-enabled Anti-Lag latency reduction before input with FPS limiting disabled. */
 void DX12SwapChain::UpdateAntiLag2BeforeInput()
 {
+	if (!antiLag2Context)
+		return;
 	const HRESULT hr = CS::AntiLag2::Update(antiLag2Context.get(), true);
 	antiLag2Enabled = antiLag2Context->m_enabled;
 	if (FAILED(hr) && !std::exchange(antiLag2UpdateFailureLogged, true))

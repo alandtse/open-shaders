@@ -80,12 +80,6 @@ runs:
                     - 'tests/shaders/**'
                   cpp_tests:
                     - 'tests/cpp/**'
-                    - 'src/Features/Upscaling/antilag2sdk.h'
-                    - 'src/Features/Upscaling.cpp'
-                    - 'src/Features/Upscaling/DX12SwapChain.cpp'
-                    - 'src/Features/Upscaling/DX12SwapChain.h'
-                    - 'src/Hooks.cpp'
-                    - 'src/Hooks.h'
                     - 'extern/AntiLag2-SDK'
               base_sha: ${{ inputs.base-sha }}
               sha: ${{ inputs.head-sha }}
