@@ -426,6 +426,7 @@ void Deferred::DeferredPasses()
 	{
 		CS_GPU_PASS("Deferred::DeferredComposite");
 
+		ID3D11ShaderResourceView* skylightingProbes = skylighting.loaded && skylighting.texProbeArray ? skylighting.texProbeArray->srv.get() : nullptr;
 		ID3D11ShaderResourceView* srvs[16]{
 			Util::AsReal(specular.SRV),                                                                      // t0  SpecularTexture
 			Util::AsReal(albedo.SRV),                                                                        // t1  AlbedoTexture
@@ -435,7 +436,7 @@ void Deferred::DeferredPasses()
 			dynamicCubemaps.loaded ? Util::AsReal(reflectance.SRV) : nullptr,                                // t5  ReflectanceTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envTexture->srv.get() : nullptr,                        // t6  EnvTexture
 			dynamicCubemaps.loaded ? dynamicCubemaps.envReflectionsTexture->srv.get() : nullptr,             // t7  EnvReflectionsTexture
-			dynamicCubemaps.loaded && skylighting.loaded ? skylighting.texProbeArray->srv.get() : nullptr,   // t8  SkylightingProbeArray
+			dynamicCubemaps.loaded ? skylightingProbes : nullptr,                                            // t8  SkylightingProbeArray
 			Util::AsReal(masks2.SRV),                                                                        // t9  Masks2Texture (vertexAO in .x, category in .y)
 			ssgi_ao,                                                                                         // t10 SsgiAoTexture
 			ssgi_hq_spec ? nullptr : ssgi_y,                                                                 // t11 SsgiYTexture
