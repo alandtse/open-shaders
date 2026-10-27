@@ -18,10 +18,10 @@ namespace Util
 	{
 		static const bool supported = [] {
 			int regs[4]{};
-			__cpuid(regs, 0);
+			__cpuidex(regs, 0, 0);
 			if (regs[0] < 7)
 				return false;
-			__cpuid(regs, 1);
+			__cpuidex(regs, 1, 0);
 			constexpr int kOsXsave = 1 << 27;
 			constexpr int kAvx = 1 << 28;
 			if ((regs[2] & kOsXsave) == 0 || (regs[2] & kAvx) == 0)
