@@ -9,6 +9,7 @@
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/OwnerAncestry.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -231,12 +232,28 @@ namespace ShadowCasterManager
 	// inside kSleepRedrawIntervalFrames (45) so a missed move is still caught.
 	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
+	constexpr int kAncestryRecheckEpochs = 16;
+	std::atomic<bool> s_actorAttachedDynamic{ true };
 	// Open-addressing map: probed once per appended caster by the cull-walk
 	// hook, so lookup cost lands directly on EnableLight's accumulate time.
 	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
 	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
 	int s_casterClassEpoch{ 0 };
+
+	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
+	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
+
+	/// True when the caster is owned by, or parented under, an actor (held weapons, scabbards, anim objects).
+	static bool IsActorAttached(const RE::BSGeometry& geom)
+	{
+		return Util::IsActorAttached(Util::ClassifyOwnerAncestry(static_cast<const RE::NiAVObject*>(&geom), [](const RE::NiAVObject& a_node) {
+			const auto* owner = a_node.GetUserData();
+			if (!owner)
+				return Util::OwnerKind::None;
+			return owner->formType == RE::FormType::ActorCharacter ? Util::OwnerKind::Actor : Util::OwnerKind::Reference;
+		}));
+	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
 	/// movement (1-unit, matching the redraw hash), memoized once per frame.
@@ -281,6 +298,14 @@ namespace ShadowCasterManager
 		r.lastVerifyEpoch = s_casterClassEpoch;
 		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
 		r.dynamic = r.framesSinceMove < promoteAt;
+		if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
+			r.actorAttached = IsActorAttached(geom);
+			r.ancestryEpoch = s_casterClassEpoch;
+		}
+		// Parented under an actor: it rests and moves with the actor, so each pause would
+		// promote it into the static set and force a rebake when it moves again.
+		if (r.actorAttached && s_actorAttachedDynamic.load(std::memory_order_relaxed))
+			r.dynamic = true;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
