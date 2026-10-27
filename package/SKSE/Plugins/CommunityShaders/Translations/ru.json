@@ -3434,6 +3434,8 @@
     "menu.advanced.export_compile_trace": "",
     "menu.advanced.frame_annotations": "Аннотации кадров",
     "menu.advanced.frame_annotations_tooltip": "Включить детальные аннотации кадров для отладки проходов рендеринга и вызовов отрисовки.",
+    "menu.advanced.tracy_per_draw_zones": "",
+    "menu.advanced.tracy_per_draw_zones_tooltip": "",
     "menu.advanced.half_precision": "Половинная точность (частичная точность)",
     "menu.advanced.half_precision_tooltip": "Добавляет D3DCOMPILE_PARTIAL_PRECISION к флагам компилятора шейдеров.\nПозволяет fxc понижать немаркированные float-операции до FP16 там, где это безопасно, в дополнение к существующим подсказкам типа min16float.\nНа GPU с поддержкой FP16 (Pascal+ / GCN+ / Skylake+) это может вдвое снизить давление регистров и удвоить пропускную способность ALU, но может внести незначительные визуальные отличия в шейдерах, не проверенных на чувствительность к точности.\nПереключение очищает кэш шейдеров и запускает полную перекомпиляцию.",
     "menu.advanced.hide_compilation_hud_vr": "",

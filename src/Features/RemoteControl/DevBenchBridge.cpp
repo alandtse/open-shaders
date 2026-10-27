@@ -55,6 +55,7 @@
 #	include "Utils/SettingsCatalog.h"
 #	include "Utils/SettingsDefaults.h"
 #	include "Utils/SettingsPatch.h"
+#	include "Utils/TracyZones.h"
 #	include "VRAPI/CSpluginapi.h"
 
 #	include <DevBenchAPI.h>
@@ -1100,7 +1101,16 @@ namespace
 				return json{ { "action", "disable" }, { "enabled", false } };
 			});
 		}
-		return json{ { "error", "unknown action (enable|disable)" }, { "action", action } };
+		if (action == "perDrawZones") {
+			if (a_args.contains("enabled") && a_args["enabled"].is_boolean())
+				TracyZones::SetPerDrawZones(a_args["enabled"].get<bool>());
+			return json{
+				{ "action", "perDrawZones" },
+				{ "enabled", TracyZones::PerDrawZonesEnabled() },
+				{ "callsSinceLastFrame", { { "State::Draw", TracyZones::Snapshot(TracyZones::Family::StateDraw) }, { "OnRenderPassBegin", TracyZones::Snapshot(TracyZones::Family::RenderPassHook) } } }
+			};
+		}
+		return json{ { "error", "unknown action (enable|disable|perDrawZones)" }, { "action", action } };
 	}
 
 	void ProfilerToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)

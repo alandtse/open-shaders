@@ -14,6 +14,7 @@
 #include "TruePBR.h"
 #include "Util.h"
 #include "Utils/ShaderDescriptor.h"
+#include "Utils/TracyZones.h"
 
 #include "Features/CSUtility.h"
 #include "Features/Effects11.h"
@@ -508,6 +509,7 @@ struct IDXGISwapChain_Present
 		NvPerf::OnPresentEnd();
 
 		TracyD3D11Collect(globals::state->tracyCtx);
+		TracyZones::PlotAndResetCounters();
 
 		return retval;
 	}
@@ -1236,9 +1238,10 @@ namespace Hooks
 
 		// No vector/std::function machinery touched at all until a feature opts in.
 		std::optional<Feature::RenderScope> renderPassHookScope;
-		if (!Feature::GetRenderPassHookFeatures().empty())
-			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
-				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
+		if (!Feature::GetRenderPassHookFeatures().empty()) {
+			TracyZones::Count(TracyZones::Family::RenderPassHook);
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin", [a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); }, TracyZones::PerDrawZonesEnabled());
+		}
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1253,9 +1256,10 @@ namespace Hooks
 			return;
 
 		std::optional<Feature::RenderScope> renderPassHookScope;
-		if (!Feature::GetRenderPassHookFeatures().empty())
-			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
-				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
+		if (!Feature::GetRenderPassHookFeatures().empty()) {
+			TracyZones::Count(TracyZones::Family::RenderPassHook);
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin", [a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); }, TracyZones::PerDrawZonesEnabled());
+		}
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
@@ -1270,9 +1274,10 @@ namespace Hooks
 			return;
 
 		std::optional<Feature::RenderScope> renderPassHookScope;
-		if (!Feature::GetRenderPassHookFeatures().empty())
-			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin",
-				[a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); });
+		if (!Feature::GetRenderPassHookFeatures().empty()) {
+			TracyZones::Count(TracyZones::Family::RenderPassHook);
+			renderPassHookScope.emplace(Feature::GetRenderPassHookFeatures(), "OnRenderPassBegin", [a_pass](Feature* feature) { return feature->OnRenderPassBegin(a_pass); }, TracyZones::PerDrawZonesEnabled());
+		}
 		func(a_pass, a_technique, a_alphaTest, a_renderFlags);
 	}
 
