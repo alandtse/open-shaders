@@ -645,32 +645,7 @@ endif()
 # #######################################################################################################################
 # # Automatic deployment
 # #######################################################################################################################
-file(GLOB FEATURE_PATHS LIST_DIRECTORIES true ${CMAKE_SOURCE_DIR}/features/*)
-# Drop empty leftover feature dirs (e.g. after a rename) so they do not create
-# Package-* targets or get copied into AIO / install trees as empty folders.
-set(_valid_feature_paths "")
-foreach(_fpath IN LISTS FEATURE_PATHS)
-    if(IS_DIRECTORY "${_fpath}")
-        file(GLOB_RECURSE _feat_files LIST_DIRECTORIES FALSE "${_fpath}/*")
-        if(_feat_files)
-            list(APPEND _valid_feature_paths "${_fpath}")
-        else()
-            get_filename_component(_feat_name "${_fpath}" NAME)
-            message(STATUS "Skipping empty feature directory: ${_feat_name}")
-        endif()
-    endif()
-endforeach()
-set(FEATURE_PATHS ${_valid_feature_paths})
-unset(_valid_feature_paths)
-unset(_feat_files)
-
-# Effects11's sources aren't compiled in when ENABLE_EFFECTS11 is off (see the
-# source filter above), so staging its ini/shaders to a local dev deploy only
-# produces an orphaned-ini warning at runtime, never a working feature.
-set(AIO_LOCAL_FEATURE_PATHS ${FEATURE_PATHS})
-if(NOT ENABLE_EFFECTS11)
-    list(FILTER AIO_LOCAL_FEATURE_PATHS EXCLUDE REGEX "/Effects11$")
-endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FeatureDiscovery.cmake)
 
 string(TIMESTAMP UTC_NOW "%Y-%m-%dT%H-%MZ" UTC)
 
@@ -872,28 +847,7 @@ endif()
 if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     message("Preparing AIO package in ${AIO_DIR}")
 
-    function(append_copy_if_different _cmds _srcs _src_base _dst_base)
-        foreach(_src IN LISTS ${_srcs})
-            file(RELATIVE_PATH _rel "${_src_base}" "${_src}")
-            set(_dst "${_dst_base}/${_rel}")
-            get_filename_component(_dst_dir "${_dst}" DIRECTORY)
-            list(
-                APPEND ${_cmds}
-                COMMAND
-                ${CMAKE_COMMAND}
-                -E
-                make_directory
-                "${_dst_dir}"
-                COMMAND
-                ${CMAKE_COMMAND}
-                -E
-                copy_if_different
-                "${_src}"
-                "${_dst}"
-            )
-        endforeach()
-        set(${_cmds} ${${_cmds}} PARENT_SCOPE)
-    endfunction()
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyIfDifferent.cmake)
 
     # Prepare AIO only when sources change. Gather package + feature files as
     # inputs so the prepare step runs only when something actually changed.
@@ -1063,162 +1017,7 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         )
     endif()
 
-    # Only copy shaders when HLSL files change; copy individually so unchanged
-    # files do not get their timestamps updated.
-    file(
-        GLOB_RECURSE _package_shaders
-        LIST_DIRECTORIES FALSE
-        "${CMAKE_SOURCE_DIR}/package/Shaders/*"
-    )
-    # Exclude test files from production packages
-    list(FILTER _package_shaders EXCLUDE REGEX "/Tests/")
-    set(_shader_copy_cmds)
-
-    # All (locally deployed) features' shaders are copied — cross-feature
-    # #includes need the full tree at compile time (e.g. DistantTree.hlsl
-    # pulls IBL/IBL.hlsli). Effects11 is excluded via AIO_LOCAL_FEATURE_PATHS
-    # when ENABLE_EFFECTS11 is off, since nothing else includes its shaders.
-    # Written to a file rather than passed as a `-D` list, same reason as
-    # FEATURE_PATHS_FILE above (Ninja mis-quotes it).
-    set(_feature_shader_paths "${FFX_RUNTIME_SHADER_ROOT}")
-    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
-        if(EXISTS "${_fpath}/Shaders")
-            list(APPEND _feature_shader_paths "${_fpath}/Shaders")
-        endif()
-    endforeach()
-    set(_feature_shader_paths_list_file
-        "${CMAKE_CURRENT_BINARY_DIR}/feature_shader_paths.txt"
-    )
-    string(
-        REPLACE ";"
-        "\n"
-        _feature_shader_paths_file_content
-        "${_feature_shader_paths}"
-    )
-    file(
-        WRITE "${_feature_shader_paths_list_file}"
-        "${_feature_shader_paths_file_content}"
-    )
-
-    set(_preserve_runtime_args)
-    if(SKIP_RUNTIME_DOWNLOADS)
-        set(_preserve_runtime_prefixes_file
-            "${CMAKE_CURRENT_BINARY_DIR}/preserve_runtime_prefixes.txt"
-        )
-        set(_runtime_payload_directories
-            "${FFX_RUNTIME_RELATIVE_DIRECTORY}"
-            "${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}"
-            "${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}"
-        )
-        string(
-            REPLACE "Shaders/"
-            ""
-            _runtime_payload_prefixes
-            "${_runtime_payload_directories}"
-        )
-        string(
-            REPLACE ";"
-            "\n"
-            _runtime_payload_prefixes
-            "${_runtime_payload_prefixes}"
-        )
-        file(
-            WRITE "${_preserve_runtime_prefixes_file}"
-            "${_runtime_payload_prefixes}"
-        )
-        list(
-            APPEND _preserve_runtime_args
-            -DPRESERVE_RUNTIME_PREFIXES_FILE="${_preserve_runtime_prefixes_file}"
-        )
-    endif()
-
-    set(_shader_cleanup_args
-        -DMODE=SHADERS
-        -DAIO_DIR="${AIO_DIR}"
-        -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
-        -DFEATURE_SHADER_PATHS_FILE="${_feature_shader_paths_list_file}"
-        ${_preserve_runtime_args}
-    )
-    list(
-        APPEND _shader_copy_cmds
-        COMMAND
-        ${CMAKE_COMMAND}
-        ${_shader_cleanup_args}
-        -P
-        "${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake"
-    )
-
-    append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
-    append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
-    # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
-    # the glob below never discovers it -- wire it in explicitly, same as FFX above.
-    append_copy_if_different(_shader_copy_cmds STREAMLINE_RUNTIME_FILES "${STREAMLINE_RUNTIME_DIRECTORY}" "${AIO_DIR}/${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}")
-    append_copy_if_different(_shader_copy_cmds STREAMLINE_RUNTIME_DX12_FILES "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" "${AIO_DIR}/${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}")
-
-    # Accumulated below and added to DEPENDS -- HLSL_FILES alone missed non-shader
-    # feature payload (e.g. bundled DLLs), silently pinning stale binaries forever.
-    set(_all_feature_shader_files)
-    foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
-        if(EXISTS "${_fpath}/Shaders")
-            file(
-                GLOB_RECURSE _feat_shaders
-                LIST_DIRECTORIES FALSE
-                "${_fpath}/Shaders/*"
-            )
-            list(FILTER _feat_shaders EXCLUDE REGEX "/Tests/")
-            append_copy_if_different(_shader_copy_cmds _feat_shaders "${_fpath}/Shaders" "${AIO_DIR}/Shaders")
-            list(APPEND _all_feature_shader_files ${_feat_shaders})
-        endif()
-    endforeach()
-
-    add_custom_command(
-        OUTPUT copy_shaders.stamp
-        COMMAND
-            ${CMAKE_COMMAND} -E make_directory "${AIO_DIR}/Shaders"
-            ${_shader_copy_cmds}
-        COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
-        DEPENDS
-            ${HLSL_FILES}
-            ${FFX_RUNTIME_FILES}
-            ${STREAMLINE_RUNTIME_FILES}
-            ${STREAMLINE_RUNTIME_DX12_FILES}
-            ${_package_shaders}
-            ${_all_feature_shader_files}
-            ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
-            ${CMAKE_SOURCE_DIR}/cmake/PreservedRuntimePaths.cmake
-        COMMENT "Copying changed shaders into AIO/Shaders"
-    )
-
-    # Standalone target for preparing shaders for CI validation
-    # This allows shader validation to run without waiting for the full build
-    add_custom_target(
-        prepare_shaders
-        DEPENDS copy_shaders.stamp
-        COMMENT "Preparing shaders for validation"
-    )
-
-    # Incremental local validation: compile only the shaders affected by the
-    # current working-tree diff (vs HEAD). Mirrors the CI incremental path but
-    # derives the change set from git instead of a precomputed list. Override
-    # the config with -DVALIDATE_CHANGED_CONFIG=... (defaults to Flatrim).
-    set(VALIDATE_CHANGED_CONFIG
-        "${CMAKE_SOURCE_DIR}/.github/configs/shader-validation.yaml"
-        CACHE FILEPATH
-        "hlslkit config used by the validate_changed target"
-    )
-    add_custom_target(
-        validate_changed
-        COMMAND
-            ${CMAKE_COMMAND} -E env python
-            "${CMAKE_SOURCE_DIR}/tools/validate_changed_shaders.py" --repo-root
-            "${CMAKE_SOURCE_DIR}" -- hlslkit-compile --shader-dir
-            "${AIO_DIR}/Shaders" --output-dir "${CMAKE_BINARY_DIR}/ShaderCache"
-            --config "${VALIDATE_CHANGED_CONFIG}" --max-warnings 0
-            --suppress-warnings X1519
-        DEPENDS prepare_shaders
-        USES_TERMINAL
-        COMMENT "Validating only shaders affected by working-tree changes"
-    )
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ShaderStaging.cmake)
 endif()
 
 # Automatic deployment to CommunityShaders output directory.
