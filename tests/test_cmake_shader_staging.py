@@ -5,7 +5,6 @@ inspected without a compiler, vcpkg or the game SDKs.
 """
 
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -50,8 +49,6 @@ FIXTURE = {
     "features/NoShaders/plugin.esp": "",
 }
 
-NINJA_COPY = re.compile(r'copy_if_different\s+"?[^\s"]+"?\s+"?[^\s"]*/aio/([^\s"]+)"?')
-
 
 class ShaderStagingConfigure(unittest.TestCase):
     def setUp(self):
@@ -72,7 +69,7 @@ class ShaderStagingConfigure(unittest.TestCase):
         cmake_dir = self.src / "cmake"
         cmake_dir.mkdir()
         for name in ("CleanupStaleEntries.cmake", "PreservedRuntimePaths.cmake"):
-            (cmake_dir / name).write_text("", encoding="utf-8")
+            shutil.copy(ROOT / "cmake" / name, cmake_dir / name)
 
     def configure(self, effects11="OFF", skip_downloads="OFF", modules=MODULES):
         includes = "\n".join(
@@ -90,8 +87,24 @@ class ShaderStagingConfigure(unittest.TestCase):
         return result
 
     def copies(self):
-        ninja = (self.build / "build.ninja").read_text(encoding="utf-8")
-        return set(NINJA_COPY.findall(ninja.replace("$:", ":").replace("\\", "/")))
+        """Stages the shaders for real and lists the files that land under AIO."""
+        for runtime_file in ("ffx-runtime/Shaders/Upscaling/FidelityFX/ffx.dll",
+                             "sl/Shaders/Upscaling/Streamline/sl.dll",
+                             "sl12/Shaders/Upscaling/StreamlineDX12/sl12.dll"):
+            path = self.build / runtime_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        built = subprocess.run(
+            [CMAKE, "--build", str(self.build), "--target", "prepare_shaders"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+        staged = {
+            path.relative_to(self.build / "aio").as_posix()
+            for path in (self.build / "aio").rglob("*") if path.is_file()
+        }
+        self.assertTrue(staged)
+        return staged
 
     def test_package_and_feature_shaders_are_staged_without_tests(self):
         self.configure()
