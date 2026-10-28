@@ -35,11 +35,16 @@ namespace Util
 	/** @brief Returns the actor's normalized aim direction in Skyrim's Z-up world space. */
 	[[nodiscard]] float3 GetAimDirection(RE::Actor& a_actor) noexcept;
 
+	/** @brief True when the reference is non-null and an actor character. */
+	[[nodiscard]] inline bool IsActorReference(const RE::TESObjectREFR* a_ref)
+	{
+		return a_ref && a_ref->GetFormType() == RE::FormType::ActorCharacter;
+	}
+
 	/** @brief True when the node, or the nearest ancestor with an owner, belongs to an actor (held weapons, scabbards, anim objects). */
 	[[nodiscard]] inline bool IsOwnedByActor(const RE::NiAVObject& a_node)
 	{
-		const auto* owner = a_node.GetUserData();
-		return owner && owner->GetFormType() == RE::FormType::ActorCharacter;
+		return IsActorReference(a_node.GetUserData());
 	}
 
 	/** @brief A Havok or Gamebryo point as the float3 the shaders and constant buffers use. */
