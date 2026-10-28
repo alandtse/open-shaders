@@ -450,62 +450,6 @@ jobs:
                   retention-days: 30
                   if-no-files-found: error
 
-    python-unit-tests:
-        name: Run Python Unit Tests
-        if: inputs.run-cpp-tests
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-              with:
-                  ref: ${{ inputs.ref }}
-                  repository: ${{ inputs.repository }}
-                  # Safe: this job is contents:read and this workflow takes no secrets input.
-                  allow-unsafe-pr-checkout: true
-
-            - name: Check if Python tests should run
-              id: check-python
-              shell: bash
-              run: |
-                  if [ "${{ github.event_name }}" != "pull_request_target" ]; then
-                    echo "skip=false" >> $GITHUB_OUTPUT
-                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
-                    echo "skip=true" >> $GITHUB_OUTPUT
-                  else
-                    echo "skip=false" >> $GITHUB_OUTPUT
-                  fi
-
-            - name: Setup Python
-              if: steps.check-python.outputs.skip != 'true'
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.11"
-
-            # These tests compile slices of src/*.cpp against stub headers with g++, so they
-            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
-            # run in the Windows jobs instead.
-            - name: Run Python unit tests
-              if: steps.check-python.outputs.skip != 'true'
-              working-directory: tests
-              run: >
-                  python -m unittest -v
-                  test_editor_startup
-                  test_effects11_hdr
-                  test_environment_controls
-                  test_feature_flip_impact
-                  test_force_weather
-                  test_gpu_pass
-                  test_nr_interop
-                  test_profiler
-                  test_release_plan
-                  test_scene_settings_audit
-                  test_scene_settings_persistence
-                  test_scene_settings_policy
-                  test_skylighting_cadence
-                  test_skylighting_scheduling
-
     shader-unit-tests:
         name: Run Shader Unit Tests
         if: inputs.run-shader-tests
@@ -633,3 +577,59 @@ jobs:
                       build/ALL/Testing/**
                   retention-days: 7
                   if-no-files-found: ignore
+
+    python-unit-tests:
+        name: Run Python Unit Tests
+        if: inputs.run-cpp-tests
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ inputs.ref }}
+                  repository: ${{ inputs.repository }}
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
+
+            - name: Check if Python tests should run
+              id: check-python
+              shell: bash
+              run: |
+                  if [ "${{ github.event_name }}" != "pull_request_target" ]; then
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                    echo "skip=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  fi
+
+            - name: Setup Python
+              if: steps.check-python.outputs.skip != 'true'
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.11"
+
+            # These tests compile slices of src/*.cpp against stub headers with g++, so they
+            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
+            # run in the Windows jobs instead.
+            - name: Run Python unit tests
+              if: steps.check-python.outputs.skip != 'true'
+              working-directory: tests
+              run: >
+                  python -m unittest -v
+                  test_editor_startup
+                  test_effects11_hdr
+                  test_environment_controls
+                  test_feature_flip_impact
+                  test_force_weather
+                  test_gpu_pass
+                  test_nr_interop
+                  test_profiler
+                  test_release_plan
+                  test_scene_settings_audit
+                  test_scene_settings_persistence
+                  test_scene_settings_policy
+                  test_skylighting_cadence
+                  test_skylighting_scheduling
