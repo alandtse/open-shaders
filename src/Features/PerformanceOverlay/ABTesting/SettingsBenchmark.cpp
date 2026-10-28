@@ -30,6 +30,7 @@ namespace SettingsBenchmark
 		constexpr uint32_t kMaxMeasureFrames = 1800;
 		constexpr uint32_t kMaxRepeats = 10;
 		constexpr float kMaxCountdownSeconds = 30.0f;
+		constexpr float kResultsCardSeconds = 60.0f;
 
 		/** @brief Where a run takes its per-frame timing: the SteamVR compositor in VR, the profiler on flat. */
 		enum class TimingSource
@@ -56,6 +57,7 @@ namespace SettingsBenchmark
 			std::vector<Result> results;
 			std::string error;
 			std::filesystem::path resultPath;
+			std::chrono::steady_clock::time_point finishedAt;
 			std::chrono::steady_clock::time_point lastTick;
 			uint32_t lastCompositorFrame = UINT32_MAX;
 			TimingSource source = TimingSource::Compositor;
@@ -175,6 +177,7 @@ namespace SettingsBenchmark
 			const auto phase = run.engine.GetPhase();
 			if (phase == Phase::Finished) {
 				run.results = run.engine.Results();
+				run.finishedAt = std::chrono::steady_clock::now();
 				WriteResults();
 				logger::info("[SettingsBenchmark] Finished {} variants, results in {}", run.results.size(), run.resultPath.string());
 			} else if (phase == Phase::Failed) {
@@ -406,9 +409,53 @@ namespace SettingsBenchmark
 			{ "results", std::move(results) } };
 	}
 
+	namespace
+	{
+		const char* VerdictText(Verdict verdict)
+		{
+			switch (verdict) {
+			case Verdict::Faster:
+				return T(TKEY("verdict_faster"), "faster");
+			case Verdict::Slower:
+				return T(TKEY("verdict_slower"), "slower");
+			default:
+				return T(TKEY("verdict_no_change"), "no measurable change");
+			}
+		}
+
+		bool ResultsCardVisible()
+		{
+			if (run.results.empty() || run.engine.IsRunning())
+				return false;
+			return std::chrono::duration<float>(std::chrono::steady_clock::now() - run.finishedAt).count() < kResultsCardSeconds;
+		}
+
+		void DrawResultsCard()
+		{
+			const float budget = BudgetMs(run.source);
+			ImGui::TextUnformatted(T(TKEY("card_title"), "Settings benchmark result"));
+			ImGui::Separator();
+			for (const auto& result : run.results) {
+				if (!result.error.empty()) {
+					ImGui::Text("%s: %s", result.label.c_str(), result.error.c_str());
+					continue;
+				}
+				const auto verdict = ClassifyDelta(result);
+				const ImVec4 color = verdict == Verdict::Faster ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f) :
+				                     verdict == Verdict::Slower ? ImVec4(1.0f, 0.5f, 0.4f, 1.0f) :
+				                                                  ImGui::GetStyleColorVec4(ImGuiCol_Text);
+				ImGui::TextColored(color, "%s: %s", result.label.c_str(), VerdictText(verdict));
+				ImGui::TextDisabled(T(TKEY("card_detail"), "GPU %+.2f +/- %.2f ms (%+.1f%% of frame budget), CPU %+.2f ms"),
+					result.gpuDeltaMs, result.gpuUncertaintyMs, result.gpuDeltaMs / budget * 100.0f, result.cpuDeltaMs);
+			}
+			ImGui::TextDisabled("%s", T(TKEY("card_hint"), "Full table: Performance page."));
+		}
+	}
+
 	void DrawOverlayUI()
 	{
-		if (!run.engine.IsRunning())
+		const bool running = run.engine.IsRunning();
+		if (!running && !ResultsCardVisible())
 			return;
 
 		const auto progress = run.engine.GetProgress();
@@ -422,7 +469,9 @@ namespace SettingsBenchmark
 			return;
 		}
 
-		if (progress.phase == Phase::Countdown) {
+		if (!running) {
+			DrawResultsCard();
+		} else if (progress.phase == Phase::Countdown) {
 			ImGui::Text(T(TKEY("overlay_countdown"), "Settings benchmark starts in %.0f s. Close the menu."), progress.countdownRemaining);
 		} else {
 			const auto current = progress.currentVariant == kBaseline ? std::string(T(TKEY("baseline"), "Baseline")) : run.variants[progress.currentVariant].label;
@@ -448,21 +497,26 @@ namespace SettingsBenchmark
 									  T(TKEY("source_compositor"), "Timing: SteamVR compositor application GPU time.") :
 									  T(TKEY("source_profiler"), "Timing: GPU time of Open Shaders' own passes (the profiler total); the game's own passes are not included."));
 
+		ImGui::TextWrapped("%s", T(TKEY("right_click_hint"), "To benchmark one setting, right-click it in any feature menu and choose Benchmark vs. The result pops up in the overlay when it finishes."));
+
 		const bool running = IsRunning();
+		const bool anyPreset = std::ranges::any_of(variants, [](const Variant& variant) { return Available(variant); });
 		ImGui::BeginDisabled(running);
-		std::string group;
-		for (size_t i = 0; i < variants.size(); ++i) {
-			if (!Available(variants[i]))
-				continue;
-			if (variants[i].group != group) {
-				group = variants[i].group;
-				ImGui::TextUnformatted(group.c_str());
+		if (anyPreset && ImGui::CollapsingHeader(T(TKEY("presets"), "Feature presets"))) {
+			std::string group;
+			for (size_t i = 0; i < variants.size(); ++i) {
+				if (!Available(variants[i]))
+					continue;
+				if (variants[i].group != group) {
+					group = variants[i].group;
+					ImGui::TextUnformatted(group.c_str());
+				}
+				bool checked = selected[i] != 0;
+				if (ImGui::Checkbox(variants[i].label.c_str(), &checked))
+					selected[i] = checked ? 1 : 0;
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::TextUnformatted(variants[i].note.c_str());
 			}
-			bool checked = selected[i] != 0;
-			if (ImGui::Checkbox(variants[i].label.c_str(), &checked))
-				selected[i] = checked ? 1 : 0;
-			if (auto _tt = Util::HoverTooltipWrapper())
-				ImGui::TextUnformatted(variants[i].note.c_str());
 		}
 
 		int warmup = static_cast<int>(config.warmupFrames);
@@ -478,7 +532,7 @@ namespace SettingsBenchmark
 		ImGui::EndDisabled();
 
 		if (!running) {
-			if (ImGui::Button(T(TKEY("start"), "Start Benchmark"))) {
+			if (anyPreset && ImGui::Button(T(TKEY("start"), "Benchmark selected presets"))) {
 				std::vector<std::string> ids;
 				for (size_t i = 0; i < variants.size(); ++i) {
 					if (selected[i] && Available(variants[i]))

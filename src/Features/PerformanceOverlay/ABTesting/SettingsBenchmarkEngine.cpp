@@ -250,4 +250,11 @@ namespace SettingsBenchmark
 		}
 		return results;
 	}
+
+	Verdict ClassifyDelta(const Result& result)
+	{
+		if (std::fabs(result.gpuDeltaMs) <= std::max(result.gpuUncertaintyMs, kNoiseFloorMs))
+			return Verdict::NoChange;
+		return result.gpuDeltaMs < 0.0f ? Verdict::Faster : Verdict::Slower;
+	}
 }

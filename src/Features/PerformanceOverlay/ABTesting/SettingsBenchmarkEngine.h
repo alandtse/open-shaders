@@ -63,6 +63,20 @@ namespace SettingsBenchmark
 		uint32_t repeats = 0;
 	};
 
+	/** @brief How a measured delta compares with its own noise. */
+	enum class Verdict
+	{
+		Faster,
+		Slower,
+		NoChange,
+	};
+
+	/** @brief Smallest GPU delta (ms) reported as a change even when the measured uncertainty is smaller. */
+	inline constexpr float kNoiseFloorMs = 0.05f;
+
+	/** @brief Faster or Slower only when the delta exceeds both its uncertainty and kNoiseFloorMs. */
+	Verdict ClassifyDelta(const Result& result);
+
 	enum class Phase
 	{
 		Idle,

@@ -10,7 +10,6 @@
 #include "FeatureIssues.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
-#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/TerrainShadows.h"
@@ -1136,7 +1135,6 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 	// A/B Testing settings
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	abTestingManager->DrawSettingsUI();
-	SettingsBenchmark::DrawPanel();
 
 	// Developer Mode Testing UI + scene-prep button (previously on the "Developer" tab)
 	if (globals::state->IsDeveloperMode()) {

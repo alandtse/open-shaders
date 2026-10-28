@@ -226,3 +226,20 @@ TEST_CASE("Benchmark combines repeats", "[settingsbenchmark]")
 	CHECK(results[0].repeats == 2);
 	CHECK(results[0].gpuDeltaMs == Catch::Approx(1.0f));
 }
+
+TEST_CASE("Benchmark verdict ignores deltas inside the noise", "[settingsbenchmark]")
+{
+	Result result;
+	result.gpuDeltaMs = 0.2f;
+	result.gpuUncertaintyMs = 0.3f;
+	CHECK(ClassifyDelta(result) == Verdict::NoChange);
+
+	result.gpuUncertaintyMs = 0.01f;
+	CHECK(ClassifyDelta(result) == Verdict::Slower);
+
+	result.gpuDeltaMs = -0.2f;
+	CHECK(ClassifyDelta(result) == Verdict::Faster);
+
+	result.gpuDeltaMs = 0.04f;
+	CHECK(ClassifyDelta(result) == Verdict::NoChange);
+}
