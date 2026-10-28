@@ -553,7 +553,7 @@ jobs:
               with:
                   configurePreset: ALL
                   buildPreset: ALL
-                  buildPresetAdditionalArgs: "['--target cpp_tests screenshot_tests_devbench']"
+                  buildPresetAdditionalArgs: "['--target cpp_tests', '--target screenshot_tests_devbench']"
 
             - name: Run C++ unit tests
               if: steps.check-cpp.outputs.skip != 'true'
@@ -614,6 +614,10 @@ jobs:
             # These tests compile slices of src/*.cpp against stub headers with g++, so they
             # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
             # run in the Windows jobs instead.
+            - name: Install PyYAML
+              if: steps.check-python.outputs.skip != 'true'
+              run: python -m pip install pyyaml
+
             - name: Run Python unit tests
               if: steps.check-python.outputs.skip != 'true'
               working-directory: tests
