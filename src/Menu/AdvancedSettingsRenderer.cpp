@@ -1132,10 +1132,6 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 
 	ImGui::Spacing();
 
-	// A/B Testing settings
-	auto* abTestingManager = ABTestingManager::GetSingleton();
-	abTestingManager->DrawSettingsUI();
-
 	// Developer Mode Testing UI + scene-prep button (previously on the "Developer" tab)
 	if (globals::state->IsDeveloperMode()) {
 		ImGui::Spacing();

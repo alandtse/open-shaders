@@ -453,13 +453,11 @@ void ABTestingManager::EndComparisons(bool finished)
 		logger::info("[A/B] Comparison cancelled, settings restored");
 }
 
-/** The overlay window is where the A/B results draw, so it is forced visible rather than left to its toggle. */
 void ABTestingManager::RevealResults()
 {
-	globals::features::performanceOverlay.settings.ShowInOverlay = true;
-	if (auto* menu = Menu::GetSingleton()) {
-		menu->overlayVisible = true;
-		if (menuClosedByRun)
+	RevealOverlay();
+	if (menuClosedByRun) {
+		if (auto* menu = Menu::GetSingleton())
 			menu->RequestVisibility(Menu::VisibilityRequest::Open);
 	}
 	menuClosedByRun = false;
@@ -482,7 +480,11 @@ nlohmann::json ABTestingManager::StatusJson() const
 			{ "verdict", verdict },
 			{ "note", run.note } });
 	}
+	auto pending = nlohmann::json::array();
+	for (const auto& item : comparisonQueue)
+		pending.push_back(item.request.label);
 	return { { "comparisonRunning", queueActive },
+		{ "queue", std::move(pending) },
 		{ "comparison", queueActive ? nlohmann::json(queue[queueIndex].label) : nlohmann::json(nullptr) },
 		{ "comparisonIndex", queueActive ? queueIndex + 1 : 0 },
 		{ "comparisonCount", queue.size() },
@@ -490,19 +492,56 @@ nlohmann::json ABTestingManager::StatusJson() const
 		{ "runs", std::move(runs) } };
 }
 
-bool ABTestingManager::StartSettingComparison(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error)
+std::string ABTestingManager::SettingKey(const SceneSettingsCatalog::SettingMetadata& setting)
+{
+	return std::format("setting:{}/{}/{}", setting.featureShortName, setting.serializedPath, setting.serializedKey);
+}
+
+bool ABTestingManager::IsQueued(const std::string& key) const
+{
+	return std::ranges::any_of(comparisonQueue, [&](const ABQueuedComparison& item) { return item.key == key; });
+}
+
+bool ABTestingManager::Unqueue(const std::string& key)
+{
+	return std::erase_if(comparisonQueue, [&](const ABQueuedComparison& item) { return item.key == key; }) > 0;
+}
+
+void ABTestingManager::ClearQueue()
+{
+	comparisonQueue.clear();
+}
+
+/** The overlay window lists the queue and draws the A/B results, so it is forced visible rather than left to its toggle. */
+void ABTestingManager::RevealOverlay()
+{
+	globals::features::performanceOverlay.settings.ShowInOverlay = true;
+	if (auto* menu = Menu::GetSingleton())
+		menu->overlayVisible = true;
+}
+
+bool ABTestingManager::Enqueue(ABQueuedComparison item)
+{
+	if (queueActive)
+		return false;
+	Unqueue(item.key);
+	comparisonQueue.push_back(std::move(item));
+	RevealOverlay();
+	return true;
+}
+
+bool ABTestingManager::QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error)
 {
 	nlohmann::json probe;
 	feature.SaveSettings(probe);
 	if (!Util::Settings::GetCatalogSerializedValue(probe, setting))
 		return Refuse(error, "The setting is not present in the feature's saved settings.");
-
-	std::vector<ABComparisonRequest> requests;
-	requests.push_back(SettingRequest(feature, setting, target, std::move(label)));
-	return StartComparisons(std::move(requests), {}, error);
+	if (!Enqueue({ SettingKey(setting), SettingRequest(feature, setting, target, std::move(label)) }))
+		return Refuse(error, "A comparison is running; wait for it to finish.");
+	return true;
 }
 
-bool ABTestingManager::StartSettingComparisonByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, const ABRunOptions& options, std::string* error)
+bool ABTestingManager::QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error)
 {
 	Feature* owner = nullptr;
 	for (auto* feature : Feature::GetFeatureList()) {
@@ -513,21 +552,13 @@ bool ABTestingManager::StartSettingComparisonByKey(const std::string& featureSho
 		return Refuse(error, "Unknown feature: " + featureShortName);
 
 	for (const auto& setting : SceneSettingsCatalog::GetSettings()) {
-		if (setting.featureShortName != featureShortName || setting.serializedKey != key || setting.serializedPath != path)
-			continue;
-		nlohmann::json probe;
-		owner->SaveSettings(probe);
-		if (!Util::Settings::GetCatalogSerializedValue(probe, setting))
-			return Refuse(error, "The setting is not present in the feature's saved settings.");
-
-		std::vector<ABComparisonRequest> requests;
-		requests.push_back(SettingRequest(*owner, setting, value, Util::Settings::GetCatalogLeafDisplayName(setting) + " = " + value.dump()));
-		return StartComparisons(std::move(requests), options, error);
+		if (setting.featureShortName == featureShortName && setting.serializedKey == key && setting.serializedPath == path)
+			return QueueSetting(*owner, setting, value, Util::Settings::GetCatalogLeafDisplayName(setting) + " = " + value.dump(), error);
 	}
 	return Refuse(error, std::format("No catalogued setting {}/{}/{}.", featureShortName, path, key));
 }
 
-bool ABTestingManager::StartProfileComparisons(const std::string& featureShortName, const ABRunOptions& options, std::string* error)
+bool ABTestingManager::QueueProfiles(const std::string& featureShortName, std::string* error)
 {
 	Feature* only = nullptr;
 	if (!featureShortName.empty()) {
@@ -544,16 +575,90 @@ bool ABTestingManager::StartProfileComparisons(const std::string& featureShortNa
 		{ Feature::PerfProfile::Balanced, T("feature.perf_overlay.profile_balanced", "Balanced") },
 		{ Feature::PerfProfile::Quality, T("feature.perf_overlay.profile_quality", "Quality") },
 	};
-	std::vector<ABComparisonRequest> requests;
+	const std::string scope = only ? only->GetDisplayName() : std::string(T("feature.perf_overlay.all_features", "All features"));
 	for (const auto& [profile, name] : profiles) {
-		requests.push_back({ std::string(name) + " preset", [only, profile] {
-								if (only)
-									only->ApplyPerformanceProfile(profile);
-								else
-									Feature::ApplyPerformanceProfileToAll(profile);
-							} });
+		const bool queued = Enqueue({ std::format("profile:{}:{}", featureShortName, name),
+			{ std::format("{} preset ({})", name, scope), [only, profile] {
+				 if (only)
+					 only->ApplyPerformanceProfile(profile);
+				 else
+					 Feature::ApplyPerformanceProfileToAll(profile);
+			 } } });
+		if (!queued)
+			return Refuse(error, "A comparison is running; wait for it to finish.");
 	}
-	return StartComparisons(std::move(requests), options, error);
+	return true;
+}
+
+bool ABTestingManager::RunQueue(std::string* error)
+{
+	std::vector<ABComparisonRequest> requests;
+	for (auto& item : comparisonQueue)
+		requests.push_back(std::move(item.request));
+	comparisonQueue.clear();
+	return StartComparisons(std::move(requests), runOptions, error);
+}
+
+void ABTestingManager::DrawQueueControls()
+{
+	const bool running = queueActive;
+	if (comparisonQueue.empty()) {
+		ImGui::TextDisabled("%s", T(TKEY("queue_empty"), "Nothing queued. Right-click a setting or use Add presets to add a comparison."));
+		return;
+	}
+
+	std::string removed;
+	for (const auto& item : comparisonQueue) {
+		ImGui::PushID(item.key.c_str());
+		ImGui::BeginDisabled(running);
+		if (ImGui::SmallButton("x"))
+			removed = item.key;
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::TextUnformatted(item.request.label.c_str());
+		ImGui::PopID();
+	}
+	if (!removed.empty())
+		Unqueue(removed);
+
+	ImGui::BeginDisabled(running || abTestingEnabled);
+	if (ImGui::Button(T(TKEY("queue_run"), "Run benchmark"))) {
+		std::string error;
+		RunQueue(&error);
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(T(TKEY("queue_clear"), "Clear queue")))
+		ClearQueue();
+	ImGui::EndDisabled();
+}
+
+void ABTestingManager::DrawBenchmarkTab()
+{
+	ImGui::TextWrapped("%s", T(TKEY("benchmark_intro"),
+								 "Measures what a change costs on your scene: your current settings alternate with the change, the first frames of every swap are ignored, "
+								 "and your settings are restored afterwards. Add changes from a setting's right-click menu or from Presets, then run them together. "
+								 "The menu closes while it runs and the result opens in the performance overlay."));
+	ImGui::Spacing();
+	ImGui::SeparatorText(T(TKEY("queue_title"), "Benchmark queue"));
+	DrawQueueControls();
+
+	ImGui::Spacing();
+	int interval = static_cast<int>(runOptions.intervalSeconds);
+	int repeats = static_cast<int>(runOptions.repeats);
+	if (ImGui::SliderInt(T(TKEY("run_interval"), "Seconds per swap"), &interval, 1, static_cast<int>(kMaxIntervalSeconds)))
+		runOptions.intervalSeconds = static_cast<uint32_t>(interval);
+	if (ImGui::SliderInt(T(TKEY("run_repeats"), "Repeats per change"), &repeats, 1, static_cast<int>(kMaxRepeats)))
+		runOptions.repeats = static_cast<uint32_t>(repeats);
+
+	if (queueActive) {
+		ImGui::Text(T(TKEY("run_progress"), "Comparing %s (%zu of %zu)"), queue[queueIndex].label.c_str(), queueIndex + 1, queue.size());
+		if (ImGui::Button(T(TKEY("run_cancel"), "Cancel")))
+			cancelRequested = true;
+	}
+
+	ImGui::Spacing();
+	ImGui::SeparatorText(T(TKEY("abtest_title"), "A/B test"));
+	DrawSettingsUI();
 }
 
 void ABTestingManager::DrawSettingsUI()

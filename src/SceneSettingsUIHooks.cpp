@@ -312,20 +312,27 @@ namespace
 		return !IsFeatureSceneEditSetting(setting);
 	}
 
+	bool IsQueuedForBenchmark(const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		return ABTestingManager::GetSingleton()->IsQueued(ABTestingManager::SettingKey(setting));
+	}
+
 	bool ShouldOutlineSetting(const SceneSettingsCatalog::SettingMetadata& setting)
 	{
-		return g_featureSceneEditing && g_cachedAlteredFeatureSceneEditSettings.contains(&setting);
+		return (g_featureSceneEditing && g_cachedAlteredFeatureSceneEditSettings.contains(&setting)) || IsQueuedForBenchmark(setting);
 	}
 
 	struct SettingOutlineGuard
 	{
 		bool outlined;
+		bool queued;
 		explicit SettingOutlineGuard(const SceneSettingsCatalog::SettingMetadata* setting) :
-			outlined(setting && ShouldOutlineSetting(*setting))
+			outlined(setting && ShouldOutlineSetting(*setting)),
+			queued(setting && IsQueuedForBenchmark(*setting))
 		{
 			if (!outlined)
 				return;
-			ImGui::PushStyleColor(ImGuiCol_Border, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+			ImGui::PushStyleColor(ImGuiCol_Border, queued ? Menu::GetSingleton()->GetTheme().StatusPalette.InfoColor : ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
 			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, std::max(ImGui::GetStyle().FrameBorderSize, Util::GetUIScale()));
 		}
 		~SettingOutlineGuard()
@@ -535,9 +542,17 @@ namespace
 		return {};
 	}
 
-	/** @brief Offers a one-setting A/B comparison: a boolean against its opposite, anything else against its default. */
+	/** @brief Offers to queue a one-setting comparison: a boolean against its opposite, anything else against its default; a queued setting offers removal. */
 	void DrawBenchmarkMenuItem(const SceneSettingsCatalog::SettingMetadata& setting, const json& currentValue, const std::optional<json>& defaultValue)
 	{
+		auto* manager = ABTestingManager::GetSingleton();
+		const auto key = ABTestingManager::SettingKey(setting);
+		if (manager->IsQueued(key)) {
+			if (ImGui::MenuItem(T("menu.settings.benchmark_remove", "Remove from benchmark")))
+				manager->Unqueue(key);
+			return;
+		}
+
 		std::optional<json> target;
 		if (currentValue.is_boolean())
 			target = !currentValue.get<bool>();
@@ -549,13 +564,13 @@ namespace
 		auto valueText = FormatSettingValue(setting, *target);
 		if (valueText.empty())
 			valueText = target->dump();
-		const auto label = std::string(T("menu.settings.benchmark_vs", "Benchmark vs")) + " " + valueText;
+		const auto label = std::string(T("menu.settings.benchmark_add", "Add to benchmark:")) + " " + valueText;
 		if (!ImGui::MenuItem(label.c_str()))
 			return;
 
 		std::string error;
 		const auto variantLabel = Util::Settings::GetCatalogLeafDisplayName(setting) + " = " + valueText;
-		if (!ABTestingManager::GetSingleton()->StartSettingComparison(*g_currentFeature, setting, *target, variantLabel, &error))
+		if (!manager->QueueSetting(*g_currentFeature, setting, *target, variantLabel, &error))
 			logger::warn("[A/B] {}", error);
 	}
 

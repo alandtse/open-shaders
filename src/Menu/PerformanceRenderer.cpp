@@ -145,21 +145,21 @@ static bool DrawProfileCard(const char* title, const char* description, bool sel
 	return pressed;
 }
 
-// Starts an A/B comparison of the current settings against each preset; an empty short name applies the preset to every feature.
-static void DrawBenchmarkPresetsButton(const std::string& featureShortName, bool compact)
+// Queues a comparison of the current settings against each preset; an empty short name applies the preset to every feature.
+static void DrawQueuePresetsButton(const std::string& featureShortName, bool compact)
 {
 	auto* manager = ABTestingManager::GetSingleton();
 	ImGui::BeginDisabled(manager->IsEnabled());
-	const char* label = T(TKEY("benchmark_presets"), "Benchmark presets");
+	const char* label = T(TKEY("benchmark_presets"), "Add presets to benchmark");
 	if (compact ? ImGui::SmallButton(label) : ImGui::Button(label)) {
 		std::string error;
-		if (!manager->StartProfileComparisons(featureShortName, {}, &error))
+		if (!manager->QueueProfiles(featureShortName, &error))
 			logger::warn("[A/B] {}", error);
 	}
 	ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("benchmark_presets_tooltip"),
-							  "Measures your current settings against each preset in turn, then restores them. Presets that change restart-gated settings cannot be measured live and are reported as needing a restart. The menu closes while it runs and the result opens in the performance overlay. Load a save first."));
+							  "Adds the Performance, Balanced and Quality presets to the benchmark queue (Benchmark tab). Presets that change restart-gated settings cannot be measured live and are reported as needing a restart."));
 }
 
 static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
@@ -246,7 +246,7 @@ static void RenderPresets(Feature* host)
 		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
 	DrawGlobalProfileChooser(profiles, labels, tooltips, activeIdx);
-	DrawBenchmarkPresetsButton("", false);
+	DrawQueuePresetsButton("", false);
 
 	// Generic per-section tooltips: unlike the global row above, a section's row can't
 	// claim specifics (render resolution, foveation) that only apply to SOME features.
@@ -302,7 +302,7 @@ static void RenderPresets(Feature* host)
 				feature->ApplyPerformanceProfile(p);
 			});
 		ImGui::SameLine();
-		DrawBenchmarkPresetsButton(feature->GetShortName(), true);
+		DrawQueuePresetsButton(feature->GetShortName(), true);
 		// Feature overrides stay visible beneath the global chooser.
 		// Only raw sliders/knobs collapse into Advanced below.
 		try {
@@ -343,6 +343,13 @@ void PerformanceRenderer::Render(Feature* host)
 		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_presets"), "Presets"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformancePresetsContent", ImVec2(0, 0), false))
 				RenderPresets(host);
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_benchmark"), "Benchmark"), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##PerformanceBenchmarkContent", ImVec2(0, 0), false))
+				ABTestingManager::GetSingleton()->DrawBenchmarkTab();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}

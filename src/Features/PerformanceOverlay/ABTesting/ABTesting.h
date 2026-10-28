@@ -31,6 +31,13 @@ struct ABRunOptions
 	bool closeMenu = true;       ///< Close the menu for the run and reopen it with the results.
 };
 
+/** @brief A comparison waiting for the next run; `key` identifies the subject so it is not queued twice. */
+struct ABQueuedComparison
+{
+	std::string key;
+	ABComparisonRequest request;
+};
+
 /** @brief The outcome of one comparison in a run. */
 struct ABRunResult
 {
@@ -85,17 +92,42 @@ public:
 	 */
 	bool StartComparisons(std::vector<ABComparisonRequest> requests, const ABRunOptions& options, std::string* error);
 
-	/** @brief Compares the current settings with one catalogued setting changed to `target`. */
-	bool StartSettingComparison(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);
+	/** @brief Identity of a catalogued setting in the queue, also used to outline it in its feature menu. */
+	static std::string SettingKey(const SceneSettingsCatalog::SettingMetadata& setting);
 
-	/** @brief Finds a catalogued setting by feature short name, serialized key and serialized path (empty for a top-level key), then runs StartSettingComparison. */
-	bool StartSettingComparisonByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, const ABRunOptions& options, std::string* error);
+	/** @brief Adds a comparison of the current settings with one catalogued setting changed to `target`; queuing the same setting again replaces it. */
+	bool QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);
+
+	/** @brief Finds a catalogued setting by feature short name, serialized key and serialized path (empty for a top-level key), then queues it. */
+	bool QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error);
 
 	/**
-	 * @brief Compares the current settings with each Performance, Balanced and Quality profile that is not already in effect.
-	 * @param featureShortName Limit the profile to one feature; empty applies it to every feature, as the global preset cards do.
+	 * @brief Adds a comparison with each of the Performance, Balanced and Quality presets.
+	 * @param featureShortName Limit the preset to one feature; empty applies it to every feature, as the global preset cards do.
 	 */
-	bool StartProfileComparisons(const std::string& featureShortName, const ABRunOptions& options, std::string* error);
+	bool QueueProfiles(const std::string& featureShortName, std::string* error);
+
+	/** @brief Removes a queued comparison; false when it was not queued. */
+	bool Unqueue(const std::string& key);
+
+	bool IsQueued(const std::string& key) const;
+	void ClearQueue();
+	const std::vector<ABQueuedComparison>& GetQueue() const { return comparisonQueue; }
+
+	/** @brief Pacing for the next RunQueue. */
+	ABRunOptions& RunOptions() { return runOptions; }
+
+	/** @brief Runs every queued comparison in order and empties the queue. */
+	bool RunQueue(std::string* error);
+
+	/** @brief Draws the queue with remove buttons and the Run and Clear buttons; shared by the Benchmark tab and the overlay. */
+	void DrawQueueControls();
+
+	/** @brief Draws the Performance page Benchmark tab: the queue, pacing, progress and the A/B interval. */
+	void DrawBenchmarkTab();
+
+	/** @brief Forces the performance overlay visible so queued items and results can be seen. */
+	void RevealOverlay();
 
 	/** @brief Results of the comparisons run since they were last cleared. */
 	const std::vector<ABRunResult>& GetRunResults() const { return runResults; }
@@ -218,6 +250,10 @@ private:
 	void EndComparisons(bool finished);
 	void RevealResults();
 
+	bool Enqueue(ABQueuedComparison item);
+
+	std::vector<ABQueuedComparison> comparisonQueue;
+	ABRunOptions runOptions;
 	std::vector<ABComparisonRequest> queue;
 	size_t queueIndex = 0;
 	ABRunOptions queueOptions;

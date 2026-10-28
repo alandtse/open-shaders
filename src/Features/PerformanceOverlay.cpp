@@ -1380,6 +1380,12 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>&)
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	auto& aggregator = abTestingManager->GetAggregator();
 
+	if (menu->IsEnabled && !abTestingManager->GetQueue().empty()) {
+		ImGui::TextUnformatted(T(TKEY("queue_overlay_title"), "Benchmark queue"));
+		abTestingManager->DrawQueueControls();
+		ImGui::Separator();
+	}
+
 	this->DrawABRunSummary();
 
 	// Display A/B test results if available
@@ -2341,21 +2347,41 @@ void PerformanceOverlay::RegisterUxActions()
 		});
 
 	FEATURE_COMMAND("startSettingComparison",
-		"Compare the current settings with the same settings with one catalogued setting changed, as an A/B run: variant A is the current settings, variant B has that one value, and they alternate for intervalSeconds each (default 4) with the first frames of every interval ignored. B intervals are bracketed by A so drift becomes uncertainty. The run closes the menu, ends by restoring the settings, reopens the menu and shows the result in the Performance overlay; the right-click 'Benchmark vs' on a setting does the same. Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), intervalSeconds, repeats (B intervals, default 2), settleFrames (default 45), closeMenu (default true). Read progress and results with abTestStatus (comparison, runs[]); stop with stopABTest.",
+		"Add a comparison of the current settings with one catalogued setting changed to the benchmark queue and, unless queueOnly, run the queue. A run is an A/B run per queued item: variant A is the current settings, variant B has the change, they alternate for intervalSeconds each (default 4) with the first frames of every interval ignored, and B intervals are bracketed by A so drift becomes uncertainty. The run closes the menu, ends by restoring the settings, reopens the menu and shows the result in the Performance overlay. The right-click 'Add to benchmark' on a setting queues the same comparison. Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), queueOnly (boolean, default false), intervalSeconds, repeats (B intervals per item, default 2), settleFrames (default 45), closeMenu (default true). Read progress and results with abTestStatus (queue, comparison, runs[]); stop with stopABTest.",
 		[](Feature*, const json& args) {
+			auto* manager = ABTestingManager::GetSingleton();
+			manager->RunOptions() = RunOptionsFromArgs(args);
 			std::string error;
-			if (!ABTestingManager::GetSingleton()->StartSettingComparisonByKey(args.value("shortName", std::string{}), args.value("key", std::string{}),
-					args.value("path", std::string{}), args.value("value", json{}), RunOptionsFromArgs(args), &error))
+			if (!manager->QueueSettingByKey(args.value("shortName", std::string{}), args.value("key", std::string{}),
+					args.value("path", std::string{}), args.value("value", json{}), &error) ||
+				(!args.value("queueOnly", false) && !manager->RunQueue(&error)))
 				throw std::runtime_error(error);
 		});
 
 	FEATURE_COMMAND("startPresetComparison",
-		"Compare the current settings with each Performance, Balanced and Quality preset in turn (the Performance page presets), as an A/B run per preset; a preset already in effect is reported as changing nothing, and one that changes a setting waiting for a restart (such as the upscaler quality mode) is reported as needing a restart and is not measured. The run closes the menu, ends by restoring the settings, reopens the menu and shows the results in the Performance overlay. Params: shortName (limit the preset to one feature, omit for the global presets), intervalSeconds (default 4), repeats (B intervals per preset, default 2), settleFrames (default 45), closeMenu (default true). Read progress and results with abTestStatus (comparison, runs[]); stop with stopABTest.",
+		"Add a comparison with each Performance, Balanced and Quality preset (the Performance page presets) to the benchmark queue and, unless queueOnly, run the queue. A preset already in effect is reported as changing nothing, and one that changes a setting waiting for a restart (such as the upscaler quality mode) is reported as needing a restart and is not measured. The run closes the menu, ends by restoring the settings, reopens the menu and shows the results in the Performance overlay. Params: shortName (limit the preset to one feature, omit for the global presets), queueOnly (boolean, default false), intervalSeconds (default 4), repeats (B intervals per item, default 2), settleFrames (default 45), closeMenu (default true). Read progress and results with abTestStatus (queue, comparison, runs[]); stop with stopABTest.",
 		[](Feature*, const json& args) {
+			auto* manager = ABTestingManager::GetSingleton();
+			manager->RunOptions() = RunOptionsFromArgs(args);
 			std::string error;
-			if (!ABTestingManager::GetSingleton()->StartProfileComparisons(args.value("shortName", std::string{}), RunOptionsFromArgs(args), &error))
+			if (!manager->QueueProfiles(args.value("shortName", std::string{}), &error) ||
+				(!args.value("queueOnly", false) && !manager->RunQueue(&error)))
 				throw std::runtime_error(error);
 		});
+
+	FEATURE_COMMAND("runComparisonQueue",
+		"Run every queued comparison in order (what the Run benchmark button does) and empty the queue. Params: intervalSeconds, repeats, settleFrames, closeMenu as for startPresetComparison. Read results with abTestStatus.",
+		[](Feature*, const json& args) {
+			auto* manager = ABTestingManager::GetSingleton();
+			manager->RunOptions() = RunOptionsFromArgs(args);
+			std::string error;
+			if (!manager->RunQueue(&error))
+				throw std::runtime_error(error);
+		});
+
+	FEATURE_COMMAND("clearComparisonQueue",
+		"Empty the benchmark queue without running it. Params: none.",
+		[](Feature*, const json&) { ABTestingManager::GetSingleton()->ClearQueue(); });
 
 	FEATURE_QUERY("abTestStatus",
 		"A/B test state and results: enabled, comparisonRunning, comparison (the label running now), comparisonIndex, comparisonCount, frameBudgetMs, runs[] (label, valid, meanAMs, meanBMs, deltaMs, uncertaintyMs against the bracketing A intervals, percentOfBudget, verdict faster/slower/noChange, note) from startSettingComparison and startPresetComparison; intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU = pre-submit plus post-submit scene time, total render GPU which also includes compositor work, compositor GPU and CPU, client frame interval, dropped frames, and frames the compositor reprojected for a CPU or GPU reason) plus deltaApplicationGpuMs and deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
