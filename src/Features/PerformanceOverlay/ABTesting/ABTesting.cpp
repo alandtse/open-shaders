@@ -21,6 +21,12 @@
 
 namespace
 {
+	constexpr const char* kNoSamplesNote = "No timing samples were collected.";
+	constexpr uint32_t kMinLiveIntervalSeconds = 1;
+	constexpr uint32_t kMaxLiveIntervalSeconds = 10;
+
+	float FrameBudgetMs();
+
 	void ReplaceAll(std::string& value, std::string_view from, std::string_view to)
 	{
 		for (auto position = value.find(from); position != std::string::npos; position = value.find(from, position + to.size())) {
@@ -82,36 +88,47 @@ void ABTestingManager::BeginRun()
 	QueryPerformanceCounter(&lastTestSwitch);
 }
 
-void ABTestingManager::Enable()
+bool ABTestingManager::Enable()
 {
-	if (!abTestingEnabled) {
-		auto* state = globals::state;
-		auto& performanceOverlay = globals::features::performanceOverlay;
+	if (abTestingEnabled)
+		return true;
 
-		logger::info("Starting A/B testing with current settings as Variant B (TEST), interval {} seconds.", testInterval);
+	testInterval = std::clamp(testInterval, kMinLiveIntervalSeconds, kMaxLiveIntervalSeconds);
+	auto* state = globals::state;
+	auto& performanceOverlay = globals::features::performanceOverlay;
 
-		// Preserve overlay enabled state before config operations
-		bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
+	logger::info("Starting A/B testing with current settings as Variant B (TEST), interval {} seconds.", testInterval);
 
-		// Save current settings as TEST variant (Variant B) in memory
-		testConfigSnapshot = nlohmann::json::object();
-		state->SaveToJson(testConfigSnapshot);
-		hasTestSnapshot = true;
+	bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
 
-		// Load and cache USER settings in memory (to avoid disk I/O during swaps)
-		userConfigSnapshot = nlohmann::json::object();
-		state->Load(State::ConfigMode::USER);
-		state->SaveToJson(userConfigSnapshot);
-		hasUserSnapshot = true;
+	// Save current settings as TEST variant (Variant B) in memory
+	testConfigSnapshot = nlohmann::json::object();
+	state->SaveToJson(testConfigSnapshot);
+	hasTestSnapshot = true;
 
-		aggregator.SetSettleFrames(0);
-		BeginRun();
+	// Load and cache USER settings in memory (to avoid disk I/O during swaps)
+	userConfigSnapshot = nlohmann::json::object();
+	state->Load(State::ConfigMode::USER);
+	state->SaveToJson(userConfigSnapshot);
+	hasUserSnapshot = true;
 
-		// Restore overlay enabled state after config operations
+	if (userConfigSnapshot == testConfigSnapshot) {
+		state->LoadFromJson(testConfigSnapshot);
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
-
-		logger::info("A/B Testing enabled - starting with Variant B (TEST). Both variants cached in memory for unbiased swapping.");
+		liveNotice = T(TKEY("live_no_changes"), "No unsaved changes. Change a setting, or queue changes to benchmark them.");
+		logger::info("[A/B] Live test not started: {}", liveNotice);
+		return false;
 	}
+
+	aggregator.SetSettleFrames(runOptions.settleFrames);
+	BeginRun();
+
+	// Restore overlay enabled state after config operations
+	performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
+	liveNotice.clear();
+
+	logger::info("A/B Testing enabled - starting with Variant B (TEST). Both variants cached in memory for unbiased swapping.");
+	return true;
 }
 
 void ABTestingManager::Disable()
@@ -141,6 +158,14 @@ void ABTestingManager::Disable()
 		ReleaseProfiler();
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
+
+		const auto& intervals = aggregator.GetHeadlineIntervals();
+		if (!intervals.empty()) {
+			const auto comparison = ComputeABComparison(intervals);
+			runResults.push_back({ T(TKEY("live_label"), "Unsaved changes (saved vs current)"), comparison, FrameBudgetMs(),
+				comparison.valid ? "" : kNoSamplesNote });
+			logger::info("[A/B] Live test: {:+.3f} +/- {:.3f} ms", comparison.deltaMs, comparison.uncertaintyMs);
+		}
 	}
 }
 
@@ -343,6 +368,25 @@ namespace
 	}
 }
 
+std::string ABTestingManager::RestartNeededBy(const std::function<void()>& apply)
+{
+	auto* state = globals::state;
+	nlohmann::json original = nlohmann::json::object();
+	state->SaveToJson(original);
+	const auto pendingBefore = FeaturesPendingRestart();
+	{
+		SceneSettingsManager::SceneLayerGuard guard(*SceneSettingsManager::GetSingleton());
+		apply();
+	}
+	std::string restartNeeded;
+	for (const auto& name : FeaturesPendingRestart()) {
+		if (!pendingBefore.contains(name))
+			restartNeeded += (restartNeeded.empty() ? "" : ", ") + name;
+	}
+	state->LoadFromJson(original);
+	return restartNeeded;
+}
+
 bool ABTestingManager::StartComparisons(std::vector<ABComparisonRequest> requests, const ABRunOptions& options, std::string* error)
 {
 	if (abTestingEnabled)
@@ -374,6 +418,7 @@ bool ABTestingManager::StartComparisons(std::vector<ABComparisonRequest> request
 
 	logger::info("[A/B] Comparing {} settings change(s), {} s intervals, {} repeats", queue.size(), queueOptions.intervalSeconds, queueOptions.repeats);
 	BeginComparison(0);
+	RevealOverlay();
 	return true;
 }
 
@@ -382,22 +427,15 @@ void ABTestingManager::BeginComparison(size_t index)
 	auto* state = globals::state;
 	const auto& request = queue[index];
 
-	auto original = queueOriginal;
-	state->LoadFromJson(original);
-	const auto pendingBefore = FeaturesPendingRestart();
+	state->LoadFromJson(queueOriginal);
+	const auto restartNeeded = RestartNeededBy(request.apply);
 	{
 		SceneSettingsManager::SceneLayerGuard guard(*SceneSettingsManager::GetSingleton());
 		request.apply();
 	}
-	std::string restartNeeded;
-	for (const auto& name : FeaturesPendingRestart()) {
-		if (!pendingBefore.contains(name))
-			restartNeeded += (restartNeeded.empty() ? "" : ", ") + name;
-	}
 	testConfigSnapshot = nlohmann::json::object();
 	state->SaveToJson(testConfigSnapshot);
-	original = queueOriginal;
-	state->LoadFromJson(original);
+	state->LoadFromJson(queueOriginal);
 
 	const bool unchanged = testConfigSnapshot == queueOriginal;
 	if (unchanged || !restartNeeded.empty()) {
@@ -427,7 +465,7 @@ void ABTestingManager::FinishComparison()
 {
 	aggregator.OnTestEnd();
 	const auto comparison = ComputeABComparison(aggregator.GetHeadlineIntervals());
-	runResults.push_back({ queue[queueIndex].label, comparison, FrameBudgetMs(), comparison.valid ? "" : "No timing samples were collected." });
+	runResults.push_back({ queue[queueIndex].label, comparison, FrameBudgetMs(), comparison.valid ? "" : kNoSamplesNote });
 	logger::info("[A/B] {}: {:+.3f} +/- {:.3f} ms", queue[queueIndex].label, comparison.deltaMs, comparison.uncertaintyMs);
 
 	if (++queueIndex < queue.size())
@@ -444,7 +482,7 @@ void ABTestingManager::EndComparisons(bool finished)
 	globals::state->LoadFromJson(original);
 	abTestingEnabled = false;
 	queueActive = false;
-	testInterval = 0;
+	testInterval = std::clamp(testInterval, kMinLiveIntervalSeconds, kMaxLiveIntervalSeconds);
 	ReleaseProfiler();
 
 	if (finished)
@@ -485,6 +523,8 @@ nlohmann::json ABTestingManager::StatusJson() const
 		pending.push_back(item.request.label);
 	return { { "comparisonRunning", queueActive },
 		{ "queue", std::move(pending) },
+		{ "queueNotice", queueNotice },
+		{ "liveNotice", liveNotice },
 		{ "comparison", queueActive ? nlohmann::json(queue[queueIndex].label) : nlohmann::json(nullptr) },
 		{ "comparisonIndex", queueActive ? queueIndex + 1 : 0 },
 		{ "comparisonCount", queue.size() },
@@ -510,9 +550,10 @@ bool ABTestingManager::Unqueue(const std::string& key)
 void ABTestingManager::ClearQueue()
 {
 	comparisonQueue.clear();
+	queueNotice.clear();
 }
 
-/** The overlay window lists the queue and draws the A/B results, so it is forced visible rather than left to its toggle. */
+/** The overlay shows the comparison in progress and its results, so it is forced visible rather than left to its toggle. */
 void ABTestingManager::RevealOverlay()
 {
 	globals::features::performanceOverlay.settings.ShowInOverlay = true;
@@ -526,7 +567,7 @@ bool ABTestingManager::Enqueue(ABQueuedComparison item)
 		return false;
 	Unqueue(item.key);
 	comparisonQueue.push_back(std::move(item));
-	RevealOverlay();
+	queueNotice.clear();
 	return true;
 }
 
@@ -539,6 +580,12 @@ bool ABTestingManager::QueueSetting(Feature& feature, const SceneSettingsCatalog
 	if (!Enqueue({ SettingKey(setting), SettingRequest(feature, setting, target, std::move(label)) }))
 		return Refuse(error, "A comparison is running; wait for it to finish.");
 	return true;
+}
+
+std::string ABTestingManager::SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target)
+{
+	const auto request = SettingRequest(feature, setting, target, {});
+	return RestartNeededBy(request.apply);
 }
 
 bool ABTestingManager::QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error)
@@ -570,28 +617,66 @@ bool ABTestingManager::QueueProfiles(const std::string& featureShortName, std::s
 			return Refuse(error, "Unknown feature: " + featureShortName);
 	}
 
+	if (queueActive)
+		return Refuse(error, "A comparison is running; wait for it to finish.");
+
 	const std::pair<Feature::PerfProfile, const char*> profiles[] = {
 		{ Feature::PerfProfile::Performance, T("feature.perf_overlay.profile_performance", "Performance") },
 		{ Feature::PerfProfile::Balanced, T("feature.perf_overlay.profile_balanced", "Balanced") },
 		{ Feature::PerfProfile::Quality, T("feature.perf_overlay.profile_quality", "Quality") },
 	};
 	const std::string scope = only ? only->GetDisplayName() : std::string(T("feature.perf_overlay.all_features", "All features"));
+	std::string notAdded;
+	bool anyQueued = false;
 	for (const auto& [profile, name] : profiles) {
+		const auto apply = [only, profile] {
+			if (only)
+				only->ApplyPerformanceProfile(profile);
+			else
+				Feature::ApplyPerformanceProfileToAll(profile);
+		};
+		const auto restartNeeded = RestartNeededBy(apply);
+		if (!restartNeeded.empty()) {
+			notAdded += std::string(notAdded.empty() ? "" : "; ") + std::format("{} ({} needs a restart)", name, restartNeeded);
+			continue;
+		}
 		const bool queued = Enqueue({ std::format("profile:{}:{}", featureShortName, name),
-			{ std::format("{} preset ({})", name, scope), [only, profile] {
-				 if (only)
-					 only->ApplyPerformanceProfile(profile);
-				 else
-					 Feature::ApplyPerformanceProfileToAll(profile);
-			 } } });
+			{ std::format("{} preset ({})", name, scope), apply } });
 		if (!queued)
 			return Refuse(error, "A comparison is running; wait for it to finish.");
+		anyQueued = true;
 	}
+	if (!notAdded.empty())
+		queueNotice = "Not added: " + notAdded;
+	if (!anyQueued)
+		return Refuse(error, queueNotice);
 	return true;
 }
 
 bool ABTestingManager::RunQueue(std::string* error)
 {
+	if (runOptions.together) {
+		if (comparisonQueue.size() < 2)
+			return Refuse(error, "All together needs at least two queued changes; queue another change or measure them one at a time.");
+		for (const auto& item : comparisonQueue) {
+			if (!item.key.starts_with("setting:"))
+				return Refuse(error, "All together can only combine changes to individual settings; a preset replaces the settings it covers, so it cannot be combined.");
+		}
+
+		std::vector<std::function<void()>> applies;
+		for (auto& item : comparisonQueue)
+			applies.push_back(std::move(item.request.apply));
+		ABComparisonRequest combined{
+			fmt::format(fmt::runtime(T(TKEY("together_label"), "{} changes together")), applies.size()),
+			[applies = std::move(applies)] {
+				for (const auto& apply : applies)
+					apply();
+			}
+		};
+		comparisonQueue.clear();
+		return StartComparisons({ std::move(combined) }, runOptions, error);
+	}
+
 	std::vector<ABComparisonRequest> requests;
 	for (auto& item : comparisonQueue)
 		requests.push_back(std::move(item.request));
@@ -599,35 +684,33 @@ bool ABTestingManager::RunQueue(std::string* error)
 	return StartComparisons(std::move(requests), runOptions, error);
 }
 
-void ABTestingManager::DrawQueueControls()
+std::vector<ABBenchmarkRow> ABTestingManager::GetBenchmarkRows() const
 {
-	const bool running = queueActive;
-	if (comparisonQueue.empty()) {
-		ImGui::TextDisabled("%s", T(TKEY("queue_empty"), "Nothing queued. Right-click a setting or use Add presets to add a comparison."));
-		return;
+	std::vector<ABBenchmarkRow> rows;
+	rows.reserve(runResults.size() + comparisonQueue.size());
+	for (const auto& result : runResults)
+		rows.push_back({ {}, result, result.comparison.valid ? ABBenchmarkRow::Status::Done : ABBenchmarkRow::Status::Skipped });
+
+	if (queueActive) {
+		rows.push_back({ {}, { queue[queueIndex].label, {}, FrameBudgetMs(), {} }, ABBenchmarkRow::Status::Running });
+		for (size_t index = queueIndex + 1; index < queue.size(); ++index)
+			rows.push_back({ {}, { queue[index].label, {}, FrameBudgetMs(), {} }, ABBenchmarkRow::Status::Queued });
 	}
 
-	std::string removed;
-	for (const auto& item : comparisonQueue) {
-		ImGui::PushID(item.key.c_str());
-		ImGui::BeginDisabled(running);
-		if (ImGui::SmallButton("x"))
-			removed = item.key;
-		ImGui::EndDisabled();
-		ImGui::SameLine();
-		ImGui::TextUnformatted(item.request.label.c_str());
-		ImGui::PopID();
-	}
-	if (!removed.empty())
-		Unqueue(removed);
+	for (const auto& item : comparisonQueue)
+		rows.push_back({ item.key, { item.request.label, {}, FrameBudgetMs(), {} }, ABBenchmarkRow::Status::Queued });
+	return rows;
+}
 
-	ImGui::BeginDisabled(running || abTestingEnabled);
+void ABTestingManager::DrawQueueButtons()
+{
+	ImGui::BeginDisabled(queueActive || abTestingEnabled || comparisonQueue.empty());
 	if (ImGui::Button(T(TKEY("queue_run"), "Run benchmark"))) {
 		std::string error;
 		RunQueue(&error);
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("queue_clear"), "Clear queue")))
+	if (ImGui::Button(T(TKEY("queue_clear_all"), "Clear all")))
 		ClearQueue();
 	ImGui::EndDisabled();
 }
@@ -635,12 +718,45 @@ void ABTestingManager::DrawQueueControls()
 void ABTestingManager::DrawBenchmarkTab()
 {
 	ImGui::TextWrapped("%s", T(TKEY("benchmark_intro"),
-								 "Measures what a change costs on your scene: your current settings alternate with the change, the first frames of every swap are ignored, "
-								 "and your settings are restored afterwards. Add changes from a setting's right-click menu or from Presets, then run them together. "
-								 "The menu closes while it runs and the result opens in the performance overlay."));
+								 "Measures what a change costs on your scene. Queued changes are measured against your current settings, one at a time or all together: "
+								 "they alternate, the first frames of every swap are ignored, and your settings are restored afterwards. "
+								 "Add changes from a setting's right-click menu or from Presets. The menu closes while it runs and the result appears in the performance overlay."));
 	ImGui::Spacing();
 	ImGui::SeparatorText(T(TKEY("queue_title"), "Benchmark queue"));
-	DrawQueueControls();
+
+	const bool canCombine = comparisonQueue.size() >= 2 &&
+	                        std::ranges::none_of(comparisonQueue, [](const ABQueuedComparison& item) { return item.key.starts_with("profile:"); });
+	if (runOptions.together && !canCombine)
+		runOptions.together = false;
+
+	if (ImGui::RadioButton(T(TKEY("queue_mode_one"), "One at a time"), !runOptions.together))
+		runOptions.together = false;
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("queue_mode_one_tooltip"), "Measures each change on its own, so you can see which one costs what."));
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!canCombine);
+	if (ImGui::RadioButton(T(TKEY("queue_mode_together"), "All together"), runOptions.together))
+		runOptions.together = true;
+	ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("queue_mode_together_tooltip"), "Applies every queued change at once and measures the bundle. It cannot tell you which change is responsible."));
+		if (!canCombine)
+			ImGui::Text("%s", T(TKEY("queue_mode_together_blocked"), "Needs at least two queued changes and no preset."));
+	}
+
+	DrawQueueButtons();
+	if (!queueNotice.empty()) {
+		ImGui::PushStyleColor(ImGuiCol_TextDisabled, Menu::GetSingleton()->GetTheme().StatusPalette.Warning);
+		ImGui::PushTextWrapPos(0.0f);
+		ImGui::TextDisabled("%s", queueNotice.c_str());
+		ImGui::PopTextWrapPos();
+		ImGui::PopStyleColor();
+	}
+	if (!queueActive && comparisonQueue.empty() && runResults.empty()) {
+		ImGui::TextDisabled("%s", T(TKEY("queue_empty"),
+									  "Nothing queued. Add changes from a setting's right-click menu (Add to benchmark) or from Presets. They appear in the table below."));
+	}
+	globals::features::performanceOverlay.DrawABRunSummary(true);
 
 	ImGui::Spacing();
 	int interval = static_cast<int>(runOptions.intervalSeconds);
@@ -663,30 +779,23 @@ void ABTestingManager::DrawBenchmarkTab()
 
 void ABTestingManager::DrawSettingsUI()
 {
-	auto& performanceOverlay = globals::features::performanceOverlay;
+	int interval = static_cast<int>(testInterval);
+	if (ImGui::SliderInt(T(TKEY("live_interval"), "Live A/B seconds per swap"), &interval, static_cast<int>(kMinLiveIntervalSeconds), static_cast<int>(kMaxLiveIntervalSeconds)))
+		testInterval = static_cast<uint32_t>(interval);
 
-	if (ImGui::SliderInt(T(TKEY("abtest_interval"), "A/B Test Interval"), reinterpret_cast<int*>(&testInterval), 0, 10)) {
-		bool overlayWasEnabled = performanceOverlay.settings.ShowInOverlay;
-		if (testInterval == 0) {
+	ImGui::BeginDisabled(queueActive);
+	if (abTestingEnabled) {
+		if (ImGui::Button(T(TKEY("live_stop"), "Stop live A/B")))
 			Disable();
-		} else if (!abTestingEnabled) {
-			Enable();
-		} else {
-			logger::info("Setting new A/B test interval {}.", testInterval);
-		}
-		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
+	} else if (ImGui::Button(T(TKEY("live_start"), "Start live A/B"))) {
+		Enable();
 	}
+	ImGui::EndDisabled();
 
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s",
-			T(TKEY("abtest_tooltip"),
-				"A/B Testing compares two configurations by automatically swapping between them.\n"
-				"Workflow: Configure your test settings, then enable A/B testing.\n"
-				"- Variant B (TEST) = Your current settings when you enable testing\n"
-				"- Variant A (USER) = Your previously saved user configuration\n"
-				"The initial Variant B interval is an unmeasured warm-up, then testing begins with Variant A.\n"
-				"Set to 0 to disable and restore TEST settings."));
-	}
+	ImGui::TextDisabled("%s", T(TKEY("live_hint"), "A = your saved settings, B = your current settings. Change settings first, then start."));
+
+	if (!liveNotice.empty())
+		ImGui::TextColored(Menu::GetSingleton()->GetTheme().StatusPalette.Warning, "%s", liveNotice.c_str());
 }
 
 std::vector<std::string> ABTestingManager::GetConfigDifferencesForDisplay() const
@@ -775,6 +884,9 @@ void ABTestingManager::DrawOverlayUI()
 
 	remaining = std::max(0.0f, remaining);
 
+	if (queueActive)
+		ImGui::Text(T(TKEY("overlay_comparing"), "Comparing %s (%zu of %zu)"), queue[queueIndex].label.c_str(), queueIndex + 1, queue.size());
+
 	// Show current variant and time
 	const char* variantLabel = aggregator.IsWarmingUp() ?
 	                               T(TKEY("variant_b_warmup"), "Variant B (TEST) warm-up") :
@@ -784,8 +896,8 @@ void ABTestingManager::DrawOverlayUI()
 						  variantLabel, remaining)
 						  .c_str());
 
-	// Show what changed (for both variants)
-	if (hasTestSnapshot) {
+	// Show what changed (for both variants); during a queue run the snapshots hold the item being measured, not the USER/TEST pair
+	if (hasTestSnapshot && !queueActive) {
 		auto differences = GetConfigDifferences();
 
 		if (!differences.empty()) {

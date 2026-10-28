@@ -9,6 +9,7 @@
 #include "Utils/SettingsDefaults.h"
 #include "Utils/UI.h"
 
+#include <fmt/format.h>
 #include <imgui_internal.h>
 
 #include <limits>
@@ -564,8 +565,27 @@ namespace
 		auto valueText = FormatSettingValue(setting, *target);
 		if (valueText.empty())
 			valueText = target->dump();
-		const auto label = std::string(T("menu.settings.benchmark_add", "Add to benchmark:")) + " " + valueText;
-		if (!ImGui::MenuItem(label.c_str()))
+
+		static std::string restartReasonKey;
+		static std::string restartReason;
+		if (ImGui::IsWindowAppearing() || restartReasonKey != key) {
+			restartReasonKey = key;
+			restartReason = manager->SettingRestartReason(*g_currentFeature, setting, *target);
+		}
+
+		const auto addLabel = std::string(T("menu.settings.benchmark_add", "Add to benchmark:")) + " " + valueText;
+		if (!restartReason.empty()) {
+			const auto label = addLabel + " " + T("menu.settings.benchmark_restart", "(requires restart)");
+			ImGui::MenuItem(label.c_str(), nullptr, false, false);
+			if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+				ImGui::SetTooltip("%s",
+					fmt::format(fmt::runtime(T("menu.settings.benchmark_restart_tooltip",
+									"Cannot be measured live: {} needs a restart to apply this, and the benchmark queue does not survive a restart.")),
+						restartReason)
+						.c_str());
+			return;
+		}
+		if (!ImGui::MenuItem(addLabel.c_str()))
 			return;
 
 		std::string error;

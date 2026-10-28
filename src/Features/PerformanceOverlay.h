@@ -186,8 +186,8 @@ struct PerformanceOverlay : OverlayFeature
 	// ============================================================================
 	void DrawABTestSection(const std::vector<DrawCallRow>& allRows);
 	void DrawABTestResultsTable();
-	/** @brief Draws the sortable, filterable table of comparison runs (presets and single settings) with a verdict per row. */
-	void DrawABRunSummary();
+	/** @brief Draws the one benchmark table: finished results, the comparison running now and everything still queued. */
+	void DrawABRunSummary(bool editable);
 	void DrawABTestStatisticalValidity(const Menu::ThemeSettings& theme, const ABTestAggregator& aggregator) const;
 	void ConvertABTestResultsToRows(const std::vector<AggregatedDrawCallStats>& results, std::vector<DrawCallRow>& mainRows, std::vector<DrawCallRow>& summaryRows) const;
 	ABTestLegends BuildABTestLegends(const Menu::ThemeSettings& theme) const;

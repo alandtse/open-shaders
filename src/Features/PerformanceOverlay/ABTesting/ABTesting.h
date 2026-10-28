@@ -29,6 +29,7 @@ struct ABRunOptions
 	uint32_t repeats = 2;        ///< B intervals per comparison.
 	uint32_t settleFrames = 45;  ///< Frames ignored at the start of every interval so a swap can settle.
 	bool closeMenu = true;       ///< Close the menu for the run and reopen it with the results.
+	bool together = false;       ///< Apply every queued change at once as one comparison instead of measuring each on its own.
 };
 
 /** @brief A comparison waiting for the next run; `key` identifies the subject so it is not queued twice. */
@@ -45,6 +46,20 @@ struct ABRunResult
 	ABComparison comparison;
 	float budgetMs = 0.0f;  ///< Frame budget the delta is a share of.
 	std::string note;       ///< Why there is no comparison, when there is none.
+};
+
+/** @brief One row of the benchmark table: a finished result, the comparison running now, or one still waiting to run. */
+struct ABBenchmarkRow
+{
+	std::string key;  ///< Queue identity while the row can still be removed from the queue; empty otherwise.
+	ABRunResult result;
+	enum class Status
+	{
+		Queued,
+		Running,
+		Done,
+		Skipped
+	} status;
 };
 
 /**
@@ -98,14 +113,25 @@ public:
 	/** @brief Adds a comparison of the current settings with one catalogued setting changed to `target`; queuing the same setting again replaces it. */
 	bool QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);
 
+	/**
+	 * @brief Display names of the features that would need a restart for a change to one catalogued setting to take effect.
+	 * @param target Value the setting would be changed to.
+	 * @return The names, comma separated; empty when the change can be measured live.
+	 */
+	std::string SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target);
+
 	/** @brief Finds a catalogued setting by feature short name, serialized key and serialized path (empty for a top-level key), then queues it. */
 	bool QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error);
 
 	/**
 	 * @brief Adds a comparison with each of the Performance, Balanced and Quality presets.
 	 * @param featureShortName Limit the preset to one feature; empty applies it to every feature, as the global preset cards do.
+	 * @return False when nothing was queued: a run is in progress, or every preset needs a restart.
 	 */
 	bool QueueProfiles(const std::string& featureShortName, std::string* error);
+
+	/** @brief Presets the last QueueProfiles left out because they need a restart, ready to show; empty when none were left out. */
+	const std::string& QueueNotice() const { return queueNotice; }
 
 	/** @brief Removes a queued comparison; false when it was not queued. */
 	bool Unqueue(const std::string& key);
@@ -114,19 +140,22 @@ public:
 	void ClearQueue();
 	const std::vector<ABQueuedComparison>& GetQueue() const { return comparisonQueue; }
 
+	/** @brief Every row of the benchmark table, in order: finished results, the comparison running now, those still queued for the run, then the queue. */
+	std::vector<ABBenchmarkRow> GetBenchmarkRows() const;
+
 	/** @brief Pacing for the next RunQueue. */
 	ABRunOptions& RunOptions() { return runOptions; }
 
 	/** @brief Runs every queued comparison in order and empties the queue. */
 	bool RunQueue(std::string* error);
 
-	/** @brief Draws the queue with remove buttons and the Run and Clear buttons; shared by the Benchmark tab and the overlay. */
-	void DrawQueueControls();
+	/** @brief Draws the Run benchmark and Clear all buttons, both disabled while a run is in progress or the queue is empty. */
+	void DrawQueueButtons();
 
-	/** @brief Draws the Performance page Benchmark tab: the queue, pacing, progress and the A/B interval. */
+	/** @brief Draws the Performance page Benchmark tab: the queue mode, the buttons, the benchmark table, pacing, progress and the live A/B controls. */
 	void DrawBenchmarkTab();
 
-	/** @brief Forces the performance overlay visible so queued items and results can be seen. */
+	/** @brief Forces the performance overlay visible so the comparison in progress and its results can be seen. */
 	void RevealOverlay();
 
 	/** @brief Results of the comparisons run since they were last cleared. */
@@ -142,13 +171,18 @@ public:
 	bool IsUsingTestConfig() const { return usingTestConfig; }
 
 	/**
-	 * @brief Starts A/B testing.
+	 * @brief Starts the live A/B test.
 	 *
 	 * Snapshots the current settings as variant B (TEST), loads and snapshots
 	 * the saved user settings as variant A (USER), then begins the test cycle
 	 * starting with variant B.
+	 * @return False when the current settings match the saved ones, so nothing changed: the
+	 *         settings are restored, no test starts and LiveNotice() says why.
 	 */
-	void Enable();
+	bool Enable();
+
+	/** @brief Why the last start did not begin a live A/B test; empty once a start succeeds. */
+	const std::string& LiveNotice() const { return liveNotice; }
 
 	/**
 	 * @brief Stops A/B testing and restores the TEST configuration.
@@ -166,7 +200,7 @@ public:
 	 */
 	void Update();
 
-	/** @brief Draws the ImGui A/B test interval slider in the settings panel. */
+	/** @brief Draws the live A/B controls: the swap pace, Start/Stop and what the two variants are. */
 	void DrawSettingsUI();
 
 	/** @brief Draws the in-game overlay showing the active variant and remaining swap time. */
@@ -221,7 +255,7 @@ public:
 	void ClearCachedSnapshots();
 
 private:
-	uint32_t testInterval = 0;
+	uint32_t testInterval = 4;
 	bool abTestingEnabled = false;
 	bool usingTestConfig = false;
 	LARGE_INTEGER timingFrequency{};
@@ -250,6 +284,9 @@ private:
 	void EndComparisons(bool finished);
 	void RevealResults();
 
+	/** @brief Display names of the features a trial `apply` leaves needing a restart, comma separated; the state is restored before returning. */
+	static std::string RestartNeededBy(const std::function<void()>& apply);
+
 	bool Enqueue(ABQueuedComparison item);
 
 	std::vector<ABQueuedComparison> comparisonQueue;
@@ -259,6 +296,8 @@ private:
 	ABRunOptions queueOptions;
 	nlohmann::json queueOriginal;
 	std::vector<ABRunResult> runResults;
+	std::string liveNotice;
+	std::string queueNotice;
 	bool queueActive = false;
 	std::atomic<bool> cancelRequested = false;  ///< Set off the render thread; Update() restores the settings so a cancel cannot race a swap.
 	bool menuClosedByRun = false;

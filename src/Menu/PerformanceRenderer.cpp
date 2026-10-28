@@ -150,7 +150,7 @@ static void DrawQueuePresetsButton(const std::string& featureShortName, bool com
 {
 	auto* manager = ABTestingManager::GetSingleton();
 	ImGui::BeginDisabled(manager->IsEnabled());
-	const char* label = T(TKEY("benchmark_presets"), "Add presets to benchmark");
+	const char* label = T(TKEY("benchmark_presets"), "Queue preset comparisons");
 	if (compact ? ImGui::SmallButton(label) : ImGui::Button(label)) {
 		std::string error;
 		if (!manager->QueueProfiles(featureShortName, &error))
@@ -159,7 +159,7 @@ static void DrawQueuePresetsButton(const std::string& featureShortName, bool com
 	ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::Text("%s", T(TKEY("benchmark_presets_tooltip"),
-							  "Adds the Performance, Balanced and Quality presets to the benchmark queue (Benchmark tab). Presets that change restart-gated settings cannot be measured live and are reported as needing a restart."));
+							  "Queues the Performance, Balanced and Quality presets as three alternatives, measured one after another (Benchmark tab). Presets that change restart-gated settings are not added; the Benchmark tab says which."));
 }
 
 static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
@@ -347,7 +347,12 @@ void PerformanceRenderer::Render(Feature* host)
 			ImGui::EndTabItem();
 		}
 
-		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_benchmark"), "Benchmark"), Menu::FontRole::Subheading)) {
+		const std::string benchmarkTabLabel = T(TKEY("tab_benchmark"), "Benchmark");
+		const size_t benchmarkQueued = ABTestingManager::GetSingleton()->GetQueue().size();
+		const std::string benchmarkTab = benchmarkQueued > 0 ?
+		                                     std::format("{} ({})###BenchmarkTab", benchmarkTabLabel, benchmarkQueued) :
+		                                     std::format("{}###BenchmarkTab", benchmarkTabLabel);
+		if (MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformanceBenchmarkContent", ImVec2(0, 0), false))
 				ABTestingManager::GetSingleton()->DrawBenchmarkTab();
 			ImGui::EndChild();
