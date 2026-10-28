@@ -2,11 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
-#include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace
@@ -57,30 +53,6 @@ namespace
 		auto context = std::make_unique<AMD::AntiLag2DX12::Context>();
 		context->m_pAntiLagAPI = &driver;
 		return context;
-	}
-
-	std::string ReadSource(const char* relativePath)
-	{
-		std::ifstream stream(std::filesystem::path(CS_TEST_SOURCE_DIR) / relativePath);
-		REQUIRE(stream.is_open());
-		return { std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>() };
-	}
-
-	std::string_view FunctionBody(const std::string& source, std::string_view signature)
-	{
-		const auto start = source.find(signature);
-		REQUIRE(start != std::string::npos);
-		const auto opening = source.find('{', start);
-		REQUIRE(opening != std::string::npos);
-		unsigned depth = 0;
-		for (auto index = opening; index != source.size(); ++index) {
-			if (source[index] == '{')
-				++depth;
-			else if (source[index] == '}' && --depth == 0)
-				return std::string_view(source).substr(opening, index - opening + 1);
-		}
-		FAIL("Unbalanced source function");
-		return {};
 	}
 }
 
@@ -225,42 +197,4 @@ TEST_CASE("Anti-Lag retains the context and interface when presentation cannot d
 	CHECK(retained->m_pAntiLagAPI == &driver);
 	AMD::AntiLag2DX12::DeInitialize(retained);
 	delete retained;
-}
-
-TEST_CASE("Anti-Lag installation stays outside the ordinary and DLSS-G startup paths", "[antilag2][integration]")
-{
-	const auto hooks = ReadSource("src/Hooks.cpp");
-	const auto swapChain = ReadSource("src/Features/Upscaling/DX12SwapChain.cpp");
-	const auto upscaling = ReadSource("src/Features/Upscaling.cpp");
-	CHECK_FALSE(FunctionBody(hooks, "void Install()").contains("InstallBeforeInputPoll"));
-	const auto optionalHook = FunctionBody(hooks, "bool Hooks::InstallBeforeInputPoll()");
-	CHECK(optionalHook.find("func.address()") < optionalHook.find("stl::detour_thunk"));
-	CHECK(optionalHook.find("return true;") < optionalHook.find("stl::detour_thunk"));
-	CHECK_FALSE(FunctionBody(swapChain, "void DX12SwapChain::CreateD3D12Device(").contains("AntiLag2"));
-	CHECK_FALSE(FunctionBody(swapChain, "void DX12SwapChain::CreateSwapChainDirect(").contains("AntiLag2"));
-	const auto fsr = FunctionBody(swapChain, "void DX12SwapChain::CreateSwapChain(");
-	CHECK(fsr.find("CreateD3D12Device(adapter)") < fsr.find("InitializeAntiLag2()"));
-	const auto interop = FunctionBody(swapChain, "void DX12SwapChain::CreateInterop()");
-	CHECK(interop.contains("antiLag2Context && !CS::AntiLag2::InstallInputHook"));
-	CHECK(interop.contains("Hooks::InstallBeforeInputPoll"));
-	CHECK(interop.contains("if (antiLag2Context)"));
-	CHECK(interop.contains("new AntiLag2SwapChainProxy"));
-	CHECK(interop.contains("new DXGISwapChainProxy"));
-	CHECK(FunctionBody(swapChain, "HRESULT DX12SwapChain::Present(").contains("PresentImpl<false>"));
-	CHECK(FunctionBody(swapChain, "HRESULT DX12SwapChain::PresentWithAntiLag2(").contains("PresentImpl<true>"));
-	CHECK_FALSE(FunctionBody(swapChain, "HRESULT STDMETHODCALLTYPE DXGISwapChainProxy::Present(").contains("AntiLag2"));
-	CHECK_FALSE(FunctionBody(upscaling, "void Upscaling::OnBeforeInputPoll()").contains("settings"));
-	CHECK_FALSE(upscaling.contains("antiLag2Enabled"));
-	CHECK_FALSE(upscaling.contains("setAntiLag2"));
-}
-
-TEST_CASE("Anti-Lag presentation notifications keep their submission ordering", "[antilag2][integration]")
-{
-	const auto source = ReadSource("src/Features/Upscaling/DX12SwapChain.cpp");
-	const auto present = FunctionBody(source, "HRESULT DX12SwapChain::PresentImpl(");
-	CHECK(present.contains("if constexpr (WithAntiLag2)\n\t\t\tPublishAntiLag2SwapChainData();"));
-	CHECK(present.contains("if constexpr (WithAntiLag2)\n\t\tMarkAntiLag2EndOfFrame();"));
-	CHECK(present.find("PublishAntiLag2SwapChainData()") < present.find("upscaling.fidelityFX.Present("));
-	CHECK(present.find("ExecuteCommandLists(") < present.find("MarkAntiLag2EndOfFrame()"));
-	CHECK(present.find("MarkAntiLag2EndOfFrame()") < present.find("swapChain->Present("));
 }

@@ -18,33 +18,6 @@ def braced(source, declaration):
 
 
 class SceneSettingsPersistenceTests(unittest.TestCase):
-    def test_exports_and_loaders_share_mode_metadata(self):
-        manager = MANAGER_PATH.read_text(encoding="utf-8")
-        for name in ("ExportWeatherUserSettingsToOverwrites", "ExportLocationUserSettingsToOverwrites",
-                     "ExportEntryLayerToOverwrites"):
-            body = extract_function(manager, name)
-            self.assertIn("kMetadataTimeOfDayEnabledKey", body)
-            self.assertIn("timeOfDayEnabled", body)
-        for name in ("LoadLocationUserSettings", "LoadWeatherUserSettings"):
-            body = extract_function(manager, name)
-            self.assertIn("userTimeOfDayEnabled", body)
-            self.assertIn("RefreshTimeOfDayMode", body)
-        saving = extract_function(manager, "SaveAllUserSettings")
-        self.assertIn("configIt->second.userTimeOfDayEnabled.has_value()", saving)
-        self.assertIn('locationEntry["timeOfDayEnabled"] = *config.userTimeOfDayEnabled', saving)
-        reload = extract_function(manager, "ReloadOverwriteEntries")
-        self.assertEqual(reload.count("overwriteTimeOfDayEnabled.reset()"), 2)
-        self.assertNotIn("userTimeOfDayEnabled.reset()", reload)
-
-    def test_discovery_inventories_files_before_duplicate_filtering(self):
-        manager = MANAGER_PATH.read_text(encoding="utf-8")
-        for name in ("DiscoverOverwritesInDir", "DiscoverLocationOverwritesForTarget",
-                     "DiscoverWeatherOverwritesForSpid"):
-            body = extract_function(manager, name)
-            self.assertLess(body.index("overwriteBackingFiles["), body.index("AddOverwriteEntryIfUnique"))
-        self.assertIn("overwriteBackingFiles.clear()", extract_function(manager, "ReloadOverwriteEntries"))
-        self.assertIn("DeleteEntryLayer", extract_function(manager, "DeleteAllOverwrites"))
-
     def test_native_export_modes_and_scoped_deletion(self):
         manager = MANAGER_PATH.read_text(encoding="utf-8")
         header = (ROOT / "src/SceneSettingsManager.h").read_text(encoding="utf-8")

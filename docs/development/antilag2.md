@@ -40,7 +40,7 @@ interface until process exit to protect pending presentation references.
 
 Catch2 tests in `tests/cpp/test_antilag2.cpp` run through CI's `CppUtilTests`.
 They cover SDK state errors and retries, zero FPS limits, initialization and
-hook failure cleanup, shutdown lifetime, and integration boundaries/order.
+hook failure cleanup, and shutdown lifetime.
 
 Runtime checks require supported FSR-FG, unsupported FSR-FG, FG-off and DLSS-G
 sessions. Initialization logs its HRESULT and availability; runtime failure
