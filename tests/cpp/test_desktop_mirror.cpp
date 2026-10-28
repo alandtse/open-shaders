@@ -26,9 +26,11 @@ namespace
 	{
 		check(close(actual.x, expected.x) && close(actual.y, expected.y), message);
 	}
-	void callback(const ImDrawList*, const ImDrawCmd*) {}
-	void otherCallback(const ImDrawList*, const ImDrawCmd*) {}
-	void markedCallback(const ImDrawList*, const ImDrawCmd*) {}
+	// Distinct bodies keep the optimizer from folding the callbacks into one address.
+	volatile int callbackSink = 0;
+	void callback(const ImDrawList*, const ImDrawCmd*) { callbackSink = 1; }
+	void otherCallback(const ImDrawList*, const ImDrawCmd*) { callbackSink = 2; }
+	void markedCallback(const ImDrawList*, const ImDrawCmd*) { callbackSink = 3; }
 
 	struct Source
 	{
