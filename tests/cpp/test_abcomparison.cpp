@@ -3,11 +3,16 @@
 
 #include "Features/PerformanceOverlay/ABTesting/ABComparison.h"
 
+#include <optional>
+
 namespace
 {
-	ABHeadlineInterval Interval(ABVariant variant, float ms, size_t frames = 30)
+	ABHeadlineInterval Interval(ABVariant variant, float ms, size_t frames = 30, std::optional<float> frame = std::nullopt)
 	{
-		return { variant, std::vector<float>(frames, ms) };
+		ABHeadlineInterval interval{ variant, std::vector<float>(frames, ms) };
+		if (frame)
+			interval.frameMs.assign(frames, *frame);
+		return interval;
 	}
 }
 
@@ -70,4 +75,48 @@ TEST_CASE("Comparison uses one baseline when only one side exists", "[abcomparis
 
 	REQUIRE(result.valid);
 	CHECK(result.deltaMs == Catch::Approx(2.0f));
+}
+
+TEST_CASE("Frame time leads the verdict when it rises", "[abcomparison]")
+{
+	const auto result = ComputeABComparison({ Interval(ABVariant::A, 5.0f, 30, 16.0f), Interval(ABVariant::B, 5.0f, 30, 20.0f), Interval(ABVariant::A, 5.0f, 30, 16.0f) }, true);
+
+	REQUIRE(result.valid);
+	REQUIRE(result.frame.valid);
+	CHECK(result.frame.deltaMs == Catch::Approx(4.0f));
+	CHECK(result.verdict == ABVerdict::Slower);
+	CHECK_FALSE(result.headroomOnly);
+}
+
+TEST_CASE("A GPU-only change is headroom when the frame time holds", "[abcomparison]")
+{
+	const auto result = ComputeABComparison({ Interval(ABVariant::A, 5.0f, 30, 16.0f), Interval(ABVariant::B, 6.0f, 30, 16.0f), Interval(ABVariant::A, 5.0f, 30, 16.0f) }, true);
+
+	REQUIRE(result.frame.valid);
+	CHECK(result.frame.verdict == ABVerdict::NoChange);
+	CHECK(result.headroomOnly);
+	CHECK(result.verdict == ABVerdict::Slower);
+}
+
+TEST_CASE("Frame time does not lead the verdict unless asked", "[abcomparison]")
+{
+	const auto result = ComputeABComparison({ Interval(ABVariant::A, 5.0f, 30, 16.0f), Interval(ABVariant::B, 5.0f, 30, 20.0f), Interval(ABVariant::A, 5.0f, 30, 16.0f) });
+
+	CHECK(result.verdict == ABVerdict::NoChange);
+	CHECK_FALSE(result.headroomOnly);
+}
+
+TEST_CASE("A frame series with too few samples falls back to the GPU verdict", "[abcomparison]")
+{
+	const auto shortFrames = [](ABVariant variant, float gpuMs) {
+		ABHeadlineInterval interval{ variant, std::vector<float>(30, gpuMs) };
+		interval.frameMs.assign(3, 16.0f);
+		return interval;
+	};
+	const auto result = ComputeABComparison({ shortFrames(ABVariant::A, 5.0f), shortFrames(ABVariant::B, 6.0f), shortFrames(ABVariant::A, 5.0f) }, true);
+
+	REQUIRE(result.valid);
+	CHECK_FALSE(result.frame.valid);
+	CHECK_FALSE(result.headroomOnly);
+	CHECK(result.verdict == ABVerdict::Slower);
 }

@@ -75,6 +75,14 @@ public:
 	 */
 	bool OnHeadline(float ms);
 
+	/**
+	 * @brief Records one wall-clock frame time for the current interval.
+	 *
+	 * Gated and filtered exactly as OnHeadline.
+	 * @return True when the sample was kept.
+	 */
+	bool OnFrameTime(float ms);
+
 	/** @brief Frames at the start of every measured interval that are not recorded, so a settings swap can settle. */
 	void SetSettleFrames(uint32_t frames) { settleFrames = frames; }
 
@@ -180,4 +188,5 @@ private:
 	uint32_t settleFrames = 0;
 	std::vector<ABHeadlineInterval> headlineIntervals;
 	std::vector<float> currentHeadline;
+	std::vector<float> currentFrameTimes;
 };

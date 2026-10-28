@@ -5,6 +5,7 @@
 #include <atomic>
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,11 +16,17 @@ namespace SceneSettingsCatalog
 	struct SettingMetadata;
 }
 
-/** @brief One comparison of a settings change against the current settings: variant B is the original settings with `apply` run over them. */
+/**
+ * @brief One comparison of a settings change against the current settings.
+ *
+ * Variant A is the current settings with `prepare` run over them, variant B is that with `apply` run over it.
+ * An empty `prepare` leaves variant A as the current settings.
+ */
 struct ABComparisonRequest
 {
 	std::string label;
 	std::function<void()> apply;
+	std::function<void()> prepare;
 };
 
 /** @brief Pacing of a run of comparisons. Each comparison alternates A and B, ending on A so every B is bracketed. */
@@ -37,6 +44,13 @@ struct ABQueuedComparison
 {
 	std::string key;
 	ABComparisonRequest request;
+};
+
+/** @brief A setting a comparison must set before its own change, and the value it must hold. */
+struct ABSettingPrerequisite
+{
+	const SceneSettingsCatalog::SettingMetadata* setting;
+	nlohmann::json requiredValue;
 };
 
 /** @brief The outcome of one comparison in a run. */
@@ -113,12 +127,32 @@ public:
 	/** @brief Adds a comparison of the current settings with one catalogued setting changed to `target`; queuing the same setting again replaces it. */
 	bool QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);
 
+	/** @brief Adds a comparison of one catalogued setting at `from` against `to`; queuing the same setting again replaces it. */
+	bool QueueSettingChange(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& from, const nlohmann::json& to, std::string label, std::string* error);
+
+	/**
+	 * @brief Reads a catalogued setting's value from the saved user configuration.
+	 * @return The saved value, or nullopt when the file cannot be read or does not hold that setting.
+	 */
+	std::optional<nlohmann::json> SavedSettingValue(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting);
+
+	/**
+	 * @brief The settings that must be turned on for one catalogued setting to be usable, outermost first.
+	 *
+	 * Reads the feature's current settings, so prerequisites already at their required value are left out.
+	 * @return The steps a comparison prepares first, empty when the setting is usable as it is, or nullopt when
+	 *         the chain cannot be resolved (a cycle or a setting that is not catalogued).
+	 */
+	std::optional<std::vector<ABSettingPrerequisite>> PrerequisitesFor(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting);
+
 	/**
 	 * @brief Display names of the features that would need a restart for a change to one catalogued setting to take effect.
 	 * @param target Value the setting would be changed to.
+	 * @param from Value the setting is first set to, when the comparison prepares it; empty for none.
 	 * @return The names, comma separated; empty when the change can be measured live.
 	 */
-	std::string SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target);
+	std::string SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target,
+		const std::optional<nlohmann::json>& from = std::nullopt);
 
 	/** @brief Finds a catalogued setting by feature short name, serialized key and serialized path (empty for a top-level key), then queues it. */
 	bool QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error);
@@ -284,8 +318,11 @@ private:
 	void EndComparisons(bool finished);
 	void RevealResults();
 
-	/** @brief Display names of the features a trial `apply` leaves needing a restart, comma separated; the state is restored before returning. */
+	/** @brief Display names of the features a trial change leaves needing a restart, comma separated; the state is restored before returning. */
 	static std::string RestartNeededBy(const std::function<void()>& apply);
+
+	/** @brief Queues `request` under the setting's key, refusing when the setting is absent from the feature or a run is active. */
+	bool EnqueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, ABComparisonRequest request, std::string* error);
 
 	bool Enqueue(ABQueuedComparison item);
 
@@ -304,4 +341,5 @@ private:
 	bool profilerOwned = false;
 	bool profilerWasEnabled = false;
 	uint32_t lastProfilerFrame = UINT32_MAX;
+	std::chrono::steady_clock::time_point lastFrameTime;  ///< Previous RecordFrame, so flat frame time is the interval between calls.
 };

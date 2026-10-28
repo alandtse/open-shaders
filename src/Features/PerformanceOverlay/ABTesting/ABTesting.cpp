@@ -4,6 +4,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
+#include "PrerequisiteChain.h"
 #include "SceneSettingsManager.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
@@ -86,6 +87,7 @@ void ABTestingManager::BeginRun()
 		QueryPerformanceFrequency(&timingFrequency);
 	}
 	QueryPerformanceCounter(&lastTestSwitch);
+	lastFrameTime = std::chrono::steady_clock::now();
 }
 
 bool ABTestingManager::Enable()
@@ -161,7 +163,7 @@ void ABTestingManager::Disable()
 
 		const auto& intervals = aggregator.GetHeadlineIntervals();
 		if (!intervals.empty()) {
-			const auto comparison = ComputeABComparison(intervals);
+			const auto comparison = ComputeABComparison(intervals, !globals::game::isVR);
 			runResults.push_back({ T(TKEY("live_label"), "Unsaved changes (saved vs current)"), comparison, FrameBudgetMs(),
 				comparison.valid ? "" : kNoSamplesNote });
 			logger::info("[A/B] Live test: {:+.3f} +/- {:.3f} ms", comparison.deltaMs, comparison.uncertaintyMs);
@@ -276,6 +278,7 @@ void ABTestingManager::SampleCompositor()
 	if (ReadLatestCompositorSample(sample, lastCompositorFrameIndex, &compositorTimingAvailable)) {
 		compositorStats.Add(usingTestConfig ? ABVariant::B : ABVariant::A, sample);
 		aggregator.OnHeadline(sample.applicationGpuMs);
+		aggregator.OnFrameTime(sample.clientFrameIntervalMs);
 	}
 }
 
@@ -319,6 +322,11 @@ void ABTestingManager::SampleProfilerHeadline()
 void ABTestingManager::RecordFrame(const std::vector<DrawCallRow>& rows)
 {
 	aggregator.OnFrame(rows);
+	if (!globals::game::isVR) {
+		const auto now = std::chrono::steady_clock::now();
+		aggregator.OnFrameTime(std::chrono::duration<float, std::milli>(now - lastFrameTime).count());
+		lastFrameTime = now;
+	}
 	SampleCompositor();
 	SampleProfilerHeadline();
 }
@@ -355,16 +363,47 @@ namespace
 		return pending;
 	}
 
-	/** @brief Request that sets one catalogued setting of a feature, leaving its other settings as they are. */
-	ABComparisonRequest SettingRequest(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label)
+	/** @brief Change that sets one catalogued setting of a feature, leaving its other settings as they are. */
+	std::function<void()> SettingSetter(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, nlohmann::json value)
 	{
-		return { std::move(label), [&feature, setting, target] {
-					nlohmann::json settings;
-					feature.SaveSettings(settings);
-					if (auto* slot = Util::Settings::GetCatalogSerializedValue(settings, setting))
-						*slot = target;
-					feature.LoadSettings(settings);
-				} };
+		return [&feature, setting, value = std::move(value)] {
+			nlohmann::json settings;
+			feature.SaveSettings(settings);
+			if (auto* slot = Util::Settings::GetCatalogSerializedValue(settings, setting))
+				*slot = value;
+			feature.LoadSettings(settings);
+		};
+	}
+
+	/** @brief Request that sets one catalogued setting to `target`, preparing it and the settings that enable it to `from` first when given. */
+	ABComparisonRequest SettingRequest(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target,
+		std::string label, const std::optional<nlohmann::json>& from = std::nullopt)
+	{
+		ABComparisonRequest request{ std::move(label), SettingSetter(feature, setting, target) };
+		std::vector<std::function<void()>> prepares;
+		if (const auto prerequisites = ABTestingManager::GetSingleton()->PrerequisitesFor(feature, setting)) {
+			for (const auto& prerequisite : *prerequisites)
+				prepares.push_back(SettingSetter(feature, *prerequisite.setting, prerequisite.requiredValue));
+		}
+		if (from)
+			prepares.push_back(SettingSetter(feature, setting, *from));
+		if (!prepares.empty())
+			request.prepare = [prepares = std::move(prepares)] {
+				for (const auto& prepare : prepares)
+					prepare();
+			};
+		return request;
+	}
+
+	/** @brief The whole change a request measures: its prepare, then its apply. */
+	std::function<void()> ChangeClosure(const ABComparisonRequest& request)
+	{
+		if (!request.prepare)
+			return request.apply;
+		return [prepare = request.prepare, apply = request.apply] {
+			prepare();
+			apply();
+		};
 	}
 }
 
@@ -428,16 +467,20 @@ void ABTestingManager::BeginComparison(size_t index)
 	const auto& request = queue[index];
 
 	state->LoadFromJson(queueOriginal);
-	const auto restartNeeded = RestartNeededBy(request.apply);
+	const auto restartNeeded = RestartNeededBy(ChangeClosure(request));
 	{
 		SceneSettingsManager::SceneLayerGuard guard(*SceneSettingsManager::GetSingleton());
+		if (request.prepare)
+			request.prepare();
+		userConfigSnapshot = nlohmann::json::object();
+		state->SaveToJson(userConfigSnapshot);
 		request.apply();
+		testConfigSnapshot = nlohmann::json::object();
+		state->SaveToJson(testConfigSnapshot);
 	}
-	testConfigSnapshot = nlohmann::json::object();
-	state->SaveToJson(testConfigSnapshot);
 	state->LoadFromJson(queueOriginal);
 
-	const bool unchanged = testConfigSnapshot == queueOriginal;
+	const bool unchanged = testConfigSnapshot == userConfigSnapshot;
 	if (unchanged || !restartNeeded.empty()) {
 		runResults.push_back({ request.label, {}, FrameBudgetMs(),
 			restartNeeded.empty() ? "Changes no saved setting, so there is nothing to compare." :
@@ -452,7 +495,6 @@ void ABTestingManager::BeginComparison(size_t index)
 		return;
 	}
 
-	userConfigSnapshot = queueOriginal;
 	hasUserSnapshot = true;
 	hasTestSnapshot = true;
 	testInterval = queueOptions.intervalSeconds;
@@ -464,7 +506,7 @@ void ABTestingManager::BeginComparison(size_t index)
 void ABTestingManager::FinishComparison()
 {
 	aggregator.OnTestEnd();
-	const auto comparison = ComputeABComparison(aggregator.GetHeadlineIntervals());
+	const auto comparison = ComputeABComparison(aggregator.GetHeadlineIntervals(), !globals::game::isVR);
 	runResults.push_back({ queue[queueIndex].label, comparison, FrameBudgetMs(), comparison.valid ? "" : kNoSamplesNote });
 	logger::info("[A/B] {}: {:+.3f} +/- {:.3f} ms", queue[queueIndex].label, comparison.deltaMs, comparison.uncertaintyMs);
 
@@ -514,7 +556,14 @@ nlohmann::json ABTestingManager::StatusJson() const
 			{ "meanBMs", c.meanBMs },
 			{ "deltaMs", c.deltaMs },
 			{ "uncertaintyMs", c.uncertaintyMs },
+			{ "frameMeanAMs", c.frame.meanAMs },
+			{ "frameMeanBMs", c.frame.meanBMs },
+			{ "frameDeltaMs", c.frame.deltaMs },
+			{ "frameUncertaintyMs", c.frame.uncertaintyMs },
+			{ "fpsA", c.frame.valid && c.frame.meanAMs > 0.0f ? 1000.0f / c.frame.meanAMs : 0.0f },
+			{ "fpsB", c.frame.valid && c.frame.meanBMs > 0.0f ? 1000.0f / c.frame.meanBMs : 0.0f },
 			{ "percentOfBudget", run.budgetMs > 0.0f ? c.deltaMs / run.budgetMs * 100.0f : 0.0f },
+			{ "headroomOnly", c.headroomOnly },
 			{ "verdict", verdict },
 			{ "note", run.note } });
 	}
@@ -571,21 +620,72 @@ bool ABTestingManager::Enqueue(ABQueuedComparison item)
 	return true;
 }
 
-bool ABTestingManager::QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error)
+bool ABTestingManager::EnqueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, ABComparisonRequest request, std::string* error)
 {
 	nlohmann::json probe;
 	feature.SaveSettings(probe);
 	if (!Util::Settings::GetCatalogSerializedValue(probe, setting))
 		return Refuse(error, "The setting is not present in the feature's saved settings.");
-	if (!Enqueue({ SettingKey(setting), SettingRequest(feature, setting, target, std::move(label)) }))
+	if (!Enqueue({ SettingKey(setting), std::move(request) }))
 		return Refuse(error, "A comparison is running; wait for it to finish.");
 	return true;
 }
 
-std::string ABTestingManager::SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target)
+bool ABTestingManager::QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error)
 {
-	const auto request = SettingRequest(feature, setting, target, {});
-	return RestartNeededBy(request.apply);
+	return EnqueueSetting(feature, setting, SettingRequest(feature, setting, target, std::move(label)), error);
+}
+
+bool ABTestingManager::QueueSettingChange(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& from, const nlohmann::json& to, std::string label, std::string* error)
+{
+	return EnqueueSetting(feature, setting, SettingRequest(feature, setting, to, std::move(label), std::optional<nlohmann::json>{ from }), error);
+}
+
+std::optional<nlohmann::json> ABTestingManager::SavedSettingValue(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting)
+{
+	std::ifstream file(Util::PathHelpers::GetSettingsUserPath());
+	if (!file.is_open())
+		return std::nullopt;
+
+	nlohmann::json saved;
+	try {
+		file >> saved;
+	} catch (const nlohmann::json::exception&) {
+		return std::nullopt;
+	}
+
+	const auto featureSettings = saved.find(feature.GetName());
+	if (featureSettings == saved.end() || !featureSettings->is_object())
+		return std::nullopt;
+	if (const auto* value = Util::Settings::GetCatalogSerializedValue(*featureSettings, setting))
+		return std::optional<nlohmann::json>{ *value };
+	return std::nullopt;
+}
+
+std::optional<std::vector<ABSettingPrerequisite>> ABTestingManager::PrerequisitesFor(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting)
+{
+	nlohmann::json current;
+	feature.SaveSettings(current);
+	const auto steps = ABPrerequisites::ResolvePrerequisites<SceneSettingsCatalog::SettingMetadata, nlohmann::json>(setting, [&setting](std::string_view key, std::string_view path) { return SceneSettingsCatalog::FindSetting(setting.featureShortName, path, key); }, [&current](const SceneSettingsCatalog::SettingMetadata& prerequisite) {
+			const auto* value = Util::Settings::GetCatalogSerializedValue(current, prerequisite);
+			return value ? *value : nlohmann::json(); }, [](const SceneSettingsCatalog::SettingMetadata& prerequisite, std::int8_t required) {
+			const bool on = required != 0;
+			return prerequisite.valueType == SceneSettingsCatalog::ValueType::Boolean ?
+			           nlohmann::json(on) :
+			           nlohmann::json(on ? 1 : 0); });
+	if (!steps)
+		return std::nullopt;
+
+	std::vector<ABSettingPrerequisite> prerequisites;
+	for (const auto& step : *steps)
+		prerequisites.push_back({ step.setting, step.required });
+	return prerequisites;
+}
+
+std::string ABTestingManager::SettingRestartReason(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, const std::optional<nlohmann::json>& from)
+{
+	const auto request = SettingRequest(feature, setting, target, {}, from);
+	return RestartNeededBy(ChangeClosure(request));
 }
 
 bool ABTestingManager::QueueSettingByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, std::string* error)
@@ -663,14 +763,22 @@ bool ABTestingManager::RunQueue(std::string* error)
 				return Refuse(error, "All together can only combine changes to individual settings; a preset replaces the settings it covers, so it cannot be combined.");
 		}
 
+		std::vector<std::function<void()>> prepares;
 		std::vector<std::function<void()>> applies;
-		for (const auto& item : comparisonQueue)
+		for (const auto& item : comparisonQueue) {
+			if (item.request.prepare)
+				prepares.push_back(item.request.prepare);
 			applies.push_back(item.request.apply);
+		}
 		ABComparisonRequest combined{
 			fmt::format(fmt::runtime(T(TKEY("together_label"), "{} changes together")), applies.size()),
 			[applies = std::move(applies)] {
 				for (const auto& apply : applies)
 					apply();
+			},
+			[prepares = std::move(prepares)] {
+				for (const auto& prepare : prepares)
+					prepare();
 			}
 		};
 		if (!StartComparisons({ std::move(combined) }, runOptions, error))
@@ -780,26 +888,26 @@ void ABTestingManager::DrawBenchmarkTab()
 	}
 
 	ImGui::Spacing();
-	ImGui::SeparatorText(T(TKEY("abtest_title"), "A/B test"));
+	ImGui::SeparatorText(T(TKEY("live_title"), "Live comparison"));
 	DrawSettingsUI();
 }
 
 void ABTestingManager::DrawSettingsUI()
 {
 	int interval = static_cast<int>(testInterval);
-	if (ImGui::SliderInt(T(TKEY("live_interval"), "Live A/B seconds per swap"), &interval, static_cast<int>(kMinLiveIntervalSeconds), static_cast<int>(kMaxLiveIntervalSeconds)))
+	if (ImGui::SliderInt(T(TKEY("live_interval"), "Live comparison seconds per swap"), &interval, static_cast<int>(kMinLiveIntervalSeconds), static_cast<int>(kMaxLiveIntervalSeconds)))
 		testInterval = static_cast<uint32_t>(interval);
 
 	ImGui::BeginDisabled(queueActive);
 	if (abTestingEnabled) {
-		if (ImGui::Button(T(TKEY("live_stop"), "Stop live A/B")))
+		if (ImGui::Button(T(TKEY("live_stop"), "Stop live comparison")))
 			Disable();
-	} else if (ImGui::Button(T(TKEY("live_start"), "Start live A/B"))) {
+	} else if (ImGui::Button(T(TKEY("live_start"), "Start live comparison"))) {
 		Enable();
 	}
 	ImGui::EndDisabled();
 
-	ImGui::TextDisabled("%s", T(TKEY("live_hint"), "A = your saved settings, B = your current settings. Change settings first, then start."));
+	ImGui::TextDisabled("%s", T(TKEY("live_hint"), "Compares your saved settings with your current settings. Change settings first, then start."));
 
 	if (!liveNotice.empty())
 		ImGui::TextColored(Menu::GetSingleton()->GetTheme().StatusPalette.Warning, "%s", liveNotice.c_str());
@@ -884,7 +992,7 @@ void ABTestingManager::DrawOverlayUI()
 	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * Util::GetUIScale();
 	ImGui::SetNextWindowBgAlpha(0.85f);
 	ImGui::SetNextWindowPos(ImVec2(pos, pos));
-	if (!ImGui::Begin("A/B Testing", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+	if (!ImGui::Begin("Benchmark", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 		ImGui::End();
 		return;
 	}
@@ -895,10 +1003,17 @@ void ABTestingManager::DrawOverlayUI()
 		ImGui::Text(T(TKEY("overlay_comparing"), "Comparing %s (%zu of %zu)"), queue[queueIndex].label.c_str(), queueIndex + 1, queue.size());
 
 	// Show current variant and time
-	const char* variantLabel = aggregator.IsWarmingUp() ?
-	                               T(TKEY("variant_b_warmup"), "Variant B (TEST) warm-up") :
-	                           usingTestConfig ? T(TKEY("variant_b_test"), "Variant B (TEST)") :
-	                                             T(TKEY("variant_a_user"), "Variant A (USER)");
+	const bool warmingUp = aggregator.IsWarmingUp();
+	const char* variantLabel = nullptr;
+	if (queueActive) {
+		variantLabel = warmingUp       ? T(TKEY("variant_change_warmup"), "Change (warm-up)") :
+		               usingTestConfig ? T(TKEY("variant_change"), "Change") :
+		                                 T(TKEY("variant_baseline"), "Baseline");
+	} else {
+		variantLabel = warmingUp       ? T(TKEY("variant_current_warmup"), "Current settings (warm-up)") :
+		               usingTestConfig ? T(TKEY("variant_current"), "Current settings") :
+		                                 T(TKEY("variant_saved"), "Saved settings");
+	}
 	ImGui::Text("%s", fmt::format(fmt::runtime(T(TKEY("variant_time_left_fmt"), "{} : {:.1f}s left")),
 						  variantLabel, remaining)
 						  .c_str());

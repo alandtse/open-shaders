@@ -111,6 +111,7 @@ add_executable(cpp_tests
 	test_nr_roi.cpp
 	test_abcompositorstats.cpp
 	test_abcomparison.cpp
+	test_prerequisitechain.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp

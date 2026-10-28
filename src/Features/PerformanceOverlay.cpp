@@ -1285,8 +1285,8 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
 /**
  * @brief Draws the benchmark table: the finished runs, the comparison running now and everything still queued.
  *
- * The delta is variant B (the change) minus variant A (the settings as they were) in application GPU time,
- * so a negative number is faster. A delta inside its uncertainty reads as no measurable change.
+ * The delta is variant B (the change) minus variant A (the settings as they were): frame time on flat, application GPU
+ * time in VR, where the frame rate follows the display. A delta inside its uncertainty reads as no measurable change.
  *
  * @param editable Adds a remove button to each row that is still in the queue; the Benchmark tab passes true, the overlay false.
  */
@@ -1307,6 +1307,9 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 			return T(TKEY("status_running"), "Running...");
 		if (!run.comparison.valid)
 			return run.note;
+		if (run.comparison.headroomOnly)
+			return run.comparison.verdict == ABVerdict::Faster ? T(TKEY("verdict_faster_gpu"), "Faster on GPU only (frame rate unchanged)") :
+			                                                     T(TKEY("verdict_slower_gpu"), "Slower on GPU only (frame rate unchanged)");
 		switch (run.comparison.verdict) {
 		case ABVerdict::Faster:
 			return T(TKEY("verdict_faster"), "Faster");
@@ -1316,21 +1319,40 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 			return T(TKEY("verdict_no_change"), "No measurable change");
 		}
 	};
-	const auto percentOfBudget = [](const ABBenchmarkRow& row) {
-		return row.result.budgetMs > 0.0f ? row.result.comparison.deltaMs / row.result.budgetMs * 100.0f : 0.0f;
+	const auto fpsText = [](const ABBenchmarkRow& row) -> std::string {
+		const auto& frame = row.result.comparison.frame;
+		if (!frame.valid || frame.meanAMs <= 0.0f || frame.meanBMs <= 0.0f)
+			return {};
+		return std::format("{:.1f} -> {:.1f}", 1000.0f / frame.meanAMs, 1000.0f / frame.meanBMs);
+	};
+	const auto frameText = [](const ABBenchmarkRow& row) -> std::string {
+		const auto& frame = row.result.comparison.frame;
+		return frame.valid ? std::format("{:+.2f} +/- {:.2f}", frame.deltaMs, frame.uncertaintyMs) : std::string{};
+	};
+	const auto gpuText = [](const ABBenchmarkRow& row) -> std::string {
+		const auto& comparison = row.result.comparison;
+		return comparison.valid ? std::format("{:+.2f} +/- {:.2f}", comparison.deltaMs, comparison.uncertaintyMs) : std::string{};
 	};
 
 	using Row = ABBenchmarkRow;
 	std::vector<std::string> headers = {
 		T(TKEY("run_col_change"), "Change"),
-		T(TKEY("run_col_delta"), "GPU delta (ms)"),
-		T(TKEY("run_col_budget"), "% of frame budget"),
+		T(TKEY("run_col_fps"), "FPS"),
+		T(TKEY("run_col_frame"), "Frame time (ms)"),
+		T(TKEY("run_col_gpu"), "GPU (ms)"),
 		T(TKEY("run_col_verdict"), "Verdict"),
 	};
 	std::vector<std::function<bool(const Row&, const Row&, bool)>> sorters = {
 		[](const Row& a, const Row& b, bool ascending) { return ascending ? a.result.label < b.result.label : a.result.label > b.result.label; },
+		[](const Row& a, const Row& b, bool ascending) {
+			const auto baselineFps = [](const Row& row) {
+				const auto& frame = row.result.comparison.frame;
+				return frame.valid && frame.meanAMs > 0.0f ? 1000.0f / frame.meanAMs : 0.0f;
+			};
+			return ascending ? baselineFps(a) < baselineFps(b) : baselineFps(a) > baselineFps(b);
+		},
+		[](const Row& a, const Row& b, bool ascending) { return ascending ? a.result.comparison.frame.deltaMs < b.result.comparison.frame.deltaMs : a.result.comparison.frame.deltaMs > b.result.comparison.frame.deltaMs; },
 		[](const Row& a, const Row& b, bool ascending) { return ascending ? a.result.comparison.deltaMs < b.result.comparison.deltaMs : a.result.comparison.deltaMs > b.result.comparison.deltaMs; },
-		[&](const Row& a, const Row& b, bool ascending) { return ascending ? percentOfBudget(a) < percentOfBudget(b) : percentOfBudget(a) > percentOfBudget(b); },
 		[&](const Row& a, const Row& b, bool ascending) { return ascending ? verdictText(a) < verdictText(b) : verdictText(a) > verdictText(b); },
 	};
 	if (editable) {
@@ -1344,7 +1366,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 	const size_t filterSlot = editable ? 1 : 0;  // The tab and the overlay can be visible in one frame, and only the tab has the remove column.
 	ImGui::TextUnformatted(T(TKEY("run_summary_title"), "Comparison results"));
 	Util::ShowFilteredStringTableCustom<Row>(
-		"ABRunSummaryTable", headers, rows, 1, true, sorters,
+		"ABRunSummaryTable", headers, rows, 2, true, sorters,
 		[&](int, int column, const Row& row, const std::string&) {
 			const auto& run = row.result;
 			switch (column) {
@@ -1352,14 +1374,15 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 				ImGui::TextUnformatted(run.label.c_str());
 				break;
 			case 1:
-				if (run.comparison.valid)
-					ImGui::Text("%+.2f +/- %.2f", run.comparison.deltaMs, run.comparison.uncertaintyMs);
+				ImGui::TextUnformatted(fpsText(row).c_str());
 				break;
 			case 2:
-				if (run.comparison.valid)
-					ImGui::Text("%+.1f%%", percentOfBudget(row));
+				ImGui::TextUnformatted(frameText(row).c_str());
 				break;
 			case 3:
+				ImGui::TextUnformatted(gpuText(row).c_str());
+				break;
+			case 4:
 				{
 					const bool finished = row.status == ABBenchmarkRow::Status::Done || row.status == ABBenchmarkRow::Status::Skipped;
 					ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_Text);
@@ -1385,8 +1408,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 		},
 		filterText[filterSlot], searchColumn[filterSlot],
 		[&](const Row& row) {
-			std::vector<std::string> fields{ row.result.label, row.result.comparison.valid ? std::format("{:+.2f}", row.result.comparison.deltaMs) : "",
-				row.result.comparison.valid ? std::format("{:+.1f}", percentOfBudget(row)) : "", verdictText(row) };
+			std::vector<std::string> fields{ row.result.label, fpsText(row), frameText(row), gpuText(row), verdictText(row) };
 			if (editable)
 				fields.emplace_back();
 			return fields;
@@ -1394,7 +1416,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 		false);
 	if (!removed.empty())
 		abTestingManager->Unqueue(removed);
-	ImGui::TextDisabled("%s", T(TKEY("run_summary_note"), "Delta is the change minus your current settings. A delta inside its uncertainty is no measurable change."));
+	ImGui::TextDisabled("%s", T(TKEY("run_summary_note"), "Frame time and FPS are the headline on flat; in VR the frame rate is locked to the display, so the verdict follows GPU time. A change inside its uncertainty is no measurable change."));
 	ImGui::Separator();
 }
 
@@ -2355,7 +2377,7 @@ namespace
 void PerformanceOverlay::RegisterUxActions()
 {
 	FEATURE_COMMAND("startABTest",
-		"Start the live in-game A/B test, the same as the Start live A/B button in Performance > Benchmark > A/B test. Variant B (TEST) is the settings active right now (set them first with openshaders.feature set, unsaved); variant A (USER) is the saved settings. It refuses when nothing has changed since the last save, because there would be nothing to compare. Variants swap every intervalSeconds (1-10, default 3); the first B interval is an unmeasured warm-up. Calling it while a test runs only changes the interval. Params: intervalSeconds (integer). Read results with the abTestStatus query; stop with stopABTest.",
+		"Start the live in-game comparison, the same as the Start live comparison button in Performance > Benchmark > Live comparison. Variant B (TEST) is the settings active right now (set them first with openshaders.feature set, unsaved); variant A (USER) is the saved settings. It refuses when nothing has changed since the last save, because there would be nothing to compare. Variants swap every intervalSeconds (1-10, default 3); the first B interval is an unmeasured warm-up. Calling it while a comparison runs only changes the interval. Params: intervalSeconds (integer). Read results with the abTestStatus query; stop with stopABTest.",
 		[](Feature*, const json& args) {
 			const auto interval = args.value("intervalSeconds", 3u);
 			if (interval < 1 || interval > kMaxABTestIntervalSeconds)
@@ -2369,7 +2391,7 @@ void PerformanceOverlay::RegisterUxActions()
 		});
 
 	FEATURE_COMMAND("stopABTest",
-		"Stop the A/B test and restore the variant B (TEST) settings, the same as the Stop live A/B button in Performance > Benchmark > A/B test; during a startSettingComparison or startPresetComparison run it cancels the run and restores the original settings. The live test's verdict is added to the runs in abTestStatus. Results stay readable through abTestStatus until the next start. Params: none.",
+		"Stop the live comparison and restore the variant B (TEST) settings, the same as the Stop live comparison button in Performance > Benchmark > Live comparison; during a startSettingComparison or startPresetComparison run it cancels the run and restores the original settings. The live comparison's verdict is added to the runs in abTestStatus. Results stay readable through abTestStatus until the next start. Params: none.",
 		[](Feature*, const json&) {
 			ABTestingManager::GetSingleton()->Disable();
 		});
@@ -2418,7 +2440,7 @@ void PerformanceOverlay::RegisterUxActions()
 		[](Feature*, const json&) { ABTestingManager::GetSingleton()->ClearQueue(); });
 
 	FEATURE_QUERY("abTestStatus",
-		"A/B test state and results: enabled, comparisonRunning, queue (labels waiting for the next run), queueNotice (presets not added to the queue and why, such as needing a restart), liveNotice (why a live A/B start was refused), comparison (the label running now), comparisonIndex, comparisonCount, frameBudgetMs, runs[] (label, valid, meanAMs, meanBMs, deltaMs, uncertaintyMs against the bracketing A intervals, percentOfBudget, verdict faster/slower/noChange, note) from startSettingComparison and startPresetComparison; intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU = pre-submit plus post-submit scene time, total render GPU which also includes compositor work, compositor GPU and CPU, client frame interval, dropped frames, and frames the compositor reprojected for a CPU or GPU reason) plus deltaApplicationGpuMs and deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
+		"Live comparison and benchmark state and results: enabled, comparisonRunning, queue (labels waiting for the next run), queueNotice (presets not added to the queue and why, such as needing a restart), liveNotice (why a live comparison start was refused), comparison (the label running now), comparisonIndex, comparisonCount, frameBudgetMs, runs[] (label, valid, meanAMs, meanBMs, deltaMs, uncertaintyMs against the bracketing A intervals, frameMeanAMs, frameMeanBMs, frameDeltaMs, frameUncertaintyMs over wall-clock frame time, fpsA and fpsB derived from it (0 when the frame series has no usable samples), percentOfBudget, headroomOnly (the frame time held and only the GPU cost moved, so the verdict is GPU headroom), verdict faster/slower/noChange, note) from startSettingComparison and startPresetComparison; intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU = pre-submit plus post-submit scene time, total render GPU which also includes compositor work, compositor GPU and CPU, client frame interval, dropped frames, and frames the compositor reprojected for a CPU or GPU reason) plus deltaApplicationGpuMs and deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
 		ABTestStatus);
 }
 #undef I18N_KEY_PREFIX

@@ -1555,8 +1555,6 @@
     "feature.perf_overlay.validity_legend_body": "",
     "feature.perf_overlay.validity_marginal_fmt": "",
     "feature.perf_overlay.validity_valid_fmt": "",
-    "feature.perf_overlay.variant_a_user": "",
-    "feature.perf_overlay.variant_b_test": "",
     "feature.perf_overlay.variant_time_left_fmt": "",
     "feature.perf_overlay.vram_not_available": "",
     "feature.perf_overlay.vram_usage": "",
