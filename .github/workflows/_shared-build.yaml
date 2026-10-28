@@ -568,6 +568,12 @@ jobs:
               if: steps.check-cpp.outputs.skip != 'true'
               run: python -m unittest discover -s tests -p test_cmake_shader_staging.py
 
+            - name: Exploratory native Python tests
+              if: steps.check-cpp.outputs.skip != 'true'
+              continue-on-error: true
+              working-directory: tests
+              run: python -m unittest -v test_scene_settings_runtime test_scene_settings_controls test_feature_overwrite_persistence test_post_processing_lifecycle test_settings_loading test_scene_settings_audit test_scene_settings_persistence test_environment_controls
+
             - name: Upload test results on failure
               if: failure() && steps.check-cpp.outputs.skip != 'true'
               uses: actions/upload-artifact@v7
