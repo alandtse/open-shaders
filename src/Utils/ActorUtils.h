@@ -39,7 +39,7 @@ namespace Util
 	[[nodiscard]] inline bool IsOwnedByActor(const RE::NiAVObject& a_node)
 	{
 		const auto* owner = a_node.GetUserData();
-		return owner && owner->GetFormType() == RE::FormType::ActorCharacter;
+		return owner && owner->IsActor();
 	}
 
 	/** @brief A Havok or Gamebryo point as the float3 the shaders and constant buffers use. */
