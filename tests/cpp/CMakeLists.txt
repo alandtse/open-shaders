@@ -50,6 +50,7 @@ set(screenshot_test_sources
     test_screenshot_png.cpp
     test_screenshot_worker.cpp
     test_screenshot_burst_adapter.cpp
+    test_screenshot_burst_policy.cpp
     "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
