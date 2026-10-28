@@ -553,12 +553,12 @@ jobs:
               with:
                   configurePreset: ALL
                   buildPreset: ALL
-                  buildPresetAdditionalArgs: "['--target cpp_tests']"
+                  buildPresetAdditionalArgs: "['--target cpp_tests', '--target screenshot_tests_devbench']"
 
             - name: Run C++ unit tests
               if: steps.check-cpp.outputs.skip != 'true'
               run: |
-                  ctest --test-dir build/ALL -C Release --output-on-failure -R CppUtilTests --timeout 60
+                  ctest --test-dir build/ALL -C Release --output-on-failure -R "CppUtilTests|ScreenshotDevBenchTests" --timeout 60
 
             - name: Test settings catalog generator
               if: steps.check-cpp.outputs.skip != 'true'
@@ -577,3 +577,59 @@ jobs:
                       build/ALL/Testing/**
                   retention-days: 7
                   if-no-files-found: ignore
+
+    python-unit-tests:
+        name: Run Python Unit Tests
+        if: inputs.run-cpp-tests
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ inputs.ref }}
+                  repository: ${{ inputs.repository }}
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
+
+            - name: Check if Python tests should run
+              id: check-python
+              shell: bash
+              run: |
+                  if [ "${{ github.event_name }}" != "pull_request_target" ]; then
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                    echo "skip=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  fi
+
+            # These tests compile slices of src/*.cpp against stub headers with g++, so they
+            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
+            # run in the Windows jobs instead.
+            - name: Install PyYAML
+              if: steps.check-python.outputs.skip != 'true'
+              run: |
+                  python3 -m venv "$RUNNER_TEMP/venv"
+                  "$RUNNER_TEMP/venv/bin/pip" install pyyaml
+
+            - name: Run Python unit tests
+              if: steps.check-python.outputs.skip != 'true'
+              working-directory: tests
+              run: >
+                  "$RUNNER_TEMP/venv/bin/python" -m unittest -v
+                  test_editor_startup
+                  test_effects11_hdr
+                  test_environment_controls
+                  test_feature_flip_impact
+                  test_force_weather
+                  test_gpu_pass
+                  test_nr_interop
+                  test_profiler
+                  test_release_plan
+                  test_scene_settings_audit
+                  test_scene_settings_persistence
+                  test_scene_settings_policy
+                  test_skylighting_cadence
+                  test_skylighting_scheduling

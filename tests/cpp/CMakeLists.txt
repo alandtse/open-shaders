@@ -50,6 +50,7 @@ set(screenshot_test_sources
     test_screenshot_png.cpp
     test_screenshot_worker.cpp
     test_screenshot_burst_adapter.cpp
+    test_screenshot_burst_policy.cpp
     "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
@@ -112,6 +113,7 @@ add_executable(cpp_tests
 	test_abcompositorstats.cpp
 	test_abcomparison.cpp
 	test_prerequisitechain.cpp
+	test_desktop_mirror.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp
@@ -128,6 +130,7 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABCompositorStats.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABComparison.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Menu/DesktopMirrorDrawData.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
@@ -141,7 +144,6 @@ add_executable(cpp_tests
 )
 
 target_include_directories(cpp_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK")
-target_compile_definitions(cpp_tests PRIVATE CS_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Exercise capture policy in both production and DevBench configurations.
 add_executable(screenshot_tests_devbench test_main.cpp ${screenshot_test_sources})

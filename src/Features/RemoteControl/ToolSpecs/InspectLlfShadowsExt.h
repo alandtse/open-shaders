@@ -14,7 +14,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(convertReEnableToleranceSkipped,originPinnedLights,warpsRun,warpsSkippedSubPixel,warpsSkippedOffscreen,warpsSkippedNoDemand,convertedLights,convertedStrictLights,passGuardChecksTotal,)"
 		R"(passGuardCycleSkipsTotal,passGuardFaultSkipsTotal,passGuardCapExceededTotal,passGuardCycleRepairsTotal,staleAccumulatesTotal,staleAfterRenderSkipTotal,stalePassClearsTotal,renderSkipSessionResetTotal,)"
 		R"(renderSkipPortalTransitionTotal,renderSkipTeardownWaitingTotal,renderSkipTeardownRaceTotal,passRegChecksTotal,passRegRingsTotal,stalePromotedTotal,passGuardRepairsPromotedTotal,)"
-		R"(passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. visibility audits every candidate light: engineCulled is the UpdateCamera verdict (frustrumCull reads 0xff for every rejection) split into exclusive causes hidden,)"
+		R"(passRegRingsPromotedTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. playerProtected counts lights reaching the player, playerForcedPastBudget the redraws forced past the configured budget or per-frame cap, and playerProtectedExcess the protected lights that still lost a slot to the shadow light count (each with a Total since load). visibility audits every candidate light: engineCulled is the UpdateCamera verdict (frustrumCull reads 0xff for every rejection) split into exclusive causes hidden,)"
 		R"( )"
 		R"(shadowDistanceCulled and frustumCulled; )"
 		R"(ownInFrustum is an independent sphere-versus-side-planes test from the published view-projection (any eye in VR) that ignores the far plane; distance is the light centre to the nearest eye; )"

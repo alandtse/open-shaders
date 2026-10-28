@@ -11,6 +11,7 @@
 #include "I18n/I18n.h"
 #include "LinearLighting.h"
 #include "Menu.h"
+#include "Menu/OverlayRenderer.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Upscaling.h"
@@ -1129,6 +1130,8 @@ HRESULT HDRDisplay::RunPresentChainWithHDR(
 		auto* dataRTV = Util::AsReal(data.RTV);
 		globals::d3d::context->OMSetRenderTargets(1, &dataRTV, nullptr);
 	}
+
+	OverlayRenderer::RenderDesktopMirrorAtPresent(swapChain, hdrReady, frameGenActive);
 
 	return presentChain(swapChain, syncInterval, flags);
 }

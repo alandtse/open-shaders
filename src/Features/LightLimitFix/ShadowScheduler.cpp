@@ -136,13 +136,13 @@ namespace ShadowCasterManager
 	/// lit frustum (a spot's radius can span the whole cell). Player-specific
 	/// supplement to the geomList-derived signals: the player's geometry
 	/// usually isn't in geomList at scheduling time. O(1), safe every frame.
-	static bool PlayerWithinLightRadius(RE::BSShadowLight* light)
+	static bool PlayerWithinLightRadius(RE::BSShadowLight* light, float reachPad = 0.0f)
 	{
 		auto* plr = globals::game::player;
 		const auto* ni = light ? light->light.get() : nullptr;
 		if (!plr || !ni)
 			return false;
-		const float r = ni->GetLightRuntimeData().radius.x;
+		const float r = ni->GetLightRuntimeData().radius.x + reachPad;
 		const auto pp = plr->GetPosition();
 		if (ni->world.translate.GetSquaredDistance(pp) >= r * r)
 			return false;
@@ -153,7 +153,13 @@ namespace ShadowCasterManager
 			return true;
 		const float playerPos[3] = { pp.x, pp.y, pp.z };
 		const float beamDistance = LightLimitFixLitRegion::DistanceToFrustum(proj, playerPos);
-		return beamDistance < kPlayerCasterReachUnits;
+		return beamDistance < kPlayerCasterReachUnits + reachPad;
+	}
+
+	/// True when a light reaches the player's body, so its shadow on them must not drop out.
+	static bool ShadowsPlayer(RE::BSShadowLight* light)
+	{
+		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -394,6 +400,10 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_sleepSkipTotal{ 0 };
 	// Cumulative schedule-time zero-demand skips since load (snapshot metric).
 	std::atomic<uint64_t> s_demandSkipTotal{ 0 };
+	// Cumulative player-protected light-frames, redraws forced past the budget, and slot-cap losses since load.
+	std::atomic<uint64_t> s_playerProtectedTotal{ 0 };
+	std::atomic<uint64_t> s_playerForcedPastBudgetTotal{ 0 };
+	std::atomic<uint64_t> s_playerProtectedExcessTotal{ 0 };
 
 	// Zero-demand-skip audit (measurement only): an oracle cross-checking
 	// the engine's frustum cull, plus a counterfactual budget-admission
@@ -1273,6 +1283,9 @@ namespace ShadowCasterManager
 
 		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
 		bool updateCameraFailed{ false };
+
+		/// Reaches the player: ranked ahead of every other candidate.
+		bool playerProtected{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
@@ -1595,6 +1608,7 @@ namespace ShadowCasterManager
 				auto& c = candidates.emplace_back();
 				c.light = l;
 				c.sun = false;
+				c.playerProtected = ShadowsPlayer(l);
 				float impact = 1.0f;
 				{
 					ZoneScopedN("SCM::ScoreCandidates::LightScore");
@@ -1673,6 +1687,8 @@ namespace ShadowCasterManager
 			[](const CandidateLight& a, const CandidateLight& b) {
 				if (a.sun != b.sun)
 					return a.sun;
+				if (a.playerProtected != b.playerProtected)
+					return a.playerProtected;
 				if (a.score != b.score)
 					return a.score > b.score;
 				return reinterpret_cast<uintptr_t>(a.light) < reinterpret_cast<uintptr_t>(b.light);
@@ -1921,6 +1937,14 @@ namespace ShadowCasterManager
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
+				if (c.playerProtected) {
+					s_schedDiag.player_protected++;
+					s_playerProtectedTotal.fetch_add(1, std::memory_order_relaxed);
+					if (c.excess) {
+						s_schedDiag.player_protected_excess++;
+						s_playerProtectedExcessTotal.fetch_add(1, std::memory_order_relaxed);
+					}
+				}
 
 				// Capture why a non-chosen light is demoted, for the shadow table. Portal
 				// wins, then frustum/distance, LOD, excess -- matching branch precedence.
@@ -2147,6 +2171,7 @@ namespace ShadowCasterManager
 					for (const auto& c : candidates) {
 						if (c.light == e.Light) {
 							e.lastScore = c.score;
+							e.playerProtected = c.playerProtected;
 							break;
 						}
 					}
@@ -2240,6 +2265,8 @@ namespace ShadowCasterManager
 	/// and the Q2 counterfactual replay so both traverse candidates identically.
 	static bool ScheduleOrderLess(uint32_t starvationFloorFrames, const LightEntry* a, const LightEntry* b)
 	{
+		if (a->playerProtected != b->playerProtected)
+			return a->playerProtected;
 		if (a->schedDirty != b->schedDirty)
 			return a->schedDirty && !b->schedDirty;
 		const bool aStarved = a->dirtyStallFrames >= starvationFloorFrames;
@@ -2277,7 +2304,7 @@ namespace ShadowCasterManager
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
 			// next frame instead of competing for this frame's budget.
-			if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+			if (!e.playerProtected && !s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
 				newLightSkips.push_back(&e);
 				continue;
 			}
@@ -2294,7 +2321,7 @@ namespace ShadowCasterManager
 			// Zero-demand skip, tested after sleep so the two never double-count.
 			// schedDirty stays at its last value so a wrongly-skipped truly-dirty
 			// light still shows starvation risk; skippedThisFrame freezes the stall counter.
-			if (DemandSkipEligible(e, i, now)) {
+			if (!e.playerProtected && DemandSkipEligible(e, i, now)) {
 				s_schedDiag.demand_skips++;
 				s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				e.skippedThisFrame = true;
@@ -2718,16 +2745,20 @@ namespace ShadowCasterManager
 		anyCostRejected = false;
 
 		for (auto* e : pending) {
-			if (maxRedraw <= 0)
+			if (!e->playerProtected && (maxRedraw <= 0 || budgetRemain <= 0))
 				break;
-			if (budgetRemain <= 0)
-				break;
-			const DueGate gate = DueGateFor(e, now, isFirst);
+			DueGate gate = DueGateFor(e, now, isFirst);
+			if (e->playerProtected && gate == DueGate::Stop)
+				gate = DueGate::Skip;
 			if (gate == DueGate::Stop)
 				break;
 			if (gate == DueGate::Skip)
 				continue;
 			int32_t budgetEstimate = s_budget.GetCost(e->Light);
+			if (e->playerProtected && (maxRedraw <= 0 || budgetEstimate > budgetRemain)) {
+				s_schedDiag.player_forced_past_budget++;
+				s_playerForcedPastBudgetTotal.fetch_add(1, std::memory_order_relaxed);
+			}
 			if (isFirst) {
 				if (!s_lights.Sun || e->Index > 0)
 					budgetRemain -= budgetEstimate;
@@ -2738,7 +2769,7 @@ namespace ShadowCasterManager
 				isFirst = false;
 				continue;
 			}
-			if (budgetEstimate <= budgetRemain) {
+			if (e->playerProtected || budgetEstimate <= budgetRemain) {
 				budgetRemain -= budgetEstimate;
 				maxRedraw--;
 				e->RedrawFrame = true;
@@ -3485,6 +3516,12 @@ namespace ShadowCasterManager
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				snap.demandSkips = s_schedDiag.demand_skips;
 				snap.demandSkipsTotal = s_demandSkipTotal.load(std::memory_order_relaxed);
+				snap.playerProtected = s_schedDiag.player_protected;
+				snap.playerProtectedTotal = s_playerProtectedTotal.load(std::memory_order_relaxed);
+				snap.playerForcedPastBudget = s_schedDiag.player_forced_past_budget;
+				snap.playerForcedPastBudgetTotal = s_playerForcedPastBudgetTotal.load(std::memory_order_relaxed);
+				snap.playerProtectedExcess = s_schedDiag.player_protected_excess;
+				snap.playerProtectedExcessTotal = s_playerProtectedExcessTotal.load(std::memory_order_relaxed);
 				snap.alphaGroupPeak = AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed);
 				snap.alphaGroupDrops = AlphaGeometryGroupCeilingFix::drops.load(std::memory_order_relaxed);
 				snap.frustumAuditCandidates = s_schedDiag.frustum_audit_candidates;
@@ -3534,6 +3571,9 @@ namespace ShadowCasterManager
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
 			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
+			TracyPlot("scm.player.protected", (int64_t)s_schedDiag.player_protected);
+			TracyPlot("scm.player.forced_past_budget", (int64_t)s_schedDiag.player_forced_past_budget);
+			TracyPlot("scm.player.protected_excess", (int64_t)s_schedDiag.player_protected_excess);
 			TracyPlot("scm.demand_skips", (int64_t)s_schedDiag.demand_skips);
 			TracyPlot("scm.alpha_groups", (int64_t)AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed));
 			TracyPlot("scm.demand.skip_eligible", (int64_t)s_schedDiag.demand_skip_eligible);

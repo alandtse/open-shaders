@@ -3,7 +3,10 @@
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
+#include <array>
+#include <cmath>
 #include <dxgi.h>
+#include <dxgi1_4.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
@@ -13,14 +16,18 @@
 #include "CSEditor/EditorWindow.h"
 #include "Feature.h"
 #include "FeatureIssues.h"
+#include "Menu/DesktopMirrorDrawData.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
+#include "Features/HDRDisplay.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
+#include "Features/Upscaling.h"
 #include "Features/VR.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
@@ -33,6 +40,15 @@
 
 namespace
 {
+	DesktopMirrorDrawData pendingDesktopMirror;
+	ImDrawData* pendingDesktopMirrorSource = nullptr;
+
+	bool IsSupportedDesktopMirrorFormat(const DXGI_FORMAT format)
+	{
+		return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
+		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+	}
+
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
 		if (failed) {
@@ -445,13 +461,145 @@ void OverlayRenderer::FinalizeImGuiFrame()
 
 	ImGui::Render();
 
-	if (!BackgroundBlur::RenderDrawData(ImGui::GetDrawData()))
-		ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+	auto* drawData = ImGui::GetDrawData();
+	if (!RenderDesktopMirror(drawData) && !BackgroundBlur::RenderDrawData(drawData))
+		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
 	// VR overlay compositing — Community Shaders no longer submits its own.
 	globals::features::vr.RenderHelperToPanel();
+}
+
+bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
+{
+	pendingDesktopMirror.Reset();
+	pendingDesktopMirrorSource = nullptr;
+	uint32_t panelWidth = 0;
+	uint32_t panelHeight = 0;
+	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
+	if (!helperPanelActive || !drawData || !globals::d3d::swapChain)
+		return false;
+	if (globals::features::upscaling.d3d12SwapChainActive ||
+		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR))
+		return false;
+
+	DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+	if (FAILED(globals::d3d::swapChain->GetDesc(&swapChainDesc)))
+		return false;
+	if (!IsSupportedDesktopMirrorFormat(swapChainDesc.BufferDesc.Format))
+		return false;
+
+	const ImVec2 desktopSize(
+		static_cast<float>(swapChainDesc.BufferDesc.Width),
+		static_cast<float>(swapChainDesc.BufferDesc.Height));
+	const double sourceWidth = static_cast<double>(drawData->DisplaySize.x) * drawData->FramebufferScale.x;
+	const double sourceHeight = static_cast<double>(drawData->DisplaySize.y) * drawData->FramebufferScale.y;
+	const bool sourceCanvasValid = std::isfinite(sourceWidth) && std::isfinite(sourceHeight) && sourceWidth > 0.0 && sourceHeight > 0.0;
+	const bool dimensionsDiffer = !sourceCanvasValid || std::abs(desktopSize.x - sourceWidth) > 0.5 || std::abs(desktopSize.y - sourceHeight) > 0.5;
+	if (!dimensionsDiffer || BackgroundBlur::HasHDRSceneImageCallback(drawData))
+		return false;
+
+	// Fit the helper-sized canvas for the desktop target; keep the original for the HMD panel.
+	if (!pendingDesktopMirror.Build(*drawData, desktopSize))
+		return false;
+
+	pendingDesktopMirrorSource = drawData;
+	return true;
+}
+
+void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, const bool hdrReady, const bool frameGenActive)
+{
+	const auto clearPending = []() {
+		pendingDesktopMirror.Reset();
+		pendingDesktopMirrorSource = nullptr;
+	};
+	if (!pendingDesktopMirror.Get())
+		return;
+	const SKSE::stl::scope_exit consumePending([&]() noexcept {
+		pendingDesktopMirror.Reset();
+		pendingDesktopMirrorSource = nullptr;
+	});
+	if (!swapChain || !pendingDesktopMirrorSource || hdrReady || frameGenActive || globals::features::upscaling.d3d12SwapChainActive ||
+		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR)) {
+		clearPending();
+		return;
+	}
+	if (!globals::d3d::device || !globals::d3d::context) {
+		clearPending();
+		return;
+	}
+
+	DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+	if (FAILED(swapChain->GetDesc(&swapChainDesc))) {
+		clearPending();
+		return;
+	}
+	UINT bufferIndex = 0;
+	winrt::com_ptr<IDXGISwapChain3> swapChain3;
+	if (SUCCEEDED(swapChain->QueryInterface(IID_PPV_ARGS(swapChain3.put())))) {
+		bufferIndex = swapChain3->GetCurrentBackBufferIndex();
+	} else if (swapChainDesc.BufferCount > 1 && swapChainDesc.SwapEffect != DXGI_SWAP_EFFECT_DISCARD) {
+		clearPending();
+		return;
+	}
+
+	winrt::com_ptr<ID3D11Texture2D> backBuffer;
+	if (FAILED(swapChain->GetBuffer(bufferIndex, IID_PPV_ARGS(backBuffer.put()))) || !backBuffer) {
+		clearPending();
+		return;
+	}
+	D3D11_TEXTURE2D_DESC backBufferDesc{};
+	backBuffer->GetDesc(&backBufferDesc);
+	auto* mirrorDrawData = pendingDesktopMirror.Get();
+	const bool fitsMirror = mirrorDrawData && IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1 &&
+	                        static_cast<float>(backBufferDesc.Width) == mirrorDrawData->DisplaySize.x &&
+	                        static_cast<float>(backBufferDesc.Height) == mirrorDrawData->DisplaySize.y;
+
+	winrt::com_ptr<ID3D11RenderTargetView> backBufferRTV;
+	if (FAILED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, backBufferRTV.put()))) {
+		clearPending();
+		return;
+	}
+	Util::SetResourceName(backBufferRTV.get(), "OverlayRenderer::DesktopMirror RTV");
+
+	auto context = globals::d3d::context;
+	std::array<ID3D11RenderTargetView*, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> rawPreviousRTVs{};
+	std::array<winrt::com_ptr<ID3D11RenderTargetView>, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> previousRTVs{};
+	winrt::com_ptr<ID3D11DepthStencilView> previousDSV;
+	context->OMGetRenderTargets(static_cast<UINT>(rawPreviousRTVs.size()), rawPreviousRTVs.data(), previousDSV.put());
+	for (size_t i = 0; i < rawPreviousRTVs.size(); ++i)
+		previousRTVs[i].attach(rawPreviousRTVs[i]);
+	D3D11_VIEWPORT previousViewports[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+	UINT previousViewportCount = ARRAYSIZE(previousViewports);
+	context->RSGetViewports(&previousViewportCount, previousViewports);
+	D3D11_RECT previousScissors[D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE]{};
+	UINT previousScissorCount = ARRAYSIZE(previousScissors);
+	context->RSGetScissorRects(&previousScissorCount, previousScissors);
+	const SKSE::stl::scope_exit restoreOutput([&]() noexcept {
+		std::array<ID3D11RenderTargetView*, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT> targets{};
+		for (size_t i = 0; i < previousRTVs.size(); ++i)
+			targets[i] = previousRTVs[i].get();
+		context->OMSetRenderTargets(static_cast<UINT>(targets.size()), targets.data(), previousDSV.get());
+		context->RSSetViewports(previousViewportCount, previousViewports);
+		context->RSSetScissorRects(previousScissorCount, previousScissors);
+	});
+
+	auto* target = backBufferRTV.get();
+	context->OMSetRenderTargets(1, &target, nullptr);
+	const D3D11_VIEWPORT viewport{ 0.0f, 0.0f, static_cast<float>(backBufferDesc.Width), static_cast<float>(backBufferDesc.Height), 0.0f, 1.0f };
+	context->RSSetViewports(1, &viewport);
+	const D3D11_RECT scissor{ 0, 0, static_cast<LONG>(backBufferDesc.Width), static_cast<LONG>(backBufferDesc.Height) };
+	context->RSSetScissorRects(1, &scissor);
+
+	CS_GPU_PASS("OverlayRenderer::DesktopMirror");
+	if (!fitsMirror) {
+		ImGui_ImplDX11_RenderDrawData(pendingDesktopMirrorSource);
+		return;
+	}
+	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
+		ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
+	clearPending();
 }
 
 void OverlayRenderer::RenderFirstTimeSetupOverlay()

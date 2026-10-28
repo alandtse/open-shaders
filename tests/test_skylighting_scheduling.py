@@ -20,6 +20,7 @@ def scheduling_fixture():
     return r'''
 #include <algorithm>
 #include <array>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -47,13 +48,14 @@ struct Skylighting {
     uint dispatchSliceStart = 0, dispatchSliceCount = 0;
     uint frameCount = 0, lastProbeUpdateFrame = ~0u, lastProbeUpdateCapture = ~0u;
     uint lastOcclusionRenderFrame = ~0u, occlusionCaptureCorner = 0, nextOcclusionCorner = 0;
+    float probeGridBottomZ = -FLT_MAX;
     bool probeDataReady = true, queuedResetSkylighting = false;
     void ResetSkylighting() { queuedResetSkylighting = true; }
     void GameLoaded();
     void OnSceneTransitionReset(bool);
     void LoadSettings(Settings&);
     void ClearProbes() { RESET }
-    void Prepare(bool moved = false) { float3 cellIDDiff{moved ? 1.f : 0.f, 0, 0}; PREPARE }
+    void Prepare(bool moved = false) { float3 cellIDDiff{moved ? 1.f : 0.f, 0, 0}, cellOrigin, cellSize{1, 1, 1}; PREPARE }
     void Advance(uint corner) { frameCount = occlusionCaptureCorner = corner; ADVANCE }
 };
 using json = Skylighting::Settings;
