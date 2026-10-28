@@ -19,6 +19,7 @@ Pick the layer by what the test needs to prove. In-game verification through dev
 ## Running locally
 
 -   C++: `cmake --build build/ALL --target cpp_tests`, then `ctest --test-dir build/ALL -C Release -R CppUtilTests`.
+-   C++ devbench screenshot tests: `cmake --build build/ALL --target screenshot_tests_devbench`, then `ctest --test-dir build/ALL -C Release -R ScreenshotDevBenchTests`.
 -   Shaders: `cmake --build build/ALL --target run_shader_tests`.
 -   Python: `cd tests && python -m unittest test_<name>`. The compile-based tests need `g++` or `clang++`; a few need the Windows imgui build and skip elsewhere.
 

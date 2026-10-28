@@ -82,6 +82,7 @@ runs:
                   cpp_tests:
                     - 'tests/cpp/**'
                     - 'tests/*.py'
+                    - 'features/Skylighting/Shaders/Skylighting/UpdateProbesCS.hlsl'
                     - 'tools/feature-flip-impact.py'
                     - 'tools/release_plan.py'
                     - 'package/Shaders/Tests/WindFieldParitySamples.hlsli'
