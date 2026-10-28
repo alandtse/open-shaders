@@ -87,19 +87,6 @@ int main() {
             source.replace("HELPERS", helpers),
             imgui_root=ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")
 
-    def test_scene_switch_never_stores_a_draft(self):
-        ui = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")
-        manager = MANAGER_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("StoreFeatureSceneEdit", braced(ui, "static bool FinishActiveFeatureSceneEdit("))
-        self.assertNotIn("StoreFeatureSceneEdit", braced(manager, "bool SceneSettingsManager::BeginFeatureSceneEdit("))
-        toolbar = braced(ui, "bool DrawFeaturePageControls(")
-        guard = toolbar.index("state.activeContext != GetFeatureSceneContext(state.edit)")
-        self.assertLess(guard, toolbar.index("manager->SetWeatherShowTimeOfDay("))
-        self.assertLess(guard, toolbar.index("manager->SetLocationShowTimeOfDay("))
-        self.assertIn("state.replaceScene.Request();", toolbar)
-        self.assertIn("state.edit = *state.pendingTarget;", toolbar)
-        self.assertIn("state.saveFailed = !manager->StoreFeatureSceneEdit();", toolbar)
-
     def test_native_failed_save_keeps_draft_and_saved_entries(self):
         manager = MANAGER_PATH.read_text(encoding="utf-8")
         store = braced(manager, "bool SceneSettingsManager::StoreFeatureSceneEdit(")

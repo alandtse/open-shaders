@@ -135,7 +135,6 @@ add_executable(cpp_tests
 )
 
 target_include_directories(cpp_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK")
-target_compile_definitions(cpp_tests PRIVATE CS_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Exercise capture policy in both production and DevBench configurations.
 add_executable(screenshot_tests_devbench test_main.cpp ${screenshot_test_sources})
