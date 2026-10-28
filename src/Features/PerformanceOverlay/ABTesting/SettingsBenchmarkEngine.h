@@ -36,6 +36,7 @@ namespace SettingsBenchmark
 	{
 		float gpuMs = 0.0f;
 		float cpuMs = 0.0f;
+		float frameMs = 0.0f;  ///< Wall-clock frame interval; 0 when the source has none.
 	};
 
 	struct VariantInfo
@@ -57,6 +58,8 @@ namespace SettingsBenchmark
 		float gpuVariantMs = 0.0f;
 		float gpuBaselineMs = 0.0f;
 		float cpuDeltaMs = 0.0f;
+		float frameDeltaMs = 0.0f;  ///< Frame-interval change; capped by vsync or a frame limiter.
+		float frameBaselineMs = 0.0f;
 		uint32_t repeats = 0;
 	};
 
@@ -132,6 +135,7 @@ namespace SettingsBenchmark
 			double sumGpu = 0.0;
 			double sumGpuSquares = 0.0;
 			double sumCpu = 0.0;
+			double sumFrame = 0.0;
 			bool complete = false;
 		};
 

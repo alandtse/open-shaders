@@ -2305,7 +2305,7 @@ void PerformanceOverlay::RegisterUxActions()
 		[](Feature*, const json&) { SettingsBenchmark::Cancel(); });
 
 	FEATURE_QUERY("settingsBenchmarkStatus",
-		"Settings benchmark state: phase, running, block, blockCount, framesInBlock, framesNeeded, countdownRemaining, currentVariant (baseline or a variant id), timingSource (compositor in VR, profiler on flat), frameBudgetMs (11.1 in VR, 16.7 on flat), error, resultPath (the results JSON next to the log), config, the built-in variants[] (id, label, group, note) and results[] (gpuDeltaMs, gpuUncertaintyMs against the bracketing baselines, gpuBaselineMs, gpuVariantMs, gpuDeltaPercentOfBudget, cpuDeltaMs, repeats). Params: none.",
+		"Settings benchmark state: phase, running, block, blockCount, framesInBlock, framesNeeded, countdownRemaining, currentVariant (baseline or a variant id), timingSource (compositor in VR, profiler on flat), frameBudgetMs (11.1 in VR, 16.7 on flat), error, resultPath (the results JSON next to the log), config, the built-in variants[] (id, label, group, note) and results[] (gpuDeltaMs, gpuUncertaintyMs against the bracketing baselines, gpuBaselineMs, gpuVariantMs, gpuDeltaPercentOfBudget, cpuDeltaMs, frameDeltaMs and frameBaselineMs (the frame interval, which a vsync or frame limiter caps), repeats). Params: none.",
 		[](const Feature*, const json&) -> json { return SettingsBenchmark::StatusJson(); });
 
 	FEATURE_QUERY("abTestStatus",

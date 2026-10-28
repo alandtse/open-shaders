@@ -161,6 +161,8 @@ namespace SettingsBenchmark
 				{ "gpuBaselineMs", result.gpuBaselineMs },
 				{ "gpuDeltaPercentOfBudget", result.gpuDeltaMs / BudgetMs(run.source) * 100.0f },
 				{ "cpuDeltaMs", result.cpuDeltaMs },
+				{ "frameDeltaMs", result.frameDeltaMs },
+				{ "frameBaselineMs", result.frameBaselineMs },
 				{ "repeats", result.repeats } };
 		}
 
@@ -366,7 +368,7 @@ namespace SettingsBenchmark
 		if (run.source == TimingSource::Compositor) {
 			CompositorSample frame;
 			hasSample = ReadLatestCompositorSample(frame, run.lastCompositorFrame);
-			sample = { frame.totalRenderGpuMs, frame.compositorRenderCpuMs };
+			sample = { frame.totalRenderGpuMs, frame.compositorRenderCpuMs, frame.clientFrameIntervalMs };
 		} else {
 			// Profiler capture is request-driven and its GPU result arrives a few frames late.
 			auto* profiler = globals::profiler;
@@ -375,7 +377,7 @@ namespace SettingsBenchmark
 			if (captured != 0 && captured != run.lastProfilerFrame) {
 				run.lastProfilerFrame = captured;
 				hasSample = true;
-				sample = { profiler->GetResolvedTotalTimeMs(), profiler->GetResolvedCpuTotalTimeMs() };
+				sample = { profiler->GetResolvedTotalTimeMs(), profiler->GetResolvedCpuTotalTimeMs(), delta * 1000.0f };
 			}
 		}
 		const auto directive = run.engine.Tick(sample, hasSample, delta, CanMeasure());
@@ -519,11 +521,12 @@ namespace SettingsBenchmark
 		if (run.results.empty())
 			return;
 
-		if (ImGui::BeginTable("##SettingsBenchmarkResults", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+		if (ImGui::BeginTable("##SettingsBenchmarkResults", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
 			ImGui::TableSetupColumn(T(TKEY("col_variant"), "Variant"));
 			ImGui::TableSetupColumn(T(TKEY("col_gpu_delta"), "GPU delta (ms)"));
 			ImGui::TableSetupColumn(T(TKEY("col_budget"), "% of frame budget"));
 			ImGui::TableSetupColumn(T(TKEY("col_cpu_delta"), "CPU delta (ms)"));
+			ImGui::TableSetupColumn(T(TKEY("col_frame_delta"), "Frame time delta (ms)"));
 			ImGui::TableSetupColumn(T(TKEY("col_baseline"), "Baseline (ms)"));
 			ImGui::TableHeadersRow();
 			for (const auto& result : run.results) {
@@ -542,12 +545,15 @@ namespace SettingsBenchmark
 				ImGui::TableNextColumn();
 				ImGui::Text("%+.2f", result.cpuDeltaMs);
 				ImGui::TableNextColumn();
+				ImGui::Text("%+.2f", result.frameDeltaMs);
+				ImGui::TableNextColumn();
 				ImGui::Text("%.2f", result.gpuBaselineMs);
 			}
 			ImGui::EndTable();
 		}
 
 		ImGui::TextDisabled(T(TKEY("budget_note"), "Frame budget: %.1f ms"), BudgetMs(run.source));
+		ImGui::TextDisabled("%s", T(TKEY("frame_note"), "Frame time follows vsync or a frame limiter: a cost below the headroom does not show in it."));
 		if (!run.resultPath.empty())
 			ImGui::TextDisabled("%s", run.resultPath.string().c_str());
 	}

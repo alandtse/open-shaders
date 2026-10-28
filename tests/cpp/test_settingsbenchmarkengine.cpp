@@ -122,6 +122,31 @@ TEST_CASE("Benchmark rejects hitches and missing samples", "[settingsbenchmark]"
 	CHECK(results[0].gpuDeltaMs == Catch::Approx(0.0f).margin(1e-4));
 }
 
+TEST_CASE("Benchmark reports the frame interval change and ignores hitch frames", "[settingsbenchmark]")
+{
+	Engine engine;
+	REQUIRE(engine.Start(Variants(1), FastConfig()));
+	int active = kBaseline;
+	uint32_t frame = 0;
+	for (int i = 0; i < 10000 && engine.IsRunning(); ++i) {
+		Sample sample{ 5.0f, 1.0f, active == 0 ? 17.7f : 16.7f };
+		if (frame % 6 == 5)
+			sample.frameMs = kMaxFrameMs + 40.0f;
+		const auto directive = engine.Tick(sample, true, 0.011f, true);
+		++frame;
+		if (directive.apply) {
+			active = directive.variant;
+			frame = 0;
+		}
+	}
+
+	const auto results = engine.Results();
+	REQUIRE(results.size() == 1);
+	CHECK(results[0].frameBaselineMs == Catch::Approx(16.7f));
+	CHECK(results[0].frameDeltaMs == Catch::Approx(1.0f));
+	CHECK(results[0].gpuDeltaMs == Catch::Approx(0.0f).margin(1e-4));
+}
+
 TEST_CASE("Benchmark waits for the countdown and for a measurable frame", "[settingsbenchmark]")
 {
 	Engine engine;

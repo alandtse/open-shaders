@@ -14,6 +14,7 @@ namespace SettingsBenchmark
 		{
 			double gpu = 0.0;
 			double cpu = 0.0;
+			double frame = 0.0;
 			double standardError = 0.0;
 		};
 
@@ -24,6 +25,7 @@ namespace SettingsBenchmark
 			BlockMean mean;
 			mean.gpu = block.sumGpu / n;
 			mean.cpu = block.sumCpu / n;
+			mean.frame = block.sumFrame / n;
 			const double variance = std::max(0.0, block.sumGpuSquares / n - mean.gpu * mean.gpu);
 			mean.standardError = std::sqrt(variance / n);
 			return mean;
@@ -112,11 +114,13 @@ namespace SettingsBenchmark
 				if (++framesInPhase > config.measureFrames * kAttemptsPerWantedFrame)
 					return Fail("The frame timing source reported too few valid frames.");
 
-				if (hasSample && sample.gpuMs > 0.0f && sample.gpuMs < kMaxFrameMs) {
+				const bool hitch = sample.frameMs >= kMaxFrameMs;
+				if (hasSample && sample.gpuMs > 0.0f && sample.gpuMs < kMaxFrameMs && !hitch) {
 					++block.validFrames;
 					block.sumGpu += sample.gpuMs;
 					block.sumGpuSquares += static_cast<double>(sample.gpuMs) * sample.gpuMs;
 					block.sumCpu += sample.cpuMs;
+					block.sumFrame += sample.frameMs;
 				} else {
 					++block.rejectedFrames;
 				}
@@ -188,7 +192,7 @@ namespace SettingsBenchmark
 		for (size_t variantIndex = 0; variantIndex < variants.size(); ++variantIndex) {
 			Result result{ .id = variants[variantIndex].id, .label = variants[variantIndex].label, .group = variants[variantIndex].group };
 			std::vector<double> deltas;
-			double cpuDeltaSum = 0.0, uncertaintySum = 0.0, variantSum = 0.0, baselineSum = 0.0;
+			double cpuDeltaSum = 0.0, frameDeltaSum = 0.0, frameBaselineSum = 0.0, uncertaintySum = 0.0, variantSum = 0.0, baselineSum = 0.0;
 
 			for (uint32_t repeat = 0; repeat < config.repeats; ++repeat) {
 				const size_t first = repeat * perRepeat + variantIndex * 2;
@@ -206,6 +210,9 @@ namespace SettingsBenchmark
 
 				deltas.push_back(variantMean.gpu - baseline);
 				cpuDeltaSum += variantMean.cpu - (baselineBefore.cpu + baselineAfter.cpu) * 0.5;
+				const double frameBaseline = (baselineBefore.frame + baselineAfter.frame) * 0.5;
+				frameDeltaSum += variantMean.frame - frameBaseline;
+				frameBaselineSum += frameBaseline;
 				uncertaintySum += std::max(drift, variantMean.standardError);
 				variantSum += variantMean.gpu;
 				baselineSum += baseline;
@@ -236,6 +243,8 @@ namespace SettingsBenchmark
 			result.gpuVariantMs = static_cast<float>(variantSum / n);
 			result.gpuBaselineMs = static_cast<float>(baselineSum / n);
 			result.cpuDeltaMs = static_cast<float>(cpuDeltaSum / n);
+			result.frameDeltaMs = static_cast<float>(frameDeltaSum / n);
+			result.frameBaselineMs = static_cast<float>(frameBaselineSum / n);
 			result.repeats = static_cast<uint32_t>(deltas.size());
 			results.push_back(std::move(result));
 		}
