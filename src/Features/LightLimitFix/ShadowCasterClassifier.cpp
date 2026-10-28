@@ -7,6 +7,7 @@
 
 #include "../../Globals.h"
 #include "../../State.h"
+#include "../../Utils/ActorUtils.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
 #include "ShadowCasterInternal.h"
@@ -244,13 +245,6 @@ namespace ShadowCasterManager
 	bool GetActorAttachedDynamic() { return s_actorAttachedDynamic.load(std::memory_order_relaxed); }
 	void SetActorAttachedDynamic(bool a_value) { s_actorAttachedDynamic.store(a_value, std::memory_order_relaxed); }
 
-	/// True when the caster is owned by, or parented under, an actor (held weapons, scabbards, anim objects).
-	static bool IsActorAttached(const RE::BSGeometry& geom)
-	{
-		const auto* owner = geom.GetUserData();
-		return owner && owner->GetFormType() == RE::FormType::ActorCharacter;
-	}
-
 	/// Classifies a caster static vs dynamic from quantized worldBound
 	/// movement (1-unit, matching the redraw hash), memoized once per frame.
 	static CasterMobility& ClassifyCaster(RE::BSGeometry& geom)
@@ -296,7 +290,7 @@ namespace ShadowCasterManager
 		r.dynamic = r.framesSinceMove < promoteAt;
 		if (s_actorAttachedDynamic.load(std::memory_order_relaxed)) {
 			if (inserted || s_casterClassEpoch - r.ancestryEpoch >= kAncestryRecheckEpochs) {
-				r.actorAttached = IsActorAttached(geom);
+				r.actorAttached = Util::IsOwnedByActor(geom);
 				r.ancestryEpoch = s_casterClassEpoch;
 			}
 			// Parented under an actor: it rests and moves with the actor, so each pause would
