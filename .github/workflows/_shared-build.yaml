@@ -564,6 +564,10 @@ jobs:
               if: steps.check-cpp.outputs.skip != 'true'
               run: python -m unittest discover -s tests -p test_scene_settings_catalog_generator.py
 
+            - name: Test shader staging CMake modules
+              if: steps.check-cpp.outputs.skip != 'true'
+              run: python -m unittest discover -s tests -p test_cmake_shader_staging.py
+
             - name: Upload test results on failure
               if: failure() && steps.check-cpp.outputs.skip != 'true'
               uses: actions/upload-artifact@v7

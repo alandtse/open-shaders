@@ -3817,6 +3817,8 @@
     "menu.advanced.test_conditions": "测试条件",
     "menu.advanced.threading_header": "",
     "menu.advanced.top_slowest_shaders": "",
+    "menu.advanced.tracy_per_draw_zones": "",
+    "menu.advanced.tracy_per_draw_zones_tooltip": "",
     "menu.advanced.vertex": "顶点",
     "menu.advanced.vertex_tooltip": "替换顶点着色器。设为false时将禁用上述类型的自定义顶点着色器。供开发者测试自定义着色器是否与原版行为匹配。",
     "menu.advanced.work_label": "",

@@ -55,6 +55,7 @@
 #	include "Utils/SettingsCatalog.h"
 #	include "Utils/SettingsDefaults.h"
 #	include "Utils/SettingsPatch.h"
+#	include "Utils/TracyZones.h"
 #	include "VRAPI/CSpluginapi.h"
 
 #	include <DevBenchAPI.h>
@@ -96,6 +97,12 @@ namespace
 		return globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 	}
 
+	// Exception text can hold ANSI-code-page bytes; a strict dump would throw past the C ABI.
+	std::string DumpForDevBench(const json& a_json)
+	{
+		return a_json.dump(-1, ' ', false, json::error_handler_t::replace);
+	}
+
 	// Shared C-ABI handler body. The whole request — parse, dispatch, dump — is wrapped
 	// so NO exception ever crosses the DLL boundary, and a_write is called exactly once.
 	// `a_build` is a plain function pointer (no captures) so this composes with the
@@ -115,7 +122,7 @@ namespace
 		} catch (...) {
 			out = json{ { "error", "unknown handler error" } };
 		}
-		const std::string dumped = out.dump();
+		const std::string dumped = DumpForDevBench(out);
 		a_write(a_sink, dumped.c_str());
 	}
 
@@ -607,6 +614,7 @@ namespace
 		auto* cache = globals::shaderCache;
 		if (!cache)
 			return json{ { "error", "shader cache unavailable" } };
+		const auto rollback = cache->GetRollbackState();
 		return json{
 			{ "compiling", cache->IsCompiling() },
 			{ "completedTasks", cache->GetCompletedTasks() },
@@ -625,13 +633,13 @@ namespace
 			{ "digestComputeTimeUs", cache->GetDigestComputeTimeUs() },
 			{ "frame_count", EnqueuedFrame() },
 			// Rollback/backup-slot state, mirrored by the restorePrevious/acceptRebuild actions.
-			{ "diskCacheHeld", cache->IsDiskCacheHeld() },
-			{ "featureSetChanged", cache->HasFeatureSetChanges() },
-			{ "featureSetRevertPending", cache->HasFeatureSetRevertPending() },
-			{ "featureSetCacheBackedUp", cache->HasFeatureSetCacheBackup() },
-			{ "previousDiskCacheAvailable", cache->HasPreviousDiskCache() },
-			{ "cacheMismatches", MismatchesToJson(cache->GetCacheMismatches()) },
-			{ "previousCacheMismatches", MismatchesToJson(cache->GetPreviousCacheMismatches()) },
+			{ "diskCacheHeld", rollback.diskCacheHeld },
+			{ "featureSetChanged", rollback.featureSetChanged },
+			{ "featureSetRevertPending", rollback.featureSetRevertPending },
+			{ "featureSetCacheBackedUp", rollback.featureSetCacheBackedUp },
+			{ "previousDiskCacheAvailable", rollback.previousDiskCacheAvailable },
+			{ "cacheMismatches", MismatchesToJson(rollback.cacheMismatches) },
+			{ "previousCacheMismatches", MismatchesToJson(rollback.previousCacheMismatches) },
 		};
 	}
 
@@ -1100,7 +1108,16 @@ namespace
 				return json{ { "action", "disable" }, { "enabled", false } };
 			});
 		}
-		return json{ { "error", "unknown action (enable|disable)" }, { "action", action } };
+		if (action == "perDrawZones") {
+			if (a_args.contains("enabled") && a_args["enabled"].is_boolean())
+				TracyZones::SetPerDrawZones(a_args["enabled"].get<bool>());
+			return json{
+				{ "action", "perDrawZones" },
+				{ "enabled", TracyZones::PerDrawZonesEnabled() },
+				{ "callsSinceLastFrame", { { "State::Draw", TracyZones::Snapshot(TracyZones::Family::StateDraw) }, { "OnRenderPassBegin", TracyZones::Snapshot(TracyZones::Family::RenderPassHook) } } }
+			};
+		}
+		return json{ { "error", "unknown action (enable|disable|perDrawZones)" }, { "action", action } };
 	}
 
 	void ProfilerToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -1365,7 +1382,7 @@ namespace
 				else if (a_status.failed)
 					payload["error"] = std::format("{} frame(s) could not be captured or written", a_status.failed);
 			}
-			const std::string text = payload.dump();
+			const std::string text = DumpForDevBench(payload);
 			if (auto* dvb = DevBenchAPI::GetDevBenchInterface001())
 				dvb->EmitEvent(a_topic, text.c_str());
 		};
@@ -1461,7 +1478,7 @@ namespace
 			auto* host = static_cast<DevBenchAPI::IDevBenchInterface001*>(context);
 			result = RunOnMainThread([request, host] {
 				return globals::features::screenshotFeature.HandleReferenceCapture(request, [host](const json& completion) {
-					const auto text = completion.dump();
+					const auto text = DumpForDevBench(completion);
 					host->EmitEvent("capture.ready", text.c_str());
 				});
 			});
@@ -1473,7 +1490,7 @@ namespace
 			result = { { "error", "Reference capture failed" } };
 		}
 		try {
-			const auto text = result.dump();
+			const auto text = DumpForDevBench(result);
 			write(sink, text.c_str());
 		} catch (...) {
 			write(sink, R"({"error":"Reference result serialization failed"})");
@@ -1802,7 +1819,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.nvperf", BrandedDescription(ToolSpecs::kNvPerfTool), &NvPerfToolHandler, nullptr);
 		NvPerf::SetCompletionCallback([](const NvPerf::CaptureResult& a_result) {
 			if (auto* host = DevBenchAPI::GetDevBenchInterface001()) {
-				const std::string payload = json{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error } }.dump();
+				const std::string payload = DumpForDevBench(json{ { "captureId", a_result.id }, { "success", a_result.success }, { "error", a_result.error } });
 				host->EmitEvent("openshaders.nvperf.completed", payload.c_str());
 			}
 		});

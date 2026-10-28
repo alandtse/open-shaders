@@ -707,6 +707,69 @@ namespace ShadowCasterManager
 	// with VR-specific stack layout -- CONTEXT is the simplest cross-runtime approach.
 	// =========================================================================
 
+	/// What the surface light loops need from a BSLight, read under SEH: a stale entry in a
+	/// surface's light list faults on the NiLight dereference.
+	struct SurfaceLightState
+	{
+		bool readable = false;
+		bool hasLight = false;
+		bool hidden = false;
+		bool shadowCaster = false;
+	};
+
+	static SurfaceLightState ReadSurfaceLight(const RE::BSLight* a_light)
+	{
+		SurfaceLightState state;
+		__try {
+			const auto* ni = a_light->light.get();
+			state.hasLight = ni != nullptr;
+			state.hidden = ni && ni->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+			state.shadowCaster = a_light->frustrumCull == 0xFFu;
+			state.readable = true;
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
+			state = {};
+		}
+		return state;
+	}
+
+	static std::atomic<std::uint64_t> s_staleSurfaceLightTotal{ 0 };
+	static std::atomic<std::uint64_t> s_prunedSurfaceLightTotal{ 0 };
+	static std::atomic<std::uint64_t> s_prunedSurfaceLightEvents{ 0 };
+
+	/// Drops the entries the engine drops before it walks a surface's lights: null, or a BSLight whose
+	/// NiLight was released. Left in place they dangle once the BSLight itself is freed.
+	static void PruneSurfaceLights(RE::BSShaderPropertyLightData* a_lightData)
+	{
+		auto& lights = a_lightData->lights;
+		std::uint32_t removed = 0;
+		for (std::uint32_t i = lights.size(); i-- > 0;) {
+			const auto* l = lights[i];
+			const auto state = l ? ReadSurfaceLight(l) : SurfaceLightState{};
+			if (state.readable && state.hasLight)
+				continue;
+			lights.erase(lights.data() + i);
+			++removed;
+		}
+		if (removed == 0)
+			return;
+		constexpr std::uint64_t kLogFirst = 16;
+		constexpr std::uint64_t kLogEvery = 256;
+		const auto total = s_prunedSurfaceLightTotal.fetch_add(removed, std::memory_order_relaxed) + removed;
+		const auto events = s_prunedSurfaceLightEvents.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (events <= kLogFirst || events % kLogEvery == 0)
+			logger::info("[SCM] Pruned {} surface light(s) without a NiLight (total={})", removed, total);
+	}
+
+	static void NoteStaleSurfaceLight(const RE::BSLight* a_light, std::uint32_t a_index, std::uint32_t a_size)
+	{
+		constexpr std::uint64_t kLogFirst = 16;
+		constexpr std::uint64_t kLogEvery = 256;
+		const auto n = s_staleSurfaceLightTotal.fetch_add(1, std::memory_order_relaxed) + 1;
+		if (n <= kLogFirst || n % kLogEvery == 0)
+			logger::warn("[SCM] Skipped an unreadable surface light (light={}, index={}, listSize={}, total={})",
+				static_cast<const void*>(a_light), a_index, a_size, n);
+	}
+
 	static void Hook_CalculateActiveLightsForSurface(CONTEXT& ctx)
 	{
 		// Args from registers/stack (x64 fastcall, shadow space at RSP+0x00..0x20):
@@ -801,12 +864,17 @@ namespace ShadowCasterManager
 
 		// Step 3: non-shadow lights from the per-surface accumulation list.
 		// Skip parabolic shadow-casters (frustrumCull == 0xFF) and hidden NiLights.
+		PruneSurfaceLights(lightData);
 		for (uint32_t i = 0; i < lightData->lights.size() && added < maxCount; i++) {
 			auto* l = lightData->lights[i];
 			if (!l || l == sunLight)
 				continue;
-			auto* ni = l->light.get();
-			if (ni && (l->frustrumCull == 0xFFu || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden)))
+			const auto state = ReadSurfaceLight(l);
+			if (!state.readable) {
+				NoteStaleSurfaceLight(l, i, lightData->lights.size());
+				continue;
+			}
+			if (state.hasLight && (state.shadowCaster || state.hidden))
 				continue;
 			lights[added++] = l;
 		}
@@ -827,8 +895,12 @@ namespace ShadowCasterManager
 			auto* l = reinterpret_cast<RE::BSLight*>(c.light);
 			if (!l || l == sunLight)
 				continue;
-			auto* ni = l->light.get();
-			if (!ni || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+			const auto state = ReadSurfaceLight(l);
+			if (!state.readable) {
+				NoteStaleSurfaceLight(l, 0, static_cast<std::uint32_t>(s_normalConvert.size()));
+				continue;
+			}
+			if (!state.hasLight || state.hidden)
 				continue;
 
 			// Skip if already added in any prior step.

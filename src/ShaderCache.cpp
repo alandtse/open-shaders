@@ -3787,12 +3787,51 @@ namespace SIE
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
 	static bool SetPreviousCacheRestoreCandidate(
 		std::vector<Util::CacheInvalidation::CacheMismatch> mismatches,
-		bool& previousDiskCacheAvailable,
 		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
 	{
+		bool available = false;
 		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
 			HasDiskCacheInfo(PreviousDiskCachePath()),
-			previousDiskCacheAvailable, previousCacheMismatches);
+			available, previousCacheMismatches);
+	}
+
+	// Empty when the rollback slot is missing, unreadable or not restorable for the current setup.
+	static std::vector<Util::CacheInvalidation::CacheMismatch> ReadPreviousRestoreCandidate()
+	{
+		if (!HasDiskCacheInfo(PreviousDiskCachePath()))
+			return {};
+
+		CSimpleIniA ini;
+		if (!LoadDiskCacheInfo(PreviousDiskCachePath(), ini)) {
+			logger::warn("Previous shader cache exists but its cache info could not be read");
+			return {};
+		}
+
+		auto mismatches = ClassifyCacheInfo(ini, GetCurrentFeatureStates());
+		if (mismatches.empty())
+			return {};
+
+		// Restore is only offered across pure toggle flips: a plugin/feature version
+		// change makes the rollback blobs stale, and a missing feature can't re-enable.
+		if (!OnlyEnabledFlips(mismatches)) {
+			logger::info("Previous shader cache is not offered for restore because versions changed");
+			return {};
+		}
+		if (HasMissingOrFailedFeature(mismatches)) {
+			logger::info("Previous shader cache is not offered for restore because a cached feature is missing or failed to load");
+			return {};
+		}
+
+		std::optional<std::string> previousCompileFlags;
+		if (auto compileFlags = ini.GetValue("Cache", "CompileFlags"))
+			previousCompileFlags = compileFlags;
+		const auto previousFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(previousCompileFlags, GetCurrentCompileFlagsTag());
+		if (previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
+			previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
+			logger::info("Previous shader cache is not offered for restore because its compile flags differ or are unknown");
+			return {};
+		}
+		return mismatches;
 	}
 
 	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
@@ -3849,13 +3888,13 @@ namespace SIE
 	{
 		DeleteDiskCacheFiles(false);
 
-		diskCacheHeld = false;
-		featureSetChanged = false;
-		featureSetRevertPending = false;
-		featureSetCacheBackedUp = false;
-		previousDiskCacheAvailable = false;
 		{
 			std::lock_guard lock{ mismatchesMutex };
+			diskCacheHeld = false;
+			featureSetChanged = false;
+			featureSetRevertPending = false;
+			featureSetCacheBackedUp = false;
+			previousDiskCacheAvailable = false;
 			cacheMismatches.clear();
 			previousCacheMismatches.clear();
 		}
@@ -3881,54 +3920,19 @@ namespace SIE
 		return backedUp;
 	}
 
-	void ShaderCache::RefreshPreviousDiskCacheInfo()
+	void ShaderCache::RefreshPreviousDiskCacheInfo(std::optional<std::vector<CacheMismatch>> a_retained)
 	{
 		ResetPreviousManifest();
-		previousDiskCacheAvailable = false;
-		{
-			std::lock_guard lock{ mismatchesMutex };
-			previousCacheMismatches.clear();
+		auto mismatches = ReadPreviousRestoreCandidate();
+		bool available = !mismatches.empty();
+		if (!available && a_retained && SetPreviousCacheRestoreCandidate(std::move(*a_retained), mismatches)) {
+			available = true;
+			logger::info("Previous shader cache restore retained from feature-change backup");
 		}
 
-		if (!HasDiskCacheInfo(PreviousDiskCachePath()))
-			return;
-
-		CSimpleIniA ini;
-		if (!LoadDiskCacheInfo(PreviousDiskCachePath(), ini)) {
-			logger::warn("Previous shader cache exists but its cache info could not be read");
-			return;
-		}
-
-		auto mismatches = ClassifyCacheInfo(ini, GetCurrentFeatureStates());
-		if (mismatches.empty())
-			return;
-
-		// Restore is only offered across pure toggle flips: a plugin/feature version
-		// change makes the rollback blobs stale, and a missing feature can't re-enable.
-		if (!OnlyEnabledFlips(mismatches)) {
-			logger::info("Previous shader cache is not offered for restore because versions changed");
-			return;
-		}
-		if (HasMissingOrFailedFeature(mismatches)) {
-			logger::info("Previous shader cache is not offered for restore because a cached feature is missing or failed to load");
-			return;
-		}
-
-		std::optional<std::string> previousCompileFlags;
-		if (auto compileFlags = ini.GetValue("Cache", "CompileFlags"))
-			previousCompileFlags = compileFlags;
-		const auto previousFlagsCheck = Util::CacheInvalidation::CheckCompileFlags(previousCompileFlags, GetCurrentCompileFlagsTag());
-		if (previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Mismatch ||
-			previousFlagsCheck == Util::CacheInvalidation::CompileFlagsCheck::Unestablished) {
-			logger::info("Previous shader cache is not offered for restore because its compile flags differ or are unknown");
-			return;
-		}
-
-		{
-			std::lock_guard lock{ mismatchesMutex };
-			previousCacheMismatches = std::move(mismatches);
-		}
-		previousDiskCacheAvailable = true;
+		std::lock_guard lock{ mismatchesMutex };
+		previousCacheMismatches = std::move(mismatches);
+		previousDiskCacheAvailable = available;
 	}
 
 	void ShaderCache::ValidateDiskCache()
@@ -3940,12 +3944,12 @@ namespace SIE
 			std::lock_guard lock{ mismatchesMutex };
 			cacheMismatches.clear();
 			previousCacheMismatches.clear();
+			diskCacheHeld = false;
+			featureSetChanged = false;
+			featureSetRevertPending = false;
+			featureSetCacheBackedUp = false;
+			previousDiskCacheAvailable = false;
 		}
-		diskCacheHeld = false;
-		featureSetChanged = false;
-		featureSetRevertPending = false;
-		featureSetCacheBackedUp = false;
-		previousDiskCacheAvailable = false;
 		heldMismatchDefines.clear();
 
 		RefreshPreviousDiskCacheInfo();
@@ -4014,7 +4018,10 @@ namespace SIE
 			// A missing/failed feature is a broken install, not a chosen setup: hold the
 			// cache untouched so a fixed install revalidates it with no recompile.
 			if (HasMissingOrFailedFeature(cacheMismatches)) {
-				diskCacheHeld = true;
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					diskCacheHeld = true;
+				}
 				logger::info("Disk cache HELD (not deleted): a previously cached feature is missing or failed to load; compiling memory-only this session");
 				return;
 			}
@@ -4037,13 +4044,14 @@ namespace SIE
 			}
 
 			if (BackupActiveDiskCache()) {
-				featureSetChanged = true;
-				featureSetCacheBackedUp = true;
 				bool previousRestoreAvailable;
 				{
 					std::lock_guard lock{ mismatchesMutex };
-					previousRestoreAvailable =
-						SetPreviousCacheRestoreCandidate(cacheMismatches, previousDiskCacheAvailable, previousCacheMismatches);
+					featureSetChanged = true;
+					featureSetCacheBackedUp = true;
+					previousRestoreAvailable = SetPreviousCacheRestoreCandidate(cacheMismatches, previousCacheMismatches);
+					if (previousRestoreAvailable)
+						previousDiskCacheAvailable = true;
 				}
 				WriteDiskCacheInfo();
 				if (previousRestoreAvailable) {
@@ -4054,8 +4062,11 @@ namespace SIE
 			} else {
 				// Backup failure falls back to the plain hold so the user keeps the
 				// match or rebuild choice; never mutate a cache we could not save.
-				diskCacheHeld = true;
-				featureSetCacheBackedUp = false;
+				{
+					std::lock_guard lock{ mismatchesMutex };
+					diskCacheHeld = true;
+					featureSetCacheBackedUp = false;
+				}
 				logger::warn("Feature set changed but previous cache backup failed; preserving the active cache and compiling memory-only");
 			}
 			return;
@@ -4089,24 +4100,17 @@ namespace SIE
 		if (!featureSetCacheBackedUp && !PartialInvalidation(heldMismatchDefines, commitInvalidationDestructive))
 			DeleteActiveDiskCache();
 
-		diskCacheHeld = false;
 		heldMismatchDefines.clear();
 		WriteDiskCacheInfo();
-		featureSetChanged = false;
-		featureSetRevertPending = false;
-		featureSetCacheBackedUp = false;
 		{
 			std::lock_guard lock{ mismatchesMutex };
+			diskCacheHeld = false;
+			featureSetChanged = false;
+			featureSetRevertPending = false;
+			featureSetCacheBackedUp = false;
 			cacheMismatches.clear();
 		}
-		RefreshPreviousDiskCacheInfo();
-		{
-			std::lock_guard lock{ mismatchesMutex };
-			if (committedFeatureSetBackup && !previousDiskCacheAvailable &&
-				SetPreviousCacheRestoreCandidate(std::move(committedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-				logger::info("Previous shader cache restore retained from feature-change backup");
-			}
-		}
+		RefreshPreviousDiskCacheInfo(committedFeatureSetBackup ? std::optional{ std::move(committedPreviousCacheMismatches) } : std::nullopt);
 		logger::info("Feature set change committed: disk cache rebuilt for the current feature set");
 	}
 
@@ -4119,14 +4123,7 @@ namespace SIE
 			retainedPreviousCacheMismatches = previousCacheMismatches;
 		}
 
-		RefreshPreviousDiskCacheInfo();
-		{
-			std::lock_guard lock{ mismatchesMutex };
-			if (!previousDiskCacheAvailable && hadPreviousRestoreCandidate &&
-				SetPreviousCacheRestoreCandidate(std::move(retainedPreviousCacheMismatches), previousDiskCacheAvailable, previousCacheMismatches)) {
-				logger::info("Previous shader cache restore retained from feature-change backup");
-			}
-		}
+		RefreshPreviousDiskCacheInfo(hadPreviousRestoreCandidate ? std::optional{ std::move(retainedPreviousCacheMismatches) } : std::nullopt);
 		if (!previousDiskCacheAvailable) {
 			logger::warn("Cannot restore previous shader cache: no compatible previous cache is available");
 			return false;
@@ -4170,13 +4167,13 @@ namespace SIE
 		}
 		globals::state->Save();
 
-		featureSetChanged = false;
-		featureSetRevertPending = true;
-		featureSetCacheBackedUp = false;
-		diskCacheHeld = false;
 		heldMismatchDefines.clear();
 		{
 			std::lock_guard lock{ mismatchesMutex };
+			featureSetChanged = false;
+			featureSetRevertPending = true;
+			featureSetCacheBackedUp = false;
+			diskCacheHeld = false;
 			cacheMismatches.clear();
 		}
 		RefreshPreviousDiskCacheInfo();
@@ -4214,12 +4211,12 @@ namespace SIE
 
 		heldMismatchDefines.clear();
 		WriteDiskCacheInfo();
-		diskCacheHeld = false;
-		featureSetChanged = false;
-		featureSetRevertPending = false;
-		featureSetCacheBackedUp = false;
 		{
 			std::lock_guard lock{ mismatchesMutex };
+			diskCacheHeld = false;
+			featureSetChanged = false;
+			featureSetRevertPending = false;
+			featureSetCacheBackedUp = false;
 			cacheMismatches.clear();
 		}
 		RefreshPreviousDiskCacheInfo();

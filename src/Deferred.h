@@ -113,6 +113,14 @@ public:
 	/** @brief True when a forward draw may write Masks2 through slot 3: a feature asked for it, in world, not in the deferred pass, and rendering to the main target. */
 	bool ForwardMasks2Available() const;
 
+	/**
+	 * @brief Gives the forward hair draw the G-buffer Masks and Masks2 the deferred hair pass wrote.
+	 * @details The forward hair pass only keeps pixels at the depth the deferred pass wrote, so the directional shadow
+	 *          the deferred hair shader stored in Masks is the one for the surface the forward draw lights.
+	 *          Called per draw because binding Masks2 as a render target drops its shader resource view.
+	 */
+	void BindForwardHairMasks();
+
 	/** @brief Runs feature prepasses between StartDeferred and geometry rendering. */
 	void PrepassPasses();
 
