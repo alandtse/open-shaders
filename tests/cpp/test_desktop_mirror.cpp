@@ -82,9 +82,12 @@ namespace
 
 		void Verify(const Source& source) const
 		{
-			check(source.list.VtxBuffer.Size == static_cast<int>(vertices.size()), "source vertex count is unchanged");
-			check(source.list.IdxBuffer.Size == static_cast<int>(indices.size()), "source index count is unchanged");
-			check(source.list.CmdBuffer.Size == static_cast<int>(commands.size()), "source command count is unchanged");
+			INFO("source vertex count is unchanged");
+			REQUIRE(source.list.VtxBuffer.Size == static_cast<int>(vertices.size()));
+			INFO("source index count is unchanged");
+			REQUIRE(source.list.IdxBuffer.Size == static_cast<int>(indices.size()));
+			INFO("source command count is unchanged");
+			REQUIRE(source.list.CmdBuffer.Size == static_cast<int>(commands.size()));
 			checkVec(source.data.DisplayPos, displayPos, "source DisplayPos is unchanged");
 			checkVec(source.data.DisplaySize, displaySize, "source DisplaySize is unchanged");
 			checkVec(source.data.FramebufferScale, framebufferScale, "source FramebufferScale is unchanged");
