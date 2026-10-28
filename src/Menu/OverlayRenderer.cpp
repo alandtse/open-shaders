@@ -30,7 +30,6 @@
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
-#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
 
 namespace
 {
@@ -175,7 +174,6 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
 			 abTestingManager->IsEnabled() ||
-			 SettingsBenchmark::IsRunning() ||
 			 (failed && !hide) ||
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
@@ -419,7 +417,6 @@ void OverlayRenderer::HandleABTesting()
 	// A/B Testing management
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	abTestingManager->Update();
-	SettingsBenchmark::Tick();
 
 	// Always update test data during TEST phase, regardless of overlay visibility
 	if (abTestingManager->IsEnabled()) {
@@ -432,13 +429,11 @@ void OverlayRenderer::HandleABTesting()
 		allRows.insert(allRows.end(), summaryRows.begin(), summaryRows.end());
 
 		// Update the A/B test aggregator with current frame data
-		abTestingManager->GetAggregator().OnFrame(allRows);
-		abTestingManager->SampleCompositor();
+		abTestingManager->RecordFrame(allRows);
 	}
 
 	// Draw A/B testing overlay
 	abTestingManager->DrawOverlayUI();
-	SettingsBenchmark::DrawOverlayUI();
 }
 
 void OverlayRenderer::FinalizeImGuiFrame()

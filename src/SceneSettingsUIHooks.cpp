@@ -1,7 +1,7 @@
 #include "SceneSettingsUIHooks.h"
 
 #include "Feature.h"
-#include "Features/PerformanceOverlay/ABTesting/SettingsBenchmark.h"
+#include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "I18n/I18n.h"
 #include "SceneSettingsCatalog.generated.h"
 #include "SceneSettingsManager.h"
@@ -535,7 +535,7 @@ namespace
 		return {};
 	}
 
-	/** @brief Offers a one-setting VR benchmark: a boolean against its opposite, anything else against its default. */
+	/** @brief Offers a one-setting A/B comparison: a boolean against its opposite, anything else against its default. */
 	void DrawBenchmarkMenuItem(const SceneSettingsCatalog::SettingMetadata& setting, const json& currentValue, const std::optional<json>& defaultValue)
 	{
 		std::optional<json> target;
@@ -555,8 +555,8 @@ namespace
 
 		std::string error;
 		const auto variantLabel = Util::Settings::GetCatalogLeafDisplayName(setting) + " = " + valueText;
-		if (!SettingsBenchmark::StartForSetting(*g_currentFeature, setting, *target, variantLabel, &error))
-			logger::warn("[SettingsBenchmark] {}", error);
+		if (!ABTestingManager::GetSingleton()->StartSettingComparison(*g_currentFeature, setting, *target, variantLabel, &error))
+			logger::warn("[A/B] {}", error);
 	}
 
 	bool DrawResetToDefaultMenu(const void* valueAddress)
@@ -586,7 +586,7 @@ namespace
 		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
 		if (reset)
 			g_featureSettingMutation = true;
-		else if (!SettingsBenchmark::IsRunning() && currentValue)
+		else if (!ABTestingManager::GetSingleton()->IsEnabled() && currentValue)
 			DrawBenchmarkMenuItem(*setting, *currentValue, defaultValue);
 		ImGui::EndPopup();
 		return reset;

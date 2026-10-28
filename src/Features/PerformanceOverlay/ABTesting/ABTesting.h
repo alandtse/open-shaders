@@ -2,8 +2,43 @@
 #include "ABCompositorStats.h"
 #include "ABTestAggregator.h"
 #include "Utils/FileSystem.h"
+#include <atomic>
+#include <functional>
 #include <nlohmann/json.hpp>
+#include <string>
 #include <vector>
+
+struct DrawCallRow;
+struct Feature;
+namespace SceneSettingsCatalog
+{
+	struct SettingMetadata;
+}
+
+/** @brief One comparison of a settings change against the current settings: variant B is the original settings with `apply` run over them. */
+struct ABComparisonRequest
+{
+	std::string label;
+	std::function<void()> apply;
+};
+
+/** @brief Pacing of a run of comparisons. Each comparison alternates A and B, ending on A so every B is bracketed. */
+struct ABRunOptions
+{
+	uint32_t intervalSeconds = 4;
+	uint32_t repeats = 2;        ///< B intervals per comparison.
+	uint32_t settleFrames = 45;  ///< Frames ignored at the start of every interval so a swap can settle.
+	bool closeMenu = true;       ///< Close the menu for the run and reopen it with the results.
+};
+
+/** @brief The outcome of one comparison in a run. */
+struct ABRunResult
+{
+	std::string label;
+	ABComparison comparison;
+	float budgetMs = 0.0f;  ///< Frame budget the delta is a share of.
+	std::string note;       ///< Why there is no comparison, when there is none.
+};
 
 /**
  * @brief Manages A/B testing of feature configurations for performance comparison.
@@ -38,6 +73,38 @@ public:
 
 	/** @brief Returns true if A/B testing is currently running. */
 	bool IsEnabled() const { return abTestingEnabled; }
+
+	/** @brief True while a run of comparisons is in progress (a subset of IsEnabled). */
+	bool IsComparisonRunning() const { return queueActive; }
+
+	/**
+	 * @brief Runs each request as an A/B comparison against the current settings, then restores them.
+	 *
+	 * Results accumulate in GetRunResults and are revealed in the Performance overlay when the run ends.
+	 * @param error Receives the reason when the run cannot start.
+	 */
+	bool StartComparisons(std::vector<ABComparisonRequest> requests, const ABRunOptions& options, std::string* error);
+
+	/** @brief Compares the current settings with one catalogued setting changed to `target`. */
+	bool StartSettingComparison(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);
+
+	/** @brief Finds a catalogued setting by feature short name, serialized key and serialized path (empty for a top-level key), then runs StartSettingComparison. */
+	bool StartSettingComparisonByKey(const std::string& featureShortName, const std::string& key, const std::string& path, const nlohmann::json& value, const ABRunOptions& options, std::string* error);
+
+	/**
+	 * @brief Compares the current settings with each Performance, Balanced and Quality profile that is not already in effect.
+	 * @param featureShortName Limit the profile to one feature; empty applies it to every feature, as the global preset cards do.
+	 */
+	bool StartProfileComparisons(const std::string& featureShortName, const ABRunOptions& options, std::string* error);
+
+	/** @brief Results of the comparisons run since they were last cleared. */
+	const std::vector<ABRunResult>& GetRunResults() const { return runResults; }
+
+	/** @brief Discards the comparison results. */
+	void ClearRunResults() { runResults.clear(); }
+
+	/** @brief Progress and results of the current or last run, for devbench. */
+	nlohmann::json StatusJson() const;
 
 	/** @brief Returns true if the TEST (variant B) configuration is currently active. */
 	bool IsUsingTestConfig() const { return usingTestConfig; }
@@ -75,6 +142,9 @@ public:
 
 	/** @brief Returns a mutable reference to the underlying test data aggregator. */
 	ABTestAggregator& GetAggregator() { return aggregator; }
+
+	/** @brief Per-frame data collection for the active run; call once per frame while IsEnabled. */
+	void RecordFrame(const std::vector<DrawCallRow>& rows);
 
 	/**
 	 * @brief Records the newest completed SteamVR compositor frame for the active variant.
@@ -137,4 +207,26 @@ private:
 
 	// Track what changed between USER and TEST configs
 	std::vector<std::string> GetConfigDifferences() const;
+
+	/** @brief Loads the TEST snapshot, clears the collected data and starts the first (warm-up) interval; both snapshots must be set. */
+	void BeginRun();
+	void SampleProfilerHeadline();
+	void AcquireProfiler();
+	void ReleaseProfiler();
+	void BeginComparison(size_t index);
+	void FinishComparison();
+	void EndComparisons(bool finished);
+	void RevealResults();
+
+	std::vector<ABComparisonRequest> queue;
+	size_t queueIndex = 0;
+	ABRunOptions queueOptions;
+	nlohmann::json queueOriginal;
+	std::vector<ABRunResult> runResults;
+	bool queueActive = false;
+	std::atomic<bool> cancelRequested = false;  ///< Set off the render thread; Update() restores the settings so a cancel cannot race a swap.
+	bool menuClosedByRun = false;
+	bool profilerOwned = false;
+	bool profilerWasEnabled = false;
+	uint32_t lastProfilerFrame = UINT32_MAX;
 };
