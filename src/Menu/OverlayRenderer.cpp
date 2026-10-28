@@ -551,14 +551,10 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	}
 	D3D11_TEXTURE2D_DESC backBufferDesc{};
 	backBuffer->GetDesc(&backBufferDesc);
-	const bool sdrFormat = IsSupportedDesktopMirrorFormat(backBufferDesc.Format);
 	auto* mirrorDrawData = pendingDesktopMirror.Get();
-	if (!mirrorDrawData || !sdrFormat || backBufferDesc.SampleDesc.Count != 1 ||
-		static_cast<float>(backBufferDesc.Width) != mirrorDrawData->DisplaySize.x ||
-		static_cast<float>(backBufferDesc.Height) != mirrorDrawData->DisplaySize.y) {
-		clearPending();
-		return;
-	}
+	const bool fitsMirror = mirrorDrawData && IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1 &&
+	                        static_cast<float>(backBufferDesc.Width) == mirrorDrawData->DisplaySize.x &&
+	                        static_cast<float>(backBufferDesc.Height) == mirrorDrawData->DisplaySize.y;
 
 	winrt::com_ptr<ID3D11RenderTargetView> backBufferRTV;
 	if (FAILED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, backBufferRTV.put()))) {
@@ -597,6 +593,10 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	context->RSSetScissorRects(1, &scissor);
 
 	CS_GPU_PASS("OverlayRenderer::DesktopMirror");
+	if (!fitsMirror) {
+		ImGui_ImplDX11_RenderDrawData(pendingDesktopMirrorSource);
+		return;
+	}
 	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
 		ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
 	clearPending();

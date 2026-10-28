@@ -1037,8 +1037,13 @@ namespace BackgroundBlur
 		}
 		retainedUI.dirty = retainedUI.source != nullptr;
 
-		if (csEditorActive)
+		if (csEditorActive) {
+			if (frame.mirrorSourceTexture && frame.mirrorSourceCopy) {
+				context->OMSetRenderTargets(0, nullptr, nullptr);
+				context->CopyResource(frame.mirrorSourceCopy, frame.mirrorSourceTexture);
+			}
 			PerformBlur(frame, constants);
+		}
 		if (useEditorLayer) {
 			const float clear[4]{};
 			context->ClearRenderTargetView(editorUIRTV.get(), clear);
