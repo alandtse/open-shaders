@@ -9,7 +9,6 @@
 #include "../../State.h"
 #include "../../Utils/FileSystem.h"
 #include "../../Utils/Game.h"
-#include "../../Utils/OwnerAncestry.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -248,12 +247,8 @@ namespace ShadowCasterManager
 	/// True when the caster is owned by, or parented under, an actor (held weapons, scabbards, anim objects).
 	static bool IsActorAttached(const RE::BSGeometry& geom)
 	{
-		return Util::IsActorAttached(Util::ClassifyOwnerAncestry(static_cast<const RE::NiAVObject*>(&geom), [](const RE::NiAVObject& a_node) {
-			const auto* owner = REL::RelocateMember<RE::TESObjectREFR*>(&a_node, 0x0F8, 0x110);
-			if (!owner)
-				return Util::OwnerKind::None;
-			return owner->formType == RE::FormType::ActorCharacter ? Util::OwnerKind::Actor : Util::OwnerKind::Reference;
-		}));
+		const auto* owner = geom.GetUserData();
+		return owner && owner->GetFormType() == RE::FormType::ActorCharacter;
 	}
 
 	/// Classifies a caster static vs dynamic from quantized worldBound
