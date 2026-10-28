@@ -79,31 +79,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
 /**
- * @brief One-shot migration of fsr4RuntimeEnable for the detected adapter's FSR4 support class.
- *
- * RX 7000 (RDNA3 discrete) eligibility was added after fsr4RuntimeEnable already shipped
- * defaulting to off; auto-enable it once for those adapters so existing/new RX 7000 users
- * get the same experience as a fresh RX 9000 install. Leaves the user's own choice alone on
- * RX 9000 (already eligible pre-migration) and on Unsupported adapters, where the version is
- * deliberately left unstamped so the migration re-runs once a supported adapter is detected.
- */
-void ApplyLegacyFsr4RuntimeSelectionMigration(Upscaling::Settings& a_settings, FidelityFX::Fsr4AdapterSupport a_adapterSupport)
-{
-	if (a_settings.fsr4RuntimeSelectionSchemaVersion >= Upscaling::kFsr4RuntimeSelectionSchemaVersion)
-		return;
-
-	if (a_adapterSupport == FidelityFX::Fsr4AdapterSupport::Unsupported)
-		return;
-
-	if (a_adapterSupport == FidelityFX::Fsr4AdapterSupport::RadeonRx7000 && !a_settings.fsr4RuntimeEnable) {
-		a_settings.fsr4RuntimeEnable = true;
-		logger::info("[Upscaling] Auto-enabled Runtime FSR4 for detected RX 7000-class adapter");
-	}
-
-	a_settings.fsr4RuntimeSelectionSchemaVersion = Upscaling::kFsr4RuntimeSelectionSchemaVersion;
-}
-
-/**
  * @brief Creates a Direct3D 11 device and swap chain, with support for advanced upscaling and frame generation features.
  *
  * This function intercepts the standard D3D11 device and swap chain creation process to enable integration with Streamline and FidelityFX technologies, as well as optional D3D12 proxying for frame generation. It adjusts swap chain flags for tearing support, manages feature checks, and conditionally routes device creation through Streamline or FidelityFX proxies based on runtime settings and hardware capabilities. If frame generation is enabled and supported, a D3D12 proxy is used; otherwise, the standard D3D11 creation path is followed.
@@ -129,7 +104,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	DXGI_ADAPTER_DESC adapterDesc{};
 	if (pAdapter && SUCCEEDED(pAdapter->GetDesc(&adapterDesc))) {
 		globals::state->SetAdapterDescription(adapterDesc.Description);
-		ApplyLegacyFsr4RuntimeSelectionMigration(upscaling.settings, FidelityFX::GetFsr4AdapterSupport(adapterDesc));
 	}
 
 	upscaling.LoadUpscalingSDKs();
@@ -669,6 +643,22 @@ void Upscaling::RegisterUxActions()
 				logger::warn("[FOVEATED] applyFoveationPreset preset {} not found; not applied", json(name).dump());
 		});
 
+	FEATURE_QUERY("runtimeUpgradeStatus",
+		"Runtime upscaler capability and actual dispatch status: available, confirmedProvider, selected, enabledAtBoot, lastFramePath, contextProvider, and unavailableReason. Availability requires a device query and successful context creation; lastFramePath stays pending until dispatch. Change fsr4RuntimeEnable through openshaders.feature and restart to apply the selection.",
+		([](const Feature* self, const json&) -> json {
+			const auto& upscaling = *static_cast<const Upscaling*>(self);
+			const auto& runtime = upscaling.fidelityFX;
+			return json{
+				{ "available", runtime.IsRuntimeUpgradeAvailable() },
+				{ "confirmedProvider", runtime.GetRuntimeUpgradeProviderName() },
+				{ "selected", upscaling.settings.fsr4RuntimeEnable },
+				{ "enabledAtBoot", upscaling.bootSnapshot.Boot(&Settings::fsr4RuntimeEnable) },
+				{ "lastFramePath", runtime.GetRuntimeUpscalerLastFramePathLabel() },
+				{ "contextProvider", runtime.GetRuntimeUpscalerProviderName() },
+				{ "unavailableReason", runtime.GetRuntimeUpgradeUnavailableReason() }
+			};
+		}));
+
 	FEATURE_QUERY("neuralRenderingStatus",
 		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. context is which situation profile is in effect right now (normal or dialogue), dialogueOnly reports whether the normal profile is suspended (settings.neuralRenderingContexts.normal.run false), and dialogueOpen whether the dialogue menu is open right now, so a state of kSuspended is explained by dialogueOnly on with dialogueOpen false. Each situation has a profile at settings.neuralRenderingContexts.normal and settings.neuralRenderingContexts.dialogue with run (false suspends the pass), scope (0 same as normal, 1 everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overriding the material scope, and region (0 same as normal, 1 full frame) dropping the tracked-actor crop. Also the verdict for the runtime on disk as runtimeAvailability (Ready, Missing, UnsupportedVersion or UnvalidatedBuild), the version it found in runtimeVersion, why it was refused in runtimeDetail, and whether the pass would load it right now in runtimeLoadable -- developer mode loads a refused build outside a missing file. The material strength is reported as materialStrength (the saved switch at settings.neuralRenderingTuning.materialStrength), materialStrengthAvailable (the deferred material lane is present and the graded protection has not been rejected or degraded), materialStrengthActive (it was bound on the last evaluate), materialStrengthValues (the active strengths in NeuralRenderingCategory id order: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal) and materialEdgeSoftness (the active edge-softness radius in pixels). Those strengths come from settings.neuralRenderingTuning.strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther, each 0 to 1, and the radius from strengthEdgeSoftness, 0 to 4 pixels. The material map debug view is settings.neuralRenderingTuning.showMaterialMap (reported here as showMaterialMap), with materialMapMode 0 for category colours or 1 for the strength ramp, and materialMapFilter a bitmask of the categories it draws (bit 0 None, 1 Skin, 2 Hair, 3 Eyes, 4 Foliage, 5 Landscape, 6 Cloth, 7 Metal; the low eight bits only, all on by default). allowUnverifiedRuntime (default false, settings.neuralRenderingTuning.allowUnverifiedRuntime) loads a 310.8.x or 310.9.x nvngx_dlssnr.dll outside the pinned builds (state UnvalidatedBuild) without developer mode; its output is unverified. settings.neuralRenderingTuning.runtimeVariant (empty by default) names a subfolder of the Streamline directory whose nvngx_dlssnr.dll to load instead of the one in the folder itself; changing it unloads the running runtime and loads the other, runtimeBuilds lists the default file and each subfolder build with its version and verdict (variant, version, availability, selected), and runtimeVersion, runtimeAvailability and runtimeDetail describe the selected build. settings.neuralRenderingTuning.modelPreset (0 the original 310.8 network, the default; 1 the newest, faster network a 310.9 runtime ships; ignored by a 310.8 runtime) is reported as modelPreset and recreates the model when changed. parallelEyes (default true, VR only) evaluates the second eye on a second compute queue; it falls back to one queue by itself. The crop NR last evaluated is reported in openshaders.feature diagnostics as neuralRegion and neuralActorBounds, with which sources chose it in neuralRegionSource (none, actor, fovea or both). Eye-staggered gain reuse is settings.neuralRenderingTuning.skipFrameReuse (VR only, off by default, on in the Performance profile), reported here as skipFrameReuse, with skipFrameReuseActive true only while it actually runs (false on flat or while frame generation is active); settings.neuralRenderingTuning.skipFrameGapMode (0 notify the model by doubling its motion, 1 reset the eye's history) is reported as skipFrameGapMode. settings.neuralRenderingTuning.crossEyeGain (default true; with the stagger) lets a reused pixel whose own earlier gain was rejected take the other eye's model gain of the same frame, and is reported as crossEyeGain. eyeReuse is per eye whether this frame reused its stored gain instead of running the model (left then right; both false on flat or with the stagger off), and modelFrames/reuseFrames count eye-evaluations and eye-reuses since startup, so one frame of a running stagger adds one to each. The model scale settings.neuralRenderingTuning.modelScale (0.25 to 1, developer-only, default 1) runs the model below the eye size and upsamples its tone gain onto the eye; modelGuidedUpsample weights that upsample by brightness similarity, and modelScale is reported here. settings.neuralRenderingTuning.sbsEvaluate (developer mode and VR only, off by default) evaluates both eyes as one side-by-side image on a single instance, which takes precedence over the stagger and combines with the model scale. With a model scale or sbsEvaluate on, modelVerify also evaluates each eye alone at full size every frame so a verify capture can compare the two, and mirrorEyes feeds eye 0's inputs to both eyes; both are developer-only measurement aids. Params: none.",
 		NeuralRenderingStatus);
@@ -864,17 +854,14 @@ void Upscaling::DrawUpscalingSettings()
 
 		if (upscaleMethod == UpscaleMethod::kFSR) {
 			ImGui::SliderFloat(T(TKEY("sharpness"), "Sharpness"), &settings.sharpnessFSR, 0.0f, 1.0f, "%.1f");
-			// Hidden entirely on ineligible GPUs so it can't be toggled somewhere it silently no-ops.
-			if (fidelityFX.IsRuntimeFsr4AutoEligible()) {
-				ImGui::Checkbox(T(TKEY("fsr4_runtime_enable"), "Use Runtime FSR4"), &settings.fsr4RuntimeEnable);
-				if (settings.fsr4RuntimeEnable) {
-					ImGui::TextDisabled("%s: %s", T(TKEY("fsr4_active_path"), "Active path"), fidelityFX.GetDisplayedFsrPathLabel().c_str());
-					if (fidelityFX.IsRuntimeFsr4FailureLatched())
-						Util::Text::Warning("%s", T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
-					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())
-						Util::Text::Warning("%s", T(TKEY("fsr4_runtime_failed_fallback"), "Runtime upscaler DLL failed this session -- using host FSR3 SDK."));
-				}
+			if (fidelityFX.IsRuntimeUpgradeAvailable()) {
+				ImGui::Checkbox(T(TKEY("runtime_upgrade_enable"), "Use runtime upscaler upgrade"), &settings.fsr4RuntimeEnable);
+				Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::fsr4RuntimeEnable);
+				ImGui::TextDisabled("%s: %s", T(TKEY("runtime_upgrade_provider"), "Available provider"), fidelityFX.GetRuntimeUpgradeProviderName().c_str());
 			}
+			ImGui::TextDisabled("%s: %s", T(TKEY("fsr4_active_path"), "Active path"), fidelityFX.GetDisplayedFsrPathLabel().c_str());
+			if (!fidelityFX.GetRuntimeUpgradeUnavailableReason().empty())
+				Util::Text::Warning("%s", fidelityFX.GetRuntimeUpgradeUnavailableReason().c_str());
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
 			ImGui::Checkbox(T(TKEY("enable_sharpening"), "Enable Sharpening"), &settings.sharpnessEnabledDLSS);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -1227,9 +1214,7 @@ void Upscaling::LoadSettings(json& o_json)
 		foveatedRender.LoadSettings(o_json["foveatedRender"]);
 		o_json.erase("foveatedRender");
 	}
-	// NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT fills an absent key with
-	// Settings' default member initializer (the CURRENT schema version), not 0 --
-	// detect absence explicitly so a pre-existing config still runs the migration.
+	// Missing schema fields take the current default during deserialization, so legacy settings need an explicit migration version.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
 	settings.neuralRenderingTuning.Sanitize();
@@ -1237,7 +1222,10 @@ void Upscaling::LoadSettings(json& o_json)
 	neuralRendering.ResetHistory();
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
-	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
+	if (settings.fsr4RuntimeSelectionSchemaVersion < kFsr4RuntimeSelectionSchemaVersion) {
+		settings.fsr4RuntimeEnable = true;
+		settings.fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
+	}
 
 	// Sanitize loaded settings to ensure enum indices are valid
 	constexpr auto enumCount = static_cast<uint>(magic_enum::enum_count<UpscaleMethod>());
@@ -2243,6 +2231,9 @@ void Upscaling::SetupResources()
 		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
 		return;
 	}
+
+	const auto displaySize = perfMode.IsHookActive() ? perfMode.GetDisplayScreenSize() : globals::state->screenSize;
+	fidelityFX.ProbeRuntimeUpscalerUpgrade(static_cast<uint32_t>(globals::game::isVR ? displaySize.x / 2 : displaySize.x), static_cast<uint32_t>(displaySize.y));
 
 	QueryPerformanceFrequency(&qpf);
 

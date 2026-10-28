@@ -80,7 +80,7 @@ public:
 		kUltraPerformance = 4,
 	};
 
-	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 1;
+	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 2;
 
 	struct Settings
 	{
@@ -119,13 +119,7 @@ public:
 		// Boot-locked; the preset is inert while set. DLSS clamps into NGX range.
 		float vrRenderScale = 0.0f;
 
-		// Opt in to AMD's runtime FSR4 upscaler DLL on eligible AMD hardware instead of the
-		// host-linked FSR3 SDK; falls back to FSR3 on any failure.
-		bool fsr4RuntimeEnable = false;
-
-		// Tracks whether fsr4RuntimeEnable has been auto-migrated for the detected adapter.
-		// Defaults to current so a fresh config needs no migration; LoadSettings resets it to
-		// 0 when absent from JSON so pre-existing configs run the migration once.
+		bool fsr4RuntimeEnable = true;
 		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
 	};
 
@@ -155,7 +149,7 @@ public:
 		// only runs on an upscale-method change, not on this toggle -- restart-gate
 		// it so a mid-session flip can't select the runtime provider without ever
 		// allocating the texture Upscale() then dereferences.
-		UTIL_RESTART_FIELD(Settings, fsr4RuntimeEnable, "Use Runtime FSR4"),
+		UTIL_RESTART_FIELD(Settings, fsr4RuntimeEnable, "Use runtime upscaler upgrade"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
