@@ -19,6 +19,7 @@ Each rule is stated once, in the section named in brackets.
 -   **Perf instrumentation:** `CS_GPU_PASS` at every render-pass entry point, including ported code. [Performance]
 -   **VR maintenance:** keep VR divergence minimal; resolve merge conflicts in favor of keeping VR. [VR]
 -   **Verify in game:** runtime-affecting changes are verified via devbench on VR plus one flat variant. [Testing]
+-   **Tests:** test the real code in Catch2; no source-text assertions, no pasted-slice stubs, and every new test is run by a named CI step. [Testing]
 -   **Git safety & upstream sync:** never force-push shared branches, never hand-create tags or bump the version, merge upstream and never cherry-pick. [Git & Release]
 
 ---
@@ -98,6 +99,7 @@ Each rule is stated once, in the section named in brackets.
 
 -   **Verify runtime-affecting changes (UI, features, shader cache) in game via devbench** on **VR plus one flat variant (SE or AE)** before calling them done. A release candidate still gets the full per-edition pass in [release validation](docs/development/release-validation.md). Say in the PR which runtimes ran in game.
 -   A new feature or settings surface ships with a devbench action in the same PR. Changing a devbench-exposed tool means updating its `RegisterTool` description and `inputSchema` in the same PR, since `GET /api/tools` and agents trust them.
+-   **Automated tests:** C++ logic gets a Catch2 test in `tests/cpp` that includes or links the production code; Python tests are for Python tooling. Never assert on source text, never paste `src/` slices into a stub, and never add a test no CI step runs. Details: [Automated Tests](docs/development/testing.md).
 -   **Shader refactors:** identical DXBC is a provable no-op (`tools/verify-shader-refactor.ps1`); legitimate op-reordering needs runtime A/B frame diffing (`tools/taa-renderdoc-ab.py`).
 
 ---
