@@ -1450,8 +1450,6 @@
     "feature.perf_overlay.ableg_worse_than_a": "",
     "feature.perf_overlay.ableg_worse_than_b": "",
     "feature.perf_overlay.ableg_zero_same": "",
-    "feature.perf_overlay.abtest_interval": "",
-    "feature.perf_overlay.abtest_tooltip": "",
     "feature.perf_overlay.appearance": "Внешний вид",
     "feature.perf_overlay.b_test_fps": "",
     "feature.perf_overlay.b_test_median_fps": "",

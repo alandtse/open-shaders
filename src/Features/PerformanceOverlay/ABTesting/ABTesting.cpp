@@ -664,8 +664,8 @@ bool ABTestingManager::RunQueue(std::string* error)
 		}
 
 		std::vector<std::function<void()>> applies;
-		for (auto& item : comparisonQueue)
-			applies.push_back(std::move(item.request.apply));
+		for (const auto& item : comparisonQueue)
+			applies.push_back(item.request.apply);
 		ABComparisonRequest combined{
 			fmt::format(fmt::runtime(T(TKEY("together_label"), "{} changes together")), applies.size()),
 			[applies = std::move(applies)] {
@@ -673,15 +673,21 @@ bool ABTestingManager::RunQueue(std::string* error)
 					apply();
 			}
 		};
+		if (!StartComparisons({ std::move(combined) }, runOptions, error))
+			return false;
 		comparisonQueue.clear();
-		return StartComparisons({ std::move(combined) }, runOptions, error);
+		queueNotice.clear();
+		return true;
 	}
 
 	std::vector<ABComparisonRequest> requests;
-	for (auto& item : comparisonQueue)
-		requests.push_back(std::move(item.request));
+	for (const auto& item : comparisonQueue)
+		requests.push_back(item.request);
+	if (!StartComparisons(std::move(requests), runOptions, error))
+		return false;
 	comparisonQueue.clear();
-	return StartComparisons(std::move(requests), runOptions, error);
+	queueNotice.clear();
+	return true;
 }
 
 std::vector<ABBenchmarkRow> ABTestingManager::GetBenchmarkRows() const
@@ -707,7 +713,8 @@ void ABTestingManager::DrawQueueButtons()
 	ImGui::BeginDisabled(queueActive || abTestingEnabled || comparisonQueue.empty());
 	if (ImGui::Button(T(TKEY("queue_run"), "Run benchmark"))) {
 		std::string error;
-		RunQueue(&error);
+		if (!RunQueue(&error))
+			queueNotice = error;
 	}
 	ImGui::SameLine();
 	if (ImGui::Button(T(TKEY("queue_clear_all"), "Clear all")))

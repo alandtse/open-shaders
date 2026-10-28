@@ -2290,15 +2290,14 @@ namespace
 			{ "meanClientFrameIntervalMs", summary.meanClientFrameIntervalMs } };
 	}
 
-	/** @brief Run pacing from devbench args; absent keys keep the defaults. */
-	ABRunOptions RunOptionsFromArgs(const json& args)
+	/** @brief Run pacing from devbench args; absent keys keep the current pacing, and together applies to the one command only. */
+	ABRunOptions RunOptionsFromArgs(const json& args, ABRunOptions options)
 	{
-		ABRunOptions options;
 		options.intervalSeconds = args.value("intervalSeconds", options.intervalSeconds);
 		options.repeats = args.value("repeats", options.repeats);
 		options.settleFrames = args.value("settleFrames", options.settleFrames);
 		options.closeMenu = args.value("closeMenu", options.closeMenu);
-		options.together = args.value("together", options.together);
+		options.together = args.value("together", false);
 		return options;
 	}
 
@@ -2379,7 +2378,9 @@ void PerformanceOverlay::RegisterUxActions()
 		"Add a comparison of the current settings with one catalogued setting changed to the benchmark queue and, unless queueOnly, run the queue. A run is an A/B run per queued item: variant A is the current settings, variant B has the change, they alternate for intervalSeconds each (default 4) with the first frames of every interval ignored, and B intervals are bracketed by A so drift becomes uncertainty. The run closes the menu, ends by restoring the settings, reopens the menu and shows the result in the Performance overlay. The right-click 'Add to benchmark' on a setting queues the same comparison. With together true every queued change is applied at once and measured as one bundle, so the run reports their combined cost and not which one is responsible. Params: shortName (feature short name), key (the setting's serialized key), path (its serialized path, empty for a top-level key), value (the value to measure, in the shape the setting is saved in), queueOnly (boolean, default false), intervalSeconds, repeats (B intervals per item, default 2), settleFrames (default 45), closeMenu (default true), together (boolean, default false). Read progress and results with abTestStatus (queue, comparison, runs[]); stop with stopABTest.",
 		[](Feature*, const json& args) {
 			auto* manager = ABTestingManager::GetSingleton();
-			manager->RunOptions() = RunOptionsFromArgs(args);
+			if (manager->IsComparisonRunning())
+				throw std::runtime_error("A comparison is running; stop it with stopABTest first.");
+			manager->RunOptions() = RunOptionsFromArgs(args, manager->RunOptions());
 			std::string error;
 			if (!manager->QueueSettingByKey(args.value("shortName", std::string{}), args.value("key", std::string{}),
 					args.value("path", std::string{}), args.value("value", json{}), &error) ||
@@ -2391,7 +2392,9 @@ void PerformanceOverlay::RegisterUxActions()
 		"Add a comparison with each Performance, Balanced and Quality preset (the Performance page presets) to the benchmark queue and, unless queueOnly, run the queue. A preset already in effect is reported as changing nothing, and one that changes a setting waiting for a restart (such as the upscaler quality mode) is reported as needing a restart and is not measured. The run closes the menu, ends by restoring the settings, reopens the menu and shows the results in the Performance overlay. together is refused here, because a preset replaces the settings it covers and cannot be combined with other changes. Params: shortName (limit the preset to one feature, omit for the global presets), queueOnly (boolean, default false), intervalSeconds (default 4), repeats (B intervals per item, default 2), settleFrames (default 45), closeMenu (default true), together (boolean, default false). Read progress and results with abTestStatus (queue, comparison, runs[]); stop with stopABTest.",
 		[](Feature*, const json& args) {
 			auto* manager = ABTestingManager::GetSingleton();
-			manager->RunOptions() = RunOptionsFromArgs(args);
+			if (manager->IsComparisonRunning())
+				throw std::runtime_error("A comparison is running; stop it with stopABTest first.");
+			manager->RunOptions() = RunOptionsFromArgs(args, manager->RunOptions());
 			std::string error;
 			if (!manager->QueueProfiles(args.value("shortName", std::string{}), &error) ||
 				(!args.value("queueOnly", false) && !manager->RunQueue(&error)))
@@ -2402,7 +2405,9 @@ void PerformanceOverlay::RegisterUxActions()
 		"Run every queued comparison in order (what the Run benchmark button does) and empty the queue. Params: intervalSeconds, repeats, settleFrames, closeMenu as for startPresetComparison, and together (boolean, default false: apply every queued change at once and measure the bundle, which needs at least two queued changes and no preset). Read results with abTestStatus.",
 		[](Feature*, const json& args) {
 			auto* manager = ABTestingManager::GetSingleton();
-			manager->RunOptions() = RunOptionsFromArgs(args);
+			if (manager->IsComparisonRunning())
+				throw std::runtime_error("A comparison is running; stop it with stopABTest first.");
+			manager->RunOptions() = RunOptionsFromArgs(args, manager->RunOptions());
 			std::string error;
 			if (!manager->RunQueue(&error))
 				throw std::runtime_error(error);

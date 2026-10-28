@@ -467,6 +467,15 @@ namespace
 		return settingAddress ? settingAddress : valueAddress;
 	}
 
+	/** @brief Looks a control up for the benchmark outline alone, since FindControlSetting returns nothing outside scene-settings mode. */
+	const SceneSettingsCatalog::SettingMetadata* FindQueuedSetting(const void* valueAddress)
+	{
+		if (!g_currentFeature || ABTestingManager::GetSingleton()->GetQueue().empty())
+			return nullptr;
+		const auto* setting = SceneSettingsCatalog::FindSettingForControl(g_currentFeature, GetControlStorageAddress(valueAddress));
+		return setting && IsQueuedForBenchmark(*setting) ? setting : nullptr;
+	}
+
 	const SceneSettingsCatalog::SettingMetadata* FindControlSetting(
 		const char* label, const void* valueAddress, bool choiceLabelsOnly = false, bool* metadataMatched = nullptr)
 	{
@@ -635,7 +644,7 @@ namespace
 		ClearControlledItem();
 		bool metadataMatched = false;
 		const auto* setting = FindControlSetting(label, valueAddress, false, &metadataMatched);
-		SettingOutlineGuard outline(setting);
+		SettingOutlineGuard outline(setting ? setting : FindQueuedSetting(valueAddress));
 		if (setting ? !ShouldBlockSetting(*setting) : !g_featureSceneEditing || metadataMatched) {
 			ControlDetourScope detourScope;
 			const bool changed = TrackFeatureSettingMutation(draw());
