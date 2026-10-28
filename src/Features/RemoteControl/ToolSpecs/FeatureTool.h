@@ -28,7 +28,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(gamma offsets and opacity controls retain their meanings. set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, )"
 		R"(including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level; )"
 		R"(its flicker-shadow keys are TolerantSplitCache, FlickerShadowMode (0 live, 1 pinned, 2 warped), WarpVisibilityGate, WarpZeroDemandSkip, )"
-		R"(SpotLitRegion (scores spot lights by the frustum they light) and DemandTileCap (holds weakly lit lights at a quarter-size tile)). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; )"
+		R"(SpotLitRegion (scores spot lights by the frustum they light), DemandTileCap (holds weakly lit lights at a quarter-size tile) and ProtectPlayerShadows (ranks lights that reach the player first and lets them redraw past the budget)). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; )"
 		R"(call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, )"
 		R"(so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings; with key (and path, empty for a top-level setting) it restores only that one catalogued setting, the same as the right-click Reset to default in the menu. toggle: params shortName, enabled (boolean, )"
 		R"(OPTIONAL — omit to flip the current loaded state); )"

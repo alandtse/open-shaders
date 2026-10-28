@@ -125,6 +125,9 @@ namespace ShadowCasterManager
 		int first_render_skips = 0;
 		int sleep_skips = 0;
 		int demand_skips = 0;
+		int player_protected = 0;
+		int player_forced_past_budget = 0;
+		int player_protected_excess = 0;
 
 		// Zero-demand-skip audit; see SchedSnapshot for the field meanings.
 		int frustum_audit_candidates = 0;

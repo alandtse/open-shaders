@@ -1800,6 +1800,13 @@ namespace ShadowCasterManager
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
 
+			ImGui::Checkbox(T(TKEY("protect_player_shadows"), "Protect Shadows on the Player"), &settings.ProtectPlayerShadows);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("protect_player_shadows_tooltip"),
+											"Ranks every light that reaches the player first and lets it redraw past the\n"
+											"redraw budget, so shadows on the player do not flicker. Costs GPU time\n"
+											"when many lights surround the player."));
+
 			// Atlas is boot-latched (the engine texture allocation depends on
 			// it), so show restart state against the captured boot value.
 			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);
