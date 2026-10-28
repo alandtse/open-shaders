@@ -344,13 +344,13 @@ void GrassOptimizations::UpdateGrass()
 	};
 
 	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, eyeTransform(0));
+	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().eyeFrustums[0] : cam->GetRuntimeData2().viewFrustum, eyeTransform(0));
 	const RE::NiPoint3 camPos = cam->world.translate;
 	const __m128 camPosV = _mm_setr_ps(camPos.x, camPos.y, camPos.z, 0.0f);
 
 	RE::NiFrustumPlanes frustum1{};
 	if (isVR)
-		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().viewFrustumArray[1], eyeTransform(1));
+		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().eyeFrustums[1], eyeTransform(1));
 
 	FrustumSoA frustumSoAs[2];
 	BuildFrustumSoA(frustumSoAs[0], frustum);
@@ -383,7 +383,7 @@ void GrassOptimizations::UpdateGrass()
 		cp.lodMinKeep = settings.MinDensity;
 		cp.lodFadeBand = 0.15f;
 
-		const auto& vf = isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum;
+		const auto& vf = isVR ? cam->GetVRRuntimeData().eyeFrustums[0] : cam->GetRuntimeData2().viewFrustum;
 		// Hi-Z uses nominal pixels; density and LOD thresholds use render-resolution pixels.
 		const float screenH = Util::ConvertToDynamic(globals::state->screenSize).y;
 		const float frustumHeight = 2.0f * std::abs(vf.fTop);

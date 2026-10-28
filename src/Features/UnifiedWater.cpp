@@ -722,7 +722,8 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 
 		if (const auto prop = shape->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
 			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
-			REX::EnumSet waterFlags = static_cast<RE::BSWaterShaderProperty::WaterFlag>(0b10000100);
+			REX::EnumSet waterFlags = RE::BSWaterShaderProperty::WaterFlag::kDepth;
+			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kRefractions;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseCubemapReflections;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseReflections;
 			if (instruction->form.ptr->flags.any(RE::TESWaterForm::Flag::kEnableFlowmap))
