@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FeatureBenchmarkVariant.h"
 #include "FeatureCategories.h"
 #include "FeatureConstraints.h"
 #include "FeatureVersions.h"
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <span>
 #include <string_view>
+#include <vector>
 #ifdef TRACY_ENABLE
 #	include <Tracy/Tracy.hpp>
 #	include <Tracy/TracyD3D11.hpp>
@@ -533,6 +535,13 @@ public:
 	 * automatically get/set-able. Default empty: most features have nothing beyond settings.
 	 */
 	virtual void RegisterUxActions() {}
+
+	/**
+	 * @brief Settings changes this feature offers to the settings benchmark, each a partial blob of its own settings.
+	 * Read when the benchmark lists its variants, so the core overlay never names another feature's settings.
+	 * Default empty.
+	 */
+	virtual std::vector<BenchmarkVariant> GetBenchmarkVariants() { return {}; }
 
 	/**
 	 * @brief Turns the feature off because a_conflict cannot coexist with it, and lists it in the feature issues.

@@ -711,7 +711,8 @@ namespace
 			ImGui::TableNextColumn();
 			ImGui::Text("%+.2f", valueB - valueA);
 		};
-		row(T(TKEY("abtest_compositor_app_gpu"), "Application GPU (ms)"), a.meanTotalRenderGpuMs, b.meanTotalRenderGpuMs, "%.2f");
+		row(T(TKEY("abtest_compositor_app_gpu"), "Application GPU (ms)"), a.meanApplicationGpuMs, b.meanApplicationGpuMs, "%.2f");
+		row(T(TKEY("abtest_compositor_total_gpu"), "Total render GPU (ms)"), a.meanTotalRenderGpuMs, b.meanTotalRenderGpuMs, "%.2f");
 		row(T(TKEY("abtest_compositor_gpu"), "Compositor GPU (ms)"), a.meanCompositorRenderGpuMs, b.meanCompositorRenderGpuMs, "%.2f");
 		row(T(TKEY("abtest_compositor_cpu"), "Compositor CPU (ms)"), a.meanCompositorRenderCpuMs, b.meanCompositorRenderCpuMs, "%.2f");
 		row(T(TKEY("abtest_compositor_interval"), "Frame interval (ms)"), a.meanClientFrameIntervalMs, b.meanClientFrameIntervalMs, "%.2f");
@@ -1293,45 +1294,11 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildABTestResultsTableColumns(con
   *
   * @param allRows The current draw call rows for data collection
   */
-void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRows)
+void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>&)
 {
 	auto* menu = Menu::GetSingleton();
 	auto* abTestingManager = ABTestingManager::GetSingleton();
-	bool abTestingEnabled = abTestingManager && abTestingManager->IsEnabled();
-	static bool lastUsingTestConfig = false;
-	static bool wasAbTestActive = false;
-	bool currentUsingTestConfig = abTestingManager && abTestingManager->IsUsingTestConfig();
-	static std::string lastSettingsA, lastSettingsB;
-	std::string currentSettingsA, currentSettingsB;
 	auto& aggregator = abTestingManager->GetAggregator();
-	if (abTestingEnabled) {
-		// Serialize current settings for A and B from the aggregator
-		if (aggregator.HasSettingsA())
-			currentSettingsA = aggregator.GetSettingsA().dump();
-		if (aggregator.HasSettingsB())
-			currentSettingsB = aggregator.GetSettingsB().dump();
-	}
-	// Detect A/B test start/stop and variant switches
-	bool settingsChanged = (currentSettingsA != lastSettingsA) || (currentSettingsB != lastSettingsB);
-	if (abTestingEnabled && (!wasAbTestActive || settingsChanged)) {
-		aggregator.Clear();
-		aggregator.OnABSwitch(currentUsingTestConfig ? ABVariant::B : ABVariant::A);
-		lastSettingsA = currentSettingsA;
-		lastSettingsB = currentSettingsB;
-	}
-	if (abTestingEnabled && (currentUsingTestConfig != lastUsingTestConfig)) {
-		aggregator.OnABSwitch(currentUsingTestConfig ? ABVariant::B : ABVariant::A);
-	}
-	if (!abTestingEnabled && wasAbTestActive) {
-		aggregator.OnTestEnd();
-	}
-	wasAbTestActive = abTestingEnabled;
-	lastUsingTestConfig = currentUsingTestConfig;
-
-	// --- A/B Test Data Collection ---
-	if (abTestingEnabled) {
-		aggregator.OnFrame(allRows);  // Pass both main and summary rows
-	}
 
 	// Display A/B test results if available
 	if (aggregator.HasResults()) {
@@ -2198,6 +2165,7 @@ namespace
 		return { { "frames", summary.frames },
 			{ "droppedFrames", summary.droppedFrames },
 			{ "reprojectedFrames", summary.reprojectedFrames },
+			{ "meanApplicationGpuMs", summary.meanApplicationGpuMs },
 			{ "meanTotalRenderGpuMs", summary.meanTotalRenderGpuMs },
 			{ "meanCompositorRenderGpuMs", summary.meanCompositorRenderGpuMs },
 			{ "meanCompositorRenderCpuMs", summary.meanCompositorRenderCpuMs },
@@ -2245,6 +2213,7 @@ namespace
 				{ "rejectedFrames", stats.RejectedFrames() },
 				{ "A", CompositorSummaryJson(stats.Summarize(ABVariant::A)) },
 				{ "B", CompositorSummaryJson(stats.Summarize(ABVariant::B)) },
+				{ "deltaApplicationGpuMs", stats.DeltaApplicationGpuMs() },
 				{ "deltaTotalRenderGpuMs", stats.DeltaTotalRenderGpuMs() } };
 		}
 		return status;
@@ -2260,6 +2229,8 @@ void PerformanceOverlay::RegisterUxActions()
 			const auto interval = args.value("intervalSeconds", 3u);
 			if (interval < 1 || interval > kMaxABTestIntervalSeconds)
 				throw std::runtime_error("intervalSeconds must be 1-10");
+			if (SettingsBenchmark::IsRunning())
+				throw std::runtime_error("Cancel the settings benchmark first; both swap settings.");
 			auto* manager = ABTestingManager::GetSingleton();
 			manager->SetTestInterval(interval);
 			manager->Enable();
@@ -2309,7 +2280,7 @@ void PerformanceOverlay::RegisterUxActions()
 		[](const Feature*, const json&) -> json { return SettingsBenchmark::StatusJson(); });
 
 	FEATURE_QUERY("abTestStatus",
-		"A/B test state and results: enabled, intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU, compositor GPU and CPU, client frame interval, dropped and reprojected frames) plus deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
+		"A/B test state and results: enabled, intervalSeconds, usingTestConfig, warmingUp, durationSeconds, frames, intervals; drawCalls[] with mean and median frame time in ms for A and B and the B-minus-A delta (the per-shader-type rows read 0 in VR; the OS Passes row carries the GPU time there); settingsDiff[] (path, a, b); and in VR a compositor object with SteamVR frame timing per variant (mean application GPU = pre-submit plus post-submit scene time, total render GPU which also includes compositor work, compositor GPU and CPU, client frame interval, dropped frames, and frames the compositor reprojected for a CPU or GPU reason) plus deltaApplicationGpuMs and deltaTotalRenderGpuMs. compositor.available is false when the runtime returns no frame timing. Params: none.",
 		ABTestStatus);
 }
 #undef I18N_KEY_PREFIX

@@ -4,6 +4,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/ThemeManager.h"
+#include "SettingsBenchmark.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
 #include "Utils/UI.h"
@@ -61,6 +62,12 @@ void ABTestingManager::SetTestInterval(uint32_t interval)
 void ABTestingManager::Enable()
 {
 	if (!abTestingEnabled) {
+		if (SettingsBenchmark::IsRunning()) {
+			logger::warn("A/B testing not started: a settings benchmark is running.");
+			testInterval = 0;
+			return;
+		}
+
 		auto* state = globals::state;
 		auto& performanceOverlay = globals::features::performanceOverlay;
 
@@ -123,6 +130,7 @@ void ABTestingManager::Disable()
 		}
 
 		abTestingEnabled = false;
+		aggregator.OnTestEnd();
 
 		performanceOverlay.settings.ShowInOverlay = overlayWasEnabled;
 	}
@@ -176,6 +184,15 @@ void ABTestingManager::Update()
 	}
 }
 
+namespace
+{
+	/** @brief Frames back to read: the newest frame is still in flight and reports zero GPU time. */
+	constexpr uint32_t kCompletedFrameOffset = 1;
+
+	/** @brief Reprojection flags that mean the compositor reprojected a missed frame; the async flag only names the mode. */
+	constexpr uint32_t kReprojectedMask = vr::VRCompositor_ReprojectionReason_Cpu | vr::VRCompositor_ReprojectionReason_Gpu;
+}
+
 bool ReadLatestCompositorSample(CompositorSample& sample, uint32_t& lastFrameIndex, bool* timingAvailable)
 {
 	if (!globals::game::isVR)
@@ -185,10 +202,9 @@ bool ReadLatestCompositorSample(CompositorSample& sample, uint32_t& lastFrameInd
 	if (!compositor)
 		return false;
 
-	// One frame back: the newest frame is still in flight and reports zero GPU time.
 	vr::Compositor_FrameTiming timing{};
 	timing.m_nSize = sizeof(timing);
-	if (!compositor->GetFrameTiming(&timing, 1))
+	if (!compositor->GetFrameTiming(&timing, kCompletedFrameOffset))
 		return false;
 
 	if (timingAvailable)
@@ -197,12 +213,13 @@ bool ReadLatestCompositorSample(CompositorSample& sample, uint32_t& lastFrameInd
 		return false;
 	lastFrameIndex = timing.m_nFrameIndex;
 
-	sample = { .totalRenderGpuMs = timing.m_flTotalRenderGpuMs,
+	sample = { .applicationGpuMs = timing.m_flPreSubmitGpuMs + timing.m_flPostSubmitGpuMs,
+		.totalRenderGpuMs = timing.m_flTotalRenderGpuMs,
 		.compositorRenderGpuMs = timing.m_flCompositorRenderGpuMs,
 		.compositorRenderCpuMs = timing.m_flCompositorRenderCpuMs,
 		.clientFrameIntervalMs = timing.m_flClientFrameIntervalMs,
 		.droppedFrames = timing.m_nNumDroppedFrames,
-		.reprojected = timing.m_nReprojectionFlags != 0 };
+		.reprojected = (timing.m_nReprojectionFlags & kReprojectedMask) != 0 };
 	return true;
 }
 

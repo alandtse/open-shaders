@@ -175,6 +175,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
 			 abTestingManager->IsEnabled() ||
+			 SettingsBenchmark::IsRunning() ||
 			 (failed && !hide) ||
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||

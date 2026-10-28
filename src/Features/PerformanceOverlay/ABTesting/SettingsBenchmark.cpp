@@ -67,35 +67,6 @@ namespace SettingsBenchmark
 		Config config;
 		std::vector<char> selected;
 
-		json Settings(const char* text)
-		{
-			return json::parse(text);
-		}
-
-		Variant NrVariant(std::string id, std::string label, const char* tuning, std::string note, bool vrOnly = false)
-		{
-			return { std::move(id), std::move(label), "Neural Rendering", std::move(note),
-				{ { "Upscaling", json{ { "neuralRenderingTuning", Settings(tuning) } } } }, vrOnly };
-		}
-
-		std::vector<Variant> BuildVariants()
-		{
-			return {
-				NrVariant("nr-eye-stagger-on", "Eye-staggered reuse on", R"({"skipFrameReuse":true})",
-					"Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.", true),
-				NrVariant("nr-eye-stagger-off", "Eye-staggered reuse off", R"({"skipFrameReuse":false})",
-					"Evaluates the model for both eyes every frame.", true),
-				NrVariant("nr-parallel-eyes-off", "Parallel eye queue off", R"({"parallelEyes":false})",
-					"Runs both eyes' model evaluations on one queue.", true),
-				NrVariant("nr-follow-foveation-off", "Follow foveation off", R"({"regionFollowFoveation":false})",
-					"Evaluates the whole eye instead of only the foveated region.", true),
-				NrVariant("nr-actor-crop-on", "Actor crop on", R"({"regionOfInterest":true})",
-					"Restricts evaluation to a crop around the most prominent visible actor."),
-				NrVariant("nr-model-preset-newest", "Newest model preset", R"({"modelPreset":1})",
-					"Uses the newest network a 310.9 or newer runtime ships."),
-			};
-		}
-
 		/** @brief True when every key in `patch` already exists in `base`, so the patch cannot silently do nothing. */
 		bool PatchApplies(const json& base, const json& patch, std::string& missing, const std::string& path)
 		{
@@ -214,6 +185,25 @@ namespace SettingsBenchmark
 			}
 		}
 
+		/**
+		 * @brief Requests a profiler capture and reads its newest resolved totals.
+		 *
+		 * Capture is request-driven and the GPU result trails the frame by a few frames, so a sample is only
+		 * returned when the resolved frame count has moved since `lastFrame`.
+		 */
+		bool ReadProfilerSample(uint32_t& lastFrame, float frameMs, Sample& sample)
+		{
+			auto* profiler = globals::profiler;
+			profiler->RequestCapture(Profiler::CaptureMode::Both);
+			const uint32_t captured = profiler->GetCapturedGpuFrameCount();
+			if (captured == 0 || captured == lastFrame)
+				return false;
+
+			lastFrame = captured;
+			sample = { profiler->GetResolvedTotalTimeMs(), profiler->GetResolvedCpuTotalTimeMs(), frameMs };
+			return true;
+		}
+
 		bool CanMeasure()
 		{
 			auto* menu = Menu::GetSingleton();
@@ -228,7 +218,17 @@ namespace SettingsBenchmark
 
 	const std::vector<Variant>& Variants()
 	{
-		static const std::vector<Variant> variants = BuildVariants();
+		static const std::vector<Variant> variants = [] {
+			std::vector<Variant> list;
+			for (auto* feature : Feature::GetFeatureList()) {
+				if (!feature->loaded)
+					continue;
+				for (auto& offered : feature->GetBenchmarkVariants())
+					list.push_back({ std::move(offered.id), std::move(offered.label), std::move(offered.group), std::move(offered.note),
+						{ { feature->GetShortName(), std::move(offered.settings) } }, offered.vrOnly });
+			}
+			return list;
+		}();
 		return variants;
 	}
 
@@ -368,17 +368,9 @@ namespace SettingsBenchmark
 		if (run.source == TimingSource::Compositor) {
 			CompositorSample frame;
 			hasSample = ReadLatestCompositorSample(frame, run.lastCompositorFrame);
-			sample = { frame.totalRenderGpuMs, frame.compositorRenderCpuMs, frame.clientFrameIntervalMs };
+			sample = { frame.applicationGpuMs, frame.compositorRenderCpuMs, frame.clientFrameIntervalMs };
 		} else {
-			// Profiler capture is request-driven and its GPU result arrives a few frames late.
-			auto* profiler = globals::profiler;
-			profiler->RequestCapture(Profiler::CaptureMode::Both);
-			const uint32_t captured = profiler->GetCapturedGpuFrameCount();
-			if (captured != 0 && captured != run.lastProfilerFrame) {
-				run.lastProfilerFrame = captured;
-				hasSample = true;
-				sample = { profiler->GetResolvedTotalTimeMs(), profiler->GetResolvedCpuTotalTimeMs(), delta * 1000.0f };
-			}
+			hasSample = ReadProfilerSample(run.lastProfilerFrame, delta * 1000.0f, sample);
 		}
 		const auto directive = run.engine.Tick(sample, hasSample, delta, CanMeasure());
 		if (directive.apply)

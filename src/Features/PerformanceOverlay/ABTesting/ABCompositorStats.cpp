@@ -11,6 +11,7 @@ bool CompositorStatsAccumulator::Add(ABVariant variant, const CompositorSample& 
 	++entry.frames;
 	entry.droppedFrames += sample.droppedFrames;
 	entry.reprojectedFrames += sample.reprojected ? 1u : 0u;
+	entry.applicationGpuMs += sample.applicationGpuMs;
 	entry.totalRenderGpuMs += sample.totalRenderGpuMs;
 	entry.compositorRenderGpuMs += sample.compositorRenderGpuMs;
 	entry.compositorRenderCpuMs += sample.compositorRenderCpuMs;
@@ -29,11 +30,21 @@ CompositorVariantSummary CompositorStatsAccumulator::Summarize(ABVariant variant
 		return summary;
 
 	const double frames = entry.frames;
+	summary.meanApplicationGpuMs = static_cast<float>(entry.applicationGpuMs / frames);
 	summary.meanTotalRenderGpuMs = static_cast<float>(entry.totalRenderGpuMs / frames);
 	summary.meanCompositorRenderGpuMs = static_cast<float>(entry.compositorRenderGpuMs / frames);
 	summary.meanCompositorRenderCpuMs = static_cast<float>(entry.compositorRenderCpuMs / frames);
 	summary.meanClientFrameIntervalMs = static_cast<float>(entry.clientFrameIntervalMs / frames);
 	return summary;
+}
+
+float CompositorStatsAccumulator::DeltaApplicationGpuMs() const
+{
+	const auto a = Summarize(ABVariant::A);
+	const auto b = Summarize(ABVariant::B);
+	if (a.frames == 0 || b.frames == 0)
+		return 0.0f;
+	return b.meanApplicationGpuMs - a.meanApplicationGpuMs;
 }
 
 float CompositorStatsAccumulator::DeltaTotalRenderGpuMs() const

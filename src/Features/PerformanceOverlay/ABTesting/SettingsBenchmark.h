@@ -40,7 +40,7 @@ namespace SettingsBenchmark
 		bool vrOnly = false;  ///< Changes a setting that only exists or only matters in VR.
 	};
 
-	/** @brief The built-in variants. */
+	/** @brief The variants loaded features offer (Feature::GetBenchmarkVariants), in feature order. */
 	const std::vector<Variant>& Variants();
 
 	/** @brief False for a VR-only variant when running on flat. */
@@ -69,6 +69,7 @@ namespace SettingsBenchmark
 	/** @brief Cancels a running benchmark and restores the original settings. */
 	void Cancel();
 
+	/** @brief True from the start of a run, including its countdown, until it finishes, is cancelled or fails. */
 	bool IsRunning();
 
 	/** @brief Phase, progress and results for devbench. */

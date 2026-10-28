@@ -10,7 +10,7 @@ namespace
 {
 	CompositorSample Sample(float gpuMs, uint32_t dropped = 0, bool reprojected = false)
 	{
-		return { .totalRenderGpuMs = gpuMs, .compositorRenderGpuMs = 1.0f, .compositorRenderCpuMs = 0.5f, .clientFrameIntervalMs = 11.1f, .droppedFrames = dropped, .reprojected = reprojected };
+		return { .applicationGpuMs = gpuMs - 1.0f, .totalRenderGpuMs = gpuMs, .compositorRenderGpuMs = 1.0f, .compositorRenderCpuMs = 0.5f, .clientFrameIntervalMs = 11.1f, .droppedFrames = dropped, .reprojected = reprojected };
 	}
 }
 
@@ -25,11 +25,13 @@ TEST_CASE("Compositor accumulator averages each variant separately", "[abtest][c
 	const auto b = stats.Summarize(ABVariant::B);
 	CHECK(a.frames == 2);
 	CHECK(a.meanTotalRenderGpuMs == Catch::Approx(7.0f));
+	CHECK(a.meanApplicationGpuMs == Catch::Approx(6.0f));
 	CHECK(a.meanCompositorRenderGpuMs == Catch::Approx(1.0f));
 	CHECK(a.meanClientFrameIntervalMs == Catch::Approx(11.1f));
 	CHECK(b.frames == 1);
 	CHECK(b.meanTotalRenderGpuMs == Catch::Approx(10.0f));
 	CHECK(stats.DeltaTotalRenderGpuMs() == Catch::Approx(3.0f));
+	CHECK(stats.DeltaApplicationGpuMs() == Catch::Approx(3.0f));
 }
 
 TEST_CASE("Compositor accumulator rejects impossible frame costs", "[abtest][compositor]")

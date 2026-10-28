@@ -2003,6 +2003,7 @@
     "feature.perf_overlay.abtest_compositor_metric": "Metric",
     "feature.perf_overlay.abtest_compositor_none": "No compositor frame timing was reported yet.",
     "feature.perf_overlay.abtest_compositor_reprojected": "Reprojected frames",
+    "feature.perf_overlay.abtest_compositor_total_gpu": "Total render GPU (ms)",
     "feature.perf_overlay.abtest_interval": "A/B Test Interval",
     "feature.perf_overlay.abtest_tooltip": "A/B Testing compares two configurations by automatically swapping between them.\nWorkflow: Configure your test settings, then enable A/B testing.\n- Variant B (TEST) = Your current settings when you enable testing\n- Variant A (USER) = Your previously saved user configuration\nThe initial Variant B interval is an unmeasured warm-up, then testing begins with Variant A.\nSet to 0 to disable and restore TEST settings.",
     "feature.perf_overlay.appearance": "Appearance",

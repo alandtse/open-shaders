@@ -658,6 +658,22 @@ namespace
 	}
 }
 
+/** @brief Neural Rendering tuning changes offered to the settings benchmark. */
+std::vector<BenchmarkVariant> Upscaling::GetBenchmarkVariants()
+{
+	const auto nr = [](std::string id, std::string label, const char* tuning, std::string note, bool vrOnly) {
+		return BenchmarkVariant{ std::move(id), std::move(label), "Neural Rendering", std::move(note), json{ { "neuralRenderingTuning", json::parse(tuning) } }, vrOnly };
+	};
+	return {
+		nr("nr-eye-stagger-on", "Eye-staggered reuse on", R"({"skipFrameReuse":true})", "Evaluates the model for one eye per frame and reuses the other eye's reprojected gain.", true),
+		nr("nr-eye-stagger-off", "Eye-staggered reuse off", R"({"skipFrameReuse":false})", "Evaluates the model for both eyes every frame.", true),
+		nr("nr-parallel-eyes-off", "Parallel eye queue off", R"({"parallelEyes":false})", "Runs both eyes' model evaluations on one queue.", true),
+		nr("nr-follow-foveation-off", "Follow foveation off", R"({"regionFollowFoveation":false})", "Evaluates the whole eye instead of only the foveated region.", true),
+		nr("nr-actor-crop-on", "Actor crop on", R"({"regionOfInterest":true})", "Restricts evaluation to a crop around the most prominent visible actor.", false),
+		nr("nr-model-preset-newest", "Newest model preset", R"({"modelPreset":1})", "Uses the newest network a 310.9 or newer runtime ships.", false),
+	};
+}
+
 /** @brief Registers upscaling and frame-generation commands for menu and devbench use. */
 void Upscaling::RegisterUxActions()
 {
