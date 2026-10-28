@@ -10,7 +10,7 @@ namespace
 	json Descriptor()
 	{
 		return { { "regions", json::array({ { { "x", 1 }, { "y", 2 }, { "width", 3 }, { "height", 2 } },
-											  { { "x", 4 }, { "y", 1 }, { "width", 3 }, { "height", 3 } } }) } };
+								  { { "x", 4 }, { "y", 1 }, { "width", 3 }, { "height", 3 } } }) } };
 	}
 }
 
