@@ -81,9 +81,7 @@ runs:
                     - 'tests/shaders/**'
                   cpp_tests:
                     - 'tests/cpp/**'
-                    - 'tests/test_cmake_shader_staging.py'
-                    - 'tests/test_feature_flip_impact.py'
-                    - 'tests/test_release_plan.py'
+                    - 'tests/*.py'
                     - 'tools/feature-flip-impact.py'
                     - 'tools/release_plan.py'
                     - 'package/Shaders/Tests/WindFieldParitySamples.hlsli'

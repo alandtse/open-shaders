@@ -34,9 +34,7 @@ on:
             - "tools/build-shader-cache.py"
             - "tools/feature-flip-impact.py"
             - "tools/release_plan.py"
-            - "tests/test_cmake_shader_staging.py"
-            - "tests/test_feature_flip_impact.py"
-            - "tests/test_release_plan.py"
+            - "tests/*.py"
 
 # Least-privilege defaults; individual jobs override where needed.
 permissions:
