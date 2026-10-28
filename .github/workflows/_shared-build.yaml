@@ -553,12 +553,12 @@ jobs:
               with:
                   configurePreset: ALL
                   buildPreset: ALL
-                  buildPresetAdditionalArgs: "['--target cpp_tests']"
+                  buildPresetAdditionalArgs: "['--target cpp_tests screenshot_tests_devbench']"
 
             - name: Run C++ unit tests
               if: steps.check-cpp.outputs.skip != 'true'
               run: |
-                  ctest --test-dir build/ALL -C Release --output-on-failure -R CppUtilTests --timeout 60
+                  ctest --test-dir build/ALL -C Release --output-on-failure -R "CppUtilTests|ScreenshotDevBenchTests" --timeout 60
 
             - name: Test settings catalog generator
               if: steps.check-cpp.outputs.skip != 'true'
@@ -567,6 +567,12 @@ jobs:
             - name: Test shader staging CMake modules
               if: steps.check-cpp.outputs.skip != 'true'
               run: python -m unittest discover -s tests -p test_cmake_shader_staging.py
+
+            - name: Test release and flip-impact tools
+              if: steps.check-cpp.outputs.skip != 'true'
+              run: |
+                  python -m unittest discover -s tests -p test_feature_flip_impact.py
+                  python -m unittest discover -s tests -p test_release_plan.py
 
             - name: Upload test results on failure
               if: failure() && steps.check-cpp.outputs.skip != 'true'
