@@ -605,24 +605,20 @@ jobs:
                     echo "skip=false" >> $GITHUB_OUTPUT
                   fi
 
-            - name: Setup Python
-              if: steps.check-python.outputs.skip != 'true'
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.11"
-
             # These tests compile slices of src/*.cpp against stub headers with g++, so they
             # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
             # run in the Windows jobs instead.
             - name: Install PyYAML
               if: steps.check-python.outputs.skip != 'true'
-              run: python -m pip install pyyaml
+              run: |
+                  python3 -m venv "$RUNNER_TEMP/venv"
+                  "$RUNNER_TEMP/venv/bin/pip" install pyyaml
 
             - name: Run Python unit tests
               if: steps.check-python.outputs.skip != 'true'
               working-directory: tests
               run: >
-                  python -m unittest -v
+                  "$RUNNER_TEMP/venv/bin/python" -m unittest -v
                   test_editor_startup
                   test_effects11_hdr
                   test_environment_controls
