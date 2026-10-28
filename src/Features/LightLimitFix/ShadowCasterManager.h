@@ -802,6 +802,7 @@ namespace ShadowCasterManager
 		/// Cumulative permanent split exclusions by trigger, and bakes retired before any cache reuse.
 		uint64_t splitLatchMismatchTotal = 0;
 		uint64_t splitLatchWindowTotal = 0;
+		uint64_t splitLatchRetryTotal = 0;
 		uint64_t splitWastedBakesTotal = 0;
 
 		/// Redraws a resolution promotion forced, and demotions skipped because the
@@ -1017,6 +1018,10 @@ namespace ShadowCasterManager
 
 	/// True when SCM owns shadow scheduling (enabled at boot, no external conflict).
 	bool IsActive();
+
+	/// Whether casters parented under an actor are always classified dynamic (runtime A/B flag, default on).
+	bool GetActorAttachedDynamic();
+	void SetActorAttachedDynamic(bool a_value);
 
 	/// Returns kSHADOWMAPS texture-array slot slice index for a light, or -1.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);

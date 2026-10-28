@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -68,6 +69,7 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	writeFrame = 0;
 	readFrame = 0;
 	frameActive = false;
+	frameRefused = false;
 	initialized = true;
 	// userEnabled is left as-is: a device teardown/re-init (e.g. display
 	// mode change) must not silently re-enable a user's "off" preference.
@@ -122,6 +124,7 @@ void Profiler::Release()
 	completedCpuTimers.clear();
 	activePassUsesGpu.clear();
 	frameActive = false;
+	frameRefused = false;
 	initialized = false;
 	device = nullptr;
 	context = nullptr;
@@ -176,11 +179,13 @@ void Profiler::LatchCaptureRequest()
 
 void Profiler::BeginFrame()
 {
-	if (!initialized || !context || frameActive || !IsEnabled())
+	if (!initialized || !context || frameActive || frameRefused || !IsEnabled())
 		return;
 
-	if (!CollectResults())
+	if (!CollectResults()) {
+		frameRefused = true;
 		return;
+	}
 
 	auto& frame = frames[writeFrame];
 	frame.batch.Reset();
@@ -188,6 +193,7 @@ void Profiler::BeginFrame()
 	frame.captureCycle = true;
 	frame.inFlight = frame.batch.BeginBatch(device, context);
 	frameActive = frame.inFlight;
+	frameRefused = !frameActive;
 	frame.acquiredTimerCount = 0;
 	acquiredSlotsThisFrame = 0;
 	if (!frameActive)
@@ -291,6 +297,7 @@ void Profiler::EndPass(bool fireCallbacks)
 
 void Profiler::EndFrame(uint32_t a_frameCount)
 {
+	const bool refused = std::exchange(frameRefused, false);
 	if (!initialized || !context) {
 		LatchCaptureRequest();
 		activeCpuTimers.clear();
@@ -298,7 +305,7 @@ void Profiler::EndFrame(uint32_t a_frameCount)
 		return;
 	}
 
-	const bool captureCycleActive = activeCaptureMode != CaptureMode::None;
+	const bool captureCycleActive = activeCaptureMode != CaptureMode::None && (!refused || HasCaptureMode(activeCaptureMode, CaptureMode::CPU));
 	const uint64_t captureCycle = captureCycleActive ? ++captureCycleCount : captureCycleCount;
 	if (HasCaptureMode(activeCaptureMode, CaptureMode::CPU)) {
 		PublishCpuResults(activeNamePrefix, a_frameCount, captureCycle);
@@ -324,6 +331,10 @@ void Profiler::EndFrame(uint32_t a_frameCount)
 			// Advance past drained slots so the next capture cannot replay them.
 			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.captureCycle; }))
 				writeFrame = (writeFrame + 1) % kFrameLatency;
+			LatchCaptureRequest();
+			return;
+		}
+		if (refused) {
 			LatchCaptureRequest();
 			return;
 		}

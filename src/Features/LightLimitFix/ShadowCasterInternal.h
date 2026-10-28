@@ -463,6 +463,8 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
+		bool actorAttached = false;  ///< parented under an actor's skeleton
+		int ancestryEpoch = -1;      ///< epoch of the last parent-chain walk
 	};
 	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
 	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;

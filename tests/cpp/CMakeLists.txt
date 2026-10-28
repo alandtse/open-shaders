@@ -92,6 +92,7 @@ add_executable(cpp_tests
 	test_framelatch.cpp
 	test_lightattachgate.cpp
 	test_pointersearch.cpp
+	test_splitlatchbackoff.cpp
 	test_shaderinclude.cpp
 	test_settingspatch.cpp
 	test_weatheridparser.cpp

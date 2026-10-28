@@ -637,7 +637,7 @@ std::function<void()> SnowCover::OnRenderPassBegin(const RE::BSRenderPass* pass)
 	auto* reference = pass->geometry->GetUserData();
 	const char* name = pass->geometry->name.c_str();
 	const std::string_view geometryName = name ? name : "";
-	const bool actor = reference && reference->GetFormType() == RE::FormType::ActorCharacter;
+	const bool actor = reference && reference->IsActor();
 	const bool movable = reference && reference->CanBeMoved();
 	const bool animated = pass->geometry->HasAnimation() || (reference && reference->GetBaseObject() && reference->GetBaseObject()->IsBoundAnimObject());
 	if (actor || blacklist.contains(geometryName) || ((animated || movable) && !whitelist.contains(geometryName) && !(settings.AffectHavok && movable)))

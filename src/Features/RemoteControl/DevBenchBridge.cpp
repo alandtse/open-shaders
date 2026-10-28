@@ -830,6 +830,7 @@ namespace
 							{ "splitAccumDynamicOnlyTotal", snap.splitAccumByMode[2] },
 							{ "splitLatchMismatchTotal", snap.splitLatchMismatchTotal },
 							{ "splitLatchWindowTotal", snap.splitLatchWindowTotal },
+							{ "splitLatchRetryTotal", snap.splitLatchRetryTotal },
 							{ "splitWastedBakesTotal", snap.splitWastedBakesTotal },
 							{ "scalePromotionRedraws", snap.scalePromotionRedraws },
 							{ "scaleDemotionRedrawsAvoided", snap.scaleDemotionRedrawsAvoided },

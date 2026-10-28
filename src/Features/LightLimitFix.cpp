@@ -817,6 +817,7 @@ json LightLimitFix::GetRuntimeFlags()
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
 		{ "LightAttachAuditDetail", LightAttach::GetAuditDetail() },
+		{ "ActorAttachedDynamic", ShadowCasterManager::GetActorAttachedDynamic() },
 	};
 }
 
@@ -828,6 +829,10 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 	}
 	if (name == "LightAttachAuditDetail") {
 		LightAttach::SetAuditDetail(value);
+		return true;
+	}
+	if (name == "ActorAttachedDynamic") {
+		ShadowCasterManager::SetActorAttachedDynamic(value);
 		return true;
 	}
 	return false;

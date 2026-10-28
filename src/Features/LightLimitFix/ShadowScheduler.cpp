@@ -21,6 +21,7 @@
 #include "LitCap.h"
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
+#include "SplitLatchBackoff.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 
@@ -299,6 +300,7 @@ namespace ShadowCasterManager
 	/// Cumulative permanent split exclusions by trigger: a pose mismatch against the bake, or the rebake window.
 	std::atomic<uint64_t> s_splitLatchMismatchTotal{ 0 };
 	std::atomic<uint64_t> s_splitLatchWindowTotal{ 0 };
+	std::atomic<uint64_t> s_splitLatchRetryTotal{ 0 };
 	/// Bakes retired (latched or dropped on slot reassignment) before any DynamicOnly accumulate reused them.
 	std::atomic<uint64_t> s_splitWastedBakeTotal{ 0 };
 
@@ -338,7 +340,10 @@ namespace ShadowCasterManager
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
 		bool splitExcluded = false;    ///< jitter outruns the bake's validity: render full, no split
+		uint32_t latchedFrame = 0;     ///< frame splitExcluded was last set
 		bool fullThisFrame = false;    ///< this frame's accumulate was All (cap/exclusion fallback)
+		/// Retry backoff for the split latch, doubling per retry up to the cap.
+		uint32_t latchRetryFrames = SplitLatchBackoff::kInitialRetryFrames;
 		/// Last completed accumulate appended >= 1 dynamic caster. Defaults
 		/// true (never sleep a light until an accumulate proves it moverless).
 		bool sawDynamicLastAccum = true;
@@ -1034,6 +1039,7 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			bool split = StaticAtlasReady();
+			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
 			st->bakeThisFrame = false;
@@ -1041,6 +1047,15 @@ namespace ShadowCasterManager
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
+			if (split && st->splitExcluded &&
+				SplitLatchBackoff::RetryDue(nowFrame, st->latchedFrame, st->latchRetryFrames)) {
+				st->splitExcluded = false;
+				st->poseRebakes = 0;
+				st->poseWindowStart = nowFrame;
+				st->bakeQueued = true;
+				st->latchRetryFrames = SplitLatchBackoff::NextRetryFrames(st->latchRetryFrames);
+				s_splitLatchRetryTotal.fetch_add(1, std::memory_order_relaxed);
+			}
 			if (split) {
 				if (st->splitExcluded || (!TolerantSplit() && st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
@@ -1050,6 +1065,7 @@ namespace ShadowCasterManager
 					if (!st->splitExcluded) {
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 						RetireSplitBake(*st);
+						st->latchedFrame = nowFrame;
 					}
 					st->splitExcluded = true;
 					split = false;
@@ -1099,7 +1115,6 @@ namespace ShadowCasterManager
 				if (st->bakeThisFrame) {
 					// A pose-stable light bakes once per window; kPoseRebakeLatch bakes in 300
 					// frames means the cache never holds -- render full and stop it.
-					const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 					if (nowFrame < st->poseWindowStart || nowFrame - st->poseWindowStart > 300u) {
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
@@ -1110,6 +1125,7 @@ namespace ShadowCasterManager
 							RetireSplitBake(*st);
 						}
 						st->splitExcluded = true;
+						st->latchedFrame = nowFrame;
 						st->bakeThisFrame = false;
 						st->fullThisFrame = true;
 						mode = CasterPass::All;
@@ -3453,6 +3469,7 @@ namespace ShadowCasterManager
 					snap.splitAccumByMode[i] = s_splitAccumByMode[i].load(std::memory_order_relaxed);
 				snap.splitLatchMismatchTotal = s_splitLatchMismatchTotal.load(std::memory_order_relaxed);
 				snap.splitLatchWindowTotal = s_splitLatchWindowTotal.load(std::memory_order_relaxed);
+				snap.splitLatchRetryTotal = s_splitLatchRetryTotal.load(std::memory_order_relaxed);
 				snap.splitWastedBakesTotal = s_splitWastedBakeTotal.load(std::memory_order_relaxed);
 				snap.scalePromotionRedraws = s_scalePromotionRedraws.load(std::memory_order_relaxed);
 				snap.scaleDemotionRedrawsAvoided = s_scaleDemotionRedrawsAvoided.load(std::memory_order_relaxed);
