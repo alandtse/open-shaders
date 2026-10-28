@@ -737,6 +737,11 @@ Texture2D<float4> TexLandLodNoiseSampler : register(t15);
 
 Texture2D<float4> TexShadowMaskSampler : register(t14);
 
+#	if defined(HAIR) && !defined(DEFERRED)
+Texture2D<float3> TexDeferredMasks : register(t124);   // y: directional shadow the deferred hair pass computed
+Texture2D<float2> TexDeferredMasks2 : register(t125);  // y: material category
+#	endif
+
 #	if defined(SKIN) && defined(CS_SKIN)
 Texture2D<float4> TexSkinExtraSampler : register(t71);
 Texture2D<float4> TexSkinWetnessSampler : register(t74);
@@ -3033,6 +3038,16 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	}
 #	endif  // SCREEN_SPACE_SHADOWS
 
+#	if defined(HAIR) && !defined(DEFERRED)
+	if (SharedData::lightLimitFixSettings.SunLitHair != 0 && inWorld && !inReflection) {
+		const int3 gbufferPixel = int3(input.Position.xy, 0);
+		if (NeuralRenderingCategory::Decode(TexDeferredMasks2.Load(gbufferPixel).y) == NeuralRenderingCategory::Hair) {
+			dirDetailedShadow = TexDeferredMasks.Load(gbufferPixel).y;
+			dirSoftShadow = max(dirSoftShadow, dirDetailedShadow);
+		}
+	}
+#	endif
+
 #	if defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
 	[branch] if (inWorld && SharedData::extendedMaterialSettings.EnableShadows)
 	{
@@ -4067,6 +4082,11 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 #			endif
 #		else
 	psout.Masks = float4(0, 0, masksZ, psout.Diffuse.w);
+#			if defined(HAIR)
+	// A 0/1 blend factor makes the Masks write replace or leave the pixel, so the shadow is not mixed with the surface behind.
+	psout.Masks.y = dirDetailedShadow;
+	psout.Masks.w = step(0.5, psout.Diffuse.w);
+#			endif
 #		endif
 
 	uint neuralRenderingCategory = NeuralRenderingCategory::None;

@@ -3501,6 +3501,8 @@
     "menu.advanced.test_conditions": "Условия тестирования",
     "menu.advanced.threading_header": "",
     "menu.advanced.top_slowest_shaders": "Топ %zu наиболее медленных шейдеров (последняя сборка)",
+    "menu.advanced.tracy_per_draw_zones": "",
+    "menu.advanced.tracy_per_draw_zones_tooltip": "",
     "menu.advanced.vertex": "Вершинный",
     "menu.advanced.vertex_tooltip": "Заменять вершинные шейдеры. При значении false отключает пользовательские вершинные шейдеры для указанных типов. Для разработчиков, проверяющих соответствие пользовательских шейдеров ванильному поведению. ",
     "menu.advanced.work_label": "Работа (W)",

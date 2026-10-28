@@ -130,6 +130,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShowShadowOverlay,
 	ShadowSettings,
 	EnableParticleContactShadows,
+	SunLitHair,
 	EnableParticleLights,
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
@@ -251,6 +252,14 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::BeginTabItem(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"))) {
 		DrawContactShadowSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.hair_shadows_header", "Hair Shadows"))) {
+		ImGui::Checkbox(T("feature.light_limit_fix.sun_lit_hair", "Sun-Lit Hair"), &settings.SunLitHair);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.sun_lit_hair_tooltip", "Hair takes the directional shadow the deferred pass computed instead of the engine's forward lookup, so it is lit by the sun like the rest of the scene. Off keeps the engine's original hair shadowing, which can leave hair much darker."));
+		}
 		ImGui::EndTabItem();
 	}
 
@@ -560,6 +569,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowDepthThickness = sanitizeFloat(settings.ContactShadowDepthThickness, 1.0f, 128.0f);
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
+	perFrame.SunLitHair = settings.SunLitHair ? 1u : 0u;
 	perFrame.EnableParticleContactShadows = settings.EnableContactShadows && settings.EnableParticleContactShadows;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
@@ -807,6 +817,7 @@ json LightLimitFix::GetRuntimeFlags()
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
 		{ "LightAttachAuditDetail", LightAttach::GetAuditDetail() },
+		{ "ActorAttachedDynamic", ShadowCasterManager::GetActorAttachedDynamic() },
 	};
 }
 
@@ -818,6 +829,10 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 	}
 	if (name == "LightAttachAuditDetail") {
 		LightAttach::SetAuditDetail(value);
+		return true;
+	}
+	if (name == "ActorAttachedDynamic") {
+		ShadowCasterManager::SetActorAttachedDynamic(value);
 		return true;
 	}
 	return false;

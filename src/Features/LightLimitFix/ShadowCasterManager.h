@@ -1018,6 +1018,10 @@ namespace ShadowCasterManager
 	/// True when SCM owns shadow scheduling (enabled at boot, no external conflict).
 	bool IsActive();
 
+	/// Whether casters parented under an actor are always classified dynamic (runtime A/B flag, default on).
+	bool GetActorAttachedDynamic();
+	void SetActorAttachedDynamic(bool a_value);
+
 	/// Returns kSHADOWMAPS texture-array slot slice index for a light, or -1.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 

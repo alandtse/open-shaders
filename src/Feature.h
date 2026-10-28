@@ -804,12 +804,11 @@ public:
 	{
 	public:
 		template <typename Func>
-		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback)
+		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback, bool a_emitCpuZone = true)
 		{
 			ForEachLoadedFeature(a_features, a_methodName, [&](Feature* feature) {
 				if (auto cleanup = a_callback(feature))
-					cleanups.push_back(std::move(cleanup));
-			});
+					cleanups.push_back(std::move(cleanup)); }, false, a_emitCpuZone);
 		}
 
 		RenderScope(const RenderScope&) = delete;

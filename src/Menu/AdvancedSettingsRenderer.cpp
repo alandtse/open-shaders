@@ -22,6 +22,7 @@
 #include "Util.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/TracyZones.h"
 #include "Utils/UI.h"
 
 namespace
@@ -775,6 +776,17 @@ void AdvancedSettingsRenderer::RenderRuntimeDebugControls()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.frame_annotations_tooltip", "Enable detailed frame annotations for debugging render passes and draw calls."));
 	}
+
+#ifdef TRACY_ENABLE
+	ImGui::Indent();
+	bool perDrawZones = TracyZones::PerDrawZonesEnabled();
+	if (ImGui::Checkbox(T("menu.advanced.tracy_per_draw_zones", "Tracy Per-Draw Zones"), &perDrawZones))
+		TracyZones::SetPerDrawZones(perDrawZones);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.tracy_per_draw_zones_tooltip", "Emit the high-volume per-draw Tracy zones (State::Draw, its nested draw zones, per-feature render-pass hooks). Off by default because they stream 100+ MB/s; call counts stay visible as zonecalls.* plots either way."));
+	}
+	ImGui::Unindent();
+#endif
 
 	// Heat-shimmer (ISRefraction.hlsl) strength. Live per-frame value, no recompile needed.
 	ImGui::SliderFloat(T("menu.advanced.refraction_scale", "Refraction Scale"), &globals::state->refractionScale, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);

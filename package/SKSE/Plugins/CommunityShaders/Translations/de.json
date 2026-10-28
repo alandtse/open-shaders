@@ -3501,6 +3501,8 @@
     "menu.advanced.test_conditions": "",
     "menu.advanced.threading_header": "",
     "menu.advanced.top_slowest_shaders": "",
+    "menu.advanced.tracy_per_draw_zones": "",
+    "menu.advanced.tracy_per_draw_zones_tooltip": "",
     "menu.advanced.vertex": "",
     "menu.advanced.vertex_tooltip": "",
     "menu.advanced.work_label": "",

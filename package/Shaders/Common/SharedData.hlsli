@@ -111,7 +111,7 @@ namespace SharedData
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
 		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU
 		// reads the cluster config from the wrong offsets. The C++ mirror has the same hole.
-		float pad0;
+		uint SunLitHair;  // 1: the forward hair pass reuses the directional shadow the deferred hair pass stored
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)

@@ -16,8 +16,14 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <vector>
 
 class ScreenshotSequenceCapture;
+
+namespace DirectX
+{
+	class ScratchImage;
+}
 
 struct ScreenshotFeature : public Feature
 {
@@ -123,6 +129,8 @@ private:
 	struct PendingScreenshot
 	{
 		winrt::com_ptr<ID3D11Texture2D> stagingTexture;
+		/// Filled on the render thread once the GPU copy lands; null if the readback failed.
+		std::shared_ptr<DirectX::ScratchImage> image;
 		DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 		uint32_t width = 0;
 		uint32_t height = 0;
@@ -146,6 +154,8 @@ private:
 	std::thread screenshotWorker;
 	bool screenshotWorkerRunning = false;
 	std::atomic<uint32_t> screenshotsInFlight{ 0 };
+	/// Render thread only: captures whose GPU copy has not been read back yet.
+	std::vector<PendingScreenshot> copiesInFlight;
 	Util::Subrect::Controller subrect;
 
 	// SRV-readable copy used when the capture source's own SRV can't be sampled
@@ -156,6 +166,8 @@ private:
 	void EnsureWorkerThread();
 	void StopWorkerThread();
 	void EnqueueScreenshot(PendingScreenshot&& screenshot);
+	/** @brief Reads back every finished GPU copy without waiting and hands it to the worker; render thread only. */
+	void EnqueueFinishedCopies();
 	void ScreenshotWorkerLoop();
 	void EnsurePreviewCache(ID3D11Texture2D* sourceTexture);
 	static void ShowInGameNotification(std::string message);
