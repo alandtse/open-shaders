@@ -26,12 +26,23 @@ namespace WindField
 		float distortionStrength{};
 		float distortionScale{ 1.0f };
 		float distortionSpeed{};
-		float _padding{};
+		float microTurbulenceStrength{ 1.0f };
+		float fineBaselineAmplitude{ 0.025f };
+		float fineWindCoupling{ 0.35f };
+		float fineGustCoupling{ 0.75f };
+		float fineFrequency{ 1.0f };
 	};
-	static_assert(sizeof(WindTuning) == 80);
+	static_assert(sizeof(WindTuning) == 96);
 	static_assert(std::is_standard_layout_v<WindTuning>);
 
-	/** @brief One procedural noise-field instance with an orientation fixed for its lifetime. */
+	/** Integrated world-space transport supplied by Open Wind. */
+	struct FineState
+	{
+		float4 travel{};
+	};
+	static_assert(sizeof(FineState) == 16);
+
+	/** One procedural noise-field instance with an orientation fixed for its lifetime. */
 	struct Field
 	{
 		float3 direction{ 1.0f, 0.0f, 0.0f };

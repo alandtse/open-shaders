@@ -48,6 +48,7 @@ void Wind::PostPostLoad()
 	const auto ui = requestUI ? requestUI(OpenWind::kUIRevision) : nullptr;
 	OpenWind::RendererHost host;
 	host.context = this;
+	host.capabilities = static_cast<uint32_t>(OpenWind::RendererCapability::FineWind);
 	host.authoring = &GetAuthoringHost();
 	if (!renderer || renderer->structSize != sizeof(OpenWind::RendererAPI) ||
 		renderer->frameSize != sizeof(OpenWind::RendererFrame) || !renderer->Bind || !renderer->Update ||
@@ -133,6 +134,11 @@ void Wind::ApplyProviderFrame(const OpenWind::RendererFrame& a_frame)
 	windFieldTuning.distortionStrength = a_frame.tuning.distortionStrength;
 	windFieldTuning.distortionScale = a_frame.tuning.distortionScale;
 	windFieldTuning.distortionSpeed = a_frame.tuning.distortionSpeed;
+	windFieldTuning.microTurbulenceStrength = a_frame.tuning.microTurbulenceStrength;
+	windFieldTuning.fineBaselineAmplitude = a_frame.tuning.fineBaselineAmplitude;
+	windFieldTuning.fineWindCoupling = a_frame.tuning.fineWindCoupling;
+	windFieldTuning.fineGustCoupling = a_frame.tuning.fineGustCoupling;
+	windFieldTuning.fineFrequency = a_frame.tuning.fineFrequency;
 	windFieldCurrent = { a_frame.current.direction, a_frame.current.travelDistance, a_frame.current.crosswind, a_frame.current.speed };
 	previousWindFieldCurrent = { a_frame.previous.direction, a_frame.previous.travelDistance, a_frame.previous.crosswind, a_frame.previous.speed };
 	windFieldTransition = { a_frame.transition.direction, a_frame.transition.travelDistance, a_frame.transition.crosswind, a_frame.transition.speed };
@@ -183,6 +189,11 @@ void Wind::CommitProviderSettings()
 	updated.treeWindSpringDamping = settings.treeWindSpringDamping;
 	updated.treeTransientSpringFrequency = settings.treeTransientSpringFrequency;
 	updated.treeTransientSpringDamping = settings.treeTransientSpringDamping;
+	updated.windFieldMicroTurbulenceStrength = settings.windFieldMicroTurbulenceStrength;
+	updated.windFieldFineBaselineAmplitude = settings.windFieldFineBaselineAmplitude;
+	updated.windFieldFineWindCoupling = settings.windFieldFineWindCoupling;
+	updated.windFieldFineGustCoupling = settings.windFieldFineGustCoupling;
+	updated.windFieldFineFrequency = settings.windFieldFineFrequency;
 	updated.windFieldGustScale = settings.windFieldGustScale;
 	updated.windFieldGustCrosswindScale = settings.windFieldGustCrosswindScale;
 	updated.windFieldGustAmplitude = settings.windFieldGustAmplitude;

@@ -144,6 +144,8 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		GrassWindSpringData data{};
 		data.transientFieldMask = GetTransientFieldMask();
 		data.flutterFrequency = sanitizedSettings.grassWindFlutterFrequency;
+		data.fineTransport.travel = providerFrame->grassFineTransport.travel;
+		data.fineAmbientTransport.travel = providerFrame->fine.travel;
 		data.transientFlutterStrength = sanitizedSettings.grassTransientFlutterStrength;
 		data.transientFlutterFrequency = sanitizedSettings.grassTransientFlutterFrequency;
 		data.transientResponseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassTransientBendStrength);

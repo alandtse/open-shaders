@@ -102,6 +102,11 @@ void Wind::SanitizeSettings(Settings& a_settings)
 		kTreeTransientSpringFrequencyMin, kTreeTransientSpringFrequencyMax, defaults.treeTransientSpringFrequency);
 	a_settings.treeTransientSpringDamping = Util::ClampFinite(a_settings.treeTransientSpringDamping,
 		kTreeTransientSpringDampingMin, kTreeTransientSpringDampingMax, defaults.treeTransientSpringDamping);
+	a_settings.windFieldMicroTurbulenceStrength = Util::ClampFinite(a_settings.windFieldMicroTurbulenceStrength, kWindFieldMicroTurbulenceStrengthMin, kWindFieldMicroTurbulenceStrengthMax, defaults.windFieldMicroTurbulenceStrength);
+	a_settings.windFieldFineBaselineAmplitude = Util::ClampFinite(a_settings.windFieldFineBaselineAmplitude, kWindFieldFineBaselineAmplitudeMin, kWindFieldFineBaselineAmplitudeMax, defaults.windFieldFineBaselineAmplitude);
+	a_settings.windFieldFineWindCoupling = Util::ClampFinite(a_settings.windFieldFineWindCoupling, kWindFieldFineCouplingMin, kWindFieldFineCouplingMax, defaults.windFieldFineWindCoupling);
+	a_settings.windFieldFineGustCoupling = Util::ClampFinite(a_settings.windFieldFineGustCoupling, kWindFieldFineCouplingMin, kWindFieldFineCouplingMax, defaults.windFieldFineGustCoupling);
+	a_settings.windFieldFineFrequency = Util::ClampFinite(a_settings.windFieldFineFrequency, kWindFieldFineFrequencyMin, kWindFieldFineFrequencyMax, defaults.windFieldFineFrequency);
 	a_settings.windFieldGustScale = Util::ClampFinite(a_settings.windFieldGustScale,
 		kWindFieldGustScaleMin, kWindFieldGustScaleMax, defaults.windFieldGustScale);
 	a_settings.windFieldGustCrosswindScale = Util::ClampFinite(a_settings.windFieldGustCrosswindScale,
@@ -161,6 +166,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	treeWindSpringDamping,
 	treeTransientSpringFrequency,
 	treeTransientSpringDamping,
+	windFieldMicroTurbulenceStrength,
+	windFieldFineBaselineAmplitude,
+	windFieldFineWindCoupling,
+	windFieldFineGustCoupling,
+	windFieldFineFrequency,
 	windFieldGustScale,
 	windFieldGustCrosswindScale,
 	windFieldGustAmplitude,
@@ -218,6 +228,11 @@ json Wind::GetDiagnostics()
 {
 	const auto [universalOverrideEnabled, universalValues] = TreeWindPatcher::GetUniversalOverride();
 	return json{
+		{ "windFieldMicroTurbulenceStrength", settings.windFieldMicroTurbulenceStrength },
+		{ "windFieldFineBaselineAmplitude", settings.windFieldFineBaselineAmplitude },
+		{ "windFieldFineWindCoupling", settings.windFieldFineWindCoupling },
+		{ "windFieldFineGustCoupling", settings.windFieldFineGustCoupling },
+		{ "windFieldFineFrequency", settings.windFieldFineFrequency },
 		{ "treeWindRuleCount", TreeWindPatcher::GetRuleCount() },
 		{ "treeWindUnsavedRuleCount", TreeWindPatcher::GetUnsavedRuleCount() },
 		{ "treeWindConflictingFiles", TreeWindPatcher::GetConflictingFiles() },
@@ -257,6 +272,23 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("setFineWind",
+		"Tune continuous grass Fine Wind without resetting transport. Optional numeric args: strength (0-4), baseline (0-0.25), ambientCoupling (0-4), gustCoupling (0-4), travelRate (0-4). Zero strength disables both bands; zero travelRate freezes transport.",
+		[](Feature* feature, const json& args) {
+			auto* wind = static_cast<Wind*>(feature);
+			if (args.contains("strength") && args["strength"].is_number())
+				wind->settings.windFieldMicroTurbulenceStrength = args["strength"].get<float>();
+			if (args.contains("baseline") && args["baseline"].is_number())
+				wind->settings.windFieldFineBaselineAmplitude = args["baseline"].get<float>();
+			if (args.contains("ambientCoupling") && args["ambientCoupling"].is_number())
+				wind->settings.windFieldFineWindCoupling = args["ambientCoupling"].get<float>();
+			if (args.contains("gustCoupling") && args["gustCoupling"].is_number())
+				wind->settings.windFieldFineGustCoupling = args["gustCoupling"].get<float>();
+			if (args.contains("travelRate") && args["travelRate"].is_number())
+				wind->settings.windFieldFineFrequency = args["travelRate"].get<float>();
+			SanitizeSettings(wind->settings);
+			wind->CommitProviderSettings();
+		});
 	FEATURE_COMMAND("setGrassTransientBendStrength",
 		"Set grass transient bend strength from 0 to 180 degrees per unit, independently of ambient bending. Args: strength (number).",
 		[](Feature* feature, const json& args) {
@@ -488,6 +520,11 @@ void Wind::RestoreCurrentPageDefaultSettings()
 	const Settings defaults{};
 	switch (uiState.activeSettingsPage) {
 	case SettingsPage::WindField:
+		settings.windFieldMicroTurbulenceStrength = defaults.windFieldMicroTurbulenceStrength;
+		settings.windFieldFineBaselineAmplitude = defaults.windFieldFineBaselineAmplitude;
+		settings.windFieldFineWindCoupling = defaults.windFieldFineWindCoupling;
+		settings.windFieldFineGustCoupling = defaults.windFieldFineGustCoupling;
+		settings.windFieldFineFrequency = defaults.windFieldFineFrequency;
 		settings.windFieldGustScale = defaults.windFieldGustScale;
 		settings.windFieldGustCrosswindScale = defaults.windFieldGustCrosswindScale;
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
@@ -529,7 +566,12 @@ void Wind::RestoreCurrentPageDefaultSettings()
 
 bool Wind::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 12> windFieldKeys{
+	static constexpr std::array<std::string_view, 17> windFieldKeys{
+		"windFieldMicroTurbulenceStrength",
+		"windFieldFineBaselineAmplitude",
+		"windFieldFineWindCoupling",
+		"windFieldFineGustCoupling",
+		"windFieldFineFrequency",
 		"windFieldGustScale",
 		"windFieldGustCrosswindScale",
 		"windFieldGustAmplitude",

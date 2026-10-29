@@ -23,6 +23,11 @@ struct WindSettings
 	float treeWindSpringDamping = 0.7f;
 	float treeTransientSpringFrequency = 2.0f;
 	float treeTransientSpringDamping = 0.7f;
+	float windFieldMicroTurbulenceStrength = 1.0f;
+	float windFieldFineBaselineAmplitude = 0.25f;
+	float windFieldFineWindCoupling = 0.35f;
+	float windFieldFineGustCoupling = 1.02f;
+	float windFieldFineFrequency = 1.0f;
 	float windFieldGustScale = 409.0f;
 	float windFieldGustCrosswindScale = 563.0f;
 	float windFieldGustAmplitude = 1.0f;
@@ -79,6 +84,14 @@ namespace WindSettingsLimits
 	inline constexpr float kTreeTransientSpringFrequencyMax = 8.0f;
 	inline constexpr float kTreeTransientSpringDampingMin = 0.5f;
 	inline constexpr float kTreeTransientSpringDampingMax = 1.5f;
+	inline constexpr float kWindFieldMicroTurbulenceStrengthMin = 0.0f;
+	inline constexpr float kWindFieldMicroTurbulenceStrengthMax = 4.0f;
+	inline constexpr float kWindFieldFineBaselineAmplitudeMin = 0.0f;
+	inline constexpr float kWindFieldFineBaselineAmplitudeMax = 0.25f;
+	inline constexpr float kWindFieldFineCouplingMin = 0.0f;
+	inline constexpr float kWindFieldFineCouplingMax = 4.0f;
+	inline constexpr float kWindFieldFineFrequencyMin = 0.0f;
+	inline constexpr float kWindFieldFineFrequencyMax = 4.0f;
 	inline constexpr float kWindFieldGustScaleMin = 128.0f;
 	inline constexpr float kWindFieldGustScaleMax = 16384.0f;
 	inline constexpr float kWindFieldGustCrosswindScaleMin = 128.0f;

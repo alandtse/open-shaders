@@ -189,6 +189,36 @@ void Wind::DrawWindFieldSettings()
 		settings.windFieldGustScale, settings.windFieldGustCrosswindScale);
 	ImGui::Text("%s: %.2fx", T(TKEY("wind_field_profile_advection"), "Advection"), settings.windFieldGustAdvectionMultiplier);
 	if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::SliderFloat(T(TKEY("wind_field_micro_turbulence_strength"), "Fine Wind Strength"),
+			&settings.windFieldMicroTurbulenceStrength, kWindFieldMicroTurbulenceStrengthMin,
+			kWindFieldMicroTurbulenceStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_micro_turbulence_strength_tooltip"),
+				"Scales continuous traveling fine wind: slow grass bending and faster grass flutter. Zero disables both bands. Direction deviations stay within four degrees without regenerating the gust field."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_baseline"), "Fine Wind Baseline"),
+			&settings.windFieldFineBaselineAmplitude, kWindFieldFineBaselineAmplitudeMin,
+			kWindFieldFineBaselineAmplitudeMax, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_baseline_tooltip"),
+				"Adds fine motion in light sustained wind. All fine motion smoothly fades to zero in completely still air."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_wind_coupling"), "Fine Wind Ambient Coupling"),
+			&settings.windFieldFineWindCoupling, kWindFieldFineCouplingMin,
+			kWindFieldFineCouplingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_wind_coupling_tooltip"),
+				"Controls how much sustained ambient wind increases the fine-motion amplitude."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_gust_coupling"), "Fine Wind Gust Coupling"),
+			&settings.windFieldFineGustCoupling, kWindFieldFineCouplingMin,
+			kWindFieldFineCouplingMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_gust_coupling_tooltip"),
+				"Adds fine-motion amplitude as the existing gust front passes, without restarting its phase. Transient impacts use their separate controls."));
+		ImGui::SliderFloat(T(TKEY("wind_field_fine_frequency"), "Fine Wind Travel Rate"),
+			&settings.windFieldFineFrequency, kWindFieldFineFrequencyMin,
+			kWindFieldFineFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_fine_frequency_tooltip"),
+				"Changes how quickly both grass noise bands travel with the wind. Rate and wind-speed changes preserve phase; zero freezes transport. Fine Wind Strength controls amplitude."));
 		ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
 			&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,
 			kWindFieldGustAdvectionMultiplierMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
@@ -828,22 +858,22 @@ void Wind::DrawGrassWindSettings()
 	ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Flutter Wind Sensitivity"), &settings.grassWindSensitivity,
 		kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales sampled wind speed before evaluating the low, medium, and high flutter response."));
+		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales the grass response to the traveling Fine Wind detail band."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
 			"Scales both ambient and transient blade flutter. Use Grass Impulse Flutter in Transients to adjust only the transient contribution."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
+	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Travel Rate"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
-			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
+			"Scales continuous grass detail travel. Rate changes preserve phase; zero disables ambient flutter."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_gust_influence"), "Flutter Gust Influence"), &settings.grassWindFlutterGustInfluence,
 		kGrassWindFlutterGustInfluenceMin, kGrassWindFlutterGustInfluenceMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_gust_influence_tooltip"),
-			"Controls how strongly local peaks and troughs in the traveling gust field modulate flutter."));
+			"Multiplies Fine Wind Gust Coupling for grass flutter. Passing gusts add amplitude without restarting motion."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_wave_scale"), "Flutter Wave Scale"), &settings.grassWindFlutterWaveScale,
 		kGrassWindFlutterWaveScaleMin, kGrassWindFlutterWaveScaleMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -860,7 +890,7 @@ void Wind::DrawGrassWindSettings()
 			"%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_amplitude_response_tooltip"),
-			"Multiplies the existing flutter at low, medium, and high local wind without changing its waveform or gust motion."));
+			"Multiplies Fine Wind flutter at low, medium, and high ambient wind speeds without changing its travel."));
 	std::array<double, kGrassWindSpringQualityRangeCount> springMemoryMiB{};
 	double totalSpringMemoryMiB = 0.0;
 	for (uint32_t index = 0; index < kGrassWindSpringQualityRangeCount; ++index) {
