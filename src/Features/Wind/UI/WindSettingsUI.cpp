@@ -830,10 +830,6 @@ void Wind::DrawGrassWindSettings()
 		kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_maximum_tilt_tooltip"), "Limits how far a grass blade can lean from upright."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_bend_profile"), "Tip Flexibility"), &settings.grassWindBendProfile,
-		kGrassWindBendProfileMin, kGrassWindBendProfileMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_bend_profile_tooltip"), "Zero leans the whole blade uniformly; one concentrates bending toward the tip."));
 	float compressionToBendPercent = settings.grassWindCompressionToBend * 100.0f;
 	if (ImGui::SliderFloat(T(TKEY("grass_wind_compression_to_bend"), "Downward Wind Bend Share"),
 			&compressionToBendPercent, kGrassWindCompressionToBendMin * 100.0f,

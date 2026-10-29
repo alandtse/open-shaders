@@ -197,7 +197,6 @@ WindPermutationContribution Wind::GetPermutationContribution() const
 		settings.treeLeafBaseWindFlutterGain,
 		static_cast<uint32_t>(loaded && settings.enableAmbientGrassWind),
 		settings.grassWindSensitivity,
-		settings.grassWindBendProfile,
 		settings.grassWindCompressionToBend,
 		settings.grassWindFlutterStrength,
 		settings.grassWindFlutterFrequency

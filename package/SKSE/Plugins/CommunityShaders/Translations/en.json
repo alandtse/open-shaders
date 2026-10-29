@@ -4407,8 +4407,6 @@
     "feature.wind.grass_transient_flutter_strength": "Grass Impulse Flutter",
     "feature.wind.grass_transient_flutter_strength_tooltip": "Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending.",
     "feature.wind.grass_transient_shared_settings": "Maximum Bend Angle, Tip Flexibility, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects.",
-    "feature.wind.grass_wind_bend_profile": "Tip Flexibility",
-    "feature.wind.grass_wind_bend_profile_tooltip": "Zero leans the whole blade uniformly; one concentrates bending toward the tip.",
     "feature.wind.grass_wind_compression_to_bend": "Downward Wind Bend Share",
     "feature.wind.grass_wind_compression_to_bend_tooltip": "Zero uses vertical compression; 100% converts the same downward-wind response into additional directional bending, limited by Maximum Bend Angle.",
     "feature.wind.grass_wind_flutter": "Flutter",
