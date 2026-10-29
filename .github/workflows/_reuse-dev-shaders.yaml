@@ -1,0 +1,82 @@
+name: "(Shared) Reuse Dev Shader Compile"
+
+# Finds a successful run of the rolling dev build for the exact SHA and republishes its compiled
+# shader binaries and timing reports under THIS run, so later jobs download them unchanged.
+# The dev compile uses the release-parity flags with --max-warnings 0, so a green run is the same gate.
+
+on:
+    workflow_call:
+        inputs:
+            ref:
+                description: "Ref (resolved to a SHA) the release builds"
+                type: string
+                required: true
+            workflow:
+                description: "Workflow file of the build whose artifacts are reused"
+                type: string
+                default: "release-dev.yaml"
+        outputs:
+            run-id:
+                description: "Run the artifacts came from; empty when none was reusable"
+                value: ${{ jobs.find.outputs.run-id }}
+
+permissions:
+    contents: read
+
+jobs:
+    find:
+        name: Find reusable dev run
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: read
+        outputs:
+            run-id: ${{ steps.find.outputs.run-id }}
+        steps:
+            - name: Find a successful run with usable shader artifacts
+              id: find
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  TARGET_REF: ${{ inputs.ref }}
+                  WORKFLOW: ${{ inputs.workflow }}
+              run: |
+                  set -euo pipefail
+                  echo "run-id=" >> "$GITHUB_OUTPUT"
+                  sha=$(gh api "repos/${GH_REPO}/commits/${TARGET_REF}" --jq .sha)
+                  for id in $(gh api "repos/${GH_REPO}/actions/workflows/${WORKFLOW}/runs?head_sha=${sha}&status=success&per_page=5" --jq '.workflow_runs[].id'); do
+                    names=$(gh api "repos/${GH_REPO}/actions/runs/${id}/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name')
+                    if grep -qx CompiledShaderBinaries-SE <<<"$names" && grep -qx CompiledShaderBinaries-VR <<<"$names" \
+                      && grep -qx shader-compile-timing-SE <<<"$names" && grep -qx shader-compile-timing-VR <<<"$names"; then
+                      echo "Reusing ${WORKFLOW} run ${id} for ${sha}"
+                      echo "run-id=${id}" >> "$GITHUB_OUTPUT"
+                      exit 0
+                    fi
+                  done
+                  echo "No reusable ${WORKFLOW} run for ${sha}; the caller compiles."
+
+    import:
+        name: Import ${{ matrix.artifact }}
+        needs: find
+        if: needs.find.outputs.run-id != ''
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            actions: read
+        strategy:
+            matrix:
+                artifact: [CompiledShaderBinaries-SE, CompiledShaderBinaries-VR, shader-compile-timing-SE, shader-compile-timing-VR]
+        steps:
+            - uses: actions/download-artifact@v7
+              with:
+                  name: ${{ matrix.artifact }}
+                  path: imported
+                  run-id: ${{ needs.find.outputs.run-id }}
+                  github-token: ${{ github.token }}
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: ${{ matrix.artifact }}
+                  path: imported
+                  retention-days: ${{ startsWith(matrix.artifact, 'shader-compile-timing') && 30 || 1 }}
+                  if-no-files-found: error
