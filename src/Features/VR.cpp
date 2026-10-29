@@ -163,19 +163,8 @@ void VR::PostPostLoad()
 	dynamicNearClip.Install();
 	stereoOpt.LatchBootSnapshot();
 
-	gDepthBufferCulling = reinterpret_cast<bool*>(REL::Offset(0x1EC6B88).address());
-	if (!gDepthBufferCulling) {
-		static bool s_defaultDepthBufferCulling = false;
-		gDepthBufferCulling = &s_defaultDepthBufferCulling;
-		logger::warn("VR: gDepthBufferCulling address not found - using fallback default (false)");
-	}
-
-	gMinOccludeeBoxExtent = reinterpret_cast<float*>(REL::Offset(0x1ED64E8).address());
-	if (!gMinOccludeeBoxExtent) {
-		static float s_defaultMinOccludeeBoxExtent = 10.0f;
-		gMinOccludeeBoxExtent = &s_defaultMinOccludeeBoxExtent;
-		logger::warn("VR: gMinOccludeeBoxExtent address not found - using fallback default (10.0)");
-	}
+	gDepthBufferCulling = &RE::BSGraphics::Renderer::GetVRDepthBufferCullingEnabled();
+	gMinOccludeeBoxExtent = &RE::BSGraphics::Renderer::GetVRMinOccludeeBoxExtent();
 
 	// Migration: Fix legacy overlay keybinds
 	if (settings.VROverlayCloseKeys.size() == 1) {

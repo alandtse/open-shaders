@@ -712,8 +712,7 @@ namespace SIE
 
 		static void GetLightingShaderDefines(uint32_t descriptor, std::span<D3D_SHADER_MACRO> defines)
 		{
-			static REL::Relocation<void(uint32_t, D3D_SHADER_MACRO*)> VanillaGetLightingShaderDefines(RELOCATION_ID(101631, 108698));
-			VanillaGetLightingShaderDefines(descriptor, defines.data());
+			RE::GetLightingShaderDefines(descriptor, reinterpret_cast<REX::W32::D3D_SHADER_MACRO*>(defines.data()));
 
 			size_t lastIndex = std::ranges::find_if(defines, [](const D3D_SHADER_MACRO& macro) { return macro.Name == nullptr; }) - defines.begin();
 
@@ -2385,13 +2384,10 @@ namespace SIE
 		std::unique_ptr<RE::BSGraphics::VertexShader> CreateVertexShader(ID3DBlob& shaderData,
 			const RE::BSShader& shader, uint32_t descriptor)
 		{
-			static const auto perTechniqueBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524755, 411371));
-			static const auto perMaterialBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524757, 411373));
-			static const auto perGeometryBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524759, 411375));
-			static const auto bufferData = REL::Relocation<void*>(RELOCATION_ID(524965, 411446));
+			static const auto perTechniqueBuffersArray = RE::BSGraphics::Renderer::GetVertexShaderPerTechniqueBuffers();
+			static const auto perMaterialBuffersArray = RE::BSGraphics::Renderer::GetVertexShaderPerMaterialBuffers();
+			static const auto perGeometryBuffersArray = RE::BSGraphics::Renderer::GetVertexShaderPerGeometryBuffers();
+			static const auto bufferData = RE::BSGraphics::Renderer::GetVertexShaderBufferData();
 
 			auto rawPtr =
 				new uint8_t[sizeof(RE::BSGraphics::VertexShader) + shaderData.GetBufferSize()];
@@ -2416,24 +2412,24 @@ namespace SIE
 					ShaderClass::Vertex, descriptor, shader);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						Util::AsW32(perTechniqueBuffersArray.get()[bufferSizes[0]]);
+						perTechniqueBuffersArray[bufferSizes[0]];
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
-					newShader->constantBuffers[0].data = bufferData.get();
+					newShader->constantBuffers[0].data = bufferData;
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						Util::AsW32(perMaterialBuffersArray.get()[bufferSizes[1]]);
+						perMaterialBuffersArray[bufferSizes[1]];
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
-					newShader->constantBuffers[1].data = bufferData.get();
+					newShader->constantBuffers[1].data = bufferData;
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						Util::AsW32(perGeometryBuffersArray.get()[bufferSizes[2]]);
+						perGeometryBuffersArray[bufferSizes[2]];
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
-					newShader->constantBuffers[2].data = bufferData.get();
+					newShader->constantBuffers[2].data = bufferData;
 				}
 			}
 
@@ -2443,13 +2439,10 @@ namespace SIE
 		std::unique_ptr<RE::BSGraphics::PixelShader> CreatePixelShader(ID3DBlob& shaderData,
 			const RE::BSShader& shader, uint32_t descriptor)
 		{
-			static const auto perTechniqueBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524761, 411377));
-			static const auto perMaterialBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524763, 411379));
-			static const auto perGeometryBuffersArray =
-				REL::Relocation<ID3D11Buffer**>(RELOCATION_ID(524765, 411381));
-			static const auto bufferData = REL::Relocation<void*>(RELOCATION_ID(524967, 411448));
+			static const auto perTechniqueBuffersArray = RE::BSGraphics::Renderer::GetPixelShaderPerTechniqueBuffers();
+			static const auto perMaterialBuffersArray = RE::BSGraphics::Renderer::GetPixelShaderPerMaterialBuffers();
+			static const auto perGeometryBuffersArray = RE::BSGraphics::Renderer::GetPixelShaderPerGeometryBuffers();
+			static const auto bufferData = RE::BSGraphics::Renderer::GetPixelShaderBufferData();
 
 			auto newShader = std::make_unique<RE::BSGraphics::PixelShader>();
 			newShader->id = descriptor;
@@ -2469,24 +2462,24 @@ namespace SIE
 					ShaderClass::Pixel, descriptor, shader);
 				if (bufferSizes[0] != 0) {
 					newShader->constantBuffers[0].buffer =
-						Util::AsW32(perTechniqueBuffersArray.get()[bufferSizes[0]]);
+						perTechniqueBuffersArray[bufferSizes[0]];
 				} else {
 					newShader->constantBuffers[0].buffer = nullptr;
-					newShader->constantBuffers[0].data = bufferData.get();
+					newShader->constantBuffers[0].data = bufferData;
 				}
 				if (bufferSizes[1] != 0) {
 					newShader->constantBuffers[1].buffer =
-						Util::AsW32(perMaterialBuffersArray.get()[bufferSizes[1]]);
+						perMaterialBuffersArray[bufferSizes[1]];
 				} else {
 					newShader->constantBuffers[1].buffer = nullptr;
-					newShader->constantBuffers[1].data = bufferData.get();
+					newShader->constantBuffers[1].data = bufferData;
 				}
 				if (bufferSizes[2] != 0) {
 					newShader->constantBuffers[2].buffer =
-						Util::AsW32(perGeometryBuffersArray.get()[bufferSizes[2]]);
+						perGeometryBuffersArray[bufferSizes[2]];
 				} else {
 					newShader->constantBuffers[2].buffer = nullptr;
-					newShader->constantBuffers[2].data = bufferData.get();
+					newShader->constantBuffers[2].data = bufferData;
 				}
 			}
 

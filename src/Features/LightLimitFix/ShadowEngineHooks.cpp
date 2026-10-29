@@ -300,8 +300,7 @@ namespace ShadowCasterManager
 
 	RE::ShadowSceneNode* GetShadowSceneNode()
 	{
-		static REL::RelocationID uid(513211, 390951);
-		return *reinterpret_cast<RE::ShadowSceneNode**>(uid.address());
+		return RE::BSShaderManager::State::GetSingleton().shadowSceneNode[0];
 	}
 
 	// RemoveLightAssociations erases lightData->lights under objectListLock; unlocked, a second
@@ -320,8 +319,7 @@ namespace ShadowCasterManager
 	RE::NiCamera* GetWorldCamera()
 	{
 		// world scene graph -> camera
-		static REL::RelocationID uid(528087, 415032);
-		auto* sg = *reinterpret_cast<RE::BSSceneGraph**>(uid.address());
+		auto* sg = RE::BSSceneGraph::GetWorldSceneGraph();
 		return sg ? sg->GetRuntimeData().camera.get() : nullptr;
 	}
 
@@ -343,13 +341,11 @@ namespace ShadowCasterManager
 	// dynamically reserve that range out of the point-light pool.
 	int GetFocusShadowActorCount()
 	{
-		static REL::RelocationID uid(527703, 414625);
-		return *reinterpret_cast<int*>(uid.address());
+		return RE::BSShaderManager::GetFocusShadowActorCount();
 	}
 	bool GetSunBool2()
 	{
-		static REL::RelocationID uid(528095, 415040);
-		return *reinterpret_cast<bool*>(uid.address());
+		return RE::BSShaderManager::IsSunShadowCasterCalculationDisabled();
 	}
 
 	// Recompute the engine's cached shadow-cull square from the live shadow-distance
@@ -357,16 +353,14 @@ namespace ShadowCasterManager
 	// edit otherwise wouldn't reach the cull until a reload.
 	void CallUpdateShadowDistance(bool a_interior)
 	{
-		static REL::Relocation<void(bool)> fn{ REL::RelocationID(98978, 105631) };
-		fn(a_interior);
+		RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(a_interior);
 	}
 
 	// Engine's current light LOD fade-out distance (squared), recomputed each frame
 	// by Sky::UpdateLightLODFadeDistances with interior-cell / weather overrides.
 	static float GetLightLODEndFadeSquared()
 	{
-		static REL::Relocation<float*> p{ REL::RelocationID(527669, 414583) };
-		return *p;
+		return RE::Sky::GetLightLODEndFadeSquared();
 	}
 
 	// Engine shadow-cull distance cache, compared against (dist²-radius²) in the
@@ -374,13 +368,11 @@ namespace ShadowCasterManager
 	// per-frame writer must re-apply every frame to stay live.
 	static float& ShadowDistanceCurrent()
 	{
-		static REL::Relocation<float*> p{ REL::RelocationID(528314, 415263) };
-		return *p;
+		return RE::BSShaderManager::GetShadowDistanceCurrent();
 	}
 	static float& ShadowDistanceSquaredCurrent()
 	{
-		static REL::Relocation<float*> p{ REL::RelocationID(528316, 415264) };
-		return *p;
+		return RE::BSShaderManager::GetShadowDistanceSquaredCurrent();
 	}
 
 	// Couple the point-light shadow-cull distance to the light fade-out distance so a
@@ -413,32 +405,27 @@ namespace ShadowCasterManager
 
 	bool* GetFocusShadowSelected()
 	{
-		static REL::RelocationID uid(528096, 415041);
-		return reinterpret_cast<bool*>(uid.address());
+		return &RE::BSShaderManager::GetFocusShadowSelected();
 	}
 	uint64_t* GetSunPtr()
 	{
-		static REL::RelocationID uid(528315, 415267);
-		return reinterpret_cast<uint64_t*>(uid.address());
+		return reinterpret_cast<uint64_t*>(&RE::BSShaderManager::GetSelectedShadowDirectionalLight());
 	}
 
 	// Current accumulated shadow slot (used as Accumulate() first arg).
 	uint32_t* GetAccumLightSlot()
 	{
-		static REL::RelocationID uid(528091, 415036);
-		return reinterpret_cast<uint32_t*>(uid.address());
+		return &RE::BSShaderManager::GetGlobalShadowLightCount();
 	}
 	// Running mask index counter (incremented each time a light is slotted).
 	uint32_t* GetMaskIndex()
 	{
-		static REL::RelocationID uid(528091, 415036);
-		return reinterpret_cast<uint32_t*>(uid.address() + 4);
+		return &RE::BSShaderManager::GetShadowCasterMaskIndex();
 	}
 	// Active shadow caster bitmask (ORed per slot).
 	uint32_t* GetShadowMask()
 	{
-		static REL::RelocationID uid(528093, 415038);
-		return reinterpret_cast<uint32_t*>(uid.address());
+		return &RE::BSShaderManager::GetActiveShadowCasterLightMask();
 	}
 
 	// Same test EnableLight uses to admit a light to firstPersonShadowMask:
@@ -457,8 +444,7 @@ namespace ShadowCasterManager
 	// Written back to the game at the end of scheduling.
 	uint32_t* GetFrameLightCount()
 	{
-		static REL::RelocationID uid(528090, 415035);
-		return reinterpret_cast<uint32_t*>(uid.address());
+		return &RE::BSShaderManager::GetLastFrameEnabledShadowCasterLightCount();
 	}
 
 	// VR-only globals
@@ -489,9 +475,7 @@ namespace ShadowCasterManager
 	// the per-focus-actor BSShaderAccumulators (one per FocusShadowActors entry).
 	void GameSetupFocusShadowAccumulators(RE::BSShadowLight* light)
 	{
-		using F = void (*)(RE::BSShadowLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(100819, 107603) };
-		func(light);
+		static_cast<RE::BSShadowDirectionalLight*>(light)->SetupFocusShadowAccumulators();
 	}
 
 	// Engine BSShadowDirectionalLight::SetupFocusShadowMaps (RelocationID 100817/107601);
@@ -499,75 +483,52 @@ namespace ShadowCasterManager
 	// actors, so the old "DirectionalLight" name was misleading.
 	void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam)
 	{
-		using F = void (*)(RE::BSShadowLight*, RE::NiCamera*);
-		static REL::Relocation<F> func{ REL::RelocationID(100817, 107601) };
-		func(light, cam);
+		static_cast<RE::BSShadowDirectionalLight*>(light)->SetupFocusShadowMaps(cam);
 	}
 
 	void GameEnableLight(RE::ShadowSceneNode* ssn, RE::BSLight* light)
 	{
-		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(99708, 106342) };
-		func(ssn, light);
+		ssn->EnableLight(light);
 	}
 
 	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk)
 	{
-		using F = void (*)(RE::ShadowSceneNode*, RE::BSLight*, uint32_t, uint32_t);
-		static REL::Relocation<F> func{ REL::RelocationID(99728, 106365) };
-		func(ssn, light, index, unk);
+		ssn->SetShadowCasterLightArrayEntry(light, index, unk);
 	}
 
 	void GameClearPortalVisibility(RE::BSPortalGraphEntry* entry)
 	{
-		using F = void (*)(RE::BSPortalGraphEntry*);
-		static REL::Relocation<F> func{ REL::RelocationID(74395, 76119) };
-		func(entry);
+		entry->ClearVisibility();
 	}
 
 	bool GamePortalHasSharedVisibility(RE::BSPortalGraphEntry* a, RE::BSPortalGraphEntry* b)
 	{
-		using F = bool (*)(RE::BSPortalGraphEntry*, RE::BSPortalGraphEntry*);
-		static REL::Relocation<F> func{ REL::RelocationID(74397, 76121) };
-		return func(a, b);
+		return a->HasSharedRoomVisibility(b);
 	}
 
 	void GameClearGeometryList(RE::BSLight* light)
 	{
-		using F = void (*)(RE::BSLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(101298, 108285) };
-		func(light);
+		light->ClearGeometryList();
 	}
 
 	void GameAttachGeometry(RE::BSLight* light, RE::BSGeometry* geom)
 	{
-		using F = void (*)(RE::BSLight*, RE::BSGeometry*);
-		static REL::Relocation<F> func{ REL::RelocationID(101296, 108283) };
-		WithObjectListLock([&] { func(light, geom); });
+		WithObjectListLock([&] { light->AttachGeometry(geom); });
 	}
 
 	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale)
 	{
-		using F = bool (*)(RE::BSLight*, const RE::NiBound*, RE::NiLight*, float);
-		static REL::Relocation<F> func{ REL::RelocationID(101299, 108286) };
-		return func(light, bound, niLight, scale);
+		return light->IsInRange(bound, niLight, scale);
 	}
 
 	static bool GameIsLightAffectingSurface(RE::BSLightingShaderProperty* p, RE::BSLight* light)
 	{
-		using F = bool (*)(RE::BSLightingShaderProperty*, RE::BSLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(98902, 105550) };
-		return func(p, light);
+		return p->IsValidLight(light);
 	}
 
 	void GameApplyLensFlare(RE::BSLight* light)
 	{
-		// SE/AE only -- no VR equivalent (ID 100440)
-		if (globals::game::isVR)
-			return;
-		using F = void (*)(RE::BSLight*);
-		static REL::Relocation<F> func{ REL::RelocationID(100440, 107157) };
-		func(light);
+		light->QueueLensFlare();
 	}
 
 	// VR-only

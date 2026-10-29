@@ -51,7 +51,7 @@ struct BlendStates
 
 	static BlendStates* GetSingleton()
 	{
-		static auto blendStates = reinterpret_cast<BlendStates*>(REL::RelocationID(524749, 411364).address());
+		static auto blendStates = reinterpret_cast<BlendStates*>(RE::BSGraphics::Renderer::GetBlendStates());
 		return blendStates;
 	}
 };
@@ -331,8 +331,7 @@ void Deferred::StartDeferred()
 		ID3D11Buffer* vrBuffer = nullptr;
 
 		if (globals::game::isVR) {
-			static REL::Relocation<ID3D11Buffer**> VRValues{ REL::Offset(0x3180688) };
-			vrBuffer = *VRValues.get();
+			vrBuffer = Util::AsReal(RE::BSGraphics::Renderer::GetVRRenderDataBuffer());
 		}
 		if (vrBuffer) {
 			context->CSSetConstantBuffers(12, 1, buffers);
@@ -372,8 +371,7 @@ void Deferred::DeferredPasses()
 		ID3D11Buffer* vrBuffer = nullptr;
 
 		if (globals::game::isVR) {
-			static REL::Relocation<ID3D11Buffer**> VRValues{ REL::Offset(0x3180688) };
-			vrBuffer = *VRValues.get();
+			vrBuffer = Util::AsReal(RE::BSGraphics::Renderer::GetVRRenderDataBuffer());
 		}
 		if (vrBuffer) {
 			context->CSSetConstantBuffers(12, 1, buffers);

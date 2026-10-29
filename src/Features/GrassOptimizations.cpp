@@ -1071,7 +1071,7 @@ void GrassOptimizations::Hooks::AddGroupGIDFile::thunk(RE::BSMultiStreamInstance
 	}
 }
 
-RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, uint64_t* typeKey, RE::BSFixedString* modelPath)
+RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, RE::GrassTypeID* typeKey, RE::BSFixedString* modelPath)
 {
 	auto* shape = func(grassManager, a_param, CellXDivided, CellYDivided, typeKey, modelPath);
 
@@ -1140,8 +1140,7 @@ void VanillaDrawInstanceTriShape(RE::BSMultiStreamInstanceTriShape* geometry)
 
 		uint32_t indexCount = 0;
 		uint32_t* indexCountPtr = &indexCount;
-		static REL::Relocation<ID3D11Buffer** (*)(RE::BSGraphics::Renderer*, uint64_t, uint32_t**, uint32_t)> MapDynamicBuffer{ REL::RelocationID(75561, 77362) };
-		auto buffer = MapDynamicBuffer(globals::game::renderer, 1, &indexCountPtr, 7);
+		auto buffer = reinterpret_cast<ID3D11Buffer**>(globals::game::renderer->GetID3D11Resource(1, &indexCountPtr, 7));
 		if (buffer && indexCountPtr) {
 			*indexCountPtr = i;
 			if (*buffer)
@@ -1149,8 +1148,7 @@ void VanillaDrawInstanceTriShape(RE::BSMultiStreamInstanceTriShape* geometry)
 			ctx->VSSetConstantBuffers(7u, 1u, buffer);
 		}
 
-		static REL::Relocation<void (*)(RE::BSGraphics::Renderer*, RE::BSGraphics::TriShape*, uint32_t, uint32_t, uint32_t, RE::BSGraphics::VertexDesc, RE::BSGraphics::VertexBuffer*)> DrawInstancedTriShape{ REL::RelocationID(75479, 77265) };
-		DrawInstancedTriShape(globals::game::renderer, geometry->GetGeometryRuntimeData().rendererData, 0, geometry->GetTrishapeRuntimeData().triangleCount, curInstanceGroup->instanceCount, geometry->GetGeometryRuntimeData().vertexDesc, curInstanceGroup->vertexBuffer);
+		globals::game::renderer->DrawIndexedInstancedTriangles(geometry->GetGeometryRuntimeData().rendererData, 0, geometry->GetTrishapeRuntimeData().triangleCount, curInstanceGroup->instanceCount, geometry->GetGeometryRuntimeData().vertexDesc, curInstanceGroup->vertexBuffer);
 	}
 }
 
@@ -1229,8 +1227,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		shadowState.topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
-	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ REL::RelocationID(75580, 77386) };
-	SetDirtyStates(0);
+	RE::BSGraphics::SetDirtyStates(false);
 
 	ctx->IASetIndexBuffer(indexB, DXGI_FORMAT_R16_UINT, 0);
 
@@ -1271,7 +1268,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		if (shadowState.vertexDesc != lod->descVal) {
 			shadowState.vertexDesc = lod->descVal;
 			shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
-			SetDirtyStates(0);
+			RE::BSGraphics::SetDirtyStates(false);
 		}
 
 		ctx->IASetIndexBuffer(lod->indexBuffer, DXGI_FORMAT_R16_UINT, 0);

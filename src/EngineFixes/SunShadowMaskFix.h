@@ -25,10 +25,6 @@ private:
 	/** @brief Light mask bits the sun shadow light occupies, zero when the fix is inactive. */
 	inline static uint32_t sunLightMask = 0;
 
-	inline static RE::BSShaderAccumulator** mainAccumulator = nullptr;
-	inline static const uint8_t* sunShadowSkipped = nullptr;
-	inline static const float* shadowDistance = nullptr;
-
 	/** @brief Whether the property's sun bits should be set for this geometry. */
 	static bool ShouldSetSunBits(const RE::BSLightingShaderProperty* property, const RE::BSGeometry* geometry, uint32_t renderMode, const RE::BSShaderAccumulator* accumulator);
 

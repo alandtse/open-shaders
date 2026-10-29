@@ -4,7 +4,7 @@
 
 void ShadowmapRasterizerFix::Install()
 {
-	gRasterStates = reinterpret_cast<RasterStatePtr*>(REL::RelocationID(524748, 411363).address());
+	gRasterStates = reinterpret_cast<RasterStatePtr*>(RE::BSGraphics::Renderer::GetRasterizerStates());
 
 	// VR's gRasterStates has 13 depth-bias presets vs 12 on flat; stride accordingly so the
 	// per-cascade swap lands in the slots the engine actually binds (fixes VR cascade flicker).

@@ -1540,8 +1540,7 @@ namespace ShadowCasterManager
 		if (!GetSunBool2()) {
 			auto* sun = ssn->GetRuntimeData().sunShadowDirLight;
 			if (sun) {
-				static REL::Relocation<bool*> vrUpdateFlag{ REL::Offset(0x1ed62f8) };
-				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(*vrUpdateFlag) + 1 : 0;
+				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(RE::BSShaderManager::IsSunShadowUpdateDue()) + 1 : 0;
 				sun->Accumulate(*GetAccumLightSlot(), 0, nullptr, vrFlag);
 
 				if (sun->lensFlareData && !globals::game::isVR)
@@ -1789,9 +1788,8 @@ namespace ShadowCasterManager
 		// Splitting validation from mutation defers state changes to a single
 		// atomic loop later, avoiding a dangling-pointer window where an earlier
 		// phase's mutation invalidates raw pointers held in s_lights[].
-		auto* globalCull = *reinterpret_cast<RE::BSCullingProcess**>(
-			*reinterpret_cast<uintptr_t**>(
-				REL::RelocationID(528077, 415022).address()));
+		auto& globalCullingProcesses = RE::BSGeometryListCullingProcess::GetGlobalCullingProcesses();
+		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
 

@@ -9,10 +9,6 @@ namespace
 
 void SunShadowMaskFix::Install()
 {
-	mainAccumulator = reinterpret_cast<RE::BSShaderAccumulator**>(REL::RelocationID(528064, 415009).address());
-	sunShadowSkipped = reinterpret_cast<const uint8_t*>(REL::RelocationID(528095, 415040).address());
-	shadowDistance = reinterpret_cast<const float*>(REL::RelocationID(528314, 415263).address());
-
 	stl::write_vfunc<0x2A, BSLightingShaderProperty_GetRenderPasses>(RE::VTABLE_BSLightingShaderProperty[0]);
 }
 
@@ -22,7 +18,7 @@ void SunShadowMaskFix::Update()
 
 	const auto* state = globals::game::smState;
 	const auto* shadowSceneNode = state->shadowSceneNode[0];
-	if (!shadowSceneNode || state->interior || *sunShadowSkipped)
+	if (!shadowSceneNode || state->interior || RE::BSShaderManager::IsSunShadowCasterCalculationDisabled())
 		return;
 
 	const auto& runtimeData = shadowSceneNode->GetRuntimeData();
@@ -43,7 +39,7 @@ bool SunShadowMaskFix::ShouldSetSunBits(const RE::BSLightingShaderProperty* prop
 {
 	using enum RE::BSShaderProperty::EShaderPropertyFlag;
 
-	if (!sunLightMask || !geometry || renderMode != static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kNormal) || accumulator != *mainAccumulator)
+	if (!sunLightMask || !geometry || renderMode != static_cast<uint32_t>(RE::BSShaderAccumulator::RENDER_MODE::kNormal) || accumulator != RE::BSShaderAccumulator::GetMainAccumulator())
 		return false;
 
 	const auto* lightData = property->lightData;
@@ -52,7 +48,7 @@ bool SunShadowMaskFix::ShouldSetSunBits(const RE::BSLightingShaderProperty* prop
 		return false;
 
 	const auto& bound = geometry->worldBound;
-	return (bound.center - accumulator->GetRuntimeData().eyePosition).Length() - bound.radius < *shadowDistance;
+	return (bound.center - accumulator->GetRuntimeData().eyePosition).Length() - bound.radius < RE::BSShaderManager::GetShadowDistanceCurrent();
 }
 
 RE::BSShaderProperty::RenderPassArray* SunShadowMaskFix::BSLightingShaderProperty_GetRenderPasses::thunk(RE::BSLightingShaderProperty* property, RE::BSGeometry* geometry, uint32_t renderMode, RE::BSShaderAccumulator* accumulator)

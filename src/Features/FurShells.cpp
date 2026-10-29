@@ -222,13 +222,12 @@ namespace
 		}
 		return 0;
 	}
-	constexpr uint32_t FirstPersonRenderMode = 0x16;
 	constexpr std::string_view EmptyOverlayPath = "textures\\actors\\character\\overlays\\default.dds";
 
 	bool IsFirstPersonPass()
 	{
 		auto* accumulator = *globals::game::currentAccumulator.get();
-		return accumulator && static_cast<uint32_t>(accumulator->GetRuntimeData().renderMode) == FirstPersonRenderMode;
+		return accumulator && accumulator->GetRuntimeData().renderMode == RE::BSShaderAccumulator::RENDER_MODE::kFirstPersonView;
 	}
 
 	bool CanDrawShells(RE::BSGeometry* a_geometry)

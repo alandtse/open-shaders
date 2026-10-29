@@ -307,7 +307,7 @@ public:
 
 		struct LoadGrassType
 		{
-			static RE::BSMultiStreamInstanceTriShape* thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, uint64_t* typeKey, RE::BSFixedString* modelPath);
+			static RE::BSMultiStreamInstanceTriShape* thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, RE::GrassTypeID* typeKey, RE::BSFixedString* modelPath);
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 

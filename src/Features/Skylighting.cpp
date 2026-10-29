@@ -869,9 +869,8 @@ void Skylighting::RenderOcclusion()
 
 	auto& precipitationTarget = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPRECIPITATION_OCCLUSION_MAP];
 	const RE::BSGraphics::DepthStencilData originalTarget = precipitationTarget;
-	static float& precipitationCubeSize = *reinterpret_cast<float*>(REL::RelocationID(515451, 401590).address());
+	static float& precipitationCubeSize = RE::Precipitation::GetCubeSize();
 	static RE::NiPoint3& precipitationDirection = *reinterpret_cast<RE::NiPoint3*>(REL::RelocationID(515509, 401648).address());
-	static REL::Relocation<void(RE::Precipitation*, RE::NiPointer<RE::NiCamera>)> computeProjection{ REL::RelocationID(25643, 26185) };
 	const float originalCubeSize = precipitationCubeSize;
 	const float originalLastCubeSize = precipitation->lastCubeSize;
 	const RE::NiPoint3 originalDirection = precipitationDirection;
@@ -889,7 +888,7 @@ void Skylighting::RenderOcclusion()
 		precipitationTarget = originalTarget;
 		if (projectionChanged) {
 			ZoneScopedN("Skylighting - Restore Projection");
-			computeProjection(precipitation, precipitation->occlusionData.camera);
+			precipitation->UpdateProjection(precipitation->occlusionData.camera);
 		}
 	});
 
@@ -922,7 +921,7 @@ void Skylighting::RenderOcclusion()
 
 	{
 		ZoneScopedN("Skylighting - Setup Projection");
-		computeProjection(precipitation, precipitation->occlusionData.camera);
+		precipitation->UpdateProjection(precipitation->occlusionData.camera);
 		projectionChanged = true;
 		precipitation->SetupMask();
 	}

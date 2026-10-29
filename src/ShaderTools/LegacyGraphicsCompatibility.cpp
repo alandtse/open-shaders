@@ -181,25 +181,15 @@ namespace LegacyGraphicsCompatibility
 					return;
 				}
 
-				configureSlot(
-					a_effect,
+				a_effect->SetEffectSlot(
 					dynamicFetchDisabledCopySlot,
 					a_manager->effects[effectIndex],
 					nullptr,
 					0);
-				configureInput(a_effect, dynamicFetchDisabledCopySlot, 1, 0);
+				a_effect->SetEffectInput(dynamicFetchDisabledCopySlot, 1, 0);
 			}
 
 			static inline REL::Relocation<decltype(thunk)> func;
-			static inline REL::Relocation<void(
-				RE::ImageSpaceEffect*,
-				std::uint32_t,
-				RE::ImageSpaceEffect*,
-				RE::ImageSpaceEffectParam*,
-				std::int32_t)>
-				configureSlot;
-			static inline REL::Relocation<void(RE::ImageSpaceEffect*, std::uint32_t, std::uint32_t, std::uint32_t)>
-				configureInput;
 
 		private:
 			[[nodiscard]] static bool HasElevenSlots(const RE::ImageSpaceEffect& a_effect) noexcept
@@ -578,8 +568,6 @@ namespace LegacyGraphicsCompatibility
 			FullScreenBlur_Setup::func = patches[0].original;
 			FullScreenBlur_Render::func = patches[1].original;
 			FullScreenBlur_UpdateParams::func = patches[2].original;
-			FullScreenBlur_Setup::configureSlot = REL::RelocationID(100668, 107449);
-			FullScreenBlur_Setup::configureInput = REL::RelocationID(100669, 107450);
 
 			constexpr std::uint8_t legacyCount = 0x0A;
 			constexpr std::uint8_t latestCount = 0x0B;

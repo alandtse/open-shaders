@@ -1162,10 +1162,10 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 		}
 
 		if (lightingFlags & static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::CharacterLight)) {
-			static const REL::Relocation<RE::ImageSpaceTexture*> characterLightTexture{ RELOCATION_ID(513464, 391302) };
+			const auto& characterLightTexture = RE::ImageSpaceTexture::GetCharacterLightTexture();
 
-			if (characterLightTexture->renderTarget >= RE::RENDER_TARGET::kFRAMEBUFFER) {
-				shadowState->SetPSTexture(11, renderer->GetRuntimeData().renderTargets[characterLightTexture->renderTarget]);
+			if (characterLightTexture.renderTarget >= RE::RENDER_TARGET::kFRAMEBUFFER) {
+				shadowState->SetPSTexture(11, renderer->GetRuntimeData().renderTargets[characterLightTexture.renderTarget]);
 				shadowState->SetPSTextureAddressMode(11, RE::BSGraphics::TextureAddressMode::kClampSClampT);
 			}
 
@@ -1266,8 +1266,7 @@ void SetupLandscapeTexture(BSLightingShaderMaterialPBRLandscape& material, RE::T
 
 RE::TESLandTexture* GetDefaultLandTexture()
 {
-	static const auto defaultLandTextureAddress = REL::Relocation<RE::TESLandTexture**>(RELOCATION_ID(514783, 400936));
-	return *defaultLandTextureAddress;
+	return RE::TESLandTexture::GetDefaultLandTexture();
 }
 
 bool TruePBR::IsPBRLand(const RE::TESObjectLAND* land)
@@ -1574,8 +1573,7 @@ struct BSGrassShader_SetupTechnique
 		// Match vanilla grass depth sampling so the alpha tests cover the same pixels.
 		shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kTrilinear);
 
-		static auto fogMethod = REL::Relocation<void (*)()>(REL::RelocationID(100000, 106707));
-		fogMethod();
+		RE::BSShaderManager::UpdateFogState();
 
 		if (!globals::game::bShadowsOnGrass->GetBool()) {
 			shadowState->SetPSTexture(1, graphicsState->GetRuntimeData().defaultTextureWhite->rendererTexture);
