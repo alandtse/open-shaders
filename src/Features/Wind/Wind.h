@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Feature.h"
+#include "Features/OverlayFeature.h"
 #include "Features/Wind/Grass/GrassWindState.h"
 #include "Features/Wind/Runtime/WindRuntimeState.h"
 #include "Features/Wind/Settings/WindSettings.h"
@@ -56,7 +56,7 @@ struct WindSharedData
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientImpulses;
 };
 
-struct Wind : Feature
+struct Wind : OverlayFeature
 {
 	/** @brief Wind components sampled from an immutable published simulation state. */
 	struct PublishedWindSample
@@ -75,6 +75,10 @@ struct Wind : Feature
 	virtual std::string GetDisplayName() override { return T("feature.wind.name", "Wind"); }
 	virtual std::string GetShortName() override { return "Wind"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
+	/** Draws transient source volumes through the shared overlay system. */
+	void DrawOverlay() override;
+	/** Reports whether flat-screen transient diagnostics are enabled. */
+	bool IsOverlayVisible() const override;
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }
 

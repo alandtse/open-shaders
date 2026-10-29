@@ -26,5 +26,6 @@ struct WindUIState
 	std::size_t filteredTreeRuleCount = static_cast<std::size_t>(-1);
 	int debugWindEffectSpawnCount = 8;
 	bool debugWindEffectWorstCase = false;
+	bool showTransientShapes = false;
 	bool treeWindSaveSucceeded = false;
 };

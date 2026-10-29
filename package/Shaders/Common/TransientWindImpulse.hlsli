@@ -2,6 +2,7 @@
 #define TRANSIENT_WIND_IMPULSE_HLSLI
 
 #include "Common/Math.hlsli"
+#include "Common/WindWedge.hlsli"
 
 namespace WindField
 {
@@ -14,6 +15,7 @@ namespace WindField
 	static const uint TransientWindSourceTypeDirectionalCone = 2u;
 	static const uint TransientWindSourceTypeOrientedFlow = 3u;
 	static const uint TransientWindSourceTypeDirectionalOvalWave = 4u;
+	static const uint TransientWindSourceTypeAttachedWedge = 5u;
 
 	struct TransientWindSource
 	{
@@ -32,7 +34,7 @@ namespace WindField
 		uint type;
 		float verticalScale;
 		float falloffWidth;
-		float padding;
+		float orientationRoll;
 	};
 
 	struct TransientImpulseSample
@@ -68,6 +70,16 @@ namespace WindField
 		float3 direction = directionLengthSquared > EPSILON_WIND_LENGTH_SQ ?
 		                       source.direction / sqrt(directionLengthSquared) :
 		                       0.0f;
+
+		if (source.type == TransientWindSourceTypeAttachedWedge) {
+			if (directionLengthSquared <= EPSILON_WIND_LENGTH_SQ)
+				return sample;
+			sample.velocity = WindWedge::Sample(offset, direction, source.orientationRoll,
+								  source.maxDistance, source.collisionRadius, source.waveHalfWidth, source.verticalScale,
+								  source.falloffWidth, source.sideStrength, source.coneSpreadTangent, sample.intensity) *
+			                  source.strength;
+			return sample;
+		}
 
 		if (source.type == TransientWindSourceTypeRadialWave) {
 			if (distance > source.maxDistance)

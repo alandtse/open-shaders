@@ -11,7 +11,7 @@ namespace
 	{
 		uint32_t count = 0;
 		for (const auto& source : a_sources) {
-			if (source.type > OpenWind::WindField::TransientWindSourceType::DirectionalOvalWave) {
+			if (source.type > OpenWind::WindField::TransientWindSourceType::AttachedWedge) {
 				static bool reported = false;
 				if (!reported) {
 					logger::warn("Open Wind supplied a transient shape this renderer does not support; that shape is omitted from vegetation.");
@@ -25,7 +25,7 @@ namespace
 				source.origin, source.wavefrontDistance, source.direction, source.strength,
 				source.maxDistance, source.waveHalfWidth, source.propagationSpeed, source.coneSpreadTangent,
 				source.decayTime, source.collisionRadius, source.sideSpreadTangent, source.sideStrength,
-				static_cast<WindField::TransientWindSourceType>(source.type), source.verticalScale, source.falloffWidth, 0.0f
+				static_cast<WindField::TransientWindSourceType>(source.type), source.verticalScale, source.falloffWidth, source.orientationRoll
 			};
 		}
 		std::fill(a_destination.begin() + count, a_destination.end(), WindField::TransientWindSource{});

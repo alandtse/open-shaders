@@ -257,6 +257,29 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("setTransientShapes",
+		"Show active transient volumes with the menu closed. Requires the global overlay toggle; flat-screen only. Args: enabled (boolean).",
+		[](Feature* feature, const json& args) {
+			if (args.contains("enabled") && args["enabled"].is_boolean())
+				static_cast<Wind*>(feature)->SetRuntimeFlag("TransientShapes", args["enabled"].get<bool>());
+		});
+	FEATURE_QUERY("transientSources",
+		"Inspect active renderer transient sources, including banked wakes. Returns type, origin, direction, strength, extent, width, vertical reach and roll. No args; available in SE, AE and VR.",
+		([](const Feature* feature, const json&) -> json {
+			const auto* wind = static_cast<const Wind*>(feature);
+			json sources = json::array();
+			for (uint32_t index = 0; index < wind->activeTransientWindImpulseCount; ++index) {
+				const auto& source = wind->transientWindImpulses[index];
+				sources.push_back({ { "type", static_cast<uint32_t>(source.type) },
+					{ "origin", { source.origin.x, source.origin.y, source.origin.z } },
+					{ "direction", { source.direction.x, source.direction.y, source.direction.z } },
+					{ "strength", source.strength }, { "maxDistance", source.maxDistance },
+					{ "wavefrontDistance", source.wavefrontDistance }, { "waveHalfWidth", source.waveHalfWidth },
+					{ "collisionRadius", source.collisionRadius }, { "verticalScale", source.verticalScale },
+					{ "orientationRoll", source.orientationRoll } });
+			}
+			return { { "providerConnected", wind->provider != nullptr }, { "sources", sources } };
+		}));
 	FEATURE_COMMAND("setGrassTransientBendStrength",
 		"Set grass transient bend strength from 0 to 180 degrees per unit, independently of ambient bending. Args: strength (number).",
 		[](Feature* feature, const json& args) {
@@ -375,6 +398,7 @@ json Wind::GetRuntimeFlags()
 	const bool universalOverrideEnabled = TreeWindPatcher::GetUniversalOverride().first;
 	return json{
 		{ "VisualizeWindField", runtimeState.visualizeWindField },
+		{ "TransientShapes", uiState.showTransientShapes },
 		{ "WindFieldUseRealSpeed", runtimeState.windFieldUseRealSpeed },
 		{ "WindFieldUseRealDirection", runtimeState.windFieldUseRealDirection },
 		{ "TreeWindTestOverride", runtimeState.treeWindTest.enabled },
@@ -384,6 +408,11 @@ json Wind::GetRuntimeFlags()
 
 bool Wind::SetRuntimeFlag(std::string_view a_name, bool a_value)
 {
+	if (a_name == "TransientShapes") {
+		uiState.showTransientShapes = a_value;
+		return true;
+	}
+
 	if (a_name == "VisualizeWindField") {
 		runtimeState.visualizeWindField = a_value;
 		return true;

@@ -14,6 +14,12 @@ namespace TransientWindCulling
 	{
 		if (source.strength <= 0.0f || source.maxDistance <= 0.0f)
 			return false;
+		if (source.type == WindField::TransientWindSourceTypeAttachedWedge) {
+			float verticalExtent = abs(source.verticalScale - source.waveHalfWidth) + abs(source.waveHalfWidth);
+			float radius = length(float3(source.maxDistance, source.collisionRadius, verticalExtent)) + tileRadius;
+			float2 offset = tileCenter - source.origin.xy;
+			return dot(offset, offset) <= radius * radius;
+		}
 
 		// This bound covers every analytic source shape without rejecting valid cells.
 		float lateralSpread = max(source.coneSpreadTangent, max(source.sideSpreadTangent, 0.0f));

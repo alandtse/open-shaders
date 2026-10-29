@@ -59,6 +59,13 @@ namespace
 void Wind::DrawWindFieldSettings()
 {
 	ImGui::Checkbox(T(TKEY("visualize_wind_field"), "Visualize Wind Field"), &runtimeState.visualizeWindField);
+	ImGui::Checkbox(T(TKEY("transient_shapes"), "Show Transient Shapes"), &uiState.showTransientShapes);
+	if (auto tooltip = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("transient_shapes_tooltip"),
+			"Draw active transient volumes over the scene, including banked attached wakes. Requires the global overlay toggle; remains visible with the menu closed. Flat-screen only."));
+	if (uiState.showTransientShapes && globals::game::isVR)
+		ImGui::TextDisabled("%s", T(TKEY("transient_shapes_vr"), "Shape wireframes are unavailable in VR; source diagnostics remain available."));
+
 	ImGui::TextWrapped("%s", T(TKEY("visualize_wind_field_tooltip"),
 								 "Colors visible world geometry by GPU-sampled ambient gust pressure."));
 	ImGui::Checkbox(T(TKEY("wind_field_use_real_speed"), "Wind Debug: Use Real Wind Speed"), &runtimeState.windFieldUseRealSpeed);

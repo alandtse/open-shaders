@@ -13,7 +13,8 @@ namespace WindField
 		RadialWave,
 		DirectionalCone,
 		OrientedFlow,
-		DirectionalOvalWave
+		DirectionalOvalWave,
+		AttachedWedge
 	};
 
 	struct TransientWindSource
@@ -33,9 +34,10 @@ namespace WindField
 		TransientWindSourceType type{};
 		float verticalScale{ 1.0f };
 		float falloffWidth{};
-		float padding{};
+		float orientationRoll{};
 	};
 	static_assert(sizeof(TransientWindSource) == 80);
+	static_assert(offsetof(TransientWindSource, orientationRoll) == 76);
 	static_assert(std::is_standard_layout_v<TransientWindSource>);
 
 }
