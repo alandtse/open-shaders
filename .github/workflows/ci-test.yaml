@@ -33,62 +33,20 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    # HARNESS: find a run of this workflow on the parent commit (stands in for release-dev on the release SHA).
-    find-dev-shaders:
+    # HARNESS: the previous push to this branch stands in for release-dev on the release SHA.
+    reuse-dev-shaders:
         if: github.repository == 'alandtse/open-shaders'
-        runs-on: ubuntu-latest
         permissions:
             contents: read
             actions: read
-        outputs:
-            run-id: ${{ steps.find.outputs.run-id }}
-        steps:
-            - name: Find
-              id: find
-              env:
-                  GH_TOKEN: ${{ github.token }}
-                  GH_REPO: ${{ github.repository }}
-                  PARENT: ${{ github.event.push.before || github.event.before }}
-              run: |
-                  set -euo pipefail
-                  echo "run-id=" >> "$GITHUB_OUTPUT"
-                  sha=$(gh api "repos/${GH_REPO}/commits/${{ github.sha }}" --jq '.parents[0].sha')
-                  for id in $(gh api "repos/${GH_REPO}/actions/workflows/ci-test.yaml/runs?head_sha=${sha}&per_page=10" --jq '.workflow_runs[].id'); do
-                    names=$(gh api "repos/${GH_REPO}/actions/runs/${id}/artifacts?per_page=100" --jq '.artifacts[] | select(.expired == false) | .name')
-                    if grep -qx CompiledShaderBinaries-SE <<<"$names" && grep -qx CompiledShaderBinaries-VR <<<"$names" \
-                      && grep -qx shader-compile-timing-SE <<<"$names" && grep -qx shader-compile-timing-VR <<<"$names"; then
-                      echo "run-id=${id}" >> "$GITHUB_OUTPUT"
-                      exit 0
-                    fi
-                  done
-
-    import-dev-shaders:
-        needs: find-dev-shaders
-        if: needs.find-dev-shaders.outputs.run-id != ''
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            actions: read
-        strategy:
-            matrix:
-                artifact: [CompiledShaderBinaries-SE, CompiledShaderBinaries-VR, shader-compile-timing-SE, shader-compile-timing-VR]
-        steps:
-            - uses: actions/download-artifact@v7
-              with:
-                  name: ${{ matrix.artifact }}
-                  path: imported
-                  run-id: ${{ needs.find-dev-shaders.outputs.run-id }}
-                  github-token: ${{ github.token }}
-            - uses: actions/upload-artifact@v7
-              with:
-                  name: ${{ matrix.artifact }}
-                  path: imported
-                  retention-days: 1
-                  if-no-files-found: error
+        uses: ./.github/workflows/_reuse-dev-shaders.yaml
+        with:
+            ref: ${{ github.event.before }}
+            workflow: ci-test.yaml
 
     self-test:
-        needs: [find-dev-shaders, import-dev-shaders]
-        if: always() && !cancelled() && github.repository == 'alandtse/open-shaders' && needs.import-dev-shaders.result != 'failure'
+        needs: reuse-dev-shaders
+        if: always() && !cancelled() && github.repository == 'alandtse/open-shaders' && needs.reuse-dev-shaders.result != 'failure'
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ github.sha }}
@@ -99,16 +57,16 @@ jobs:
             run-cpp-tests: true
             cache-artifacts: true
             upload-compiled-shaders: true
-            reuse-compiled-shaders: ${{ needs.find-dev-shaders.outputs.run-id != '' }}
-            generate-flip-impact: ${{ needs.find-dev-shaders.outputs.run-id == '' }}
+            reuse-compiled-shaders: ${{ needs.reuse-dev-shaders.outputs.run-id != '' }}
+            generate-flip-impact: ${{ needs.reuse-dev-shaders.outputs.run-id == '' }}
             run-full-config-validation: false
             # Isolate this harness's build caches from production keys so a
             # ci_test branch cannot poison dev / main / PR build caches.
             cache-key-suffix: "-ci-test"
 
     feature-flip-impact:
-        needs: [find-dev-shaders, import-dev-shaders]
-        if: always() && !cancelled() && needs.import-dev-shaders.result == 'success'
+        needs: reuse-dev-shaders
+        if: always() && !cancelled() && needs.reuse-dev-shaders.outputs.run-id != ''
         permissions:
             contents: read
         uses: ./.github/workflows/_feature-flip-impact.yaml
