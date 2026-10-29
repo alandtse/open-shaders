@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location("feature_flip_impact", ROOT / "tools/feature-flip-impact.py")
@@ -77,6 +78,35 @@ class FeatureFlipImpactTests(unittest.TestCase):
         share, changed = tool.group_share(variants, ["x", "y"], ["x", "z"], {("L.hlsl", "a"): 3.0, ("L.hlsl", "b"): 1.0}, {})
         self.assertEqual((round(share, 2), changed), (0.25, 1))
         self.assertEqual(tool.group_share(variants, ["x", "y"], ["x", "z"], {}, {}), (None, 0))
+
+    def test_flip_impact_only_rehashes_variants_that_have_the_define(self):
+        variants = [
+            ("A.hlsl", "a", "PSHADER", Path("A.hlsl"), ["LIGHT", "NOOP", "SSS"]),
+            ("A.hlsl", "b", "PSHADER", Path("A.hlsl"), ["LIGHT", "SSS"]),
+            ("B.hlsl", "c", "PSHADER", Path("B.hlsl"), ["LIGHT"]),
+            ("B.hlsl", "d", "VSHADER", Path("B.hlsl"), []),
+        ]
+        timings = {("A.hlsl", "a"): 4.0, ("A.hlsl", "b"): 6.0, ("B.hlsl", "c"): 8.0, ("B.hlsl", "d"): 2.0}
+        calls = []
+
+        def fake_hash(d3d, stage, relative, defines):
+            calls.append(tuple(defines))
+            return relative.as_posix() + "|" + ",".join(d for d in defines if d != "NOOP")
+
+        with mock.patch.object(tool, "code_hash", fake_hash):
+            impact = tool.flip_impact(None, None, variants, timings, {}, ["LIGHT", "NOOP", "SSS"], 2)
+
+        def brute_force(define):
+            with_define = [fake_hash(None, None, v[3], v[4]) for v in variants]
+            without = [fake_hash(None, None, v[3], [d for d in v[4] if d != define]) for v in variants]
+            share, changed = tool.group_share(variants, with_define, without, timings, {})
+            return {"share": round(share, 3), "groups": changed}
+
+        self.assertEqual(impact, {define: brute_force(define) for define in ["LIGHT", "NOOP", "SSS"]})
+        calls.clear()
+        with mock.patch.object(tool, "code_hash", fake_hash):
+            tool.flip_impact(None, None, variants, timings, {}, ["LIGHT", "NOOP", "SSS"], 2)
+        self.assertEqual(len(calls), len(variants) + 3 + 1 + 2)
 
 
 if __name__ == "__main__":
