@@ -1044,7 +1044,7 @@ float3 FurShells::GetWind(const RE::NiPoint3& a_position) const
 		if (!sky || !std::isfinite(sky->windSpeed) || !std::isfinite(sky->windAngle))
 			return {};
 		const float speed = std::clamp(sky->windSpeed, 0.0f, 1.0f);
-		velocity = { std::cos(sky->windAngle) * speed, std::sin(sky->windAngle) * speed, 0.0f };
+		velocity = float3{ std::cos(sky->windAngle) * speed, std::sin(sky->windAngle) * speed, 0.0f };
 	}
 	velocity *= settings.WindStrength;
 	velocity.z = 0.0f;
