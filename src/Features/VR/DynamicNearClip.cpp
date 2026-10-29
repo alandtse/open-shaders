@@ -107,7 +107,7 @@ void VRDynamicNearClip::RestoreCamera()
 		return;
 	auto& camera = controlledCamera->GetVRRuntimeData();
 	if (!camera.eyeFrustums.empty()) {
-		for (uint32_t eye = 0; eye < std::min(camera.eyeCount, 2u); ++eye) {
+		for (uint32_t eye = 0; eye < std::min({ camera.eyeCount, 2u, static_cast<uint32_t>(camera.eyeFrustums.size()) }); ++eye) {
 			if (ApproximatelyEqual(camera.eyeFrustums[eye].fNear, appliedNear))
 				camera.eyeFrustums[eye].fNear = savedNear[eye];
 		}
@@ -179,7 +179,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		return;
 	}
 	auto& cameraData = camera->GetVRRuntimeData();
-	if (cameraData.eyeCount != 2 || cameraData.eyeFrustums.empty() || !cameraData.viewFrustumBuffer) {
+	if (cameraData.eyeCount != 2 || cameraData.eyeFrustums.size() < 2 || !cameraData.viewFrustumBuffer) {
 		inputNear = {};
 		inputFar = {};
 		WaitForCamera("Waiting for both eye frustums");
@@ -297,7 +297,7 @@ void VRDynamicNearClip::UpdateVanillaFogOverride()
 bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 {
 	const auto& camera = controlledCamera->GetVRRuntimeData();
-	if (camera.eyeCount != 2 || camera.eyeFrustums.empty())
+	if (camera.eyeCount != 2 || camera.eyeFrustums.size() < 2)
 		return false;
 	observedEngineNear = cameraData.y;
 	bool depthConsistent = std::isfinite(cameraData.x) && std::isfinite(cameraData.y) &&
