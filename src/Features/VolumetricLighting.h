@@ -162,7 +162,6 @@ public:
 private:
 	static const char* FromUnits(int32_t value, int32_t unitScale);
 	static void SetVLQuality(std::uint32_t quality);
-	static void RenderVolumetricLighting(RE::VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag);
 
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);

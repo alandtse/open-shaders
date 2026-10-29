@@ -282,18 +282,11 @@ void VolumetricLighting::SetVLQuality(const uint32_t quality)
 	RE::SetVolumetricLightingQuality(RE::GetVolumetricLightingDescriptor(), std::clamp<uint32_t>(quality, 0, 2));
 }
 
-void VolumetricLighting::RenderVolumetricLighting(RE::VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag)
-{
-	using func_t = decltype(&VolumetricLighting::RenderVolumetricLighting);
-	static REL::Relocation<func_t> func{ REL::RelocationID(100306, 0) };
-	func(descriptor, camera, flag);
-}
-
 void VolumetricLighting::RenderDepth::thunk()
 {
 	func();
 	if (globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)
-		RenderVolumetricLighting(&RE::GetVolumetricLightingDescriptor(), RE::Main::WorldRootCamera(), false);
+		RE::RenderVolumetricLighting(&RE::GetVolumetricLightingDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
 RE::BSImagespaceShader* VolumetricLighting::CreateShader(const std::string_view& name, const std::string_view& fileName, RE::BSComputeShader* computeShader)
