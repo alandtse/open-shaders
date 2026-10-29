@@ -1,20 +1,21 @@
 #pragma once
 
-#include "Feature.h"
+#include "Features/OverlayFeature.h"
 #include "Features/Wind/Grass/GrassWindState.h"
 #include "Features/Wind/Runtime/WindRuntimeState.h"
 #include "Features/Wind/Settings/WindSettings.h"
 #include "Features/Wind/TransientWindImpulse.h"
 #include "Features/Wind/Trees/TreeWindState.h"
 #include "Features/Wind/UI/WindUIState.h"
-#include "Features/Wind/WindEffects/WindEffect.h"
 #include "Features/Wind/WindField.h"
 #include "I18n/I18n.h"
+#include <OpenWind/API.h>
+#include <OpenWind/RendererAPI.h>
+#include <OpenWind/UIAPI.h>
 
 #include <array>
+#include <atomic>
 #include <memory>
-#include <mutex>
-#include <shared_mutex>
 #include <span>
 #include <vector>
 
@@ -54,7 +55,7 @@ struct WindSharedData
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientImpulses;
 };
 
-struct Wind : Feature
+struct Wind : OverlayFeature
 {
 	/** @brief Wind components sampled from an immutable published simulation state. */
 	struct PublishedWindSample
@@ -69,12 +70,14 @@ struct Wind : Feature
 		uint64_t frameId{};
 	};
 
-	Wind();
-
 	virtual std::string GetName() override { return "Wind"; }
 	virtual std::string GetDisplayName() override { return T("feature.wind.name", "Wind"); }
 	virtual std::string GetShortName() override { return "Wind"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kFoliage; }
+	/** Draws transient source volumes through the shared overlay system. */
+	void DrawOverlay() override;
+	/** Reports whether flat-screen transient diagnostics are enabled. */
+	bool IsOverlayVisible() const override;
 	virtual bool SupportsVR() override { return true; }
 	virtual bool IsCore() const override { return true; }
 
@@ -94,52 +97,11 @@ struct Wind : Feature
 	using WindFieldDebugView = ::WindFieldDebugView;
 	using RuntimeWindTest = ::RuntimeWindTest;
 
-	enum class TransientWindSourceOwner : uint8_t
-	{
-		Generic,
-		FusRoDah,
-		Dragon,
-		SpellShout,
-		StormCall,
-		ProjectileMagic,
-		WeaponThrowVR,
-		Explosion,
-		HeavyImpact
-	};
-
-	/** @brief Marks whether a transient's triggering event already applies native Havok force. */
-	enum class TransientWindPhysics : uint8_t
-	{
-		Wind,
-		Native
-	};
-
-	/** Controls which sources survive when the shared pool reaches capacity. */
-	enum class TransientWindSourcePriority : uint8_t
-	{
-		Wingbeat = 10,
-		Flight = 20,
-		Impact = 40,
-		Breath = 50,
-		FusRoDah = 60
-	};
-
-	struct TransientWindSourceSubmission
-	{
-		WindField::TransientWindSource source;
-		TransientWindSourcePriority priority;
-		TransientWindPhysics physics = TransientWindPhysics::Wind;
-	};
-
 	Settings settings;
 	WindUIState uiState;
 	WindRuntimeState runtimeState;
 	GrassWindState grassState;
 	TreeWindState treeState;
-
-	// Wind effects live until process exit because their Bethesda event sinks remain registered for that lifetime.
-	// ProjectileHookDispatcher observers are removed explicitly by their effect routers.
-	std::vector<std::unique_ptr<WindEffect>> windEffects;
 
 	float windFieldFrameTime = 0.0f;
 	float windFieldAmbientSpeed = 0.0f;
@@ -154,12 +116,10 @@ struct Wind : Feature
 	WindField::Field previousWindFieldCurrent{};
 	WindField::Field windFieldTransition{};
 	WindField::Field previousWindFieldTransition{};
-	float windFieldTransitionElapsed = 0.0f;
 	float windFieldTransitionBlend = 1.0f;
 	float previousWindFieldTransitionBlend = 1.0f;
 	bool windFieldTransitionActive = false;
 	float windFieldSelectedSpeed = 0.0f;
-	bool windFieldHasPreviousSample = false;
 	WindField::WindTuning windFieldTuning{};
 
 	/** @copydoc Feature::DrawSettings */
@@ -192,29 +152,10 @@ struct Wind : Feature
 	[[nodiscard]] PerFrameData GetCommonBufferData() const;
 	[[nodiscard]] WindPermutationContribution GetPermutationContribution() const;
 	[[nodiscard]] WindSharedData GetSharedWindData() const;
-	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition) const noexcept;
-	[[nodiscard]] WindField::WindSample SampleWind(const float3& a_worldPosition,
-		const float3& a_windDirection, float a_windSpeed) const noexcept;
-	/** @brief Samples a position batch from one published render-thread state. */
+	/** Samples the Open Wind provider without advancing its state. */
 	[[nodiscard]] bool SamplePublishedWind(std::span<const float3> a_worldPositions,
 		std::span<PublishedWindSample> a_samples) const noexcept;
-	void QueueTransientWindImpulse(const WindField::TransientWindSource& a_impulse);
-	void QueueTransientWindSource(const WindField::TransientWindSource& a_source,
-		TransientWindSourceOwner a_owner, TransientWindSourcePriority a_priority,
-		TransientWindPhysics a_physics = TransientWindPhysics::Wind);
-	void SetAttachedTransientWindSources(TransientWindSourceOwner a_owner,
-		std::span<const TransientWindSourceSubmission> a_sources);
-	/** @brief Removes active, pending, and attached sources owned by one producer. */
-	void ClearTransientWindSources(TransientWindSourceOwner a_owner);
-	/** @brief Unlike ClearTransientWindSources, clears every owner's sources, not just one. */
-	void ClearTransientWindImpulses();
-	void UpdateWindEffects(float a_frameTime);
 	void SetTreeWindTestEnabled(bool a_enabled);
-	[[nodiscard]] bool ShouldUseRealWindSpeed() const { return !runtimeState.treeWindTest.enabled && runtimeState.windFieldUseRealSpeed; }
-	[[nodiscard]] float GetEffectiveWindOverrideSpeed() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.speed : runtimeState.windFieldOverrideSpeed; }
-	[[nodiscard]] float GetEffectiveWindGustScale() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustScale : settings.windFieldGustScale; }
-	[[nodiscard]] float GetEffectiveWindGustAmplitude() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAmplitude : settings.windFieldGustAmplitude; }
-	[[nodiscard]] float GetEffectiveWindGustAdvectionMultiplier() const { return runtimeState.treeWindTest.enabled ? runtimeState.treeWindTest.gustAdvectionMultiplier : settings.windFieldGustAdvectionMultiplier; }
 	void UpdateGrassWindSpring(bool a_compute = false);
 	void UpdateTreeWindSpring();
 	void RecreateGrassWindSpringTextures(uint32_t a_qualityIndex, uint32_t a_textureSize);
@@ -222,47 +163,27 @@ struct Wind : Feature
 
 private:
 	bool IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const;
-	void UpdateWind();
-	void AdvanceWindHistory(float a_frameTime);
-	void UpdateWeatherWind();
-	void UpdateWindField(const float3& a_direction, float a_speed, float a_frameTime);
-	void UpdateTransientWindImpulses(float a_frameTime);
-	struct ManagedTransientWindSource
-	{
-		WindField::TransientWindSource source;
-		TransientWindSourceOwner owner;
-		TransientWindSourcePriority priority;
-		uint64_t sequence;
-		TransientWindPhysics physics;
-	};
+	const OpenWind::RendererAPI* provider{};
+	std::atomic<const OpenWind::API*> samplingAPI{};
+	const OpenWind::UIAPI* uiProvider{};
+	std::unique_ptr<OpenWind::RendererFrame> providerFrame;
+	uint64_t providerResetId{};
+	json uiSettingsDocument = json::object();
+	json uiControlsDocument;
+	json pendingProviderSettings;
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transientWindImpulses{};
 	std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> previousTransientWindImpulses{};
-	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> transientWindImpulseOwners{};
-	std::array<TransientWindSourceOwner, WindField::kTransientImpulseCapacity> previousTransientWindImpulseOwners{};
-	std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientWindImpulsePhysics{};
-	std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> previousTransientWindImpulsePhysics{};
-	uint32_t activeTransientWindImpulseCount = 0;
-	uint32_t previousActiveTransientWindImpulseCount = 0;
-	std::vector<ManagedTransientWindSource> activeTransientWindSources;
-	std::vector<ManagedTransientWindSource> pendingTransientWindSources;
-	std::vector<ManagedTransientWindSource> attachedTransientWindSources;
-	uint64_t transientWindSourceSequence = 0;
-	std::mutex transientWindImpulseMutex;
-	struct PublishedWindState
-	{
-		WindField::WindTuning tuning{};
-		WindField::Field current{};
-		WindField::Field transition{};
-		float transitionBlend{ 1.0f };
-		std::array<WindField::TransientWindSource, WindField::kTransientImpulseCapacity> transients{};
-		std::array<TransientWindPhysics, WindField::kTransientImpulseCapacity> transientPhysics{};
-		uint32_t transientCount{};
-		uint64_t frameId{};
-		bool valid{};
-	};
-	mutable std::shared_mutex publishedWindMutex;
-	PublishedWindState publishedWindState{};
-	void PublishWindState() noexcept;
+	uint32_t activeTransientWindImpulseCount{};
+	uint32_t previousActiveTransientWindImpulseCount{};
+	void ResetSpringHistory();
+	void ApplyProviderFrame(const OpenWind::RendererFrame& a_frame);
+	void CommitProviderSettings();
+	void RefreshProviderSettings();
+	[[nodiscard]] bool ReadProviderSettings(json& a_document) const;
+	[[nodiscard]] bool RunProviderAction(const json& a_action);
+	[[nodiscard]] json RunProviderCommand(const json& a_request) const;
+	[[nodiscard]] const OpenWind::AuthoringHost& GetAuthoringHost();
+	void DrawWindEffectControls();
 	static void SanitizeSettings(Settings& a_settings);
 	static void SanitizeGrassWindSettings(Settings& a_settings);
 	static uint32_t SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize);

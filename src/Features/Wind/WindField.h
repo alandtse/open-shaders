@@ -42,18 +42,4 @@ namespace WindField
 	static_assert(sizeof(Field) == 32);
 	static_assert(std::is_standard_layout_v<Field>);
 
-	struct WindSample
-	{
-		float3 velocity{};
-		float ambientGust{};
-		float transientImpulse{};
-	};
-
-	[[nodiscard]] Field CreateField(const float3& a_direction, float a_speed,
-		float a_travelDistance = 0.0f) noexcept;
-	void SetFieldSpeed(Field& a_field, float a_speed) noexcept;
-	void AdvanceField(Field& a_field, float a_distance) noexcept;
-
-	[[nodiscard]] WindSample SampleField(const float3& a_worldPosition, const Field& a_field,
-		const WindTuning& a_tuning) noexcept;
 }

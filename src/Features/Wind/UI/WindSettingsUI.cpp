@@ -5,6 +5,7 @@
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "SceneSettingsManager.h"
 #include "State.h"
 #include "Utils/Format.h"
 #include "Utils/UI.h"
@@ -25,15 +26,6 @@ namespace
 	constexpr uint32_t kGrassWindSpringTextureCount = 4;
 	constexpr uint32_t kGrassWindSpringBytesPerPixel = 8;
 	constexpr double kBytesPerMiB = 1024.0 * 1024.0;
-	constexpr float kDebugWindSpawnRadius = 1000.0f;
-	constexpr float kWorstCaseInnerRadius = 2000.0f;
-	constexpr float kWorstCaseOuterRadius = 24000.0f;
-	constexpr float kWorstCaseSourceDistance = 12000.0f;
-	constexpr float kWorstCaseWaveHalfWidth = 600.0f;
-	constexpr float kWorstCasePropagationSpeed = 1200.0f;
-	constexpr float kWorstCaseDecayTime = 3.0f;
-	constexpr float kWorstCaseConeCosine = 0.85f;
-	constexpr float kGoldenAngleRadians = 2.39996323f;
 	std::string CompactMeshPath(std::string_view a_path, float a_availableWidth)
 	{
 		const std::string fullPath(a_path);
@@ -67,6 +59,13 @@ namespace
 void Wind::DrawWindFieldSettings()
 {
 	ImGui::Checkbox(T(TKEY("visualize_wind_field"), "Visualize Wind Field"), &runtimeState.visualizeWindField);
+	ImGui::Checkbox(T(TKEY("transient_shapes"), "Show Transient Shapes"), &uiState.showTransientShapes);
+	if (auto tooltip = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("transient_shapes_tooltip"),
+			"Draw active transient volumes over the scene, including banked attached wakes. Requires the global overlay toggle; remains visible with the menu closed. Flat-screen only."));
+	if (uiState.showTransientShapes && globals::game::isVR)
+		ImGui::TextDisabled("%s", T(TKEY("transient_shapes_vr"), "Shape wireframes are unavailable in VR; source diagnostics remain available."));
+
 	ImGui::TextWrapped("%s", T(TKEY("visualize_wind_field_tooltip"),
 								 "Colors visible world geometry by GPU-sampled ambient gust pressure."));
 	ImGui::Checkbox(T(TKEY("wind_field_use_real_speed"), "Wind Debug: Use Real Wind Speed"), &runtimeState.windFieldUseRealSpeed);
@@ -173,23 +172,14 @@ void Wind::DrawWindFieldSettings()
 	if (globals::game::shadowState) {
 		const auto eyePosition = Util::GetAverageEyePosition();
 		const float3 samplePosition{ eyePosition.x, eyePosition.y, eyePosition.z };
-		const float rawAmbientSpeed = std::sqrt(
-			ambientWindVelocity.x * ambientWindVelocity.x +
-			ambientWindVelocity.y * ambientWindVelocity.y +
-			ambientWindVelocity.z * ambientWindVelocity.z);
-		const auto eyeSample = SampleWind(samplePosition, ambientWindVelocity, rawAmbientSpeed);
-		const auto selectedSample = SampleWind(samplePosition);
-		localWindSpeed = std::sqrt(
-			selectedSample.velocity.x * selectedSample.velocity.x +
-			selectedSample.velocity.y * selectedSample.velocity.y +
-			selectedSample.velocity.z * selectedSample.velocity.z);
-		ambientGust = selectedSample.ambientGust;
-		ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
-			T(TKEY("wind_field_cpu_sample"), "CPU sample at camera"), eyeSample.velocity.x, eyeSample.velocity.y,
-			eyeSample.velocity.z, eyeSample.ambientGust);
-		ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
-			T(TKEY("wind_field_selected_sample"), "Selected sample at camera"), selectedSample.velocity.x,
-			selectedSample.velocity.y, selectedSample.velocity.z, selectedSample.ambientGust);
+		PublishedWindSample selectedSample;
+		if (SamplePublishedWind({ &samplePosition, 1 }, { &selectedSample, 1 })) {
+			localWindSpeed = selectedSample.finalVelocity.Length();
+			ambientGust = selectedSample.ambientGust;
+			ImGui::Text("%s: (%.5f, %.5f, %.5f), gust %.5f",
+				T(TKEY("wind_field_selected_sample"), "Selected sample at camera"), selectedSample.finalVelocity.x,
+				selectedSample.finalVelocity.y, selectedSample.finalVelocity.z, selectedSample.ambientGust);
+		}
 	}
 	ImGui::SeparatorText(T(TKEY("wind_field_readout"), "Field Readout"));
 	ImGui::Text("%s: %.2f", T(TKEY("wind_field_weather_wind"), "Weather Wind"), weatherWindSpeed);
@@ -329,6 +319,20 @@ void Wind::DrawTreeSettings()
 
 void Wind::DrawSettings()
 {
+	if (!provider) {
+		ImGui::TextUnformatted("Install Open Wind to enable wind field settings.");
+		return;
+	}
+	RefreshProviderSettings();
+	const auto originalEffects = uiSettingsDocument.value("windEffects", json::object());
+	const SKSE::stl::scope_exit commit([&] {
+		if (uiProvider && uiSettingsDocument.value("windEffects", json::object()) != originalEffects) {
+			const auto text = uiSettingsDocument.dump();
+			uiProvider->LoadSettings(text.c_str());
+			RefreshProviderSettings();
+		}
+		CommitProviderSettings();
+	});
 	if (ImGui::BeginTabBar("##WindTabs", ImGuiTabBarFlags_None)) {
 		if (globals::state->IsDeveloperMode() && ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
 			uiState.activeSettingsPage = SettingsPage::WindField;
@@ -351,6 +355,8 @@ void Wind::DrawWindEffectsSettings()
 		return;
 
 	uiState.activeSettingsPage = SettingsPage::WindEffects;
+	ImGui::BeginDisabled(SceneSettingsManager::GetSingleton()->CanCaptureFeatureSceneEdit("Wind"));
+	const SKSE::stl::scope_exit endDisabled([] { ImGui::EndDisabled(); });
 	ImGui::SeparatorText(T(TKEY("transient_field_coverage"), "Transient Field Coverage"));
 	ImGui::Checkbox(T(TKEY("process_mid_range_transients"), "Process Mid Transients"),
 		&settings.processMidRangeTransients);
@@ -379,88 +385,9 @@ void Wind::DrawWindEffectsSettings()
 				"Replaces active impulses with the selected performance-test pattern and enables transient visualization."));
 	}
 	ImGui::SeparatorText(T(TKEY("configured_wind_effects"), "Configured Wind Effects"));
-	if (windEffects.empty()) {
-		ImGui::TextUnformatted(T(TKEY("no_wind_effects"), "No wind effects are registered."));
-	} else if (ImGui::BeginTabBar("##WindEffectTabs", ImGuiTabBarFlags_None)) {
-		for (std::size_t index = 0; index < windEffects.size(); ++index) {
-			auto& effect = windEffects[index];
-			const auto effectId = effect->GetId();
-			const auto displayName = effect->GetDisplayName();
-			ImGui::PushID(effectId.data(), effectId.data() + effectId.size());
-			if (ImGui::BeginTabItem(displayName.c_str())) {
-				uiState.activeWindEffectIndex = index;
-				effect->DrawSettings();
-				ImGui::EndTabItem();
-			}
-			ImGui::PopID();
-		}
-		ImGui::EndTabBar();
-	}
+	DrawWindEffectControls();
 
 	ImGui::EndTabItem();
-}
-
-void Wind::SpawnDebugWindEffects()
-{
-	auto* const player = globals::game::player;
-	if (!player)
-		return;
-
-	static std::mt19937 randomGenerator{ std::random_device{}() };
-	static std::uniform_real_distribution<float> unitDistribution(-1.0f, 1.0f);
-	static std::uniform_real_distribution<float> strengthDistribution(1.25f, 2.5f);
-	static std::uniform_real_distribution<float> distanceDistribution(450.0f, 800.0f);
-	static std::uniform_real_distribution<float> widthDistribution(90.0f, 180.0f);
-	static std::uniform_real_distribution<float> speedDistribution(650.0f, 1100.0f);
-	static std::uniform_real_distribution<float> decayDistribution(0.35f, 0.75f);
-
-	const auto playerPosition = player->GetPosition();
-	const int spawnCount = std::clamp(uiState.debugWindEffectSpawnCount, 1,
-		static_cast<int>(WindField::kTransientImpulseCapacity));
-	ClearTransientWindImpulses();
-	if (uiState.debugWindEffectWorstCase) {
-		const float innerRadiusSquared = kWorstCaseInnerRadius * kWorstCaseInnerRadius;
-		const float outerRadiusSquared = kWorstCaseOuterRadius * kWorstCaseOuterRadius;
-		for (int index = 0; index < spawnCount; ++index) {
-			const float distribution = (static_cast<float>(index) + 0.5f) / static_cast<float>(spawnCount);
-			const float radius = std::sqrt(std::lerp(innerRadiusSquared, outerRadiusSquared, distribution));
-			const float angle = static_cast<float>(index) * kGoldenAngleRadians;
-			const float cosine = std::cos(angle);
-			const float sine = std::sin(angle);
-			const float heightOffset = static_cast<float>(index % 5 - 2) * 350.0f;
-			const float3 origin{ playerPosition.x + cosine * radius, playerPosition.y + sine * radius,
-				playerPosition.z + heightOffset };
-			const float3 direction{ -cosine, -sine, -heightOffset / kWorstCaseSourceDistance };
-			QueueTransientWindImpulse(WindField::MakeDirectionalWave(origin, direction, 2.5f,
-				kWorstCaseSourceDistance, kWorstCaseWaveHalfWidth, kWorstCasePropagationSpeed,
-				kWorstCaseConeCosine, kWorstCaseDecayTime));
-		}
-	} else {
-		for (int index = 0; index < spawnCount; ++index) {
-			float3 offset;
-			do {
-				offset = float3{ unitDistribution(randomGenerator), unitDistribution(randomGenerator),
-					unitDistribution(randomGenerator) };
-			} while (offset.x * offset.x + offset.y * offset.y + offset.z * offset.z > 1.0f);
-			offset *= kDebugWindSpawnRadius;
-			const float3 origin{ playerPosition.x + offset.x, playerPosition.y + offset.y,
-				playerPosition.z + offset.z };
-			QueueTransientWindImpulse({ origin,
-				0.0f,
-				{},
-				strengthDistribution(randomGenerator),
-				distanceDistribution(randomGenerator),
-				widthDistribution(randomGenerator),
-				speedDistribution(randomGenerator),
-				0.0f,
-				decayDistribution(randomGenerator),
-				0.0f,
-				0.0f,
-				0.0f });
-		}
-	}
-	runtimeState.windFieldDebugView = WindFieldDebugView::TransientImpulses;
-	runtimeState.visualizeWindField = true;
 }
 
 void Wind::DrawTreeWindTestSettings()

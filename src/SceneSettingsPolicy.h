@@ -36,9 +36,12 @@ namespace SceneSettingsPolicy
 		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
 		{ "ScreenSpaceGI", "ResourceProfile" },
 		{ "VolumetricLighting" },
+		{ "Wind", "processMidRangeTransients" },
+		{ "Wind", "processFarRangeTransients" },
 	};
 
 	inline const std::vector<SettingPolicyPath> kLocationFeatureWhitelist = {
+		{ "Wind" },
 		{ "CSUtility" },
 		{ "ExponentialHeightFog" },
 		{ "LightLimitFix", "EnableContactShadows" },

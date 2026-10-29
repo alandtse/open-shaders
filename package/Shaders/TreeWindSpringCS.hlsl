@@ -40,6 +40,17 @@ WindField::TransientImpulseSample SampleCurrentTransientBand(
 		}
 		float sampleHeight = clamp(
 			influenceHeight, bandCenter - bandHalfExtent, bandCenter + bandHalfExtent);
+		if (source.type == WindField::TransientWindSourceTypeAttachedWedge) {
+			float directionLength = length(source.direction);
+			if (directionLength * directionLength <= EPSILON_WIND_LENGTH_SQ)
+				continue;
+			if (!WindWedge::SampleHeight(worldPosition, source.origin, source.direction / directionLength,
+					source.orientationRoll, source.maxDistance, source.collisionRadius,
+					source.waveHalfWidth, source.verticalScale,
+					bandCenter - bandHalfExtent, bandCenter + bandHalfExtent, sampleHeight))
+				continue;
+		}
+
 		WindField::TransientImpulseSample sourceSample = WindField::SampleTransientImpulse(
 			float3(worldPosition, sampleHeight), source);
 		sample.velocity += sourceSample.velocity;

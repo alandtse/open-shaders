@@ -18,7 +18,7 @@ enum class WindSettingsPage
 struct WindUIState
 {
 	WindSettingsPage activeSettingsPage = WindSettingsPage::WindField;
-	std::size_t activeWindEffectIndex = 0;
+	std::string activeWindEffect;
 	std::array<char, 256> treeMeshSearch{};
 	std::vector<std::size_t> filteredTreeRuleIndices;
 	std::string appliedTreeMeshSearch;
@@ -26,5 +26,6 @@ struct WindUIState
 	std::size_t filteredTreeRuleCount = static_cast<std::size_t>(-1);
 	int debugWindEffectSpawnCount = 8;
 	bool debugWindEffectWorstCase = false;
+	bool showTransientShapes = false;
 	bool treeWindSaveSucceeded = false;
 };

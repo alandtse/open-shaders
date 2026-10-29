@@ -3,6 +3,7 @@
 #include "HomePageRenderer.h"
 #include "ThemeManager.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <dxgi.h>
@@ -185,7 +186,12 @@ bool OverlayRenderer::ShouldSkipRendering()
 	uint32_t effectFailed = 0;
 #endif
 
-	return !(shaderCache->IsCompiling() ||
+	const bool featureOverlayVisible = std::ranges::any_of(Feature::GetFeatureList(), [](const Feature* feature) {
+		const auto* overlay = dynamic_cast<const OverlayFeature*>(feature);
+		return overlay && overlay->loaded && overlay->IsOverlayVisible();
+	});
+
+	return !(featureOverlayVisible || shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsEnabled ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
