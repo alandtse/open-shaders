@@ -644,6 +644,8 @@ namespace
 			return;
 		if (ABTestingManager::GetSingleton()->IsEnabled())
 			return;
+		ImGui::PushID(valueAddress);
+		const SKSE::stl::scope_exit popControlId([]() noexcept { ImGui::PopID(); });
 		if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && ImGui::IsMouseReleased(ImGuiMouseButton_Right))
 			ImGui::OpenPopup(kDisabledBenchmarkPopup);
 		if (!ImGui::BeginPopup(kDisabledBenchmarkPopup))

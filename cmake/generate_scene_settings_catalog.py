@@ -4314,6 +4314,7 @@ def collect_navigation_controls(paths: list[Path]) -> dict[str, tuple[tuple[str,
 
 DISABLED_TOGGLE_RE = re.compile(r"\bImGui::(BeginDisabled|EndDisabled)\s*\(")
 MEMBER_REFERENCE_RE = re.compile(r"(?:\.|->)\s*([A-Za-z_]\w*)")
+CHAIN_REFERENCE_RE = re.compile(r"[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+")
 CONDITION_CHAIN = r"[A-Za-z_]\w*(?:(?:\.|->)\s*[A-Za-z_]\w*)*"
 
 
@@ -4346,8 +4347,8 @@ def collect_disabled_regions(
     return regions, condition_spans
 
 
-def resolve_disabled_condition(condition: str) -> tuple[str, int] | None:
-    """Returns (field, required value) for a plain on/off condition over one setting, or None."""
+def resolve_disabled_condition(condition: str) -> tuple[tuple[str, ...], int] | None:
+    """Returns (member chain, required value) for a plain on/off condition over one setting, or None."""
     expression = condition.strip()
     if not expression or any(operator in expression for operator in ("&&", "||", "(", ")", "?", ":")):
         return None
@@ -4361,17 +4362,24 @@ def resolve_disabled_condition(condition: str) -> tuple[str, int] | None:
         expression if re.fullmatch(CONDITION_CHAIN, expression) else "")
     if not chain:
         return None
-    field = re.findall(r"[A-Za-z_]\w*", chain)[-1]
-    return field, 1 if (negated or required_on) else 0
+    return tuple(re.findall(r"[A-Za-z_]\w*", chain)), 1 if (negated or required_on) else 0
 
 
-def control_field_name(entry: dict[str, object]) -> str:
-    """Names the C++ member a catalogued control writes through its access expression."""
-    members = [
-        member for member in re.findall(r"[A-Za-z_]\w*", str(entry["access"]))
-        if member != "settings" and member not in VECTOR_COMPONENT_NAMES
-    ]
-    return members[-1] if members else ""
+def control_member_chain(entry: dict[str, object]) -> tuple[str, ...]:
+    """Lists the C++ members a catalogued control writes through its access expression."""
+    members = [member for member in re.findall(r"[A-Za-z_]\w*", str(entry["access"])) if member != "settings"]
+    while members and members[-1] in VECTOR_COMPONENT_NAMES:
+        members.pop()
+    return tuple(members)
+
+
+def chains_match(reference: tuple[str, ...], control: tuple[str, ...]) -> bool:
+    """True when a referenced access chain names the control's member, ignoring a leading object or alias."""
+    if not reference or not control:
+        return False
+    if len(reference) > len(control):
+        return reference[-len(control):] == control
+    return control[-(len(reference) - 1):] == reference[1:] if len(reference) > 1 else control[-1:] == reference
 
 
 def assign_enabled_by(entries: list[dict[str, object]], features: dict[str, dict[str, str]]):
@@ -4383,27 +4391,26 @@ def assign_enabled_by(entries: list[dict[str, object]], features: dict[str, dict
         feature = features.get(feature_class)
         if not feature:
             continue
-        by_key: dict[str, list[dict[str, object]]] = {}
-        by_member: dict[str, list[dict[str, object]]] = {}
-        for entry in feature_entries:
-            by_key.setdefault(str(entry["key"]), []).append(entry)
-            member = control_field_name(entry)
-            if member:
-                by_member.setdefault(member, []).append(entry)
+        controls = [(chain, entry) for entry in feature_entries if (chain := control_member_chain(entry))]
         for source in feature_control_sources(feature):
             masked = mask_cpp_source(read_text(source))
             regions, condition_spans = collect_disabled_regions(masked)
             if not regions:
                 continue
-            references: dict[str, list[int]] = {}
-            for reference in MEMBER_REFERENCE_RE.finditer(masked):
+            references: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+            for reference in CHAIN_REFERENCE_RE.finditer(masked):
                 offset = reference.start()
                 if any(start <= offset < end for start, end in condition_spans):
                     continue
-                references.setdefault(reference.group(1), []).append(offset)
-            for member, member_entries in by_member.items():
+                members = re.findall(r"[A-Za-z_]\w*", reference.group(0))
+                while len(members) > 1 and members[-1] in VECTOR_COMPONENT_NAMES:
+                    members.pop()
+                references.setdefault(members[-1], []).append((tuple(members), offset))
+            for control_chain, control in controls:
                 best_depth, enabled_by = -1, None
-                for offset in references.get(member, ()):
+                for chain, offset in references.get(control_chain[-1], ()):
+                    if not chains_match(chain, control_chain):
+                        continue
                     enclosing = sorted(
                         (region for region in regions if region[0] <= offset < region[1]),
                         key=lambda region: (-region[2], -region[0]))
@@ -4415,16 +4422,16 @@ def assign_enabled_by(entries: list[dict[str, object]], features: dict[str, dict
                             break
                 if not enabled_by:
                     continue
-                prerequisite_entries = by_key.get(enabled_by[0], [])
+                prerequisite_entries = [
+                    candidate for chain, candidate in controls if chains_match(enabled_by[0], chain)]
                 if len(prerequisite_entries) != 1:
                     continue
                 prerequisite = prerequisite_entries[0]
-                for entry in member_entries:
-                    if entry is prerequisite:
-                        continue
-                    entry["enabledByKey"] = prerequisite["key"]
-                    entry["enabledByPath"] = prerequisite["path"]
-                    entry["enabledByValue"] = enabled_by[1]
+                if control is prerequisite:
+                    continue
+                control["enabledByKey"] = prerequisite["key"]
+                control["enabledByPath"] = prerequisite["path"]
+                control["enabledByValue"] = enabled_by[1]
 
 
 def build_entries(source_dir: Path) -> list[dict[str, object]]:

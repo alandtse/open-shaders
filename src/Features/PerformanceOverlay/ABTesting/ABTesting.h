@@ -290,6 +290,7 @@ public:
 
 private:
 	uint32_t testInterval = 4;
+	uint32_t liveTestInterval = 4;
 	bool abTestingEnabled = false;
 	bool usingTestConfig = false;
 	LARGE_INTEGER timingFrequency{};

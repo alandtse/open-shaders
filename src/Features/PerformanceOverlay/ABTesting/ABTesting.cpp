@@ -437,6 +437,7 @@ bool ABTestingManager::StartComparisons(std::vector<ABComparisonRequest> request
 	if (!globals::game::isVR && !globals::profiler)
 		return Refuse(error, "The profiler is not available.");
 
+	liveTestInterval = testInterval;
 	queueOptions = options;
 	queueOptions.intervalSeconds = std::clamp<uint32_t>(options.intervalSeconds, 1, kMaxIntervalSeconds);
 	queueOptions.repeats = std::clamp<uint32_t>(options.repeats, 1, kMaxRepeats);
@@ -524,7 +525,7 @@ void ABTestingManager::EndComparisons(bool finished)
 	globals::state->LoadFromJson(original);
 	abTestingEnabled = false;
 	queueActive = false;
-	testInterval = std::clamp(testInterval, kMinLiveIntervalSeconds, kMaxLiveIntervalSeconds);
+	testInterval = std::clamp(liveTestInterval, kMinLiveIntervalSeconds, kMaxLiveIntervalSeconds);
 	ReleaseProfiler();
 
 	if (finished)
