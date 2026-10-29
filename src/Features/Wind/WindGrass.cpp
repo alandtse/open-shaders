@@ -83,6 +83,10 @@ void Wind::SetupGrassWindResources()
 {
 	grassState.springConstantBuffer = std::make_unique<ConstantBuffer>(
 		ConstantBufferDesc<GrassWindSpringData>(), "Wind::GrassWindSpringData");
+	if (!provider) {
+		grassState.springConstantBuffer->Update(GrassWindSpringData{});
+		return;
+	}
 	Settings sanitizedSettings = settings;
 	SanitizeSettings(sanitizedSettings);
 	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex)
@@ -108,6 +112,14 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 {
 	if (!grassState.springConstantBuffer)
 		return;
+	if (!provider) {
+		ID3D11Buffer* buffer = grassState.springConstantBuffer->CB();
+		if (a_compute)
+			globals::d3d::context->CSSetConstantBuffers(kGrassWindSpringVertexConstantBufferSlot, 1, &buffer);
+		else
+			globals::d3d::context->VSSetConstantBuffers(kGrassWindSpringVertexConstantBufferSlot, 1, &buffer);
+		return;
+	}
 	for (uint32_t qualityIndex = 0; qualityIndex < kGrassWindSpringQualityRangeCount; ++qualityIndex) {
 		if (!grassState.springResponseTextures[qualityIndex][0] || !grassState.springResponseTextures[qualityIndex][1] ||
 			!grassState.springVelocityTextures[qualityIndex][0] || !grassState.springVelocityTextures[qualityIndex][1])

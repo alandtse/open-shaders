@@ -1,14 +1,6 @@
 #include "Wind.h"
 
 #include "Features/Wind/TransientWindImpulse.h"
-#include "Features/Wind/WindEffects/DragonWind.h"
-#include "Features/Wind/WindEffects/ExplosionWindRouter.h"
-#include "Features/Wind/WindEffects/FusRoDahWind.h"
-#include "Features/Wind/WindEffects/HeavyImpactWindRouter.h"
-#include "Features/Wind/WindEffects/ProjectileMagicWindRouter.h"
-#include "Features/Wind/WindEffects/SpellShoutWindRouter.h"
-#include "Features/Wind/WindEffects/StormCallWindRouter.h"
-#include "Features/Wind/WindEffects/WeaponThrowVRWind.h"
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "ShaderCache.h"
@@ -89,18 +81,6 @@ namespace
 		return (shaderType == RE::BSShader::Type::Lighting || shaderType == RE::BSShader::Type::Utility) &&
 		       IsTreeGeometry(a_pass->geometry);
 	}
-}
-
-Wind::Wind()
-{
-	windEffects.emplace_back(std::make_unique<FusRoDahWind>());
-	windEffects.emplace_back(std::make_unique<DragonWind>());
-	windEffects.emplace_back(std::make_unique<SpellShoutWindRouter>());
-	windEffects.emplace_back(std::make_unique<ProjectileMagicWindRouter>());
-	windEffects.emplace_back(std::make_unique<ExplosionWindRouter>());
-	windEffects.emplace_back(std::make_unique<StormCallWindRouter>());
-	windEffects.emplace_back(std::make_unique<WeaponThrowVRWind>());
-	windEffects.emplace_back(std::make_unique<HeavyImpactWindRouter>());
 }
 
 void Wind::SanitizeSettings(Settings& a_settings)
@@ -319,82 +299,49 @@ void Wind::RegisterUxActions()
 		});
 	FEATURE_COMMAND("setUniversalTreeResponse",
 		"Set the runtime-only response used for every tree. All response params and enabled are optional.",
-		[](Feature*, const json& args) {
-			const auto currentOverride = TreeWindPatcher::GetUniversalOverride();
-			auto enabled = currentOverride.first;
-			auto values = currentOverride.second;
-			if (args.contains("enabled") && args["enabled"].is_boolean())
-				enabled = args["enabled"].get<bool>();
-			if (args.contains("bendSensitivity") && args["bendSensitivity"].is_number())
-				values.bend = args["bendSensitivity"].get<float>();
-			if (args.contains("leafAmbientSensitivity") && args["leafAmbientSensitivity"].is_number())
-				values.leafAmbient = args["leafAmbientSensitivity"].get<float>();
-			if (args.contains("upperBendRange") && args["upperBendRange"].is_number())
-				values.upperBendRange = args["upperBendRange"].get<float>();
-			if (args.contains("maximumDisplacementPercent") && args["maximumDisplacementPercent"].is_number())
-				values.maximumDisplacementPercent = args["maximumDisplacementPercent"].get<float>();
-			if (args.contains("trunkGustInfluence") && args["trunkGustInfluence"].is_number())
-				values.trunkGustInfluence = args["trunkGustInfluence"].get<float>();
-			if (args.contains("leafGustInfluence") && args["leafGustInfluence"].is_number())
-				values.leafGustInfluence = args["leafGustInfluence"].get<float>();
-			if (args.contains("transientWindInfluence") && args["transientWindInfluence"].is_number())
-				values.transientWindInfluence = args["transientWindInfluence"].get<float>();
-			if (args.contains("leafTransientWindInfluence") && args["leafTransientWindInfluence"].is_number())
-				values.leafTransientWindInfluence = args["leafTransientWindInfluence"].get<float>();
-			if (args.contains("leafTransientFlutterMaximum") && args["leafTransientFlutterMaximum"].is_number())
-				values.leafTransientFlutterMaximum = args["leafTransientFlutterMaximum"].get<float>();
-			if (args.contains("transientMaximumBendMultiplier") && args["transientMaximumBendMultiplier"].is_number())
-				values.transientMaximumBendMultiplier = args["transientMaximumBendMultiplier"].get<float>();
-			TreeWindPatcher::SetUniversalOverride(enabled, values);
+		[](Feature* feature, const json& args) {
+			json request = args;
+			request["action"] = "setUniversalTreeResponse";
+			const auto result = static_cast<Wind*>(feature)->RunProviderCommand(request);
+			if (!result.value("success", false))
+				logger::warn("Open Wind authoring command failed: {}", result.dump());
 		});
 	FEATURE_COMMAND("setTreeWindRule",
 		"Apply live per-model tree wind tuning. Params: mesh (string), bendSensitivity and leafAmbientSensitivity (0-4), "
 		"upperBendRange (5-100), maximumDisplacementPercent (0-10), trunkGustInfluence and leafGustInfluence (0-2), "
 		"transientWindInfluence, leafTransientWindInfluence, "
 		"leafTransientFlutterMaximum (0-20), and transientMaximumBendMultiplier (0-5).",
-		[](Feature*, const json& args) {
-			if (!args.contains("mesh") || !args["mesh"].is_string() ||
-				!args.contains("bendSensitivity") || !args["bendSensitivity"].is_number() ||
-				!args.contains("leafAmbientSensitivity") || !args["leafAmbientSensitivity"].is_number() ||
-				!args.contains("upperBendRange") || !args["upperBendRange"].is_number() ||
-				!args.contains("maximumDisplacementPercent") || !args["maximumDisplacementPercent"].is_number() ||
-				!args.contains("trunkGustInfluence") || !args["trunkGustInfluence"].is_number() ||
-				!args.contains("leafGustInfluence") || !args["leafGustInfluence"].is_number() ||
-				!args.contains("transientWindInfluence") || !args["transientWindInfluence"].is_number() ||
-				!args.contains("leafTransientWindInfluence") || !args["leafTransientWindInfluence"].is_number() ||
-				!args.contains("leafTransientFlutterMaximum") || !args["leafTransientFlutterMaximum"].is_number() ||
-				!args.contains("transientMaximumBendMultiplier") || !args["transientMaximumBendMultiplier"].is_number()) {
-				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule received invalid arguments");
-				return;
-			}
-			if (!TreeWindPatcher::SetRule(args["mesh"].get<std::string>(), args["bendSensitivity"].get<float>(),
-					args["leafAmbientSensitivity"].get<float>(), args["upperBendRange"].get<float>(),
-					args["maximumDisplacementPercent"].get<float>(), args["trunkGustInfluence"].get<float>(),
-					args["leafGustInfluence"].get<float>(), args["transientWindInfluence"].get<float>(),
-					args["leafTransientWindInfluence"].get<float>(),
-					args["leafTransientFlutterMaximum"].get<float>(),
-					args["transientMaximumBendMultiplier"].get<float>())) {
-				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
-			}
+		[](Feature* feature, const json& args) {
+			json request = args;
+			request["action"] = "setTreeRule";
+			const auto result = static_cast<Wind*>(feature)->RunProviderCommand(request);
+			if (!result.value("success", false))
+				logger::warn("Open Wind authoring command failed: {}", result.dump());
 		});
 	FEATURE_COMMAND("setTreeBendEnabled", "Enable or disable the tree-bending render path for one mesh, retaining its saved sensitivity and normal TreeAnim animation. Required args: mesh (string), enabled (boolean). Disabled meshes remain excluded under Global Override.",
-		[](Feature*, const json& args) {
-			if (!args.contains("mesh") || !args["mesh"].is_string() ||
-				!args.contains("enabled") || !args["enabled"].is_boolean()) {
-				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled received invalid arguments");
-				return;
-			}
-			if (!TreeWindPatcher::SetBendEnabled(args["mesh"].get<std::string>(), args["enabled"].get<bool>()))
-				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled did not match mesh {}", args["mesh"].get<std::string>());
+		[](Feature* feature, const json& args) {
+			json request = args;
+			request["action"] = "setTreeBendEnabled";
+			const auto result = static_cast<Wind*>(feature)->RunProviderCommand(request);
+			if (!result.value("success", false))
+				logger::warn("Open Wind authoring command failed: {}", result.dump());
 		});
 	FEATURE_COMMAND("saveTreeWindRules", "Write changed tree response values to each tree's last-scanned source JSON.",
-		[](Feature*, const json&) {
-			const auto result = TreeWindPatcher::SaveRules();
-			if (!result.success)
-				logger::error("[TreeWindPatcher] Devbench save failed: {}", result.error);
+		[](Feature* feature, const json& args) {
+			json request = args;
+			request["action"] = "saveTreeRules";
+			const auto result = static_cast<Wind*>(feature)->RunProviderCommand(request);
+			if (!result.value("success", false))
+				logger::warn("Open Wind authoring command failed: {}", result.dump());
 		});
 	FEATURE_COMMAND("revertTreeWindRules", "Revert live tree wind edits made since the JSON was loaded or saved.",
-		[](Feature*, const json&) { TreeWindPatcher::RevertUnsavedChanges(); });
+		[](Feature* feature, const json& args) {
+			json request = args;
+			request["action"] = "revertTreeRules";
+			const auto result = static_cast<Wind*>(feature)->RunProviderCommand(request);
+			if (!result.value("success", false))
+				logger::warn("Open Wind authoring command failed: {}", result.dump());
+		});
 	FEATURE_COMMAND("setTreeWindTestConditions",
 		"Set runtime-only tree wind test conditions. Optional params: enabled (boolean), speed (0-2), gustScale (128-16384), gustAmplitude (0-1), gustAdvectionMultiplier (0-8).",
 		[](Feature* feature, const json& args) {
@@ -416,42 +363,10 @@ void Wind::RegisterUxActions()
 		});
 	FEATURE_QUERY("treeWindRules",
 		"Search live tree wind rules. Params: search (string, optional), offset (integer, default 0), limit (integer, 1-500, default 100).",
-		([](const Feature*, const json& args) -> json {
-			const std::string search = Util::FixFilePath(args.value("search", std::string{}));
-			const std::size_t offset = static_cast<std::size_t>(std::max(args.value("offset", 0), 0));
-			const std::size_t limit = static_cast<std::size_t>(std::clamp(args.value("limit", 100), 1, 500));
-			json matches = json::array();
-			std::size_t matchIndex = 0;
-			std::size_t totalMatches = 0;
-			for (std::size_t index = 0; index < TreeWindPatcher::GetRuleCount(); ++index) {
-				const auto rule = TreeWindPatcher::GetRule(index);
-				if (!search.empty() && rule.mesh.find(search) == std::string_view::npos)
-					continue;
-				if (matchIndex++ >= offset && matches.size() < limit) {
-					matches.push_back({
-						{ "mesh", rule.mesh },
-						{ "bendEnabled", rule.bendEnabled },
-						{ "bendSensitivity", rule.bend },
-						{ "leafAmbientSensitivity", rule.leafAmbient },
-						{ "upperBendRange", rule.upperBendRange },
-						{ "maximumDisplacementPercent", rule.maximumDisplacementPercent },
-						{ "trunkGustInfluence", rule.trunkGustInfluence },
-						{ "leafGustInfluence", rule.leafGustInfluence },
-						{ "transientWindInfluence", rule.transientWindInfluence },
-						{ "leafTransientWindInfluence", rule.leafTransientWindInfluence },
-						{ "leafTransientFlutterMaximum", rule.leafTransientFlutterMaximum },
-						{ "transientMaximumBendMultiplier", rule.transientMaximumBendMultiplier },
-						{ "unsaved", rule.unsaved },
-					});
-				}
-				++totalMatches;
-			}
-			return json{
-				{ "totalRules", TreeWindPatcher::GetRuleCount() },
-				{ "totalMatches", totalMatches },
-				{ "unsavedRules", TreeWindPatcher::GetUnsavedRuleCount() },
-				{ "rules", std::move(matches) },
-			};
+		([](const Feature* feature, const json& args) -> json {
+			json request = args;
+			request["action"] = "treeRules";
+			return static_cast<const Wind*>(feature)->RunProviderCommand(request);
 		}));
 }
 
@@ -530,41 +445,41 @@ void Wind::LoadSettings(json& o_json)
 			settings.treeLeafBaseWindFlutterGain =
 				o_json["treeLeafAmbientSensitivity"].get<float>() * defaults.treeLeafBaseWindFlutterGain;
 	}
-	const auto windEffectSettings = o_json.find("windEffects");
-	const bool hasWindEffectSettings = windEffectSettings != o_json.end() && windEffectSettings->is_object();
-	const json emptyEffectSettings = json::object();
-	for (auto& effect : windEffects) {
-		const std::string effectId(effect->GetId());
-		if (hasWindEffectSettings) {
-			const auto effectSettings = windEffectSettings->find(effectId);
-			effect->LoadSettings(effectSettings != windEffectSettings->end() && effectSettings->is_object() ?
-									 *effectSettings :
-									 emptyEffectSettings);
-		} else {
-			effect->LoadSettings(o_json);
+	if (uiProvider) {
+		json document;
+		if (ReadProviderSettings(document)) {
+			if (o_json.contains("windEffects"))
+				document["windEffects"] = o_json["windEffects"];
+			const auto text = document.dump();
+			uiProvider->LoadSettings(text.c_str());
+			RefreshProviderSettings();
 		}
+	} else {
+		pendingProviderSettings = o_json;
 	}
 	SanitizeSettings(settings);
+	CommitProviderSettings();
 }
 
 void Wind::SaveSettings(json& o_json)
 {
 	SanitizeSettings(settings);
 	o_json = settings;
-	json windEffectSettings = json::object();
-	for (const auto& effect : windEffects) {
-		json effectSettings;
-		effect->SaveSettings(effectSettings);
-		windEffectSettings[std::string(effect->GetId())] = std::move(effectSettings);
-	}
-	o_json["windEffects"] = std::move(windEffectSettings);
+	json document;
+	if (ReadProviderSettings(document) && document.contains("windEffects"))
+		o_json["windEffects"] = document["windEffects"];
+	else if (pendingProviderSettings.contains("windEffects"))
+		o_json["windEffects"] = pendingProviderSettings["windEffects"];
 }
 
 void Wind::RestoreDefaultSettings()
 {
 	settings = {};
-	for (auto& effect : windEffects)
-		effect->RestoreDefaultSettings();
+	if (uiProvider) {
+		uiProvider->RestoreDefaults();
+		RefreshProviderSettings();
+	}
+	CommitProviderSettings();
 	TreeWindPatcher::SetUniversalOverride(false, {});
 }
 
@@ -589,8 +504,7 @@ void Wind::RestoreCurrentPageDefaultSettings()
 	case SettingsPage::WindEffects:
 		settings.processMidRangeTransients = defaults.processMidRangeTransients;
 		settings.processFarRangeTransients = defaults.processFarRangeTransients;
-		if (uiState.activeWindEffectIndex < windEffects.size())
-			windEffects[uiState.activeWindEffectIndex]->RestoreDefaultSettings();
+		(void)RunProviderAction({ { "action", "resetEffect" }, { "id", uiState.activeWindEffect } });
 		break;
 	case SettingsPage::Trees:
 		settings.enableTrunkBend = defaults.enableTrunkBend;
@@ -695,7 +609,7 @@ void Wind::SetupResources()
 
 bool Wind::IsTreeBendRenderPass(const RE::BSRenderPass* a_pass) const
 {
-	if (!loaded || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
+	if (!loaded || !provider || !settings.enableTrunkBend || !IsTreeRenderPass(a_pass) ||
 		!SupportsTreeBend(*a_pass->shader, GetRenderPassVertexDescriptor(*a_pass)))
 		return false;
 
@@ -764,31 +678,8 @@ std::function<void()> Wind::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
 Wind::PerFrameData Wind::GetCommonBufferData() const
 {
 	return {
-		runtimeState.visualizeWindField ? 1u : 0u,
+		provider && runtimeState.visualizeWindField ? 1u : 0u,
 		static_cast<uint32_t>(runtimeState.windFieldDebugView),
 		{}
 	};
-}
-
-void Wind::PostPostLoad()
-{
-	TreeWindPatcher::LoadAndInstall();
-}
-
-void Wind::DataLoaded()
-{
-	for (auto& effect : windEffects)
-		effect->DataLoaded();
-}
-
-void Wind::UpdateWindEffects(float a_frameTime)
-{
-	for (auto& effect : windEffects)
-		effect->Update(a_frameTime);
-}
-
-void Wind::OnSceneTransitionReset(bool)
-{
-	for (auto& effect : windEffects)
-		effect->Reset();
 }

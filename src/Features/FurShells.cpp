@@ -1036,9 +1036,17 @@ float3 FurShells::GetWind(const RE::NiPoint3& a_position) const
 		return {};
 	const float3 position{ a_position.x, a_position.y, a_position.z };
 	Wind::PublishedWindSample sample;
-	if (!windFeature.SamplePublishedWind({ &position, 1 }, { &sample, 1 }))
-		return {};
-	float3 velocity = sample.windExcludingHavokImpulses * settings.WindStrength;
+	float3 velocity;
+	if (windFeature.SamplePublishedWind({ &position, 1 }, { &sample, 1 })) {
+		velocity = sample.windExcludingHavokImpulses;
+	} else {
+		const auto* sky = globals::game::sky;
+		if (!sky || !std::isfinite(sky->windSpeed) || !std::isfinite(sky->windAngle))
+			return {};
+		const float speed = std::clamp(sky->windSpeed, 0.0f, 1.0f);
+		velocity = { std::cos(sky->windAngle) * speed, std::sin(sky->windAngle) * speed, 0.0f };
+	}
+	velocity *= settings.WindStrength;
 	velocity.z = 0.0f;
 	const float speed = velocity.Length();
 	return speed > MaxWindSpeed ? velocity * (MaxWindSpeed / speed) : velocity;
