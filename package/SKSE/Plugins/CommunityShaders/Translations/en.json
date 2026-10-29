@@ -5415,5 +5415,14 @@
     "ui.vr.color_coding_primary": "Yellow = Primary controller",
     "ui.vr.color_coding_secondary": "Blue = Secondary controller",
     "ui.vr.primary_controller": "(Primary Controller)",
-    "ui.vr.secondary_controller": "(Secondary Controller)"
+    "ui.vr.secondary_controller": "(Secondary Controller)",
+    "feature.wind.gust_preset_sweeping_waves": "Sweeping Waves",
+    "feature.wind.gust_preset_rolling_gusts": "Rolling Gusts",
+    "feature.wind.gust_preset_turbulent_patches": "Turbulent Patches",
+    "feature.wind.gust_preset_sweeping_waves_tooltip": "Long, nearly unbroken wave fronts sweep across the grass, with gently irregular edges. Inspired by sweeping grass waves in animation.",
+    "feature.wind.gust_preset_rolling_gusts_tooltip": "Broad rolling gusts with broken edges and calm gaps. A middle ground between sweeping waves and scattered patches.",
+    "feature.wind.gust_preset_turbulent_patches_tooltip": "Smaller, noisier gust patches with more local variation. Slower travel keeps the tighter pattern from becoming too frantic.",
+    "feature.wind.gust_pattern_preset": "Gust Pattern Preset",
+    "feature.wind.gust_preset_apply": "Apply a preset...",
+    "feature.wind.gust_preset_scope": "Applies shared gust shape and travel settings to grass, trees, and other wind consumers. Wind strength and vegetation response stay as tuned. You can adjust the sliders afterward and save normally, including through Scene Manager."
 }
