@@ -192,7 +192,6 @@ void VolumetricLighting::PostPostLoad()
 		stl::write_thunk_call<RenderDepth>(REL::RelocationID(35560, 0).address() + REL::Relocate(0x2EE, 0));
 	}
 
-	// Low, medium and high are consecutive 12-byte entries in every runtime.
 	static_assert(sizeof(TextureSize) == 12);
 	auto* const textureSizes = reinterpret_cast<TextureSize*>(REL::RelocationID(527970, 414916).address());
 	gVolumetricLightingSizeLow = textureSizes;

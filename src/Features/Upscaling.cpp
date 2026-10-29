@@ -2427,10 +2427,10 @@ bool Upscaling::CopySharedD3D12Resources()
 
 void UpdateCameraData()
 {
-	// Flags gate optional camera updates in the engine; 0 is what its Render path passes.
+	constexpr std::uint32_t kEngineRenderCameraFlags = 0;
 	using func_t = void (*)(RE::BSGraphics::Renderer*, std::uint32_t);
 	static REL::Relocation<func_t> func{ RELOCATION_ID(75472, 77258) };
-	func(globals::game::renderer, 0);
+	func(globals::game::renderer, kEngineRenderCameraFlags);
 }
 
 void Upscaling::PostDisplay()
