@@ -11,7 +11,9 @@ already supplies DirectXTK for the renderer types. Open Wind's root project,
 implementation, runtime dependencies and optional bridge DLLs are not built.
 Runtime discovery still uses the exported interfaces in `OpenWind.dll`.
 
-The SDK is GPL-licensed; its source repository contains `COPYING` and `NOTICE.md`.
+The public SDK headers use LGPL-3.0-or-later; the implementation retains GPL.
+The source repository contains `COPYING`, `COPYING.LESSER`, `EXCEPTIONS.md`
+and `NOTICE.md` with the license scope and attribution.
 
 ## Local development
 
