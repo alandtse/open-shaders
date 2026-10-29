@@ -533,9 +533,6 @@ namespace ShadowCasterManager
 	void GameAttachGeometry(RE::BSLight* light, RE::BSGeometry* geom);
 	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale);
 	void GameApplyLensFlare(RE::BSLight* light);
-	void GameVRPrepareShadowMaps(RE::BSLight* light);
-	void GameVRAccumulateShadowMaps(RE::BSLight* light);
-	void GameFrustumOverlap(RE::NiCamera* cam, float* coord, float* r1, float* r2, float eps);
 
 	/// Culling process for first shadow descriptor of a light.
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light);

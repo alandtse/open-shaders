@@ -454,10 +454,11 @@ void UnifiedWater::PostPostLoad()
 	stl::write_vfunc<0x6, BSWaterShader_SetupGeometry>(RE::VTABLE_BSWaterShader[0]);
 
 	gWaterLOD = &RE::BGSTerrainManager::GetWaterNode();
-	gFlowMapSize = reinterpret_cast<int32_t*>(REL::RelocationID(527644, 414596).address());
+	// Water SetupGeometry reads the grids-to-load copy as ObjectUV.x, so writing the flow-map size here feeds the shader.
+	gFlowMapSize = &RE::TES::GetGridsToLoadCopy();
 	gFlowMapSourceTex = &RE::BSShaderManager::GetWaterFlowMapSourceTexture();
 	gDisplacementCellTexCoordOffset = reinterpret_cast<float4*>(&RE::BSShaderManager::GetWaterDisplacementCellTexCoordOffset());
-	gDisplacementMeshPos = reinterpret_cast<RE::NiPoint2*>(REL::RelocationID(516235, 402400).address());
+	gDisplacementMeshPos = &RE::BSShaderManager::GetWaterDisplacementMeshPosition();
 	gDisplacementMeshFlowCellOffset = &RE::BSShaderManager::GetWaterDisplacementMeshFlowCellOffset();
 
 	logger::info("[Unified Water] Installed hooks");

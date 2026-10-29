@@ -193,14 +193,14 @@ namespace ShadowCasterManager
 				g.screenArea = 1.0f;  // camera within the sphere: it fills the view
 			} else {
 				const float inv = 1.0f / dist;
-				float coord[4] = { lp.x - rx * lightRadius * inv, lp.y - ry * lightRadius * inv,
+				const RE::NiPoint4 coord{ lp.x - rx * lightRadius * inv, lp.y - ry * lightRadius * inv,
 					lp.z - rz * lightRadius * inv, lightRadius };
-				float r1[2], r2[2];
-				GameFrustumOverlap(cam, coord, r1, r2, 0.00001f);
-				const float x0 = std::clamp(std::min(r1[0], r2[0]), -1.0f, 1.0f);
-				const float x1 = std::clamp(std::max(r1[0], r2[0]), -1.0f, 1.0f);
-				const float y0 = std::clamp(std::min(r1[1], r2[1]), -1.0f, 1.0f);
-				const float y1 = std::clamp(std::max(r1[1], r2[1]), -1.0f, 1.0f);
+				RE::NiPoint3 r1, r2;
+				cam->CalculateFrustumOverlap(&coord, &r1, &r2, 0.00001f);
+				const float x0 = std::clamp(std::min(r1.x, r2.x), -1.0f, 1.0f);
+				const float x1 = std::clamp(std::max(r1.x, r2.x), -1.0f, 1.0f);
+				const float y0 = std::clamp(std::min(r1.y, r2.y), -1.0f, 1.0f);
+				const float y1 = std::clamp(std::max(r1.y, r2.y), -1.0f, 1.0f);
 				g.screenArea = std::clamp((x1 - x0) * (y1 - y0) * 0.25f, 0.0f, 1.0f);
 			}
 		}

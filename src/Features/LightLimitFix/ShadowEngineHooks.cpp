@@ -531,36 +531,6 @@ namespace ShadowCasterManager
 		light->QueueLensFlare();
 	}
 
-	// VR-only
-	void GameVRPrepareShadowMaps(RE::BSLight* light)
-	{
-		using F = void (*)(RE::BSLight*);
-		static REL::Relocation<F> func{ REL::Offset(0x1356e50) };
-		func(light);
-	}
-
-	void GameVRAccumulateShadowMaps(RE::BSLight* light)
-	{
-		using F = void (*)(RE::BSLight*);
-		static REL::Relocation<F> func{ REL::Offset(0x1357450) };
-		func(light);
-	}
-
-	void GameFrustumOverlap(RE::NiCamera* cam, float* coord, float* r1, float* r2, float eps)
-	{
-		// Non-VR: (cam, coord, r1, r2, eps)
-		// VR:     (cam, coord, r1, r2, eyeIndex, eps)  -- pass 0xffffffff for combined frustum
-		static REL::Relocation<uintptr_t> addr{ REL::RelocationID(69265, 70632) };
-		auto ptr = addr.address();
-		if (globals::game::isVR) {
-			using VR = void (*)(RE::NiCamera*, float*, float*, float*, uint32_t, float);
-			reinterpret_cast<VR>(ptr)(cam, coord, r1, r2, 0xffffffffu, eps);
-		} else {
-			using SE = void (*)(RE::NiCamera*, float*, float*, float*, float);
-			reinterpret_cast<SE>(ptr)(cam, coord, r1, r2, eps);
-		}
-	}
-
 	// Returns the culling process for the first shadow descriptor of a light,
 	// or nullptr if it has none (callers already treat that as valid).
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light)
@@ -1091,21 +1061,6 @@ namespace ShadowCasterManager
 	// in Hook_UpdateLightLevelPlayer, consumed in Hook_CheckLightLevelPlayer.
 	static std::set<uint64_t> s_stealthDetectionTmp;
 
-	static void* GetUnkDetectionGlobal()
-	{
-		// SE: 142F6DB98 -- a ~80-byte detection struct; GetSingleton equivalent
-		static REL::RelocationID uid(518074, 404596);
-		return *reinterpret_cast<void**>(uid.address());
-	}
-
-	static bool IsLightAffectingActor(RE::BSShadowLight* light, RE::Actor* actor, RE::NiPoint3* pos)
-	{
-		// SE: 14071A380 (ID 41661)
-		using F = bool (*)(void*, RE::BSShadowLight*, RE::Actor*, RE::NiPoint3*);
-		static REL::Relocation<F> func{ REL::RelocationID(41661, 42744) };
-		return func(GetUnkDetectionGlobal(), light, actor, pos);
-	}
-
 	// Replaces the vanilla shadow-light-affect-player loop.
 	// RBP-33 holds the player's position (NiPoint3*).
 	static void Hook_UpdateLightLevelPlayer(CONTEXT& ctx)
@@ -1125,7 +1080,7 @@ namespace ShadowCasterManager
 			auto* ni = l->light.get();
 			if (!ni || ni->GetFlags().any(RE::NiAVObject::Flag::kHidden))
 				continue;
-			if (IsLightAffectingActor(l, player, pos))
+			if (RE::BSShadowLight::IsLightAffectingActor(l, player, pos))
 				s_stealthDetectionTmp.insert(reinterpret_cast<uint64_t>(l));
 		}
 	}

@@ -1013,14 +1013,14 @@ namespace ShadowCasterManager
 
 			if (dist >= radius + camera->GetNearPlane()) {
 				float inv = 1.0f / dist;
-				float coord[4] = {
+				const RE::NiPoint4 coord{
 					lpos.x - dx * radius * inv,
 					lpos.y - dy * radius * inv,
 					lpos.z - dz * radius * inv,
 					radius
 				};
-				float r1[2], r2[2];
-				GameFrustumOverlap(camera, coord, r1, r2, 0.00001f);
+				RE::NiPoint3 r1, r2;
+				camera->CalculateFrustumOverlap(&coord, &r1, &r2, 0.00001f);
 
 				float vw = (float)*globals::game::viewWidth;
 				float vh = (float)*globals::game::viewHeight;
@@ -1029,10 +1029,10 @@ namespace ShadowCasterManager
 					vh *= GetVRDRSHeightRatio();
 				}
 
-				left = (r1[0] + 1.0f) * 0.5f * vw;
-				right = (r2[0] + 1.0f) * 0.5f * vw;
-				top = (1.0f - (r1[1] + 1.0f) * 0.5f) * vh;
-				bottom = (1.0f - (r2[1] + 1.0f) * 0.5f) * vh;
+				left = (r1.x + 1.0f) * 0.5f * vw;
+				right = (r2.x + 1.0f) * 0.5f * vw;
+				top = (1.0f - (r1.y + 1.0f) * 0.5f) * vh;
+				bottom = (1.0f - (r2.y + 1.0f) * 0.5f) * vh;
 			} else {
 				// Light contains the camera: use full screen.
 				if (const uint32_t slot = *GetAccumLightSlot(); slot < kShadowMaskBits)
@@ -1547,8 +1547,8 @@ namespace ShadowCasterManager
 					GameApplyLensFlare(sun);
 
 				if (globals::game::isVR && !GetVRAccumFirst()) {
-					GameVRPrepareShadowMaps(sun);
-					GameVRAccumulateShadowMaps(sun);
+					sun->StepShadowAccumulators();
+					sun->ClearShadowAccumulators();
 				}
 
 				sunLight = sun;
