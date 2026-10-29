@@ -236,6 +236,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(ImGuiVRHelper)
 target_link_libraries(${PROJECT_NAME} PRIVATE ImGuiVRHelper::api)
 
+include(cmake/OpenWind.cmake)
+target_link_libraries(${PROJECT_NAME} PRIVATE OpenWind::SDK)
+
 target_include_directories(
     ${PROJECT_NAME}
     SYSTEM
