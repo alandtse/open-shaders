@@ -179,6 +179,10 @@ struct Wind : Feature
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
+	/** @brief Opts into shared grass geometry setup. */
+	virtual bool WantsGrassMeshHooks() const override { return true; }
+	/** @brief Updates and binds the grass spring after engine geometry setup. */
+	virtual void OnGrassGeometrySetup(RE::BSGeometry*) override { UpdateGrassWindSpring(); }
 	virtual void DataLoaded() override;
 	virtual void OnSceneTransitionReset(bool a_opening) override;
 	virtual bool WantsRenderPassHook() const override { return true; }

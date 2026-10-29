@@ -398,6 +398,12 @@ const std::vector<Feature*>& Feature::GetFrameBufferFixupFeatures()
 	return fixupFeatures;
 }
 
+const std::vector<Feature*>& Feature::GetGrassMeshHookFeatures()
+{
+	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->loaded && f->WantsGrassMeshHooks(); });
+	return hookFeatures;
+}
+
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)
 {
 	for (auto* feature : GetAllFeatures()) {

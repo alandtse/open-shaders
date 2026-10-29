@@ -3,6 +3,7 @@
 #include "ShaderTools/BSShaderHooks.h"
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
 #include "Utils/ExternalEmittance.h"
+#include "Utils/VersionedRelocation.h"
 
 #include "Deferred.h"
 #include "EngineFix.h"
@@ -282,6 +283,32 @@ namespace SkyExtensions
 
 namespace GrassExtensions
 {
+	struct LoadGrassType
+	{
+		static RE::BSMultiStreamInstanceTriShape* thunk(RE::BGSGrassManager* grassManager,
+			RE::GrassParam* param, uint32_t cellXDivided, uint32_t cellYDivided,
+			RE::GrassTypeID* typeKey, RE::BSFixedString* modelPath)
+		{
+			auto* shape = func(grassManager, param, cellXDivided, cellYDivided, typeKey, modelPath);
+			if (shape && modelPath) {
+				Feature::ForEachLoadedFeature(Feature::GetGrassMeshHookFeatures(), "OnGrassMeshLoaded", [&](Feature* feature) { feature->OnGrassMeshLoaded(shape, modelPath->c_str()); }, false, false);
+			}
+			return shape;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	struct BSMultiStreamInstanceTriShape_dtor
+	{
+		static void thunk(RE::BSMultiStreamInstanceTriShape* shape)
+		{
+			for (auto* feature : Feature::GetGrassMeshHookFeatures())
+				feature->OnGrassMeshDestroyed(shape);
+			func(shape);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	struct BSGrassShaderProperty_ctor
 	{
 		static RE::BSLightingShaderProperty* thunk(RE::BSLightingShaderProperty* property)
@@ -308,8 +335,7 @@ namespace GrassExtensions
 		{
 			func(shader, pass, renderFlags);
 			LegacyGraphicsCompatibility::BindLegacyGrassPerGeometryToPixelShader();
-			if (globals::features::wind.loaded)
-				globals::features::wind.UpdateGrassWindSpring();
+			Feature::ForEachLoadedFeature(Feature::GetGrassMeshHookFeatures(), "OnGrassGeometrySetup", [&](Feature* feature) { feature->OnGrassGeometrySetup(pass ? pass->geometry : nullptr); }, false, false);
 
 			auto state = globals::state;
 
@@ -1372,6 +1398,10 @@ namespace Hooks
 		// 0x4F5 decodes as a stray TEST, not a CALL, on 1.7.99 -- the two offsets are not interchangeable.
 		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate<std::uintptr_t>(0x45B, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x4FD : 0x4F5));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
+		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15204, 15372).address() + Util::VersionedRelocation::Select(0x2F5, 0x2F5, 0x305));
+		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15205, 15373).address() + Util::VersionedRelocation::Select(0x62B, 0x597, 0x590));
+		stl::write_thunk_call<GrassExtensions::LoadGrassType>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x25C, 0x25C));
+		stl::write_vfunc<0x0, GrassExtensions::BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 
 		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
