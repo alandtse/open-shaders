@@ -75,6 +75,10 @@ struct SnowDeformation : Feature
 	/** @brief Binds the hull and domain stages and patch topology for a routed landscape draw, after the engine has flushed its state. */
 	void ApplyDrawState();
 
+	/** @brief Binds the hull and domain stages for a displaced landscape draw through the shared draw hook. */
+	bool WantsDrawHook() const override { return true; }
+	void OnDraw() override { ApplyDrawState(); }
+
 	/** @brief Updates the footprint field once per frame; called before the shadow maps so every pass of the frame sees the same field. */
 	void UpdateFieldOnce();
 
