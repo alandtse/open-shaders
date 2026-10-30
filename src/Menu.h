@@ -22,6 +22,7 @@
 using json = nlohmann::json;
 
 struct ImFont;
+struct ImGuiContext;
 
 class Menu
 {
@@ -276,13 +277,20 @@ public:
 		return files;
 	}();
 	mutable std::array<float, static_cast<size_t>(FontRole::Count)> cachedFontPixelSizesByRole = {};
-	std::string cachedFontSignature;
+	mutable std::string cachedFontSignature;
 	mutable std::array<ImFont*, static_cast<size_t>(FontRole::Count)> loadedFontRoles = {};
+	float vrCachedFontSize = ThemeManager::Constants::DEFAULT_FONT_SIZE;
+	mutable std::array<float, static_cast<size_t>(FontRole::Count)> vrCachedFontPixelSizesByRole = {};
+	mutable std::string vrCachedFontSignature;
+	mutable std::array<ImFont*, static_cast<size_t>(FontRole::Count)> vrLoadedFontRoles = {};
+	mutable bool desktopPreviewAtlasLoaded = false;
+	mutable bool vrPreviewAtlasLoaded = false;
 
 	// Deferred reload systems (public for SettingsTabRenderer access)
 	bool pendingFontReload = false;
 	bool pendingIconReload = false;
 	bool wantsFontPreviewAtlas = false;  // Set when Fonts tab is opened; gates catalog preview font loading
+	bool vrWantsFontPreviewAtlas = false;
 	bool pendingCursorReload = false;
 
 private:
@@ -303,6 +311,7 @@ private:
 	std::string offThreadTab;
 	std::string pendingTab;
 	uint32_t pendingTabFramesLeft = 0;
+	bool pendingTabMatched = false;
 	/** @brief Frames a RequestTab keeps looking for its tab: a tab inside another tab only draws once that one is selected. */
 	static constexpr uint32_t kPendingTabFrames = 600;
 
@@ -310,6 +319,8 @@ public:
 	// Display size tracking for cross-session resolution change detection
 	float2 lastDisplaySize{};
 	bool resetLayout = false;
+	float2 vrLastDisplaySize{};
+	bool vrResetLayout = false;
 
 	// Used for resetting input keys to solve alt-tab stuck issue
 	std::atomic<bool> focusChanged = false;
@@ -595,8 +606,52 @@ public:
 	ThemeSettings::FontRoleSettings& GetFontRoleSettings(FontRole role) { return settings.Theme.FontRoles[static_cast<size_t>(role)]; }
 	/** @brief Gets the font role settings for the given role */
 	const ThemeSettings::FontRoleSettings& GetFontRoleSettings(FontRole role) const { return settings.Theme.FontRoles[static_cast<size_t>(role)]; }
-	/** @brief Gets the loaded ImFont pointer for the given role */
-	ImFont* GetFont(FontRole role) const { return loadedFontRoles[static_cast<size_t>(role)]; }
+	/** @brief Gets the loaded ImFont pointer for the given role on the active ImGui context */
+	ImFont* GetFont(FontRole role) const
+	{
+		ImGuiContext* current = ImGui::GetCurrentContext();
+		if (vrPanelContext && current == vrPanelContext)
+			return vrLoadedFontRoles[static_cast<size_t>(role)];
+		if (!desktopContext || current == desktopContext)
+			return loadedFontRoles[static_cast<size_t>(role)];
+		return ImGui::GetIO().FontDefault;
+	}
+
+	/** @brief Gets the primary desktop ImGui context. */
+	ImGuiContext* GetDesktopContext() const noexcept { return desktopContext; }
+	/** @brief Gets the VR HMD helper panel ImGui context, or nullptr when inactive. */
+	ImGuiContext* GetVRPanelContext() const noexcept { return vrPanelContext; }
+	/** @brief Returns true when the VR HMD panel context is currently bound. */
+	bool IsVRPanelContextActive() const noexcept { return vrPanelContext && ImGui::GetCurrentContext() == vrPanelContext; }
+	/** @brief Lazily creates and initializes the VR HMD panel ImGui context on the render thread. */
+	bool EnsureVRPanelContext();
+	/** @brief Advances or clears a pending RequestTab once all UI surfaces finish drawing for the frame. */
+	void FinishPendingTabFrame();
+
+	/** @brief Returns the active surface's cached base font size. */
+	float& ActiveFontSize() noexcept { return IsVRPanelContextActive() ? vrCachedFontSize : cachedFontSize; }
+	/** @brief Returns the active surface's cached font configuration signature. */
+	std::string& ActiveFontSignature() const noexcept { return IsVRPanelContextActive() ? vrCachedFontSignature : cachedFontSignature; }
+	/** @brief Returns the active surface's per-role pixel sizes. */
+	std::array<float, static_cast<size_t>(FontRole::Count)>& ActiveFontPixelSizesByRole() const noexcept
+	{
+		return IsVRPanelContextActive() ? vrCachedFontPixelSizesByRole : cachedFontPixelSizesByRole;
+	}
+	/** @brief Returns the active surface's loaded ImFont role table. */
+	std::array<ImFont*, static_cast<size_t>(FontRole::Count)>& ActiveLoadedFontRoles() const noexcept
+	{
+		return IsVRPanelContextActive() ? vrLoadedFontRoles : loadedFontRoles;
+	}
+	/** @brief Returns whether the active surface currently requests catalog preview fonts in its atlas. */
+	bool& ActiveWantsFontPreviewAtlas() noexcept { return IsVRPanelContextActive() ? vrWantsFontPreviewAtlas : wantsFontPreviewAtlas; }
+	/** @brief Returns whether the active surface currently requests catalog preview fonts in its atlas. */
+	bool ActiveWantsFontPreviewAtlas() const noexcept { return IsVRPanelContextActive() ? vrWantsFontPreviewAtlas : wantsFontPreviewAtlas; }
+	/** @brief Returns whether catalog preview fonts are currently baked into the active surface's atlas. */
+	bool& ActivePreviewAtlasLoaded() const noexcept { return IsVRPanelContextActive() ? vrPreviewAtlasLoaded : desktopPreviewAtlasLoaded; }
+	/** @brief Returns the active surface's last observed display size. */
+	float2& ActiveLastDisplaySize() noexcept { return IsVRPanelContextActive() ? vrLastDisplaySize : lastDisplaySize; }
+	/** @brief Returns the active surface's pending layout-reset flag. */
+	bool& ActiveResetLayout() noexcept { return IsVRPanelContextActive() ? vrResetLayout : resetLayout; }
 
 	/** @brief Queues a feature (by GetShortName()) or built-in page (by canonicalId, e.g.
 	 *  "Performance") to be selected in the left panel on the next frame.
@@ -610,9 +665,10 @@ public:
 	 *  target (see SelectFeatureMenu) exactly once, without exposing the raw field. */
 	bool ConsumeSectionAnchor(const std::string& anchor)
 	{
-		if (pendingSectionAnchor != anchor)
+		auto& activeAnchor = IsVRPanelContextActive() ? vrPendingSectionAnchor : pendingSectionAnchor;
+		if (activeAnchor != anchor)
 			return false;
-		pendingSectionAnchor.clear();
+		activeAnchor.clear();
 		return true;
 	}
 	static std::unordered_map<std::string, int> categoryCounts;  // Number of features in each feature category
@@ -675,14 +731,21 @@ public:
 private:
 	Settings settings;
 
+	ImGuiContext* desktopContext = nullptr;
+	ImGuiContext* vrPanelContext = nullptr;
 	std::string cachedIniPath;  // io.IniFilename must point to a string that lives for the duration of the runtime
+	std::string cachedVrIniPath;
+	bool desktopWasDocked = false;
+	bool vrWasDocked = false;
 
 	// Menu navigation
 	SidebarState sidebar;
+	SidebarState vrSidebar;
 	std::string pendingFeatureSelection;  // Feature to select on next frame
 	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a
 	// feature's DrawSettings consumes it via ConsumeSectionAnchor to scroll there.
 	std::string pendingSectionAnchor;
+	std::string vrPendingSectionAnchor;
 
 	// Input event handling
 	std::vector<KeyEvent> _keyEventQueue;
@@ -696,6 +759,7 @@ private:
 
 	Menu() = default;
 
+	void ClearAllImGuiInputKeys();
 	void DrawGeneralSettings();
 	void DrawAdvancedSettings();
 	void DrawDisableAtBootSettings();

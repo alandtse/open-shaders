@@ -197,7 +197,7 @@ namespace MenuFonts
 
 	namespace
 	{
-		std::unordered_map<std::string, ImFont*> g_previewFontsByFile;
+		std::unordered_map<ImGuiContext*, std::unordered_map<std::string, ImFont*>> g_previewFontsByContext;
 
 		const ImWchar g_previewGlyphRanges[] = {
 			0x0020,
@@ -210,14 +210,22 @@ namespace MenuFonts
 		constexpr size_t MAX_PREVIEW_FONT_FAILURES = 3;
 	}  // namespace
 
-	void InvalidatePreviewFonts()
+	void InvalidatePreviewFonts(ImGuiContext* context)
 	{
-		g_previewFontsByFile.clear();
+		ImGuiContext* target = context ? context : ImGui::GetCurrentContext();
+		if (target)
+			g_previewFontsByContext.erase(target);
+		else
+			g_previewFontsByContext.clear();
 	}
 
 	void AddPreviewFontsToAtlas(float previewFontSize)
 	{
-		InvalidatePreviewFonts();
+		ImGuiContext* ctx = ImGui::GetCurrentContext();
+		if (!ctx)
+			return;
+		InvalidatePreviewFonts(ctx);
+		auto& previewFonts = g_previewFontsByContext[ctx];
 
 		const float clampedSize = std::clamp(
 			std::round(previewFontSize),
@@ -247,14 +255,14 @@ namespace MenuFonts
 					continue;
 				}
 
-				if (g_previewFontsByFile.size() >= MAX_PREVIEW_FONTS) {
+				if (previewFonts.size() >= MAX_PREVIEW_FONTS) {
 					goto done_loading;
 				}
 
 				ImFont* font = io.Fonts->AddFontFromFileTTF(
 					fontPath.string().c_str(), clampedSize, &cfg, g_previewGlyphRanges);
 				if (font) {
-					g_previewFontsByFile.emplace(style.file, font);
+					previewFonts.emplace(style.file, font);
 					consecutiveFailures = 0;
 				} else if (++consecutiveFailures >= MAX_PREVIEW_FONT_FAILURES) {
 					goto done_loading;
@@ -269,8 +277,16 @@ done_loading:;
 		if (file.empty()) {
 			return nullptr;
 		}
-		const auto it = g_previewFontsByFile.find(file);
-		return it != g_previewFontsByFile.end() ? it->second : nullptr;
+		ImGuiContext* ctx = ImGui::GetCurrentContext();
+		if (!ctx) {
+			return nullptr;
+		}
+		const auto ctxIt = g_previewFontsByContext.find(ctx);
+		if (ctxIt == g_previewFontsByContext.end()) {
+			return nullptr;
+		}
+		const auto it = ctxIt->second.find(file);
+		return it != ctxIt->second.end() ? it->second : nullptr;
 	}
 
 	std::string BuildFontSignature(const Menu::ThemeSettings& theme, float baseFontSize)

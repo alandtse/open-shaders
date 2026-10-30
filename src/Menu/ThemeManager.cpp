@@ -399,7 +399,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 	// Clear existing fonts from the atlas
 	io.Fonts->Clear();
-	MenuFonts::InvalidatePreviewFonts();
+	MenuFonts::InvalidatePreviewFonts(ctx);
 	io.Fonts->TexGlyphPadding = 1;
 
 	ImFontConfig font_config;
@@ -407,7 +407,12 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 	float fontSize = ResolveFontSize(menu);
 	auto fontsRoot = Util::PathHelpers::GetFontsPath();
-	menu.loadedFontRoles.fill(nullptr);
+	auto& loadedRoles = menu.ActiveLoadedFontRoles();
+	auto& pixelSizes = menu.ActiveFontPixelSizesByRole();
+	auto& previewAtlasLoaded = menu.ActivePreviewAtlasLoaded();
+	const bool wantsPreviewAtlas = menu.ActiveWantsFontPreviewAtlas();
+	loadedRoles.fill(nullptr);
+	previewAtlasLoaded = false;
 
 	std::unordered_map<std::string, ImFont*> atlasCache;
 	std::vector<size_t> rolesNeedingFallback;
@@ -427,7 +432,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 		float scaledSize = std::clamp(fontSize * effective.SizeScale, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
 		float roundedSize = std::round(scaledSize);
-		menu.cachedFontPixelSizesByRole[i] = roundedSize;
+		pixelSizes[i] = roundedSize;
 
 		ImFont* loadedFont = nullptr;
 		if (!effective.File.empty()) {
@@ -461,18 +466,18 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		if (!loadedFont) {
 			rolesNeedingFallback.push_back(i);
 		} else {
-			menu.loadedFontRoles[i] = loadedFont;
+			loadedRoles[i] = loadedFont;
 			mutableRoleSettings = effective;
 			const_cast<Menu&>(menu).cachedFontFilesByRole[i] = effective.File;
 		}
 	}
 
 	const size_t bodyIndex = static_cast<size_t>(Menu::FontRole::Body);
-	if (!menu.loadedFontRoles[bodyIndex]) {
+	if (!loadedRoles[bodyIndex]) {
 		const auto& defaults = Menu::GetDefaultFontRole(Menu::FontRole::Body);
 		float bodySize = std::clamp(fontSize * defaults.SizeScale, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
 		float roundedBodySize = std::round(bodySize);
-		menu.cachedFontPixelSizesByRole[bodyIndex] = roundedBodySize;
+		pixelSizes[bodyIndex] = roundedBodySize;
 
 		ImFont* bodyFont = nullptr;
 		auto defaultPath = fontsRoot / defaults.File;
@@ -490,14 +495,14 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 			MergeFontAwesome5(io.Fonts, bodyFont, roundedBodySize);
 		}
 
-		menu.loadedFontRoles[bodyIndex] = bodyFont;
+		loadedRoles[bodyIndex] = bodyFont;
 		const_cast<Menu&>(menu).GetFontRoleSettings(Menu::FontRole::Body) = defaults;
 		const_cast<Menu&>(menu).cachedFontFilesByRole[bodyIndex] = defaults.File;
 		menu.cachedFontName = defaults.File;
 		const_cast<Menu&>(menu).GetSettings().Theme.FontName = defaults.File;
 	}
 
-	ImFont* bodyFont = menu.loadedFontRoles[bodyIndex];
+	ImFont* bodyFont = loadedRoles[bodyIndex];
 	for (size_t idx : rolesNeedingFallback) {
 		if (idx == bodyIndex) {
 			continue;
@@ -505,22 +510,22 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		Menu::FontRole role = static_cast<Menu::FontRole>(idx);
 		const auto& defaults = Menu::GetDefaultFontRole(role);
 		float fallbackSize = std::clamp(fontSize * defaults.SizeScale, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE);
-		menu.cachedFontPixelSizesByRole[idx] = std::round(fallbackSize);
-		menu.loadedFontRoles[idx] = bodyFont;
+		pixelSizes[idx] = std::round(fallbackSize);
+		loadedRoles[idx] = bodyFont;
 		const_cast<Menu&>(menu).GetFontRoleSettings(role) = defaults;
 		const_cast<Menu&>(menu).cachedFontFilesByRole[idx] = defaults.File;
 	}
 
 	if (!bodyFont) {
 		bodyFont = io.Fonts->AddFontDefault();
-		menu.loadedFontRoles[bodyIndex] = bodyFont;
+		loadedRoles[bodyIndex] = bodyFont;
 	}
 
 	io.FontDefault = bodyFont ? bodyFont : io.Fonts->AddFontDefault();
 	menu.cachedFontName = const_cast<Menu&>(menu).GetFontRoleSettings(Menu::FontRole::Body).File;
 	cachedFontSize = fontSize;
 	const_cast<Menu&>(menu).GetSettings().Theme.FontName = menu.cachedFontName;
-	const_cast<Menu&>(menu).cachedFontSignature = const_cast<Menu&>(menu).BuildFontSignature(fontSize);
+	menu.ActiveFontSignature() = menu.BuildFontSignature(fontSize);
 
 	// ─── CJK Font Merging ────────────────────────────────────────────────────────
 	// Merge glyphs needed by the active locale, plus the minimum glyph set needed
@@ -568,7 +573,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 				logger::warn("[I18n] CJK locale '{}' active but no CJK font path candidates were available.", locale);
 			} else {
 				io.Fonts->Clear();
-				MenuFonts::InvalidatePreviewFonts();
+				MenuFonts::InvalidatePreviewFonts(ctx);
 
 				std::unordered_map<std::string, ImFont*> cjkAtlasCache;
 				bool mergedAnyCJKFont = false;
@@ -604,7 +609,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 				};
 
 				for (size_t i = 0; i < static_cast<size_t>(Menu::FontRole::Count); ++i) {
-					float roleSize = menu.cachedFontPixelSizesByRole[i];
+					float roleSize = pixelSizes[i];
 					std::string roleFile = const_cast<Menu&>(menu).cachedFontFilesByRole[i];
 					Menu::FontRole role = static_cast<Menu::FontRole>(i);
 
@@ -617,7 +622,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 					auto cached = cjkAtlasCache.find(cacheKey);
 					if (cached != cjkAtlasCache.end()) {
-						menu.loadedFontRoles[i] = cached->second;
+						loadedRoles[i] = cached->second;
 						continue;
 					}
 
@@ -637,11 +642,11 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 						tryMergeGlyphSet(baseFont, roleSize, merge.fontPaths, merge.glyphRanges.Data, std::format("locale display '{}'", merge.locale), role);
 					}
 
-					menu.loadedFontRoles[i] = baseFont;
+					loadedRoles[i] = baseFont;
 					cjkAtlasCache.emplace(cacheKey, baseFont);
 				}
 
-				bodyFont = menu.loadedFontRoles[static_cast<size_t>(Menu::FontRole::Body)];
+				bodyFont = loadedRoles[static_cast<size_t>(Menu::FontRole::Body)];
 				io.FontDefault = bodyFont;
 
 				if (mergedAnyCJKFont) {
@@ -653,9 +658,10 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		}
 	}
 
-	if (menu.wantsFontPreviewAtlas) {
-		const float previewFontSize = menu.cachedFontPixelSizesByRole[static_cast<size_t>(Menu::FontRole::Body)];
+	if (wantsPreviewAtlas) {
+		const float previewFontSize = pixelSizes[static_cast<size_t>(Menu::FontRole::Body)];
 		MenuFonts::AddPreviewFontsToAtlas(previewFontSize);
+		previewAtlasLoaded = true;
 	}
 
 	// Build the font atlas - this bakes all fonts into the texture
@@ -664,11 +670,12 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 		// Emergency fallback: try to restore with default font before giving up
 		io.Fonts->Clear();
-		MenuFonts::InvalidatePreviewFonts();
+		MenuFonts::InvalidatePreviewFonts(ctx);
+		previewAtlasLoaded = false;
 		ImFont* fallbackFont = io.Fonts->AddFontDefault();
 		MergeFontAwesome5(io.Fonts, fallbackFont, fontSize);
 		if (fallbackFont && io.Fonts->Build()) {
-			menu.loadedFontRoles.fill(fallbackFont);
+			loadedRoles.fill(fallbackFont);
 			io.FontDefault = fallbackFont;
 		} else {
 			logger::error("ReloadFont: Emergency fallback failed");
@@ -699,7 +706,8 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 
 		// Emergency fallback: restore with default font and retry device objects
 		io.Fonts->Clear();
-		MenuFonts::InvalidatePreviewFonts();
+		MenuFonts::InvalidatePreviewFonts(ctx);
+		previewAtlasLoaded = false;
 		ImFont* fallbackFont = io.Fonts->AddFontDefault();
 		MergeFontAwesome5(io.Fonts, fallbackFont, fontSize);
 
@@ -707,7 +715,7 @@ bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 		if (fallbackFont && io.Fonts->Build()) {
 			ImGui_ImplDX11_InvalidateDeviceObjects();
 			if (ImGui_ImplDX11_CreateDeviceObjects()) {
-				menu.loadedFontRoles.fill(fallbackFont);
+				loadedRoles.fill(fallbackFont);
 				io.FontDefault = fallbackFont;
 				menu.cachedFontName = "ImGui Default";
 				recoverySucceeded = true;
@@ -1105,13 +1113,27 @@ float ThemeManager::ResolveFontSize(const Menu& menu)
 	// Compute dynamic size from screen resolution
 	float dynamicSize;
 	if (globals::game::isVR) {
-		// VR: canvas is sized 1:1 to the helper panel, so size the font from
-		// the live panel height; falls back to kOverlayHeight before the panel exists.
-		uint32_t panelW = 0, panelH = 0;
-		const float canvasH = globals::features::vr.GetHelperPanelSize(panelW, panelH) ?
-		                          static_cast<float>(panelH) :
-		                          static_cast<float>(VR::Config::kOverlayHeight);
-		dynamicSize = canvasH * Constants::DEFAULT_FONT_RATIO;
+		const bool isDesktopContext = menu.GetDesktopContext() && ImGui::GetCurrentContext() == menu.GetDesktopContext();
+		if (isDesktopContext) {
+			float desktopH = 0.0f;
+			DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+			if (globals::d3d::swapChain && SUCCEEDED(globals::d3d::swapChain->GetDesc(&swapChainDesc)) && swapChainDesc.BufferDesc.Height > 0) {
+				desktopH = static_cast<float>(swapChainDesc.BufferDesc.Height);
+			} else if (ImGui::GetCurrentContext() && ImGui::GetIO().DisplaySize.y > 0.0f) {
+				desktopH = ImGui::GetIO().DisplaySize.y;
+			} else if (globals::state && globals::state->screenSize.y > 0.0f) {
+				desktopH = globals::state->screenSize.y;
+			} else {
+				desktopH = Constants::DEFAULT_SCREEN_HEIGHT;
+			}
+			dynamicSize = desktopH * Constants::DEFAULT_FONT_RATIO;
+		} else {
+			uint32_t panelW = 0, panelH = 0;
+			const float canvasH = globals::features::vr.GetHelperPanelSize(panelW, panelH) ?
+			                          static_cast<float>(panelH) :
+			                          static_cast<float>(VR::Config::kOverlayHeight);
+			dynamicSize = canvasH * Constants::DEFAULT_FONT_RATIO;
+		}
 	} else if (globals::state && globals::state->screenSize.y > 0) {
 		// Non-VR: use current screen height
 		dynamicSize = globals::state->screenSize.y * Constants::DEFAULT_FONT_RATIO;

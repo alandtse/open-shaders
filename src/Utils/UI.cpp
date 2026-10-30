@@ -109,7 +109,8 @@ namespace Util
 		if (!GetClientRect(hwnd, &rect) || rect.right <= 0 || rect.bottom <= 0)
 			return;
 
-		if (rect.right == g_lastWindowWidth && rect.bottom == g_lastWindowHeight)
+		if (rect.right == g_lastWindowWidth && rect.bottom == g_lastWindowHeight &&
+			g_displaySize.x == bufferWidth && g_displaySize.y == bufferHeight)
 			return;
 
 		g_displaySize.x = bufferWidth;
@@ -1726,11 +1727,9 @@ namespace Util
 
 		SearchableComboStorage& GetSearchableComboStorage()
 		{
-			static SearchableComboStorage storage;
-			if (storage.context != GImGui) {
-				storage = {};
-				storage.context = GImGui;
-			}
+			static std::unordered_map<ImGuiContext*, SearchableComboStorage> storages;
+			auto& storage = storages[GImGui];
+			storage.context = GImGui;
 			return storage;
 		}
 
@@ -3113,6 +3112,60 @@ namespace Util
 			state.draggedFromFlyout = false;
 		}
 
+		struct SecondaryFlyoutKey
+		{
+			const FlyoutState* primary = nullptr;
+			ImGuiContext* context = nullptr;
+			bool operator==(const SecondaryFlyoutKey&) const noexcept = default;
+		};
+
+		struct SecondaryFlyoutKeyHash
+		{
+			size_t operator()(const SecondaryFlyoutKey& key) const noexcept
+			{
+				const auto p1 = std::bit_cast<std::uintptr_t>(key.primary);
+				const auto p2 = std::bit_cast<std::uintptr_t>(key.context);
+				std::uint64_t h = Util::HashCombine(0, static_cast<std::uint32_t>(p1));
+				h = Util::HashCombine(h, static_cast<std::uint32_t>(p1 >> 32));
+				h = Util::HashCombine(h, static_cast<std::uint32_t>(p2));
+				h = Util::HashCombine(h, static_cast<std::uint32_t>(p2 >> 32));
+				return static_cast<size_t>(h);
+			}
+		};
+
+		auto& GetSecondaryFlyoutMap()
+		{
+			static std::unordered_map<SecondaryFlyoutKey, FlyoutState, SecondaryFlyoutKeyHash> map;
+			return map;
+		}
+
+		FlyoutState& ResolveFlyoutState(FlyoutState& state)
+		{
+			ImGuiContext* ctx = ImGui::GetCurrentContext();
+			if (!ctx)
+				return state;
+			if (!state.ownerContext) {
+				state.ownerContext = ctx;
+				return state;
+			}
+			if (state.ownerContext == ctx)
+				return state;
+			auto& resolved = GetSecondaryFlyoutMap()[SecondaryFlyoutKey{ &state, ctx }];
+			resolved.ownerContext = ctx;
+			return resolved;
+		}
+
+		const FlyoutState& ResolveFlyoutState(const FlyoutState& state)
+		{
+			ImGuiContext* ctx = ImGui::GetCurrentContext();
+			if (!ctx || !state.ownerContext || state.ownerContext == ctx)
+				return state;
+			auto& map = GetSecondaryFlyoutMap();
+			if (const auto it = map.find(SecondaryFlyoutKey{ &state, ctx }); it != map.end())
+				return it->second;
+			return state;
+		}
+
 		bool ContainsPoint(const ImVec2& min, const ImVec2& max, const ImVec2& point)
 		{
 			return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
@@ -3337,15 +3390,17 @@ namespace Util
 	FlyoutScope::FlyoutScope(
 		FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed, const FlyoutStyle& flyoutStyle)
 	{
-		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed, flyoutStyle))
-			state = &flyoutState;
+		auto& resolved = ResolveFlyoutState(flyoutState);
+		if (BeginFlyoutImpl(resolved, itemId, sourcePressed, flyoutStyle))
+			state = &resolved;
 	}
 
 	FlyoutScope::FlyoutScope(FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed,
 		const ImVec2& sourceMin, const ImVec2& sourceMax, const FlyoutStyle& flyoutStyle)
 	{
-		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed, flyoutStyle, &sourceMin, &sourceMax))
-			state = &flyoutState;
+		auto& resolved = ResolveFlyoutState(flyoutState);
+		if (BeginFlyoutImpl(resolved, itemId, sourcePressed, flyoutStyle, &sourceMin, &sourceMax))
+			state = &resolved;
 	}
 
 	FlyoutScope::~FlyoutScope()
@@ -3365,8 +3420,9 @@ namespace Util
 		return name && std::string_view(name).starts_with(kFlyoutWindowPrefix);
 	}
 
-	void RequestCloseFlyout(FlyoutState& state) noexcept
+	void RequestCloseFlyout(FlyoutState& flyoutState) noexcept
 	{
+		auto& state = ResolveFlyoutState(flyoutState);
 		if (!state.isOpen)
 			return;
 
@@ -3375,14 +3431,16 @@ namespace Util
 		state.blockedHoverId = state.activeId;
 	}
 
-	void CloseFlyout(FlyoutState& state) noexcept
+	void CloseFlyout(FlyoutState& flyoutState) noexcept
 	{
+		auto& state = ResolveFlyoutState(flyoutState);
 		ResetFlyout(state);
 		state.pendingFocusReturnId = 0;
 	}
 
-	float GetFlyoutEasedProgress(const FlyoutState& state) noexcept
+	float GetFlyoutEasedProgress(const FlyoutState& flyoutState) noexcept
 	{
+		const auto& state = ResolveFlyoutState(flyoutState);
 		const float progress = std::clamp(state.openProgress, 0.0f, 1.0f);
 		return 1.0f - (1.0f - progress) * (1.0f - progress);
 	}

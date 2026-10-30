@@ -1862,6 +1862,7 @@ namespace Util
 		bool draggedFromFlyout = false;
 		int lastFrame = -1;
 		std::string windowName;
+		ImGuiContext* ownerContext = nullptr;
 	};
 
 	struct FlyoutStyle

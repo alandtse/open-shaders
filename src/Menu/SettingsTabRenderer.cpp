@@ -979,9 +979,8 @@ void SettingsTabRenderer::RenderFontsTab()
 			fontCatalog = Util::Fonts::DiscoverFontCatalog(forceRescan);
 		};
 
-		if (!menuInstance->wantsFontPreviewAtlas) {
-			menuInstance->wantsFontPreviewAtlas = true;
-			menuInstance->pendingFontReload = true;
+		if (!menuInstance->ActiveWantsFontPreviewAtlas()) {
+			menuInstance->ActiveWantsFontPreviewAtlas() = true;
 		}
 
 		if (!catalogInitialized) {
@@ -1021,11 +1020,10 @@ void SettingsTabRenderer::RenderFontsTab()
 		}
 
 		ImGui::EndTabItem();
-	} else if (auto* menuInstance = globals::menu; menuInstance->wantsFontPreviewAtlas) {
+	} else if (auto* menuInstance = globals::menu; menuInstance->ActiveWantsFontPreviewAtlas()) {
 		// Fonts tab not active: drop the preview-font atlas so it is not rebaked into every
 		// later atlas rebuild for the rest of the session.
-		menuInstance->wantsFontPreviewAtlas = false;
-		menuInstance->pendingFontReload = true;
+		menuInstance->ActiveWantsFontPreviewAtlas() = false;
 	}
 }
 

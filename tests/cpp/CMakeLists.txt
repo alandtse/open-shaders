@@ -114,6 +114,7 @@ add_executable(cpp_tests
 	test_abcomparison.cpp
 	test_prerequisitechain.cpp
 	test_desktop_mirror.cpp
+	test_imgui_surface_sync.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp
@@ -131,6 +132,7 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABCompositorStats.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABComparison.cpp"
     "${CMAKE_SOURCE_DIR}/src/Menu/DesktopMirrorDrawData.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Menu/ImGuiSurfaceSync.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"

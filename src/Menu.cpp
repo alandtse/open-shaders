@@ -34,6 +34,7 @@
 #include "Menu/Fonts.h"
 #include "Menu/HomePageRenderer.h"
 #include "Menu/IconLoader.h"
+#include "Menu/ImGuiSurfaceSync.h"
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/OverlayRenderer.h"
 #include "Menu/SettingsTabRenderer.h"
@@ -423,9 +424,20 @@ Menu::~Menu()
 	if (!initialized)
 		return;
 
+	if (vrPanelContext) {
+		ScopedImGuiContext vrGuard(vrPanelContext);
+		MenuFonts::InvalidatePreviewFonts(vrPanelContext);
+		ImGui_ImplDX11_Shutdown();
+		ImGui::DestroyContext(vrPanelContext);
+		vrPanelContext = nullptr;
+	}
+	if (desktopContext)
+		ImGui::SetCurrentContext(desktopContext);
+	MenuFonts::InvalidatePreviewFonts(desktopContext);
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
-	ImGui::DestroyContext();
+	ImGui::DestroyContext(desktopContext);
+	desktopContext = nullptr;
 	dxgiAdapter3 = nullptr;
 }
 
@@ -678,11 +690,35 @@ void Menu::CreateDefaultThemes()
 	themeManager->CreateDefaultThemeFiles();
 }
 
+namespace
+{
+	void RegisterDisplaySizeSettingsHandler(ImGuiContext* context, float2* targetDisplaySize)
+	{
+		if (!context || !targetDisplaySize)
+			return;
+		ImGuiSettingsHandler handler{};
+		handler.TypeName = "CommunityShaders";
+		handler.TypeHash = ImHashStr("CommunityShaders");
+		handler.UserData = targetDisplaySize;
+		handler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char*) -> void* { return (void*)1; };
+		handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
+			float w, ht;
+			if (sscanf(line, "DisplaySize=%f,%f", &w, &ht) == 2)
+				*static_cast<float2*>(h->UserData) = float2{ w, ht };
+		};
+		handler.WriteAllFn = [](ImGuiContext* ctx, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
+			const auto& ds = ctx->IO.DisplaySize;
+			buf->appendf("[%s][Data]\nDisplaySize=%g,%g\n\n", h->TypeName, ds.x, ds.y);
+		};
+		context->SettingsHandlers.push_back(handler);
+	}
+}
+
 void Menu::Init()
 {
 	// Setup Dear ImGui context
 	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
+	desktopContext = ImGui::CreateContext();
 
 	// IMPORTANT: Immediately override ImGui's default styles with our Default.json theme
 	// This prevents hardcoded ImGui defaults from ever showing through
@@ -726,23 +762,7 @@ void Menu::Init()
 
 	cachedIniPath = Util::PathHelpers::GetImGuiIniPath().string();
 	imgui_io.IniFilename = cachedIniPath.c_str();
-
-	// Register settings handler to persist display size for cross-session resolution change detection
-	ImGuiSettingsHandler handler{};
-	handler.TypeName = "CommunityShaders";
-	handler.TypeHash = ImHashStr("CommunityShaders");
-	handler.UserData = &lastDisplaySize;
-	handler.ReadOpenFn = [](ImGuiContext*, ImGuiSettingsHandler*, const char*) -> void* { return (void*)1; };
-	handler.ReadLineFn = [](ImGuiContext*, ImGuiSettingsHandler* h, void*, const char* line) {
-		float w, ht;
-		if (sscanf(line, "DisplaySize=%f,%f", &w, &ht) == 2)
-			*static_cast<float2*>(h->UserData) = float2{ w, ht };
-	};
-	handler.WriteAllFn = [](ImGuiContext*, ImGuiSettingsHandler* h, ImGuiTextBuffer* buf) {
-		auto& ds = ImGui::GetIO().DisplaySize;
-		buf->appendf("[%s][Data]\nDisplaySize=%g,%g\n\n", h->TypeName, ds.x, ds.y);
-	};
-	ImGui::GetCurrentContext()->SettingsHandlers.push_back(handler);
+	RegisterDisplaySizeSettingsHandler(desktopContext, &lastDisplaySize);
 
 	DXGI_SWAP_CHAIN_DESC desc{};
 	globals::d3d::swapChain->GetDesc(&desc);
@@ -779,6 +799,54 @@ void Menu::Init()
 	initialized = true;
 }
 
+bool Menu::EnsureVRPanelContext()
+{
+	if (vrPanelContext)
+		return true;
+	if (!initialized || !globals::game::isVR || !globals::d3d::device || !globals::d3d::context)
+		return false;
+
+	vrPanelContext = ImGui::CreateContext();
+	if (!vrPanelContext)
+		return false;
+
+	ScopedImGuiContext vrGuard(vrPanelContext);
+	auto& vrIo = ImGui::GetIO();
+	vrIo.ConfigFlags = ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_DockingEnable;
+	vrIo.ConfigInputTrickleEventQueue = false;
+	vrIo.ConfigDockingWithShift = settings.RequireShiftToDock;
+	vrIo.BackendFlags = ImGuiBackendFlags_HasMouseCursors | ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_HasGamepad;
+
+	const auto iniPath = Util::PathHelpers::GetImGuiIniPath();
+	cachedVrIniPath = (iniPath.parent_path() / "imgui_vr.ini").string();
+	vrIo.IniFilename = cachedVrIniPath.c_str();
+	RegisterDisplaySizeSettingsHandler(vrPanelContext, &vrLastDisplaySize);
+
+	if (!ImGui_ImplDX11_Init(globals::d3d::device, globals::d3d::context)) {
+		ImGui::DestroyContext(vrPanelContext);
+		vrPanelContext = nullptr;
+		return false;
+	}
+
+	ThemeManager::ReloadFont(*this, vrCachedFontSize);
+	return true;
+}
+
+void Menu::FinishPendingTabFrame()
+{
+	if (pendingTab.empty())
+		return;
+	if (pendingTabMatched) {
+		pendingTab.clear();
+		pendingTabMatched = false;
+		return;
+	}
+	if (pendingTabFramesLeft > 0 && --pendingTabFramesLeft == 0) {
+		logger::warn("[Menu] No tab named '{}' drew within {} menu frames; the request was dropped", pendingTab, kPendingTabFrames);
+		pendingTab.clear();
+	}
+}
+
 /**
  * @brief Main UI rendering coordinator for the Open Shaders menu
  *
@@ -794,20 +862,19 @@ void Menu::Init()
  */
 void Menu::DrawSettings()
 {
-	if (focusChanged) {
+	if (focusChanged.exchange(false))
 		OnFocusChanged();
-		focusChanged = false;
-	}
 
 	// Apply theme styling with universal contrast enhancement
 	ThemeManager::SetupImGuiStyle(*this);
 
 	ImGui::DockSpaceOverViewport(0, NULL, ImGuiDockNodeFlags_PassthruCentralNode);
 
-	const auto layoutCond = resetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+	bool& activeResetLayout = ActiveResetLayout();
+	const auto layoutCond = activeResetLayout ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
 	ImGui::SetNextWindowPos(Util::GetNativeViewportSizeScaled(0.5f), layoutCond, ImVec2(0.5f, 0.5f));
 	ImGui::SetNextWindowSize(Util::GetNativeViewportSizeScaled(0.8f), layoutCond);
-	resetLayout = false;
+	activeResetLayout = false;
 	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
 	auto expectedTag = std::format("v{}", versionStr);
 	auto displayTitle = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) : std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
@@ -818,9 +885,8 @@ void Menu::DrawSettings()
 
 	// Determine window flags based on docking state
 	ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar;
-	// Check if this will be docked (we need to peek at the docking state)
-	static bool wasDocked = false;
-	bool willBeDocked = wasDocked;  // Use previous frame's state as approximation
+	bool& activeWasDocked = IsVRPanelContextActive() ? vrWasDocked : desktopWasDocked;
+	const bool willBeDocked = activeWasDocked;
 
 	// Only hide title bar when not docked
 	if (!willBeDocked) {
@@ -831,7 +897,7 @@ void Menu::DrawSettings()
 	{
 		// Update docking state tracking
 		bool isDocked = ImGui::IsWindowDocked();
-		wasDocked = isDocked;
+		activeWasDocked = isDocked;
 
 		float globalScale = settings.Theme.GlobalScale;
 
@@ -844,8 +910,12 @@ void Menu::DrawSettings()
 		bool canShowIcons = uiIcons.saveSettings.texture || uiIcons.loadSettings.texture || uiIcons.clearCache.texture;
 		bool showLogo = uiIcons.logo.texture != nullptr;
 
+		auto& activeSidebar = IsVRPanelContextActive() ? vrSidebar : sidebar;
+		activeSidebar.visible = sidebar.visible;
+
 		// Render header using extracted component
-		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons, sidebar.visible);
+		MenuHeaderRenderer::RenderHeader(isDocked, showLogo, canShowIcons, uiScale, uiIcons, activeSidebar.visible);
+		sidebar.visible = activeSidebar.visible;
 
 		// Main content starts here - no additional separator needed as it's already handled in the conditions above
 
@@ -859,7 +929,7 @@ void Menu::DrawSettings()
 		// Render feature list using extracted component
 		FeatureListRenderer::RenderFeatureList(
 			footer_height,
-			sidebar,
+			activeSidebar,
 			selectedMenu,
 			featureSearch,
 			pendingFeatureSelection,
@@ -876,26 +946,20 @@ void Menu::DrawSettings()
 		// Draw global popups (needs to be called once per frame)
 		Util::DrawClearShaderCacheConfirmation();
 
-		if (!pendingTab.empty()) {
-			if (Util::SelectTabByLabel(pendingTab)) {
-				pendingTab.clear();
-			} else if (--pendingTabFramesLeft == 0) {
-				logger::warn("[Menu] No tab named '{}' drew within {} menu frames; the request was dropped", pendingTab, kPendingTabFrames);
-				pendingTab.clear();
-			}
-		}
+		if (!pendingTab.empty() && Util::SelectTabByLabel(pendingTab))
+			pendingTabMatched = true;
 	}
 	ImGui::End();
 }
 
 void Menu::DrawEditorSettings(bool resetEditorLayout)
 {
-	if (focusChanged) {
+	if (focusChanged.exchange(false))
 		OnFocusChanged();
-		focusChanged = false;
-	}
+	auto& activeSidebar = IsVRPanelContextActive() ? vrSidebar : sidebar;
+	activeSidebar.visible = sidebar.visible;
 	size_t selectedMenu = 0;
-	FeatureListRenderer::RenderFeatureList(0.0f, sidebar, selectedMenu, featureSearch, pendingFeatureSelection, [this]() { DrawGeneralSettings(); }, [this]() { DrawAdvancedSettings(); }, true, resetEditorLayout);
+	FeatureListRenderer::RenderFeatureList(0.0f, activeSidebar, selectedMenu, featureSearch, pendingFeatureSelection, [this]() { DrawGeneralSettings(); }, [this]() { DrawAdvancedSettings(); }, true, resetEditorLayout);
 	Util::DrawClearShaderCacheConfirmation();
 }
 
@@ -1027,24 +1091,26 @@ void Menu::DrawFooter()
  */
 void Menu::DrawOverlay()
 {
-	// Only process reloads when ImGui is NOT in an active frame
+	ScopedImGuiContext desktopScope(desktopContext ? desktopContext : ImGui::GetCurrentContext());
 	ImGuiContext* ctx = ImGui::GetCurrentContext();
 	bool canReload = ctx && !ctx->WithinFrameScope && ctx->WithinEndChildID == 0;
+	bool canReloadVR = !vrPanelContext || (!vrPanelContext->WithinFrameScope && vrPanelContext->WithinEndChildID == 0);
 
-	if (!IsEnabled && wantsFontPreviewAtlas) {
+	if (!IsEnabled && (wantsFontPreviewAtlas || vrWantsFontPreviewAtlas)) {
 		wantsFontPreviewAtlas = false;
+		vrWantsFontPreviewAtlas = false;
 		pendingFontReload = true;
 	}
 
-	// Process deferred font reload BEFORE any ImGui operations
-	// This is the safest place to do font atlas modifications
-	if (pendingFontReload && canReload) {
-		// Call ReloadFont first - only clear flag if it succeeds
-		if (ThemeManager::ReloadFont(*this, cachedFontSize)) {
-			// Reload completed successfully
+	if (pendingFontReload && canReload && canReloadVR) {
+		bool reloaded = ThemeManager::ReloadFont(*this, cachedFontSize);
+		if (reloaded && vrPanelContext) {
+			ScopedImGuiContext vrScope(vrPanelContext);
+			reloaded = ThemeManager::ReloadFont(*this, vrCachedFontSize);
+		}
+		if (reloaded) {
 			pendingFontReload = false;
 		} else {
-			// Reload failed - keep flag true to retry next frame
 			logger::warn("Menu::DrawOverlay() - Font reload failed, will retry next frame");
 		}
 	}
@@ -1121,11 +1187,27 @@ static std::vector<InputCombo> DeriveCSEditorKey(const std::vector<InputCombo>& 
 	return { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(baseKey) };
 }
 
+void Menu::ClearAllImGuiInputKeys()
+{
+	if (desktopContext) {
+		ScopedImGuiContext desktopScope(desktopContext);
+		ImGui::GetIO().ClearInputKeys();
+	} else if (ImGui::GetCurrentContext()) {
+		ImGui::GetIO().ClearInputKeys();
+	}
+	if (vrPanelContext) {
+		ScopedImGuiContext vrScope(vrPanelContext);
+		ImGui::GetIO().ClearInputKeys();
+	}
+}
+
 void Menu::ProcessInputEventQueue()
 {
 	const int requestedSidebarVisibility = pendingSidebarVisibility.exchange(-1, std::memory_order_relaxed);
-	if (requestedSidebarVisibility != -1)
+	if (requestedSidebarVisibility != -1) {
 		sidebar.visible = requestedSidebarVisibility != 0;
+		vrSidebar.visible = sidebar.visible;
+	}
 
 	// Apply any off-thread visibility requests (e.g. devbench) here on the render thread,
 	// mirroring the ToggleKey path, so SetVisible's ImGui access stays on the owning thread.
@@ -1166,6 +1248,7 @@ void Menu::ProcessInputEventQueue()
 		if (!requested.empty()) {
 			pendingTab = std::move(requested);
 			pendingTabFramesLeft = kPendingTabFrames;
+			pendingTabMatched = false;
 		}
 	}
 
@@ -1176,6 +1259,9 @@ void Menu::ProcessInputEventQueue()
 	}
 
 	ImGuiIO& io = ImGui::GetIO();
+	ImGuiIO& keyboardTargetIO = (vrPanelContext && vrPanelContext->IO.WantTextInput && !io.WantTextInput) ?
+	                                vrPanelContext->IO :
+	                                io;
 	// Split the queue into VR and non-VR events
 	std::vector<KeyEvent> vrEvents;
 	std::vector<KeyEvent> nonVREvents;
@@ -1192,10 +1278,6 @@ void Menu::ProcessInputEventQueue()
 	}
 	// Process VR events
 	if (!vrEvents.empty()) {
-		// Helper-required: forward raw VR controller events to the helper,
-		// which owns wand pointing, combo matching, drag and overlay focus.
-		// Without the helper the events are dropped — VR menus are desktop-only
-		// (no built-in VR overlay fallback).
 		if (globals::features::vr.IsHelperRegistered()) {
 			for (const auto& event : vrEvents) {
 				globals::features::vr.FeedHelperEvent(
@@ -1208,17 +1290,17 @@ void Menu::ProcessInputEventQueue()
 		}
 	}
 
-	// Per-frame VR input pump (runs every frame, not just when there are events):
-	// polls helper combos to open/close the menu, syncs helper focus to
-	// Menu::IsEnabled, and feeds the wand pointer + controller buttons into ImGui
-	// IO. Must run before ImGui::NewFrame (InitializeImGuiFrame), which it does —
-	// ProcessInputEventQueue is called first in OverlayRenderer::RenderOverlay.
-	globals::features::vr.UpdateHelper();
+	if (vrPanelContext) {
+		ScopedImGuiContext vrScope(vrPanelContext);
+		globals::features::vr.UpdateHelper();
+	} else {
+		globals::features::vr.UpdateHelper();
+	}
 
 	// Process non-VR events in Menu
 	for (auto& event : nonVREvents) {
 		if (event.eventType == RE::INPUT_EVENT_TYPE::kChar) {
-			io.AddInputCharacter(event.keyCode);
+			keyboardTargetIO.AddInputCharacter(event.keyCode);
 			continue;
 		}
 		if (event.device == RE::INPUT_DEVICE::kMouse) {
@@ -1272,7 +1354,7 @@ void Menu::ProcessInputEventQueue()
 						 if (!HomePageRenderer::ShouldShowFirstTimeSetup()) {
 							 IsEnabled = !IsEnabled;
 							 if (IsEnabled)
-								 ImGui::GetIO().ClearInputKeys();  // Prevent toggle key from remaining "held" in ImGui after open.
+								 ClearAllImGuiInputKeys();
 						 }
 					 } },
 					{ settings.SkipCompilationKey, [this, shaderCache]() { if (!ShouldSwallowInput() && shaderCache->IsCompiling()) shaderCache->SetBackgroundCompilation(true); } },
@@ -1315,7 +1397,7 @@ void Menu::ProcessInputEventQueue()
 			if (!event.IsPressed()) {
 				// Skip key release if it was used to close the first-time setup dialog
 				if (HomePageRenderer::ShouldSkipKeyRelease(key)) {
-					io.AddKeyEvent(Util::Input::VirtualKeyToImGuiKey(key), event.IsPressed());
+					keyboardTargetIO.AddKeyEvent(Util::Input::VirtualKeyToImGuiKey(key), event.IsPressed());
 					continue;
 				}
 
@@ -1438,14 +1520,14 @@ void Menu::ProcessInputEventQueue()
 			if (!suppressForwarding) {
 				// DirectInput loses key-up events after alt-tab; validate against OS state.
 				bool pressed = isKeyDown && (GetAsyncKeyState(key) & Constants::KEY_PRESSED_MASK);
-				io.AddKeyEvent(Util::Input::VirtualKeyToImGuiKey(key), pressed);
+				keyboardTargetIO.AddKeyEvent(Util::Input::VirtualKeyToImGuiKey(key), pressed);
 
 				if (key == VK_LCONTROL || key == VK_RCONTROL)
-					io.AddKeyEvent(ImGuiMod_Ctrl, pressed);
+					keyboardTargetIO.AddKeyEvent(ImGuiMod_Ctrl, pressed);
 				else if (key == VK_LSHIFT || key == VK_RSHIFT)
-					io.AddKeyEvent(ImGuiMod_Shift, pressed);
+					keyboardTargetIO.AddKeyEvent(ImGuiMod_Shift, pressed);
 				else if (key == VK_LMENU || key == VK_RMENU)
-					io.AddKeyEvent(ImGuiMod_Alt, pressed);
+					keyboardTargetIO.AddKeyEvent(ImGuiMod_Alt, pressed);
 			}
 		}
 	}
@@ -1482,8 +1564,7 @@ void Menu::OnFocusChanged()
 			device->ClearInputState();
 		}
 	}
-	// Allows tab to work again after alt+tabbing back in.
-	ImGui::GetIO().ClearInputKeys();
+	ClearAllImGuiInputKeys();
 }
 
 void Menu::ProcessInputEvents(RE::InputEvent* const* a_events)
@@ -1520,7 +1601,7 @@ bool Menu::SetVisible(bool a_visible)
 	const bool wasEnabled = IsEnabled;
 	IsEnabled = a_visible;
 	if (IsEnabled && !wasEnabled)
-		ImGui::GetIO().ClearInputKeys();
+		ClearAllImGuiInputKeys();
 	return IsEnabled;
 }
 
@@ -1544,6 +1625,7 @@ void Menu::SelectFeatureMenu(const std::string& featureName, const std::string& 
 {
 	pendingFeatureSelection = featureName;
 	pendingSectionAnchor = sectionAnchor;
+	vrPendingSectionAnchor = sectionAnchor;
 	logger::info("Queued navigation to {} feature menu", featureName);
 }
 

@@ -60,9 +60,12 @@ private:
 	static bool ShouldSkipRendering();
 	static void HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize);
 	static bool ApplyVRPanelDisplaySize();
-	static void InitializeImGuiFrame(Menu& menu);
+	static void InitializeImGuiFrame(Menu& menu, bool isVRPanelPass);
 	static void RenderFirstTimeSetupOverlay();
-	static void HandleABTesting();
-	static void FinalizeImGuiFrame();
-	static bool RenderDesktopMirror(ImDrawData* drawData);
+	static void UpdateABTesting();
+	static void DrawOverlaySurfaceContent(
+		Menu& menu,
+		const std::function<void()>& drawSettings,
+		const std::function<const char*(std::vector<InputCombo>)>& keyIdToString);
+	static bool StageDesktopMirror(ImDrawData* drawData);
 };

@@ -31,6 +31,7 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
+#include "Menu/ImGuiSurfaceSync.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
@@ -41,12 +42,27 @@
 namespace
 {
 	DesktopMirrorDrawData pendingDesktopMirror;
-	ImDrawData* pendingDesktopMirrorSource = nullptr;
+	ImDrawData* pendingDesktopDrawData = nullptr;
+	ImGuiSurfaceSync g_surfaceSync;
 
 	bool IsSupportedDesktopMirrorFormat(const DXGI_FORMAT format)
 	{
 		return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
 		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+	}
+
+	void UpdateVRPanelDeltaTime()
+	{
+		static INT64 lastVrTicks = 0;
+		LARGE_INTEGER ticksPerSecond{};
+		LARGE_INTEGER currentTicks{};
+		if (QueryPerformanceFrequency(&ticksPerSecond) && QueryPerformanceCounter(&currentTicks) && ticksPerSecond.QuadPart > 0) {
+			if (lastVrTicks > 0 && currentTicks.QuadPart > lastVrTicks) {
+				ImGui::GetIO().DeltaTime = static_cast<float>(
+					static_cast<double>(currentTicks.QuadPart - lastVrTicks) / static_cast<double>(ticksPerSecond.QuadPart));
+			}
+			lastVrTicks = currentTicks.QuadPart;
+		}
 	}
 
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
@@ -92,38 +108,55 @@ void OverlayRenderer::RenderOverlay(
 {
 	BackgroundBlur::RestoreRetainedBuffers();
 
-	// Apply the VR panel size before pumping input: PumpInput reads
-	// io.DisplaySize to map wand UV to pixels for this frame.
-	ApplyVRPanelDisplaySize();
+	uint32_t panelW = 0, panelH = 0;
+	const bool useDualVRSurfaces = globals::game::isVR &&
+	                               globals::features::vr.GetHelperPanelSize(panelW, panelH) &&
+	                               menu.EnsureVRPanelContext();
+	if (useDualVRSurfaces) {
+		ScopedImGuiContext vrScope(menu.GetVRPanelContext());
+		ApplyVRPanelDisplaySize();
+	}
 	processInputEventQueue();
 
-	auto& io = ImGui::GetIO();
 	const bool acceptsInput = !menu.IsPreviewFlying() &&
 	                          (menu.ShouldSwallowInput() || globals::features::vr.HelperRequestsRender());
-	io.SetAppAcceptingEvents(acceptsInput);
-	if (!acceptsInput) {
-		io.ClearEventsQueue();
-		io.ClearInputKeys();
-		io.ClearInputMouse();
-		io.WantSetMousePos = false;
-		ImGui::ClearActiveID();
-	}
+	const auto applyInputAcceptance = [acceptsInput](ImGuiContext* ctx) {
+		if (!ctx)
+			return;
+		ScopedImGuiContext scope(ctx);
+		auto& surfaceIO = ImGui::GetIO();
+		surfaceIO.SetAppAcceptingEvents(acceptsInput);
+		if (!acceptsInput) {
+			surfaceIO.ClearEventsQueue();
+			surfaceIO.ClearInputKeys();
+			surfaceIO.ClearInputMouse();
+			surfaceIO.WantSetMousePos = false;
+			ImGui::ClearActiveID();
+		}
+	};
+	ImGuiContext* desktopCtx = menu.GetDesktopContext() ? menu.GetDesktopContext() : ImGui::GetCurrentContext();
+	applyInputAcceptance(desktopCtx);
+	if (useDualVRSurfaces)
+		applyInputAcceptance(menu.GetVRPanelContext());
 
+	auto* editorWindow = EditorWindow::GetSingleton();
 	if (ShouldSkipRendering()) {
-		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
-		io.ClearInputKeys();
-		io.ClearEventsQueue();
-		EditorWindow::GetSingleton()->UpdateOpenState();
+		editorWindow->FinishGameHourSliderFrame(false);
+		const auto clearIdleSurface = [](ImGuiContext* ctx) {
+			if (!ctx)
+				return;
+			ScopedImGuiContext scope(ctx);
+			auto& surfaceIO = ImGui::GetIO();
+			surfaceIO.ClearInputKeys();
+			surfaceIO.ClearEventsQueue();
+		};
+		clearIdleSurface(desktopCtx);
+		if (useDualVRSurfaces)
+			clearIdleSurface(menu.GetVRPanelContext());
+		editorWindow->UpdateOpenState();
 		return;
 	}
 
-	HandleFontReload(menu, cachedFontSize, currentFontSize);
-	InitializeImGuiFrame(menu);
-
-	RenderShaderCompilationStatus(keyIdToString);
-	RenderShaderBlockingStatus();
-
-	auto* editorWindow = EditorWindow::GetSingleton();
 	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
 		editorWindow->open = false;
 		if (editorWindow->IsInPreviewMode())
@@ -135,11 +168,66 @@ void OverlayRenderer::RenderOverlay(
 	if (effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
 		effects11Editor.Close(false);
 #endif
+	UpdateABTesting();
+
+	if (useDualVRSurfaces) {
+		ImGuiContext* vrCtx = menu.GetVRPanelContext();
+		{
+			ScopedImGuiContext vrScope(vrCtx);
+			g_surfaceSync.ApplyBeforeNewFrame(vrCtx);
+			HandleFontReload(menu, menu.vrCachedFontSize, ThemeManager::ResolveFontSize(menu));
+			InitializeImGuiFrame(menu, true);
+			DrawOverlaySurfaceContent(menu, drawSettings, keyIdToString);
+			ImGui::Render();
+			globals::features::vr.RenderHelperToPanel();
+			g_surfaceSync.OnFrameCompleted(vrCtx, desktopCtx);
+		}
+		{
+			ScopedImGuiContext desktopScope(desktopCtx);
+			g_surfaceSync.ApplyBeforeNewFrame(desktopCtx);
+			HandleFontReload(menu, cachedFontSize, ThemeManager::ResolveFontSize(menu));
+			InitializeImGuiFrame(menu, false);
+			DrawOverlaySurfaceContent(menu, drawSettings, keyIdToString);
+			ImGui::Render();
+			g_surfaceSync.OnFrameCompleted(desktopCtx, vrCtx);
+			auto* desktopDrawData = ImGui::GetDrawData();
+			if (!StageDesktopMirror(desktopDrawData) && !BackgroundBlur::RenderDrawData(desktopDrawData))
+				ImGui_ImplDX11_RenderDrawData(desktopDrawData);
+		}
+	} else {
+		g_surfaceSync.Reset();
+		HandleFontReload(menu, cachedFontSize, currentFontSize);
+		InitializeImGuiFrame(menu, false);
+		DrawOverlaySurfaceContent(menu, drawSettings, keyIdToString);
+		ImGui::Render();
+		auto* drawData = ImGui::GetDrawData();
+		if (!BackgroundBlur::RenderDrawData(drawData))
+			ImGui_ImplDX11_RenderDrawData(drawData);
+	}
+
+	editorWindow->FinishGameHourSliderFrame(true);
+	menu.FinishPendingTabFrame();
+}
+
+void OverlayRenderer::DrawOverlaySurfaceContent(
+	Menu& menu,
+	const std::function<void()>& drawSettings,
+	const std::function<const char*(std::vector<InputCombo>)>& keyIdToString)
+{
+	auto& io = ImGui::GetIO();
+	auto* editorWindow = EditorWindow::GetSingleton();
+#if defined(ENABLE_EFFECTS11)
+	auto& effects11Editor = Effects11Editor::GetSingleton();
+#endif
+
+	RenderShaderCompilationStatus(keyIdToString);
+	RenderShaderBlockingStatus();
+
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
 		io.MouseDrawCursor = !flying;
 		if (flying)
-			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
+			io.MousePos = { -FLT_MAX, -FLT_MAX };
 		editorWindow->Draw();
 #if defined(ENABLE_EFFECTS11)
 	} else if (effects11Editor.IsOpen()) {
@@ -148,23 +236,21 @@ void OverlayRenderer::RenderOverlay(
 #endif
 	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			   globals::features::vr.HelperRequestsRender()) {
-		ImGui::GetIO().MouseDrawCursor = true;
-		// Helper-requested render: the helper's in-scene focus model routed
-		// focus here. Draw the settings UI even though Menu::IsEnabled hasn't
-		// been flipped by the local TAB hotkey. This honors the
-		// kClientFlag_RendersOnFocus contract we advertised at registration.
+		io.MouseDrawCursor = true;
 		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
 			drawSettings();
 		}
 	} else {
-		ImGui::GetIO().MouseDrawCursor = false;
+		io.MouseDrawCursor = false;
 	}
 
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
-	HandleABTesting();
-	editorWindow->FinishGameHourSliderFrame(true);
-	FinalizeImGuiFrame();
+	ABTestingManager::GetSingleton()->DrawOverlayUI();
+
+	if (menu.GetSettings().Theme.UseCustomCursor && Util::CursorLoader::GetLoadedCount() > 0) {
+		Util::CursorLoader::DrawCustomCursor(menu);
+	}
 }
 
 bool OverlayRenderer::ShouldSkipRendering()
@@ -202,9 +288,10 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 {
 	bool fontSizeChanged = std::abs(cachedFontSize - currentFontSize) > ThemeManager::Constants::FONT_CACHE_EPSILON;
 	std::string desiredSignature = menu.BuildFontSignature(currentFontSize);
-	bool signatureChanged = desiredSignature != menu.cachedFontSignature;
+	bool signatureChanged = desiredSignature != menu.ActiveFontSignature();
+	bool previewChanged = menu.ActiveWantsFontPreviewAtlas() != menu.ActivePreviewAtlasLoaded();
 
-	if (fontSizeChanged || signatureChanged) {
+	if (fontSizeChanged || signatureChanged || previewChanged) {
 		if (!ThemeManager::ReloadFont(menu, cachedFontSize)) {
 			logger::warn("OverlayRenderer::HandleFontReload() - Font reload failed");
 		}
@@ -217,45 +304,36 @@ bool OverlayRenderer::ApplyVRPanelDisplaySize()
 	if (!globals::game::isVR || !globals::features::vr.GetHelperPanelSize(panelW, panelH))
 		return false;
 
-	// VR: canvas must equal the helper panel's pixel size 1:1, or wand
-	// clicks (mapped via the same DisplaySize-based UV) drift from the
-	// resized content. The desktop mirror shares this size and can clip on
-	// a differing swapchain resolution; pre-existing, not a regression.
 	auto& io = ImGui::GetIO();
 	io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
 	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 	return true;
 }
 
-void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
+void OverlayRenderer::InitializeImGuiFrame(Menu& menu, bool isVRPanelPass)
 {
-	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
-	ImGui_ImplWin32_NewFrame();
-
-	// ImGui_ImplWin32_NewFrame() above overwrites DisplaySize from the window
-	// rect, so the panel size must be re-applied here before ImGui::NewFrame.
-	const bool vrPanel = ApplyVRPanelDisplaySize();
-	if (!vrPanel) {
+	if (isVRPanelPass) {
+		UpdateVRPanelDeltaTime();
+		ApplyVRPanelDisplaySize();
+	} else {
+		ImGui_ImplWin32_NewFrame();
 		DXGI_SWAP_CHAIN_DESC desc{};
-		globals::d3d::swapChain->GetDesc(&desc);
-		const float displayW = static_cast<float>(desc.BufferDesc.Width);
-		const float displayH = static_cast<float>(desc.BufferDesc.Height);
-		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+		if (globals::d3d::swapChain && SUCCEEDED(globals::d3d::swapChain->GetDesc(&desc))) {
+			const float displayW = static_cast<float>(desc.BufferDesc.Width);
+			const float displayH = static_cast<float>(desc.BufferDesc.Height);
+			Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
+		}
 	}
-	// The wand drives the cursor in VR (PumpInput), so skip the desktop
-	// cursor injection above for the panel case, since it would fight the wand position.
 
 	ImGui::NewFrame();
 
-	// Detect display size change to reset window layout. The VR canvas size
-	// is not invariant (it tracks panel resolution/supersampling), which is
-	// exactly the kind of change this catches.
+	auto& lastDisplaySize = menu.ActiveLastDisplaySize();
 	const float2 currentDisplaySize{ ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y };
-	if (menu.lastDisplaySize.x > 0.f && menu.lastDisplaySize != currentDisplaySize) {
+	if (lastDisplaySize.x > 0.f && lastDisplaySize != currentDisplaySize) {
 		logger::info("Display size changed: {}x{} -> {}x{}, resetting window layout",
-			menu.lastDisplaySize.x, menu.lastDisplaySize.y, currentDisplaySize.x, currentDisplaySize.y);
-		menu.resetLayout = true;
+			lastDisplaySize.x, lastDisplaySize.y, currentDisplaySize.x, currentDisplaySize.y);
+		menu.ActiveResetLayout() = true;
 		EditorWindow::GetSingleton()->resetLayout = true;
 #if defined(ENABLE_EFFECTS11)
 		Effects11Editor::GetSingleton().RequestLayoutReset();
@@ -263,7 +341,7 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 		globals::features::performanceOverlay.ResetWindowLayout();
 		globals::features::sceneSelector.ResetWindowLayout();
 	}
-	menu.lastDisplaySize = currentDisplaySize;
+	lastDisplaySize = currentDisplaySize;
 
 	ThemeManager::SetupImGuiStyle(menu);
 }
@@ -428,60 +506,35 @@ void OverlayRenderer::RenderFeatureOverlays()
 	}
 }
 
-void OverlayRenderer::HandleABTesting()
+void OverlayRenderer::UpdateABTesting()
 {
-	// A/B Testing management
 	auto* abTestingManager = ABTestingManager::GetSingleton();
 	abTestingManager->Update();
 
-	// Always update test data during TEST phase, regardless of overlay visibility
 	if (abTestingManager->IsEnabled()) {
 		globals::features::performanceOverlay.UpdateAllShaderTestData();
 
-		// Add A/B test aggregator data collection here
 		auto& overlay = globals::features::performanceOverlay;
 		auto [mainRows, summaryRows] = overlay.BuildDrawCallRows();
 		std::vector<DrawCallRow> allRows = mainRows;
 		allRows.insert(allRows.end(), summaryRows.begin(), summaryRows.end());
 
-		// Update the A/B test aggregator with current frame data
 		abTestingManager->RecordFrame(allRows);
 	}
-
-	// Draw A/B testing overlay
-	abTestingManager->DrawOverlayUI();
 }
 
-void OverlayRenderer::FinalizeImGuiFrame()
-{
-	if (auto* menu = Menu::GetSingleton();
-		menu && menu->GetSettings().Theme.UseCustomCursor && Util::CursorLoader::GetLoadedCount() > 0) {
-		Util::CursorLoader::DrawCustomCursor(*menu);
-	}
-
-	ImGui::Render();
-
-	auto* drawData = ImGui::GetDrawData();
-	if (!RenderDesktopMirror(drawData) && !BackgroundBlur::RenderDrawData(drawData))
-		ImGui_ImplDX11_RenderDrawData(drawData);
-
-	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
-	// helper can composite our menu as a 3D quad in the HMD. The helper owns
-	// VR overlay compositing — Community Shaders no longer submits its own.
-	globals::features::vr.RenderHelperToPanel();
-}
-
-bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
+bool OverlayRenderer::StageDesktopMirror(ImDrawData* drawData)
 {
 	pendingDesktopMirror.Reset();
-	pendingDesktopMirrorSource = nullptr;
+	pendingDesktopDrawData = nullptr;
 	uint32_t panelWidth = 0;
 	uint32_t panelHeight = 0;
 	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
 	if (!helperPanelActive || !drawData || !globals::d3d::swapChain)
 		return false;
 	if (globals::features::upscaling.d3d12SwapChainActive ||
-		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR))
+		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR) ||
+		BackgroundBlur::HasHDRSceneImageCallback(drawData))
 		return false;
 
 	DXGI_SWAP_CHAIN_DESC swapChainDesc{};
@@ -490,21 +543,7 @@ bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
 	if (!IsSupportedDesktopMirrorFormat(swapChainDesc.BufferDesc.Format))
 		return false;
 
-	const ImVec2 desktopSize(
-		static_cast<float>(swapChainDesc.BufferDesc.Width),
-		static_cast<float>(swapChainDesc.BufferDesc.Height));
-	const double sourceWidth = static_cast<double>(drawData->DisplaySize.x) * drawData->FramebufferScale.x;
-	const double sourceHeight = static_cast<double>(drawData->DisplaySize.y) * drawData->FramebufferScale.y;
-	const bool sourceCanvasValid = std::isfinite(sourceWidth) && std::isfinite(sourceHeight) && sourceWidth > 0.0 && sourceHeight > 0.0;
-	const bool dimensionsDiffer = !sourceCanvasValid || std::abs(desktopSize.x - sourceWidth) > 0.5 || std::abs(desktopSize.y - sourceHeight) > 0.5;
-	if (!dimensionsDiffer || BackgroundBlur::HasHDRSceneImageCallback(drawData))
-		return false;
-
-	// Fit the helper-sized canvas for the desktop target; keep the original for the HMD panel.
-	if (!pendingDesktopMirror.Build(*drawData, desktopSize))
-		return false;
-
-	pendingDesktopMirrorSource = drawData;
+	pendingDesktopDrawData = drawData;
 	return true;
 }
 
@@ -512,15 +551,15 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 {
 	const auto clearPending = []() {
 		pendingDesktopMirror.Reset();
-		pendingDesktopMirrorSource = nullptr;
+		pendingDesktopDrawData = nullptr;
 	};
-	if (!pendingDesktopMirror.Get())
+	if (!pendingDesktopDrawData)
 		return;
 	const SKSE::stl::scope_exit consumePending([&]() noexcept {
 		pendingDesktopMirror.Reset();
-		pendingDesktopMirrorSource = nullptr;
+		pendingDesktopDrawData = nullptr;
 	});
-	if (!swapChain || !pendingDesktopMirrorSource || hdrReady || frameGenActive || globals::features::upscaling.d3d12SwapChainActive ||
+	if (!swapChain || hdrReady || frameGenActive || globals::features::upscaling.d3d12SwapChainActive ||
 		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR)) {
 		clearPending();
 		return;
@@ -529,6 +568,9 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 		clearPending();
 		return;
 	}
+
+	auto* menu = Menu::GetSingleton();
+	ScopedImGuiContext desktopScope(menu && menu->GetDesktopContext() ? menu->GetDesktopContext() : ImGui::GetCurrentContext());
 
 	DXGI_SWAP_CHAIN_DESC swapChainDesc{};
 	if (FAILED(swapChain->GetDesc(&swapChainDesc))) {
@@ -551,10 +593,6 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	}
 	D3D11_TEXTURE2D_DESC backBufferDesc{};
 	backBuffer->GetDesc(&backBufferDesc);
-	auto* mirrorDrawData = pendingDesktopMirror.Get();
-	const bool fitsMirror = mirrorDrawData && IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1 &&
-	                        static_cast<float>(backBufferDesc.Width) == mirrorDrawData->DisplaySize.x &&
-	                        static_cast<float>(backBufferDesc.Height) == mirrorDrawData->DisplaySize.y;
 
 	winrt::com_ptr<ID3D11RenderTargetView> backBufferRTV;
 	if (FAILED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, backBufferRTV.put()))) {
@@ -593,12 +631,26 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	context->RSSetScissorRects(1, &scissor);
 
 	CS_GPU_PASS("OverlayRenderer::DesktopMirror");
-	if (!fitsMirror) {
-		ImGui_ImplDX11_RenderDrawData(pendingDesktopMirrorSource);
+	const bool supportedBackBuffer = IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1;
+	const bool matchesBackBuffer = supportedBackBuffer &&
+	                               std::abs(static_cast<float>(backBufferDesc.Width) - pendingDesktopDrawData->DisplaySize.x) <= 0.5f &&
+	                               std::abs(static_cast<float>(backBufferDesc.Height) - pendingDesktopDrawData->DisplaySize.y) <= 0.5f;
+	if (matchesBackBuffer) {
+		if (!BackgroundBlur::RenderDrawDataForDesktopMirror(pendingDesktopDrawData, *pendingDesktopDrawData))
+			ImGui_ImplDX11_RenderDrawData(pendingDesktopDrawData);
+		clearPending();
 		return;
 	}
-	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
-		ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
+	if (supportedBackBuffer &&
+		pendingDesktopMirror.Build(*pendingDesktopDrawData,
+			ImVec2(static_cast<float>(backBufferDesc.Width), static_cast<float>(backBufferDesc.Height)))) {
+		auto* mirrorDrawData = pendingDesktopMirror.Get();
+		if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopDrawData))
+			ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
+		clearPending();
+		return;
+	}
+	ImGui_ImplDX11_RenderDrawData(pendingDesktopDrawData);
 	clearPending();
 }
 

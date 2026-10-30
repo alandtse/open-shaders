@@ -62,8 +62,22 @@ namespace
 		float scrollMaxY = 0.0f;
 	};
 
-	std::unordered_map<std::string, FeaturePageLayoutState> g_featurePageLayouts;
-	float g_featureActionsIconProgress = 0.0f;
+	struct FeatureSurfaceState
+	{
+		std::unordered_map<std::string, FeaturePageLayoutState> pageLayouts;
+		Util::FlyoutState actionsFlyout;
+		std::string actionsFlyoutFeature;
+		float actionsIconProgress = 0.0f;
+		bool leftPanelVisible = true;
+		float hoverStartTime = 0.0f;
+		bool wasHovering = false;
+	};
+
+	FeatureSurfaceState& GetFeatureSurfaceState()
+	{
+		static std::unordered_map<ImGuiContext*, FeatureSurfaceState> states;
+		return states[ImGui::GetCurrentContext()];
+	}
 
 	void DrawFeatureActionsIcon(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float progress)
 	{
@@ -132,12 +146,10 @@ namespace
 	bool ShouldShowLeftPanel()
 	{
 		bool autoHideEnabled = globals::menu->GetSettings().AutoHideFeatureList;
-		static bool leftPanelVisible = true;
-		static float hoverStartTime = 0.0f;
-		static bool wasHovering = false;
+		auto& surface = GetFeatureSurfaceState();
 
 		if (!autoHideEnabled) {
-			leftPanelVisible = true;
+			surface.leftPanelVisible = true;
 			return true;
 		}
 
@@ -162,27 +174,27 @@ namespace
 		// For staying visible: check both X and Y to ensure mouse is actually over the panel area
 		const bool mouseOverPanelX = relativeX >= 0.0f && relativeX < panelWidth;
 		const bool mouseOverPanelY = mousePos.y >= windowPos.y && mousePos.y <= (windowPos.y + windowSize.y);
-		bool mouseOverPanel = leftPanelVisible && mouseOverPanelX && mouseOverPanelY;
+		bool mouseOverPanel = surface.leftPanelVisible && mouseOverPanelX && mouseOverPanelY;
 
 		// Track hover start time
-		if (mouseInActivationZone && !wasHovering) {
-			hoverStartTime = currentTime;
-			wasHovering = true;
+		if (mouseInActivationZone && !surface.wasHovering) {
+			surface.hoverStartTime = currentTime;
+			surface.wasHovering = true;
 		} else if (!mouseInActivationZone) {
-			wasHovering = false;
+			surface.wasHovering = false;
 		}
 
 		// Expand only after delay has elapsed
-		bool shouldExpand = mouseInActivationZone && (currentTime - hoverStartTime >= expandDelay);
+		bool shouldExpand = mouseInActivationZone && (currentTime - surface.hoverStartTime >= expandDelay);
 
 		// Update visibility: expand with delay, or stay visible while mouse is over panel
 		if (shouldExpand || mouseOverPanel) {
-			leftPanelVisible = true;
+			surface.leftPanelVisible = true;
 		} else if (!mouseOverPanel && !mouseInActivationZone) {
-			leftPanelVisible = false;
+			surface.leftPanelVisible = false;
 		}
 
-		return leftPanelVisible;
+		return surface.leftPanelVisible;
 	}
 
 	void SeparatorTextWithFont(const char* text, Menu::FontRole role)
@@ -335,8 +347,6 @@ namespace
 	// "Don't show again" checkbox state inside the modal (reset each time popup opens).
 	bool g_dontShowAgainCheckbox = false;
 
-	Util::FlyoutState g_featureActionsFlyout;
-	std::string g_featureActionsFlyoutFeature;
 	bool g_featurePreferenceSaveFailed = false;
 
 	std::string GetMenuId(const FeatureListRenderer::MenuFuncInfo& item)
@@ -820,8 +830,9 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 		                          sceneManager->IsFeatureSceneEditing(featureName);
 		const float pageViewportHeight = std::max(ImGui::GetContentRegionAvail().y, 0.0f);
 
+		auto& surface = GetFeatureSurfaceState();
 		if (!featureProfilingAvailable) {
-			g_featurePageLayouts.erase(featureName);
+			surface.pageLayouts.erase(featureName);
 			ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
 			const bool settingsVisible = ImGui::BeginChild("##FeatureSettingsScroll", { 0, 0 }, false);
 			ImGui::PopStyleVar();
@@ -830,7 +841,7 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 					sceneControlled, sceneEditing);
 			ImGui::EndChild();
 		} else {
-			auto& pageLayout = g_featurePageLayouts[featureName];
+			auto& pageLayout = surface.pageLayouts[featureName];
 			const float predictedProfilingStart = std::max(
 				pageLayout.materialHeight, pageViewportHeight - profilingHeight);
 			const float predictedContentHeight = predictedProfilingStart + profilingHeight;
@@ -929,6 +940,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	bool canEditSceneSettings,
 	const FeatureActionsLayout& layout)
 {
+	auto& surface = GetFeatureSurfaceState();
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 	const auto featureName = feat->GetShortName();
 	auto* overrideManager = SettingsOverrideManager::GetSingleton();
@@ -937,9 +949,9 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	const bool canApplyOverrides = !isDisabled && isLoaded && hasOverrides;
 	const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat);
 	if (layout.size <= 0.0f) {
-		if (g_featureActionsFlyoutFeature == featureName) {
-			Util::CloseFlyout(g_featureActionsFlyout);
-			g_featureActionsFlyoutFeature.clear();
+		if (surface.actionsFlyoutFeature == featureName) {
+			Util::CloseFlyout(surface.actionsFlyout);
+			surface.actionsFlyoutFeature.clear();
 		}
 		return;
 	}
@@ -965,11 +977,11 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	}
 
 	bool bootEnabled = !isDisabled;
-	if (g_featureActionsFlyoutFeature != featureName) {
-		Util::CloseFlyout(g_featureActionsFlyout);
-		g_featureActionsFlyoutFeature = featureName;
+	if (surface.actionsFlyoutFeature != featureName) {
+		Util::CloseFlyout(surface.actionsFlyout);
+		surface.actionsFlyoutFeature = featureName;
 		g_featurePreferenceSaveFailed = false;
-		g_featureActionsIconProgress = 0.0f;
+		surface.actionsIconProgress = 0.0f;
 	}
 
 	ImGui::PushID(featureName.c_str());
@@ -983,7 +995,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
 		const ImVec2 flyoutPadding(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
 		Util::FlyoutScope flyout(
-			g_featureActionsFlyout, actionsButtonId, actionsButtonPressed,
+			surface.actionsFlyout, actionsButtonId, actionsButtonPressed,
 			{ .windowPadding = flyoutPadding,
 				.windowRounding = style.WindowRounding,
 				.windowBackgroundAlpha = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w,
@@ -1116,20 +1128,20 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 			}
 
 			if (closeFlyout)
-				Util::RequestCloseFlyout(g_featureActionsFlyout);
+				Util::RequestCloseFlyout(surface.actionsFlyout);
 		}
 	}
 
-	const bool actionsIconActive = g_featureActionsFlyout.activeId == actionsButtonId &&
-	                               g_featureActionsFlyout.isOpen && !g_featureActionsFlyout.closing;
+	const bool actionsIconActive = surface.actionsFlyout.activeId == actionsButtonId &&
+	                               surface.actionsFlyout.isOpen && !surface.actionsFlyout.closing;
 	const float iconTargetProgress = actionsIconActive ? 1.0f : 0.0f;
 	const float iconDeltaTime = std::min(ImGui::GetIO().DeltaTime, FEATURE_ACTION_ICON_MAX_DELTA_TIME);
-	const float iconDistance = iconTargetProgress - g_featureActionsIconProgress;
+	const float iconDistance = iconTargetProgress - surface.actionsIconProgress;
 	const float iconSpeed = FEATURE_ACTION_ICON_RESPONSE_SPEED + FEATURE_ACTION_ICON_START_BOOST * iconDistance * iconDistance;
 	const float iconResponse = 1.0f - std::exp(-iconSpeed * iconDeltaTime);
 	const float iconStep = (std::abs(iconDistance) + FEATURE_ACTION_ICON_FINISH_BIAS) * iconResponse;
-	g_featureActionsIconProgress += std::clamp(iconDistance, -iconStep, iconStep);
-	DrawFeatureActionsIcon(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, g_featureActionsIconProgress);
+	surface.actionsIconProgress += std::clamp(iconDistance, -iconStep, iconStep);
+	DrawFeatureActionsIcon(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, surface.actionsIconProgress);
 	ImGui::PopID();
 	ImGui::EndChild();
 }
