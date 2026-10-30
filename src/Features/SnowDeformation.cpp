@@ -29,7 +29,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BlanketHeight,
 	Depth,
 	Lifetime,
-	TargetSpacing)
+	TrianglePixels)
 
 namespace
 {
@@ -43,6 +43,8 @@ namespace
 	constexpr float kGroundClearance = 2.0f;
 	constexpr float kMaxTessellation = 64.0f;
 	constexpr float kDetailDistance = 512.0f;
+	constexpr float kMinSpacing = 2.0f;
+	constexpr float kAmplitudePixels = 4.0f;
 	constexpr float kMinNormalZ = 0.8f;
 	constexpr float kCapFloor = 8.0f;
 	constexpr float kCapClearance = 4.0f;
@@ -96,7 +98,7 @@ namespace
 	constexpr float kFadeEndTiles = 14.8f;
 	constexpr float kReposeRate = 0.1f;
 	constexpr float kReposeSlope = 1.19175f;
-	constexpr float kBoundDepth = 0.25f;
+	constexpr float kBoundDepth = 2.0f;
 	constexpr float kFootLength = 1.3f;
 	constexpr float kFootAspect = 0.5f;
 	constexpr float kSlopeProbe = 48.0f;
@@ -155,9 +157,10 @@ namespace
 		float4 FadeParams1;
 		int32_t SlotParams1[4];
 		float4 BlanketWindow;
+		float4 DetailParams;
 	};
 	STATIC_ASSERT_ALIGNAS_16(DrawParams);
-	static_assert(sizeof(DrawParams) == 18 * 16);
+	static_assert(sizeof(DrawParams) == 19 * 16);
 
 	struct TileEntry
 	{
@@ -676,9 +679,9 @@ void SnowDeformation::SetupResources()
 			level.activityTexture->CreateSRV(srvDesc);
 		}
 
-		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 		beforeTexture = new Texture2D(desc, "SnowDeformation::FieldBefore");
 		beforeTexture->CreateSRV(srvDesc);
+		beforeTexture->CreateUAV(uavDesc);
 	}
 
 	tileList = eastl::make_unique<StructuredBuffer>(StructuredBufferDesc<TileEntry>(kMaxTileEntries), kMaxTileEntries, "SnowDeformation::TileList");
@@ -770,6 +773,7 @@ void SnowDeformation::ClearShaderCache()
 {
 	EndLandscapeDraw();
 	updateCS = nullptr;
+	copyCS = nullptr;
 	probeCS = nullptr;
 	blanketCS = nullptr;
 	lightingHS = nullptr;
@@ -788,7 +792,7 @@ bool SnowDeformation::EnsureShaders()
 {
 	if (shaderCompileFailed)
 		return false;
-	if (updateCS && lightingHS && lightingDS && depthHS && depthDS)
+	if (updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS)
 		return true;
 
 	const std::vector<std::pair<const char*, const char*>> lightingDefines;
@@ -800,6 +804,8 @@ bool SnowDeformation::EnsureShaders()
 
 	if (!updateCS)
 		updateCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationUpdateCS.hlsl", updateDefines, "cs_5_0")));
+	if (!copyCS)
+		copyCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationCopyCS.hlsl", {}, "cs_5_0")));
 	if (!lightingHS)
 		lightingHS.attach(static_cast<ID3D11HullShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationHS.hlsl", lightingDefines, "hs_5_0")));
 	if (!lightingDS)
@@ -813,7 +819,7 @@ bool SnowDeformation::EnsureShaders()
 	if (!blanketCS)
 		blanketCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationBlanketCS.hlsl", updateDefines, "cs_5_0")));
 
-	shaderCompileFailed = !(updateCS && lightingHS && lightingDS && depthHS && depthDS);
+	shaderCompileFailed = !(updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS);
 	if (shaderCompileFailed)
 		logger::error("[SnowDeformation] Shader compilation failed, prints are disabled until the shader cache is cleared");
 	return !shaderCompileFailed;
@@ -1861,8 +1867,20 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 		context->CSSetSamplers(0, 2, samplers);
 
 		if (entryCount > 0) {
-			context->CopyResource(beforeTexture->resource.get(), level.texture->resource.get());
 			tileList->Update(entries.data(), sizeof(TileEntry) * entries.size());
+			{
+				constexpr uint32_t copyBlocks = (kTileTexels + 2 + 7) / 8;
+				ID3D11ShaderResourceView* copyResources[4] = { level.texture->srv.get(), nullptr, nullptr, tileList->SRV() };
+				ID3D11UnorderedAccessView* copyUAV = beforeTexture->uav.get();
+				context->CSSetShaderResources(0, 4, copyResources);
+				context->CSSetUnorderedAccessViews(0, 1, &copyUAV, nullptr);
+				context->CSSetShader(copyCS.get(), nullptr, 0);
+				context->Dispatch(copyBlocks * copyBlocks, entryCount, 1);
+				ID3D11ShaderResourceView* nullSource = nullptr;
+				ID3D11UnorderedAccessView* nullCopyUAV = nullptr;
+				context->CSSetShaderResources(0, 1, &nullSource);
+				context->CSSetUnorderedAccessViews(0, 1, &nullCopyUAV, nullptr);
+			}
 			ID3D11ShaderResourceView* raise = blanketActive && blanketTexture ? blanketTexture->srv.get() : nullptr;
 			ID3D11ShaderResourceView* resources[7] = { nullptr, snowMap, probes, tileList->SRV(), raise, beforeTexture->srv.get(), seeding ? coarse->texture->srv.get() : nullptr };
 			ID3D11UnorderedAccessView* uav = level.texture->uav.get();
@@ -2347,6 +2365,8 @@ bool SnowDeformation::PrepareCamera(DrawKind a_kind, bool a_clamped)
 				return false;
 			mainCamera = key;
 			mainPosAdjust = { key.posAdjust.x, key.posAdjust.y, key.posAdjust.z };
+			const float renderHeight = Util::ConvertToDynamic({ 0.0f, static_cast<float>(globals::game::graphicsState->screenHeight) }).y;
+			mainPixelScale = static_cast<float>(std::sqrt(m(1, 0) * m(1, 0) + m(1, 1) * m(1, 1) + m(1, 2) * m(1, 2))) * 0.5f * renderHeight;
 		} else if (std::memcmp(mainCamera.viewProj.data(), key.viewProj.data(), sizeof(key.viewProj)) != 0 ||
 				   mainCamera.posAdjust.x != key.posAdjust.x || mainCamera.posAdjust.y != key.posAdjust.y || mainCamera.posAdjust.z != key.posAdjust.z) {
 			return false;
@@ -2389,7 +2409,8 @@ bool SnowDeformation::PrepareCamera(DrawKind a_kind, bool a_clamped)
 		static_cast<float>((static_cast<uint32_t>(fine.windowTileY) & (kSlots - 1)) * kTileTexels), 1.0f / static_cast<float>(kTexels) };
 	params.FadeParams = { fine.tileSize * 0.5f, fine.fadeStart, 1.0f / (fine.fadeEnd - fine.fadeStart), 2.0f * fine.cellSize };
 	const float spacingScale = a_kind == DrawKind::Shadow ? 2.0f : 1.0f;
-	params.TessParams = { kMaxTessellation, 1.0f / (std::clamp(settings.TargetSpacing, 0.5f, 16.0f) * spacingScale), 1.0f / kDetailDistance, kMinNormalZ };
+	params.TessParams = { kMaxTessellation, 1.0f / (kMinSpacing * spacingScale), 1.0f / kDetailDistance, kMinNormalZ };
+	params.DetailParams = { mainPixelScale, 1.0f / (std::clamp(settings.TrianglePixels, 2.0f, 32.0f) * spacingScale), 1.0f / kAmplitudePixels, 0.0f };
 	const bool blanket = blanketActive;
 	params.RangeParams = { maxBound, maxBound + (blanket ? blanketHeight : 0.0f), a_clamped ? 1.0f : 0.0f, 1.0f / kBoundDepth };
 	const double blanketPeriod = static_cast<double>(kBlanketTexels);
@@ -2951,9 +2972,9 @@ void SnowDeformation::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("lifetime"), "Lifetime"), &settings.Lifetime, 10.0f, 1800.0f, "%.0f s", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("lifetime_tooltip"), "Seconds until a print has filled back in to a tenth of its depth. Prints fill faster while it is snowing."));
-	ImGui::SliderFloat(T(TKEY("target_spacing"), "Vertex Spacing"), &settings.TargetSpacing, 0.5f, 16.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+	ImGui::SliderFloat(T(TKEY("triangle_size"), "Triangle Size"), &settings.TrianglePixels, 2.0f, 32.0f, "%.0f px", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextWrapped("%s", T(TKEY("target_spacing_tooltip"), "Distance between generated vertices over marked snow near the camera, in game units. Lower is sharper and costs more."));
+		ImGui::TextWrapped("%s", T(TKEY("triangle_size_tooltip"), "On-screen size of the triangles generated over prints, in pixels. Lower is sharper and costs more."));
 
 	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"))) {
 		ImGui::Text("%s: %u", T(TKEY("debug_stamps"), "Stamps last frame"), debugShown.stamps);
@@ -2983,7 +3004,7 @@ void SnowDeformation::LoadSettings(json& o_json)
 	sanitize(settings.BlanketHeight, defaults.BlanketHeight, 0.0f, kMaxBlanketHeight);
 	sanitize(settings.Depth, defaults.Depth, 1.0f, 20.0f);
 	sanitize(settings.Lifetime, defaults.Lifetime, 10.0f, 1800.0f);
-	sanitize(settings.TargetSpacing, defaults.TargetSpacing, 0.5f, 16.0f);
+	sanitize(settings.TrianglePixels, defaults.TrianglePixels, 2.0f, 32.0f);
 }
 
 void SnowDeformation::SaveSettings(json& o_json)

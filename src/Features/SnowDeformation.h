@@ -52,7 +52,7 @@ struct SnowDeformation : Feature
 		float BlanketHeight = 24.0f;
 		float Depth = 6.0f;
 		float Lifetime = 240.0f;
-		float TargetSpacing = 2.0f;
+		float TrianglePixels = 8.0f;
 	};
 
 	Settings settings;
@@ -382,6 +382,7 @@ private:
 	winrt::com_ptr<ID3D11SamplerState> fieldSampler;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	winrt::com_ptr<ID3D11ComputeShader> updateCS;
+	winrt::com_ptr<ID3D11ComputeShader> copyCS;
 	winrt::com_ptr<ID3D11ComputeShader> probeCS;
 	winrt::com_ptr<ID3D11ComputeShader> blanketCS;
 	Texture2D* blanketLandTexture = nullptr;
@@ -424,6 +425,7 @@ private:
 	std::vector<float> stampSnow;
 	std::vector<float> stampReach;
 	RE::NiPoint3 mainPosAdjust;
+	float mainPixelScale = 0.0f;
 
 	std::mutex stampLock;
 	std::vector<Stamp> pendingStamps;

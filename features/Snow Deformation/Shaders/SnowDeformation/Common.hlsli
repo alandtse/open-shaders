@@ -21,6 +21,7 @@ cbuffer DrawParams : register(b0)
 	float4 FadeParams1;
 	int4 SlotParams1;
 	float4 BlanketWindow;
+	float4 DetailParams;
 };
 
 Texture2D<float> Field : register(t0);
