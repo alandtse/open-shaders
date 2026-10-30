@@ -208,12 +208,6 @@ private:
 		uint8_t kind = 0;
 	};
 
-	struct MaterialParams
-	{
-		int32_t Layers[4] = { -1, 0, 0, 0 };
-		float4 Blend{};
-	};
-
 	struct ActorSink
 	{
 		RE::ObjectRefHandle handle;
@@ -357,7 +351,6 @@ private:
 	void AppendHeatStamps(std::vector<Stamp>& a_stamps);
 	void AppendImpactStamps(std::vector<Stamp>& a_stamps);
 	void BuildImpact(const ImpactEvent& a_event, std::vector<Stamp>& a_stamps);
-	void ClassifyLayers(RE::BSLightingShaderMaterialLandscape* a_material, MaterialParams& a_params) const;
 	void TrackShapeMotion(const void* a_key, const RE::NiPoint3& a_position, bool a_contact, float& a_motionX, float& a_motionY);
 	void UpdateActorSinks(const std::vector<RE::ActorPtr>& a_actors);
 	void ApplySink(RE::TESObjectREFR* a_ref, ActorSink& a_state, float a_sink);
@@ -385,7 +378,6 @@ private:
 	Texture2D* beforeTexture = nullptr;
 	eastl::unique_ptr<ConstantBuffer> updateConstants;
 	eastl::unique_ptr<ConstantBuffer> drawConstants;
-	eastl::unique_ptr<ConstantBuffer> materialConstants;
 	eastl::unique_ptr<StructuredBuffer> tileList;
 	winrt::com_ptr<ID3D11SamplerState> fieldSampler;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;

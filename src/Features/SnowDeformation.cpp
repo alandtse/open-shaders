@@ -53,9 +53,6 @@ namespace
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
 	constexpr float kObjectContact = 48.0f;
-	constexpr float kRevealStrength = 0.45f;
-	constexpr float kRevealFullDepth = 4.0f;
-	constexpr float kRevealNameStrength = 0.4f;
 	constexpr float kHeatMelt = 0.85f;
 	constexpr float kHeatDepthScale = 0.8f;
 	constexpr float kTorchRadius = 40.0f;
@@ -355,21 +352,6 @@ namespace
 			return 1.0f;
 		const float above = a_height + kCapFloor - a_height * std::clamp(pick.rayOutput.hitFraction, 0.0f, 1.0f);
 		return std::clamp((above - kCapFloor - kCapClearance) / a_height, 0.0f, 1.0f);
-	}
-
-	bool NameSuggestsGround(const char* a_path)
-	{
-		if (!a_path)
-			return false;
-		std::string name(a_path);
-		std::transform(name.begin(), name.end(), name.begin(), [](unsigned char a_char) { return static_cast<char>(std::tolower(a_char)); });
-		if (const auto slash = name.find_last_of("/\\"); slash != std::string::npos)
-			name.erase(0, slash + 1);
-		for (const char* keyword : { "dirt", "path", "mud", "gravel", "rock", "cobble", "ash", "sand", "grass" }) {
-			if (name.find(keyword) != std::string::npos)
-				return true;
-		}
-		return false;
 	}
 
 	bool ClassifyElement(RE::MagicItem* a_spell, uint8_t& a_element)
@@ -765,7 +747,6 @@ void SnowDeformation::SetupResources()
 
 	updateConstants = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<UpdateParams>(), "SnowDeformation::UpdateParams");
 	drawConstants = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<DrawParams>(), "SnowDeformation::DrawParams");
-	materialConstants = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<MaterialParams>(), "SnowDeformation::MaterialParams");
 
 	D3D11_SAMPLER_DESC samplerDesc{};
 	samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -2034,42 +2015,6 @@ void SnowDeformation::UpdateField()
 		UpdateLevel(i, position, decay, deltaTime, sinking, gateSnowCover, skylightingReady);
 }
 
-void SnowDeformation::ClassifyLayers(RE::BSLightingShaderMaterialLandscape* a_material, MaterialParams& a_params) const
-{
-	a_params = {};
-	if (!a_material)
-		return;
-	const uint32_t count = std::min<uint32_t>(a_material->numLandscapeTextures, 6u);
-	int32_t reveal = -1;
-	int32_t fallback = -1;
-	uint32_t snowMask = 0;
-	for (uint32_t i = 0; i < count; ++i) {
-		if (a_material->textureIsSnow[i] <= 0.5f) {
-			if (reveal < 0)
-				reveal = static_cast<int32_t>(i);
-			continue;
-		}
-		snowMask |= 1u << i;
-		if (fallback < 0) {
-			const auto texture = i == 0 ? a_material->diffuseTexture.get() : a_material->landscapeDiffuseTexture[i - 1].get();
-			if (texture && NameSuggestsGround(texture->name.c_str()))
-				fallback = static_cast<int32_t>(i);
-		}
-	}
-	if (snowMask == 0)
-		return;
-	float strength = kRevealStrength;
-	if (reveal < 0) {
-		reveal = fallback;
-		strength *= kRevealNameStrength;
-	}
-	if (reveal < 0)
-		return;
-	a_params.Layers[0] = reveal;
-	a_params.Layers[1] = static_cast<int32_t>(snowMask);
-	a_params.Blend = { strength, 1.0f / kRevealFullDepth, 0.0f, 0.0f };
-}
-
 void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a_worldspace)
 {
 	const float height = std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight);
@@ -2513,11 +2458,6 @@ void SnowDeformation::BeginLandscapeDraw(RE::BSRenderPass* a_pass, DrawKind a_ki
 				debug.skippedDraws++;
 				return;
 			}
-			{
-				MaterialParams material{};
-				ClassifyLayers(static_cast<RE::BSLightingShaderMaterialLandscape*>(a_pass->shaderProperty->GetBaseMaterial()), material);
-				materialConstants->Update(material);
-			}
 			debug.lightingDraws++;
 			break;
 		}
@@ -2704,8 +2644,7 @@ void SnowDeformation::ApplyDrawState()
 	context->HSSetConstantBuffers(0, 1, &constants);
 	context->HSSetShaderResources(0, 5, hullResources);
 	context->HSSetSamplers(0, 1, &sampler);
-	ID3D11Buffer* domainConstants[2] = { constants, materialConstants->CB() };
-	context->DSSetConstantBuffers(0, 2, domainConstants);
+	context->DSSetConstantBuffers(0, 1, &constants);
 	context->DSSetShaderResources(0, 5, domainResources);
 	context->DSSetSamplers(0, 1, &sampler);
 	context->HSSetShader(activeHS, nullptr, 0);
@@ -2728,14 +2667,14 @@ void SnowDeformation::EndLandscapeDraw()
 
 	auto context = globals::d3d::context;
 	ID3D11ShaderResourceView* nullViews[5] = {};
-	ID3D11Buffer* nullBuffers[2] = {};
+	ID3D11Buffer* nullBuffers[1] = {};
 	ID3D11SamplerState* nullSampler = nullptr;
 	context->HSSetShader(nullptr, nullptr, 0);
 	context->DSSetShader(nullptr, nullptr, 0);
 	context->HSSetShaderResources(0, 5, nullViews);
 	context->DSSetShaderResources(0, 5, nullViews);
 	context->HSSetConstantBuffers(0, 1, nullBuffers);
-	context->DSSetConstantBuffers(0, 2, nullBuffers);
+	context->DSSetConstantBuffers(0, 1, nullBuffers);
 	context->HSSetSamplers(0, 1, &nullSampler);
 	context->DSSetSamplers(0, 1, &nullSampler);
 	context->IASetPrimitiveTopology(globals::game::shadowState->GetRuntimeData().topology);
