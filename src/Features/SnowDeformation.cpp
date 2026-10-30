@@ -2059,7 +2059,8 @@ void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a
 		blanketMinY = FloorDiv(a_position.y, kBlanketCell) - kBlanketTexels / 2;
 
 		uint32_t landBudget = kBlanketLandBudget;
-		bool dirty = false;
+		std::array<bool, kBlanketTexels> dirtyRows{};
+		bool capPending = false;
 		bool vanillaSnow = false;
 		std::vector<BlanketRequest> requests;
 		{
@@ -2082,7 +2083,7 @@ void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a
 					land[2] = result.cap;
 					blanketCapFrame[index] = frameIndex;
 				}
-				dirty = true;
+				dirtyRows[index / kBlanketTexels] = true;
 			}
 			blanketResults.clear();
 		}
@@ -2100,7 +2101,7 @@ void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a
 					land = { 0.0f, -1.0f, 1.0f, 0.0f };
 					blanketRetry[index] = 0;
 					blanketCapFrame[index] = 0;
-					dirty = true;
+					dirtyRows[sy] = true;
 				}
 				if (land[1] < 0.0f) {
 					if (landBudget > 0 && blanketRetry[index] <= frameIndex) {
@@ -2110,19 +2111,30 @@ void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a
 					}
 					continue;
 				}
+				capPending = capPending || blanketCapFrame[index] == 0;
 				++blanketReady;
 				vanillaSnow = vanillaSnow || land[1] > 0.5f;
 				maxLand = std::max(maxLand, land[0]);
 			}
 		}
 
-		if (dirty)
-			globals::d3d::context->UpdateSubresource(blanketLandTexture->resource.get(), 0, nullptr, blanketLand.data(), kBlanketTexels * sizeof(float) * 4, 0);
+		for (int32_t row = 0; row < kBlanketTexels;) {
+			if (!dirtyRows[row]) {
+				++row;
+				continue;
+			}
+			int32_t end = row + 1;
+			while (end < kBlanketTexels && dirtyRows[end])
+				++end;
+			const D3D11_BOX box{ 0, static_cast<UINT>(row), 0, static_cast<UINT>(kBlanketTexels), static_cast<UINT>(end), 1 };
+			globals::d3d::context->UpdateSubresource(blanketLandTexture->resource.get(), 0, &box, blanketLand.data() + static_cast<size_t>(row) * kBlanketTexels, kBlanketTexels * sizeof(float) * 4, 0);
+			row = end;
+		}
 
 		if (wasActive) {
 			constexpr uint32_t cells = kBlanketTexels * kBlanketTexels;
 			uint32_t rays = 0;
-			for (uint32_t index = 0; index < cells && rays < kCapRaysPerFrame; ++index) {
+			for (uint32_t index = 0; capPending && index < cells && rays < kCapRaysPerFrame; ++index) {
 				if (blanketLand[index][1] >= 0.0f && blanketCapFrame[index] == 0) {
 					blanketCapFrame[index] = frameIndex;
 					requests.push_back({ blanketOwner[index][0], blanketOwner[index][1], blanketLand[index][0], false, true });
@@ -2488,10 +2500,13 @@ void SnowDeformation::BeginLandscapeDraw(RE::BSRenderPass* a_pass, DrawKind a_ki
 	switch (a_kind) {
 	case DrawKind::Lighting:
 		{
+			const bool routed = displacing && !IsReflectionPass() && prepassRouted.contains(a_pass->geometry) && !prepassRejected.contains(a_pass->geometry);
+			if (!routed && lightingLayoutSeen)
+				return;
 			const Layout layout = ValidateBoundVertexShader(DrawKind::Lighting);
 			if (layout == Layout::Valid)
 				lightingLayoutSeen = true;
-			if (!displacing || IsReflectionPass() || !prepassRouted.contains(a_pass->geometry) || prepassRejected.contains(a_pass->geometry))
+			if (!routed)
 				return;
 			if (layout != Layout::Valid) {
 				debug.layoutRejects++;
@@ -2682,7 +2697,7 @@ void SnowDeformation::ApplyDrawState()
 	ID3D11Buffer* constants = drawConstants->CB();
 	ID3D11ShaderResourceView* blanket = blanketTexture ? blanketTexture->srv.get() : nullptr;
 	ID3D11ShaderResourceView* hullResources[5] = { nullptr, levels[0].activityTexture->srv.get(), blanket, nullptr, levels[1].activityTexture->srv.get() };
-	ID3D11ShaderResourceView* domainResources[5] = { levels[0].texture->srv.get(), nullptr, blanket, levels[1].texture->srv.get(), nullptr };
+	ID3D11ShaderResourceView* domainResources[5] = { levels[0].texture->srv.get(), levels[0].activityTexture->srv.get(), blanket, levels[1].texture->srv.get(), levels[1].activityTexture->srv.get() };
 	ID3D11SamplerState* sampler = fieldSampler.get();
 
 	context->HSSetConstantBuffers(0, 1, &constants);
