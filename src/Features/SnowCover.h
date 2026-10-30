@@ -258,6 +258,9 @@ public:
 	void RegisterUxActions() override;
 	json GetDiagnostics() override;
 
+	/** @brief Returns the largest altitude-map value in a UV rectangle, or nothing when the map is not loaded or the rectangle leaves it. */
+	std::optional<float> GetSnowMapMaximum(float u0, float v0, float u1, float v1) const { return snowMap.Maximum(u0, v0, u1, v1); }
+
 private:
 	std::atomic<bool> active{ false };
 	bool resourcesReady = false;
