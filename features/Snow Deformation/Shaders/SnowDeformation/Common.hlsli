@@ -23,12 +23,6 @@ cbuffer DrawParams : register(b0)
 	float4 BlanketWindow;
 };
 
-cbuffer MaterialParams : register(b1)
-{
-	int4 MaterialLayers;
-	float4 MaterialBlend;
-};
-
 Texture2D<float> Field : register(t0);
 Texture2D<float> Activity : register(t1);
 Texture2D<float> Blanket : register(t2);

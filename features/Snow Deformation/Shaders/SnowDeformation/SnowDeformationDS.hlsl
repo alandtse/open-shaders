@@ -57,23 +57,6 @@ ControlPoint main(PatchConstants constants, float3 bary : SV_DomainLocation, con
 		output.TBN1 = float3(displacedTangent.y, displacedBitangent.y, displacedNormal.y);
 		output.TBN2 = float3(displacedTangent.z, displacedBitangent.z, displacedNormal.z);
 	}
-
-	[branch] if (MaterialLayers.x >= 0 && field < 0.0)
-	{
-		float4 weights1 = output.LandBlendWeights1;
-		float2 weights2 = output.LandBlendWeights2.xy;
-		float total = dot(weights1, 1.0) + weights2.x + weights2.y;
-		uint mask = (uint)MaterialLayers.y;
-		float4 snowSelect1 = float4((mask & 1u) != 0, (mask & 2u) != 0, (mask & 4u) != 0, (mask & 8u) != 0);
-		float2 snowSelect2 = float2((mask & 16u) != 0, (mask & 32u) != 0);
-		float snowFraction = saturate((dot(weights1, snowSelect1) + dot(weights2, snowSelect2)) / max(total, 1e-4));
-		float amount = saturate(-field * MaterialBlend.y) * MaterialBlend.x * snowFraction;
-		int reveal = MaterialLayers.x;
-		float4 target1 = float4(reveal == 0, reveal == 1, reveal == 2, reveal == 3) * total;
-		float2 target2 = float2(reveal == 4, reveal == 5) * total;
-		output.LandBlendWeights1 = lerp(weights1, target1, amount);
-		output.LandBlendWeights2.xy = lerp(weights2, target2, amount);
-	}
 #endif
 
 	return output;
