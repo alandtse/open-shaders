@@ -9,9 +9,9 @@ TEST_CASE("Pass names are selected by index", "[gpupass]")
 {
 	constexpr auto names = MakePassNames("Feature::A", "Feature::B", "Feature::C");
 	STATIC_REQUIRE(names.names.size() == 3);
-	CHECK(std::string_view(names.names[names.Clamp(0)]) == "Feature::A");
-	CHECK(std::string_view(names.names[names.Clamp(1)]) == "Feature::B");
-	CHECK(std::string_view(names.names[names.Clamp(2)]) == "Feature::C");
+	CHECK((std::string_view(names.names[names.Clamp(0)]) == "Feature::A"));
+	CHECK((std::string_view(names.names[names.Clamp(1)]) == "Feature::B"));
+	CHECK((std::string_view(names.names[names.Clamp(2)]) == "Feature::C"));
 }
 
 TEST_CASE("An out-of-range pass index clamps to the last name", "[gpupass]")
@@ -19,7 +19,7 @@ TEST_CASE("An out-of-range pass index clamps to the last name", "[gpupass]")
 	constexpr auto names = MakePassNames("Feature::A", "Feature::B", "Feature::C");
 	CHECK(names.Clamp(3) == 2);
 	CHECK(names.Clamp(static_cast<std::size_t>(-1)) == 2);
-	CHECK(std::string_view(names.names[names.Clamp(99)]) == "Feature::C");
+	CHECK((std::string_view(names.names[names.Clamp(99)]) == "Feature::C"));
 }
 
 TEST_CASE("A single-name table always selects that name", "[gpupass]")
