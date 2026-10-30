@@ -64,7 +64,13 @@ jobs:
             actions: read
         strategy:
             matrix:
-                artifact: [CompiledShaderBinaries-SE, CompiledShaderBinaries-VR, shader-compile-timing-SE, shader-compile-timing-VR]
+                artifact:
+                    [
+                        CompiledShaderBinaries-SE,
+                        CompiledShaderBinaries-VR,
+                        shader-compile-timing-SE,
+                        shader-compile-timing-VR,
+                    ]
         steps:
             - uses: actions/download-artifact@v7
               with:
