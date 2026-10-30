@@ -24,7 +24,7 @@
 #include "../../State.h"
 #include "DX12SwapChain.h"
 
-/** @brief Manages AMD FidelityFX upscaling and frame generation, including the host FSR3 SDK and the runtime-loaded FSR4 provider. */
+/** @brief Manages FidelityFX upscaling and frame generation with host FSR3 fallback and runtime provider discovery. */
 class FidelityFX
 {
 public:
@@ -82,60 +82,32 @@ public:
 	// of writing back into a_upscalingTexture (needed when kMAIN is renderRes, e.g. PerfMode).
 	void Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_depth, ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_motionVectors, float a_sharpness, ID3D11Resource* a_colorOut = nullptr);
 
-	/** @brief AMD adapter classes eligible to request runtime FSR4: RX 6000, RX 7000 and RX 9000. */
-	enum class Fsr4AdapterSupport
-	{
-		Unsupported,
-		RadeonRx6000,
-		RadeonRx7000,
-		RadeonRx9000
-	};
-
-	// Runtime upscaler provider (amd_fidelityfx_upscaler_dx12.dll): on eligible AMD hardware,
-	// dispatches via the runtime DLL instead of the host FSR3 SDK. See RuntimeUpscaler.cpp.
 	/** @brief True if the active adapter is an AMD GPU. */
 	bool IsAmdAdapterDetected() const;
 	/** @brief True if the active adapter is an NVIDIA GPU. */
 	bool IsNvidiaAdapterDetected() const;
 	/** @brief True if the runtime upscaler DLL was found and loaded. */
 	bool IsRuntimeUpscalerPresent() const;
-	/** @brief Classifies an adapter's FSR 4.1.1 eligibility from its DXGI description. */
-	static Fsr4AdapterSupport GetFsr4AdapterSupport(const DXGI_ADAPTER_DESC& a_adapterDesc);
-	/** @brief Classifies the active adapter's FSR 4.1.1 eligibility. */
-	Fsr4AdapterSupport GetFsr4AdapterSupport() const;
-	/** @brief True if the active adapter qualifies for the one-shot runtime-FSR4 migration. */
-	bool IsRuntimeFsr4AutoEligible() const;
-	/** @brief True if the runtime upscaler DLL and an eligible adapter are both present. */
-	bool IsRuntimeFsr4Available() const;
-	/** @brief True if settings and hardware together call for requesting the runtime FSR4 provider. */
-	bool ShouldRequestRuntimeFsr4() const;
+	/** @brief Queries device-compatible providers and confirms the default upgrade by creating its context. */
+	void ProbeRuntimeUpscalerUpgrade(uint32_t a_displayWidth, uint32_t a_displayHeight);
+	/** @brief True after a newer runtime provider successfully created a context on the active device. */
+	bool IsRuntimeUpgradeAvailable() const;
+	/** @brief Describes the confirmed runtime upgrade provider. */
+	const std::string& GetRuntimeUpgradeProviderName() const { return runtimeUpgradeProviderName; }
+	/** @brief Explains unavailable upgrades or a latched runtime failure. */
+	const std::string& GetRuntimeUpgradeUnavailableReason() const { return runtimeUpgradeUnavailableReason; }
+	/** @brief True if the boot setting selects the confirmed runtime upgrade. */
+	bool ShouldRequestRuntimeUpgrade() const;
 	/** @brief True if the runtime upscaler provider must handle FSR dispatch this frame. */
 	bool ShouldUseRuntimeUpscalerForFSR() const;
-	/** @brief True once the runtime upscaler support probe has produced a result. */
-	bool HasRuntimeUpscalerSupportCheckResult() const;
-	/** @brief True if the runtime upscaler support probe confirmed provider support. */
-	bool IsRuntimeUpscalerSupportConfirmed() const;
-	/** @brief True if the loaded runtime provider's version matches what was requested. */
-	bool IsRuntimeUpscalerProviderMatchingRequestedVersion() const;
-	/** @brief True if a runtime-provider dispatch failure is latched for the current session. */
-	bool IsRuntimeUpscalerFailureLatched() const;
-	/** @brief True if a runtime-FSR4-specific dispatch failure is latched for the current session. */
-	bool IsRuntimeFsr4FailureLatched() const;
 	/** @brief Human-readable label for the frame path the runtime upscaler last dispatched through. */
 	const std::string& GetRuntimeUpscalerLastFramePathLabel() const;
-	/** @brief Human-readable label for the FSR path selected by current settings. */
-	const std::string& GetConfiguredFsrPathLabel() const;
 	/** @brief Human-readable label for the FSR path actually shown to the user this frame. */
 	const std::string& GetDisplayedFsrPathLabel() const;
 	/** @brief Human-readable label for the host-linked FSR3 SDK version. */
 	static const std::string& GetHostFsrSdkLabel();
-	/** @brief Human-readable label for a runtime upscaler provider version. */
-	static const std::string& GetRuntimeUpscalerLabel(uint32_t a_version);
 	/** @brief Name of the currently loaded runtime upscaler provider. */
 	std::string GetRuntimeUpscalerProviderName() const;
-	/** @brief Human-readable string for the runtime upscaler version this session requested. */
-	std::string GetRuntimeUpscalerRequestedVersionString() const;
-
 	/** @brief True if runtime upscaler GPU resources are currently allocated. */
 	bool HasRuntimeUpscalerResources() const;
 	/** @brief Polls whether a pending runtime upscaler resource teardown has finished. */
@@ -223,35 +195,36 @@ private:
 		kInactive = 0,
 		kHostFsr31 = 1,
 		kRuntimeFsr31 = 2,
-		kRuntimeFsr4 = 3,
+		kRuntimeUpgrade = 3,
 		kHostFsr31Fallback = 4
 	};
 
 	bool runtimeUpscalerFailureLatched = false;
-	bool runtimeFsr4FailureLatched = false;
-	// Set once a runtime-provider dispatch throws. Unlike runtimeUpscalerFailureLatched,
-	// this survives ResetRuntimeUpscalerTracking -- a terminal exception can leave the
-	// DX12 provider state unsafe to reuse, so it is never re-armed this session.
+	bool runtimeUpgradeFailureLatched = false;
+	// A provider fault can leave DX12 state unsafe, so resource recreation must not re-arm it.
 	bool runtimeUpscalerQuarantined = false;
 	uint32_t runtimeFallbackResetDispatchesRemaining = 0;
 	bool runtimeUpscalerLastFramePathValid = false;
 	uint32_t runtimeUpscalerLastFrameIndex = 0;
 	RuntimeUpscalerFramePath runtimeUpscalerLastFramePath = RuntimeUpscalerFramePath::kInactive;
+	std::string runtimeUpscalerLastFrameProviderName;
 
-	bool runtimeUpscalerSupportCheckKnown = false;
-	bool runtimeUpscalerSupportConfirmed = false;
+	bool runtimeUpgradeProbeComplete = false;
+	bool runtimeUpgradeAvailable = false;
+	std::string runtimeUpgradeProviderName;
+	std::string runtimeUpgradeUnavailableReason = "Runtime upgrade has not been checked yet.";
+
 	uint64_t runtimeUpscalerProviderMatchedVersionId = 0;
 	std::string runtimeUpscalerProviderMatchedVersionName;
 
 	bool CanUseRuntimeUpscalerPath();
-	// True if an earlier eye already published a runtime-provider (FSR4/runtime-FSR3) frame
+	// True if an earlier eye already published a runtime-provider (upgrade/runtime-FSR3) frame
 	// this same frame index -- a later eye must not fall through to the host FSR3 SDK, which
 	// would present a mixed-provider stereo pair. See UpscaleRegion's failure paths.
 	bool WasRuntimeUpscalerUsedThisFrame() const;
-	uint32_t GetPreferredRuntimeUpscalerVersion() const;
 	void ResetRuntimeUpscalerTracking(bool a_invalidateProviderCache);
 	void LatchRuntimeUpscalerFailure();
-	void LatchRuntimeFsr4Failure();
+	void LatchRuntimeUpgradeFailure();
 	// Retires the runtime provider for the rest of the session: latches the ordinary
 	// failure flag immediately (so no eye attempts it again this frame) and marks it
 	// quarantined so a later ResetRuntimeUpscalerTracking(true) cannot re-arm it.

@@ -519,7 +519,7 @@ void Menu::Load(json& o_json)
 	// the first-load compile. OR in (never clear) so an env-var force or a manual
 	// Skip Compilation press during a runtime settings reload is preserved.
 	if (settings.BackgroundShaderCompilationOnBoot)
-		globals::shaderCache->backgroundCompilation = true;
+		globals::shaderCache->SetBackgroundCompilation(true);
 }
 
 void Menu::Save(json& o_json)

@@ -4,7 +4,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-#include "Common/TransientWindImpulse.hlsli"
+#include "Common/TransientWindTypes.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/WindFieldTypes.hlsli"
 

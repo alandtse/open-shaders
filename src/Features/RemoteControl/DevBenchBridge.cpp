@@ -1016,9 +1016,7 @@ namespace
 			return json{ { "action", "activeOnly" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "scoped (smart) clear started; captures on-screen shaders over two windows, then evicts+recompiles just those (see inspect(kind=shadercache) and openshaders.shaderRecompiled)" } };
 		}
 		if (action == "backgroundCompile") {
-			// Same atomic the in-game "Skip Compilation" hotkey flips (Menu.cpp);
-			// unblocks XSEPlugin.cpp's boot-wait loop on its next check.
-			cache->backgroundCompilation = true;
+			cache->SetBackgroundCompilation(true);
 			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
 		}
 		if (action == "contentStore") {

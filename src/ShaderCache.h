@@ -244,7 +244,7 @@ namespace SIE
 			Completed
 		};
 		ShaderCompilationTask(ShaderClass shaderClass, const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, bool a_precompile = false);
 		/** @brief Compiles the shader, writing the result to the ShaderCache. */
 		void Perform() const;
 
@@ -276,6 +276,10 @@ namespace SIE
 		void SetGeneration(uint64_t gen) { generation = gen; }
 		/** @brief Gets the batch generation this task was enqueued under, for staleness checks against a later Clear(). */
 		uint64_t GetGeneration() const { return generation; }
+		/** Whether this task was requested only to populate the startup cache. */
+		bool IsPrecompile() const { return precompile; }
+		/** Keeps a queued startup task when rendering requests the same permutation. */
+		void RequireForRendering() { precompile = false; }
 		/** @brief Shader type this task compiles for, which selects the per-type epoch its generation embeds. */
 		RE::BSShader::Type GetType() const { return shader.shaderType.get(); }
 
@@ -291,6 +295,7 @@ namespace SIE
 		int cachedPriority;
 		int64_t enqueuedQpc = 0;
 		uint64_t generation = 0;
+		bool precompile = false;
 	};
 }
 
@@ -750,9 +755,11 @@ namespace SIE
 		bool IsShaderKeyAbsent(const std::string& a_key);
 		std::string GetShaderStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 
-		RE::BSGraphics::VertexShader* GetVertexShader(const RE::BSShader& shader, uint32_t descriptor);
+		/** Requests a vertex shader; optional startup precompiles are skipped in background mode. */
+		RE::BSGraphics::VertexShader* GetVertexShader(const RE::BSShader& shader, uint32_t descriptor, bool a_precompile = false);
+		/** Requests a pixel shader; optional startup precompiles are skipped in background mode. */
 		RE::BSGraphics::PixelShader* GetPixelShader(const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, bool a_precompile = false);
 		RE::BSGraphics::ComputeShader* GetComputeShader(const RE::BSShader& shader,
 			uint32_t descriptor);
 
@@ -942,7 +949,7 @@ namespace SIE
 		int32_t backgroundCompilationThreadCount = std::max(static_cast<int32_t>(Util::GetPerformanceCoreCount()) / 2, 1);
 		BS::thread_pool<> compilationPool{ static_cast<std::size_t>(compilationThreadCount) };
 		std::jthread managementJthread;  // dedicated thread for ManageCompilationSet (not in pool)
-		/** @brief Updates compilation mode and wakes the dispatcher to recheck its capacity. */
+		/** Switches compilation mode, dropping unstarted precompiles when entering background mode. */
 		void SetBackgroundCompilation(bool value);
 		// atomic: written from the menu/input thread (boot setting + Skip Compilation hotkey),
 		// read on the management/compile and render threads.

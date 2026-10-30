@@ -177,6 +177,18 @@ jobs:
                   base-sha: ${{ steps.resolve.outputs.main_sha }}
                   head-sha: ${{ steps.resolve.outputs.target_sha }}
 
+    # Reuse the rolling dev build's release-parity compile when it built this exact SHA;
+    # otherwise validate-shaders compiles as before.
+    reuse-dev-shaders:
+        needs: check-changes
+        if: needs.check-changes.outputs.hlsl-should-build != 'false'
+        permissions:
+            contents: read
+            actions: read
+        uses: ./.github/workflows/_reuse-dev-shaders.yaml
+        with:
+            ref: ${{ inputs.ff_target || github.sha }}
+
     # Gate the version cut on the release-parity shader validation the cache build
     # enforces (/O3 + default-install profile), and produce the compiled binaries
     # build-artifacts reuses below. Shader-only (no C++ build), so it adds
@@ -186,7 +198,8 @@ jobs:
     # promotion mode, else the dispatched SHA.
     # check-changes skip is binary, never partial: it either runs this full pass or none of it.
     validate-shaders:
-        needs: check-changes
+        needs: [check-changes, reuse-dev-shaders]
+        if: needs.reuse-dev-shaders.outputs.run-id == ''
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ inputs.ff_target || github.sha }}
@@ -203,11 +216,11 @@ jobs:
             run-full-config-validation: false
 
     release:
-        needs: [plan, validate-shaders, check-changes]
+        needs: [plan, validate-shaders, check-changes, reuse-dev-shaders]
         # An all-skipped validate-shaders (no shader/cmake/build-ci changes) reports
         # "skipped", same as a failed check-changes blocking it -- check-changes must
         # be checked directly here, not inferred from validate-shaders alone.
-        if: always() && !cancelled() && needs.plan.outputs.mode == 'release' && needs.check-changes.result == 'success' && needs.validate-shaders.result != 'failure'
+        if: always() && !cancelled() && needs.plan.outputs.mode == 'release' && needs.check-changes.result == 'success' && needs.validate-shaders.result != 'failure' && needs.reuse-dev-shaders.result != 'failure'
         runs-on: ubuntu-latest
         outputs:
             new-release-published: ${{ steps.semantic.outputs.new_release_published }}
@@ -400,7 +413,7 @@ jobs:
     # Publishing before this finishes races release-build.yaml's own
     # fallback build -- wait for attach-artifacts to finish first.
     build-artifacts:
-        needs: [plan, release, check-changes]
+        needs: [plan, release, check-changes, reuse-dev-shaders]
         # always()/!cancelled(): new-release-published reflects only the
         # Semantic Release step, which can succeed even if a LATER step
         # (dev reconciliation) fails the job's overall result.
@@ -410,13 +423,30 @@ jobs:
             ref: ${{ needs.release.outputs.new-release-tag }}
             repository: ${{ github.repository }}
             cache-artifacts: true
+            generate-flip-impact: false
             run-full-config-validation: false
             # Info.ini still finalizes fresh here (not skipped) -- only the
             # compile validate-shaders already uploaded is reused.
             reuse-compiled-shaders: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
 
+    # Off the critical path: only the timing reports from stage 1 (or the imported dev run) are needed,
+    # so it runs beside build-artifacts and attach-artifacts waits for it.
+    feature-flip-impact:
+        needs: [plan, release, check-changes, validate-shaders, reuse-dev-shaders]
+        if: >
+            always() && !cancelled() && needs.plan.outputs.mode == 'release' &&
+            needs.release.outputs.new-release-published == 'true' &&
+            needs.check-changes.outputs.hlsl-should-build != 'false' &&
+            (needs.validate-shaders.result == 'success' || needs.reuse-dev-shaders.outputs.run-id != '')
+        permissions:
+            contents: read
+        uses: ./.github/workflows/_feature-flip-impact.yaml
+        with:
+            ref: ${{ needs.release.outputs.new-release-tag }}
+            repository: ${{ github.repository }}
+
     attach-artifacts:
-        needs: [plan, release, build-artifacts]
+        needs: [plan, release, build-artifacts, feature-flip-impact]
         # Publishing requires the plugin and validated caches from this build.
         if: >
             always() && !cancelled() &&

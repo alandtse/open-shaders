@@ -20,7 +20,9 @@
 #include "Common/Triplanar.hlsli"
 #include "Common/VR.hlsli"
 
-#include "Common/TreeWind.hlsli"
+#if defined(VSHADER)
+#	include "Common/TreeWind.hlsli"
+#endif
 
 #if defined(FUR_SHELLS)
 #	include "FurShells/FurShells.hlsli"

@@ -65,10 +65,7 @@ namespace GrassWind
 		float tipWeight, float modelHeight, float instanceBaseHeight, float3 bendAxis,
 		float rigidBendAngle, float rigidCompression, out float bendAngle)
 	{
-		float squaredTipWeight = saturate(tipWeight);
-		squaredTipWeight *= squaredTipWeight;
-		float deformationWeight = lerp(
-			1.0, squaredTipWeight, saturate(Permutation::GrassWindBendProfile));
+		float deformationWeight = saturate(tipWeight);
 		bendAngle = rigidBendAngle * deformationWeight;
 		float compression = saturate(rigidCompression * deformationWeight);
 

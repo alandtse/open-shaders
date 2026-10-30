@@ -76,6 +76,11 @@ public:
 
 	/** @brief Installs the grass capture, culling and draw hooks after all plugins have loaded. */
 	virtual void PostPostLoad() override;
+	virtual bool WantsGrassMeshHooks() const override { return true; }
+	/** @brief Records the loaded source mesh for grass LOD lookup. */
+	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* a_shape, const char* a_modelPath) override;
+	/** @brief Schedules removal of a destroyed grass shape's captured instances. */
+	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* a_shape) override;
 
 	/** @brief Returns the instance culling compute shader, compiling it on first use. */
 	ID3D11ComputeShader* GetCullCS();
@@ -239,12 +244,6 @@ public:
 
 	struct Hooks
 	{
-		struct BSMultiStreamInstanceTriShape_dtor
-		{
-			static void thunk(RE::BSMultiStreamInstanceTriShape* This);
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
 		struct BSMultiStreamInstanceTriShape_OnVisible
 		{
 			static void thunk(RE::BSMultiStreamInstanceTriShape* This, RE::NiCullingProcess* process, std::int32_t alphaGroupIndex);
@@ -305,12 +304,6 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct LoadGrassType
-		{
-			static RE::BSMultiStreamInstanceTriShape* thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, RE::GrassTypeID* typeKey, RE::BSFixedString* modelPath);
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-
 		/** @brief An engine code span whose vanilla and optimized bytes can be swapped at runtime. */
 		struct CodePatch
 		{
@@ -352,8 +345,6 @@ public:
 		{
 			auto& trampoline = SKSE::GetTrampoline();
 
-			stl::write_vfunc<0x0, BSMultiStreamInstanceTriShape_dtor>(RE::VTABLE_BSMultiStreamInstanceTriShape[0]);
-
 			// VR's vtable inserts one extra slot before these two vs SE/AE; the unshifted index lands
 			// on AddInstances instead, whose different (count, data) signature crashed on cell load.
 			{
@@ -372,11 +363,6 @@ public:
 			stl::write_thunk_call<ReadInstanceGroupStreamTraits>(REL::RelocationID(74607, 76339).address() + REL::Relocate(0xCF, 0xCF));
 			stl::write_thunk_call<AddGroupQueuedGIDFile>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x394, 0x384));
 			stl::write_thunk_call<AddGroupGIDFile>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x39B, 0x38B));
-
-			// Record each grass type's source .nif path alongside its shape.
-			stl::write_thunk_call<LoadGrassType>(REL::RelocationID(15204, 15372).address() + Util::VersionedRelocation::Select(0x2F5, 0x2F5, 0x305));
-			stl::write_thunk_call<LoadGrassType>(REL::RelocationID(15205, 15373).address() + Util::VersionedRelocation::Select(0x62B, 0x597, 0x590));
-			stl::write_thunk_call<LoadGrassType>(REL::RelocationID(15206, 15374).address() + REL::Relocate(0x25C, 0x25C));
 
 			// Spans the mov, call and branch patches below.
 			drawLoopPatch.CaptureVanilla(REL::RelocationID(100847, 107637).address() + REL::Relocate(0x660, 0x648), 13);

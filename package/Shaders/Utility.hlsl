@@ -7,7 +7,9 @@
 #include "Common/ReverseZ.hlsli"
 #include "Common/SharedData.hlsli"
 #include "Common/Skinned.hlsli"
-#include "Common/TreeWind.hlsli"
+#if defined(VSHADER)
+#	include "Common/TreeWind.hlsli"
+#endif
 #include "Common/VR.hlsli"
 
 #if defined(RENDER_SHADOWMASK) || defined(RENDER_SHADOWMASKSPOT) || defined(RENDER_SHADOWMASKPB) || defined(RENDER_SHADOWMASKDPB)

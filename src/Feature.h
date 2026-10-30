@@ -480,6 +480,15 @@ public:
 	/** @brief Called after all SKSE plugins have finished PostLoad. */
 	virtual void PostPostLoad() {}
 
+	/** @brief Opts into the shared grass lifecycle and geometry setup hooks. */
+	virtual bool WantsGrassMeshHooks() const { return false; }
+	/** @brief Called after a grass type loads with its source NIF path. */
+	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape*, const char*) {}
+	/** @brief Called before a grass shape is destroyed, including after runtime disablement. */
+	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape*) {}
+	/** @brief Called after the engine sets up a grass geometry draw. */
+	virtual void OnGrassGeometrySetup(RE::BSGeometry*) {}
+
 	/**
 	 * @brief Loads the feature from its INI file and JSON settings.
 	 *
@@ -631,6 +640,9 @@ public:
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
+
+	/** @brief Cached features that opted into the shared grass hooks. */
+	static const std::vector<Feature*>& GetGrassMeshHookFeatures();
 
 	/**
 	 * @brief Opt-in flag checked once, when the constant-buffer fixup feature list is built:

@@ -941,10 +941,9 @@ bool GrassOptimizations::EnsureCullBucketCapacity(uint32_t slots, [[maybe_unused
 	return true;
 }
 
-void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_dtor::thunk(RE::BSMultiStreamInstanceTriShape* shape)
+void GrassOptimizations::OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape* shape)
 {
-	globals::features::grassOptimizations.bucketStore.StageRemoval(shape);
-	func(shape);
+	bucketStore.StageRemoval(shape);
 }
 
 void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(RE::BSMultiStreamInstanceTriShape* This, RE::NiCullingProcess* process, std::int32_t alphaGroupIndex)
@@ -1071,14 +1070,10 @@ void GrassOptimizations::Hooks::AddGroupGIDFile::thunk(RE::BSMultiStreamInstance
 	}
 }
 
-RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thunk(RE::BGSGrassManager* grassManager, RE::GrassParam* a_param, uint32_t CellXDivided, uint32_t CellYDivided, RE::GrassTypeID* typeKey, RE::BSFixedString* modelPath)
+void GrassOptimizations::OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape* shape, const char* modelPath)
 {
-	auto* shape = func(grassManager, a_param, CellXDivided, CellYDivided, typeKey, modelPath);
-
 	if (shape && modelPath)
-		globals::features::grassOptimizations.bucketStore.meshLibrary.RecordModelPath(shape, modelPath->c_str());
-
-	return shape;
+		bucketStore.meshLibrary.RecordModelPath(shape, modelPath);
 }
 
 static void UploadEyeIndexCB(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t capacityPerEye)

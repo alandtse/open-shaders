@@ -47,7 +47,6 @@ struct WindSettings
 	float grassWindResponse = 13.0f;
 	float grassWindSensitivity = 2.50f;
 	float grassWindMaximumTilt = 89.0f;
-	float grassWindBendProfile = 0.50f;
 	float grassWindCompressionToBend = 0.5f;
 	float grassWindSpringFrequency = 4.01f;
 	float grassWindSpringDamping = 0.82f;
@@ -110,8 +109,6 @@ namespace WindSettingsLimits
 	inline constexpr float kGrassWindSensitivityMax = 5.0f;
 	inline constexpr float kGrassWindMaximumTiltMin = 0.0f;
 	inline constexpr float kGrassWindMaximumTiltMax = 89.0f;
-	inline constexpr float kGrassWindBendProfileMin = 0.0f;
-	inline constexpr float kGrassWindBendProfileMax = 1.0f;
 	inline constexpr float kGrassWindCompressionToBendMin = 0.0f;
 	inline constexpr float kGrassWindCompressionToBendMax = 1.0f;
 	inline constexpr float kGrassWindSpringFrequencyMin = 0.25f;

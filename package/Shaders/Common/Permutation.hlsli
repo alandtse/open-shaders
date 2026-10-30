@@ -130,7 +130,7 @@ namespace Permutation
 		float TreeLeafBaseWindFlutterGain;
 		uint EnableAmbientGrassWind;
 
-		float GrassWindBendProfile;
+		float GrassWindPadding;
 		float GrassWindFlutterStrength;
 		float GrassWindFlutterFrequency;
 		float GrassWindSensitivity;
