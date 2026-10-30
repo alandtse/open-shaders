@@ -1127,6 +1127,7 @@ void SnowDeformation::AppendActorStamps(RE::Actor* a_actor, const RE::NiPoint3& 
 			stamp.normalZ = normalZ;
 			stamp.owner = owner;
 			stamp.kind = kKindWade;
+			stamp.trail = true;
 			a_stamps.push_back(stamp);
 		}
 	}
@@ -1939,6 +1940,8 @@ void SnowDeformation::UpdateField()
 	boundCamera.valid = false;
 	debugShown = debug;
 	debug = {};
+	wadeEmitters.clear();
+	wadeFrame = globals::state->frameCount;
 
 	const bool active = IsActiveContext();
 	gatherEnabled.store(active, std::memory_order_relaxed);
@@ -2014,6 +2017,9 @@ void SnowDeformation::UpdateField()
 		stampSnow.push_back(snow);
 		stampReach.push_back(reach);
 		probeOwners.push_back(stamp.owner);
+		if (stamp.kind == kKindWade)
+			wadeEmitters.push_back({ static_cast<float>(stamp.x), static_cast<float>(stamp.y), stamp.landZ, stamp.clearance, stamp.radius, stamp.halfWidth,
+				stamp.forwardX, stamp.forwardY, stamp.motionX, stamp.motionY, stamp.owner, stamp.trail });
 	}
 	frameStampCount = kept;
 	debug.stamps = kept;
@@ -2152,6 +2158,23 @@ void SnowDeformation::UpdateBlanket(const RE::NiPoint3& a_position, RE::FormID a
 
 	if (blanketActive != wasActive || (blanketActive && blanketHeight != lastHeight))
 		++fieldSerial;
+}
+
+SnowDeformation::SurfaceView SnowDeformation::GetSurfaceView() const
+{
+	SurfaceView view{};
+	if (blanketActive && blanketTexture) {
+		view.blanket = blanketTexture->srv.get();
+		view.blanketMinX = blanketMinX;
+		view.blanketMinY = blanketMinY;
+	}
+	const auto& fine = levels[0];
+	if (windowValid && fine.windowValid && fine.texture) {
+		view.field = fine.texture->srv.get();
+		view.fieldTileX = fine.windowTileX;
+		view.fieldTileY = fine.windowTileY;
+	}
+	return view;
 }
 
 bool SnowDeformation::InBlanketRange(const RE::NiBound& a_bound) const

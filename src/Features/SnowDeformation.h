@@ -49,10 +49,10 @@ struct SnowDeformation : Feature
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
-		float BlanketHeight = 24.0f;
+		float BlanketHeight = 20.0f;
 		float Depth = 6.0f;
 		float Lifetime = 240.0f;
-		float TrianglePixels = 8.0f;
+		float TrianglePixels = 24.0f;
 	};
 
 	Settings settings;
@@ -94,6 +94,36 @@ struct SnowDeformation : Feature
 
 	/** @brief Remembers a geometry decal attached to landscape so its draws follow the displaced surface. */
 	void RegisterDecal(RE::BSTempEffectGeometryDecal* a_decal);
+
+	struct WadeEmitter
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float landZ = 0.0f;
+		float clearance = 0.0f;
+		float radius = 0.0f;
+		float halfWidth = 0.0f;
+		float forwardX = 0.0f;
+		float forwardY = 0.0f;
+		float motionX = 0.0f;
+		float motionY = 0.0f;
+		RE::FormID owner = 0;
+		bool trail = false;
+	};
+
+	struct SurfaceView
+	{
+		ID3D11ShaderResourceView* blanket = nullptr;
+		ID3D11ShaderResourceView* field = nullptr;
+		int32_t blanketMinX = 0;
+		int32_t blanketMinY = 0;
+		int32_t fieldTileX = 0;
+		int32_t fieldTileY = 0;
+	};
+
+	const std::vector<WadeEmitter>& GetWadeEmitters() const { return wadeEmitters; }
+	uint32_t GetWadeFrame() const { return wadeFrame; }
+	SurfaceView GetSurfaceView() const;
 
 	struct SpellCastSink : RE::BSTEventSink<RE::TESSpellCastEvent>
 	{
@@ -206,6 +236,7 @@ private:
 		float clearance = 0.0f;
 		RE::FormID owner = 0;
 		uint8_t kind = 0;
+		bool trail = false;
 	};
 
 	struct ActorSink
@@ -424,6 +455,8 @@ private:
 	uint32_t frameStampCount = 0;
 	std::vector<float> stampSnow;
 	std::vector<float> stampReach;
+	std::vector<WadeEmitter> wadeEmitters;
+	uint32_t wadeFrame = UINT32_MAX;
 	RE::NiPoint3 mainPosAdjust;
 	float mainPixelScale = 0.0f;
 
