@@ -32,6 +32,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowDeformation.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
 #include "Features/Upscaling.h"
@@ -197,6 +198,11 @@ void State::Draw()
 		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
 			CS_DRAW_ZONE("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
+		}
+
+		if (globals::features::snowDeformation.loaded) {
+			CS_DRAW_ZONE("SnowDeformation::ApplyDrawState");
+			globals::features::snowDeformation.ApplyDrawState();
 		}
 
 		if (cloudShadows.loaded) {
