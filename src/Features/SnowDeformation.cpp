@@ -2686,7 +2686,7 @@ void SnowDeformation::ApplyDrawState()
 		return;
 
 	auto context = globals::d3d::context;
-	if (globals::game::shadowState->GetRuntimeData().topology != D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST || !IsDrawVertexShaderValid()) {
+	if (globals::game::shadowState->GetRuntimeData().topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST || !IsDrawVertexShaderValid()) {
 		debug.layoutRejects++;
 		if (activeKind == DrawKind::Depth)
 			prepassRejected.insert(activeGeometry);
@@ -2740,7 +2740,7 @@ void SnowDeformation::EndLandscapeDraw()
 	context->DSSetConstantBuffers(0, 1, nullBuffers);
 	context->HSSetSamplers(0, 1, &nullSampler);
 	context->DSSetSamplers(0, 1, &nullSampler);
-	context->IASetPrimitiveTopology(globals::game::shadowState->GetRuntimeData().topology);
+	context->IASetPrimitiveTopology(static_cast<D3D11_PRIMITIVE_TOPOLOGY>(globals::game::shadowState->GetRuntimeData().topology));
 }
 
 void SnowDeformation::UpdateFieldOnce()
