@@ -2,6 +2,7 @@
 #define __SNOW_DEFORMATION_COVERAGE_HLSLI__
 
 #include "Common/SharedData.hlsli"
+#include "SnowDeformation/UpdateParams.hlsli"
 
 #if defined(SKYLIGHTING)
 #	define SKYLIGHTING_PROBE_REGISTER t2
