@@ -2280,8 +2280,8 @@ float SnowDeformation::SnowCoverUpperBound(const Stamp& a_stamp, float a_reach) 
 	const float u1 = static_cast<float>(a_stamp.x + a_reach) * world.mapScale.x + world.mapOffset.x;
 	const float v0 = static_cast<float>(a_stamp.y - a_reach) * world.mapScale.y + world.mapOffset.y;
 	const float v1 = static_cast<float>(a_stamp.y + a_reach) * world.mapScale.y + world.mapOffset.y;
-	if (float value = 0.0f; world.mapZscale >= 0.0f && snowCover.GetSnowMapMax(u0, v0, u1, v1, value))
-		map = value;
+	if (const auto value = world.mapZscale >= 0.0f ? snowCover.GetSnowMapMaximum(u0, v0, u1, v1) : std::nullopt)
+		map = *value;
 
 	const float environment = (a_stamp.landZ - snowCover.settings.SnowHeightOffset + (map - 0.5f) * world.mapZscale + snowCover.perFrame.SeasonalAltitude) /
 	                          std::max(world.BlendSmoothness, 1.0f);
@@ -2321,7 +2321,7 @@ SnowDeformation::Layout SnowDeformation::ValidateBoundVertexShader(DrawKind a_ki
 	allowedShaderCount = 0;
 
 	auto validate = [&](ID3D11VertexShader* a_shader) -> Layout {
-		if (a_kind == DrawKind::Depth && terrainBlending.loaded && a_shader == terrainBlending.terrainOffsetVertexShader)
+		if (a_kind == DrawKind::Depth && terrainBlending.loaded && a_shader == terrainBlending.terrainOffsetVertexShader.get())
 			return Layout::Valid;
 
 		const RE::BSGraphics::VertexShader* source = nullptr;
@@ -2367,8 +2367,8 @@ SnowDeformation::Layout SnowDeformation::ValidateBoundVertexShader(DrawKind a_ki
 			if (result == Layout::Valid)
 				allow(vanillaShader);
 		}
-		if (result == Layout::Valid && terrainBlending.terrainOffsetVertexShader && terrainBlending.terrainOffsetVertexShader != bound)
-			allow(terrainBlending.terrainOffsetVertexShader);
+		if (result == Layout::Valid && terrainBlending.terrainOffsetVertexShader && terrainBlending.terrainOffsetVertexShader.get() != bound)
+			allow(terrainBlending.terrainOffsetVertexShader.get());
 	}
 	if (result != Layout::Valid)
 		allowedShaderCount = 0;
@@ -2784,7 +2784,7 @@ void SnowDeformation::Prepass()
 
 	snapshotValid = snapshot(state->sharedDataCB->CB(), sharedSnapshot, "SnowDeformation::SharedDataSnapshot") &&
 	                snapshot(state->featureDataCB->CB(), featureSnapshot, "SnowDeformation::FeatureDataSnapshot");
-	snapshotEye = Util::GetEyePosition();
+	snapshotEye = Util::GetEyePosition(0);
 }
 
 void SnowDeformation::GameLoaded()
@@ -2948,7 +2948,7 @@ void SnowDeformation::Hooks::Install()
 	constexpr std::size_t kTrampolineHeadroom = 3 * 14;
 	auto& singleton = globals::features::snowDeformation;
 	if (SKSE::GetTrampoline().free_size() >= kTrampolineHeadroom) {
-		stl::write_thunk_call<Main_Update>(REL::RelocationID(35565, 36564).address() + Util::VersionedRelocation::Select(0x748, 0xC26, 0xC38));
+		stl::write_thunk_call<Main_Update>(Util::MainUpdateCallSite());
 		singleton.gatherOnUpdate = true;
 	} else {
 		logger::warn("[SnowDeformation] Trampoline has {} bytes free; gathering footprints on the render thread instead", SKSE::GetTrampoline().free_size());
