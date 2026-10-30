@@ -24,9 +24,10 @@ float EdgeFactor(float3 a, float3 b)
 		precise float distance = length((a + b) * 0.5 - EyePosition.xyz);
 		precise float range = max(1.0, distance * TessParams.z);
 		precise float edge = length(b - a);
-		precise float fineFactor = clamp(edge * TessParams.y / range, 1.0, TessParams.x);
+		precise float pixelsPerUnit = DetailParams.x / max(distance, 1.0);
+		precise float fineFactor = clamp(edge * min(TessParams.y, pixelsPerUnit * DetailParams.y), 1.0, TessParams.x);
 		precise float blanketFactor = blanket > 0.01 ? clamp(edge * BlanketParams.w / range, 1.0, TessParams.x) : 1.0;
-		factor = lerp(blanketFactor, fineFactor, saturate(activity * RangeParams.w));
+		factor = lerp(blanketFactor, fineFactor, saturate(activity * min(RangeParams.w, pixelsPerUnit * DetailParams.z)));
 	}
 	return factor;
 }
