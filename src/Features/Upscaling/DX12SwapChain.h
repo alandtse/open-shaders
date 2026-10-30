@@ -150,7 +150,7 @@ public:
 	// Actual buffer count the live swap chain was created/resized with (<= kMaxBackBuffers).
 	UINT backBufferCount = 2;
 
-	/** @brief Releases the Anti-Lag driver context before the D3D12 device. */
+	/** @brief Runs only at DLL detach, after the FFX and driver DLLs; leaves the Anti-Lag context to process teardown. */
 	~DX12SwapChain();
 	/** @brief Updates the installed Anti-Lag session before input with FPS limiting disabled. */
 	void UpdateAntiLag2BeforeInput();

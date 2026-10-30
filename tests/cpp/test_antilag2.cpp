@@ -2,8 +2,6 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
-#include <string>
-#include <vector>
 
 namespace
 {
@@ -16,15 +14,12 @@ namespace
 		unsigned releases = 0;
 		bool enabled = false;
 		unsigned maxFPS = 0;
-		std::vector<std::string>* events = nullptr;
 
 		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void**) override { return E_NOINTERFACE; }
 		ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
 		ULONG STDMETHODCALLTYPE Release() override
 		{
 			++releases;
-			if (events)
-				events->emplace_back("release");
 			return 0;
 		}
 		HRESULT UpdateAntiLagState(VOID* value) override
@@ -158,43 +153,27 @@ TEST_CASE("Anti-Lag initializes before installing optional input interception", 
 	CHECK(bool(context) == installed);
 	CHECK(driver.releases == unsigned((result != S_OK && partial) || (result == S_OK && !hookSucceeds)));
 	if (context) {
-		CHECK(CS::AntiLag2::Shutdown(context, [] { return true; }, [] {}));
-		CHECK_FALSE(context);
+		AMD::AntiLag2DX12::DeInitialize(context.get());
 		CHECK(driver.releases == 1);
 	}
 }
 
-TEST_CASE("Anti-Lag shutdown does no work without an eligible context", "[antilag2]")
-{
-	CS::AntiLag2::ContextPtr context;
-	unsigned callbacks = 0;
-	CHECK(CS::AntiLag2::Shutdown(context, [&] { ++callbacks; return true; }, [&] { ++callbacks; }));
-	CHECK(callbacks == 0);
-}
-
-TEST_CASE("Anti-Lag drains before disabling the handshake and releasing its interface", "[antilag2]")
-{
-	Driver driver;
-	std::vector<std::string> events;
-	driver.events = &events;
-	auto context = SupportedContext(driver);
-	CHECK(CS::AntiLag2::Shutdown(context, [&] { events.emplace_back("drain"); return true; }, [&] { events.emplace_back("disable"); }));
-	CHECK(events == std::vector<std::string>{ "drain", "disable", "release" });
-	CHECK_FALSE(context);
-	CHECK(driver.releases == 1);
-}
-
-TEST_CASE("Anti-Lag retains the context and interface when presentation cannot drain", "[antilag2]")
+TEST_CASE("Anti-Lag abandon leaves the driver interface unreleased", "[antilag2]")
 {
 	Driver driver;
 	auto context = SupportedContext(driver);
 	auto* retained = context.get();
-	unsigned disabled = 0;
-	CHECK_FALSE(CS::AntiLag2::Shutdown(context, [] { return false; }, [&] { ++disabled; }));
+	CS::AntiLag2::Abandon(context);
 	CHECK_FALSE(context);
-	CHECK(disabled == 0);
 	CHECK(driver.releases == 0);
 	CHECK(retained->m_pAntiLagAPI == &driver);
 	AMD::AntiLag2DX12::DeInitialize(retained);
 	delete retained;
+}
+
+TEST_CASE("Anti-Lag abandon accepts an absent context", "[antilag2]")
+{
+	CS::AntiLag2::ContextPtr context;
+	CS::AntiLag2::Abandon(context);
+	CHECK_FALSE(context);
 }

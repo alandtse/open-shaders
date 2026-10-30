@@ -3,6 +3,7 @@
 #include <d3d12.h>
 #include <ffx_antilag2_dx12.h>
 #include <memory>
+#include <tuple>
 #include <utility>
 
 namespace CS::AntiLag2
@@ -35,20 +36,10 @@ namespace CS::AntiLag2
 		return false;
 	}
 
-	/** @brief Drains presentation before disabling and releasing the context, retaining it on drain failure. */
-	template <class DrainFn, class DisableFn>
-	bool Shutdown(ContextPtr& context, DrainFn drain, DisableFn disable)
+	/** @brief Leaves the context and its driver interface to process teardown, for callers that run after the driver DLLs are gone. */
+	inline void Abandon(ContextPtr& context)
 	{
-		if (!context)
-			return true;
-		if (!drain()) {
-			(void)context.release();
-			return false;
-		}
-		disable();
-		AMD::AntiLag2DX12::DeInitialize(context.get());
-		context.reset();
-		return true;
+		std::ignore = context.release();
 	}
 
 	/** @brief Applies driver state transactionally before invoking the SDK's pre-input delay. */
