@@ -44,7 +44,7 @@ bool IsPatchCulled(float4 p0, float4 p1, float4 p2)
 	{
 		float4 corner = corners[i];
 		inFront = inFront && corner.w > 0.0;
-		outside *= float4(corner.x > corner.w, corner.x < -corner.w, corner.y > corner.w, corner.y < -corner.w);
+		outside *= float4(corner.x > corner.w, corner.x<-corner.w, corner.y> corner.w, corner.y < -corner.w);
 	}
 	return inFront && any(outside);
 }
@@ -72,12 +72,11 @@ PatchConstants PatchConstantFunction(InputPatch<ControlPoint, 3> patch)
 }
 
 [domain("tri")]
-[partitioning("fractional_odd")]
-[outputtopology("triangle_cw")]
-[outputcontrolpoints(3)]
-[patchconstantfunc("PatchConstantFunction")]
-[maxtessfactor(64.0)]
-ControlPoint main(InputPatch<ControlPoint, 3> patch, uint id : SV_OutputControlPointID)
-{
-	return patch[id];
-}
+	[partitioning("fractional_odd")]
+	[outputtopology("triangle_cw")]
+	[outputcontrolpoints(3)]
+	[patchconstantfunc("PatchConstantFunction")]
+	[maxtessfactor(64.0)] ControlPoint
+	main(InputPatch<ControlPoint, 3> patch, uint id : SV_OutputControlPointID) {
+		return patch[id];
+	}

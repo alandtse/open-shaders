@@ -1,5 +1,5 @@
-#include "SnowDeformation/UpdateParams.hlsli"
 #include "SnowDeformation/Coverage.hlsli"
+#include "SnowDeformation/UpdateParams.hlsli"
 
 #define STAMP_WORDS 3
 #define FLAG_FRESH 1
