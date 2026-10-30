@@ -82,6 +82,7 @@ public:
 	struct CategoryHeader
 	{
 		std::string name;
+		int count = 0;
 	};
 
 	/** @brief Variant type representing any entry in the menu list. */

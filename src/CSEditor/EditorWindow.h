@@ -48,6 +48,8 @@ public:
 	};
 	/** @brief Queues the requested browser mode on the render thread. */
 	void RequestBrowserMode(BrowserMode mode) { pendingBrowserMode.store(static_cast<int>(mode), std::memory_order_relaxed); }
+	/** @brief Reveals and focuses the hosted OS Menu without closing the editor. */
+	void ShowMenuBrowser();
 	/** @brief Closes after resolving unwritten external changes, then runs the requested action. */
 	void RequestClose(std::function<void()> proceed = {});
 	bool open = false;

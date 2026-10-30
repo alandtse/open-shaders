@@ -185,6 +185,7 @@ public:
 		static constexpr float CATEGORY_ROW_PADDING = 4.0f;
 		static constexpr float CATEGORY_ROW_GAP = 8.0f;
 		static constexpr float CATEGORY_ICON_OFFSET = 2.0f;
+		static constexpr float FEATURE_SCENE_TOGGLE_HEIGHT_RATIO = 0.5f;
 		static constexpr float FEATURE_ACTION_HINT_WIDTH_EM = 24.0f;
 		static constexpr float FEATURE_ACTION_HINT_PADDING_X = 12.0f;
 		static constexpr float FEATURE_ACTION_HINT_PADDING_Y = 8.0f;
@@ -233,6 +234,8 @@ public:
 		static constexpr float WIND_MESH_MIN_NAME_WIDTH_EM = 6.0f;
 		static constexpr float WIND_MESH_MIN_CONTROL_WIDTH_EM = 5.0f;
 		static constexpr float PRESET_BROWSER_MIN_WIDTH = 720.0f;
+		static constexpr float PRESET_DIALOG_WIDTH = 900.0f;
+		static constexpr float PRESET_DIALOG_HEIGHT = 720.0f;
 		static constexpr float PRESET_STACKED_LIST_RATIO = 0.5f;
 		static constexpr float PALETTE_SWATCH_SIZE = 24.0f;
 		static constexpr float PALETTE_SWATCH_SPACING = 4.0f;
@@ -262,8 +265,7 @@ public:
 		static constexpr float SEPARATOR_THICKNESS = 1.0f;
 		static constexpr float UNDOCKED_ICON_ITEM_SPACING = 6.0f;
 		static constexpr float POPUP_BUTTON_WIDTH = 180.0f;
-		static constexpr float EDITOR_WIDGET_BORDER_MIN = 1.0f;
-		static constexpr float EDITOR_WIDGET_BORDER_MAX = 5.0f;
+		static constexpr float WINDOW_BORDER_MIN = 1.0f;
 		static constexpr float DIALOG_RESIZE_RESPONSE = 20.0f;
 		static constexpr float EDITOR_VIEWPORT_BACKGROUND_DIM_ALPHA = 0.35f;  // Extra backdrop dim while the CS Editor viewport is open
 		static constexpr float EDITOR_BROWSER_SIDEBAR_WIDTH = 180.0f;

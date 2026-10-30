@@ -14,7 +14,6 @@
 #include "Globals.h"
 #include "Menu.h"
 #include "Profiler.h"
-#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
 #include "Utils/SettingsPatch.h"
@@ -438,82 +437,13 @@ void PostProcessing::RestoreCurrentPageDefaultSettings()
 
 bool PostProcessing::ReapplyCurrentPageOverrideSettings()
 {
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	const std::string featureName = GetShortName();
-	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName))
-		return false;
-
 	if (!ApplyPendingSettings())
 		return false;
-
-	json currentSettings;
-	SaveSettings(currentSettings);
-	json mergedSettings = currentSettings;
-	if (overrideManager->ReapplyFeatureOverrides(featureName, mergedSettings) == 0)
-		return false;
-	const json overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-
-	const auto rollback = [&]() {
-		try {
-			ProcessSettings(currentSettings);
-		} catch (const std::exception& e) {
-			logger::error("Failed to roll back override settings for {}. Error: {}", featureName, e.what());
-		}
-	};
-	const auto rollbackPersistence = [&]() {
-		try {
-			if (!overrideManager->PersistUserOverride(featureName, currentSettings, overrideSettings))
-				logger::error("Failed to roll back persisted override settings for {}", featureName);
-		} catch (const std::exception& e) {
-			logger::error("Failed to roll back persisted override settings for {}. Error: {}", featureName, e.what());
-		}
-	};
-
-	if (!HasActivePipelineFeature()) {
-		try {
-			ProcessSettings(mergedSettings);
-		} catch (const std::exception& e) {
-			logger::warn("Failed to apply override settings for {}. Error: {}", featureName, e.what());
-			rollback();
-			return false;
-		}
-		if (overrideManager->DeleteUserOverride(featureName))
-			return true;
-		logger::warn("Failed to delete user override settings for {}", featureName);
-		rollback();
-		rollbackPersistence();
-		return false;
-	}
-
-	const auto featureType = pipeline[activePipelineFeature]->GetType();
-	bool hasScopedOverride = false;
-	for (const auto* featureOverride : overrideManager->GetFeatureOverrides(featureName)) {
-		if (featureOverride->enabled && featureOverride->overrideData.contains(featureType)) {
-			hasScopedOverride = true;
-			break;
-		}
-	}
-	if (!hasScopedOverride || !mergedSettings.contains(featureType))
-		return false;
-
-	json scopedSettings = json::object();
-	scopedSettings[featureType] = mergedSettings[featureType];
-	bool persistenceAttempted = false;
-	try {
-		ProcessSettings(scopedSettings);
-		json appliedSettings;
-		SaveSettings(appliedSettings);
-		persistenceAttempted = true;
-		if (overrideManager->PersistUserOverride(featureName, appliedSettings, overrideSettings))
-			return true;
-		logger::warn("Failed to persist scoped override settings for {}", featureName);
-	} catch (const std::exception& e) {
-		logger::warn("Failed to apply scoped override settings for {}. Error: {}", featureName, e.what());
-	}
-	rollback();
-	if (persistenceAttempted)
-		rollbackPersistence();
-	return false;
+	if (!HasActivePipelineFeature())
+		return Feature::ReapplyOverrideSettings();
+	const auto type = pipeline[activePipelineFeature]->GetType();
+	const std::array<std::string_view, 1> keys{ type };
+	return ReapplyOverrideSettingsForKeys(keys);
 }
 
 bool PostProcessing::ApplyPendingSettings()

@@ -11,10 +11,9 @@
 #include <unordered_set>
 #include <utility>
 
+#include "BaselineManager.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
-#include "CSEditor/SceneManager/FeatureOverwritesPanel.h"
-#include "CSEditor/SceneManager/ScenePresetExport.h"
 #include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "CSEditor/SceneManager/SceneSettingsUI.h"
 #include "CSEditor/SceneManager/SceneWidgetInterceptor.h"
@@ -34,12 +33,12 @@
 #include "Menu/Icons/helpers/SettingsActionIcons.h"
 #include "Menu/MenuIcons.h"
 #include "Menu/PerformanceRenderer.h"
+#include "Menu/Presets/PresetExportPanel.h"
 #include "Menu/PresetsPageRenderer.h"
 #include "Menu/ProfilingRenderer.h"
 #include "Menu/SettingReveal.h"
 #include "Menu/SettingsPageRenderer.h"
 #include "Menu/ThemeManager.h"
-#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
 #include "Utils/MathUtils.h"
@@ -187,7 +186,9 @@ namespace
 		const ImVec2 size(std::max(labelSize.x, detailSize.x) + padding.x * 2.0f,
 			labelSize.y + detailSize.y + textGap + padding.y * 2.0f);
 		const float left = std::max(viewport->WorkPos.x, right - size.x);
-		const float top = std::clamp((itemMin.y + itemMax.y - size.y) * 0.5f, viewport->WorkPos.y,
+		const float anchorTop = details && !label ? ImGui::GetWindowPos().y + ImGui::GetWindowSize().y - size.y :
+		                                            (itemMin.y + itemMax.y - size.y) * 0.5f;
+		const float top = std::clamp(anchorTop, viewport->WorkPos.y,
 			std::max(viewport->WorkPos.y, viewport->WorkPos.y + viewport->WorkSize.y - size.y));
 		const float slide = ThemeManager::Constants::FEATURE_ACTION_HINT_SLIDE * scale * (1.0f - easedProgress);
 		const float animatedLeft = std::max(viewport->WorkPos.x, left - slide);
@@ -200,8 +201,8 @@ namespace
 		const SKSE::stl::scope_exit restoreClip([drawList]() noexcept { drawList->PopClipRect(); });
 		const float rounding = ThemeManager::Constants::FEATURE_ACTION_HINT_ROUNDING * scale;
 		drawList->AddRectFilled(origin, end, ImGui::GetColorU32(background), rounding);
-		drawList->AddRect(origin, end, ImGui::GetColorU32(ImGuiCol_ButtonHovered, easedProgress), rounding,
-			ImDrawFlags_None, ThemeManager::Constants::CONTROL_OUTLINE_WIDTH * scale);
+		drawList->AddRect(origin, end, ImGui::GetColorU32(ImGuiCol_Border, easedProgress), rounding,
+			ImDrawFlags_None, style.PopupBorderSize);
 		if (label)
 			drawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(origin.x + padding.x, origin.y + padding.y),
 				ImGui::GetColorU32(ImGuiCol_Text, easedProgress), label, nullptr, wrapWidth);
@@ -241,6 +242,38 @@ namespace
 		default:  // unknown values from a hand-edited config fall back to categories
 			return Icons::TI(ICON_TI_CATEGORY);
 		}
+	}
+
+	/** @brief Gap above the list's first line of text, deep enough for the sort button to centre on it. */
+	float GetListTextTop()
+	{
+		return std::max(ImGui::GetStyle().FramePadding.y, ThemeManager::Constants::LEFT_PANE_EDGE_INSET * Util::GetUIScale());
+	}
+
+	/** @brief The sort button floating over the list's top-right; a child window so it takes the mouse from the rows. */
+	void DrawFloatingSortButton()
+	{
+		const float size = ImGui::GetFrameHeight();
+		const float inset = ThemeManager::Constants::LEFT_PANE_EDGE_INSET * Util::GetUIScale();
+		const ImRect visible = ImGui::GetCurrentWindow()->InnerRect;
+		const float top = visible.Min.y + GetListTextTop() + (ImGui::GetTextLineHeight() - size) * 0.5f;
+		ImGui::SetCursorScreenPos(ImVec2(visible.Max.x - size - inset, top));
+		if (ImGui::BeginChild("##FeatureSortOverlay", ImVec2(size, size), ImGuiChildFlags_NavFlattened,
+				ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+			const ImGuiID buttonId = ImGui::GetID("###FeatureSort");
+			const bool lit = ImGui::IsWindowHovered() || ImGui::GetFocusID() == buttonId || ImGui::IsPopupOpen("##FeatureSortPopup");
+			const float alpha = std::lerp(ThemeManager::Constants::PALETTE_DIMMED_ALPHA, 1.0f, Util::Anim::Toggle(ImGui::GetID("##Visibility"), lit));
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
+			{
+				auto style = Util::TransparentIconButtonStyle();
+				if (Icons::Button("###FeatureSort", GetSortModeIcon(globals::menu->GetSettings().FeatureListSort), ImVec2(size, size)))
+					ImGui::OpenPopup("##FeatureSortPopup");
+			}
+			ImGui::PopStyleVar();
+			Util::HoverTip(T("menu.features.sort_tooltip", "Sort features"));
+			FeatureListRenderer::RenderSortPopup("##FeatureSortPopup");
+		}
+		ImGui::EndChild();
 	}
 
 	/**
@@ -720,7 +753,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 			}
 
 			// Add category header
-			menuList.push_back(CategoryHeader{ category });
+			menuList.push_back(CategoryHeader{ category, static_cast<int>(categorizedFeatures[category].size()) });
 
 			std::ranges::copy(categorizedFeatures[category], std::back_inserter(menuList));
 		}
@@ -735,7 +768,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 			}
 
 			// Add category header
-			menuList.push_back(CategoryHeader{ category });
+			menuList.push_back(CategoryHeader{ category, static_cast<int>(features.size()) });
 
 			std::ranges::copy(features, std::back_inserter(menuList));
 		}
@@ -746,7 +779,7 @@ std::vector<FeatureListRenderer::MenuFuncInfo> FeatureListRenderer::BuildMenuLis
 	});
 	if (std::ranges::distance(unloadedFeatures) != 0) {
 		categoryExpansionStates.try_emplace(kUnloadedCategory, true);
-		menuList.push_back(CategoryHeader{ kUnloadedCategory });
+		menuList.push_back(CategoryHeader{ kUnloadedCategory, static_cast<int>(std::ranges::distance(unloadedFeatures)) });
 		std::ranges::copy(unloadedFeatures, std::back_inserter(menuList));
 	}
 
@@ -847,13 +880,12 @@ void FeatureListRenderer::RenderLeftColumn(
 			}
 			ImGui::EndChild();
 		} else {
-			const auto sortSize = BrowserUI::IconButtonSize();
-			const ImVec2 listStart = ImGui::GetCursorScreenPos();
-			const ImVec2 listSize = ImGui::GetContentRegionAvail();
-			const float listHeight = std::max(1.0f, listSize.y - sortSize - inset - ImGui::GetStyle().ItemSpacing.y);
-			float listRight = listStart.x + listSize.x;
-			if (ImGui::BeginChild("##FeatureListScroll", ImVec2(0.0f, listHeight))) {
-				listRight = ImGui::GetCurrentWindow()->InnerRect.Max.x;
+			if (ImGui::BeginChild("##FeatureListScroll")) {
+				const auto first = std::ranges::find_if(menuList, [](const auto& entry) { return !std::holds_alternative<BuiltInMenu>(entry); });
+				const float headerPad = first != menuList.end() && std::holds_alternative<CategoryHeader>(*first) ?
+				                            ThemeManager::Constants::CATEGORY_HEADER_PAD * scale * 0.5f :
+				                            0.0f;
+				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + GetListTextTop() - headerPad);
 				const auto filter = globals::menu->GetSettings().FeatureListFilter & FeatureListFilter::kKnown;
 				if (filter != 0)
 					globals::state->PrimeUserEdits();
@@ -863,20 +895,22 @@ void FeatureListRenderer::RenderLeftColumn(
 					return Util::FeatureMatchesSearch(feature, featureSearch) &&
 					       PassesFilter(GetFilterBits(feature), filter);
 				};
-				ImGui::SetCursorPosY(ImGui::GetCursorPosY() + inset);
 				bool expanded = true;
 				bool hasMatches = false;
 				for (size_t i = 0; i < menuList.size(); ++i) {
 					if (std::holds_alternative<BuiltInMenu>(menuList[i]))
 						continue;
 					if (const auto* category = std::get_if<CategoryHeader>(&menuList[i])) {
-						const bool unloaded = category->name == kUnloadedCategory;
-						if (!std::ranges::any_of(menuList, [&](const MenuFuncInfo& item) {
-								const auto* feature = std::get_if<Feature*>(&item);
-								return feature && matches(*feature) && (unloaded ? !(*feature)->loaded : (*feature)->loaded && (*feature)->GetCategory() == category->name);
-							}))
+						int count = 0;
+						for (size_t next = i + 1; next < menuList.size(); ++next) {
+							const auto* feature = std::get_if<Feature*>(&menuList[next]);
+							if (!feature)
+								break;
+							count += matches(*feature);
+						}
+						if (count == 0)
 							continue;
-						std::visit(ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }, menuList[i]);
+						ListMenuVisitor{ i, selectedMenu, categoryExpansionStates, showVersions }(CategoryHeader{ category->name, count });
 						expanded = categoryExpansionStates[category->name];
 						continue;
 					}
@@ -898,21 +932,7 @@ void FeatureListRenderer::RenderLeftColumn(
 						globals::menu->GetSettings().FeatureListFilter = 0;
 				}
 				ImGui::Dummy(ImVec2(0.0f, inset));
-			}
-			ImGui::EndChild();
-			ImGui::SetCursorScreenPos(ImVec2(std::max(listStart.x, listRight - sortSize - ImGui::GetStyle().ItemSpacing.x),
-				listStart.y + std::max(0.0f, listSize.y - sortSize - inset)));
-			if (ImGui::BeginChild("##FloatingSort", ImVec2(sortSize, sortSize), ImGuiChildFlags_None,
-					ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-				const bool lit = ImGui::IsWindowHovered() || ImGui::GetFocusID() == ImGui::GetID("##SortFeatures") || ImGui::IsPopupOpen("##FeatureSortPopup");
-				const float alpha = std::lerp(ThemeManager::Constants::PALETTE_DIMMED_ALPHA, 1.0f, Util::Anim::Toggle(ImGui::GetID("##Visibility"), lit));
-				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * alpha);
-				if (BrowserUI::IconButton("##SortFeatures", GetSortModeIcon(globals::menu->GetSettings().FeatureListSort), T("menu.features.sort_tooltip", "Sort features")))
-					ImGui::OpenPopup("##FeatureSortPopup");
-				ImGui::PopStyleVar();
-				ImGui::SetNextWindowPos(ImVec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMin().y - ImGui::GetStyle().ItemSpacing.y),
-					ImGuiCond_Appearing, ImVec2(1.0f, 1.0f));
-				RenderSortPopup("##FeatureSortPopup");
+				DrawFloatingSortButton();
 			}
 			ImGui::EndChild();
 		}
@@ -972,7 +992,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& head
 	{
 		MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
 		const auto categoryLabel = TranslateCategory(header.name);
-		Util::DrawCategoryHeader(header.name.c_str(), categoryLabel.c_str(), isExpanded);
+		Util::DrawCategoryHeader(header.name.c_str(), categoryLabel.c_str(), isExpanded, header.count);
 	}
 
 	// Update expansion state
@@ -1168,10 +1188,11 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 	const float profilingHeight = ProfilingRenderer::PrepareFeatureTimers(featureName, featureProfilingAvailable);
 	const auto& style = ImGui::GetStyle();
 	const float railWidth = BrowserUI::IconButtonSize() + style.FramePadding.x * 2.0f;
+	const bool showRail = featureName != "SceneManager";
 	ImGui::PushID(featureName.c_str());
 	if (ImGui::BeginChild("##FeatureConfigFrame", ImVec2(0, 0), true,
 			ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-		const float width = std::max(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x - railWidth - style.ItemSpacing.x);
+		const float width = std::max(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x - (showRail ? railWidth + style.ItemSpacing.x : 0.0f));
 		if (ImGui::BeginChild("##FeaturePageContent", ImVec2(width, 0), false,
 				ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground)) {
 			RenderFeatureHeader(feat, feat->loaded);
@@ -1212,12 +1233,13 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 			ImGui::EndChild();
 		}
 		ImGui::EndChild();
-		ImGui::SameLine();
-		RenderFeatureActions(feat, disabled, feat->loaded);
+		if (showRail) {
+			ImGui::SameLine();
+			RenderFeatureActions(feat, disabled, feat->loaded);
+		}
 	}
 	ImGui::EndChild();
 	ImGui::PopID();
-	FeatureOverwritesPanel::DrawExport();
 	DrawConstraintWarningDialog(pendingFeatureSelection);
 }
 
@@ -1260,6 +1282,19 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, b
 					if (globals::state->SetFeatureFavorite(name, !favorite))
 						globals::menu->SelectFeatureMenu(name);
 				});
+			auto* manager = globals::sceneSettingsManager;
+			if (!SceneSettingsUI::IsFeaturePageEditing(feat) && manager->HasCurrentSceneSettingsForFeature(name)) {
+				bool active = !manager->IsFeaturePaused(name);
+				const auto origin = ImGui::GetCursorPos();
+				const ImVec2 toggleSize(size, size * ThemeManager::Constants::FEATURE_SCENE_TOGGLE_HEIGHT_RATIO);
+				ImGui::SetCursorPosY(origin.y + (size - toggleSize.y) * 0.5f);
+				if (Util::FeatureToggle("##PauseSceneSettings", &active, toggleSize))
+					manager->SetFeaturePaused(name, !active);
+				DrawFeatureActionHint(T("menu.features.scene_specific_settings", "Scene Specific Settings"), active ?
+																												 T("menu.features.scene_active_tooltip", "Active - click to pause") :
+																												 T("menu.features.scene_paused_tooltip", "Paused - click to resume"));
+				ImGui::SetCursorPos(ImVec2(origin.x, origin.y + size + style.ItemSpacing.y));
+			}
 			if (SceneSettingsUI::CanEditFeaturePage(feat))
 				action("##Scene", Icons::TI(ICON_TI_STACK_2), T("feature.scene_manager.name", "Scene Manager"), loaded && !disabled,
 					SceneSettingsUI::IsFeaturePageEditing(feat), [&] {
@@ -1274,18 +1309,12 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, b
 				action("##RestoreSaved", SettingsActionIcons::kRestoreSaved, T("menu.restore_settings", "Restore Saved Settings"), loaded && !disabled,
 					false, [&] { globals::state->RestoreSavedFeatureSettings(feat); });
 			}
-			if (auto* overrides = SettingsOverrideManager::GetSingleton(); feat->UsesMainSettings() && overrides->HasFeatureOverrides(name))
-				action("##ApplyOverride", SettingsActionIcons::kReapplyOverride, T("menu.features.apply_override", "Reapply Override"), loaded && !disabled,
+			if (feat->UsesMainSettings() && globals::state->HasEditsUnderBaselines(feat))
+				action("##ApplyBaseline", SettingsActionIcons::kReapplyOverride, T("menu.features.reapply_base_settings", "Reapply Base Settings"), loaded && !disabled,
 					false, [&] { feat->ReapplyCurrentPageOverrideSettings(); });
-			if (FeatureOverwritesPanel::HasExportableSettings(feat))
-				action("##ExportOverwrite", Icons::TI(ICON_TI_FILE_EXPORT), T("cs_editor.feature_overwrite_export", "Export Feature Override..."),
-					loaded && !disabled, false, [&] { FeatureOverwritesPanel::BeginOverrideExport(feat); });
 			if (feat->UsesMainSettings()) {
 				action("##ExportBaseline", SceneActionIcons::kExport, T("cs_editor.baseline_export", "Export to Base Settings Preset..."),
-					loaded && !disabled, false, [&] { ScenePresetExport::OpenBaseline(name); });
-				if (globals::state->HasEditsUnderBaselines(feat))
-					action("##Baseline", Icons::TI(ICON_TI_ARROWS_EXCHANGE), T("menu.presets.use_values", "Use preset values"), loaded && !disabled,
-						false, [&] { globals::state->ClearFeatureEditsUnderBaselines(feat); });
+					loaded && !disabled, false, [&] { PresetExportPanel::OpenBaseline(name); });
 			}
 		}
 		ImGui::EndChild();
@@ -1296,7 +1325,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(Feature* feat, b
 			DrawFeatureActionHint(nullptr, currentSettingHint->c_str(), true);
 		} else if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
 			DrawFeatureActionHint(nullptr,
-				T("menu.features.setting_information_hint", "Hover a setting to see its source or scene-editing restrictions."), true);
+				T("menu.features.setting_information_hint", "Hover a setting to see where its value comes from."), true);
 		}
 	}
 	ImGui::EndChild();
@@ -1315,8 +1344,6 @@ void FeatureListRenderer::DrawFeatureBody(Feature* feat)
 
 	const ImVec2 cursorPosBefore = ImGui::GetCursorPos();
 	{
-		// Sketches live only while their feature is on screen; the next Update drops any other.
-		globals::sceneSettingsManager->RetainSketches(feat->GetShortName());
 		SceneWidgetInterceptor::Scope baselineScope({ .feature = feat, .baseline = true });
 		// ImGui raises this flag for any value edit; set only inside the call, it means this feature changed.
 		// Buttons that rewrite settings (a reset, a preset) raise no flag, so a finished click is checked instead.
@@ -1333,7 +1360,7 @@ void FeatureListRenderer::DrawFeatureBody(Feature* feat)
 			if (Util::InteractionEndedThisFrame()) {
 				// Those buttons also bypass the interceptor, so the scene layer's cached apply document must
 				// take their values before anything replays it.
-				globals::sceneSettingsManager->CaptureExternalFeatureChanges(feat, true);
+				globals::sceneSettingsManager->CaptureExternalFeatureChanges(feat);
 				if (!edited)
 					state->CheckFeatureSettingsChanged(feat);
 				state->InvalidateEditsUnderBaselines(feat);

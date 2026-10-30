@@ -254,6 +254,7 @@ public:
 		bool clearScreenshots = false;
 		std::map<std::string, json> baselines;
 		std::set<std::string> replaceBaselines;
+		std::optional<std::set<std::string>> selectedSceneSettings;
 		std::map<std::string, bool> disableAtBoot;
 	};
 
@@ -291,9 +292,15 @@ public:
 
 	/// Check if any scene settings are active for a given feature
 	bool HasActiveSettingsForFeature(const std::string& featureShortName) const;
+	/** @brief Whether the current environment has applied or resumable settings for this feature. */
+	bool HasCurrentSceneSettingsForFeature(const std::string& featureShortName) const;
+	/** @brief Whether scene application is temporarily paused for this feature. */
+	bool IsFeaturePaused(const std::string& featureShortName) const;
+	/** @brief Pauses or resumes this feature without changing saved scene entries. */
+	void SetFeaturePaused(const std::string& featureShortName, bool paused);
 	/// Whether a feature has any entry authored anywhere, in effect here or not.
 	bool HasAnySceneEntriesForFeature(const std::string& featureShortName) const;
-	/** @brief Whether the scene layer currently applies a value at this address that differs from the base. */
+	/** @brief Whether the scene layer currently supplies this address, including a value equal to its base. */
 	bool IsActiveSceneSetting(std::string_view featureShortName,
 		std::string_view settingPath, std::string_view settingKey) const;
 	bool IsActiveSceneSetting(const std::string& featureShortName,
@@ -722,6 +729,21 @@ public:
 	/// Copy one source into several destinations as one mutation: one revision bump, one save, one reapply.
 	CopyResult CopySettingsBatch(const SceneContextId& source, std::span<const SceneContextId> destinations,
 		CopyConflictPolicy conflictPolicy, std::string_view featureShortName = {});
+	struct PresetSceneSetting
+	{
+		std::string key;
+		SceneContextId context;
+		SettingEntry entry;
+		std::optional<bool> timeOfDayEnabled;
+	};
+	/** @brief Stable selection key shared by the preset browser and exporter. */
+	static std::string GetSceneExportKey(const SceneContextId& context, const SettingEntry& entry);
+	/** @brief Reads compatible scene settings from an installed preset, including inactive legacy imports. */
+	std::vector<PresetSceneSetting> GetPresetSceneSettings(const std::string& packId) const;
+	/** @brief Lists the effective scene values the upstream exporter would bake. */
+	std::vector<PresetSceneSetting> GetSceneExportSettings();
+	/** @brief Copies selected preset settings into the matching personal scene contexts. */
+	CopyResult CopyPresetSceneSettings(const std::string& packId, std::span<const std::string> selected, CopyConflictPolicy policy);
 	/// Name one context the way the copy source list spells it.
 	std::string GetSceneContextDisplayName(const SceneContextId& context) const;
 
@@ -888,9 +910,6 @@ public:
 	void SetEntryLayerPaused(EntrySource source, bool paused, const EntryLayerScope& scope);
 	/** @brief Deletes scoped user entries or only the exact loaded backing files of installed entries. */
 	EntryLayerFileResult DeleteEntryLayer(EntrySource source, const EntryLayerScope& scope);
-	/** @brief Exports a scoped source into grouped scene files without changing the active preset. */
-	EntryLayerFileResult ExportEntryLayerToOverwrites(std::string_view modName, EntrySource source,
-		const EntryLayerScope& scope);
 
 	/// Enables location discovery once Skyrim form data is guaranteed to be available.
 	void OnDataLoaded();
@@ -1174,6 +1193,7 @@ private:
 	std::map<std::string, size_t> verifiedApplySignatures;
 	bool resolverDirty = true;
 	bool resolverSuspended = false;
+	std::set<std::string> featurePauseStates;
 	bool activeEntryCacheDirty = true;
 	bool hasActiveSceneEntries = false;
 	std::uint32_t lastUpdateFrame = std::numeric_limits<std::uint32_t>::max();

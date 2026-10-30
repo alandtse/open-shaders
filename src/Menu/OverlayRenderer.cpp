@@ -21,7 +21,6 @@
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
-#include "CSEditor/SceneManager/ScenePresetExport.h"
 #include "Features/HDRDisplay.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
@@ -33,6 +32,8 @@
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
 #include "Menu/FontAtlasState.h"
+#include "Menu/Presets/PresetExportPanel.h"
+#include "Menu/PresetsPageRenderer.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -218,7 +219,7 @@ void OverlayRenderer::RenderOverlay(
 				globals::state->CheckCoreSettingsChanged();
 		}
 	} else {
-		ImGui::GetIO().MouseDrawCursor = ScenePresetExport::IsOpen();
+		ImGui::GetIO().MouseDrawCursor = PresetExportPanel::IsOpen();
 	}
 
 	// Enabling a Baseline pack can happen from either the menu or the CS editor, and the answer outlives the page.
@@ -230,7 +231,7 @@ void OverlayRenderer::RenderOverlay(
 	if (!editorWindow->open)
 		Util::Notifications::Draw();
 
-	ScenePresetExport::Draw();
+	PresetsPageRenderer::DrawPopups();
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
@@ -263,7 +264,7 @@ bool OverlayRenderer::ShouldSkipRendering()
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
 			 Util::Notifications::HasAny() ||
-			 ScenePresetExport::IsOpen() ||
+			 PresetExportPanel::IsOpen() ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||

@@ -18,6 +18,8 @@ namespace PresetCompatibility
 		int patch = 0;
 	};
 
+	inline constexpr SemVer kSupportedCsVersion{ 1, 9, 0 };
+
 	/// How far the installed CS build lags behind a preset's required CS version.
 	enum class VersionGap : std::uint8_t
 	{

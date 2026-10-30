@@ -572,16 +572,13 @@ public:
 	 */
 	virtual bool ToggleAtBootSetting();
 
-	/**
-	 * @brief Reapplies override settings for this feature if available
-	 * @return True if overrides were found and applied, false otherwise
-	 */
+	/** @brief Reapplies Base Settings values, discarding personal edits at the preset's keys. */
 	virtual bool ReapplyOverrideSettings();
 
-	/** @brief Whether Apply Override targets the current settings page instead of the entire feature. */
+	/** @brief Whether Reapply Base Settings targets the current page instead of the entire feature. */
 	virtual bool HasScopedOverrideSettings() const { return false; }
 
-	/** @brief Reapplies overrides for the current page or the entire feature. */
+	/** @brief Reapplies Base Settings for the current page or the entire feature. */
 	virtual bool ReapplyCurrentPageOverrideSettings() { return ReapplyOverrideSettings(); }
 
 	/**
@@ -854,6 +851,6 @@ public:
 	};
 
 protected:
-	/** Reapplies override-controlled values for the selected top-level setting keys. */
+	/** Reapplies Base Settings values for the selected top-level setting keys. */
 	bool ReapplyOverrideSettingsForKeys(std::span<const std::string_view> a_settingKeys);
 };

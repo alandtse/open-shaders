@@ -26,22 +26,12 @@ namespace SceneSettingsInternal
 {
 	std::vector<std::filesystem::path> GetSceneOverwriteRoots()
 	{
-		auto roots = UnifiedPresetCatalog::GetSingleton().GetActivePackRoots();
-		const auto legacy = Util::PathHelpers::GetSceneSettingsPath();
-		if (std::ranges::find(roots, legacy) == roots.end())
-			roots.push_back(legacy);
-		return roots;
+		return UnifiedPresetCatalog::GetSingleton().GetActivePackRoots();
 	}
 
 	bool IsPrimarySceneOverwriteFile(const std::filesystem::path& path)
 	{
-		const auto roots = GetSceneOverwriteRoots();
-		for (const auto& root : roots) {
-			const auto relative = path.lexically_relative(root);
-			if (!relative.empty() && !relative.has_root_path() && *relative.begin() != "..")
-				return PresetState::FindFirstExistingPayload(roots, relative).lexically_normal() == path.lexically_normal();
-		}
-		return true;
+		return UnifiedPresetCatalog::GetSingleton().IsSceneFileEnabled(path);
 	}
 
 	void CombineHash(size_t& signature, size_t value)

@@ -26,7 +26,6 @@
 #include "SceneEntryTable.h"
 #include "SceneFeatureReplica.h"
 #include "SceneManager.h"
-#include "ScenePresetExport.h"
 #include "State.h"
 #include "Utils/Form.h"
 #include "Utils/Game.h"
@@ -52,10 +51,6 @@ namespace
 	Util::DeferredModal manageSettingsModal;
 	Util::ConfirmationPopup deleteSceneChangesConfirmation;
 	SceneSettingsManager::EntryLayerScope pendingDeleteScope;
-	SceneSettingsManager::EntrySource pendingDeleteSource = SceneSettingsManager::EntrySource::User;
-	std::optional<SceneSettingsManager::EntrySource> layerExportSource;
-	SceneSettingsManager::EntryLayerScope layerExportScope;
-	std::string layerExportName;
 	int manageSection = 0;
 	int manageScope = 0;
 	int manageSource = 0;
@@ -232,8 +227,8 @@ namespace
 	}
 
 	ImVec4 GetScenePickerTextColor(bool current, bool paused);
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature = {});
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature = {});
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature = {}, float* scroll = nullptr);
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature = {}, float* scroll = nullptr);
 
 	float GetPeriodPickerWidth()
 	{
@@ -400,27 +395,6 @@ namespace
 		return std::nullopt;
 	}
 
-	void ReportLayerFileResult(const SceneSettingsManager::EntryLayerFileResult& result)
-	{
-		using Error = SceneSettingsManager::EntryLayerFileResult::Error;
-		if (result.error == Error::PendingEdit) {
-			SceneSettingsUI::WarnPendingContextEdit();
-			return;
-		}
-		if (result.error != Error::None) {
-			EditorWindow::GetSingleton()->ShowNotification(result.error == Error::InvalidName ?
-															   T(TKEY("scene_manage_invalid_name"), "Enter a visible mod name without reserved filename characters.") :
-															   T(TKEY("scene_manage_data_unavailable"), "Scene data is not ready. Try again after loading a game."),
-				Util::Colors::GetWarning());
-			return;
-		}
-		auto completed = result.written;
-		auto failed = result.failed;
-		EditorWindow::GetSingleton()->ShowNotification(
-			std::vformat(T(TKEY("scene_manage_file_result"), "{} files completed, {} failed"), std::make_format_args(completed, failed)),
-			failed ? Util::Colors::GetWarning() : Util::Colors::GetSuccess());
-	}
-
 	void DrawLayerManagement(const std::optional<SceneSettingsManager::SceneContextId>& target = std::nullopt)
 	{
 		using Manager = SceneSettingsManager;
@@ -438,15 +412,13 @@ namespace
 			const std::array types{ Type::Interior, Type::TimeOfDay, Type::Location, Type::Weather };
 			ImGui::TextUnformatted(T(TKEY("scene_manage_scope"), "Scope"));
 			ImGui::SetNextItemWidth(-FLT_MIN);
-			if (ImGui::Combo("##SceneManageScope", &manageScope, scopeLabels, IM_ARRAYSIZE(scopeLabels)))
-				layerExportSource.reset();
+			ImGui::Combo("##SceneManageScope", &manageScope, scopeLabels, IM_ARRAYSIZE(scopeLabels));
 			if (manageScope > 0)
 				scope.type = types[manageScope - 1];
 			const auto selected = GetStandaloneContext();
 			if (selected && scope.type && selected->type == *scope.type &&
 				(*scope.type == Type::Location || *scope.type == Type::Weather)) {
-				if (ImGui::Checkbox(T(TKEY("scene_manage_selected_target"), "Selected target only"), &manageSelectedTarget))
-					layerExportSource.reset();
+				ImGui::Checkbox(T(TKEY("scene_manage_selected_target"), "Selected target only"), &manageSelectedTarget);
 				if (manageSelectedTarget) {
 					scope.target = selected;
 					Util::Text::WrappedDisabled("%s", manager->GetSceneContextDisplayName(*selected).c_str());
@@ -456,10 +428,9 @@ namespace
 		if (manager->HasPendingContextEdit())
 			Util::Text::WrappedWarning("%s", SceneSettingsUI::PendingContextEditMessage());
 		const char* sourceLabels[] = { T("feature.scene_manager.section.user_settings", "User Settings"),
-			T("feature.scene_manager.section.overwrite_files", "Overwrite Files") };
+			T("feature.scene_manager.section.overwrite_files", "Preset Settings") };
 		ImGui::Spacing();
-		if (Util::SegmentedControl("##SceneManageSource", sourceLabels, IM_ARRAYSIZE(sourceLabels), manageSource))
-			layerExportSource.reset();
+		Util::SegmentedControl("##SceneManageSource", sourceLabels, IM_ARRAYSIZE(sourceLabels), manageSource);
 		const auto source = manageSource == 0 ? Source::User : Source::Overwrite;
 		{
 			ImGui::PushID(static_cast<int>(source));
@@ -473,49 +444,21 @@ namespace
 				Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_pause_session"), "Pausing installed settings lasts until they are reloaded."));
 			ImGui::Spacing();
 			const Util::DisableGuard disabled(manager->HasPendingContextEdit() || summary.total == 0);
-			if (Util::Button(T("feature.scene_manager.action.export_all", "Export All"))) {
-				layerExportSource = source;
-				layerExportScope = scope;
-			}
-			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("feature.scene_manager.action.unpause_all", "Unpause All")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
 			if (Util::Button(summary.AllPaused() ? T("feature.scene_manager.action.unpause_all", "Unpause All") :
 												   T("feature.scene_manager.action.pause_all", "Pause All")))
 				globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [&] {
 					manager->SetEntryLayerPaused(source, !summary.AllPaused(), scope);
 				});
 			BrowserUI::SameLineIfFits(ImGui::CalcTextSize(T("feature.scene_manager.action.delete_all", "Delete All")).x + ImGui::GetStyle().FramePadding.x * 2.0f);
-			if (Util::Button(T("feature.scene_manager.action.delete_all", "Delete All"))) {
-				pendingDeleteSource = source;
+			if (source == Source::User && Util::Button(T("feature.scene_manager.action.delete_all", "Delete All"))) {
 				pendingDeleteScope = scope;
 				deleteSceneChangesConfirmation.title = T(TKEY("scene_page_delete_changes_title"), "Delete changes");
-				deleteSceneChangesConfirmation.message = source == Source::User ?
-				                                             T(TKEY("scene_manage_delete_user"), "Delete your settings in the selected scope? Installed settings remain. Undo restores your changes.") :
-				                                             T(TKEY("scene_manage_delete_files"), "Delete the loaded overwrite files in the selected scope from disk? This cannot be undone. Invalid and unloaded files remain.");
+				deleteSceneChangesConfirmation.message = T(TKEY("scene_manage_delete_user"), "Delete your settings in the selected scope? Installed settings remain. Undo restores your changes.");
 				deleteSceneChangesConfirmation.confirmLabel = T("feature.scene_manager.action.delete", "Delete");
 				deleteSceneChangesConfirmation.cancelLabel = T(TKEY("cancel"), "Cancel");
 				deleteSceneChangesConfirmation.Request();
 			}
 			ImGui::PopID();
-		}
-		if (layerExportSource) {
-			ImGui::SeparatorText(T(TKEY("scene_manage_export_files"), "Export scene files"));
-			ImGui::TextUnformatted(T(TKEY("scene_manage_mod_name"), "Mod name"));
-			ImGui::SetNextItemWidth(-FLT_MIN);
-			ImGui::InputText("##SceneManageModName", &layerExportName);
-			Util::Text::WrappedDisabled("%s", T(TKEY("scene_manage_export_files_help"),
-												  "Writes all settings from this source into SceneSettings, including paused settings. Existing files with the same name receive the selected values. Your settings and active preset stay in place."));
-			{
-				const Util::DisableGuard disabled(layerExportName.empty() || manager->HasPendingContextEdit());
-				if (Util::Button(T("feature.scene_manager.action.export", "Export"))) {
-					const auto result = manager->ExportEntryLayerToOverwrites(layerExportName, *layerExportSource, layerExportScope);
-					ReportLayerFileResult(result);
-					if (result.error == Manager::EntryLayerFileResult::Error::None && !result.failed)
-						layerExportSource.reset();
-				}
-			}
-			ImGui::SameLine();
-			if (Util::Button(T(TKEY("cancel"), "Cancel")))
-				layerExportSource.reset();
 		}
 	}
 
@@ -523,12 +466,9 @@ namespace
 	{
 		if (deleteSceneChangesConfirmation.Draw()) {
 			auto* manager = SceneSettingsManager::GetSingleton();
-			if (pendingDeleteSource == SceneSettingsManager::EntrySource::User)
-				globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [manager] {
-					manager->DeleteEntryLayer(pendingDeleteSource, pendingDeleteScope);
-				});
-			else
-				ReportLayerFileResult(manager->DeleteEntryLayer(pendingDeleteSource, pendingDeleteScope));
+			globals::menu->GetUndoHistory().Change(SceneSettingsUI::MakeUndoTarget(), [manager] {
+				manager->DeleteEntryLayer(SceneSettingsManager::EntrySource::User, pendingDeleteScope);
+			});
 		}
 	}
 
@@ -539,8 +479,7 @@ namespace
 			if (EditorWindow::ClosePopupOnEscape())
 				return;
 			const char* sections[] = { T(TKEY("scene_manage_layers"), "Manage scenes"),
-				T("feature.scene_manager.copy.title", "Copy Scene Settings"),
-				T(TKEY("scene_export_title"), "Export preset") };
+				T("feature.scene_manager.copy.title", "Copy Scene Settings") };
 			Util::SegmentedControl("##SceneManagementSections", sections, IM_ARRAYSIZE(sections), manageSection);
 			ImGui::Spacing();
 			switch (manageSection) {
@@ -549,9 +488,6 @@ namespace
 				break;
 			case 1:
 				SceneCopyModal::DrawEmbedded();
-				break;
-			case 2:
-				ScenePresetExport::DrawEmbedded();
 				break;
 			}
 			DrawLayerDeleteConfirmation();
@@ -757,7 +693,6 @@ namespace
 	void DrawTargetManagementPopup(const SceneSettingsManager::SceneContextId& target, const std::string& label, bool open)
 	{
 		if (open) {
-			layerExportSource.reset();
 			ImGui::OpenPopup("##ManageSceneTarget");
 		}
 		ImGui::SetNextWindowSizeConstraints(ImVec2(ThemeManager::Constants::Em(kTargetManageWidthEm), 0.0f), ImVec2(FLT_MAX, FLT_MAX));
@@ -851,7 +786,7 @@ namespace
 		return targets;
 	}
 
-	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature)
+	bool DrawWeatherPicker(RE::FormID& selectedWeather, std::string_view feature, float* scroll)
 	{
 		using Context = SceneSettingsManager::SceneContextId;
 		using Type = SceneSettingsManager::SceneContextType;
@@ -874,7 +809,7 @@ namespace
 		                         std::string(T("feature.scene_manager.weather.select_target", "Select a weather..."));
 
 		if (!Util::BeginSearchableCombo(feature.empty() ? T("feature.scene_manager.weather.target", "Weather") : "##FeatureSceneWeather", GetScenePickerLabel(preview, GetFeatureSceneMarker(feature, { .type = Type::Weather, .weatherId = selectedWeather }, false)).c_str(),
-				ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, &weatherPickerScroll))
+				ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, scroll ? scroll : &weatherPickerScroll))
 			return false;
 		std::vector<RE::TESWeather*> current;
 		std::vector<RE::TESWeather*> configured;
@@ -951,7 +886,7 @@ namespace
 			std::make_format_args(target.name.empty() ? target.formKey : target.name, typeName));
 	}
 
-	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature)
+	bool DrawLocationPicker(std::optional<SceneSettingsManager::LocationTarget>& selectedLocation, std::string_view feature, float* scroll)
 	{
 		using Target = SceneSettingsManager::LocationTarget;
 		using Type = SceneSettingsManager::LocationTargetType;
@@ -986,7 +921,7 @@ namespace
 		                                        std::string(T("feature.scene_manager.location.select_target", "Select a worldspace, region, location type, location, or cell..."));
 
 		if (!Util::BeginSearchableCombo(feature.empty() ? T("feature.scene_manager.location.target", "Target") : "##FeatureSceneLocation", GetScenePickerLabel(preview, selectedLocation ? GetFeatureSceneMarker(feature, { .type = ContextType::Location, .locationType = selectedLocation->type, .locationFormKey = selectedLocation->formKey }, false) : SceneSettingMarker::None).c_str(),
-				ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, &locationPickerScroll))
+				ImGuiComboFlags_None, nullptr, kSceneTargetComboVisibleItems, scroll ? scroll : &locationPickerScroll))
 			return false;
 		std::vector<const Target*> currentTargets;
 		std::vector<const Target*> configured;
@@ -1069,8 +1004,6 @@ void SceneSettingsUI::DrawStandalonePage()
 			.type = SceneSettingsManager::SceneContextType::TimeOfDay,
 			.period = SceneSettingsManager::GetCurrentPeriod() });
 		SceneCopyModal::PrepareEmbedded(context);
-		ScenePresetExport::PrepareEmbedded();
-		layerExportSource.reset();
 		manageSettingsModal.Request();
 	}
 	DrawManageSettings();
@@ -1378,4 +1311,14 @@ void SceneSettingsUI::DrawFeaturePageBody(Feature* feature)
 {
 	if (IsFeaturePageEditing(feature))
 		SceneFeatureReplica::Draw(feature->GetShortName(), *featurePageContext);
+}
+
+bool SceneSettingsUI::DrawWeatherTargetPicker(RE::FormID& selected, float& scroll)
+{
+	return DrawWeatherPicker(selected, {}, &scroll);
+}
+
+bool SceneSettingsUI::DrawLocationTargetPicker(std::optional<SceneSettingsManager::LocationTarget>& selected, float& scroll)
+{
+	return DrawLocationPicker(selected, {}, &scroll);
 }

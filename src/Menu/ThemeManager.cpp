@@ -261,7 +261,7 @@ void ThemeManager::SetupImGuiStyle(const Menu& menu)
 			return 0.0f;
 		return ImMax(1.0f, ImTrunc(value * scaleFactor));
 	};
-	styleCopy.WindowBorderSize = scaleSize(themeSettings.Style.WindowBorderSize);
+	styleCopy.WindowBorderSize = scaleSize(std::max(Constants::WINDOW_BORDER_MIN, themeSettings.Style.WindowBorderSize));
 	styleCopy.ChildBorderSize = scaleSize(themeSettings.Style.ChildBorderSize);
 	styleCopy.PopupBorderSize = scaleSize(themeSettings.Style.PopupBorderSize);
 	styleCopy.FrameBorderSize = scaleSize(themeSettings.Style.FrameBorderSize);

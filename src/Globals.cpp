@@ -14,7 +14,6 @@
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
-#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
@@ -127,7 +126,6 @@ namespace globals
 		CSEditor csEditor{};
 		CSUtility csUtility{};
 		Wind wind{};
-		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		SnowCover snowCover{};

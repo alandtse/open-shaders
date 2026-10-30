@@ -1048,7 +1048,9 @@ namespace Util
 	 * @return true if the expansion state was toggled (only relevant if collapsible)
 	 */
 	/** @brief Draws a localized collapsible feature category. */
-	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded);
+	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount);
+	/** @brief Left padding for custom selectable content, clear of its selection accent. */
+	float GetSelectableTextInset();
 
 	bool DrawSectionHeader(const char* sectionName, bool useWhiteText = false, bool isCollapsible = true, bool* isExpanded = nullptr, IconDrawCallback icon = nullptr);
 

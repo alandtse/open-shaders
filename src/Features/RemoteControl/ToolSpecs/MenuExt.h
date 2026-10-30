@@ -14,7 +14,6 @@ namespace DevBenchBridge::ToolSpecs
 		R"(the call still reports queued. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; )"
 		R"(false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; )"
 		R"(use op=open and page=CSEditor to open the editor first. )"
-		R"(widgetBorderSize: OPTIONAL number from 1 to 5, setting the active theme's OS Editor record-window border width in 1080p baseline pixels, independently of the main window border. Applies on the render thread without saving the theme. )"
 		R"(Sidebar visibility only affects the standalone menu. Returns {op,page,tab,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).")"
 		R"(,"inputSchema":{
 	"type": "object",
@@ -26,7 +25,6 @@ namespace DevBenchBridge::ToolSpecs
 		"page": {"type":"string"},
 		"tab": {"type":"string","maxLength":128},
 		"sidebarVisible": {"type":"boolean"},
-		"widgetBorderSize": {"type":"number","minimum":1,"maximum":5},
 		"editorMode": {
 			"type": "string",
 			"enum": ["browser","menu"]

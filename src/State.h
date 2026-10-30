@@ -222,7 +222,7 @@ public:
 	/** @brief Drops only personal edits masked by this pack, retaining installed overwrite layers. */
 	bool ClearEditsUnderPack(const std::string& packId);
 	/** @brief Drops only this feature's personal edits masked by enabled Baselines. */
-	bool ClearFeatureEditsUnderBaselines(Feature* feature);
+	bool ClearFeatureEditsUnderBaselines(Feature* feature, std::span<const std::string_view> keys = {});
 	/**
 	 * @brief Restores settings from a JSON object (in-memory, no disk I/O).
 	 * @param i_json Input JSON object to read from.
@@ -790,7 +790,7 @@ public:
 	}
 
 private:
-	bool DropPresetEdits(const std::string& packId, Feature* onlyFeature);
+	bool DropPresetEdits(const std::string& packId, Feature* onlyFeature, std::span<const std::string_view> keys = {});
 	std::unordered_map<std::string, bool> baselineOverlapCache;
 	std::uint64_t baselineOverlapCatalogRevision = UINT64_MAX;
 	void MarkSettingsSaved();

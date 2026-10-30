@@ -1896,7 +1896,7 @@ void SceneEntryTable::Draw(const Context& context)
 		if (cached.group.rows.empty())
 			continue;
 		const char* suffix = source == Source::Overwrite ? "##Overwrite" : "##User";
-		const char* label = source == Source::Overwrite ? T("feature.scene_manager.section.overwrite_files", "Overwrite Files") :
+		const char* label = source == Source::Overwrite ? T("feature.scene_manager.section.overwrite_files", "Preset Settings") :
 		                                                  T("feature.scene_manager.section.user_settings", "User Settings");
 		if (DrawSectionHeader(label, suffix, cached.allPaused, [&] {
 				if (!OwnsRetainedEdit(context, entries, cached.indices))

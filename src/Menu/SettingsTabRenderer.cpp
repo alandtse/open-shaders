@@ -412,7 +412,7 @@ namespace
 		case Menu::FontRole::Body:
 			return T("menu.settings.font_role_body_desc", "Most of the menu: settings, lists and buttons.");
 		case Menu::FontRole::Title:
-			return T("menu.settings.font_role_title_desc", "Large titles, such as the menu header and feature names at the top of a page.");
+			return T("menu.settings.font_role_title_desc", "Feature and page titles.");
 		case Menu::FontRole::Heading:
 			return T("menu.settings.font_role_heading_desc", "Section headers, such as card titles and category labels.");
 		case Menu::FontRole::Subheading:
@@ -456,13 +456,14 @@ namespace
 		const ImGuiStyle& style = ImGui::GetStyle();
 		const float pad = style.FramePadding.y;
 		const float height = pad * 2.0f + nameHeight + detailSize;
-		const bool clicked = Util::Selectable("##RoleRow", selected, ImGuiSelectableFlags_None, ImVec2(0.0f, height));
+		const bool clicked = Util::Selectable("##RoleRow", selected, ImGuiSelectableFlags_NoPadWithHalfSpacing, ImVec2(0.0f, height));
 		const ImVec2 min = ImGui::GetItemRectMin();
 		const ImVec2 max = ImGui::GetItemRectMax();
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
 		drawList->PushClipRect(min, max, true);
-		const float x = min.x + style.FramePadding.x;
-		drawList->AddText(nameFont, nameSize, ImVec2(x, min.y + pad), ImGui::GetColorU32(ImGuiCol_Text), descriptor.displayName.data());
+		const float x = min.x + Util::GetSelectableTextInset();
+		const char* name = descriptor.displayName.data();
+		drawList->AddText(nameFont, nameSize, ImVec2(x, min.y + pad), ImGui::GetColorU32(ImGuiCol_Text), name);
 		drawList->AddText(detailFont, detailSize, ImVec2(x, min.y + pad + nameHeight), ImGui::GetColorU32(ImGuiCol_TextDisabled), detail.c_str());
 		drawList->PopClipRect();
 		return clicked;
@@ -1459,9 +1460,7 @@ void SettingsTabRenderer::RenderStylingSection()
 			Util::EndPillTabItem();
 		}
 		if (Util::BeginPillTabItem(T("menu.settings.styling_tab_borders", "Borders"))) {
-			ImGui::SliderFloat(T("menu.settings.window_border_size", "Window Border Size"), &style.WindowBorderSize, 0.0f, 5.0f, "%.0f");
-			ImGui::SliderFloat(T("menu.settings.widget_border_size", "OS Editor Widget Border Size"), &themeSettings.WidgetBorderSize,
-				ThemeManager::Constants::EDITOR_WIDGET_BORDER_MIN, ThemeManager::Constants::EDITOR_WIDGET_BORDER_MAX, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+			ImGui::SliderFloat(T("menu.settings.window_border_size", "Window Border Size"), &style.WindowBorderSize, ThemeManager::Constants::WINDOW_BORDER_MIN, 5.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 			ImGui::SliderFloat(T("menu.settings.child_border_size", "Child Border Size"), &style.ChildBorderSize, 0.0f, 5.0f, "%.0f");
 			ImGui::SliderFloat(T("menu.settings.popup_border_size", "Popup Border Size"), &style.PopupBorderSize, 0.0f, 5.0f, "%.0f");
 			ImGui::SliderFloat(T("menu.settings.frame_border_size", "Frame Border Size"), &style.FrameBorderSize, 0.0f, 5.0f, "%.0f");

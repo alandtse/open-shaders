@@ -180,8 +180,10 @@ namespace MenuFonts::Selector
 		auto& roleSettings = themeSettings.FontRoles[roleIndex];
 		const auto& descriptor = Menu::FontRoleDescriptors[roleIndex];
 
+		const std::string_view roleName = descriptor.displayName;
+
 		int familyIndex = Util::Fonts::FindFamilyIndex(catalog, roleSettings.Family);
-		RenderFamilyCombo(menu, themeSettings, roleSettings, catalog, role, roleIndex, descriptor.displayName, familyIndex);
+		RenderFamilyCombo(menu, themeSettings, roleSettings, catalog, role, roleIndex, roleName, familyIndex);
 
 		const Util::Fonts::FamilyInfo* selectedFamily =
 			catalog.families.empty() ? nullptr : &catalog.families[familyIndex];
@@ -192,10 +194,10 @@ namespace MenuFonts::Selector
 			const auto selectedStyle = std::find_if(selectedFamily->styles.begin(), selectedFamily->styles.end(),
 				[&](const auto& style) { return style.file == roleSettings.File; });
 			int styleIndex = selectedStyle != selectedFamily->styles.end() ? static_cast<int>(selectedStyle - selectedFamily->styles.begin()) : Util::Fonts::FindStyleIndex(*selectedFamily, roleSettings.Style);
-			RenderStyleCombo(menu, themeSettings, roleSettings, *selectedFamily, role, roleIndex, descriptor.displayName, styleIndex);
+			RenderStyleCombo(menu, themeSettings, roleSettings, *selectedFamily, role, roleIndex, roleName, styleIndex);
 		}
 
-		const std::string scaleLabel = RoleLabel("menu.settings.font_scale_label", "{role} Scale", descriptor.displayName, roleIndex);
+		const std::string scaleLabel = RoleLabel("menu.settings.font_scale_label", "{role} Scale", roleName, roleIndex);
 		if (ImGui::SliderFloat(scaleLabel.c_str(), &roleSettings.SizeScale, ThemeManager::Constants::FONT_ROLE_SCALE_MIN, ThemeManager::Constants::FONT_ROLE_SCALE_MAX, "%.2fx", ImGuiSliderFlags_AlwaysClamp)) {
 			MenuFonts::GetAtlasState().pendingFontReload = true;
 		}

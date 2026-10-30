@@ -44,6 +44,7 @@
 #include "Features/Wind/Wind.h"
 #include "Menu.h"
 #include "PostProcessingMode.h"
+#include "Presets/PresetPreferences.h"
 #include "Presets/PresetState.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsManager.h"
@@ -633,7 +634,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		errorDetected = true;
 	}
 
-	// LOADING ORDER: Default → User → Overrides → User Overrides (.user files)
+	// LOADING ORDER: Defaults, Base Settings presets, personal edits.
 
 	// Step 1: Generate the baseline before any user settings can reach live state
 	if (defaultSettingsBaseline.is_null()) {
@@ -678,10 +679,14 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			}
 		}
 	}
+	if (a_configMode == ConfigMode::USER)
+		userSettings["Presets"] = PresetPreferences::Restore(userSettings.value("Presets", json::object()));
 	Feature::MigrateConfigSettings(userSettings);
 	if (a_configMode == ConfigMode::USER)
 		catalog.LoadActiveState(userSettings);
 	catalog.Discover();
+	if (a_configMode == ConfigMode::USER)
+		overrideManager->ImportUserSettings(userSettings);
 	auto* baselines = BaselineManager::GetSingleton();
 	baselines->DiscoverFiles();
 	featureSettingsBases = defaultSettingsBaseline;
@@ -709,7 +714,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 			userBootPreferences = Util::Settings::SelectSettings(settings["Disable at Boot"], *boot);
 		if (const auto menu = userSettings.find("Menu"); menu != userSettings.end() && menu->is_object())
 			Menu::OverlayInputSettings(settings["Menu"], defaultSettingsBaseline["Menu"], *menu);
-		const auto presetState = catalog.SerializeActiveState();
+		const auto presetState = userSettings.value(UnifiedPresetCatalog::kUserSettingsKey, json::object());
 		for (auto* feature : Feature::GetFeatureList()) {
 			if (!feature->HasPersonalSettings())
 				continue;
@@ -723,26 +728,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		logger::info("Applied user settings from: {}", userConfigFilePath);
 	}
 
-	// Step 3: Discover and prepare overrides (applied after user settings, so overrides take priority)
 	overrideManager->CaptureBaseSettings(settings);
-	size_t overridesDiscovered = overrideManager->DiscoverOverrides();
-	if (!overrideManager->CleanupStaleUserOverrides())
-		logger::warn("Could not clean up orphaned user overwrite settings");
-
-	if (overridesDiscovered > 0) {
-		logger::info("Discovered {} override files", overridesDiscovered);
-
-		// Apply global overrides to main settings
-		size_t globalOverrides = overrideManager->ApplyGlobalOverrides(settings);
-		if (globalOverrides > 0) {
-			logger::info("Applied {} global override(s)", globalOverrides);
-		}
-
-		// Apply global user overrides on top (if any)
-		if (overrideManager->LoadUserOverride("Global", settings)) {
-			logger::info("Applied global user override customizations");
-		}
-	}
 
 	try {
 		// Load core settings (Menu, Advanced, General, Replace Original Shaders)
@@ -765,30 +751,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 					// Load base feature settings from merged config (default + user)
 					feature->Load(settings);
-
-					// Apply feature-specific overrides on top (overrides take priority over user settings)
-					if (feature->HasPersonalSettings() && overridesDiscovered > 0 && overrideManager->HasFeatureOverrides(featureName)) {
-						json featureJson;
-						feature->SaveSettings(featureJson);  // Get current settings as JSON
-
-						// Apply overrides
-						size_t appliedOverrides = overrideManager->ApplyOverrides(featureName, featureJson);
-						if (appliedOverrides > 0) {
-							logger::info("Applied {} override(s) to {}", appliedOverrides, feature->GetName());
-						}
-
-						// Apply user override customizations on top (if any)
-						if (overrideManager->LoadUserOverride(featureName, featureJson)) {
-							logger::info("Applied user override customizations to {}", feature->GetName());
-						}
-
-						// Reload settings with overrides applied
-						try {
-							feature->LoadSettings(featureJson);
-						} catch (...) {
-							logger::warn("Invalid override settings for {}, keeping original settings.", feature->GetName());
-						}
-					}
 
 				} else {
 					logger::info("Feature '{}' is disabled at boot.", featureName);
@@ -880,8 +842,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				restore("pipeline", [&] { return PostProcessingMode::Set(previousMode); });
 			if (restoring)
 				restore("live settings", [&] { LoadFromJson(previousSettings); return true; });
-			restore("overwrite bases", [&] { overrideManager->CaptureBaseSettings(previousOverrideBase); return true; });
-			restore("applied overwrites", [&] { overrideManager->CaptureAppliedSettings(previousApplied); return true; });
+			restore("settings bases", [&] { overrideManager->CaptureBaseSettings(previousOverrideBase); return true; });
+			restore("applied settings", [&] { overrideManager->CaptureAppliedSettings(previousApplied); return true; });
 			restore("scene settings", [] { return SceneSettingsManager::GetSingleton()->ReloadSceneSettings(); });
 			restore("editor form sources", [] { return FormEditSources::ReloadActivePack(); });
 			return;
@@ -931,7 +893,7 @@ json State::BuildSettingsSnapshot()
 	auto* overrides = SettingsOverrideManager::GetSingleton();
 	const auto pending = overrides->GetPendingEdits(current);
 	auto personal = current;
-	overrides->RestoreBaselines(personal);
+
 	for (auto* feature : Feature::GetFeatureList()) {
 		if (!feature->HasPersonalSettings())
 			continue;
@@ -988,7 +950,7 @@ bool State::ReapplyPresetLayers()
 	auto personal = previous;
 	auto* overrides = SettingsOverrideManager::GetSingleton();
 	const auto pending = overrides->GetPendingEdits(previous);
-	overrides->RestoreBaselines(personal);
+
 	auto next = personal;
 	auto nextBases = featureSettingsBases;
 	auto* baselines = BaselineManager::GetSingleton();
@@ -1016,15 +978,6 @@ bool State::ReapplyPresetLayers()
 	bootBase.update(bootEdits, true);
 	next["Disable at Boot"] = std::move(bootBase);
 	const auto underlying = next;
-	overrides->ApplyGlobalOverrides(next);
-	overrides->LoadUserOverride("Global", next);
-	for (auto* feature : Feature::GetFeatureList()) {
-		if (!feature->loaded || !feature->UsesMainSettings())
-			continue;
-		auto& values = next[feature->GetName()];
-		overrides->ApplyOverrides(feature->GetShortName(), values);
-		overrides->LoadUserOverride(feature->GetShortName(), values);
-	}
 	const auto appliedLayers = next;
 	next.update(pending, true);
 	json applied;
@@ -1133,6 +1086,7 @@ State::SavedFeatureSettings State::ReadSavedFeatureSettings(Feature& feature) co
 			throw std::runtime_error("Saved settings must be a JSON object");
 	}
 	Feature::MigrateConfigSettings(userSettings);
+	overrides->ImportUserSettings(userSettings);
 	json settings{ { name, *base } };
 	Util::Settings::OverlayRecognizedRootSettings(settings, userSettings);
 	json savedEdits = json::object();
@@ -1145,15 +1099,6 @@ State::SavedFeatureSettings State::ReadSavedFeatureSettings(Feature& feature) co
 			PresetState::HasNormalizedFeatureEdits(presetState, name));
 	}
 	const auto underlying = settings.at(name);
-	const auto loadUserOverride = [&](const std::string& featureName, json& values) {
-		const bool exists = overrides->HasUserOverride(featureName);
-		if (!overrides->LoadUserOverride(featureName, values) && exists)
-			throw std::runtime_error("Could not read saved user override settings");
-	};
-	overrides->ApplyGlobalOverrides(settings);
-	loadUserOverride("Global", settings);
-	overrides->ApplyOverrides(shortName, settings[name]);
-	loadUserOverride(shortName, settings[name]);
 	if (!settings.at(name).is_object())
 		throw std::runtime_error("Saved feature layers must be a JSON object");
 	std::vector<std::string> invalidSettings;
@@ -1240,7 +1185,7 @@ std::vector<Feature*> State::FindEditsUnderPack(const std::string& packId)
 	SaveToJson(current);
 	auto personal = current;
 	auto* overrides = SettingsOverrideManager::GetSingleton();
-	overrides->RestoreBaselines(personal);
+
 	const auto pending = overrides->GetPendingEdits(current);
 	auto* baselines = BaselineManager::GetSingleton();
 	for (auto* feature : Feature::GetFeatureList()) {
@@ -1289,19 +1234,19 @@ bool State::ClearEditsUnderPack(const std::string& packId)
 	return UnifiedPresetCatalog::GetSingleton().IsBaselineEnabled(packId) && DropPresetEdits(packId, nullptr);
 }
 
-bool State::ClearFeatureEditsUnderBaselines(Feature* feature)
+bool State::ClearFeatureEditsUnderBaselines(Feature* feature, std::span<const std::string_view> keys)
 {
-	return feature && feature->loaded && feature->UsesMainSettings() && DropPresetEdits({}, feature);
+	return feature && feature->loaded && feature->UsesMainSettings() && DropPresetEdits({}, feature, keys);
 }
 
-bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature)
+bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature, std::span<const std::string_view> keys)
 {
 	SceneSettingsManager::SceneLayerGuard sceneLayerGuard;
 	json previous;
 	SaveToJson(previous);
 	auto* overrides = SettingsOverrideManager::GetSingleton();
 	auto underlying = previous;
-	overrides->RestoreBaselines(underlying);
+
 	auto pending = overrides->GetPendingEdits(previous);
 	auto savedEdits = userFeatureEdits;
 	std::vector<Feature*> changed;
@@ -1312,7 +1257,14 @@ bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature)
 		const auto* base = GetFeatureBase(name);
 		if (!base)
 			continue;
-		const auto mask = BaselineManager::GetSingleton()->BuildFeatureBaseline(feature->GetShortName(), *base, packId);
+		auto mask = BaselineManager::GetSingleton()->BuildFeatureBaseline(feature->GetShortName(), *base, packId);
+		if (!keys.empty()) {
+			for (auto item = mask.begin(); item != mask.end();)
+				if (std::ranges::find(keys, std::string_view(item.key())) == keys.end())
+					item = mask.erase(item);
+				else
+					++item;
+		}
 		if (mask.empty())
 			continue;
 		Util::Settings::RestoreSettings(underlying[name], *base, mask);
@@ -1325,15 +1277,6 @@ bool State::DropPresetEdits(const std::string& packId, Feature* onlyFeature)
 	if (changed.empty())
 		return true;
 	auto next = underlying;
-	overrides->ApplyGlobalOverrides(next);
-	overrides->LoadUserOverride("Global", next);
-	for (auto* feature : Feature::GetFeatureList()) {
-		if (!feature->loaded || !feature->UsesMainSettings())
-			continue;
-		auto& values = next[feature->GetName()];
-		overrides->ApplyOverrides(feature->GetShortName(), values);
-		overrides->LoadUserOverride(feature->GetShortName(), values);
-	}
 	const auto appliedLayers = next;
 	next.update(pending, true);
 	json applied;
@@ -1576,16 +1519,14 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 
 	std::string serializedSettings;
-	json effectiveSettings;
 	json userBaseSettings;
 	auto* overrideManager = SettingsOverrideManager::GetSingleton();
 	try {
 		SaveToJson(settings);
 		if (a_configMode == ConfigMode::USER) {
-			effectiveSettings = settings;
-			overrideManager->PrepareUserSettings(settings);
 			userBaseSettings = settings;
 			auto presetState = UnifiedPresetCatalog::GetSingleton().SerializeActiveState();
+			presetState["legacyBootOverridesImported"] = true;
 			for (auto* feature : Feature::GetFeatureList()) {
 				const auto name = feature->GetName();
 				const auto base = featureSettingsBases.find(name);
@@ -1596,6 +1537,11 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 				if (settings[name].empty())
 					settings.erase(name);
 				PresetState::MarkNormalizedFeatureEdits(presetState, name);
+				auto& imported = presetState["legacyUserOverrideFeatures"];
+				if (!imported.is_array())
+					imported = json::array();
+				if (std::ranges::find(imported, json(name)) == imported.end())
+					imported.push_back(name);
 			}
 			settings[UnifiedPresetCatalog::kUserSettingsKey] = std::move(presetState);
 			if (const auto bootBase = featureSettingsBases.find("Disable at Boot"); bootBase != featureSettingsBases.end())
@@ -1608,10 +1554,8 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	}
 
 	const auto saveConfig = [&] { return WriteConfigAtomically(configPath, serializedSettings); };
-	if (!(a_configMode == ConfigMode::USER && a_isExplicitUserSave ?
-				overrideManager->SaveUserEdits(effectiveSettings, saveConfig) :
-				saveConfig())) {
-		logger::error("Could not save settings and feature overwrites");
+	if (!saveConfig()) {
+		logger::error("Could not save settings");
 		return;
 	}
 	logger::info("Saving settings to {}", configPath);
@@ -1621,7 +1565,10 @@ void State::Save(ConfigMode a_configMode, bool a_isExplicitUserSave)
 	// can auto-resolve instead of holding for the "Rebuild Cache" menu action.
 	if (a_configMode == ConfigMode::USER) {
 		UnifiedPresetCatalog::GetSingleton().LoadActiveState(settings);
+		if (!PresetPreferences::Save(settings[UnifiedPresetCatalog::kUserSettingsKey]))
+			logger::error("Could not persist OS preset migration preferences");
 		overrideManager->CaptureBaseSettings(userBaseSettings);
+		overrideManager->CaptureAppliedSettings(userBaseSettings);
 		userFeatureEdits = json::object();
 		userBootPreferences = settings.value("Disable at Boot", json::object());
 		for (auto* feature : Feature::GetFeatureList()) {
@@ -1659,9 +1606,8 @@ bool State::SaveFeaturePreference(const json& patch)
 		settings.merge_patch(patch);
 		std::filesystem::create_directories(Util::PathHelpers::GetCommunityShaderPath());
 
-		auto* overrides = SettingsOverrideManager::GetSingleton();
 		const auto serializedSettings = settings.dump(1);
-		if (!overrides->SaveUserEdits(patch, [&] { return WriteConfigAtomically(configPath, serializedSettings); }))
+		if (!WriteConfigAtomically(configPath, serializedSettings))
 			return false;
 		if (!savedSettingsSnapshot.is_null()) {
 			savedSettingsSnapshot["personal"].merge_patch(patch);

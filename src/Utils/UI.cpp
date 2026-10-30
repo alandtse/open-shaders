@@ -1155,7 +1155,7 @@ namespace Util
 	void DrawHdrSdrCapabilityPill(bool a_supportsHDR)
 	{
 		const ImVec2 cursor = ImGui::GetCursorScreenPos();
-		const float lineH = ImGui::GetTextLineHeight();
+		const float lineH = ImGui::GetFrameHeight();
 		DrawHdrSdrCapabilityPillAt(cursor, lineH, a_supportsHDR);
 		ImGui::Dummy(ImVec2(MeasureHdrSdrCapabilityPillWidth(a_supportsHDR), lineH));
 	}
@@ -2726,7 +2726,15 @@ namespace Util
 		return categoryIcon;
 	}
 
-	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded)
+	float GetSelectableTextInset()
+	{
+		const auto& style = ImGui::GetStyle();
+		const auto& surface = Surface::Get(Surface::Role::NavSelected);
+		const float accentSpace = surface.enabled && surface.accentBar ? surface.accentBarWidth * GetUIScale() + style.ItemInnerSpacing.x : 0.0f;
+		return std::max(style.FramePadding.x, accentSpace);
+	}
+
+	bool DrawCategoryHeader(const char* categoryKey, const char* displayName, bool& isExpanded, int categoryCount)
 	{
 		// Get the appropriate icon for this category
 		ID3D11ShaderResourceView* categoryIcon = GetCategoryIcon(categoryKey);
@@ -2744,7 +2752,7 @@ namespace Util
 		const float iconSpacing = currentFontSize * C::SECTION_ICON_SPACING_SCALE;
 		const ImVec2 textSize = ImGui::CalcTextSize(displayName);
 
-		// Left-aligned label row: icon, secondary-coloured name, then a faint rule to the right edge
+		// Left-aligned icon, label, dimmed count and trailing rule.
 		const float scale = Util::GetUIScale();
 
 		ImGui::PushID(categoryKey);
@@ -2758,9 +2766,11 @@ namespace Util
 		ImVec4 color = Util::Colors::GetSecondary();
 		if (!isExpanded)
 			color.w *= ThemeManager::Constants::CATEGORY_HEADER_COLLAPSED_ALPHA;
-		const float hover = Anim::ItemBlend(ImGui::GetItemID(), hovered, ImGui::IsItemActive(), false).hover;
-		color = Anim::Lerp(color, ImGui::GetStyleColorVec4(ImGuiCol_Text), hover);
+		if (hovered)
+			color = ImGui::GetStyleColorVec4(ImGuiCol_Text);
 		const ImU32 headerColor = ImGui::GetColorU32(color);
+		ImVec4 countColor = color;
+		countColor.w *= ThemeManager::Constants::CATEGORY_HEADER_COUNT_ALPHA;
 
 		const float padX = ImGui::GetStyle().FramePadding.x;
 		float currentX = pos.x + std::max(ImGui::GetStyle().ItemInnerSpacing.x, ThemeManager::Constants::ANIM_SELECTED_BAR_WIDTH * scale);
@@ -2771,6 +2781,9 @@ namespace Util
 		}
 		drawList->AddText(ImVec2(currentX, pos.y), headerColor, displayName);
 		currentX += textSize.x + iconSpacing;
+		const std::string countText = std::format("{}", categoryCount);
+		drawList->AddText(ImVec2(currentX, pos.y), ImGui::GetColorU32(countColor), countText.c_str());
+		currentX += ImGui::CalcTextSize(countText.c_str()).x + iconSpacing;
 
 		const float lineY = pos.y + textSize.y * 0.5f;
 		if (currentX < pos.x + availableWidth - padX) {

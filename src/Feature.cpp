@@ -17,7 +17,6 @@
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
-#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
@@ -61,7 +60,6 @@
 #include "Features/Wind/Wind.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Format.h"
@@ -304,7 +302,6 @@ namespace
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
 			&globals::features::wind,
-			&globals::features::featureOverwrites,
 			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,
@@ -560,109 +557,12 @@ bool Feature::ToggleAtBootSetting()
 
 bool Feature::ReapplyOverrideSettings()
 {
-	auto overrideManager = SettingsOverrideManager::GetSingleton();
-	std::string featureName = GetShortName();
-
-	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName)) {
-		return false;
-	}
-
-	// Delete user override file to restore original override behavior
-	overrideManager->DeleteUserOverride(featureName);
-
-	// Get base settings and apply overrides fresh
-	json featureJson;
-	SaveSettings(featureJson);
-	json previousJson = featureJson;  // LoadSettings takes a non-const reference
-
-	// Apply overrides to the settings (without user customizations)
-	size_t appliedCount = overrideManager->ReapplyFeatureOverrides(featureName, featureJson);
-
-	if (appliedCount > 0) {
-		// Load the override settings back into the feature. A malformed override throws from
-		// LoadSettings, possibly after some fields were already applied, so restore the previous values.
-		try {
-			LoadSettings(featureJson);
-			return true;
-		} catch (const std::exception& e) {
-			logger::warn("Failed to reapply override settings for {}, keeping previous settings. Error: {}", featureName, e.what());
-			try {
-				LoadSettings(previousJson);
-			} catch (...) {
-				logger::warn("Failed to restore previous settings for {}, using default.", featureName);
-				RestoreDefaultSettings();
-			}
-			return false;
-		}
-	}
-
-	return false;
+	return globals::state->ClearFeatureEditsUnderBaselines(this);
 }
 
-bool Feature::ReapplyOverrideSettingsForKeys(std::span<const std::string_view> a_settingKeys)
+bool Feature::ReapplyOverrideSettingsForKeys(std::span<const std::string_view> settingKeys)
 {
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	const std::string featureName = GetShortName();
-	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName))
-		return false;
-
-	const auto featureOverrides = overrideManager->GetFeatureOverrides(featureName);
-	const auto isOverridden = [&](std::string_view a_key) {
-		const std::string key{ a_key };
-		for (const auto* featureOverride : featureOverrides) {
-			if (featureOverride->enabled && featureOverride->overrideData.contains(key))
-				return true;
-		}
-		return false;
-	};
-
-	json originalSettings;
-	SaveSettings(originalSettings);
-	json currentSettings = originalSettings;
-	json mergedSettings = originalSettings;
-	if (overrideManager->ReapplyFeatureOverrides(featureName, mergedSettings) == 0)
-		return false;
-
-	bool applied = false;
-	for (const auto keyView : a_settingKeys) {
-		const std::string key{ keyView };
-		if (!isOverridden(keyView) || !mergedSettings.contains(key))
-			continue;
-		currentSettings[key] = mergedSettings[key];
-		applied = true;
-	}
-	if (!applied)
-		return false;
-
-	json overrideSettings;
-	bool persistenceAttempted = false;
-	try {
-		LoadSettings(currentSettings);
-		json appliedSettings;
-		SaveSettings(appliedSettings);
-		overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-		persistenceAttempted = true;
-		if (overrideManager->PersistUserOverride(featureName, appliedSettings, overrideSettings))
-			return true;
-		logger::warn("Failed to persist scoped override settings for {}", featureName);
-	} catch (const std::exception& e) {
-		logger::warn("Failed to apply scoped override settings for {}. Error: {}", featureName, e.what());
-	}
-
-	try {
-		LoadSettings(originalSettings);
-	} catch (const std::exception& e) {
-		logger::error("Failed to roll back scoped override settings for {}. Error: {}", featureName, e.what());
-	}
-	if (persistenceAttempted) {
-		try {
-			if (!overrideManager->PersistUserOverride(featureName, originalSettings, overrideSettings))
-				logger::error("Failed to roll back persisted override settings for {}", featureName);
-		} catch (const std::exception& e) {
-			logger::error("Failed to roll back persisted override settings for {}. Error: {}", featureName, e.what());
-		}
-	}
-	return false;
+	return globals::state->ClearFeatureEditsUnderBaselines(this, settingKeys);
 }
 
 std::string Feature::GetDisplayCategory() const

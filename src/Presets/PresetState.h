@@ -20,6 +20,23 @@ namespace PresetState
 	inline constexpr const char* kFeatureSettingsVersionKey = "featureSettingsVersion";
 	inline constexpr int kFeatureSettingsVersion = 1;
 	inline constexpr const char* kNormalizedFeatureNamesKey = "normalizedFeatureNames";
+	inline constexpr std::array kPrivateKeys{
+		"featureSettingsVersion", "normalizedFeatureNames", "legacyUserOverrideFeatures", "legacyBootOverridesImported",
+		"removedLegacyPackIds", "knownBaselinePackIds", "disabledBaselinePackIds", "enabledScenePackIds",
+		"disabledScenePackIds", "knownScenePackIds", "automaticPresets", "lastSharedActivePackId", "lastSharedBaselinePackIds", "baseSettingsOrderCustomized", "baselinePackOrder"
+	};
+
+	/** @brief Restores OS-only fields omitted by an upstream preset-state save. */
+	inline nlohmann::json RestorePrivateState(nlohmann::json state, const nlohmann::json& saved)
+	{
+		if (!state.is_object())
+			state = nlohmann::json::object();
+		if (saved.is_object())
+			for (const auto key : kPrivateKeys)
+				if (!state.contains(key) && saved.contains(key))
+					state[key] = saved.at(key);
+		return state;
+	}
 
 	/** @brief Whether this feature's fields are normalized edits instead of unmigrated legacy settings. */
 	inline bool HasNormalizedFeatureEdits(const nlohmann::json& state, std::string_view featureName)
@@ -102,6 +119,96 @@ namespace PresetState
 					std::ranges::find(ids, id.get_ref<const std::string&>()) == ids.end())
 					ids.push_back(id.get<std::string>());
 		result["baselinePackIds"] = std::move(ids);
+		return result;
+	}
+
+	/** @brief Reads distinct valid pack identifiers from a preference array. */
+	inline std::vector<std::string> ReadIds(const nlohmann::json& state, const char* key)
+	{
+		std::vector<std::string> result;
+		const auto values = state.find(key);
+		if (values != state.end() && values->is_array())
+			for (const auto& value : *values)
+				if (value.is_string() && IsCatalogId(value.get_ref<const std::string&>()) && !value.get_ref<const std::string&>().empty() &&
+					std::ranges::find(result, value.get_ref<const std::string&>()) == result.end())
+					result.push_back(value.get<std::string>());
+		return result;
+	}
+
+	/** @brief Records an explicit disabled choice without duplicate preference entries. */
+	inline void SetDisabled(nlohmann::json& state, const char* key, const std::string& id, bool disabled)
+	{
+		auto ids = ReadIds(state, key);
+		std::erase(ids, id);
+		if (disabled)
+			ids.push_back(id);
+		state[key] = std::move(ids);
+	}
+
+	/** @brief Enables overlapping Base Settings in application order unless explicitly disabled. */
+	inline nlohmann::json DiscoverBaselines(const nlohmann::json& state, std::span<const std::string> discovered, bool automatic = true)
+	{
+		auto result = Normalize(state);
+		auto disabled = ReadIds(result, "disabledBaselinePackIds");
+		const auto previous = ReadIds(result, "baselinePackIds");
+		if (!result.contains("disabledBaselinePackIds"))
+			for (const auto& id : ReadIds(result, "knownBaselinePackIds"))
+				if (std::ranges::find(previous, id) == previous.end())
+					disabled.push_back(id);
+		result["disabledBaselinePackIds"] = disabled;
+		std::vector<std::string> enabled;
+		const bool customized = result.value("baseSettingsOrderCustomized", nlohmann::json(false)) == true;
+		if (customized)
+			for (const auto& id : previous)
+				if (std::ranges::find(disabled, id) == disabled.end())
+					enabled.push_back(id);
+		for (const auto& id : discovered)
+			if ((automatic || std::ranges::find(previous, id) != previous.end()) && IsPackId(id) &&
+				std::ranges::find(disabled, id) == disabled.end() && std::ranges::find(enabled, id) == enabled.end())
+				enabled.push_back(id);
+		if (!customized)
+			for (const auto& id : previous)
+				if (std::ranges::find(discovered, id) == discovered.end() && std::ranges::find(disabled, id) == disabled.end())
+					enabled.push_back(id);
+		result["baselinePackIds"] = std::move(enabled);
+		auto known = ReadIds(result, "knownBaselinePackIds");
+		for (const auto& id : discovered)
+			if (IsPackId(id) && std::ranges::find(known, id) == known.end())
+				known.push_back(id);
+		result["knownBaselinePackIds"] = std::move(known);
+		return result;
+	}
+
+	/** @brief Orders enabled Base Settings without discarding selections whose files are temporarily absent. */
+	inline std::vector<std::string> OrderEnabledBaselines(std::span<const std::string> order, std::span<const std::string> enabled)
+	{
+		std::vector<std::string> result;
+		for (const auto& id : order)
+			if (std::ranges::find(enabled, id) != enabled.end())
+				result.push_back(id);
+		for (const auto& id : enabled)
+			if (std::ranges::find(result, id) == result.end())
+				result.push_back(id);
+		return result;
+	}
+
+	/** @brief Keeps disabled presets in their priority slots while accepting upstream changes to enabled order. */
+	inline std::vector<std::string> RetainBaselineOrder(std::span<const std::string> previous, std::span<const std::string> enabled,
+		std::span<const std::string> discovered, bool customized)
+	{
+		std::vector<std::string> result;
+		for (const auto source : { customized ? previous : discovered, discovered })
+			for (const auto& id : source)
+				if (std::ranges::find(discovered, id) != discovered.end() && std::ranges::find(result, id) == result.end())
+					result.push_back(id);
+		std::vector<std::string> active;
+		for (const auto& id : enabled)
+			if (std::ranges::find(result, id) != result.end())
+				active.push_back(id);
+		size_t index = 0;
+		for (auto& id : result)
+			if (std::ranges::find(active, id) != active.end())
+				id = active[index++];
 		return result;
 	}
 

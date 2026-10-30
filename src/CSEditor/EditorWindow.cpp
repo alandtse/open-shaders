@@ -18,9 +18,9 @@
 #include "Menu/Icons/helpers/WeatherTypeIcons.h"
 #include "Menu/MenuHeaderRenderer.h"
 #include "Menu/MenuIcons.h"
+#include "Menu/Presets/PresetExportPanel.h"
 #include "PaletteWindow.h"
 #include "SaveManager.h"
-#include "SceneManager/ScenePresetExport.h"
 #include "SceneManager/SceneSettingsManager.h"
 #include "SceneManager/SceneSettingsUI.h"
 #include "State.h"
@@ -458,6 +458,14 @@ void EditorWindow::DrawBrowserHeader()
 	modeButton(T(TKEY("os_menu"), "OS Menu"), BrowserMode::Menu);
 }
 
+void EditorWindow::ShowMenuBrowser()
+{
+	widgetsHidden = false;
+	RequestBrowserMode(BrowserMode::Menu);
+	m_focusBrowser = true;
+	BackgroundBlur::SetCSEditorActive(IsViewportActive());
+}
+
 void EditorWindow::ShowObjectsWindow()
 {
 	if (std::exchange(m_focusBrowser, false))
@@ -864,8 +872,8 @@ void EditorWindow::RenderUI()
 	if (CanUseEditorShortcuts()) {
 		if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
 			if (io.KeyShift) {
-				if (ScenePresetExport::CanExport())
-					ScenePresetExport::Open();
+				if (PresetExportPanel::CanExport())
+					PresetExportPanel::Open();
 			} else {
 				SaveManager::SaveEditor(SaveManager::Trigger::User);
 			}
@@ -952,10 +960,10 @@ void EditorWindow::RenderUI()
 
 				ImGui::Separator();
 
-				const bool canExport = ScenePresetExport::CanExport();
+				const bool canExport = PresetExportPanel::CanExport();
 				if (MenuItemWithShortcutSubtext(T(TKEY("export_preset"), "Export Preset..."), "Ctrl+Shift+S", canExport))
-					ScenePresetExport::Open();
-				Util::AddTooltip(ScenePresetExport::GetSummary(), Util::kTooltipWhenDisabled);
+					PresetExportPanel::Open();
+				Util::AddTooltip(PresetExportPanel::GetSummary(), Util::kTooltipWhenDisabled);
 
 				ImGui::Separator();
 				for (auto* collection : GetWidgetCollections())
@@ -1117,17 +1125,16 @@ void EditorWindow::RenderUI()
 				Util::AddTooltip(SaveManager::GetEditorSaveTooltip(unsaved));
 			}
 
-			// Export preset: the one on-screen entry to the universal export dialog. It covers every
-			// context, so it sits with the other editor-wide actions instead of on each scene page.
+			// Export opens the shared Presets page without leaving the editor.
 			ImGui::SameLine(0.0f, style.ItemSpacing.x);
 			{
-				const bool canExport = ScenePresetExport::CanExport();
+				const bool canExport = PresetExportPanel::CanExport();
 				ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, iconY));
 				if (DrawBarIconButton("##GlobalExportPreset", SceneActionIcons::kExport, canExport, textColor, statusPalette.Disable, iconButtonSize))
-					ScenePresetExport::Open();
+					PresetExportPanel::Open();
 				const std::string exportTooltip = std::format("{} (Ctrl+Shift+S)\n{}", T(TKEY("export_preset"), "Export Preset..."),
 					canExport ?
-						ScenePresetExport::GetSummary() :
+						PresetExportPanel::GetSummary() :
 						T(TKEY("export_preset_empty_tooltip"), "Nothing to export yet: author scene settings, save form edits, or load Post Processing or an Effects 11 preset first."));
 				Util::AddTooltip(exportTooltip.c_str(), Util::kTooltipWhenDisabled);
 			}

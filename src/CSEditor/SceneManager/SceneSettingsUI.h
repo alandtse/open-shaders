@@ -65,6 +65,11 @@ namespace SceneSettingsUI
 	bool OpenCurrentLocationForSetting(const std::string& featureShortName,
 		const std::vector<std::string>& settingPath, const std::string& settingKey);
 
+	/** @brief Selects a weather using the shared current/configured scene list. */
+	bool DrawWeatherTargetPicker(RE::FormID& selected, float& scroll);
+	/** @brief Selects a location using the shared current/configured scene list. */
+	bool DrawLocationTargetPicker(std::optional<SceneSettingsManager::LocationTarget>& selected, float& scroll);
+
 	/** @brief The undo target for the user's scene settings, every context at once. */
 	UndoHistory::Target MakeUndoTarget();
 }

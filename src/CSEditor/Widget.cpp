@@ -271,11 +271,6 @@ bool Widget::BeginWidgetWindow(bool showApply, bool showSaveLoadRevert, bool sho
 	// Weather type icon sits left of the title via drawLeading (standalone icon fonts).
 	const auto typeIcon = WeatherTypeIcons::Resolve(weather);
 	const bool hasLeadingIcon = typeIcon.has_value();
-	const float borderSize = std::min(ThemeManager::Constants::EDITOR_WIDGET_BORDER_MAX,
-		std::max(ThemeManager::Constants::EDITOR_WIDGET_BORDER_MIN, globals::menu->GetTheme().WidgetBorderSize));
-	ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, std::max(ThemeManager::Constants::EDITOR_WIDGET_BORDER_MIN, borderSize * Util::GetUIScale()));
-	const SKSE::stl::scope_exit restoreBorder([] { ImGui::PopStyleVar(); });
-
 	bool result = Util::BeginWithCustomHeader(title.c_str(), &open, [this, showApply, showSaveLoadRevert, showForceWeather, weather, searchId]() { m_customHeaderActionsDrawn = DrawTitleBarActions(showApply, showSaveLoadRevert, showForceWeather, weather, true, searchId); }, ImGuiWindowFlags_NoSavedSettings | kStickyHeaderFlags, hasLeadingIcon ? [typeIcon](ImVec2 iconMin, float iconSize) { WeatherTypeIcons::Draw(typeIcon, ImGui::GetWindowDrawList(), iconMin, iconSize,
 																																																																																																		   ImGui::GetColorU32(ImGuiCol_Text)); } : std::function<void(ImVec2, float)>{});
 	UpdateWidgetTypeSize(GetWidgetTypeName());

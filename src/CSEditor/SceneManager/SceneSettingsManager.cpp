@@ -11,6 +11,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 #include "Utils/SettingsCatalog.h"
 
 #include <algorithm>
@@ -598,7 +599,7 @@ void SceneSettingsManager::MarkEntryListUserSettingsModified(SceneType type)
 
 bool SceneSettingsManager::IsEntryActive(const SettingEntry& entry) const
 {
-	return !entry.paused;
+	return !entry.paused && !IsFeaturePaused(entry.featureShortName);
 }
 
 bool SceneSettingsManager::HasDuplicateEntry(SceneType type, const std::string& featureShortName,
@@ -749,6 +750,65 @@ bool SceneSettingsManager::HasAnySceneEntriesForFeature(const std::string& featu
 	return configuredFeatureNamesCache.contains(featureShortName);
 }
 
+bool SceneSettingsManager::HasCurrentSceneSettingsForFeature(const std::string& featureShortName) const
+{
+	if (HasActiveSettingsForFeature(featureShortName))
+		return true;
+	if (!IsFeaturePaused(featureShortName))
+		return false;
+	const auto hasResumableEntry = [&](const auto& sourceEntries, SceneType type, const PeriodicSceneConfig* config = nullptr) {
+		return std::ranges::any_of(sourceEntries, [&](const auto& entry) {
+			if (entry.featureShortName != featureShortName || entry.paused ||
+				(config && !config->IsPeriodActive(entry.period)) ||
+				!IsSettingAllowedForType(type, entry.featureShortName, entry.settingPath, entry.settingKey))
+				return false;
+			if (type == SceneType::TimeOfDay && (!IsNumericValue(entry.value) ||
+													(!config && (entry.period < TimeOfDayPeriod::Dawn || entry.period >= TimeOfDayPeriod::Count))))
+				return false;
+			return !IsNumericValue(entry.value) || std::isfinite(entry.value.template get<double>());
+		});
+	};
+	if (Util::IsInterior()) {
+		if (hasResumableEntry(GetEntries(SceneType::InteriorOnly), SceneType::InteriorOnly))
+			return true;
+	} else {
+		if (hasResumableEntry(GetEntries(SceneType::TimeOfDay), SceneType::TimeOfDay))
+			return true;
+		if (const auto* sky = globals::game::sky) {
+			const auto weatherLerp = Util::ClampFinite(sky->currentWeatherPct, 0.0f, 1.0f, 0.0f);
+			for (const auto weatherId : { sky->currentWeather ? sky->currentWeather->GetFormID() : 0, GetEffectivePreviousWeatherId(sky, weatherLerp) }) {
+				const auto config = weatherSceneConfigs.find(weatherId);
+				if (config != weatherSceneConfigs.end() && hasResumableEntry(config->second.entries, SceneType::TimeOfDay, &config->second))
+					return true;
+			}
+		}
+	}
+	for (const auto& target : GetCurrentLocationTargets()) {
+		const auto config = locationSceneConfigs.find(GetLocationConfigKey(target.type, target.formKey));
+		if (config != locationSceneConfigs.end() && hasResumableEntry(config->second.entries, SceneType::Location, &config->second))
+			return true;
+	}
+	return false;
+}
+
+bool SceneSettingsManager::IsFeaturePaused(const std::string& featureShortName) const
+{
+	return featurePauseStates.contains(featureShortName);
+}
+
+void SceneSettingsManager::SetFeaturePaused(const std::string& featureShortName, bool paused)
+{
+	if (paused)
+		featurePauseStates.insert(featureShortName);
+	else
+		featurePauseStates.erase(featureShortName);
+	++sceneValueRevision;
+	BumpEntryPresentationRevision();
+	activeEntryCacheDirty = true;
+	locationOverridesDirty = true;
+	ReapplyIfActive();
+}
+
 bool SceneSettingsManager::IsActiveSceneSetting(std::string_view featureShortName,
 	std::string_view settingPath, std::string_view settingKey) const
 {
@@ -763,14 +823,16 @@ bool SceneSettingsManager::IsActiveSceneSetting(const std::string& featureShortN
 	if (applied == appliedSettings.end())
 		return false;
 	const auto baseline = baselineSettings.find(address);
-	return baseline == baselineSettings.end() || !AppliedValuesEqual(applied->second, baseline->second);
+	return baseline == baselineSettings.end() || !AppliedValuesEqual(applied->second, baseline->second) ||
+	       FindWinningContext(address).has_value();
 }
 
 bool SceneSettingsManager::IsFeatureOverridingBase(const std::string& featureShortName) const
 {
 	return std::ranges::any_of(appliedSettings, [&](const auto& item) {
+		const auto baseline = baselineSettings.find(item.first);
 		return item.first.featureShortName == featureShortName &&
-		       IsActiveSceneSetting(item.first.featureShortName, item.first.settingPath, item.first.settingKey);
+		       (baseline == baselineSettings.end() || !AppliedValuesEqual(item.second, baseline->second));
 	});
 }
 

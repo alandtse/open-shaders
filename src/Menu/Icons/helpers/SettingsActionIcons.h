@@ -8,7 +8,7 @@ namespace SettingsActionIcons
 {
 	inline constexpr Icons::GlyphRef kRestoreDefaults = Icons::TI(ICON_TI_ERASER);
 	inline constexpr Icons::GlyphRef kRestoreSaved = Icons::TI(ICON_TI_RESTORE);
-	inline constexpr Icons::GlyphRef kReapplyOverride = Icons::TI(ICON_TI_REFRESH);
+	inline constexpr Icons::GlyphRef kReapplyOverride = Icons::TI(ICON_TI_ARROWS_EXCHANGE);
 	inline constexpr Icons::GlyphRef kClearCache = Icons::TI(ICON_TI_DATABASE_X);
 	inline constexpr Icons::GlyphRef kClearActiveShaders = Icons::TI(ICON_TI_DATABASE_MINUS);
 }

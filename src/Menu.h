@@ -68,7 +68,7 @@ public:
 	enum class FontRole : std::uint8_t
 	{
 		Body = 0,    // Default UI text
-		Title,       // Large title text (e.g., "Open Shaders" header)
+		Title,       // Feature and page titles
 		Heading,     // Section headers (tabs, category labels)
 		Subheading,  // Subsection headers (feature names, separators)
 		Subtext,     // Smaller secondary text (descriptions, about content)
@@ -434,7 +434,6 @@ public:
 			float ThumbActive = 0.9f;    // Thumb when being dragged
 		} ScrollbarOpacity;
 		Util::Surface::Settings Surfaces;  // per-role look of the menu's flat surfaces (Home cards, toasts, palette, nav)
-		float WidgetBorderSize = ThemeManager::Constants::EDITOR_WIDGET_BORDER_MIN;
 		struct PaletteColors
 		{
 			ImVec4 Background{ 0.10f, 0.10f, 0.10f, 0.80f };

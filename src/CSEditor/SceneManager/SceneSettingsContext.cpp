@@ -1,11 +1,9 @@
 #include "SceneSettingsManager.h"
 
 #include "Feature.h"
-#include "PresetExportTransaction.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsInternal.h"
 #include "SceneSettingsLocationTargets.h"
-#include "SceneSettingsOverwrites.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Game.h"
 #include "Utils/SettingsCatalog.h"
@@ -715,92 +713,6 @@ SceneSettingsManager::EntryLayerFileResult SceneSettingsManager::DeleteEntryLaye
 		CommitSceneSettingChanges();
 	}
 	return result;
-}
-
-SceneSettingsManager::EntryLayerFileResult SceneSettingsManager::ExportEntryLayerToOverwrites(
-	std::string_view modName, EntrySource source, const EntryLayerScope& scope)
-try {
-	using namespace SceneSettingsOverwrites;
-	EntryLayerFileResult result;
-	const auto safeName = Util::FileHelpers::SanitizeFileName(std::string(modName));
-	if (HasPendingContextEdit()) {
-		result.error = EntryLayerFileResult::Error::PendingEdit;
-		return result;
-	}
-	if (safeName.empty() || IsReservedPresetName(safeName)) {
-		result.error = EntryLayerFileResult::Error::InvalidName;
-		return result;
-	}
-	const auto root = Util::PathHelpers::GetSceneSettingsPath();
-	PresetExportTransaction transaction(root);
-	if (!transaction.Prepare()) {
-		result.failed = 1;
-		return result;
-	}
-	struct ExportFile
-	{
-		std::string feature;
-		std::string description;
-		json metadata = json::object();
-		std::vector<const SettingEntry*> entries;
-	};
-	std::map<std::filesystem::path, ExportFile> files;
-	const bool loaded = VisitEntryLayers(scope, [&](const SceneContextId& context, const std::vector<SettingEntry>& sourceEntries) {
-		std::filesystem::path directory;
-		std::string label;
-		json metadata = json::object();
-		switch (context.type) {
-		case SceneContextType::Interior:
-			directory = GetOverwritesPath(SceneType::InteriorOnly, transaction.Root());
-			label = "Interior Only";
-			break;
-		case SceneContextType::TimeOfDay:
-			directory = GetOverwritesPath(SceneType::TimeOfDay, transaction.Root());
-			label = "Time of Day";
-			break;
-		case SceneContextType::Weather:
-			directory = GetWeatherOverwritesDir(transaction.Root()) / Util::FormIdToSpid(context.weatherId);
-			label = "Weather";
-			metadata[kTimeOfDayEnabledKey] = weatherSceneConfigs.at(context.weatherId).timeOfDayEnabled;
-			break;
-		case SceneContextType::Location:
-			{
-				const auto& config = GetLocationConfig(context.locationType, context.locationFormKey);
-				directory = GetLocationOverwritesDir(transaction.Root()) / context.locationFormKey;
-				label = GetLocationTargetTypeName(context.locationType);
-				metadata = { { kTimeOfDayEnabledKey, config.timeOfDayEnabled }, { "targetType", label },
-					{ "targetName", config.name }, { "coc", config.cocCode } };
-				break;
-			}
-		}
-		for (const auto& entry : sourceEntries) {
-			if (entry.source != source)
-				continue;
-			const auto path = GetOverwriteDir(directory, entry.period) / std::format("{}_{}.json", safeName, entry.featureShortName);
-			auto& file = files[path];
-			file.feature = entry.featureShortName;
-			file.description = GetOverwriteTypeDescription(label, entry.period);
-			file.metadata = metadata;
-			file.entries.push_back(&entry);
-		}
-	});
-	if (!loaded) {
-		result.error = EntryLayerFileResult::Error::DataUnavailable;
-		return result;
-	}
-	for (const auto& [path, file] : files)
-		if (!WriteGroupedOverwriteFile(transaction.Root(), path, file.feature, file.description, file.entries, file.metadata))
-			++result.failed;
-	if (result.failed || !transaction.Commit()) {
-		result.failed = std::max(result.failed, size_t{ 1 });
-		return result;
-	}
-	result.written = files.size();
-	ReloadOverwrites();
-	return result;
-} catch (const std::exception& error) {
-	logger::error("[SceneSettings] Scene layer export failed: {}", error.what());
-	return { .failed = 1 };
 }
 
 std::optional<size_t> SceneSettingsManager::FindContextUserEntry(const SceneContextId& context,

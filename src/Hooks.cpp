@@ -311,11 +311,11 @@ namespace GrassExtensions
 
 	struct BSMultiStreamInstanceTriShape_dtor
 	{
-		static void thunk(RE::BSMultiStreamInstanceTriShape* shape)
+		static RE::BSMultiStreamInstanceTriShape* thunk(RE::BSMultiStreamInstanceTriShape* shape, std::uint32_t flags)
 		{
 			for (auto* feature : Feature::GetGrassMeshHookFeatures())
 				feature->OnGrassMeshDestroyed(shape);
-			func(shape);
+			return func(shape, flags);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

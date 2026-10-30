@@ -27,7 +27,6 @@
 #include "SceneSettingsUI.h"
 #include "SceneTransitionField.h"
 #include "SceneWidgetInterceptor.h"
-#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Utils/Game.h"
 #include "Utils/SettingsCatalog.h"
@@ -480,30 +479,6 @@ namespace
 		return FindStateLayerValue(a_setting, &State::GetFeatureBase);
 	}
 
-	Util::Settings::OverwriteValue FindOverwriteValue(const SettingMetadata& setting, const json*& applied)
-	{
-		const std::string shortName{ setting.featureShortName };
-		auto* feature = Feature::FindFeatureByShortName(shortName);
-		if (!feature)
-			return {};
-		auto* overwrites = SettingsOverrideManager::GetSingleton();
-		const auto featureName = feature->GetName();
-		const auto read = [&](const json* values, bool global) -> const json* {
-			if (values && global) {
-				const auto found = values->find(featureName);
-				values = found != values->end() ? &*found : nullptr;
-			}
-			return values ? SceneSettingsInternal::GetCatalogSerializedValue(*values, setting) : nullptr;
-		};
-		const auto source = Util::Settings::ResolveOverwriteValue(
-			read(overwrites->GetOverrideSettings("Global"), true),
-			read(overwrites->GetUserOverrideSettings("Global"), true),
-			read(overwrites->GetOverrideSettings(shortName), false),
-			read(overwrites->GetUserOverrideSettings(shortName), false));
-		if (source.installed)
-			applied = read(&overwrites->GetAppliedSettings(), true);
-		return source;
-	}
 }
 
 SceneWidgetBinding::HideBaselineScenePresentationGuard::HideBaselineScenePresentationGuard() :
@@ -690,9 +665,12 @@ void SceneWidgetBinding::Guard::BindBaseline()
 	}
 
 	baselineLayer = ResolveBaselineLayer(baselinePackId);
-	const auto* proxy = SceneWidgetInterceptor::GetArmedProxy();
-	ownsActionFlyout = !baselineScenePresentationHidden && IsSceneBaselineLayer(baselineLayer) &&
-	                   (policy == GutterPolicy::Owner || ClaimGutter(proxy ? proxy->member : value.data));
+	if (IsSceneBaselineLayer(baselineLayer)) {
+		replicaReadOnly = true;
+		boundToHolding = true;
+		std::memcpy(holding.bytes, preCall.bytes, valueSize);
+		OpenDisabled();
+	}
 
 	if (const auto tint = ResolveBaselineColor()) {
 		Util::PushTintedFrameStyle(*tint);
@@ -719,17 +697,7 @@ SceneWidgetBinding::BaselineLayer SceneWidgetBinding::Guard::ResolveBaselineLaye
 		return BaselineLayer::Scene;
 
 	bool fromPack = false;
-	bool fromOverwrite = false;
 	for (const auto& component : components) {
-		const json* applied = nullptr;
-		const auto overwrite = FindOverwriteValue(*component.setting, applied);
-		if (overwrite.installed) {
-			if (overwrite.user || ImGui::GetActiveID() == ImGui::GetID(label) ||
-				!SceneSettingsManager::AppliedValuesEqual(applied ? *applied : *overwrite.installed, ReadEditedValue(component)))
-				return BaselineLayer::EditedOverwrite;
-			fromOverwrite = true;
-			continue;
-		}
 		std::string packId;
 		const auto* packValue = FindBaselineValue(*component.setting, packId);
 		const auto* beneath = packValue ? packValue : FindLayeredBaseValue(*component.setting);
@@ -741,8 +709,6 @@ SceneWidgetBinding::BaselineLayer SceneWidgetBinding::Guard::ResolveBaselineLaye
 			return BaselineLayer::Edited;
 		fromPack |= packValue != nullptr;
 	}
-	if (fromOverwrite)
-		return BaselineLayer::Overwrite;
 	return fromPack ? BaselineLayer::Pack : BaselineLayer::Base;
 }
 
@@ -752,10 +718,8 @@ std::optional<ImVec4> SceneWidgetBinding::Guard::ResolveBaselineColor() const
 		return std::nullopt;
 	switch (baselineLayer) {
 	case BaselineLayer::Pack:
-	case BaselineLayer::Overwrite:
 		return Util::Colors::GetWarning();
 	case BaselineLayer::Edited:
-	case BaselineLayer::EditedOverwrite:
 	case BaselineLayer::Sketch:
 		return Util::Colors::GetSuccess();
 	case BaselineLayer::Scene:
@@ -773,10 +737,6 @@ std::string SceneWidgetBinding::Guard::ResolveBaselineTooltip() const
 	case BaselineLayer::Pack:
 		return std::vformat(T(TKEY("baseline_from_named_pack"), "Base Settings: {}. This preset supplies the value."),
 			std::make_format_args(baselinePackId));
-	case BaselineLayer::Overwrite:
-		return T(TKEY("baseline_from_overwrite"), "Feature Override: an installed overwrite file supplies this value.");
-	case BaselineLayer::EditedOverwrite:
-		return T(TKEY("baseline_edited_over_overwrite"), "Edited: your customization takes priority over the overwrite file.");
 	case BaselineLayer::Edited:
 		if (baselinePackId.empty())
 			return T(TKEY("baseline_edited"), "Edited: your change from the default. Save Settings keeps it; Restore Defaults clears it.");
@@ -785,8 +745,7 @@ std::string SceneWidgetBinding::Guard::ResolveBaselineTooltip() const
 			std::make_format_args(baselinePackId));
 	case BaselineLayer::Scene:
 		return T(TKEY("baseline_from_scene"),
-			"A Scene Manager preset supplies this value here. Editing sketches over it until you leave "
-			"this feature or close the menu.");
+			"Scene Manager supplies this value. Open the Scene Manager toolbar to edit scene settings.");
 	case BaselineLayer::Sketch:
 		return T(TKEY("baseline_sketch"),
 			"Sketched over the Scene Manager's value. It is kept as your base setting, but the scene's "
@@ -801,30 +760,6 @@ void SceneWidgetBinding::Guard::ReportSettingHint(std::string message) const
 	if (!ImGui::IsItemHovered(Util::kTooltipWhenDisabled))
 		return;
 	FeatureListRenderer::SetSettingHint(std::move(message));
-}
-
-void SceneWidgetBinding::Guard::DrawBaselineGutter()
-{
-	auto* manager = SceneSettingsManager::GetSingleton();
-	ImGui::PushID(label);
-
-	if (baselineLayer == BaselineLayer::Scene) {
-		if (ImGui::ArrowButton("##SceneJump", ImGuiDir_Right))
-			if (const auto context = manager->FindWinningContext(identity))
-				SceneSettingsUI::OpenSceneContext(*context, identity.featureShortName);
-		Util::AddTooltip(T(TKEY("baseline_jump_tooltip"), "Open the Scene Manager page supplying this value."));
-	} else {
-		const bool committed = Icons::Button("##SketchCommit", SceneActionIcons::kSave);
-		if (committed) {
-			std::vector<SceneSettingsManager::SettingIdentity> sketched;
-			for (const auto& component : components)
-				sketched.push_back(ComponentIdentity(component));
-			manager->CommitSketches(sketched);
-		}
-		Util::AddTooltip(T(TKEY("baseline_commit_tooltip"),
-			"Write this value into the Scene Manager preset supplying it, and restore your base setting."));
-	}
-	ImGui::PopID();
 }
 
 void SceneWidgetBinding::Guard::ResolveState()
@@ -1290,11 +1225,6 @@ const json* SceneWidgetBinding::Guard::FindResetValue(const Component& component
 	switch (source) {
 	case ResetSource::Defaults:
 		return FindStateLayerValue(*component.setting, &::State::GetFeatureDefaults);
-	case ResetSource::Overwrite:
-		{
-			const json* applied = nullptr;
-			return FindOverwriteValue(*component.setting, applied).installed;
-		}
 	case ResetSource::BaseSettings:
 		{
 			std::string packId;
@@ -1335,7 +1265,6 @@ bool SceneWidgetBinding::Guard::DrawBaselineContextMenu()
 	if (ImGui::BeginPopup("##BaselineDefaultMenu")) {
 		const std::array resetSources{
 			std::pair{ ResetSource::Defaults, T("menu.settings.reset_to_default", "Reset to default") },
-			std::pair{ ResetSource::Overwrite, T("menu.settings.reset_to_overwrite", "Reset to overwrite") },
 			std::pair{ ResetSource::BaseSettings, T("menu.settings.reset_to_base_settings", "Reset to Base Settings preset") }
 		};
 		for (const auto& [source, resetCaption] : resetSources) {
@@ -1576,9 +1505,7 @@ void SceneWidgetBinding::Guard::DrawActionFlyout()
 		const auto id = controlItem.ID != 0 ? controlItem.ID : ImGui::GetID(label);
 		if (auto popup = Util::FlyoutScope(flyout, id, false, controlItem.NavRect.Min, controlItem.NavRect.Max,
 				SceneEntryTable::GetActionFlyoutStyle())) {
-			if (state == State::Baseline)
-				DrawBaselineGutter();
-			else if (DrawGutter()) {
+			if (DrawGutter()) {
 				ResolveState();
 			}
 		}
@@ -1650,21 +1577,18 @@ bool SceneWidgetBinding::Guard::Finish(bool a_changed)
 		return a_changed;
 	}
 	if (state == State::Baseline) {
-		DrawActionFlyout();
-		a_changed |= TryResetFromGesture();
-		a_changed |= DrawBaselineContextMenu();
-		if (a_changed) {
-			auto* manager = SceneSettingsManager::GetSingleton();
-			for (const auto& component : components)
-				manager->RecordBaselineEdit(ComponentIdentity(component), ReadEditedValue(component));
+		if (!IsSceneBaselineLayer(baselineLayer)) {
+			a_changed |= TryResetFromGesture();
+			a_changed |= DrawBaselineContextMenu();
 		}
 		if (ImGui::IsItemHovered(Util::kTooltipWhenDisabled)) {
 			if (auto tooltip = ResolveBaselineTooltip(); !tooltip.empty()) {
-				tooltip.append("\n").append(T(TKEY("baseline_reset_hint"), "Right-click for options. Middle-click to restore the default."));
+				if (!IsSceneBaselineLayer(baselineLayer))
+					tooltip.append("\n").append(T(TKEY("baseline_reset_hint"), "Right-click for options. Middle-click to restore the default."));
 				ReportSettingHint(std::move(tooltip));
 			}
 		}
-		return a_changed;
+		return !IsSceneBaselineLayer(baselineLayer) && a_changed;
 	}
 	// Both were greyed, so neither took input: no gutter to own and nothing to commit. Words are all a
 	// greyed control has left, and without them it reads as broken rather than barred.

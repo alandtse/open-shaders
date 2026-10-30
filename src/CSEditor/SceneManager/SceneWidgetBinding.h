@@ -82,13 +82,11 @@ namespace SceneWidgetBinding
 	/// Which layer a main-menu control's value comes from, highest precedence last.
 	enum class BaselineLayer : std::uint8_t
 	{
-		Base,  // the default value
-		Pack,  // a Baseline preset supplies it
-		Overwrite,
+		Base,    // the default value
+		Pack,    // a Baseline preset supplies it
 		Edited,  // the user's edit over the default or a Baseline preset's value
-		EditedOverwrite,
-		Scene,  // a Scene Manager preset supplies it
-		Sketch  // edited over the Scene Manager's value, until the menu moves on
+		Scene,   // a Scene Manager preset supplies it
+		Sketch   // edited over the Scene Manager's value, until the menu moves on
 	};
 
 	/** @brief Hides Scene and Sketch decorations without changing baseline edit handling. */
@@ -162,8 +160,6 @@ namespace SceneWidgetBinding
 		std::string ResolveBaselineTooltip() const;
 		/** @brief Sends shared setting information to the sidebar after the normal hover delay. */
 		void ReportSettingHint(std::string message) const;
-		/// Jumps to the Scene Manager page supplying the value, or commits a sketch into it.
-		void DrawBaselineGutter();
 
 		/// A component's own address; `identity` answers for the first component only.
 		SceneSettingsManager::SettingIdentity ComponentIdentity(const Component& a_component) const;
@@ -212,7 +208,6 @@ namespace SceneWidgetBinding
 		enum class ResetSource : std::uint8_t
 		{
 			Defaults,
-			Overwrite,
 			BaseSettings
 		};
 		/** @brief Finds this setting's value in the requested installed or default layer. */

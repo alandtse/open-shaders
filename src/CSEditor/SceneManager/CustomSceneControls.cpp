@@ -3,6 +3,7 @@
 #include <imgui.h>
 
 #include "../../I18n/I18n.h"
+#include "Feature.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsManager.h"
@@ -77,14 +78,25 @@ namespace CustomSceneControls
 		const std::function<std::string(const std::filesystem::path&)>& validate)
 	{
 		const auto* scene = SceneWidgetInterceptor::GetArmedContext();
-		if (!scene || scene->baseline)
+		if (!scene)
 			return false;
+		if (scene->baseline) {
+			auto* manager = SceneSettingsManager::GetSingleton();
+			if (!manager->IsActiveSceneSetting(setting.featureShortName, setting.settingPath, setting.settingKey))
+				return false;
+			const auto context = manager->FindWinningContext(setting);
+			if (!context)
+				return false;
+			const Util::DisableGuard readOnly(true);
+			DrawPathContextControls(setting, path, error, validate, *context);
+			return true;
+		}
 		DrawPathContextControls(setting, path, error, validate, scene->contextId);
 		return true;
 	}
 
-	void RecordBaselineEdit(const SceneSettingsManager::SettingIdentity& setting, const json& value)
+	void RecordBaselineEdit(const SceneSettingsManager::SettingIdentity& setting, const json&)
 	{
-		SceneSettingsManager::GetSingleton()->RecordBaselineEdit(setting, value);
+		SceneSettingsManager::GetSingleton()->CaptureExternalFeatureChanges(Feature::FindRegisteredFeatureByShortName(setting.featureShortName));
 	}
 }

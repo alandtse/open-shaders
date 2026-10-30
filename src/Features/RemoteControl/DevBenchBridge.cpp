@@ -1701,12 +1701,6 @@ namespace
 		const auto sidebarVisibility = a_args.find("sidebarVisible");
 		if (sidebarVisibility != a_args.end() && !sidebarVisibility->is_boolean())
 			return json{ { "error", "sidebarVisible must be a boolean" } };
-		const auto widgetBorderSize = a_args.find("widgetBorderSize");
-		if (widgetBorderSize != a_args.end() && (!widgetBorderSize->is_number() ||
-													!std::isfinite(widgetBorderSize->get<float>()) ||
-													widgetBorderSize->get<float>() < ThemeManager::Constants::EDITOR_WIDGET_BORDER_MIN ||
-													widgetBorderSize->get<float>() > ThemeManager::Constants::EDITOR_WIDGET_BORDER_MAX))
-			return json{ { "error", "widgetBorderSize must be a number from 1 to 5" } };
 
 		const std::string op = a_args.value("op", std::string("toggle"));
 		Menu::VisibilityRequest req;
@@ -1739,10 +1733,6 @@ namespace
 			Menu::GetSingleton()->RequestSidebarVisibility(sidebarVisibility->get<bool>());
 		if (editorMode != a_args.end())
 			EditorWindow::GetSingleton()->RequestBrowserMode(*editorMode == "menu" ? EditorWindow::BrowserMode::Menu : EditorWindow::BrowserMode::Editor);
-		if (widgetBorderSize != a_args.end())
-			Menu::GetSingleton()->RequestRenderTask([size = widgetBorderSize->get<float>()] {
-				Menu::GetSingleton()->GetSettings().Theme.WidgetBorderSize = size;
-			});
 		return json{ { "op", op }, { "page", page }, { "tab", tab }, { "queued", true } };
 	}
 

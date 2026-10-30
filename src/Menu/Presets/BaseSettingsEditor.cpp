@@ -1,13 +1,13 @@
-#include "FeatureOverwritesPanel.h"
+#include "Menu/Presets/BaseSettingsEditor.h"
 
 #include "BaselineManager.h"
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
+#include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "Feature.h"
 #include "I18n/I18n.h"
 #include "IconsTabler.h"
 #include "Presets/UnifiedPresetCatalog.h"
-#include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Utils/FileSystem.h"
@@ -34,7 +34,6 @@ namespace
 {
 	/// Fixed ID behind the translated title, so the popup survives a language switch.
 	constexpr const char* kPopupId = "###FeatureOverwritesExport";
-	constexpr const char* kPickerId = "##ExistingNames";
 
 	/// Sizes in font heights, so the modal scales with the UI font.
 	constexpr float kModalWidthEm = 48.0f;
@@ -42,7 +41,6 @@ namespace
 	constexpr float kFeatureListWidthEm = 12.0f;
 	constexpr float kListHeightEm = 16.0f;
 	constexpr float kSearchWidthEm = 10.0f;
-	constexpr float kNameWidthEm = 14.0f;
 	constexpr float kValueColumnEm = 6.0f;
 
 	constexpr size_t kSearchBufferSize = 256;
@@ -99,7 +97,6 @@ namespace
 	struct Target
 	{
 		std::string name;
-		bool legacyOverride = false;
 	};
 	Target target;
 
@@ -115,8 +112,7 @@ namespace
 		bool featureLocked = false;
 		bool failed = false;
 		Util::DeferredModal modal;
-		std::vector<std::string> packNames;
-		std::vector<std::string> overrideNames;
+		std::function<void(std::vector<std::string>)> applySelection;
 	};
 	Session session;
 
@@ -188,16 +184,28 @@ namespace
 		entry.ticked.assign(entry.rows.size(), uint8_t{ 0 });
 	}
 
+	std::optional<json> ReadPackFeature(const std::string& packId, const std::string& feature)
+	{
+		const auto destination = BaselineManager::GetSingleton()->GetExportDestination(packId, feature);
+		auto document = BaselineManager::ReadExportTarget(destination);
+		const auto* pack = UnifiedPresetCatalog::GetSingleton().FindPack(packId);
+		if (document && document->empty() && pack && pack->source == UnifiedPresetCatalog::SourceKind::LegacyBaseline)
+			for (const auto& legacy : SettingsOverrideManager::GetSingleton()->GetBaselinePacks())
+				if (legacy.id == packId)
+					if (const auto file = legacy.documents.find(feature); file != legacy.documents.end())
+						return json(file->second);
+		return document;
+	}
+
 	/** @brief Compares the feature with its destination file whenever the target changes. */
 	void RefreshTarget(FeatureExport& entry)
 	{
-		std::string key = std::format("{}|{}", target.legacyOverride, target.name);
+		std::string key = target.name;
 		if (entry.targetKey == key)
 			return;
 		entry.targetKey = std::move(key);
-		entry.destination = target.legacyOverride ? SettingsOverrideManager::GetSingleton()->GetExportDestination(target.name, entry.shortName) :
-		                                            BaselineManager::GetSingleton()->GetExportDestination(target.name, entry.shortName);
-		entry.existing = entry.destination.empty() ? std::optional<json>(json::object()) : BaselineManager::ReadExportTarget(entry.destination);
+		entry.destination = BaselineManager::GetSingleton()->GetExportDestination(target.name, entry.shortName);
+		entry.existing = ReadPackFeature(Util::FileHelpers::SanitizeFileName(target.name), entry.shortName);
 		entry.fileCount = 0;
 		for (auto& row : entry.rows) {
 			row.fileState = FileState::Absent;
@@ -212,24 +220,13 @@ namespace
 		}
 	}
 
-	void CollectExistingNames()
-	{
-		for (const auto& info : SettingsOverrideManager::GetSingleton()->GetOverrides())
-			if (!info.isGlobal && std::ranges::find(session.overrideNames, info.modName) == session.overrideNames.end())
-				session.overrideNames.push_back(info.modName);
-		std::ranges::sort(session.overrideNames);
-		for (const auto& pack : UnifiedPresetCatalog::GetSingleton().GetPacks())
-			if (pack.source == UnifiedPresetCatalog::SourceKind::UnifiedPack)
-				session.packNames.push_back(pack.id);
-	}
-
 	ExportCounts CountChanges()
 	{
 		ExportCounts counts;
 		for (auto& entry : session.features) {
-			if (CountTicked(entry) == 0)
-				continue;
 			RefreshTarget(entry);
+			if (CountTicked(entry) == 0 && !(session.removeUnticked && entry.fileCount))
+				continue;
 			++counts.files;
 			counts.unreadable |= !entry.existing;
 			for (size_t index = 0; index < entry.rows.size(); ++index) {
@@ -252,37 +249,11 @@ namespace
 		return counts;
 	}
 
-	/** @brief Name field, the picker of packs already exported to, and the guide. */
 	void DrawNameRow()
 	{
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(target.legacyOverride ? T("feature.feature_overwrites.export.mod_name", "Mod Name") : T(TKEY("export.pack_name"), "Pack Name"));
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(ImGui::GetFontSize() * kNameWidthEm);
-		ImGui::InputText("##name", &target.name);
-		const auto& names = target.legacyOverride ? session.overrideNames : session.packNames;
-		Util::DropdownArrowButton(kPickerId, T(TKEY("export.existing_tooltip"), "Pick a name already in use to add to its file."),
-			names.empty(), T(TKEY("export.existing_none_tooltip"), "Nothing exported under a name yet."));
-		if (ImGui::BeginPopup(kPickerId)) {
-			for (const auto& name : names)
-				if (Util::RoundedSelectable(name.c_str(), name == target.name))
-					target.name = name;
-			ImGui::EndPopup();
-		}
-		BrowserUI::HelpMarkerRight(target.legacyOverride ? T(TKEY("export.guide_override"),
-															   "Writes a feature override file, without scene-specific values. Choose one feature, then tick its settings. "
-															   "In file shows the existing values. Remove unticked settings deletes those settings from the file; otherwise they are kept. "
-															   "Other settings and author metadata are preserved.") :
-														   T(TKEY("export.guide_baseline"),
-															   "Writes feature settings into a Base Settings preset pack, without any scene layer values. The pack applies when "
-															   "picked on the Presets page.\n\n"
-															   "Pack Name and its dropdown arrow: one file per feature is written into this pack; the arrow adds to a pack "
-															   "exported before.\n"
-															   "Settings: tick what to write. With several features, pick each one on the left. In file shows what the "
-															   "destination already holds.\n"
-															   "Remove unticked settings: deletes the settings you left unticked from the file instead of keeping them.\n\n"
-															   "Workflow: tune a feature in Base Settings, then export the settings the pack should ship. For a full look "
-															   "with scene layers, use Export Preset on the Scene Manager page."));
+		ImGui::TextUnformatted(target.name.c_str());
+		Util::Text::WrappedDisabled("%s", T("menu.presets.edit_included_help",
+											  "Choose the settings this file includes. Saving writes their current base values; other settings stay unless you choose to remove them."));
 	}
 
 	/** @brief Where the viewed feature's file goes, and whether it is new. */
@@ -301,8 +272,8 @@ namespace
 													T(TKEY("export.file_new_tooltip"), "Export creates this file.") } :
 		                                        std::tuple{ T(TKEY("export.file_existing"), "Existing file"), Util::Colors::GetInfo(),
 													T(TKEY("export.file_existing_tooltip"), "Export updates the ticked settings. Other settings and metadata in the file are kept.") };
-		// A pack file is <presets>/<pack>/Baseline/<feature>.json; an override is <overrides>/<name>_<feature>.json.
-		const auto root = target.legacyOverride ? entry.destination.parent_path() : entry.destination.parent_path().parent_path().parent_path();
+		// A pack file is <presets>/<pack>/Baseline/<feature>.json.
+		const auto root = entry.destination.parent_path().parent_path().parent_path();
 		const auto shown = entry.destination.lexically_relative(root.parent_path()).generic_string();
 		const float badgeWidth = Util::MeasureBadgeWidth(label) + ImGui::GetStyle().ItemSpacing.x;
 		BrowserUI::MetaText(shown.c_str(), std::max(1.0f, ImGui::GetContentRegionAvail().x - badgeWidth));
@@ -330,12 +301,6 @@ namespace
 			ImGui::SameLine(0.0f, 0.0f);
 			int state = GetTickState(CountTicked(entry), entry.rows.size());
 			if (ImGui::CheckboxFlags("##tick", &state, kTickAll)) {
-				if (target.legacyOverride && state == kTickAll) {
-					session.viewed = index;
-					for (auto& other : session.features)
-						if (&other != &entry)
-							std::ranges::fill(other.ticked, uint8_t{ 0 });
-				}
 				LoadFeature(entry);
 				std::ranges::fill(entry.ticked, uint8_t{ state == kTickAll });
 			}
@@ -368,6 +333,8 @@ namespace
 			ImGui::PopID();
 		}
 
+		if (session.applySelection)
+			return;
 		const auto count = static_cast<int>(entry.fileCount);
 		const float width = BrowserUI::MeasureToggleChip(count);
 		BrowserUI::SameLineIfFits(width);
@@ -444,6 +411,8 @@ namespace
 		ImGui::AlignTextToFramePadding();
 		BrowserUI::EllipsizedText(row.value.c_str(), 0.0f, ImGui::GetStyleColorVec4(ImGuiCol_Text));
 
+		if (session.applySelection)
+			return;
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
 		switch (row.fileState) {
@@ -464,14 +433,15 @@ namespace
 	void DrawSettingTable(FeatureExport& entry, const std::vector<Line>& lines)
 	{
 		const float em = ImGui::GetFontSize();
-		if (!BrowserUI::BeginListTable("##settings", 4, ImVec2(0.0f, em * kListHeightEm), lines.empty(),
+		if (!BrowserUI::BeginListTable("##settings", session.applySelection ? 3 : 4, ImVec2(0.0f, em * kListHeightEm), lines.empty(),
 				T("cs_editor.scene_copy_empty", "Nothing matches.")))
 			return;
 
 		ImGui::TableSetupColumn("##tick", ImGuiTableColumnFlags_WidthFixed);
 		ImGui::TableSetupColumn(T(TKEY("export.column_setting"), "Setting"), ImGuiTableColumnFlags_WidthStretch);
 		ImGui::TableSetupColumn(T(TKEY("export.column_value"), "Value"), ImGuiTableColumnFlags_WidthFixed, em * kValueColumnEm);
-		ImGui::TableSetupColumn(T(TKEY("export.column_in_file"), "In file"), ImGuiTableColumnFlags_WidthFixed, em * kValueColumnEm);
+		if (!session.applySelection)
+			ImGui::TableSetupColumn(T(TKEY("export.column_in_file"), "In file"), ImGuiTableColumnFlags_WidthFixed, em * kValueColumnEm);
 		ImGui::TableSetupScrollFreeze(0, 1);
 		ImGui::TableHeadersRow();
 
@@ -510,10 +480,6 @@ namespace
 
 	void DrawSettings(FeatureExport& entry)
 	{
-		if (target.legacyOverride)
-			for (auto& other : session.features)
-				if (&other != &entry)
-					std::ranges::fill(other.ticked, uint8_t{ 0 });
 		DrawSettingFilters(entry);
 		const auto visible = FilterRows(entry);
 		DrawSettingTable(entry, BuildLines(entry, visible));
@@ -542,6 +508,9 @@ namespace
 	/** @brief Writes one file per feature with a tick. @return False when any write failed. */
 	bool RunExport()
 	{
+		const auto id = Util::FileHelpers::SanitizeFileName(target.name);
+		if (!UnifiedPresetCatalog::GetSingleton().PreparePackExport(id))
+			return false;
 		auto* manager = BaselineManager::GetSingleton();
 		// One file per feature, so a failure puts the ones already written back as they were.
 		std::vector<std::pair<std::filesystem::path, std::optional<std::string>>> written;
@@ -555,7 +524,7 @@ namespace
 			}
 		};
 		for (auto& entry : session.features) {
-			if (CountTicked(entry) == 0)
+			if (CountTicked(entry) == 0 && !(session.removeUnticked && entry.fileCount))
 				continue;
 			std::vector<std::string> paths;
 			std::vector<std::string> removePaths;
@@ -564,14 +533,6 @@ namespace
 					paths.push_back(entry.rows[index].path);
 				else if (IsRemoved(entry, index))
 					removePaths.push_back(entry.rows[index].path);
-			}
-			if (target.legacyOverride) {
-				json settings;
-				globals::state->SaveToJson(settings);
-				if (auto* feature = Feature::FindFeatureByShortName(entry.shortName))
-					settings[feature->GetName()] = entry.values;
-				entry.targetKey.clear();
-				return SettingsOverrideManager::GetSingleton()->ExportSettings(target.name, entry.shortName, paths, settings, removePaths);
 			}
 			const auto destination = manager->GetExportDestination(target.name, entry.shortName);
 			std::optional<std::string> previous;
@@ -596,21 +557,17 @@ namespace
 	/** @brief Export with its count, or greyed with the reason, then Cancel. */
 	void DrawButtons(const ExportCounts& counts)
 	{
-		const auto name = target.legacyOverride ? session.features[session.viewed].destination.stem().string() :
-		                                          Util::FileHelpers::SanitizeFileName(target.name);
-		const char* blocker = name.empty()          ? T(TKEY("export.blocked_name"), "Enter a name first.") :
-		                      counts.Ticked() == 0  ? T(TKEY("export.blocked_ticks"), "Tick the settings to export.") :
-		                      counts.unreadable     ? T(TKEY("export.blocked_unreadable"), "A destination file cannot be read. Fix or remove it first.") :
-		                      counts.Changes() == 0 ? T(TKEY("export.blocked_unchanged"), "The file already holds these values.") :
-		                                              nullptr;
+		const auto name = Util::FileHelpers::SanitizeFileName(target.name);
+		const char* blocker = name.empty()                                ? T(TKEY("export.blocked_name"), "Enter a name first.") :
+		                      counts.Ticked() == 0 && counts.removed == 0 ? T(TKEY("export.blocked_ticks"), "Tick the settings to export.") :
+		                      counts.unreadable                           ? T(TKEY("export.blocked_unreadable"), "A destination file cannot be read. Fix or remove it first.") :
+		                      counts.Changes() == 0                       ? T(TKEY("export.blocked_unchanged"), "The file already holds these values.") :
+		                                                                    nullptr;
 		auto ticked = counts.Ticked();
-		auto files = counts.files;
-		const auto label = (files > 1 ? std::vformat(T(TKEY("export.count_files"), "Export {} to {} files"), std::make_format_args(ticked, files)) :
-										std::vformat(T(TKEY("export.count"), "Export {}"), std::make_format_args(ticked))) +
-		                   "###export";
+		const auto label = T("menu.presets.save_changes", "Save Changes");
 		{
 			const Util::DisableGuard blocked(blocker != nullptr);
-			if (Util::Button(label.c_str())) {
+			if (Util::Button(label)) {
 				session.failed = !RunExport();
 				if (!session.failed) {
 					EditorWindow::GetSingleton()->ShowNotification(
@@ -632,18 +589,8 @@ namespace
 		if (EditorWindow::ClosePopupOnEscape())
 			return;
 
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(T(TKEY("export.destination"), "Destination"));
-		const char* overrideLabel = T(TKEY("export.destination_override"), "Feature override file");
-		const char* presetLabel = T(TKEY("export.destination_preset"), "Base Settings preset");
-		Util::SameLineIfFits(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(overrideLabel).x);
-		if (ImGui::RadioButton(overrideLabel, target.legacyOverride))
-			target.legacyOverride = true;
-		Util::SameLineIfFits(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(presetLabel).x);
-		if (ImGui::RadioButton(presetLabel, !target.legacyOverride))
-			target.legacyOverride = false;
-		ImGui::Spacing();
-		DrawNameRow();
+		if (!session.applySelection)
+			DrawNameRow();
 		if (session.features.empty()) {
 			BrowserUI::EmptyState(T(TKEY("export.no_features"), "No loaded feature has settings to export."));
 			return;
@@ -651,8 +598,10 @@ namespace
 
 		auto& viewed = session.features[session.viewed];
 		LoadFeature(viewed);
-		RefreshTarget(viewed);
-		DrawDestination(viewed);
+		if (!session.applySelection) {
+			RefreshTarget(viewed);
+			DrawDestination(viewed);
+		}
 		ImGui::Spacing();
 
 		if (!session.featureLocked) {
@@ -662,11 +611,27 @@ namespace
 		ImGui::BeginGroup();
 		auto& selected = session.features[session.viewed];
 		LoadFeature(selected);
-		RefreshTarget(selected);
+		if (!session.applySelection)
+			RefreshTarget(selected);
 		DrawSettings(selected);
 		ImGui::EndGroup();
 
 		ImGui::Spacing();
+		if (session.applySelection) {
+			if (Util::Button(T("menu.presets.use_selection", "Use Selected Settings"))) {
+				std::vector<std::string> paths;
+				for (size_t index = 0; index < selected.rows.size(); ++index)
+					if (selected.ticked[index])
+						paths.push_back(selected.rows[index].path);
+				session.applySelection(std::move(paths));
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (Util::Button(T("ui.cancel", "Cancel")))
+				ImGui::CloseCurrentPopup();
+			return;
+		}
+
 		const auto counts = CountChanges();
 		DrawResults(counts);
 		ImGui::Checkbox(T(TKEY("export.remove_unticked"), "Remove unticked settings from the file"), &session.removeUnticked);
@@ -679,10 +644,9 @@ namespace
 	}
 }
 
-void FeatureOverwritesPanel::BeginExport(Feature* feature)
+static void BeginExport(Feature* feature)
 {
 	session = {};
-	target.legacyOverride = false;
 	session.featureLocked = feature != nullptr;
 	if (feature) {
 		auto& entry = session.features.emplace_back(FeatureExport{ .shortName = feature->GetShortName(), .label = feature->GetDisplayName() });
@@ -692,28 +656,13 @@ void FeatureOverwritesPanel::BeginExport(Feature* feature)
 		auto features = Feature::GetFeatureList();
 		std::ranges::sort(features, {}, [](Feature* candidate) { return candidate->GetDisplayName(); });
 		for (auto* candidate : features)
-			if (candidate->loaded && HasExportableSettings(candidate))
+			if (candidate->loaded && BaseSettingsEditor::HasExportableSettings(candidate))
 				session.features.push_back({ .shortName = candidate->GetShortName(), .label = candidate->GetDisplayName() });
 	}
-	CollectExistingNames();
 	session.modal.Request();
 }
 
-void FeatureOverwritesPanel::BeginOverrideExport(Feature* feature, const std::string& modName)
-{
-	BeginExport(feature);
-	target.legacyOverride = true;
-	if (modName.empty())
-		return;
-	assert(feature);
-	target.name = modName;
-	auto& entry = session.features.front();
-	RefreshTarget(entry);
-	for (size_t index = 0; index < entry.rows.size(); ++index)
-		entry.ticked[index] = entry.rows[index].fileState != FileState::Absent;
-}
-
-void FeatureOverwritesPanel::BeginExportInto(Feature* feature, const std::string& packId)
+void BaseSettingsEditor::BeginExportInto(Feature* feature, const std::string& packId)
 {
 	assert(feature);
 	BeginExport(feature);
@@ -724,26 +673,46 @@ void FeatureOverwritesPanel::BeginExportInto(Feature* feature, const std::string
 		entry.ticked[index] = entry.rows[index].fileState != FileState::Absent;
 }
 
-void FeatureOverwritesPanel::DrawExport()
+void BaseSettingsEditor::DrawExport()
 {
 	if (!session.modal.IsActive())
 		return;
-	const auto title = std::format("{}{}", T(TKEY("export.title"), "Export Feature Settings"), kPopupId);
+	const auto title = std::format("{}{}", session.applySelection ? T("menu.presets.choose_settings", "Choose Settings") : T("menu.presets.edit_base_settings", "Edit Base Settings"), kPopupId);
 	session.modal.Draw(title.c_str(), ImGui::GetFontSize() * (session.featureLocked ? kLockedModalWidthEm : kModalWidthEm),
 		DrawContents);
 }
 
-void FeatureOverwritesPanel::DrawExportButton(Feature* feature, const char* id)
+void BaseSettingsEditor::SelectSettings(Feature* feature, const std::optional<std::vector<std::string>>& selected,
+	std::function<void(std::vector<std::string>)> apply)
 {
-	const float size = ImGui::GetFrameHeight();
-	{
-		auto style = Util::TransparentIconButtonStyle();
-		if (Icons::Button(id, Icons::TI(ICON_TI_FILE_EXPORT), ImVec2(size, size)))
-			BeginOverrideExport(feature);
+	assert(feature);
+	BeginExport(feature);
+	session.applySelection = std::move(apply);
+	if (selected) {
+		auto& entry = session.features.front();
+		for (size_t index = 0; index < entry.rows.size(); ++index)
+			entry.ticked[index] = std::ranges::find(*selected, entry.rows[index].path) != selected->end();
 	}
-	const auto tooltip = std::format("{}\n{}", T(TKEY("export.button_title"), "Export Feature Override..."),
-		T(TKEY("export.override_tooltip"), "Writes a feature override file without scene-specific values."));
-	Util::AddTooltip(tooltip.c_str());
+}
+
+std::optional<std::vector<std::string>> BaseSettingsEditor::GetIncludedSettings(Feature* feature, const std::string& packId)
+{
+	const auto document = ReadPackFeature(packId, feature->GetShortName());
+	if (!document)
+		return std::nullopt;
+	SceneSettingsManager::SceneLayerGuard guard;
+	json settings;
+	feature->SaveSettings(settings);
+	std::vector<std::string> selected;
+	for (const auto& setting : Util::Settings::GetExportSettings(feature->GetShortName(), settings))
+		if (document->contains(json::json_pointer(setting.path)))
+			selected.push_back(setting.path);
+	return selected;
+}
+
+bool BaseSettingsEditor::IsOpen()
+{
+	return session.modal.IsActive();
 }
 
 #undef I18N_KEY_PREFIX

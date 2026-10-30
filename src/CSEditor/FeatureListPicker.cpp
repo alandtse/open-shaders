@@ -138,7 +138,7 @@ void FeatureListPicker::Draw(std::span<Feature* const> features, std::string& se
 		auto& expanded = options.categories->try_emplace(categoryKey, true).first->second;
 		{
 			MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Heading);
-			Util::DrawCategoryHeader(categoryKey.c_str(), FeatureListRenderer::TranslateCategory(category).c_str(), expanded);
+			Util::DrawCategoryHeader(categoryKey.c_str(), FeatureListRenderer::TranslateCategory(category).c_str(), expanded, static_cast<int>(grouped.size()));
 		}
 		if (!expanded)
 			continue;

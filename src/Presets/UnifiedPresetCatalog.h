@@ -12,6 +12,7 @@
 
 #include "PackManifest.h"
 #include "PostProcessingMode.h"
+#include "PresetActivation.h"
 #include "PresetCompatibility.h"
 #include "PresetProvider.h"
 #include "Utils/UI.h"
@@ -27,7 +28,9 @@ public:
 	{
 		UnifiedPack,
 		Effects11Orphan,
-		Effects11Legacy
+		Effects11Legacy,
+		LegacyBaseline,
+		LegacyScene
 	};
 
 	/** @brief Pipeline a pack targets, declared by the manifest's "type" field. */
@@ -70,7 +73,8 @@ public:
 		std::string invalidReason;
 
 		SourceKind source = SourceKind::UnifiedPack;
-		std::filesystem::path rootPath;       ///< Pack folder or library root
+		std::filesystem::path rootPath;  ///< Pack folder or library root
+		std::vector<std::filesystem::path> legacySceneFiles;
 		std::filesystem::path effects11Root;  ///< Folder with enbseries.ini + enbseries/
 		PresetProvider* provider = nullptr;
 
@@ -126,6 +130,8 @@ public:
 
 	/** @brief Rescans every pack and orphan, sorted by name, releasing loaded artwork and reloading the active id. */
 	void Discover();
+	/** @brief Rescans and reapplies every selected payload through the selection transaction. */
+	bool Refresh();
 	/** @brief Packs from the last Discover. */
 	const std::vector<PackInfo>& GetPacks() const { return packs; }
 
@@ -145,6 +151,19 @@ public:
 	/** @brief Returns active payload roots in VFS-before-physical precedence. */
 	std::vector<std::filesystem::path> GetActivePackRoots() const;
 
+	/** @brief Whether the scene payload of a pack is enabled. */
+	bool IsScenePackEnabled(const std::string& id) const;
+	/** @brief Roots of one installed pack, retaining VFS precedence. */
+	std::vector<std::filesystem::path> GetPackRoots(const std::string& id) const;
+	/** @brief Whether this file is selected and primary within its supplying pack. */
+	bool IsSceneFileEnabled(const std::filesystem::path& path) const;
+	/** @brief Whether new presets apply automatically, layering Base Settings and checking scene conflicts. */
+	bool GetAutomaticPresets() const;
+	/** @brief Persists the automatic-preset preference. */
+	bool SetAutomaticPresets(bool enabled);
+	/** @brief Enabled presets whose settings conflict with the requested pack. */
+	std::vector<std::string> GetConflictingPacks(const std::string& id) const;
+
 	/** @brief Resolves a relative path against the game directory first, then the active pack root.
 	 *  @return The first existing candidate, or the path unchanged when neither exists. */
 	std::filesystem::path ResolveActivePackPath(const std::filesystem::path& path) const;
@@ -163,13 +182,15 @@ public:
 
 	/** @brief Applies Effects11, swaps the Scene Manager overwrite layer to this pack's CS Presets files, and
 	 *  enables its Baseline overwrites. A Baseline-only pack leaves the active pack and scene layer untouched. */
-	bool ApplyPack(const std::string& id, bool saveEffects11Current = true);
+	bool ApplyPack(const std::string& id, bool saveEffects11Current = true, bool replaceConflicts = false);
 
 	/** @brief Turns the active pack off: an Effects 11 pack switches the pipeline to Vanilla,
 	 *  and the scene layer and form edits fall back to the user's own. */
 	void DisableActivePack();
 	/** @brief Disables a selected pack's scene, form, pipeline and Base Settings layers together. */
 	bool DisablePack(const std::string& id);
+	/** @brief Deletes selected settings or one exact backing file, restoring it if reapplication fails. */
+	bool DeletePackSettings(const std::string& id, const std::filesystem::path& relative, std::span<const std::string> paths, bool entireFile);
 	/** @brief Whether a pack has its own deletable library folder. */
 	bool CanDeletePack(const std::string& id) const;
 	/** @brief Disables a pack and moves its folder to the library's hidden deleted-presets folder. */
@@ -177,6 +198,8 @@ public:
 
 	/** @brief Ids of packs whose Baseline overwrites are enabled, in layering order (a later pack wins conflicts). */
 	const std::vector<std::string>& GetBaselinePackIds() const { return baselinePackIds; }
+	/** @brief Installed Base Settings priority, including disabled packs, in application order. */
+	const std::vector<std::string>& GetBaselinePackOrder() const { return baselinePackOrder; }
 	/** @brief Whether a pack's Baseline overwrites are enabled. */
 	bool IsBaselineEnabled(const std::string& id) const;
 	/** @brief Reloads the layers a pack that is active or has its Baseline enabled supplies, so freshly exported
@@ -191,9 +214,9 @@ public:
 	 *  @return False when the pack was not enabled. */
 	bool RemoveBaseline(const std::string& id);
 
-	/** @brief Moves an enabled Baseline pack one step in the layering order and reapplies the layers.
+	/** @brief Moves an installed Baseline pack one step in priority and reapplies enabled layers.
 	 *  @param raise True moves it later, so it wins conflicts against the pack it passes; false moves it earlier.
-	 *  @return False when the pack is not enabled, is already at that end, or the new order could not be saved. */
+	 *  @return False when the pack is absent, is already at that end, or the new order could not be saved. */
 	bool MoveBaseline(const std::string& id, bool raise);
 
 	/** @brief Sets provider handoff flags from the active pack's manifest sceneControl, overlaid with the
@@ -210,6 +233,8 @@ public:
 	/** @brief Writes a starter manifest for a pack folder that has none, so an exported Baseline shows up as a preset.
 	 *  @return True when a manifest exists afterwards. */
 	static bool EnsureBaselineManifest(const std::filesystem::path& packRoot, const std::string& displayName);
+	/** @brief Refuses authoring into legacy imports without creating replacement files. */
+	bool PreparePackExport(const std::string& id) const;
 
 	/** @brief Creates the presets root if needed and opens its real path in Explorer. */
 	bool OpenPresetsFolder() const;
@@ -244,6 +269,12 @@ private:
 
 	/** @brief Adds each folder under Presets as a pack, read from its manifest. */
 	void DiscoverUnifiedPacks();
+	/** @brief Exposes legacy feature overwrites as read-only Base Settings packs. */
+	void DiscoverLegacyBaselines();
+	/** @brief Exposes loose legacy scenes without copying or rewriting their files. */
+	void DiscoverLegacyScenes();
+	/** @brief Discovers setting conflicts and selects new scene presets. */
+	void DiscoverSceneActivation();
 	/** @brief Adds provider-owned library and legacy payloads not covered by unified packs. */
 	void DiscoverProviderPresets();
 	/** @brief Switches to the pipeline a pack chose, recording it as the pack layer's choice; the caller persists.
@@ -256,6 +287,10 @@ private:
 	std::vector<PackInfo> packs;
 	std::string activePackId;
 	std::vector<std::string> baselinePackIds;
+	std::vector<std::string> baselinePackOrder;
+	std::vector<std::string> enabledScenePackIds;
+	std::map<std::string, PresetActivation::Footprint> sceneFootprints;
+	mutable std::map<std::string, std::pair<std::uint64_t, std::vector<std::string>>> conflictCache;
 	std::optional<PostProcessingMode::Mode> activePipeline;
 	uint32_t pipelineRevision = 0;
 	/// Pack id → the user's Effects 11 handoff choices for it, over the pack's own sceneControl.

@@ -5,6 +5,7 @@
 #include "I18n/I18n.h"
 #include "Presets/PresetState.h"
 #include "Presets/UnifiedPresetCatalog.h"
+#include "SettingsOverrideManager.h"
 #include "Util.h"
 #include "Utils/FileSystem.h"
 #include "Utils/SettingsCatalog.h"
@@ -37,6 +38,25 @@ size_t BaselineManager::DiscoverFiles()
 
 	// Each enabled pack in layering order: later files win merge conflicts.
 	for (const auto& packId : UnifiedPresetCatalog::GetSingleton().GetBaselinePackIds()) {
+		const auto* pack = UnifiedPresetCatalog::GetSingleton().FindPack(packId);
+		if (pack && pack->source == UnifiedPresetCatalog::SourceKind::LegacyBaseline) {
+			for (const auto& legacy : SettingsOverrideManager::GetSingleton()->GetBaselinePacks()) {
+				if (legacy.id != packId)
+					continue;
+				for (const auto& [name, document] : legacy.documents) {
+					if (!IsValidDocument(document, pack->rootPath))
+						continue;
+					BaselineFile file;
+					file.packId = packId;
+					file.featureName = name;
+					file.values = document;
+					file.filePath = Util::PathHelpers::ToUtf8(legacy.documentSources.at(name));
+					featureFileMap[name].push_back(files.size());
+					files.push_back(std::move(file));
+				}
+			}
+			continue;
+		}
 		for (const auto& packPath : Util::PathHelpers::GetUnifiedPackPaths(packId))
 			DiscoverDirectory(packPath / UnifiedPresetCatalog::kBaselineSubdir, packId);
 	}
@@ -515,7 +535,8 @@ void BaselineManager::ReportFailure(const std::string& packId, const std::string
 
 	std::error_code ec;
 	if (!filePath.empty() && std::filesystem::exists(filePath, ec)) {
-		fileInfo.hasINI = true;  // Using hasINI to indicate file exists (even though it's JSON)
+		const auto* pack = UnifiedPresetCatalog::GetSingleton().FindPack(packId);
+		fileInfo.hasINI = !pack || pack->source != UnifiedPresetCatalog::SourceKind::LegacyBaseline;
 		fileInfo.iniPath = Util::PathHelpers::ToUtf8(filePath);
 
 		fileInfo.latestTimestamp = std::filesystem::last_write_time(filePath, ec);
@@ -574,6 +595,9 @@ bool BaselineManager::ExportSettings(const std::string& packName, const std::str
 	if (destination.empty() || (settingPaths.empty() && removePaths.empty()) || !feature || !feature->UsesMainSettings()) {
 		return false;
 	}
+	const auto packId = Util::FileHelpers::SanitizeFileName(packName);
+	if (!UnifiedPresetCatalog::GetSingleton().PreparePackExport(packId))
+		return false;
 
 	const auto available = Util::Settings::GetExportSettings(featureName, featureSettings);
 	for (const auto& paths : { settingPaths, removePaths }) {

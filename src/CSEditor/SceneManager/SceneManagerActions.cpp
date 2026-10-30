@@ -1,13 +1,16 @@
 #include "SceneManager.h"
 
+#include "BaselineManager.h"
 #include "Presets/UnifiedPresetCatalog.h"
 #include "SceneSettingsContextRules.h"
 #include "SceneSettingsLocationTargets.h"
 #include "SceneSettingsUI.h"
 #include "State.h"
 #include "Utils/DevBenchUx.h"
+#include "Utils/FileSystem.h"
 #include "Utils/Form.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsCatalog.h"
 
 #include <algorithm>
 #include <array>
@@ -142,7 +145,7 @@ namespace
 			userPaused += entry.source == Source::User && entry.paused;
 			activeOverwrites += entry.source == Source::Overwrite && !entry.paused && !entry.deleted;
 		}
-		return { { "count", count }, { "paused", paused }, { "userCount", userCount }, { "userPaused", userPaused },
+		return { { "featurePaused", Manager::GetSingleton()->IsFeaturePaused(feature) }, { "count", count }, { "paused", paused }, { "userCount", userCount }, { "userPaused", userPaused },
 			{ "activeOverwrites", activeOverwrites }, { "sceneReady", IsSceneReady() },
 			{ "toolbarOpen", SceneSettingsUI::IsFeaturePageEditing(Feature::FindFeatureByShortName(feature)) },
 			{ "previewEditing", Manager::GetSingleton()->IsContextEditing(feature) },
@@ -198,7 +201,7 @@ namespace
 			throw std::invalid_argument(SceneSettingsUI::PendingContextEditMessage());
 	}
 
-	void SetFeaturePaused(Feature*, const json& args)
+	void SetSceneEntriesPaused(Feature*, const json& args)
 	{
 		auto& manager = RequireReady();
 		const auto context = ParseContext(args);
@@ -370,6 +373,31 @@ namespace
 
 void SceneManager::RegisterUxActions()
 {
+	FEATURE_RENDER_QUERY("exportBaseSettings", "List exportable Base Settings paths for one loaded feature. Args: feature=shortName. Returns path and label; arrays are exported whole. No files are changed.",
+		([](const Feature*, const json& args) {
+			auto* feature = RequireFeature(args);
+			if (!feature->UsesMainSettings())
+				throw std::invalid_argument("The feature has no Base Settings");
+			json values;
+			globals::state->SaveToJson(values);
+			json result = json::array();
+			for (const auto& setting : Util::Settings::GetExportSettings(feature->GetShortName(), values.at(feature->GetName())))
+				result.push_back({ { "path", setting.path }, { "label", setting.label } });
+			return result;
+		}));
+	FEATURE_RENDER_COMMAND("exportBaseSettings", "Export selected settings into an upstream-compatible Base Settings preset, excluding applied scene values. Args: packName, feature=shortName, settings=[JSON pointer paths from exportBaseSettings query], optional removeSettings=[paths]. Preserves other file keys and pack metadata. Legacy imports are not export destinations; use a new preset name. Original legacy files are never written by export. New standalone Base Settings packs enable automatically. Does not save the main settings file.",
+		([](Feature*, const json& args) {
+			auto* feature = RequireFeature(args);
+			json values;
+			globals::state->SaveToJson(values);
+			const auto name = args.at("packName").get<std::string>();
+			if (!feature->UsesMainSettings() || !BaselineManager::GetSingleton()->ExportSettings(name, feature->GetShortName(),
+													args.at("settings").get<std::vector<std::string>>(), values.at(feature->GetName()), args.value("removeSettings", std::vector<std::string>{})))
+				throw std::runtime_error("Base Settings export failed");
+			auto& catalog = UnifiedPresetCatalog::GetSingleton();
+			if (!catalog.Refresh())
+				throw std::runtime_error("Could not apply exported Base Settings");
+		}));
 	FEATURE_RENDER_QUERY("sceneLayerSummary",
 		"Read the Manage Settings source layer across all saved periods. Args: source=user|overwrite, type=all|interior|timeOfDay|weather|location (all default), optional target object using sceneSets context args to narrow to one target. The target period is ignored. Returns total and paused. Requires a loaded player cell; no settings are changed.",
 		([](const Feature*, const json& args) -> json {
@@ -385,7 +413,7 @@ void SceneManager::RegisterUxActions()
 			manager.SetEntryLayerPaused(ParseEntryLayerSource(args), args.at("paused").get<bool>(), ParseEntryLayerScope(args));
 		}));
 	FEATURE_RENDER_QUERY("presets",
-		"List unified preset packs and current selection. Args: none. Returns activePack, baselinePacks in precedence order, and packs with id/name/version, valid/error, scene/form/Baseline payload flags and Baseline state. This reads the current catalog; refresh through managePreset action=refresh.",
+		"List unified preset packs and current selection. Args: none. Returns activePack, enabled baselinePacks in precedence order, baselineOrder including disabled packs, and packs with id/name/version, valid/error, scene/form/Baseline payload flags, enabled scene state, automatic startup activation and conflict blockers. This reads the current catalog; refresh through managePreset action=refresh.",
 		([](const Feature*, const json&) -> json {
 			auto& catalog = UnifiedPresetCatalog::GetSingleton();
 			json packs = json::array();
@@ -393,21 +421,24 @@ void SceneManager::RegisterUxActions()
 				packs.push_back({ { "id", pack.id }, { "name", pack.name }, { "version", pack.version },
 					{ "valid", pack.valid }, { "error", pack.invalidReason }, { "hasScenes", pack.hasCSPresets },
 					{ "hasForms", pack.hasFormEdits }, { "hasBaseline", pack.hasBaseline },
-					{ "baselineEnabled", catalog.IsBaselineEnabled(pack.id) } });
-			return { { "activePack", catalog.GetActivePackId() }, { "baselinePacks", catalog.GetBaselinePackIds() }, { "packs", packs } };
+					{ "baselineEnabled", catalog.IsBaselineEnabled(pack.id) }, { "sceneEnabled", catalog.IsScenePackEnabled(pack.id) }, { "conflicts", catalog.GetConflictingPacks(pack.id) } });
+			return { { "activePack", catalog.GetActivePackId() }, { "baselinePacks", catalog.GetBaselinePackIds() }, { "baselineOrder", catalog.GetBaselinePackOrder() }, { "packs", packs }, { "automatic", catalog.GetAutomaticPresets() } };
 		}));
 	FEATURE_RENDER_COMMAND("managePreset",
-		"Use the Presets page production paths. Args: action=refresh|apply|disable|delete|removeBaseline|raiseBaseline|lowerBaseline, id for pack actions; disable with id disables all of that pack's layers, without id disables the active scene pack. delete disables a library pack and moves its folder into the hidden deleted-presets library; the legacy game/Data install cannot be deleted. saveCurrent=boolean for apply (true default). Requires a loaded player cell. Selection changes refuse an unsaved retained scene draft. Verify with presets and live feature queries.",
+		"Use the Presets page production paths. Args: action=refresh|apply|disable|delete|removeBaseline|raiseBaseline|lowerBaseline|automatic, id for pack actions; disable with id disables all of that pack's layers, without id disables the active scene pack. delete disables a library pack and moves its folder into the hidden deleted-presets library; the legacy game/Data install cannot be deleted. saveCurrent=boolean for apply (true default), replaceConflicts=true explicitly disables conflicting scene presets. raiseBaseline/lowerBaseline also retain priority for disabled packs. automatic requires enabled=boolean and controls startup discovery for both scene and Base Settings presets; scenes reject conflicts, Base Settings layer together. Requires a loaded player cell except for automatic. Selection changes refuse an unsaved retained scene draft. Verify with presets and live feature queries.",
 		[](Feature*, const json& args) {
-			RequireReady();
 			auto& catalog = UnifiedPresetCatalog::GetSingleton();
 			const auto action = args.at("action").get<std::string>();
-			if (action != "refresh" && Manager::GetSingleton()->HasPendingContextEdit())
+			if (action != "automatic")
+				RequireReady();
+			if (action != "refresh" && action != "automatic" && Manager::GetSingleton()->HasPendingContextEdit())
 				throw std::invalid_argument(SceneSettingsUI::PendingContextEditMessage());
 			bool applied = true;
-			if (action == "refresh")
-				catalog.Discover();
-			else if (action == "disable") {
+			if (action == "automatic")
+				applied = catalog.SetAutomaticPresets(args.at("enabled").get<bool>());
+			else if (action == "refresh") {
+				applied = catalog.Refresh();
+			} else if (action == "disable") {
 				if (args.contains("id"))
 					applied = catalog.DisablePack(args.at("id").get<std::string>());
 				else {
@@ -415,7 +446,7 @@ void SceneManager::RegisterUxActions()
 					applied = catalog.GetActivePackId().empty();
 				}
 			} else if (action == "apply")
-				applied = catalog.ApplyPack(args.at("id").get<std::string>(), args.value("saveCurrent", true));
+				applied = catalog.ApplyPack(args.at("id").get<std::string>(), args.value("saveCurrent", true), args.value("replaceConflicts", false));
 			else if (action == "delete")
 				applied = catalog.DeletePack(args.at("id").get<std::string>());
 			else if (action == "removeBaseline")
@@ -430,11 +461,39 @@ void SceneManager::RegisterUxActions()
 	FEATURE_QUERY("currentLocations",
 		"Read the current location targets in resolver order, from general to specific. Args: none. Returns type, formKey, name, editorId and formId. Includes the parent-location chain; only the innermost location supplies location-type keywords. Worldspace membership follows the exterior cell.",
 		CurrentLocations);
+	FEATURE_RENDER_QUERY("presetSceneSettings",
+		"Read compatible scene settings from one installed preset, including inactive legacy imports. Args: id from presets query. Returns stable key, scene label, feature, setting and value. No files or selections are changed. Use keys with copyPresetSettings.",
+		([](const Feature*, const json& args) -> json {
+			auto& manager = RequireReady();
+			json result = json::array();
+			for (const auto& setting : manager.GetPresetSceneSettings(args.at("id").get<std::string>()))
+				if (!setting.entry.deleted)
+					result.push_back({ { "key", setting.key }, { "scene", manager.GetSceneContextDisplayName(setting.context) },
+						{ "feature", setting.entry.featureShortName }, { "setting", setting.entry.displayName }, { "value", setting.entry.value } });
+			return result;
+		}));
+	FEATURE_RENDER_COMMAND("copyPresetSettings",
+		"Copy selected installed-preset scene values to matching User Settings, including inactive legacy presets. Args: id, settings=[stable keys from presetSceneSettings], overwrite=boolean (false default keeps existing User Settings). Original preset files are unchanged. Logical controls copy together; a conflict skips the whole control unless overwrite is true. Pending scene drafts block copying. Verify sceneSets afterward.",
+		([](Feature*, const json& args) {
+			auto& manager = RequireReady();
+			const auto result = manager.CopyPresetSceneSettings(args.at("id").get<std::string>(), args.at("settings").get<std::vector<std::string>>(),
+				args.value("overwrite", false) ? Manager::CopyConflictPolicy::OverwriteExisting : Manager::CopyConflictPolicy::SkipExisting);
+			if (result.cancelled)
+				throw std::runtime_error("Preset copy was refused or could not be saved");
+		}));
+	FEATURE_RENDER_COMMAND("deletePresetSettings",
+		"Delete selected settings or one backing file through preset management. Args: id, file=relative payload path, settings=[JSON pointer paths], entireFile=boolean (false default). Legacy originals change only through this explicit destructive action. Pending scene drafts block deletion; failed reapplication restores the source. Refresh presets afterward.",
+		([](Feature*, const json& args) {
+			RequireReady();
+			if (!UnifiedPresetCatalog::GetSingleton().DeletePackSettings(args.at("id").get<std::string>(), args.at("file").get<std::string>(),
+					args.value("settings", std::vector<std::string>{}), args.value("entireFile", false)))
+				throw std::runtime_error("Preset deletion was refused or failed");
+		}));
 	FEATURE_QUERY("sceneSets",
 		"Read current scene entries and mode, including an active toolbar's unsaved preview. Args: type=interior|timeOfDay|weather|location; period=Normal|Dawn|Sunrise|Day|Sunset|Dusk|Night (Normal default, named period required for timeOfDay, only Normal for interior). Weather/location require formKey=SPID; location requires locationType=Worldspace|Region|LocationType|Location|Cell. Returns every period and ownership layer, with source, deleted tombstones, values and indices. selectedPeriod marks the requested set. Refresh indices after structural mutations, preview suspension or resume. timeOfDayEnabled selects the active weather/location set without deleting the other set.",
 		SceneSets);
 	FEATURE_QUERY("featureScenePauseState",
-		"Read one feature's counts and retained toolbar state. Args: feature=shortName plus sceneSets context args. count/paused cover both sources; userCount/userPaused cover editable User entries; activeOverwrites counts unpaused, nondeleted mod entries. toolbarOpen reports the visible enabled toolbar; previewEditing identifies its retained draft, previewActive its applied preview, and previewPendingEdits changes awaiting explicit Save. No settings are changed.",
+		"Read one feature's counts, session-only featurePaused, and retained toolbar state. Args: feature=shortName plus sceneSets context args. count/paused cover both sources; userCount/userPaused cover editable User entries; activeOverwrites counts unpaused, nondeleted mod entries. toolbarOpen reports the visible enabled toolbar; previewEditing identifies its retained draft, previewActive its applied preview, and previewPendingEdits changes awaiting explicit Save. No settings are changed.",
 		FeaturePauseState);
 	FEATURE_QUERY("blendState",
 		"Read sceneReady, game hour, climate-derived periodFactors, and currentWeather/previousWeather FormIDs with weatherBlend. Args: none. Does not advance time or change weather.",
@@ -472,9 +531,15 @@ void SceneManager::RegisterUxActions()
 			if (!SceneSettingsUI::SetFeaturePagePreviewPlaying(playing))
 				throw std::invalid_argument("The selected scene cannot be previewed or the game is not ready");
 		});
+	FEATURE_COMMAND("setFeatureApplicationPaused",
+		"Temporarily pause or resume all scene settings for one loaded feature, without changing saved entries. Pausing restores its editable base settings; resuming reapplies the current scene. Args: feature=shortName, paused=boolean. This state lasts for the current session. Verify featurePaused with featureScenePauseState.",
+		([](Feature*, const json& args) {
+			auto* feature = RequireFeature(args);
+			SceneSettingsManager::GetSingleton()->SetFeaturePaused(feature->GetShortName(), args.at("paused").get<bool>());
+		}));
 	FEATURE_COMMAND("setFeatureScenePaused",
 		"Persist paused=boolean for User entries of one feature in one scene context. Args: feature, paused, plus sceneSets context args. Author overwrite entries are left intact. Does not change scene mode, create entries or pause the whole feature. Verify with featureScenePauseState. Active retained-toolbar entries stay unsaved until saveFeatureSceneEdit; a suspended dirty draft refuses edits to its owned entries.",
-		SetFeaturePaused);
+		SetSceneEntriesPaused);
 	FEATURE_COMMAND("addSceneSetting",
 		"Add one User setting with the production add-setting path. Args: feature=shortName, setting=key, path=string array (empty default), plus sceneSets context args. Captures its lower-layer/base value and persists; incompatible settings and duplicate User entries are refused. Does not change weather/location mode. Read sceneSets before updating its value. Active retained-toolbar entries stay unsaved until saveFeatureSceneEdit; a suspended dirty draft refuses edits to its owned entries.",
 		AddSetting);

@@ -481,7 +481,7 @@ SceneWidgetInterceptor::Scope::~Scope()
 	pendingCaptures.clear();
 	for (auto* feature : captures) {
 		try {
-			SceneSettingsManager::GetSingleton()->CaptureExternalFeatureChanges(feature, true);
+			SceneSettingsManager::GetSingleton()->CaptureExternalFeatureChanges(feature);
 		} catch (const std::exception& error) {
 			logger::error("Could not capture external settings edits: {}", error.what());
 		}

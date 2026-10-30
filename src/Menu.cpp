@@ -58,11 +58,11 @@
 
 #include "CSEditor/Browser/BrowserWidgets.h"
 #include "CSEditor/EditorWindow.h"
-#include "CSEditor/SceneManager/ScenePresetExport.h"
 #include "CSEditor/SceneManager/SceneSettingsManager.h"
 #include "CSEditor/SceneManager/SceneWidgetInterceptor.h"
 #include "Features/CSEditor.h"
 #include "Features/Effects11.h"
+#include "Menu/Presets/PresetExportPanel.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
@@ -185,6 +185,7 @@ inline void from_json(const json& data, ImGuiStyle& style)
 	if (!data.is_null())
 		merged.update(data);
 	ImGuiStyleSerialization::from_json(merged, style);
+	style.WindowBorderSize = std::max(ThemeManager::Constants::WINDOW_BORDER_MIN, style.WindowBorderSize);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -219,7 +220,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Cursor,
 	ScrollbarOpacity,
 	Surfaces,
-	WidgetBorderSize,
 	Palette,
 	StatusPalette,
 	FeatureHeading,
@@ -264,7 +264,7 @@ namespace
 		auto target = FeatureUndo::MakeTarget(feature);
 		target.restore = [restore = std::move(target.restore), feature](const UndoHistory::Snapshot& snapshot) {
 			restore(snapshot);
-			globals::sceneSettingsManager->CaptureExternalFeatureChanges(feature, true);
+			globals::sceneSettingsManager->CaptureExternalFeatureChanges(feature);
 		};
 		return target;
 	}
@@ -1800,7 +1800,7 @@ bool Menu::ShouldSwallowInput()
 		return true;
 #endif
 	auto editorWindow = EditorWindow::GetSingleton();
-	return IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() || (editorWindow && editorWindow->open) || ScenePresetExport::IsOpen();
+	return IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() || (editorWindow && editorWindow->open) || PresetExportPanel::IsOpen();
 }
 
 void Menu::SyncVanityCamera()

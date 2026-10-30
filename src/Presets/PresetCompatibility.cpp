@@ -3,7 +3,6 @@
 #include "Feature.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "Plugin.h"
 #include "Utils/Format.h"
 
 #include <cctype>
@@ -85,11 +84,7 @@ namespace PresetCompatibility
 		if (!ParseSemVer(requiredCsVersion, required))
 			return VersionGap::None;
 
-		const SemVer current{
-			.major = static_cast<int>(Plugin::VERSION.major()),
-			.minor = static_cast<int>(Plugin::VERSION.minor()),
-			.patch = static_cast<int>(Plugin::VERSION.patch()),
-		};
+		const auto current = kSupportedCsVersion;
 
 		if (current.major != required.major)
 			return current.major < required.major ? VersionGap::Major : VersionGap::None;
@@ -126,7 +121,7 @@ namespace PresetCompatibility
 
 	std::string CurrentCsVersionString()
 	{
-		return Util::GetFormattedVersion(Plugin::VERSION);
+		return std::format("{}.{}.{}", kSupportedCsVersion.major, kSupportedCsVersion.minor, kSupportedCsVersion.patch);
 	}
 
 	Warning Evaluate(std::string_view requiredCsVersion, const std::vector<std::string>& requiredFeatures,

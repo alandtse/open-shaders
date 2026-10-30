@@ -178,6 +178,15 @@ try {
 		}
 	}
 
+	if (info.selectedSceneSettings) {
+		std::set<std::string> available;
+		for (const auto& setting : GetSceneExportSettings()) available.insert(setting.key);
+		if (!std::ranges::includes(available, *info.selectedSceneSettings)) {
+			logger::warn("[Presets] Scene export selection changed; select the settings again");
+			return false;
+		}
+	}
+
 	const auto safeModName = Util::FileHelpers::SanitizeFileName(info.name);
 	if (safeModName.empty() || IsReservedPresetName(safeModName))
 		return false;
@@ -187,6 +196,8 @@ try {
 		return false;
 	}
 
+	if (!UnifiedPresetCatalog::GetSingleton().PreparePackExport(safeModName))
+		return false;
 	const auto targetRoot = Util::PathHelpers::GetUnifiedPackPath(safeModName);
 	PresetExportTransaction transaction(targetRoot);
 	if (!transaction.Prepare())
@@ -312,6 +323,8 @@ try {
 									 std::string_view sceneLabel, const json& extraMetadata = json::object()) {
 			const auto directory = GetOverwriteDir(baseDir, context.period);
 			for (const auto& [identity, entry] : BuildEffectiveContextEntries(sourceEntries, context, true)) {
+				if (info.selectedSceneSettings && !info.selectedSceneSettings->contains(GetSceneExportKey(context, *entry)))
+					continue;
 				auto& file = files[{ directory, identity.featureShortName }];
 				file.allowedRoot = allowedRoot;
 				file.typeDescription = GetOverwriteTypeDescription(sceneLabel, context.period);
@@ -529,6 +542,17 @@ std::optional<SceneSettingsManager::PresetMetadata> SceneSettingsManager::ReadPr
 void SceneSettingsManager::DiscoverPresetMetadata()
 {
 	activePresetMetadata = ReadPresetMetadata(GetActiveScenePackRoot());
+	for (const auto& pack : UnifiedPresetCatalog::GetSingleton().GetPacks()) {
+		if (!UnifiedPresetCatalog::GetSingleton().IsScenePackEnabled(pack.id))
+			continue;
+		if (const auto metadata = ReadPresetMetadata(pack.rootPath)) {
+			if (!activePresetMetadata)
+				activePresetMetadata = metadata;
+			for (size_t index = 0; index < kTransitionControlCount; ++index)
+				if (metadata->transitionControls[index])
+					activePresetMetadata->transitionControls[index] = metadata->transitionControls[index];
+		}
+	}
 	if (activePresetMetadata)
 		logger::info("[SceneSettings] Active scene preset: '{}'", activePresetMetadata->name);
 	RefreshTransitionControls();

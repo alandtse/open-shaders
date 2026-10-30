@@ -11,9 +11,231 @@
 #include <winrt/base.h>
 
 #include "CSEditor/SceneManager/SceneEntryDraft.h"
+#include "Presets/LegacyPreset.h"
+#include "Presets/PresetActivation.h"
+#include "Presets/PresetContent.h"
 #include "Presets/PresetState.h"
 #include "Utils/RenderTaskQueue.h"
 #include "Utils/SettingsPatch.h"
+
+TEST_CASE("Legacy feature overwrites translate into upstream Baseline payloads", "[presets][legacy-presets]")
+{
+	const std::array<LegacyPreset::FeatureNames, 2> features{
+		std::pair{ "First", "First Feature" }, std::pair{ "Second", "Second Feature" }
+	};
+	const nlohmann::json values{
+		{ "First Feature", { { "Amount", 0.5 }, { "Layers", { 1, 2, 3 } } } },
+		{ "Second Feature", { { "Enabled", false } } },
+		{ "Advanced", { { "CompilerThreads", 99 } } },
+		{ "Unknown", { { "Amount", 5 } } }
+	};
+	const auto translated = LegacyPreset::Translate(values, "", features);
+	REQUIRE(translated.size() == 2);
+	REQUIRE(translated.at("First") == values.at("First Feature"));
+	REQUIRE(translated.at("Second") == values.at("Second Feature"));
+	REQUIRE(LegacyPreset::Translate(values.at("First Feature"), "First", features).at("First") == values.at("First Feature"));
+	REQUIRE(LegacyPreset::Translate(values, "Unknown", features).empty());
+	REQUIRE(LegacyPreset::Translate(nlohmann::json::array(), "First", features).empty());
+}
+
+TEST_CASE("Retired legacy keys do not reject neighboring supported settings", "[presets][legacy-presets]")
+{
+	const nlohmann::json schema{ { "Enabled", true }, { "Group", { { "Amount", 1.0 } } }, { "Layers", { 1, 2 } } };
+	const nlohmann::json legacy{
+		{ "Enabled", false }, { "RetiredToggle", true },
+		{ "Group", { { "Amount", 0.7 }, { "OldAmount", 2.0 } } }, { "Layers", { 3, 4, 5 } }
+	};
+	const auto normalized = LegacyPreset::NormalizePayload(legacy, schema);
+	REQUIRE(normalized.values == nlohmann::json{
+									 { "Enabled", false }, { "Group", { { "Amount", 0.7 } } }, { "Layers", { 3, 4, 5 } } });
+	REQUIRE(normalized.retiredKeys == std::vector<std::string>{ "Group.OldAmount", "RetiredToggle" });
+	REQUIRE(legacy.contains("RetiredToggle"));
+	const auto malformed = LegacyPreset::NormalizePayload({ { "Enabled", "invalid" }, { "RetiredToggle", true } }, schema);
+	std::vector<std::string> invalid;
+	Util::Settings::CollectUnknownSettingKeys(malformed.values, schema, "", invalid);
+	REQUIRE(invalid == std::vector<std::string>{ "Enabled (wrong type)" });
+	REQUIRE(malformed.retiredKeys == std::vector<std::string>{ "RetiredToggle" });
+}
+
+TEST_CASE("Legacy companion values remain personal edits above Base Settings", "[presets][legacy-presets]")
+{
+	const std::array<LegacyPreset::FeatureNames, 1> features{ std::pair{ "First", "First Feature" } };
+	nlohmann::json settings{ { "First Feature", { { "Amount", 0.3 }, { "Kept", 2 } } } };
+	LegacyPreset::ImportPersonalEdits(settings,
+		{ { "First Feature", { { "Amount", 0.7 } } }, { "Unknown", { { "Amount", 5 } } } }, features);
+	REQUIRE(settings.at("First Feature").at("Amount") == 0.7);
+	REQUIRE(settings.at("First Feature").at("Kept") == 2);
+	REQUIRE_FALSE(settings.contains("Unknown"));
+	REQUIRE(PresetState::HasNormalizedFeatureEdits(settings.at("Presets"), "First Feature"));
+	LegacyPreset::ImportPersonalEdits(settings, { { "First Feature", nullptr } }, features);
+	REQUIRE(settings.at("First Feature").at("Amount") == 0.7);
+}
+
+TEST_CASE("Legacy boot settings use the upstream manifest contract", "[presets][legacy-presets]")
+{
+	const std::array<LegacyPreset::FeatureNames, 2> features{
+		std::pair{ "First", "First Feature" }, std::pair{ "Second", "Second Feature" }
+	};
+	const auto flags = LegacyPreset::TranslateBoot({ { "Disable at Boot", { { "First", true }, { "Second", 1 }, { "Unknown", false } } } }, features);
+	REQUIRE(flags.size() == 1);
+	REQUIRE(flags.at("First"));
+	REQUIRE(LegacyPreset::TranslateBoot({ { "Disable at Boot", nullptr } }, features).empty());
+	REQUIRE(LegacyPreset::TranslateBoot(nlohmann::json::object(), features).empty());
+}
+
+TEST_CASE("Imported legacy globals retain their lower priority", "[presets][legacy-presets]")
+{
+	const auto global = LegacyPreset::BuildPackId("Z Pack", true);
+	const auto feature = LegacyPreset::BuildPackId("A Pack", false);
+	REQUIRE(global < feature);
+	REQUIRE(PresetState::IsPackId(global));
+	REQUIRE(PresetState::IsPackId(feature));
+	REQUIRE(LegacyPreset::BuildPackId("Same Pack", true) != LegacyPreset::BuildPackId("Same Pack", false));
+}
+
+TEST_CASE("Base Settings default to all enabled and retain explicit disabled choices", "[presets][legacy-presets]")
+{
+	const std::array<std::string, 3> order{ "Z Pack", "Alpha", "!Priority" };
+	auto state = PresetState::DiscoverBaselines(nlohmann::json::object(), order);
+	REQUIRE(state.at("baselinePackIds") == order);
+	PresetState::SetDisabled(state, "disabledBaselinePackIds", "Alpha", true);
+	REQUIRE(PresetState::DiscoverBaselines(state, order).at("baselinePackIds") == nlohmann::json({ "Z Pack", "!Priority" }));
+	PresetState::SetDisabled(state, "disabledBaselinePackIds", "Alpha", false);
+	REQUIRE(PresetState::DiscoverBaselines(state, order).at("baselinePackIds") == order);
+	state["baseSettingsOrderCustomized"] = true;
+	state["baselinePackIds"] = { "!Priority", "Z Pack", "Alpha" };
+	REQUIRE(PresetState::DiscoverBaselines(state, order).at("baselinePackIds") == state.at("baselinePackIds"));
+	PresetState::SetDisabled(state, "disabledBaselinePackIds", "Alpha", true);
+	REQUIRE(PresetState::DiscoverBaselines(state, order).at("baselinePackIds") == nlohmann::json({ "!Priority", "Z Pack" }));
+	const auto migrated = PresetState::DiscoverBaselines({ { "knownBaselinePackIds", { "Alpha", "Z Pack" } },
+															 { "baselinePackIds", { "Z Pack" } } },
+		order);
+	REQUIRE(migrated.at("disabledBaselinePackIds") == nlohmann::json({ "Alpha" }));
+	const auto manual = PresetState::DiscoverBaselines({ { "baselinePackIds", { "Z Pack" } } }, order, false);
+	REQUIRE(manual.at("baselinePackIds") == nlohmann::json({ "Z Pack" }));
+	REQUIRE(PresetState::DiscoverBaselines(manual, order, true).at("baselinePackIds") == order);
+	REQUIRE(PresetState::DiscoverBaselines(nlohmann::json::object(), order, false).at("baselinePackIds").empty());
+}
+
+TEST_CASE("Upstream preset-state saves do not discard OS preferences", "[presets]")
+{
+	const nlohmann::json privateState{ { "disabledBaselinePackIds", { "Off" } }, { "legacyUserOverrideFeatures", { "Feature" } },
+		{ "removedLegacyPackIds", { "Legacy - Old" } }, { "automaticPresets", false } };
+	const auto restored = PresetState::RestorePrivateState({ { "activePackId", "CS Selection" } }, privateState);
+	REQUIRE(restored.at("activePackId") == "CS Selection");
+	REQUIRE(restored.at("disabledBaselinePackIds") == nlohmann::json({ "Off" }));
+	REQUIRE(restored.at("legacyUserOverrideFeatures") == nlohmann::json({ "Feature" }));
+	REQUIRE(restored.at("removedLegacyPackIds") == nlohmann::json({ "Legacy - Old" }));
+	REQUIRE(restored.at("automaticPresets") == false);
+	REQUIRE(PresetState::RestorePrivateState({ { "automaticPresets", true } }, privateState).at("automaticPresets") == true);
+}
+
+TEST_CASE("Disabled Base Settings retain priority across startup and reactivation", "[presets]")
+{
+	const std::vector<std::string> installed{ "Z Pack", "Alpha", "!Priority" };
+	const std::vector<std::string> enabled{ "Z Pack", "!Priority" };
+	const auto order = PresetState::RetainBaselineOrder(installed, enabled, installed, false);
+	REQUIRE(order == installed);
+	REQUIRE(PresetState::OrderEnabledBaselines(order, enabled) == enabled);
+	auto reenabled = enabled;
+	reenabled.push_back("Alpha");
+	REQUIRE(PresetState::OrderEnabledBaselines(order, reenabled) == installed);
+	const std::vector<std::string> custom{ "!Priority", "Alpha", "Z Pack" };
+	const std::vector<std::string> customEnabled{ "!Priority", "Z Pack" };
+	REQUIRE(PresetState::RetainBaselineOrder(custom, customEnabled, installed, true) == custom);
+	const auto restored = PresetState::RestorePrivateState({ { "baselinePackIds", customEnabled } }, { { "baselinePackOrder", custom } });
+	REQUIRE(PresetState::ReadIds(restored, "baselinePackOrder") == custom);
+	REQUIRE(PresetState::RetainBaselineOrder(custom, enabled, installed, true) == installed);
+	const std::vector<std::string> removed{ "Z Pack", "!Priority" };
+	REQUIRE(PresetState::RetainBaselineOrder(custom, customEnabled, removed, true) == customEnabled);
+	auto missing = enabled;
+	missing.push_back("Missing");
+	REQUIRE(PresetState::OrderEnabledBaselines(order, missing) == missing);
+}
+
+TEST_CASE("Automatic scene presets keep conflicting new presets entirely disabled", "[presets]")
+{
+	using namespace PresetActivation;
+	const std::vector<Candidate> candidates{
+		{ "First", { { "weather/day/Feature/Value", 1 } } },
+		{ "Second", { { "weather/day/Feature/Value", 2 }, { "location/Feature/Other", 3 } } },
+		{ "Third", { { "weather/night/Feature/Value", 4 } } }
+	};
+	auto selected = Select(candidates, {}, {}, {}, true);
+	REQUIRE(selected.enabled == std::vector<std::string>{ "First", "Third" });
+	REQUIRE(selected.blocked.at("Second") == std::vector<std::string>{ "First" });
+	const std::array<std::string, 1> existing{ "Second" };
+	selected = Select(candidates, existing, {}, {}, true);
+	REQUIRE(selected.enabled == std::vector<std::string>{ "Second", "Third" });
+	REQUIRE(selected.blocked.at("First") == std::vector<std::string>{ "Second" });
+	REQUIRE(Select(candidates, {}, {}, {}, false).enabled.empty());
+	REQUIRE(Select(candidates, {}, existing, {}, true).enabled == std::vector<std::string>{ "First", "Third" });
+	REQUIRE(Select(candidates, {}, {}, existing, true).enabled == std::vector<std::string>{ "First", "Third" });
+	REQUIRE_FALSE(Conflicts({ { "same", 1 } }, { { "same", 1.0 } }));
+	REQUIRE(Conflicts({ { "exclusive/e11", true } }, { { "exclusive/e11", true } }));
+}
+
+TEST_CASE("Preset conflicts use setting addresses rather than filenames", "[presets]")
+{
+	using PresetContent::Describe;
+	const nlohmann::json first{ { "_feature", "Example" }, { "Group", { { "Amount", 0.5 } } } };
+	const auto footprint = Describe("Weather/0x123~example.esp/Day/One.json", first);
+	REQUIRE(PresetActivation::Conflicts(footprint, Describe("Weather/0x123~EXAMPLE.esp/Day/Other.json",
+													   { { "_feature", "Example" }, { "Group", { { "Amount", 0.8 } } } })));
+	REQUIRE_FALSE(PresetActivation::Conflicts(footprint, Describe("Weather/0x123~example.esp/Night/Other.json", first)));
+	REQUIRE_FALSE(PresetActivation::Conflicts(footprint, Describe("Weather/0x123~example.esp/Day/Other.json",
+															 { { "_feature", "Example" }, { "Group", { { "Other", 1.0 } } } })));
+	REQUIRE(Describe("TimeOfDay/Day/Legacy_Example.json", { { "Group", { { "Amount", 0.5 } } } }).contains("scene/timeofday/day/Example/Group/Amount"));
+	REQUIRE(Describe("InteriorOnly/Invalid.json", { { "_feature", false } }).empty());
+	REQUIRE(PresetActivation::Conflicts(Describe("Forms/One.json", { { "value", 1 } }), Describe("Forms/One.json", { { "value", 2 } })));
+	const auto base = Describe("Baseline/Example.json", { { "Amount", 0.5 } });
+	REQUIRE_FALSE(base.empty());
+	REQUIRE_FALSE(PresetActivation::Conflicts(base, Describe("Baseline/Example.json", { { "Amount", 0.8 } })));
+}
+
+TEST_CASE("Scene mode, transitions and deletions participate in preset conflicts", "[presets]")
+{
+	const nlohmann::json original{ { "_feature", "Example" }, { "Amount", 0.5 }, { "_metadata", { { "timeOfDayEnabled", false } } } };
+	auto deleted = original;
+	deleted["_metadata"]["entryDeletions"]["Amount"] = true;
+	const auto first = PresetContent::Describe("Weather/0x123~example.esp/One.json", original);
+	REQUIRE(PresetActivation::Conflicts(first, PresetContent::Describe("Weather/0x123~example.esp/Two.json", deleted)));
+	auto transition = original;
+	transition["_metadata"]["entryTransitions"]["Amount"] = 2.0;
+	REQUIRE(PresetActivation::Conflicts(first, PresetContent::Describe("Weather/0x123~example.esp/Two.json", transition)));
+	auto periodic = original;
+	periodic["_metadata"]["timeOfDayEnabled"] = true;
+	REQUIRE(PresetActivation::Conflicts(first, PresetContent::Describe("Weather/0x123~example.esp/Day/Two.json", periodic)));
+	REQUIRE_FALSE(PresetContent::IsSceneFile("InteriorOnly/../Baseline/Example.json"));
+	REQUIRE(PresetContent::PathKey(std::filesystem::path(u8"Weather/0x123~日本語.esp/Day")) == "weather/0x123~日本語.esp/day");
+}
+
+TEST_CASE("Deleting selected preset settings preserves other values and metadata", "[presets]")
+{
+	nlohmann::json document{
+		{ "_feature", "Example" }, { "Group", { { "Amount", 0.5 }, { "Kept", 2 } } },
+		{ "_metadata", { { "author", "Author" }, { "entryTransitions", { { "Group", { { "Amount", 2.0 }, { "Kept", 3.0 } } } } },
+						   { "entryDeletions", { { "Group", { { "Amount", true } } } } } } }
+	};
+	const std::array<std::string, 1> paths{ "/Group/Amount" };
+	REQUIRE(PresetContent::RemoveSettings(document, paths));
+	REQUIRE_FALSE(document.at("Group").contains("Amount"));
+	REQUIRE(document.at("Group").at("Kept") == 2);
+	REQUIRE(document.at("_metadata").at("author") == "Author");
+	REQUIRE(document.at("_metadata").at("entryTransitions").at("Group").at("Kept") == 3.0);
+	REQUIRE(document.at("_metadata").at("entryDeletions").empty());
+	REQUIRE_FALSE(PresetContent::RemoveSettings(document, std::array<std::string, 1>{ "/_feature" }));
+	REQUIRE(document.at("_feature") == "Example");
+}
+
+TEST_CASE("Updated enabled scene presets cannot retain conflicting selections", "[presets]")
+{
+	const std::vector<PresetActivation::Candidate> candidates{ { "First", { { "field", 1 } } }, { "Second", { { "field", 2 } } } };
+	const std::array<std::string, 2> enabled{ "Second", "First" };
+	const auto result = PresetActivation::Select(candidates, enabled, {}, enabled, false);
+	REQUIRE(result.enabled == std::vector<std::string>{ "Second" });
+	REQUIRE(result.blocked.at("First") == std::vector<std::string>{ "Second" });
+}
 
 TEST_CASE("Scene drafts suspend and resume only their owned entries", "[presets][scene-draft]")
 {

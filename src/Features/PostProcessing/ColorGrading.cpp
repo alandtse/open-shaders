@@ -664,10 +664,11 @@ void ColorGrading::DrawSettings()
 
 					const float gap = ImGui::GetStyle().ItemInnerSpacing.x;
 					const ImVec2 nameSize = ImGui::CalcTextSize(tonemapperName);
-					const float badgeW = Util::MeasureHdrSdrCapabilityPillWidth(supportsHDR);
-					const float rowW = nameSize.x + gap + badgeW;
+					const float rowHeight = ImGui::GetFrameHeight();
+					const float rowWidth = std::max(ImGui::GetContentRegionAvail().x,
+						Util::GetSelectableTextInset() + nameSize.x + gap + Util::MeasureHdrSdrCapabilityPillWidth(supportsHDR) + ImGui::GetStyle().FramePadding.x);
 
-					if (Util::RoundedSelectable("##tm", selected, 0, ImVec2(rowW, 0))) {
+					if (Util::RoundedSelectable("##tm", selected, ImGuiSelectableFlags_NoPadWithHalfSpacing, ImVec2(rowWidth, rowHeight))) {
 						tonemappers[tonemapperType].cached_settings = settings.tonemapParams;
 						settings.tonemapParams = tonemappers[i].cached_settings;
 						tonemapperType = i;
@@ -678,9 +679,10 @@ void ColorGrading::DrawSettings()
 					{
 						const ImVec2 min = ImGui::GetItemRectMin();
 						const float rowH = ImGui::GetItemRectSize().y;
-						const float textY = min.y + (rowH - nameSize.y) * 0.5f;
-						ImGui::GetWindowDrawList()->AddText(ImVec2(min.x, textY), ImGui::GetColorU32(ImGuiCol_Text), tonemapperName);
-						Util::DrawHdrSdrCapabilityPillAt(ImVec2(min.x + nameSize.x + gap, min.y), rowH, supportsHDR);
+						const float textX = min.x + Util::GetSelectableTextInset();
+						const float textY = Util::CenterTextTopY(min.y, rowH);
+						ImGui::GetWindowDrawList()->AddText(ImVec2(textX, textY), ImGui::GetColorU32(ImGuiCol_Text), tonemapperName);
+						Util::DrawHdrSdrCapabilityPillAt(ImVec2(textX + nameSize.x + gap, min.y), rowH, supportsHDR);
 					}
 
 					if (selected)
