@@ -439,10 +439,11 @@ bool DynamicCubemaps::Irradiance(bool a_reflections, uint32_t a_startLevel, uint
 				size /= 2;
 
 			// Suffix: A = level 1, BA = levels 2..N-1, BB = last level.
-			const char* suffix = (a_startLevel == 1) ? "A" : (a_endLevel == MIPLEVELS) ? "BB" :
-			                                                                             "BA";
-			const auto passName = a_reflections ? std::format("DynamicCubemaps::IrradianceReflections{}", suffix) : std::format("DynamicCubemaps::Irradiance{}", suffix);
-			CS_GPU_PASS_DYNAMIC(passName);
+			const std::size_t suffix = (a_startLevel == 1) ? 0 : (a_endLevel == MIPLEVELS) ? 2 :
+			                                                                                 1;
+			CS_GPU_PASS_INDEXED((a_reflections ? 3 : 0) + suffix,
+				"DynamicCubemaps::IrradianceA", "DynamicCubemaps::IrradianceBA", "DynamicCubemaps::IrradianceBB",
+				"DynamicCubemaps::IrradianceReflectionsA", "DynamicCubemaps::IrradianceReflectionsBA", "DynamicCubemaps::IrradianceReflectionsBB");
 			for (std::uint32_t level = a_startLevel; level < a_endLevel; level++, size /= 2) {
 				const UINT numGroups = (UINT)std::max(1u, (size + 7u) / 8u);
 
