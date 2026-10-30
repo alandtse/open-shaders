@@ -511,8 +511,8 @@ void LightLimitFix::AddCachedParticleLights(eastl::vector<LightData>& lightsData
 	if (lightsData.size() >= MAX_LIGHTS)
 		return;
 
-	static float& lightFadeStart = *reinterpret_cast<float*>(REL::RelocationID(527668, 414582).address());
-	static float& lightFadeEnd = *reinterpret_cast<float*>(REL::RelocationID(527669, 414583).address());
+	static float& lightFadeStart = RE::Sky::GetLightLODStartFadeSquared();
+	static float& lightFadeEnd = RE::Sky::GetLightLODEndFadeSquared();
 	const float3 luminanceWeights = float3(0.3f, 0.59f, 0.11f);
 
 	if (settings.MaxParticleDistance > 0.0f) {

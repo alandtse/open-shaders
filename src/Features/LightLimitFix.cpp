@@ -1,6 +1,7 @@
 #include "LightLimitFix.h"
 #include "CSEditor/EditorWindow.h"
 #include "Features/LightLimitFix/Common.h"
+#include "Features/LightLimitFix/LightAttach.h"
 #include "Features/LightLimitFix/LightReadSafety.h"
 #include "Features/LightLimitFix/RadiusMath.h"
 #include "Features/LightLimitFix/SettingsSanitize.h"
@@ -49,6 +50,8 @@ namespace
 	constexpr float kMaxParticleDistanceMax = 20000.0f;
 	constexpr float kJsonPlacedLightIntensityMin = 0.0f;
 	constexpr float kJsonPlacedLightIntensityMax = 8.0f;
+	constexpr int kLightAttachRefreshFramesMin = 1;
+	constexpr int kLightAttachRefreshFramesMax = 600;
 
 	void SanitizeSettings(LightLimitFix::Settings& a_settings)
 	{
@@ -69,6 +72,7 @@ namespace
 			Util::ClampFiniteOrDefault(a_settings.MaxParticleDistance, kMaxParticleDistanceMin, kMaxParticleDistanceMax, 6000.0f);
 		a_settings.JsonPlacedLightIntensity =
 			Util::ClampFiniteOrDefault(a_settings.JsonPlacedLightIntensity, kJsonPlacedLightIntensityMin, kJsonPlacedLightIntensityMax, 1.0f);
+		a_settings.LightAttachRefreshFrames = std::clamp(a_settings.LightAttachRefreshFrames, kLightAttachRefreshFramesMin, kLightAttachRefreshFramesMax);
 	}
 
 	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
@@ -126,6 +130,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ShowShadowOverlay,
 	ShadowSettings,
 	EnableParticleContactShadows,
+	SunLitHair,
 	EnableParticleLights,
 	EnableParticleLightsCulling,
 	EnableParticleLightsDetection,
@@ -140,10 +145,33 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	MaxParticleDistance,
 	JsonPlacedLightIntensity,
 	JsonPlacedLightsInteriorsOnly,
-	JsonPlacedLightsPortalStrictOnly)
+	JsonPlacedLightsPortalStrictOnly,
+	SkipRedundantLightAttach,
+	LightAttachRefreshFrames)
+
+void LightLimitFix::DrawLightAttachSettings()
+{
+	ImGui::BeginDisabled(!LightAttach::IsSupported());
+	ImGui::Checkbox(T("feature.light_limit_fix.skip_redundant_light_attach", "Skip Redundant Light Updates"), &settings.SkipRedundantLightAttach);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s",
+			T("feature.light_limit_fix.skip_redundant_light_attach_tooltip",
+				"The game re-checks every dynamic light's nearby geometry each frame, which costs milliseconds in scenes with hundreds of lights. "
+				"With this on, a light that has not moved or changed is only re-checked at the interval below."));
+	}
+
+	ImGui::BeginDisabled(!settings.SkipRedundantLightAttach);
+	ImGui::SliderInt(T("feature.light_limit_fix.light_attach_refresh_frames", "Light Update Interval (frames)"), &settings.LightAttachRefreshFrames, kLightAttachRefreshFramesMin, kLightAttachRefreshFramesMax, "%d", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("feature.light_limit_fix.light_attach_refresh_frames_tooltip", "How many frames an unchanged light may go without being re-checked. Lower values track scene changes sooner at a small cost; a light that moves is always re-checked immediately."));
+	}
+	ImGui::EndDisabled();
+	ImGui::EndDisabled();
+}
 
 void LightLimitFix::DrawPerformanceSettings()
 {
+	DrawLightAttachSettings();
 	if (!settings.ShadowSettings.Enabled)
 		return;
 	ShadowCasterManager::DrawImpactCullSliders(settings.ShadowSettings);
@@ -224,6 +252,14 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::BeginTabItem(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"))) {
 		DrawContactShadowSettings();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(T("feature.light_limit_fix.hair_shadows_header", "Hair Shadows"))) {
+		ImGui::Checkbox(T("feature.light_limit_fix.sun_lit_hair", "Sun-Lit Hair"), &settings.SunLitHair);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T("feature.light_limit_fix.sun_lit_hair_tooltip", "Hair takes the directional shadow the deferred pass computed instead of the engine's forward lookup, so it is lit by the sun like the rest of the scene. Off keeps the engine's original hair shadowing, which can leave hair much darker."));
+		}
 		ImGui::EndTabItem();
 	}
 
@@ -533,6 +569,7 @@ LightLimitFix::PerFrame LightLimitFix::GetCommonBufferData()
 	perFrame.ContactShadowDepthThickness = sanitizeFloat(settings.ContactShadowDepthThickness, 1.0f, 128.0f);
 	perFrame.ContactShadowMinIntensity = sanitizeFloat(settings.ContactShadowMinIntensity, 0.0f, 1.0f);
 	perFrame.ShadowMapSlots = ShadowCasterManager::GetInstalledSlotCount();
+	perFrame.SunLitHair = settings.SunLitHair ? 1u : 0u;
 	perFrame.EnableParticleContactShadows = settings.EnableContactShadows && settings.EnableParticleContactShadows;
 	std::copy(clusterSize, clusterSize + 3, perFrame.ClusterSize);
 	perFrame.EnableLightsVisualisation = EnableLightsVisualisation;
@@ -586,15 +623,6 @@ void LightLimitFix::SetupResources()
 		clusters->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
 		clusters->CreateUAV(uavDesc);
-
-		numElements = 1;
-		sbDesc.StructureByteStride = sizeof(uint32_t);
-		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
-		lightIndexCounter = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::LightIndexCounter");
-		srvDesc.Buffer.NumElements = numElements;
-		lightIndexCounter->CreateSRV(srvDesc);
-		uavDesc.Buffer.NumElements = numElements;
-		lightIndexCounter->CreateUAV(uavDesc);
 
 		numElements = clusterCount * CLUSTER_MAX_LIGHTS;
 		sbDesc.StructureByteStride = sizeof(uint32_t);
@@ -728,6 +756,7 @@ void LightLimitFix::OnSceneTransitionReset(bool opening)
 	// the settings-menu table iteration that reads the same caches instead of racing it.
 	if (opening) {
 		ShadowCasterManager::ResetSession();
+		LightAttach::ResetTracking();
 		// Slots are reassigned to different lights across a cell transition;
 		// an old occupant's decaying EMA must not read as a new light's demand.
 		shadowDemandEMA.fill(0.0f);
@@ -774,17 +803,21 @@ void LightLimitFix::RestoreDefaultSettings()
 
 json LightLimitFix::GetDiagnostics()
 {
-	return json{
+	json diagnostics{
 		{ "particleLightCount", particleLightCount.load(std::memory_order_relaxed) },
 		{ "lightCount", clusteredLightCount.load(std::memory_order_relaxed) },
 		{ "maxLights", MAX_LIGHTS },
 	};
+	diagnostics.update(LightAttach::GetDiagnostics());
+	return diagnostics;
 }
 
 json LightLimitFix::GetRuntimeFlags()
 {
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
+		{ "LightAttachAuditDetail", LightAttach::GetAuditDetail() },
+		{ "ActorAttachedDynamic", ShadowCasterManager::GetActorAttachedDynamic() },
 	};
 }
 
@@ -792,6 +825,14 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 {
 	if (name == "ShadowDemandInstrumentation") {
 		ShadowDemandInstrumentation = value;
+		return true;
+	}
+	if (name == "LightAttachAuditDetail") {
+		LightAttach::SetAuditDetail(value);
+		return true;
+	}
+	if (name == "ActorAttachedDynamic") {
+		ShadowCasterManager::SetActorAttachedDynamic(value);
 		return true;
 	}
 	return false;
@@ -1084,6 +1125,7 @@ void LightLimitFix::PostPostLoad()
 {
 	particleLights.GetConfigs();
 	Hooks::Install();
+	LightAttach::Install();
 	ShadowCasterManager::Init(settings.ShadowSettings);
 	ShadowCasterManager::Install(settings.ShadowSettings);
 
@@ -1531,16 +1573,13 @@ void LightLimitFix::UpdateStructure()
 
 		lightCullingCB->Update(updateData);
 
-		UINT counterReset[4] = { 0, 0, 0, 0 };
-		context->ClearUnorderedAccessViewUint(lightIndexCounter->uav.get(), counterReset);
-
 		ID3D11Buffer* buffer = lightCullingCB->CB();
 		context->CSSetConstantBuffers(0, 1, &buffer);
 
 		ID3D11ShaderResourceView* srvs[] = { clusters->srv.get(), lights->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		ID3D11UnorderedAccessView* uavs[] = { lightIndexCounter->uav.get(), lightIndexList->uav.get(), lightGrid->uav.get() };
+		ID3D11UnorderedAccessView* uavs[] = { nullptr, lightIndexList->uav.get(), lightGrid->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(clusterCulling, nullptr, 0);

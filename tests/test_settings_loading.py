@@ -58,15 +58,13 @@ struct Menu {
 BINDING_TYPE;
 BINDINGS;
 MENU_OVERLAY
-namespace FidelityFX { enum class Fsr4AdapterSupport { Unsupported, RadeonRx7000, RadeonRx9000 }; }
 using uint = unsigned;
 #include NR_CONTEXT_PATH
 struct Upscaling {
-    static constexpr unsigned kFsr4RuntimeSelectionSchemaVersion = 1;
+    static constexpr unsigned kFsr4RuntimeSelectionSchemaVersion = 2;
     UPSCALING_TYPES
 };
 UPSCALING_SERIALIZERS
-FSR4_MIGRATION
 struct float3 { float x, y, z; };
 struct float4 { float x, y, z, w; };
 FLOAT_ARRAY_READER
@@ -209,23 +207,6 @@ std::string read(const std::string& path) {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 int main() {
-    for (const auto adapter : {FidelityFX::Fsr4AdapterSupport::Unsupported,
-            FidelityFX::Fsr4AdapterSupport::RadeonRx7000, FidelityFX::Fsr4AdapterSupport::RadeonRx9000}) {
-        for (const unsigned schema : {0u, Upscaling::kFsr4RuntimeSelectionSchemaVersion}) {
-            for (const bool enabled : {false, true}) {
-                Upscaling::Settings settings;
-                settings.fsr4RuntimeEnable = enabled;
-                settings.fsr4RuntimeSelectionSchemaVersion = schema;
-                ApplyLegacyFsr4RuntimeSelectionMigration(settings, adapter);
-                const bool autoEnable = schema == 0 && adapter == FidelityFX::Fsr4AdapterSupport::RadeonRx7000;
-                check(settings.fsr4RuntimeEnable == (enabled || autoEnable),
-                    "FSR4 retains upstream's one-shot RX 7000 auto-enable migration");
-                check(settings.fsr4RuntimeSelectionSchemaVersion ==
-                    (adapter == FidelityFX::Fsr4AdapterSupport::Unsupported ? schema : Upscaling::kFsr4RuntimeSelectionSchemaVersion),
-                    "FSR4 migration stamps supported adapters only");
-            }
-        }
-    }
     PostProcessing post;
     auto& feature = *post.pipeline.front();
     json oldPipeline = {{"Motion Blur", {{"settings", {{"Strength", 2}}}}}};
@@ -319,7 +300,7 @@ int main() {
             check(simulatedSSS.settings.ScatterMode == 2, "Absent modern SSS fields use current defaults");
             check(!simulatedUpscaling.neuralRenderingEnabled && !simulatedUpscaling.enableDLSSFrameGen,
                 "Absent Open Shaders opt-ins stay off using actual current Upscaling settings");
-            check(!simulatedUpscaling.fsr4RuntimeEnable, "FSR4 starts from its declared default before adapter migration");
+            check(simulatedUpscaling.fsr4RuntimeEnable, "Runtime upscaler upgrades default to enabled");
             check(json(simulatedUpscaling.neuralRenderingContexts) == json(NR::Context::Profiles{}),
                 "Old configs keep the new dialogue profiles at their unchanged defaults");
             check(migrated.live["Menu"]["ToggleKey"] == 36u, "Old and current Community Shaders menu keys survive");
@@ -419,7 +400,6 @@ int main() {
             "BINDINGS": braced(menu, "constexpr InputBindingSetting kInputBindings[]"),
             "MENU_OVERLAY": braced(menu, "void Menu::OverlayInputSettings("),
             "PROCESS_SETTINGS": braced(post, "void PostProcessing::ProcessSettings("),
-            "FSR4_MIGRATION": braced(upscaling, "void ApplyLegacyFsr4RuntimeSelectionMigration("),
             "NR_CONTEXT_PATH": json.dumps((ROOT / "src/Features/Upscaling/NeuralRendering/ContextProfile.h").as_posix()),
             "UPSCALING_TYPES": "\n".join(braced(upscaling_header, token) + ";" for token in
                                          ("enum class UpscaleMethod", "enum class QualityMode", "struct Settings")),

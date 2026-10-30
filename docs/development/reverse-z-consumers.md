@@ -6,8 +6,8 @@ projection, and flips depth-stencil comparison, depth-bias and viewport depth ra
 every pass drawing into a converted target. From then on the depth buffer holds
 `1 - standardDepth` and every _shader that reads depth_ sees the inverted convention.
 
-`EnableReverseZ` is restart-gated and ships **off**. Do not turn it on by default until it has
-been validated on SE/AE **and** VR (`docs/development/release-validation.md`).
+`EnableReverseZBuffer` is restart-gated and ships **on**. Validate changes on SE/AE **and** VR
+(`docs/development/release-validation.md`).
 
 ## Two rules
 
@@ -75,7 +75,7 @@ detours cover them (comparison func, depth bias sign, viewport depth range, clea
 -   The VR hidden-area mask mesh writes a fixed clip depth of 0 that bypasses the camera matrix, so it
     landed on the far plane and masked nothing. `HiddenAreaMeshVS.hlsl` writes 1.0 for it, applied to
     the only small non-indexed draw with no pixel shader bound.
--   `EnableReverseZ` ships off and is restart-gated; toggling it rebuilds the shader cache.
+-   `EnableReverseZBuffer` ships on and is restart-gated; toggling it rebuilds the shader cache.
 -   `VRStereoOptimizations/DepthScatterCS.hlsl` keeps an `#ifdef` for its `InterlockedMin`/`Max`
     on depth bits (no float helper applies).
 -   Relative raw-depth thresholds in the VR stereo passes (`StencilCS`, `GBufferFillCS`,

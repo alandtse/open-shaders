@@ -55,6 +55,7 @@ constexpr bool FAILED(HRESULT hr) { return hr < 0; }
 #define D3D12_COMMAND_LIST_TYPE_DIRECT 0
 #define D3D12_COMMAND_LIST_TYPE_COMPUTE 1
 #define IID_PPV_ARGS(x) 0, reinterpret_cast<void**>(x)
+namespace DX { inline void ThrowIfFailed(HRESULT result) { if (FAILED(result)) throw std::runtime_error("HRESULT failure"); } }
 
 namespace winrt {
 struct hresult_error { std::string messageText; explicit hresult_error(std::string value) : messageText(std::move(value)) {} std::string message() const { return messageText; } };

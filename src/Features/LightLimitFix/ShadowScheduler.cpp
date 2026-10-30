@@ -21,6 +21,7 @@
 #include "LitCap.h"
 #include "LitRegion.h"
 #include "ShadowCasterInternal.h"
+#include "SplitLatchBackoff.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 
@@ -135,13 +136,13 @@ namespace ShadowCasterManager
 	/// lit frustum (a spot's radius can span the whole cell). Player-specific
 	/// supplement to the geomList-derived signals: the player's geometry
 	/// usually isn't in geomList at scheduling time. O(1), safe every frame.
-	static bool PlayerWithinLightRadius(RE::BSShadowLight* light)
+	static bool PlayerWithinLightRadius(RE::BSShadowLight* light, float reachPad = 0.0f)
 	{
 		auto* plr = globals::game::player;
 		const auto* ni = light ? light->light.get() : nullptr;
 		if (!plr || !ni)
 			return false;
-		const float r = ni->GetLightRuntimeData().radius.x;
+		const float r = ni->GetLightRuntimeData().radius.x + reachPad;
 		const auto pp = plr->GetPosition();
 		if (ni->world.translate.GetSquaredDistance(pp) >= r * r)
 			return false;
@@ -152,7 +153,13 @@ namespace ShadowCasterManager
 			return true;
 		const float playerPos[3] = { pp.x, pp.y, pp.z };
 		const float beamDistance = LightLimitFixLitRegion::DistanceToFrustum(proj, playerPos);
-		return beamDistance < kPlayerCasterReachUnits;
+		return beamDistance < kPlayerCasterReachUnits + reachPad;
+	}
+
+	/// True when a light reaches the player's body, so its shadow on them must not drop out.
+	static bool ShadowsPlayer(RE::BSShadowLight* light)
+	{
+		return s_settings.ProtectPlayerShadows && PlayerWithinLightRadius(light, kPlayerCasterReachUnits);
 	}
 
 	/// Player-only dynamic-caster proxy, applied every frame on top of the
@@ -299,6 +306,7 @@ namespace ShadowCasterManager
 	/// Cumulative permanent split exclusions by trigger: a pose mismatch against the bake, or the rebake window.
 	std::atomic<uint64_t> s_splitLatchMismatchTotal{ 0 };
 	std::atomic<uint64_t> s_splitLatchWindowTotal{ 0 };
+	std::atomic<uint64_t> s_splitLatchRetryTotal{ 0 };
 	/// Bakes retired (latched or dropped on slot reassignment) before any DynamicOnly accumulate reused them.
 	std::atomic<uint64_t> s_splitWastedBakeTotal{ 0 };
 
@@ -338,7 +346,10 @@ namespace ShadowCasterManager
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
 		bool splitExcluded = false;    ///< jitter outruns the bake's validity: render full, no split
+		uint32_t latchedFrame = 0;     ///< frame splitExcluded was last set
 		bool fullThisFrame = false;    ///< this frame's accumulate was All (cap/exclusion fallback)
+		/// Retry backoff for the split latch, doubling per retry up to the cap.
+		uint32_t latchRetryFrames = SplitLatchBackoff::kInitialRetryFrames;
 		/// Last completed accumulate appended >= 1 dynamic caster. Defaults
 		/// true (never sleep a light until an accumulate proves it moverless).
 		bool sawDynamicLastAccum = true;
@@ -389,6 +400,10 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_sleepSkipTotal{ 0 };
 	// Cumulative schedule-time zero-demand skips since load (snapshot metric).
 	std::atomic<uint64_t> s_demandSkipTotal{ 0 };
+	// Cumulative player-protected light-frames, redraws forced past the budget, and slot-cap losses since load.
+	std::atomic<uint64_t> s_playerProtectedTotal{ 0 };
+	std::atomic<uint64_t> s_playerForcedPastBudgetTotal{ 0 };
+	std::atomic<uint64_t> s_playerProtectedExcessTotal{ 0 };
 
 	// Zero-demand-skip audit (measurement only): an oracle cross-checking
 	// the engine's frustum cull, plus a counterfactual budget-admission
@@ -998,14 +1013,14 @@ namespace ShadowCasterManager
 
 			if (dist >= radius + camera->GetNearPlane()) {
 				float inv = 1.0f / dist;
-				float coord[4] = {
+				const RE::NiPoint4 coord{
 					lpos.x - dx * radius * inv,
 					lpos.y - dy * radius * inv,
 					lpos.z - dz * radius * inv,
 					radius
 				};
-				float r1[2], r2[2];
-				GameFrustumOverlap(camera, coord, r1, r2, 0.00001f);
+				RE::NiPoint3 r1, r2;
+				camera->CalculateFrustumOverlap(&coord, &r1, &r2, 0.00001f);
 
 				float vw = (float)*globals::game::viewWidth;
 				float vh = (float)*globals::game::viewHeight;
@@ -1014,10 +1029,10 @@ namespace ShadowCasterManager
 					vh *= GetVRDRSHeightRatio();
 				}
 
-				left = (r1[0] + 1.0f) * 0.5f * vw;
-				right = (r2[0] + 1.0f) * 0.5f * vw;
-				top = (1.0f - (r1[1] + 1.0f) * 0.5f) * vh;
-				bottom = (1.0f - (r2[1] + 1.0f) * 0.5f) * vh;
+				left = (r1.x + 1.0f) * 0.5f * vw;
+				right = (r2.x + 1.0f) * 0.5f * vw;
+				top = (1.0f - (r1.y + 1.0f) * 0.5f) * vh;
+				bottom = (1.0f - (r2.y + 1.0f) * 0.5f) * vh;
 			} else {
 				// Light contains the camera: use full screen.
 				if (const uint32_t slot = *GetAccumLightSlot(); slot < kShadowMaskBits)
@@ -1034,6 +1049,7 @@ namespace ShadowCasterManager
 		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			bool split = StaticAtlasReady();
+			const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 			SplitState* st = &s_splitState[light];
 			st->fullThisFrame = !split;
 			st->bakeThisFrame = false;
@@ -1041,6 +1057,15 @@ namespace ShadowCasterManager
 			uint64_t bakedHash = 0;
 			bool staticValid = false;
 			bool staticEmpty = false;
+			if (split && st->splitExcluded &&
+				SplitLatchBackoff::RetryDue(nowFrame, st->latchedFrame, st->latchRetryFrames)) {
+				st->splitExcluded = false;
+				st->poseRebakes = 0;
+				st->poseWindowStart = nowFrame;
+				st->bakeQueued = true;
+				st->latchRetryFrames = SplitLatchBackoff::NextRetryFrames(st->latchRetryFrames);
+				s_splitLatchRetryTotal.fetch_add(1, std::memory_order_relaxed);
+			}
 			if (split) {
 				if (st->splitExcluded || (!TolerantSplit() && st->bakePoseValid && !SplitPoseMatches(light, *st))) {
 					// Latched jitter light: the cache can never stay fresh for
@@ -1050,6 +1075,7 @@ namespace ShadowCasterManager
 					if (!st->splitExcluded) {
 						s_splitLatchMismatchTotal.fetch_add(1, std::memory_order_relaxed);
 						RetireSplitBake(*st);
+						st->latchedFrame = nowFrame;
 					}
 					st->splitExcluded = true;
 					split = false;
@@ -1099,7 +1125,6 @@ namespace ShadowCasterManager
 				if (st->bakeThisFrame) {
 					// A pose-stable light bakes once per window; kPoseRebakeLatch bakes in 300
 					// frames means the cache never holds -- render full and stop it.
-					const uint32_t nowFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 					if (nowFrame < st->poseWindowStart || nowFrame - st->poseWindowStart > 300u) {
 						st->poseWindowStart = nowFrame;
 						st->poseRebakes = 0;
@@ -1110,6 +1135,7 @@ namespace ShadowCasterManager
 							RetireSplitBake(*st);
 						}
 						st->splitExcluded = true;
+						st->latchedFrame = nowFrame;
 						st->bakeThisFrame = false;
 						st->fullThisFrame = true;
 						mode = CasterPass::All;
@@ -1257,6 +1283,9 @@ namespace ShadowCasterManager
 
 		/// Raw UpdateCamera failure, true for held lights too (invalidCamera is not).
 		bool updateCameraFailed{ false };
+
+		/// Reaches the player: ranked ahead of every other candidate.
+		bool playerProtected{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
@@ -1511,16 +1540,15 @@ namespace ShadowCasterManager
 		if (!GetSunBool2()) {
 			auto* sun = ssn->GetRuntimeData().sunShadowDirLight;
 			if (sun) {
-				static REL::Relocation<bool*> vrUpdateFlag{ REL::Offset(0x1ed62f8) };
-				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(*vrUpdateFlag) + 1 : 0;
+				uint8_t vrFlag = globals::game::isVR ? static_cast<uint8_t>(RE::BSShaderManager::IsSunShadowUpdateDue()) + 1 : 0;
 				sun->Accumulate(*GetAccumLightSlot(), 0, nullptr, vrFlag);
 
 				if (sun->lensFlareData && !globals::game::isVR)
 					GameApplyLensFlare(sun);
 
 				if (globals::game::isVR && !GetVRAccumFirst()) {
-					GameVRPrepareShadowMaps(sun);
-					GameVRAccumulateShadowMaps(sun);
+					sun->StepShadowAccumulators();
+					sun->ClearShadowAccumulators();
 				}
 
 				sunLight = sun;
@@ -1579,6 +1607,7 @@ namespace ShadowCasterManager
 				auto& c = candidates.emplace_back();
 				c.light = l;
 				c.sun = false;
+				c.playerProtected = ShadowsPlayer(l);
 				float impact = 1.0f;
 				{
 					ZoneScopedN("SCM::ScoreCandidates::LightScore");
@@ -1657,6 +1686,8 @@ namespace ShadowCasterManager
 			[](const CandidateLight& a, const CandidateLight& b) {
 				if (a.sun != b.sun)
 					return a.sun;
+				if (a.playerProtected != b.playerProtected)
+					return a.playerProtected;
 				if (a.score != b.score)
 					return a.score > b.score;
 				return reinterpret_cast<uintptr_t>(a.light) < reinterpret_cast<uintptr_t>(b.light);
@@ -1757,9 +1788,8 @@ namespace ShadowCasterManager
 		// Splitting validation from mutation defers state changes to a single
 		// atomic loop later, avoiding a dangling-pointer window where an earlier
 		// phase's mutation invalidates raw pointers held in s_lights[].
-		auto* globalCull = *reinterpret_cast<RE::BSCullingProcess**>(
-			*reinterpret_cast<uintptr_t**>(
-				REL::RelocationID(528077, 415022).address()));
+		auto& globalCullingProcesses = RE::BSGeometryListCullingProcess::GetGlobalCullingProcesses();
+		RE::BSCullingProcess* globalCull = globalCullingProcesses.empty() ? nullptr : globalCullingProcesses.front();
 
 		int wantCount = 0;
 
@@ -1905,6 +1935,14 @@ namespace ShadowCasterManager
 					s_schedDiag.candidates_chosen++;
 				if (c.excess)
 					s_schedDiag.candidates_excess++;
+				if (c.playerProtected) {
+					s_schedDiag.player_protected++;
+					s_playerProtectedTotal.fetch_add(1, std::memory_order_relaxed);
+					if (c.excess) {
+						s_schedDiag.player_protected_excess++;
+						s_playerProtectedExcessTotal.fetch_add(1, std::memory_order_relaxed);
+					}
+				}
 
 				// Capture why a non-chosen light is demoted, for the shadow table. Portal
 				// wins, then frustum/distance, LOD, excess -- matching branch precedence.
@@ -2131,6 +2169,7 @@ namespace ShadowCasterManager
 					for (const auto& c : candidates) {
 						if (c.light == e.Light) {
 							e.lastScore = c.score;
+							e.playerProtected = c.playerProtected;
 							break;
 						}
 					}
@@ -2224,6 +2263,8 @@ namespace ShadowCasterManager
 	/// and the Q2 counterfactual replay so both traverse candidates identically.
 	static bool ScheduleOrderLess(uint32_t starvationFloorFrames, const LightEntry* a, const LightEntry* b)
 	{
+		if (a->playerProtected != b->playerProtected)
+			return a->playerProtected;
 		if (a->schedDirty != b->schedDirty)
 			return a->schedDirty && !b->schedDirty;
 		const bool aStarved = a->dirtyStallFrames >= starvationFloorFrames;
@@ -2261,7 +2302,7 @@ namespace ShadowCasterManager
 			}
 			// Honour AllowDrawNewLight: when disabled, brand-new entries wait for the
 			// next frame instead of competing for this frame's budget.
-			if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+			if (!e.playerProtected && !s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
 				newLightSkips.push_back(&e);
 				continue;
 			}
@@ -2278,7 +2319,7 @@ namespace ShadowCasterManager
 			// Zero-demand skip, tested after sleep so the two never double-count.
 			// schedDirty stays at its last value so a wrongly-skipped truly-dirty
 			// light still shows starvation risk; skippedThisFrame freezes the stall counter.
-			if (DemandSkipEligible(e, i, now)) {
+			if (!e.playerProtected && DemandSkipEligible(e, i, now)) {
 				s_schedDiag.demand_skips++;
 				s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
 				e.skippedThisFrame = true;
@@ -2702,16 +2743,20 @@ namespace ShadowCasterManager
 		anyCostRejected = false;
 
 		for (auto* e : pending) {
-			if (maxRedraw <= 0)
+			if (!e->playerProtected && (maxRedraw <= 0 || budgetRemain <= 0))
 				break;
-			if (budgetRemain <= 0)
-				break;
-			const DueGate gate = DueGateFor(e, now, isFirst);
+			DueGate gate = DueGateFor(e, now, isFirst);
+			if (e->playerProtected && gate == DueGate::Stop)
+				gate = DueGate::Skip;
 			if (gate == DueGate::Stop)
 				break;
 			if (gate == DueGate::Skip)
 				continue;
 			int32_t budgetEstimate = s_budget.GetCost(e->Light);
+			if (e->playerProtected && (maxRedraw <= 0 || budgetEstimate > budgetRemain)) {
+				s_schedDiag.player_forced_past_budget++;
+				s_playerForcedPastBudgetTotal.fetch_add(1, std::memory_order_relaxed);
+			}
 			if (isFirst) {
 				if (!s_lights.Sun || e->Index > 0)
 					budgetRemain -= budgetEstimate;
@@ -2722,7 +2767,7 @@ namespace ShadowCasterManager
 				isFirst = false;
 				continue;
 			}
-			if (budgetEstimate <= budgetRemain) {
+			if (e->playerProtected || budgetEstimate <= budgetRemain) {
 				budgetRemain -= budgetEstimate;
 				maxRedraw--;
 				e->RedrawFrame = true;
@@ -3453,6 +3498,7 @@ namespace ShadowCasterManager
 					snap.splitAccumByMode[i] = s_splitAccumByMode[i].load(std::memory_order_relaxed);
 				snap.splitLatchMismatchTotal = s_splitLatchMismatchTotal.load(std::memory_order_relaxed);
 				snap.splitLatchWindowTotal = s_splitLatchWindowTotal.load(std::memory_order_relaxed);
+				snap.splitLatchRetryTotal = s_splitLatchRetryTotal.load(std::memory_order_relaxed);
 				snap.splitWastedBakesTotal = s_splitWastedBakeTotal.load(std::memory_order_relaxed);
 				snap.scalePromotionRedraws = s_scalePromotionRedraws.load(std::memory_order_relaxed);
 				snap.scaleDemotionRedrawsAvoided = s_scaleDemotionRedrawsAvoided.load(std::memory_order_relaxed);
@@ -3468,6 +3514,12 @@ namespace ShadowCasterManager
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				snap.demandSkips = s_schedDiag.demand_skips;
 				snap.demandSkipsTotal = s_demandSkipTotal.load(std::memory_order_relaxed);
+				snap.playerProtected = s_schedDiag.player_protected;
+				snap.playerProtectedTotal = s_playerProtectedTotal.load(std::memory_order_relaxed);
+				snap.playerForcedPastBudget = s_schedDiag.player_forced_past_budget;
+				snap.playerForcedPastBudgetTotal = s_playerForcedPastBudgetTotal.load(std::memory_order_relaxed);
+				snap.playerProtectedExcess = s_schedDiag.player_protected_excess;
+				snap.playerProtectedExcessTotal = s_playerProtectedExcessTotal.load(std::memory_order_relaxed);
 				snap.alphaGroupPeak = AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed);
 				snap.alphaGroupDrops = AlphaGeometryGroupCeilingFix::drops.load(std::memory_order_relaxed);
 				snap.frustumAuditCandidates = s_schedDiag.frustum_audit_candidates;
@@ -3517,6 +3569,9 @@ namespace ShadowCasterManager
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
 			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
+			TracyPlot("scm.player.protected", (int64_t)s_schedDiag.player_protected);
+			TracyPlot("scm.player.forced_past_budget", (int64_t)s_schedDiag.player_forced_past_budget);
+			TracyPlot("scm.player.protected_excess", (int64_t)s_schedDiag.player_protected_excess);
 			TracyPlot("scm.demand_skips", (int64_t)s_schedDiag.demand_skips);
 			TracyPlot("scm.alpha_groups", (int64_t)AlphaGeometryGroupCeilingFix::peak.load(std::memory_order_relaxed));
 			TracyPlot("scm.demand.skip_eligible", (int64_t)s_schedDiag.demand_skip_eligible);

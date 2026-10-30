@@ -63,11 +63,7 @@ float2 ClosestPointOnSegment(float2 position, float2 pointA, float2 pointB)
 	const uint TEXTURE_SIZE = 1024;
 	const float WORLD_SIZE = 8192.0;
 	const float COLLISION_ACCELERATION = 50.0;
-	const int2 textureSize = int2(TEXTURE_SIZE, TEXTURE_SIZE);
-
-	int2 cellID = int2(dispatchThreadId.xy) - int2(ArrayOrigin);
-	cellID %= textureSize;
-	cellID += int2(cellID < 0) * textureSize;
+	int2 cellID = int2((dispatchThreadId.xy + TEXTURE_SIZE - ArrayOrigin) % TEXTURE_SIZE);
 	float2 cellCentreMS = float2(cellID) + 0.5 - TEXTURE_SIZE * 0.5;
 	cellCentreMS = cellCentreMS / TEXTURE_SIZE * WORLD_SIZE + PosOffset;
 

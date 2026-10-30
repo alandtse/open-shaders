@@ -35,6 +35,13 @@ namespace Util
 	/** @brief Returns the actor's normalized aim direction in Skyrim's Z-up world space. */
 	[[nodiscard]] float3 GetAimDirection(RE::Actor& a_actor) noexcept;
 
+	/** @brief True when the node, or the nearest ancestor with an owner, belongs to an actor (held weapons, scabbards, anim objects). */
+	[[nodiscard]] inline bool IsOwnedByActor(const RE::NiAVObject& a_node)
+	{
+		const auto* owner = a_node.GetUserData();
+		return owner && owner->IsActor();
+	}
+
 	/** @brief A Havok or Gamebryo point as the float3 the shaders and constant buffers use. */
 	inline float3 ToFloat3(const RE::NiPoint3& a_point)
 	{

@@ -28,8 +28,7 @@ namespace
 	/** @brief The game's volumetric lighting settings, blended by Sky::Update for the current weather and time. */
 	RE::BSVolumetricLightingRenderData& GetGameVolumetricLighting()
 	{
-		static auto& volumetricLighting = *reinterpret_cast<RE::BSVolumetricLightingRenderData*>(REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, color));
-		return volumetricLighting;
+		return RE::BSVolumetricLightingRenderData::GetCurrentRenderData();
 	}
 
 	/** @brief Angular half-size of a sky billboard as seen from the viewer, as tan(angle); a_fallback when it has no usable bound. */

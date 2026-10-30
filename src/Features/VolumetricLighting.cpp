@@ -192,9 +192,11 @@ void VolumetricLighting::PostPostLoad()
 		stl::write_thunk_call<RenderDepth>(REL::RelocationID(35560, 0).address() + REL::Relocate(0x2EE, 0));
 	}
 
-	gVolumetricLightingSizeLow = reinterpret_cast<TextureSize*>(REL::RelocationID(527970, 414916).address());
-	gVolumetricLightingSizeMedium = reinterpret_cast<TextureSize*>(REL::RelocationID(527973, 414919).address());
-	gVolumetricLightingSizeHigh = reinterpret_cast<TextureSize*>(REL::RelocationID(527976, 414922).address());
+	static_assert(sizeof(TextureSize) == 12);
+	auto* const textureSizes = reinterpret_cast<TextureSize*>(REL::RelocationID(527970, 414916).address());
+	gVolumetricLightingSizeLow = textureSizes;
+	gVolumetricLightingSizeMedium = textureSizes + 1;
+	gVolumetricLightingSizeHigh = textureSizes + 2;
 	defaultSizeHigh = *gVolumetricLightingSizeHigh;
 
 	// Ensure the VL raymarch compute shader is only dispatched once, rather than once for every level of depth
@@ -263,43 +265,27 @@ void VolumetricLighting::SetupVL()
 		else
 			*globals::game::bEnableVolumetricLighting = settings.InteriorEnabled && inInteriorWithSun;
 		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.InteriorQuality) == Quality::Custom ? settings.InteriorCustomSize : defaultSizeHigh;
-		SetVLQuality(GetVLDescriptor(), settings.InteriorQuality);
+		SetVLQuality(settings.InteriorQuality);
 	} else {
 		if (globals::game::isVR)
 			SetBooleanSettings(hiddenVRSettings, GetName(), settings.ExteriorEnabled);
 		else
 			*globals::game::bEnableVolumetricLighting = settings.ExteriorEnabled;
 		*gVolumetricLightingSizeHigh = static_cast<Quality>(settings.ExteriorQuality) == Quality::Custom ? settings.ExteriorCustomSize : defaultSizeHigh;
-		SetVLQuality(GetVLDescriptor(), settings.ExteriorQuality);
+		SetVLQuality(settings.ExteriorQuality);
 	}
 }
 
-VolumetricLighting::VolumetricLightingDescriptor& VolumetricLighting::GetVLDescriptor()
+void VolumetricLighting::SetVLQuality(const uint32_t quality)
 {
-	using func_t = decltype(&VolumetricLighting::GetVLDescriptor);
-	static REL::Relocation<func_t> func{ REL::RelocationID(100297, 107014) };
-	return func();
-}
-
-void VolumetricLighting::SetVLQuality(VolumetricLightingDescriptor& descriptor, const uint32_t quality)
-{
-	using func_t = decltype(&VolumetricLighting::SetVLQuality);
-	static REL::Relocation<func_t> func{ REL::RelocationID(100299, 107016).address() };
-	func(descriptor, std::clamp<uint32_t>(quality, 0, 2));
-}
-
-void VolumetricLighting::RenderVolumetricLighting(VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag)
-{
-	using func_t = decltype(&VolumetricLighting::RenderVolumetricLighting);
-	static REL::Relocation<func_t> func{ REL::RelocationID(100306, 0) };
-	func(descriptor, camera, flag);
+	RE::SetVolumetricLightingQuality(RE::GetVolumetricLightingDescriptor(), std::clamp<uint32_t>(quality, 0, 2));
 }
 
 void VolumetricLighting::RenderDepth::thunk()
 {
 	func();
 	if (globals::game::bEnableVolumetricLighting && *globals::game::bEnableVolumetricLighting)
-		RenderVolumetricLighting(&GetVLDescriptor(), RE::Main::WorldRootCamera(), false);
+		RE::RenderVolumetricLighting(&RE::GetVolumetricLightingDescriptor(), RE::Main::WorldRootCamera(), false);
 }
 
 RE::BSImagespaceShader* VolumetricLighting::CreateShader(const std::string_view& name, const std::string_view& fileName, RE::BSComputeShader* computeShader)

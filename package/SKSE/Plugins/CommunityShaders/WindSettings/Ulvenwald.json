@@ -1,0 +1,10 @@
+{
+    "$schema": "WindSettings.schema.json",
+    "version": 1,
+    "trees": [
+        {
+            "mesh": "meshes/landscape/trees/Spruce Forest/ClumpSpruce02.nif",
+            "bendEnabled": false
+        }
+    ]
+}

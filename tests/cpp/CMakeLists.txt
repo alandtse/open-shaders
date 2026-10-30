@@ -50,6 +50,7 @@ set(screenshot_test_sources
     test_screenshot_png.cpp
     test_screenshot_worker.cpp
     test_screenshot_burst_adapter.cpp
+    test_screenshot_burst_policy.cpp
     "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
@@ -57,6 +58,7 @@ set(screenshot_test_sources
 
 add_executable(cpp_tests
     test_main.cpp
+    test_antilag2.cpp
     ${screenshot_test_sources}
     test_bootsnapshot.cpp
     test_dynamicnearclip.cpp
@@ -73,6 +75,7 @@ add_executable(cpp_tests
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_snowcover_math.cpp
+    test_rain_texture_footprint.cpp
     test_llf_sanitize.cpp
     test_litregion.cpp
     test_litcap.cpp
@@ -88,6 +91,9 @@ add_executable(cpp_tests
     test_shadercacheclear.cpp
 	test_generationclaim.cpp
 	test_framelatch.cpp
+	test_lightattachgate.cpp
+	test_pointersearch.cpp
+	test_splitlatchbackoff.cpp
 	test_shaderinclude.cpp
 	test_settingspatch.cpp
 	test_weatheridparser.cpp
@@ -104,6 +110,10 @@ add_executable(cpp_tests
 	test_nr_eye_mode.cpp
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
+	test_abcompositorstats.cpp
+	test_abcomparison.cpp
+	test_prerequisitechain.cpp
+	test_desktop_mirror.cpp
 	test_furshellassetscan.cpp
 	test_furinertiaspring.cpp
 	test_region.cpp
@@ -118,6 +128,9 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Utils/Subrect.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/RegionOverlay.cpp"
     "${CMAKE_SOURCE_DIR}/src/Utils/SphericalHarmonics.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABCompositorStats.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABComparison.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Menu/DesktopMirrorDrawData.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
@@ -129,6 +142,8 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
+
+target_include_directories(cpp_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK")
 
 # Exercise capture policy in both production and DevBench configurations.
 add_executable(screenshot_tests_devbench test_main.cpp ${screenshot_test_sources})

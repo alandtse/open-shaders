@@ -10,6 +10,7 @@
 #include "../I18n/I18n.h"
 #include "../State.h"
 #include "../Util.h"
+#include "DesktopMirrorDrawData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -38,6 +39,7 @@ namespace BackgroundBlur
 		std::mutex resourceMutex;
 		bool enabled = false;
 		bool csEditorActive = false;
+		bool retainedDesktopMirror = false;
 
 		// DirectX resources (RAII managed)
 		winrt::com_ptr<ID3D11VertexShader> vertexShader;
@@ -74,6 +76,8 @@ namespace BackgroundBlur
 		// Cached SRV for non-upscaling path (avoids per-frame CreateShaderResourceView)
 		winrt::com_ptr<ID3D11ShaderResourceView> cachedSourceSRV;
 		ID3D11Texture2D* cachedSourceTexture = nullptr;  // raw pointer for cache invalidation check
+		winrt::com_ptr<ID3D11Texture2D> desktopMirrorSourceTexture;
+		winrt::com_ptr<ID3D11ShaderResourceView> desktopMirrorSourceSRV;
 
 		winrt::com_ptr<ID3D11Texture2D> editorUITexture;
 		winrt::com_ptr<ID3D11RenderTargetView> editorUIRTV;
@@ -95,6 +99,7 @@ namespace BackgroundBlur
 			ImRect clip;
 		};
 		SceneImage sceneImage;
+		ImDrawCallback hdrSceneImageCallback = nullptr;
 
 		UINT textureWidth = 0;
 		UINT textureHeight = 0;
@@ -128,6 +133,8 @@ namespace BackgroundBlur
 			UIBufferViews uiBuffer;
 			bool uiOnly = false;
 			bool hdr = false;
+			ID3D11Texture2D* mirrorSourceTexture = nullptr;
+			ID3D11Texture2D* mirrorSourceCopy = nullptr;
 		};
 
 		struct WindowBlur
@@ -307,11 +314,15 @@ namespace BackgroundBlur
 			return true;
 		}
 
-		std::vector<WindowBlur> GatherWindows(ImDrawData* drawData, const BlurFrame& frame, BlurConstants constants)
+		std::vector<WindowBlur> GatherWindows(ImDrawData* drawData, const ImDrawData* sourceDrawData, const BlurFrame& frame, BlurConstants constants)
 		{
 			std::vector<WindowBlur> windows;
 			auto* ctx = ImGui::GetCurrentContext();
 			const auto* performanceOverlay = ImGui::FindWindowByName(T("feature.perf_overlay.overlay_title", "Performance Overlay"));
+			const bool fittedMirror = sourceDrawData && sourceDrawData != drawData;
+			DesktopMirrorDrawData::FitTransform fit{};
+			if (fittedMirror && !DesktopMirrorDrawData::GetFitTransform(*sourceDrawData, drawData->DisplaySize, fit))
+				return windows;
 			windows.reserve(ctx->Windows.Size);
 			constants.windowParams[3] = 0.0f;
 			for (auto* window : ctx->Windows) {
@@ -328,18 +339,38 @@ namespace BackgroundBlur
 				auto* drawList = window->DockIsActive && window->DockNode && window->DockNode->HostWindow ?
 				                     window->DockNode->HostWindow->DrawList :
 				                     window->DrawList;
-				const auto it = std::ranges::find(drawData->CmdLists, drawList);
-				if (it == drawData->CmdLists.end())
+				const auto& sourceLists = fittedMirror ? sourceDrawData->CmdLists : drawData->CmdLists;
+				const auto it = std::ranges::find(sourceLists, drawList);
+				if (it == sourceLists.end())
 					continue;
+				const auto drawOrder = static_cast<int>(it - sourceLists.begin());
+				if (drawOrder >= drawData->CmdLists.Size)
+					continue;
+				drawList = drawData->CmdLists[drawOrder];
 
 				const ImRect rect = window->Rect();
-				const auto scale = drawData->FramebufferScale;
-				constants.windowRect[0] = (rect.Min.x - drawData->DisplayPos.x) * scale.x;
-				constants.windowRect[1] = (rect.Min.y - drawData->DisplayPos.y) * scale.y;
-				constants.windowRect[2] = (rect.Max.x - drawData->DisplayPos.x) * scale.x;
-				constants.windowRect[3] = (rect.Max.y - drawData->DisplayPos.y) * scale.y;
-				constants.windowParams[0] = window->WindowRounding * (std::min)(scale.x, scale.y);
-				windows.push_back({ &frame, drawList, constants, static_cast<int>(it - drawData->CmdLists.begin()) });
+				if (fittedMirror) {
+					const auto scale = sourceDrawData->FramebufferScale;
+					ImVec2 min{}, max{};
+					if (!fit.MapPosition(rect.Min, sourceDrawData->DisplayPos, scale, min) ||
+						!fit.MapPosition(rect.Max, sourceDrawData->DisplayPos, scale, max))
+						continue;
+					constants.windowRect[0] = (std::clamp)(min.x, 0.0f, drawData->DisplaySize.x);
+					constants.windowRect[1] = (std::clamp)(min.y, 0.0f, drawData->DisplaySize.y);
+					constants.windowRect[2] = (std::clamp)(max.x, 0.0f, drawData->DisplaySize.x);
+					constants.windowRect[3] = (std::clamp)(max.y, 0.0f, drawData->DisplaySize.y);
+					if (constants.windowRect[0] >= constants.windowRect[2] || constants.windowRect[1] >= constants.windowRect[3])
+						continue;
+					constants.windowParams[0] = window->WindowRounding * static_cast<float>((std::min)(scale.x, scale.y) * fit.scale);
+				} else {
+					const auto scale = drawData->FramebufferScale;
+					constants.windowRect[0] = (rect.Min.x - drawData->DisplayPos.x) * scale.x;
+					constants.windowRect[1] = (rect.Min.y - drawData->DisplayPos.y) * scale.y;
+					constants.windowRect[2] = (rect.Max.x - drawData->DisplayPos.x) * scale.x;
+					constants.windowRect[3] = (rect.Max.y - drawData->DisplayPos.y) * scale.y;
+					constants.windowParams[0] = window->WindowRounding * (std::min)(scale.x, scale.y);
+				}
+				windows.push_back({ &frame, drawList, constants, drawOrder });
 			}
 			if (csEditorActive) {
 				const auto imageOrder = std::ranges::find(drawData->CmdLists, sceneImage.drawList);
@@ -364,8 +395,9 @@ namespace BackgroundBlur
 	void RestoreRetainedBuffers()
 	{
 		sceneImage = {};
-		if (globals::game::isVR || !globals::d3d::context)
+		if (!globals::d3d::context || (globals::game::isVR && !retainedDesktopMirror))
 			return;
+		retainedDesktopMirror = false;
 		std::lock_guard<std::mutex> lock(resourceMutex);
 		auto& hdr = globals::features::hdrDisplay;
 		auto& upscaling = globals::features::upscaling;
@@ -643,6 +675,13 @@ namespace BackgroundBlur
 	void RenderWindowBlur(const ImDrawList*, const ImDrawCmd* command)
 	{
 		const auto& window = *static_cast<const WindowBlur*>(command->UserCallbackData);
+		if (window.frame->mirrorSourceTexture && window.frame->mirrorSourceCopy) {
+			auto context = globals::d3d::context;
+			context->OMSetRenderTargets(0, nullptr, nullptr);
+			context->CopyResource(window.frame->mirrorSourceCopy, window.frame->mirrorSourceTexture);
+			auto* target = window.frame->imguiRTV;
+			context->OMSetRenderTargets(1, &target, nullptr);
+		}
 		PerformBlur(*window.frame, window.constants);
 	}
 
@@ -677,6 +716,8 @@ namespace BackgroundBlur
 	{
 		cachedSourceSRV = nullptr;
 		cachedSourceTexture = nullptr;
+		desktopMirrorSourceSRV = nullptr;
+		desktopMirrorSourceTexture = nullptr;
 	}
 
 	void Cleanup()
@@ -703,6 +744,7 @@ namespace BackgroundBlur
 		ReleaseEditorLayer();
 		retainedScene = {};
 		retainedUI = {};
+		retainedDesktopMirror = false;
 
 		ReleaseSourceCache();
 
@@ -744,7 +786,7 @@ namespace BackgroundBlur
 		sceneImage = { drawList, ImRect(toPixels(min), toPixels(ImVec2(min.x + size.x, min.y + size.y))),
 			ImRect(toPixels(drawList->GetClipRectMin()), toPixels(drawList->GetClipRectMax())) };
 		sceneImage.clip.ClipWith(sceneImage.rect);
-		drawList->AddCallback([](const ImDrawList*, const ImDrawCmd*) {
+		const auto sceneImageCallback = [](const ImDrawList*, const ImDrawCmd*) {
 			auto& hdr = globals::features::hdrDisplay;
 			if (!hdr.IsCleanSceneCaptureFresh() || sceneImage.clip.GetWidth() <= 0.0f || sceneImage.clip.GetHeight() <= 0.0f)
 				return;
@@ -778,16 +820,42 @@ namespace BackgroundBlur
 			context->PSSetShaderResources(0, 1, &source);
 			context->PSSetSamplers(0, 1, &sampler);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
-		},
-			nullptr);
+		};
+		hdrSceneImageCallback = sceneImageCallback;
+		drawList->AddCallback(sceneImageCallback, nullptr);
 		ImGui::Dummy(size);
 		return true;
 	}
 
+	bool HasHDRSceneImageCallback(const ImDrawData* drawData)
+	{
+		return drawData && DesktopMirrorDrawData::ContainsCallback(*drawData, hdrSceneImageCallback);
+	}
+
+	static bool RenderDrawDataImpl(ImDrawData* drawData, const ImDrawData* sourceDrawData, bool desktopMirror);
+
 	bool RenderDrawData(ImDrawData* drawData)
 	{
-		if (!enabled || globals::game::isVR || !drawData || drawData->DisplaySize.x <= 0.0f || drawData->DisplaySize.y <= 0.0f) {
+		return RenderDrawDataImpl(drawData, nullptr, false);
+	}
+
+	bool RenderDrawDataForDesktopMirror(ImDrawData* drawData, const ImDrawData& sourceDrawData)
+	{
+		if (!globals::game::isVR || !drawData || !sourceDrawData.Valid || HasHDRSceneImageCallback(&sourceDrawData))
 			return false;
+		return RenderDrawDataImpl(drawData, &sourceDrawData, true);
+	}
+
+	static bool RenderDrawDataImpl(ImDrawData* drawData, const ImDrawData* sourceDrawData, bool desktopMirror)
+	{
+		if (!enabled || (globals::game::isVR && !desktopMirror) || !drawData || drawData->DisplaySize.x <= 0.0f || drawData->DisplaySize.y <= 0.0f) {
+			return false;
+		}
+		if (desktopMirror) {
+			DesktopMirrorDrawData::FitTransform fit{};
+			if (!sourceDrawData || !sourceDrawData->Valid ||
+				!DesktopMirrorDrawData::GetFitTransform(*sourceDrawData, drawData->DisplaySize, fit))
+				return false;
 		}
 
 		if (!initialized || initializationFailed) {
@@ -815,6 +883,7 @@ namespace BackgroundBlur
 		winrt::com_ptr<ID3D11Texture2D> currentTexture;
 		winrt::com_ptr<ID3D11RenderTargetView> currentRTV;
 		ID3D11ShaderResourceView* sourceSRV = nullptr;  // Non-owning; lifetime managed elsewhere
+		ID3D11Texture2D* mirrorSourceCopy = nullptr;
 		UIBufferViews uiBuffer;
 
 		if (hdrActive) {
@@ -856,22 +925,55 @@ namespace BackgroundBlur
 			}
 			currentTexture = tex;
 
-			// Cache SRV for non-upscaling path (avoids CreateShaderResourceView every frame)
-			if (cachedSourceTexture != currentTexture.get()) {
-				cachedSourceSRV = nullptr;
-				HRESULT hr = device->CreateShaderResourceView(currentTexture.get(), nullptr, cachedSourceSRV.put());
-				if (FAILED(hr)) {
-					logger::error("Failed to create cached source SRV for blur");
-					return false;
+			if (desktopMirror) {
+				// Swap-chain back buffers need not be shader-readable, so blur a private copy.
+				D3D11_TEXTURE2D_DESC sourceDesc{};
+				currentTexture->GetDesc(&sourceDesc);
+				D3D11_TEXTURE2D_DESC copyDesc = sourceDesc;
+				copyDesc.Usage = D3D11_USAGE_DEFAULT;
+				copyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+				copyDesc.CPUAccessFlags = 0;
+				copyDesc.MiscFlags = 0;
+				D3D11_TEXTURE2D_DESC cachedDesc{};
+				if (desktopMirrorSourceTexture)
+					desktopMirrorSourceTexture->GetDesc(&cachedDesc);
+				if (!desktopMirrorSourceTexture || cachedDesc.Width != copyDesc.Width || cachedDesc.Height != copyDesc.Height ||
+					cachedDesc.Format != copyDesc.Format || cachedDesc.SampleDesc.Count != copyDesc.SampleDesc.Count ||
+					cachedDesc.ArraySize != copyDesc.ArraySize || cachedDesc.MipLevels != copyDesc.MipLevels) {
+					desktopMirrorSourceSRV = nullptr;
+					desktopMirrorSourceTexture = nullptr;
+					if (FAILED(device->CreateTexture2D(&copyDesc, nullptr, desktopMirrorSourceTexture.put())) ||
+						FAILED(device->CreateShaderResourceView(desktopMirrorSourceTexture.get(), nullptr, desktopMirrorSourceSRV.put()))) {
+						desktopMirrorSourceTexture = nullptr;
+						desktopMirrorSourceSRV = nullptr;
+						return false;
+					}
+					Util::SetResourceName(desktopMirrorSourceTexture.get(), "BackgroundBlur::Desktop Mirror Source");
+					Util::SetResourceName(desktopMirrorSourceSRV.get(), "BackgroundBlur::Desktop Mirror Source SRV");
 				}
-				Util::SetResourceName(cachedSourceSRV.get(), "BackgroundBlur::Source SRV");
-				cachedSourceTexture = currentTexture.get();
+				mirrorSourceCopy = desktopMirrorSourceTexture.get();
+				sourceSRV = desktopMirrorSourceSRV.get();
+			} else {
+				// Cache SRV for non-upscaling path (avoids CreateShaderResourceView every frame)
+				if (cachedSourceTexture != currentTexture.get()) {
+					cachedSourceSRV = nullptr;
+					HRESULT hr = device->CreateShaderResourceView(currentTexture.get(), nullptr, cachedSourceSRV.put());
+					if (FAILED(hr)) {
+						logger::error("Failed to create cached source SRV for blur");
+						return false;
+					}
+					Util::SetResourceName(cachedSourceSRV.get(), "BackgroundBlur::Source SRV");
+					cachedSourceTexture = currentTexture.get();
+				}
+				sourceSRV = cachedSourceSRV.get();
 			}
-			sourceSRV = cachedSourceSRV.get();
 		}
 
 		D3D11_TEXTURE2D_DESC texDesc;
 		currentTexture->GetDesc(&texDesc);
+		if (desktopMirror && (std::abs(static_cast<float>(texDesc.Width) - drawData->DisplaySize.x) > 0.5f ||
+								 std::abs(static_cast<float>(texDesc.Height) - drawData->DisplaySize.y) > 0.5f))
+			return false;
 
 		// Create blur textures if needed (check format too for HDR toggle)
 		const auto blurFormat = csEditorActive ? DXGI_FORMAT_R16G16B16A16_FLOAT : texDesc.Format;
@@ -887,8 +989,20 @@ namespace BackgroundBlur
 		context->OMGetRenderTargets(1, imguiRTV.put(), nullptr);
 		if (!imguiRTV)
 			return false;
+		if (desktopMirror) {
+			winrt::com_ptr<ID3D11Resource> imguiResource;
+			imguiRTV->GetResource(imguiResource.put());
+			winrt::com_ptr<ID3D11Texture2D> imguiTexture;
+			if (!imguiResource || FAILED(imguiResource->QueryInterface(IID_PPV_ARGS(imguiTexture.put()))) || !imguiTexture)
+				return false;
+			D3D11_TEXTURE2D_DESC imguiDesc{};
+			imguiTexture->GetDesc(&imguiDesc);
+			if (imguiDesc.Width != texDesc.Width || imguiDesc.Height != texDesc.Height)
+				return false;
+		}
 
-		const BlurFrame frame{ sourceSRV, currentRTV.get(), imguiRTV.get(), uiBuffer, false, hdrActive };
+		const BlurFrame frame{ sourceSRV, currentRTV.get(), imguiRTV.get(), uiBuffer, false, hdrActive,
+			desktopMirror ? currentTexture.get() : nullptr, mirrorSourceCopy };
 		BlurConstants constants{
 			{ static_cast<float>(downsampledWidth), static_cast<float>(downsampledHeight), 1.0f / downsampledWidth, 1.0f / downsampledHeight },
 			{ 0.0f, 0.0f, static_cast<float>(texDesc.Width), static_cast<float>(texDesc.Height) },
@@ -896,7 +1010,7 @@ namespace BackgroundBlur
 			{ hdrActive ? hdr->settings.hdrUIBrightness : 1.0f, 0.0f, 0.0f, 0.0f }
 		};
 
-		auto windows = GatherWindows(drawData, frame, constants);
+		auto windows = GatherWindows(drawData, sourceDrawData, frame, constants);
 		if (windows.empty() && !csEditorActive)
 			return false;
 		const bool useEditorLayer = csEditorActive && !hdrActive && !windows.empty();
@@ -907,6 +1021,7 @@ namespace BackgroundBlur
 		const BlurFrame editorFrame{ editorUISRV.get(), editorUIRTV.get(), editorUIRTV.get(), {}, true };
 		if (!PreserveUIBuffer(uiBuffer))
 			return false;
+		retainedDesktopMirror = desktopMirror;
 
 		Util::FullscreenPassScope restoreState(context);
 		UINT scissorCount = D3D11_VIEWPORT_AND_SCISSORRECT_OBJECT_COUNT_PER_PIPELINE;
@@ -922,8 +1037,13 @@ namespace BackgroundBlur
 		}
 		retainedUI.dirty = retainedUI.source != nullptr;
 
-		if (csEditorActive)
+		if (csEditorActive) {
+			if (frame.mirrorSourceTexture && frame.mirrorSourceCopy) {
+				context->OMSetRenderTargets(0, nullptr, nullptr);
+				context->CopyResource(frame.mirrorSourceCopy, frame.mirrorSourceTexture);
+			}
 			PerformBlur(frame, constants);
+		}
 		if (useEditorLayer) {
 			const float clear[4]{};
 			context->ClearRenderTargetView(editorUIRTV.get(), clear);

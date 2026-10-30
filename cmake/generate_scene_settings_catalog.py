@@ -4312,6 +4312,128 @@ def collect_navigation_controls(paths: list[Path]) -> dict[str, tuple[tuple[str,
     return {owner: tuple(sorted(labels)) for owner, labels in controls.items()}
 
 
+DISABLED_TOGGLE_RE = re.compile(r"\bImGui::(BeginDisabled|EndDisabled)\s*\(")
+MEMBER_REFERENCE_RE = re.compile(r"(?:\.|->)\s*([A-Za-z_]\w*)")
+CHAIN_REFERENCE_RE = re.compile(r"[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+")
+CONDITION_CHAIN = r"[A-Za-z_]\w*(?:(?:\.|->)\s*[A-Za-z_]\w*)*"
+
+
+def feature_control_sources(feature: dict[str, str]) -> list[Path]:
+    header = Path(feature["source"])
+    candidates = [header.with_suffix(".cpp")]
+    directory = header.with_suffix("")
+    if directory.is_dir():
+        candidates.extend(sorted(directory.rglob("*.cpp")))
+    return [path for path in dict.fromkeys(candidates) if path.exists()]
+
+
+def collect_disabled_regions(
+        masked: str) -> tuple[list[tuple[int, int, int, str]], list[tuple[int, int]]]:
+    """Returns (regions, condition spans): regions as (body start, body end, depth, condition)."""
+    stack: list[tuple[int, str, int]] = []
+    regions: list[tuple[int, int, int, str]] = []
+    condition_spans: list[tuple[int, int]] = []
+    for match in DISABLED_TOGGLE_RE.finditer(masked):
+        open_paren = match.end() - 1
+        close = find_matching_paren(masked, open_paren)
+        if close < 0:
+            continue
+        if match.group(1) == "BeginDisabled":
+            condition_spans.append((open_paren, close + 1))
+            stack.append((close + 1, masked[open_paren + 1:close], len(stack)))
+        elif stack:
+            start, condition, depth = stack.pop()
+            regions.append((start, match.start(), depth, condition))
+    return regions, condition_spans
+
+
+def resolve_disabled_condition(condition: str) -> tuple[tuple[str, ...], int] | None:
+    """Returns (member chain, required value) for a plain on/off condition over one setting, or None."""
+    expression = condition.strip()
+    if not expression or any(operator in expression for operator in ("&&", "||", "(", ")", "?", ":")):
+        return None
+    negated = re.fullmatch(rf"!\s*({CONDITION_CHAIN})", expression)
+    required_on = re.fullmatch(rf"({CONDITION_CHAIN})\s*==\s*(?:0|false)", expression)
+    required_off = re.fullmatch(rf"({CONDITION_CHAIN})\s*!=\s*0", expression)
+    chain = (
+        negated.group(1) if negated else
+        required_on.group(1) if required_on else
+        required_off.group(1) if required_off else
+        expression if re.fullmatch(CONDITION_CHAIN, expression) else "")
+    if not chain:
+        return None
+    return tuple(re.findall(r"[A-Za-z_]\w*", chain)), 1 if (negated or required_on) else 0
+
+
+def control_member_chain(entry: dict[str, object]) -> tuple[str, ...]:
+    """Lists the C++ members a catalogued control writes through its access expression."""
+    members = [member for member in re.findall(r"[A-Za-z_]\w*", str(entry["access"])) if member != "settings"]
+    while members and members[-1] in VECTOR_COMPONENT_NAMES:
+        members.pop()
+    return tuple(members)
+
+
+def chains_match(reference: tuple[str, ...], control: tuple[str, ...]) -> bool:
+    """True when a referenced access chain names the control's member, ignoring a leading object or alias."""
+    if not reference or not control:
+        return False
+    if len(reference) > len(control):
+        return reference[-len(control):] == control
+    return control[-(len(reference) - 1):] == reference[1:] if len(reference) > 1 else control[-1:] == reference
+
+
+def assign_enabled_by(entries: list[dict[str, object]], features: dict[str, dict[str, str]]):
+    """Fills enabledByKey/Path/Value from the ImGui::BeginDisabled region each control is drawn in."""
+    by_feature: dict[str, list[dict[str, object]]] = {}
+    for entry in entries:
+        by_feature.setdefault(str(entry["featureClass"]), []).append(entry)
+    for feature_class, feature_entries in by_feature.items():
+        feature = features.get(feature_class)
+        if not feature:
+            continue
+        controls = [(chain, entry) for entry in feature_entries if (chain := control_member_chain(entry))]
+        for source in feature_control_sources(feature):
+            masked = mask_cpp_source(read_text(source))
+            regions, condition_spans = collect_disabled_regions(masked)
+            if not regions:
+                continue
+            references: dict[str, list[tuple[tuple[str, ...], int]]] = {}
+            for reference in CHAIN_REFERENCE_RE.finditer(masked):
+                offset = reference.start()
+                if any(start <= offset < end for start, end in condition_spans):
+                    continue
+                members = re.findall(r"[A-Za-z_]\w*", reference.group(0))
+                while len(members) > 1 and members[-1] in VECTOR_COMPONENT_NAMES:
+                    members.pop()
+                references.setdefault(members[-1], []).append((tuple(members), offset))
+            for control_chain, control in controls:
+                best_depth, enabled_by = -1, None
+                for chain, offset in references.get(control_chain[-1], ()):
+                    if not chains_match(chain, control_chain):
+                        continue
+                    enclosing = sorted(
+                        (region for region in regions if region[0] <= offset < region[1]),
+                        key=lambda region: (-region[2], -region[0]))
+                    for _, _, depth, condition in enclosing:
+                        resolved = resolve_disabled_condition(condition)
+                        if resolved:
+                            if depth > best_depth:
+                                best_depth, enabled_by = depth, resolved
+                            break
+                if not enabled_by:
+                    continue
+                prerequisite_entries = [
+                    candidate for chain, candidate in controls if chains_match(enabled_by[0], chain)]
+                if len(prerequisite_entries) != 1:
+                    continue
+                prerequisite = prerequisite_entries[0]
+                if control is prerequisite:
+                    continue
+                control["enabledByKey"] = prerequisite["key"]
+                control["enabledByPath"] = prerequisite["path"]
+                control["enabledByValue"] = enabled_by[1]
+
+
 def build_entries(source_dir: Path) -> list[dict[str, object]]:
     src_paths = list((source_dir / "src").rglob("*.cpp")) + list((source_dir / "src").rglob("*.h"))
     src_paths += [source_dir / "src" / "TruePBR.cpp", source_dir / "src" / "TruePBR.h"]
@@ -4556,6 +4678,9 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "addressable": context.addressable and
                 access.split(".")[0].split("[")[0] in public_members.get(context.field_class, {}),
             "controlScope": context.control_scope,
+            "enabledByKey": "",
+            "enabledByPath": "",
+            "enabledByValue": -1,
             "virtualControls": virtual_controls,
             "navigationControls": navigation_controls.get(context.feature_class, ()),
         })
@@ -4847,6 +4972,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
     if discovery_errors:
         raise ValueError("scene settings catalog discovery failed: " + "; ".join(sorted(set(discovery_errors))))
 
+    assign_enabled_by(entries, features)
     entries.sort(key=lambda e: (e["feature"], e["displayPath"], e["displayName"], e["path"], e["key"]))
     return entries
 
@@ -4982,6 +5108,9 @@ namespace SceneSettingsCatalog
 \t\tconst ChoiceMetadata* choices;
 \t\tstd::size_t choiceCount;
 \t\tstd::string_view controlScope;
+\t\tstd::string_view enabledByKey;
+\t\tstd::string_view enabledByPath;
+\t\tstd::int8_t enabledByValue;
 \t};
 
 \tstruct VirtualAggregateControlMetadata
@@ -5057,7 +5186,8 @@ namespace SceneSettingsCatalog
             f'{str(e.get("clampNumericInput", False)).lower()}, '
             f'{str(e.get("hdrColor", False)).lower()}, '
             f'{str(e["invertedDisplay"]).lower()}, '
-            f'{choice_pointer}, {choice_count}, "{cpp_escape(e.get("controlScope", ""))}" }},'
+            f'{choice_pointer}, {choice_count}, "{cpp_escape(e.get("controlScope", ""))}", '
+            f'"{cpp_escape(e["enabledByKey"])}", "{cpp_escape(e["enabledByPath"])}", {e["enabledByValue"]} }},'
         )
     joined_rows = "\n".join(rows)
     joined_choice_arrays = "\n".join(choice_arrays)

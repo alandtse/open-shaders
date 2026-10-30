@@ -329,6 +329,9 @@ namespace ShadowCasterManager
 		/// Scores spot lights by the frustum they light instead of by their emitter, and wakes
 		/// them for the player only inside that frustum.
 		bool SpotLitRegion = true;
+
+		/// Ranks lights that reach the player first and lets them past the redraw budget, so shadows on the player do not flicker.
+		bool ProtectPlayerShadows = true;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -374,7 +377,8 @@ namespace ShadowCasterManager
 		FlickerShadowMode,
 		WarpVisibilityGate,
 		WarpZeroDemandSkip,
-		SpotLitRegion)
+		SpotLitRegion,
+		ProtectPlayerShadows)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -423,6 +427,9 @@ namespace ShadowCasterManager
 		/// True if shadow content changed since last render. Eligibility signal,
 		/// not priority -- partitions ahead of RedrawScore in ShadowScheduler.cpp's `pending` sort.
 		bool schedDirty{ false };
+
+		/// The light reaches the player: ranked first and exempt from the redraw budget.
+		bool playerProtected{ false };
 
 		/// Consecutive frames read dirty without redraw admission (stop-motion
 		/// metric). FROZEN while skippedThisFrame, so occlusion isn't read as starvation.
@@ -495,6 +502,7 @@ namespace ShadowCasterManager
 			RedrawFrame = false;
 			lastRenderedPos = { 0.0f, 0.0f, 0.0f };
 			lastImportance = 0.0f;
+			playerProtected = false;
 			lastGeomHash = 0;
 			pendingGeomHash = 0;
 			cachedPendingGeomHash = 0;
@@ -802,6 +810,7 @@ namespace ShadowCasterManager
 		/// Cumulative permanent split exclusions by trigger, and bakes retired before any cache reuse.
 		uint64_t splitLatchMismatchTotal = 0;
 		uint64_t splitLatchWindowTotal = 0;
+		uint64_t splitLatchRetryTotal = 0;
 		uint64_t splitWastedBakesTotal = 0;
 
 		/// Redraws a resolution promotion forced, and demotions skipped because the
@@ -857,6 +866,15 @@ namespace ShadowCasterManager
 		/// Redraws skipped by the zero-demand gate this frame, and since load.
 		int demandSkips = 0;
 		uint64_t demandSkipsTotal = 0;
+
+		/// Player-protected lights this frame and since load; redraws forced past the configured
+		/// budget or per-frame cap; protected lights that still lost a shadow slot to the cap.
+		int playerProtected = 0;
+		uint64_t playerProtectedTotal = 0;
+		int playerForcedPastBudget = 0;
+		uint64_t playerForcedPastBudgetTotal = 0;
+		int playerProtectedExcess = 0;
+		uint64_t playerProtectedExcessTotal = 0;
 
 		/// High-water occupancy of the engine's global 512-slot alpha
 		/// GeometryGroup array, and requests refused at that ceiling -- a non-zero
@@ -1017,6 +1035,10 @@ namespace ShadowCasterManager
 
 	/// True when SCM owns shadow scheduling (enabled at boot, no external conflict).
 	bool IsActive();
+
+	/// Whether casters parented under an actor are always classified dynamic (runtime A/B flag, default on).
+	bool GetActorAttachedDynamic();
+	void SetActorAttachedDynamic(bool a_value);
 
 	/// Returns kSHADOWMAPS texture-array slot slice index for a light, or -1.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);

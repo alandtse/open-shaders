@@ -22,6 +22,7 @@
 #include "Util.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/TracyZones.h"
 #include "Utils/UI.h"
 
 namespace
@@ -309,9 +310,10 @@ void AdvancedSettingsRenderer::RenderShaderThreading()
 	ImGui::Checkbox("Background Compile on Boot", &menuSettings.BackgroundShaderCompilationOnBoot);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::TextUnformatted(
-			"Load the menu immediately and compile shaders in the background on boot "
-			"(same as the Skip Compilation key). Shaders still compile - only the startup wait "
-			"is skipped. Takes effect on the next launch. Default off.");
+			"Load the menu immediately and compile shaders as rendering requests them, "
+			"instead of precompiling every permutation (same as the Skip Compilation key). "
+			"Required feature setup still runs; shader jobs already started finish normally. "
+			"Takes effect on the next launch. Default off.");
 	}
 
 	if (globals::game::isVR) {
@@ -776,6 +778,17 @@ void AdvancedSettingsRenderer::RenderRuntimeDebugControls()
 		ImGui::Text("%s", T("menu.advanced.frame_annotations_tooltip", "Enable detailed frame annotations for debugging render passes and draw calls."));
 	}
 
+#ifdef TRACY_ENABLE
+	ImGui::Indent();
+	bool perDrawZones = TracyZones::PerDrawZonesEnabled();
+	if (ImGui::Checkbox(T("menu.advanced.tracy_per_draw_zones", "Tracy Per-Draw Zones"), &perDrawZones))
+		TracyZones::SetPerDrawZones(perDrawZones);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.tracy_per_draw_zones_tooltip", "Emit the high-volume per-draw Tracy zones (State::Draw, its nested draw zones, per-feature render-pass hooks). Off by default because they stream 100+ MB/s; call counts stay visible as zonecalls.* plots either way."));
+	}
+	ImGui::Unindent();
+#endif
+
 	// Heat-shimmer (ISRefraction.hlsl) strength. Live per-frame value, no recompile needed.
 	ImGui::SliderFloat(T("menu.advanced.refraction_scale", "Refraction Scale"), &globals::state->refractionScale, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -1119,10 +1132,6 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 	}
 
 	ImGui::Spacing();
-
-	// A/B Testing settings
-	auto* abTestingManager = ABTestingManager::GetSingleton();
-	abTestingManager->DrawSettingsUI();
 
 	// Developer Mode Testing UI + scene-prep button (previously on the "Developer" tab)
 	if (globals::state->IsDeveloperMode()) {

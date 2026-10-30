@@ -205,7 +205,6 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindResponse,
 	grassWindSensitivity,
 	grassWindMaximumTilt,
-	grassWindBendProfile,
 	grassWindCompressionToBend,
 	grassWindSpringFrequency,
 	grassWindSpringDamping,
@@ -377,6 +376,16 @@ void Wind::RegisterUxActions()
 				logger::warn("[TreeWindPatcher] Devbench setTreeWindRule did not match mesh {}", args["mesh"].get<std::string>());
 			}
 		});
+	FEATURE_COMMAND("setTreeBendEnabled", "Enable or disable the tree-bending render path for one mesh, retaining its saved sensitivity and normal TreeAnim animation. Required args: mesh (string), enabled (boolean). Disabled meshes remain excluded under Global Override.",
+		[](Feature*, const json& args) {
+			if (!args.contains("mesh") || !args["mesh"].is_string() ||
+				!args.contains("enabled") || !args["enabled"].is_boolean()) {
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled received invalid arguments");
+				return;
+			}
+			if (!TreeWindPatcher::SetBendEnabled(args["mesh"].get<std::string>(), args["enabled"].get<bool>()))
+				logger::warn("[TreeWindPatcher] Devbench setTreeBendEnabled did not match mesh {}", args["mesh"].get<std::string>());
+		});
 	FEATURE_COMMAND("saveTreeWindRules", "Write changed tree response values to each tree's last-scanned source JSON.",
 		[](Feature*, const json&) {
 			const auto result = TreeWindPatcher::SaveRules();
@@ -420,6 +429,7 @@ void Wind::RegisterUxActions()
 				if (matchIndex++ >= offset && matches.size() < limit) {
 					matches.push_back({
 						{ "mesh", rule.mesh },
+						{ "bendEnabled", rule.bendEnabled },
 						{ "bendSensitivity", rule.bend },
 						{ "leafAmbientSensitivity", rule.leafAmbient },
 						{ "upperBendRange", rule.upperBendRange },
@@ -647,7 +657,6 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"grassWindResponse",
 		"grassWindSensitivity",
 		"grassWindMaximumTilt",
-		"grassWindBendProfile",
 		"grassWindCompressionToBend",
 		"grassWindSpringFrequency",
 		"grassWindSpringDamping",
@@ -701,6 +710,8 @@ std::function<void()> Wind::OnRenderPassBegin(const RE::BSRenderPass* a_pass)
 	const auto previous = permutationData;
 
 	const auto sensitivities = TreeWindPatcher::GetSensitivities(a_pass->geometry);
+	if (!sensitivities.bendEnabled)
+		return nullptr;
 	permutationData.ExtraShaderDescriptor |= kTreeBendDescriptor;
 	permutationData.TreeBendModelSensitivity = sensitivities.bend;
 	permutationData.TreeLeafModelSensitivity = sensitivities.leafAmbient;

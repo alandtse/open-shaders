@@ -24,7 +24,6 @@ void Wind::SanitizeGrassWindSettings(Settings& a_settings)
 	a_settings.grassWindResponse = Util::ClampFinite(a_settings.grassWindResponse, kGrassWindResponseMin, kGrassWindResponseMax, defaults.grassWindResponse);
 	a_settings.grassWindSensitivity = Util::ClampFinite(a_settings.grassWindSensitivity, kGrassWindSensitivityMin, kGrassWindSensitivityMax, defaults.grassWindSensitivity);
 	a_settings.grassWindMaximumTilt = Util::ClampFinite(a_settings.grassWindMaximumTilt, kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, defaults.grassWindMaximumTilt);
-	a_settings.grassWindBendProfile = Util::ClampFinite(a_settings.grassWindBendProfile, kGrassWindBendProfileMin, kGrassWindBendProfileMax, defaults.grassWindBendProfile);
 	a_settings.grassWindCompressionToBend = Util::ClampFinite(a_settings.grassWindCompressionToBend, kGrassWindCompressionToBendMin, kGrassWindCompressionToBendMax, defaults.grassWindCompressionToBend);
 	a_settings.grassWindSpringFrequency = Util::ClampFinite(a_settings.grassWindSpringFrequency, kGrassWindSpringFrequencyMin, kGrassWindSpringFrequencyMax, defaults.grassWindSpringFrequency);
 	a_settings.grassWindSpringDamping = Util::ClampFinite(a_settings.grassWindSpringDamping, kGrassWindSpringDampingMin, kGrassWindSpringDampingMax, defaults.grassWindSpringDamping);
@@ -66,7 +65,6 @@ void Wind::ResetGrassWindSettings()
 	settings.grassWindResponse = defaults.grassWindResponse;
 	settings.grassWindSensitivity = defaults.grassWindSensitivity;
 	settings.grassWindMaximumTilt = defaults.grassWindMaximumTilt;
-	settings.grassWindBendProfile = defaults.grassWindBendProfile;
 	settings.grassWindCompressionToBend = defaults.grassWindCompressionToBend;
 	settings.grassWindSpringFrequency = defaults.grassWindSpringFrequency;
 	settings.grassWindSpringDamping = defaults.grassWindSpringDamping;

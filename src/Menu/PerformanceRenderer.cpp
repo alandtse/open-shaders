@@ -8,6 +8,7 @@
 
 #include "Feature.h"
 #include "Features/PerformanceOverlay.h"
+#include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -144,6 +145,23 @@ static bool DrawProfileCard(const char* title, const char* description, bool sel
 	return pressed;
 }
 
+// Queues a comparison of the current settings against each preset; an empty short name applies the preset to every feature.
+static void DrawQueuePresetsButton(const std::string& featureShortName, bool compact)
+{
+	auto* manager = ABTestingManager::GetSingleton();
+	ImGui::BeginDisabled(manager->IsEnabled());
+	const char* label = T(TKEY("benchmark_presets"), "Queue preset comparisons");
+	if (compact ? ImGui::SmallButton(label) : ImGui::Button(label)) {
+		std::string error;
+		if (!manager->QueueProfiles(featureShortName, &error))
+			logger::warn("[A/B] {}", error);
+	}
+	ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("benchmark_presets_tooltip"),
+							  "Queues the Performance, Balanced and Quality presets as three alternatives, measured one after another (Benchmark tab). Presets that change restart-gated settings are not added; the Benchmark tab says which."));
+}
+
 static void DrawGlobalProfileChooser(const Feature::PerfProfile (&profiles)[3], const char* const (&labels)[3],
 	const char* const (&descriptions)[3], int activeIdx)
 {
@@ -228,6 +246,7 @@ static void RenderPresets(Feature* host)
 		globals::game::isVR ? T(TKEY("profile_quality_tooltip"), "Higher render resolution; reprojection off for max fidelity. Some changes apply on restart.") : T(TKEY("profile_quality_tooltip_flat"), "Higher render resolution for max fidelity. Some changes apply on restart.")
 	};
 	DrawGlobalProfileChooser(profiles, labels, tooltips, activeIdx);
+	DrawQueuePresetsButton("", false);
 
 	// Generic per-section tooltips: unlike the global row above, a section's row can't
 	// claim specifics (render resolution, foveation) that only apply to SOME features.
@@ -282,6 +301,8 @@ static void RenderPresets(Feature* host)
 				SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
 				feature->ApplyPerformanceProfile(p);
 			});
+		ImGui::SameLine();
+		DrawQueuePresetsButton(feature->GetShortName(), true);
 		// Feature overrides stay visible beneath the global chooser.
 		// Only raw sliders/knobs collapse into Advanced below.
 		try {
@@ -322,6 +343,18 @@ void PerformanceRenderer::Render(Feature* host)
 		if (MenuFonts::BeginTabItemWithFont(T(TKEY("tab_presets"), "Presets"), Menu::FontRole::Subheading)) {
 			if (ImGui::BeginChild("##PerformancePresetsContent", ImVec2(0, 0), false))
 				RenderPresets(host);
+			ImGui::EndChild();
+			ImGui::EndTabItem();
+		}
+
+		const std::string benchmarkTabLabel = T(TKEY("tab_benchmark"), "Benchmark");
+		const size_t benchmarkQueued = ABTestingManager::GetSingleton()->GetQueue().size();
+		const std::string benchmarkTab = benchmarkQueued > 0 ?
+		                                     std::format("{} ({})###BenchmarkTab", benchmarkTabLabel, benchmarkQueued) :
+		                                     std::format("{}###BenchmarkTab", benchmarkTabLabel);
+		if (MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading)) {
+			if (ImGui::BeginChild("##PerformanceBenchmarkContent", ImVec2(0, 0), false))
+				ABTestingManager::GetSingleton()->DrawBenchmarkTab();
 			ImGui::EndChild();
 			ImGui::EndTabItem();
 		}

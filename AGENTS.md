@@ -19,6 +19,8 @@ Each rule is stated once, in the section named in brackets.
 -   **Perf instrumentation:** `CS_GPU_PASS` at every render-pass entry point, including ported code. [Performance]
 -   **VR maintenance:** keep VR divergence minimal; resolve merge conflicts in favor of keeping VR. [VR]
 -   **Verify in game:** runtime-affecting changes are verified via devbench on VR plus one flat variant. [Testing]
+-   **Humans on GitHub:** agents never respond to human reviewers or commenters. [Git & Release]
+-   **Tests:** test the real code in Catch2; no source-text assertions (except architecture lints), no pasted-slice stubs, and every new test is run by a named CI step. [Testing]
 -   **Git safety & upstream sync:** never force-push shared branches, never hand-create tags or bump the version, merge upstream and never cherry-pick. [Git & Release]
 
 ---
@@ -98,6 +100,7 @@ Each rule is stated once, in the section named in brackets.
 
 -   **Verify runtime-affecting changes (UI, features, shader cache) in game via devbench** on **VR plus one flat variant (SE or AE)** before calling them done. A release candidate still gets the full per-edition pass in [release validation](docs/development/release-validation.md). Say in the PR which runtimes ran in game.
 -   A new feature or settings surface ships with a devbench action in the same PR. Changing a devbench-exposed tool means updating its `RegisterTool` description and `inputSchema` in the same PR, since `GET /api/tools` and agents trust them.
+-   **Automated tests:** C++ logic gets a Catch2 test in `tests/cpp` that includes or links the production code; Python tests are for Python tooling. Never assert on source text (architecture lints for repo invariants excepted), never paste `src/` slices into a stub, and never add a test no CI step runs. Details: [Automated Tests](docs/development/testing.md).
 -   **Shader refactors:** identical DXBC is a provable no-op (`tools/verify-shader-refactor.ps1`); legitimate op-reordering needs runtime A/B frame diffing (`tools/taa-renderdoc-ab.py`).
 
 ---
@@ -106,6 +109,7 @@ Each rule is stated once, in the section named in brackets.
 
 -   **PRs target `dev`, never `main`;** never push to a shared branch without explicit OK. `main` must remain an ancestor of `dev`; after a hotfix promotion the workflow auto-rebase-reconciles `dev` (its force-push is the one allowed exception).
 -   **Commit-type traps:** a build/CI/test change labeled `fix:` burns a patch release (use `build:`/`ci:`/`test:`); a refactor labeled `feat:` forces a minor; an internal perf win is `refactor:`; prefer a specific type over `chore:`.
+-   **Humans on GitHub:** an agent does not respond to human reviewers or commenters on PRs or issues: no replies, no resolving their threads, no re-requesting their review, no `@`-mentions. Surface the comment and a drafted reply to the user, who posts it. Replying to and resolving a bot's findings is allowed.
 -   **Never, without explicit user direction:** force-push or rebase `main`, `dev` or `hotfix/*`; create `v*` tags (semantic-release owns them); bump `CMakeLists.txt`'s `VERSION`; PR a feature branch into `main`; run `Release: Semantic Version` on `hotfix/X.Y.x` for the current line (use `ff_target` into `main`).
 -   **Upstream sync:** merge from `community-shaders/skyrim-community-shaders`, never cherry-pick; land sync PRs as merge commits, never squash; verify ancestry with `git merge-base --is-ancestor <upstream-sha> HEAD`; resolve conflicts in favor of keeping VR. The per-commit intent review and the "upstream never tests VR" checks are in the [Upstream Sync Guide](docs/development/upstream-sync.md#conflict-resolution-guidelines).
 -   Release stages, staging/RC workflows and packaging targets: [Release Process](docs/development/release-process.md).

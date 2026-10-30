@@ -5,7 +5,6 @@
 #include "Utils/FileDigest.h"
 #ifdef DEVBENCH_BRIDGE_ENABLED
 #	include "Features/Screenshot/ReferenceCompletion.h"
-#	include "screenshot_burst_test.h"
 #endif
 #include "service_retry_test.h"
 #include <Windows.h>
@@ -246,7 +245,6 @@ TEST_CASE("Digest failures stay unavailable and empty files hash correctly", "[s
 #ifdef DEVBENCH_BRIDGE_ENABLED
 TEST_CASE("Burst budgets, native atlas orientation and continuity", "[screenshot-sequence][screenshot-burst]")
 {
-	REQUIRE_NOTHROW(RunScreenshotBurstTests());
 	auto request = Plan();
 	request["burst"] = { { "regions", json::array({ { { "x", 0 }, { "y", 0 }, { "width", 384 }, { "height", 256 } } }) } };
 	CHECK(ParsePlan(request, true).burst.payloadBytes == 120ull * 384 * 256 * 8);

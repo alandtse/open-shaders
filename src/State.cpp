@@ -48,6 +48,7 @@
 #include "Utils/Game.h"
 #include "Utils/SettingsPatch.h"
 #include "Utils/SphericalHarmonics.h"
+#include "Utils/TracyZones.h"
 #include "VRAPI/CSpluginapi.h"
 
 #ifdef TRACY_ENABLE
@@ -137,7 +138,6 @@ void State::UpdatePermutationBuffer()
 	permutationData.TreeLeafBaseWindFlutterGain = windContribution.treeLeafBaseWindFlutterGain;
 	permutationData.EnableAmbientGrassWind = windContribution.enableAmbientGrassWind;
 	permutationData.GrassWindSensitivity = windContribution.grassWindSensitivity;
-	permutationData.GrassWindBendProfile = windContribution.grassWindBendProfile;
 	permutationData.GrassWindCompressionToBend = windContribution.grassWindCompressionToBend;
 	permutationData.GrassWindFlutterStrength = windContribution.grassWindFlutterStrength;
 	permutationData.GrassWindFlutterFrequency = windContribution.grassWindFlutterFrequency;
@@ -178,7 +178,8 @@ void State::BindSharedDataCS(ID3D11DeviceContext* a_context, bool a_withFeatureD
 
 void State::Draw()
 {
-	ZoneScoped;
+	TracyZones::Count(TracyZones::Family::StateDraw);
+	CS_DRAW_ZONE("State::Draw");
 	UpdateGrassGpuPass();
 	if (globals::features::sceneManager.loaded)
 		globals::features::sceneManager.Update();
@@ -194,37 +195,37 @@ void State::Draw()
 
 	if (shaderCache->IsEnabled()) {
 		if (terrainBlending.loaded && terrainBlending.settings.Enabled) {
-			ZoneScopedN("TerrainBlending::TerrainShaderHacks");
+			CS_DRAW_ZONE("TerrainBlending::TerrainShaderHacks");
 			terrainBlending.TerrainShaderHacks();
 		}
 
 		if (cloudShadows.loaded) {
-			ZoneScopedN("CloudShadows::SkyShaderHacks");
+			CS_DRAW_ZONE("CloudShadows::SkyShaderHacks");
 			cloudShadows.SkyShaderHacks();
 		}
 
 		if (globals::features::rainRefraction.loaded) {
-			ZoneScopedN("RainRefraction::ParticleShaderHacks");
+			CS_DRAW_ZONE("RainRefraction::ParticleShaderHacks");
 			globals::features::rainRefraction.ParticleShaderHacks();
 		}
 
 		if (terrainHelper.loaded) {
-			ZoneScopedN("TerrainHelper::SetShaderResources");
+			CS_DRAW_ZONE("TerrainHelper::SetShaderResources");
 			terrainHelper.SetShaderResources(context);
 		}
 
 		if (skin.loaded) {
-			ZoneScopedN("Skin::SetShaderResources");
+			CS_DRAW_ZONE("Skin::SetShaderResources");
 			skin.SetShaderResources(context);
 		}
 
 		if (truePBR.loaded) {
-			ZoneScopedN("TruePBR::SetShaderResources");
+			CS_DRAW_ZONE("TruePBR::SetShaderResources");
 			truePBR.SetShaderResources(context);
 		}
 
 		if (volumetricShadows.loaded) {
-			ZoneScopedN("VolumetricShadows::SetShaderResources");
+			CS_DRAW_ZONE("VolumetricShadows::SetShaderResources");
 			volumetricShadows.SetShaderResources(context);
 		}
 
@@ -639,7 +640,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				if (ec)
 					logger::warn("Could not determine install state for feature '{}': {}", featureName, ec.message());
 				feature->installed = ec || iniExists;
-				bool isDisabled = !feature->IsAlwaysEnabled() && disabledFeatures.contains(featureName) && disabledFeatures[featureName];
+				bool isDisabled = !feature->IsAlwaysEnabled() && ((disabledFeatures.contains(featureName) && disabledFeatures[featureName]) || !feature->conflictMessage.empty());
 				if (!isDisabled) {
 					logger::info("Loading Feature: '{}'", featureName);
 
@@ -728,6 +729,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
+	advanced["Tracy Per-Draw Zones"] = TracyZones::PerDrawZonesEnabled();
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
 	advanced["Content Store"] = enableContentStore.load(std::memory_order_relaxed);
 	advanced["Content Store Max MB"] = contentStoreMaxMB.load(std::memory_order_relaxed);
@@ -832,6 +834,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			shaderCache->SetFileWatcher(advanced["Use FileWatcher"]);
 		if (advanced.contains("Frame Annotations") && advanced["Frame Annotations"].is_boolean())
 			frameAnnotations = advanced["Frame Annotations"];
+		if (advanced.contains("Tracy Per-Draw Zones") && advanced["Tracy Per-Draw Zones"].is_boolean())
+			TracyZones::SetPerDrawZones(advanced["Tracy Per-Draw Zones"]);
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
 		if (advanced.contains("Content Store") && advanced["Content Store"].is_boolean())

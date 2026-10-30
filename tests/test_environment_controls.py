@@ -583,22 +583,6 @@ int main() {
         source = source.replace("WEATHER_HOOKS", weather_hooks)
         runtime.SceneSettingsRuntimeTests.compile_and_run(self, source)
 
-    def test_environment_state_access_is_synchronized(self):
-        source = (ROOT / "src/Utils/Game.cpp").read_text(encoding="utf-8")
-        header = braced((ROOT / "src/Utils/Game.h").read_text(encoding="utf-8"),
-                        "namespace Util::EnvironmentControls")
-        environment = braced(source, "namespace Util::EnvironmentControls")
-        atomic_accessors = {"SetWeatherLockAvailable", "IsWeatherLockAvailable", "GetLockedWeather"}
-        for line in header.splitlines():
-            if "(" not in line or not line.strip().endswith(";"):
-                continue
-            declaration = line.strip().split("(", 1)[0]
-            if declaration.split()[-1] in atomic_accessors:
-                continue
-            with self.subTest(function=declaration):
-                body = braced(environment, declaration + "(")
-                self.assertIn("std::scoped_lock lock(environmentMutex);", body.split("\n", 3)[2])
-
     def test_all_ui_environment_writes_use_shared_controls(self):
         editor = (ROOT / "src/CSEditor/EditorWindow.cpp").read_text(encoding="utf-8")
         scene = (ROOT / "src/CSEditor/SceneSettingsUI.cpp").read_text(encoding="utf-8")

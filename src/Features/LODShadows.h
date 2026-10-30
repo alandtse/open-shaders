@@ -160,6 +160,7 @@ private:
 	void DrawMask();
 	void CollectTerrain();
 	void CollectLoadedObjects();
+	void CollectScene(bool a_refreshLoaded);
 	void Collect(RE::NiAVObject* a_object, bool a_ignoreAppCulling = false, bool a_loadedObject = false);
 	void AddCaster(RE::BSGeometry* a_geometry);
 	void BeginMap(uint32_t a_index, const RE::NiPoint3& a_center, const RE::NiPoint3& a_direction);
@@ -180,6 +181,10 @@ private:
 	bool distantDepthCaptured = false;
 	bool wasEnabled = false;
 	bool refreshEveryFrame = false;
+	bool throttleCollect = true;
+	uint32_t framesSinceCollect = 0;
+	int32_t collectedGridX = 0;
+	int32_t collectedGridY = 0;
 	bool interpolateHistory = true;
 	bool hardwareComparison = true;
 	bool rayBounds = true;

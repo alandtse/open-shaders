@@ -107,8 +107,7 @@ namespace
 	/** @brief Hands @p object to the engine's deferred release queue, which destroys it at a safe point once the caller's references drop. */
 	void QueueDeferredRelease(RE::NiPointer<RE::NiRefObject>& object)
 	{
-		static REL::Relocation<void(RE::NiPointer<RE::NiRefObject>*)> func{ REL::RelocationID(69180, 70544) };
-		func(&object);
+		RE::QueueNiRefObjectForDeferredRelease(object);
 	}
 
 	/** @brief Removes @p entry from @p entries when the array holds its last reference, as TESWaterSystem::RemoveWater does. */
@@ -454,12 +453,13 @@ void UnifiedWater::PostPostLoad()
 
 	stl::write_vfunc<0x6, BSWaterShader_SetupGeometry>(RE::VTABLE_BSWaterShader[0]);
 
-	gWaterLOD = reinterpret_cast<RE::NiNode**>(REL::RelocationID(516171, 402322).address());
-	gFlowMapSize = reinterpret_cast<int32_t*>(REL::RelocationID(527644, 414596).address());
-	gFlowMapSourceTex = reinterpret_cast<RE::NiPointer<RE::NiSourceTexture>*>(REL::RelocationID(527694, 414616).address());
-	gDisplacementCellTexCoordOffset = reinterpret_cast<float4*>(REL::RelocationID(528184, 415129).address());
-	gDisplacementMeshPos = reinterpret_cast<RE::NiPoint2*>(REL::RelocationID(516235, 402400).address());
-	gDisplacementMeshFlowCellOffset = reinterpret_cast<RE::NiPoint2*>(REL::RelocationID(528164, 415109).address());
+	gWaterLOD = &RE::BGSTerrainManager::GetWaterNode();
+	// Water SetupGeometry reads the grids-to-load copy as ObjectUV.x, so writing the flow-map size here feeds the shader.
+	gFlowMapSize = &RE::TES::GetGridsToLoadCopy();
+	gFlowMapSourceTex = &RE::BSShaderManager::GetWaterFlowMapSourceTexture();
+	gDisplacementCellTexCoordOffset = reinterpret_cast<float4*>(&RE::BSShaderManager::GetWaterDisplacementCellTexCoordOffset());
+	gDisplacementMeshPos = &RE::BSShaderManager::GetWaterDisplacementMeshPosition();
+	gDisplacementMeshFlowCellOffset = &RE::BSShaderManager::GetWaterDisplacementMeshFlowCellOffset();
 
 	logger::info("[Unified Water] Installed hooks");
 }
@@ -722,7 +722,8 @@ void UnifiedWater::BGSTerrainBlock_Attach::thunk(RE::BGSTerrainBlock* block)
 
 		if (const auto prop = shape->GetGeometryRuntimeData().shaderProperty.get(); prop && prop->GetRTTI() == globals::rtti::BSWaterShaderPropertyRTTI.get()) {
 			const auto waterShaderProp = static_cast<RE::BSWaterShaderProperty*>(prop);
-			REX::EnumSet waterFlags = static_cast<RE::BSWaterShaderProperty::WaterFlag>(0b10000100);
+			REX::EnumSet waterFlags = RE::BSWaterShaderProperty::WaterFlag::kDepth;
+			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kRefractions;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseCubemapReflections;
 			waterFlags |= RE::BSWaterShaderProperty::WaterFlag::kUseReflections;
 			if (instruction->form.ptr->flags.any(RE::TESWaterForm::Flag::kEnableFlowmap))

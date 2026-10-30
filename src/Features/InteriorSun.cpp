@@ -67,7 +67,7 @@ void InteriorSun::PostPostLoad()
 	stl::write_thunk_call<GetWorldSpace>(REL::RelocationID(38900, 39946).address() + REL::Relocate(0x1ED, 0x1F3));
 	REL::safe_fill(REL::RelocationID(38900, 39946).address() + REL::Relocate(0x2CA, 0x22B), REL::NOP, REL::Module::IsAE() ? 6 : 2);
 
-	gShadowDistance = reinterpret_cast<float*>(REL::RelocationID(528314, 415263).address());
+	gShadowDistance = &RE::BSShaderManager::GetShadowDistanceCurrent();
 	gInteriorShadowDistance = reinterpret_cast<float*>(REL::RelocationID(513755, 391724).address());
 	*gInteriorShadowDistance = settings.InteriorShadowDistance;
 
@@ -236,8 +236,6 @@ bool InteriorSun::IsInSunDirectionAndWithinShadowDistance(const RE::NiPointer<RE
 
 void InteriorSun::SetShadowDistance(bool inInterior)
 {
-	using func_t = decltype(SetShadowDistance);
-	static REL::Relocation<func_t> func{ REL::RelocationID(98978, 105631).address() };
-	func(inInterior);
+	RE::BSShaderManager::UpdateShadowDistanceAndInteriorFlag(inInterior);
 }
 #undef I18N_KEY_PREFIX

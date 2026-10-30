@@ -8,7 +8,8 @@ namespace DevBenchBridge::ToolSpecs
 		R"(All {brand} graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, )"
 		R"(read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; )"
 		R"(features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the )"
-		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Upscaling exposes enableDLSSFrameGen (boolean, default false); )"
+		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Anti-Lag 2 is automatic for a supported FSR Frame Generation session, with no independent setting or FPS cap. )"
+		R"(Upscaling exposes enableDLSSFrameGen (boolean, default false); )"
 		R"(existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; )"
 		R"(use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, )"
 		R"(and white reflectance 1.0. These calibration values are not settings. PBR texture inputs bypass calibration. )"
@@ -27,15 +28,15 @@ namespace DevBenchBridge::ToolSpecs
 		R"(gamma offsets and opacity controls retain their meanings. set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, )"
 		R"(including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level; )"
 		R"(its flicker-shadow keys are TolerantSplitCache, FlickerShadowMode (0 live, 1 pinned, 2 warped), WarpVisibilityGate, WarpZeroDemandSkip, )"
-		R"(SpotLitRegion (scores spot lights by the frustum they light) and DemandTileCap (holds weakly lit lights at a quarter-size tile)). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; )"
+		R"(SpotLitRegion (scores spot lights by the frustum they light), DemandTileCap (holds weakly lit lights at a quarter-size tile) and ProtectPlayerShadows (ranks lights that reach the player first and lets them redraw past the budget)). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; )"
 		R"(call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, )"
-		R"(so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, )"
+		R"(so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings; with key (and path, empty for a top-level setting) it restores only that one catalogued setting, the same as the right-click Reset to default in the menu. toggle: params shortName, enabled (boolean, )"
 		R"(OPTIONAL — omit to flip the current loaded state); )"
 		R"(flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, )"
 		R"(which force-enables it with a logged warning instead. Rejects enabling a feature that was not loaded at boot or turned itself off during boot (a missing companion plugin or a conflicting mod), )"
 		R"(since its resources were never set up; )"
 		R"(enable it with boot and restart. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); )"
-		R"(use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to )"
+		R"(use this instead of adding a new inspect kind for a new counter. Upscaling FSR-session diagnostics include antiLag2Active (boolean, accepted driver enable state; not measured latency). runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to )"
 		R"(SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via )"
 		R"(SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names). favorite: params shortName, enabled (required boolean); )"
 		R"(automatically saves favorite status for a loaded menu feature. Unloaded favorites retain their status but remain in Unloaded Features and cannot be changed until loaded. boot: params shortName, enabled (required boolean); )"
@@ -48,6 +49,8 @@ namespace DevBenchBridge::ToolSpecs
 			"enum": ["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet","favorite","boot"]
 		},
 		"shortName": {"type":"string"},
+		"path": {"type":"string", "description":"reset only: catalogue settingPath of the setting to restore, empty for a top-level one"},
+		"key": {"type":"string", "description":"reset only: catalogue settingKey; restores just that setting instead of the whole feature"},
 		"settings": {
 			"type": "object",
 			"description": "Partial )"

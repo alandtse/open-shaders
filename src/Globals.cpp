@@ -258,7 +258,7 @@ namespace globals
 			viewWidth = reinterpret_cast<int*>(REL::RelocationID(524978, 411459).address());
 			viewHeight = reinterpret_cast<int*>(REL::RelocationID(524979, 411460).address());
 			if (globals::game::isVR)
-				drawStereo = reinterpret_cast<bool*>(REL::RelocationID(524907, 411393).address() + sizeof(void*));
+				drawStereo = &RE::BSGraphics::Renderer::GetDrawStereo();
 		}
 
 		{
@@ -291,7 +291,7 @@ namespace globals
 		calendar = RE::Calendar::GetSingleton();
 		utilityShader = RE::BSUtilityShader::GetSingleton();
 		imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		bEnableVolumetricLighting = reinterpret_cast<bool*>(REL::RelocationID(527940, 414913).address());
+		bEnableVolumetricLighting = &RE::BSGraphics::Renderer::GetVolumetricLightingEnabled();
 
 		bEnableLandFade = iniSettingCollection->GetSetting("bEnableLandFade:Display");
 

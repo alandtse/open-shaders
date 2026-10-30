@@ -125,6 +125,9 @@ namespace ShadowCasterManager
 		int first_render_skips = 0;
 		int sleep_skips = 0;
 		int demand_skips = 0;
+		int player_protected = 0;
+		int player_forced_past_budget = 0;
+		int player_protected_excess = 0;
 
 		// Zero-demand-skip audit; see SchedSnapshot for the field meanings.
 		int frustum_audit_candidates = 0;
@@ -463,6 +466,8 @@ namespace ShadowCasterManager
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;
+		bool actorAttached = false;  ///< parented under an actor's skeleton
+		int ancestryEpoch = -1;      ///< epoch of the last parent-chain walk
 	};
 	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
 	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
@@ -528,9 +533,6 @@ namespace ShadowCasterManager
 	void GameAttachGeometry(RE::BSLight* light, RE::BSGeometry* geom);
 	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale);
 	void GameApplyLensFlare(RE::BSLight* light);
-	void GameVRPrepareShadowMaps(RE::BSLight* light);
-	void GameVRAccumulateShadowMaps(RE::BSLight* light);
-	void GameFrustumOverlap(RE::NiCamera* cam, float* coord, float* r1, float* r2, float eps);
 
 	/// Culling process for first shadow descriptor of a light.
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light);

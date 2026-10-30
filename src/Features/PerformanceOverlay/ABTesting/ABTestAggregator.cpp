@@ -2,6 +2,7 @@
 #include "Features/PerformanceOverlay.h"
 #include "Utils/PerfUtils.h"
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <numeric>
 
@@ -14,9 +15,12 @@ void ABTestAggregator::OnABSwitch(ABVariant variant)
 	if (currentInterval) {
 		currentInterval->endTime = now;
 		if (!currentInterval->warmup) {
+			headlineIntervals.push_back({ currentInterval->variant, std::move(currentHeadline), std::move(currentFrameTimes) });
 			intervals.push_back(std::move(*currentInterval));
 		}
 	}
+	currentHeadline.clear();
+	currentFrameTimes.clear();
 
 	const bool warmup = initialBWarmupPending && variant == ABVariant::B;
 	if (variant == ABVariant::A)
@@ -34,6 +38,10 @@ void ABTestAggregator::OnABSwitch(ABVariant variant)
 void ABTestAggregator::OnFrame(const std::vector<DrawCallRow>& rows)
 {
 	if (!currentInterval || currentInterval->warmup)
+		return;
+
+	++currentInterval->framesSeen;
+	if (IsSettling())
 		return;
 
 	// Find the Total row to check for outliers and shader compilation
@@ -74,6 +82,26 @@ void ABTestAggregator::OnFrame(const std::vector<DrawCallRow>& rows)
 	}
 }
 
+bool ABTestAggregator::OnHeadline(float ms)
+{
+	if (!currentInterval || currentInterval->warmup || IsSettling())
+		return false;
+	if (!(ms > 0.0f) || ms > kMaxOutlierFrameTime)
+		return false;
+	currentHeadline.push_back(ms);
+	return true;
+}
+
+bool ABTestAggregator::OnFrameTime(float ms)
+{
+	if (!currentInterval || currentInterval->warmup || IsSettling())
+		return false;
+	if (!(ms > 0.0f) || ms > kMaxOutlierFrameTime)
+		return false;
+	currentFrameTimes.push_back(ms);
+	return true;
+}
+
 void ABTestAggregator::OnTestEnd()
 {
 	auto now = std::chrono::steady_clock::now();
@@ -83,8 +111,11 @@ void ABTestAggregator::OnTestEnd()
 	if (currentInterval) {
 		currentInterval->endTime = now;
 		if (!currentInterval->warmup) {
+			headlineIntervals.push_back({ currentInterval->variant, std::move(currentHeadline), std::move(currentFrameTimes) });
 			intervals.push_back(std::move(*currentInterval));
 		}
+		currentHeadline.clear();
+		currentFrameTimes.clear();
 		currentInterval.reset();
 	}
 }
@@ -92,6 +123,9 @@ void ABTestAggregator::OnTestEnd()
 void ABTestAggregator::Clear()
 {
 	intervals.clear();
+	headlineIntervals.clear();
+	currentHeadline.clear();
+	currentFrameTimes.clear();
 	currentInterval.reset();
 	cachedResults.reset();
 	recentFrameTimes.clear();

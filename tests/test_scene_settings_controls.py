@@ -301,6 +301,7 @@ template<class T> const SceneSettingsCatalog::SettingMetadata* FindBlockedAggreg
 }
 void ClearControlledItem() {}
 void FinishControlledItem() { ++finished; }
+bool DrawResetToDefaultMenu(const void*) { return false; }
 bool TrackFeatureSettingMutation(bool changed) { mutations += changed; return changed; }
 auto g_checkbox = static_cast<bool(*)(const char*, bool*)>(&ImGui::Checkbox);
 auto g_button = static_cast<bool(*)(const char*, const ImVec2&)>(&ImGui::Button);
@@ -401,7 +402,7 @@ int main() {
                 "const SceneSettingsCatalog::SettingMetadata* FindUniqueBlockedSettingForLabel(",
                 "struct RegisteredVirtualControlMatch", "RegisteredVirtualControlMatch FindRegisteredVirtualControlSetting(",
                 "const SceneSettingsCatalog::SettingMetadata* FindVirtualControlSetting(",
-                "const SceneSettingsCatalog::SettingMetadata* FindControlSetting(",
+                "const void* GetControlStorageAddress(", "const SceneSettingsCatalog::SettingMetadata* FindControlSetting(",
                 "struct ControlDetourScope", "struct SettingOutlineGuard",
                 "bool DrawControl(", "bool CheckboxDetour(", "bool ButtonDetour(", "bool BeginComboDetour("):
             helper = braced(hooks, declaration)

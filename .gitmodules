@@ -8,3 +8,6 @@
 	path = extern/FidelityFX-SDK
 	url = https://github.com/alandtse/FidelityFX-SDK-DX11
 	branch = optiscaler-build
+[submodule "extern/AntiLag2-SDK"]
+	path = extern/AntiLag2-SDK
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/AntiLag2-SDK.git

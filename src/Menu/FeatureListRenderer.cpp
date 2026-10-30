@@ -673,8 +673,9 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const BuiltInMenu& menu)
 {
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 	const auto label = fmt::format(" {} ", menu.name);
+	const auto& statusPalette = globals::menu->GetSettings().Theme.StatusPalette;
 	const ImVec4 textColor = menu.name == T("menu.features.feature_issues", "Feature Issues") ?
-	                             globals::menu->GetSettings().Theme.StatusPalette.Error :
+	                             (FeatureIssues::CountLoadFailures() ? statusPalette.Error : statusPalette.Warning) :
 	                             ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	if (DrawSidebarRow({ .label = label, .textColor = textColor }, selectedMenuRef == listId, editorLayout))
 		selectedMenuRef = listId;
@@ -731,6 +732,8 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 		textColor = feat->HasAnyPendingRestart() ? themeSettings.StatusPalette.RestartNeeded : ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	} else if (hasFailedMessage) {
 		textColor = feat->version.empty() ? themeSettings.StatusPalette.Disable : themeSettings.StatusPalette.Error;
+	} else if (!feat->conflictMessage.empty()) {
+		textColor = themeSettings.StatusPalette.Warning;
 	} else {
 		// Installed but not loaded means the feature is only pending a restart (green),
 		// otherwise it is simply missing (grey).
@@ -1236,6 +1239,8 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat,
 		} else {
 			if (FeatureIssues::IsObsoleteFeature(feat->GetShortName())) {
 				feat->DrawUnloadedUI();
+			} else if (!feat->conflictMessage.empty()) {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", feat->conflictMessage.c_str());
 			} else if (feat->installed) {
 				ImGui::Text("%s", T("menu.features.available_after_restart", "This feature will be available after restart."));
 			} else {

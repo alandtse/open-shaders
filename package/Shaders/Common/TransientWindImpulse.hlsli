@@ -2,38 +2,16 @@
 #define TRANSIENT_WIND_IMPULSE_HLSLI
 
 #include "Common/Math.hlsli"
+#include "Common/TransientWindTypes.hlsli"
 
 namespace WindField
 {
-	// Keep this mirrored with WindField::kTransientImpulseCapacity; use spatial indexing or
-	// a rasterized shared field if source counts make per-sample scans expensive.
-	static const uint TransientImpulseCapacity = 96u;
 	static const float TransientMaximumDecayTime = 5.0f;
 	static const uint TransientWindSourceTypeDirectionalWave = 0u;
 	static const uint TransientWindSourceTypeRadialWave = 1u;
 	static const uint TransientWindSourceTypeDirectionalCone = 2u;
 	static const uint TransientWindSourceTypeOrientedFlow = 3u;
 	static const uint TransientWindSourceTypeDirectionalOvalWave = 4u;
-
-	struct TransientWindSource
-	{
-		float3 origin;
-		float wavefrontDistance;
-		float3 direction;
-		float strength;
-		float maxDistance;
-		float waveHalfWidth;
-		float propagationSpeed;
-		float coneSpreadTangent;
-		float decayTime;
-		float collisionRadius;
-		float sideSpreadTangent;
-		float sideStrength;
-		uint type;
-		float verticalScale;
-		float falloffWidth;
-		float padding;
-	};
 
 	struct TransientImpulseSample
 	{

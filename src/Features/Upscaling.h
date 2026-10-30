@@ -7,6 +7,7 @@
 #include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
+#include "Upscaling/RainLayer.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
 #include "Utils/LazyShader.h"
@@ -79,7 +80,7 @@ public:
 		kUltraPerformance = 4,
 	};
 
-	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 1;
+	static constexpr uint32_t kFsr4RuntimeSelectionSchemaVersion = 2;
 
 	struct Settings
 	{
@@ -118,13 +119,7 @@ public:
 		// Boot-locked; the preset is inert while set. DLSS clamps into NGX range.
 		float vrRenderScale = 0.0f;
 
-		// Opt in to AMD's runtime FSR4 upscaler DLL on eligible RDNA4 hardware instead of the
-		// host-linked FSR3 SDK; falls back to FSR3 on any failure.
-		bool fsr4RuntimeEnable = false;
-
-		// Tracks whether fsr4RuntimeEnable has been auto-migrated for the detected adapter.
-		// Defaults to current so a fresh config needs no migration; LoadSettings resets it to
-		// 0 when absent from JSON so pre-existing configs run the migration once.
+		bool fsr4RuntimeEnable = true;
 		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
 	};
 
@@ -154,7 +149,7 @@ public:
 		// only runs on an upscale-method change, not on this toggle -- restart-gate
 		// it so a mid-session flip can't select the runtime provider without ever
 		// allocating the texture Upscale() then dereferences.
-		UTIL_RESTART_FIELD(Settings, fsr4RuntimeEnable, "Use Runtime FSR4"),
+		UTIL_RESTART_FIELD(Settings, fsr4RuntimeEnable, "Use runtime upscaler upgrade"),
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
@@ -247,6 +242,8 @@ public:
 	// class's boot-vs-live blob diff can never see it.
 	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
+	/** @copydoc Feature::OnBeforeInputPoll */
+	void OnBeforeInputPoll() override;
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
 	void DrawPerformancePresets() override;
@@ -280,6 +277,10 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	/** @brief Routes rain around temporal reconstruction for both vendor upscalers. */
+	bool WantsDrawHook() const override { return true; }
+	/** @copydoc Feature::OnDraw */
+	void OnDraw() override;
 	/** @brief Propagates frame inactivity to NR temporal history. */
 	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled, settings.neuralRenderingTuning.regionOfInterest, settings.neuralRenderingTuning.regionFit, settings.neuralRenderingTuning.regionGroup, settings.neuralRenderingTuning.allowUnverifiedRuntime, settings.neuralRenderingTuning.runtimeVariant); }
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
@@ -431,6 +432,7 @@ public:
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 	NeuralRendering neuralRendering;
+	RainLayer rainLayer;
 
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

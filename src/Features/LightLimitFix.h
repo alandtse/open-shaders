@@ -16,6 +16,7 @@ struct LightLimitFix : OverlayFeature
 {
 private:
 	void DrawContactShadowSettings();
+	void DrawLightAttachSettings();
 	void DrawParticleLightSettings();
 	void DrawPlacedLightSettings();
 	void DrawLightStatistics();
@@ -139,7 +140,7 @@ public:
 		uint32_t ShadowMapSlots;  // total shadow map texture-array capacity
 		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU reads
 		// the cluster config from the wrong offsets. SharedData::LightLimitFixSettings mirrors it.
-		float pad0;
+		uint SunLitHair;  // 1: the forward hair pass reuses the directional shadow the deferred hair pass stored
 		// Cluster config (computed)
 		uint ClusterSize[4];
 		// Debug (last)
@@ -251,7 +252,6 @@ public:
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
-	eastl::unique_ptr<Buffer> lightIndexCounter = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 
@@ -510,6 +510,9 @@ public:
 
 		bool EnableParticleContactShadows = false;
 
+		/// Hair takes the directional shadow the deferred pass computed instead of the engine's cheaper forward lookup, so it is lit by the sun like the rest of the scene.
+		bool SunLitHair = true;
+
 		// Particle Lights.
 		bool EnableParticleLights = true;
 		bool EnableParticleLightsCulling = true;
@@ -528,6 +531,10 @@ public:
 		float JsonPlacedLightIntensity = 1.0f;
 		bool JsonPlacedLightsInteriorsOnly = false;
 		bool JsonPlacedLightsPortalStrictOnly = false;
+
+		// Light attach gate: skips the engine's per-frame attach walk for unchanged dynamic lights.
+		bool SkipRedundantLightAttach = true;
+		int LightAttachRefreshFrames = 60;
 	};
 
 	uint clusterSize[3] = { 16 };

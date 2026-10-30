@@ -122,11 +122,11 @@ private:
 	Flowmap* flowmap = nullptr;
 	WaterCache* waterCache = nullptr;
 
-	RE::NiNode** gWaterLOD = nullptr;
+	RE::NiPointer<RE::NiNode>* gWaterLOD = nullptr;
 	RE::NiPointer<RE::NiSourceTexture>* gFlowMapSourceTex = nullptr;
 	int32_t* gFlowMapSize = nullptr;
 	float4* gDisplacementCellTexCoordOffset = nullptr;
-	RE::NiPoint2* gDisplacementMeshPos = nullptr;
+	RE::NiPoint3* gDisplacementMeshPos = nullptr;
 	RE::NiPoint2* gDisplacementMeshFlowCellOffset = nullptr;
 
 	std::atomic_bool exteriorWorldspaceActive{ false };

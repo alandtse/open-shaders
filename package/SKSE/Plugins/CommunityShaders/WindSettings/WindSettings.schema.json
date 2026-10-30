@@ -25,6 +25,10 @@
                         "maxLength": 260,
                         "pattern": "[.][nN][iI][fF]$"
                     },
+                    "bendEnabled": {
+                        "type": "boolean",
+                        "default": true
+                    },
                     "bendSensitivity": {
                         "type": "number",
                         "default": 1.0,

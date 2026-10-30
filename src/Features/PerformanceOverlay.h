@@ -144,6 +144,7 @@ struct PerformanceOverlay : OverlayFeature
 	virtual void DataLoaded() override;
 	void DrawOverlay() override;
 	virtual json GetDiagnostics() override;
+	void RegisterUxActions() override;
 	virtual bool WantsDrawHook() const override { return true; }
 	virtual void OnDraw() override;
 	virtual void Reset() override;
@@ -185,6 +186,8 @@ struct PerformanceOverlay : OverlayFeature
 	// ============================================================================
 	void DrawABTestSection(const std::vector<DrawCallRow>& allRows);
 	void DrawABTestResultsTable();
+	/** @brief Draws the one benchmark table: finished results, the comparison running now and everything still queued. */
+	void DrawABRunSummary(bool editable);
 	void DrawABTestStatisticalValidity(const Menu::ThemeSettings& theme, const ABTestAggregator& aggregator) const;
 	void ConvertABTestResultsToRows(const std::vector<AggregatedDrawCallStats>& results, std::vector<DrawCallRow>& mainRows, std::vector<DrawCallRow>& summaryRows) const;
 	ABTestLegends BuildABTestLegends(const Menu::ThemeSettings& theme) const;

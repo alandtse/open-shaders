@@ -8,6 +8,7 @@
 -   **[Upstream Sync](./upstream-sync.md)** - How Open Shaders merges with upstream community-shaders
 -   **[Repository Architecture](./architecture.md)** - Codebase layout, global systems, and multi-runtime targeting
 -   **[Release Process](./release-process.md)** - Branch model, semantic version bumps, release stages, and manual packaging
+-   **[Automated Tests](./testing.md)** - Which test layer to use, what not to write, and how tests reach CI
 
 ## Quick Links
 

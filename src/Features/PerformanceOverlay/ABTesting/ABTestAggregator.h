@@ -1,4 +1,5 @@
 #pragma once
+#include "ABComparison.h"
 #include <chrono>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -17,13 +18,6 @@ constexpr float kMinimumTestDuration = 10.0f;        // At least 10 seconds
 constexpr float kMinimumValidFramesPercent = 80.0f;  // At least 80% valid frames
 constexpr int kMinimumSamplesForMarginal = 30;       // Minimum for marginal validity
 constexpr float kMinimumDurationForMarginal = 5.0f;  // Minimum duration for marginal validity
-
-// Only define ABVariant here
-enum class ABVariant
-{
-	A,
-	B
-};
 
 // Forward declarations
 struct DrawCallRow;
@@ -47,6 +41,7 @@ struct ABInterval
 	std::chrono::steady_clock::time_point endTime;
 	bool warmup = false;
 	int excludedFrames = 0;  // Frames excluded due to outliers or shader compilation
+	int framesSeen = 0;      // Frames since the interval began, including settling frames
 };
 
 class ABTestAggregator
@@ -72,6 +67,34 @@ public:
 	 */
 	void OnFrame(const std::vector<DrawCallRow>& rows);
 
+	/**
+	 * @brief Records one headline cost sample for the current interval.
+	 *
+	 * Ignored during warm-up and settling, and for values that cannot be a real frame cost.
+	 * @return True when the sample was kept.
+	 */
+	bool OnHeadline(float ms);
+
+	/**
+	 * @brief Records one wall-clock frame time for the current interval.
+	 *
+	 * Gated and filtered exactly as OnHeadline.
+	 * @return True when the sample was kept.
+	 */
+	bool OnFrameTime(float ms);
+
+	/** @brief Frames at the start of every measured interval that are not recorded, so a settings swap can settle. */
+	void SetSettleFrames(uint32_t frames) { settleFrames = frames; }
+
+	/** @brief True while the current interval is still inside its settle frames. */
+	bool IsSettling() const { return currentInterval && currentInterval->framesSeen <= static_cast<int>(settleFrames); }
+
+	/** @brief Measured intervals recorded so far plus the one in progress. */
+	size_t MeasuredIntervalCount() const { return intervals.size() + (currentInterval && !currentInterval->warmup ? 1 : 0); }
+
+	/** @brief The variant of the interval in progress; A before any interval has started. */
+	ABVariant CurrentVariant() const { return currentInterval ? currentInterval->variant : ABVariant::A; }
+
 	/** @brief Finalises the A/B test by closing the current interval and recording the end time. */
 	void OnTestEnd();
 
@@ -80,6 +103,9 @@ public:
 	 * @return Vector of aggregated stats (mean, median, delta) for each shader type, sorted with summary rows last.
 	 */
 	std::vector<AggregatedDrawCallStats> GetAggregatedResults() const;
+
+	/** @brief Headline samples of the measured intervals recorded so far, for ComputeABComparison. */
+	const std::vector<ABHeadlineInterval>& GetHeadlineIntervals() const { return headlineIntervals; }
 
 	/** @brief Returns true if at least one measurement interval has been recorded. */
 	bool HasResults() const { return !intervals.empty(); }
@@ -159,4 +185,8 @@ private:
 	// Frame history for outlier detection
 	std::vector<float> recentFrameTimes;
 	bool initialBWarmupPending = true;
+	uint32_t settleFrames = 0;
+	std::vector<ABHeadlineInterval> headlineIntervals;
+	std::vector<float> currentHeadline;
+	std::vector<float> currentFrameTimes;
 };

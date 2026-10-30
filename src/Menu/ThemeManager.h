@@ -158,6 +158,8 @@ public:
 
 	struct Constants
 	{
+		static constexpr ImVec4 SHADER_CACHE_NOTICE_COLOR{ 1.0f, 1.0f, 0.0f, 1.0f };
+
 		// Font size constants
 		static constexpr float DEFAULT_SCREEN_HEIGHT = 1080.0f;       // Default screen resolution to use for subsequent calculations
 		static constexpr float DEFAULT_FONT_RATIO = (7.0f / 360.0f);  // 21px @ 1080p, 28px @ 1440p, 42px @ 4K

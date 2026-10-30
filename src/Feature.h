@@ -9,6 +9,7 @@
 #include <cstring>
 #include <span>
 #include <string_view>
+#include <vector>
 #ifdef TRACY_ENABLE
 #	include <Tracy/Tracy.hpp>
 #	include <Tracy/TracyD3D11.hpp>
@@ -86,6 +87,8 @@ struct Feature
 	bool installed = false;
 	std::string version;
 	std::string failedLoadedMessage;
+	/// Why a conflicting mod keeps this feature off, empty when none does; see DisableForConflict().
+	std::string conflictMessage;
 
 	virtual std::string GetName() = 0;
 	virtual std::string GetShortName() = 0;
@@ -321,6 +324,9 @@ public:
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
 
+	/** @brief Runs immediately before the engine polls physical input devices. */
+	virtual void OnBeforeInputPoll() {}
+
 	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
 	virtual void OnWorldRenderBegin() {}
 
@@ -474,6 +480,15 @@ public:
 	/** @brief Called after all SKSE plugins have finished PostLoad. */
 	virtual void PostPostLoad() {}
 
+	/** @brief Opts into the shared grass lifecycle and geometry setup hooks. */
+	virtual bool WantsGrassMeshHooks() const { return false; }
+	/** @brief Called after a grass type loads with its source NIF path. */
+	virtual void OnGrassMeshLoaded(RE::BSMultiStreamInstanceTriShape*, const char*) {}
+	/** @brief Called before a grass shape is destroyed, including after runtime disablement. */
+	virtual void OnGrassMeshDestroyed(RE::BSMultiStreamInstanceTriShape*) {}
+	/** @brief Called after the engine sets up a grass geometry draw. */
+	virtual void OnGrassGeometrySetup(RE::BSGeometry*) {}
+
 	/**
 	 * @brief Loads the feature from its INI file and JSON settings.
 	 *
@@ -528,6 +543,12 @@ public:
 	 * automatically get/set-able. Default empty: most features have nothing beyond settings.
 	 */
 	virtual void RegisterUxActions() {}
+
+	/**
+	 * @brief Turns the feature off because a_conflict cannot coexist with it, and lists it in the feature issues.
+	 * Leaves failedLoadedMessage unset: an expected conflict is not a load failure, and a failure would hold the disk cache.
+	 */
+	void DisableForConflict(std::string_view a_conflict);
 
 	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
@@ -619,6 +640,9 @@ public:
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
+
+	/** @brief Cached features that opted into the shared grass hooks. */
+	static const std::vector<Feature*>& GetGrassMeshHookFeatures();
 
 	/**
 	 * @brief Opt-in flag checked once, when the constant-buffer fixup feature list is built:
@@ -721,6 +745,24 @@ public:
 	static void SetTracyCtx(TracyD3D11Ctx ctx) noexcept { s_tracyCtx = ctx; }
 #endif
 
+#ifdef TRACY_ENABLE
+	/** @brief Writes "<a_shortName>::<a_method>" into a_buffer without allocating, truncating to fit; returns a_buffer. */
+	static const char* FormatZoneName(std::span<char> a_buffer, std::string_view a_shortName, std::string_view a_method) noexcept
+	{
+		if (a_buffer.empty())
+			return a_buffer.data();
+
+		std::size_t length = 0;
+		for (const auto part : { a_shortName, std::string_view("::"), a_method }) {
+			const auto count = std::min(part.size(), a_buffer.size() - 1 - length);
+			std::memcpy(a_buffer.data() + length, part.data(), count);
+			length += count;
+		}
+		a_buffer[length] = '\0';
+		return a_buffer.data();
+	}
+#endif
+
 	/**
 	 * @brief Invokes a callback on every loaded feature with optional Tracy profiling.
 	 * @param methodName Label for the Tracy zone (e.g. "Reset", "Prepass").
@@ -753,10 +795,11 @@ public:
 					continue;
 				}
 				{
-					const auto zoneName = std::format("{}::{}", feature->GetShortName(), methodName);
-					ZoneTransientN(___tracy_feature_zone, zoneName.c_str(), true);
+					char zoneNameBuffer[128];
+					const auto* zoneName = FormatZoneName(zoneNameBuffer, feature->GetShortName(), methodName);
+					ZoneTransientN(___tracy_feature_zone, zoneName, true);
 					if (emitGpuZone) {
-						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName.c_str(), 0, s_tracyCtx != nullptr);
+						TracyD3D11ZoneTransientS(s_tracyCtx, ___tracy_d3d11_feature_zone, zoneName, 0, s_tracyCtx != nullptr);
 						callback(feature);
 					} else {
 						callback(feature);
@@ -774,12 +817,11 @@ public:
 	{
 	public:
 		template <typename Func>
-		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback)
+		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback, bool a_emitCpuZone = true)
 		{
 			ForEachLoadedFeature(a_features, a_methodName, [&](Feature* feature) {
 				if (auto cleanup = a_callback(feature))
-					cleanups.push_back(std::move(cleanup));
-			});
+					cleanups.push_back(std::move(cleanup)); }, false, a_emitCpuZone);
 		}
 
 		RenderScope(const RenderScope&) = delete;

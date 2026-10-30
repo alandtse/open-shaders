@@ -160,13 +160,8 @@ public:
 	};
 
 private:
-	struct VolumetricLightingDescriptor
-	{};
-
 	static const char* FromUnits(int32_t value, int32_t unitScale);
-	static VolumetricLightingDescriptor& GetVLDescriptor();
-	static void SetVLQuality(VolumetricLightingDescriptor& descriptor, std::uint32_t quality);
-	static void RenderVolumetricLighting(VolumetricLightingDescriptor* descriptor, RE::NiCamera* camera, bool flag);
+	static void SetVLQuality(std::uint32_t quality);
 
 	void DrawVolumetricLightingSettings(int32_t& quality, TextureSize& customSize, bool isInterior, bool inLocationType);
 	TextureSize& FetchCurrentSizeInUnits(bool interior);

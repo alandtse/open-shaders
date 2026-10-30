@@ -1,6 +1,7 @@
 #include "SkySync.h"
 #include "../I18n/I18n.h"
 #include "RE/B/BSVolumetricLightingRenderData.h"
+#include "RE/S/Sun.h"
 
 #include "Utils/Game.h"
 
@@ -242,10 +243,9 @@ void SkySync::PostPostLoad()
 	stl::detour_thunk<Sky_Update>(REL::RelocationID(25682, 26229));
 	Util::SetCelestialTransitionHandlerAvailable(true);
 
-	gSunPosition = reinterpret_cast<RE::NiPoint3*>(REL::RelocationID(527924, 414871).address());
+	gSunPosition = &RE::Sun::GetSunPosition();
 
-	gVolumetricLighting = reinterpret_cast<RE::BSVolumetricLightingRenderData*>(
-		REL::RelocationID(527719, 414629).address() - offsetof(RE::BSVolumetricLightingRenderData, color));
+	gVolumetricLighting = &RE::BSVolumetricLightingRenderData::GetCurrentRenderData();
 
 	logger::info("[Sky Sync] Installed hooks");
 }
@@ -269,12 +269,9 @@ void SkySync::GameLoaded()
 
 void SkySync::DisableOnConflict(std::string_view conflictName)
 {
-	// A conflicting mod is an expected, benign disable, not a load failure --
-	// leave failedLoadedMessage unset so the cache classifier treats it as such.
-	loaded = false;
+	DisableForConflict(conflictName);
 	settings.Enabled = false;
 	Util::SetCelestialTransitionHandlerAvailable(false);
-	logger::warn("[Sky Sync] Disabled as {} has been detected, both cannot be used together", conflictName);
 }
 
 void SkySync::OnSkyUpdateColors(RE::Sky* sky)

@@ -39,6 +39,14 @@ on:
                 description: "Skip the release-parity fxc compile and download a prior upload-compiled-shaders run's binaries instead. Finalize/upload still run normally against THIS ref's CMakeLists.txt/feature .ini, so Info.ini's PluginVersion and feature Versions stay correct even though the compile itself was reused."
                 type: boolean
                 default: false
+            compiled-shaders-retention-days:
+                description: "Retention of the uploaded CompiledShaderBinaries-* artifacts"
+                type: number
+                default: 1
+            generate-flip-impact:
+                description: "Generate the feature flip impact tables when cache-artifacts is set; a caller that runs _feature-flip-impact.yaml itself sets this false"
+                type: boolean
+                default: true
             run-full-config-validation:
                 description: "Run the full-config pass (every feature, default opt). On by default for broad PR coverage; release/cache/gate runs set this false since they only need the release-parity (profile) set."
                 type: boolean
@@ -331,6 +339,7 @@ jobs:
                     python tools/validate_changed_shaders.py --changed-list-file changed_files.txt -- \
                       hlslkit-compile --fxc "$FXC" --shader-dir build/ALL/aio/Shaders --output-dir build/ShaderCache --config "$PROFILE_CONFIG" --max-warnings 0 --suppress-warnings X1519 --strip-debug-defines --optimization-level 3 --dedupe --timing-report "build/shader-compile-timing-${{ matrix.config.runtime }}.json"
                     cp "$PROFILE_CONFIG" build/ShaderCache/CompileConfig.yaml
+                    python tools/build-shader-cache.py --compile-extra build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }} --fxc "$FXC"
                     if [ "${{ inputs.cache-artifacts }}" = "true" ] || [ "${{ inputs.upload-compiled-shaders }}" = "true" ]; then
                       python tools/build-shader-cache.py --record-compile build/ShaderCache --shader-dir build/ALL/aio/Shaders --runtime ${{ matrix.config.runtime }}
                     fi
@@ -343,7 +352,7 @@ jobs:
               with:
                   name: CompiledShaderBinaries-${{ matrix.config.runtime }}
                   path: build/ShaderCache
-                  retention-days: 1
+                  retention-days: ${{ inputs.compiled-shaders-retention-days }}
                   if-no-files-found: error
 
             # Never runs in pull_request_target contexts or on fork checkouts
@@ -398,56 +407,20 @@ jobs:
                   retention-days: 30
                   if-no-files-found: ignore
 
-    # Runs repo tooling, so it restores no build cache; a failure only costs the release its compile-impact tiers.
     feature-flip-impact:
         name: Generate feature flip impact
         needs: shader-validation
         if: >
             !cancelled() && needs.shader-validation.result == 'success' &&
-            inputs.cache-artifacts && github.event_name != 'pull_request_target' &&
+            inputs.cache-artifacts && inputs.generate-flip-impact &&
+            github.event_name != 'pull_request_target' &&
             inputs.repository == github.repository
-        continue-on-error: true
-        runs-on: windows-2025-vs2026
         permissions:
             contents: read
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-              with:
-                  ref: ${{ inputs.ref }}
-                  repository: ${{ inputs.repository }}
-                  persist-credentials: false
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.12"
-
-            - name: Install generator dependencies
-              shell: bash
-              run: python -m pip install --quiet pyyaml
-
-            - name: Download shader compile timing reports
-              uses: actions/download-artifact@v7
-              with:
-                  pattern: shader-compile-timing-*
-                  path: timing/
-
-            - name: Generate feature flip impact tables
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  mkdir -p flip-impact
-                  python tools/feature-flip-impact.py --runtime SE --config .github/configs/shader-validation.yaml --timing timing/shader-compile-timing-SE/shader-compile-timing-SE.json --output flip-impact/FeatureFlipImpact-SE.json
-                  python tools/feature-flip-impact.py --runtime VR --config .github/configs/shader-validation-vr.yaml --timing timing/shader-compile-timing-VR/shader-compile-timing-VR.json --output flip-impact/FeatureFlipImpact-VR.json
-
-            - name: Upload feature flip impact tables
-              uses: actions/upload-artifact@v7
-              with:
-                  name: FeatureFlipImpact
-                  path: flip-impact/FeatureFlipImpact-*.json
-                  retention-days: 30
-                  if-no-files-found: error
+        uses: ./.github/workflows/_feature-flip-impact.yaml
+        with:
+            ref: ${{ inputs.ref }}
+            repository: ${{ inputs.repository }}
 
     shader-unit-tests:
         name: Run Shader Unit Tests
@@ -552,16 +525,20 @@ jobs:
               with:
                   configurePreset: ALL
                   buildPreset: ALL
-                  buildPresetAdditionalArgs: "['--target cpp_tests']"
+                  buildPresetAdditionalArgs: "['--target cpp_tests', '--target screenshot_tests_devbench']"
 
             - name: Run C++ unit tests
               if: steps.check-cpp.outputs.skip != 'true'
               run: |
-                  ctest --test-dir build/ALL -C Release --output-on-failure -R CppUtilTests --timeout 60
+                  ctest --test-dir build/ALL -C Release --output-on-failure -R "CppUtilTests|ScreenshotDevBenchTests" --timeout 60
 
             - name: Test settings catalog generator
               if: steps.check-cpp.outputs.skip != 'true'
               run: python -m unittest discover -s tests -p test_scene_settings_catalog_generator.py
+
+            - name: Test shader staging CMake modules
+              if: steps.check-cpp.outputs.skip != 'true'
+              run: python -m unittest discover -s tests -p test_cmake_shader_staging.py
 
             - name: Upload test results on failure
               if: failure() && steps.check-cpp.outputs.skip != 'true'
@@ -572,3 +549,59 @@ jobs:
                       build/ALL/Testing/**
                   retention-days: 7
                   if-no-files-found: ignore
+
+    python-unit-tests:
+        name: Run Python Unit Tests
+        if: inputs.run-cpp-tests
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  ref: ${{ inputs.ref }}
+                  repository: ${{ inputs.repository }}
+                  # Safe: this job is contents:read and this workflow takes no secrets input.
+                  allow-unsafe-pr-checkout: true
+
+            - name: Check if Python tests should run
+              id: check-python
+              shell: bash
+              run: |
+                  if [ "${{ github.event_name }}" != "pull_request_target" ]; then
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  elif [ "${{ inputs.cpp-tests-should-build }}" != "true" ]; then
+                    echo "skip=true" >> $GITHUB_OUTPUT
+                  else
+                    echo "skip=false" >> $GITHUB_OUTPUT
+                  fi
+
+            # These tests compile slices of src/*.cpp against stub headers with g++, so they
+            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
+            # run in the Windows jobs instead.
+            - name: Install PyYAML
+              if: steps.check-python.outputs.skip != 'true'
+              run: |
+                  python3 -m venv "$RUNNER_TEMP/venv"
+                  "$RUNNER_TEMP/venv/bin/pip" install pyyaml
+
+            - name: Run Python unit tests
+              if: steps.check-python.outputs.skip != 'true'
+              working-directory: tests
+              run: >
+                  "$RUNNER_TEMP/venv/bin/python" -m unittest -v
+                  test_editor_startup
+                  test_effects11_hdr
+                  test_environment_controls
+                  test_feature_flip_impact
+                  test_force_weather
+                  test_gpu_pass
+                  test_nr_interop
+                  test_profiler
+                  test_release_plan
+                  test_scene_settings_audit
+                  test_scene_settings_persistence
+                  test_scene_settings_policy
+                  test_skylighting_cadence
+                  test_skylighting_scheduling

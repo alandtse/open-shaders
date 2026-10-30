@@ -93,13 +93,13 @@ def verify_artifact(cache, shaders, source_root, runtime, plugin_version=None):
     from hlslkit.shader_digest import combine_hashes, compute_shader_content_digest, hash_string, to_hex
 
     require(sys.platform == "win32", "Artifact validation requires Windows include ordering")
-    strip, include, disabled = builder.profile_strip_defines(source_root, "aio")
+    strip, include, disabled = builder.profile_strip_defines(source_root, "aio", runtime)
     config = source_root / ".github/configs" / (
         "shader-validation-vr.yaml" if runtime == "VR" else "shader-validation.yaml")
     with tempfile.TemporaryDirectory() as directory:
         temporary = Path(directory)
         profile = builder.filter_profile_defines(config, temporary / "profile.yaml", strip, source_root)
-        permutations = builder.cache_shader_permutations(profile, runtime)
+        permutations = builder.release_shader_permutations(profile, runtime, source_root)
         required_features = include - builder.RUNTIME_EXCLUDED_FEATURES[runtime]
         present_features = {path.stem for path in (shaders / "Features").glob("*.ini")}
         require(not required_features - present_features,
@@ -121,7 +121,11 @@ def verify_artifact(cache, shaders, source_root, runtime, plugin_version=None):
             digest = compute_shader_content_digest(shaders / source, shaders)
             require(digest is not None, f"Cannot hash packaged shader {source}")
             source_digests[source] = combine_hashes(digest, global_digest)
-        expected[relative] = to_hex(combine_hashes(source_digests[source], hash_string(key)))
+        if key.startswith("standalone:"):
+            digest = compute_shader_content_digest(shaders / source, shaders)
+            expected[relative] = to_hex(combine_hashes(digest, int(key.split(":", 1)[1], 16)))
+        else:
+            expected[relative] = to_hex(combine_hashes(source_digests[source], hash_string(key)))
     compare("Runtime content / permutation digests", expected, entries)
     for path in blobs.values():
         check_dxbc(path)
@@ -171,7 +175,7 @@ def verify_log(text, snapshot, modified_ns):
     lines = text.splitlines()
     require(lines and lines[0] != snapshot["previousLogStart"], "No fresh game session after the snapshot")
     version = snapshot["cache"]["info"]["Cache"]["pluginversion"]
-    logged_version = re.search(r"\bCommunityShaders v(\S+)", lines[0])
+    logged_version = re.search(r"\b(?:Loaded CommunityShaders |CommunityShaders v)(\S+)", lines[0])
     require(logged_version and logged_version.group(1) == version,
             "Game log does not match the installed plugin version")
     failures = re.findall(

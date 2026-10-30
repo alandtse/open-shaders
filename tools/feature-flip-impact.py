@@ -140,16 +140,19 @@ def group_share(variants, before_hashes, after_hashes, timings, type_means):
 
 
 def flip_impact(d3d, stage, variants, timings, type_means, defines, workers):
-    def hash_all(drop):
-        with ThreadPoolExecutor(workers) as pool:
-            return list(pool.map(lambda v: code_hash(d3d, stage, v[3], [d for d in v[4] if d != drop]), variants))
-
-    with_define = hash_all(None)
-    impact = {}
-    for define in defines:
-        share, changed = group_share(variants, with_define, hash_all(define), timings, type_means)
-        if share is not None:
-            impact[define] = {"share": round(share, 3), "groups": changed}
+    with ThreadPoolExecutor(workers) as pool:
+        with_define = list(pool.map(lambda v: code_hash(d3d, stage, v[3], v[4]), variants))
+        impact = {}
+        for define in defines:
+            # A variant without the define preprocesses identically when it is dropped, so only the others are re-hashed.
+            affected = [i for i, v in enumerate(variants) if define in v[4]]
+            rehashed = pool.map(lambda i: code_hash(d3d, stage, variants[i][3], [d for d in variants[i][4] if d != define]), affected)
+            without_define = list(with_define)
+            for i, code in zip(affected, rehashed):
+                without_define[i] = code
+            share, changed = group_share(variants, with_define, without_define, timings, type_means)
+            if share is not None:
+                impact[define] = {"share": round(share, 3), "groups": changed}
     return impact
 
 

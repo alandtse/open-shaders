@@ -106,10 +106,10 @@ void VRDynamicNearClip::RestoreCamera()
 	if (!controlledCamera)
 		return;
 	auto& camera = controlledCamera->GetVRRuntimeData();
-	if (camera.viewFrustumArray) {
-		for (uint32_t eye = 0; eye < std::min(camera.unk1C8, 2u); ++eye) {
-			if (ApproximatelyEqual(camera.viewFrustumArray[eye].fNear, appliedNear))
-				camera.viewFrustumArray[eye].fNear = savedNear[eye];
+	if (!camera.eyeFrustums.empty()) {
+		for (uint32_t eye = 0; eye < std::min({ camera.eyeCount, 2u, static_cast<uint32_t>(camera.eyeFrustums.size()) }); ++eye) {
+			if (ApproximatelyEqual(camera.eyeFrustums[eye].fNear, appliedNear))
+				camera.eyeFrustums[eye].fNear = savedNear[eye];
 		}
 	}
 	if (camera.viewFrustumBuffer) {
@@ -179,7 +179,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		return;
 	}
 	auto& cameraData = camera->GetVRRuntimeData();
-	if (cameraData.unk1C8 != 2 || !cameraData.viewFrustumArray || !cameraData.viewFrustumBuffer) {
+	if (cameraData.eyeCount != 2 || cameraData.eyeFrustums.size() < 2 || !cameraData.viewFrustumBuffer) {
 		inputNear = {};
 		inputFar = {};
 		WaitForCamera("Waiting for both eye frustums");
@@ -189,8 +189,8 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 	inputMinimumNear = projection.minNearPlaneDist;
 	inputFarNearRatio = projection.maxFarNearRatio;
 	for (uint32_t eye = 0; eye < 2; ++eye) {
-		inputNear[eye] = cameraData.viewFrustumArray[eye].fNear;
-		inputFar[eye] = cameraData.viewFrustumArray[eye].fFar;
+		inputNear[eye] = cameraData.eyeFrustums[eye].fNear;
+		inputFar[eye] = cameraData.eyeFrustums[eye].fFar;
 	}
 	// Camera preparation also runs while scene/menu cameras are being initialized.
 	if (!std::isfinite(projection.minNearPlaneDist) || projection.minNearPlaneDist < 0.0f ||
@@ -199,7 +199,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		return;
 	}
 	for (uint32_t eye = 0; eye < 2; ++eye) {
-		const auto& frustum = cameraData.viewFrustumArray[eye];
+		const auto& frustum = cameraData.eyeFrustums[eye];
 		if (frustum.bOrtho || !std::isfinite(frustum.fNear) || frustum.fNear <= 0.0f ||
 			!std::isfinite(frustum.fFar) || frustum.fFar <= std::max(frustum.fNear, settings.NormalNearClip)) {
 			WaitForCamera("Waiting for a valid perspective camera frustum");
@@ -219,7 +219,7 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 		RestoreCamera();
 		controlledCamera.reset(camera);
 		for (uint32_t eye = 0; eye < 2; ++eye)
-			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
+			savedNear[eye] = cameraData.eyeFrustums[eye].fNear;
 		savedBufferNear = cameraData.viewFrustumBuffer->fNear;
 		savedMinimum = projection.minNearPlaneDist;
 		savedRatio = projection.maxFarNearRatio;
@@ -266,9 +266,9 @@ void VRDynamicNearClip::BeforeCameraUpdate()
 	for (uint32_t eye = 0; eye < 2; ++eye) {
 		// If another controller already moved fNear off our applied value, capture it here
 		// so RestoreCamera() does not overwrite that change with a stale saved value.
-		if (appliedNear > 0.0f && !ApproximatelyEqual(cameraData.viewFrustumArray[eye].fNear, appliedNear))
-			savedNear[eye] = cameraData.viewFrustumArray[eye].fNear;
-		cameraData.viewFrustumArray[eye].fNear = controller.current;
+		if (appliedNear > 0.0f && !ApproximatelyEqual(cameraData.eyeFrustums[eye].fNear, appliedNear))
+			savedNear[eye] = cameraData.eyeFrustums[eye].fNear;
+		cameraData.eyeFrustums[eye].fNear = controller.current;
 	}
 	camera->GetRuntimeData2().minNearPlaneDist = std::min(savedMinimum, settings.MinimumNearClip);
 	appliedNear = controller.current;
@@ -297,7 +297,7 @@ void VRDynamicNearClip::UpdateVanillaFogOverride()
 bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 {
 	const auto& camera = controlledCamera->GetVRRuntimeData();
-	if (camera.unk1C8 != 2 || !camera.viewFrustumArray)
+	if (camera.eyeCount != 2 || camera.eyeFrustums.size() < 2)
 		return false;
 	observedEngineNear = cameraData.y;
 	bool depthConsistent = std::isfinite(cameraData.x) && std::isfinite(cameraData.y) &&
@@ -313,7 +313,7 @@ bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 		observedNear[eye] = VRNearClipMath::PerspectiveNear(projection(2, 2), projection(3, 2), projection(2, 3), projection(3, 3));
 		jitteredNear[eye] = VRNearClipMath::PerspectiveNear(view.projMat(2, 2), view.projMat(3, 2), view.projMat(2, 3), view.projMat(3, 3));
 		depthConsistent &= ApproximatelyEqual(observedNear[eye], observedEngineNear) && ApproximatelyEqual(jitteredNear[eye], observedEngineNear);
-		requestMatches &= ApproximatelyEqual(observedNear[eye], appliedNear) && ApproximatelyEqual(camera.viewFrustumArray[eye].fNear, appliedNear);
+		requestMatches &= ApproximatelyEqual(observedNear[eye], appliedNear) && ApproximatelyEqual(camera.eyeFrustums[eye].fNear, appliedNear);
 		// The GPU upload cache is transposed and can describe a different camera or preparation.
 		const auto& cached = globals::game::frameBufferCached.GetCameraProjUnjittered(eye);
 		cachedNear[eye] = VRNearClipMath::PerspectiveNear(cached._33, cached._34, cached._43, cached._44);
@@ -326,7 +326,7 @@ bool VRDynamicNearClip::CheckProjection(const float4& cameraData)
 		const auto now = Util::GetNowSecs();
 		if (globals::state && globals::state->IsDeveloperMode() && now - lastProjectionLog >= kLogInterval) {
 			logger::warn("VR dynamic near clip: {}; requested={:.6g}, engine={:.6g}, far={:.6g}, frustum L/R={:.6g}/{:.6g}, projection L/R={:.6g}/{:.6g}, jittered L/R={:.6g}/{:.6g}, cached L/R={:.6g}/{:.6g}; native Z/W L=[{:.6g},{:.6g},{:.6g},{:.6g}], R=[{:.6g},{:.6g},{:.6g},{:.6g}]",
-				status, appliedNear, observedEngineNear, cameraData.x, camera.viewFrustumArray[0].fNear, camera.viewFrustumArray[1].fNear,
+				status, appliedNear, observedEngineNear, cameraData.x, camera.eyeFrustums[0].fNear, camera.eyeFrustums[1].fNear,
 				observedNear[0], observedNear[1], jitteredNear[0], jitteredNear[1], cachedNear[0], cachedNear[1],
 				projectionZ[0].x, projectionZ[0].y, projectionZ[0].z, projectionZ[0].w,
 				projectionZ[1].x, projectionZ[1].y, projectionZ[1].z, projectionZ[1].w);

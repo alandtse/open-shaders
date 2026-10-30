@@ -4,7 +4,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
-#include "Common/TransientWindImpulse.hlsli"
+#include "Common/TransientWindTypes.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/WindFieldTypes.hlsli"
 
@@ -111,7 +111,7 @@ namespace SharedData
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
 		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU
 		// reads the cluster config from the wrong offsets. The C++ mirror has the same hole.
-		float pad0;
+		uint SunLitHair;  // 1: the forward hair pass reuses the directional shadow the deferred hair pass stored
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)
@@ -699,6 +699,9 @@ namespace SharedData
 		float MotionStretch;
 		float MotionTransparency;
 		float pad0;
+		float4 TextureBounds;
+		float2 TextureRadiusScale;
+		float2 pad1;
 	};
 
 #if defined(SNOW_COVER) && defined(PSHADER)
