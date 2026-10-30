@@ -41,6 +41,15 @@ struct SnowDeformation : Feature
 	static_assert((kTexels & (kTexels - 1)) == 0);
 	static_assert(kWindowSpan < static_cast<int32_t>(kSlots));
 
+	/** @brief Plain 16-byte vector for constant-buffer and key members; brace assignment is ambiguous on SimpleMath::Vector4 with the current DirectXTK. */
+	struct PackedFloat4
+	{
+		float x = 0.0f;
+		float y = 0.0f;
+		float z = 0.0f;
+		float w = 0.0f;
+	};
+
 	struct Settings
 	{
 		bool Enabled = true;
@@ -350,7 +359,7 @@ private:
 	struct CameraKey
 	{
 		std::array<float, 16> viewProj{};
-		float4 posAdjust{};
+		PackedFloat4 posAdjust{};
 		uint64_t serial = 0;
 		bool clamped = false;
 		bool shadow = false;
