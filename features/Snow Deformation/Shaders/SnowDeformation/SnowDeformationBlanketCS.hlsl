@@ -1,5 +1,5 @@
-#include "SnowDeformation/UpdateParams.hlsli"
 #include "SnowDeformation/Coverage.hlsli"
+#include "SnowDeformation/UpdateParams.hlsli"
 
 Texture2D<float4> LandGrid : register(t4);
 RWTexture2D<float> Blanket : register(u0);

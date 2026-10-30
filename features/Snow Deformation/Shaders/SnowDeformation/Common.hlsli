@@ -130,19 +130,19 @@ struct ControlPoint
 #if defined(SD_LAYOUT)
 	SD_LAYOUT
 #else
-	float4 Position : SV_POSITION0;
+	float4 Position: SV_POSITION0;
 #	if !defined(DEPTH_ONLY)
-	float4 TexCoord0 : TEXCOORD0;
-	float3 TBN0 : TEXCOORD1;
-	float3 TBN1 : TEXCOORD2;
-	float3 TBN2 : TEXCOORD3;
-	float4 LandBlendWeights1 : TEXCOORD6;
-	float4 LandBlendWeights2 : TEXCOORD7;
-	float4 WorldPosition : POSITION1;
-	float4 PreviousWorldPosition : POSITION2;
-	float4 Color : COLOR0;
-	float4 FogParam : COLOR1;
-	float3 ModelPosition : TEXCOORD12;
+	float4 TexCoord0: TEXCOORD0;
+	float3 TBN0: TEXCOORD1;
+	float3 TBN1: TEXCOORD2;
+	float3 TBN2: TEXCOORD3;
+	float4 LandBlendWeights1: TEXCOORD6;
+	float4 LandBlendWeights2: TEXCOORD7;
+	float4 WorldPosition: POSITION1;
+	float4 PreviousWorldPosition: POSITION2;
+	float4 Color: COLOR0;
+	float4 FogParam: COLOR1;
+	float3 ModelPosition: TEXCOORD12;
 #	endif
 #endif
 };
@@ -150,7 +150,7 @@ struct ControlPoint
 struct PatchConstants
 {
 	float Edges[3] : SV_TessFactor;
-	float Inside : SV_InsideTessFactor;
+	float Inside: SV_InsideTessFactor;
 };
 
 #endif
