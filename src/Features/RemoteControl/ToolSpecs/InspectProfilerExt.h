@@ -5,9 +5,9 @@ namespace DevBenchBridge::ToolSpecs
 	/** Devbench descriptor JSON for inspect extension profiler. {brand} is expanded at registration. */
 	inline constexpr const char* kInspectProfilerExt =
 		R"({"description":")"
-		R"({brand} GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,capturedGpuFrameCount,capturedCpuFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,)"
+		R"({brand} GPU/CPU profiler snapshot on the render owner -> {frame:{ms,avgMs,p95Ms,p99Ms,samples,frameGeneration},enabled,capturing,frame_count,capturedFrameCount,capturedGpuFrameCount,capturedCpuFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,)"
 		R"(peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,)"
-		R"(cpuHistoryCount}]}. Calling this primes the next capture, )"
+		R"(cpuHistoryCount}]}. frame measures engine-frame wall-clock intervals even while pass capture is idle; generated presents are not additional engine frames. Calling this primes the next capture, )"
 		R"(so an idle first call may show stale data. CPU samples publish at their engine-frame boundary and pair with capturedCpuFrameCount, resolvedCpuTotalMs, cpuMs, )"
 		R"(and CPU history. GPU samples resolve independently through a three-slot query ring (a frame that cannot open at its first pass, because its oldest slot is still pending or its batch fails to begin, is skipped whole, so a GPU-bound scene publishes fewer, complete GPU samples) and pair with capturedGpuFrameCount, resolvedTotalMs, gpuMs, topLevelMs, )"
 		R"(and GPU history. gpuMs and its rolling statistics report self time with directly nested GPU passes removed. topLevelMs is the inclusive contribution from top-level intervals; )"

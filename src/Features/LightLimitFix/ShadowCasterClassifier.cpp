@@ -178,15 +178,15 @@ namespace ShadowCasterManager
 		for (size_t f = 0; f < s_recFrames.size(); f++) {
 			const auto& fr = s_recFrames[f];
 			out << (f ? ",\n" : "") << "{\"frame\":" << fr.frame << ",\"reallocs\":" << fr.reallocs
-				<< ",\"ownerInv\":" << fr.ownerInv << ",\"slots\":[";
+			    << ",\"ownerInv\":" << fr.ownerInv << ",\"slots\":[";
 			for (size_t s = 0; s < fr.slots.size(); s++) {
 				const auto& r = fr.slots[s];
 				out << (s ? "," : "") << "{\"i\":" << r.slot << ",\"light\":\"" << r.light
-					<< "\",\"tx\":" << r.tx << ",\"ty\":" << r.ty << ",\"ts\":" << r.ts
-					<< ",\"valid\":" << (r.valid ? "true" : "false")
-					<< ",\"staticValid\":" << (r.staticValid ? "true" : "false")
-					<< ",\"redrew\":" << (r.redrew ? "true" : "false")
-					<< ",\"pending\":" << r.pending << ",\"rendered\":" << r.rendered << "}";
+				    << "\",\"tx\":" << r.tx << ",\"ty\":" << r.ty << ",\"ts\":" << r.ts
+				    << ",\"valid\":" << (r.valid ? "true" : "false")
+				    << ",\"staticValid\":" << (r.staticValid ? "true" : "false")
+				    << ",\"redrew\":" << (r.redrew ? "true" : "false")
+				    << ",\"pending\":" << r.pending << ",\"rendered\":" << r.rendered << "}";
 			}
 			out << "],\"casters\":[";
 			for (size_t c = 0; c < fr.casters.size(); c++) {
@@ -194,7 +194,7 @@ namespace ShadowCasterManager
 				std::string nm = k.name;
 				std::erase_if(nm, [](char ch) { return ch == '"' || ch == '\\'; });
 				out << (c ? "," : "") << "{\"geom\":\"" << k.geom << "\",\"name\":\"" << nm
-					<< "\",\"dynamic\":" << (k.dynamic ? "true" : "false") << ",\"mode\":" << k.mode << "}";
+				    << "\",\"dynamic\":" << (k.dynamic ? "true" : "false") << ",\"mode\":" << k.mode << "}";
 			}
 			out << "]}";
 		}

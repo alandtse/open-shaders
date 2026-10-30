@@ -5,8 +5,8 @@ namespace DevBenchBridge::ToolSpecs
 	/** Devbench descriptor JSON for openshaders.shadercache. {brand} is expanded at registration. */
 	inline constexpr const char* kShadercacheTool =
 		R"({"description":")"
-		R"(Manage {brand}' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, restorePrevious, and discardPrevious are queued onto the main thread, )"
-		R"(fire-and-forget. backgroundCompile and contentStore apply immediately on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; )"
+		R"(Manage {brand}' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and discardPrevious are queued onto the main thread. restorePrevious queues onto the render thread, matching the UI and its saved configuration access. )"
+		R"(These queued operations are fire-and-forget. backgroundCompile and contentStore apply immediately on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; )"
 		R"(with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, )"
 		R"(forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, )"
 		R"(then evicts+recompiles just those (needs something rendering; )"
@@ -18,7 +18,7 @@ namespace DevBenchBridge::ToolSpecs
 		R"(cancels an in-progress compile if one is running, only takes effect after a restart, )"
 		R"(check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. discardPrevious: delete the rollback slot so the current cache is kept and the home-page mismatch notice clears -- mirrors the in-game 'keep current cache' button; )"
 		R"(refused while a feature-set change awaits commit (featureSetChanged), a restore is pending, or the cache is held. contentStore (param enabled: bool): toggle the developer/tester Advanced setting that persists compiled blobs keyed by the preprocessed source, entry, profile, flags and compiler; )"
-		R"(the store lives in Data/ShaderCache/ContentStore and survives invalidation, rotation and file-watcher wipes, )"
+		R"(disk reads and writes require General.Enable Disk Cache. The store lives in Data/ShaderCache/ContentStore and survives invalidation, rotation and file-watcher wipes, )"
 		R"(but deleteDisk removes it too. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache. exportTrace: write every task record from the current build to a Chrome Trace Event Format JSON file (importable at ui.perfetto.dev or chrome://tracing) -- a timeline can localize external CPU contention during a build in a way aggregate stats can't. Runs synchronously on the calling thread (read-only over the record set plus a file write). Optional 'path' overrides the default (next to OpenShaders.log); )"
 		R"(fails if the current build has no recorded tasks yet.")"
 		R"(,"inputSchema":{
@@ -26,7 +26,7 @@ namespace DevBenchBridge::ToolSpecs
 	"properties": {
 		"action": {
 			"type": "string",
-			"description": "Cache operation; backgroundCompile drops unstarted precompiles and switches to rendering-requested compilation while admitted jobs finish.",
+			"description": "restorePrevious queues on render; other queued cache operations use main. backgroundCompile drops unstarted precompiles and switches to rendering-requested compilation. backgroundCompile, contentStore, and exportTrace run on the calling thread.",
 			"enum": [
 				"clear",
 				"deleteDisk",
@@ -41,7 +41,7 @@ namespace DevBenchBridge::ToolSpecs
 		},
 		"enabled": {
 			"type": "boolean",
-			"description": "contentStore only: turn the content-addressed compile store on or off."
+			"description": "contentStore only: select the content-addressed compile store; disk access also requires General.Enable Disk Cache."
 		},
 		"path": {
 			"type": "string",

@@ -7,8 +7,10 @@
 #include <Buffer.h>
 #include <array>
 #include <atomic>
+#include <d3d11_1.h>
 #include <format>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -27,6 +29,20 @@ using json = nlohmann::json;
 class State
 {
 public:
+	/** @brief Scopes access to persistent settings beneath transient runtime layers. */
+	class SettingsLayerGuard
+	{
+	public:
+		SettingsLayerGuard();
+		~SettingsLayerGuard();
+		SettingsLayerGuard(const SettingsLayerGuard&) = delete;
+		SettingsLayerGuard& operator=(const SettingsLayerGuard&) = delete;
+
+	private:
+		struct Impl;
+		std::unique_ptr<Impl> impl;
+	};
+
 	State()
 	{
 		std::lock_guard<std::mutex> lock(statsMutex);
@@ -56,6 +72,8 @@ public:
 
 	bool updateShader = true;
 	bool settingCustomShader = false;
+	RE::BSGraphics::VertexShader* customVertexShader = nullptr;
+	RE::BSGraphics::PixelShader* customPixelShader = nullptr;
 	RE::BSShader* currentShader = nullptr;
 	std::string adapterDescription = "";
 
@@ -100,6 +118,9 @@ public:
 	void Debug();
 	/** @brief Per-frame reset: advances timer, caches menu state, resets descriptors and frame counters. */
 	void Reset();
+
+	/** @brief Selects sphere-normal lighting and the TruePBR material for the next grass draw. */
+	void SetGrassFlags(bool sphereNormal, bool pbr);
 	/** @brief One-time post-D3D setup: creates resources, probes GPU caps, initializes features. */
 	void Setup();
 
@@ -125,6 +146,8 @@ public:
 	 * @param a_allowReload If true, retries once after a parse error.
 	 */
 	void Load(ConfigMode a_configMode = ConfigMode::USER, bool a_allowReload = true);
+	/** @brief Reloads personal settings with the upstream retry control. */
+	void Load(bool allowReload) { Load(ConfigMode::USER, allowReload); }
 	/**
 	 * @brief Persists current settings to the config file for the given mode.
 	 * @param a_configMode Which config file to write.
@@ -132,11 +155,35 @@ public:
 	 *  re-saves, which must not also persist Effects11's separate ENB-side state.
 	 */
 	void Save(ConfigMode a_configMode = ConfigMode::USER, bool a_isExplicitUserSave = true);
+	/** @brief Writes the running build's immutable feature defaults and returns the output path. */
+	std::filesystem::path DumpFeatureDefaults() const;
+	/** @brief Checks serialized settings against the last successful load or save after an interaction. */
+	void CheckSettingsChanged();
+	/** @brief Marks the personal configuration changed after a non-widget action. */
+	void MarkSettingsChanged()
+	{
+		settingsChanged = true;
+		userEditsCache = nullptr;
+	}
+	/** @brief Checks changed feature values after a settings interaction. */
+	void CheckFeatureSettingsChanged(Feature*) { CheckSettingsChanged(); }
+	/** @brief Checks core settings after an interaction. */
+	void CheckCoreSettingsChanged() { CheckSettingsChanged(); }
+	/** @brief Returns whether the user configuration has unsaved changes. */
+	bool HasUnsavedChanges() const { return settingsChanged; }
 
 	/** @brief Saves a feature's boot preference immediately; returns false on failure. */
 	bool SetFeatureBootEnabled(const std::string& featureName, bool enabled);
 	/** @brief Saves a loaded feature's favorite status immediately; returns false on failure. */
 	bool SetFeatureFavorite(const std::string& featureName, bool favorite);
+	/** @brief Saves category or alphabetical feature sorting immediately; returns false on failure. */
+	bool SetFeatureListSort(bool alphabetical);
+	/** @brief Refreshes personal edits once after a settings change. */
+	void PrimeUserEdits();
+	/** @brief Personal edits for one feature, including pending file overrides. */
+	json GetUserEdits(Feature* feature);
+	/** @brief Whether a feature differs from its preset and default layers. */
+	bool HasUserEdits(Feature* feature);
 	/** @brief Returns the saved favorite status, including for unloaded features. */
 	bool IsFeatureFavorite(const std::string& featureName) const;
 
@@ -145,6 +192,37 @@ public:
 	 * @param o_json Output JSON object to populate.
 	 */
 	void SaveToJson(nlohmann::json& o_json);
+	/** @brief Returns a feature's generated startup defaults without exposing mutable baseline state. */
+	const json* GetFeatureDefaults(std::string_view featureName) const;
+	/** @brief Returns the merged code defaults and enabled preset Baselines for a settings root. */
+	const json* GetFeatureBase(std::string_view featureName) const;
+	/** @brief Rebuilds preset Baselines while retaining live personal edits and installed overwrites. */
+	bool ReapplyPresetLayers();
+	/** @brief Reapplies the enabled preset layers through the existing transaction. */
+	void ReapplySettingsLayers();
+	/** @brief Invalidates cached personal edits beneath enabled Baseline packs. */
+	void InvalidateEditsUnderBaselines(Feature* feature = nullptr);
+	/** @brief Restores one feature to its code defaults and enabled Baseline packs. */
+	void RestoreFeatureLayers(Feature* feature);
+	/** @brief Saved feature values and their underlying personal-edit layers. */
+	struct SavedFeatureSettings
+	{
+		json values;
+		json underlying;
+		json personalEdits;
+	};
+	/** @brief Reads effective saved values without modifying the live feature; throws for invalid files. */
+	SavedFeatureSettings ReadSavedFeatureSettings(Feature& feature) const;
+	/** @brief Reloads one feature's saved personal settings over its current Base Settings and overwrite layers. */
+	bool RestoreSavedFeatureSettings(Feature* feature);
+	/** @brief Returns loaded features whose personal edits overlap one pack, or all enabled Baselines. */
+	std::vector<Feature*> FindEditsUnderPack(const std::string& packId);
+	/** @brief Returns the cached overlap status for a feature, refreshed after settings interactions. */
+	bool HasEditsUnderBaselines(Feature* feature);
+	/** @brief Drops only personal edits masked by this pack, retaining installed overwrite layers. */
+	bool ClearEditsUnderPack(const std::string& packId);
+	/** @brief Drops only this feature's personal edits masked by enabled Baselines. */
+	bool ClearFeatureEditsUnderBaselines(Feature* feature);
 	/**
 	 * @brief Restores settings from a JSON object (in-memory, no disk I/O).
 	 * @param i_json Input JSON object to read from.
@@ -245,6 +323,10 @@ public:
 	 */
 	[[nodiscard]] static uint32_t GetRuntimePixelBits(const RE::BSShader& a_shader);
 
+	/** @brief Whether perf events reach a consumer: an attached capture tool, a connected Tracy client, or an Nsight Perf pass. */
+	[[nodiscard]] bool PerfEventsConsumed() const;
+	/** @brief Whether optional frame event names reach an active consumer. */
+	[[nodiscard]] bool AnnotateDraws() const { return frameAnnotations && PerfEventsConsumed(); }
 	/** @brief Opens a named GPU performance event (D3D annotation + Tracy zone). */
 	void BeginPerfEvent(std::string_view title);
 	/** @brief Formats the title into a reused buffer (no per-call heap allocation)
@@ -313,9 +395,9 @@ public:
 	// shaders or chasing a precision bug.
 	// Atomic: written from the UI thread, read from compilation pool workers.
 	std::atomic_bool enablePartialPrecision{ false };
-	std::atomic_bool enableContentStore{ false };
+	std::atomic_bool enableContentStore{ true };
 	/// Size limit of the persistent shader store in MB; least recently used shaders beyond it are evicted.
-	std::atomic<uint32_t> contentStoreMaxMB{ 4096 };
+	std::atomic<uint32_t> contentStoreMaxMB{ 1024 };
 	static constexpr uint32_t kContentStoreMinMB = 512;
 	static constexpr uint32_t kContentStoreMaxMB = 32768;
 
@@ -358,8 +440,10 @@ public:
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
-		IsAurora = 1 << 7,
-		IsMoon = 1 << 8,
+		IsAurora = 1 << 10,
+		IsMoon = 1 << 11,
+		ProjectedTextureIsSRGB = 1 << 12,
+		GrassPBR = 1 << 13,
 		NoSkyScattering = 1 << 9,  ///< Cloud layer drawn without Effects11 cloud scattering
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
@@ -498,6 +582,8 @@ public:
 
 		float4 TreeWindProbeBase;
 		float4 TreeWindProbeTop;
+		float GrassCanopyHeight;
+		float3 canopyPadding;
 
 		bool operator==(const PermutationCB& other) const
 		{
@@ -531,7 +617,8 @@ public:
 			       TreeWindProbeBase.z == other.TreeWindProbeBase.z &&
 			       TreeWindProbeTop.x == other.TreeWindProbeTop.x &&
 			       TreeWindProbeTop.y == other.TreeWindProbeTop.y &&
-			       TreeWindProbeTop.z == other.TreeWindProbeTop.z;
+			       TreeWindProbeTop.z == other.TreeWindProbeTop.z &&
+			       GrassCanopyHeight == other.GrassCanopyHeight;
 		}
 	};
 	static_assert(offsetof(PermutationCB, EnableAmbientGrassWind) == 60);
@@ -541,7 +628,8 @@ public:
 	static_assert(offsetof(PermutationCB, TreeLeafTransientFlutterMaximum) == 104);
 	static_assert(offsetof(PermutationCB, TreeWindProbeBase) == 112);
 	static_assert(offsetof(PermutationCB, TreeWindProbeTop) == 128);
-	static_assert(sizeof(PermutationCB) == 144);
+	static_assert(offsetof(PermutationCB, GrassCanopyHeight) == 144);
+	static_assert(sizeof(PermutationCB) == 160);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
 	std::unique_ptr<ConstantBuffer> permutationCB;
@@ -617,6 +705,7 @@ public:
 	PermutationCB permutationDataPrevious{};
 
 	Util::FrameChecker frameChecker;
+	Util::FrameChecker shaderTrackingFrameChecker;
 	uint frameCount = 0;
 	// Thread-safe mirror of frameCount maintained by the render thread.
 	// Off-thread readers (MCP listener, future telemetry) must read this
@@ -701,9 +790,21 @@ public:
 	}
 
 private:
+	bool DropPresetEdits(const std::string& packId, Feature* onlyFeature);
+	std::unordered_map<std::string, bool> baselineOverlapCache;
+	std::uint64_t baselineOverlapCatalogRevision = UINT64_MAX;
+	void MarkSettingsSaved();
+	json BuildSettingsSnapshot();
+	json savedSettingsSnapshot;
+	bool settingsChanged = false;
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch);
 	json defaultSettingsBaseline;
-	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
+	json featureSettingsBases = json::object();
+	json userFeatureEdits = json::object();
+	json userEditsCache;
+	json userBootPreferences = json::object();
+	bool featureResourcesReady = false;
+	winrt::com_ptr<ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

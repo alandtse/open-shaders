@@ -36,6 +36,8 @@ public:
 
 	/** @brief Renders the full Home page including welcome, quick links, constraints, and FAQ sections. */
 	static void RenderHomePage();
+	/** @brief Opens the Home attention details after navigation. */
+	static void FocusNeedsAttention();
 
 	// First-time setup management
 	/** @brief Returns true if the first-time setup dialog should be displayed to the user. */
@@ -44,28 +46,16 @@ public:
 	/** @brief Renders the modal first-time setup dialog overlay with initial configuration options. */
 	static void RenderFirstTimeSetupDialog();
 
-	/**
-	 * @brief Checks whether a key release event should be suppressed.
-	 *
-	 * Returns true and clears internal state if the given key was the one
-	 * used to close the first-time setup dialog, preventing the release
-	 * from triggering the menu toggle.
-	 *
-	 * @param key The virtual key code of the released key.
-	 * @return true if the key release should be consumed, false otherwise.
-	 */
-	static bool ShouldSkipKeyRelease(uint32_t key);
+	/** @brief Dismisses the first-time setup dialog and persists completion. Called by the menu toggle key. */
+	static void MarkFirstTimeSetupComplete();
 
 private:
-	static void RenderWelcomeSection();
+	static bool attentionRequested;
 	static void RenderQuickLinksSection();
 	static void RenderFAQSection();
 	static void RenderCacheMismatchSection();
 	static void RenderActiveConstraintsSection();
 
-	static void MarkFirstTimeSetupComplete(uint32_t closingKey);
-
 	// State
 	static bool isFirstTimeSetupShown;
-	static uint32_t keyThatClosedDialog;
 };

@@ -80,6 +80,20 @@ namespace Util
 		}
 	}
 
+	void ReapplyWeatherLock(RE::Sky* a_sky, RE::TESWeather* a_weather)
+	{
+		if (!a_sky || !a_weather)
+			return;
+
+		// Resetting an already-settled sky restarts its region, sound and cloud state.
+		if (a_sky->currentWeather == a_weather && !a_sky->lastWeather) {
+			a_sky->overrideWeather = a_weather;
+			a_sky->lastWeatherUpdate = a_sky->currentGameHour;
+			return;
+		}
+		ForceWeather(a_sky, a_weather, true);
+	}
+
 	void SetCelestialTransitionHandlerAvailable(bool a_available)
 	{
 		celestialTransitionHandlerAvailable.store(a_available, std::memory_order_release);
@@ -297,7 +311,7 @@ namespace Util
 	RE::NiPoint3 GetReferenceFocusPosition(RE::TESObjectREFR* a_ref)
 	{
 		RE::NiPoint3 targetPosition = a_ref->GetPosition();
-		if (a_ref->GetFormType() == RE::FormType::ActorCharacter) {
+		if (a_ref->IsActor()) {
 			auto head = a_ref->GetNodeByName("NPC Head [Head]");
 			if (head)
 				targetPosition = head->world.translate;
@@ -740,6 +754,61 @@ namespace Util
 		const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
 		return REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE);
 	}
+
+	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform, float edgePadding)
+	{
+		const __m128 forward = _mm_set_ps(0.0f, transform.rotate.entry[2][0], transform.rotate.entry[1][0], transform.rotate.entry[0][0]);
+		const __m128 up = _mm_set_ps(0.0f, transform.rotate.entry[2][1], transform.rotate.entry[1][1], transform.rotate.entry[0][1]);
+		const __m128 right = _mm_set_ps(0.0f, transform.rotate.entry[2][2], transform.rotate.entry[1][2], transform.rotate.entry[0][2]);
+		const __m128 translation = _mm_set_ps(0.0f, transform.translate.z, transform.translate.y, transform.translate.x);
+
+		const __m128 nearPoint = _mm_add_ps(translation, _mm_mul_ps(forward, _mm_set1_ps(viewFrustum.fNear)));
+		const __m128 farPoint = _mm_add_ps(translation, _mm_mul_ps(forward, _mm_set1_ps(viewFrustum.fFar)));
+
+		auto setPlane = [&](int planeIndex, __m128 normal, __m128 point) {
+			alignas(16) float components[4];
+			_mm_store_ps(components, normal);
+			out.cullingPlanes[planeIndex].normal = { components[0], components[1], components[2] };
+			out.cullingPlanes[planeIndex].constant = _mm_cvtss_f32(_mm_dp_ps(normal, point, 0x71));
+		};
+
+		setPlane(0, forward, nearPoint);
+		const __m128 backward = _mm_xor_ps(forward, _mm_set1_ps(-0.0f));
+		setPlane(1, backward, farPoint);
+
+		if (viewFrustum.bOrtho) {
+			setPlane(2, right, _mm_add_ps(translation, _mm_mul_ps(right, _mm_set1_ps(viewFrustum.fLeft))));
+			setPlane(3, _mm_xor_ps(right, _mm_set1_ps(-0.0f)), _mm_add_ps(translation, _mm_mul_ps(right, _mm_set1_ps(viewFrustum.fRight))));
+			setPlane(4, _mm_xor_ps(up, _mm_set1_ps(-0.0f)), _mm_add_ps(translation, _mm_mul_ps(up, _mm_set1_ps(viewFrustum.fTop))));
+			setPlane(5, up, _mm_add_ps(translation, _mm_mul_ps(up, _mm_set1_ps(viewFrustum.fBottom))));
+		} else {
+			// Normalize each side plane from the camera axis and frustum slope.
+			auto setSidePlane = [&](int planeIndex, __m128 axis, float slope, float forwardSign, float axisSign) {
+				const float inverseLength = 1.0f / std::sqrt(slope * slope + 1.0f);
+				const __m128 normal = _mm_add_ps(
+					_mm_mul_ps(forward, _mm_set1_ps(forwardSign * slope * inverseLength)),
+					_mm_mul_ps(axis, _mm_set1_ps(axisSign * inverseLength)));
+				setPlane(planeIndex, normal, translation);
+			};
+
+			setSidePlane(2, right, viewFrustum.fLeft, -1.0f, +1.0f);
+			setSidePlane(3, right, viewFrustum.fRight, +1.0f, -1.0f);
+			setSidePlane(4, up, viewFrustum.fTop, +1.0f, -1.0f);
+			setSidePlane(5, up, viewFrustum.fBottom, -1.0f, +1.0f);
+		}
+
+		out.activePlanes = RE::NiFrustumPlanes::ActivePlane(0x3F);
+
+		for (int planeIndex = RE::NiFrustumPlanes::Planes::kLeft; planeIndex <= RE::NiFrustumPlanes::Planes::kBottom; planeIndex++)
+			out.cullingPlanes[planeIndex].constant -= edgePadding;
+	}
+
+	bool IsSphereInFrustum(const RE::NiFrustumPlanes& frustum, const RE::NiPoint3& center, float radius)
+	{
+		return std::ranges::all_of(frustum.cullingPlanes, [&](const RE::NiPlane& plane) {
+			return plane.normal.Dot(center) - plane.constant >= -radius;
+		});
+	}
 }  // namespace Util
 
 namespace Util::EnvironmentControls
@@ -842,7 +911,7 @@ namespace Util::EnvironmentControls
 				const bool releasePending = sky->flags.any(RE::Sky::Flags::kReleaseWeatherOverride);
 				if (releasePending || sky->currentWeather != weather || sky->overrideWeather != weather) {
 					sky->flags.reset(RE::Sky::Flags::kReleaseWeatherOverride);
-					Util::ForceWeather(sky, weather, true);
+					Util::ReapplyWeatherLock(sky, weather);
 				}
 			}
 		}

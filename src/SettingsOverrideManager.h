@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -73,6 +74,8 @@ public:
 	 * @return Vector of override information
 	 */
 	const std::vector<OverrideInfo>& GetOverrides() const { return overrides; }
+	/** @brief Changes when discovery or an edit updates the live override inventory. */
+	std::uint64_t GetRevision() const { return revision; }
 
 	/** @brief Captures default/user settings before mod-provided layers are applied. */
 	void CaptureBaseSettings(const json& settings) { userBaseline = settings; }
@@ -80,6 +83,16 @@ public:
 	void RestoreBaselines(json& settings) const;
 	/** @brief Captures scene-free values after loading and normalizing the applied layers. */
 	void CaptureAppliedSettings(const json& settings) { appliedSettings = settings; }
+	/** @brief Returns the underlying personal settings for reload rollback. */
+	const json& GetBaseSettings() const { return userBaseline; }
+	/** @brief Returns normalized applied values for reload rollback. */
+	const json& GetAppliedSettings() const { return appliedSettings; }
+	/** @brief Cached installed overwrite values for a feature short name or Global. */
+	const json* GetOverrideSettings(const std::string& featureName) const;
+	/** @brief Loaded companion user values for a feature short name or Global. */
+	const json* GetUserOverrideSettings(const std::string& featureName) const;
+	/** @brief Returns live edits relative to the last normalized applied layers. */
+	json GetPendingEdits(const json& settings);
 	/** @brief Excludes untouched overwrite values while retaining saved and pending user edits. */
 	void PrepareUserSettings(json& settings);
 	/** @brief Saves companion user files and normal settings without modifying installed overwrites. */
@@ -88,7 +101,9 @@ public:
 	bool DeleteFile(const std::string& filePath);
 	/** @brief Exports selected JSON setting paths from one loaded feature. Arrays remain whole. */
 	bool ExportSettings(const std::string& modName, const std::string& featureName,
-		std::span<const std::string> settingPaths, const json& settings);
+		std::span<const std::string> settingPaths, const json& settings, std::span<const std::string> removePaths = {});
+	/** @brief Returns the safe destination of one feature's legacy override export. */
+	std::filesystem::path GetExportDestination(const std::string& modName, const std::string& featureName) const;
 	/** @brief Returns whether a discovered file targets loaded feature or global settings. */
 	bool IsApplicable(const OverrideInfo& info) const;
 
@@ -262,7 +277,7 @@ private:
 	 * @param filePath Path to the file being validated (for error reporting)
 	 * @return True if all data types are safe
 	 */
-	bool ValidateJsonDataTypes(const json& jsonData, const std::string& path = "", const std::string& filePath = "");
+	bool ValidateJsonDataTypes(const json& jsonData, const std::string& path = "", const std::string& filePath = "", size_t depth = 0);
 
 	/**
 	 * @brief Sanitizes JSON data to prevent corruption
@@ -281,15 +296,18 @@ private:
 	std::vector<size_t> GetOrderedOverrides() const;
 	void RebuildOverrideIndex();
 	json ApplyLayers(json settings);
-	json GetPendingEdits(const json& settings);
 	void ReapplyChangedSettings(const json& current, const json& underlying, const json& mask, const json& pending);
 
 	std::vector<OverrideInfo> overrides;
 	std::unordered_map<std::string, std::vector<size_t>> featureOverrideMap;  // Maps feature name to override indices
 	bool enabled = true;
 	bool discovered = false;
+	std::uint64_t revision = 0;
 	json userBaseline;
 	json appliedSettings;
+	mutable std::uint64_t cachedOverrideRevision = 0;
+	mutable std::unordered_map<std::string, json> cachedOverrideSettings;
+	std::unordered_map<std::string, json> loadedUserOverrideSettings;
 
 	static constexpr const char* GLOBAL_SUFFIX = "_Global.json";
 

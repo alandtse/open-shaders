@@ -29,6 +29,9 @@
 
 struct FoveatedRender
 {
+	/** @brief Initializes stereo crop defaults before settings snapshots are captured. */
+	FoveatedRender();
+
 	// DLSS execution mode for VR
 	enum class DlssMode : uint
 	{
@@ -105,7 +108,7 @@ struct FoveatedRender
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
-	/** @brief Region-preset display names, shared by PostPostLoad's seed list, the
+	/** @brief Region-preset display names, shared by the constructor's seed list, the
 	 *  top-level preset buttons, and Upscaling::ApplyPerformanceProfile. */
 	static constexpr const char* kPresetFullEye = "Full Eye";                          ///< No crop; full-eye DLSS coverage.
 	static constexpr const char* kPresetCenter75 = "Center 75%";                       ///< Centered crop covering 75% of the eye.
@@ -128,7 +131,7 @@ struct FoveatedRender
 	void LoadSettings(const json& o_json);
 	void RestoreDefaultSettings();
 	void ClearShaderCache();
-	// Called from Upscaling::PostPostLoad to seed subrect presets.
+	// Called from Upscaling::PostPostLoad to latch restart-gated settings.
 	void PostPostLoad();
 
 	bool IsRuntimeSupported() const;

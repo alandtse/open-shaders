@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Menu.h"
+#include "FontAtlasState.h"
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -18,6 +19,8 @@ namespace MenuFonts
 	void NormalizeFontRoles(Menu::ThemeSettings& theme, bool themeProvidedFontRoles);
 	const FontRoleSettings& GetDefaultRole(FontRole role);
 	std::string BuildFontSignature(const Menu::ThemeSettings& theme, float baseFontSize);
+	/** @brief Returns a semibold variant of the theme's Body font at the same size. */
+	[[nodiscard]] ImFont* GetSectionHeadingFont();
 
 	/**
 	 * @brief RAII guard for pushing/popping an arbitrary ImGui font.
@@ -64,46 +67,20 @@ namespace MenuFonts
 	};
 
 	/**
-	 * @brief RAII guard for tab bars that automatically scales padding for larger tab fonts
+	 * @brief Begins a tab item with the specified font role for the label.
 	 *
-	 * Scales FramePadding when tab fonts are larger than body text to ensure proper
-	 * tab bar height and separator positioning. Automatically restores original padding on destruction.
-	 *
-	 * Usage:
-	 *   {
-	 *       MenuFonts::TabBarPaddingGuard tabGuard(Menu::FontRole::Subheading);
-	 *       if (ImGui::BeginTabBar("##MyTabs")) {
-	 *           // Tab items...
-	 *           ImGui::EndTabBar();
-	 *       }
-	 *   } // Padding automatically restored here
-	 */
-	class TabBarPaddingGuard
-	{
-	public:
-		explicit TabBarPaddingGuard(FontRole tabFontRole);
-		~TabBarPaddingGuard();
-
-		TabBarPaddingGuard(const TabBarPaddingGuard&) = delete;
-		TabBarPaddingGuard& operator=(const TabBarPaddingGuard&) = delete;
-
-	private:
-		ImVec2 originalPadding_;
-		bool scaled_ = false;
-	};
-
-	/**
-	 * @brief Begins an ImGui tab item with the specified font role
-	 *
-	 * Convenience wrapper that combines FontRoleGuard with ImGui::BeginTabItem.
-	 * The font is automatically managed and will be popped when the tab ends.
+	 * Inside a Util::BeginPillTabBar, routes to Util::BeginPillTabItem (pill strip uses Body).
+	 * Otherwise falls back to ImGui::BeginTabItem with a temporary FontRoleGuard on the label.
 	 *
 	 * @param label Tab label text
-	 * @param role Font role to use for the tab
+	 * @param role Font role to use for classic ImGui tab labels
 	 * @param flags ImGui tab item flags
 	 * @return true if the tab is selected and visible, false otherwise
 	 */
 	bool BeginTabItemWithFont(const char* label, FontRole role, ImGuiTabItemFlags flags = ImGuiTabItemFlags_None);
+
+	/** @brief Ends the current pill or standard tab item. */
+	void EndTabItem();
 
 	/**
 	 * @brief Loads catalog fonts into the current ImGui atlas for selector previews.
@@ -157,7 +134,6 @@ namespace Util
 		[[nodiscard]] int FindStyleIndex(const FamilyInfo& family, const std::string& styleName);
 	}
 
-	std::vector<std::string> DiscoverFonts();
 	bool ValidateFont(const std::string& fontName);
 
 	// Security: Path validation helpers

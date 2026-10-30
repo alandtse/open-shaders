@@ -75,14 +75,15 @@ namespace
 		a_settings.LightAttachRefreshFrames = std::clamp(a_settings.LightAttachRefreshFrames, kLightAttachRefreshFramesMin, kLightAttachRefreshFramesMax);
 	}
 
-	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetRoomIndex) noexcept
+	void ClearStrictLightData(LightLimitFix::StrictLightDataCB& a_data, bool a_resetGeometryData) noexcept
 	{
 		a_data.NumStrictLights = 0;
 		a_data.ShadowBitMask = 0;
-		a_data.FirstPerson = 0;
-		a_data.WorldEyePosition = float4{};
-		if (a_resetRoomIndex)
+		if (a_resetGeometryData) {
 			a_data.RoomIndex = -1;
+			a_data.FirstPerson = 0;
+			a_data.WorldEyePosition = float4{};
+		}
 	}
 
 	void SetPointLightTypeFlags(LightLimitFix::LightData& a_light, RE::BSLight* a_bsLight)
@@ -238,52 +239,52 @@ void LightLimitFix::DrawSettings()
 	ShadowCasterManager::ClearHighlight();
 	ShadowCasterManager::SetHoveredLight(0);
 
-	if (!ImGui::BeginTabBar("##LightLimitFixTabs", ImGuiTabBarFlags_FittingPolicyScroll))
+	if (!Util::BeginPillTabBar("##LightLimitFixTabs"))
 		return;
 
 	const bool selectShadows = globals::menu->ConsumeSectionAnchor("ShadowLimitFix");
 	if (selectShadows)
 		ImGui::SetScrollHereY(0.0f);
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.shadow_limit_fix_header", "Shadow Limit Fix"), nullptr,
 			selectShadows ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None)) {
 		ShadowCasterManager::DrawSettings(settings.ShadowSettings);
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.contact_shadows_header", "Contact Shadows"))) {
 		DrawContactShadowSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.hair_shadows_header", "Hair Shadows"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.hair_shadows_header", "Hair Shadows"))) {
 		ImGui::Checkbox(T("feature.light_limit_fix.sun_lit_hair", "Sun-Lit Hair"), &settings.SunLitHair);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T("feature.light_limit_fix.sun_lit_hair_tooltip", "Hair takes the directional shadow the deferred pass computed instead of the engine's forward lookup, so it is lit by the sun like the rest of the scene. Off keeps the engine's original hair shadowing, which can leave hair much darker."));
 		}
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.particle_lights_header", "Particle Lights"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.particle_lights_header", "Particle Lights"))) {
 		DrawParticleLightSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.placed_lights_json_header", "Placed Lights (JSON)"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.placed_lights_json_header", "Placed Lights (JSON)"))) {
 		DrawPlacedLightSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.statistics", "Statistics"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.statistics", "Statistics"))) {
 		DrawLightStatistics();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T("feature.light_limit_fix.debug", "Debug"))) {
+	if (Util::BeginPillTabItem(T("feature.light_limit_fix.debug", "Debug"))) {
 		DrawLightDebugSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	ImGui::EndTabBar();
+	Util::EndPillTabBar();
 }
 
 void LightLimitFix::DrawLightStatistics()
@@ -292,6 +293,8 @@ void LightLimitFix::DrawLightStatistics()
 		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
 		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
 		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
+		auto bufferedParticleLightCountValue = bufferedParticleLightCount.load(std::memory_order_relaxed);
+		ImGui::TextUnformatted(std::vformat(T("feature.light_limit_fix.particle_light_count", "Particle Lights : {}"), std::make_format_args(bufferedParticleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -726,6 +729,7 @@ void LightLimitFix::SetupResources()
 void LightLimitFix::Reset()
 {
 	effectLightValidationCache.clear();
+	bufferedParticleLightCount.store(0, std::memory_order_relaxed);
 
 	std::lock_guard<std::mutex> queueLock{ particleLightsQueueMutex };
 
@@ -871,6 +875,27 @@ void LightLimitFix::BSLightingShader_SetupGeometry_Before(RE::BSRenderPass* a_pa
 				strictLightDataTemp.RoomIndex = it->second;
 		}
 	}
+
+	auto smState = globals::game::smState;
+	if (!smState)
+		return;
+	auto accumulator = *globals::game::currentAccumulator.get();
+	if (!accumulator)
+		return;
+
+	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
+	// The first-person pass rebases b12's posAdjust, so its draws can't index
+	// the world-camera cluster grid. BSShaderAccumulator::firstPerson is never
+	// written on SE, so detect the camera rebase directly; VR keeps the grid.
+	const bool firstPerson = inWorld && !globals::game::isVR &&
+	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
+	strictLightDataTemp.FirstPerson = firstPerson ? 1u : 0u;
+	if (firstPerson) {
+		// Shadow-space projections need the true world eye; b12's posAdjust is
+		// viewmodel-local during this pass and cannot reconstruct it.
+		strictLightDataTemp.WorldEyePosition =
+			float4(eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z, 0.0f);
+	}
 }
 
 void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(RE::BSRenderPass* a_pass)
@@ -894,11 +919,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 	const bool isInterior = Util::IsInterior();
-	// The first-person pass rebases b12's posAdjust, so its draws can't index
-	// the world-camera cluster grid. BSShaderAccumulator::firstPerson is never
-	// written on SE, so detect the camera rebase directly; VR keeps the grid.
-	const bool firstPerson = inWorld && !globals::game::isVR &&
-	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
+	const bool firstPerson = strictLightDataTemp.FirstPerson != 0;
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
@@ -908,13 +929,6 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	RefreshJsonPlacedLightCacheFrame();
 
 	ClearStrictLightData(strictLightDataTemp, false);
-	strictLightDataTemp.FirstPerson = firstPerson ? 1u : 0u;
-	if (firstPerson) {
-		// Shadow-space projections need the true world eye; b12's posAdjust is
-		// viewmodel-local during this pass and cannot reconstruct it.
-		strictLightDataTemp.WorldEyePosition =
-			float4(eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z, 0.0f);
-	}
 
 	uint32_t outIndex = 0;
 #if defined(_MSC_VER)
@@ -1495,7 +1509,9 @@ void LightLimitFix::UpdateLights()
 
 	{
 		CS_PROFILE_CPU_SCOPE(globals::profiler, "LightLimitFix::ParticleLightsCPU");
+		const auto particleBufferStart = lightsData.size();
 		ProcessQueuedParticleLights(lightsData);
+		bufferedParticleLightCount.store(static_cast<uint32_t>(lightsData.size() - particleBufferStart), std::memory_order_relaxed);
 	}
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);

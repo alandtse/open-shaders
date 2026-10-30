@@ -213,7 +213,7 @@ namespace HLSLTestDiscovery
 
 					// Also print to stdout for immediate visibility during test runs
 					std::cout << "\n"
-							  << errorMsg << "\n";
+					          << errorMsg << "\n";
 					return false;
 				}
 

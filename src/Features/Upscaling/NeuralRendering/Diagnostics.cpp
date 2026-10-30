@@ -255,8 +255,8 @@ namespace NR
 				throw std::runtime_error("Cannot open diagnostic trace");
 			traceFile << std::setprecision(9);
 			traceFile << "NRDiag/v2 CPU scheduling and camera trace. Thresholds: distance>" << kCameraCutDistance
-					  << ", directionDot<" << kCameraCutDirectionDot << ", projectionDelta>" << kProjectionCutThreshold << ".\n"
-					  << "Options: ";
+			          << ", directionDot<" << kCameraCutDirectionDot << ", projectionDelta>" << kProjectionCutThreshold << ".\n"
+			          << "Options: ";
 			for (size_t i = 0; i < kOptionBitNames.size(); ++i)
 				traceFile << (i ? "," : "") << kOptionBitNames[i].bit << '=' << kOptionBitNames[i].name;
 			traceFile << ".\nReset bits: ";
@@ -275,17 +275,17 @@ namespace NR
 		if (!traceFile)
 			return;
 		traceFile << "frame=" << frame.number << " options=" << frame.options << " outcome=" << Name(frame.outcome)
-				  << " eval=" << frame.evaluated << " reuse=" << frame.reused << " copy=" << frame.copied << " created=" << frame.created
-				  << " recreated=" << frame.recreated << " size=" << frame.width << 'x' << frame.height
-				  << " sourceFormat=" << frame.format << " proxyFormat=" << frame.proxyFormat
-				  << " calls=" << frame.calls << " duplicates=" << frame.duplicates << " upscale=" << frame.afterUpscale
-				  << " post=" << frame.afterPost << " mainChanged=" << frame.mainChanged
-				  << " fence=" << frame.completedFence << '/' << frame.submittedFence << '\n';
+		          << " eval=" << frame.evaluated << " reuse=" << frame.reused << " copy=" << frame.copied << " created=" << frame.created
+		          << " recreated=" << frame.recreated << " size=" << frame.width << 'x' << frame.height
+		          << " sourceFormat=" << frame.format << " proxyFormat=" << frame.proxyFormat
+		          << " calls=" << frame.calls << " duplicates=" << frame.duplicates << " upscale=" << frame.afterUpscale
+		          << " post=" << frame.afterPost << " mainChanged=" << frame.mainChanged
+		          << " fence=" << frame.completedFence << '/' << frame.submittedFence << '\n';
 		for (uint32_t i = 0; i < frame.eyeCount; ++i) {
 			const auto& c = frame.camera[i];
 			traceFile << "eye=" << i << " detected=" << c.detected << " reset=" << frame.reset[i] << " ngx=" << frame.result[i]
-					  << " distance=" << c.distance << " directionDot=" << c.directionDot << " projectionDelta=" << c.projectionDelta
-					  << " jitter=" << c.jitterX << ',' << c.jitterY << " dtMs=" << c.frameTimeMs;
+			          << " distance=" << c.distance << " directionDot=" << c.directionDot << " projectionDelta=" << c.projectionDelta
+			          << " jitter=" << c.jitterX << ',' << c.jitterY << " dtMs=" << c.frameTimeMs;
 			const std::array<const char*, 4> names{ " position=", " previous=", " enginePrevious=", " viewTranslation=" };
 			const std::array<std::array<float, 3>, 4> vectors{ c.position, c.previous, c.enginePrevious, c.viewTranslation };
 			for (size_t j = 0; j < vectors.size(); ++j)
@@ -451,7 +451,7 @@ namespace NR
 			highlightProtect = highlightValue;
 		if (ImGui::SliderFloat("Local tone radius", &toneRadiusValue, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp))
 			toneRadius = toneRadiusValue;
-		if (ImGui::Button("Restore Diagnostic Defaults")) {
+		if (Util::Button("Restore Diagnostic Defaults")) {
 			options = 0;
 			conversionMode = static_cast<uint32_t>(ColorConversion::Production);
 			exposureMode = static_cast<uint32_t>(ExposureMode::Production);
@@ -464,7 +464,7 @@ namespace NR
 			highlightProtect = kHighlightProtect;
 			toneRadius = kToneRadius;
 		}
-		if (ImGui::Button("Run All NR Tests"))
+		if (Util::Button("Run All NR Tests"))
 			startSuite = true;
 		ImGui::TextWrapped("%zu tests, %u world frames each. Repeat standing still, turning and walking; watch the overlay. The sequence pauses while this menu is open.",
 			kSuiteOptions.size(), kSuiteFrames);
@@ -480,11 +480,11 @@ namespace NR
 			Util::DisableGuard disableSuite(suite);
 			DrawSuiteOptions();
 		}
-		if (suite && ImGui::Button("Stop Tests and Restore"))
+		if (suite && Util::Button("Stop Tests and Restore"))
 			stopSuite = true;
 		if (!tracePath.empty()) {
 			ImGui::TextWrapped("Trace: %s", tracePath.c_str());
-			if (ImGui::Button("Copy Trace Path"))
+			if (Util::Button("Copy Trace Path"))
 				ImGui::SetClipboardText(tracePath.c_str());
 		}
 		bool overlayVisible = showOverlay.load(std::memory_order_relaxed);

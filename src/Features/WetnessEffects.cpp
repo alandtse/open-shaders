@@ -1,11 +1,13 @@
 #include "WetnessEffects.h"
+#include "CSEditor.h"
 #include "CharacterRainSurfaces.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "SceneSelector.h"
+#include "PerformanceOverlay.h"
 #include "State.h"
 #include "Utils/MathUtils.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
 
 #include <array>
@@ -445,20 +447,20 @@ void WetnessEffects::GameLoaded()
 
 void WetnessEffects::DrawSettings()
 {
-	if (!ImGui::BeginTabBar("##WetnessEffectsTabs"))
+	if (!Util::BeginPillTabBar("##WetnessEffectsTabs"))
 		return;
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_environment_wetness"), "Environment Wetness"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_environment_wetness"), "Environment Wetness"))) {
 		DrawEnvironmentWetnessSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_character_wet_effects"), "Character Wet Effects"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_character_wet_effects"), "Character Wet Effects"))) {
 		DrawCharacterRainSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 
-	ImGui::EndTabBar();
+	Util::EndPillTabBar();
 }
 
 void WetnessEffects::DrawEnvironmentWetnessSettings()
@@ -685,19 +687,27 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 		ImGui::TreePop();
 	}
 
+	// The weather picker and debug overrides have no scene-context meaning, so hide them while a
+	// Scene Manager replica is borrowing this panel to author overrides.
+	if (SettingsControl::IsReplicating())
+		return;
+
 	ImGui::Spacing();
 	ImGui::Spacing();
-	auto& sceneSelector = globals::features::sceneSelector;
-	if (sceneSelector.loaded) {
-		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Scene Selector"))) {
-			Menu::GetSingleton()->SelectFeatureMenu(sceneSelector.GetShortName());
+	auto& csEditor = globals::features::csEditor;
+	if (csEditor.loaded) {
+		// The picker is a standalone widget now; the CS Editor feature has no menu page to open.
+		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Weather Picker"))) {
+			globals::features::performanceOverlay.settings.ShowWeatherPicker = true;
+			csEditor.WeatherDetailsWindow.Enabled = true;
+			globals::state->MarkSettingsChanged();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open Scene Selector feature"));
+			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open the Weather Picker widget, which stays open when the main menu is closed"));
 		}
 	}
 
-	if (ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (Util::ShowDebugSections() && ImGui::TreeNodeEx(T(TKEY("debug"), "Debug"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Checkbox(T(TKEY("enable_wetness_override"), "Enable Wetness Override"), &debugSettings.EnableWetnessOverride);
 		ImGui::Checkbox(T(TKEY("enable_puddle_override"), "Enable Puddle Override"), &debugSettings.EnablePuddleOverride);
 		ImGui::Checkbox(T(TKEY("enable_rain_override"), "Enable Rain Override"), &debugSettings.EnableRainOverride);
@@ -852,7 +862,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 
 	ImGui::Spacing();
 	Util::DrawSectionHeader(T(TKEY("character_debug"), "Debug"), false, false);
-	if (ImGui::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
+	if (Util::Button(T(TKEY("character_restore_defaults"), "Restore Character Wet Defaults")))
 		RestoreCharacterRainDefaults();
 
 	ImGui::BeginDisabled(characterEffectsDisabled);

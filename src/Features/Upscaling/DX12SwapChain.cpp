@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "../HDRDisplay.h"
+#include "../ScreenshotFeature.h"
 #include "../Upscaling.h"
 #include "FidelityFX.h"
 #include "Hooks.h"
@@ -414,6 +415,8 @@ HRESULT DX12SwapChain::PresentImpl(UINT SyncInterval, UINT Flags)
 	if (hdr)
 		hdr->ScaleUIBrightnessForFG();
 
+	globals::features::screenshotFeature.ProcessCaptureRequest();
+
 	bool isHDR = hdr && hdr->settings.enableHDR;
 
 	// Wait for D3D11 to finish (includes ApplyHDR scene encoding AND UIBrightnessCS)
@@ -556,29 +559,6 @@ HRESULT DX12SwapChain::GetDevice(REFIID uuid, void** ppDevice)
 HANDLE DX12SwapChain::GetFrameLatencyWaitableObject()
 {
 	return swapChain->GetFrameLatencyWaitableObject();
-}
-
-float DX12SwapChain::GetFrameTime() const
-{
-	// Calculate frame time based on swap chain presentation
-	static float lastPresentTime = 0.0f;
-	static float frameTime = 1.0f / 60.0f;  // Default to 60 fps
-	static LARGE_INTEGER frequency = {};
-	static LARGE_INTEGER currentTime = {};
-
-	if (frequency.QuadPart == 0) {
-		QueryPerformanceFrequency(&frequency);
-	}
-
-	QueryPerformanceCounter(&currentTime);
-	float time = static_cast<float>(currentTime.QuadPart) / static_cast<float>(frequency.QuadPart);
-
-	if (lastPresentTime > 0.0f) {
-		frameTime = time - lastPresentTime;
-	}
-	lastPresentTime = time;
-
-	return frameTime;
 }
 
 WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* a_d3d11Device, ID3D12Device* a_d3d12Device, const std::string& a_name)

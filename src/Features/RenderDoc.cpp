@@ -1,10 +1,11 @@
-// RenderDoc feature implementation providing in-application graphics debugging capabilities
+// RenderDoc component of the Developer Tools feature providing in-application graphics debugging capabilities
 #include "Features/RenderDoc.h"
 
 #include "Globals.h"
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 // Include additional core headers required by the feature implementation
+#include "Feature.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Plugin.h"
@@ -175,13 +176,9 @@ void RenderDoc::DrawSettings()
 	// Include enable toggle and annotation forcing logic here
 	bool prevRenderDocCapture = settings.enableCapture;
 	if (ImGui::Checkbox(T(TKEY("enable_capture"), "Enable RenderDoc Capture"), &settings.enableCapture)) {
-		if (settings.enableCapture && !prevRenderDocCapture) {
-			globals::state->useFrameAnnotations = globals::state->frameAnnotations;
-			globals::state->frameAnnotations = true;
-		}
-		if (!settings.enableCapture && prevRenderDocCapture) {
-			globals::state->frameAnnotations = globals::state->useFrameAnnotations;
-		}
+		const bool enabled = settings.enableCapture;
+		settings.enableCapture = prevRenderDocCapture;
+		SetCaptureEnabled(enabled);
 	}
 	// enableCapture is restart-gated (renderdoc.dll only injects at boot). The
 	// helper renders the tooltip first so it attaches to the checkbox, then the
@@ -213,6 +210,7 @@ void RenderDoc::DrawSettings()
 		{
 			auto captureSection = Util::SectionWrapper(T(TKEY("capture_control"), "Capture Control"), T(TKEY("capture_control_tooltip"), "Manual capture creation and basic controls"));
 			if (captureSection) {
+				ImGui::AlignTextToFramePadding();
 				ImGui::TextColored(themeSettings.StatusPalette.InfoColor, "%s", T(TKEY("capture_active"), "RenderDoc capture is active."));
 				ImGui::SameLine();
 
@@ -239,7 +237,7 @@ void RenderDoc::DrawSettings()
 				}
 				Util::AddTooltip(T(TKEY("capture_frames_tooltip"), "Number of consecutive frames to capture. 1 uses a normal RenderDoc capture; higher values use TriggerMultiFrameCapture."));
 
-				if (ImGui::Button(T(TKEY("create_capture"), "Create Capture"))) {
+				if (Util::Button(T(TKEY("create_capture"), "Create Capture"))) {
 					// Check available disk space before allowing capture
 					try {
 						if (!HasSufficientDiskSpaceForConfiguredCapture()) {
@@ -268,14 +266,14 @@ void RenderDoc::DrawSettings()
 				if (ImGui::BeginPopup("Not enough disk space##RenderDoc")) {
 					ImGui::Text("%s", T(TKEY("not_enough_space"), "Not enough free disk space to create a capture."));
 					ImGui::Text(T(TKEY("space_required"), "At least %llu MB of free space is required."), static_cast<unsigned long long>(GetRequiredCaptureSpaceBytes() / (1024 * 1024)));
-					if (ImGui::Button(T(TKEY("ok"), "OK"))) {
+					if (Util::Button(T(TKEY("ok"), "OK"))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
 				}
 
 				ImGui::SameLine();
-				if (ImGui::Button(T(TKEY("open_capture_dir"), "Open Capture Directory"))) {
+				if (Util::Button(T(TKEY("open_capture_dir"), "Open Capture Directory"))) {
 					// Open the directory where captures are saved
 					try {
 						auto capturesDir = GetCapturesDirectory();
@@ -289,7 +287,7 @@ void RenderDoc::DrawSettings()
 				Util::AddTooltip(T(TKEY("capture_dir_tooltip"), "Right-click to copy the directory path."));
 
 				if (ImGui::BeginPopupContextItem()) {
-					if (ImGui::MenuItem(T(TKEY("copy_dir_path"), "Copy Directory Path"))) {
+					if (Util::RoundedMenuItem(T(TKEY("copy_dir_path"), "Copy Directory Path"))) {
 						// Copy the captures directory path to clipboard
 						try {
 							auto capturesDir = GetCapturesDirectory();
@@ -315,11 +313,12 @@ void RenderDoc::DrawSettings()
 				Util::ColorCodedValueConfig diskUsageConfig = Util::ColorCodedValueConfig::HighIsBad(0.1f, 1.0f, 5.0f);
 				diskUsageConfig.tooltipText = T(TKEY("capture_size_tooltip"), "Total size of all capture files in the captures directory");
 
+				ImGui::AlignTextToFramePadding();
 				Util::DrawColorCodedValue(T(TKEY("capture_size"), "Capture Size"), diskUsageGB, std::format("{:.2f} GB", diskUsageGB), diskUsageConfig);
 
 				if (diskUsageMB > 0) {
 					ImGui::SameLine();
-					if (ImGui::Button(T(TKEY("clear_all_captures"), "Clear All Captures"))) {
+					if (Util::Button(T(TKEY("clear_all_captures"), "Clear All Captures"))) {
 						ImGui::OpenPopup("Confirm Clear Captures##RenderDoc");
 					}
 				}
@@ -329,12 +328,12 @@ void RenderDoc::DrawSettings()
 					ImGui::Text(T(TKEY("delete_size"), "This will permanently remove %u MB of capture data."), diskUsageMB);
 					ImGui::Separator();
 
-					if (ImGui::Button(T(TKEY("yes_delete"), "Yes, Delete All"))) {
+					if (Util::Button(T(TKEY("yes_delete"), "Yes, Delete All"))) {
 						ClearFrameCaptures();
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::SameLine();
-					if (ImGui::Button(T(TKEY("cancel"), "Cancel"))) {
+					if (Util::Button(T(TKEY("cancel"), "Cancel"))) {
 						ImGui::CloseCurrentPopup();
 					}
 					ImGui::EndPopup();
@@ -350,7 +349,7 @@ void RenderDoc::DrawSettings()
 				const auto& captureFiles = GetCachedCaptureFiles();
 
 				// Refresh button
-				if (ImGui::Button(T(TKEY("refresh_list"), "Refresh List"))) {
+				if (Util::Button(T(TKEY("refresh_list"), "Refresh List"))) {
 					ClearFailedDeletions();
 					RefreshCaptureFileCache();
 				}
@@ -395,11 +394,11 @@ void RenderDoc::DrawSettings()
 												break;
 											case 1:  // Size
 												cmp = (a.fileSize < b.fileSize) ? -1 : (a.fileSize > b.fileSize) ? 1 :
-											                                                                       0;
+												                                                                   0;
 												break;
 											case 2:  // Created (time)
 												cmp = (a.lastWriteTime < b.lastWriteTime) ? -1 : (a.lastWriteTime > b.lastWriteTime) ? 1 :
-											                                                                                           0;
+												                                                                                       0;
 												break;
 											}
 
@@ -433,7 +432,7 @@ void RenderDoc::DrawSettings()
 								ImGui::PushStyleColor(ImGuiCol_Text, Util::Colors::GetError());
 							}
 
-							if (ImGui::Selectable(file.filename.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
+							if (Util::Selectable(file.filename.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
 								if (ImGui::IsMouseDoubleClicked(0)) {
 									// Double-clicked - open the file
 									try {
@@ -637,11 +636,6 @@ void RenderDoc::RestoreDefaultSettings()
 	settings = {};
 }
 
-void RenderDoc::ClearShaderCache()
-{
-	// RenderDoc doesn't have shaders to clear
-}
-
 void RenderDoc::RefreshCaptureFileCache()
 {
 	cachedCaptureFiles.clear();
@@ -764,6 +758,19 @@ bool RenderDoc::TriggerConfiguredCapture(bool a_checkDiskSpace)
 	}
 
 	return true;
+}
+
+void RenderDoc::SetCaptureEnabled(bool a_enabled)
+{
+	if (a_enabled == settings.enableCapture)
+		return;
+	settings.enableCapture = a_enabled;
+	if (a_enabled) {
+		globals::state->useFrameAnnotations = globals::state->frameAnnotations;
+		globals::state->frameAnnotations = true;
+	} else {
+		globals::state->frameAnnotations = globals::state->useFrameAnnotations;
+	}
 }
 
 bool RenderDoc::HandleCaptureHotkey(uint32_t a_vkKey)
@@ -930,6 +937,8 @@ std::string RenderDoc::BuildAutomaticCaptureComments(const std::string& userComm
 
 	// Plugin version
 	auto pluginVersion = Util::GetFormattedVersion(Plugin::VERSION);
+	if (Plugin::BUILD_DESCRIBE != std::format("v{}", pluginVersion))
+		pluginVersion += " " + Util::GetBuildLabel();
 	comments += std::format("{} {}\n", Plugin::DISPLAY_NAME, pluginVersion);
 
 	// Enabled features

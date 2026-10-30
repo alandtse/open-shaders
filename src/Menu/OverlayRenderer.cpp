@@ -21,6 +21,7 @@
 #	include "Features/Effects11/EffectManager.h"
 #	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
+#include "CSEditor/SceneManager/ScenePresetExport.h"
 #include "Features/HDRDisplay.h"
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
@@ -31,9 +32,12 @@
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/CursorLoader.h"
+#include "Menu/FontAtlasState.h"
+#include "Presets/UnifiedPresetCatalog.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/UISurface.h"
 
 #include "Features/PerformanceOverlay.h"
 #include "Features/PerformanceOverlay/ABTesting/ABTesting.h"
@@ -43,10 +47,56 @@ namespace
 	DesktopMirrorDrawData pendingDesktopMirror;
 	ImDrawData* pendingDesktopMirrorSource = nullptr;
 
+	bool IsMenuBackgroundHidden()
+	{
+		const auto* menu = Menu::GetSingleton();
+		return !EditorWindow::GetSingleton()->open &&
+		       (menu->IsEnabled || menu->openFade > 0.0f || globals::features::vr.HelperRequestsRender()) && !menu->IsBackgroundVisible();
+	}
+
 	bool IsSupportedDesktopMirrorFormat(const DXGI_FORMAT format)
 	{
 		return format == DXGI_FORMAT_R8G8B8A8_UNORM || format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB ||
 		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+	}
+
+	bool BeginShaderStatusCard(const ImVec2& cardPosition)
+	{
+		using Constants = ThemeManager::Constants;
+		const float scale = Util::GetUIScale();
+		ImGui::SetNextWindowPos(cardPosition);
+		ImGui::SetNextWindowBgAlpha(0.0f);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, ImGui::GetStyle().FrameRounding * Constants::TOAST_ROUNDING_SCALE);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+			ImVec2(Constants::TOAST_PADDING_X * scale, Constants::TOAST_PADDING_Y * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+		const bool visible = ImGui::Begin("ShaderCompilationInfo", nullptr,
+			ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+		if (auto* menuWindow = ImGui::FindWindowByID(ImHashStr("###CommunityShaders")); menuWindow && menuWindow->WasActive)
+			ImGui::BringWindowToDisplayBehind(ImGui::GetCurrentWindow(), menuWindow);
+		if (visible) {
+			Util::Surface::Options surface;
+			surface.rounding = ImGui::GetStyle().WindowRounding;
+			const ImVec2 position = ImGui::GetWindowPos();
+			const ImVec2 size = ImGui::GetWindowSize();
+			Util::Surface::Draw(ImGui::GetWindowDrawList(), position, ImVec2(position.x + size.x, position.y + size.y), Util::Surface::Role::OverlayCard, surface);
+		}
+		return visible;
+	}
+
+	void EndShaderStatusCard(const ImVec4& accentColor)
+	{
+		using Constants = ThemeManager::Constants;
+		const float scale = Util::GetUIScale();
+		ImDrawList* draw = ImGui::GetWindowDrawList();
+		const ImVec2 p0 = ImGui::GetWindowPos();
+		const ImVec2 size = ImGui::GetWindowSize();
+		const ImVec2 p1(p0.x + size.x, p0.y + size.y);
+		const float rounding = ImGui::GetStyle().WindowRounding;
+		const ImU32 accent = ImGui::ColorConvertFloat4ToU32(ImVec4(accentColor.x, accentColor.y, accentColor.z, Constants::TOAST_ACCENT_ALPHA));
+		Util::Surface::DrawAccentFrame(draw, p0, p1, accent, rounding, Constants::TOAST_BORDER_THICKNESS * scale, 0.0f);
+		ImGui::End();
+		ImGui::PopStyleVar(3);
 	}
 
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
@@ -95,6 +145,9 @@ void OverlayRenderer::RenderOverlay(
 	// Apply the VR panel size before pumping input: PumpInput reads
 	// io.DisplaySize to map wand UV to pixels for this frame.
 	ApplyVRPanelDisplaySize();
+	// Always sync, including frames that skip drawing, so closing the last CS UI restores vanity.
+	menu.SyncVanityCamera();
+
 	processInputEventQueue();
 
 	auto& io = ImGui::GetIO();
@@ -108,6 +161,16 @@ void OverlayRenderer::RenderOverlay(
 		io.WantSetMousePos = false;
 		ImGui::ClearActiveID();
 	}
+
+	// Before the skip check so the editor's close edge is never missed.
+	auto* editorWindow = EditorWindow::GetSingleton();
+	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
+		editorWindow->open = false;
+		if (editorWindow->IsInPreviewMode())
+			editorWindow->ExitPreviewMode();
+	}
+	editorWindow->UpdateOpenState();
+	menu.UpdateOpenFade(io.DeltaTime);
 
 	if (ShouldSkipRendering()) {
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
@@ -123,16 +186,9 @@ void OverlayRenderer::RenderOverlay(
 	RenderShaderCompilationStatus(keyIdToString);
 	RenderShaderBlockingStatus();
 
-	auto* editorWindow = EditorWindow::GetSingleton();
-	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
-		editorWindow->open = false;
-		if (editorWindow->IsInPreviewMode())
-			editorWindow->ExitPreviewMode();
-	}
-	editorWindow->UpdateOpenState();
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11Editor = Effects11Editor::GetSingleton();
-	if (effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
+	if (effects11Editor.IsOpen() && menu.IsEnabled)
 		effects11Editor.Close(false);
 #endif
 	if (editorWindow->open) {
@@ -146,24 +202,40 @@ void OverlayRenderer::RenderOverlay(
 		io.MouseDrawCursor = true;
 		effects11Editor.Draw();
 #endif
-	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
+	} else if (menu.IsEnabled || menu.openFade > 0.0f || HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			   globals::features::vr.HelperRequestsRender()) {
-		ImGui::GetIO().MouseDrawCursor = true;
+		ImGui::GetIO().MouseDrawCursor = menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() || globals::features::vr.HelperRequestsRender();
 		// Helper-requested render: the helper's in-scene focus model routed
 		// focus here. Draw the settings UI even though Menu::IsEnabled hasn't
 		// been flipped by the local TAB hotkey. This honors the
 		// kClientFlag_RendersOnFocus contract we advertised at registration.
-		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
+		if (menu.IsEnabled || menu.openFade > 0.0f || globals::features::vr.HelperRequestsRender()) {
+			const auto& context = *ImGui::GetCurrentContext();
+			const bool editedBefore = context.ActiveIdHasBeenEditedThisFrame;
 			drawSettings();
+			// Only frames that edited something pay for the check; search boxes edit too, so it compares.
+			if (!editedBefore && context.ActiveIdHasBeenEditedThisFrame)
+				globals::state->CheckCoreSettingsChanged();
 		}
 	} else {
-		ImGui::GetIO().MouseDrawCursor = false;
+		ImGui::GetIO().MouseDrawCursor = ScenePresetExport::IsOpen();
 	}
 
+	// Enabling a Baseline pack can happen from either the menu or the CS editor, and the answer outlives the page.
+	if (editorWindow->open || menu.IsEnabled)
+		UnifiedPresetCatalog::GetSingleton().DrawBaselineOverlapPrompt();
+
+	// The editor draws its own notifications; while it is closed they still need a host, e.g. the
+	// "cannot open in a loading screen" warning raised by the toggle hotkey.
+	if (!editorWindow->open)
+		Util::Notifications::Draw();
+
+	ScenePresetExport::Draw();
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
 	HandleABTesting();
 	editorWindow->FinishGameHourSliderFrame(true);
+	editorWindow->undoHistory.EndFrame(ImGui::GetFrameCount(), Util::InteractionEndedThisFrame());
 	FinalizeImGuiFrame();
 }
 
@@ -187,13 +259,17 @@ bool OverlayRenderer::ShouldSkipRendering()
 
 	return !(shaderCache->IsCompiling() ||
 			 Menu::GetSingleton()->IsEnabled ||
+			 Menu::GetSingleton()->openFade > 0.0f ||
 			 HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			 EditorWindow::GetSingleton()->open ||
+			 Util::Notifications::HasAny() ||
+			 ScenePresetExport::IsOpen() ||
 			 abTestingManager->IsEnabled() ||
 			 (failed && !hide) ||
 			 effectFailed ||
 			 globals::features::performanceOverlay.settings.ShowInOverlay ||
 			 globals::features::sceneSelector.IsOverlayVisible() ||
+			 globals::features::performanceOverlay.settings.ShowWeatherPicker ||
 			 renderDoc->IsAvailable() ||
 			 globals::features::vr.HelperRequestsRender());
 }
@@ -202,7 +278,7 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 {
 	bool fontSizeChanged = std::abs(cachedFontSize - currentFontSize) > ThemeManager::Constants::FONT_CACHE_EPSILON;
 	std::string desiredSignature = menu.BuildFontSignature(currentFontSize);
-	bool signatureChanged = desiredSignature != menu.cachedFontSignature;
+	bool signatureChanged = desiredSignature != MenuFonts::GetAtlasState().cachedFontSignature;
 
 	if (fontSizeChanged || signatureChanged) {
 		if (!ThemeManager::ReloadFont(menu, cachedFontSize)) {
@@ -290,7 +366,7 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	std::string shaderStats = shaderCache->GetShaderStatsString(!state->IsDeveloperMode());
 	auto progressTitle = std::vformat(T("overlay.compiling_shaders", "{}Compiling Shaders: {}"),
 		std::make_format_args(compilePrefix, shaderStats));
-	auto percent = (float)compiledShaders / (float)totalShaders;
+	const float percent = totalShaders > 0 ? static_cast<float>(compiledShaders) / static_cast<float>(totalShaders) : 0.0f;
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
 #if defined(ENABLE_EFFECTS11)
@@ -298,6 +374,10 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 #else
 	uint32_t effectFailed = 0;
 #endif
+
+	const ImVec4 accent = (failed && !hide) || effectFailed ? themeSettings.StatusPalette.Error :
+	                      renderDocAvailable                ? themeSettings.StatusPalette.Warning :
+	                                                          themeSettings.StatusPalette.InfoColor;
 
 	if (shaderCache->IsCompiling()) {
 		// VR immersion: suppress only the routine background-compile readout; the
@@ -309,9 +389,8 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		if (hideRoutineHud && !hasExceptionalInfo)
 			return;
 
-		ImGui::SetNextWindowPos(ImVec2(pos, pos));
-		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::End();
+		if (!BeginShaderStatusCard(ImVec2(pos, pos))) {
+			EndShaderStatusCard(accent);
 			return;
 		}
 		if (!hideRoutineHud) {
@@ -385,14 +464,13 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		if (renderDocAvailable)
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
-		ImGui::End();
+		EndShaderStatusCard(accent);
 		return;
 	}
 
 	if ((failed && !hide) || effectFailed) {
-		ImGui::SetNextWindowPos(ImVec2(pos, pos));
-		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::End();
+		if (!BeginShaderStatusCard(ImVec2(pos, pos))) {
+			EndShaderStatusCard(accent);
 			return;
 		}
 
@@ -404,15 +482,14 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 		if (renderDocAvailable)
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
 
-		ImGui::End();
+		EndShaderStatusCard(accent);
 	} else if (renderDocAvailable) {
-		ImGui::SetNextWindowPos(ImVec2(pos, pos));
-		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
-			ImGui::End();
+		if (!BeginShaderStatusCard(ImVec2(pos, pos))) {
+			EndShaderStatusCard(accent);
 			return;
 		}
 		ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s", renderDocInformation.c_str());
-		ImGui::End();
+		EndShaderStatusCard(accent);
 	}
 }
 
@@ -462,7 +539,7 @@ void OverlayRenderer::FinalizeImGuiFrame()
 	ImGui::Render();
 
 	auto* drawData = ImGui::GetDrawData();
-	if (!RenderDesktopMirror(drawData) && !BackgroundBlur::RenderDrawData(drawData))
+	if (!RenderDesktopMirror(drawData) && (IsMenuBackgroundHidden() || !BackgroundBlur::RenderDrawData(drawData)))
 		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
@@ -597,7 +674,7 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 		ImGui_ImplDX11_RenderDrawData(pendingDesktopMirrorSource);
 		return;
 	}
-	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
+	if (IsMenuBackgroundHidden() || !BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
 		ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
 	clearPending();
 }

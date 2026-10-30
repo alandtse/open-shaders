@@ -5,16 +5,13 @@
 
 namespace SceneSettingsPolicy
 {
+	/// Catalog address prefix: feature short name, then setting path segments, then the key.
+	/// A bare feature name covers everything the feature exposes.
 	using SettingPolicyPath = std::vector<std::string_view>;
 
+	/// Settings that must never be scene-overridden, matched by catalog address prefix.
 	inline const std::vector<SettingPolicyPath> kSettingBlacklist = {
-		{ "CSUtility", "Scene Dof", "locked" },
-		{ "CSUtility", "Scene Dof", "baseline" },
-		{ "CSUtility", "Underwater Dof", "locked" },
-		{ "CSUtility", "Underwater Dof", "baseline" },
-		{ "CSUtility", "Underwater Dof", "values", "autoFocus" },
-		{ "CSUtility", "Underwater Dof", "values", "autoFocusSettings" },
-		{ "CSUtility", "Underwater Dof", "values", "mode" },
+		{ "DeveloperTools" },
 		{ "ExponentialHeightFog", "volumetricGridPixelSize" },
 		{ "ExponentialHeightFog", "volumetricGridSizeZ" },
 		{ "ExponentialHeightFog", "volumetricFarGridPixelSize" },
@@ -25,22 +22,47 @@ namespace SceneSettingsPolicy
 		{ "ExponentialHeightFog", "volumetricHistoryMissSampleCount" },
 		{ "ExponentialHeightFog", "volumetricSampleJitterMultiplier" },
 		{ "ExponentialHeightFog", "volumetricUpsampleJitterMultiplier" },
-		{ "ImageBasedLighting", "DisableInInteriors" },
+		{ "GrassOptimizations" },
+		{ "TerrainVariation" },
 		{ "ImageBasedLighting", "DisableInWorldMap" },
 		{ "ImageBasedLighting", "DisableInLoadingScreen" },
-		{ "LightLimitFix", "ShowShadowOverlay" },
 		{ "PostProcessing", "Border" },
+		// Auto-enabled each frame from its inputs, so a scene value would never be retained.
+		{ "PostProcessing", "Composite" },
 		{ "PostProcessing", "Depth of Field", "HighlightShape" },
-		{ "PostProcessing", "LUT" },
+		{ "PostProcessing", "Color Grading and Tone Mapping", "enabled" },
+		{ "PostProcessing", "Color Grading and Tone Mapping", "enableTonemap" },
+		{ "PostProcessing", "Color Grading and Tone Mapping", "useOpenDrt" },
+		{ "PostProcessing", "Color Grading and Tone Mapping", "currentTonemapper" },
+		{ "PostProcessing", "Color Grading and Tone Mapping", "tonemapParams" },
 		{ "PostProcessing", "Motion Blur", "VelocityScale" },
+		// Shader defines: a change recompiles every SSGI compute shader on the render thread.
+		{ "ScreenSpaceGI", "ResolutionMode" },
+		{ "ScreenSpaceGI", "EnableGI" },
+		{ "ScreenSpaceGI", "EnableTemporalDenoiser" },
+		{ "ScreenSpaceGI", "EnableExperimentalSpecularGI" },
+		{ "VolumetricLighting" },
+		{ "CSUtility", "Scene Dof", "locked" },
+		{ "CSUtility", "Scene Dof", "baseline" },
+		{ "CSUtility", "Underwater Dof", "locked" },
+		{ "CSUtility", "Underwater Dof", "baseline" },
+		{ "CSUtility", "Underwater Dof", "values", "autoFocus" },
+		{ "CSUtility", "Underwater Dof", "values", "autoFocusSettings" },
+		{ "CSUtility", "Underwater Dof", "values", "mode" },
+		{ "LightLimitFix", "ShowShadowOverlay" },
 		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
 		{ "ScreenSpaceGI", "ResourceProfile" },
-		{ "VolumetricLighting" },
 	};
 
 	inline const std::vector<SettingPolicyPath> kLocationFeatureWhitelist = {
-		{ "CSUtility" },
 		{ "ExponentialHeightFog" },
+		{ "HorizonFix" },
+		{ "ImageBasedLighting" },
+		{ "PostProcessing" },
+		{ "ScreenSpaceGI" },
+		{ "ScreenSpaceShadows" },
+		{ "SubsurfaceScattering" },
+		{ "CSUtility" },
 		{ "LightLimitFix", "EnableContactShadows" },
 		{ "LightLimitFix", "EnableParticleContactShadows" },
 		{ "LightLimitFix", "ContactShadowMaxSteps" },
@@ -48,26 +70,23 @@ namespace SceneSettingsPolicy
 		{ "LightLimitFix", "ContactShadowLength" },
 		{ "LightLimitFix", "ContactShadowDepthThickness" },
 		{ "LightLimitFix", "ContactShadowMinIntensity" },
-		{ "PostProcessing" },
-		{ "ScreenSpaceGI" },
-		{ "ScreenSpaceShadows" },
-		{ "SubsurfaceScattering" },
-		{ "ImageBasedLighting" },
 		{ "VanillaFresnel" },
 	};
 
 	inline const std::vector<SettingPolicyPath> kTimeOfDayFeatureWhitelist = {
-		{ "CSUtility" },
-		{ "CloudRelight" },
 		{ "CloudShadows" },
 		{ "ExponentialHeightFog" },
 		{ "GrassLighting" },
 		{ "ImageBasedLighting" },
 		{ "PostProcessing" },
-		{ "ProceduralSun" },
+		{ "ScreenSpaceGI" },
+		{ "ScreenSpaceShadows" },
 		{ "Skylighting" },
 		{ "SubsurfaceScattering" },
 		{ "WetnessEffects" },
+		{ "CSUtility" },
+		{ "CloudRelight" },
+		{ "ProceduralSun" },
 		{ "Wind" },
 	};
 }

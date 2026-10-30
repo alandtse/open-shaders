@@ -5,7 +5,6 @@ set(VCPKG_BUILD_TYPE release)
 
 # Do not set VCPKG_CMAKE_SYSTEM_NAME: vcpkg only sets VCPKG_TARGET_IS_WINDOWS when it's
 # undefined/empty; naming it "Windows" silently unsets that.
-set(
-    VCPKG_CHAINLOAD_TOOLCHAIN_FILE
+set(VCPKG_CHAINLOAD_TOOLCHAIN_FILE
     "${CMAKE_CURRENT_LIST_DIR}/../../extern/CommonLibSSE-NG/cmake/toolchain-linux-clangcl.cmake"
 )

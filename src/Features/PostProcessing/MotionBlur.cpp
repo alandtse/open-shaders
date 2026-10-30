@@ -1,9 +1,11 @@
 #include "MotionBlur.h"
+
 #include "Features/PostProcessing.h"
 #include "Features/Upscaling.h"
 #include "GpuPass.h"
 #include "ShaderCache.h"
 #include "Util.h"
+#include "Utils/SettingsControl.h"
 
 #pragma warning(disable: 4324)
 
@@ -134,18 +136,25 @@ void MotionBlur::SaveSettings(json& j)
 
 void MotionBlur::DrawSettings()
 {
-	ImGui::Text("Motion Blur Settings");
+	ImGui::TextUnformatted(T("feature.post_processing.motion_blur.settings", "Motion Blur Settings"));
 
 	// Motion scale presets
 	const char* presets[] = {
-		"Very Short", "Short", "Medium", "Long", "Very Long"
+		T("feature.post_processing.motion_blur.preset_very_short", "Very Short"),
+		T("feature.post_processing.motion_blur.preset_short", "Short"),
+		T("feature.post_processing.motion_blur.preset_medium", "Medium"),
+		T("feature.post_processing.motion_blur.preset_long", "Long"),
+		T("feature.post_processing.motion_blur.preset_very_long", "Very Long")
 	};
 
 	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
 	ImGui::BeginDisabled(cam != nullptr);
-	int preset = static_cast<int>(settings.ScalePreset);
-	if (ImGui::Combo("Motion Length", &preset, presets, IM_ARRAYSIZE(presets))) {
-		settings.ScalePreset = static_cast<MotionScale>(preset);
+
+	{
+		int preset = static_cast<int>(settings.ScalePreset);
+		const SettingsControl::ProxyScope proxy(&settings.ScalePreset, 1.0f);
+		if (ImGui::Combo(T("feature.post_processing.motion_blur.motion_length", "Motion Length"), &preset, presets, IM_ARRAYSIZE(presets)) && !SettingsControl::IsReplicating())
+			settings.ScalePreset = static_cast<MotionScale>(preset);
 	}
 
 	ImGui::EndDisabled();
@@ -157,9 +166,8 @@ void MotionBlur::DrawSettings()
 
 	// Samples (each UI sample represents 2 actual samples)
 	ImGui::SliderInt(T("feature.post_processing.motion_blur.samples", "Samples"), &settings.SampleCount, 8, 16, "%d");
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("feature.post_processing.motion_blur.sample_count_is_doubled_internally_for_smoother_results", "Sample count is doubled internally for smoother results.\nMore samples = better quality but slower performance"));
-	}
+	ImGui::SameLine();
+	Util::HelpMarker(T("feature.post_processing.motion_blur.sample_count_is_doubled_internally_for_smoother_results", "Sample count is doubled internally for smoother results.\nMore samples = better quality but slower performance"));
 }
 
 void MotionBlur::Draw(TextureInfo& inout_tex)

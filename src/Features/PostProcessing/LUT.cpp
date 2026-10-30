@@ -9,17 +9,22 @@
 #include "Util.h"
 #include "Utils/StringUtils.h"
 
+#include "Presets/UnifiedPresetCatalog.h"
+#include "Utils/SettingsControl.h"
+
 #include <DDSTextureLoader.h>
 #include <DirectXTex.h>
 
 #include "I18n/I18n.h"
 #include <algorithm>
 #include <cctype>
+#include <format>
 #include <imgui_stdlib.h>
 
 namespace
 {
 	constexpr float kLUTInputDragSpeed = 1e-3f;
+	const SettingsControl::SettingIdentity kLutPathSetting{ "PostProcessing", { "LUT", "settings" }, "LutPath" };
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
@@ -27,6 +32,39 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	LutPath,
 	InputMin,
 	InputMax)
+
+namespace
+{
+	std::string GetLowercaseExtension(const std::filesystem::path& path)
+	{
+		return Util::ToLowerAscii(path.extension().string());
+	}
+
+	/** @brief Load/Clear acting on the feature's own LUT, as the main menu shows it. */
+	void DrawBaseLutControls(LUT& lut)
+	{
+		const bool loadClicked = Util::Button(T("feature.post_processing.lut.load", "Load"));
+		if (loadClicked)
+			lut.ReadTexture(lut.tempPath);
+		ImGui::SameLine();
+		const bool clearClicked = Util::Button(T("feature.post_processing.lut.clear", "Clear"));
+		if (clearClicked) {
+			lut.Clear();
+			lut.tempPath = "";
+		}
+		if (loadClicked || clearClicked)
+			SettingsControl::RecordBaselineEdit(kLutPathSetting, lut.settings.LutPath);
+		if (!lut.errMsg.empty()) {
+			ImGui::SameLine();
+			Util::Text::Error("%s", lut.errMsg.c_str());
+		}
+
+		if (lut.LutType == -1)
+			ImGui::TextWrapped("%s", T("feature.post_processing.lut.loaded_texture_none", "Loaded Texture: None"));
+		else
+			ImGui::TextWrapped(T("feature.post_processing.lut.loaded_texture", "Loaded Texture: %s"), lut.settings.LutPath.c_str());
+	}
+}
 
 void LUT::DrawSettings()
 {
@@ -37,22 +75,8 @@ void LUT::DrawSettings()
 
 	ImGui::InputText(T("feature.post_processing.lut.lut_texture_path", "LUT Texture Path"), &tempPath);
 
-	if (ImGui::Button(T("feature.post_processing.lut.load", "Load")))
-		ReadTexture(tempPath);
-	ImGui::SameLine();
-	if (ImGui::Button(T("feature.post_processing.lut.clear", "Clear"))) {
-		Clear();
-		tempPath = "";
-	}
-	if (!errMsg.empty()) {
-		ImGui::SameLine();
-		Util::Text::Error("%s", errMsg.c_str());
-	}
-
-	if (LutType == -1)
-		ImGui::TextUnformatted(T("feature.post_processing.lut.loaded_texture_none", "Loaded Texture: None"));
-	else
-		ImGui::Text(T("feature.post_processing.lut.loaded_texture", "Loaded Texture: %s"), settings.LutPath.c_str());
+	if (!SettingsControl::DrawPathControls(kLutPathSetting, tempPath, errMsg, ValidateLutFile))
+		DrawBaseLutControls(*this);
 
 	ImGui::Separator();
 
@@ -77,18 +101,21 @@ void LUT::RestoreDefaultSettings()
 
 void LUT::LoadSettings(json& o_json)
 {
-	const auto oldPath = settings.LutPath;
 	settings = o_json;
-
 	tempPath = settings.LutPath;
+}
 
+void LUT::UpdateTexture()
+{
+	// Scene blends reload every frame, so only hit the disk when the path or the pack it resolves against changes.
+	if (settings.LutPath == attemptedPath && UnifiedPresetCatalog::GetSingleton().GetActivePackId() == attemptedPackId)
+		return;
 	try {
-		if (tempPath.empty()) {
+		if (settings.LutPath.empty()) {
 			Clear();
-		} else if (tempPath != oldPath || LutType == -1) {
-			logger::debug("Loading LUT texture: {}", tempPath);
-			ReadTexture(tempPath);
-		}
+			attemptedPackId = UnifiedPresetCatalog::GetSingleton().GetActivePackId();
+		} else
+			ReadTexture(settings.LutPath);
 	} catch (const std::exception& e) {
 		logger::warn("Failed to load LUT settings: {}", e.what());
 	}
@@ -137,26 +164,36 @@ void LUT::SetupResources()
 	CompileRasterShaders();
 }
 
-void LUT::ReadTexture(std::filesystem::path path)
+std::string LUT::ValidateLutFile(const std::filesystem::path& resolvedPath)
 {
-	constexpr auto comErrMsg = "Failed to create texture! Error: {}";
+	const auto extension = GetLowercaseExtension(resolvedPath);
+	if (extension != ".dds" && extension != ".png" && extension != ".bmp") {
+		const auto fileExtension = resolvedPath.extension().string();
+		return std::vformat(T("feature.post_processing.lut.invalid_extension", "Invalid extension: {}! Only dds/png/bmp are supported."), std::make_format_args(fileExtension));
+	}
+	std::error_code ec;
+	if (!std::filesystem::exists(resolvedPath, ec))
+		return T("feature.post_processing.lut.file_missing", "The file does not exist.");
+	return {};
+}
 
+void LUT::ReadTexture(std::string requestedPath)
+{
 	auto device = globals::d3d::device;
+	auto& catalog = UnifiedPresetCatalog::GetSingleton();
 
 	Clear();
+	// Kept even when loading fails, so a scene entry's path still matches what the feature reports.
+	settings.LutPath = attemptedPath = requestedPath;
+	attemptedPackId = catalog.GetActivePackId();
 
-	auto extension = Util::ToLowerAscii(path.extension().string());
-
-	if (extension != ".dds" && extension != ".png" && extension != ".bmp") {
-		errMsg = std::format("Invalid extension: {}! Only dds/png/bmp are supported.", path.extension().string());
-		logger::warn("Invalid extension: {}! Only dds/png/bmp are supported.", path.extension().string());
+	const auto path = catalog.ResolveActivePackPath(requestedPath);
+	errMsg = ValidateLutFile(path);
+	if (!errMsg.empty()) {
+		logger::warn("LUT '{}': {}", requestedPath, errMsg);
 		return;
 	}
-	if (!std::filesystem::exists(path)) {
-		errMsg = "The file does not exist.";
-		logger::warn("The file does not exist.");
-		return;
-	}
+	const auto extension = GetLowercaseExtension(path);
 
 	if (extension == ".dds") {
 		ID3D11Resource* pRsrc = nullptr;
@@ -164,8 +201,11 @@ void LUT::ReadTexture(std::filesystem::path path)
 		try {
 			DX::ThrowIfFailed(DirectX::CreateDDSTextureFromFile(device, path.c_str(), &pRsrc, &pSrv));
 		} catch (std::runtime_error& e) {
-			errMsg = std::format(comErrMsg, e.what());
-			logger::warn(comErrMsg, e.what());
+			errMsg = I18n::GetSingleton()->Format(
+				"feature.post_processing.lut.failed_to_create_texture",
+				{ { "error", e.what() } },
+				"Failed to create texture! Error: {error}");
+			logger::warn("Failed to create texture! Error: {}", e.what());
 			return;
 		}
 
@@ -180,7 +220,8 @@ void LUT::ReadTexture(std::filesystem::path path)
 			texLUT3D->srv.attach(pSrv);
 			LutType = 3;
 		} else {
-			errMsg = std::format("Invalid texture dimension: {}! Only 2D/3D textures are supported.", magic_enum::enum_name(texType));
+			const auto dimension = magic_enum::enum_name(texType);
+			errMsg = std::vformat(T("feature.post_processing.lut.invalid_dimension", "Invalid texture dimension: {}! Only 2D/3D textures are supported."), std::make_format_args(dimension));
 			logger::warn("Invalid texture dimension: {}! Only 2D/3D textures are supported.", magic_enum::enum_name(texType));
 			return;
 		}
@@ -189,8 +230,11 @@ void LUT::ReadTexture(std::filesystem::path path)
 		try {
 			DX::ThrowIfFailed(DirectX::LoadFromWICFile(path.c_str(), DirectX::WIC_FLAGS_NONE, nullptr, image));
 		} catch (std::runtime_error& e) {
-			errMsg = std::format(comErrMsg, e.what());
-			logger::warn(comErrMsg, e.what());
+			errMsg = I18n::GetSingleton()->Format(
+				"feature.post_processing.lut.failed_to_create_texture",
+				{ { "error", e.what() } },
+				"Failed to create texture! Error: {error}");
+			logger::warn("Failed to create texture! Error: {}", e.what());
 			return;
 		}
 
@@ -198,8 +242,11 @@ void LUT::ReadTexture(std::filesystem::path path)
 		try {
 			DX::ThrowIfFailed(CreateTexture(device, image.GetImages(), image.GetImageCount(), image.GetMetadata(), &pRsrc));
 		} catch (std::runtime_error& e) {
-			errMsg = std::format(comErrMsg, e.what());
-			logger::warn(comErrMsg, e.what());
+			errMsg = I18n::GetSingleton()->Format(
+				"feature.post_processing.lut.failed_to_create_texture",
+				{ { "error", e.what() } },
+				"Failed to create texture! Error: {error}");
+			logger::warn("Failed to create texture! Error: {}", e.what());
 			return;
 		}
 
@@ -216,8 +263,6 @@ void LUT::ReadTexture(std::filesystem::path path)
 
 		LutType = texLUT2D->desc.Height == 1 ? 0 : 2;
 	}
-
-	settings.LutPath = path.string();
 }
 
 void LUT::ClearShaderCache()

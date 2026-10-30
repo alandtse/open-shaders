@@ -1,12 +1,20 @@
 #include "MenuHeaderRenderer.h"
 
+#include <algorithm>
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include "CSEditor/Browser/BrowserWidgets.h"
 #include "Fonts.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "IconsTabler.h"
+#include "Menu/GoToPalette.h"
+#include "Menu/HomePageRenderer.h"
+#include "Menu/Icons/helpers/SettingsActionIcons.h"
+#include "Menu/IssuesPageRenderer.h"
 #include "Plugin.h"
+#include "SaveManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "ThemeManager.h"
@@ -14,516 +22,141 @@
 
 namespace
 {
-	using RoleFontGuard = MenuFonts::FontRoleGuard;
-}
+	Util::ConfirmationPopup restoreDefaults;
 
-void MenuHeaderRenderer::RenderHeader(bool isDocked, bool showLogo, bool canShowIcons, float uiScale, const Menu::UIIcons& uiIcons, bool& sidebarVisible)
-{
-	if (!globals::menu) {
-		logger::error("MenuHeaderRenderer::RenderHeader: globals::menu is null, cannot render header");
-		return;
+	void RequestRestoreDefaults()
+	{
+		restoreDefaults.title = T("menu.restore_defaults", "Restore All Defaults");
+		restoreDefaults.message = T("menu.restore_defaults_confirm", "Reset all settings to their defaults? Your saved settings remain unchanged until you save.");
+		restoreDefaults.confirmLabel = T("menu.restore_defaults", "Restore All Defaults");
+		restoreDefaults.cancelLabel = T("ui.cancel", "Cancel");
+		restoreDefaults.focus = Util::ConfirmationPopup::Focus::Cancel;
+		restoreDefaults.Request();
 	}
 
-	auto versionStr = Util::GetFormattedVersion(Plugin::VERSION);
-	auto expectedTag = std::format("v{}", versionStr);
-	auto title = Plugin::BUILD_DESCRIBE == expectedTag ? std::format("{} {}", Plugin::DISPLAY_NAME, versionStr) : std::format("{} {} [{}]", Plugin::DISPLAY_NAME, versionStr, Plugin::BUILD_DESCRIBE);
-	auto actionIcons = BuildActionIcons(canShowIcons, uiIcons);
-	const char* sidebarTooltip = sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar");
-	const float sidebarIconSize = ImGui::GetFontSize() * ThemeManager::Constants::SIDEBAR_ICON_SIZE_MULTIPLIER * uiScale;
-	const ImVec2 sidebarContentSize = uiIcons.sidebar.texture ? ImVec2(sidebarIconSize, sidebarIconSize) : ImGui::CalcTextSize(sidebarTooltip);
-	const ImVec2 padding = ImGui::GetStyle().FramePadding;
-	const ImVec2 sidebarButtonSize(sidebarContentSize.x + padding.x * 2.0f, sidebarContentSize.y + padding.y * 2.0f);
+}
 
-	if (isDocked) {
-		// When docked, draw logo as a background watermark if available
-		if (showLogo && uiIcons.logo.texture) {
-			RenderWatermarkLogo(uiIcons);
+std::string MenuHeaderRenderer::GetTitle()
+{
+	auto version = Plugin::BUILD_DESCRIBE;
+	if (version.starts_with('v'))
+		version.remove_prefix(1);
+	if (version.empty())
+		return std::format("{} {}", Plugin::DISPLAY_NAME, Util::GetFormattedVersion(Plugin::VERSION));
+	return std::format("{} {}", Plugin::DISPLAY_NAME, version);
+}
+
+void MenuHeaderRenderer::RenderHeader(Menu& menu, bool& sidebarVisible, float uiScale)
+{
+	const float size = BrowserUI::IconButtonSize();
+	const float homeGap = ImGui::GetStyle().ItemInnerSpacing.x;
+	if (ImGui::BeginTable("##MainMenuHeader", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoPadOuterX | ImGuiTableFlags_NoPadInnerX | ImGuiTableFlags_NoSavedSettings)) {
+		ImGui::TableSetupColumn("##ActionsAndTitle", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("##Navigation", ImGuiTableColumnFlags_WidthFixed, size * 2.0f + homeGap + ImGui::GetStyle().ItemSpacing.x);
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		const float top = ImGui::GetCursorPosY();
+		ImGui::BeginGroup();
+		bool afterFirst = false;
+		const auto action = [&](const char* id, Icons::GlyphRef glyph, const char* tooltip, bool selected, bool enabled, auto&& run, ImU32 tint = 0) {
+			if (afterFirst)
+				BrowserUI::SameLineIfFits(size);
+			afterFirst = true;
+			ImGui::BeginDisabled(!enabled);
+			if (BrowserUI::IconButton(id, glyph, tooltip, selected, tint))
+				run();
+			ImGui::EndDisabled();
+		};
+		action("##SidebarToggle", Icons::TI(ICON_TI_LAYOUT_COLUMNS), sidebarVisible ? T("menu.hide_sidebar", "Hide Sidebar") : T("menu.show_sidebar", "Show Sidebar"),
+			sidebarVisible, true, [&] { sidebarVisible = !sidebarVisible; });
+		action("##BackgroundToggle", Icons::TI(ICON_TI_EYE), menu.IsBackgroundVisible() ? T("menu.hide_background", "Hide Background") : T("menu.show_background", "Show Background"),
+			!menu.IsBackgroundVisible(), true, [&] { menu.ToggleBackgroundVisibility(); });
+
+		auto* shaderCache = globals::shaderCache;
+		const bool canClear = !shaderCache->IsCapturingActiveShaders() && !shaderCache->IsAwaitingMenuCloseCapture();
+		const auto clearScope = Util::ResolveShaderCacheClearScope();
+		const auto* cacheTooltip = clearScope == Util::ShaderCacheClearScope::ActiveOnly ?
+		                               T("menu.clear_active_shaders", "Clear Active Shaders") :
+		                               T("menu.clear_shader_cache", "Clear Shader Cache");
+		const auto cacheGlyph = clearScope == Util::ShaderCacheClearScope::ActiveOnly ? SettingsActionIcons::kClearActiveShaders : SettingsActionIcons::kClearCache;
+		BrowserUI::SameLineIfFits(size);
+		ImGui::BeginDisabled(!canClear);
+		if (BrowserUI::PaintedIconButton("##ClearShaderCache", [cacheGlyph](ImDrawList* drawList, ImVec2, float, ImU32) {
+				Icons::FontGuard font(cacheGlyph);
+				const auto color = ImGui::IsItemHovered() ? ImGui::GetStyleColorVec4(ImGuiCol_Text) : Util::Colors::GetSecondary();
+				// Status marks change glyph bounds, so both cache icons share one placement reference.
+				const auto position = Icons::GetCenteredGlyphPos(ImGui::GetItemRectMin(), ImGui::GetItemRectSize(), SettingsActionIcons::kClearCache.utf8);
+			drawList->AddText(position, ImGui::GetColorU32(color), cacheGlyph.utf8); }, 0, cacheTooltip))
+			Util::RequestClearShaderCacheConfirmation(clearScope);
+		ImGui::EndDisabled();
+		const bool restoreAllDefaults = ImGui::GetIO().KeyShift;
+		const auto* restoreTooltip = restoreAllDefaults ? T("menu.restore_defaults", "Restore All Defaults") : T("menu.restore_settings", "Restore Saved Settings");
+		action("##RestoreSettings", restoreAllDefaults ? SettingsActionIcons::kRestoreDefaults : SettingsActionIcons::kRestoreSaved, restoreTooltip, false, true,
+			[&] {
+				if (restoreAllDefaults)
+					RequestRestoreDefaults();
+				else
+					globals::state->Load();
+			});
+		const bool unsaved = globals::state->HasUnsavedChanges();
+		{
+			auto unsavedTint = Util::StateHoverButtonStyle(Util::Colors::GetUnsaved(), unsaved);
+			ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered));
+			const SKSE::stl::scope_exit restoreSaveHover([]() noexcept { ImGui::PopStyleColor(); });
+			action("##SaveSettings", Icons::TI(ICON_TI_DEVICE_FLOPPY), unsaved ? T("menu.save_settings_unsaved", "Save Settings (unsaved changes)") : T("menu.save_settings", "Save Settings"), false, true, [] { SaveManager::SaveAll(); }, unsaved ? ImGui::GetColorU32(Util::Colors::GetUnsaved()) : 0);
 		}
 
-		// Draw action icons in the title bar area
-		RenderDockedIcons(actionIcons, uiScale);
-		RenderSidebarToggle(sidebarButtonSize, uiIcons, sidebarTooltip, sidebarVisible);
-	} else {
-		ImGui::BeginGroup();
-		const ImVec2 headerOrigin = ImGui::GetCursorScreenPos();
-		ImGui::Dummy(sidebarButtonSize);
-		ImGui::SameLine();
-
-		// When not docked, show the custom header
-		bool centerHeader = globals::menu->GetTheme().CenterHeader;
-
-		if ((showLogo || canShowIcons) && ImGui::BeginTable("##HeaderLayout", 2, ImGuiTableFlags_SizingStretchProp)) {
-			ImGui::TableSetupColumn("Title", ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("Buttons", ImGuiTableColumnFlags_WidthFixed);
-			ImGui::TableNextColumn();  // Title on the left with logo
-
-			// Determine scaling based on GlobalScale setting and font size
-			const float currentFontSize = ImGui::GetFontSize();
-			const float baseTextScale = ThemeManager::Constants::HEADER_BASE_TEXT_SCALE;
-			const float baseIconSize = currentFontSize * ThemeManager::Constants::HEADER_BASE_ICON_MULTIPLIER;
-
-			// Apply UI scale to the base scaling factors
-			const float textScaleFactor = baseTextScale * uiScale;
-			const float logoSize = baseIconSize * uiScale;  // Match action icon size
-
-			if (centerHeader) {
-				// Calculate the width of the content
-				float contentWidth = 0.0f;
-
-				if (showLogo) {
-					float logoAspectRatio = uiIcons.logo.size.x / uiIcons.logo.size.y;
-					contentWidth = (logoSize * logoAspectRatio) + ImGui::GetStyle().ItemSpacing.x;
-				}
-
-				// Calculate text width
-				{
-					RoleFontGuard titleFont(Menu::FontRole::Title);
-					ImGui::SetWindowFontScale(textScaleFactor);
-					contentWidth += ImGui::CalcTextSize(title.c_str()).x;
-					ImGui::SetWindowFontScale(1.0f);
-				}
-
-				float offset = Util::GetCenterOffsetForContent(contentWidth);
-				if (offset > 0.0f) {
-					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-				}
-			} else {
-				// Add padding for left-aligned layout
-				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ThemeManager::Constants::CURSOR_POSITION_PADDING);
-			}
-
-			// Always display logo if texture is available
-			if (showLogo) {
-				float logoAspectRatio = uiIcons.logo.size.x / uiIcons.logo.size.y;
-				ImVec2 logoSizeVec(logoSize * logoAspectRatio, logoSize);
-
-				// Determine tint color for logo
-				ImU32 logoTint = IM_COL32_WHITE;
-				if (globals::menu->GetSettings().Theme.UseMonochromeLogo) {
-					ImVec4 textColor = globals::menu->GetSettings().Theme.Palette.Text;
-					logoTint = ImGui::GetColorU32(textColor);
-				}
-
-				// Use our helper to render aligned logo and text with perfect vertical alignment
-				{
-					RoleFontGuard titleFont(Menu::FontRole::Title);
-					Util::DrawAlignedTextWithLogo(
-						uiIcons.logo.texture,
-						logoSizeVec,
-						title.c_str(),
-						textScaleFactor,
-						logoTint);
-				}
-			} else {
-				// No logo, just render the text with proper alignment
-				ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-				{
-					RoleFontGuard titleFont(Menu::FontRole::Title);
-					Util::DrawSharpText(title.c_str(), true, textScaleFactor);
-				}
-				ImGui::PopStyleVar();
-			}
-
-			// Buttons on the right
-			ImGui::TableNextColumn();
-			RenderUndockedIcons(actionIcons, uiScale);
-
-			ImGui::EndTable();
-		} else if (!(showLogo || canShowIcons)) {
-			// No icons available - show just the title without the table layout
-			const float baseTextScale = ThemeManager::Constants::HEADER_FALLBACK_TEXT_SCALE;
-			const float textScaleFactor = baseTextScale * uiScale;  // Apply UI scale
-
-			if (centerHeader) {
-				// Calculate text width for centering
-				float textWidth = 0.0f;
-				{
-					RoleFontGuard titleFont(Menu::FontRole::Title);
-					ImGui::SetWindowFontScale(textScaleFactor);
-					textWidth = ImGui::CalcTextSize(title.c_str()).x;
-					ImGui::SetWindowFontScale(1.0f);
-				}
-
-				// Use helper to get centering offset
-				float offset = Util::GetCenterOffsetForContent(textWidth);
-				if (offset > 0.0f) {
-					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-				}
-			}
-
-			ImGui::SetWindowFontScale(textScaleFactor);
-			{
-				RoleFontGuard titleFont(Menu::FontRole::Title);
-				ImGui::TextUnformatted(title.c_str());
-			}
-			ImGui::SetWindowFontScale(1.0f);
+		{
+			MenuFonts::FontRoleGuard titleFont(Menu::FontRole::Title);
+			const auto title = GetTitle();
+			const float titleWidth = ImGui::CalcTextSize(title.c_str()).x;
+			BrowserUI::SameLineIfFits(titleWidth);
+			ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - titleWidth));
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextWrapped("%s", title.c_str());
 		}
 		ImGui::EndGroup();
-		const float headerHeight = ImGui::GetItemRectSize().y;
-		const ImVec2 cursorAfterHeader = ImGui::GetCursorScreenPos();
-		ImGui::SetCursorScreenPos(ImVec2(headerOrigin.x, headerOrigin.y + (headerHeight - sidebarButtonSize.y) * 0.5f));
-		RenderSidebarToggle(sidebarButtonSize, uiIcons, sidebarTooltip, sidebarVisible);
-		ImGui::SetCursorScreenPos(cursorAfterHeader);
+		const float height = ImGui::GetItemRectSize().y;
+		ImGui::TableSetColumnIndex(1);
+		ImGui::SetCursorPosX(ImGui::GetCursorPosX() + homeGap);
+		ImGui::SetCursorPosY(top + std::max(0.0f, (height - size) * 0.5f));
+		const auto issueCount = IssuesPageRenderer::GetFeatureIssueCount();
+		const auto homeTooltip = issueCount == 0 ? std::string(T("menu.features.home", "Home")) :
+		                         issueCount == 1 ? std::string(T("menu.home.feature_issue_one", "1 feature issue")) :
+		                                           I18n::GetSingleton()->Format("menu.home.feature_issue_many", { { "count", std::to_string(issueCount) } }, "{count} feature issues");
+		const auto errorColor = Util::Colors::GetError();
+		ImGui::PushStyleColor(ImGuiCol_Header, issueCount > 0 ? ImVec4(errorColor.x, errorColor.y, errorColor.z, ThemeManager::Constants::SEGMENT_SELECTED_FILL_ALPHA) : ImGui::GetStyleColorVec4(ImGuiCol_Header));
+		const SKSE::stl::scope_exit restoreIssueAccent([]() noexcept { ImGui::PopStyleColor(); });
+		if (BrowserUI::IconButton("##Home", Icons::TI(ICON_TI_HOME), homeTooltip.c_str(), issueCount > 0 || menu.GetSelectedMenuId() == "Home",
+				issueCount > 0 ? ImGui::GetColorU32(errorColor) : 0)) {
+			menu.SelectFeatureMenu("Home");
+			if (issueCount > 0)
+				HomePageRenderer::FocusNeedsAttention();
+		}
+		ImGui::SameLine();
+		if (BrowserUI::IconButton("##Search", Icons::TI(ICON_TI_SEARCH), T("menu.palette.title", "Go to..."), GoToPalette::IsOpen()))
+			GoToPalette::Open();
+		ImGui::EndTable();
 	}
 
-	// Add separators - no separator needed for docked mode since icons are in title bar
-	if (!isDocked) {
-		// First separator - always shown when not docked
-		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS);
+	if (restoreDefaults.Draw()) {
+		globals::state->Load(State::ConfigMode::DEFAULT);
+		globals::state->MarkSettingsChanged();
+	}
+
+	ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS * uiScale);
+	ImGui::Spacing();
+	if (globals::shaderCache->GetFailedTasks()) {
+		if (Util::Button(T("menu.toggle_error_message", "Toggle Error Message"), { -1, 0 }))
+			globals::shaderCache->ToggleErrorMessages();
+		if (auto tooltip = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T("menu.toggle_error_message_tooltip",
+				"Hide or show the shader failure message. "
+				"Your installation is broken and will likely see errors in game. "
+				"Please double check you have updated all features and that your load order is correct. "
+				"See OpenShaders.log for details and check the Nexus Mods page or Discord server."));
+		ImGui::Spacing();
+		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS * uiScale);
 		ImGui::Spacing();
 	}
-
-	// If icons are disabled or missing, show action buttons as text between separators (only when not docked)
-	auto shaderCache = globals::shaderCache;
-	if (!canShowIcons && !isDocked) {
-		if (ImGui::BeginTable("##ActionButtons", 4, ImGuiTableFlags_SizingStretchSame)) {
-			// Save Settings Button
-			ImGui::TableNextColumn();
-			if (Util::ButtonWithFlash(T("menu.save_settings", "Save Settings"), { -1, 0 })) {
-				globals::state->Save();
-			}
-
-			// Restore Saved Settings Button
-			ImGui::TableNextColumn();
-			if (ImGui::Button(T("menu.restore_settings", "Restore Saved Settings"), { -1, 0 })) {
-				globals::state->Load();
-			}
-
-			// Clear Shader Cache Button
-			ImGui::TableNextColumn();
-			{
-				const bool capturing = shaderCache->IsCapturingActiveShaders();
-				const bool awaitingMenuClose = shaderCache->IsAwaitingMenuCloseCapture();
-				ImGui::BeginDisabled(capturing || awaitingMenuClose);
-				std::string label = awaitingMenuClose ?
-				                        T("menu.clear_shader_cache_awaiting_close", "Close the menu to finish") :
-				                    capturing ?
-				                        std::format("{} {}", T("menu.clear_shader_cache_capturing", "Capturing..."), shaderCache->GetActiveShaderCaptureFramesRemaining()) :
-				                        T("menu.clear_shader_cache", "Clear Shader Cache");
-				if (ImGui::Button(label.c_str(), { -1, 0 })) {
-					Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
-				}
-				ImGui::EndDisabled();
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", Util::GetClearShaderCacheTooltip());
-				ImGui::Text("%s", T("menu.clear_shader_cache_modifier_hint", "Shift-click for the other clear mode."));
-			}
-
-			// Error message toggle if needed
-			if (shaderCache->GetFailedTasks()) {
-				ImGui::TableNextRow();
-				ImGui::TableNextColumn();
-				if (ImGui::Button(T("menu.toggle_error_message", "Toggle Error Message"), { -1, 0 })) {
-					shaderCache->ToggleErrorMessages();
-				}
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s", T("menu.toggle_error_message_tooltip",
-										  "Hide or show the shader failure message. "
-										  "Your installation is broken and will likely see errors in game. "
-										  "Please double check you have updated all features and that your load order is correct. "
-										  "See OpenShaders.log for details and check the Nexus Mods page or Discord server."));
-				}
-			}
-
-			ImGui::EndTable();
-		}
-
-		// Second separator - only shown if icons are disabled/missing or if there are failed tasks (and not docked)
-		if (!isDocked) {
-			ImGui::Spacing();
-			ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS);
-			ImGui::Spacing();
-		}
-	} else if (shaderCache->GetFailedTasks() && !isDocked) {
-		// If icons are enabled but there are failed tasks, show error toggle button
-		// and add the second separator (only when not docked)
-		if (ImGui::Button(T("menu.toggle_error_message", "Toggle Error Message"), { -1, 0 })) {
-			shaderCache->ToggleErrorMessages();
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T("menu.toggle_error_message_tooltip",
-								  "Hide or show the shader failure message. "
-								  "Your installation is broken and will likely see errors in game. "
-								  "Please double check you have updated all features and that your load order is correct. "
-								  "See OpenShaders.log for details and check the Nexus Mods page or Discord server."));
-		}
-
-		// Add second separator when showing error button
-		ImGui::Spacing();
-		ImGui::SeparatorEx(ImGuiSeparatorFlags_Horizontal, ThemeManager::Constants::SEPARATOR_THICKNESS);
-		ImGui::Spacing();
-	}
-}
-
-void MenuHeaderRenderer::RenderSidebarToggle(const ImVec2& buttonSize, const Menu::UIIcons& uiIcons, const char* tooltip, bool& sidebarVisible)
-{
-	if (uiIcons.sidebar.texture) {
-		const ImVec2 padding = ImGui::GetStyle().FramePadding;
-		if (ImGui::InvisibleButton("##SidebarToggle", buttonSize, ImGuiButtonFlags_EnableNav))
-			sidebarVisible = !sidebarVisible;
-		Util::DrawCurrentItemRoundedButtonHighlight();
-		const ImVec2 min = ImGui::GetItemRectMin();
-		ImGui::GetWindowDrawList()->AddImage(uiIcons.sidebar.texture,
-			ImVec2(min.x + padding.x, min.y + padding.y),
-			ImVec2(min.x + buttonSize.x - padding.x, min.y + buttonSize.y - padding.y),
-			ImVec2(0, 0), ImVec2(1, 1), ImGui::GetColorU32(ImGuiCol_Text));
-	} else {
-		const auto buttonStyle = Util::TransparentIconButtonStyle();
-		if (ImGui::Button(std::format("{}###SidebarToggle", tooltip).c_str(), buttonSize))
-			sidebarVisible = !sidebarVisible;
-	}
-	if (auto tooltipScope = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(tooltip);
-}
-
-float MenuHeaderRenderer::GetCompactActionsWidth(const Menu::UIIcons& uiIcons)
-{
-	const auto icons = BuildActionIcons(true, uiIcons, true);
-	float width = ImGui::GetStyle().ItemSpacing.x * static_cast<float>(icons.size() - 1);
-	for (const auto& icon : icons)
-		width += icon.texture ? ImGui::GetFrameHeight() : ImGui::CalcTextSize(icon.tooltip).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-	return width;
-}
-
-void MenuHeaderRenderer::RenderCompactActions(const Menu::UIIcons& uiIcons)
-{
-	const auto icons = BuildActionIcons(true, uiIcons, true);
-	const auto buttonStyle = Util::TransparentIconButtonStyle();
-	const float size = ImGui::GetFrameHeight();
-	const float imageSize = ImGui::GetFontSize();
-	const auto tint = ImGui::GetColorU32(Util::GetIconTint());
-	for (size_t i = 0; i < icons.size(); ++i) {
-		if (i != 0)
-			ImGui::SameLine();
-		const auto& icon = icons[i];
-		const bool clearing = i == icons.size() - 1;
-		const bool disabled = clearing && (globals::shaderCache->IsCapturingActiveShaders() || globals::shaderCache->IsAwaitingMenuCloseCapture());
-		ImGui::BeginDisabled(disabled);
-		ImGui::PushID(static_cast<int>(i));
-		if (icon.texture) {
-			if (ImGui::InvisibleButton("##MenuAction", { size, size }, ImGuiButtonFlags_EnableNav))
-				icon.callback();
-			Util::DrawCurrentItemRoundedButtonHighlight();
-			const auto min = ImGui::GetItemRectMin();
-			const float inset = (size - imageSize) * 0.5f;
-			ImGui::GetWindowDrawList()->AddImage(icon.texture, { min.x + inset, min.y + inset },
-				{ min.x + inset + imageSize, min.y + inset + imageSize }, { 0, 0 }, { 1, 1 }, tint);
-		} else if (ImGui::Button(icon.tooltip)) {
-			icon.callback();
-		}
-		ImGui::PopID();
-		ImGui::EndDisabled();
-		if (auto tooltip = Util::HoverTooltipWrapper()) {
-			ImGui::TextUnformatted(icon.tooltip);
-		}
-	}
-}
-
-std::vector<MenuHeaderRenderer::ActionIcon> MenuHeaderRenderer::BuildActionIcons(bool canShowIcons, const Menu::UIIcons& uiIcons, bool includeMissing)
-{
-	std::vector<ActionIcon> actionIcons;
-
-	if (!canShowIcons) {
-		return actionIcons;
-	}
-
-	// Build list of available action icons (in display order)
-	if (uiIcons.saveSettings.texture || includeMissing) {
-		actionIcons.push_back({ uiIcons.saveSettings.texture,
-			T("menu.save_settings", "Save Settings"),
-			[]() {
-				globals::state->Save();
-			} });
-	}
-	if (uiIcons.loadSettings.texture || includeMissing) {
-		actionIcons.push_back({ uiIcons.loadSettings.texture,
-			T("menu.restore_settings", "Restore Saved Settings"),
-			[]() {
-				globals::state->Load();
-			} });
-	}
-	if (uiIcons.clearCache.texture || includeMissing) {
-		actionIcons.push_back({ uiIcons.clearCache.texture,
-			Util::ResolveShaderCacheClearScope() == Util::ShaderCacheClearScope::ActiveOnly ?
-				T("menu.clear_active_shaders", "Clear Active Shaders") :
-				T("menu.clear_shader_cache", "Clear Shader Cache"),
-			[]() {
-				Util::RequestClearShaderCacheConfirmation(Util::ResolveShaderCacheClearScope());
-			} });
-	}
-
-	return actionIcons;
-}
-
-void MenuHeaderRenderer::RenderActionIcons(const std::vector<ActionIcon>& actionIcons, bool isDocked, float uiScale)
-{
-	if (isDocked) {
-		RenderDockedIcons(actionIcons, uiScale);
-	} else {
-		RenderUndockedIcons(actionIcons, uiScale);
-	}
-}
-
-void MenuHeaderRenderer::RenderDockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale)
-{
-	if (actionIcons.empty())
-		return;
-
-	// Docked: Draw larger icons in the title bar using foreground draw list
-	const float currentFontSize = ImGui::GetFontSize();
-	const float iconSize = currentFontSize * ThemeManager::Constants::DOCKED_ICON_SIZE_MULTIPLIER * uiScale;
-	const float iconSpacing = ThemeManager::Constants::DOCKED_ICON_SPACING * uiScale;
-	const float rightMargin = ThemeManager::Constants::DOCKED_RIGHT_MARGIN * uiScale;
-
-	// Get window position and calculate title bar area
-	ImVec2 windowPos = ImGui::GetWindowPos();
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	float titleBarHeight = ImGui::GetFrameHeight();
-
-	// Use foreground draw list to draw over the title bar
-	ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
-
-	// Calculate icon positions (right to left from close button)
-	float iconX = windowPos.x + windowSize.x - rightMargin;
-	float iconY = windowPos.y + (titleBarHeight - iconSize) * 0.5f;
-
-	// Draw icons from right to left
-	for (auto it = actionIcons.rbegin(); it != actionIcons.rend(); ++it) {
-		iconX -= iconSize + iconSpacing;
-
-		// Slightly reduce the icon rendering area to minimize any transparent padding
-		const float paddingReduction = ThemeManager::Constants::DOCKED_ICON_PADDING_REDUCTION * uiScale;
-		ImVec2 iconMin(iconX + paddingReduction, iconY + paddingReduction);
-		ImVec2 iconMax(iconX + iconSize - paddingReduction, iconY + iconSize - paddingReduction);
-
-		// Use the full area for mouse interaction (including padding)
-		ImRect interactionRect({ iconX, iconY }, { iconX + iconSize, iconY + iconSize });
-
-		// Check mouse interaction against full area
-		const bool isHovered = ImGui::IsMouseHoveringRect(interactionRect.Min, interactionRect.Max, false);
-		Util::DrawRoundedButtonHighlight(interactionRect, isHovered, isHovered && ImGui::IsMouseDown(ImGuiMouseButton_Left), fgDrawList);
-
-		// Only render if texture is valid
-		if (it->texture) {
-			// Draw icon with hover effect, using reduced area to minimize padding
-			ImU32 tintColor;
-			if (globals::menu->GetSettings().Theme.UseMonochromeIcons) {
-				// Use theme text color for monochrome icons
-				ImVec4 textColor = globals::menu->GetSettings().Theme.Palette.Text;
-				if (!isHovered) {
-					textColor.w *= 0.85f;  // Slightly reduce alpha when not hovered
-				}
-				tintColor = ImGui::GetColorU32(textColor);
-			} else {
-				// Use white/gray tint for colored icons
-				tintColor = isHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(220, 220, 220, 220);
-			}
-			fgDrawList->AddImage(it->texture, iconMin, iconMax, ImVec2(0, 0), ImVec2(1, 1), tintColor);
-		}
-
-		// Handle interaction
-		if (isHovered) {
-			if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-				it->callback();
-			}
-
-			// Set tooltip manually since we're drawing outside normal ImGui flow
-			ImGui::SetTooltip("%s", it->tooltip);
-		}
-	}
-}
-
-void MenuHeaderRenderer::RenderUndockedIcons(const std::vector<ActionIcon>& actionIcons, float uiScale)
-{
-	if (actionIcons.empty())
-		return;
-
-	// Undocked: Draw icons as ImageButtons in a table column
-	const float currentFontSize = ImGui::GetFontSize();
-	const float baseIconSize = currentFontSize * ThemeManager::Constants::HEADER_BASE_ICON_MULTIPLIER;
-	const float iconSize = baseIconSize * uiScale;
-	const float paddingReduction = ThemeManager::Constants::UNDOCKED_ICON_PADDING_REDUCTION * uiScale;
-	const ImVec2 buttonSize(iconSize, iconSize);
-	const ImVec2 imageSize(iconSize - paddingReduction, iconSize - paddingReduction);
-
-	// Setup button styling for transparent background with hover effects
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ThemeManager::Constants::UNDOCKED_ICON_ITEM_SPACING, 0.0f));  // Slightly increased spacing
-	ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);                                                           // Remove button borders
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));                                                         // Transparent button background
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.8f, 0.8f, 0.25f));                                     // Slightly more visible hover effect
-
-	// Get tint color for monochrome icons
-	ImVec4 tintColor = ImVec4(1, 1, 1, 1);
-	if (globals::menu->GetSettings().Theme.UseMonochromeIcons) {
-		tintColor = globals::menu->GetSettings().Theme.Palette.Text;
-	}
-
-	// Draw action icons as ImageButtons
-	for (size_t i = 0; i < actionIcons.size(); ++i) {
-		const auto& icon = actionIcons[i];
-
-		// Skip if texture is null
-		if (!icon.texture) {
-			continue;
-		}
-
-		std::string buttonId = std::format("##ActionBtn{}", i);
-
-		// Use ImageButton with reduced image size to minimize padding
-		if (ImGui::ImageButton(buttonId.c_str(), icon.texture, imageSize, ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), tintColor)) {
-			icon.callback();
-		}
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", icon.tooltip);
-		}
-
-		// Add SameLine except for the last button
-		if (i < actionIcons.size() - 1) {
-			ImGui::SameLine();
-		}
-	}
-
-	// Restore default style
-	ImGui::PopStyleVar(2);    // Pop both style variables: ItemSpacing and FrameBorderSize
-	ImGui::PopStyleColor(2);  // Pop both style colors: Button and ButtonHovered
-}
-
-void MenuHeaderRenderer::RenderWatermarkLogo(const Menu::UIIcons& uiIcons)
-{
-	// Get current window's drawable area (excluding title bar)
-	ImVec2 windowPos = ImGui::GetWindowPos();
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	float titleBarHeight = ImGui::GetFrameHeight();
-
-	// Calculate content area (below title bar)
-	ImVec2 contentPos(windowPos.x, windowPos.y + titleBarHeight);
-	ImVec2 contentSize(windowSize.x, windowSize.y - titleBarHeight);
-
-	// Calculate watermark logo size - base it on height for consistent sizing
-	const float watermarkHeightPercent = ThemeManager::Constants::WATERMARK_HEIGHT_PERCENT;
-	float watermarkHeight = contentSize.y * watermarkHeightPercent;
-	float logoAspectRatio = uiIcons.logo.size.x / uiIcons.logo.size.y;
-	float watermarkWidth = watermarkHeight * logoAspectRatio;
-
-	// Position watermark in the center of the content area
-	float logoX = contentPos.x + (contentSize.x - watermarkWidth) * 0.5f;   // Horizontally centered
-	float logoY = contentPos.y + (contentSize.y - watermarkHeight) * 0.5f;  // Vertically centered
-
-	// Draw watermark logo with transparency and blending
-	ImDrawList* drawList = ImGui::GetWindowDrawList();
-	ImVec2 logoMin(logoX, logoY);
-	ImVec2 logoMax(logoX + watermarkWidth, logoY + watermarkHeight);
-
-	// Determine watermark color based on monochrome logo setting
-	ImU32 watermarkColor;
-	if (globals::menu->GetSettings().Theme.UseMonochromeLogo) {
-		ImVec4 textColor = globals::menu->GetSettings().Theme.Palette.Text;
-		textColor.w = 0.18f;  // Very low alpha for subtle watermark effect
-		watermarkColor = ImGui::GetColorU32(textColor);
-	} else {
-		watermarkColor = IM_COL32(255, 255, 255, 45);
-	}
-
-	drawList->AddImage(uiIcons.logo.texture, logoMin, logoMax, ImVec2(0, 0), ImVec2(1, 1), watermarkColor);
 }

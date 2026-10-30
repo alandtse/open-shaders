@@ -38,7 +38,10 @@ function(feature_ini_stage content out_alpha_var out_beta_var)
     else()
         set(${out_alpha_var} FALSE PARENT_SCOPE)
     endif()
-    if(NOT _alpha MATCHES "^(true|1|yes|on)$" AND _beta MATCHES "^(true|1|yes|on)$")
+    if(
+        NOT _alpha MATCHES "^(true|1|yes|on)$"
+        AND _beta MATCHES "^(true|1|yes|on)$"
+    )
         set(${out_beta_var} TRUE PARENT_SCOPE)
     else()
         set(${out_beta_var} FALSE PARENT_SCOPE)

@@ -10,14 +10,14 @@ namespace Util::DevBenchUx
 		return singleton;
 	}
 
-	void Registry::RegisterCommand(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, CommandFn a_fn)
+	void Registry::RegisterCommand(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, CommandFn a_fn, ExecutionThread a_thread)
 	{
-		commands[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn };
+		commands[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn, a_thread };
 	}
 
-	void Registry::RegisterQuery(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, QueryFn a_fn)
+	void Registry::RegisterQuery(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, QueryFn a_fn, ExecutionThread a_thread)
 	{
-		queries[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn };
+		queries[std::string(a_featureShortName)][std::string(a_name)] = { I18n::ExpandBrand(std::string(a_description)), a_fn, a_thread };
 	}
 
 	const CommandEntry* Registry::FindCommand(std::string_view a_featureShortName, std::string_view a_name) const
@@ -44,7 +44,7 @@ namespace Util::DevBenchUx
 		const auto featureIt = commands.find(std::string(a_featureShortName));
 		if (featureIt != commands.end())
 			for (const auto& [name, entry] : featureIt->second)
-				out.push_back(json{ { "name", name }, { "description", entry.description } });
+				out.push_back(json{ { "name", name }, { "description", entry.description }, { "executionThread", entry.executionThread == ExecutionThread::Render ? "render" : "main" } });
 		return out;
 	}
 
@@ -54,7 +54,7 @@ namespace Util::DevBenchUx
 		const auto featureIt = queries.find(std::string(a_featureShortName));
 		if (featureIt != queries.end())
 			for (const auto& [name, entry] : featureIt->second)
-				out.push_back(json{ { "name", name }, { "description", entry.description } });
+				out.push_back(json{ { "name", name }, { "description", entry.description }, { "executionThread", entry.executionThread == ExecutionThread::Render ? "render" : "main" } });
 		return out;
 	}
 }

@@ -9,7 +9,7 @@ namespace PostProcessingRaster
 {
 	RasterPass::RasterPass(ID3D11DeviceContext* a_context) :
 		context(a_context),
-		savedState(a_context, kPSSRVCount, 0, kPSCBCount)
+		savedState(a_context, kPSSRVCount, 0, kPSCBCount, kPSSamplerCount)
 	{
 		assert(context && globals::state && globals::state->sharedDataCB && globals::state->featureDataCB);
 

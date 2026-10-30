@@ -155,8 +155,7 @@ struct CSUtility : Feature
 		Water,                ///< Water rendering controls.
 		Materials,            ///< Material color controls.
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
-		VanillaBloom,         ///< Vanilla bloom controls.
-		VolumetricLighting
+		VanillaBloom          ///< Vanilla bloom controls.
 	};
 	/** The visible utility tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;

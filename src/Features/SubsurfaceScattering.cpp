@@ -438,6 +438,7 @@ void SubsurfaceScattering::SaveSettings(json& o_json)
 void SubsurfaceScattering::ClearShaderCache()
 {
 	prepassSS.Reset();
+	prepassBurleySS.Reset();
 	horizontalSSBlur.Reset();
 	verticalSSBlur.Reset();
 	burleySS.Reset();
@@ -445,6 +446,8 @@ void SubsurfaceScattering::ClearShaderCache()
 
 ID3D11ComputeShader* SubsurfaceScattering::GetComputeShaderPrepass()
 {
+	if (settings.SSMode == 1)
+		return prepassBurleySS.Get(L"Data\\Shaders\\SubsurfaceScattering\\DiffuseExtractionCS.hlsl", { { "BURLEY", "" } }, "cs_5_0");
 	return prepassSS.Get(L"Data\\Shaders\\SubsurfaceScattering\\DiffuseExtractionCS.hlsl", {}, "cs_5_0");
 }
 

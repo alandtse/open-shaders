@@ -909,6 +909,7 @@ void TerrainBlending::Hooks::BSBatchRenderer__RenderPassImmediately::thunk(RE::B
 			}
 
 			if (inTerrain) {
+				CS_GPU_PASS("TerrainBlending::TerrainDepth");
 				func(a_pass, a_technique, a_alphaTest, a_renderFlags);  // Run terrain twice
 			}
 		} else if (globals::state->inWorld) {
@@ -1019,8 +1020,11 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		// Enable rendering for depth below the surface
 		context->OMSetDepthStencilState(terrainDepthStencilState, 0xFF);
 
-		for (auto& renderPass : terrainRenderPasses)
-			Hooks::BSBatchRenderer__RenderPassImmediately::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+		{
+			CS_GPU_PASS("TerrainBlending::TerrainPasses");
+			for (auto& renderPass : terrainRenderPasses)
+				Hooks::BSBatchRenderer__RenderPassImmediately::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+		}
 
 		// Reset alpha blending
 		alphaBlendMode = 0;
@@ -1030,8 +1034,11 @@ void TerrainBlending::RenderTerrainBlendingPasses()
 		depthStencilDepthMode = RE::BSGraphics::DepthStencilDepthMode::kTestEqual;
 		stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_DEPTH_MODE);
 
-		for (auto& renderPass : renderPasses)
-			Hooks::BSBatchRenderer__RenderPassImmediately::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+		{
+			CS_GPU_PASS("TerrainBlending::NoBlendPasses");
+			for (auto& renderPass : renderPasses)
+				Hooks::BSBatchRenderer__RenderPassImmediately::func(renderPass.a_pass, renderPass.a_technique, renderPass.a_alphaTest, renderPass.a_renderFlags);
+		}
 
 		terrainRenderPasses.clear();
 		renderPasses.clear();

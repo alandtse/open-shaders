@@ -12,10 +12,10 @@
 
 /** Routes record-backed magic explosions into radial transient wind sources. */
 class ExplosionWindRouter final :
-	public WindEffect,
-	public RE::BSTEventSink<RE::TESHitEvent>,
-	public RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
-	public RE::BSTEventSink<RE::TESSpellCastEvent>
+    public WindEffect,
+    public RE::BSTEventSink<RE::TESHitEvent>,
+    public RE::BSTEventSink<RE::TESMagicEffectApplyEvent>,
+    public RE::BSTEventSink<RE::TESSpellCastEvent>
 {
 public:
 	/** User tuning applied after explosion-record classification. */

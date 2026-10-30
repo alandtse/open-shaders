@@ -1,4 +1,4 @@
-﻿#include "MenuManager.h"
+#include "MenuManager.h"
 
 #include "EffectManager.h"
 #include "Features/Effects11.h"
@@ -103,7 +103,7 @@ bool MenuManager::RenderPresetSelector()
 		if (ImGui::BeginCombo(T("feature.effects11.preset_location", "Preset location"), previewLabel.c_str())) {
 			for (const auto& loc : locations) {
 				const bool isSelected = active && active->root == loc.root;
-				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
+				if (Util::RoundedSelectable(loc.label.c_str(), isSelected)) {
 					presetManager.SetActiveLocation(loc.root);
 					effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
 					// After Load()/Apply(), not before: Save() piggybacks an ENB save for
@@ -119,7 +119,7 @@ bool MenuManager::RenderPresetSelector()
 		}
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T("feature.effects11.rescan_presets", "Rescan"))) {
+	if (Util::Button(T("feature.effects11.rescan_presets", "Rescan"))) {
 		presetManager.Rescan();
 		changed = true;
 	}

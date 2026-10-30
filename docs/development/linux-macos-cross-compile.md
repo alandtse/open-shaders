@@ -23,16 +23,16 @@ surface as an in-game crash, not a build failure.
 
 Three vcpkg overlay ports beyond CommonLibSSE-NG's own example were needed:
 
--   **`cppwinrt`** — the official port requires real Windows SDK `.winmd`
-    metadata that `xwin` doesn't stage. This codebase only uses
-    `winrt::com_ptr` (base COM interop), so this port runs `cppwinrt.exe
+- **`cppwinrt`** — the official port requires real Windows SDK `.winmd`
+  metadata that `xwin` doesn't stage. This codebase only uses
+  `winrt::com_ptr` (base COM interop), so this port runs `cppwinrt.exe
 -base` under Wine instead, which needs no SDK metadata.
--   **`detours`** — the official port's NMake-based build needs a real
-    `nmake.exe` (unavailable in an `xwin` sysroot); this one compiles the
-    same source-file set via a small vendored `CMakeLists.txt`.
--   **`directxtex`** — bundles its own BC6H-encode compute shaders,
-    compiled the same way DirectXTK's (already-solved) shaders are, reusing
-    the identical `fxc2`-under-Wine stand-in.
+- **`detours`** — the official port's NMake-based build needs a real
+  `nmake.exe` (unavailable in an `xwin` sysroot); this one compiles the
+  same source-file set via a small vendored `CMakeLists.txt`.
+- **`directxtex`** — bundles its own BC6H-encode compute shaders,
+  compiled the same way DirectXTK's (already-solved) shaders are, reusing
+  the identical `fxc2`-under-Wine stand-in.
 
 ## FidelityFX_SC.exe under Wine (resolved)
 

@@ -1,11 +1,14 @@
 #include "Feature.h"
 
+#include <unordered_map>
+
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
@@ -32,8 +35,6 @@
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/RainRefraction.h"
-#include "Features/RemoteControl.h"
-#include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
@@ -64,6 +65,12 @@
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Format.h"
+
+void Feature::MigrateConfigSettings(json& settings)
+{
+	for (auto* feature : GetFeatureList())
+		feature->MigrateLegacySettings(settings);
+}
 
 void Feature::Load(json& o_json)
 {
@@ -176,7 +183,7 @@ void Feature::Load(json& o_json)
 			logger::error("Feature has empty short name, cannot add to feature issues list");
 		}
 	} else {
-		if (!UsesMainSettings())
+		if (!HasPersonalSettings())
 			return;
 
 		// No errors, load settings now
@@ -185,8 +192,17 @@ void Feature::Load(json& o_json)
 			try {
 				LoadSettings(o_json[GetName()]);
 			} catch (...) {
-				logger::warn("Invalid settings for {}, using default.", GetName());
+				logger::warn("Invalid settings for {}, using defaults and preset Baselines.", GetName());
 				RestoreDefaultSettings();
+				if (const auto* base = globals::state->GetFeatureBase(GetName())) {
+					try {
+						auto values = *base;
+						LoadSettings(values);
+					} catch (...) {
+						logger::warn("Invalid Baseline settings for {}, using default.", GetName());
+						RestoreDefaultSettings();
+					}
+				}
 			}
 		} else {
 			logger::info("Loading default settings for {}", GetName());
@@ -197,7 +213,7 @@ void Feature::Load(json& o_json)
 
 void Feature::Save(json& o_json)
 {
-	if (UsesMainSettings())
+	if (HasPersonalSettings())
 		SaveSettings(o_json[GetName()]);
 }
 
@@ -283,8 +299,7 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
-			&globals::features::renderDoc,
-			&globals::features::remoteControl,
+			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
@@ -486,7 +501,24 @@ void Feature::DrainSceneTransitions()
 
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 {
-	return FindLoadedFeature([&](Feature* f) { return f->GetShortName() == shortName; });
+	const auto& features = GetFeatureList();
+	const bool developerMode = globals::game::isVR && globals::state->IsDeveloperMode();
+	thread_local const std::vector<Feature*>* indexedFeatureList = nullptr;
+	thread_local bool indexedDeveloperMode = false;
+	thread_local std::unordered_map<std::string, Feature*> featuresByShortName;
+
+	// Developer Mode rebuilds the VR list in place, so invalidate its name index too.
+	if (indexedFeatureList != &features || indexedDeveloperMode != developerMode) {
+		featuresByShortName.clear();
+		featuresByShortName.reserve(features.size());
+		for (auto* feature : features)
+			featuresByShortName.emplace(feature->GetShortName(), feature);
+		indexedFeatureList = &features;
+		indexedDeveloperMode = developerMode;
+	}
+
+	const auto it = featuresByShortName.find(shortName);
+	return it != featuresByShortName.end() && it->second->loaded ? it->second : nullptr;
 }
 
 bool Feature::FindSceneExposure(SceneExposure& a_out)
@@ -672,6 +704,12 @@ std::string Feature::GetReleaseStageTag(ReleaseStage stage)
 	default:
 		return {};
 	}
+}
+
+ImVec4 Feature::GetReleaseStageColor(ReleaseStage stage)
+{
+	const auto& status = globals::menu->GetTheme().StatusPalette;
+	return stage == ReleaseStage::Alpha ? status.Error : status.Warning;
 }
 
 void Feature::DrawUnloadedUI()

@@ -123,6 +123,8 @@ public:
 
 	/** @brief Identity of a catalogued setting in the queue, also used to outline it in its feature menu. */
 	static std::string SettingKey(const SceneSettingsCatalog::SettingMetadata& setting);
+	/** @brief Registers benchmark actions for settings controls. */
+	static void RegisterSettingActions();
 
 	/** @brief Adds a comparison of the current settings with one catalogued setting changed to `target`; queuing the same setting again replaces it. */
 	bool QueueSetting(Feature& feature, const SceneSettingsCatalog::SettingMetadata& setting, const nlohmann::json& target, std::string label, std::string* error);

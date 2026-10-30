@@ -394,6 +394,11 @@ float4 ComputeLightScattering(uint3 coord, float3 cellOffset)
 		return;
 	}
 
+	if (all(VBufferA[dispatchID] == 0.0f)) {
+		LightScattering[dispatchID] = 0.0f.xxxx;
+		return;
+	}
+
 	bool validHistory;
 	float3 historyUV = ComputeHistoryVolumeUV(centerPositionWS, eyeIndex, validHistory);
 	if (VolumetricFogHasPrevConservativeDepth && validHistory) {

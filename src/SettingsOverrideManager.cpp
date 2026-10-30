@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "FeatureIssues.h"
 #include "Util.h"
+#include "Utils/FileSystem.h"
 #include "Utils/SettingsPatch.h"
 
 #include <algorithm>
@@ -35,6 +36,8 @@ size_t SettingsOverrideManager::DiscoverOverrides()
 
 	overrides.clear();
 	featureOverrideMap.clear();
+	loadedUserOverrideSettings.clear();
+	++revision;
 
 	auto overridesDir = GetOverridesDirectory();
 
@@ -340,21 +343,7 @@ void SettingsOverrideManager::SaveAppliedOverridesTracking(const json& appliedOv
 			}
 		}
 
-		std::ofstream file(trackingPath);
-		if (file.is_open()) {
-			try {
-				file << appliedOverrides.dump(1);
-				file.flush();
-
-				if (file.fail()) {
-					logger::info("Failed to write applied overrides tracking file completely");
-				}
-			} catch (const json::exception& e) {
-				logger::info("JSON error writing applied overrides tracking file: {}", e.what());
-			}
-		} else {
-			logger::info("Could not open applied overrides tracking file for writing: {}", trackingPath.string());
-		}
+		Util::FileHelpers::WriteJsonAtomically(trackingPath, appliedOverrides, 1, "applied overrides tracking");
 	} catch (const std::filesystem::filesystem_error& e) {
 		logger::info("Filesystem error saving applied overrides tracking: {}", e.what());
 	} catch (const std::exception& e) {
@@ -624,11 +613,11 @@ bool SettingsOverrideManager::ValidateOverrideFormat(const json& overrideJson, c
 	}
 }
 
-bool SettingsOverrideManager::ValidateJsonDataTypes(const json& jsonData, const std::string& path, const std::string& filePath)
+bool SettingsOverrideManager::ValidateJsonDataTypes(const json& jsonData, const std::string& path, const std::string& filePath, size_t depth)
 {
 	try {
 		// Check nesting depth
-		if (static_cast<size_t>(std::count(path.begin(), path.end(), '.')) > MAX_JSON_DEPTH) {
+		if (depth > MAX_JSON_DEPTH) {
 			if (!filePath.empty()) {
 				logger::info("JSON nesting too deep at '{}' (max {}) in override file: {}", path, MAX_JSON_DEPTH, filePath);
 			}
@@ -654,7 +643,7 @@ bool SettingsOverrideManager::ValidateJsonDataTypes(const json& jsonData, const 
 
 				// Recursively validate value
 				std::string newPath = path.empty() ? key : path + "." + key;
-				if (!ValidateJsonDataTypes(value, newPath, filePath)) {
+				if (!ValidateJsonDataTypes(value, newPath, filePath, depth + 1)) {
 					return false;
 				}
 			}
@@ -668,7 +657,7 @@ bool SettingsOverrideManager::ValidateJsonDataTypes(const json& jsonData, const 
 
 			for (size_t i = 0; i < jsonData.size(); ++i) {
 				std::string newPath = path + "[" + std::to_string(i) + "]";
-				if (!ValidateJsonDataTypes(jsonData[i], newPath, filePath)) {
+				if (!ValidateJsonDataTypes(jsonData[i], newPath, filePath, depth + 1)) {
 					return false;
 				}
 			}
@@ -942,6 +931,7 @@ bool SettingsOverrideManager::LoadUserOverride(const std::string& featureName, j
 		return false;
 	}
 
+	loadedUserOverrideSettings.erase(featureName);
 	auto userFilePath = GetUserOverridesDirectory() / (featureName + ".user.json");
 
 	std::error_code ec;
@@ -971,7 +961,9 @@ bool SettingsOverrideManager::LoadUserOverride(const std::string& featureName, j
 		}
 
 		const auto mask = GetMergedOverrideSettings(featureName, json::object());
-		MergeJson(featureJson, Util::Settings::SelectSettings(userJson, mask));
+		auto values = Util::Settings::SelectSettings(userJson, mask);
+		MergeJson(featureJson, values);
+		loadedUserOverrideSettings[featureName] = std::move(values);
 		logger::info("Loaded user override for {}", featureName);
 		return true;
 
@@ -1000,22 +992,10 @@ bool SettingsOverrideManager::SaveUserOverride(const std::string& featureName, c
 
 		auto userFilePath = userDir / (featureName + ".user.json");
 
-		std::ofstream file(userFilePath);
-		if (!file.is_open()) {
-			logger::info("Could not create user override file: {}", userFilePath.string());
+		if (!Util::FileHelpers::WriteJsonAtomically(userFilePath, userOverride, 1, "user override")) {
 			return false;
 		}
-
-		file << userOverride.dump(1);
-		file.flush();
-
-		if (file.fail()) {
-			logger::info("Failed to write user override file: {}", userFilePath.string());
-			file.close();
-			return false;
-		}
-
-		file.close();
+		loadedUserOverrideSettings[featureName] = userOverride;
 
 		// Store the current override hash so we can detect if overrides change later
 		json tracking = LoadAppliedOverridesTracking();
@@ -1062,6 +1042,7 @@ bool SettingsOverrideManager::DeleteUserOverride(const std::string& featureName)
 
 	std::error_code ec;
 	if (!std::filesystem::exists(userFilePath, ec)) {
+		loadedUserOverrideSettings.erase(featureName);
 		return true;  // Already doesn't exist
 	}
 
@@ -1071,6 +1052,7 @@ bool SettingsOverrideManager::DeleteUserOverride(const std::string& featureName)
 			logger::info("Failed to delete user override file: {}", ec.message());
 			return false;
 		}
+		loadedUserOverrideSettings.erase(featureName);
 
 		// Clean up tracking entry
 		json tracking = LoadAppliedOverridesTracking();

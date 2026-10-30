@@ -187,8 +187,12 @@ void VolumetricShadows::CopyShadowLightData()
 
 						context->CSSetSamplers(0, 1, &linearSampler);
 
-						// Dispatch covers full input: each thread gathers 2x2, 8 threads per group
-						auto dispatchSize = srcDesc.Width / 16;
+						// A group spans 16 source texels; a 32x reduction gathers twice per thread.
+						auto dispatchSize = [&](uint32_t outputSize) {
+							return srcDesc.Width / 16 / std::max(srcDesc.Width / outputSize / 16, 1u);
+						};
+						auto mip0Groups = dispatchSize(SHADOW_COPY_SIZE);
+						auto mip1Groups = dispatchSize(SHADOW_COPY_SIZE / 2);
 
 						// Mip 0 (cascade 1)
 						ID3D11UnorderedAccessView* csUavs[1]{ shadowCopyMip0UAV };
@@ -196,7 +200,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShader(downsampleMip0, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::DownsampleMip0");
-							context->Dispatch(dispatchSize, dispatchSize, 1);
+							context->Dispatch(mip0Groups, mip0Groups, 1);
 						}
 
 						// Mip 1 (cascade 0)
@@ -205,7 +209,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShader(downsampleMip1, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::DownsampleMip1");
-							context->Dispatch(dispatchSize, dispatchSize, 1);
+							context->Dispatch(mip1Groups, mip1Groups, 1);
 						}
 
 						// Unbind SRVs before blur passes

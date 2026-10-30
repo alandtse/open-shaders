@@ -9,7 +9,6 @@
 #include "Utils/MathUtils.h"
 #include "Utils/PointLightFlags.h"
 #include "Utils/UI.h"
-#include "VolumetricLighting.h"
 
 #include <algorithm>
 #include <array>
@@ -280,7 +279,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void CSUtility::DrawAtmosphereSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_atmosphere"), "Atmosphere")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_atmosphere"), "Atmosphere")))
 		return;
 	activeSettingsPage = SettingsPage::Atmosphere;
 	ImGui::Checkbox(T(TKEY("ambient_effect_lighting"), "Ambient Lighting for Effects and Sky Statics"), &settings.useAmbientEffectLighting);
@@ -346,12 +345,12 @@ void CSUtility::DrawAtmosphereSettings()
 		DrawColorAdjustmentSliders(T(TKEY("sun_glare"), "Sun Glare"), settings.sunGlareColor);
 		ImGui::TreePop();
 	}
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void CSUtility::DrawLightSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_multipliers"), "Light")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_multipliers"), "Light")))
 		return;
 	activeSettingsPage = SettingsPage::Light;
 	const bool linearLightingEnabled = globals::features::linearLighting.settings.enableLinearLighting;
@@ -368,24 +367,24 @@ void CSUtility::DrawLightSettings()
 	DrawLightGroup(T(TKEY("omnidirectional_bulbs"), "Omnidirectional Bulbs"), settings.omnidirectionalBulbMult, settings.omnidirectionalBulbColor);
 	DrawLightGroup(T(TKEY("omnidirectional_bulbs_linear"), "Omnidirectional Bulbs (Linear Flagged)"), settings.linearOmnidirectionalBulbMult, settings.linearOmnidirectionalBulbColor, ImGuiTreeNodeFlags_None, kMultiplierMin, kMultiplierMax, linearLightingEnabled, nullptr,
 		T(TKEY("omnidirectional_bulbs_linear_label"), "Omnidirectional Bulbs (Linear)"));
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void CSUtility::DrawMaterialSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("materials"), "Materials")))
+	if (!Util::BeginPillTabItem(T(TKEY("materials"), "Materials")))
 		return;
 	activeSettingsPage = SettingsPage::Materials;
 	DrawLightGroup(T(TKEY("emissive_multiplier"), "Emissive"), settings.emitColorMult, settings.emitColor, ImGuiTreeNodeFlags_DefaultOpen);
 	DrawLightGroup(T(TKEY("glowmap_multiplier"), "Glowmaps"), settings.glowmapMult, settings.glowmapColor, ImGuiTreeNodeFlags_DefaultOpen);
 	DrawLightGroup(T(TKEY("effect_lighting_multiplier"), "Effects"), settings.effectLightingMult, settings.effectLightingColor, ImGuiTreeNodeFlags_DefaultOpen, kMultiplierMin, kMultiplierMax, true,
 		T(TKEY("effect_lighting_multiplier_tooltip"), "Adjusts lighting on effect meshes according to their lighting influence."));
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void CSUtility::DrawSettings()
 {
-	if (ImGui::BeginTabBar("##CSUtilityTabs", ImGuiTabBarFlags_None)) {
+	if (Util::BeginPillTabBar("##CSUtilityTabs")) {
 		DrawAtmosphereSettings();
 		DrawLightSettings();
 		DrawWaterSettings();
@@ -394,14 +393,7 @@ void CSUtility::DrawSettings()
 		DrawDepthOfFieldSettings();
 		DrawVanillaBloomSettings();
 
-		auto& volumetricLighting = globals::features::volumetricLighting;
-		if (volumetricLighting.loaded && ImGui::BeginTabItem(volumetricLighting.GetDisplayName().c_str())) {
-			activeSettingsPage = SettingsPage::VolumetricLighting;
-			Util::DrawEmbeddedFeatureSettings(volumetricLighting);
-			ImGui::EndTabItem();
-		}
-
-		ImGui::EndTabBar();
+		Util::EndPillTabBar();
 	}
 }
 
@@ -427,7 +419,7 @@ void CSUtility::SanitizeWaterSettings(WaterSettings& a_settings)
 
 void CSUtility::DrawWaterSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_water"), "Water")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_water"), "Water")))
 		return;
 
 	activeSettingsPage = SettingsPage::Water;
@@ -467,15 +459,15 @@ void CSUtility::DrawWaterSettings()
 	}
 
 	SanitizeWaterSettings(water);
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void CSUtility::DrawVanillaBloomSettings()
 {
-	if (ImGui::BeginTabItem(T(TKEY("tab_vanilla_bloom"), "Vanilla Bloom"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_vanilla_bloom"), "Vanilla Bloom"))) {
 		activeSettingsPage = SettingsPage::VanillaBloom;
 		Bloom::DrawSettings(settings.bloomEnhancement);
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
 }
 
@@ -562,9 +554,6 @@ void CSUtility::RestoreCurrentPageDefaultSettings()
 	case SettingsPage::VanillaBloom:
 		settings.bloomEnhancement = defaults.bloomEnhancement;
 		break;
-	case SettingsPage::VolumetricLighting:
-		globals::features::volumetricLighting.RestoreDefaultSettings();
-		break;
 	}
 }
 
@@ -590,8 +579,6 @@ bool CSUtility::ReapplyCurrentPageOverrideSettings()
 		return ReapplyOverrideSettingsForKeys(depthOfFieldKeys);
 	case SettingsPage::VanillaBloom:
 		return ReapplyOverrideSettingsForKeys(bloomKeys);
-	case SettingsPage::VolumetricLighting:
-		return globals::features::volumetricLighting.ReapplyOverrideSettings();
 	}
 	return false;
 }

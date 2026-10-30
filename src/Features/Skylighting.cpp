@@ -178,7 +178,7 @@ void Skylighting::DrawSettings()
 
 	ImGui::Separator();
 
-	if (ImGui::Button(T(TKEY("rebuild"), "Rebuild Skylighting")))
+	if (Util::Button(T(TKEY("rebuild"), "Rebuild Skylighting")))
 		ResetSkylighting();
 
 	if (auto _tt = Util::HoverTooltipWrapper())

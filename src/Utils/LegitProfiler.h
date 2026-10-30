@@ -165,9 +165,11 @@ namespace ImGuiUtils
 		{
 			ImDrawList* drawList = ImGui::GetWindowDrawList();
 			const ImVec2 widgetPos = ImGui::GetCursorScreenPos();
+			drawList->PushClipRect(widgetPos, ImVec2(widgetPos.x + graphWidth + legendWidth, widgetPos.y + height), true);
 			RenderGraph(drawList, widgetPos, ImVec2(graphWidth, height), frameIndexOffset, maxFrameTime, uiScale);
 			if (legendWidth > 0.0f)
 				RenderLegend(drawList, ImVec2(widgetPos.x + graphWidth, widgetPos.y), ImVec2(legendWidth, height), frameIndexOffset, maxFrameTime, uiScale);
+			drawList->PopClipRect();
 			ImGui::Dummy(ImVec2(graphWidth + legendWidth, height));
 		}
 
@@ -338,16 +340,16 @@ namespace ImGuiUtils
 		static void Rect(ImDrawList* drawList, ImVec2 minPoint, ImVec2 maxPoint, uint32_t col, bool filled = true)
 		{
 			if (filled)
-				drawList->AddRectFilled(minPoint, maxPoint, col);
+				drawList->AddRectFilled(minPoint, maxPoint, ImGui::GetColorU32(col));
 			else
-				drawList->AddRect(minPoint, maxPoint, col);
+				drawList->AddRect(minPoint, maxPoint, ImGui::GetColorU32(col));
 		}
 
 		static void Text(ImDrawList* drawList, ImVec2 point, uint32_t col, const char* text, float scale = 1.0f)
 		{
 			ImFont* font = ImGui::GetFont();
 			const float fontSize = ImGui::GetFontSize() * scale;
-			drawList->AddText(font, fontSize, point, col, text);
+			drawList->AddText(font, fontSize, point, ImGui::GetColorU32(col), text);
 		}
 
 		static float CalcTextWidth(const char* text, float scale = 1.0f)
@@ -367,7 +369,7 @@ namespace ImGuiUtils
 				ImVec2(rightMinPoint.x, rightMaxPoint.y),
 				ImVec2(rightMinPoint.x, rightMinPoint.y)
 			};
-			drawList->AddConvexPolyFilled(points.data(), int(points.size()), col);
+			drawList->AddConvexPolyFilled(points.data(), int(points.size()), ImGui::GetColorU32(col));
 		}
 
 		struct FrameData

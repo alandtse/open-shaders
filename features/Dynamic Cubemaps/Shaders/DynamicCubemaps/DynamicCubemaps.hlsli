@@ -19,7 +19,7 @@ namespace DynamicCubemaps
 #if !defined(WATER)
 
 #	if defined(SKYLIGHTING)
-	float3 GetDynamicCubemapSpecularIrradiance(float3 N, float3 V, float roughness, sh2 skylighting)
+	float3 GetDynamicCubemapSpecularIrradiance(float3 N, float3 V, float roughness, sh2 skylighting, float skylightingFadeOut)
 #	else
 	float3 GetDynamicCubemapSpecularIrradiance(float3 N, float3 V, float roughness)
 #	endif
@@ -53,8 +53,8 @@ namespace DynamicCubemaps
 #		if defined(SKYLIGHTING)
 			skylightingSpecular = 0.0;
 			if (!SharedData::InInterior) {
-				skylightingSpecular = Skylighting::EvaluateSpecular(skylighting, SphericalHarmonics::FauxSpecularLobe(N, V, roughness));
-				skylightingVisibility = Skylighting::EvaluateVisibility(skylighting);
+				skylightingSpecular = Skylighting::EvaluateSpecular(skylighting, SphericalHarmonics::FauxSpecularLobe(N, V, roughness), skylightingFadeOut);
+				skylightingVisibility = Skylighting::EvaluateVisibility(skylighting, skylightingFadeOut);
 			}
 #		endif
 

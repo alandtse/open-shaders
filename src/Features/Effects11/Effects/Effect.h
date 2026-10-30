@@ -5,6 +5,7 @@
 #include <winrt/base.h>
 
 #include "../TextureManager.h"
+#include "Profiler.h"
 
 class Effect
 {

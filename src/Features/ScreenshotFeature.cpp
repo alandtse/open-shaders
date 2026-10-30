@@ -12,6 +12,7 @@
 #include <PCH.h>
 
 #include "Features/HDRDisplay.h"
+#include "Features/Screenshot/Avif.h"
 #include "Features/Upscaling.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -19,6 +20,7 @@
 #include "Utils/D3D.h"
 #include "Utils/FileSystem.h"
 #include "Utils/HdrPngMetadata.h"
+#include "Utils/UILayout.h"
 
 #define I18N_KEY_PREFIX "feature.screenshot."
 
@@ -44,6 +46,7 @@ namespace
 	{
 		ID3D11Texture2D* texture = nullptr;
 		ID3D11ShaderResourceView* srv = nullptr;
+		ID3D11ShaderResourceView* uiSRV = nullptr;
 		// kFRAMEBUFFER's SRV aliases the swap-chain backbuffer, which ImGui's DX11
 		// backend can't sample directly. When true, the preview path copies through
 		// the SRV-readable cache instead.
@@ -59,8 +62,56 @@ namespace
 		Exclude
 	};
 
-	// Render thread only: the immediate context is not thread-safe. Never waits for the
-	// GPU; DXGI_ERROR_WAS_STILL_DRAWING means poll again next frame.
+	struct CaptureStateGuard
+	{
+		ID3D11DeviceContext* context;
+		ID3D11RenderTargetView* rtvs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT]{};
+		winrt::com_ptr<ID3D11DepthStencilView> dsv;
+		winrt::com_ptr<ID3D11ComputeShader> shader;
+		ID3D11ClassInstance* instances[256]{};
+		UINT instanceCount = ARRAYSIZE(instances);
+		ID3D11ShaderResourceView* srvs[2]{};
+		winrt::com_ptr<ID3D11UnorderedAccessView> uav;
+		winrt::com_ptr<ID3D11Buffer> cb;
+
+		explicit CaptureStateGuard(ID3D11DeviceContext* a_context) :
+			context(a_context)
+		{
+			context->OMGetRenderTargets(ARRAYSIZE(rtvs), rtvs, dsv.put());
+			context->CSGetShader(shader.put(), instances, &instanceCount);
+			context->CSGetShaderResources(0, ARRAYSIZE(srvs), srvs);
+			context->CSGetUnorderedAccessViews(0, 1, uav.put());
+			context->CSGetConstantBuffers(0, 1, cb.put());
+			context->OMSetRenderTargets(0, nullptr, nullptr);
+			ID3D11UnorderedAccessView* nullUAV = nullptr;
+			context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+		}
+
+		~CaptureStateGuard()
+		{
+			ID3D11ShaderResourceView* nullSRVs[2]{};
+			context->CSSetShaderResources(0, ARRAYSIZE(nullSRVs), nullSRVs);
+			auto* savedUAV = uav.get();
+			const UINT keepCounter = UINT32_MAX;
+			context->CSSetUnorderedAccessViews(0, 1, &savedUAV, &keepCounter);
+			context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, dsv.get());
+			context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+			auto* savedCB = cb.get();
+			context->CSSetConstantBuffers(0, 1, &savedCB);
+			context->CSSetShader(shader.get(), instances, instanceCount);
+			for (auto* rtv : rtvs)
+				if (rtv)
+					rtv->Release();
+			for (auto* srv : srvs)
+				if (srv)
+					srv->Release();
+			for (UINT i = 0; i < instanceCount; ++i)
+				if (instances[i])
+					instances[i]->Release();
+		}
+	};
+
+	/** @brief Reads a completed staging copy on the render thread without waiting for the GPU. */
 	HRESULT PopulateScratchImageFromStagingTexture(
 		ID3D11DeviceContext* context,
 		ID3D11Texture2D* stagingTexture,
@@ -93,7 +144,7 @@ namespace
 		// Driver-mapped region can be smaller than height * mapped.RowPitch
 		// (alignment quirks, partial mappings). Cap by mapped.DepthPitch and
 		// clamp each row's copy to whichever of source/dest pitches is smaller -
-		// stepping past either side hits unmapped memory and the worker crashes
+		// stepping past either side hits unmapped memory and the copy crashes
 		// inside rep movsb (see crash 2026-05-19).
 		const size_t bytesPerRow = std::min<size_t>(destImage->rowPitch, mapped.RowPitch);
 		const size_t mappedDepth = mapped.DepthPitch != 0 ? mapped.DepthPitch :
@@ -315,7 +366,7 @@ namespace
 		return resolveFromView(Util::AsReal(slot.RTV));
 	}
 
-	// Returns the texture that was presented to the display (post-ApplyHDR).
+	// ApplyHDR has encoded the back buffer before the actual Present.
 	ID3D11Texture2D* ResolveDisplayedBackBuffer(winrt::com_ptr<ID3D11Texture2D>& holder)
 	{
 		auto& upscaling = globals::features::upscaling;
@@ -391,10 +442,19 @@ namespace
 					}
 				}
 			}
+		}
 
+		auto& upscaling = globals::features::upscaling;
+		if (IsFlatHdrScreenshotCapture() || upscaling.d3d12SwapChainActive) {
 			src.texture = ResolveDisplayedBackBuffer(holder);
+			if (upscaling.d3d12SwapChainActive && upscaling.ShouldUseFrameGenerationThisFrame()) {
+				if (!upscaling.dx12SwapChain.swapChainBufferWrapped || !upscaling.dx12SwapChain.uiBufferWrapped)
+					return {};
+				src.srv = upscaling.dx12SwapChain.swapChainBufferWrapped->srv;
+				src.uiSRV = upscaling.dx12SwapChain.uiBufferWrapped->srv;
+			}
 			src.needsPreviewCache = true;
-			src.description = "Swap chain back buffer (HDR display composite)";
+			src.description = "Swap chain back buffer (display composite)";
 			return src;
 		}
 
@@ -417,36 +477,11 @@ namespace
 		       combo[0].GetKey() == VK_SNAPSHOT;
 	}
 
-	// Forces BlendEnable=FALSE and opaque alpha for the preview Image draw.
-	// Paired with ImDrawCallback_ResetRenderState queued by Subrect::DrawEditor.
-	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*)
-	{
-		const bool writeAlpha = IsFlatHdrScreenshotCapture() && Menu::GetSingleton()->IsEnabled;
-
-		static winrt::com_ptr<ID3D11BlendState> rgbBlend;
-		static winrt::com_ptr<ID3D11BlendState> rgbaBlend;
-		auto& blend = writeAlpha ? rgbaBlend : rgbBlend;
-		if (!blend) {
-			D3D11_BLEND_DESC desc{};
-			desc.RenderTarget[0].BlendEnable = FALSE;
-			desc.RenderTarget[0].RenderTargetWriteMask =
-				D3D11_COLOR_WRITE_ENABLE_RED |
-				D3D11_COLOR_WRITE_ENABLE_GREEN |
-				D3D11_COLOR_WRITE_ENABLE_BLUE |
-				(writeAlpha ? D3D11_COLOR_WRITE_ENABLE_ALPHA : 0);
-			globals::d3d::device->CreateBlendState(&desc, blend.put());
-		}
-		if (blend) {
-			globals::d3d::context->OMSetBlendState(blend.get(), nullptr, 0xFFFFFFFF);
-		}
-	}
-
-	std::filesystem::path BuildScreenshotPath(const std::string& screenshotPath, bool usePng)
+	std::filesystem::path BuildScreenshotPath(const std::string& screenshotPath, const char* extension)
 	{
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 		char buf[80];
-		const char* extension = usePng ? ".png" : ".bmp";
 		snprintf(buf, sizeof(buf), "OS_%04d-%02d-%02d_%02d-%02d-%02d_%03d%s",
 			st.wYear, st.wMonth, st.wDay,
 			st.wHour, st.wMinute, st.wSecond,
@@ -616,8 +651,13 @@ namespace
 		DXGI_FORMAT format,
 		int hdrPngBitDepth,
 		bool saveAsHdrPng,
+		bool saveAsHdrAvif,
 		bool saveAsSdrPng)
 	{
+		if (saveAsHdrAvif) {
+			const auto* firstImage = image.GetImage(0, 0, 0);
+			return firstImage && Screenshot::SaveHdrAvif(*firstImage, outputPath);
+		}
 		if (saveAsHdrPng) {
 			return SaveHdrPng(image, outputPath, hdrPngBitDepth, format);
 		}
@@ -656,6 +696,7 @@ bool ScreenshotFeature::IsInMenu() const
 
 void ScreenshotFeature::PostPostLoad()
 {
+	ApplyVanillaScreenshotSetting();
 	// fork: seed VR per-eye Subrect presets here, not in LoadSettings -- Feature::Load only
 	// dispatches to LoadSettings when the JSON already has a settings block, so a fresh install
 	// would skip a seed placed there. Left Eye first so it's the default (matches vanilla VR saves).
@@ -668,6 +709,26 @@ void ScreenshotFeature::PostPostLoad()
 	}
 }
 
+void ScreenshotFeature::ApplyVanillaScreenshotSetting()
+{
+	// Toggles the in-memory value only; Skyrim.ini on disk is never rewritten.
+	auto* setting = RE::GetINISetting("bAllowScreenShot:Display");
+	if (!setting || setting->GetType() != RE::Setting::Type::kBool)
+		return;
+	if (!vanillaScreenshotDefault)
+		vanillaScreenshotDefault = setting->GetBool();
+	const bool allow = disableVanillaScreenshot ? false : *vanillaScreenshotDefault;
+	if (setting->GetBool() != allow) {
+		setting->data.b = allow;
+		logger::info("[Screenshot] Vanilla screenshots {}", allow ? "enabled" : "disabled");
+	}
+}
+
+void ScreenshotFeature::ClearShaderCache()
+{
+	compositeCS = nullptr;
+}
+
 void ScreenshotFeature::LoadSettings(json& a_json)
 {
 	if (a_json.contains("ScreenshotPath"))
@@ -676,12 +737,17 @@ void ScreenshotFeature::LoadSettings(json& a_json)
 		applyCropToScreenshot = a_json["ApplyCropToScreenshot"];
 	if (a_json.contains("HdrPngBitDepth"))
 		hdrPngBitDepth = std::clamp<unsigned int>(a_json["HdrPngBitDepth"], 7u, 16u);
+	if (a_json.contains("HdrUseAvif") && a_json["HdrUseAvif"].is_boolean())
+		hdrUseAvif = a_json["HdrUseAvif"];
 	if (a_json.contains("SdrUsePng"))
 		sdrUsePng = a_json["SdrUsePng"];
 	if (a_json.contains("CopyToClipboard"))
 		copyToClipboard = a_json["CopyToClipboard"];
+	if (a_json.contains("DisableVanillaScreenshot") && a_json["DisableVanillaScreenshot"].is_boolean())
+		disableVanillaScreenshot = a_json["DisableVanillaScreenshot"];
 
 	subrect.LoadSettings(a_json);
+	ApplyVanillaScreenshotSetting();
 }
 
 void ScreenshotFeature::SaveSettings(json& a_json)
@@ -689,8 +755,10 @@ void ScreenshotFeature::SaveSettings(json& a_json)
 	a_json["ScreenshotPath"] = screenshotPath;
 	a_json["ApplyCropToScreenshot"] = applyCropToScreenshot;
 	a_json["HdrPngBitDepth"] = hdrPngBitDepth;
+	a_json["HdrUseAvif"] = hdrUseAvif;
 	a_json["SdrUsePng"] = sdrUsePng;
 	a_json["CopyToClipboard"] = copyToClipboard;
+	a_json["DisableVanillaScreenshot"] = disableVanillaScreenshot;
 	subrect.SaveSettings(a_json);
 }
 
@@ -701,32 +769,43 @@ void ScreenshotFeature::DrawSettings()
 	const bool hdrCaptureAvailable = IsFlatHdrScreenshotCapture();
 
 	if (hdrCaptureAvailable) {
-		ImGui::TextWrapped("%s",
-			T(TKEY("hdr_note"),
-				"HDR enabled: saves the displayed frame as a 48 bpp RGB PNG with HDR10 metadata "
-				"(cICP color signaling plus MaxCLL/MaxFALL and mastering-display levels, BT.2020 PQ). "
-				"Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF."));
-		ImGui::SliderInt(
-			T(TKEY("hdr_bit_depth"), "HDR PNG bit depth"),
-			reinterpret_cast<int*>(&hdrPngBitDepth),
-			7,
-			16,
-			"%d-bit",
-			ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text(
-				"%s", T(TKEY("hdr_bit_depth_tooltip"),
-						  "Quantization for the 48 bpp RGB PNG payload. 11-bit is a good default; "
-						  "higher values increase file size with diminishing returns."));
-
+		int hdrFormat = hdrUseAvif ? 1 : 0;
+		ImGui::RadioButton(T(TKEY("hdr_png"), "HDR PNG"), &hdrFormat, 0);
+		ImGui::SameLine();
+		ImGui::RadioButton(T(TKEY("hdr_avif"), "HDR AVIF"), &hdrFormat, 1);
+		hdrUseAvif = hdrFormat != 0;
+		if (hdrUseAvif) {
+			ImGui::TextWrapped("%s",
+				T(TKEY("hdr_avif_note"),
+					"Saves PQ/BT.2020 HDR with lossless 4:4:4 encoding. HDR10 pixels retain 10-bit precision; "
+					"floating-point pixels are quantized to 12-bit. Encoding runs in the background and may take longer. "
+					"Viewing requires HDR AVIF support."));
+		} else {
+			ImGui::TextWrapped("%s",
+				T(TKEY("hdr_note"),
+					"HDR enabled: saves the displayed frame as PNG with HDR10 metadata (48 bpp RGB, cICP/cLLi). "
+					"Use an HDR-aware viewer such as Windows Photos (HDR on) or Special K SKIF."));
+			ImGui::SliderInt(
+				T(TKEY("hdr_bit_depth"), "HDR PNG bit depth"),
+				reinterpret_cast<int*>(&hdrPngBitDepth),
+				7,
+				16,
+				"%d-bit",
+				ImGuiSliderFlags_AlwaysClamp);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text(
+					"%s", T(TKEY("hdr_bit_depth_tooltip"),
+							  "Quantization for the 48 bpp RGB PNG payload. 11-bit is a good default; "
+							  "higher values increase file size with diminishing returns."));
+		}
 	} else {
 		ImGui::TextWrapped("%s",
 			T(TKEY("sdr_note"),
-				"Enable HDR Display to capture HDR PNG screenshots with HDR10 metadata. "
+				"Enable HDR Display to capture HDR PNG or AVIF screenshots with HDR10 metadata. "
 				"SDR captures use the lossless format selected below."));
 	}
 
-	if (ImGui::Button(T(TKEY("take_screenshot"), "Take Screenshot Now"))) {
+	if (Util::Button(T(TKEY("take_screenshot"), "Take Screenshot Now"))) {
 		captureRequested = true;
 	}
 	ImGui::SameLine();
@@ -748,22 +827,27 @@ void ScreenshotFeature::DrawSettings()
 
 	char buf[260];
 	strncpy_s(buf, sizeof(buf), screenshotPath.c_str(), _TRUNCATE);
-	ImGui::PushItemWidth(-FLT_MIN - 120.0f);
+	const auto& style = ImGui::GetStyle();
+	const char* openLabel = T(TKEY("open"), "Open");
+	const char* folderLabel = T(TKEY("folder"), "Folder");
+	const float openWidth = ImGui::CalcTextSize(openLabel).x + style.FramePadding.x * 2.0f;
+	const float folderWidth = ImGui::CalcTextSize(folderLabel).x;
+	const float reservedWidth = openWidth + folderWidth + style.ItemSpacing.x * 2.0f;
+	ImGui::SetNextItemWidth(std::max(ImGui::GetFrameHeight(), ImGui::GetContentRegionAvail().x - reservedWidth));
 	if (ImGui::InputText("##ScreenshotFolder", buf, sizeof(buf))) {
 		screenshotPath = buf;
 	}
-	ImGui::PopItemWidth();
-	ImGui::SameLine();
+	Util::SameLineIfFits(openWidth);
 	const bool canOpen = !screenshotPath.empty();
 	ImGui::BeginDisabled(!canOpen);
-	if (ImGui::Button(T(TKEY("open"), "Open"))) {
+	if (Util::Button(openLabel)) {
 		std::error_code ec;
 		std::filesystem::create_directories(screenshotPath, ec);
 		ShellExecuteA(nullptr, "open", screenshotPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 	}
 	ImGui::EndDisabled();
-	ImGui::SameLine();
-	ImGui::Text("%s", T(TKEY("folder"), "Folder"));
+	Util::SameLineIfFits(folderWidth);
+	ImGui::Text("%s", folderLabel);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("folder_tooltip"),
 							  "Relative paths resolve against the Skyrim install dir.\n"
@@ -777,18 +861,32 @@ void ScreenshotFeature::DrawSettings()
 		Menu::GetSingleton()->settingScreenshotKey,
 		"Change##ScreenshotFeature");
 
-	if (HotkeyCollidesWithVanilla()) {
-		Util::Text::WrappedWarning("%s", T(TKEY("hotkey_collision"),
-											 "This hotkey collides with vanilla PrintScreen; both saves will fire. "
-											 "Set bAllowScreenShot=0 in Skyrim.ini to suppress vanilla, or pick a different hotkey above."));
+	if (ImGui::Checkbox(T(TKEY("disable_vanilla"), "Disable vanilla screenshots"), &disableVanillaScreenshot))
+		ApplyVanillaScreenshotSetting();
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("disable_vanilla_tooltip"),
+							  "Suppresses Skyrim's built-in PrintScreen capture while the game is running.\n"
+							  "Skyrim.ini is not modified; unchecking restores its bAllowScreenShot value."));
+
+	if (!disableVanillaScreenshot && vanillaScreenshotDefault.value_or(false) && HotkeyCollidesWithVanilla()) {
+		Util::Text::WrappedWarning("%s",
+			T(TKEY("hotkey_collision_vanilla"),
+				"This hotkey collides with vanilla PrintScreen; both saves will fire. "
+				"Enable \"Disable vanilla screenshots\" above, or pick a different hotkey."));
 	}
 
 	DrawSequenceSettings();
 	ImGui::SeparatorText(T(TKEY("crop"), "Crop"));
 
 	// Preview reflects what Capture() would save.
+	CaptureStateGuard guard(globals::d3d::context);
 	winrt::com_ptr<ID3D11Texture2D> previewTextureKeepAlive;
-	const auto src = SelectCaptureSource(previewTextureKeepAlive, /*forCapture=*/false);
+	auto src = SelectCaptureSource(previewTextureKeepAlive, /*forCapture=*/false);
+	if (src.texture && src.uiSRV) {
+		src.texture = CompositeCapture(src.texture, src.srv, src.uiSRV);
+		src.srv = src.texture ? compositeTexture->srv.get() : nullptr;
+		src.needsPreviewCache = false;
+	}
 
 	ID3D11ShaderResourceView* previewView = src.srv;
 	if (src.texture && (src.needsPreviewCache || !previewView)) {
@@ -800,7 +898,7 @@ void ScreenshotFeature::DrawSettings()
 		}
 	}
 
-	subrect.DrawEditor(previewView, src.texture, 1.0f, 0.0f, OpaquePreviewBlendCallback);
+	subrect.DrawEditor(previewView, src.texture, 1.0f, 0.0f, Util::Subrect::OpaquePreviewBlendCallback);
 }
 
 void ScreenshotFeature::DrawSequenceSettings()
@@ -838,7 +936,7 @@ void ScreenshotFeature::DrawSequenceSettings()
 	};
 	try {
 		ImGui::BeginDisabled(active || !loaded);
-		const bool start = ImGui::Button(T(TKEY("sequence_start"), "Start sequence"));
+		const bool start = Util::Button(T(TKEY("sequence_start"), "Start sequence"));
 		ImGui::EndDisabled();
 		if (start) {
 			const json sequence = {
@@ -850,7 +948,7 @@ void ScreenshotFeature::DrawSequenceSettings()
 		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!active);
-		const bool stop = ImGui::Button(T(TKEY("sequence_stop"), "Stop sequence"));
+		const bool stop = Util::Button(T(TKEY("sequence_stop"), "Stop sequence"));
 		ImGui::EndDisabled();
 		if (stop) {
 			const auto status = dispatch({ { "action", "status" } });
@@ -870,6 +968,61 @@ void ScreenshotFeature::DrawSequenceSettings()
 	}
 	if (!uiSequenceMessage.empty())
 		ImGui::TextWrapped("%s", uiSequenceMessage.c_str());
+}
+
+ID3D11Texture2D* ScreenshotFeature::CompositeCapture(ID3D11Texture2D* sourceTexture, ID3D11ShaderResourceView* sceneSRV, ID3D11ShaderResourceView* uiSRV)
+{
+	CS_GPU_PASS("Screenshot::Composite");
+	if (!sourceTexture || !sceneSRV || !uiSRV)
+		return nullptr;
+
+	if (!compositeCS) {
+		std::vector<std::pair<const char*, const char*>> defines;
+		compositeCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Screenshot\\CompositeCS.hlsl", defines, "cs_5_0")));
+		if (!compositeCS) {
+			logger::error("Failed to compile screenshot compositor.");
+			return nullptr;
+		}
+		Util::SetResourceName(compositeCS.get(), "Screenshot::Composite CS");
+	}
+
+	D3D11_TEXTURE2D_DESC desc{};
+	sourceTexture->GetDesc(&desc);
+	if (!compositeTexture || compositeTexture->desc.Width != desc.Width || compositeTexture->desc.Height != desc.Height || compositeTexture->desc.Format != desc.Format) {
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.SampleDesc.Count = 1;
+		desc.SampleDesc.Quality = 0;
+		desc.Usage = D3D11_USAGE_DEFAULT;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		desc.CPUAccessFlags = 0;
+		desc.MiscFlags = 0;
+		auto texture = std::make_unique<Texture2D>(desc, "Screenshot::Composite");
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = desc.Format;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+		texture->CreateSRV(srvDesc);
+		D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+		uavDesc.Format = desc.Format;
+		uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		texture->CreateUAV(uavDesc);
+		compositeTexture = std::move(texture);
+	}
+
+	auto* context = globals::d3d::context;
+	ID3D11ShaderResourceView* srvs[2] = { sceneSRV, uiSRV };
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	auto* uav = compositeTexture->uav.get();
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	context->CSSetShader(compositeCS.get(), nullptr, 0);
+	context->Dispatch((desc.Width + 7) / 8, (desc.Height + 7) / 8, 1);
+	srvs[0] = nullptr;
+	srvs[1] = nullptr;
+	context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+	uav = nullptr;
+	context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	return compositeTexture->resource.get();
 }
 
 void ScreenshotFeature::EnsurePreviewCache(ID3D11Texture2D* sourceTexture)
@@ -939,8 +1092,7 @@ bool ScreenshotFeature::RequestCapture(CaptureRequest request)
 
 void ScreenshotFeature::ProcessCaptureRequest()
 {
-	EnqueueFinishedCopies();
-
+	ProcessPendingReadbacks();
 	if (sequenceCapture)
 		sequenceCapture->Tick(loaded);
 #ifdef DEVBENCH_BRIDGE_ENABLED
@@ -1021,6 +1173,36 @@ void ScreenshotFeature::OnRuntimeDisabled()
 		sequenceCapture->Stop();
 }
 
+void ScreenshotFeature::ProcessPendingReadbacks()
+{
+	std::erase_if(pendingReadbacks, [this](PendingScreenshot& screenshot) {
+		const HRESULT hr = PopulateScratchImageFromStagingTexture(
+			globals::d3d::context, screenshot.stagingTexture.get(), screenshot.format,
+			screenshot.width, screenshot.height, screenshot.image);
+		if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
+			return false;
+		screenshot.stagingTexture = nullptr;
+		if (FAILED(hr)) {
+			logger::error("Failed to map screenshot staging texture.");
+			screenshot.image.Release();
+		}
+		try {
+			EnsureWorkerThread();
+			EnqueueScreenshot(std::move(screenshot));
+		} catch (const std::exception& e) {
+			logger::error("Screenshot failed: could not hand off to worker thread: {}", e.what());
+			--screenshotsInFlight;
+			try {
+				if (screenshot.onComplete)
+					screenshot.onComplete({});
+			} catch (...) {
+				logger::error("Screenshot completion callback threw.");
+			}
+		}
+		return true;
+	});
+}
+
 void ScreenshotFeature::EnsureWorkerThread()
 {
 	if (screenshotWorker.joinable()) {
@@ -1049,38 +1231,8 @@ void ScreenshotFeature::EnqueueScreenshot(PendingScreenshot&& screenshot)
 	{
 		std::lock_guard<std::mutex> lock(screenshotQueueMutex);
 		screenshotQueue.push(std::move(screenshot));
-		++screenshotsInFlight;
 	}
 	screenshotQueueCV.notify_one();
-}
-
-void ScreenshotFeature::EnqueueFinishedCopies()
-{
-	for (auto it = copiesInFlight.begin(); it != copiesInFlight.end();) {
-		const HRESULT hr = PopulateScratchImageFromStagingTexture(
-			globals::d3d::context,
-			it->stagingTexture.get(),
-			it->format,
-			it->width,
-			it->height,
-			*it->image);
-		if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
-			++it;
-			continue;
-		}
-		if (FAILED(hr)) {
-			logger::error("Screenshot readback of the GPU copy failed: {:#010x}", static_cast<uint32_t>(hr));
-			it->image = nullptr;
-		}
-		it->stagingTexture = nullptr;
-		try {
-			EnqueueScreenshot(std::move(*it));
-		} catch (const std::exception& e) {
-			logger::error("Screenshot hand-off to the save worker failed: {}", e.what());
-		}
-		--screenshotsInFlight;
-		it = copiesInFlight.erase(it);
-	}
 }
 
 void ScreenshotFeature::ScreenshotWorkerLoop()
@@ -1112,24 +1264,20 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 		};
 
 		const SKSE::stl::scope_exit complete([this] { --screenshotsInFlight; });
-		if (!screenshot.image) {
-			finish(false);
-			continue;
-		}
-
 		Util::FileHelpers::EnsureDirectoryExists(screenshot.outputPath.parent_path());
 
-		const bool saveOk = SaveScreenshotToDisk(
-			*screenshot.image,
-			screenshot.outputPath,
-			screenshot.format,
-			screenshot.hdrPngBitDepth,
-			screenshot.saveAsHdrPng,
-			screenshot.saveAsSdrPng);
+		const bool saveOk = screenshot.image.GetImageCount() != 0 && SaveScreenshotToDisk(
+																		 screenshot.image,
+																		 screenshot.outputPath,
+																		 screenshot.format,
+																		 screenshot.hdrPngBitDepth,
+																		 screenshot.saveAsHdrPng,
+																		 screenshot.saveAsHdrAvif,
+																		 screenshot.saveAsSdrPng);
 		if (!saveOk) {
 			logger::error(
 				"Failed to save {} screenshot.",
-				screenshot.saveAsHdrPng ? "HDR PNG" : "SDR");
+				screenshot.saveAsHdrAvif ? "HDR AVIF" : (screenshot.saveAsHdrPng ? "HDR PNG" : "SDR"));
 		}
 
 		if (saveOk) {
@@ -1174,6 +1322,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 		return;
 	}
 
+	CaptureStateGuard guard(context);
 	winrt::com_ptr<ID3D11Texture2D> sourceTextureKeepAlive;
 	const auto src = SelectCaptureSource(sourceTextureKeepAlive, /*forCapture=*/true,
 		request ? (request->excludeUi ? UiMode::Exclude : UiMode::Include) : UiMode::MenuDefault);
@@ -1184,7 +1333,12 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 		fail();
 		return;
 	}
-	ID3D11Texture2D* sourceTexture = src.texture;
+	ID3D11Texture2D* sourceTexture = src.uiSRV ? CompositeCapture(src.texture, src.srv, src.uiSRV) : src.texture;
+	if (!sourceTexture) {
+		logger::error("Failed to composite screenshot UI.");
+		fail();
+		return;
+	}
 
 	D3D11_TEXTURE2D_DESC srcDesc{};
 	sourceTexture->GetDesc(&srcDesc);
@@ -1226,6 +1380,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 		fail();
 		return;
 	}
+	Util::SetResourceName(stagingTexture.get(), "Screenshot::Staging");
 
 	D3D11_BOX sourceRegion{};
 	sourceRegion.left = copyX;
@@ -1237,7 +1392,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 
 	context->CopySubresourceRegion(stagingTexture.get(), 0, 0, 0, 0, sourceTexture, 0, &sourceRegion);
 
-	// Match SelectCaptureSource: only the flat HDR back-buffer path uses HDR PNG.
+	// Match SelectCaptureSource: only the flat HDR back-buffer path uses HDR encoding.
 	// Do not key off DXGI format alone — kFRAMEBUFFER can be float/HDR-sized in SDR mode.
 	const bool flatHdrCapture = IsFlatHdrScreenshotCapture();
 	if (flatHdrCapture && !IsHdrCaptureFormat(srcDesc.Format)) {
@@ -1245,27 +1400,27 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 		fail();
 		return;
 	}
-	const bool saveAsHdrPng = flatHdrCapture && IsHdrCaptureFormat(srcDesc.Format);
-	const bool saveAsSdrPng = !saveAsHdrPng && (sdrUsePng || request);
+	const bool saveAsHdrAvif = !request && flatHdrCapture && hdrUseAvif;
+	const bool saveAsHdrPng = flatHdrCapture && !saveAsHdrAvif;
+	const bool saveAsSdrPng = !flatHdrCapture && (sdrUsePng || request);
 
-	EnsureWorkerThread();
 	PendingScreenshot screenshot;
 	screenshot.stagingTexture = std::move(stagingTexture);
-	screenshot.image = std::make_shared<DirectX::ScratchImage>();
 	screenshot.format = srcDesc.Format;
 	screenshot.width = copyW;
 	screenshot.height = copyH;
 	screenshot.saveAsHdrPng = saveAsHdrPng;
+	screenshot.saveAsHdrAvif = saveAsHdrAvif;
 	screenshot.saveAsSdrPng = saveAsSdrPng;
 	screenshot.hdrPngBitDepth = static_cast<int>(hdrPngBitDepth);
-	screenshot.outputPath = request ? request->outputPath : BuildScreenshotPath(screenshotPath, saveAsHdrPng || saveAsSdrPng);
+	screenshot.outputPath = request ? request->outputPath : BuildScreenshotPath(screenshotPath, saveAsHdrAvif ? ".avif" : (saveAsHdrPng || saveAsSdrPng ? ".png" : ".bmp"));
 	screenshot.copyToClipboard = copyToClipboard && !request;
 	screenshot.silent = request.has_value();
 	screenshot.uiExcluded = src.uiExcluded;
 	screenshot.renderFrame = globals::game::graphicsState->GetFrameCount();
 	if (request)
 		screenshot.onComplete = std::move(request->onComplete);
-	copiesInFlight.push_back(std::move(screenshot));
+	pendingReadbacks.push_back(std::move(screenshot));
 	++screenshotsInFlight;
 }
 #undef I18N_KEY_PREFIX

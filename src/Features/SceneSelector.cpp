@@ -107,7 +107,7 @@ void SceneSelector::DataLoaded()
 void SceneSelector::Prepass()
 {
 	if (!globals::features::csEditor.loaded)
-		CSEditor::UpdateWeatherLockAndTime();
+		EditorWindow::MaintainWeatherLock();
 }
 
 void SceneSelector::EnsureWeatherListLoaded()
@@ -500,11 +500,11 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 	ImGui::SeparatorText(T(TKEY("weather_selection"), "Weather Selection"));
 
 	ImGui::Text("%s", T(TKEY("filter_by_weather_type"), "Filter by Weather Type:"));
-	if (ImGui::Button(T(TKEY("select_all"), "Select All"))) {
+	if (Util::Button(T(TKEY("select_all"), "Select All"))) {
 		s_weatherFlagFilter = ALL_WEATHER_FLAGS;  // All weather flags (bits 0-6, including unclassified)
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("clear_all"), "Clear All"))) {
+	if (Util::Button(T(TKEY("clear_all"), "Clear All"))) {
 		s_weatherFlagFilter = 0x00;  // No flags
 	}
 	// Dynamic checkbox layout - calculate how many fit per row
@@ -545,7 +545,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 		s_lastWeatherFlagFilter = s_weatherFlagFilter;
 	}
 
-	if (ImGui::Button(T(TKEY("reset_weather"), "Reset Weather"))) {
+	if (Util::Button(T(TKEY("reset_weather"), "Reset Weather"))) {
 		Util::EnvironmentControls::ResetWeather();
 		// Update the selection box to reflect the reset weather without double-applying
 		s_selectedWeatherIdx = FindWeatherIndex(sky->defaultWeather);
@@ -567,7 +567,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 		const auto& theme = Menu::GetSingleton()->GetTheme();
 		ImGui::PushStyleColor(ImGuiCol_Button, theme.StatusPalette.SuccessColor);
 	}
-	if (ImGui::Button(lockLabel)) {
+	if (Util::Button(lockLabel)) {
 		if (isLocked) {
 			editorWindow->UnlockWeather();
 		} else if (sky->currentWeather) {
@@ -628,7 +628,7 @@ void SceneSelector::RenderWeatherControls(RE::Sky* sky)
 			}
 
 			ImGui::PushStyleColor(ImGuiCol_Text, GetWeatherTypeColor(weather));
-			bool didSelect = ImGui::Selectable(weatherLabels[i].c_str(), isSelected);
+			bool didSelect = Util::RoundedSelectable(weatherLabels[i].c_str(), isSelected);
 			ImGui::PopStyleColor();
 
 			if (didSelect) {

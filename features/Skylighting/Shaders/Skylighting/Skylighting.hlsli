@@ -28,6 +28,7 @@ namespace Skylighting
 	{
 		return max(SharedData::skylightingSettings.ProbeArrayWorldSize, 10000.0) * float3(1, 1, 0.5);
 	}
+	const static float FADE_MARGIN = 0.05;
 
 	float GetFadeOutFactor(float3 positionMS)
 	{
@@ -35,7 +36,22 @@ namespace Skylighting
 		float3 uvw = saturate((positionMS - SharedData::skylightingSettings.PosOffset.xyz) / ARRAY_SIZE + .5);
 		float3 dists = min(uvw, 1 - uvw);
 		float edgeDist = min(dists.x, min(dists.y, dists.z));
-		return saturate(edgeDist * 20);
+		return saturate(edgeDist / FADE_MARGIN);
+	}
+
+	/** @brief Fade-out over the probe volume's horizontal edges only, for samples whose height is clamped by ClampToArrayHeight. */
+	float GetHorizontalFadeOutFactor(float3 positionMS)
+	{
+		return GetFadeOutFactor(float3(positionMS.xy, SharedData::skylightingSettings.PosOffset.z));
+	}
+
+	/** @brief Clamps the height inside the fade margin, so geometry above or below the probe volume reuses converged layers instead of reading as unoccluded. */
+	float3 ClampToArrayHeight(float3 positionMS)
+	{
+		const float halfHeight = GetArraySize().z * (0.5 - FADE_MARGIN);
+		const float centreZ = SharedData::skylightingSettings.PosOffset.z;
+		positionMS.z = clamp(positionMS.z, centreZ - halfHeight, centreZ + halfHeight);
+		return positionMS;
 	}
 
 	float MixDiffuse(float visibility)
@@ -59,9 +75,9 @@ namespace Skylighting
 		return MixDiffuse(CosineLobeVisibility(skylightingSH, normal, fadeOutFactor));
 	}
 
-	float EvaluateVisibility(sh2 skylightingSH)
+	float EvaluateVisibility(sh2 skylightingSH, float fadeOutFactor = 1.0)
 	{
-		return MixSpecular(CosineLobeVisibility(skylightingSH, float3(0, 0, 1), 1.0));
+		return MixSpecular(CosineLobeVisibility(skylightingSH, float3(0, 0, 1), fadeOutFactor));
 	}
 
 	float EvaluateSpecular(sh2 skylightingSH, sh2 specularLobe, float fadeOutFactor = 1.0)
@@ -227,6 +243,16 @@ namespace Skylighting
 		}
 
 		return SphericalHarmonics::Scale(sum, rcp(wsum + EPSILON_WEIGHT_SUM));
+	}
+
+	/** @brief Returns skylightingSH, re-sampled at the clamped height when positionMS lies above or below the probe volume. */
+	sh2 SampleSpecular(sh2 skylightingSH, float3 positionMS)
+	{
+		const float3 clampedMS = ClampToArrayHeight(positionMS);
+		sh2 specularSH = skylightingSH;
+		[branch] if (clampedMS.z != positionMS.z)
+			specularSH = SampleNoBias(clampedMS);
+		return specularSH;
 	}
 #endif
 }

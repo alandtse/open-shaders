@@ -258,10 +258,10 @@ namespace
 }
 
 class HeavyImpactWindRouter::Impl :
-	public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
-	public RE::BSTEventSink<RE::TESHitEvent>,
-	public RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent>,
-	public RE::BSTEventSink<RE::BSAnimationGraphEvent>
+    public RE::BSTEventSink<RE::TESObjectLoadedEvent>,
+    public RE::BSTEventSink<RE::TESHitEvent>,
+    public RE::BSTEventSink<RE::TESSwitchRaceCompleteEvent>,
+    public RE::BSTEventSink<RE::BSAnimationGraphEvent>
 {
 public:
 	void Register()

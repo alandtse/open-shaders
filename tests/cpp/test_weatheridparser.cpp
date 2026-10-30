@@ -1,9 +1,20 @@
 // Unit tests for the WeatherIDs= tokenizer (src/Features/Effects11/WeatherIDParser.cpp).
 // Pure string parsing; no game/D3D dependency.
 
+#include "CSEditor/Weather/PrecipitationSettings.h"
 #include "Features/Effects11/WeatherIDParser.h"
 
 #include <catch2/catch_test_macros.hpp>
+
+TEST_CASE("Precipitation box sizes accept upstream integers and legacy float bit views", "[precipitation]")
+{
+	REQUIRE(PrecipitationSerialization::ReadBoxSize(2000.0) == 2000u);
+	REQUIRE(PrecipitationSerialization::ReadBoxSize(2.802596928649634e-42) == 2000u);
+	REQUIRE(PrecipitationSerialization::ReadBoxSize(1.401298464324817e-45) == 1u);
+	REQUIRE(PrecipitationSerialization::ReadBoxSize(4294967295.0) == 4294967295u);
+	for (const double invalid : { 0.0, -1.0, 0.5, 4294967296.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() })
+		REQUIRE_FALSE(PrecipitationSerialization::ReadBoxSize(invalid));
+}
 
 TEST_CASE("Parse accepts comma-separated IDs", "[weatheridparser]")
 {

@@ -8,6 +8,7 @@
 #include "Utils/SettingsPatch.h"
 
 #include <fstream>
+#include <iterator>
 
 namespace
 {
@@ -139,6 +140,37 @@ void SettingsOverrideManager::RestoreBaselines(json& settings) const
 		Util::Settings::RestoreSettings(settings, userBaseline, GetLayerData(overrides[i]));
 }
 
+const json* SettingsOverrideManager::GetOverrideSettings(const std::string& featureName) const
+{
+	if (!enabled || !discovered)
+		return nullptr;
+	if (cachedOverrideRevision != revision) {
+		cachedOverrideSettings.clear();
+		cachedOverrideRevision = revision;
+	}
+	const auto [found, inserted] = cachedOverrideSettings.try_emplace(featureName, json::value_t::object);
+	if (inserted) {
+		if (featureName == "Global") {
+			for (const auto& info : overrides)
+				if (info.enabled && info.isGlobal)
+					Util::Settings::MergeSettings(found->second, info.overrideData);
+		} else if (const auto indices = featureOverrideMap.find(featureName); indices != featureOverrideMap.end()) {
+			for (const auto index : indices->second)
+				if (overrides[index].enabled)
+					Util::Settings::MergeSettings(found->second, overrides[index].overrideData);
+		}
+	}
+	return &found->second;
+}
+
+const json* SettingsOverrideManager::GetUserOverrideSettings(const std::string& featureName) const
+{
+	if (!enabled || !discovered)
+		return nullptr;
+	const auto found = loadedUserOverrideSettings.find(featureName);
+	return found == loadedUserOverrideSettings.end() ? nullptr : &found->second;
+}
+
 json SettingsOverrideManager::GetPendingEdits(const json& settings)
 {
 	return Util::Settings::BuildUserOverride(settings, appliedSettings.is_object() ? appliedSettings : ApplyLayers(userBaseline));
@@ -178,6 +210,7 @@ try {
 	}
 
 	std::vector<FileChange> changes;
+	auto nextUserOverrides = loadedUserOverrideSettings;
 	for (const auto& [name, layer] : groups) {
 		auto edited = Util::Settings::SelectSettings(pending, layer);
 		if (name == "Global")
@@ -193,6 +226,10 @@ try {
 		change.after = Util::Settings::SelectSettings(change.before, mask);
 		Util::Settings::RestoreSettings(change.after, unwrap(Util::Settings::BuildUserOverride(settings, layer)), unwrap(edited));
 		change.remove = change.after.empty();
+		if (change.remove)
+			nextUserOverrides.erase(name);
+		else
+			nextUserOverrides[name] = change.after;
 		if (change.after != change.before && !(change.remove && change.before.is_null()))
 			changes.push_back(std::move(change));
 	}
@@ -200,6 +237,7 @@ try {
 	PrepareUserSettings(userSettings);
 	if (!CommitFileChanges(changes, saveUserSettings))
 		return false;
+	loadedUserOverrideSettings = std::move(nextUserOverrides);
 	if (!userBaseline.is_object())
 		userBaseline = json::object();
 	userBaseline.update(userSettings, true);
@@ -217,7 +255,12 @@ bool SettingsOverrideManager::CleanupStaleUserOverrides()
 	if (!enabled || !discovered)
 		return true;
 	std::vector<FileChange> changes;
-	return CollectUserCleanup(*this, changes) && CommitFileChanges(changes, {});
+	if (!CollectUserCleanup(*this, changes) || !CommitFileChanges(changes, {}))
+		return false;
+	for (auto& [name, values] : loadedUserOverrideSettings)
+		if (const auto* mask = GetOverrideSettings(name))
+			values = Util::Settings::SelectSettings(values, *mask);
+	return true;
 }
 
 json SettingsOverrideManager::ApplyLayers(json settings)
@@ -237,6 +280,7 @@ json SettingsOverrideManager::ApplyLayers(json settings)
 void SettingsOverrideManager::RebuildOverrideIndex()
 {
 	featureOverrideMap.clear();
+	++revision;
 	for (size_t i = 0; i < overrides.size(); ++i)
 		if (!overrides[i].isGlobal)
 			featureOverrideMap[overrides[i].featureName].push_back(i);
@@ -285,22 +329,41 @@ bool SettingsOverrideManager::DeleteFile(const std::string& filePath)
 	return true;
 }
 
-bool SettingsOverrideManager::ExportSettings(const std::string& modName, const std::string& featureName,
-	std::span<const std::string> settingPaths, const json& settings)
+std::filesystem::path SettingsOverrideManager::GetExportDestination(const std::string& modName, const std::string& featureName) const
 {
+	if (!Feature::IsFeatureKnown(featureName))
+		return {};
+	const auto directory = GetOverridesDirectory();
+	const auto existing = std::ranges::find_if(overrides, [&](const auto& info) {
+		return !info.isGlobal && info.modName == modName && info.featureName == featureName;
+	});
+	if (existing != overrides.end()) {
+		const std::filesystem::path path(existing->filePath);
+		return Util::PathHelpers::IsPathLexicallyWithinDirectory(directory, path) ? path : std::filesystem::path{};
+	}
 	const auto safeName = Util::FileHelpers::SanitizeFileName(modName);
+	if (safeName.empty())
+		return {};
+	const auto path = directory / std::format("{}_{}.json", safeName, featureName);
+	return Util::PathHelpers::IsPathLexicallyWithinDirectory(directory, path) ? path : std::filesystem::path{};
+}
+
+bool SettingsOverrideManager::ExportSettings(const std::string& modName, const std::string& featureName,
+	std::span<const std::string> settingPaths, const json& settings, std::span<const std::string> removePaths)
+{
+	const auto path = GetExportDestination(modName, featureName);
 	auto* feature = Feature::FindFeatureByShortName(featureName);
-	if (safeName.empty() || settingPaths.empty() || !feature || !feature->UsesMainSettings() ||
+	if (path.empty() || (settingPaths.empty() && removePaths.empty()) || !feature || !feature->UsesMainSettings() ||
 		!settings.contains(feature->GetName()))
 		return false;
 	const auto& values = settings.at(feature->GetName());
 	const auto available = Util::Settings::GetExportSettings(featureName, values);
-	for (const auto& selected : settingPaths)
-		if (std::ranges::find(available, selected, &Util::Settings::ExportSetting::path) == available.end())
-			return false;
+	for (const auto& paths : { settingPaths, removePaths })
+		for (const auto& selected : paths)
+			if (std::ranges::find(available, selected, &Util::Settings::ExportSetting::path) == available.end())
+				return false;
 	const auto selected = Util::Settings::SelectSettingPaths(values, { settingPaths.begin(), settingPaths.end() });
-	const auto path = GetOverridesDirectory() / std::format("{}_{}.json", safeName, featureName);
-	if (selected.empty() || !Util::PathHelpers::IsPathLexicallyWithinDirectory(GetOverridesDirectory(), path))
+	if (selected.empty() && !settingPaths.empty())
 		return false;
 	json document = json::object();
 	std::error_code error;
@@ -318,19 +381,46 @@ bool SettingsOverrideManager::ExportSettings(const std::string& modName, const s
 			return false;
 		}
 	}
+	std::string previousContents;
+	if (exists) {
+		std::ifstream original(destination, std::ios::binary);
+		if (!original)
+			return false;
+		previousContents.assign(std::istreambuf_iterator<char>(original), std::istreambuf_iterator<char>());
+		if (original.bad())
+			return false;
+	}
 	auto underlying = settings;
 	RestoreBaselines(underlying);
 	const auto pendingEdits = GetPendingEdits(settings);
+	const auto previousOverrides = overrides;
+	const bool previousDiscovered = discovered;
+	json mask = found == overrides.end() ? json::object() : GetLayerData(*found);
+	for (const auto& removed : removePaths)
+		Util::Settings::EraseSettingPath(document, json::json_pointer(removed));
 	document.update(selected, true);
 	if (!ValidateOverrideFormat(document, path.string()) || !ValidateJsonDataTypes(document, "", path.string()) ||
 		!Util::FileHelpers::WriteJsonAtomically(destination, document, kJsonIndent, "exported feature overwrite"))
 		return false;
 	auto refreshed = LoadOverrideFile(found != overrides.end() ? found->filePath : path.string());
-	if (!refreshed)
+	const auto restoreExport = [&] {
+		std::error_code ec;
+		const bool restored = exists ? Util::FileHelpers::WriteFileAtomically(destination, previousContents, "overwrite export rollback") :
+		                               std::filesystem::remove(destination, ec) && !ec;
+		if (!restored)
+			logger::error("Could not restore feature overwrite '{}'", destination.string());
+		overrides = previousOverrides;
+		discovered = previousDiscovered;
+		RebuildOverrideIndex();
+	};
+	if (!refreshed) {
+		restoreExport();
 		return false;
-	const auto mask = GetLayerData(*refreshed);
+	}
+	mask.update(GetLayerData(*refreshed), true);
 	if (found != overrides.end()) {
 		*found = std::move(*refreshed);
+		++revision;
 	} else {
 		auto position = overrides.end();
 		bool afterExport = false;
@@ -351,6 +441,10 @@ bool SettingsOverrideManager::ExportSettings(const std::string& modName, const s
 		RebuildOverrideIndex();
 	}
 	discovered = true;
+	if (!removePaths.empty() && !CleanupStaleUserOverrides()) {
+		restoreExport();
+		return false;
+	}
 	ReapplyChangedSettings(settings, underlying, mask, pendingEdits);
 	return true;
 }

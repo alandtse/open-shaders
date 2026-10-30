@@ -3,11 +3,231 @@
 // dependency (ApplyPatch itself needs a live Feature and isn't unit-testable
 // here -- see DevBenchBridge.cpp / VRAPI::CSpluginapi.cpp for its callers).
 
+#include "Utils/SettingsNumeric.h"
 #include "Utils/SettingsPatch.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
 #include <limits>
+
+TEST_CASE("Overwrite provenance follows global and feature application order", "[settingspatch][provenance]")
+{
+	const json global = 1;
+	const json globalUser = 2;
+	const json feature = 3;
+	const json featureUser = 4;
+	const auto none = Util::Settings::ResolveOverwriteValue(nullptr, &globalUser, nullptr, &featureUser);
+	REQUIRE(none.installed == nullptr);
+	REQUIRE(none.user == nullptr);
+	const auto globalOnly = Util::Settings::ResolveOverwriteValue(&global, &globalUser, nullptr, &featureUser);
+	REQUIRE(globalOnly.installed == &global);
+	REQUIRE(globalOnly.user == &globalUser);
+	const auto featureWins = Util::Settings::ResolveOverwriteValue(&global, &globalUser, &feature, nullptr);
+	REQUIRE(featureWins.installed == &feature);
+	REQUIRE(featureWins.user == nullptr);
+	const auto customized = Util::Settings::ResolveOverwriteValue(&global, &globalUser, &feature, &featureUser);
+	REQUIRE(customized.installed == &feature);
+	REQUIRE(customized.user == &featureUser);
+}
+
+TEST_CASE("Overwrite customizations apply only to the setting present in the user file", "[settingspatch][provenance]")
+{
+	const json installed = { { "a", 1 }, { "b", 2 } };
+	const json user = { { "a", 1 } };
+	const auto first = Util::Settings::ResolveOverwriteValue(nullptr, nullptr, &installed["a"], &user["a"]);
+	const auto second = Util::Settings::ResolveOverwriteValue(nullptr, nullptr, &installed["b"], nullptr);
+	REQUIRE(first.user != nullptr);
+	REQUIRE(*first.user == *first.installed);
+	REQUIRE(second.installed != nullptr);
+	REQUIRE(second.user == nullptr);
+}
+
+namespace
+{
+	struct NumericMetadata
+	{
+		enum class Semantic
+		{
+			Generic,
+			Numeric,
+			Other
+		};
+		enum class Transform
+		{
+			Identity,
+			Log2
+		};
+		Semantic editorSemantic = Semantic::Numeric;
+		Transform numericTransform = Transform::Identity;
+		double displayScale = 1.0;
+		bool hasNumericBounds = true;
+		double minimumValue = 0.0;
+		double maximumValue = 1.0;
+	};
+}
+
+TEST_CASE("Catalog numeric percentages keep persisted bounds and scale display bounds once", "[settings-numeric]")
+{
+	const NumericMetadata setting{ .displayScale = 100.0 };
+	double minimum = 0.0;
+	double maximum = 0.0;
+	REQUIRE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(minimum == 0.0);
+	CHECK(maximum == 100.0);
+	json value = 0.5;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 0.5);
+	value = 1.25;
+	CHECK(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 1.0);
+	double display = 0.0;
+	double stored = 0.0;
+	REQUIRE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, display));
+	CHECK(display == 50.0);
+	REQUIRE(Util::Settings::ConvertCatalogNumericDisplayToStored(setting, display, stored));
+	CHECK(stored == 0.5);
+}
+
+TEST_CASE("Catalog numeric angles keep radian bounds while displaying degrees", "[settings-numeric]")
+{
+	const NumericMetadata setting{ .displayScale = 57.29577951308232,
+		.minimumValue = 0.0008726646259971648,
+		.maximumValue = 0.08726646259971647 };
+	double minimum = 0.0;
+	double maximum = 0.0;
+	REQUIRE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(minimum == Catch::Approx(0.05));
+	CHECK(maximum == Catch::Approx(5.0));
+	json value = 0.02;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 0.02);
+	value = 1.0;
+	CHECK(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value.get<double>() == Catch::Approx(setting.maximumValue));
+}
+
+TEST_CASE("Catalog numeric logarithms transform values and display bounds once", "[settings-numeric]")
+{
+	const NumericMetadata setting{ .numericTransform = NumericMetadata::Transform::Log2,
+		.minimumValue = 0.0625,
+		.maximumValue = 16.0 };
+	double minimum = 0.0;
+	double maximum = 0.0;
+	REQUIRE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(minimum == -4.0);
+	CHECK(maximum == 4.0);
+	json value = 0.5;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 0.5);
+	value = 0.01;
+	CHECK(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 0.0625);
+	double display = 0.0;
+	double stored = 0.0;
+	REQUIRE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, display));
+	CHECK(display == -1.0);
+	REQUIRE(Util::Settings::ConvertCatalogNumericDisplayToStored(setting, display, stored));
+	CHECK(stored == 0.5);
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.0, display));
+}
+
+TEST_CASE("Catalog numeric integer clamping uses whole numbers inside persisted bounds", "[settings-numeric]")
+{
+	NumericMetadata setting{ .minimumValue = 0.2, .maximumValue = 3.8 };
+	json value = 9;
+	REQUIRE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 3);
+	CHECK(value.is_number_integer());
+	value = -9;
+	REQUIRE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 1);
+	setting.maximumValue = 0.8;
+	value = 9;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 9);
+	setting.minimumValue = std::ldexp(1.0, std::numeric_limits<std::int64_t>::digits);
+	setting.maximumValue = setting.minimumValue * 2.0;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK(value == 9);
+}
+
+TEST_CASE("Catalog numeric invalid values and bounds do not mutate persisted settings", "[settings-numeric]")
+{
+	NumericMetadata setting;
+	for (const json value : { json(true), json("invalid"), json(std::numeric_limits<double>::infinity()) }) {
+		json actual = value;
+		CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, actual));
+		CHECK(actual == value);
+	}
+	json value = 2.0;
+	double minimum = 0.0;
+	double maximum = 0.0;
+	setting.minimumValue = std::numeric_limits<double>::quiet_NaN();
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK_FALSE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(value == 2.0);
+	setting.minimumValue = 1.0;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK_FALSE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(value == 2.0);
+	setting.minimumValue = 0.0;
+	setting.hasNumericBounds = false;
+	CHECK_FALSE(Util::Settings::ClampCatalogNumericValue(setting, value));
+	CHECK_FALSE(Util::Settings::GetCatalogNumericDisplayBounds(setting, minimum, maximum));
+	CHECK(value == 2.0);
+}
+
+TEST_CASE("Catalog numeric generic values and invalid transforms preserve conversion validation", "[settings-numeric]")
+{
+	NumericMetadata setting{ .editorSemantic = NumericMetadata::Semantic::Generic, .displayScale = 100.0 };
+	double result = 0.0;
+	CHECK(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, result));
+	CHECK(result == 0.5);
+	CHECK(Util::Settings::ConvertCatalogNumericDisplayToStored(setting, 0.5, result));
+	CHECK(result == 0.5);
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, std::numeric_limits<double>::infinity(), result));
+	setting.editorSemantic = NumericMetadata::Semantic::Other;
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, result));
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericDisplayToStored(setting, 0.5, result));
+	setting.editorSemantic = NumericMetadata::Semantic::Numeric;
+	setting.numericTransform = static_cast<NumericMetadata::Transform>(-1);
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, result));
+	CHECK_FALSE(Util::Settings::ConvertCatalogNumericDisplayToStored(setting, 0.5, result));
+	setting.numericTransform = NumericMetadata::Transform::Identity;
+	setting.displayScale = std::numeric_limits<double>::infinity();
+	CHECK(Util::Settings::GetCatalogNumericDisplayScale(setting) == 1.0);
+	CHECK(Util::Settings::ConvertCatalogNumericStoredToDisplay(setting, 0.5, result));
+	CHECK(result == 0.5);
+}
+
+TEST_CASE("EraseSettingPath removes a setting and empty groups while retaining author metadata", "[settings-export]")
+{
+	json document{ { "_metadata", { { "description", "Keep the author metadata" } } },
+		{ "Group", { { "Nested", { { "Remove", 2 } } }, { "Keep", 3 } } },
+		{ "Vector", { 1, 2, 3 } } };
+	CHECK(Util::Settings::EraseSettingPath(document, json::json_pointer("/Group/Nested/Remove")));
+	CHECK(document == json{ { "_metadata", { { "description", "Keep the author metadata" } } },
+						  { "Group", { { "Keep", 3 } } }, { "Vector", { 1, 2, 3 } } });
+	CHECK(Util::Settings::EraseSettingPath(document, json::json_pointer("/Vector")));
+	CHECK_FALSE(document.contains("Vector"));
+	CHECK(Util::Settings::EraseSettingPath(document, json::json_pointer("/Group/Keep")));
+	CHECK_FALSE(document.contains("Group"));
+	CHECK(document.at("_metadata").at("description") == "Keep the author metadata");
+}
+
+TEST_CASE("EraseSettingPath respects pointer escaping and rejects metadata or partial arrays atomically", "[settings-export]")
+{
+	json document{ { "a/b", { { "~key", false }, { "Keep", true } } },
+		{ "_metadata", { { "description", "Keep" } } }, { "Vector", { 1, 2, 3 } } };
+	const auto original = document;
+	for (const auto* path : { "", "/Missing", "/Vector/0", "/_metadata", "/_metadata/description" }) {
+		CHECK_FALSE(Util::Settings::EraseSettingPath(document, json::json_pointer(path)));
+		CHECK(document == original);
+	}
+	CHECK(Util::Settings::EraseSettingPath(document, json::json_pointer("/a~1b/~0key")));
+	CHECK(document.at("a/b") == json{ { "Keep", true } });
+}
 
 TEST_CASE("OverlayRecognizedRootSettings ignores a non-object document", "[settingsoverlay]")
 {
@@ -289,6 +509,21 @@ TEST_CASE("CollectUnknownSettingKeys accepts an all-known flat patch", "[setting
 	REQUIRE(unknown.empty());
 }
 
+TEST_CASE("Settings array validation preserves lists and rejects malformed fixed vectors", "[settingspatch]")
+{
+	const json known{ { "Tint", { 1.0, 1.0, 1.0 } }, { "Ids", { 1, 2 } } };
+	json incoming{ { "Tint", { 1.0, "bad", 0.0 } }, { "Ids", { 3, 4, 5 } } };
+	std::vector<std::string> rejected;
+	Util::Settings::EraseMismatchedSettings(incoming, known, "", rejected);
+	CHECK(rejected == std::vector<std::string>{ "Tint" });
+	CHECK(incoming == json{ { "Ids", { 3, 4, 5 } } });
+
+	CHECK(Util::Settings::IsCompatibleSettingValue(known.at("Ids"), json::array()));
+	CHECK_FALSE(Util::Settings::IsCompatibleSettingValue(known.at("Tint"), json::array()));
+	CHECK_FALSE(Util::Settings::IsCompatibleSettingValue(known.at("Ids"), json::array({ 3, "bad", 5 })));
+	CHECK_FALSE(Util::Settings::IsCompatibleSettingValue(known.at("Tint"), json::array({ 1.0, 2.0 })));
+}
+
 TEST_CASE("CollectUnknownSettingKeys reports an unknown flat key", "[settingspatch]")
 {
 	const json known{ { "Enabled", true } };
@@ -353,8 +588,10 @@ TEST_CASE("CollectUnknownSettingKeys reports nesting under a known scalar field"
 	// Inverse of the flattened-key case: a caller that nests under a field
 	// the feature defines as a scalar, not a group.
 	const json known{ { "A", 1 } };
+	const json originalKnown = known;
 	const json patch{ { "A", { { "B", 2 } } } };
 	std::vector<std::string> unknown;
 	Util::Settings::CollectUnknownSettingKeys(patch, known, "", unknown);
-	REQUIRE(unknown == std::vector<std::string>{ "A.B" });
+	REQUIRE(unknown == std::vector<std::string>{ "A (wrong type)" });
+	REQUIRE(known == originalKnown);
 }

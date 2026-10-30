@@ -93,7 +93,7 @@ public:
 
 	struct Sky_Update
 	{
-		static void thunk(RE::Sky* sky);
+		static void thunk(RE::Sky* sky, float deltaTime);
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
@@ -105,7 +105,7 @@ public:
 		Sun,
 		Masser,
 		Secunda,
-		Zenith  // fallback when no moon is up: lights as a pseudo skylight, without VL
+		Zenith  // fallback when no moon is up: lights as a pseudo skylight, without direct light or VL
 	};
 
 	/** @brief Returns a body's synchronized world direction before shadow clamping, or nullopt when inactive. */
@@ -144,18 +144,20 @@ private:
 	{
 		RE::NiPoint3 currentDir = { 0.0f, 0.0f, 1.0f };
 		RE::NiPoint3 startDir = { 0.0f, 0.0f, 1.0f };
+		RE::NiPoint3 dimDir = { 0.0f, 0.0f, 1.0f };        // direction whose elevation drives the horizon dim
 		RE::NiPoint3 celestialDir = { 0.0f, 0.0f, 1.0f };  // blended direction of the casters before shadow elevation limits
 		RE::NiPoint3 startCelestialDir = { 0.0f, 0.0f, 1.0f };
 		float3 lightWeights = { 1.0f, 0.0f, 0.0f };  // sun, Masser, Secunda
 		float3 startLightWeights = { 1.0f, 0.0f, 0.0f };
 		Caster target = Caster::Sun;
+		Caster source = Caster::Sun;  // target before the current transition
 		float fadeTimer = 0.0f;
 		float immediateTransitionRemaining = 0.0f;
 		bool transitioning = false;
 		float intensityFactor = 1.0f;  // scales directional light and VL while the caster changes
 		float startIntensityFactor = 1.0f;
-		float vlFade = 1.0f;  // additionally scales VL, fading it out towards the zenith fallback
-		float startVlFade = 1.0f;
+		float casterFade = 1.0f;  // additionally scales directional light and VL, fading them out towards the zenith fallback
+		float startCasterFade = 1.0f;
 
 		/** @brief Fraction of the current transition completed, 0 to 1. */
 		float Progress(float fadeDuration) const { return fadeDuration > 0.0f ? fadeTimer / fadeDuration : 1.0f; }
@@ -178,7 +180,6 @@ private:
 	static constexpr float AlignmentFadeStartAngle = 2.0f;
 	static constexpr float AlignmentFadeEndAngle = 15.0f;
 	static constexpr float MaxHorizonFadeHours = 1.5f;
-	static constexpr float HoursPerTimingUnit = 1.0f / 6.0f;
 	static constexpr float DefaultSunAlphaTransTime = 2.0f;
 	static constexpr float AlternateSunHorizonOffsetHours = 0.25f;
 	static constexpr float MaxHorizonFadeElevation = 45.0f;
@@ -257,9 +258,6 @@ private:
 
 	/** @brief Re-evaluates worldspaceDisabled; call whenever the current worldspace or the disabled list changes. */
 	void UpdateWorldspaceDisabled() { worldspaceDisabled = IsWorldspaceDisabled(currentCellWorldspace); }
-
-	/** @brief Midpoint hour of a climate sunrise or sunset interval, using the same float ops as Sun::Update. */
-	static float MiddleHour(const RE::TESClimate::Timing::Interval& interval);
 
 	/** @brief Hours at which the active sun path crosses the horizon, as { sunrise, sunset }. */
 	std::pair<float, float> GetSunHorizonHours(const RE::TESClimate::Timing& timing) const;

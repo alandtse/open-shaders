@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT AND (LicenseRef-GPL-3.0-with-Modding-Exception WITH GPL-3.0-linking-source-exception)
+// Original code Copyright (c) 2022 Ilya Perapechka (MIT), modifications GPL-3.0 with Modding Exception (see EXCEPTIONS.md)
+
 #include "Common/Color.hlsli"
 #include "Common/FlareOcclusion.hlsli"
 #include "Common/FrameBuffer.hlsli"
@@ -538,16 +541,19 @@ PS_OUTPUT main(PS_INPUT input)
 #			if defined(CLOUDS) && defined(EFFECTS11)
 	[branch] if (SharedData::enbSettings.Enable)
 	{
-		float3 viewDirection = normalize(input.WorldPosition.xyz);
-		float cloudTextureAlpha = saturate(baseColor.w);
-		float cloudTextureGray = pow(max(dot(baseColor.xyz, 1.0 / 3.0), 0.0), SharedData::enbSettings.CloudsCurve);
-
-		float3 cloudColor = pow(max(ComposeSkyColor(input.Color.xyz, baseColor.xyz, 0.0, composeAuthoredSky), 0.0), SharedData::enbSettings.CloudsCurve);
-		cloudColor = lerp(cloudColor, dot(cloudColor, 1.0 / 3.0), SharedData::enbSettings.CloudsDesaturation) * SharedData::enbSettings.CloudsIntensity * SharedData::enbSettings.CloudsColorFilter;
-
-		psout.Color.xyz = SkyScattering::ShadeCloud(cloudColor, cloudTextureAlpha, cloudTextureGray, viewDirection, SampBaseSampler) + skyScale * min(SharedData::enbSettings.CloudsIntensity, 1.0);
-		psout.Color.xyz *= skyBrightnessMultiplier;
 		psout.Color.w = saturate(input.Color.w * baseColor.w * (1.0 + baseColor.w * SharedData::enbSettings.CloudsVertexAlphaBoost));
+		[branch] if (psout.Color.w > 0.0)
+		{
+			float3 viewDirection = normalize(input.WorldPosition.xyz);
+			float cloudTextureAlpha = saturate(baseColor.w);
+			float cloudTextureGray = pow(max(dot(baseColor.xyz, 1.0 / 3.0), 0.0), SharedData::enbSettings.CloudsCurve);
+
+			float3 cloudColor = pow(max(ComposeSkyColor(input.Color.xyz, baseColor.xyz, 0.0, composeAuthoredSky), 0.0), SharedData::enbSettings.CloudsCurve);
+			cloudColor = lerp(cloudColor, dot(cloudColor, 1.0 / 3.0), SharedData::enbSettings.CloudsDesaturation) * SharedData::enbSettings.CloudsIntensity * SharedData::enbSettings.CloudsColorFilter;
+
+			psout.Color.xyz = SkyScattering::ShadeCloud(cloudColor, cloudTextureAlpha, cloudTextureGray, viewDirection, SampBaseSampler) + skyScale * min(SharedData::enbSettings.CloudsIntensity, 1.0);
+			psout.Color.xyz *= skyBrightnessMultiplier;
+		}
 	}
 #			endif
 #		endif

@@ -1832,7 +1832,7 @@ namespace
 				const auto mode = static_cast<NR::EyeMode>(i);
 				const bool experimental = mode == NR::EyeMode::kSideBySide;
 				ImGui::BeginDisabled(experimental && !developerMode);
-				if (ImGui::Selectable(labels[i], mode == current)) {
+				if (Util::RoundedSelectable(labels[i], mode == current)) {
 					NR::SetEyeMode(tuning, mode);
 					changed = true;
 				}
@@ -2081,7 +2081,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		}
 		if (ImGui::BeginCombo(T(TKEY("runtime_variant"), "Runtime Build"), RuntimeBuildLabel(builds[selected]).c_str())) {
 			for (size_t i = 0; i < builds.size(); ++i) {
-				if (ImGui::Selectable(RuntimeBuildLabel(builds[i]).c_str(), i == selected) && i != selected) {
+				if (Util::RoundedSelectable(RuntimeBuildLabel(builds[i]).c_str(), i == selected) && i != selected) {
 					tuning.runtimeVariant = builds[i].variant;
 					changed = true;
 					resetHistory = true;
@@ -2187,15 +2187,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	const bool cropDisabled = !tuning.regionOfInterest;
 	if (DrawContextProfiles(contexts, cropDisabled))
 		resetHistory = true;
-	if (ImGui::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
+	if (Util::Button(T(TKEY("restore_defaults"), "Restore NR Defaults"))) {
 		tuning = {};
 		contexts = {};
 		changed = recreateTuning = true;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("reset_history"), "Reset NR History")))
+	if (Util::Button(T(TKEY("reset_history"), "Reset NR History")))
 		resetHistory = true;
-	if (enabled && ImGui::Button(T(TKEY("retry"), "Retry NR")))
+	if (enabled && Util::Button(T(TKEY("retry"), "Retry NR")))
 		RequestRetry();
 	if (globals::state->IsDeveloperMode() && ImGui::TreeNodeEx(T(TKEY("developer"), "Developer"), ImGuiTreeNodeFlags_None)) {
 		ImGui::SeparatorText(T(TKEY("developer_model"), "Model input"));
@@ -2222,7 +2222,7 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"How much margin the crop keeps around the tracked character. Padded keeps the normal margin; Tight evaluates the character's own outline with no margin, for checking what the crop covers."));
 		ImGui::EndDisabled();
 		// The sweep forces its own centred crops, so it stays usable without a tracked actor.
-		if (ImGui::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
+		if (Util::Button(T(TKEY("crop_calibrate"), "Calibrate Crop Cost")))
 			RequestCalibration();
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("crop_calibrate_tooltip"),

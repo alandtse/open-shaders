@@ -20,8 +20,8 @@
  *
  * Maintains a GPU query ring and frame-scoped CPU samples
  * with rolling statistics (average, p95, p99) per named pass. Capture is
- * request-driven: no queries or QPC reads are issued unless a capture is
- * active for the current frame.
+ * request-driven; frame cadence uses one QPC read per frame while pass
+ * timestamps run only during an active capture.
  */
 class Profiler
 {
@@ -135,6 +135,16 @@ public:
 		}
 	};
 
+	/** @brief Rolling wall-clock statistics of the interval between EndFrame calls. */
+	struct FrameStats
+	{
+		float lastMs = 0.0f;
+		float avgMs = 0.0f;
+		float p95Ms = 0.0f;
+		float p99Ms = 0.0f;
+		uint32_t count = 0;
+	};
+
 	/**
 	 * @brief Creates timestamp query objects and prepares the frame ring buffer.
 	 * @param device D3D11 device used to create query objects.
@@ -213,6 +223,13 @@ public:
 	 * @param timerPrefix Includes only passes starting with this prefix, or all passes when empty.
 	 */
 	std::vector<TimerResult> GetStatistics(std::string_view timerPrefix = {}) const;
+
+	/**
+	 * @brief Gets the present-cadence frame interval statistics, tracked even while GPU timing is off.
+	 * Re-sorts the history if it gained a sample, so callers should throttle it.
+	 * Not synchronized: call it only on the thread that calls EndFrame, like GetResults.
+	 */
+	FrameStats GetFrameStats() const;
 
 	/** @brief Gets the total GPU time in milliseconds for the last collected frame. */
 	float GetTotalTimeMs() const { return totalTimeMs; }
@@ -347,7 +364,7 @@ private:
 	/// a bracket opened by a later pass would record the earlier passes as 0 ms.
 	bool frameRefused = false;
 	// Enabled by default so profiling pages show data without an extra toggle;
-	// zero-overhead idling still holds because captureActive stays false until requested.
+	// pass capture stays idle because captureActive stays false until requested.
 	std::atomic_bool userEnabled{ true };
 	std::atomic_bool captureRequested{ false };
 	std::atomic_bool captureActive{ false };
@@ -357,7 +374,11 @@ private:
 	CaptureMode activeCaptureMode = CaptureMode::None;
 	std::string activeNamePrefix;
 	std::vector<bool> activePassUsesGpu;
-	double cpuTicksToMs = 0.0;
+	static double QpcTicksToMs();
+
+	double cpuTicksToMs = QpcTicksToMs();
+	RollingHistory frameHistory;
+	int64_t lastFrameTicks = 0;
 
 	PerfEventCallback beginPerfEvent;
 	PerfEventCallback endPerfEvent;

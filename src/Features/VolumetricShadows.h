@@ -14,7 +14,7 @@ public:
 	virtual inline std::string_view GetShaderDefineName() override { return "VOLUMETRIC_SHADOWS"; }
 	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
 	virtual bool IsCore() const override { return true; }
-	virtual bool IsInMenu() const override { return false; }
+	virtual bool IsInMenu() const override { return true; }
 
 	static constexpr uint32_t kSharedShadowMapShaderSlot = 18;
 

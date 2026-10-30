@@ -73,6 +73,7 @@ public:
 	Texture2D* diffuseNoAlbedoTex = nullptr;
 
 	Util::LazyShader<ID3D11ComputeShader> prepassSS;
+	Util::LazyShader<ID3D11ComputeShader> prepassBurleySS;
 	Util::LazyShader<ID3D11ComputeShader> horizontalSSBlur;
 	Util::LazyShader<ID3D11ComputeShader> verticalSSBlur;
 	Util::LazyShader<ID3D11ComputeShader> burleySS;

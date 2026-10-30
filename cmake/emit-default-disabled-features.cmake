@@ -16,7 +16,11 @@ if(NOT DEFINED OUTPUT)
     set(OUTPUT "default-disabled-features.txt")
 endif()
 
-file(GLOB_RECURSE _ini_paths LIST_DIRECTORIES false "${FEATURES_DIR}/*/Shaders/Features/*.ini")
+file(
+    GLOB_RECURSE _ini_paths
+    LIST_DIRECTORIES false
+    "${FEATURES_DIR}/*/Shaders/Features/*.ini"
+)
 set(_names "")
 foreach(_ini IN LISTS _ini_paths)
     file(READ "${_ini}" _content)
