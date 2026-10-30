@@ -4,6 +4,7 @@
 #include "Features/SnowCover.h"
 #include "Features/TerrainBlending.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/ActorUtils.h"
@@ -1863,7 +1864,7 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 		ID3D11ShaderResourceView* snowMap = a_gateSnowCover ? globals::features::snowCover.views[6].get() : nullptr;
 		ID3D11ShaderResourceView* probes = a_skylightingReady ? skylighting.texProbeArray->srv.get() : nullptr;
 
-		globals::profiler->BeginPass(fine ? "SnowDeformation::Update" : "SnowDeformation::UpdateCoarse");
+		CS_GPU_PASS_SELECT(fine, "SnowDeformation::Update", "SnowDeformation::UpdateCoarse");
 		context->CSSetConstantBuffers(0, 1, constants);
 		context->CSSetConstantBuffers(5, 2, sharedBuffers);
 		context->CSSetSamplers(0, 2, samplers);
@@ -1903,7 +1904,6 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 			context->CSSetShader(blanketCS.get(), nullptr, 0);
 			context->Dispatch(kBlanketTexels / 8, kBlanketTexels / 8, 1);
 		}
-		globals::profiler->EndPass();
 
 		ID3D11ShaderResourceView* nullResources[7] = {};
 		ID3D11UnorderedAccessView* nullUAV = nullptr;
@@ -2204,6 +2204,7 @@ void SnowDeformation::DispatchProbes(uint32_t a_stampCount)
 	if (!probeCS || !probeBuffer || !staging || a_stampCount == 0)
 		return;
 
+	CS_GPU_PASS("SnowDeformation::Probe");
 	auto context = globals::d3d::context;
 	ID3D11UnorderedAccessView* uav = probeBuffer->uav.get();
 	ID3D11ShaderResourceView* field = levels[0].texture->srv.get();
