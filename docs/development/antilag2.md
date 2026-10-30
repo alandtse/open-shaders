@@ -32,9 +32,10 @@ The SDK FPS limit stays zero; existing display-refresh and Reflex limits remain.
 Eligible sessions use a separate presentation specialization. It publishes the
 SDK context through FSR's swap-chain private-data handshake and marks rendering
 completion after command submission, before Present. Ordinary sessions compile
-out these notifications. Shutdown drains pending presents before clearing the
-handshake and releasing the interface. A failed drain retains the context and
-interface until process exit to protect pending presentation references.
+out these notifications. The context lives until process exit: `DX12SwapChain`
+is only destroyed at DLL detach, after the FFX and driver DLLs have detached and
+the FFX presenter thread is gone, so it neither drains presents nor releases the
+interface there.
 
 ## Validation
 
