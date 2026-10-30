@@ -119,47 +119,49 @@ namespace
 	constexpr int32_t kFlagClear = 2;
 	constexpr int32_t kFlagSeed = 4;
 
+	using PackedFloat4 = SnowDeformation::PackedFloat4;
+
 	struct alignas(16) UpdateParams
 	{
-		float4 Control;
-		float4 Shape;
-		float4 Options;
-		float4 EyeOffset;
-		float4 Probe;
+		PackedFloat4 Control;
+		PackedFloat4 Shape;
+		PackedFloat4 Options;
+		PackedFloat4 EyeOffset;
+		PackedFloat4 Probe;
 		int32_t OriginCell[4];
 		int32_t BlanketCell[4];
-		float4 BlanketShape;
-		float4 BlanketFade;
-		float4 Coarse;
-		float4 Stamps[SnowDeformation::kMaxStamps];
-		float4 StampShape[SnowDeformation::kMaxStamps];
-		float4 StampMotion[SnowDeformation::kMaxStamps];
-		float4 StampSurface[SnowDeformation::kMaxStamps];
-		float4 StampBounds[SnowDeformation::kMaxStamps];
+		PackedFloat4 BlanketShape;
+		PackedFloat4 BlanketFade;
+		PackedFloat4 Coarse;
+		PackedFloat4 Stamps[SnowDeformation::kMaxStamps];
+		PackedFloat4 StampShape[SnowDeformation::kMaxStamps];
+		PackedFloat4 StampMotion[SnowDeformation::kMaxStamps];
+		PackedFloat4 StampSurface[SnowDeformation::kMaxStamps];
+		PackedFloat4 StampBounds[SnowDeformation::kMaxStamps];
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateParams);
 
 	struct alignas(16) DrawParams
 	{
-		float4 InverseRow0;
-		float4 InverseRow1;
-		float4 InverseRow2;
-		float4 Translation;
-		float4 DepthColumn;
-		float4 WindowOffset;
-		float4 EyePosition;
-		float4 FieldParams;
-		float4 FadeParams;
-		float4 TessParams;
-		float4 RangeParams;
+		PackedFloat4 InverseRow0;
+		PackedFloat4 InverseRow1;
+		PackedFloat4 InverseRow2;
+		PackedFloat4 Translation;
+		PackedFloat4 DepthColumn;
+		PackedFloat4 WindowOffset;
+		PackedFloat4 EyePosition;
+		PackedFloat4 FieldParams;
+		PackedFloat4 FadeParams;
+		PackedFloat4 TessParams;
+		PackedFloat4 RangeParams;
 		int32_t SlotParams[4];
-		float4 BlanketParams;
-		float4 WindowOffset1;
-		float4 FieldParams1;
-		float4 FadeParams1;
+		PackedFloat4 BlanketParams;
+		PackedFloat4 WindowOffset1;
+		PackedFloat4 FieldParams1;
+		PackedFloat4 FadeParams1;
 		int32_t SlotParams1[4];
-		float4 BlanketWindow;
-		float4 DetailParams;
+		PackedFloat4 BlanketWindow;
+		PackedFloat4 DetailParams;
 	};
 	STATIC_ASSERT_ALIGNAS_16(DrawParams);
 	static_assert(sizeof(DrawParams) == 19 * 16);
