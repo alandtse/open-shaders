@@ -590,8 +590,8 @@ void LightLimitFix::SetupResources()
 	{
 		CompileComputeShaders();
 
-		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
-		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
+		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>(), "LLF::LightBuildingCB");
+		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>(), "LLF::LightCullingCB");
 		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>(), "LLF::ShadowDemandCB");
 		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>(), "LLF::ShadowDepthPyramidCB");
 	}
@@ -719,7 +719,7 @@ void LightLimitFix::SetupResources()
 	}
 
 	{
-		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>());
+		strictLightDataCB = new ConstantBuffer(ConstantBufferDesc<StrictLightDataCB>(), "LLF::StrictLightDataCB");
 	}
 }
 
