@@ -72,6 +72,7 @@ add_executable(cpp_tests
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
     test_lodshadow_update_budget.cpp
+    test_gpupassnames.cpp
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_snowcover_math.cpp
