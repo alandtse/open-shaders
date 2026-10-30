@@ -1,8 +1,7 @@
 name: "(Shared) Reuse Dev Shader Compile"
 
-# Finds a successful run of the rolling dev build for the exact SHA and republishes its compiled
-# shader binaries and timing reports under THIS run, so later jobs download them unchanged.
-# The dev compile uses the release-parity flags with --max-warnings 0, so a green run is the same gate.
+# Republishes the compiled shaders and timing reports of a green dev build of the exact SHA under this run.
+# That build compiles with the release-parity flags and --max-warnings 0, so reusing it is the same gate.
 
 on:
     workflow_call:
