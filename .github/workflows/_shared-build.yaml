@@ -39,6 +39,14 @@ on:
                 description: "Skip the release-parity fxc compile and download a prior upload-compiled-shaders run's binaries instead. Finalize/upload still run normally against THIS ref's CMakeLists.txt/feature .ini, so Info.ini's PluginVersion and feature Versions stay correct even though the compile itself was reused."
                 type: boolean
                 default: false
+            compiled-shaders-retention-days:
+                description: "Retention of the uploaded CompiledShaderBinaries-* artifacts"
+                type: number
+                default: 1
+            generate-flip-impact:
+                description: "Generate the feature flip impact tables when cache-artifacts is set; a caller that runs _feature-flip-impact.yaml itself sets this false"
+                type: boolean
+                default: true
             run-full-config-validation:
                 description: "Run the full-config pass (every feature, default opt). On by default for broad PR coverage; release/cache/gate runs set this false since they only need the release-parity (profile) set."
                 type: boolean
@@ -344,7 +352,7 @@ jobs:
               with:
                   name: CompiledShaderBinaries-${{ matrix.config.runtime }}
                   path: build/ShaderCache
-                  retention-days: 1
+                  retention-days: ${{ inputs.compiled-shaders-retention-days }}
                   if-no-files-found: error
 
             # Never runs in pull_request_target contexts or on fork checkouts
@@ -399,56 +407,20 @@ jobs:
                   retention-days: 30
                   if-no-files-found: ignore
 
-    # Runs repo tooling, so it restores no build cache; a failure only costs the release its compile-impact tiers.
     feature-flip-impact:
         name: Generate feature flip impact
         needs: shader-validation
         if: >
             !cancelled() && needs.shader-validation.result == 'success' &&
-            inputs.cache-artifacts && github.event_name != 'pull_request_target' &&
+            inputs.cache-artifacts && inputs.generate-flip-impact &&
+            github.event_name != 'pull_request_target' &&
             inputs.repository == github.repository
-        continue-on-error: true
-        runs-on: windows-2025-vs2026
         permissions:
             contents: read
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-              with:
-                  ref: ${{ inputs.ref }}
-                  repository: ${{ inputs.repository }}
-                  persist-credentials: false
-
-            - name: Set up Python
-              uses: actions/setup-python@v6
-              with:
-                  python-version: "3.12"
-
-            - name: Install generator dependencies
-              shell: bash
-              run: python -m pip install --quiet pyyaml
-
-            - name: Download shader compile timing reports
-              uses: actions/download-artifact@v7
-              with:
-                  pattern: shader-compile-timing-*
-                  path: timing/
-
-            - name: Generate feature flip impact tables
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  mkdir -p flip-impact
-                  python tools/feature-flip-impact.py --runtime SE --config .github/configs/shader-validation.yaml --timing timing/shader-compile-timing-SE/shader-compile-timing-SE.json --output flip-impact/FeatureFlipImpact-SE.json
-                  python tools/feature-flip-impact.py --runtime VR --config .github/configs/shader-validation-vr.yaml --timing timing/shader-compile-timing-VR/shader-compile-timing-VR.json --output flip-impact/FeatureFlipImpact-VR.json
-
-            - name: Upload feature flip impact tables
-              uses: actions/upload-artifact@v7
-              with:
-                  name: FeatureFlipImpact
-                  path: flip-impact/FeatureFlipImpact-*.json
-                  retention-days: 30
-                  if-no-files-found: error
+        uses: ./.github/workflows/_feature-flip-impact.yaml
+        with:
+            ref: ${{ inputs.ref }}
+            repository: ${{ inputs.repository }}
 
     shader-unit-tests:
         name: Run Shader Unit Tests

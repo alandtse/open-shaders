@@ -107,6 +107,9 @@ jobs:
             run-shader-tests: true
             run-cpp-tests: true
             cache-artifacts: true
+            # A release of this exact SHA imports these instead of recompiling (see release-semantic.yaml).
+            upload-compiled-shaders: true
+            compiled-shaders-retention-days: 7
 
     prune-stale-cache:
         name: Prune superseded CMake build-dir cache generations
