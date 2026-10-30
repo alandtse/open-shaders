@@ -69,6 +69,8 @@ struct SnowDeformation : Feature
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+	virtual void RegisterUxActions() override;
+	virtual json GetDiagnostics() override;
 
 	/** @brief Binds the hull and domain stages and patch topology for a routed landscape draw, after the engine has flushed its state. */
 	void ApplyDrawState();

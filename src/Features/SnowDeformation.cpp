@@ -8,6 +8,7 @@
 #include "State.h"
 #include "Utils/ActorUtils.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 #include "Utils/VersionedRelocation.h"
@@ -3030,6 +3031,35 @@ void SnowDeformation::DrawSettings()
 			ClearField();
 		ImGui::TreePop();
 	}
+}
+
+void SnowDeformation::RegisterUxActions()
+{
+	FEATURE_COMMAND("ClearPrints", "Clear every footprint and trail from the Snow Deformation field.", [](Feature* self, const json&) {
+		static_cast<SnowDeformation*>(self)->ClearField();
+	});
+}
+
+json SnowDeformation::GetDiagnostics()
+{
+	return {
+		{ "Active", IsActiveContext() },
+		{ "Stamps", debugShown.stamps },
+		{ "ActiveTiles", debugShown.activeTiles },
+		{ "DispatchedTiles", debugShown.dispatchedTiles },
+		{ "DepthDraws", debugShown.depthDraws },
+		{ "LightingDraws", debugShown.lightingDraws },
+		{ "ShadowDraws", debugShown.shadowDraws },
+		{ "DecalDraws", debugShown.decalDraws },
+		{ "SkippedDraws", debugShown.skippedDraws },
+		{ "LayoutRejects", debugShown.layoutRejects },
+		{ "SnowCoverGating", debugShown.snowCover },
+		{ "LandscapeLayoutSeen", lightingLayoutSeen },
+		{ "BlanketActive", blanketActive },
+		{ "BlanketReadyTexels", blanketReady },
+		{ "SunkActors", sunkActors },
+		{ "DeepestSink", deepestSink }
+	};
 }
 
 void SnowDeformation::LoadSettings(json& o_json)
