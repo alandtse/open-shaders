@@ -58,6 +58,7 @@ struct HDRDisplay;
 struct PostProcessing;
 struct ScreenshotFeature;
 struct SnowCover;
+struct SnowDeformation;
 struct Skin;
 struct SceneManager;
 struct ReverseZ;
@@ -165,6 +166,7 @@ namespace globals
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern SnowCover snowCover;
+		extern SnowDeformation snowDeformation;
 		extern Skin skin;
 		extern ReverseZ reverseZ;
 		extern PostProcessing postProcessing;
