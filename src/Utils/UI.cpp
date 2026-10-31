@@ -672,6 +672,12 @@ namespace Util
 		return changed;
 	}
 
+	bool ComboAtStorage(const char* label, const void* storageAddress, int* displayIndex, const char* const* items, int itemCount)
+	{
+		ActiveControlStorageGuard storageGuard(storageAddress);
+		return ImGui::Combo(label, displayIndex, items, itemCount);
+	}
+
 	const void* GetActiveControlStorageAddress()
 	{
 		return g_activeControlStorageAddress;
