@@ -12,22 +12,9 @@
 #include "Streamline.h"
 #include "Utils/D3D.h"
 
-/** @brief Drains queued presents before releasing Anti-Lag state, retaining it if draining fails. */
 DX12SwapChain::~DX12SwapChain()
 {
-	const bool released = CS::AntiLag2::Shutdown(antiLag2Context, [] {
-			auto& fidelityFX = globals::features::upscaling.fidelityFX;
-			if (!fidelityFX.swapChainContext)
-				return true;
-			ffx::DispatchDescFrameGenerationSwapChainWaitForPresentsDX12 wait{};
-			return ffxModule.Dispatch && ffx::Dispatch(fidelityFX.swapChainContext, wait) == ffx::ReturnCode::Ok; }, [this] {
-			if (globals::features::upscaling.fidelityFX.swapChainContext) {
-				antiLag2Enabled = false;
-				if (swapChain)
-					PublishAntiLag2SwapChainData();
-			} });
-	if (!released)
-		logger::warn("[AntiLag2] Shutdown drain failed; retaining context and driver interface");
+	CS::AntiLag2::Abandon(antiLag2Context);
 }
 
 /** @brief Initializes Anti-Lag on the persistent D3D12 device and records driver availability. */
