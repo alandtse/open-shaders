@@ -308,6 +308,7 @@ struct NeuralRendering::Impl
 	};
 	static_assert(sizeof(PeripheralData) == 32);
 	std::unique_ptr<ConstantBuffer> peripheralBuffer;
+	bool peripheralResourcesFailed = false;
 	NR::PeripheralCompressionPlan peripheralPlan;
 	std::array<Util::LazyShader<ID3D11ComputeShader>, 2> downsamplePeripheral;
 	Util::LazyShader<ID3D11ComputeShader> expandPeripheral;
@@ -786,19 +787,28 @@ struct NeuralRendering::Impl
 		context->ClearState();
 	}
 
-	/** @brief Compiles optional sampling variants before selecting any compressed resources. */
-	bool PreparePeripheralShaders()
+	/** @brief Preflights optional sampling resources before selecting the compressed model size. */
+	NR::PeripheralCompressionReason PreparePeripheralResources()
 	{
+		if (peripheralResourcesFailed)
+			return NR::PeripheralCompressionReason::ResourceUnavailable;
 		peripheralDepthReversed = globals::features::reverseZ.IsActive();
 		auto* prepare = downsamplePeripheral[peripheralDepthReversed].Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
 			{ { "NR_PERIPHERAL_COMPRESSION", "1" } }, "cs_5_0", "Downsample", "NeuralRendering::PeripheralDownsample CS");
 		auto* expand = expandPeripheral.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
 			{ { "NR_PERIPHERAL_COMPRESSION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::PeripheralExpand CS");
 		if (!prepare || !expand)
-			return false;
-		if (!peripheralBuffer)
-			peripheralBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<PeripheralData>(), "NeuralRendering::Peripheral CB");
-		return true;
+			return NR::PeripheralCompressionReason::ShaderUnavailable;
+		try {
+			if (!peripheralBuffer)
+				peripheralBuffer = std::make_unique<ConstantBuffer>(ConstantBufferDesc<PeripheralData>(), "NeuralRendering::Peripheral CB");
+		} catch (...) {
+			if (interop.DeviceRemoved())
+				throw;
+			peripheralResourcesFailed = true;
+			return NR::PeripheralCompressionReason::ResourceUnavailable;
+		}
+		return NR::PeripheralCompressionReason::Active;
 	}
 
 	/** @brief Binds the admitted full-eye map for both preparation and gain reconstruction. */
@@ -2487,7 +2497,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		materialEdgeSoftness.store(materialStrengths.edgeSoftness, std::memory_order_relaxed);
 	};
 	try {
-		retryRequested = false;
+		const bool retry = retryRequested.exchange(false);
 		if (action == NR::FrameAction::RebuildThenRun) {
 			// Retire both APIs before releasing a failed runtime and its shared resources.
 			impl->interop.Drain();
@@ -2495,6 +2505,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			resetHistory = true;
 		}
 		auto& work = *impl;
+		if (retry)
+			work.peripheralResourcesFailed = false;
 		const auto selected = diagnostics.Selected();
 		diagnostic.options = selected.options;
 		if (diagnostic.options != work.lastDiagnosticOptions) {
@@ -2539,6 +2551,7 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			for (auto& shader : work.downsamplePeripheral)
 				shader.Reset();
 			work.expandPeripheral.Reset();
+			work.peripheralResourcesFailed = false;
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
@@ -2570,32 +2583,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 				throw std::runtime_error("Missing or incompatible NR guide texture");
 		}
 		const bool calibrationRunning = GetCalibration().state == NR::CropCalibration::State::kRunning;
-		auto boundedTuning = effective;
-		boundedTuning.Sanitize();
-		const bool cropActive = boundedTuning.regionOfInterest || calibrationRunning;
-		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
-		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};
-		const bool actorCrop = work.region.active && !calibrationRunning;
-		const bool foveatedRouteSuspended = state->IsMainOrLoadingMenuOpen();
-		bool foveaClip = false;
-		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
-			const auto& foveated = globals::features::upscaling.foveatedRender;
-			Util::Subrect::UVRegion leftUV, rightUV;
-			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {
-				const auto clip = NR::FoveaClip::BuildClip(std::array<Util::Subrect::UVRegion, 2>{ leftUV, rightUV }, w, h);
-				if (clip.active) {
-					Util::Region::ClipRegion(work.region, clip);
-					NR::FoveaClip::ClipSubject(work.actorBox, clip);
-					foveaClip = true;
-				}
-			}
-		}
-		auto source = RegionSource::kNone;
-		if (actorCrop)
-			source = foveaClip ? RegionSource::kBoth : RegionSource::kActor;
-		else if (foveaClip)
-			source = RegionSource::kFovea;
-		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
 		auto lowExtent = NR::ModelExtent(effective.modelScale, w, h);
 		NR::PeripheralCompressionPlan compression;
 		if (effective.peripheralCompressionPercent) {
@@ -2604,15 +2591,11 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			                       selected.exposure == NR::Diagnostics::ExposureMode::Production && selected.composite == NR::Diagnostics::CompositeMode::Production;
 			compression = NR::BuildPeripheralCompressionPlan(w, h, lowExtent.first ? lowExtent.first : w, lowExtent.second ? lowExtent.second : h,
 				effective.peripheralCompressionPercent, supported, NR::kModelExtentAlignment, NR::kMinModelExtent);
-			if (compression.Active() && work.region.active) {
-				for (uint32_t eye = 0; eye < count; ++eye) {
-					const auto crop = Util::Region::ClampToFrame(work.region.eye[eye], w, h);
-					if (!crop.w || !crop.h)
-						compression = { .reason = NR::PeripheralCompressionReason::InvalidGeometry };
-				}
+			if (compression.Active()) {
+				const auto reason = work.PreparePeripheralResources();
+				if (reason != NR::PeripheralCompressionReason::Active)
+					compression = { .reason = reason };
 			}
-			if (compression.Active() && !work.PreparePeripheralShaders())
-				compression = { .reason = NR::PeripheralCompressionReason::ShaderUnavailable };
 			if (compression.Active())
 				lowExtent = { compression.width, compression.height };
 		}
@@ -2653,6 +2636,32 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 		work.highlightProtect = selected.highlightProtect;
 		work.toneRadius = selected.toneRadius;
 		uint32_t reset = NR::Diagnostics::FrameResetReasons(resetHistory.exchange(false), work.lastFrame, state->frameCount);
+		auto boundedTuning = effective;
+		boundedTuning.Sanitize();
+		const bool cropActive = boundedTuning.regionOfInterest || calibrationRunning;
+		work.region = cropActive ? GetRegionOfInterest() : Util::Region::StereoRegion{};
+		work.actorBox = cropActive ? GetActorBox() : Util::Region::StereoRegion{};
+		const bool actorCrop = work.region.active && !calibrationRunning;
+		const bool foveatedRouteSuspended = state->IsMainOrLoadingMenuOpen();
+		bool foveaClip = false;
+		if (boundedTuning.regionFollowFoveation && !calibrationRunning && !foveatedRouteSuspended) {
+			const auto& foveated = globals::features::upscaling.foveatedRender;
+			Util::Subrect::UVRegion leftUV, rightUV;
+			if (foveated.GetClipUV(0, leftUV) && foveated.GetClipUV(1, rightUV)) {
+				const auto clip = NR::FoveaClip::BuildClip(std::array<Util::Subrect::UVRegion, 2>{ leftUV, rightUV }, w, h);
+				if (clip.active) {
+					Util::Region::ClipRegion(work.region, clip);
+					NR::FoveaClip::ClipSubject(work.actorBox, clip);
+					foveaClip = true;
+				}
+			}
+		}
+		auto source = RegionSource::kNone;
+		if (actorCrop)
+			source = foveaClip ? RegionSource::kBoth : RegionSource::kActor;
+		else if (foveaClip)
+			source = RegionSource::kFovea;
+		regionSource.store(static_cast<uint32_t>(source), std::memory_order_relaxed);
 		if (Util::Region::ShouldResetForRegion(NR::ActorRegion::kResetPolicy, work.region, work.lastRegion, NR::ActorRegion::kHistoryTolerancePixels))
 			reset |= NR::Diagnostics::RegionChanged;
 		work.lastRegion = work.region;

@@ -18,13 +18,14 @@ namespace NR
 		InvalidGeometry,
 		InsufficientSavings,
 		FootprintLimit,
-		ShaderUnavailable
+		ShaderUnavailable,
+		ResourceUnavailable
 	};
 
 	/** @brief Frozen full-eye sampling map and one shared per-eye allocation size. */
 	struct PeripheralCompressionPlan
 	{
-		PeripheralMapping mapping;
+		PeripheralMapping mapping{};
 		std::uint32_t width = 0, height = 0;
 		PeripheralCompressionReason reason = PeripheralCompressionReason::Disabled;
 		/** @brief True only after the sampling footprint was admitted. */
@@ -87,6 +88,8 @@ namespace NR
 			return "footprint_limit";
 		case PeripheralCompressionReason::ShaderUnavailable:
 			return "shader_unavailable";
+		case PeripheralCompressionReason::ResourceUnavailable:
+			return "resource_unavailable";
 		default:
 			return "disabled";
 		}
