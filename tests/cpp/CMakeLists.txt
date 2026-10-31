@@ -102,7 +102,6 @@ add_executable(cpp_tests
 	test_effects11_settings.cpp
 	test_versiongate.cpp
 	test_presetinclude.cpp
-	test_windfield.cpp
 	test_sehguard.cpp
 	test_nr_decisions.cpp
 	test_nr_cadence.cpp
@@ -140,8 +139,6 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/FurShells/AssetScan.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
 
 target_include_directories(cpp_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK")

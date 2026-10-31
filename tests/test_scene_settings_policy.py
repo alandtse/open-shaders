@@ -130,6 +130,14 @@ class SceneSettingsPolicyTests(unittest.TestCase):
                 self.assertTrue(any(is_prefix(prefix, address)
                                     for address in self.addresses))
 
+    def test_provider_wind_effects_are_not_scene_controllable(self):
+        prefix = normalize_path(("Wind", "windEffects"))
+        self.assertFalse(any(is_prefix(prefix, address)
+                             for address in self.addresses))
+        for key in ("processMidRangeTransients", "processFarRangeTransients"):
+            with self.subTest(key=key):
+                self.assertIn(("Wind", key), self.blacklist)
+
     def test_location_whitelist_prefixes_resolve_and_restrict(self):
         for feature in self.location_features:
             normalized_feature = normalize_address_token(feature)
