@@ -34,6 +34,21 @@ namespace
 	constexpr float kWorstCaseDecayTime = 3.0f;
 	constexpr float kWorstCaseConeCosine = 0.85f;
 	constexpr float kGoldenAngleRadians = 2.39996323f;
+	struct GustPreset
+	{
+		std::string_view id;
+		float alongWindScale;
+		float crosswindScale;
+		float coverage;
+		float edgeSoftness;
+		float distortionStrength;
+		float distortionScale;
+		float distortionSpeed;
+		float advectionMultiplier;
+	};
+	constexpr std::array<GustPreset, 3> kGustPresets{ { { "sweepingWaves", 1024.0f, 16384.0f, 0.50f, 0.18f, 0.15f, 2.00f, 0.08f, 0.85f },
+		{ "rollingGusts", 768.0f, 4096.0f, 0.50f, 0.26f, 0.65f, 1.25f, 0.18f, 1.00f },
+		{ "turbulentPatches", 384.0f, 1024.0f, 0.50f, 0.24f, 1.20f, 0.65f, 0.35f, 0.75f } } };
 	std::string CompactMeshPath(std::string_view a_path, float a_availableWidth)
 	{
 		const std::string fullPath(a_path);
@@ -62,6 +77,50 @@ namespace
 		}
 		return compactPath;
 	}
+}
+
+void Wind::ApplyGustPreset(std::string_view a_id)
+{
+	for (const auto& preset : kGustPresets) {
+		if (preset.id != a_id)
+			continue;
+		settings.windFieldGustScale = preset.alongWindScale;
+		settings.windFieldGustCrosswindScale = preset.crosswindScale;
+		settings.windFieldGustCoverage = preset.coverage;
+		settings.windFieldGustEdgeSoftness = preset.edgeSoftness;
+		settings.enableWindFieldGustDistortion = true;
+		settings.windFieldGustDistortionStrength = preset.distortionStrength;
+		settings.windFieldGustDistortionScale = preset.distortionScale;
+		settings.windFieldGustDistortionSpeed = preset.distortionSpeed;
+		settings.windFieldGustAdvectionMultiplier = preset.advectionMultiplier;
+		return;
+	}
+}
+
+void Wind::DrawGustPresets()
+{
+	const char* labels[]{
+		T(TKEY("gust_preset_sweeping_waves"), "Sweeping Waves"),
+		T(TKEY("gust_preset_rolling_gusts"), "Rolling Gusts"),
+		T(TKEY("gust_preset_turbulent_patches"), "Turbulent Patches")
+	};
+	const char* descriptions[]{
+		T(TKEY("gust_preset_sweeping_waves_tooltip"), "Long, nearly unbroken wave fronts sweep across the grass, with gently irregular edges. Inspired by sweeping grass waves in animation."),
+		T(TKEY("gust_preset_rolling_gusts_tooltip"), "Broad rolling gusts with broken edges and calm gaps. A middle ground between sweeping waves and scattered patches."),
+		T(TKEY("gust_preset_turbulent_patches_tooltip"), "Smaller, noisier gust patches with more local variation. Slower travel keeps the tighter pattern from becoming too frantic.")
+	};
+	if (ImGui::BeginCombo(T(TKEY("gust_pattern_preset"), "Gust Pattern Preset"),
+			T(TKEY("gust_preset_apply"), "Apply a preset..."))) {
+		for (std::size_t index = 0; index < kGustPresets.size(); ++index) {
+			if (ImGui::Selectable(labels[index]))
+				ApplyGustPreset(kGustPresets[index].id);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::TextUnformatted(descriptions[index]);
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::TextWrapped("%s", T(TKEY("gust_preset_scope"),
+								 "Applies shared gust shape and travel settings to grass, trees, and other wind consumers. Wind strength and vegetation response stay as tuned. You can adjust the sliders afterward and save normally, including through Scene Manager."));
 }
 
 void Wind::DrawWindFieldSettings()
@@ -205,6 +264,7 @@ void Wind::DrawWindFieldSettings()
 	ImGui::Text("%s: %.0f / %.0f", T(TKEY("wind_field_profile_scale"), "Along-wind / crosswind scale"),
 		settings.windFieldGustScale, settings.windFieldGustCrosswindScale);
 	ImGui::Text("%s: %.2fx", T(TKEY("wind_field_profile_advection"), "Advection"), settings.windFieldGustAdvectionMultiplier);
+	DrawGustPresets();
 	if (ImGui::TreeNodeEx(T(TKEY("wind_field_tuning"), "Sampler tuning"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("wind_field_gust_advection_multiplier"), "Gust Advection Multiplier"),
 			&settings.windFieldGustAdvectionMultiplier, kWindFieldGustAdvectionMultiplierMin,

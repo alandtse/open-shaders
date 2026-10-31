@@ -276,6 +276,13 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("applyGustPreset",
+		"Apply shared gust shape and travel settings. Args: preset (sweepingWaves|rollingGusts|turbulentPatches). Preserves wind strength, vegetation responses and effects. Save through normal Wind settings or Scene Manager.",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("preset") || !args["preset"].is_string())
+				return;
+			static_cast<Wind*>(feature)->ApplyGustPreset(args["preset"].get<std::string>());
+		});
 	FEATURE_COMMAND("setGrassTransientBendStrength",
 		"Set grass transient bend strength from 0 to 180 degrees per unit, independently of ambient bending. Args: strength (number).",
 		[](Feature* feature, const json& args) {

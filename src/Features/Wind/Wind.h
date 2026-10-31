@@ -16,6 +16,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <span>
+#include <string_view>
 #include <vector>
 
 /** Per-frame contribution Wind makes to State::PermutationCB; see State::UpdatePermutationBuffer. */
@@ -268,6 +269,8 @@ private:
 	static uint32_t SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize);
 	[[nodiscard]] uint32_t GetTransientFieldMask() const;
 	void DrawWindFieldSettings();
+	void DrawGustPresets();
+	void ApplyGustPreset(std::string_view a_id);
 	void DrawWindEffectsSettings();
 	void SpawnDebugWindEffects();
 	void DrawTreeSettings();
