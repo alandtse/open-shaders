@@ -2,6 +2,7 @@
 
 #include "MaterialMap.h"
 #include "MaterialStrength.h"
+#include "ModelReconstruction.h"
 #include "Utils/MathUtils.h"
 #include "Utils/StringUtils.h"
 
@@ -138,6 +139,10 @@ namespace NR
 		uint32_t modelPreset = 0;
 		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
 		bool modelGuidedUpsample = true;
+		/** @brief Uses normalized RGB similarity at or below 50% model scale; otherwise the selected basic filter applies. */
+		bool modelRgbGuidedUpsample = false;
+		/** @brief Basic reconstruction filter: 0 bilinear, 1 Lanczos3; guidance takes priority when eligible. */
+		uint32_t modelReconstructionFilter = Reconstruction::kBilinearFilter;
 		/**
 		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
 		 *        the per-instance cost of the second eye but changes the model's result by position.
@@ -225,6 +230,7 @@ namespace NR
 			materialMapFilter = MaterialMap::Sanitize(materialMapFilter);
 			skipFrameGapMode = std::min(skipFrameGapMode, kMaxSkipFrameGapMode);
 			modelPreset = std::min(modelPreset, kMaxModelPreset);
+			modelReconstructionFilter = Reconstruction::SanitizeFilter(modelReconstructionFilter);
 			if (!IsValidRuntimeVariant(runtimeVariant))
 				runtimeVariant.clear();
 			modelScale = Util::ClampFinite(modelScale, kMinModelScale, kMaxModelScale, kMaxModelScale);
