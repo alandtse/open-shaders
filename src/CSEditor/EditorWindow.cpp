@@ -2354,8 +2354,17 @@ bool EditorWindow::DrawGameHourSlider(const char* label, const char* format)
 
 void EditorWindow::FinishGameHourSliderFrame(bool widgetsDrawn)
 {
-	if (gameHourScrubId && (!widgetsDrawn || ImGui::GetActiveID() != gameHourScrubId ||
-							   GImGui->ActiveIdIsAlive != gameHourScrubId)) {
+	const auto isScrubActiveInContext = [id = gameHourScrubId](const ImGuiContext* ctx) {
+		return ctx && ctx->ActiveId == id && ctx->ActiveIdIsAlive == id;
+	};
+	bool scrubActive = false;
+	if (widgetsDrawn && gameHourScrubId != 0) {
+		if (auto* menu = Menu::GetSingleton())
+			scrubActive = isScrubActiveInContext(menu->GetDesktopContext()) || isScrubActiveInContext(menu->GetVRPanelContext());
+		if (!scrubActive)
+			scrubActive = isScrubActiveInContext(ImGui::GetCurrentContext());
+	}
+	if (gameHourScrubId && !scrubActive) {
 		Util::EnvironmentControls::EndGameHourScrub();
 		gameHourScrubId = 0;
 		if (gameHourScrubRefreshIssued)

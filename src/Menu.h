@@ -22,6 +22,7 @@
 using json = nlohmann::json;
 
 struct ImFont;
+struct ImGuiContext;
 
 class Menu
 {
@@ -310,6 +311,49 @@ public:
 	// Display size tracking for cross-session resolution change detection
 	float2 lastDisplaySize{};
 	bool resetLayout = false;
+
+	/** @brief Per-surface state that is swapped into the live Menu members while the VR HMD panel draws. */
+	struct SurfaceState
+	{
+		float cachedFontSize = ThemeManager::Constants::DEFAULT_FONT_SIZE;
+		std::array<float, static_cast<size_t>(FontRole::Count)> cachedFontPixelSizesByRole = {};
+		std::string cachedFontSignature;
+		std::array<ImFont*, static_cast<size_t>(FontRole::Count)> loadedFontRoles = {};
+		bool wantsFontPreviewAtlas = false;
+		float2 lastDisplaySize{};
+		bool resetLayout = false;
+		SidebarState sidebar;
+		bool wasDocked = false;
+	};
+
+	/**
+	 * @brief Binds the VR HMD panel's ImGui context and swaps its font, layout and sidebar state into the live members.
+	 *
+	 * Everything that draws or reloads the HMD surface runs inside this scope, so the existing
+	 * single-surface code paths need no per-surface variants. The desktop surface is the default.
+	 */
+	class VRSurfaceScope
+	{
+	public:
+		explicit VRSurfaceScope(Menu& menu) noexcept;
+		~VRSurfaceScope();
+		VRSurfaceScope(const VRSurfaceScope&) = delete;
+		VRSurfaceScope& operator=(const VRSurfaceScope&) = delete;
+
+	private:
+		Menu& menu;
+		ImGuiContext* previous;
+	};
+
+	/** @brief True while the VR HMD panel and the desktop window are drawn as independent ImGui surfaces. */
+	bool separateSurfaces = false;
+
+	/** @brief Gets the desktop ImGui context created by Init(). */
+	ImGuiContext* GetDesktopContext() const noexcept { return desktopContext; }
+	/** @brief Gets the VR HMD panel ImGui context, or nullptr until EnsureVRPanelContext() succeeds. */
+	ImGuiContext* GetVRPanelContext() const noexcept { return vrPanelContext; }
+	/** @brief Lazily creates the VR HMD panel ImGui context on the render thread. */
+	bool EnsureVRPanelContext();
 
 	// Used for resetting input keys to solve alt-tab stuck issue
 	std::atomic<bool> focusChanged = false;
@@ -676,6 +720,14 @@ private:
 	Settings settings;
 
 	std::string cachedIniPath;  // io.IniFilename must point to a string that lives for the duration of the runtime
+	std::string cachedVrIniPath;
+	bool wasDocked = false;
+	ImGuiContext* desktopContext = nullptr;
+	ImGuiContext* vrPanelContext = nullptr;
+	bool vrPanelContextFailed = false;
+	SurfaceState vrSurface;
+	void SwapSurfaceState(SurfaceState& other) noexcept;
+	void ClearAllImGuiInputKeys();
 
 	// Menu navigation
 	SidebarState sidebar;

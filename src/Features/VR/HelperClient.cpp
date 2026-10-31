@@ -182,7 +182,10 @@ void VR::RenderStatusHud()
 	// A dedicated HUD context is load-bearing: rendering these on the menu's own
 	// context would clear its input state each frame and break interaction.
 	const bool menuShown = g_client.HasFocus() || menu->IsEnabled;
-	const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+	uint32_t panelW = 0, panelH = 0;
+	const ImVec2 displaySize = GetHelperPanelSize(panelW, panelH) ?
+	                               ImVec2(static_cast<float>(panelW), static_cast<float>(panelH)) :
+	                               ImGui::GetIO().DisplaySize;
 
 	g_hud.RenderHud(globals::d3d::device, globals::d3d::context, displaySize, [menuShown]() {
 		if (menuShown)
