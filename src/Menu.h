@@ -1,13 +1,22 @@
 
 #pragma once
+#include "CSEditor/UndoHistory.h"
 #include "Feature.h"
+#include "Menu/FontAtlasState.h"
+#include "Menu/IconLoader.h"
+#include "Menu/MenuShortcuts.h"
 #include "Menu/ThemeManager.h"
 #include "Utils/Input.h"
+#include "Utils/RenderTaskQueue.h"
 #include "Utils/Serialize.h"
+#include "Utils/UISurface.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <dxgi1_4.h>
+#include <map>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -16,6 +25,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <winrt/base.h>
 
@@ -49,7 +59,7 @@ public:
 	 * ]
 	 *
 	 * SizeScale multiplies the base FontSize for each role.
-	 * Example: FontSize=27, Heading SizeScale=1.05 → 28.35px rendered size
+	 * Example: FontSize=27, Heading SizeScale=1.05 â†’ 28.35px rendered size
 	 *
 	 * Migration from Legacy:
 	 * Old "FontName" field auto-populates Body role on theme load.
@@ -58,7 +68,7 @@ public:
 	enum class FontRole : std::uint8_t
 	{
 		Body = 0,    // Default UI text
-		Title,       // Large title text (e.g., "Open Shaders" header)
+		Title,       // Feature and page titles
 		Heading,     // Section headers (tabs, category labels)
 		Subheading,  // Subsection headers (feature names, separators)
 		Subtext,     // Smaller secondary text (descriptions, about content)
@@ -118,6 +128,16 @@ public:
 
 	bool initialized = false;
 	bool IsEnabled = false;
+	float openFade = 0.0f;  // 0 = closed, 1 = fully open; eased toward IsEnabled each frame
+
+	/** @brief Eases menu opacity toward requested visibility, or snaps when menu fades are off. */
+	void UpdateOpenFade(float deltaTime);
+	/** @brief Whether the main menu draws its authored background and blur. */
+	bool IsBackgroundVisible() const { return backgroundVisible; }
+	/** @brief Whether the current menu draw uses the temporary transparent-background view. */
+	bool IsBackgroundPeekActive() const { return backgroundPeekActive; }
+	/** @brief Toggles temporary game visibility without changing theme or saved settings. */
+	void ToggleBackgroundVisibility() { backgroundVisible = !backgroundVisible; }
 
 	/** @brief Loads menu settings from JSON, including legacy migration */
 	void Load(json& o_json);
@@ -154,7 +174,7 @@ public:
 	 *
 	 * Mirrors the ToggleKey hotkey: honours the first-time-setup guard and clears
 	 * stale ImGui input on open. Touches the ImGui context and the `IsEnabled` flag
-	 * the render thread owns, so it is **render/UI thread only** — call it from the
+	 * the render thread owns, so it is **render/UI thread only** â€” call it from the
 	 * render loop (as the ToggleKey path does), not the game/main thread. Off-thread
 	 * callers (e.g. devbench) must use RequestVisibility instead.
 	 * @param a_visible Desired visibility.
@@ -175,7 +195,7 @@ public:
 	 * @brief Thread-safe entry point for off-thread callers to change menu visibility.
 	 *
 	 * Records an atomic request that the render loop (ProcessInputEventQueue) consumes
-	 * and applies via SetVisible on the render thread — so the ImGui access stays on
+	 * and applies via SetVisible on the render thread â€” so the ImGui access stays on
 	 * the thread that owns the context. Safe to call from any thread (e.g. devbench's
 	 * listener thread); the change takes effect on the next rendered frame. Absolute
 	 * open/close is last-writer-wins; toggles accumulate (count) so rapid sub-frame
@@ -207,10 +227,23 @@ public:
 		offThreadTab = std::move(a_label);
 	}
 
+	/** @brief Selects a path through nested tabs on the render thread. */
+	void RequestTabs(std::vector<std::string> labels)
+	{
+		pendingTabPath = std::move(labels);
+		pendingTabFramesLeft = kPendingTabFrames;
+	}
+
 	/** @brief Queues sidebar visibility for the render thread without saving settings. */
 	void RequestSidebarVisibility(bool visible)
 	{
 		pendingSidebarVisibility.store(visible ? 1 : 0, std::memory_order_relaxed);
+	}
+
+	/** @brief Queues an owning-thread operation before the next UI frame, including when the menu is hidden. */
+	void RequestRenderTask(std::function<void()> task)
+	{
+		renderTasks.Enqueue(std::move(task));
 	}
 
 	/** @brief Render-thread state for the sliding navigation sidebar. */
@@ -222,10 +255,12 @@ public:
 		float contentWidth = 0.0f;
 		float availableWidth = 0.0f;
 		float widthRatio = ThemeManager::Constants::AUTOHIDE_PANEL_WIDTH_RATIO;
+		float windowOffset = 0.0f;
 	};
 
-	// Search bar state
-	std::string featureSearch;  // For left pane feature search
+	/** @brief Render-thread animation and expanded-width state for menu navigation. */
+	[[nodiscard]] SidebarState& GetSidebarState() { return sidebar; }
+
 	/** @brief Draws the in-game performance/debug overlay */
 	void DrawOverlay();
 	/** @brief Draws the detached weather details editor window */
@@ -237,8 +272,39 @@ public:
 	void RecordDirectInputWheelDelta(std::int32_t delta);
 	/** @brief Returns true if the menu should consume all input (menu open or capturing hotkey) */
 	bool ShouldSwallowInput();
+	/** @brief Keeps Skyrim's AFK vanity camera off while any CS UI is open (settings, editor, first-time setup). */
+	void SyncVanityCamera();
 	/** @brief Returns true if the free camera preview is in flying mode */
 	bool IsPreviewFlying();
+	/**
+	 * @brief Claims the Escape press ImGui reports this frame for a widget, such as a search field
+	 * clearing its text or a popup closing, so the same press does not also close the CS Editor or
+	 * this menu when the key is released.
+	 */
+	void ConsumeEscape() { escapeConsumed = true; }
+	/** @brief Drops menu and editor history after saved settings are reloaded. */
+	void ClearUndoHistory();
+	/** @brief Registers a target with the active menu or editor history before drawing its UI. */
+	void WatchUndoTarget(UndoHistory::Target target) { GetUndoHistory().Watch(std::move(target), ImGui::GetFrameCount()); }
+	/** @brief History owned by the active standalone menu or editor surface. */
+	UndoHistory& GetUndoHistory();
+	/** @brief Read-only history owned by the active standalone menu or editor surface. */
+	const UndoHistory& GetUndoHistory() const;
+	/** @brief Watches feature edits in the active menu or editor history. */
+	void WatchFeatureUndo(Feature* feature);
+	/** @brief Queues an undo of the newest change, applied before the next frame draws, as Ctrl+Z does. */
+	void RequestUndo() { pendingUndo = UndoRequest::Undo; }
+	/** @brief Queues a redo of the newest undone change, as Ctrl+Y does. */
+	void RequestRedo() { pendingUndo = UndoRequest::Redo; }
+	/** @brief Whether the active menu or editor history has a change to undo. */
+	bool CanUndo() const { return GetUndoHistory().CanUndo(); }
+	/** @brief Whether the active menu or editor history has an undone change to redo. */
+	bool CanRedo() const { return GetUndoHistory().CanRedo(); }
+	/**
+	 * @brief Reads and clears the claim made by ConsumeEscape().
+	 * @return True when a widget claimed the Escape press being released.
+	 */
+	bool TakeConsumedEscape() { return std::exchange(escapeConsumed, false); }
 	/**
 	 * @brief Builds a deterministic string signature from current font configuration.
 	 * @param baseFontSize The base pixel size before per-role scaling.
@@ -256,33 +322,10 @@ public:
 	bool settingShaderBlockNextKey = false;  // Debug: capture shader block next key
 	bool settingCSEditorToggleKey = false;   // CS Editor toggle key
 	bool settingScreenshotKey = false;       // Screenshot capture key
-	bool settingEffects11EditorKey = false;
 	bool settingEffects11ToggleKey = false;  // Effects 11 toggle key
-
-	// Font caching (made public for ThemeManager and OverlayRenderer access)
-	// Marked mutable because they're cache fields that may be updated from const methods
-	float cachedFontSize = ThemeManager::Constants::DEFAULT_FONT_SIZE;  // Tracks whether font has been modified and may require reloading
-	mutable std::string cachedFontName = "Jost/Jost-Regular.ttf";       // Tracks whether font file has changed and may require reloading
-	std::array<std::string, static_cast<size_t>(FontRole::Count)> cachedFontFilesByRole = []() {
-		std::array<std::string, static_cast<size_t>(FontRole::Count)> files{};
-		auto setFile = [&files](FontRole role, std::string value) {
-			files[static_cast<size_t>(role)] = std::move(value);
-		};
-		setFile(FontRole::Body, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Title, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Heading, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Subheading, "Jost/Jost-Regular.ttf");
-		setFile(FontRole::Subtext, "Jost/Jost-Regular.ttf");
-		return files;
-	}();
-	mutable std::array<float, static_cast<size_t>(FontRole::Count)> cachedFontPixelSizesByRole = {};
-	std::string cachedFontSignature;
-	mutable std::array<ImFont*, static_cast<size_t>(FontRole::Count)> loadedFontRoles = {};
+	bool settingEffects11EditorKey = false;  // Effects 11 editor key
 
 	// Deferred reload systems (public for SettingsTabRenderer access)
-	bool pendingFontReload = false;
-	bool pendingIconReload = false;
-	bool wantsFontPreviewAtlas = false;  // Set when Fonts tab is opened; gates catalog preview font loading
 	bool pendingCursorReload = false;
 
 private:
@@ -293,6 +336,7 @@ private:
 	std::atomic<VisibilityRequest> pendingAbsolute{ VisibilityRequest::None };  // None/Open/Close
 	std::atomic<unsigned int> pendingToggleCount{ 0 };
 	std::atomic<int> pendingSidebarVisibility{ -1 };
+	Util::RenderTaskQueue renderTasks;
 
 	// Off-thread feature-menu selection request (see RequestFeatureMenu), drained into
 	// pendingFeatureSelection on the render thread in ProcessInputEventQueue.
@@ -302,6 +346,8 @@ private:
 	std::mutex offThreadTabMutex;
 	std::string offThreadTab;
 	std::string pendingTab;
+	std::vector<std::string> pendingTabPath;
+	std::string featureSearch;
 	uint32_t pendingTabFramesLeft = 0;
 	/** @brief Frames a RequestTab keeps looking for its tab: a tab inside another tab only draws once that one is selected. */
 	static constexpr uint32_t kPendingTabFrames = 600;
@@ -319,50 +365,8 @@ public:
 	struct Constants
 	{
 		static constexpr std::uint16_t KEY_PRESSED_MASK = 0x8000;
+		static constexpr float VANITY_CAMERA_DELAY_SECONDS = 10000.0f;
 	};
-
-	// UI icon textures
-	struct UIIcon
-	{
-		ID3D11ShaderResourceView* texture = nullptr;
-		ImVec2 size = ImVec2(32.0f, 32.0f);
-
-		void Release()
-		{
-			if (texture) {
-				texture->Release();
-				texture = nullptr;
-			}
-		}
-	};
-	struct UIIcons
-	{
-		UIIcon sidebar;
-		UIIcon saveSettings;
-		UIIcon loadSettings;
-		UIIcon deleteSettings;
-		UIIcon clearCache;
-		UIIcon logo;                  // New logo icon
-		UIIcon search;                // Search icon for search bars
-		UIIcon featureSettingRevert;  // Feature revert settings icon
-		UIIcon applyToGame;           // Apply changes to game icon (CS editor)
-		UIIcon pauseTime;             // Pause time icon (CS editor)
-		UIIcon undo;                  // Undo icon (CS editor)
-		UIIcon freeCamera;            // Free camera preview icon (CS editor)
-		UIIcon playMode;              // Play mode preview icon (CS editor)
-
-		// Category icons
-		UIIcon characters;
-		UIIcon display;
-		UIIcon foliage;
-		UIIcon lighting;
-		UIIcon sky;
-		UIIcon landscape;
-		UIIcon water;
-		UIIcon debug;
-		UIIcon materials;
-		UIIcon postProcessing;
-	} uiIcons;
 
 	struct ThemeSettings
 	{
@@ -397,14 +401,16 @@ public:
 			return roles;
 		}();
 
-		bool UseSimplePalette = false;      // DEPRECATED: No longer affects behavior. UI now shows both Simple and Advanced controls.
-		bool UseMonochromeIcons = false;    // whether to use monochrome (white) action icons with text color tinting
+		bool UseSimplePalette = false;    // DEPRECATED: No longer affects behavior. UI now shows both Simple and Advanced controls.
+		bool UseMonochromeIcons = false;  // whether to use monochrome (white) action icons with text color tinting
+		bool ShowActionIcons = true;
 		bool UseMonochromeLogo = false;     // whether to use monochrome CS logo
-		bool ShowFooter = true;             // whether to show the footer with game version/GPU info
+		bool ShowFooter = true;             // whether to show the status bar (status, GPU, game version) at the bottom
 		bool CenterHeader = false;          // whether to center the header title and logo
 		float TooltipHoverDelay = 0.5f;     // tooltip hover delay in seconds
 		bool BackgroundBlurEnabled = true;  // enable background blur effect
-		bool UseCustomCursor = false;       // use theme cursor images instead of default ImGui cursors
+		bool MenuFadeEnabled = true;        // fade the menu in and out when it is toggled
+		bool UseCustomCursor = true;        // use theme cursor images instead of default ImGui cursors (each bundled theme ships a set)
 		struct CursorImageSettings
 		{
 			std::string File;
@@ -427,6 +433,7 @@ public:
 			float ThumbHovered = 0.75f;  // Thumb when hovered
 			float ThumbActive = 0.9f;    // Thumb when being dragged
 		} ScrollbarOpacity;
+		Util::Surface::Settings Surfaces;  // per-role look of the menu's flat surfaces (Home cards, toasts, palette, nav)
 		struct PaletteColors
 		{
 			ImVec4 Background{ 0.10f, 0.10f, 0.10f, 0.80f };
@@ -442,9 +449,9 @@ public:
 			ImVec4 Disable{ 0.5f, 0.5f, 0.5f, 1.0f };
 			ImVec4 Error{ 1.0f, 0.4f, 0.4f, 1.0f };
 			ImVec4 Warning{ 1.0f, 0.6f, 0.2f, 1.0f };
-			ImVec4 RestartNeeded{ 0.4f, 1.0f, 0.4f, 1.0f };
+			ImVec4 RestartNeeded{ 0.45f, 0.78f, 0.48f, 1.0f };
 			ImVec4 CurrentHotkey{ 1.0f, 1.0f, 0.0f, 1.0f };
-			ImVec4 SuccessColor{ 0.0f, 1.0f, 0.0f, 1.0f };
+			ImVec4 SuccessColor{ 0.32f, 0.68f, 0.42f, 1.0f };
 			ImVec4 InfoColor{ 0.2f, 0.6f, 1.0f, 1.0f };
 		} StatusPalette;
 		struct FeatureHeadingColors
@@ -478,7 +485,7 @@ public:
 		// url: https://github.com/ocornut/imgui/issues/707#issuecomment-1494706165
 		// Entries ordered to match imgui 1.92+ ImGuiCol_ enum (62 entries).
 		// 7 new slots were inserted in the middle of the 1.90 enum; all subsequent
-		// indices shifted — corrected here to prevent colour mismatches.
+		// indices shifted â€” corrected here to prevent colour mismatches.
 		std::array<ImVec4, ImGuiCol_COUNT> FullPalette = {
 			ImVec4(0.9f, 0.9f, 0.9f, 0.9f),      // [0]  Text
 			ImVec4(0.6f, 0.6f, 0.6f, 1.0f),      // [1]  TextDisabled
@@ -552,11 +559,23 @@ public:
 	static void PaletteToJson(json& themeJson, const std::array<ImVec4, ImGuiCol_COUNT>& palette);
 	/** @brief Deserializes palette from named color map or legacy positional array */
 	static void PaletteFromJson(const json& themeJson, std::array<ImVec4, ImGuiCol_COUNT>& palette);
+	/**
+	 * @brief Reads a theme file's "Theme" object into theme settings, palette included, without applying it.
+	 * @throws nlohmann::json::exception when the object does not fit.
+	 */
+	static void ThemeFromJson(const json& themeJson, ThemeSettings& theme);
 
 	/** @brief Serializes cursor settings to JSON using named cursor type keys */
 	static void CursorToJson(json& cursorJson, const ThemeSettings::CursorSettings& cursorSettings);
 	/** @brief Deserializes cursor settings from named-key or legacy sparse-array format */
 	static void CursorFromJson(const json& cursorJson, ThemeSettings::CursorSettings& cursor);
+
+	/** @brief Order of the feature list in the left menu column. */
+	enum class FeatureSortMode : std::uint8_t
+	{
+		Category = 0,  // Grouped under collapsible category headers
+		Alphabetical   // Flat A-Z list
+	};
 
 	struct Settings
 	{
@@ -576,15 +595,32 @@ public:
 		bool SmartClearShaderCacheDefault = false;       // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
 		bool BackgroundShaderCompilationOnBoot = false;  // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
 		bool HideCompilationHUDInVR = false;             // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
-		bool AutoHideFeatureList = false;                // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;              // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;                  // Require holding Shift to dock windows
-		bool UseResolutionFont = true;                   // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		FeatureSortMode FeatureListSort = FeatureSortMode::Category;
+		bool AutoHideFeatureList = false;     // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;   // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;       // Require holding Shift to dock windows
+		bool UseResolutionFont = true;        // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		float AnimationSpeed = 1.0f;          // Menu animation speed multiplier (Util::Anim::Speed clamps it to the supported range)
+		bool ReduceUIAnimations = false;      // Snap menu animations (hover fades, slides, expanding search) instead of easing
+		std::uint32_t FeatureListFilter = 0;  // Feature list filters (FeatureListFilter bits); read in Load, unknown bits dropped
 		ThemeSettings Theme;
-		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
+		std::string SelectedThemePreset = "";     // Currently selected theme preset (empty = custom/user theme)
+		std::string LastSettingsSection;          // Settings page section shown last (SettingsSectionIds); unknown = first section
+		std::vector<std::string> RecentFeatures;  // Short names of the features opened last, newest first, at most MAX_RECENT_FEATURES
 	};
+	/** @brief Cap on Settings::RecentFeatures, the recently opened features Home lists. */
+	static constexpr size_t MAX_RECENT_FEATURES = 6;
 	/** @brief Gets the current theme settings */
 	const ThemeSettings& GetTheme() const { return settings.Theme; }
+
+	/** @brief Feature title scale from the theme, defaulted when malformed and clamped to the UI slider range. */
+	float GetFeatureTitleScale() const
+	{
+		float scale = settings.Theme.FeatureHeading.FeatureTitleScale;
+		if (!std::isfinite(scale))
+			scale = ThemeManager::Constants::DEFAULT_FEATURE_TITLE_SCALE;
+		return std::clamp(scale, ThemeManager::Constants::SETTINGS_TITLE_SCALE_MIN, ThemeManager::Constants::SETTINGS_TITLE_SCALE_MAX);
+	}
 	/** @brief Gets the mutable menu settings */
 	Settings& GetSettings() { return settings; }
 	/** @brief Gets the menu settings */
@@ -596,13 +632,20 @@ public:
 	/** @brief Gets the font role settings for the given role */
 	const ThemeSettings::FontRoleSettings& GetFontRoleSettings(FontRole role) const { return settings.Theme.FontRoles[static_cast<size_t>(role)]; }
 	/** @brief Gets the loaded ImFont pointer for the given role */
-	ImFont* GetFont(FontRole role) const { return loadedFontRoles[static_cast<size_t>(role)]; }
+	ImFont* GetFont(FontRole role) const { return MenuFonts::GetAtlasState().GetFont(static_cast<size_t>(role)); }
+	/** @brief Texture icons loaded by IconLoader (save/load/logo/categories/â€¦). */
+	Util::IconLoader::UIIcons& GetUIIcons() { return Util::IconLoader::GetIcons(); }
+	const Util::IconLoader::UIIcons& GetUIIcons() const { return Util::IconLoader::GetIcons(); }
 
 	/** @brief Queues a feature (by GetShortName()) or built-in page (by canonicalId, e.g.
 	 *  "Performance") to be selected in the left panel on the next frame.
 	 *  @param sectionAnchor Optional: an anchor id a feature's own DrawSettings can
 	 *  check (via pendingSectionAnchor) to scroll to a specific heading once selected,
 	 *  instead of leaving the panel at whatever scroll position it was last left at. */
+	/** @brief Opens Scene Manager in its standalone menu page. */
+	void OpenSceneManager();
+	/** @brief Opens a feature page after closing any editor tool safely. */
+	void OpenFeaturePage(const std::string& featureName);
 	void SelectFeatureMenu(const std::string& featureName, const std::string& sectionAnchor = "");
 
 	/** @brief Returns true and clears the pending section anchor if it matches @p anchor;
@@ -615,7 +658,11 @@ public:
 		pendingSectionAnchor.clear();
 		return true;
 	}
-	static std::unordered_map<std::string, int> categoryCounts;  // Number of features in each feature category
+
+	/** @brief Active keyboard shortcuts for the main menu. */
+	const std::vector<MenuShortcuts::Shortcut>& GetShortcuts() const { return shortcuts; }
+	/** @brief The page selected in the standalone menu. */
+	std::string_view GetSelectedMenuId() const { return selectedMenuId; }
 
 	bool overlayVisible = false;
 
@@ -666,23 +713,40 @@ public:
 		[[nodiscard]] constexpr bool IsPressed() const noexcept { return value > 0.0F; }
 		[[nodiscard]] constexpr bool IsRepeating() const noexcept { return heldDownSecs > 0.0F; }
 		[[nodiscard]] constexpr bool IsDown() const noexcept { return IsPressed() && (heldDownSecs == 0.0F); }
-		[[nodiscard]] constexpr bool IsHeld() const noexcept { return IsPressed() && IsRepeating(); }
-		[[nodiscard]] constexpr bool IsUp() const noexcept { return (value == 0.0F) && IsRepeating(); }
 	};
 	// VR overlay input and cursor helpers
 	void ProcessVROverlayInput();
 
 private:
 	Settings settings;
+	bool backgroundVisible = true;
 
 	std::string cachedIniPath;  // io.IniFilename must point to a string that lives for the duration of the runtime
 
 	// Menu navigation
 	SidebarState sidebar;
+	std::string selectedMenuId = "Home";
+	std::map<std::string, bool> categoryExpansionStates;
 	std::string pendingFeatureSelection;  // Feature to select on next frame
 	// Anchor id set alongside pendingFeatureSelection (see SelectFeatureMenu); a
 	// feature's DrawSettings consumes it via ConsumeSectionAnchor to scroll there.
 	std::string pendingSectionAnchor;
+	int pendingFeatureStep = 0;       // Ctrl+PgUp / Ctrl+PgDn request, applied by the feature list this frame
+	Feature* shownFeature = nullptr;  // Feature whose page the right column drew; read by shortcuts the frame after
+
+	// Keyboard shortcuts, built on the first DrawSettings and dispatched once per frame
+	std::vector<MenuShortcuts::Shortcut> shortcuts;
+
+	// Undo / redo of feature settings edited in this menu; a separate history from the CS Editor's
+	enum class UndoRequest : std::uint8_t
+	{
+		None,
+		Undo,
+		Redo
+	};
+	UndoHistory undoHistory;
+	bool backgroundPeekActive = false;
+	UndoRequest pendingUndo = UndoRequest::None;  // Set by Ctrl+Z / Ctrl+Y, applied at the start of the next DrawSettings
 
 	// Input event handling
 	std::vector<KeyEvent> _keyEventQueue;
@@ -694,13 +758,36 @@ private:
 	// the modifier is released first.
 	std::unordered_set<uint32_t> _comboFiredKeys;
 
+	// Escape closes the menu or editor on key-up in ProcessInputEventQueue, which runs before
+	// ImGui::NewFrame. The key-down reached ImGui through an earlier frame's queue, so widgets see
+	// IsKeyPressed(Escape) and call ConsumeEscape() at least one frame before the release is
+	// handled; the claim waits here until that release reads it with TakeConsumedEscape().
+	bool escapeConsumed = false;
+
+	// Settings page: Disable at Boot list filter
+	std::array<char, 128> disableAtBootSearch{};
+	bool disableAtBootDisabledOnly = false;
+
+	// Skyrim AFK vanity camera: delayed spin while idle. Held off while any CS UI is open.
+	bool vanityCameraDisabled = false;
+	float savedVanityCameraDelay = 180.0f;
+
 	Menu() = default;
 
-	void DrawGeneralSettings();
-	void DrawAdvancedSettings();
+	/**
+	 * @brief Draws the Settings page.
+	 * @param navigation Draws only the section list instead of the selected section.
+	 */
+	void DrawSettingsPage(bool navigation = false);
 	void DrawDisableAtBootSettings();
-	void DrawFooter();
-	void BuildCategoryCounts();
+	/** @brief Applies a queued undo or redo before anything draws, and reports it with a toast. */
+	void ApplyPendingUndo();
+	/** @brief Moves a feature to the front of Settings::RecentFeatures, dropping the oldest past the cap. */
+	void RecordRecentFeature(const std::string& shortName);
+	/** @brief Binds the shortcut table's actions to this menu's state. */
+	MenuShortcuts::Actions MakeShortcutActions();
+	/** @brief Runs pressed shortcuts unless typing, capturing a hotkey, a modal or the CS Editor should have the keys. */
+	void DispatchShortcuts();
 
 	void addToEventQueue(KeyEvent e);
 	void ProcessInputEventQueue();

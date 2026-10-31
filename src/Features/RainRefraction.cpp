@@ -41,6 +41,7 @@ namespace
 		if (FAILED(hr))
 			return fail(std::format("Failed to load texture (invalid image, HRESULT 0x{:08X})", static_cast<uint32_t>(hr)));
 
+		// Fit the drop billboard to the texture's alpha coverage, which needs 8-bit RGBA texels
 		DirectX::ScratchImage rgbaImage;
 		const auto* source = image.GetImage(0, 0, 0);
 		if (source->format != DXGI_FORMAT_R8G8B8A8_UNORM) {
@@ -89,10 +90,8 @@ namespace
 
 void RainRefraction::DrawSettings()
 {
-	if (IsManagedByENB()) {
-		ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
-		return;
-	}
+	const Util::LockedSection enbLock(IsManagedByENB(),
+		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
 
 	if (!defaultRaindrops.status.empty())
 		Util::Text::WrappedWarning("%s", defaultRaindrops.status.c_str());
@@ -209,6 +208,7 @@ void RainRefraction::ModifyParticle()
 	if (globals::state->currentPixelDescriptor != static_cast<uint32_t>(SIE::ShaderCache::ParticleShaderTechniques::EnvCubeRain))
 		return;
 
+	// The rain vertex shader reads the Enable flag whether or not refraction is active this frame
 	auto context = globals::d3d::context;
 	ID3D11Buffer* cbs[] = { globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
 	context->VSSetConstantBuffers(5, 2, cbs);

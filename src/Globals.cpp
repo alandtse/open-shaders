@@ -8,12 +8,12 @@
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/Effects11.h"
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
-#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
@@ -60,7 +60,6 @@
 #include "Features/WetnessEffects.h"
 #include "Features/Wind/Wind.h"
 #include "Menu.h"
-#include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
@@ -120,13 +119,13 @@ namespace globals
 #if defined(ENABLE_EFFECTS11)
 		Effects11 effects11{};
 #endif
+		DeveloperTools developerTools{};
 		RenderDoc renderDoc{};
 		RemoteControl remoteControl{};
 		ScreenshotFeature screenshotFeature{};
 		CSEditor csEditor{};
 		CSUtility csUtility{};
 		Wind wind{};
-		FeatureOverwrites featureOverwrites{};
 		ExponentialHeightFog exponentialHeightFog{};
 		TruePBR truePBR{};
 		SnowCover snowCover{};
@@ -306,6 +305,22 @@ namespace globals
 			shaderCache->StopCompilation();
 	}
 
+	namespace
+	{
+		template <typename T>
+		void CopyMappedFrameBuffer(T& destination, const T& source)
+		{
+			static_assert(sizeof(T) % sizeof(__m128i) == 0);
+			const auto* input = reinterpret_cast<const __m128i*>(&source);
+			auto* output = reinterpret_cast<__m128i*>(&destination);
+			if (reinterpret_cast<std::uintptr_t>(input) % alignof(__m128i) == 0) {
+				for (size_t i = 0; i < sizeof(T) / sizeof(__m128i); ++i)
+					_mm_storeu_si128(output + i, _mm_stream_load_si128(input + i));
+			} else
+				destination = source;
+		}
+	}
+
 	/**
  * @brief Caches the current frame buffer data and clears the mapped pointer.
  *
@@ -321,12 +336,12 @@ namespace globals
 			auto& frameBufferVR = *reinterpret_cast<FrameBufferVR*>(mappedFrameBuffer->pData);
 			for (auto* feature : fixupFeatures)
 				feature->FixupMappedFrameBufferVR(frameBufferVR);
-			frameBufferCached.vr = frameBufferVR;
+			CopyMappedFrameBuffer(frameBufferCached.vr, frameBufferVR);
 		} else {
 			auto& frameBuffer = *reinterpret_cast<FrameBuffer*>(mappedFrameBuffer->pData);
 			for (auto* feature : fixupFeatures)
 				feature->FixupMappedFrameBuffer(frameBuffer);
-			frameBufferCached.nonVR = frameBuffer;
+			CopyMappedFrameBuffer(frameBufferCached.nonVR, frameBuffer);
 		}
 		mappedFrameBuffer = nullptr;
 	}

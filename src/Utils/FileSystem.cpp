@@ -1,8 +1,10 @@
 #include "FileSystem.h"
+#include "ImGuiLayout.h"
 #include <Windows.h>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <psapi.h>
 
 namespace Util
@@ -55,6 +57,11 @@ namespace Util
 		std::filesystem::path GetIconsPath()
 		{
 			return GetInterfacePath() / "Icons";
+		}
+
+		std::filesystem::path GetIconFontsPath()
+		{
+			return GetIconsPath() / "glyphs";
 		}
 
 		std::filesystem::path GetCursorsPath()
@@ -178,6 +185,103 @@ namespace Util
 		std::filesystem::path GetThemesRealPath()
 		{
 			return GetRootRealPath() / "SKSE" / "Plugins" / "CommunityShaders" / "Themes";
+		}
+
+		namespace
+		{
+			/** @brief A CommunityShaders subfolder under the real mod root, or its in-game path when the root is unknown. */
+			std::filesystem::path GetCommunityShaderRealPath(const std::filesystem::path& relativePath)
+			{
+				const auto realRoot = GetRootRealPath();
+				return realRoot.empty() ? GetCommunityShaderPath() / relativePath :
+				                          realRoot / "SKSE" / "Plugins" / "CommunityShaders" / relativePath;
+			}
+		}
+
+		std::filesystem::path GetEffects11PresetsRealPath()
+		{
+			return GetCommunityShaderRealPath(kEffects11PresetsSubdir);
+		}
+
+		std::filesystem::path GetUnifiedPresetsRealPath()
+		{
+			return GetCommunityShaderRealPath(kUnifiedPresetsSubdir);
+		}
+
+		std::vector<std::filesystem::path> GetCommunityShaderScanRoots(const std::filesystem::path& relativePath)
+		{
+			std::vector<std::filesystem::path> roots{ GetCommunityShaderPath() / relativePath };
+			if (const auto realRoot = GetRootRealPath(); !realRoot.empty()) {
+				auto realPath = realRoot / "SKSE" / "Plugins" / "CommunityShaders" / relativePath;
+				std::error_code ec;
+				if (!std::filesystem::equivalent(roots.front(), realPath, ec))
+					roots.push_back(std::move(realPath));
+			}
+			return roots;
+		}
+
+		std::string ToGenericUtf8(const std::filesystem::path& path)
+		{
+			const auto text = path.generic_u8string();
+			return { reinterpret_cast<const char*>(text.data()), text.size() };
+		}
+
+		namespace
+		{
+			bool IsHiddenLibraryPrefix(wchar_t first)
+			{
+				return first == L'_' || first == L'.';
+			}
+		}
+
+		bool IsHiddenLibraryEntry(std::string_view name)
+		{
+			return !name.empty() && IsHiddenLibraryPrefix(static_cast<unsigned char>(name.front()));
+		}
+
+		bool IsHiddenLibraryEntry(const std::filesystem::path& name)
+		{
+			const auto& native = name.native();
+			return !native.empty() && IsHiddenLibraryPrefix(native.front());
+		}
+
+		std::vector<std::filesystem::path> ListCommunityShaderEntries(const std::filesystem::path& relativePath, bool directories)
+		{
+			std::vector<std::filesystem::path> found;
+			const auto isListed = [&](const std::filesystem::path& name) {
+				return std::ranges::any_of(found, [&](const auto& path) {
+					return _wcsicmp(path.filename().c_str(), name.c_str()) == 0;
+				});
+			};
+			for (const auto& root : GetCommunityShaderScanRoots(relativePath)) {
+				std::error_code ec;
+				for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
+					std::error_code typeEc;
+					const bool wantedType = directories ? entry.is_directory(typeEc) : entry.is_regular_file(typeEc);
+					const auto name = entry.path().filename();
+					if (wantedType && !name.empty() && !IsHiddenLibraryEntry(name) && !isListed(name))
+						found.push_back(entry.path());
+				}
+			}
+			return found;
+		}
+
+		std::vector<std::filesystem::path> GetUnifiedPackPaths(const std::string& packId)
+		{
+			std::vector<std::filesystem::path> packPaths;
+			const auto packFolder = FromUtf8(packId);
+			for (const auto& root : GetCommunityShaderScanRoots(kUnifiedPresetsSubdir)) {
+				std::error_code ec;
+				if (std::filesystem::is_directory(root / packFolder, ec))
+					packPaths.push_back(root / packFolder);
+			}
+			return packPaths;
+		}
+
+		std::filesystem::path GetUnifiedPackPath(const std::string& packId)
+		{
+			const auto packPaths = GetUnifiedPackPaths(packId);
+			return packPaths.empty() ? GetCommunityShaderScanRoots(kUnifiedPresetsSubdir).front() / FromUtf8(packId) : packPaths.front();
 		}
 
 		std::filesystem::path GetFeaturesRealPath()
@@ -309,6 +413,50 @@ namespace Util
 	// File system utilities implementation
 	namespace FileHelpers
 	{
+		std::optional<unsigned> PrepareImGuiLayout(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			const bool exists = std::filesystem::exists(path, error);
+			if (error) {
+				logger::warn("Could not inspect ImGui layout '{}': {}", PathHelpers::ToUtf8(path), error.message());
+				return std::nullopt;
+			}
+			if (!exists)
+				return ImGuiLayout::kVersion;
+			const auto resolvedPath = ResolveExistingFile(path);
+			if (resolvedPath.empty()) {
+				logger::warn("Could not resolve ImGui layout '{}'", PathHelpers::ToUtf8(path));
+				return std::nullopt;
+			}
+			std::ifstream file(resolvedPath, std::ios::binary);
+			if (!file.is_open()) {
+				logger::warn("Could not open ImGui layout '{}'", PathHelpers::ToUtf8(resolvedPath));
+				return std::nullopt;
+			}
+			const std::string contents(std::istreambuf_iterator<char>{ file }, std::istreambuf_iterator<char>{});
+			if (file.bad()) {
+				logger::warn("Could not read ImGui layout '{}'", PathHelpers::ToUtf8(resolvedPath));
+				return std::nullopt;
+			}
+			file.close();
+			const auto migration = ImGuiLayout::Prepare(contents);
+			if (!migration.changed)
+				return migration.version;
+
+			auto backupPath = resolvedPath;
+			backupPath += std::format(".layout-v{}.bak", ImGuiLayout::kVersion);
+			if (std::filesystem::exists(backupPath, error))
+				backupPath += std::format(".{}.{}", ::GetCurrentProcessId(), ::GetTickCount64());
+			if (error || !::CopyFileW(resolvedPath.c_str(), backupPath.c_str(), TRUE)) {
+				logger::warn("Could not back up ImGui layout '{}' (Win32 error {})", PathHelpers::ToUtf8(resolvedPath), ::GetLastError());
+				return std::nullopt;
+			}
+			if (!WriteFileAtomically(resolvedPath, migration.contents, "ImGui layout"))
+				return std::nullopt;
+			logger::info("Updated ImGui layout to version {}; previous layout saved to '{}'", migration.version, PathHelpers::ToUtf8(backupPath));
+			return migration.version;
+		}
+
 		DeletionResult SafeDelete(const std::string& path, const std::string& description)
 		{
 			DeletionResult result;
@@ -341,8 +489,16 @@ namespace Util
 			std::error_code ec;
 			std::filesystem::create_directories(path, ec);
 			if (ec) {
-				logger::warn("Failed to create directory '{}': {}", path.string(), ec.message());
+				logger::warn("Failed to create directory '{}': {}", Util::PathHelpers::ToUtf8(path), ec.message());
 			}
+		}
+
+		bool OpenWithShell(const std::filesystem::path& path)
+		{
+			// ShellExecute returns a value above 32 on success.
+			constexpr intptr_t kShellExecuteSuccessThreshold = 32;
+			const auto result = ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+			return reinterpret_cast<intptr_t>(result) > kShellExecuteSuccessThreshold;
 		}
 
 		std::string SanitizeFileName(std::string name)
@@ -353,9 +509,10 @@ namespace Util
 			if (first == std::string::npos)
 				return "";
 			constexpr std::string_view trimTrailingChars = " \t\r\n\v\f.";
-			auto last = name.find_last_not_of(trimTrailingChars);
-			if (last == std::string::npos)
-				last = first;
+			// Nothing but dots and spaces would leave "." or "..", which name a directory rather than a file.
+			const auto last = name.find_last_not_of(trimTrailingChars);
+			if (last == std::string::npos || last < first)
+				return "";
 			name = name.substr(first, last - first + 1);
 
 			// Replace invalid characters
@@ -383,12 +540,107 @@ namespace Util
 				}
 			}
 
-			// Limit length
-			if (name.length() > 255u) {
-				name = name.substr(0, 255u);
+			// Limit length, backing off to a UTF-8 lead byte so no character is cut in half.
+			constexpr size_t kMaxFileNameBytes = 255;
+			if (name.length() > kMaxFileNameBytes) {
+				constexpr unsigned char kContinuationMask = 0xC0, kContinuationBits = 0x80;
+				size_t length = kMaxFileNameBytes;
+				while (length > 0 && (static_cast<unsigned char>(name[length]) & kContinuationMask) == kContinuationBits)
+					--length;
+				name.resize(length);
 			}
 
 			return name;
+		}
+
+		namespace
+		{
+			/** @brief Truncating binary write; true only when the file opened, wrote and closed without error. */
+			bool WriteRawContent(const std::filesystem::path& path, std::string_view content)
+			{
+				std::ofstream file(path, std::ios::binary | std::ios::trunc);
+				if (!file.is_open())
+					return false;
+				file.write(content.data(), static_cast<std::streamsize>(content.size()));
+				file.close();
+				return !file.fail();
+			}
+		}
+
+		bool WriteFileAtomically(const std::filesystem::path& path, std::string_view content, std::string_view context)
+		{
+			std::error_code ec;
+			if (!path.parent_path().empty()) {
+				std::filesystem::create_directories(path.parent_path(), ec);
+				if (ec) {
+					logger::error("Could not create directory for {} '{}': {}", context, Util::PathHelpers::ToUtf8(path), ec.message());
+					return false;
+				}
+			}
+
+			// Process and thread qualified so concurrent writers cannot collide on the temporary.
+			auto temporaryPath = path;
+			temporaryPath += std::format(".{}.{}.tmp", ::GetCurrentProcessId(), ::GetCurrentThreadId());
+			if (!WriteRawContent(temporaryPath, content)) {
+				logger::error("Could not write temporary {} file '{}'", context, Util::PathHelpers::ToUtf8(temporaryPath));
+				std::filesystem::remove(temporaryPath, ec);
+				return false;
+			}
+
+			if (::MoveFileExW(temporaryPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+				return true;
+			}
+
+			const auto moveError = ::GetLastError();
+			std::filesystem::remove(temporaryPath, ec);
+			logger::error("Could not replace {} '{}' (Win32 error {})", context, Util::PathHelpers::ToUtf8(path), moveError);
+			return false;
+		}
+
+		namespace
+		{
+			/** @brief Logs why a JSON file was rejected and hands the reason to the caller when requested. */
+			void ReportReadFailure(const std::filesystem::path& path, std::string_view context, std::string reason, std::string* error)
+			{
+				logger::warn("Could not read {} '{}': {}", context, Util::PathHelpers::ToUtf8(path), reason);
+				if (error)
+					*error = std::move(reason);
+			}
+		}
+
+		template <class Json>
+		std::optional<Json> ReadJsonFile(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		{
+			std::ifstream file(path);
+			if (!file.is_open())
+				return std::nullopt;
+			if (maxBytes) {
+				std::error_code ec;
+				const auto size = std::filesystem::file_size(path, ec);
+				if (ec || size > maxBytes) {
+					ReportReadFailure(path, context, ec ? ec.message() : std::format("{} bytes exceeds the {} byte limit", size, maxBytes), error);
+					return std::nullopt;
+				}
+			}
+			try {
+				return Json::parse(file);
+			} catch (const std::exception& e) {
+				ReportReadFailure(path, context, e.what(), error);
+				return std::nullopt;
+			}
+		}
+
+		template std::optional<nlohmann::json> ReadJsonFile<nlohmann::json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
+		template std::optional<nlohmann::ordered_json> ReadJsonFile<nlohmann::ordered_json>(const std::filesystem::path&, std::string_view, std::uintmax_t, std::string*);
+
+		std::optional<nlohmann::json> ReadJsonObject(const std::filesystem::path& path, std::string_view context, std::uintmax_t maxBytes, std::string* error)
+		{
+			auto document = ReadJsonFile(path, context, maxBytes, error);
+			if (document && !document->is_object()) {
+				ReportReadFailure(path, context, "root is not a JSON object", error);
+				return std::nullopt;
+			}
+			return document;
 		}
 	}
 }
@@ -440,59 +692,6 @@ std::vector<SettingsDiffEntry> Util::FileSystem::DiffJson(const nlohmann::json& 
 		}
 	} catch (const std::exception& e) {
 		logger::warn("Failed to compute JSON diff: {}", e.what());
-	}
-
-	return diffEntries;
-}
-
-std::vector<SettingsDiffEntry> Util::FileSystem::LoadJsonDiff(const std::filesystem::path& userPath, const std::filesystem::path& testPath, float epsilon)
-{
-	std::vector<SettingsDiffEntry> diffEntries;
-
-	try {
-		if (!std::filesystem::exists(userPath)) {
-			logger::warn("User config file does not exist: {}", userPath.string());
-			return diffEntries;
-		}
-
-		if (!std::filesystem::exists(testPath)) {
-			logger::warn("Test config file does not exist: {}", testPath.string());
-			return diffEntries;
-		}
-
-		std::ifstream userFile(userPath);
-		std::ifstream testFile(testPath);
-
-		if (!userFile.is_open()) {
-			logger::warn("Failed to open user config file: {}", userPath.string());
-			return diffEntries;
-		}
-
-		if (!testFile.is_open()) {
-			logger::warn("Failed to open test config file: {}", testPath.string());
-			return diffEntries;
-		}
-
-		nlohmann::json userJson, testJson;
-
-		try {
-			userFile >> userJson;
-		} catch (const std::exception& e) {
-			logger::warn("Failed to parse user config JSON from '{}': {}", userPath.string(), e.what());
-			return diffEntries;
-		}
-
-		try {
-			testFile >> testJson;
-		} catch (const std::exception& e) {
-			logger::warn("Failed to parse test config JSON from '{}': {}", testPath.string(), e.what());
-			return diffEntries;
-		}
-
-		// Use shared diffing logic
-		return DiffJson(userJson, testJson, epsilon);
-	} catch (const std::exception& e) {
-		logger::warn("Failed to load JSON diff from '{}' and '{}': {}", userPath.string(), testPath.string(), e.what());
 	}
 
 	return diffEntries;

@@ -31,6 +31,7 @@
 #include "Utils/FileSystem.h"
 #include "Utils/Format.h"
 #include "Utils/Game.h"
+#include "Utils/UILayout.h"
 
 #define I18N_KEY_PREFIX "feature.perf_overlay."
 
@@ -106,6 +107,7 @@ static std::tuple<float, float, float> CalculateSummaryData(float smoothedFrameT
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PerformanceOverlay::Settings,
 	ShowInOverlay,
+	ShowWeatherPicker,
 	ShowDrawCalls,
 	ShowVRAM,
 	ShowCSPasses,
@@ -142,9 +144,21 @@ void PerformanceOverlay::DrawSettings()
 	auto menu = Menu::GetSingleton();
 	const auto& themeSettings = menu->GetTheme();
 	const auto& menuSettings = menu->GetSettings();
-	ImGui::Checkbox(T(TKEY("show_in_overlay"), "Show Performance in Overlay"), &this->settings.ShowInOverlay);
+	ImGui::Checkbox(T(TKEY("show_in_overlay"), "Enable Performance Overlay"), &this->settings.ShowInOverlay);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("show_in_overlay_tooltip"), "Opens performance overlay in a separate window that stays open\neven when the main menu is closed. "));
+		ImGui::Text("%s", T(TKEY("toggle_with"), "Toggle with "));
+		ImGui::SameLine();
+		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
+			Util::Input::KeyIdToString(menuSettings.OverlayToggleKey).c_str());
+	}
+
+	// Independent of the performance overlay: works with the overlay above switched off.
+	const auto* weatherPickerLabel = T(TKEY("show_weather_picker"), "Enable Weather Picker Widget");
+	Util::SameLineIfFits(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(weatherPickerLabel).x);
+	ImGui::Checkbox(weatherPickerLabel, &this->settings.ShowWeatherPicker);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("show_weather_picker_tooltip"), "Opens the weather picker, with weather details and rain & wetness analysis,\nin a separate window that stays open even when the main menu is closed."));
 		ImGui::Text("%s", T(TKEY("toggle_with"), "Toggle with "));
 		ImGui::SameLine();
 		ImGui::TextColored(themeSettings.StatusPalette.CurrentHotkey, "%s",
@@ -174,7 +188,7 @@ void PerformanceOverlay::DrawSettings()
 			ImGui::Checkbox(T(TKEY("show_post_fg_graph"), "Show Post-FG Frametime Graph"), &this->settings.ShowPostFGFrameTimeGraph);
 			if (ImGui::IsItemHovered()) {
 				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text("%s", T(TKEY("post_fg_graph_tooltip"), "FSR Frame Generation uses calculated timing data (2x Pre-FG).\nDLSS Frame Generation provides measured timing data."));
+					ImGui::Text("%s", T(TKEY("post_fg_graph_tooltip"), "AMD FSR Frame Generation timing is calculated assuming 2x Pre-FG.\nNVIDIA DLSS Frame Generation timing is derived from the driver's reported flip count per real frame."));
 				}
 			}
 		} else if (this->settings.ShowFPS) {
@@ -191,17 +205,19 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("text_size"), "Text Size"), &this->settings.TextSize, 0.8f, 1.2f, "%.2f");
 		ImGui::SliderFloat(T(TKEY("bg_opacity"), "Background Opacity"), &this->settings.BackgroundOpacity, 0.0f, 1.0f, "%.2f");
 		ImGui::Checkbox(T(TKEY("show_border"), "Show Border"), &this->settings.ShowBorder);
-		ImGui::SliderFloat(T(TKEY("update_interval"), "Update Interval"), &this->settings.UpdateInterval, 0.001f, PerformanceOverlay::Settings::kMaxUpdateInterval, "%.2f seconds");
+		ImGui::SliderFloat(T(TKEY("update_interval"), "FPS Smoothing"), &this->settings.UpdateInterval, 0.001f, PerformanceOverlay::Settings::kMaxUpdateInterval, "%.2f seconds");
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("update_interval_tooltip"), "How long the FPS readout averages over. It updates every frame; higher values steady it, lower values follow changes faster. Avg and 1% low refresh at this rate too (at most 4 times a second)."));
 		ImGui::SliderInt(T(TKEY("frame_history_size"), "Frame History Size"), &this->settings.FrameHistorySize,
 			this->settings.kMinFrameHistorySize, this->settings.kMaxFrameHistorySize, "%d", ImGuiSliderFlags_AlwaysClamp);
 
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("position"), "Position:"));
-		if (ImGui::Button(T(TKEY("reset_position"), "Reset Position"))) {
+		if (Util::Button(T(TKEY("reset_position"), "Reset Position"))) {
 			this->settings.PositionSet = false;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T(TKEY("restore_defaults"), "Restore Defaults"))) {
+		if (Util::Button(T(TKEY("restore_defaults"), "Restore Defaults"))) {
 			RestoreDefaultSettings();
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -242,6 +258,7 @@ void PerformanceOverlay::RestoreDefaultSettings()
 	this->state.smoothFrameTimeMs = 0.0f;
 	this->state.postFGSmoothFps = 0.0f;
 	this->state.postFGSmoothFrameTimeMs = 0.0f;
+	ResetFrameStats();
 	this->state.minFrameTime = 1000.0f;
 	this->state.maxFrameTime = 0.0f;
 	this->state.smoothedMinFrameTime = 0.0f;
@@ -260,6 +277,7 @@ void PerformanceOverlay::ResetWindowLayout()
 
 void PerformanceOverlay::DataLoaded()
 {
+	ABTestingManager::RegisterSettingActions();
 	// Initialize performance overlay state
 	REX::W32::QueryPerformanceFrequency(&this->state.frequency);
 	REX::W32::QueryPerformanceCounter(&this->state.lastFrameCounter);
@@ -359,7 +377,7 @@ void PerformanceOverlay::DrawOverlay()
 	this->resizeWindowHeight = false;
 
 	// Create the window
-	Util::BeginWithRoundedClose(T(TKEY("overlay_title"), "Performance Overlay"), nullptr, windowFlags);
+	Util::BeginWithRoundedClose(std::format("{}{}", T(TKEY("overlay_title"), "Performance Overlay"), kWindowId).c_str(), nullptr, windowFlags);
 	this->currentWindowWidth = ImGui::GetWindowWidth();
 	this->resetWindowSize = false;
 
@@ -447,17 +465,15 @@ void PerformanceOverlay::DrawFPS()
 		ImGui::TextUnformatted(this->state.isFrameGenerationActive ? T(TKEY("raw_fps"), "Raw FPS:") : T(TKEY("fps"), "FPS:"));
 		ImGui::TableNextColumn();
 
-		// Check if buffer is full for the avg
-		auto frameData = this->state.frameTimeHistory.GetData();
-		size_t validFrameCount = std::count_if(frameData.begin(), frameData.end(), [](float ft) { return ft > 0.0f; });
-		bool bufferIsFull = validFrameCount == frameData.size();
+		ImGui::Text("%.1f (%.2f ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
 
-		if (bufferIsFull) {
-			float avgFrameTime = std::accumulate(frameData.begin(), frameData.end(), 0.0f) / frameData.size();
-			float avgFps = (avgFrameTime > 0.001f) ? 1000.0f / avgFrameTime : 0.0f;
-			ImGui::Text("%.1f (%.2f ms) | Avg: %.1f", this->state.smoothFps, this->state.smoothFrameTimeMs, avgFps);
-		} else {
-			ImGui::Text("%.1f (%.2f ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
+		if (this->state.avgFps > 0.0f) {
+			ImGui::TableNextColumn();
+			ImGui::Text("%s", T(TKEY("avg_fps"), "Avg:"));
+			ImGui::TableNextColumn();
+			ImGui::Text("%.1f | %s %.1f", this->state.avgFps, T(TKEY("one_percent_low"), "1% Low:"), this->state.onePercentLowFps);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("avg_fps_tooltip"), "Average FPS (frames / time) and 1% low (FPS of the 99th percentile frame time) over the last 5 seconds."));
 		}
 
 		if (this->state.isFrameGenerationActive) {
@@ -773,7 +789,10 @@ void PerformanceOverlay::DrawABTestResultsTable()
 			(void)rowIdx;
 			columns[colIdx].cellRender(row, colIdx);
 		},
-		summaryRowsCopy);
+		summaryRowsCopy,
+		ImVec2(0.0f, 0.0f),
+		true,
+		ImGuiTableFlags_BordersInner | ImGuiTableFlags_BordersOuterV);
 
 	if (globals::game::isVR)
 		DrawABTestCompositorTable(*abTestingManager);
@@ -885,7 +904,7 @@ void PerformanceOverlay::ConvertABTestResultsToRows(const std::vector<Aggregated
 					row.tooltip = T(TKEY("tip_other_abtest"), "Frame time not attributed to any measured shader type. This includes UI, post-processing, engine work, and any GPU activity not directly measured by the overlay.");
 					break;
 				case SpecialShaderType::CSPasses:
-					row.tooltip = T(TKEY("tip_cs_passes"), "Total time spent in compute shader passes.");
+					row.tooltip = T(TKEY("tip_cs_passes"), "GPU time spent in {brand} compute passes (profiled).");
 					break;
 				}
 			}
@@ -1446,11 +1465,11 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>&)
 		// --- A/B Results Controls ---
 		static bool showSettingsDiff = false;
 		ImGui::BeginGroup();
-		if (ImGui::Button(showSettingsDiff ? T(TKEY("hide_settings_diff"), "Hide Settings Diff") : T(TKEY("show_settings_diff"), "Show Settings Diff"))) {
+		if (Util::Button(showSettingsDiff ? T(TKEY("hide_settings_diff"), "Hide Settings Diff") : T(TKEY("show_settings_diff"), "Show Settings Diff"))) {
 			showSettingsDiff = !showSettingsDiff;
 		}
 		ImGui::SameLine();
-		if (ImGui::Button(T(TKEY("clear_abtest_results"), "Clear A/B Test Results"))) {
+		if (Util::Button(T(TKEY("clear_abtest_results"), "Clear A/B Test Results"))) {
 			aggregator.Clear();
 			abTestingManager->ClearRunResults();
 			this->settingsDiff.clear();
@@ -1468,15 +1487,11 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>&)
 		// --- Settings diff section (inline, toggled) ---
 		if (showSettingsDiff) {
 			if (!this->settingsDiffLoaded) {
-				// Use cached memory data from ABTestingManager instead of loading from disk
-				if (abTestingManager && abTestingManager->HasCachedSnapshots()) {
-					// Pull structured diff entries directly from ABTestingManager (in-memory snapshots)
+				// Diff the in-memory snapshots ABTestingManager keeps of both configs
+				if (abTestingManager && abTestingManager->HasCachedSnapshots())
 					this->settingsDiff = abTestingManager->GetConfigDiffEntries();
-				} else {
-					this->settingsDiff = Util::FileSystem::LoadJsonDiff(
-						Util::PathHelpers::GetSettingsUserPath(),
-						Util::PathHelpers::GetSettingsTestPath());
-				}
+				else
+					this->settingsDiff.clear();
 				this->settingsDiffLoaded = true;
 			}
 			ImGui::TextUnformatted(T(TKEY("diff_header"), "Differences between USER (A) and TEST (B) configs:"));
@@ -1572,7 +1587,7 @@ void PerformanceOverlay::DrawDrawCallsTable(const std::vector<DrawCallRow>& main
 	overlay.CaptureTestData();
 	bool anyTestData = !overlay.testData.empty();
 	if (anyTestData) {
-		if (ImGui::Button(T(TKEY("clear_test_data"), "Clear Test Data"))) {
+		if (Util::Button(T(TKEY("clear_test_data"), "Clear Test Data"))) {
 			clearTestDataRequested = true;
 		}
 	}
@@ -1603,7 +1618,8 @@ void PerformanceOverlay::DrawDrawCallsTable(const std::vector<DrawCallRow>& main
 		rowHandler,
 		summaryRowsCopy,
 		ImVec2(0.0f, 0.0f),
-		false);
+		false,
+		ImGuiTableFlags_BordersInner | ImGuiTableFlags_BordersOuterV);
 
 	// Handle clear test data request
 	if (clearTestDataRequested) {
@@ -1680,7 +1696,7 @@ std::vector<ColumnConfig> PerformanceOverlay::BuildDrawCallTableColumns(const Me
 				if (!row.enabled)
 					ImGui::PushStyleColor(ImGuiCol_Text, theme.StatusPalette.Disable);
 				bool wasEnabled = row.enabled;
-				if (ImGui::Selectable(row.label.c_str(), false)) {
+				if (Util::Selectable(row.label.c_str(), false)) {
 					auto maybeType = magic_enum::enum_cast<RE::BSShader::Type>(row.shaderType);
 					if (maybeType.has_value()) {
 						auto classIndex = magic_enum::enum_integer(*maybeType) - 1;
@@ -1899,7 +1915,7 @@ std::function<void(int, int, const DrawCallRow&)> PerformanceOverlay::CreateTabl
 		// Special handling for summary rows
 		if ((row.label == "Total:" || row.label == "Other:") && colIdx == 0) {
 			if (row.label == "Total:") {
-				if (ImGui::Selectable(row.label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
+				if (Util::Selectable(row.label.c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) {
 					HandleTotalRowToggle();
 				}
 				if (ImGui::IsItemHovered()) {
@@ -2183,6 +2199,66 @@ void PerformanceOverlay::UpdateSummaryTestData(float smoothedFrameTime, float ot
 // PERFORMANCE OVERLAY STATE MANAGEMENT
 // ============================================================================
 
+void PerformanceOverlay::ResetFrameStats()
+{
+	state.smoothTimeSumMs = 0.0;
+	state.smoothFrameWeight = 0.0;
+	state.statsFrameTimes.clear();
+	state.statsFrameTimeSumMs = 0.0;
+	state.avgFps = 0.0f;
+	state.onePercentLowFps = 0.0f;
+}
+
+void PerformanceOverlay::AccumulateFrameStats()
+{
+	// The overlay only updates while drawn; a gap means the measured delta spans hidden frames
+	const uint32_t frame = globals::state->frameCount;
+	const bool contiguous = frame == state.lastStatsFrame + 1;
+	const bool repeat = frame == state.lastStatsFrame;
+	state.lastStatsFrame = frame;
+	if (repeat)
+		return;
+	if (!contiguous) {
+		ResetFrameStats();
+		return;
+	}
+	if (state.frameTimeMs <= 0.0f)
+		return;
+
+	// Older frames fade by the time that has passed, not by how many frames came after, so the smoothing feels the
+	// same at any frame rate; the ratio of the two sums stays frames / elapsed time
+	const double timeConstantMs = std::max(settings.UpdateInterval, Settings::kMinSmoothingSeconds) * 1000.0;
+	const double decay = std::exp(-state.frameTimeMs / timeConstantMs);
+	state.smoothTimeSumMs = state.smoothTimeSumMs * decay + state.frameTimeMs;
+	state.smoothFrameWeight = state.smoothFrameWeight * decay + 1.0;
+
+	// Every frame counts, hitches included, so the average matches frames / elapsed time
+	state.statsFrameTimes.push_back(state.frameTimeMs);
+	state.statsFrameTimeSumMs += state.frameTimeMs;
+	constexpr double windowMs = Settings::kStatsWindowSeconds * 1000.0;
+	while (state.statsFrameTimes.size() > 1 && state.statsFrameTimeSumMs - state.statsFrameTimes.front() >= windowMs) {
+		state.statsFrameTimeSumMs -= state.statsFrameTimes.front();
+		state.statsFrameTimes.pop_front();
+	}
+}
+
+void PerformanceOverlay::UpdateFrameStats()
+{
+	if (state.statsFrameTimes.empty() || state.statsFrameTimeSumMs < Settings::kStatsMinSeconds * 1000.0) {
+		state.avgFps = 0.0f;
+		state.onePercentLowFps = 0.0f;
+		return;
+	}
+
+	state.avgFps = Util::CalcFPS(static_cast<float>(state.statsFrameTimeSumMs / state.statsFrameTimes.size()));
+
+	// 1% low as the FPS of the 99th percentile frame time (CapFrameX "P1")
+	std::vector<float> sorted(state.statsFrameTimes.begin(), state.statsFrameTimes.end());
+	const size_t idx = static_cast<size_t>(0.99 * static_cast<double>(sorted.size() - 1));
+	std::nth_element(sorted.begin(), sorted.begin() + idx, sorted.end());
+	state.onePercentLowFps = Util::CalcFPS(sorted[idx]);
+}
+
 void PerformanceOverlay::UpdateGraphValues()
 {
 	// Check if Frame Generation is active
@@ -2205,6 +2281,8 @@ void PerformanceOverlay::UpdateGraphValues()
 	state.frameTimeMs = Util::CalcFrameTime(elapsedCounter, state.frequency);
 	state.fps = Util::CalcFPS(state.frameTimeMs);
 
+	AccumulateFrameStats();
+
 	// Calculate smooth values for display using the user-defined update interval
 	// Initialize overlay timing frequency if needed
 	if (state.overlayTimingFrequency.QuadPart == 0) {
@@ -2218,22 +2296,22 @@ void PerformanceOverlay::UpdateGraphValues()
 	                  static_cast<float>(state.overlayTimingFrequency.QuadPart);
 	state.lastUpdateTime = now;
 
-	if (!state.graphSampleGate.ShouldSample())
-		return;
+	const bool sampleGraph = state.graphSampleGate.ShouldSample();
 
-	// Insert latest frame time into circular buffer
-	float oldFrameTime = state.frameTimeHistory.GetData()[state.frameTimeHistory.GetHeadIdx()];  // what is the point of oldFrameTime?
-	state.frameTimeHistory.Push(state.frameTimeMs);
+	if (sampleGraph) {
+		const float oldFrameTime = state.frameTimeHistory.GetData()[state.frameTimeHistory.GetHeadIdx()];
+		state.frameTimeHistory.Push(state.frameTimeMs);
 
-	// Maintain instantaneous min/max tracking
-	if (state.frameTimeMs > state.maxFrameTime) {
-		state.maxFrameTime = state.frameTimeMs;
-	} else if (state.frameTimeMs < state.minFrameTime) {
-		state.minFrameTime = state.frameTimeMs;
-	} else if (oldFrameTime == state.minFrameTime) {
-		state.minFrameTime = *std::ranges::min_element(state.frameTimeHistory.GetData());
-	} else if (oldFrameTime == state.maxFrameTime) {
-		state.maxFrameTime = *std::ranges::max_element(state.frameTimeHistory.GetData());
+		// Maintain instantaneous min/max tracking
+		if (state.frameTimeMs > state.maxFrameTime) {
+			state.maxFrameTime = state.frameTimeMs;
+		} else if (state.frameTimeMs < state.minFrameTime) {
+			state.minFrameTime = state.frameTimeMs;
+		} else if (oldFrameTime == state.minFrameTime) {
+			state.minFrameTime = *std::ranges::min_element(state.frameTimeHistory.GetData());
+		} else if (oldFrameTime == state.maxFrameTime) {
+			state.maxFrameTime = *std::ranges::max_element(state.frameTimeHistory.GetData());
+		}
 	}
 
 	float avgFrameTime = kDefaultFrameTimeMs,
@@ -2264,16 +2342,19 @@ void PerformanceOverlay::UpdateGraphValues()
 	state.smoothedMinFrameTime = state.smoothedMinFrameTime + Settings::kSmoothingFactor * (graphMin - state.smoothedMinFrameTime);
 	state.smoothedMaxFrameTime = state.smoothedMaxFrameTime + Settings::kSmoothingFactor * (graphMax - state.smoothedMaxFrameTime);
 
+	float frameGenerationMultiplier = 1.0f;
 	if (state.isFrameGenerationActive) {
 		auto& upscaling = globals::features::upscaling;
 		if (upscaling.UsesDLSSGFrameGen()) {
 			// Host present timing mirrors pre-FG (the SL pacer inserts generated frames
 			// after Present); the reported flip count is the only host-visible post-FG signal.
 			const float framesPresented = static_cast<float>(std::max(1u, upscaling.streamlineDX12.lastDLSSGFramesPresented));
+			frameGenerationMultiplier = framesPresented;
 			state.postFGFrameTimeMs = state.frameTimeMs / framesPresented;
 			state.postFGFps = state.fps * framesPresented;
 		} else {
 			const float multiplier = static_cast<float>(upscaling.GetFrameGenerationMultiplier());
+			frameGenerationMultiplier = multiplier;
 			state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
 			state.postFGFps = state.fps * multiplier;
 		}
@@ -2285,14 +2366,27 @@ void PerformanceOverlay::UpdateGraphValues()
 		}
 
 		// Update post-FG frametime history
-		state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
+		if (sampleGraph)
+			state.postFGFrameTimeHistory.Push(state.postFGFrameTimeMs);
 	}
 
-	// Update smooth values with user-specified interval
-	state.updateTimer += deltaTime;
-	if (state.updateTimer >= settings.UpdateInterval) {
-		state.smoothFps = state.fps;  // Sampling white noise won't give you smoothed noise. This is useless.
+	// The smoothed FPS updates every frame
+	if (state.smoothFrameWeight > 0.0 && state.smoothTimeSumMs > 0.0) {
+		state.smoothFrameTimeMs = static_cast<float>(state.smoothTimeSumMs / state.smoothFrameWeight);
+		state.smoothFps = Util::CalcFPS(state.smoothFrameTimeMs);
+	} else {
+		state.smoothFps = state.fps;
 		state.smoothFrameTimeMs = state.frameTimeMs;
+	}
+	if (state.isFrameGenerationActive) {
+		state.postFGSmoothFrameTimeMs = state.smoothFrameTimeMs / frameGenerationMultiplier;
+		state.postFGSmoothFps = Util::CalcFPS(state.postFGSmoothFrameTimeMs);
+	}
+
+	// Avg and 1% low sort the whole window, so they refresh on the interval instead
+	state.updateTimer += deltaTime;
+	if (state.updateTimer >= std::max(settings.UpdateInterval, Settings::kMinStatsRefreshSeconds)) {
+		UpdateFrameStats();
 		state.updateTimer = 0.0f;
 	}
 }

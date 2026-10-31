@@ -242,8 +242,8 @@ namespace Util::Subrect
 	//      the destination alpha to 1 before this RGB-only draw.
 	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*);
 
-	// Draws an ImGui image of a render-target SRV with opaque RGB blending, seeding destination
-	// alpha to 1 before the draw. Use instead of a raw
+	// Draws a render-target SRV with RGB blending that ignores texture alpha and follows style opacity.
+	// Seeds destination alpha from style opacity before the draw. Use instead of a raw
 	// ImGui::Image whenever the SRV is an RT with non-1 alpha, or the preview shows as a
 	// transparency mask (and a cutout through the HMD in VR). No-op if a_srv is null.
 	void ImageOpaque(ID3D11ShaderResourceView* a_srv, const ImVec2& a_size,

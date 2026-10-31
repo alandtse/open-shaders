@@ -1,11 +1,14 @@
 #include "Feature.h"
 
+#include <unordered_map>
+
 #include "FeatureIssues.h"
 #include "FeatureVersions.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
+#include "Features/DeveloperTools.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
@@ -14,7 +17,6 @@
 #include "Features/ExponentialHeightFog.h"
 #include "Features/ExtendedMaterials.h"
 #include "Features/ExtendedTranslucency.h"
-#include "Features/FeatureOverwrites.h"
 #include "Features/FoliageLighting.h"
 #include "Features/FurShells.h"
 #include "Features/GrassCollision.h"
@@ -32,8 +34,6 @@
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
 #include "Features/RainRefraction.h"
-#include "Features/RemoteControl.h"
-#include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
@@ -60,10 +60,15 @@
 #include "Features/Wind/Wind.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
-#include "SettingsOverrideManager.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Format.h"
+
+void Feature::MigrateConfigSettings(json& settings)
+{
+	for (auto* feature : GetFeatureList())
+		feature->MigrateLegacySettings(settings);
+}
 
 void Feature::Load(json& o_json)
 {
@@ -176,7 +181,7 @@ void Feature::Load(json& o_json)
 			logger::error("Feature has empty short name, cannot add to feature issues list");
 		}
 	} else {
-		if (!UsesMainSettings())
+		if (!HasPersonalSettings())
 			return;
 
 		// No errors, load settings now
@@ -185,8 +190,17 @@ void Feature::Load(json& o_json)
 			try {
 				LoadSettings(o_json[GetName()]);
 			} catch (...) {
-				logger::warn("Invalid settings for {}, using default.", GetName());
+				logger::warn("Invalid settings for {}, using defaults and preset Baselines.", GetName());
 				RestoreDefaultSettings();
+				if (const auto* base = globals::state->GetFeatureBase(GetName())) {
+					try {
+						auto values = *base;
+						LoadSettings(values);
+					} catch (...) {
+						logger::warn("Invalid Baseline settings for {}, using default.", GetName());
+						RestoreDefaultSettings();
+					}
+				}
 			}
 		} else {
 			logger::info("Loading default settings for {}", GetName());
@@ -197,7 +211,7 @@ void Feature::Load(json& o_json)
 
 void Feature::Save(json& o_json)
 {
-	if (UsesMainSettings())
+	if (HasPersonalSettings())
 		SaveSettings(o_json[GetName()]);
 }
 
@@ -283,13 +297,11 @@ namespace
 			&globals::features::ibl,
 			&globals::features::extendedTranslucency,
 			&globals::features::upscaling,
-			&globals::features::renderDoc,
-			&globals::features::remoteControl,
+			&globals::features::developerTools,
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
 			&globals::features::wind,
-			&globals::features::featureOverwrites,
 			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
 			&globals::features::linearLighting,
@@ -486,7 +498,24 @@ void Feature::DrainSceneTransitions()
 
 Feature* Feature::FindFeatureByShortName(const std::string& shortName)
 {
-	return FindLoadedFeature([&](Feature* f) { return f->GetShortName() == shortName; });
+	const auto& features = GetFeatureList();
+	const bool developerMode = globals::game::isVR && globals::state->IsDeveloperMode();
+	thread_local const std::vector<Feature*>* indexedFeatureList = nullptr;
+	thread_local bool indexedDeveloperMode = false;
+	thread_local std::unordered_map<std::string, Feature*> featuresByShortName;
+
+	// Developer Mode rebuilds the VR list in place, so invalidate its name index too.
+	if (indexedFeatureList != &features || indexedDeveloperMode != developerMode) {
+		featuresByShortName.clear();
+		featuresByShortName.reserve(features.size());
+		for (auto* feature : features)
+			featuresByShortName.emplace(feature->GetShortName(), feature);
+		indexedFeatureList = &features;
+		indexedDeveloperMode = developerMode;
+	}
+
+	const auto it = featuresByShortName.find(shortName);
+	return it != featuresByShortName.end() && it->second->loaded ? it->second : nullptr;
 }
 
 bool Feature::FindSceneExposure(SceneExposure& a_out)
@@ -528,109 +557,12 @@ bool Feature::ToggleAtBootSetting()
 
 bool Feature::ReapplyOverrideSettings()
 {
-	auto overrideManager = SettingsOverrideManager::GetSingleton();
-	std::string featureName = GetShortName();
-
-	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName)) {
-		return false;
-	}
-
-	// Delete user override file to restore original override behavior
-	overrideManager->DeleteUserOverride(featureName);
-
-	// Get base settings and apply overrides fresh
-	json featureJson;
-	SaveSettings(featureJson);
-	json previousJson = featureJson;  // LoadSettings takes a non-const reference
-
-	// Apply overrides to the settings (without user customizations)
-	size_t appliedCount = overrideManager->ReapplyFeatureOverrides(featureName, featureJson);
-
-	if (appliedCount > 0) {
-		// Load the override settings back into the feature. A malformed override throws from
-		// LoadSettings, possibly after some fields were already applied, so restore the previous values.
-		try {
-			LoadSettings(featureJson);
-			return true;
-		} catch (const std::exception& e) {
-			logger::warn("Failed to reapply override settings for {}, keeping previous settings. Error: {}", featureName, e.what());
-			try {
-				LoadSettings(previousJson);
-			} catch (...) {
-				logger::warn("Failed to restore previous settings for {}, using default.", featureName);
-				RestoreDefaultSettings();
-			}
-			return false;
-		}
-	}
-
-	return false;
+	return globals::state->ClearFeatureEditsUnderBaselines(this);
 }
 
-bool Feature::ReapplyOverrideSettingsForKeys(std::span<const std::string_view> a_settingKeys)
+bool Feature::ReapplyOverrideSettingsForKeys(std::span<const std::string_view> settingKeys)
 {
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	const std::string featureName = GetShortName();
-	if (!overrideManager || !overrideManager->HasFeatureOverrides(featureName))
-		return false;
-
-	const auto featureOverrides = overrideManager->GetFeatureOverrides(featureName);
-	const auto isOverridden = [&](std::string_view a_key) {
-		const std::string key{ a_key };
-		for (const auto* featureOverride : featureOverrides) {
-			if (featureOverride->enabled && featureOverride->overrideData.contains(key))
-				return true;
-		}
-		return false;
-	};
-
-	json originalSettings;
-	SaveSettings(originalSettings);
-	json currentSettings = originalSettings;
-	json mergedSettings = originalSettings;
-	if (overrideManager->ReapplyFeatureOverrides(featureName, mergedSettings) == 0)
-		return false;
-
-	bool applied = false;
-	for (const auto keyView : a_settingKeys) {
-		const std::string key{ keyView };
-		if (!isOverridden(keyView) || !mergedSettings.contains(key))
-			continue;
-		currentSettings[key] = mergedSettings[key];
-		applied = true;
-	}
-	if (!applied)
-		return false;
-
-	json overrideSettings;
-	bool persistenceAttempted = false;
-	try {
-		LoadSettings(currentSettings);
-		json appliedSettings;
-		SaveSettings(appliedSettings);
-		overrideSettings = overrideManager->GetMergedOverrideSettings(featureName, json::object());
-		persistenceAttempted = true;
-		if (overrideManager->PersistUserOverride(featureName, appliedSettings, overrideSettings))
-			return true;
-		logger::warn("Failed to persist scoped override settings for {}", featureName);
-	} catch (const std::exception& e) {
-		logger::warn("Failed to apply scoped override settings for {}. Error: {}", featureName, e.what());
-	}
-
-	try {
-		LoadSettings(originalSettings);
-	} catch (const std::exception& e) {
-		logger::error("Failed to roll back scoped override settings for {}. Error: {}", featureName, e.what());
-	}
-	if (persistenceAttempted) {
-		try {
-			if (!overrideManager->PersistUserOverride(featureName, originalSettings, overrideSettings))
-				logger::error("Failed to roll back persisted override settings for {}", featureName);
-		} catch (const std::exception& e) {
-			logger::error("Failed to roll back persisted override settings for {}. Error: {}", featureName, e.what());
-		}
-	}
-	return false;
+	return globals::state->ClearFeatureEditsUnderBaselines(this, settingKeys);
 }
 
 std::string Feature::GetDisplayCategory() const
@@ -672,6 +604,12 @@ std::string Feature::GetReleaseStageTag(ReleaseStage stage)
 	default:
 		return {};
 	}
+}
+
+ImVec4 Feature::GetReleaseStageColor(ReleaseStage stage)
+{
+	const auto& status = globals::menu->GetTheme().StatusPalette;
+	return stage == ReleaseStage::Alpha ? status.Error : status.Warning;
 }
 
 void Feature::DrawUnloadedUI()

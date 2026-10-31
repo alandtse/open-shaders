@@ -9,6 +9,8 @@ namespace DevBenchBridge::ToolSpecs
 		R"(read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu,favorite,enabledAtBoot}; )"
 		R"(features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the )"
 		R"(SaveSettings blob (null if the feature has no override; set/reset then no-op). Anti-Lag 2 is automatic for a supported FSR Frame Generation session, with no independent setting or FPS cap. )"
+		R"(GrassLighting.EnableNewLightingModel (integer 0/1, default 0), shown as Thin-Surface Grass Lighting, opts into thin-surface scattering, canopy occlusion and clump shading; 0 retains legacy grass lighting without disabling rendering optimizations. )"
+		R"(DeveloperTools owns RenderDoc capture settings under RenderDoc, including restart-gated Enable RenderDoc Capture; legacy top-level RenderDoc settings migrate automatically. )"
 		R"(Upscaling exposes enableDLSSFrameGen (boolean, default false); )"
 		R"(existing configurations must opt in explicitly and restart to use NVIDIA DLSS-G. PostProcessing includes cinematic_camera settings for the optional linked physical camera; )"
 		R"(use get/set with shortName PostProcessing to inspect or change them without saving. LinearLighting uses Jiaye's per-channel diffuse calibration with fixed gamma 2.2, reflectance 0.5 at encoded 0.5, )"
@@ -54,7 +56,7 @@ namespace DevBenchBridge::ToolSpecs
 		"settings": {
 			"type": "object",
 			"description": "Partial )"
-		R"(SaveSettings object from get. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
+		R"(SaveSettings object from get. GrassLighting.EnableNewLightingModel is integer 0/1, default 0. DeveloperTools capture settings are nested under RenderDoc. Upscaling exposes enableDLSSFrameGen (boolean, default false, )"
 		R"(restart required). Upscaling Neural Rendering material strengths live under settings.neuralRenderingTuning.materialStrength (the master switch), strengthSkin, strengthHair, strengthEyes, )"
 		R"(strengthFoliage, strengthLandscape, strengthCloth, strengthMetal and strengthOther (each 0 to 1) and strengthEdgeSoftness (0 to 4 pixels); )"
 		R"(read the live state and the active strengths back with the neuralRenderingStatus query. The material map debug view adds settings.neuralRenderingTuning.showMaterialMap (boolean), )"

@@ -4,6 +4,7 @@
 #include "Menu/BackgroundBlur.hlsli"
 
 static const float CLIP_EPSILON = 0.001f;
+static const float EDGE_AA_HALF_WIDTH = 0.5f;
 
 float4 SampleBicubic(float2 uv)
 {
@@ -43,26 +44,23 @@ float RoundedRectSDF(float2 pixelPos, float2 rectMin, float2 rectMax, float radi
 	return length(max(p, 0.0f)) + min(max(p.x, p.y), 0.0f) - radius;
 }
 
+float WindowCoverage(float2 pixelPos)
+{
+	// Create smooth edge (anti-aliased)
+	// Negative = inside, positive outside
+	// Use 1.0 pixel transition for smooth edge
+	return saturate(EDGE_AA_HALF_WIDTH - RoundedRectSDF(pixelPos, WindowRect.xy, WindowRect.zw, WindowParams.x));
+}
+
 float4 PS_Main(VS_OUTPUT input) :
 	SV_TARGET
 {
 	// Convert UV to pixel coordinates
 	float2 pixelPos = input.TexCoord * float2(WindowParams.y, WindowParams.z);
 
-	// Get window bounds and corner radius
-	float2 rectMin = WindowRect.xy;
-	float2 rectMax = WindowRect.zw;
-	float cornerRadius = WindowParams.x;
-
 	float alpha = 1.0f;
 	if (WindowParams.w < 0.5f) {
-		// Calculate signed distance to rounded rectangle
-		float sdf = RoundedRectSDF(pixelPos, rectMin, rectMax, cornerRadius);
-
-		// Create smooth edge (anti-aliased)
-		// Negative = inside, positive outside
-		// Use 1.0 pixel transition for smooth edge
-		alpha = saturate(-sdf);
+		alpha = WindowCoverage(pixelPos);
 
 		// Early out if completely outside
 		if (alpha <= 0.0f) {
@@ -98,16 +96,10 @@ SceneOutput PS_Scene(VS_OUTPUT input)
 	return output;
 }
 
-// Clear shader entry point - outputs transparent black inside rounded rect only
-// Used to clear UI buffer (HUD) in the exact same shape as the blur
+// Clear HUD coverage matches the blur composite to preserve antialiased window edges.
 float4 PS_Clear(VS_OUTPUT input) :
 	SV_TARGET
 {
 	float2 pixelPos = input.TexCoord * float2(WindowParams.y, WindowParams.z);
-	float sdf = RoundedRectSDF(pixelPos, WindowRect.xy, WindowRect.zw, WindowParams.x);
-
-	// Discard pixels outside rounded rect to preserve HUD in corners
-	clip(-sdf - CLIP_EPSILON);
-
-	return float4(0.0f, 0.0f, 0.0f, 0.0f);
+	return float4(0.0f, 0.0f, 0.0f, WindowCoverage(pixelPos));
 }

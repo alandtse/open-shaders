@@ -1,12 +1,53 @@
-
 #!/usr/bin/env python3
+
+"""Generates the scene settings catalog from the feature sources at build time.
+
+Every scene-controllable setting is discovered by statically parsing C++: `SaveSettings`
+bodies give the serialized address a scene override writes to, and `DrawSettings` bodies
+give the editor metadata (label, category, bounds, choices) to present it with. There is no
+runtime reflection and no hand-maintained list, so a setting that stops being parsed simply
+disappears; the floors in `validate_entries` exist to make that loud instead of silent.
+
+Two invariants the parsing rests on:
+
+- `mask_cpp_source` is length-preserving, so an offset found in the masked view indexes the
+  raw text unchanged. Match on the masked view (a commented-out line must never win over the
+  live one), then slice the raw text to recover literals.
+- A missing binding must degrade to "not scene-controllable", never to a wrong binding.
+  `merge_unique` and the `add_metadata` priority ladder are both fail-closed for that reason.
+"""
 
 import argparse
 import ast
+import collections
+import functools
+import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+
+
+# Struct types that are debug state, never scene-controllable. Anything else non-primitive in a
+# SaveSettings body fails the build, so an aggregate can never drop out of the catalog silently.
+# Keyed by declared type rather than serialized key: a feature persisting some other struct under
+# the name "DebugSettings" must still trip the guard, and naming features here would put policy in
+# the generator instead of SceneSettingsPolicy.h. Generic names like "Settings" must be qualified.
+UNCATALOGED_PERSISTED_AGGREGATE_TYPES = {
+    "DebugSettings",
+}
+
+
+def load_persisted_aggregate_policy() -> set[str]:
+    policy = Path(__file__).resolve().parents[1] / "src" / "SceneSettingsPolicy.h"
+    if not policy.is_file():
+        return set()
+    text = policy.read_text(encoding="utf-8")
+    values = re.search(r"kUncatalogedPersistedAggregateTypes\[\]\s*=\s*\{(.*?)\}", text, re.DOTALL)
+    return set(re.findall(r'"([^"\n]+)"', values.group(1))) if values else set()
+
+
+UNCATALOGED_PERSISTED_AGGREGATE_TYPES.update(load_persisted_aggregate_policy())
 
 
 PRIMITIVE_TYPES = {
@@ -31,6 +72,20 @@ PRIMITIVE_TYPES = {
     "std::uint16_t": "Integer",
     "std::uint32_t": "Integer",
     "std::uint64_t": "Integer",
+    # Multi-word builtin spellings: without these a plain `unsigned int` member drops
+    # out of the catalog instead of being cataloged as an integer.
+    "unsigned": "Integer",
+    "unsigned int": "Integer",
+    "signed": "Integer",
+    "signed int": "Integer",
+    "short": "Integer",
+    "unsigned short": "Integer",
+    "long": "Integer",
+    "unsigned long": "Integer",
+    "long long": "Integer",
+    "unsigned long long": "Integer",
+    "size_t": "Integer",
+    "std::size_t": "Integer",
     "std::string": "String",
     "string": "String",
 }
@@ -64,6 +119,7 @@ class CatalogContext:
     component_class: str = ""
     component_type: str = ""
     component_container: str = ""
+    # Serialized children live in a keyed map, so they have no fixed member address to compare.
     addressable: bool = True
     control_scope: str = ""
 
@@ -108,7 +164,6 @@ class NumericControlFlow:
     maximum_expression: str
     semantic: str
     presentation: str
-    supports_unified_edit: bool
     source_widget: str
     clamp_numeric_input: bool
     hdr_color: bool
@@ -154,8 +209,6 @@ class ControlBinding:
     choices: tuple[tuple[int, str, str], ...] = ()
     component_labels: tuple[LocalizedText, ...] = ()
     aggregate_all: bool = False
-    virtual_control: tuple[str, str] | None = None
-    supports_unified_edit: bool = False
     source_widget: str = ""
     clamp_numeric_input: bool = False
     hdr_color: bool = False
@@ -269,6 +322,15 @@ def resolve_vector_binding(
 
 STRUCT_DECL_RE = r"\bstruct\s+(?:alignas\s*\([^)]*\)\s+)?(\w+)([^;{]*)\{"
 
+# A const SaveSettings persists exactly like a mutable one, so missing it drops a whole feature.
+SAVE_SETTINGS_DEFINITION_RE = r"\bvoid\s+(\w+)::SaveSettings\s*\([^)]*\)\s*(?:const\s*)?\{"
+# A class or struct definition with a base list: group 1 the name, group 2 the bases.
+FEATURE_CLASS_DECL_RE = re.compile(r"\b(?:struct|class)\s+(\w+)\s*(?:final\s*)?:\s*([^{;]*)\{")
+
+# Features reach for eastl as readily as std, and either smart pointer owns a child the same way, so
+# recognising only one spelling would silently drop that child's whole set of bindings.
+SMART_POINTER_FACTORY_RE = r"(?:std|eastl)::make_(?:unique|shared)"
+
 CATEGORY_CONTROL_NAMES = {
     "CollapsingHeader",
     "TreeNode",
@@ -280,11 +342,12 @@ PERSISTENT_CATEGORY_CONTROL_NAMES = {
     "SeparatorText",
 }
 
+# Scalar InputFloat is deliberately unmatched, so the settings it edits stay hidden from scenes.
 DIRECT_UI_CONTROL_RE = re.compile(
-    r"(?:ImGui|Util(?:::UI)?)::(Checkbox|InvertedCheckbox|CheckboxFlags?|CheckboxUint|RadioButton|Combo|BeginCombo|"
+    r"(?:ImGui|Util)::(Checkbox|InvertedCheckbox|CheckboxFlag|CheckboxUint|CheckboxFlags|RadioButton|Combo|BeginCombo|"
     r"Drag(?:Float[234]?|Int[234]?|ScalarN?)|"
     r"Slider(?:Float[234]?|Int[234]?|ScalarN?|Angle)|"
-    r"Input(?:Float[234]?|Int[234]?|ScalarN?)|ColorEdit[34]|PercentageSlider)\s*\(")
+    r"Input(?:Float[234]|Int[234]?|ScalarN?)|ColorEdit[34]|PercentageSlider)\s*\(")
 
 SHIFT_UNIFIED_CONTROL_RE = re.compile(
     r"\bUtil::ShiftSlider\s*<\s*([234])\s*>\s*\(")
@@ -292,8 +355,46 @@ SHIFT_UNIFIED_CONTROL_RE = re.compile(
 
 
 
+@functools.lru_cache(maxsize=None)
 def read_text(path: Path) -> str:
+    """Source of a file. Cached: every collector re-reads the same tree."""
     return path.read_text(encoding="utf-8", errors="ignore")
+
+
+@functools.lru_cache(maxsize=None)
+def masked_text(path: Path) -> str:
+    """Comment/string-masked view of a file. Length-preserving, so indices are
+    interchangeable with read_text(path) -- match on this, slice the raw text."""
+    return mask_cpp_source(read_text(path))
+
+
+_CLASS_DEFINITION_PATTERN = re.compile(r"\b(?:struct|class)\s+(\w+)\b(?=[^{;]*\{)")
+
+
+@functools.lru_cache(maxsize=None)
+def class_definition_braces(path: Path) -> dict[str, int]:
+    """Opening brace of each class's first definition in a file, so lookups skip a per-class rescan."""
+    text = read_text(path)
+    braces: dict[str, int] = {}
+    for match in _CLASS_DEFINITION_PATTERN.finditer(text):
+        braces.setdefault(match.group(1), text.find("{", match.end()))
+    return braces
+
+
+def class_body(path: Path, class_name: str) -> str | None:
+    """Body of a class's first definition in a file, excluding its braces."""
+    start = class_definition_braces(path).get(class_name)
+    if start is None:
+        return None
+    text = read_text(path)
+    end = find_matching_brace(text, start)
+    return text[start + 1:end] if end >= 0 else None
+
+
+def write_if_changed(path: Path, text: str) -> None:
+    """Leaves an unchanged output's timestamp alone so its dependents don't rebuild."""
+    if not path.exists() or path.read_text(encoding="utf-8") != text:
+        path.write_text(text, encoding="utf-8")
 
 
 def cpp_escape(value: str) -> str:
@@ -325,9 +426,14 @@ def split_args(arg_text: str) -> list[str]:
     args = []
     current = []
     depth = 0
+    # Kept apart from depth: only a `<` glued to a name opens template arguments, so `a < b`,
+    # `->` and `>=` never merge two arguments.
+    angle_depth = 0
     in_string = False
     escaped = False
-    for ch in arg_text:
+    for index, ch in enumerate(arg_text):
+        previous = arg_text[index - 1] if index > 0 else ""
+        following = arg_text[index + 1] if index + 1 < len(arg_text) else ""
         if in_string:
             current.append(ch)
             if escaped:
@@ -340,13 +446,19 @@ def split_args(arg_text: str) -> list[str]:
         if ch == '"':
             in_string = True
             current.append(ch)
-        elif ch in "([{<":
+        elif ch in "([{":
             depth += 1
             current.append(ch)
-        elif ch in ")]}>":
+        elif ch in ")]}":
             depth = max(0, depth - 1)
             current.append(ch)
-        elif ch == "," and depth == 0:
+        elif ch == "<" and (_is_identifier_char(previous) or previous == ">") and following not in "<=":
+            angle_depth += 1
+            current.append(ch)
+        elif ch == ">" and angle_depth > 0 and previous != "-" and following != "=":
+            angle_depth -= 1
+            current.append(ch)
+        elif ch == "," and depth == 0 and angle_depth == 0:
             args.append("".join(current).strip())
             current = []
         else:
@@ -356,61 +468,77 @@ def split_args(arg_text: str) -> list[str]:
     return args
 
 
-def find_matching_paren(text: str, open_index: int) -> int:
+@functools.lru_cache(maxsize=None)
+def _bracket_scanner(open_ch: str, close_ch: str) -> re.Pattern[str]:
+    """Matches only the characters that can change bracket-scanning state."""
+    return re.compile("[" + re.escape(open_ch + close_ch) + '"/]')
+
+
+def find_matching_bracket(text: str, open_index: int, open_ch: str, close_ch: str) -> int:
+    """Index of the bracket closing the one at open_index, or -1.
+
+    Skips string literals and comments. Callers pass raw source as often as masked
+    source, and an unbalanced bracket inside a comment would otherwise silently
+    truncate a function body and drop every control in it.
+    """
     depth = 0
-    in_string = False
-    escaped = False
-    for i in range(open_index, len(text)):
+    i = open_index
+    length = len(text)
+    # Jump between state-changing characters in C rather than walking every character in Python.
+    search = _bracket_scanner(open_ch, close_ch).search
+    while i < length:
+        match = search(text, i)
+        if not match:
+            return -1
+        i = match.start()
         ch = text[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
         if ch == '"':
-            in_string = True
-        elif ch == "(":
+            i += 1
+            while i < length:
+                quoted = text[i]
+                if quoted == "\\":
+                    i += 2
+                    continue
+                if quoted == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+        if ch == "/":
+            if text.startswith("//", i):
+                newline = text.find("\n", i)
+                i = length if newline < 0 else newline
+            elif text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                i = length if end < 0 else end + 2
+            else:
+                i += 1
+            continue
+        if ch == open_ch:
             depth += 1
-        elif ch == ")":
+        else:
             depth -= 1
             if depth == 0:
                 return i
+        i += 1
     return -1
+
+
+def find_matching_paren(text: str, open_index: int) -> int:
+    return find_matching_bracket(text, open_index, "(", ")")
 
 
 def find_matching_brace(text: str, open_index: int) -> int:
-    depth = 0
-    in_string = False
-    escaped = False
-    for i in range(open_index, len(text)):
-        ch = text[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
+    return find_matching_bracket(text, open_index, "{", "}")
 
 
 def collect_nlohmann_macros(paths: list[Path]) -> dict[str, list[str]]:
     macros: dict[str, list[str]] = {}
+    conflicts: list[str] = []
     token = "NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT"
     for path in paths:
-        text = read_text(path)
+        # Type names and field names survive masking, so the masked view is enough here.
+        text = masked_text(path)
         pos = 0
         while True:
             start = text.find(token, pos)
@@ -426,13 +554,20 @@ def collect_nlohmann_macros(paths: list[Path]) -> dict[str, list[str]]:
             if len(args) >= 2:
                 type_name = args[0].strip()
                 fields = [a.strip().rstrip(";") for a in args[1:] if a.strip()]
+                if macros.get(type_name, fields) != fields:
+                    conflicts.append(
+                        f"{type_name} is declared with conflicting field lists "
+                        f"({macros[type_name]} vs {fields})")
                 macros[type_name] = fields
             pos = close_index + 1
+    if conflicts:
+        raise SystemExit("conflicting nlohmann type definitions:\n  " + "\n  ".join(conflicts))
     return macros
 
 
-def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
-    bodies: dict[str, str] = {}
+def collect_struct_bodies(paths: list[Path]) -> dict[str, list[str]]:
+    """Every definition's body per struct name, in scan order."""
+    bodies: dict[str, list[str]] = {}
     for path in paths:
         text = read_text(path)
         for match in re.finditer(STRUCT_DECL_RE, text):
@@ -458,7 +593,7 @@ def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
                 elif ch == "}":
                     depth -= 1
                     if depth == 0:
-                        bodies.setdefault(name, text[body_start:i])
+                        bodies.setdefault(name, []).append(text[body_start:i])
                         break
                 i += 1
     return bodies
@@ -489,46 +624,56 @@ def parse_field_statement(raw_statement: str) -> tuple[str, str] | None:
     statement = re.sub(r"=\s*.*$", "", statement, flags=re.DOTALL).strip()
     statement = re.sub(r"\s*\{.*\}\s*$", "", statement, flags=re.DOTALL).strip()
     statement = re.sub(r"\[[^\]]*\]", "", statement).strip()
-    if not statement or "(" in statement or ")" in statement:
+    if not statement:
         return None
+    template_depth = 0
+    for character in statement:
+        if character == "<":
+            template_depth += 1
+        elif character == ">" and template_depth:
+            template_depth -= 1
+        elif character in "()" and not template_depth:
+            return None
     match = re.match(r"(.+?)\s+([A-Za-z_]\w*)$", statement)
     if not match:
         return None
     return match.group(2), clean_type(match.group(1))
 
 
-def parse_top_level_fields(body: str, public_only: bool = False,
+def parse_top_level_fields(body: str, *, public_only: bool = False,
                            default_access: str = "public") -> dict[str, str]:
     fields: dict[str, str] = {}
     masked = mask_cpp_source(body)
     statement_start = 0
     index = 0
     access = default_access
-    access_pattern = re.compile(r"\b(public|private|protected)\s*:")
     while index < len(masked):
-        access_label = access_pattern.match(masked, index)
-        if access_label:
-            access = access_label.group(1)
-            index = access_label.end()
-            statement_start = index
-            continue
+        if masked.startswith(("public", "private", "protected"), index):
+            label = re.match(r"(public|private|protected)\s*:", masked[index:])
+            if label:
+                access = label.group(1)
+                index += label.end()
+                statement_start = index
+                continue
         if masked[index] == "{":
             end = find_matching_brace(masked, index)
             if end < 0:
                 break
             prefix = masked[statement_start:index]
-            if not re.search(r"\b(struct|class|enum)\b", prefix):
+            if not re.search(r"\b(struct|class|enum)\b", prefix) and (
+                    not public_only or access == "public"):
                 parsed = parse_field_statement(prefix)
-                if parsed and (not public_only or access == "public"):
+                if parsed:
                     fields[parsed[0]] = parsed[1]
             elif public_only and access == "public":
                 declaration = re.search(r"\b(?:struct|class)\s+(\w+)", prefix)
-                tail_end = masked.find(";", end)
-                if declaration and tail_end >= 0:
-                    parsed = parse_field_statement(
-                        declaration.group(1) + " " + masked[end + 1:tail_end])
-                    if parsed:
-                        fields[parsed[0]] = parsed[1]
+                if declaration:
+                    tail_end = masked.find(";", end)
+                    for declarator in split_args(masked[end + 1:tail_end]):
+                        parsed = parse_field_statement(
+                            f"{declaration.group(1)} {declarator}")
+                        if parsed:
+                            fields[parsed[0]] = parsed[1]
             statement_start = end + 1
             index = end + 1
             continue
@@ -557,16 +702,11 @@ def collect_feature_struct_fields(paths: list[Path], features: dict[str, dict[st
     raw_feature_fields: dict[str, dict[str, dict[str, str]]] = {}
     feature_bases: dict[str, dict[str, list[str]]] = {}
     for path in paths:
-        text = read_text(path)
         for feature_class in features:
-            feature_match = re.search(rf"\b(?:struct|class)\s+{re.escape(feature_class)}\b[^\{{;]*\{{", text)
-            if not feature_match:
-                continue
-            feature_end = find_matching_brace(text, feature_match.end() - 1)
-            if feature_end < 0:
+            feature_body = class_body(path, feature_class)
+            if feature_body is None:
                 continue
 
-            feature_body = text[feature_match.end():feature_end]
             for struct_match in re.finditer(STRUCT_DECL_RE, feature_body):
                 body_start = struct_match.end()
                 body_end = find_matching_brace(feature_body, body_start - 1)
@@ -603,25 +743,64 @@ def collect_feature_struct_fields(paths: list[Path], features: dict[str, dict[st
 
 
 def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[str, str]],
-                                  public_only: bool = False) -> dict[str, dict[str, str]]:
+                                  *, public_only: bool = False) -> dict[str, dict[str, str]]:
+    if public_only:
+        definitions = {}
+        for path in paths:
+            for class_name in class_definition_braces(path):
+                if class_name in definitions:
+                    definitions[class_name] = None
+                else:
+                    definitions[class_name] = path
+
+        resolved = {}
+
+        def public_fields(class_name, active):
+            if class_name in resolved:
+                return resolved[class_name]
+            path = definitions.get(class_name)
+            if path is None or class_name in active:
+                return {}
+            declaration = re.search(
+                rf"\b(struct|class)\s+{re.escape(class_name)}\b([^;{{]*)\{{",
+                masked_text(path))
+            if not declaration:
+                return {}
+            default_access = "public" if declaration.group(1) == "struct" else "private"
+            members = {}
+            ambiguous = set()
+            tail = declaration.group(2)
+            if ":" in tail:
+                for base in split_args(tail.split(":", 1)[1]):
+                    access = re.search(r"\b(public|protected|private)\b", base)
+                    if (access.group(1) if access else default_access) != "public":
+                        continue
+                    base = re.sub(r"\b(public|protected|private|virtual)\b", "", base).strip()
+                    if not re.fullmatch(r"\w+(?:::\w+)*", base):
+                        continue
+                    inherited = public_fields(base.split("::")[-1], active | {class_name})
+                    ambiguous.update(members.keys() & inherited.keys())
+                    members.update(inherited)
+            for name in ambiguous:
+                members.pop(name, None)
+            body = class_body(path, class_name)
+            for name in parse_top_level_fields(body):
+                members.pop(name, None)
+            members.update(parse_top_level_fields(
+                body, public_only=True, default_access=default_access))
+            resolved[class_name] = members
+            return members
+
+        return {name: public_fields(name, set()) for name in features}
+
     feature_members: dict[str, dict[str, str]] = {}
     for path in paths:
-        text = read_text(path)
         for feature_class in features:
-            feature_match = re.search(rf"\b(?:struct|class)\s+{re.escape(feature_class)}\b[^\{{;]*\{{", text)
-            if not feature_match:
-                continue
-            feature_end = find_matching_brace(text, feature_match.end() - 1)
-            if feature_end < 0:
+            raw_feature_body = class_body(path, feature_class)
+            if raw_feature_body is None:
                 continue
 
-            raw_feature_body = text[feature_match.end():feature_end]
-            members = parse_top_level_fields(
-                raw_feature_body, public_only,
-                "private" if feature_match.group().startswith("class") else "public")
-            if public_only:
-                feature_members[feature_class] = members
-                continue
+            members = parse_top_level_fields(raw_feature_body)
             for struct_match in re.finditer(STRUCT_DECL_RE, raw_feature_body):
                 body_end = find_matching_brace(raw_feature_body, struct_match.end() - 1)
                 if body_end < 0:
@@ -639,31 +818,68 @@ def collect_feature_member_fields(paths: list[Path], features: dict[str, dict[st
 def collect_feature_type_aliases(paths: list[Path], features: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
     feature_aliases: dict[str, dict[str, str]] = {}
     for path in paths:
-        text = read_text(path)
         for feature_class in features:
-            feature_match = re.search(rf"\b(?:struct|class)\s+{re.escape(feature_class)}\b[^\{{;]*\{{", text)
-            if not feature_match:
+            # Class-scoped: two features may declare same-named aliases in one combined scan.
+            feature_body = class_body(path, feature_class)
+            if feature_body is None:
                 continue
-            feature_end = find_matching_brace(text, feature_match.end() - 1)
-            if feature_end < 0:
-                continue
-
-            feature_body = text[feature_match.end():feature_end]
             feature_aliases.setdefault(feature_class, {}).update(collect_type_aliases(feature_body))
     return feature_aliases
+
+
+@functools.lru_cache(maxsize=None)
+def serialization_text(path: Path) -> str:
+    """Expand same-owner JSON save delegates for serialization discovery."""
+    text = read_text(path)
+    methods = {}
+    pattern = re.compile(
+        r"\bvoid\s+(\w+)::(\w+)\s*\(\s*(?:nlohmann::)?json\s*&\s*(\w+)\s*\)\s*(?:const\s*)?\{")
+    for match in pattern.finditer(mask_cpp_source(text)):
+        end = find_matching_brace(text, match.end() - 1)
+        if end >= 0:
+            methods.setdefault((match.group(1), match.group(2)), []).append(
+                (match.group(3), text[match.end():end], match.end(), end))
+
+    def expand(owner, name, parameter, visited):
+        original_parameter, body, _, _ = methods[(owner, name)][0]
+        body = re.sub(rf"\b{re.escape(original_parameter)}\b", parameter, body)
+        replacements = []
+        for call in re.finditer(
+                rf"(?<![.>:])\b(\w+)\s*\(\s*{re.escape(parameter)}\s*\)\s*;",
+                mask_cpp_source(body)):
+            target = owner, call.group(1)
+            if target not in visited and len(methods.get(target, ())) == 1:
+                replacements.append((call.start(), call.end(),
+                                     "{" + expand(owner, target[1], parameter, visited | {target}) + "}"))
+        for start, end, replacement in reversed(replacements):
+            body = body[:start] + replacement + body[end:]
+        return body
+
+    replacements = []
+    for identity, definitions in methods.items():
+        if identity[1] == "SaveSettings" and len(definitions) == 1:
+            parameter, _, start, end = definitions[0]
+            replacements.append((start, end, expand(*identity, parameter, {identity})))
+    for start, end, replacement in sorted(replacements, reverse=True):
+        text = text[:start] + replacement + text[end:]
+    return text
 
 
 def collect_save_roots(paths: list[Path]) -> dict[str, str]:
     roots: dict[str, str] = {}
     for path in paths:
-        text = read_text(path)
-        for match in re.finditer(r"\bvoid\s+(\w+)::SaveSettings\s*\([^)]*\)\s*(?:const\s*)?\{", text):
+        # Masked: a commented-out assignment must not win over the live one.
+        text = mask_cpp_source(serialization_text(path))
+        for match in re.finditer(SAVE_SETTINGS_DEFINITION_RE, text):
             feature_class = match.group(1)
             body_end = find_matching_brace(text, match.end() - 1)
             if body_end < 0:
                 continue
             body = text[match.end():body_end]
-            assignment = re.search(r"\b(?:\w+|this->\w+)\s*=\s*(?:this->)?([A-Za-z_]\w*)\s*;", body)
+            # Only an assignment to the JSON parameter names the root: a local `x = y;` ahead of it is not one.
+            parameter = re.search(r"&\s*(\w+)\s*\)\s*(?:const\s*)?\{$", match.group(0))
+            target = re.escape(parameter.group(1)) if parameter else r"\w+"
+            assignment = re.search(rf"\b{target}\s*=\s*(?:this->)?([A-Za-z_]\w*)\s*;", body)
             if assignment:
                 roots[feature_class] = assignment.group(1)
     return roots
@@ -671,67 +887,48 @@ def collect_save_roots(paths: list[Path]) -> dict[str, str]:
 
 def collect_direct_persisted_fields(
         paths: list[Path],
-        feature_members: dict[str, dict[str, str]]) -> dict[str, list[tuple[str, str, str]]]:
+        feature_members: dict[str, dict[str, str]],
+        class_fields=None, enum_types=()) -> dict[str, list[tuple[str, str, str]]]:
     persisted_fields: dict[str, list[tuple[str, str, str]]] = {}
+    uncataloged: list[str] = []
     for path in paths:
-        text = read_text(path)
-        for match in re.finditer(r"\bvoid\s+(\w+)::SaveSettings\s*\([^)]*\)\s*\{", text):
+        # Masked for matching so commented-out persistence cannot register a phantom key;
+        # the JSON key itself is blanked by masking, so read it back out of the raw text.
+        raw = serialization_text(path)
+        text = mask_cpp_source(serialization_text(path))
+        for match in re.finditer(SAVE_SETTINGS_DEFINITION_RE, text):
             feature_class = match.group(1)
             body_end = find_matching_brace(text, match.end() - 1)
             if body_end < 0:
                 continue
-            body = text[match.end():body_end]
+            offset = match.end()
+            body = text[offset:body_end]
             for assignment in re.finditer(
-                    r'\b[A-Za-z_]\w*\s*\[\s*"([^"]+)"\s*\]\s*=\s*(?:this->)?([A-Za-z_]\w*)\s*;',
+                    r'\b[A-Za-z_]\w*\s*\[\s*"([^"]+)"\s*\]\s*=\s*(?:this->)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*;',
                     body):
-                key = assignment.group(1)
+                key = raw[offset + assignment.start(1):offset + assignment.end(1)]
                 member = assignment.group(2)
-                value_type = type_to_value_type(
-                    feature_members.get(feature_class, {}).get(member, ""))
+                parts = member.split(".")
+                declared_type = feature_members.get(feature_class, {}).get(parts[0], "")
+                for part in parts[1:]:
+                    declared_type = (class_fields or {}).get(feature_class, {}).get(
+                        clean_type(declared_type).split("::")[-1], {}).get(part, "")
+                value_type = type_to_value_type(declared_type)
+                if not value_type and clean_type(declared_type).split("::")[-1] in enum_types:
+                    value_type = "Integer"
                 if value_type:
                     persisted_fields.setdefault(feature_class, []).append(
                         (key, value_type, member))
+                elif declared_type and not (
+                        {declared_type, f"{feature_class}::{declared_type}"}
+                        & UNCATALOGED_PERSISTED_AGGREGATE_TYPES):
+                    uncataloged.append(
+                        f"{feature_class}::SaveSettings persists '{key}' as non-primitive "
+                        f"'{declared_type}'; catalog it or list it in "
+                        f"UNCATALOGED_PERSISTED_AGGREGATE_TYPES")
+    if uncataloged:
+        raise SystemExit("uncataloged persisted aggregates:\n  " + "\n  ".join(uncataloged))
     return persisted_fields
-
-
-def collect_serialized_struct_parts(paths: list[Path]):
-    parts = {}
-    for function in collect_source_functions(paths):
-        if function.name != "SaveSettings" or not function.owner or len(function.parameters) != 1:
-            continue
-        output = re.escape(function.parameters[0].name)
-        for assignment in re.finditer(
-                rf'\b{output}\s*\[\s*"([^"]+)"\s*\]\s*=\s*(\w+)\s*;', function.body):
-            key, local = assignment.groups()
-            declarations = re.findall(
-                rf"\b(\w+)\s+{re.escape(local)}\s*;", function.masked_body[:assignment.start()])
-            if len(declarations) != 1:
-                continue
-            part_type = declarations[0]
-            copies = []
-            for copy in re.finditer(r"\bstd::memcpy\s*\(", function.masked_body[:assignment.start()]):
-                close = find_matching_paren(function.body, copy.end() - 1)
-                args = split_args(function.body[copy.end():close]) if close >= 0 else []
-                if (len(args) != 3 or not re.fullmatch(rf"\s*&\s*{re.escape(local)}\s*", args[0]) or
-                        not re.fullmatch(rf"\s*sizeof\s*\(\s*(?:{re.escape(part_type)}|{re.escape(local)})\s*\)\s*", args[2])):
-                    continue
-                source = re.fullmatch(r"\s*&\s*(\w+)\.(\w+)\s*", args[1])
-                offset_type = ""
-                if not source:
-                    source = re.fullmatch(
-                        r"\s*reinterpret_cast\s*<\s*const\s+char\s*\*\s*>\s*\(\s*&\s*(\w+)\.(\w+)\s*\)"
-                        r"\s*\+\s*sizeof\s*\(\s*(\w+)\s*\)\s*", args[1])
-                    if source:
-                        offset_type = source.group(3)
-                        offset_declarations = re.findall(
-                            rf"\b(\w+)\s+{re.escape(offset_type)}\s*;", function.masked_body[:copy.start()])
-                        if len(offset_declarations) == 1:
-                            offset_type = offset_declarations[0]
-                if source:
-                    copies.append((source.group(1), source.group(2), offset_type, part_type, key))
-            if len(copies) == 1:
-                parts.setdefault(function.owner, []).append(copies[0])
-    return parts
 
 
 def collect_string_constants(text: str) -> dict[str, str]:
@@ -787,10 +984,13 @@ def collect_features(paths: list[Path]) -> dict[str, dict[str, str]]:
     features: dict[str, dict[str, str]] = {}
     for path in paths:
         text = read_text(path)
-        class_match = re.search(r"\b(?:struct|class)\s+(\w+)[^{:;]*(?::[^{]+Feature)", text)
-        if not class_match:
+        # Masked, so a doc comment such as "Feature class for ..." cannot pose as the declaration.
+        class_name = next((
+            match.group(1) for match in FEATURE_CLASS_DECL_RE.finditer(masked_text(path))
+            if re.search(r"\b\w*Feature\b", match.group(2))
+        ), None)
+        if not class_name:
             continue
-        class_name = class_match.group(1)
         constants = collect_string_constants(text)
         short_expression = get_function_return_expression(text, "GetShortName")
         short_name = resolve_string_expression(short_expression, text, constants) if short_expression else None
@@ -804,34 +1004,6 @@ def collect_features(paths: list[Path]) -> dict[str, dict[str, str]]:
             "source": str(path),
         }
     return features
-
-
-def collect_indexed_factory_assignments(text: str) -> list[tuple[str, str]]:
-    assignments = []
-    masked = mask_cpp_source(text)
-    factory_pattern = re.compile(
-        r"\bstd::make_(?:unique|shared)\s*<\s*([A-Za-z_]\w*(?:::\w+)*)\s*>\s*\(")
-    for indexed in re.finditer(r"\b([A-Za-z_]\w*)\s*\[", masked):
-        depth = 1
-        index_end = indexed.end()
-        while index_end < len(masked) and depth:
-            if masked[index_end] == "[":
-                depth += 1
-            elif masked[index_end] == "]":
-                depth -= 1
-            index_end += 1
-        assignment = re.match(r"\s*=(?!=)\s*([^;]+);", masked[index_end:])
-        if not assignment:
-            continue
-        expression = assignment.group(1)
-        position = 0
-        while factory := factory_pattern.search(expression, position):
-            end = find_matching_paren(expression, factory.end() - 1)
-            if end < 0:
-                break
-            assignments.append((indexed.group(1), factory.group(1)))
-            position = end + 1
-    return assignments
 
 
 def collect_settings_components(
@@ -849,7 +1021,7 @@ def collect_settings_components(
         if len(candidates) == 1
     }
 
-    components: dict[str, list[tuple[str, str, str, str, str]]] = {}
+    components: dict[str, list[tuple[str, str, str]]] = {}
     for feature_class, feature in features.items():
         source_path = Path(feature["source"]).with_suffix(".cpp")
         if not source_path.exists():
@@ -857,7 +1029,9 @@ def collect_settings_components(
         text = read_text(source_path)
         feature_components = []
         seen_classes = set()
-        for container_name, child_type in collect_indexed_factory_assignments(text):
+        for container_name, child_type in re.findall(
+                r"\b([A-Za-z_]\w*)\s*\[[^\]]+\]\s*=\s*"
+                rf"{SMART_POINTER_FACTORY_RE}\s*<\s*([A-Za-z_]\w*(?:::\w+)*)\s*>", text):
             child_name = child_type.split("::")[-1]
             if child_name in seen_classes:
                 continue
@@ -891,79 +1065,81 @@ def collect_settings_components(
 
 
 def collect_serialized_settings_components(
-        features: dict[str, dict[str, str]], paths: list[Path]) -> list[SerializedSettingsComponent]:
-    headers = {}
+        features: dict[str, dict[str, str]],
+        paths: list[Path]) -> list[SerializedSettingsComponent]:
+    """Discover children whose own SaveSettings output a feature folds into a keyed map."""
+    headers: dict[str, list[Path]] = {}
     for path in (path for path in paths if path.suffix == ".h"):
-        for match in re.finditer(
-                r"\b(?:struct|class)\s+(\w+)\b[^;{]*\{", mask_cpp_source(read_text(path))):
+        for match in re.finditer(r"\b(?:struct|class)\s+(\w+)\b[^;{]*\{", masked_text(path)):
             headers.setdefault(match.group(1), []).append(path)
 
-    sources = []
-    for path in (path for path in paths if path.suffix == ".cpp"):
-        text = read_text(path)
-        sources.append((text, mask_cpp_source(text)))
-    components = []
+    sources = [(serialization_text(path), mask_cpp_source(serialization_text(path)))
+               for path in paths if path.suffix == ".cpp"]
+    components: list[SerializedSettingsComponent] = []
     for feature_class in features:
         for text, masked in sources:
+            # Substring prefilter: the regex below would otherwise scan every file for every feature.
+            if f"{feature_class}::SaveSettings" not in masked:
+                continue
             method = re.search(
-                rf"\bvoid\s+{re.escape(feature_class)}::SaveSettings\s*\([^)]*&\s*(\w+)\s*\)\s*\{{",
-                masked)
+                rf"\bvoid\s+{re.escape(feature_class)}::SaveSettings"
+                rf"\s*\([^)]*&\s*(\w+)\s*\)\s*(?:const\s*)?\{{", masked)
             if not method:
                 continue
-            end = find_matching_brace(text, method.end() - 1)
-            if end < 0:
+            body_end = find_matching_brace(text, method.end() - 1)
+            if body_end < 0:
                 continue
             output = method.group(1)
-            body = text[method.end():end]
+            body = text[method.end():body_end]
             for loop in re.finditer(
                     r"\bfor\s*\(\s*(?:const\s+)?auto\s*&\s*(\w+)\s*:\s*(\w+)\s*\)\s*\{",
                     mask_cpp_source(body)):
-                child, container = loop.groups()
+                child_variable, container = loop.groups()
                 loop_end = find_matching_brace(body, loop.end() - 1)
                 if loop_end < 0:
                     continue
                 loop_body = body[loop.end():loop_end]
-                save = re.search(
-                    rf"\b{child}->SaveSettings\s*\(\s*(\w+)\s*\)\s*;", loop_body)
-                if not save:
+                saved = re.search(
+                    rf"\b{child_variable}->SaveSettings\s*\(\s*(\w+)\s*\)\s*;", loop_body)
+                if not saved:
                     continue
-                saved = save.group(1)
                 keyed = re.search(
-                    rf"\b(\w+)\s*\[\s*(?:std::string\s*\(\s*)?{child}->(\w+)\(\)\s*\)?\s*\]"
-                    rf"\s*=\s*(?:std::move\s*\(\s*)?{saved}\s*\)?\s*;", loop_body)
+                    rf"\b(\w+)\s*\[\s*(?:std::string\s*\(\s*)?{child_variable}->(\w+)\(\)\s*\)?\s*\]"
+                    rf"\s*=\s*(?:std::move\s*\(\s*)?{saved.group(1)}\s*\)?\s*;", loop_body)
                 if not keyed:
                     continue
                 object_name, key_method = keyed.groups()
-                persist = re.search(
+                persisted = re.search(
                     rf'\b{output}\s*((?:\[\s*"[^"\n]+"\s*\]\s*)+)='
-                    rf'\s*(?:std::move\s*\(\s*)?{object_name}\s*\)?\s*;',
-                    body[loop_end + 1:])
-                if not persist:
+                    rf'\s*(?:std::move\s*\(\s*)?{object_name}\s*\)?\s*;', body[loop_end + 1:])
+                if not persisted:
                     continue
-                json_path = tuple(re.findall(r'"([^"\n]+)"', persist.group(1)))
+                json_path = tuple(re.findall(r'"([^"\n]+)"', persisted.group(1)))
                 factory_pattern = re.compile(
                     rf"\b{container}\.(?:emplace_back|push_back)\s*\(\s*"
-                    r"std::make_(?:unique|shared)\s*<\s*(\w+)\s*>")
-                child_classes = set()
-                control_scope = False
-                for source, masked_source in sources:
+                    rf"{SMART_POINTER_FACTORY_RE}\s*<\s*(\w+)\s*>")
+                child_classes: set[str] = set()
+                scopes_controls = False
+                for owner_text, owner_masked in sources:
                     for owner in re.finditer(
                             rf"\b{re.escape(feature_class)}::\w+\s*\([^;{{}}]*\)\s*(?:const\s*)?\{{",
-                            masked_source):
-                        owner_end = find_matching_brace(source, owner.end() - 1)
+                            owner_masked):
+                        owner_end = find_matching_brace(owner_text, owner.end() - 1)
                         if owner_end < 0:
                             continue
-                        owner_body = source[owner.end():owner_end]
+                        owner_body = owner_text[owner.end():owner_end]
                         child_classes.update(factory_pattern.findall(mask_cpp_source(owner_body)))
                         for alias in re.finditer(
                                 rf"\bauto\s*&\s*(\w+)\s*=\s*{container}\s*\[", owner_body):
                             identity = re.search(
-                                rf"\bauto\s+(\w+)\s*=\s*{alias.group(1)}->{key_method}\(\)", owner_body)
-                            if identity:
-                                name = identity.group(1)
-                                control_scope |= bool(re.search(
-                                    rf"ImGui::PushID\s*\(\s*{name}\.data\(\)\s*,\s*"
-                                    rf"{name}\.data\(\)\s*\+\s*{name}\.size\(\)\s*\)", owner_body))
+                                rf"\bauto\s+(\w+)\s*=\s*{alias.group(1)}->{key_method}\(\)",
+                                owner_body)
+                            if not identity:
+                                continue
+                            name = identity.group(1)
+                            scopes_controls |= bool(re.search(
+                                rf"ImGui::PushID\s*\(\s*{name}\.data\(\)\s*,\s*"
+                                rf"{name}\.data\(\)\s*\+\s*{name}\.size\(\)\s*\)", owner_body))
                 for child_class in sorted(child_classes):
                     candidates = headers.get(child_class, [])
                     if len(candidates) != 1:
@@ -971,26 +1147,54 @@ def collect_serialized_settings_components(
                     header = candidates[0]
                     header_text = read_text(header)
                     declaration = re.search(
-                        rf"\b(?:struct|class)\s+{child_class}\b[^;{{]*\{{", header_text)
+                        rf"\b(?:struct|class)\s+{child_class}\b[^;{{]*\{{", masked_text(header))
+                    if not declaration:
+                        continue
                     declaration_end = find_matching_brace(header_text, declaration.end() - 1)
-                    child_text = header_text[declaration.end():declaration_end]
-                    expression = get_function_return_expression(child_text, key_method)
+                    if declaration_end < 0:
+                        continue
+                    child_body = header_text[declaration.end():declaration_end]
+                    key_expression = get_function_return_expression(child_body, key_method)
                     key = resolve_string_expression(
-                        expression, child_text, collect_string_constants(child_text)) if expression else None
+                        key_expression, child_body,
+                        collect_string_constants(child_body)) if key_expression else None
                     if not key:
                         continue
+                    display_text = child_body
+                    display = get_function_return_expression(child_body, "GetDisplayName") or ""
                     child_source = header.with_suffix(".cpp")
-                    display = get_function_return_expression(child_text, "GetDisplayName") or ""
                     if not display and child_source.exists():
-                        child_text = read_text(child_source)
+                        display_text = read_text(child_source)
                         display = get_function_return_expression(
-                            child_text, f"{child_class}::GetDisplayName") or ""
-                    prefix = re.search(r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"', child_text)
+                            display_text, f"{child_class}::GetDisplayName") or ""
+                    prefix = re.search(
+                        r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"', display_text)
                     translated = extract_i18n_call(display, prefix.group(1) if prefix else "")
                     display_key, display_name = translated or ("", key)
                     components.append(SerializedSettingsComponent(
                         feature_class, child_class, (*json_path, key),
-                        display_name, display_key, key if control_scope else ""))
+                        display_name, display_key, key if scopes_controls else ""))
+    return components
+
+
+def collect_owned_settings_components(features, paths, feature_members):
+    components = []
+    for path in (path for path in paths if path.suffix == ".cpp"):
+        text = serialization_text(path)
+        for method in re.finditer(SAVE_SETTINGS_DEFINITION_RE, mask_cpp_source(text)):
+            owner = method.group(1)
+            if owner not in features:
+                continue
+            end = find_matching_brace(text, method.end() - 1)
+            body = text[method.end():end]
+            for saved in re.finditer(r"\b(\w+)\.SaveSettings\(\s*(\w+)\s*\)\s*;", body):
+                member, temporary = saved.groups()
+                child_type = feature_members.get(owner, {}).get(member)
+                persisted = re.search(
+                    rf'\b\w+\s*\[\s*"([^"\n]+)"\s*\]\s*=\s*{temporary}\s*;',
+                    body[saved.end():])
+                if child_type and persisted:
+                    components.append((owner, member, clean_type(child_type), persisted.group(1)))
     return components
 
 
@@ -1004,7 +1208,7 @@ def collect_component_persisted_controls(
         source = Path(features[feature_class]["source"]).with_suffix(".cpp")
         if not source.exists():
             continue
-        text = read_text(source)
+        text = serialization_text(source)
         prefix_match = re.search(r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"', text)
         prefix = prefix_match.group(1) if prefix_match else ""
         method_bodies = {}
@@ -1119,42 +1323,111 @@ def resolve_control_translation(
         key=lambda item: (item[1] != fallback, len(item[1]), item[1]))
 
 
+_MASK_SCANNER = re.compile("[\"'/]")
+_MASK_NON_NEWLINE = re.compile(r"[^\r\n]")
+
+
+def _blank_keeping_newlines(segment: str) -> str:
+    """Blanks a segment while preserving line structure, so line numbers still line up."""
+    return _MASK_NON_NEWLINE.sub(" ", segment)
+
+
+def _is_identifier_char(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def _is_digit_separator(text: str, quote: int) -> bool:
+    """Whether the ' at `quote` splits a numeric literal (1'000) rather than opening a char literal."""
+    if quote + 1 >= len(text) or not text[quote + 1].isalnum():
+        return False
+    begin = quote
+    while begin > 0 and (text[begin - 1].isalnum() or text[begin - 1] in "'."):
+        begin -= 1
+    return begin < quote and text[begin].isdigit()
+
+
+def _raw_string_end(text: str, quote: int) -> int:
+    """Index of the closing quote of R"delim(...)delim" opened at `quote`, or -1 when it opens none."""
+    if quote < 1 or text[quote - 1] != "R":
+        return -1
+
+    def opens_token(prefix: str) -> bool:
+        # The R, with its encoding prefix, has to start a token: `fooR"` is an identifier then a string.
+        begin = quote - 1 - len(prefix)
+        return begin >= 0 and text[begin:quote - 1] == prefix and (
+            begin == 0 or not _is_identifier_char(text[begin - 1]))
+
+    open_paren = text.find("(", quote + 1)
+    if open_paren < 0 or not any(opens_token(prefix) for prefix in ("u8", "u", "U", "L", "")):
+        return -1
+    delimiter = text[quote + 1:open_paren]
+    close = text.find(f"){delimiter}\"", open_paren)
+    return close + len(delimiter) + 1 if close >= 0 else -1
+
+
+@functools.lru_cache(maxsize=None)
 def mask_cpp_source(text: str) -> str:
-    result = list(text)
+    length = len(text)
+    # Copy whole runs between literals instead of rewriting the source character by character.
+    chunks: list[str] = []
+    copied = 0
     i = 0
-    while i < len(text):
-        if text.startswith("//", i):
-            end = text.find("\n", i)
-            end = len(text) if end < 0 else end
-            for j in range(i, end):
-                result[j] = " "
-            i = end
-            continue
-        if text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            end = len(text) if end < 0 else end + 2
-            for j in range(i, end):
-                if result[j] not in "\r\n":
-                    result[j] = " "
-            i = end
-            continue
-        if text[i] in ('"', "'"):
-            quote = text[i]
-            i += 1
-            while i < len(text):
-                if text[i] == "\\":
-                    result[i] = " "
-                    if i + 1 < len(text):
-                        result[i + 1] = " "
-                    i += 2
-                    continue
-                if text[i] == quote:
-                    break
-                if result[i] not in "\r\n":
-                    result[i] = " "
+    search = _MASK_SCANNER.search
+    while i < length:
+        match = search(text, i)
+        if not match:
+            break
+        i = match.start()
+        if text[i] == "/":
+            if text.startswith("//", i):
+                end = text.find("\n", i)
+                end = length if end < 0 else end
+                # A line comment runs to the newline, so blanking it cannot lose one.
+                chunks.append(text[copied:i])
+                chunks.append(" " * (end - i))
+            elif text.startswith("/*", i):
+                end = text.find("*/", i + 2)
+                end = length if end < 0 else end + 2
+                chunks.append(text[copied:i])
+                chunks.append(_blank_keeping_newlines(text[i:end]))
+            else:
                 i += 1
+                continue
+            copied = i = end
+            continue
+
+        quote = text[i]
+        if quote == "'" and _is_digit_separator(text, i):
+            i += 1
+            continue
+        # A raw string has no escapes and may hold quotes, so it ends only at its delimiter.
+        if quote == '"' and (raw_end := _raw_string_end(text, i)) >= 0:
+            chunks.append(text[copied:i + 1])
+            chunks.append(_blank_keeping_newlines(text[i + 1:raw_end]))
+            copied = raw_end
+            i = raw_end + 1
+            continue
+
+        # The quotes themselves survive; only the body is blanked.
+        chunks.append(text[copied:i + 1])
         i += 1
-    return "".join(result)
+        body: list[str] = []
+        while i < length:
+            ch = text[i]
+            if ch == "\\":
+                # An escape pair is blanked whole, even when it spans a line continuation.
+                body.append("  " if i + 1 < length else " ")
+                i += 2
+                continue
+            if ch == quote:
+                break
+            body.append(ch if ch in "\r\n" else " ")
+            i += 1
+        chunks.append("".join(body))
+        copied = min(i, length)
+        i = copied + 1
+    chunks.append(text[copied:])
+    return "".join(chunks)
 
 
 def extract_draw_settings_body(text: str) -> tuple[str, str] | None:
@@ -1170,12 +1443,10 @@ def extract_draw_settings_body(text: str) -> tuple[str, str] | None:
 def collect_tab_selector_roots(
         paths: list[Path]) -> dict[tuple[str, tuple[str, ...]], tuple[tuple[str, ...], tuple[str, ...]]]:
     candidates = {}
-    fallback_candidates = {}
-    tabs_by_body = {}
     method_pattern = re.compile(
         r"\b(?:bool|void)\s+([A-Za-z_]\w*)::Draw[A-Za-z_]\w*\s*\([^;{]*\)\s*(?:const\s*)?\{")
-    tab_pattern = re.compile(r"\b(?:ImGui|Util)::BeginTabItem\s*\(")
-    end_tab_pattern = re.compile(r"\b(?:ImGui|Util)::EndTabItem\s*\(\s*\)\s*;")
+    tab_pattern = re.compile(r"\b(?:ImGui|Util)::Begin(?:Pill)?TabItem\s*\(")
+    tab_end_pattern = re.compile(r"\b(?:ImGui|Util)::End(?:Pill)?TabItem\s*\(")
     setting_pattern = re.compile(
         r"\b(?:settings|debugSettings|[A-Za-z_]\w*Settings)\."
         r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
@@ -1196,121 +1467,30 @@ def collect_tab_selector_roots(
                 close = find_matching_paren(body, tab.end() - 1)
                 if close < 0:
                     continue
-                translated = extract_i18n_call(body[tab.start():close + 1], prefix)
-                if not translated:
-                    continue
-                guard_prefix = re.search(r"\bif\s*\(\s*!\s*$", masked_body[:tab.start()])
-                if guard_prefix:
-                    cursor = close + 1
-                    while cursor < len(masked_body) and masked_body[cursor].isspace():
-                        cursor += 1
-                    if cursor >= len(masked_body) or masked_body[cursor] != ")":
-                        continue
-                    cursor += 1
-                    while cursor < len(masked_body) and masked_body[cursor].isspace():
-                        cursor += 1
-
-                    if cursor < len(masked_body) and masked_body[cursor] == "{":
-                        guard_end = find_matching_brace(body, cursor)
-                        if guard_end < 0 or not re.fullmatch(
-                                r"\s*return\s*;\s*", masked_body[cursor + 1:guard_end]):
-                            continue
-                        guard_end += 1
-                    else:
-                        return_statement = re.match(r"return\s*;", masked_body[cursor:])
-                        if not return_statement:
-                            continue
-                        guard_end = cursor + return_statement.end()
-
-                    end_tab = end_tab_pattern.search(masked_body, guard_end)
-                    if end_tab:
-                        tabs.append((guard_end, end_tab.start(), translated[1], translated[0]))
-                    continue
-
                 block_start = masked_body.find("{", close + 1)
                 statement_end = masked_body.find(";", close + 1)
                 if block_start < 0 or (statement_end >= 0 and statement_end < block_start):
                     continue
                 block_end = find_matching_brace(body, block_start)
-                if block_end >= 0:
-                    tabs.append((block_start, block_end, translated[1], translated[0]))
+                translated = extract_i18n_call(body[tab.start():close + 1], prefix)
+                if block_end >= 0 and translated:
+                    # The tab ends at its EndTabItem, not at the brace: a block that keeps drawing
+                    # after that call is back on the tab bar, and those controls are not in the tab.
+                    # Any nested tab closes first, so the last call in the block is this tab's.
+                    ends = list(tab_end_pattern.finditer(masked_body, block_start, block_end))
+                    scope_end = ends[-1].start() if ends else block_end
+                    tabs.append((block_start, scope_end, translated[1], translated[0]))
 
-            tabs_by_body[(method.group(1), body)] = tabs
             for setting in setting_pattern.finditer(masked_body):
                 selectors = sorted(
                     (tab for tab in tabs if tab[0] < setting.start() < tab[1]),
                     key=lambda tab: (tab[0], -tab[1]))
-                if selectors:
-                    identity = (method.group(1), tuple(setting.group(1).split(".")))
-                    fallback_candidates.setdefault(identity, set()).add((
-                        tuple(tab[2] for tab in selectors),
-                        tuple(tab[3] for tab in selectors)))
-
-    functions = collect_source_functions(paths, include_qualifiers=True)
-    call_sites = _collect_control_call_sites(functions)
-    controls = {}
-    parameters = {
-        function: tuple((parameter.type_name, parameter.name, parameter.default)
-                        for parameter in function.parameters)
-        for function in functions
-    }
-    storage_parameters = {function: set() for function in functions}
-    for function in functions:
-        controls[function] = []
-        for control in DIRECT_UI_CONTROL_RE.finditer(function.masked_body):
-            close = find_matching_paren(function.body, control.end() - 1)
-            args = split_args(function.body[control.end():close]) if close >= 0 else []
-            storage_index = control_storage_argument_index(control.group(1))
-            if len(args) <= storage_index:
-                continue
-            controls[function].append((control.start(), args[storage_index]))
-            origin = find_parameter_origin(args[storage_index], parameters[function])
-            if origin:
-                storage_parameters[function].add(origin[0])
-    changed = True
-    while changed:
-        changed = False
-        for caller, calls in call_sites.items():
-            for callee, _, args in calls:
-                for index in tuple(storage_parameters[callee]):
-                    if index < len(args):
-                        origin = find_parameter_origin(args[index], parameters[caller])
-                        if origin and origin[0] not in storage_parameters[caller]:
-                            storage_parameters[caller].add(origin[0])
-                            changed = True
-
-    def visit(function, inherited, active):
-        if function in active:
-            return
-        active = active | {function}
-        tabs = tabs_by_body.get((function.owner, function.body), ())
-
-        def selectors_at(position):
-            local = sorted(
-                (tab for tab in tabs if tab[0] < position < tab[1]),
-                key=lambda tab: (tab[0], -tab[1]))
-            return (inherited[0] + tuple(tab[2] for tab in local),
-                    inherited[1] + tuple(tab[3] for tab in local))
-
-        aliases = collect_local_setting_aliases(function.body)
-        storage = list(controls[function])
-        for callee, position, args in call_sites[function]:
-            storage.extend((position, args[index]) for index in storage_parameters[callee]
-                           if index < len(args))
-        for position, argument in storage:
-            setting_path = extract_control_setting_path("Checkbox", ["", argument], aliases)
-            selectors = selectors_at(position)
-            if setting_path and selectors[0]:
-                candidates.setdefault((function.owner, setting_path), set()).add(selectors)
-        for callee, position, _ in call_sites[function]:
-            if callee.qualifier == function.qualifier:
-                visit(callee, selectors_at(position), active)
-
-    for function in functions:
-        if function.name == "DrawSettings" and function.owner:
-            visit(function, ((), ()), set())
-    for identity, selectors in fallback_candidates.items():
-        candidates.setdefault(identity, selectors)
+                if not selectors:
+                    continue
+                identity = (method.group(1), tuple(setting.group(1).split(".")))
+                candidates.setdefault(identity, set()).add((
+                    tuple(tab[2] for tab in selectors),
+                    tuple(tab[3] for tab in selectors)))
     return {
         identity: next(iter(values))
         for identity, values in candidates.items()
@@ -1318,6 +1498,7 @@ def collect_tab_selector_roots(
     }
 
 
+@functools.lru_cache(maxsize=None)
 def collect_numeric_constants(text: str) -> dict[str, float]:
     expressions: dict[str, str] = {}
     pattern = re.compile(
@@ -1364,6 +1545,17 @@ def collect_numeric_constants(text: str) -> dict[str, float]:
         if not changed:
             break
     return constants
+
+
+@functools.lru_cache(maxsize=None)
+def source_numeric_constants(source: Path) -> dict[str, float]:
+    """Numeric constants a translation unit can see, including its companion header.
+
+    Callers only read the result, so the cached dict is shared rather than copied.
+    """
+    header = source.with_suffix(".h")
+    return collect_numeric_constants(
+        read_text(source) + (read_text(header) if header.exists() else ""))
 
 
 def resolve_numeric_expression(expression: str, constants: dict[str, float]) -> float | None:
@@ -1449,6 +1641,10 @@ def substitute_helper_parameters(
 
 
 def control_source_widget(control_kind: str) -> str:
+    if control_kind in {"CheckboxFlag", "CheckboxUint"}:
+        return "Checkbox"
+    if control_kind == "RadioButton":
+        return "Combo"
     if re.fullmatch(r"ShiftSliderFloat[234]", control_kind):
         return "ShiftSlider"
     return "" if control_kind.startswith("Projected") else control_kind
@@ -1573,7 +1769,9 @@ def normalize_setting_path(value: str) -> tuple[str, ...]:
     return tuple(parts)
 
 
+@functools.lru_cache(maxsize=None)
 def collect_local_setting_aliases(body: str) -> dict[str, tuple[str, ...]]:
+    """Cached: every control in a function body asks for the same aliases."""
     aliases: dict[str, tuple[str, ...]] = {}
     pattern = re.compile(
         r"\b(?:bool|int|unsigned|uint(?:32_t)?|float|double|auto)\s*(&?)\s*"
@@ -1621,6 +1819,21 @@ def collect_local_setting_aliases(body: str) -> dict[str, tuple[str, ...]]:
 
         if writes and all(is_proxy_write(write) for write in writes):
             aliases[match.group(2)] = setting_path
+    for proxy in re.finditer(
+            r"\b(?:SettingsControl|SceneWidgetInterceptor)::ProxyScope\s+\w+\s*\(\s*"
+            r"&\s*(?:settings|debugSettings|[A-Za-z_]\w*Settings)\."
+            r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*1(?:\.0*)?[fF]?\s*\)\s*;",
+            mask_cpp_source(body)):
+        control = DIRECT_UI_CONTROL_RE.search(mask_cpp_source(body), proxy.end())
+        scope_end = body.find("}", proxy.end())
+        if control and (scope_end < 0 or control.start() < scope_end):
+            end = find_matching_paren(body, control.end() - 1)
+            arguments = split_args(body[control.end():end]) if end >= 0 else []
+            index = control_storage_argument_index(control.group(1))
+            if len(arguments) > index:
+                temporary = re.fullmatch(r"\s*&\s*(\w+)\s*", arguments[index])
+                if temporary:
+                    aliases[temporary.group(1)] = normalize_setting_path(proxy.group(1))
     return aliases
 
 
@@ -1644,13 +1857,15 @@ def extract_control_setting_path(
         return normalize_setting_path(setting_match.group(1))
 
     for alias, setting_path in aliases.items():
-        alias_storage = re.search(
+        alias_match = re.search(
             rf"(?:&|\b){re.escape(alias)}\b"
             r"((?:(?:\[[^\]]+\])|(?:\.[A-Za-z_]\w*(?:\(\))?))*)",
             storage_argument)
-        if alias_storage:
-            suffix = normalize_setting_path(alias_storage.group(1))
-            return (*setting_path, *suffix)
+        if not alias_match:
+            continue
+        # `&alias.member` addresses the member: dropping the suffix would file the control under the
+        # aliased struct's own path, where no scalar setting lives.
+        return setting_path + normalize_setting_path(alias_match.group(1))
 
     return None
 
@@ -1676,34 +1891,34 @@ def control_group_semantic(control_kind: str) -> str:
     return "Numeric" if control_component_count(control_kind) > 1 else "None"
 
 
-def control_aggregate_presentation(control_kind: str) -> str:
-    if control_kind.startswith(("ColorEdit", "ProjectedColorEditor")):
-        return "ColorPicker"
-    return "Components"
+def collect_custom_path_controls(paths: list[Path]) -> set[tuple[str, tuple[str, ...], str]]:
+    controls = set()
+    for path in paths:
+        text = read_text(path)
+        for identity in re.finditer(
+                r"\bSettingsControl::SettingIdentity\s+(\w+)\s*\{", mask_cpp_source(text)):
+            end = find_matching_brace(text, identity.end() - 1)
+            arguments = split_args(text[identity.end():end]) if end >= 0 else []
+            if len(arguments) != 3 or not re.search(
+                    rf"\bSettingsControl::DrawPathControls\s*\(\s*{identity.group(1)}\s*,", text):
+                continue
+            feature = parse_cpp_string_expression(arguments[0])
+            key = parse_cpp_string_expression(arguments[2])
+            segments = arguments[1].strip()
+            if feature and key and segments.startswith("{") and segments.endswith("}"):
+                parts = tuple(parse_cpp_string_expression(part) for part in split_args(segments[1:-1]))
+                if all(part is not None for part in parts):
+                    controls.add((feature, parts, key))
+    return controls
 
-
-def control_supports_unified_edit(control_kind: str) -> bool:
-    return control_kind.startswith("ShiftSliderFloat")
-
-
-def resolve_unified_edit_mode(
-        binding: ControlBinding | None,
-        virtual_controls: tuple[tuple[str, str], ...]) -> str:
-    if virtual_controls:
-        return "Always"
-    if binding and binding.supports_unified_edit:
-        return "Shift"
-    return "None"
 
 
 def resolve_editor_semantic(
         binding: ControlBinding | None,
         value_type: str,
         force_hidden: bool = False) -> str:
-    if force_hidden:
+    if force_hidden or binding is None:
         return "None"
-    if binding is None:
-        return "Generic" if value_type in {"Boolean", "Integer", "Float", "String"} else "None"
     if binding.choices and value_type == "Integer":
         return "Choice"
     if ((binding.control_kind in {"Checkbox", "CheckboxFlag", "CheckboxUint"} or
@@ -1753,10 +1968,7 @@ def collect_projected_numeric_helpers(paths: list[Path]) -> dict[str, ProjectedN
         if storage_parameter is None:
             continue
 
-        constants = collect_numeric_constants(
-            read_text(function.source) + (
-                read_text(function.source.with_suffix(".h"))
-                if function.source.with_suffix(".h").exists() else ""))
+        constants = source_numeric_constants(function.source)
         loop_counts = set()
         loop_pattern = re.compile(
             rf"\bfor\s*\(\s*(?:[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\s+)+"
@@ -1997,7 +2209,7 @@ def _summarize_numeric_control_flow(
         controls.add(NumericControlFlow(
             storage[0], storage[1], storage[2], args[0].strip(),
             bounds[0].strip(), bounds[1].strip(), semantic,
-            "ColorPicker" if is_color_editor else "Components", False,
+            "ColorPicker" if is_color_editor else "Components",
             control_source_widget(control_kind),
             control_clamps_numeric_input(control_kind, flags_expression),
             control_is_hdr_color(control_kind, flags_expression)))
@@ -2020,7 +2232,7 @@ def _summarize_numeric_control_flow(
             continue
         controls.add(NumericControlFlow(
             storage[0], storage[1], storage[2], args[0].strip(),
-            args[2].strip(), args[3].strip(), "Numeric", "Components", True,
+            args[2].strip(), args[3].strip(), "Numeric", "Components",
             control_source_widget(control_kind),
             control_clamps_numeric_input(control_kind, flags_expression), False))
 
@@ -2047,7 +2259,7 @@ def _summarize_numeric_control_flow(
                 substitute_helper_parameters(flow.item_label, arguments),
                 substitute_helper_parameters(flow.minimum_expression, arguments),
                 substitute_helper_parameters(flow.maximum_expression, arguments),
-                flow.semantic, flow.presentation, flow.supports_unified_edit,
+                flow.semantic, flow.presentation,
                 flow.source_widget, flow.clamp_numeric_input, flow.hdr_color))
 
     cache[identity] = tuple(sorted(controls, key=lambda value: (
@@ -2227,15 +2439,13 @@ def _infer_indirect_numeric_bindings(
                                 rf"([^;]*\b{re.escape(value_alias)}\b[^;]*)\s*;",
                                 mask_cpp_source(body[:position]))
                             if derived and item_label and item_label.startswith("##"):
-                                layouts.add((slice_start, flow.component_count, -1, item_label,
+                                layouts.add((slice_start, flow.component_count, -1,
                                              flow.semantic, flow.presentation,
-                                             flow.supports_unified_edit,
                                              minimum, maximum, flow.source_widget,
                                              flow.clamp_numeric_input, flow.hdr_color))
                         elif scalar[1] + 1 == slice_start:
-                            layouts.add((scalar[1], flow.component_count + 1, scalar[1], "",
+                            layouts.add((scalar[1], flow.component_count + 1, scalar[1],
                                          flow.semantic, flow.presentation,
-                                         flow.supports_unified_edit,
                                          minimum, maximum, flow.source_widget,
                                          flow.clamp_numeric_input, flow.hdr_color))
 
@@ -2243,16 +2453,15 @@ def _infer_indirect_numeric_bindings(
                     raise ValueError(f"ambiguous indirect numeric layout {name}")
                 if not layouts:
                     continue
-                (aggregate_start, aggregate_count, aggregate_all, virtual_label,
-                 semantic, presentation, supports_unified_edit,
+                (aggregate_start, aggregate_count, aggregate_all,
+                 semantic, presentation,
                  minimum, maximum, source_widget, clamp_numeric_input,
                  hdr_color) = next(iter(layouts))
                 binding_candidates.setdefault(name, set()).add((
                     record_type, record_parameter, pointer_field, aggregate_start,
                     aggregate_count, semantic, presentation, aggregate_all,
-                    next(iter(push_fields)), next(iter(label_fields)), minimum,
-                    maximum, virtual_label, vector_components,
-                    supports_unified_edit, source_widget,
+                    next(iter(label_fields)), minimum,
+                    maximum, vector_components, source_widget,
                     clamp_numeric_input, hdr_color))
 
     bindings = {}
@@ -2300,7 +2509,9 @@ def _collect_indirect_table_wrappers(
     return wrappers
 
 
-def _collect_scoped_categories(body: str, prefix: str) -> list[tuple[int, int, str, str]]:
+@functools.lru_cache(maxsize=None)
+def _collect_scoped_categories(body: str, prefix: str) -> tuple[tuple[int, int, str, str], ...]:
+    """Cached: every control in a function body asks for the same categories."""
     categories = []
     pattern = re.compile(
         r"\b(?:ImGui|Util)::(?:" + "|".join(sorted(CATEGORY_CONTROL_NAMES)) + r")\s*\(")
@@ -2317,24 +2528,19 @@ def _collect_scoped_categories(body: str, prefix: str) -> list[tuple[int, int, s
         translated = extract_i18n_call(body[category.start():close + 1], prefix)
         if block_end >= 0 and translated:
             categories.append((block_start, block_end, translated[1], translated[0]))
-    return categories
+    return tuple(categories)
 
 
 def collect_indirect_numeric_projections(paths: list[Path]):
     collected_labels = {}
     collected_components = {}
     collected_aggregate_all = {}
-    collected_virtual_controls = {}
-    collected_unified_edit = {}
 
     texts = {path: read_text(path) for path in paths}
-    source_functions = collect_source_functions(paths)
     definitions = {}
-    for path, text in texts.items():
-        companion_header = path.with_suffix(".h")
-        constants = collect_numeric_constants(
-            text + (read_text(companion_header) if companion_header.exists() else ""))
-        for function in (value for value in source_functions if value.source == path):
+    for path in texts:
+        constants = source_numeric_constants(path)
+        for function in collect_source_functions([path]):
             parameters = tuple(
                 (value.type_name, value.name, value.default)
                 for value in function.parameters)
@@ -2358,9 +2564,7 @@ def collect_indirect_numeric_projections(paths: list[Path]):
 
         prefix_match = re.search(r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"', text)
         prefix = prefix_match.group(1) if prefix_match else ""
-        companion_header = path.with_suffix(".h")
-        constants = collect_numeric_constants(
-            text + (read_text(companion_header) if companion_header.exists() else ""))
+        constants = source_numeric_constants(path)
         categories = _collect_scoped_categories(body, prefix)
 
         for invocation_position, wrapper_name, args in _source_function_calls(body, definitions):
@@ -2378,9 +2582,8 @@ def collect_indirect_numeric_projections(paths: list[Path]):
             binding = wrapper_summary[2]
             (record_type, _, pointer_field, aggregate_start, aggregate_count,
              aggregate_semantic, aggregate_presentation, aggregate_all,
-             push_id_field, display_label_field, minimum_field, maximum_field,
-             virtual_item_label, components, supports_unified_edit,
-             source_widget, clamp_numeric_input, hdr_color) = binding
+             display_label_field, minimum_field, maximum_field,
+             components, source_widget, clamp_numeric_input, hdr_color) = binding
             provider_type, rows = providers[provider_name]
             if provider_type != record_type:
                 continue
@@ -2419,20 +2622,9 @@ def collect_indirect_numeric_projections(paths: list[Path]):
                     clamp_numeric_input, hdr_color)
                 label_identity = (owner, (field, components[aggregate_start]))
                 collected_labels.setdefault(label_identity, set()).add(label_metadata)
-                if supports_unified_edit:
-                    collected_unified_edit.setdefault(label_identity, set()).add(True)
                 if aggregate_all >= 0:
                     component_identity = (owner, (field, components[aggregate_all]))
                     collected_aggregate_all.setdefault(component_identity, set()).add(True)
-
-                if virtual_item_label:
-                    push_id = parse_cpp_string_expression(
-                        values.get(push_id_field, ""))
-                    if not push_id:
-                        raise ValueError(f"unresolved indirect control id in {provider_name}")
-                    virtual_identity = (owner, (field,))
-                    collected_virtual_controls.setdefault(virtual_identity, set()).add(
-                        (push_id, virtual_item_label))
 
     def finalize(mapping, description):
         result = {}
@@ -2446,8 +2638,6 @@ def collect_indirect_numeric_projections(paths: list[Path]):
         finalize(collected_labels, "indirect numeric projection"),
         finalize(collected_components, "indirect numeric component"),
         finalize(collected_aggregate_all, "indirect aggregate component"),
-        finalize(collected_virtual_controls, "virtual aggregate control"),
-        finalize(collected_unified_edit, "unified aggregate control"),
     )
 
 
@@ -2804,7 +2994,7 @@ def _control_category(
     pattern = re.compile(
         r"\b(?:ImGui|Util)::(?:" +
         "|".join(sorted(PERSISTENT_CATEGORY_CONTROL_NAMES)) + r")\s*\(")
-    masked = mask_cpp_source(body[:position])
+    masked = mask_cpp_source(body)[:position]
     for category in pattern.finditer(masked):
         close = find_matching_paren(body, category.end() - 1)
         if close < 0 or close >= position:
@@ -2819,7 +3009,9 @@ def _control_category(
     return label, key
 
 
+@functools.lru_cache(maxsize=None)
 def collect_member_selector_helpers(text: str):
+    """Cached: the projection and context passes both scan every source."""
     candidates = {}
     constants = collect_numeric_constants(text)
     pattern = re.compile(
@@ -3320,55 +3512,67 @@ def collect_mapped_combo_helpers(paths: list[Path]) -> dict[str, MappedComboHelp
 
 
 
+_SOURCE_FUNCTION_PATTERN = re.compile(
+    r"\b(?:static\s+)?(?:inline\s+)?(?:bool|void)\s+"
+    r"(?:(?P<owner>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)::)?"
+    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<parameters>[^)]*)\)\s*(?:const\s*)?\{")
+_NAMESPACE_PATTERN = re.compile(
+    r"\bnamespace\s+(?:inline\s+)?([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{")
+_I18N_PREFIX_PATTERN = re.compile(r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"')
+
+
+@functools.lru_cache(maxsize=None)
+def _file_source_functions(
+        path: Path, include_qualifiers: bool) -> tuple[SourceFunction, ...]:
+    """Functions declared in one file. Cached: callers scan the same tree repeatedly."""
+    functions = []
+    text = read_text(path)
+    masked = mask_cpp_source(text)
+    namespace_ranges = []
+    if include_qualifiers:
+        for namespace in _NAMESPACE_PATTERN.finditer(masked):
+            namespace_end = find_matching_brace(text, namespace.end() - 1)
+            if namespace_end >= 0:
+                namespace_ranges.append((
+                    namespace.start(), namespace_end,
+                    tuple(namespace.group(1).split("::"))))
+    prefix_match = _I18N_PREFIX_PATTERN.search(text)
+    prefix = prefix_match.group(1) if prefix_match else ""
+    for match in _SOURCE_FUNCTION_PATTERN.finditer(masked):
+        body_end = find_matching_brace(text, match.end() - 1)
+        if body_end < 0:
+            continue
+        parameters = tuple(
+            SourceParameter(type_name, name, default)
+            for type_name, name, default in parse_helper_parameters(
+                text[match.start("parameters"):match.end("parameters")]))
+        body = text[match.end():body_end]
+        namespace_path = tuple(
+            segment
+            for start, end, namespace in namespace_ranges
+            if start < match.start() < end
+            for segment in namespace)
+        owner_parts = tuple((match.group("owner") or "").split("::"))
+        owner_parts = tuple(part for part in owner_parts if part)
+        functions.append(SourceFunction(
+            match.group("name"),
+            owner_parts[-1] if owner_parts else "",
+            (*namespace_path, *owner_parts),
+            parameters,
+            body,
+            mask_cpp_source(body),
+            prefix,
+            path,
+            text[match.start("parameters"):match.end("parameters")]))
+    return tuple(functions)
+
+
 def collect_source_functions(
         paths: list[Path], include_qualifiers: bool = False) -> tuple[SourceFunction, ...]:
-    functions = []
-    pattern = re.compile(
-        r"\b(?:static\s+)?(?:inline\s+)?(?:bool|void)\s+"
-        r"(?:(?P<owner>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)::)?"
-        r"(?P<name>[A-Za-z_]\w*)\s*\((?P<parameters>[^)]*)\)\s*(?:const\s*)?\{")
-    for path in paths:
-        text = read_text(path)
-        masked = mask_cpp_source(text)
-        namespace_ranges = []
-        if include_qualifiers:
-            for namespace in re.finditer(
-                    r"\bnamespace\s+(?:inline\s+)?"
-                    r"([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{", masked):
-                namespace_end = find_matching_brace(text, namespace.end() - 1)
-                if namespace_end >= 0:
-                    namespace_ranges.append((
-                        namespace.start(), namespace_end,
-                        tuple(namespace.group(1).split("::"))))
-        prefix_match = re.search(r'#define\s+I18N_KEY_PREFIX\s+"([^"]*)"', text)
-        prefix = prefix_match.group(1) if prefix_match else ""
-        for match in pattern.finditer(masked):
-            body_end = find_matching_brace(text, match.end() - 1)
-            if body_end < 0:
-                continue
-            parameters = tuple(
-                SourceParameter(type_name, name, default)
-                for type_name, name, default in parse_helper_parameters(
-                    text[match.start("parameters"):match.end("parameters")]))
-            body = text[match.end():body_end]
-            namespace_path = tuple(
-                segment
-                for start, end, namespace in namespace_ranges
-                if start < match.start() < end
-                for segment in namespace)
-            owner_parts = tuple((match.group("owner") or "").split("::"))
-            owner_parts = tuple(part for part in owner_parts if part)
-            functions.append(SourceFunction(
-                match.group("name"),
-                owner_parts[-1] if owner_parts else "",
-                (*namespace_path, *owner_parts),
-                parameters,
-                body,
-                mask_cpp_source(body),
-                prefix,
-                path,
-                text[match.start("parameters"):match.end("parameters")]))
-    return tuple(functions)
+    return tuple(
+        function
+        for path in paths
+        for function in _file_source_functions(path, include_qualifiers))
 
 
 def _localized_text(expression: str, prefix: str) -> LocalizedText | None:
@@ -3451,11 +3655,15 @@ def resolve_record_array_radio_choices(
     return tuple(choices)
 
 
-def _collect_control_call_sites(functions):
+def _project_standard_controls(
+        paths: list[Path], provider_paths: list[Path],
+        component_containers: dict[str, dict[str, str]] | None = None) -> dict[
+            tuple[str, tuple[str, ...]], ControlBinding]:
+    functions = collect_source_functions(paths, include_qualifiers=True)
     definitions: dict[str, list[SourceFunction]] = {}
     for function in functions:
         definitions.setdefault(function.name, []).append(function)
-    def resolve_callee(caller, name: str, qualifier: tuple[str, ...], argument_count: int):
+    def resolve_callee(name: str, qualifier: tuple[str, ...], argument_count: int, caller):
         candidates = [
             function for function in definitions.get(name, ())
             if sum(parameter.default is None for parameter in function.parameters) <=
@@ -3468,38 +3676,11 @@ def _collect_control_call_sites(functions):
                 function.qualifier[-len(qualifier):] == qualifier
             ]
             candidates = qualified
-        else:
-            local = [function for function in candidates if function.qualifier == caller.qualifier]
-            if local:
-                candidates = local
+        elif caller.owner:
+            owned = [function for function in candidates if function.qualifier == caller.qualifier]
+            if owned:
+                candidates = owned
         return candidates[0] if len(candidates) == 1 else None
-    call_sites = {}
-    for function in functions:
-        calls = []
-        for invocation in re.finditer(
-                r"\b((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)\s*\(",
-                function.masked_body):
-            qualifier = tuple(
-                part for part in invocation.group(1).split("::") if part)
-            name = invocation.group(2)
-            if qualifier in {("ImGui",), ("Util",)} or name not in definitions:
-                continue
-            close = find_matching_paren(function.body, invocation.end() - 1)
-            if close >= 0:
-                arguments = split_args(function.body[invocation.end():close])
-                callee = resolve_callee(
-                    function, name, qualifier, len(arguments))
-                if callee:
-                    calls.append((callee, invocation.start(), arguments))
-        call_sites[function] = calls
-    return call_sites
-
-
-def _project_standard_controls(
-        paths: list[Path], provider_paths: list[Path]) -> dict[
-            tuple[str, tuple[str, ...]], ControlBinding]:
-    functions = collect_source_functions(paths, include_qualifiers=True)
-    call_sites = _collect_control_call_sites(functions)
     text_by_path = {path: read_text(path) for path in paths}
     aliases_by_path = {
         path: collect_type_aliases(text) for path, text in text_by_path.items()
@@ -3515,6 +3696,25 @@ def _project_standard_controls(
         for path, text in text_by_path.items()
     }
     providers = collect_string_array_providers(provider_paths)
+    call_sites = {}
+    for function in functions:
+        calls = []
+        for invocation in re.finditer(
+                r"\b((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)\s*\(",
+                function.masked_body):
+            qualifier = tuple(
+                part for part in invocation.group(1).split("::") if part)
+            name = invocation.group(2)
+            if qualifier in {("ImGui",), ("Util",)} or name not in definitions:
+                continue
+            close = find_matching_paren(function.body, invocation.end() - 1)
+            if close >= 0:
+                arguments = split_args(function.body[invocation.end():close])
+                callee = resolve_callee(
+                    name, qualifier, len(arguments), function)
+                if callee:
+                    calls.append((callee, invocation.start(), arguments))
+        call_sites[function] = calls
     draw_control_functions = {
         function for function in functions
         if function.name == "DrawSettings" and function.owner
@@ -3533,6 +3733,13 @@ def _project_standard_controls(
     choice_candidates = {}
 
     def add_metadata(identity, binding, priority):
+        """Records a candidate binding, keeping only those from the most direct evidence.
+
+        Priority is how directly the control names the member: 3 = `settings.x` written
+        literally in a DrawSettings body, 2 = recovered from the parameter origin of a typed
+        helper, 1 = projected through a call chain. Ties accumulate instead of picking a
+        winner, and a tie is later discarded as ambiguous.
+        """
         previous_priority, candidates = metadata_candidates.get(
             identity, (-1, set()))
         if priority > previous_priority:
@@ -3587,7 +3794,6 @@ def _project_standard_controls(
         return ControlBinding(
             owner, setting_path, label, category, kind,
             minimum, maximum, scale, "Identity", tuple(choices),
-            supports_unified_edit=control_supports_unified_edit(kind),
             source_widget=control_source_widget(kind),
             clamp_numeric_input=control_clamps_numeric_input(
                 kind, flags_expression),
@@ -3629,8 +3835,20 @@ def _project_standard_controls(
             if setting_path:
                 identity = function.owner, setting_path
                 add_metadata(identity, make_binding(
-                    function, control.start(), *identity, kind, args, choices=choices),
-                    2 if kind in {"CheckboxFlag", "CheckboxUint"} else 3)
+                    function, control.start(), *identity, kind, args, choices=choices), 3)
+                add_choices(identity, choices)
+
+            # A feature may draw an owned component's setting itself, e.g. `&component.settings.Enabled`.
+            container = re.search(
+                r"&\s*([A-Za-z_]\w*)\s*\.\s*settings\s*\.\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$",
+                args[storage_index])
+            component_owner = (
+                (component_containers or {}).get(function.owner, {}).get(container.group(1))
+                if container and function in draw_control_functions else None)
+            if component_owner:
+                identity = component_owner, normalize_setting_path(container.group(2))
+                add_metadata(identity, make_binding(
+                    function, control.start(), *identity, kind, args, choices=choices), 3)
                 add_choices(identity, choices)
 
             origins = []
@@ -3728,7 +3946,9 @@ def _project_standard_controls(
 
     projected_helpers = collect_projected_numeric_helpers(paths)
     for function in functions:
-        if function not in draw_control_functions or not function.owner:
+        # A feature that moved part of its UI into a Draw* helper draws no less of its settings there,
+        # so the reachable set is the gate, not the entry point's own name.
+        if function not in draw_control_functions:
             continue
         aliases = collect_local_setting_aliases(function.body)
         source_text = text_by_path[function.source] + (
@@ -3786,7 +4006,7 @@ def _project_standard_controls(
 
     mapped_helpers = collect_mapped_combo_helpers(paths)
     for function in functions:
-        if function not in draw_control_functions or not function.owner:
+        if function not in draw_control_functions:
             continue
         aliases = collect_local_setting_aliases(function.body)
         for helper_name, summary in mapped_helpers.items():
@@ -3873,7 +4093,7 @@ def _project_standard_controls(
                 storage = call_args[summary.storage_parameter]
                 owner = ""
                 path = None
-                if caller in draw_control_functions and caller.owner:
+                if caller.name == "DrawSettings" and caller.owner:
                     pseudo = [""] * (control_storage_argument_index(summary.control_kind) + 1)
                     pseudo[-1] = storage
                     path = extract_control_setting_path(
@@ -3906,7 +4126,7 @@ def _project_standard_controls(
                 add_choices(identity, summary.choices)
 
     for function in functions:
-        if function.name != "DrawSettings" or not function.owner:
+        if function not in draw_control_functions:
             continue
         constants = constants_by_path[function.source]
         for button in re.finditer(r"\bImGui::Button\s*\(", function.masked_body):
@@ -3925,11 +4145,19 @@ def _project_standard_controls(
                     ((int(value), label.text, label.key),))
 
     finalized_choices = finalize_ui_choices(choice_candidates)
-    bindings = {
-        identity: next(iter(candidates))
-        for identity, (_, candidates) in metadata_candidates.items()
-        if len(candidates) == 1
-    }
+    bindings = {}
+    for identity, (_, candidates) in metadata_candidates.items():
+        if len(candidates) > 1:
+            labeled = {candidate for candidate in candidates
+                       if candidate.label and candidate.label.text}
+            if len(labeled) == 1:
+                binding = next(iter(labeled))
+                if all((not candidate.category.text or candidate.category == binding.category) and
+                       replace(candidate, label=binding.label, category=binding.category) == binding
+                       for candidate in candidates):
+                    candidates = labeled
+        if len(candidates) == 1:
+            bindings[identity] = next(iter(candidates))
     for identity, choices in finalized_choices.items():
         binding = bindings.get(identity)
         if binding:
@@ -3938,7 +4166,6 @@ def _project_standard_controls(
                 binding.control_kind, binding.minimum, binding.maximum,
                 binding.display_scale, binding.numeric_transform, choices,
                 binding.component_labels, binding.aggregate_all,
-                binding.virtual_control, binding.supports_unified_edit,
                 binding.source_widget, binding.clamp_numeric_input,
                 binding.hdr_color)
         else:
@@ -3967,14 +4194,13 @@ def _collect_reversible_numeric_bindings(
         if len(direct_controls) == 1:
             direct = direct_controls[0]
             if direct.group(1).startswith(("Slider", "Drag", "Input")):
-                numeric_controls.append((direct, direct.group(1), 1, False))
+                numeric_controls.append((direct, direct.group(1), 1))
         numeric_controls.extend(
-            (control, f"ShiftSliderFloat{control.group(1)}",
-             int(control.group(1)), True)
+            (control, f"ShiftSliderFloat{control.group(1)}", int(control.group(1)))
             for control in SHIFT_UNIFIED_CONTROL_RE.finditer(function.masked_body))
 
         function_summaries = set()
-        for control, control_kind, component_count, supports_unified_edit in numeric_controls:
+        for control, control_kind, component_count in numeric_controls:
             close = find_matching_paren(function.body, control.end() - 1)
             args = split_args(function.body[control.end():close]) if close >= 0 else []
             storage_index = control_storage_argument_index(control_kind)
@@ -4017,7 +4243,7 @@ def _collect_reversible_numeric_bindings(
             function_summaries.add((
                 component_count, proven[0][0], label, control_kind,
                 minimum, maximum, display_scale, proven[0][1],
-                supports_unified_edit, control_source_widget(control_kind),
+                control_source_widget(control_kind),
                 control_clamps_numeric_input(control_kind, flags_expression),
                 control_is_hdr_color(control_kind, flags_expression)))
         if function_summaries:
@@ -4026,7 +4252,9 @@ def _collect_reversible_numeric_bindings(
     collected = {}
     conflicts = set()
     for function in functions:
-        if function.name != "DrawSettings" or not function.owner:
+        # No call graph here to walk, so the naming convention stands in for it: a Draw* member draws
+        # settings whether or not it is the entry point, and gating on the exact name loses its controls.
+        if not function.owner or not function.name.startswith("Draw"):
             continue
         aliases = collect_local_setting_aliases(function.body)
         for helper_name, helper_summaries in summaries.items():
@@ -4045,7 +4273,7 @@ def _collect_reversible_numeric_bindings(
                 if len(matching) != 1:
                     continue
                 (_, parameter_index, label, control_kind, minimum, maximum,
-                 display_scale, transform, supports_unified_edit, source_widget,
+                 display_scale, transform, source_widget,
                  clamp_numeric_input, hdr_color) = matching[0]
                 if parameter_index >= len(args):
                     continue
@@ -4060,7 +4288,6 @@ def _collect_reversible_numeric_bindings(
                     function.owner, path, label,
                     LocalizedText(category, category_key), control_kind,
                     minimum, maximum, display_scale, transform,
-                    supports_unified_edit=supports_unified_edit,
                     source_widget=source_widget,
                     clamp_numeric_input=clamp_numeric_input,
                     hdr_color=hdr_color)
@@ -4076,12 +4303,19 @@ def _collect_reversible_numeric_bindings(
 
 
 def collect_control_index(
-        paths: list[Path], provider_paths: list[Path] | None = None) -> ControlIndex:
+        paths: list[Path], provider_paths: list[Path] | None = None,
+        component_containers: dict[str, dict[str, str]] | None = None) -> ControlIndex:
     provider_paths = provider_paths or paths
-    bindings = _project_standard_controls(paths, provider_paths)
+    bindings = _project_standard_controls(paths, provider_paths, component_containers)
     conflicts = set()
 
     def merge_unique(target, additions):
+        """Merges bindings, dropping any identity two sources disagree on.
+
+        Fail-closed: an ambiguous identity is poisoned for the rest of the merge rather than
+        resolved arbitrarily, so it falls out of the catalog instead of shipping a binding
+        that writes the wrong member.
+        """
         for identity, value in additions.items():
             if identity in conflicts:
                 continue
@@ -4092,8 +4326,8 @@ def collect_control_index(
                 target.pop(identity)
                 conflicts.add(identity)
 
-    (indirect_labels, indirect_components, aggregate_all, virtual_controls,
-     unified_edit) = collect_indirect_numeric_projections(paths)
+    (indirect_labels, indirect_components,
+     aggregate_all) = collect_indirect_numeric_projections(paths)
     indirect_bindings = {}
     for identity, metadata in indirect_labels.items():
         kind = metadata[4]
@@ -4113,8 +4347,6 @@ def collect_control_index(
             metadata[5], metadata[6], metadata[7],
             component_labels=component_labels,
             aggregate_all=bool(aggregate_all.get(identity)),
-            virtual_control=virtual_controls.get((identity[0], base_path)),
-            supports_unified_edit=bool(unified_edit.get(identity)),
             source_widget=metadata[8],
             clamp_numeric_input=metadata[9],
             hdr_color=metadata[10])
@@ -4189,48 +4421,6 @@ def fixed_array_type(type_name: str, constants: dict[str, float] | None = None) 
     return clean_type(arguments[0]), int(count)
 
 
-def collect_callback_setting_roots(paths: list[Path]) -> set[tuple[str, tuple[str, ...]]]:
-    roots = set()
-    for path in paths:
-        text = read_text(path)
-        header = path.with_suffix(".h")
-        if header.exists():
-            text += "\n" + read_text(header)
-        callbacks = {}
-        for declaration in re.finditer(
-                r"\bstd::function\s*<\s*(?:void|bool)\s*\(([^()]*)\)\s*>\s*"
-                r"([A-Za-z_]\w*)\s*;", mask_cpp_source(text)):
-            mutable_parameters = tuple(
-                index for index, parameter in enumerate(split_args(declaration.group(1)))
-                if "&" in parameter and not re.search(r"\bconst\b", parameter))
-            callbacks.setdefault(declaration.group(2), set()).add(mutable_parameters)
-        if not callbacks:
-            continue
-        for function in collect_source_functions([path]):
-            if function.name != "DrawSettings" or not function.owner:
-                continue
-            aliases = collect_local_setting_aliases(function.body)
-            for name, signatures in callbacks.items():
-                if len(signatures) != 1:
-                    continue
-                for invocation in re.finditer(
-                        rf"\b{re.escape(name)}\s*\(", function.masked_body):
-                    close = find_matching_paren(function.body, invocation.end() - 1)
-                    if close < 0:
-                        continue
-                    args = split_args(function.body[invocation.end():close])
-                    for index in next(iter(signatures)):
-                        if index >= len(args) or not re.fullmatch(
-                                r"\s*[A-Za-z_]\w*(?:(?:\.[A-Za-z_]\w*)|(?:\[\s*\d+\s*\]))*\s*",
-                                args[index]):
-                            continue
-                        setting_path = extract_control_setting_path(
-                            "InputFloat", ["", args[index]], aliases)
-                        if setting_path:
-                            roots.add((function.owner, setting_path))
-    return roots
-
-
 def collect_enum_types(paths: list[Path]) -> set[str]:
     enum_types = set()
     for path in paths:
@@ -4251,65 +4441,13 @@ def collect_class_numeric_constants(paths: list[Path]) -> dict[str, dict[str, fl
 
 
 def nested_type_candidates(owner: str, field_type: str) -> list[str]:
+    """Qualify a field type against every enclosing scope, innermost first."""
     cleaned = clean_type(field_type)
     candidates = [cleaned]
     while owner:
         candidates.append(f"{owner}::{cleaned}")
         owner = owner.rsplit("::", 1)[0] if "::" in owner else ""
     return candidates
-
-
-def collect_navigation_controls(paths: list[Path]) -> dict[str, tuple[tuple[str, str], ...]]:
-    controls: dict[str, set[tuple[str, str]]] = {}
-    for function in collect_source_functions(paths):
-        if not function.owner or not function.name.startswith("Draw"):
-            continue
-        for declaration in re.finditer(
-                r"\bstatic\s+bool\s+(\w+)\s*(?:=\s*(?:true|false)|\{\s*(?:true|false)?\s*\})?\s*;",
-                function.masked_body):
-            name = declaration.group(1)
-            uses = {match.start() for match in re.finditer(rf"\b{re.escape(name)}\b", function.masked_body)}
-            uses.difference_update(position for position in list(uses)
-                                   if declaration.start() <= position < declaration.end())
-            labels = []
-            for call in re.finditer(r"\bImGui::Checkbox\s*\(", function.masked_body):
-                end = find_matching_paren(function.body, call.end() - 1)
-                if end < 0:
-                    continue
-                arguments = split_args(function.body[call.end():end])
-                if len(arguments) != 2 or not re.fullmatch(rf"&\s*{re.escape(name)}", arguments[1].strip()):
-                    continue
-                before = function.masked_body[:call.start()].rstrip()
-                if not before.endswith((";", "{", "}")) or not function.masked_body[end + 1:].lstrip().startswith(";"):
-                    continue
-                translated = extract_i18n_call(arguments[0], function.prefix)
-                literal = parse_cpp_string_expression(arguments[0])
-                if not translated and literal is None:
-                    continue
-                labels.append((translated[1], translated[0]) if translated else (literal, ""))
-                uses.difference_update(position for position in list(uses) if call.start() <= position <= end)
-            conditions = 0
-            for condition in re.finditer(r"\bif\s*\(", function.masked_body):
-                end = find_matching_paren(function.body, condition.end() - 1)
-                if end < 0:
-                    continue
-                expression = function.masked_body[condition.end():end]
-                opening = end + 1
-                while opening < len(function.masked_body) and function.masked_body[opening].isspace():
-                    opening += 1
-                closing = (find_matching_brace(function.body, opening)
-                           if function.masked_body[opening:opening + 1] == "{"
-                           else function.masked_body.find(";", opening))
-                if closing < 0 or not re.search(
-                        r"\b(?:ImGui::\w+|Draw\w+)\s*\(", function.masked_body[opening:closing]):
-                    continue
-                for operand in re.finditer(
-                        rf"(?:^|&&|\|\|)\s*!?\s*({re.escape(name)})\s*(?=$|&&|\|\|)", expression):
-                    uses.discard(condition.end() + operand.start(1))
-                    conditions += 1
-            if labels and conditions and not uses:
-                controls.setdefault(function.owner, set()).update(labels)
-    return {owner: tuple(sorted(labels)) for owner, labels in controls.items()}
 
 
 DISABLED_TOGGLE_RE = re.compile(r"\bImGui::(BeginDisabled|EndDisabled)\s*\(")
@@ -4440,14 +4578,22 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
     src_paths = sorted({p for p in src_paths if p.exists()})
 
     macros = collect_nlohmann_macros(src_paths)
-    struct_bodies = collect_struct_bodies(src_paths)
-    struct_fields = {name: parse_struct_fields(body) for name, body in struct_bodies.items()}
+    parsed_struct_fields = {
+        name: [parse_struct_fields(body) for body in bodies]
+        for name, bodies in collect_struct_bodies(src_paths).items()}
+    struct_fields = {name: definitions[0] for name, definitions in parsed_struct_fields.items()}
+    # A name defined with different fields in two places cannot be resolved by the name alone.
+    ambiguous_structs = {
+        name for name, definitions in parsed_struct_fields.items()
+        if any(definition != definitions[0] for definition in definitions[1:])}
     enum_types = collect_enum_types(src_paths)
     class_numeric_constants = collect_class_numeric_constants(
         [path for path in src_paths if path.suffix == ".h"])
     features = collect_features([p for p in src_paths if p.suffix == ".h"])
     settings_components = collect_settings_components(features, src_paths)
     serialized_components = collect_serialized_settings_components(features, src_paths)
+    feature_members = collect_feature_member_fields([p for p in src_paths if p.suffix == ".h"], features)
+    owned_components = collect_owned_settings_components(features, src_paths, feature_members)
     component_persisted_controls = collect_component_persisted_controls(
         features, settings_components)
     settings_component_classes = {
@@ -4456,31 +4602,35 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         for child in children
     }
     settings_component_classes.update(child.child_class for child in serialized_components)
+    settings_component_classes.update(child_type.split("::")[-1] for _, _, child_type, _ in owned_components)
     feature_fields = collect_feature_struct_fields([p for p in src_paths if p.suffix == ".h"], features)
-    feature_members = collect_feature_member_fields([p for p in src_paths if p.suffix == ".h"], features)
     component_fields = collect_feature_struct_fields(
         [p for p in src_paths if p.suffix == ".h"],
         {child_class: {} for child_class in settings_component_classes})
     component_members = collect_feature_member_fields(
         [p for p in src_paths if p.suffix == ".h"],
         {child_class: {} for child_class in settings_component_classes})
-    catalog_class_fields = feature_fields | component_fields
     public_members = collect_feature_member_fields(
         [p for p in src_paths if p.suffix == ".h"],
         features | {child_class: {} for child_class in settings_component_classes},
         public_only=True)
+    catalog_class_fields = feature_fields | component_fields
     catalog_class_aliases = collect_feature_type_aliases(
         [p for p in src_paths if p.suffix == ".h"],
         features | {child_class: {} for child_class in settings_component_classes})
     save_roots = collect_save_roots([p for p in src_paths if p.suffix == ".cpp"])
     direct_persisted_fields = collect_direct_persisted_fields(
-        [p for p in src_paths if p.suffix == ".cpp"], feature_members)
+        [p for p in src_paths if p.suffix == ".cpp"],
+        feature_members | {child.child_class: component_members[child.child_class]
+                           for child in serialized_components},
+        catalog_class_fields, enum_types)
     cpp_paths = [p for p in src_paths if p.suffix == ".cpp"]
-    control_index = collect_control_index(cpp_paths, src_paths)
-    navigation_controls = collect_navigation_controls(cpp_paths)
-    callback_setting_roots = collect_callback_setting_roots(cpp_paths)
-    serialized_struct_parts = collect_serialized_struct_parts(cpp_paths)
+    component_containers: dict[str, dict[str, str]] = {}
+    for owner, member, child_type, _ in owned_components:
+        component_containers.setdefault(owner, {})[member] = child_type.split("::")[-1]
+    control_index = collect_control_index(cpp_paths, src_paths, component_containers)
 
+    custom_path_controls = collect_custom_path_controls(cpp_paths)
     entries: list[dict[str, object]] = []
     seen: dict[tuple[str, tuple[str, ...], str], tuple[object, ...]] = {}
     discovery_errors: list[str] = []
@@ -4498,7 +4648,6 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                   component_label: str = "",
                   component_label_key: str = "",
                   aggregate_all: bool = False,
-                  virtual_controls: tuple[tuple[str, str], ...] = (),
                   force_hidden: bool = False,
                   aggregate_semantic: str = "None",
                   aggregate_start: int = -1,
@@ -4563,12 +4712,9 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         maximum = binding.maximum if binding else None
         display_scale = binding.display_scale if binding else 1.0
         numeric_transform = binding.numeric_transform if binding else "Identity"
-        discovered_virtual_controls = (
-            (binding.virtual_control,) if binding and binding.virtual_control else ())
-        virtual_controls = tuple(dict.fromkeys((
-            *virtual_controls, *discovered_virtual_controls)))
-        editor_semantic = resolve_editor_semantic(
-            binding, value_type, force_hidden)
+        editor_semantic = ("Text" if value_type == "String" and
+                           (feature_short, tuple(full_path), key) in custom_path_controls else
+                           resolve_editor_semantic(binding, value_type, force_hidden))
 
         flags = ["SceneSettingsCatalog::SettingFlag::Persisted"]
         if value_type == "Float" and editor_semantic in {"Numeric", "Generic"}:
@@ -4651,9 +4797,6 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "componentDisplayNameKey": component_label_key,
             "aggregateAll": aggregate_all,
             "aggregateSemantic": aggregate_semantic,
-            "aggregatePresentation": control_aggregate_presentation(control_kind),
-            "unifiedEditMode": resolve_unified_edit_mode(
-                binding, virtual_controls),
             "aggregateStart": aggregate_start,
             "aggregateCount": aggregate_count,
             "type": value_type,
@@ -4676,13 +4819,14 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "componentType": context.component_type,
             "componentContainer": context.component_container,
             "addressable": context.addressable and
-                access.split(".")[0].split("[")[0] in public_members.get(context.field_class, {}),
+                re.split(r"[.\[]", access, maxsplit=1)[0] in public_members.get(
+                    context.component_class or context.feature_class, {}) and
+                (not context.component_container or
+                 context.component_container in public_members.get(context.feature_class, {})),
             "controlScope": context.control_scope,
             "enabledByKey": "",
             "enabledByPath": "",
             "enabledByValue": -1,
-            "virtualControls": virtual_controls,
-            "navigationControls": navigation_controls.get(context.feature_class, ()),
         })
 
     def emit_type(
@@ -4699,14 +4843,20 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         type_owner_name = type_owner.split("::")[-1]
         metadata_owners = tuple(dict.fromkeys(
             (context.field_class, type_owner_name, simple_type)))
+        # "Settings" is excluded because nearly every feature names its struct that: as a
+        # lookup owner it would match members of an unrelated feature's settings.
         metadata_suffix_owners = tuple(
             owner for owner in dict.fromkeys((
                 *inherited_metadata_owners, type_owner_name, simple_type))
             if owner not in {context.field_class, "Settings"})
         declared_type = catalog_class_aliases.get(context.field_class, {}).get(simple_type, simple_type)
         declared_type = declared_type.split("::")[-1]
-        declared_fields = catalog_class_fields.get(context.field_class, {}).get(
-            simple_type, struct_fields.get(declared_type, {}))
+        class_fields = catalog_class_fields.get(context.field_class, {})
+        if simple_type not in class_fields and declared_type in ambiguous_structs:
+            discovery_errors.append(
+                f"{full_type} resolves by name to {declared_type}, which several structs define differently")
+            return
+        declared_fields = class_fields.get(simple_type, struct_fields.get(declared_type, {}))
         for field in fields:
             field_type = declared_fields.get(field, "")
             if not field_type:
@@ -4716,10 +4866,6 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             if not value_type and clean_type(field_type).split("::")[-1] in enum_types:
                 value_type = "Integer"
             field_access = f"{access}.{field}"
-            field_path = tuple(path + [field])
-            callback_controlled = any(
-                owner == context.field_class and field_path[:len(root)] == root
-                for owner, root in callback_setting_roots)
             if value_type:
                 add_entry(
                     context, path, field, value_type, field_access,
@@ -4758,9 +4904,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                     component_label_key=component_display.key,
                     aggregate_all=bool(
                         binding and binding.aggregate_all and component_index == aggregate_start),
-                    virtual_controls=(binding.virtual_control,)
-                    if grouped and binding and binding.virtual_control else (),
-                    force_hidden=binding is None and not callback_controlled,
+                    force_hidden=binding is None,
                     aggregate_semantic=aggregate_semantic,
                     aggregate_start=aggregate_start,
                     aggregate_count=aggregate_count)
@@ -4803,7 +4947,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                             metadata_owners=metadata_owners,
                             metadata_suffix_owners=metadata_suffix_owners,
                             binding_override=binding_match,
-                            force_hidden=binding is None and not callback_controlled,
+                            force_hidden=binding is None,
                             aggregate_semantic=aggregate_semantic,
                             aggregate_start=aggregate_start,
                             aggregate_count=aggregate_count)
@@ -4832,7 +4976,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                             metadata_owners=metadata_owners,
                             metadata_suffix_owners=metadata_suffix_owners,
                             binding_override=binding_match,
-                            force_hidden=binding is None and not callback_controlled,
+                            force_hidden=binding is None,
                             aggregate_semantic=aggregate_semantic,
                             aggregate_start=aggregate_start,
                             aggregate_count=aggregate_count)
@@ -4854,30 +4998,11 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             if not emitted_nested and field_type:
                 continue
 
-        for root, member, offset_type, part_type, key in serialized_struct_parts.get(context.field_class, ()):
-            if root != access or part_type not in macros:
-                continue
-            source_type = clean_type(declared_fields.get(member, ""))
-            source_fields = list(struct_fields.get(source_type, {}).items())
-            part_fields = list(struct_fields.get(part_type, {}).items())
-            offset_fields = list(struct_fields.get(offset_type, {}).items()) if offset_type else []
-            if (not source_fields or not part_fields or (offset_type and not offset_fields) or
-                    source_fields[:len(offset_fields)] != offset_fields or
-                    source_fields[len(offset_fields):len(offset_fields) + len(part_fields)] != part_fields or
-                    any(field_type not in {"float", "int32_t", "uint32_t", "int", "uint"}
-                        for _, field_type in source_fields)):
-                continue
-            for field, field_type in part_fields:
-                if field in macros[part_type]:
-                    add_entry(
-                        context, path + [key], field, type_to_value_type(field_type),
-                        f"{access}.{member}.{field}",
-                        metadata_owners=(source_type, part_type),
-                        metadata_suffix_owners=(source_type, part_type))
-
     for feature_class in sorted(features):
         members = feature_members.get(feature_class, {})
         root_member = save_roots.get(feature_class)
+        if clean_type(members.get(root_member, "")) in {"json", "nlohmann::json"}:
+            root_member = None
         if not root_member:
             for member_name, member_type in members.items():
                 if clean_type(member_type).split("::")[-1] == "Settings":
@@ -4896,6 +5021,11 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                     f"{feature_class}.{root_member} has no discovered settings type")
             continue
         root_full_type = f"{feature_class}::{root_type.split('::')[-1]}"
+        # emit_type skips a type without a macro, which would drop the feature's whole catalog in silence.
+        if root_full_type not in macros and f"{feature_class}::Settings" in macros:
+            discovery_errors.append(
+                f"{feature_class}::SaveSettings root '{root_member}' is not its persisted Settings type")
+            continue
         emit_type(CatalogContext(feature_class, feature_class), root_full_type, [], root_member)
 
     for feature_class, children in settings_components.items():
@@ -4954,10 +5084,23 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             add_entry(context, [], key, value_type, access)
 
     for child in serialized_components:
-        root_member = save_roots.get(child.child_class)
+        root_member = save_roots.get(child.child_class, "")
         root_type = component_members.get(child.child_class, {}).get(root_member, "")
-        if not root_type:
-            discovery_errors.append(f"{child.child_class} has no discovered serialized settings root")
+        if not root_member or not root_type:
+            explicit = direct_persisted_fields.get(child.child_class, ())
+            if explicit:
+                context = CatalogContext(
+                    child.feature_class, child.child_class,
+                    json_path_prefix=child.json_path,
+                    display_path_prefix=(child.display_name,),
+                    selector_path_prefix=(child.display_name,),
+                    selector_key_prefix=(child.display_key,),
+                    addressable=False, control_scope=child.control_scope)
+                for key, value_type, access in explicit:
+                    add_entry(context, [], key, value_type, access)
+            else:
+                discovery_errors.append(
+                    f"{child.child_class} has no discovered serialized settings root")
             continue
         emit_type(
             CatalogContext(
@@ -4967,7 +5110,36 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
                 selector_path_prefix=(child.display_name,),
                 selector_key_prefix=(child.display_key,),
                 addressable=False, control_scope=child.control_scope),
-            f"{child.child_class}::{root_type}", [], root_member)
+            f"{child.child_class}::{clean_type(root_type).split('::')[-1]}", [], root_member)
+
+    for feature_class, member, child_type, key in owned_components:
+        child_class = child_type.split("::")[-1]
+        namespace = child_type.rsplit("::", 1)[0] if "::" in child_type else child_type
+        headers = [path for path in src_paths if path.suffix == ".h" and
+                   ("::" not in child_type or
+                    re.search(rf"\bnamespace\s+{re.escape(namespace)}\b", masked_text(path))) and
+                   class_body(path, child_class) is not None]
+        members = collect_feature_member_fields(headers, {child_class: {}}) if headers else component_members
+        sources = [header.with_suffix(".cpp") for header in headers if header.with_suffix(".cpp").exists()]
+        roots = collect_save_roots(sources) if sources else save_roots
+        root_member = roots.get(child_class, "")
+        root_type = members.get(child_class, {}).get(root_member, "")
+        full_type = root_type if "::" in root_type else f"{namespace}::{root_type}"
+        if not root_member or full_type not in macros:
+            explicit = collect_direct_persisted_fields(
+                sources, members, collect_feature_struct_fields(headers, {child_class: {}}), enum_types)
+            if explicit.get(child_class):
+                context = CatalogContext(feature_class, child_class, json_path_prefix=(key,),
+                                         display_path_prefix=(prettify(key),))
+                for field_key, value_type, access in explicit[child_class]:
+                    add_entry(context, [], field_key, value_type, f"{member}.{access}")
+            else:
+                discovery_errors.append(f"{child_type} has no discovered serialized settings root")
+            continue
+        emit_type(
+            CatalogContext(feature_class, child_class, json_path_prefix=(key,),
+                           display_path_prefix=(prettify(key),)),
+            full_type, [], f"{member}.{root_member}")
 
     if discovery_errors:
         raise ValueError("scene settings catalog discovery failed: " + "; ".join(sorted(set(discovery_errors))))
@@ -4977,7 +5149,95 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
     return entries
 
 
-def write_catalog(entries: list[dict[str, object]], out_dir: Path):
+def collect_ui_controls(paths: list[Path], features: dict[str, dict[str, str]]):
+    functions = collect_source_functions(paths, include_qualifiers=True)
+    by_owner = collections.defaultdict(list)
+    for function in functions:
+        by_owner[function.owner].append(function)
+    controls = []
+    for owner, feature in features.items():
+        reachable = {function for function in by_owner[owner]
+                     if function.name == "DrawSettings"}
+        pending = list(reachable)
+        while pending:
+            caller = pending.pop()
+            for call in re.finditer(
+                    r"\b((?:[A-Za-z_]\w*::)*)([A-Za-z_]\w*)\s*\(", caller.masked_body):
+                qualifier = call.group(1).removesuffix("::")
+                if qualifier and qualifier != owner:
+                    continue
+                close = find_matching_paren(caller.body, call.end() - 1)
+                if close < 0:
+                    continue
+                count = len(split_args(caller.body[call.end():close]))
+                candidates = [function for function in by_owner[owner]
+                              if function.name == call.group(2) and
+                              sum(parameter.default is None for parameter in function.parameters) <=
+                              count <= len(function.parameters)]
+                if len(candidates) == 1 and candidates[0] not in reachable:
+                    reachable.add(candidates[0])
+                    pending.append(candidates[0])
+        owner_controls = []
+        unknown_kinds = set()
+        for function in reachable:
+            declarations = list(re.finditer(
+                r"\bstatic\s+bool\s+([A-Za-z_]\w*)\s*(?:=\s*(?:true|false)\s*)?;",
+                function.masked_body))
+            direct = []
+            for control in DIRECT_UI_CONTROL_RE.finditer(function.masked_body):
+                close = find_matching_paren(function.body, control.end() - 1)
+                args = split_args(function.body[control.end():close]) if close >= 0 else []
+                if not args:
+                    continue
+                kind = ("Checkbox" if control.group(1) in {"CheckboxFlag", "CheckboxUint"}
+                        else control.group(1))
+                translated = extract_i18n_call(args[0], function.prefix)
+                literal = parse_cpp_string_expression(args[0])
+                label = LocalizedText(translated[1], translated[0]) if translated else (
+                    LocalizedText(literal) if literal else None)
+                if label is None:
+                    unknown_kinds.add(kind)
+                    continue
+                direct.append((control, close, args, kind, label))
+            for control, close, args, kind, label in direct:
+                ui_only = False
+                before = function.masked_body[:control.start()].rstrip()
+                standalone = ((not before or before[-1] in "{};") and
+                              function.masked_body[close + 1:].lstrip().startswith(";"))
+                if control.group(1) == "Checkbox" and len(args) == 2 and standalone:
+                    for declaration in declarations:
+                        name = declaration.group(1)
+                        if not re.fullmatch(rf"\s*&\s*{re.escape(name)}\s*", args[1]):
+                            continue
+                        allowed = [(declaration.start(), declaration.end()),
+                                   (control.start(), close + 1)]
+                        for condition in re.finditer(r"\bif\s*\(", function.masked_body):
+                            end = find_matching_paren(function.body, condition.end() - 1)
+                            expression = function.masked_body[condition.end():end] if end >= 0 else ""
+                            if (expression and not re.search(r"[=;]|\+\+|--|\w\s*\(", expression) and
+                                    re.fullmatch(r"[\w\s:!&|().<>-]+", expression)):
+                                allowed.append((condition.end(), end))
+                        references = re.finditer(rf"\b{re.escape(name)}\b", function.masked_body)
+                        ui_only = all(any(start <= reference.start() < end for start, end in allowed)
+                                      for reference in references)
+                        break
+                owner_controls.append({"feature": feature["short"], "kind": kind,
+                                       "label": label.text, "labelKey": label.key,
+                                       "uiOnly": ui_only})
+        for control in owner_controls:
+            duplicates = sum(other["kind"] == control["kind"] and
+                             (other["label"] == control["label"] or
+                              (bool(control["labelKey"]) and other["labelKey"] == control["labelKey"]))
+                             for other in owner_controls)
+            if control["kind"] in unknown_kinds or duplicates != 1:
+                control["uiOnly"] = False
+        controls.extend(owner_controls)
+    return sorted(controls, key=lambda control: (
+        control["feature"], control["kind"], control["labelKey"], control["label"]))
+
+
+def write_catalog(entries: list[dict[str, object]], out_dir: Path,
+                  ui_controls: list[dict[str, object]] = ()):
     out_dir.mkdir(parents=True, exist_ok=True)
     header = out_dir / "SceneSettingsCatalog.generated.h"
     source = out_dir / "SceneSettingsCatalog.generated.cpp"
@@ -4988,7 +5248,7 @@ def write_catalog(entries: list[dict[str, object]], out_dir: Path):
         key=lambda entry: (entry["feature"], entry["path"], entry["key"]),
     )
 
-    header.write_text("""#pragma once
+    write_if_changed(header, """#pragma once
 
 #include <cstddef>
 #include <cstdint>
@@ -5024,19 +5284,6 @@ namespace SceneSettingsCatalog
 \t\tColor,
 \t};
 
-\tenum class AggregatePresentation : std::uint8_t
-\t{
-\t\tComponents,
-\t\tColorPicker,
-\t};
-
-\tenum class UnifiedEditMode : std::uint8_t
-\t{
-\t\tNone,
-\t\tAlways,
-\t\tShift,
-\t};
-
 \tenum class NumericTransform : std::uint8_t
 \t{
 \t\tIdentity,
@@ -5063,9 +5310,8 @@ namespace SceneSettingsCatalog
 \t\treturn (static_cast<std::uint32_t>(flags) & static_cast<std::uint32_t>(flag)) != 0;
 \t}
 
-\tstruct ChoiceMetadata
+\tstruct ChoiceDisplayMetadata
 \t{
-\t\tstd::int64_t value;
 \t\tstd::string_view displayName;
 \t\tstd::string_view displayNameKey;
 \t};
@@ -5089,8 +5335,6 @@ namespace SceneSettingsCatalog
 \t\tstd::string_view componentDisplayNameKey;
 \t\tbool aggregateAll;
 \t\tAggregateSemantic aggregateSemantic;
-\t\tAggregatePresentation aggregatePresentation;
-\t\tUnifiedEditMode unifiedEditMode;
 \t\tstd::int8_t aggregateStart;
 \t\tstd::uint8_t aggregateCount;
 \t\tValueType valueType;
@@ -5105,24 +5349,23 @@ namespace SceneSettingsCatalog
 \t\tbool clampNumericInput;
 \t\tbool hdrColor;
 \t\tbool invertedDisplay;
-\t\tconst ChoiceMetadata* choices;
+\t\tconst std::int64_t* choices;
 \t\tstd::size_t choiceCount;
+\t\tconst ChoiceDisplayMetadata* choiceDisplay;
+\t\t// Non-empty when the control lives under an ImGui scope pushed from this key.
 \t\tstd::string_view controlScope;
 \t\tstd::string_view enabledByKey;
 \t\tstd::string_view enabledByPath;
 \t\tstd::int8_t enabledByValue;
 \t};
 
-\tstruct VirtualAggregateControlMetadata
+\tstruct UiControlMetadata
 \t{
 \t\tstd::string_view featureShortName;
-\t\tstd::string_view serializedPath;
-\t\tstd::string_view serializedKey;
-\t\tAggregateSemantic aggregateSemantic;
-\t\tstd::int8_t aggregateStart;
-\t\tstd::uint8_t aggregateCount;
-\t\tstd::string_view pushId;
-\t\tstd::string_view itemLabel;
+\t\tstd::string_view kind;
+\t\tstd::string_view label;
+\t\tstd::string_view labelKey;
+\t\tbool uiOnly;
 \t};
 
 \tconstexpr bool IsSceneControllable(const SettingMetadata& setting)
@@ -5131,38 +5374,38 @@ namespace SceneSettingsCatalog
 \t\t       !HasFlag(setting.flags, SettingFlag::Hidden);
 \t}
 
-\tstruct NavigationControlMetadata
-\t{
-\t\tstd::string_view featureShortName;
-\t\tstd::string_view displayName;
-\t\tstd::string_view displayNameKey;
-\t};
-
-\t/** Returns discovered controls that only change feature UI visibility. */
-\tstd::span<const NavigationControlMetadata> GetNavigationControls();
 \tstd::span<const SettingMetadata> GetSettings();
-\tstd::span<const VirtualAggregateControlMetadata> GetVirtualAggregateControls();
+\tstd::span<const UiControlMetadata> GetUiControls();
+\t/// ImGui entry points SceneWidgetInterceptor must detour to cover every scene-controllable control.
+\tstd::span<const std::string_view> GetRequiredInterceptorEntryPoints();
 \tconst SettingMetadata* FindSetting(std::string_view featureShortName, std::string_view settingPath, std::string_view settingKey);
 \tusing ControlResolver = const SettingMetadata* (*)(Feature*, const void*);
 \tbool RegisterControlResolver(std::string_view featureShortName, ControlResolver resolver);
 \tconst SettingMetadata* FindSettingForControl(Feature* feature, const void* valueAddress);
 }
-""", encoding="utf-8")
+""")
     rows = []
     choice_arrays = []
     for index, e in enumerate(entries):
         choices = e["choices"]
         choice_pointer = "nullptr"
+        choice_display_pointer = "nullptr"
         choice_count = 0
         if choices:
             choice_name = f"kSceneSettingChoices{index}"
-            choice_rows = ",\n".join(
-                f'\t\t{{ {value}, "{cpp_escape(label)}", "{cpp_escape(label_key)}" }}'
-                for value, label, label_key in choices)
+            choice_rows = ",\n".join(f"\t\t{value}" for value, _, _ in choices)
             choice_arrays.append(
-                f"\tstatic constexpr std::array<SceneSettingsCatalog::ChoiceMetadata, {len(choices)}> {choice_name} = {{{{\n"
+                f"\tstatic constexpr std::array<std::int64_t, {len(choices)}> {choice_name} = {{{{\n"
                 f"{choice_rows}\n\t}}}};")
             choice_pointer = f"{choice_name}.data()"
+            display_name = f"kSceneSettingChoiceDisplay{index}"
+            display_rows = ",\n".join(
+                f'\t\t{{ "{cpp_escape(label)}", "{cpp_escape(label_key)}" }}'
+                for _, label, label_key in choices)
+            choice_arrays.append(
+                f"\tstatic constexpr std::array<SceneSettingsCatalog::ChoiceDisplayMetadata, {len(choices)}> {display_name} = {{{{\n"
+                f"{display_rows}\n\t}}}};")
+            choice_display_pointer = f"{display_name}.data()"
             choice_count = len(choices)
         rows.append(
             f'\t\t{{ "{cpp_escape(e["feature"])}", "{cpp_escape(e["featureName"])}", '
@@ -5174,8 +5417,6 @@ namespace SceneSettingsCatalog
             f'"{cpp_escape(e.get("componentDisplayNameKey", ""))}", '
             f'{str(e.get("aggregateAll", False)).lower()}, '
             f'SceneSettingsCatalog::AggregateSemantic::{e["aggregateSemantic"]}, '
-            f'SceneSettingsCatalog::AggregatePresentation::{e.get("aggregatePresentation", "Components")}, '
-            f'SceneSettingsCatalog::UnifiedEditMode::{e.get("unifiedEditMode", "None")}, '
             f'{e["aggregateStart"]}, {e["aggregateCount"]}, '
             f'SceneSettingsCatalog::ValueType::{e["type"]}, {e["flags"]}, '
             f'SceneSettingsCatalog::EditorSemantic::{e["editorSemantic"]}, '
@@ -5186,33 +5427,17 @@ namespace SceneSettingsCatalog
             f'{str(e.get("clampNumericInput", False)).lower()}, '
             f'{str(e.get("hdrColor", False)).lower()}, '
             f'{str(e["invertedDisplay"]).lower()}, '
-            f'{choice_pointer}, {choice_count}, "{cpp_escape(e.get("controlScope", ""))}", '
+            f'{choice_pointer}, {choice_count}, {choice_display_pointer}, '
+            f'"{cpp_escape(e.get("controlScope", ""))}", '
             f'"{cpp_escape(e["enabledByKey"])}", "{cpp_escape(e["enabledByPath"])}", {e["enabledByValue"]} }},'
         )
     joined_rows = "\n".join(rows)
+    ui_control_rows = "\n".join(
+        '\t\t{ "' + cpp_escape(control["feature"]) + '", "' +
+        cpp_escape(control["kind"]) + '", "' + cpp_escape(control["label"]) + '", "' +
+        cpp_escape(control["labelKey"]) + '", ' + str(control["uiOnly"]).lower() + ' },'
+        for control in ui_controls)
     joined_choice_arrays = "\n".join(choice_arrays)
-    navigation_controls = sorted({
-        (entry["feature"], label, key)
-        for entry in entries
-        for label, key in entry.get("navigationControls", ())
-    })
-    navigation_rows = "\n".join(
-        f'\t\t{{ "{cpp_escape(feature)}", "{cpp_escape(label)}", "{cpp_escape(key)}" }},'
-        for feature, label, key in navigation_controls)
-    virtual_controls = sorted({
-        (e["feature"], e["serializedPath"], e["serializedKey"],
-         e["aggregateSemantic"], e["aggregateStart"], e["aggregateCount"],
-         push_id, item_label)
-        for e in entries
-        for push_id, item_label in e.get("virtualControls", ())
-    })
-    virtual_rows = "\n".join(
-        f'\t\t{{ "{cpp_escape(feature)}", "{cpp_escape(serialized_path)}", '
-        f'"{cpp_escape(serialized_key)}", SceneSettingsCatalog::AggregateSemantic::{semantic}, '
-        f'{start}, {count}, "{cpp_escape(push_id)}", "{cpp_escape(item_label)}" }},'
-        for feature, serialized_path, serialized_key, semantic, start, count,
-        push_id, item_label
-        in virtual_controls)
     includes = "\n".join(f'#include "{cpp_escape(include_path)}"' for include_path in sorted({e["include"] for e in entries}))
     feature_blocks = []
     for feature_short in sorted({e["feature"] for e in entries}):
@@ -5225,7 +5450,7 @@ namespace SceneSettingsCatalog
             for e in feature_entries if not e["componentClass"] and e.get("addressable", True))
         component_groups: dict[str, dict[tuple[str, str], list[dict[str, object]]]] = {}
         for entry in feature_entries:
-            if entry["componentClass"]:
+            if entry["componentClass"] and entry.get("addressable", True):
                 container_group = component_groups.setdefault(entry["componentContainer"], {})
                 container_group.setdefault(
                     (entry["componentClass"], entry["componentType"]), []).append(entry)
@@ -5261,7 +5486,9 @@ namespace SceneSettingsCatalog
 \t\tSceneSettingsCatalog::RegisterControlResolver(
 \t\t\t"{cpp_escape(feature_short)}", {resolver_name});''')
     joined_feature_blocks = "\n".join(feature_blocks)
-    source.write_text(f"""#include "SceneSettingsCatalog.generated.h"
+    entry_points = required_entry_points(entries)
+    entry_point_rows = "\n".join(f'\t\t"{point}",' for point in entry_points)
+    write_if_changed(source, f"""#include "SceneSettingsCatalog.generated.h"
 
 #include <algorithm>
 #include <array>
@@ -5269,32 +5496,32 @@ namespace SceneSettingsCatalog
 namespace
 {{
 {joined_choice_arrays}
-\tstatic constexpr std::array<SceneSettingsCatalog::NavigationControlMetadata, {len(navigation_controls)}> kNavigationControls = {{{{
-{navigation_rows}
-\t}}}};
 \tstatic constexpr std::array<SceneSettingsCatalog::SettingMetadata, {len(entries)}> kSceneSettings = {{{{
 {joined_rows}
 \t}}}};
-\tstatic constexpr std::array<SceneSettingsCatalog::VirtualAggregateControlMetadata, {len(virtual_controls)}> kVirtualAggregateControls = {{{{
-{virtual_rows}
+\tstatic constexpr std::array<SceneSettingsCatalog::UiControlMetadata, {len(ui_controls)}> kUiControls = {{{{
+{ui_control_rows}
+\t}}}};
+\tstatic constexpr std::array<std::string_view, {len(entry_points)}> kRequiredInterceptorEntryPoints = {{{{
+{entry_point_rows}
 \t}}}};
 }}
 
 namespace SceneSettingsCatalog
 {{
-\tstd::span<const NavigationControlMetadata> GetNavigationControls()
-\t{{
-\t\treturn kNavigationControls;
-\t}}
-
 \tstd::span<const SettingMetadata> GetSettings()
 \t{{
 \t\treturn kSceneSettings;
 \t}}
 
-\tstd::span<const VirtualAggregateControlMetadata> GetVirtualAggregateControls()
+\tstd::span<const UiControlMetadata> GetUiControls()
 \t{{
-\t\treturn kVirtualAggregateControls;
+\t\treturn kUiControls;
+\t}}
+
+\tstd::span<const std::string_view> GetRequiredInterceptorEntryPoints()
+\t{{
+\t\treturn kRequiredInterceptorEntryPoints;
 \t}}
 
 \tconst SettingMetadata* FindSetting(std::string_view featureShortName, std::string_view settingPath, std::string_view settingKey)
@@ -5321,9 +5548,9 @@ namespace SceneSettingsCatalog
 \t}}
 
 }}
-""", encoding="utf-8")
+""")
 
-    adapters.write_text(f"""#include "SceneSettingsCatalog.generated.h"
+    write_if_changed(adapters, f"""#include "SceneSettingsCatalog.generated.h"
 
 #include "Feature.h"
 {includes}
@@ -5372,14 +5599,67 @@ namespace SceneSettingsCatalog
 \t\treturn resolver != resolvers.end() ? resolver->second(feature, valueAddress) : nullptr;
 \t}}
 }}
-""", encoding="utf-8")
+""")
 
 
-def validate_entries(entries: list[dict[str, object]], min_entries: int) -> None:
-    if len(entries) < min_entries:
-        raise ValueError(
-            f"scene settings catalog found {len(entries)} entries, expected at least {min_entries}")
+# Logical editor kind -> the ImGui entry points that can produce it. `sourceWidget` names an
+# editor kind, not an ImGui function: Combo also covers 3-arg RadioButton groups, and
+# PercentageSlider is Util::PercentageSlider over SliderFloat.
+SOURCE_WIDGET_ENTRY_POINTS = {
+    "Checkbox": ("Checkbox",),
+    "ColorEdit3": ("ColorEdit3",),
+    "ColorEdit4": ("ColorEdit4",),
+    "Combo": ("Combo", "RadioButton"),
+    "DragFloat": ("DragFloat",),
+    "DragFloat2": ("DragFloat2",),
+    "DragFloat3": ("DragFloat3",),
+    "DragFloat4": ("DragFloat4",),
+    "InputFloat2": ("InputFloat2",),
+    "InputFloat3": ("InputFloat3",),
+    "InputInt": ("InputInt",),
+    "PercentageSlider": ("SliderFloat",),
+    "SliderAngle": ("SliderAngle",),
+    "SliderFloat": ("SliderFloat",),
+    "SliderFloat2": ("SliderFloat2",),
+    "SliderFloat3": ("SliderFloat3",),
+    "SliderFloat4": ("SliderFloat4",),
+    "SliderInt": ("SliderInt",),
+    "SliderScalar": ("SliderScalar",),
+}
 
+
+def required_entry_points(entries: list[dict[str, object]]) -> list[str]:
+    """Sorted union of ImGui entry points the interceptor must cover for these entries."""
+    points: set[str] = set()
+    for entry in entries:
+        if "SceneSettingsCatalog::SettingFlag::SceneControllable" not in entry.get("flags", ""):
+            continue
+        points.update(SOURCE_WIDGET_ENTRY_POINTS.get(entry.get("sourceWidget", ""), ()))
+    return sorted(points)
+
+
+def validate_entries(
+        entries: list[dict[str, object]],
+        min_entries: int,
+        min_controllable: int = 1,
+        min_controllable_features: int = 1) -> None:
+    """Fails the build when the catalog shrinks past the floors, then checks each entry.
+
+    The floors are not redundant. Persisted-but-hidden entries keep the total up even if every
+    scene binding is lost, a healthy total hides one feature's bindings vanishing behind another's
+    growth, and the aggregate checks catch an incomplete multi-component control.
+    """
+    controllable = [
+        entry for entry in entries
+        if "SceneSettingsCatalog::SettingFlag::SceneControllable" in entry.get("flags", "")]
+    controllable_features = {entry["feature"] for entry in controllable}
+    for found, floor, label in (
+            (len(entries), min_entries, "entries"),
+            (len(controllable), min_controllable, "scene-controllable entries"),
+            (len(controllable_features), min_controllable_features, "features with scene-controllable entries")):
+        if found < floor:
+            raise ValueError(
+                f"scene settings catalog found {found} {label}, expected at least {floor}")
     errors = []
     identities = set()
     aggregate_members = {}
@@ -5396,6 +5676,13 @@ def validate_entries(entries: list[dict[str, object]], min_entries: int) -> None
         semantic = entry["editorSemantic"]
         if allowed == (semantic == "None"):
             errors.append(f"invalid editor for {identity}")
+        if allowed and semantic != "Text":  # Text settings draw their own UI, no interceptor entry point
+            widget = entry.get("sourceWidget", "")
+            if widget not in SOURCE_WIDGET_ENTRY_POINTS:
+                errors.append(
+                    f"scene-controllable {identity} uses widget '{widget}' with no interceptor "
+                    f"entry point; add it to SOURCE_WIDGET_ENTRY_POINTS and to "
+                    f"SceneWidgetInterceptor's detour table")
         transform = entry.get("numericTransform", "Identity")
         if transform not in {"Identity", "Log2"}:
             errors.append(f"invalid numeric transform for {identity}")
@@ -5444,16 +5731,25 @@ def main() -> int:
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--min-entries", type=int, default=1)
+    parser.add_argument("--min-controllable", type=int, default=1)
+    parser.add_argument("--min-controllable-features", type=int, default=1)
+    parser.add_argument("--stamp", type=Path,
+                        help="File touched after every run, for build systems that compare timestamps")
     args = parser.parse_args()
 
     source_dir = Path(args.source_dir)
     out_dir = Path(args.out_dir)
     entries = build_entries(source_dir)
     try:
-        validate_entries(entries, args.min_entries)
+        validate_entries(
+            entries, args.min_entries, args.min_controllable, args.min_controllable_features)
     except ValueError as error:
         parser.error(str(error))
-    write_catalog(entries, out_dir)
+    paths = sorted((source_dir / "src").rglob("*.cpp"))
+    features = collect_features(sorted((source_dir / "src").rglob("*.h")))
+    write_catalog(entries, out_dir, collect_ui_controls(paths, features))
+    if args.stamp:
+        args.stamp.touch()
     print(f"Generated {len(entries)} scene setting catalog entries")
     return 0
 

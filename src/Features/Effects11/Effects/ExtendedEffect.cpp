@@ -7,6 +7,7 @@
 #	include <sstream>
 
 #	include "../EffectManager.h"
+#	include "../IniSerialization.h"
 #	include "../PresetManager.h"
 #	include "../SettingManager.h"
 #	include "../WeatherManager.h"
@@ -421,22 +422,16 @@ void ExtendedEffect::SyncWeatherVarFromUI(size_t index, uint32_t weatherID)
 
 	std::vector<std::pair<std::string, std::string>> updates;
 	if (uiVar.type == UIVariableType::Float) {
-		updates.emplace_back(iniKey, std::to_string(uiVar.floatValue));
+		updates.emplace_back(iniKey, Effects11Util::Ini::FormatFloat(uiVar.floatValue));
 	} else {
 		int comps = (uiVar.type == UIVariableType::Float2) ? 2 : (uiVar.type == UIVariableType::Float3) ? 3 :
 		                                                                                                  4;
 		if (IsPerComponentVector(uiVar)) {
 			static const char* suffixes[] = { "X", "Y", "Z", "W" };
 			for (int c = 0; c < comps; ++c)
-				updates.emplace_back(iniKey + suffixes[c], std::to_string(uiVar.vectorValue[c]));
+				updates.emplace_back(iniKey + suffixes[c], Effects11Util::Ini::FormatFloat(uiVar.vectorValue[c]));
 		} else {
-			std::string val;
-			for (int c = 0; c < comps; ++c) {
-				if (c > 0)
-					val += ", ";
-				val += std::to_string(uiVar.vectorValue[c]);
-			}
-			updates.emplace_back(iniKey, val);
+			updates.emplace_back(iniKey, Effects11Util::Ini::FormatFloatList({ uiVar.vectorValue, static_cast<size_t>(comps) }));
 		}
 	}
 
@@ -752,23 +747,23 @@ namespace
 		bool changed = false;
 		if (uiVar.hasDefaultValue) {
 			const std::string label = std::format("{} ({})", T(TKEY("reset_default"), "Reset to shader default"), FormatDefault(uiVar));
-			if (ImGui::MenuItem(label.c_str()))
+			if (Util::RoundedMenuItem(label.c_str()))
 				changed = Effect::RestoreDefaultValue(uiVar);
 		}
 
 		if (uiVar.type == Effect::UIVariableType::Float) {
 			ImGui::Separator();
-			if (ImGui::MenuItem(T(TKEY("copy"), "Copy")))
+			if (Util::RoundedMenuItem(T(TKEY("copy"), "Copy")))
 				Effects11UI::Clipboard::SetFloat(uiVar.floatValue);
-			if (ImGui::MenuItem(T(TKEY("paste"), "Paste"), nullptr, false, Effects11UI::Clipboard::HasFloat())) {
+			if (Util::RoundedMenuItem(T(TKEY("paste"), "Paste"), nullptr, false, Effects11UI::Clipboard::HasFloat())) {
 				uiVar.floatValue = std::clamp(Effects11UI::Clipboard::GetFloat(), uiVar.floatMin, uiVar.floatMax);
 				changed = true;
 			}
 		} else if (IsColorVector(uiVar)) {
 			ImGui::Separator();
-			if (ImGui::MenuItem(T(TKEY("copy"), "Copy")))
+			if (Util::RoundedMenuItem(T(TKEY("copy"), "Copy")))
 				Effects11UI::Clipboard::SetColor(uiVar.vectorValue);
-			if (ImGui::MenuItem(T(TKEY("paste"), "Paste"), nullptr, false, Effects11UI::Clipboard::HasColor())) {
+			if (Util::RoundedMenuItem(T(TKEY("paste"), "Paste"), nullptr, false, Effects11UI::Clipboard::HasColor())) {
 				Effects11UI::Clipboard::GetColor(uiVar.vectorValue);
 				for (int i = 0; i < Effects11UI::Clipboard::kColorComponents; ++i)
 					uiVar.vectorValue[i] = std::clamp(uiVar.vectorValue[i], uiVar.floatMin, uiVar.floatMax);
@@ -810,7 +805,7 @@ namespace
 				if (ImGui::BeginCombo("##v", preview)) {
 					for (int j = 0; j < static_cast<int>(uiVar.dropdownItems.size()); ++j) {
 						const int value = quality ? j - 1 : j;
-						if (ImGui::Selectable(uiVar.dropdownItems[j].c_str(), uiVar.intValue == value)) {
+						if (Util::RoundedSelectable(uiVar.dropdownItems[j].c_str(), uiVar.intValue == value)) {
 							uiVar.intValue = value;
 							changed = true;
 						}
@@ -916,7 +911,7 @@ namespace
 			if (ImGui::BeginCombo("##technique", current)) {
 				for (uint32_t i = 0; i < effect->uiTechniques.size(); ++i) {
 					ImGui::PushID(static_cast<int>(i));
-					if (ImGui::Selectable(effect->uiTechniques[i].displayName.c_str(), effect->selectedTechniqueIndex == i)) {
+					if (Util::RoundedSelectable(effect->uiTechniques[i].displayName.c_str(), effect->selectedTechniqueIndex == i)) {
 						effect->selectedTechniqueIndex = i;
 						ctx.changedEffects.insert(effect);
 						ctx.view.changed = true;

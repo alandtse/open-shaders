@@ -22,9 +22,9 @@ Override files must follow these naming patterns:
 
 Examples:
 
--   `MyMod_Skylighting.json` - Overrides for Skylighting feature
--   `EnhancedSSGI_ScreenSpaceGI.json` - Overrides for Screen Space GI feature
--   `WaterTweaks_WaterEffects.json` - Overrides for Water Effects feature
+- `MyMod_Skylighting.json` - Overrides for Skylighting feature
+- `EnhancedSSGI_ScreenSpaceGI.json` - Overrides for Screen Space GI feature
+- `WaterTweaks_WaterEffects.json` - Overrides for Water Effects feature
 
 ### Global Overrides
 
@@ -34,8 +34,8 @@ Examples:
 
 Examples:
 
--   `PerformanceOptimizer_Global.json` - Global settings changes
--   `MyMod_Global.json` - Global configuration overrides
+- `PerformanceOptimizer_Global.json` - Global settings changes
+- `MyMod_Global.json` - Global configuration overrides
 
 ## File Format
 
@@ -81,40 +81,40 @@ Override files use JSON format and should contain only the settings you want to 
 
 The optional `_metadata` section describes the override. Its filename identifies the mod and target feature.
 
--   `modName`: Display name of your mod
--   `version`: Version of your override file
--   `description`: Description of what the override does
--   `enabled`: Whether the override is enabled by default (optional, defaults to true)
+- `modName`: Display name of your mod
+- `version`: Version of your override file
+- `description`: Description of what the override does
+- `enabled`: Whether the override is enabled by default (optional, defaults to true)
 
 ## Feature Short Names
 
 To create feature-specific overrides, you need to use the correct feature short name. The full list of feature short names is:
 
--   `CloudShadows` - Cloud Shadows
--   `DynamicCubemaps` - Dynamic Cubemaps
--   `ExtendedMaterials` - Extended Materials
--   `GrassCollision` - Grass Collision
--   `GrassLighting` - Grass Lighting
--   `HairSpecular` - Hair Specular
--   `IBL` - Image-Based Lighting
--   `LightLimitFix` - Light Limit Fix
--   `LODBlending` - LOD Blending
--   `InteriorSun` - Interior Sun
--   `ScreenSpaceGI` - Screen Space Global Illumination
--   `ScreenSpaceShadows` - Screen-Space Shadows
--   `Skylighting` - Skylighting
--   `TerrainVariation` - Terrain Variation
--   `SkySync` - Sky Sync
--   `SubsurfaceScattering` - Subsurface Scattering
--   `TerrainBlending` - Terrain Blending
--   `TerrainHelper` - Terrain Helper
--   `TerrainShadows` - Terrain Shadows
--   `VolumetricLighting` - Volumetric Lighting
--   `VR` - VR
--   `WaterEffects` - Water Effects
--   `PerformanceOverlay` - Performance Overlay
--   `WetnessEffects` - Wetness Effects
--   `ExtendedTranslucency` - Extended Translucency
+- `CloudShadows` - Cloud Shadows
+- `DynamicCubemaps` - Dynamic Cubemaps
+- `ExtendedMaterials` - Extended Materials
+- `GrassCollision` - Grass Collision
+- `GrassLighting` - Grass Lighting
+- `HairSpecular` - Hair Specular
+- `IBL` - Image-Based Lighting
+- `LightLimitFix` - Light Limit Fix
+- `LODBlending` - LOD Blending
+- `InteriorSun` - Interior Sun
+- `ScreenSpaceGI` - Screen Space Global Illumination
+- `ScreenSpaceShadows` - Screen-Space Shadows
+- `Skylighting` - Skylighting
+- `TerrainVariation` - Terrain Variation
+- `SkySync` - Sky Sync
+- `SubsurfaceScattering` - Subsurface Scattering
+- `TerrainBlending` - Terrain Blending
+- `TerrainHelper` - Terrain Helper
+- `TerrainShadows` - Terrain Shadows
+- `VolumetricLighting` - Volumetric Lighting
+- `VR` - VR
+- `WaterEffects` - Water Effects
+- `PerformanceOverlay` - Performance Overlay
+- `WetnessEffects` - Wetness Effects
+- `ExtendedTranslucency` - Extended Translucency
 
 **This list is not exhaustive. It is current as of 11/08/2025. All Feature Short Names will work.**
 
@@ -129,12 +129,12 @@ To create feature-specific overrides, you need to use the correct feature short 
 
 ### In-Game UI
 
--   Open **Utilities > Feature Overwrites**, directly before OS Utility.
--   View overwrite files targeting loaded features, including global files.
--   Delete a file after confirmation. This removes it from disk, not just from the list.
--   Deletion reapplies the remaining layers without saving or discarding pending normal feature edits. It removes companion user entries no remaining overwrite controls, deleting empty companion files. Saved personal values remain in normal user settings. Scene Manager drafts remain separate.
--   Use **Export Settings** to choose one feature, then select individual settings from its searchable catalogue-backed list. Arrays are selected as a whole. Exports include unsaved normal feature edits, but exclude applied Scene Manager values and toolbar drafts. Existing same-name files are updated while preserving unselected keys and metadata.
--   Externally changed export targets require a settings reload before export. Exporting another file does not clear this protection. Files changed outside the game are not automatically watched.
+- Open **Utilities > Feature Overrides**, after Scene Manager.
+- View overwrite files targeting loaded features, including global files.
+- Delete a file after confirmation. This removes it from disk, not just from the list.
+- Deletion reapplies the remaining layers without saving or discarding pending normal feature edits. It removes companion user entries no remaining overwrite controls, deleting empty companion files. Saved personal values remain in normal user settings. Scene Manager drafts remain separate.
+- Use **Export Feature Override** for a legacy override file or **Export Settings** for a Baseline preset pack, then select settings from the searchable catalogue-backed list. Arrays are selected as a whole. Exports include unsaved normal feature edits, but exclude applied Scene Manager values and toolbar drafts. Existing same-name files are updated while preserving unselected keys and metadata.
+- Externally changed export targets require a settings reload before export. Exporting another file does not clear this protection. Files changed outside the game are not automatically watched.
 
 ### Saving Feature Edits
 
@@ -159,26 +159,26 @@ Settings that normally require a restart still require one. Set `_metadata.enabl
 
 ### Override Not Applied
 
--   Check file naming follows the correct pattern
--   Verify JSON syntax is valid
--   Ensure feature short name is correct
--   Check that the providing mod is enabled and the file does not set `_metadata.enabled` to `false`
--   Look for errors in the Open Shaders log (OpenShaders.log)
+- Check file naming follows the correct pattern
+- Verify JSON syntax is valid
+- Ensure feature short name is correct
+- Check that the providing mod is enabled and the file does not set `_metadata.enabled` to `false`
+- Look for errors in the Open Shaders log (OpenShaders.log)
 
 ### JSON Validation
 
 Use a JSON validator to ensure your override files have valid syntax:
 
--   No trailing commas
--   Proper quotation marks around strings
--   Balanced brackets and braces
+- No trailing commas
+- Proper quotation marks around strings
+- Balanced brackets and braces
 
 ### Log Messages
 
 Open Shaders logs override discovery and application:
 
--   Check `OpenShaders.log` for override-related messages
--   Look for "Discovered X override files" and "Applied X override(s)" messages
+- Check `OpenShaders.log` for override-related messages
+- Look for "Discovered X override files" and "Applied X override(s)" messages
 
 ## Examples
 

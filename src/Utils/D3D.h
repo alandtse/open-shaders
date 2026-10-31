@@ -233,7 +233,7 @@ namespace Util
 	 *
 	 * Covers OM (RTV/DSV, blend, depth-stencil), RS (state, viewports),
 	 * the VS/PS/GS/HS/DS shaders, IA (input layout, vertex/index buffers,
-	 * topology), PS sampler 0 and the requested PS resource/constant-buffer ranges.
+	 * topology), and the requested PS sampler/resource/constant-buffer ranges.
 	 * The destructor nulls the saved PS SRV range before restoring to break any SRV-vs-RTV
 	 * hazard left by the wrapped pass. Construct it, set up + issue the pass,
 	 * then let it go out of scope.
@@ -241,7 +241,7 @@ namespace Util
 	struct FullscreenPassScope
 	{
 		/** @brief Saves PS SRVs starting at zero and the specified CB range; defaults preserve SRV0 and CB1. */
-		explicit FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount = 1, UINT a_psCBStart = 1, UINT a_psCBCount = 1);
+		explicit FullscreenPassScope(ID3D11DeviceContext* a_context, UINT a_psSRVCount = 1, UINT a_psCBStart = 1, UINT a_psCBCount = 1, UINT a_psSamplerCount = 1);
 		~FullscreenPassScope();
 		FullscreenPassScope(const FullscreenPassScope&) = delete;
 		FullscreenPassScope& operator=(const FullscreenPassScope&) = delete;
@@ -263,10 +263,11 @@ namespace Util
 		ID3D11HullShader* savedHS = nullptr;
 		ID3D11DomainShader* savedDS = nullptr;
 		ID3D11RasterizerState* savedRS = nullptr;
-		ID3D11SamplerState* savedSampler0 = nullptr;
+		ID3D11SamplerState* savedPSSamplers[D3D11_COMMONSHADER_SAMPLER_SLOT_COUNT] = {};
 		UINT psSRVCount = 1;
 		UINT psCBStart = 1;
 		UINT psCBCount = 1;
+		UINT psSamplerCount = 1;
 		ID3D11ShaderResourceView* savedPSSRVs[D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT] = {};
 		ID3D11Buffer* savedPSCBs[D3D11_COMMONSHADER_CONSTANT_BUFFER_API_SLOT_COUNT] = {};
 		ID3D11InputLayout* savedIL = nullptr;

@@ -10,6 +10,15 @@ struct Feature;
 
 namespace Util::Settings
 {
+	/** @brief Installed value and companion customization winning at one overwrite-owned setting. */
+	struct OverwriteValue
+	{
+		const json* installed = nullptr;
+		const json* user = nullptr;
+	};
+	/** @brief Feature overwrites outrank global companion edits; companions require an installed owner. */
+	OverwriteValue ResolveOverwriteValue(const json* global, const json* globalUser, const json* feature, const json* featureUser);
+
 	/**
 	 * @brief Overlays recognized roots, validating known values and preserving owner-defined nested data.
 	 * @param a_defaults Current default settings and destination.
@@ -26,6 +35,16 @@ namespace Util::Settings
 	 * @return Changed values shaped like a_override; empty when they match.
 	 */
 	json BuildUserOverride(const json& a_current, const json& a_override);
+	/** @brief Retains explicitly saved keys even when their values equal the current baseline. */
+	json BuildUserOverride(const json& current, const json& baseline, const json& savedKeys);
+	/** @brief Removes top-level metadata from a settings object. */
+	void EraseMetadataKeys(json& settings);
+	/** @brief Merges objects recursively, replacing values whose shape changes. */
+	void MergeSettings(json& target, const json& overlay);
+	/** @brief Validates a known setting's JSON type and numeric range. */
+	bool IsCompatibleSettingValue(const json& known, const json& value);
+	/** @brief Removes known settings with incompatible types while preserving unknown keys. */
+	void EraseMismatchedSettings(json& incoming, const json& known, const std::string& prefix, std::vector<std::string>& erasedKeys);
 
 	/** @brief Selects values present in both a_values and a_mask, retaining their nested structure. */
 	json SelectSettings(const json& a_values, const json& a_mask);
@@ -33,6 +52,8 @@ namespace Util::Settings
 	void RestoreSettings(json& a_target, const json& a_source, const json& a_mask);
 	/** @brief Selects complete JSON leaves by pointer, preserving object keys and indivisible arrays. */
 	json SelectSettingPaths(const json& values, const std::vector<std::string>& paths);
+	/** @brief Erases one setting leaf and empty parent groups without removing metadata or array elements. */
+	bool EraseSettingPath(json& document, const json::json_pointer& pointer);
 
 	// Collects keys of a_incoming that a_known has no counterpart for, as dotted
 	// paths, recursing into nested groups. The settings serializers drop keys they

@@ -10,7 +10,10 @@ vcpkg_from_github(
 
 # Upstream's NMake makefile needs nmake.exe, absent from an xwin sysroot; build the plain
 # portable C/C++ sources via a vendored CMakeLists.txt (same source-file set) instead.
-file(COPY "${CMAKE_CURRENT_LIST_DIR}/CMakeLists.txt" DESTINATION "${SOURCE_PATH}")
+file(
+    COPY "${CMAKE_CURRENT_LIST_DIR}/CMakeLists.txt"
+    DESTINATION "${SOURCE_PATH}"
+)
 
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
@@ -18,5 +21,8 @@ vcpkg_cmake_configure(
 
 vcpkg_cmake_install()
 
-file(INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}")
+file(
+    INSTALL "${CMAKE_CURRENT_LIST_DIR}/usage"
+    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+)
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE.md")

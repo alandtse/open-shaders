@@ -35,6 +35,13 @@ namespace Hooks
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	/** @brief Intercepts the inlined AE persistent-pass draw path. */
+	struct BSBatchRenderer_RenderPassImmediately4
+	{
+		static void thunk(RE::BSRenderPass* pass, uint32_t technique, bool alphaTest, uint32_t renderFlags);
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	/** @brief Installs all hooks, detours, and memory patches for the rendering pipeline, input handling, and shader management. */
 	void Install();
 

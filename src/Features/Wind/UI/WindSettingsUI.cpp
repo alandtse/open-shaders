@@ -5,9 +5,11 @@
 #include "Features/Wind/WindMath.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "Menu/Fonts.h"
 #include "State.h"
 #include "Utils/Format.h"
 #include "Utils/UI.h"
+#include "imgui_internal.h"
 
 #include <algorithm>
 #include <array>
@@ -34,33 +36,21 @@ namespace
 	constexpr float kWorstCaseDecayTime = 3.0f;
 	constexpr float kWorstCaseConeCosine = 0.85f;
 	constexpr float kGoldenAngleRadians = 2.39996323f;
-	std::string CompactMeshPath(std::string_view a_path, float a_availableWidth)
+	bool TreeMeshSlider(const char* a_label, const char* a_id, float& a_value,
+		TreeWindSettings::Range a_range, const char* a_format, float a_trailingWidth = 0.0f)
 	{
-		const std::string fullPath(a_path);
-		if (ImGui::CalcTextSize(fullPath.c_str()).x <= a_availableWidth)
-			return fullPath;
-
-		const auto fileSeparator = a_path.rfind('/');
-		if (fileSeparator == std::string_view::npos)
-			return fullPath;
-
-		const std::string fileName(a_path.substr(fileSeparator + 1));
-		if (ImGui::CalcTextSize(fileName.c_str()).x > a_availableWidth)
-			return fileName;
-
-		std::string compactPath = ".../" + fileName;
-		auto suffixStart = fileSeparator;
-		while (suffixStart > 0) {
-			const auto previousSeparator = a_path.rfind('/', suffixStart - 1);
-			if (previousSeparator == std::string_view::npos)
-				break;
-			const std::string candidate = "..." + std::string(a_path.substr(previousSeparator));
-			if (ImGui::CalcTextSize(candidate.c_str()).x > a_availableWidth)
-				break;
-			compactPath = candidate;
-			suffixStart = previousSeparator;
+		const float labelWidth = ImGui::CalcTextSize(a_label).x;
+		const float minimumSliderWidth = ThemeManager::Constants::Em(ThemeManager::Constants::WIND_MESH_MIN_CONTROL_WIDTH_EM);
+		if (labelWidth + ImGui::GetStyle().ItemInnerSpacing.x + minimumSliderWidth + a_trailingWidth <= ImGui::GetContentRegionAvail().x) {
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted(a_label);
+			ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+		} else {
+			ImGui::TextWrapped("%s", a_label);
 		}
-		return compactPath;
+		ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x - a_trailingWidth));
+		return ImGui::SliderFloat(a_id, &a_value, a_range.minimum, a_range.maximum, a_format,
+			ImGuiSliderFlags_AlwaysClamp);
 	}
 }
 
@@ -95,12 +85,12 @@ void Wind::DrawWindFieldSettings()
 	}
 	ImGui::SliderFloat(T(TKEY("wind_field_target_direction"), "Target Direction"),
 		&runtimeState.windFieldPendingDirectionDegrees, -180.0f, 180.0f, "%.1f deg", ImGuiSliderFlags_AlwaysClamp);
-	if (ImGui::Button(T(TKEY("wind_field_apply_direction"), "Apply Direction"))) {
+	if (Util::Button(T(TKEY("wind_field_apply_direction"), "Apply Direction"))) {
 		runtimeState.windFieldAppliedDirectionDegrees = runtimeState.windFieldPendingDirectionDegrees;
 		runtimeState.windFieldUseRealDirection = false;
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("wind_field_random_direction"), "New Random Wind Direction"))) {
+	if (Util::Button(T(TKEY("wind_field_random_direction"), "New Random Wind Direction"))) {
 		static std::mt19937 randomGenerator{ std::random_device{}() };
 		static std::uniform_real_distribution<float> randomDirectionDegrees(-180.0f, 180.0f);
 		runtimeState.windFieldPendingDirectionDegrees = randomDirectionDegrees(randomGenerator);
@@ -284,7 +274,7 @@ void Wind::DrawWindFieldSettings()
 
 void Wind::DrawTreeSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_trees"), "Trees")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_trees"), "Trees")))
 		return;
 
 	uiState.activeSettingsPage = SettingsPage::Trees;
@@ -324,16 +314,16 @@ void Wind::DrawTreeSettings()
 		ImGui::TextUnformatted(T(TKEY("tree_leaf_base_wind_flutter_gain_tooltip"),
 			"Controls the direct leaf animation strength driven by shared base wind. Gust influence adds only local amplitude variation."));
 	}
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void Wind::DrawSettings()
 {
-	if (ImGui::BeginTabBar("##WindTabs", ImGuiTabBarFlags_None)) {
-		if (globals::state->IsDeveloperMode() && ImGui::BeginTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
+	if (Util::BeginPillTabBar("##WindTabs")) {
+		if (globals::state->IsDeveloperMode() && Util::BeginPillTabItem(T(TKEY("tab_wind_field"), "Wind Field"))) {
 			uiState.activeSettingsPage = SettingsPage::WindField;
 			DrawWindFieldSettings();
-			ImGui::EndTabItem();
+			Util::EndPillTabItem();
 		}
 
 		DrawWindEffectsSettings();
@@ -341,13 +331,13 @@ void Wind::DrawSettings()
 		DrawTreeMeshSettings();
 		DrawGrassWindSettings();
 
-		ImGui::EndTabBar();
+		Util::EndPillTabBar();
 	}
 }
 
 void Wind::DrawWindEffectsSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_wind_effects"), "Wind Effects")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_wind_effects"), "Wind Effects")))
 		return;
 
 	uiState.activeSettingsPage = SettingsPage::WindEffects;
@@ -372,7 +362,7 @@ void Wind::DrawWindEffectsSettings()
 		ImGui::SliderInt(T(TKEY("debug_wind_effect_spawn_count"), "How many wind effects to spawn"),
 			&uiState.debugWindEffectSpawnCount, 1, static_cast<int>(WindField::kTransientImpulseCapacity), "%d",
 			ImGuiSliderFlags_AlwaysClamp);
-		if (ImGui::Button(T(TKEY("debug_wind_effect_spawn"), "Spawn")))
+		if (Util::Button(T(TKEY("debug_wind_effect_spawn"), "Spawn")))
 			SpawnDebugWindEffects();
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("debug_wind_effect_spawn_tooltip"),
@@ -381,23 +371,23 @@ void Wind::DrawWindEffectsSettings()
 	ImGui::SeparatorText(T(TKEY("configured_wind_effects"), "Configured Wind Effects"));
 	if (windEffects.empty()) {
 		ImGui::TextUnformatted(T(TKEY("no_wind_effects"), "No wind effects are registered."));
-	} else if (ImGui::BeginTabBar("##WindEffectTabs", ImGuiTabBarFlags_None)) {
+	} else if (Util::BeginPillTabBar("##WindEffectTabs")) {
 		for (std::size_t index = 0; index < windEffects.size(); ++index) {
 			auto& effect = windEffects[index];
 			const auto effectId = effect->GetId();
 			const auto displayName = effect->GetDisplayName();
 			ImGui::PushID(effectId.data(), effectId.data() + effectId.size());
-			if (ImGui::BeginTabItem(displayName.c_str())) {
+			if (Util::BeginPillTabItem(displayName.c_str())) {
 				uiState.activeWindEffectIndex = index;
 				effect->DrawSettings();
-				ImGui::EndTabItem();
+				Util::EndPillTabItem();
 			}
 			ImGui::PopID();
 		}
-		ImGui::EndTabBar();
+		Util::EndPillTabBar();
 	}
 
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void Wind::SpawnDebugWindEffects()
@@ -498,7 +488,7 @@ void Wind::DrawTreeWindTestSettings()
 
 void Wind::DrawTreeMeshSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_tree_meshes"), "Tree Meshes")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_tree_meshes"), "Tree Meshes")))
 		return;
 
 	uiState.activeSettingsPage = SettingsPage::TreeMeshes;
@@ -509,7 +499,7 @@ void Wind::DrawTreeMeshSettings()
 		DrawTreeGlobalOverrideSettings();
 	DrawTreeMeshRuleControls();
 	DrawTreeMeshRulesTable();
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 void Wind::DrawTreeMeshConflictWarning()
@@ -607,10 +597,11 @@ void Wind::DrawTreeMeshRuleControls()
 		}
 		uiState.filteredTreeRuleCount = ruleCount;
 		uiState.appliedTreeMeshSearch = normalizedSearch;
+		uiState.treeMeshNameWidth = 0.0f;
 	}
 
 	ImGui::BeginDisabled(unsavedCount == 0);
-	if (ImGui::Button(T(TKEY("tree_mesh_save"), "Save JSON"))) {
+	if (Util::Button(T(TKEY("tree_mesh_save"), "Save JSON"))) {
 		const auto result = TreeWindPatcher::SaveRules();
 		uiState.treeWindSaveSucceeded = result.success;
 		uiState.treeWindSaveStatus = result.success ?
@@ -618,7 +609,7 @@ void Wind::DrawTreeMeshRuleControls()
 		                                 std::format("Save failed: {}", result.error);
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("tree_mesh_revert"), "Revert Unsaved"))) {
+	if (Util::Button(T(TKEY("tree_mesh_revert"), "Revert Unsaved"))) {
 		TreeWindPatcher::RevertUnsavedChanges();
 		uiState.treeWindSaveStatus.clear();
 	}
@@ -633,28 +624,76 @@ void Wind::DrawTreeMeshRuleControls()
 void Wind::DrawTreeMeshRulesTable()
 {
 	ImGui::Text("%s: %zu", T(TKEY("tree_mesh_search_results"), "Matches"), uiState.filteredTreeRuleIndices.size());
+	const float footerHeight = ImGui::GetFrameHeightWithSpacing();
+	MenuFonts::FontRoleGuard tableFont(Menu::FontRole::Subtext);
 	const auto& style = ImGui::GetStyle();
-	const float tableBottom = ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - style.WindowPadding.y - style.ItemSpacing.y;
-	const float visibleTableHeight = tableBottom - ImGui::GetCursorScreenPos().y;
-	const float minimumTableHeight = ImGui::GetTextLineHeightWithSpacing() * 5.0f;
-	const float tableHeight = std::max(visibleTableHeight, minimumTableHeight);
+	ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, style.CellPadding);
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemInnerSpacing.x, style.CellPadding.y));
+	const SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+	const char* headings[]{ T(TKEY("tree_mesh_path"), "Mesh"),
+		T(TKEY("tree_mesh_bending_group"), "Bending"),
+		T(TKEY("tree_mesh_trunk_group"), "Trunk"),
+		T(TKEY("tree_mesh_leaves_group"), "Leaves") };
+	const char* labels[]{ T(TKEY("tree_mesh_bend"), "Bend"),
+		T(TKEY("tree_mesh_upper_bend_range"), "Upper Range"),
+		T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"),
+		T(TKEY("tree_mesh_trunk_gust"), "Gust"),
+		T(TKEY("tree_mesh_transient_influence"), "Transient"),
+		T(TKEY("tree_mesh_transient_bend"), "Transient Bend"),
+		T(TKEY("tree_mesh_leaf"), "Flutter"),
+		T(TKEY("tree_mesh_leaf_gust"), "Gust"),
+		T(TKEY("tree_mesh_leaf_transient_influence"), "Transient"),
+		T(TKEY("tree_mesh_transient_flutter_cap"), "Flutter Cap") };
+	const char* controlsHeading = T(TKEY("tree_mesh_controls"), "Controls");
+	const float checkboxWidth = ImGui::GetFrameHeight() + style.ItemSpacing.x;
+	const float minimumSliderWidth = ThemeManager::Constants::Em(ThemeManager::Constants::WIND_MESH_MIN_CONTROL_WIDTH_EM);
+	std::array<float, 4> minimumWidths{};
+	minimumWidths[0] = std::max(ThemeManager::Constants::Em(ThemeManager::Constants::WIND_MESH_MIN_NAME_WIDTH_EM), ImGui::CalcTextSize(headings[0]).x);
+	for (std::size_t index = 1; index < minimumWidths.size(); ++index) {
+		minimumWidths[index] = std::max(ImGui::CalcTextSize(headings[index]).x,
+			minimumSliderWidth + (index == 1 ? checkboxWidth : 0.0f));
+	}
+	const float availableWidth = ImGui::GetContentRegionAvail().x - style.ScrollbarSize;
+	const float groupedMinimumWidth = minimumWidths[0] + minimumWidths[1] + minimumWidths[2] + minimumWidths[3] +
+	                                  style.CellPadding.x * 2.0f * static_cast<float>(std::size(headings)) +
+	                                  style.ItemInnerSpacing.x * static_cast<float>(std::size(headings) - 1);
+	const bool stacked = availableWidth < groupedMinimumWidth;
+	const int columnCount = stacked ? 2 : static_cast<int>(std::size(headings));
+	const float minimumTableHeight = uiState.treeMeshHeaderHeight + ImGui::GetFrameHeightWithSpacing();
+	const float tableHeight = std::max(minimumTableHeight,
+		ImGui::GetWindowHeight() - style.WindowPadding.y - ImGui::GetCursorPosY() - footerHeight - style.ItemSpacing.y * 2.0f);
 	const ImGuiTableFlags tableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
-	                                   ImGuiTableFlags_ScrollX | ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
-	if (ImGui::BeginTable("##TreeMeshRules", 12, tableFlags, ImVec2(0.0f, tableHeight), ImGui::GetFontSize() * 80.0f)) {
+	                                   ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchSame;
+	if (ImGui::BeginTable(stacked ? "##TreeMeshRulesEqualStacked" : "##TreeMeshRulesEqual", columnCount, tableFlags, ImVec2(0.0f, tableHeight))) {
 		ImGui::TableSetupScrollFreeze(0, 1);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_path"), "Mesh"), ImGuiTableColumnFlags_WidthStretch);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend_enabled"), "Enable Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_bend"), "Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf"), "Leaf Flutter"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_trunk_gust"), "Trunk Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_gust"), "Leaf Gust"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_upper_bend_range"), "Upper Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_maximum_displacement"), "Top Displacement"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_influence"), "Trunk Transient"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_leaf_transient_influence"), "Leaf Transient"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_flutter_cap"), "Flutter Cap"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
-		ImGui::TableSetupColumn(T(TKEY("tree_mesh_transient_bend"), "Transient Bend"), ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 8.0f);
+		auto* table = ImGui::GetCurrentTable();
+		for (int index = 0; index < columnCount; ++index)
+			ImGui::TableSetupColumn(stacked && index == 1 ? controlsHeading : headings[index], ImGuiTableColumnFlags_WidthStretch, 1.0f);
 		ImGui::TableHeadersRow();
+		ImGui::TableEndRow(table);
+		uiState.treeMeshHeaderHeight = table->RowPosY2 - table->RowPosY1;
+		const float nameWidth = table->Columns[0].WorkMaxX - table->Columns[0].WorkMinX;
+		const auto& fontSignature = MenuFonts::GetAtlasState().cachedFontSignature;
+		if (uiState.treeMeshNameWidth != nameWidth || uiState.treeMeshNameFontSignature != fontSignature || uiState.treeMeshNameFontSize != ImGui::GetFontSize()) {
+			uiState.treeMeshNameWidth = nameWidth;
+			uiState.treeMeshNameHeight = 0.0f;
+			for (const auto ruleIndex : uiState.filteredTreeRuleIndices) {
+				const auto rule = TreeWindPatcher::GetRule(ruleIndex);
+				uiState.treeMeshNameHeight = std::max(uiState.treeMeshNameHeight,
+					ImGui::CalcTextSize(rule.mesh.data(), rule.mesh.data() + rule.mesh.size(), false, nameWidth).y);
+			}
+			uiState.treeMeshNameFontSignature = fontSignature;
+			uiState.treeMeshNameFontSize = ImGui::GetFontSize();
+		}
+		const auto beginGroup = [stacked, &headings](int index) {
+			if (stacked) {
+				if (index == 1)
+					ImGui::TableSetColumnIndex(1);
+				ImGui::SeparatorText(headings[index]);
+			} else {
+				ImGui::TableSetColumnIndex(index);
+			}
+		};
 
 		ImGuiListClipper clipper;
 		clipper.Begin(static_cast<int>(uiState.filteredTreeRuleIndices.size()));
@@ -675,69 +714,39 @@ void Wind::DrawTreeMeshRulesTable()
 				bool changed = false;
 
 				ImGui::PushID(static_cast<int>(rule.id));
-				ImGui::TableNextRow();
+				ImGui::TableNextRow(ImGuiTableRowFlags_None, uiState.treeMeshNameHeight + style.CellPadding.y * 2.0f);
 				ImGui::TableSetColumnIndex(0);
-				const std::string compactPath = CompactMeshPath(rule.mesh, ImGui::GetContentRegionAvail().x);
-				ImGui::TextUnformatted(compactPath.c_str());
-				if (compactPath != rule.mesh && ImGui::IsItemHovered())
-					ImGui::SetTooltip("%.*s", static_cast<int>(rule.mesh.size()), rule.mesh.data());
-				ImGui::TableSetColumnIndex(1);
+				{
+					ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x);
+					ImGui::TextUnformatted(rule.mesh.data(), rule.mesh.data() + rule.mesh.size());
+					ImGui::PopTextWrapPos();
+				}
+				beginGroup(1);
 				bool bendEnabled = rule.bendEnabled;
+				{
+					auto disabled = Util::DisableGuard(!bendEnabled);
+					changed |= TreeMeshSlider(labels[0], "##Bend", bend, TreeWindSettings::kBend, "%.2f", checkboxWidth);
+				}
+				ImGui::SameLine();
 				if (ImGui::Checkbox("##BendEnabled", &bendEnabled)) {
 					(void)TreeWindPatcher::SetBendEnabled(ruleIndex, bendEnabled);
 					uiState.treeWindSaveStatus.clear();
 				}
-				ImGui::TableSetColumnIndex(2);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##Bend", &bend, TreeWindSettings::kBend.minimum,
-					TreeWindSettings::kBend.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(3);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##Leaf", &leafAmbient, TreeWindSettings::kLeafAmbient.minimum,
-					TreeWindSettings::kLeafAmbient.maximum, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(4);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##TrunkGust", &trunkGustInfluence,
-					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(5);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##LeafGust", &leafGustInfluence,
-					TreeWindSettings::kGustInfluence.minimum, TreeWindSettings::kGustInfluence.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(6);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##UpperBend", &upperBendRange,
-					TreeWindSettings::kUpperBendPercent.minimum, TreeWindSettings::kUpperBendPercent.maximum,
-					"%.0f%%", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(7);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##MaximumDisplacement", &maximumDisplacementPercent,
-					TreeWindSettings::kMaximumDisplacementPercent.minimum,
-					TreeWindSettings::kMaximumDisplacementPercent.maximum, "%.2f%%",
-					ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(8);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##TrunkTransientInfluence", &transientWindInfluence,
-					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(9);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##LeafTransientInfluence", &leafTransientWindInfluence,
-					TreeWindSettings::kTransientInfluence.minimum, TreeWindSettings::kTransientInfluence.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(10);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##TransientFlutterCap", &leafTransientFlutterMaximum,
-					TreeWindSettings::kLeafTransientFlutterMaximum.minimum,
-					TreeWindSettings::kLeafTransientFlutterMaximum.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
-				ImGui::TableSetColumnIndex(11);
-				ImGui::SetNextItemWidth(-1.0f);
-				changed |= ImGui::SliderFloat("##TransientBend", &transientMaximumBendMultiplier,
-					TreeWindSettings::kTransientMaximumBendMultiplier.minimum,
-					TreeWindSettings::kTransientMaximumBendMultiplier.maximum,
-					"%.2f", ImGuiSliderFlags_AlwaysClamp);
+				Util::AddTooltip(T(TKEY("tree_mesh_bend_enabled"), "Enable Bend"));
+				changed |= TreeMeshSlider(labels[1], "##UpperBend", upperBendRange, TreeWindSettings::kUpperBendPercent, "%.0f%%");
+				changed |= TreeMeshSlider(labels[2], "##MaximumDisplacement", maximumDisplacementPercent,
+					TreeWindSettings::kMaximumDisplacementPercent, "%.2f%%");
+				beginGroup(2);
+				changed |= TreeMeshSlider(labels[3], "##TrunkGust", trunkGustInfluence, TreeWindSettings::kGustInfluence, "%.2f");
+				changed |= TreeMeshSlider(labels[4], "##TrunkTransientInfluence", transientWindInfluence, TreeWindSettings::kTransientInfluence, "%.2f");
+				changed |= TreeMeshSlider(labels[5], "##TransientBend", transientMaximumBendMultiplier,
+					TreeWindSettings::kTransientMaximumBendMultiplier, "%.2f");
+				beginGroup(3);
+				changed |= TreeMeshSlider(labels[6], "##Leaf", leafAmbient, TreeWindSettings::kLeafAmbient, "%.2f");
+				changed |= TreeMeshSlider(labels[7], "##LeafGust", leafGustInfluence, TreeWindSettings::kGustInfluence, "%.2f");
+				changed |= TreeMeshSlider(labels[8], "##LeafTransientInfluence", leafTransientWindInfluence, TreeWindSettings::kTransientInfluence, "%.2f");
+				changed |= TreeMeshSlider(labels[9], "##TransientFlutterCap", leafTransientFlutterMaximum,
+					TreeWindSettings::kLeafTransientFlutterMaximum, "%.2f");
 				if (changed) {
 					(void)TreeWindPatcher::SetRule(ruleIndex, bend, leafAmbient, upperBendRange,
 						maximumDisplacementPercent, trunkGustInfluence, leafGustInfluence,
@@ -785,7 +794,7 @@ void Wind::DrawGrassTransientSettings()
 
 void Wind::DrawGrassWindSettings()
 {
-	if (!ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass")))
+	if (!Util::BeginPillTabItem(T(TKEY("tab_grass"), "Grass")))
 		return;
 	uiState.activeSettingsPage = SettingsPage::Grass;
 
@@ -803,23 +812,23 @@ void Wind::DrawGrassWindSettings()
 	ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("trunk_wind_intensity_tooltip"), "Scales Skyrim's vanilla grass motion; ambient tree bending always uses the shared wind field."));
-	if (ImGui::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
+	if (Util::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
 		ResetGrassWindSettings();
 
 	ImGui::BeginDisabled(!settings.enableAmbientGrassWind);
-	if (!ImGui::BeginTabBar("GrassResponseTabs")) {
+	if (!Util::BeginPillTabBar("GrassResponseTabs")) {
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 		return;
 	}
-	if (ImGui::BeginTabItem(T(TKEY("tab_grass_transients"), "Transients"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_grass_transients"), "Transients"))) {
 		DrawGrassTransientSettings();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	if (!ImGui::BeginTabItem(T(TKEY("tab_grass_ambient"), "Ambient and Shared"))) {
-		ImGui::EndTabBar();
+	if (!Util::BeginPillTabItem(T(TKEY("tab_grass_ambient"), "Ambient and Shared"))) {
+		Util::EndPillTabBar();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 		return;
 	}
 	ImGui::SliderFloat(T(TKEY("grass_wind_response"), "Bend Strength"), &settings.grassWindResponse,
@@ -956,10 +965,10 @@ void Wind::DrawGrassWindSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_memory_tooltip"),
 			"Estimate for four RGBA16F textures per field: two response textures and two velocity textures."));
 
-	ImGui::EndTabItem();
-	ImGui::EndTabBar();
+	Util::EndPillTabItem();
+	Util::EndPillTabBar();
 	ImGui::EndDisabled();
-	ImGui::EndTabItem();
+	Util::EndPillTabItem();
 }
 
 #undef I18N_KEY_PREFIX

@@ -37,9 +37,10 @@ namespace PostProcessingRaster
 		void Draw();
 
 	private:
-		static constexpr UINT kPSSRVCount = 6;
+		static constexpr UINT kPSSRVCount = 8;
 		static constexpr UINT kPSCBCount = 7;
 		static constexpr UINT kSharedCBStart = 5;
+		static constexpr UINT kPSSamplerCount = 2;
 
 		ID3D11DeviceContext* context;
 		Util::FullscreenPassScope savedState;

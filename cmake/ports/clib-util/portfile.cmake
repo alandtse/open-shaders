@@ -10,7 +10,10 @@ vcpkg_from_github(
 # Install codes
 # Upstream's real dir is CLIBUtil; every #include here uses ClibUtil (case-
 # insensitive Windows masked the mismatch) -- install under that name instead.
-set(CLIBUTIL_SOURCE	${SOURCE_PATH}/include/CLIBUtil/)
-file(INSTALL ${CLIBUTIL_SOURCE} DESTINATION ${CURRENT_PACKAGES_DIR}/include/ClibUtil)
+set(CLIBUTIL_SOURCE ${SOURCE_PATH}/include/CLIBUtil/)
+file(
+    INSTALL ${CLIBUTIL_SOURCE}
+    DESTINATION ${CURRENT_PACKAGES_DIR}/include/ClibUtil
+)
 
 vcpkg_install_copyright(FILE_LIST "${SOURCE_PATH}/LICENSE")

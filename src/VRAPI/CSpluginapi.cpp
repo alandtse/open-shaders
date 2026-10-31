@@ -8,7 +8,7 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/Wind/Wind.h"
 #include "Globals.h"
-#include "SceneSettingsManager.h"
+#include "State.h"
 #include "Utils/SettingsPatch.h"
 
 #include <algorithm>
@@ -203,8 +203,7 @@ namespace CSPluginAPI
 				return;
 			pending.swap(stagedPatches);
 		}
-		SceneSettingsManager::SceneLayerGuard sceneLayerGuard(
-			*SceneSettingsManager::GetSingleton());
+		State::SettingsLayerGuard settingsLayerGuard;
 		for (auto& [shortName, patch] : pending) {
 			auto* feature = Feature::FindFeatureByShortName(shortName);
 			if (!feature) {

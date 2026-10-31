@@ -83,24 +83,24 @@ tuning above. `NR::Context::Resolve` picks the situation from the game state eac
 reports whether it suspends the pass and whether history must be reset;
 `NR::Context::EffectiveTuning` applies the situation's overrides to the tuning.
 
--   **Only in dialogue** (the normal profile's `run` false, the dialogue profile's true; default
-    off) evaluates NR only while `RE::DialogueMenu` is open and suspends the pass the rest of
-    the time. A suspended pass keeps its resources, its runtime and its NGX features, so the
-    frame renders exactly as it does with NR off and the next dialogue frame resumes without a
-    rebuild. Shown as _Waiting for dialogue_, and in DevBench's `neuralRenderingStatus` as
-    `state` `kSuspended` with `dialogueOnly` and `dialogueOpen`.
--   **In dialogue, apply Neural Rendering to** (`dialogue.scope`: 0 same as normal, 1
-    everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overrides the material
-    scope while dialogue is open. A scope override in any profile binds the by-material lane in
-    every situation, at a cost of about 0.04 ms, because Feature 18 latches the `UIAlpha`
-    binding at creation: a situation change must never rebuild the eye features. A profile
-    with no override keeps the selection the by-material setting gives it; when that setting
-    is off, the lane carries all-ones strengths, which leaves every pixel unprotected, so
-    that frame is unchanged.
--   **In dialogue, crop** (`dialogue.region`: 0 same as normal, 1 full frame) drops the
-    tracked-actor crop while dialogue is open and evaluates the whole view. It needs **Limit to
-    Tracked Actor** on. Without an override the crop is untouched: in dialogue the tracked
-    actor is normally the speaker, so the crop keeps following it.
+- **Only in dialogue** (the normal profile's `run` false, the dialogue profile's true; default
+  off) evaluates NR only while `RE::DialogueMenu` is open and suspends the pass the rest of
+  the time. A suspended pass keeps its resources, its runtime and its NGX features, so the
+  frame renders exactly as it does with NR off and the next dialogue frame resumes without a
+  rebuild. Shown as _Waiting for dialogue_, and in DevBench's `neuralRenderingStatus` as
+  `state` `kSuspended` with `dialogueOnly` and `dialogueOpen`.
+- **In dialogue, apply Neural Rendering to** (`dialogue.scope`: 0 same as normal, 1
+  everything, 2 skin hair and eyes, 3 skin hair eyes and foliage) overrides the material
+  scope while dialogue is open. A scope override in any profile binds the by-material lane in
+  every situation, at a cost of about 0.04 ms, because Feature 18 latches the `UIAlpha`
+  binding at creation: a situation change must never rebuild the eye features. A profile
+  with no override keeps the selection the by-material setting gives it; when that setting
+  is off, the lane carries all-ones strengths, which leaves every pixel unprotected, so
+  that frame is unchanged.
+- **In dialogue, crop** (`dialogue.region`: 0 same as normal, 1 full frame) drops the
+  tracked-actor crop while dialogue is open and evaluates the whole view. It needs **Limit to
+  Tracked Actor** on. Without an override the crop is untouched: in dialogue the tracked
+  actor is normally the speaker, so the crop keeps following it.
 
 History is reset once when a frame leaves a suspension and when it enters a situation whose
 scope or crop differs from the previous one, so NR never blends across them.
@@ -283,34 +283,34 @@ the fovea clip also narrowed the crop the last frame evaluated.
 
 ## Resource and temporal contract
 
--   Color: a bounded display-referred proxy in an RGBA16 float carrier at
-    render-eye resolution. The original scene-linear `kMAIN` RGB and alpha are
-    retained separately for luminance-ratio writeback.
--   Depth: the existing upscaling encoder reads the engine depth SRV,
-    including VR's R24 depth view, and writes the device depth to R32 float
-    unchanged: inverted (1 is near) when Reverse Z is active. Depth is not
-    linearized.
--   Motion: the same encoder's undilated path writes RG16 float, preserving
-    correspondence with the center-pixel depth guide. The default Feature 18
-    contract converts normalized eye-UV displacement to NR input pixels using
-    the input width and height independently as motion-vector scales. The
-    developer A/B switch can instead send identity scales. Reset frames submit
-    zero motion because their previous history is invalid.
--   Frame data: diagnostics observe cached camera position, view direction, and
-    projection changes. These inferred cuts do not reset production history.
-    Production evaluation does not supply camera aliases to Feature 18. When
-    the developer **Feed historical camera parameters** option is enabled, the
-    current jitter, frame time, world-to-view matrix, and view-to-clip matrix
-    are supplied for the diagnostic comparison. Before a history reset, prior
-    NR GPU work is retired. Frames retaining history keep GPU-only interop
-    ordering.
--   Loading transitions, skipped world frames, enable changes, shader
-    invalidation, and resource recreation invalidate history. Ordinary UI menus
-    continue evaluating NR when the world rendered that frame; UI composition
-    remains later in the frame and is not passed through Feature 18.
-    Resolution, format, eye-count changes, or explicit resource recreation retire
-    GPU work and recreate the eye resources and NGX instances together. Changing
-    only the engine texture pointer does not recreate NR.
+- Color: a bounded display-referred proxy in an RGBA16 float carrier at
+  render-eye resolution. The original scene-linear `kMAIN` RGB and alpha are
+  retained separately for luminance-ratio writeback.
+- Depth: the existing upscaling encoder reads the engine depth SRV,
+  including VR's R24 depth view, and writes the device depth to R32 float
+  unchanged: inverted (1 is near) when Reverse Z is active. Depth is not
+  linearized.
+- Motion: the same encoder's undilated path writes RG16 float, preserving
+  correspondence with the center-pixel depth guide. The default Feature 18
+  contract converts normalized eye-UV displacement to NR input pixels using
+  the input width and height independently as motion-vector scales. The
+  developer A/B switch can instead send identity scales. Reset frames submit
+  zero motion because their previous history is invalid.
+- Frame data: diagnostics observe cached camera position, view direction, and
+  projection changes. These inferred cuts do not reset production history.
+  Production evaluation does not supply camera aliases to Feature 18. When
+  the developer **Feed historical camera parameters** option is enabled, the
+  current jitter, frame time, world-to-view matrix, and view-to-clip matrix
+  are supplied for the diagnostic comparison. Before a history reset, prior
+  NR GPU work is retired. Frames retaining history keep GPU-only interop
+  ordering.
+- Loading transitions, skipped world frames, enable changes, shader
+  invalidation, and resource recreation invalidate history. Ordinary UI menus
+  continue evaluating NR when the world rendered that frame; UI composition
+  remains later in the frame and is not passed through Feature 18.
+  Resolution, format, eye-count changes, or explicit resource recreation retire
+  GPU work and recreate the eye resources and NGX instances together. Changing
+  only the engine texture pointer does not recreate NR.
 
 The runtime receives independent depth and motion subrects and X/Y motion scales
 from the producer. It clamps each subrect against its own D3D12 allocation before

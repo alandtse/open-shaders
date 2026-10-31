@@ -18,13 +18,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void CloudShadows::DrawSettings()
 {
 #if defined(ENABLE_EFFECTS11)
-	if (globals::features::effects11.loaded) {
-		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
-			ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
-			return;
-		}
-	}
+	const Util::LockedSection enbLock(globals::features::effects11.OwnsFeature(E11Handoff::Feature::CloudShadows),
+		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
 #endif
 
 	ImGui::SliderFloat(T(TKEY("opacity"), "Opacity"), &settings.Opacity, 0.0f, 4.0f, "%.1f");
@@ -61,7 +56,7 @@ CloudShadows::Settings CloudShadows::GetCommonBufferData()
 #if defined(ENABLE_EFFECTS11)
 	if (globals::features::effects11.loaded) {
 		auto& enb = globals::features::effects11;
-		if (enb.enableEffect) {
+		if (enb.OwnsFeature(E11Handoff::Feature::CloudShadows)) {
 			auto& settingManager = SettingManager::GetSingleton();
 			if (settingManager.GetValue<bool>("EnableCloudShadows", "EFFECT")) {
 				data.Opacity = settingManager.GetInterpolatedTimeOfDayValue("Amount", "CLOUDSHADOWS");
@@ -77,7 +72,6 @@ CloudShadows::Settings CloudShadows::GetCommonBufferData()
 
 void CloudShadows::CheckResourcesSide(int side)
 {
-	static Util::FrameChecker frame_checker[6];
 	if (!frame_checker[side].IsNewFrame())
 		return;
 
@@ -251,7 +245,6 @@ void CloudShadows::ModifySky(RE::BSRenderPass* Pass)
 
 void CloudShadows::ReflectionsPrepass()
 {
-	Util::FrameChecker frameChecker;
 	if (frameChecker.IsNewFrame()) {
 		if ((globals::game::sky->mode.get() != RE::Sky::Mode::kFull) ||
 			!globals::game::sky->currentClimate)

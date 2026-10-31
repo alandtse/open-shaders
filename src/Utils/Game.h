@@ -134,6 +134,8 @@ namespace Util
 
 	/** @brief Forces weather and refreshes its cloud passes and sky model. */
 	void ForceWeather(RE::Sky* a_sky, RE::TESWeather* a_weather, bool a_override);
+	/** @brief Holds settled weather without resetting the sky, forcing only a different or transitioning weather. */
+	void ReapplyWeatherLock(RE::Sky* a_sky, RE::TESWeather* a_weather);
 
 	/** @brief Pending celestial synchronization requests consumed by the sky update hook. */
 	struct CelestialTransitionRequest
@@ -407,6 +409,15 @@ namespace Util
 	 * @param y Output parameter for the cell Y coordinate.
 	 */
 	void WorldToCell(const RE::NiPoint3& worldPos, int32_t& x, int32_t& y);
+
+	/**
+	 * @brief Derives inward-facing world-space frustum planes from a camera frustum and transform.
+	 * @param edgePadding World units the four side planes are pushed outward.
+	 */
+	void ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE::NiFrustum& viewFrustum, const RE::NiTransform& transform, float edgePadding = 0.0f);
+
+	/** @brief True when a sphere is not fully outside any of the frustum's planes. */
+	[[nodiscard]] bool IsSphereInFrustum(const RE::NiFrustumPlanes& frustum, const RE::NiPoint3& center, float radius);
 
 	/**
 	 * @brief Converts a four-character string to a uint32_t for efficient comparison.

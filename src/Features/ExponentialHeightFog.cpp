@@ -18,7 +18,11 @@
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
 #include "Utils/PerfUtils.h"
+#include "Utils/SettingsControl.h"
 #include "Utils/UI.h"
+#if defined(ENABLE_EFFECTS11)
+#	include "Effects11.h"
+#endif
 
 #include <numbers>
 
@@ -226,7 +230,7 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
-	data.enabled = data.enabled && !globals::state->isMapMenuOpen;
+	data.enabled = data.enabled && !IsSuppressed();
 	ClampDistanceHazeSettings(data);
 	ClampMistSettings(data);
 	data.vanillaFogDensity = 0.0f;
@@ -273,31 +277,44 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 	return data;
 }
 
+bool ExponentialHeightFog::IsSuppressed() const
+{
+#if defined(ENABLE_EFFECTS11)
+	if (globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog))
+		return true;
+#endif
+	return globals::state->IsFlatWorldMapOpen();
+}
+
 void ExponentialHeightFog::DrawSettings()
 {
+#if defined(ENABLE_EFFECTS11)
+	const Util::LockedSection enbLock(globals::features::effects11.OwnsFeature(E11Handoff::Feature::HeightFog),
+		T("common.settings_managed_by_enb", "This setting is managed by Effects 11."));
+#endif
 	Util::CheckboxFlag(T(TKEY("enable_exp_height_fog"), "Enable Exponential Height Fog"), settings.enabled);
-	if (!ImGui::BeginTabBar("##ExponentialHeightFogTabs"))
+	if (!Util::BeginPillTabBar("##ExponentialHeightFogTabs"))
 		return;
 
-	if (ImGui::BeginTabItem(T(TKEY("tab_general"), "General"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_general"), "General"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawGeneralSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	if (ImGui::BeginTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
+	if (Util::BeginPillTabItem(T(TKEY("volumetric_fog"), "Volumetric Fog"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawVolumetricSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	if (ImGui::BeginTabItem(T(TKEY("tab_mists"), "Mists"))) {
+	if (Util::BeginPillTabItem(T(TKEY("tab_mists"), "Mists"))) {
 		ImGui::BeginDisabled(settings.enabled == 0);
 		DrawMistSettings();
 		ImGui::EndDisabled();
-		ImGui::EndTabItem();
+		Util::EndPillTabItem();
 	}
-	ImGui::EndTabBar();
+	Util::EndPillTabBar();
 }
 
 void ExponentialHeightFog::DrawGeneralSettings()
@@ -509,7 +526,7 @@ void ExponentialHeightFog::DrawVolumetricSettings()
 		ImGui::TreePop();
 	}
 
-	if (ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
+	if (!SettingsControl::IsReplicating() && Util::ShowDebugSections() && ImGui::TreeNode(T(TKEY("debug"), "Quality and Temporal Filtering"))) {
 		uint32_t minGridPixelSize = 4;
 		uint32_t maxGridPixelSize = 64;
 		uint32_t minGridSizeZ = 16;
@@ -574,6 +591,8 @@ void ExponentialHeightFog::ClearShaderCache()
 	farMaterialSetupCS.Reset();
 	conservativeDepthCS.Reset();
 	farConservativeDepthCS.Reset();
+	conservativeDepthGroupCS.Reset();
+	farConservativeDepthGroupCS.Reset();
 	lightScatteringCS.Reset();
 	farLightScatteringCS.Reset();
 	integrationCS.Reset();
@@ -787,13 +806,17 @@ ID3D11ComputeShader* ExponentialHeightFog::GetFarMaterialSetupCS()
 	return farMaterialSetupCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogMaterialCS.hlsl", { { "VOLUMETRIC_FOG_FAR_GRID", "" } }, "cs_5_0");
 }
 
-ID3D11ComputeShader* ExponentialHeightFog::GetConservativeDepthCS()
+ID3D11ComputeShader* ExponentialHeightFog::GetConservativeDepthCS(bool a_groupReduce)
 {
+	if (a_groupReduce)
+		return conservativeDepthGroupCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", { { "GROUP_REDUCE", "" } }, "cs_5_0");
 	return conservativeDepthCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", {}, "cs_5_0");
 }
 
-ID3D11ComputeShader* ExponentialHeightFog::GetFarConservativeDepthCS()
+ID3D11ComputeShader* ExponentialHeightFog::GetFarConservativeDepthCS(bool a_groupReduce)
 {
+	if (a_groupReduce)
+		return farConservativeDepthGroupCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", { { "VOLUMETRIC_FOG_FAR_GRID", "" }, { "GROUP_REDUCE", "" } }, "cs_5_0");
 	return farConservativeDepthCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", { { "VOLUMETRIC_FOG_FAR_GRID", "" } }, "cs_5_0");
 }
 
@@ -1071,6 +1094,7 @@ void ExponentialHeightFog::Prepass()
 		Texture3D* integrated;
 		ID3D11ComputeShader* materialSetupCS;
 		ID3D11ComputeShader* conservativeDepthCS;
+		bool groupReduce;
 		ID3D11ComputeShader* lightScatteringCS;
 		ID3D11ComputeShader* integrationCS;
 		bool hasPrevConservativeDepth;
@@ -1093,7 +1117,10 @@ void ExponentialHeightFog::Prepass()
 			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 			if (p.conservativeDepthCS) {
 				context->CSSetShader(p.conservativeDepthCS, nullptr, 0);
-				context->Dispatch(groupX, groupY, 1);
+				if (p.groupReduce)
+					context->Dispatch(p.gridSize.x, p.gridSize.y, 1);
+				else
+					context->Dispatch(groupX, groupY, 1);
 			} else {
 				allStagesOk = false;
 			}
@@ -1156,6 +1183,10 @@ void ExponentialHeightFog::Prepass()
 		}
 	};
 
+	// From 8-pixel cells up, one thread group per cell reduces the cell's depth footprint in parallel.
+	const bool nearGroupReduce = std::clamp(settings.volumetricGridPixelSize, 4u, 64u) >= 8;
+	const bool farGroupReduce = std::clamp(settings.volumetricFarGridPixelSize, 4u, 64u) >= 8;
+
 	runVolumetricPass({ currentGridSize,
 		vBufferA.get(),
 		conservativeDepth.get(),
@@ -1164,7 +1195,8 @@ void ExponentialHeightFog::Prepass()
 		temporalHistoryValid ? lightScatteringHistory.get() : nullptr,
 		integratedLightScattering.get(),
 		GetMaterialSetupCS(),
-		GetConservativeDepthCS(),
+		GetConservativeDepthCS(nearGroupReduce),
+		nearGroupReduce,
 		GetLightScatteringCS(),
 		GetIntegrationCS(),
 		temporalHistoryValid && hasConservativeDepthHistory,
@@ -1179,7 +1211,8 @@ void ExponentialHeightFog::Prepass()
 			temporalHistoryValidFar ? lightScatteringFarHistory.get() : nullptr,
 			integratedLightScatteringFar.get(),
 			GetFarMaterialSetupCS(),
-			GetFarConservativeDepthCS(),
+			GetFarConservativeDepthCS(farGroupReduce),
+			farGroupReduce,
 			GetFarLightScatteringCS(),
 			GetFarIntegrationCS(),
 			temporalHistoryValidFar && hasConservativeDepthFarHistory,

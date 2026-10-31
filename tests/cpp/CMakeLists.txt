@@ -56,7 +56,8 @@ set(screenshot_test_sources
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
 )
 
-add_executable(cpp_tests
+add_executable(
+    cpp_tests
     test_main.cpp
     test_antilag2.cpp
     ${screenshot_test_sources}
@@ -90,37 +91,40 @@ add_executable(cpp_tests
     test_shadercontentstore.cpp
     test_featureflipimpact.cpp
     test_shadercacheclear.cpp
-	test_generationclaim.cpp
-	test_framelatch.cpp
-	test_lightattachgate.cpp
-	test_pointersearch.cpp
-	test_splitlatchbackoff.cpp
-	test_shaderinclude.cpp
-	test_settingspatch.cpp
-	test_weatheridparser.cpp
-	test_effectsourcecompatibility.cpp
-	test_effects11_settings.cpp
-	test_versiongate.cpp
-	test_presetinclude.cpp
-	test_windfield.cpp
-	test_sehguard.cpp
-	test_nr_decisions.cpp
-	test_nr_cadence.cpp
-	test_nr_material_strength.cpp
-	test_nr_model_scale.cpp
-	test_nr_eye_mode.cpp
-	test_nr_context_profile.cpp
-	test_nr_roi.cpp
-	test_abcompositorstats.cpp
-	test_abcomparison.cpp
-	test_prerequisitechain.cpp
-	test_desktop_mirror.cpp
-	test_furshellassetscan.cpp
-	test_furinertiaspring.cpp
-	test_region.cpp
-	test_bound_points.cpp
-	test_region_overlay.cpp
-	test_tablabel.cpp
+    test_generationclaim.cpp
+    test_framelatch.cpp
+    test_lightattachgate.cpp
+    test_pointersearch.cpp
+    test_splitlatchbackoff.cpp
+    test_shaderinclude.cpp
+    test_settingspatch.cpp
+    test_weatheridparser.cpp
+    test_undohistory.cpp
+    test_effectsourcecompatibility.cpp
+    test_effects11_settings.cpp
+    test_versiongate.cpp
+    test_presetinclude.cpp
+    test_unifiedpresets.cpp
+    test_windfield.cpp
+    test_sehguard.cpp
+    test_nr_decisions.cpp
+    test_nr_cadence.cpp
+    test_nr_material_strength.cpp
+    test_nr_model_scale.cpp
+    test_nr_eye_mode.cpp
+    test_nr_context_profile.cpp
+    test_nr_roi.cpp
+    test_abcompositorstats.cpp
+    test_abcomparison.cpp
+    test_prerequisitechain.cpp
+    test_desktop_mirror.cpp
+    test_furshellassetscan.cpp
+    test_furinertiaspring.cpp
+    test_region.cpp
+    test_bound_points.cpp
+    test_region_overlay.cpp
+    test_tablabel.cpp
+    test_imguilayout.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -132,64 +136,83 @@ add_executable(cpp_tests
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABCompositorStats.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/PerformanceOverlay/ABTesting/ABComparison.cpp"
     "${CMAKE_SOURCE_DIR}/src/Menu/DesktopMirrorDrawData.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/FurShells/AssetScan.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
-	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/HdrPngMetadata.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/SehGuard.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/SettingsKeys.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Utils/ShaderInclude.cpp"
+    "${CMAKE_SOURCE_DIR}/src/CSEditor/UndoHistory.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/FurShells/AssetScan.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
+    "${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )
 
-target_include_directories(cpp_tests SYSTEM PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK")
+target_include_directories(
+    cpp_tests
+    SYSTEM
+    PRIVATE "${CMAKE_SOURCE_DIR}/extern/AntiLag2-SDK"
+)
 
 # Exercise capture policy in both production and DevBench configurations.
-add_executable(screenshot_tests_devbench test_main.cpp ${screenshot_test_sources})
-target_compile_definitions(screenshot_tests_devbench PRIVATE DEVBENCH_BRIDGE_ENABLED=1)
+add_executable(
+    screenshot_tests_devbench
+    test_main.cpp
+    ${screenshot_test_sources}
+)
+target_compile_definitions(
+    screenshot_tests_devbench
+    PRIVATE DEVBENCH_BRIDGE_ENABLED=1
+)
 
 foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
     # The plugin defines the float2/3/4 = SimpleMath aliases in its PCH, which the
     # test target does not use. Force-include a tiny prelude so SphericalHarmonics
     # (and its .cpp) see those aliases without the heavy RE/SKSE PCH.
     if(MSVC)
-        target_compile_options(${cpp_test_target} PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+        target_compile_options(
+            ${cpp_test_target}
+            PRIVATE "/FI${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h"
+        )
     else()
-        target_compile_options(${cpp_test_target} PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h")
+        target_compile_options(
+            ${cpp_test_target}
+            PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/test_prelude.h"
+        )
     endif()
 
     set_property(TARGET ${cpp_test_target} PROPERTY CXX_STANDARD 23)
     set_property(TARGET ${cpp_test_target} PROPERTY CXX_STANDARD_REQUIRED ON)
 
-    target_include_directories(${cpp_test_target} PRIVATE
-        "${CMAKE_SOURCE_DIR}/src"
-        "${CMAKE_SOURCE_DIR}/package/Shaders"
+    target_include_directories(
+        ${cpp_test_target}
+        PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/package/Shaders"
     )
 
-    target_link_libraries(${cpp_test_target} PRIVATE
-        Catch2::Catch2
-        nlohmann_json::nlohmann_json
-        imgui::imgui
-        Microsoft::DirectXTK
-        Microsoft::DirectXTex
-        magic_enum::magic_enum
-        xxHash::xxhash
-        spdlog::spdlog
-        d3dcompiler
-        bcrypt
-        Threads::Threads
+    target_link_libraries(
+        ${cpp_test_target}
+        PRIVATE
+            Catch2::Catch2
+            nlohmann_json::nlohmann_json
+            imgui::imgui
+            Microsoft::DirectXTK
+            Microsoft::DirectXTex
+            magic_enum::magic_enum
+            xxHash::xxhash
+            spdlog::spdlog
+            d3dcompiler
+            bcrypt
+            Threads::Threads
     )
 
     # windows.h (pulled in via d3d11.h) defines min/max macros that break the
     # std::min<T>/std::max<T> calls in Subrect.cpp. The plugin's PCH suppresses
     # this implicitly; the test target needs it explicitly.
-    target_compile_definitions(${cpp_test_target} PRIVATE
-        NOMINMAX
-        WIN32_LEAN_AND_MEAN
+    target_compile_definitions(
+        ${cpp_test_target}
+        PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
     )
-
 endforeach()
 
 enable_testing()
@@ -198,19 +221,16 @@ add_test(
     COMMAND cpp_tests --reporter compact
     WORKING_DIRECTORY $<TARGET_FILE_DIR:cpp_tests>
 )
-set_tests_properties(CppUtilTests PROPERTIES
-    TIMEOUT 60
-    LABELS "Cpp;UnitTests"
-)
+set_tests_properties(CppUtilTests PROPERTIES TIMEOUT 60 LABELS "Cpp;UnitTests")
 
 add_test(
     NAME ScreenshotDevBenchTests
     COMMAND screenshot_tests_devbench --reporter compact
     WORKING_DIRECTORY $<TARGET_FILE_DIR:screenshot_tests_devbench>
 )
-set_tests_properties(ScreenshotDevBenchTests PROPERTIES
-    TIMEOUT 60
-    LABELS "Cpp;UnitTests;Screenshot"
+set_tests_properties(
+    ScreenshotDevBenchTests
+    PROPERTIES TIMEOUT 60 LABELS "Cpp;UnitTests;Screenshot"
 )
 
 message(STATUS "C++ unit tests configured successfully")

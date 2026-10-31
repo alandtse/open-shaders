@@ -42,16 +42,16 @@ void SnowCover::DrawSettings()
 	ImGui::Separator();
 	ImGui::TextUnformatted(lastWorldspace.c_str());
 	ImGui::TextWrapped("%s", status.c_str());
-	if (ImGui::Button(T(TKEY("reload"), "Reload config"))) {
+	if (Util::Button(T(TKEY("reload"), "Reload config"))) {
 		lastWorldspace.clear();
 		LoadGeometryLists();
 		UpdateFrame();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("save"), "Save worldspace config")))
+	if (Util::Button(T(TKEY("save"), "Save worldspace config")))
 		SaveConfig();
 	ImGui::SameLine();
-	if (ImGui::Button(T(TKEY("defaults"), "Worldspace defaults"))) {
+	if (Util::Button(T(TKEY("defaults"), "Worldspace defaults"))) {
 		const auto enabled = wsettings.EnableSnowCover;
 		ResetWorldConfig();
 		wsettings.EnableSnowCover = enabled;

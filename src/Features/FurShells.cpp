@@ -462,7 +462,7 @@ void FurShells::DrawOverrideSettings()
 
 	if (ImGui::BeginCombo(T(TKEY("shell_texture"), "Shell Texture"), selectedShellName.c_str())) {
 		for (auto& [name, data] : shellTextures) {
-			if (ImGui::Selectable(name.c_str(), name == selectedShellName)) {
+			if (Util::RoundedSelectable(name.c_str(), name == selectedShellName)) {
 				selectedShellName = name;
 				selectedShell = &data;
 				overrideStatus.clear();
@@ -526,7 +526,7 @@ void FurShells::DrawOverrideSettings()
 			UpdateOverrideFadeEnd();
 		}
 
-		if (ImGui::Button(T(TKEY("create_override"), "Create Override"))) {
+		if (Util::Button(T(TKEY("create_override"), "Create Override"))) {
 			selectedShell->overridden = true;
 			UpdateOverrideFadeEnd();
 			overrideStatusFailed = !SaveOverride(selectedShellName, values, overrideStatus);
@@ -535,7 +535,7 @@ void FurShells::DrawOverrideSettings()
 			ImGui::TextWrapped("%s", T(TKEY("create_override_tooltip"), "Saves these values as a .json beside the shell texture. Mod Organizer 2 puts the new file in Overwrite, so the texture's mod stays untouched."));
 
 		ImGui::SameLine();
-		if (ImGui::Button(T(TKEY("discard_override"), "Discard Changes"))) {
+		if (Util::Button(T(TKEY("discard_override"), "Discard Changes"))) {
 			LoadOverride(selectedShellName, *selectedShell);
 			overrideStatus.clear();
 		}
@@ -962,7 +962,7 @@ void FurShells::DrawInertiaSettings()
 	const auto selected = std::min(settings.InertiaPreset, static_cast<uint32_t>(Preset::Custom));
 	if (ImGui::BeginCombo(T(TKEY("inertia_preset"), "Inertia Preset"), names[selected].c_str())) {
 		for (uint32_t i = 0; i < names.size(); ++i) {
-			if (ImGui::Selectable(names[i].c_str(), i == selected) && i != selected) {
+			if (Util::RoundedSelectable(names[i].c_str(), i == selected) && i != selected) {
 				if (i == static_cast<uint32_t>(Preset::Custom)) {
 					const auto tuning = GetInertiaTuning();
 					settings.InertiaFrequency = tuning.frequencyHz;

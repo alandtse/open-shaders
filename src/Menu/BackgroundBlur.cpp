@@ -4,6 +4,7 @@
 
 #include "BackgroundBlur.h"
 #include "../Features/HDRDisplay.h"
+#include "../Features/PerformanceOverlay.h"
 #include "../Features/Upscaling.h"
 #include "../Globals.h"
 #include "../GpuPass.h"
@@ -59,6 +60,7 @@ namespace BackgroundBlur
 
 		// Blend state for compositing UI over game world (alpha blending)
 		winrt::com_ptr<ID3D11BlendState> compositeBlendState;
+		winrt::com_ptr<ID3D11BlendState> clearBlendState;
 
 		// Downsampled textures for blur (1/8 res for performance)
 		winrt::com_ptr<ID3D11Texture2D> downsampleTexture;
@@ -507,6 +509,12 @@ namespace BackgroundBlur
 			return false;
 		Util::SetResourceName(compositeBlendState.get(), "BackgroundBlur::CompositeBlendState");
 
+		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_ZERO;
+		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+		if (!checkCreate(device->CreateBlendState(&blendDesc, clearBlendState.put()), "UI clear blend state"))
+			return false;
+		Util::SetResourceName(clearBlendState.get(), "BackgroundBlur::ClearBlendState");
+
 		// Create scissor-enabled rasterizer state
 		D3D11_RASTERIZER_DESC rsDesc = {};
 		rsDesc.FillMode = D3D11_FILL_SOLID;
@@ -664,7 +672,7 @@ namespace BackgroundBlur
 
 		if (frame.uiBuffer.rtv) {
 			context->OMSetRenderTargets(1, &frame.uiBuffer.rtv, nullptr);
-			context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+			context->OMSetBlendState(clearBlendState.get(), nullptr, 0xFFFFFFFF);
 			context->PSSetShader(clearPixelShader.get(), nullptr, 0);
 			context->Draw(FULLSCREEN_TRIANGLE_VERTICES, 0);
 		}
@@ -738,6 +746,7 @@ namespace BackgroundBlur
 		samplerState = nullptr;
 		blendState = nullptr;
 		compositeBlendState = nullptr;
+		clearBlendState = nullptr;
 		scissorRasterizerState = nullptr;
 
 		ReleaseBlurTextures();

@@ -4,6 +4,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <set>
 
@@ -135,6 +136,77 @@ namespace
 // (and be unit-tested) without the engine headers ApplyPatch needs.
 namespace Util::Settings
 {
+	OverwriteValue ResolveOverwriteValue(const json* global, const json* globalUser, const json* feature, const json* featureUser)
+	{
+		if (feature)
+			return { feature, featureUser };
+		return global ? OverwriteValue{ global, globalUser } : OverwriteValue{};
+	}
+
+	void EraseMetadataKeys(json& settings)
+	{
+		if (!settings.is_object())
+			return;
+		for (auto it = settings.begin(); it != settings.end();)
+			it = it.key().starts_with('_') ? settings.erase(it) : std::next(it);
+	}
+
+	void MergeSettings(json& target, const json& overlay)
+	{
+		if (!target.is_object() || !overlay.is_object()) {
+			target = overlay;
+			return;
+		}
+		for (const auto& [key, value] : overlay.items()) {
+			if (const auto found = target.find(key); found != target.end())
+				MergeSettings(*found, value);
+			else
+				target[key] = value;
+		}
+	}
+
+	bool IsCompatibleSettingValue(const json& known, const json& value)
+	{
+		if (known.is_null())
+			return true;
+		if (known.is_number())
+			return value.is_boolean() || IsCompatibleNumber(known, value);
+		if (known.is_array()) {
+			if (!value.is_array())
+				return false;
+			if (known.empty())
+				return true;
+			const bool sameSize = known.size() == value.size();
+			if (!sameSize && !IsIntegerArray(known))
+				return false;
+			for (size_t index = 0; index < value.size(); ++index)
+				if (!IsCompatibleSettingValue(known[sameSize ? index : 0], value[index]))
+					return false;
+		}
+		return known.type() == value.type();
+	}
+
+	void EraseMismatchedSettings(json& incoming, const json& known, const std::string& prefix, std::vector<std::string>& erasedKeys)
+	{
+		if (!incoming.is_object() || !known.is_object())
+			return;
+		for (auto it = incoming.begin(); it != incoming.end();) {
+			const auto found = known.find(it.key());
+			if (found == known.end()) {
+				++it;
+				continue;
+			}
+			const std::string path = prefix.empty() ? it.key() : prefix + "." + it.key();
+			if (!IsCompatibleSettingValue(*found, it.value())) {
+				erasedKeys.push_back(path);
+				it = incoming.erase(it);
+				continue;
+			}
+			EraseMismatchedSettings(it.value(), *found, path, erasedKeys);
+			++it;
+		}
+	}
+
 	json SelectSettingPaths(const json& values, const std::vector<std::string>& paths)
 	{
 		const std::set<std::string> selected(paths.begin(), paths.end());
@@ -250,15 +322,44 @@ namespace Util::Settings
 		return userOverride;
 	}
 
+	bool EraseSettingPath(json& document, const json::json_pointer& setting)
+	{
+		if (setting.empty() || !document.contains(setting))
+			return false;
+		for (auto parent = setting; !parent.empty(); parent = parent.parent_pointer())
+			if (!document.at(parent.parent_pointer()).is_object() || parent.back().starts_with('_'))
+				return false;
+		auto pointer = setting;
+		while (!pointer.empty() && document.contains(pointer)) {
+			auto& parent = document.at(pointer.parent_pointer());
+			parent.erase(pointer.back());
+			if (!parent.empty())
+				return true;
+			pointer = pointer.parent_pointer();
+		}
+		return true;
+	}
+
+	json BuildUserOverride(const json& current, const json& baseline, const json& savedKeys)
+	{
+		auto edits = BuildUserOverride(current, baseline);
+		MergeSettings(edits, SelectSettings(current, savedKeys));
+		return edits;
+	}
+
 	void CollectUnknownSettingKeys(const json& a_incoming, const json& a_known,
 		const std::string& a_prefix, std::vector<std::string>& a_out)
 	{
 		if (!a_incoming.is_object())
 			return;
 		for (auto it = a_incoming.begin(); it != a_incoming.end(); ++it) {
+			if (it.key().starts_with('_'))
+				continue;
 			const std::string path = a_prefix.empty() ? it.key() : a_prefix + "." + it.key();
 			if (!a_known.is_object() || !a_known.contains(it.key()))
 				a_out.push_back(path);
+			else if (!IsCompatibleSettingValue(a_known[it.key()], it.value()))
+				a_out.push_back(path + " (wrong type)");
 			else if (it.value().is_object())
 				CollectUnknownSettingKeys(it.value(), a_known[it.key()], path, a_out);
 		}

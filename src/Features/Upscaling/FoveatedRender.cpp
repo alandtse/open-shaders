@@ -31,10 +31,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 // Lifecycle
 // ============================================================================
 
-void FoveatedRender::PostPostLoad()
+FoveatedRender::FoveatedRender()
 {
-	bootSnapshot.LatchIfNeeded(settings);
-
 	// Opt into the stereo extension so the controller tracks a separate
 	// right-eye UV (HMD nose-side overlap symmetry).
 	subrectController.SetStereoEnabled(true);
@@ -60,11 +58,12 @@ void FoveatedRender::PostPostLoad()
 			.uv = { 0.3f, 0.15f, 0.7f, 0.7f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.15f, 0.7f, 0.7f } },
 	});
-	// PostPostLoad runs after settings load, so a user with an older, shorter
-	// persisted preset list (from before these names existed) still sees every
-	// current preset in the DrawEditor dropdown, not just whichever ones they
-	// happened to click as buttons.
 	subrectController.MaterializeNewDefaults();
+}
+
+void FoveatedRender::PostPostLoad()
+{
+	bootSnapshot.LatchIfNeeded(settings);
 }
 
 void FoveatedRender::ClearShaderCache()
@@ -89,6 +88,7 @@ void FoveatedRender::LoadSettings(const json& o_json)
 	// so no const_cast is needed — keeping it would imply mutation that never
 	// happens.
 	subrectController.LoadSettings(o_json);
+	subrectController.MaterializeNewDefaults();
 	ClampSettings();
 }
 

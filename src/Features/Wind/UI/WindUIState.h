@@ -22,6 +22,11 @@ struct WindUIState
 	std::array<char, 256> treeMeshSearch{};
 	std::vector<std::size_t> filteredTreeRuleIndices;
 	std::string appliedTreeMeshSearch;
+	std::string treeMeshNameFontSignature;
+	float treeMeshNameFontSize = 0.0f;
+	float treeMeshNameWidth = 0.0f;
+	float treeMeshNameHeight = 0.0f;
+	float treeMeshHeaderHeight = 0.0f;
 	std::string treeWindSaveStatus;
 	std::size_t filteredTreeRuleCount = static_cast<std::size_t>(-1);
 	int debugWindEffectSpawnCount = 8;

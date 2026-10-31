@@ -22,10 +22,10 @@ ref's whole include tree is materialized (via `git archive`), so the base compil
 against base-ref `.hlsli` headers and the working tree against working headers — a
 refactor that also edits a shared header is compared correctly, not masked:
 
--   **IDENTICAL** SHA-256 of the `.cso` ⇒ the refactor is a provable no-op (fxc emits
-    no timestamps without `/Zi`, so identical source ⇒ identical bytes).
--   **DIFFERS** ⇒ it dumps and diffs the `/Fc` assembly so a legitimate-but-non-identical
-    change can be reviewed.
+- **IDENTICAL** SHA-256 of the `.cso` ⇒ the refactor is a provable no-op (fxc emits
+  no timestamps without `/Zi`, so identical source ⇒ identical bytes).
+- **DIFFERS** ⇒ it dumps and diffs the `/Fc` assembly so a legitimate-but-non-identical
+  change can be reviewed.
 
 Exit codes: `0` all identical, `2` some differ, `1` compile error. Defaults to comparing
 the working tree against `merge-base(HEAD, origin/dev)`; pass `-BaseRef <ref>` to override.
@@ -91,19 +91,19 @@ content instead of just stat-ing it (cheap for a shader tree's file sizes).
 Independent of the build-side fix above, two menu settings control the
 runtime cache's own staleness check:
 
--   **Skip Unchanged Shaders** (`SettingsTabRenderer`, default on): the
-    mtime fallback described above, used only when no manifest digest is on
-    record yet for a given blob.
--   **File Watcher** (`AdvancedSettingsRenderer`, default off): watches
-    `Data\Shaders` for real filesystem write events (`efsw`) instead of
-    re-stat-ing on demand. It tracks a shader's real mtime _at the moment a
-    write event fires_, so it only reacts to files that were actually
-    (re)written, so a content-identical deploy that the sync script correctly
-    skips produces no write event and no false recompile, while a genuinely changed
-    shader produces exactly one event and one targeted recompile. This is why
-    the content-based deploy hop above and FileWatcher compose correctly with
-    no FileWatcher-side change needed: FileWatcher was already only as good as
-    the write events it's fed, and those are now accurate.
+- **Skip Unchanged Shaders** (`SettingsTabRenderer`, default on): the
+  mtime fallback described above, used only when no manifest digest is on
+  record yet for a given blob.
+- **File Watcher** (`AdvancedSettingsRenderer`, default off): watches
+  `Data\Shaders` for real filesystem write events (`efsw`) instead of
+  re-stat-ing on demand. It tracks a shader's real mtime _at the moment a
+  write event fires_, so it only reacts to files that were actually
+  (re)written, so a content-identical deploy that the sync script correctly
+  skips produces no write event and no false recompile, while a genuinely changed
+  shader produces exactly one event and one targeted recompile. This is why
+  the content-based deploy hop above and FileWatcher compose correctly with
+  no FileWatcher-side change needed: FileWatcher was already only as good as
+  the write events it's fed, and those are now accurate.
 
 ### Routine version bumps no longer force a full recompile
 
@@ -132,28 +132,28 @@ Even with the fix above, a branch switch that _does_ change a shader still
 correctly triggers exactly one recompile for that shader, which is expected, not a
 bug. To A/B two branches with zero recompile risk at all:
 
--   **Prefer a runtime toggle over a branch switch** when comparing a
-    feature flag, not a code change: flip it via `openshaders.feature set` /
-    devbench with the game closed, or in-menu. Zero files touched.
--   **Use a separate build directory (or worktree) per branch** when you
-    genuinely need two different branches built: each directory's own
-    `git-head.stamp` never changes as long as you don't switch branches
-    _inside_ it, so the non-shader wipe never triggers between A/B runs.
-    Building from a `.claude/worktrees/`-style path hits Windows `MAX_PATH` on
-    FidelityFX's generated permutation headers; `subst` a drive letter to the
-    worktree root first.
+- **Prefer a runtime toggle over a branch switch** when comparing a
+  feature flag, not a code change: flip it via `openshaders.feature set` /
+  devbench with the game closed, or in-menu. Zero files touched.
+- **Use a separate build directory (or worktree) per branch** when you
+  genuinely need two different branches built: each directory's own
+  `git-head.stamp` never changes as long as you don't switch branches
+  _inside_ it, so the non-shader wipe never triggers between A/B runs.
+  Building from a `.claude/worktrees/`-style path hits Windows `MAX_PATH` on
+  FidelityFX's generated permutation headers; `subst` a drive letter to the
+  worktree root first.
 
 ## Overview
 
 Two deployment targets for different workflows:
 
--   **`COPY_SHADERS`** - Fast shader-only deployment (seconds)
--   **`DEPLOY_ALL`** - Full build + tests + deployment (minutes)
+- **`COPY_SHADERS`** - Fast shader-only deployment (seconds)
+- **`DEPLOY_ALL`** - Full build + tests + deployment (minutes)
 
 ### Requirements
 
--   Must have `AUTO_PLUGIN_DEPLOYMENT=ON` in your CMake preset
--   Must have `CommunityShadersOutputDir` environment variable set to your Skyrim directory
+- Must have `AUTO_PLUGIN_DEPLOYMENT=ON` in your CMake preset
+- Must have `CommunityShadersOutputDir` environment variable set to your Skyrim directory
 
 ### Usage
 
@@ -228,10 +228,10 @@ The PR shader-validation job feeds the PR's changed-file list (from
 `tj-actions/changed-files`) into the same wrapper. Validation is **only**
 narrowed when provably safe — any of these forces a full run:
 
--   a change to a validation config (`.github/configs/**`), CMake, or a submodule
-    (these can redefine the entry-point/define set itself);
--   a changed shader path outside the known shader roots;
--   push/release builds (no PR change set), which always validate in full.
+- a change to a validation config (`.github/configs/**`), CMake, or a submodule
+  (these can redefine the entry-point/define set itself);
+- a changed shader path outside the known shader roots;
+- push/release builds (no PR change set), which always validate in full.
 
 `hlslkit` applies the same safety net independently: any changed path it can't
 find in the shader tree falls back to full validation. Preprocessor guards are

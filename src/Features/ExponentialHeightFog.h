@@ -6,6 +6,9 @@
 struct ExponentialHeightFog : Feature
 {
 private:
+	/** @brief Returns whether another pipeline or the flat map owns fog. */
+	bool IsSuppressed() const;
+
 	static constexpr std::string_view MOD_ID = "180146";
 
 public:
@@ -178,8 +181,8 @@ private:
 	void BindIntegratedLightScattering();
 	ID3D11ComputeShader* GetMaterialSetupCS();
 	ID3D11ComputeShader* GetFarMaterialSetupCS();
-	ID3D11ComputeShader* GetConservativeDepthCS();
-	ID3D11ComputeShader* GetFarConservativeDepthCS();
+	ID3D11ComputeShader* GetConservativeDepthCS(bool a_groupReduce);
+	ID3D11ComputeShader* GetFarConservativeDepthCS(bool a_groupReduce);
 	ID3D11ComputeShader* GetLightScatteringCS();
 	ID3D11ComputeShader* GetFarLightScatteringCS();
 	ID3D11ComputeShader* GetIntegrationCS();
@@ -205,6 +208,8 @@ private:
 	Util::LazyShader<ID3D11ComputeShader> farMaterialSetupCS;
 	Util::LazyShader<ID3D11ComputeShader> conservativeDepthCS;
 	Util::LazyShader<ID3D11ComputeShader> farConservativeDepthCS;
+	Util::LazyShader<ID3D11ComputeShader> conservativeDepthGroupCS;
+	Util::LazyShader<ID3D11ComputeShader> farConservativeDepthGroupCS;
 	Util::LazyShader<ID3D11ComputeShader> lightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> farLightScatteringCS;
 	Util::LazyShader<ID3D11ComputeShader> integrationCS;

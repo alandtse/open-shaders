@@ -26,13 +26,12 @@ struct PostProcessing : Feature
 		return &singleton;
 	}
 
-	struct alignas(16) Settings
+	struct alignas(16) PerFrame
 	{
-		uint DisableVanillaTonemapping = 1;
-		uint pad[3];
-	} settings;
-
-	const std::string ppPresetPath = "Data\\SKSE\\Plugins\\CommunityShaders\\PostProcessing";
+		uint DisableVanillaTonemapping = 0;
+		uint pad[3]{};
+	};
+	static_assert(sizeof(PerFrame) == 16);
 
 	virtual inline std::string GetName() override { return "Post Processing"; }
 	virtual inline std::string GetDisplayName() override { return T("feature.post_processing.name", "Post Processing"); }
@@ -58,6 +57,8 @@ struct PostProcessing : Feature
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
+	/** @brief Exposes dedicated portable Baseline authoring and legacy migration. */
+	PresetProvider* GetPresetProvider() override;
 	virtual void RestoreDefaultSettings() override;
 	/** @return true while viewing a pipeline subfeature. */
 	virtual bool HasScopedDefaultSettings() const override;
@@ -74,19 +75,16 @@ struct PostProcessing : Feature
 	/**
 	 * @brief Whether Post Processing wants to replace the vanilla tonemap this frame.
 	 *
-	 * Queried by State::GetTonemapOwner() to arbitrate against Effects11. Note this is
-	 * narrower than "is the pipeline active": with DisableVanillaTonemapping off the
-	 * pipeline still runs its effects and then hands off to the vanilla tonemap.
+	 * Queried by State::GetTonemapOwner() to arbitrate against Effects11.
 	 */
 	bool WantsTonemapOwnership() const;
 
 	/**
-	 * @brief Whether Effects11 replaced the tonemap this frame.
+	 * @brief Whether the sub-feature pipeline runs this frame: Post Processing mode and owner of the tonemap.
 	 *
-	 * The pipeline's output is discarded in that case, so every entry point that would
-	 * write to a game render target must bail out rather than perform unused work.
+	 * Otherwise PreProcess draws no sub-features, so every other entry point must bail out too.
 	 */
-	bool IsTonemapOwnedByEffects11() const;
+	bool IsPipelineRunning() const;
 
 	/**
 	 * @brief Builds the shared-buffer payload, masking flags the arbiter has revoked.
@@ -95,20 +93,27 @@ struct PostProcessing : Feature
 	 * tonemap, so ISHDR and HDROutputCS do not assume a linear, already-tonemapped scene
 	 * when another feature produced the image.
 	 */
-	Settings GetCommonBufferData() const;
+	PerFrame GetCommonBufferData() const;
 
 	/** @brief Publishes Composite's auto exposure whenever the Post Processing pipeline runs. */
 	virtual bool GetSceneExposure(SceneExposure& a_out) const override;
 
+	/**
+	 * @brief Whether Color Grading wants Pumbo AutoHDR this frame (SDR tonemapper + HDR Display).
+	 */
+	bool WantsAutoHDR() const;
+
+	/// Settings loaded before the pipeline exists.
 	json pendingSettings = {};
 
 	void ProcessSettings(json& o_json);
 
-	std::vector<std::string> presets = {};
-	std::vector<std::string> LoadPresets();
-	void SavePresetTo(std::string a_name);
-	/** Loads a named preset. @return true when parsing and application succeed. */
-	bool LoadPresetFrom(std::string a_name);
+	/// Sets each sub-feature's on/off state to the shipped default. Their values default to their
+	/// Settings initializers, so this and RestoreDefaultSettings need no defaults file.
+	void ApplyDefaultEnabledStates();
+
+	/** @brief Creates every sub-feature at its shipped defaults, without GPU resources. */
+	void BuildPipeline();
 
 	enum class FeaturePipelineIndex : size_t
 	{
@@ -128,14 +133,18 @@ struct PostProcessing : Feature
 		COUNT
 	};
 
+	/** @brief Suppresses vanilla effects only when their Post Processing replacements can render. */
+	void UpdateVanillaEffects(bool active);
+
 	/// shared_ptr, not unique_ptr: see PostProcessFeature's weak_ptr callback contract.
 	std::array<std::shared_ptr<PostProcessFeature>, static_cast<size_t>(FeaturePipelineIndex::COUNT)> pipeline;
 
 	/** Identifies the Post Processing page targeted by scoped restoration. */
 	enum class SettingsPage
 	{
-		Pipeline,   ///< Top-level pipeline controls.
-		SubFeature  ///< Settings for the selected pipeline feature.
+		Pipeline,        ///< Top-level pipeline controls.
+		SubFeature,      ///< Settings for the selected pipeline feature.
+		CinematicCamera  ///< Physical camera controls.
 	};
 	/** The visible page whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Pipeline;

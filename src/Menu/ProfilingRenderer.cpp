@@ -388,7 +388,7 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 		if (ImGui::Checkbox(T("menu.profiling.enable_profiling", "Enable Profiling"), &enabled))
 			profiler.SetUserEnabled(enabled);
 		ImGui::SameLine();
-		if (ImGui::Button(T("menu.profiling.clear_timers", "Clear Timers"))) {
+		if (Util::Button(T("menu.profiling.clear_timers", "Clear Timers"))) {
 			profiler.ClearTimers();
 			cachedGroups.clear();
 			cachedTotalAvgMs = 0.0f;
@@ -465,6 +465,19 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 				groups.push_back(&group);
 			Util::SortTableRows(groups, sort, groupSorts);
 
+			// Avg / P95 / P99 cells heat-coloured against the column maxima, then the share of the total.
+			const auto metricCells = [](float avg, float p95, float p99) {
+				ImGui::TableNextColumn();
+				TextHeat("%.3f", avg, cachedMaxAvgMs);
+				ImGui::TableNextColumn();
+				TextHeat("%.3f", p95, cachedMaxP95Ms);
+				ImGui::TableNextColumn();
+				TextHeat("%.3f", p99, cachedMaxP99Ms);
+				ImGui::TableNextColumn();
+				if (cachedTotalAvgMs > 0.0f)
+					TextHeat("%5.1f", (avg / cachedTotalAvgMs) * 100.0f, 100.0f);
+			};
+
 			for (const GroupEntry* groupRow : groups) {
 				const auto& group = *groupRow;
 				ImGui::TableNextRow();
@@ -474,52 +487,30 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 				if (group.passes.empty()) {
 					RenderColorMarker(groupColor);
 					ImGui::TreeNodeEx(group.name.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
-					ImGui::TableNextColumn();
-					if (cachedTotalAvgMs > 0.0f)
-						TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
-				} else {
-					RenderColorMarker(groupColor);
-					bool open = ImGui::TreeNodeEx(group.name.c_str(), 0);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalAvgMs, cachedMaxAvgMs);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalP95Ms, cachedMaxP95Ms);
-					ImGui::TableNextColumn();
-					TextHeat("%.3f", group.totalP99Ms, cachedMaxP99Ms);
-					ImGui::TableNextColumn();
-					if (cachedTotalAvgMs > 0.0f)
-						TextHeat("%5.1f", (group.totalAvgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
-					if (open) {
-						std::vector<const PassEntry*> passes;
-						passes.reserve(group.passes.size());
-						for (const auto& pass : group.passes)
-							passes.push_back(&pass);
-						Util::SortTableRows(passes, sort, passSorts);
-						for (const PassEntry* passRow : passes) {
-							const auto& pass = *passRow;
-							ImGui::TableNextRow();
-							ImGui::TableNextColumn();
-							RenderColorMarker(groupColor);
-							ImGui::TreeNodeEx(pass.label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
-							ImGui::TableNextColumn();
-							TextHeat("%.3f", pass.avgMs, cachedMaxAvgMs);
-							ImGui::TableNextColumn();
-							TextHeat("%.3f", pass.p95Ms, cachedMaxP95Ms);
-							ImGui::TableNextColumn();
-							TextHeat("%.3f", pass.p99Ms, cachedMaxP99Ms);
-							ImGui::TableNextColumn();
-							if (cachedTotalAvgMs > 0.0f)
-								TextHeat("%5.1f", (pass.avgMs / cachedTotalAvgMs) * 100.0f, 100.0f);
-						}
-						ImGui::TreePop();
-					}
+					metricCells(group.totalAvgMs, group.totalP95Ms, group.totalP99Ms);
+					continue;
 				}
+
+				RenderColorMarker(groupColor);
+				const bool open = ImGui::TreeNodeEx(group.name.c_str(), 0);
+				metricCells(group.totalAvgMs, group.totalP95Ms, group.totalP99Ms);
+				if (!open)
+					continue;
+
+				std::vector<const PassEntry*> passes;
+				passes.reserve(group.passes.size());
+				for (const auto& pass : group.passes)
+					passes.push_back(&pass);
+				Util::SortTableRows(passes, sort, passSorts);
+				for (const PassEntry* passRow : passes) {
+					const auto& pass = *passRow;
+					ImGui::TableNextRow();
+					ImGui::TableNextColumn();
+					RenderColorMarker(groupColor);
+					ImGui::TreeNodeEx(pass.label.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen);
+					metricCells(pass.avgMs, pass.p95Ms, pass.p99Ms);
+				}
+				ImGui::TreePop();
 			}
 			ImGui::EndTable();
 		}
@@ -911,7 +902,7 @@ void ProfilingRenderer::RenderFeatureTimingButton(const std::string& featurePref
 		std::ceil(contentWidth + style.FramePadding.x * 2.0f),
 		buttonHeight);
 
-	const bool pressed = ImGui::Button("##FeatureProfiling", buttonSize);
+	const bool pressed = Util::Button("##FeatureProfiling", buttonSize);
 	const ImVec2 buttonMin = ImGui::GetItemRectMin();
 	auto* drawList = ImGui::GetWindowDrawList();
 	if (pressed)

@@ -10,21 +10,18 @@ cbuffer BorderCB : register(b1)
 {
 	float4 BorderColor;  // color in xyz, depth threshold in w
 	float4 Scale;        // xyzw: up, down, left, right
+	float4 BufferDim;
 };
 
 [numthreads(8, 8, 1)] void main(uint3 DTid : SV_DispatchThreadID) {
-	// This shader runs before upscaling, so account for dynamic resolution.
-	float2 dynResDim = SharedData::BufferDim.xy * FrameBuffer::DynamicResolutionParams1.xy;
-
-	// Early exit for pixels outside the dynamic resolution area
-	if (any(DTid.xy >= uint2(dynResDim)))
+	if (any(DTid.xy >= uint2(BufferDim.xy)))
 		return;
 
 	float depth = FrameBuffer::ToStandardDepth(DepthTexture[DTid.xy]);
 	float depthThreshold = BorderColor.w;
 	if (depth > depthThreshold || depthThreshold == 0.0f) {
 		// UV relative to the dynamic resolution viewport [0, 1]
-		float2 uv = (DTid.xy + 0.5f) / dynResDim;
+		float2 uv = (DTid.xy + 0.5f) * BufferDim.zw;
 		// Left/right border thresholds are eye-relative; in VR the packed stereo
 		// buffer's raw x spans both eyes, so remap to the eye-local [0,1] range.
 		uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);

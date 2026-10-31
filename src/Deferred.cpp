@@ -6,6 +6,7 @@
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "VanillaBinding.h"
 
 #include "Features/CSEditor.h"
 #include "Features/DynamicCubemaps.h"
@@ -918,11 +919,5 @@ void Deferred::Hooks::Main_RenderPlayerView_EndWorld::thunk(bool a1)
 void Deferred::Hooks::Renderer_ResetState::thunk(void* This)
 {
 	func(This);
-
-	auto* const state = globals::state;
-	auto* const context = globals::d3d::context;
-
-	ID3D11Buffer* buffers[3] = { state->permutationCB->CB(), state->sharedDataCB->CB(), state->featureDataCB->CB() };
-	context->PSSetConstantBuffers(4, 3, buffers);
-	state->BindSharedDataCS(context);
+	VanillaBinding::BindSharedConstantBuffers();
 }

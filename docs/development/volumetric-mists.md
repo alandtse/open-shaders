@@ -75,28 +75,28 @@ This implementation is procedural art direction, not a fluid simulation.
 
 ## Starting controls
 
--   **Mist Strength: 0.1.** Scales only the added pockets; zero restores the
-    baseline. It cannot create mist if the weather reference is zero.
--   **Mist Range: 8192 game units (about 117 m).** With the existing 8030-unit volumetric
-    distance, support ends at 7227. Increasing this control alone cannot
-    enlarge the volumetric grid.
--   **Mist Pocket Size: 4096 game units (about 58 m).** Controls the broad noise scale.
-    Density scales inversely with size to retain pocket optical thickness.
-    Very small pockets fade sooner as depth cells become too large.
--   **Follow Outdoor Wind: on.** Outdoor drift follows the live sky wind
-    angle and normalized strength. Velocity transitions have a one-second
-    response time. Interiors and disabling this option use manual drift.
-    This does not change density or simulate shelter behind geometry.
--   **Mist Wind Multiplier: 1.0.** Scales outdoor wind-driven movement only.
-    Final speed is capped at 2000 game units/second (about 29 m/s).
--   **Mist Movement Speed: 1000 game units/second (about 14 m/s).** Manual speed, or speed
-    at full wind strength before the wind multiplier. Adjustable from zero
-    to 2000. Zero freezes the field in world space, not to the camera.
-    Movement accumulates from a monotonic per-frame clock and is uploaded
-    directly to the fog compute buffer. Changing speed does not reposition
-    the mist. Pauses, missing render frames, and stalls over 0.25 seconds
-    do not accumulate catch-up movement. The UI shows the movement offset
-    supplied to the shader; this readout does not verify GPU output.
+- **Mist Strength: 0.1.** Scales only the added pockets; zero restores the
+  baseline. It cannot create mist if the weather reference is zero.
+- **Mist Range: 8192 game units (about 117 m).** With the existing 8030-unit volumetric
+  distance, support ends at 7227. Increasing this control alone cannot
+  enlarge the volumetric grid.
+- **Mist Pocket Size: 4096 game units (about 58 m).** Controls the broad noise scale.
+  Density scales inversely with size to retain pocket optical thickness.
+  Very small pockets fade sooner as depth cells become too large.
+- **Follow Outdoor Wind: on.** Outdoor drift follows the live sky wind
+  angle and normalized strength. Velocity transitions have a one-second
+  response time. Interiors and disabling this option use manual drift.
+  This does not change density or simulate shelter behind geometry.
+- **Mist Wind Multiplier: 1.0.** Scales outdoor wind-driven movement only.
+  Final speed is capped at 2000 game units/second (about 29 m/s).
+- **Mist Movement Speed: 1000 game units/second (about 14 m/s).** Manual speed, or speed
+  at full wind strength before the wind multiplier. Adjustable from zero
+  to 2000. Zero freezes the field in world space, not to the camera.
+  Movement accumulates from a monotonic per-frame clock and is uploaded
+  directly to the fog compute buffer. Changing speed does not reposition
+  the mist. Pauses, missing render frames, and stalls over 0.25 seconds
+  do not accumulate catch-up movement. The UI shows the movement offset
+  supplied to the shader; this readout does not verify GPU output.
 
 Turning this off skips noise evaluation. Turning it on adds material
 evaluation work within its support, but no extra dispatch or allocation.

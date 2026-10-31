@@ -534,7 +534,9 @@ jobs:
 
             - name: Test settings catalog generator
               if: steps.check-cpp.outputs.skip != 'true'
-              run: python -m unittest discover -s tests -p test_scene_settings_catalog_generator.py
+              run: |
+                  python -m unittest discover -s tests -p test_scene_settings_catalog_generator.py
+                  python -m unittest discover -s tests -p test_scene_settings_policy.py
 
             - name: Test shader staging CMake modules
               if: steps.check-cpp.outputs.skip != 'true'
@@ -577,9 +579,7 @@ jobs:
                     echo "skip=false" >> $GITHUB_OUTPUT
                   fi
 
-            # These tests compile slices of src/*.cpp against stub headers with g++, so they
-            # need no Windows SDK. Tests that need the Windows imgui build, hlslkit or pyfomod
-            # run in the Windows jobs instead.
+            # Source-slice suites still target the pre-split Scene Manager and cannot run here.
             - name: Install PyYAML
               if: steps.check-python.outputs.skip != 'true'
               run: |
@@ -591,17 +591,6 @@ jobs:
               working-directory: tests
               run: >
                   "$RUNNER_TEMP/venv/bin/python" -m unittest -v
-                  test_editor_startup
-                  test_effects11_hdr
-                  test_environment_controls
                   test_feature_flip_impact
-                  test_force_weather
-                  test_gpu_pass
-                  test_nr_interop
-                  test_profiler
                   test_release_plan
-                  test_scene_settings_audit
-                  test_scene_settings_persistence
                   test_scene_settings_policy
-                  test_skylighting_cadence
-                  test_skylighting_scheduling

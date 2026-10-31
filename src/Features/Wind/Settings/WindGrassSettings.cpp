@@ -11,7 +11,7 @@ uint32_t Wind::SanitizeGrassWindSpringTextureSize(uint32_t a_textureSize)
 	return *std::min_element(kGrassWindSpringTextureSizes.begin(), kGrassWindSpringTextureSizes.end(),
 		[a_textureSize](uint32_t a_left, uint32_t a_right) {
 			return std::abs(static_cast<int64_t>(a_left) - a_textureSize) <
-		           std::abs(static_cast<int64_t>(a_right) - a_textureSize);
+			       std::abs(static_cast<int64_t>(a_right) - a_textureSize);
 		});
 }
 

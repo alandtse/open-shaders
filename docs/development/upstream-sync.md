@@ -74,9 +74,9 @@ The merge commit's message is `chore(sync): merge upstream/dev as of <sha>`. sem
 
 A real conflict (in a file _not_ on the fork-owned list) means upstream and the fork have both meaningfully changed the same code. Examples we'd expect:
 
--   Both forks bump the same feature INI version.
--   We add a method to a class upstream also modified.
--   We rename a function upstream also renamed.
+- Both forks bump the same feature INI version.
+- We add a method to a class upstream also modified.
+- We rename a function upstream also renamed.
 
 The workflow `git merge --abort`s, posts the conflicted file list to the workflow summary, and exits non-zero. Resolution is manual: clone, run the same merge locally, resolve, push the branch, and open the PR (see [Running a sync manually](#running-a-sync-manually)).
 
@@ -140,9 +140,9 @@ Caches live in `.git/rr-cache/` and aren't pushed, so each maintainer builds the
 
 Each sync workflow run leaves a summary on the run page with:
 
--   Upstream tip SHA
--   `git diff --stat` of files changed
--   `git log --oneline` of commits brought in
+- Upstream tip SHA
+- `git diff --stat` of files changed
+- `git log --oneline` of commits brought in
 
 The PR itself is the primary review surface — read its diff and description before approving/merging, same as any other PR.
 

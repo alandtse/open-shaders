@@ -1,0 +1,62 @@
+#pragma once
+
+#include "Presets/UnifiedPresetCatalog.h"
+
+#include <optional>
+#include <string>
+
+struct ImVec2;
+
+/** @brief Renders the unified Presets browser for Effects 11 and CS Presets packs. */
+class PresetsPageRenderer
+{
+public:
+	/** @brief Draws the page, discovering packs and picking an initial selection on first use. */
+	static void Render();
+	/** @brief Draws preset creation and management popups above either menu host. */
+	static void DrawPopups();
+	/** @brief Whether a preset popup owns input. */
+	static bool IsPopupOpen();
+	/** @brief Opens preset authoring in the menu that currently hosts the UI. */
+	static void OpenExport();
+	/** @brief Opens the selected preset's files and selective copy actions. */
+	static void OpenContents(const std::string& id);
+	/** @brief Closes preset authoring and returns to the installed library. */
+	static void ShowLibrary();
+
+	/** @brief Closes the screenshot lightbox if open. @return True if it consumed the request. */
+	static bool CloseLightboxIfOpen();
+
+	/** @brief One informational label per backend the pack carries. */
+	static void DrawBackendBadges(bool hasE11, bool hasCSPresets, bool hasBaseline, bool compact, bool muted = false);
+
+private:
+	/** @brief Search box and backend filter chips. */
+	static void RenderToolbar();
+	/** @brief Search, actions, and the independently scrolling preset list. */
+	static void RenderBrowser(const ImVec2& size);
+	/** @brief The filtered pack list. */
+	static void RenderList();
+	static void RenderThemeList(float width);
+	static void RenderThemeDetail(const ImVec2& size);
+	/** @brief The selected pack's artwork and metadata. */
+	static void RenderDetail(const ImVec2& size);
+	/** @brief Full-viewport screenshot lightbox when a filmstrip thumb is selected. */
+	static void RenderScreenshotLightbox();
+	/** @brief Width DrawBackendBadges will take, for right-aligning it. */
+	static float MeasureBackendBadgesWidth(bool hasE11, bool hasCSPresets, bool hasBaseline, bool compact);
+
+	/** @brief The one type shown; null shows all. */
+	static std::optional<UnifiedPresetCatalog::PresetType> typeFilter;
+	static char searchBuffer[128];
+	static std::string selectedPackId;
+	static bool discovered;
+	static float stackedListRatio;
+
+	/** @brief Pack lightboxImageIndex belongs to, so selecting another pack resets it. */
+	static std::string lightboxPackId;
+	/** @brief Open lightbox screenshot index into screenshotSRVs; -1 = closed. */
+	static int lightboxImageIndex;
+	/** @brief Ignores close clicks until the mouse is released after opening. */
+	static bool lightboxSuppressClose;
+};
