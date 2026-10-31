@@ -30,6 +30,7 @@ namespace
 		REQUIRE(a_left.foliageToneStrength == a_right.foliageToneStrength);
 		REQUIRE(a_left.landscapeToneStrength == a_right.landscapeToneStrength);
 		REQUIRE(a_left.useAutoMask == a_right.useAutoMask);
+		REQUIRE(a_left.pauseInCombat == a_right.pauseInCombat);
 		REQUIRE(a_left.regionOfInterest == a_right.regionOfInterest);
 		REQUIRE(a_left.regionOverlay == a_right.regionOverlay);
 		REQUIRE(a_left.regionFit == a_right.regionFit);
@@ -65,6 +66,7 @@ namespace
 		tuning.foliageToneStrength = 0.5f;
 		tuning.landscapeToneStrength = 1.25f;
 		tuning.useAutoMask = false;
+		tuning.pauseInCombat = true;
 		tuning.regionOfInterest = true;
 		tuning.regionOverlay = true;
 		tuning.regionFit = NR::Tuning::kRegionFitTight;

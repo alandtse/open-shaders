@@ -1585,8 +1585,27 @@ void NeuralRendering::SetupResources() { retryRequested = recreate = resetHistor
 void NeuralRendering::ResetHistory() { resetHistory = true; }
 void NeuralRendering::ClearShaderCache() { retryRequested = clearShaders = resetHistory = true; }
 
-void NeuralRendering::Reset(bool enabled, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& variant)
+NR::CombatPauseSnapshot NeuralRendering::ResolveCombatPause(bool enabled)
 {
+	std::scoped_lock lock(combatPauseMutex);
+	const auto* state = globals::state;
+	const auto frame = state ? state->frameCount : UINT32_MAX;
+	if (combatPause.HasFrame(frame))
+		return combatPause.GetSnapshot();
+	std::optional<bool> inCombat;
+	auto* const ui = globals::game::ui;
+	if (enabled && state && ui && !state->IsMainOrLoadingMenuOpen(ui) && globals::game::player)
+		inCombat = globals::game::player->IsInCombat();
+	const bool wasPaused = combatPause.GetSnapshot().IsPaused();
+	const auto decision = combatPause.Update(frame, enabled, GetTickCount64(), inCombat, ui && ui->GameIsPaused());
+	if (wasPaused != decision.IsPaused())
+		resetHistory = true;
+	return decision;
+}
+
+void NeuralRendering::Reset(bool enabled, bool pauseInCombat, bool regionOfInterest, uint32_t cropFit, bool cropGroup, bool allowUnverified, const std::string& variant)
+{
+	ResolveCombatPause(enabled && pauseInCombat);
 	allowUnverifiedRuntime.store(allowUnverified, std::memory_order_relaxed);
 	{
 		std::scoped_lock lock(variantMutex);
@@ -1639,6 +1658,10 @@ NeuralRendering::Status NeuralRendering::GetStatus() const
 {
 	std::scoped_lock lock(statusMutex);
 	auto snapshot = status;
+	{
+		std::scoped_lock combatLock(combatPauseMutex);
+		snapshot.combatPause = combatPause.GetSnapshot();
+	}
 	if (snapshot.text.empty())
 		snapshot.text = T(TKEY("status_off"), "Off");
 	snapshot.lastAppliedFrame = appliedFrame.load(std::memory_order_relaxed);
@@ -2109,6 +2132,13 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	}
 	if (ImGui::CollapsingHeader(T(TKEY("performance"), "Performance"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::PushID("performance");
+		if (ImGui::Checkbox(T(TKEY("pause_in_combat"), "Pause NR During Combat"), &tuning.pauseInCombat)) {
+			changed = true;
+			resetHistory = true;
+		}
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("pause_in_combat_tooltip"),
+				"Pauses Neural Rendering for both eyes during player combat. Ordinary upscaling continues. Resumes with fresh history after three continuous seconds of peaceful, unpaused gameplay; the runtime stays initialized."));
 		if (globals::game::isVR && DrawEyeModeControls(tuning, developerMode)) {
 			changed = true;
 			resetHistory = true;
@@ -2260,6 +2290,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		recreate = resetHistory = true;
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (enabled && tuning.pauseInCombat && current.combatPause.phase == NR::CombatPausePhase::Cooldown) {
+		ImGui::TextUnformatted(T(TKEY("combat_resume_delay"), "Peaceful gameplay remaining:"));
+		ImGui::SameLine();
+		ImGui::Text("%.1f s", static_cast<double>(current.combatPause.remainingMs) / 1000.0);
+	}
 	if (tuning.regionOverlay)
 		DrawRegionPreview();
 	ImGui::PopID();
@@ -2340,8 +2375,9 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 {
 	using Outcome = NR::Diagnostics::Outcome;
 	const auto context = NR::Context::Resolve(contexts, DialogueOpen(), contextState);
+	const auto combat = ResolveCombatPause(enabled && tuning.pauseInCombat);
 	auto& diagnostic = diagnostics.BeginHook(globals::state->frameCount, target);
-	const auto action = NR::DecideFrame({ enabled, context.suspended, globals::state->worldRenderedThisFrame, impl->failed,
+	const auto action = NR::DecideFrame({ enabled, context.suspended || combat.IsPaused(), globals::state->worldRenderedThisFrame, impl->failed,
 		retryRequested.load(), impl->ready, impl->lastFrame, globals::state->frameCount, swapRuntime.load(std::memory_order_relaxed) });
 	if (context.resetHistory)
 		resetHistory = true;
@@ -2375,9 +2411,18 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 	}
 	if (action == NR::FrameAction::Suspend) {
 		diagnostic.outcome = Outcome::Suspended;
-		if (!impl->failed && publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended) {
-			logger::debug("[NeuralRendering] Suspended: waiting for dialogue");
-			PublishStatus(Status::State::kSuspended, T(TKEY("status_waiting_dialogue"), "Waiting for dialogue"));
+		const auto phase = context.suspended ? NR::CombatPausePhase::Disabled : combat.phase;
+		if (!impl->failed && (publishedState.load(std::memory_order_relaxed) != Status::State::kSuspended || publishedCombatPhase != phase)) {
+			const char* text = T(TKEY("status_waiting_dialogue"), "Waiting for dialogue");
+			if (phase == NR::CombatPausePhase::Combat)
+				text = T(TKEY("status_combat"), "Neural Rendering paused during combat");
+			else if (phase == NR::CombatPausePhase::Cooldown)
+				text = T(TKEY("status_combat_cooldown"), "Waiting for peaceful gameplay before resuming Neural Rendering");
+			else if (phase == NR::CombatPausePhase::Unavailable)
+				text = T(TKEY("status_combat_unavailable"), "Neural Rendering waiting for active gameplay and combat state");
+			logger::debug("[NeuralRendering] Suspended: {}", text);
+			PublishStatus(Status::State::kSuspended, text);
+			publishedCombatPhase = phase;
 		}
 		return;
 	}
