@@ -796,7 +796,7 @@ bool SnowDeformation::EnsureShaders()
 {
 	if (shaderCompileFailed)
 		return false;
-	if (updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS)
+	if (updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && probeCS && blanketCS)
 		return true;
 
 	const std::vector<std::pair<const char*, const char*>> lightingDefines;
@@ -825,7 +825,7 @@ bool SnowDeformation::EnsureShaders()
 	if (!blanketCS)
 		blanketCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationBlanketCS.hlsl", updateDefines, "cs_5_0")));
 
-	shaderCompileFailed = !(updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS);
+	shaderCompileFailed = !(updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && probeCS && blanketCS);
 	if (shaderCompileFailed)
 		logger::error("[SnowDeformation] Shader compilation failed, prints are disabled until the shader cache is cleared");
 	return !shaderCompileFailed;
