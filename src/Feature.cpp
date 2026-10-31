@@ -379,6 +379,15 @@ void Feature::ApplyDrawHooks()
 	}
 }
 
+void Feature::ApplyPreShadowMapsHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->PreShadowMaps();
+	}
+}
+
 void Feature::ApplyPointLightColorOverrides(float3& a_color)
 {
 	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPointLightColorOverride(); });

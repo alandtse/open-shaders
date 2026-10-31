@@ -90,6 +90,8 @@ struct SnowDeformation : Feature
 
 	/** @brief Updates the footprint field once per frame; called before the shadow maps so every pass of the frame sees the same field. */
 	void UpdateFieldOnce();
+	bool WantsPreShadowMapsHook() const override { return true; }
+	void PreShadowMaps() override { UpdateFieldOnce(); }
 
 	struct ImpactEvent
 	{
