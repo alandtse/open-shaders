@@ -20,7 +20,7 @@
 #include "../Menu/Fonts.h"
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
-#include "Utils/ComboIndex.h"
+#include "Utils/ControlValue.h"
 #include "Utils/Input.h"
 #include "Utils/ShaderCacheClearScope.h"
 #include "Utils/StringUtils.h"
@@ -540,7 +540,7 @@ namespace Util
 		int displayIndex = shownIndex;
 		if (!ComboAtStorage(label, storedValue, &displayIndex, items.data(), static_cast<int>(ItemCount)))
 			return false;
-		CommitComboIndex(*storedValue, shownIndex, displayIndex);
+		CommitDisplayedValue(*storedValue, shownIndex, displayIndex);
 		return true;
 	}
 	const void* GetActiveControlStorageAddress();
