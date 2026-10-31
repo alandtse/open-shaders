@@ -3820,7 +3820,7 @@
     "feature.upscaling.neural_rendering.local_structure": "Local Structure Strength",
     "feature.upscaling.neural_rendering.local_tone": "Local Tone Strength",
     "feature.upscaling.neural_rendering.material_apply_to": "Apply Neural Rendering To",
-    "feature.upscaling.neural_rendering.material_apply_to_tooltip": "Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. It changes where the effect shows, not how much GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts.",
+    "feature.upscaling.neural_rendering.material_apply_to_tooltip": "Choose the materials Neural Rendering is applied to, using the labels the deferred pass writes. All selected is the normal behaviour. With a reduced Model Scale, strengths apply in the full-resolution composite. It changes where the effect shows, not how much model GPU time it costs, and needs the deferred pass. Fine-Tune Strengths sets partial amounts.",
     "feature.upscaling.neural_rendering.material_characters_only": "Characters Only",
     "feature.upscaling.neural_rendering.material_map": "Show Material Map",
     "feature.upscaling.neural_rendering.material_map_category": "Category colours",
