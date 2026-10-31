@@ -4,10 +4,10 @@
     "requests": [
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "main",
             "flags": 34818,
@@ -18,10 +18,10 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "Prepare",
             "flags": 34818,
@@ -32,10 +32,10 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "PrepareToneData",
             "flags": 34818,
@@ -46,10 +46,10 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "Composite",
             "flags": 34818,
@@ -60,11 +60,11 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["VR",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VR", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "main",
             "flags": 34818,
@@ -75,11 +75,11 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["VR",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VR", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "Prepare",
             "flags": 34818,
@@ -90,11 +90,11 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["VR",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VR", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "PrepareToneData",
             "flags": 34818,
@@ -105,11 +105,11 @@
         },
         {
             "defines": [
-                ["COMPUTESHADER",""],
-                ["DX11",""],
-                ["REVERSE_Z",""],
-                ["VR",""],
-                ["WINPC",""]
+                ["COMPUTESHADER", ""],
+                ["DX11", ""],
+                ["REVERSE_Z", ""],
+                ["VR", ""],
+                ["WINPC", ""]
             ],
             "entryPoint": "Composite",
             "flags": 34818,
