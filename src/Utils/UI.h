@@ -20,6 +20,7 @@
 #include "../Menu/Fonts.h"
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/ComboIndex.h"
 #include "Utils/Input.h"
 #include "Utils/ShaderCacheClearScope.h"
 #include "Utils/StringUtils.h"
@@ -528,16 +529,18 @@ namespace Util
 	 * ImGui::Combo needs an int, so the setting is shown through a copy; this reports the setting itself
 	 * as the control's storage, which the scene-setting and benchmark menus match controls by.
 	 * A stored value past the last item is shown as the last item and left unchanged until the user picks.
+	 * Returns true when the user picked or the control hook changed the setting itself, such as a reset.
 	 */
 	template <class Stored, size_t ItemCount>
 	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
 	{
 		if (!storedValue)
 			return false;
-		int displayIndex = std::min(static_cast<int>(*storedValue), static_cast<int>(ItemCount) - 1);
+		const int shownIndex = ComboShownIndex(*storedValue, static_cast<int>(ItemCount));
+		int displayIndex = shownIndex;
 		if (!ComboAtStorage(label, storedValue, &displayIndex, items.data(), static_cast<int>(ItemCount)))
 			return false;
-		*storedValue = static_cast<Stored>(displayIndex);
+		CommitComboIndex(*storedValue, shownIndex, displayIndex);
 		return true;
 	}
 	const void* GetActiveControlStorageAddress();
