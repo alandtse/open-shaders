@@ -41,6 +41,10 @@ struct NeuralRendering
 		uint32_t height = 0;
 		/** @brief Eye count: 1 on flat, 2 on VR. */
 		uint32_t eyes = 0;
+		/** @brief Last admitted model size, including uniform scale and peripheral compression. */
+		uint32_t modelWidth = 0, modelHeight = 0;
+		/** @brief Last frame's PeripheralCompressionReason admission result. */
+		uint32_t peripheralCompressionReason = 0;
 		/** @brief Engine frame of the last frame NR applied; UINT32_MAX before the first. */
 		uint32_t lastAppliedFrame = UINT32_MAX;
 		/** @brief Frames NR has applied since startup. */
@@ -191,6 +195,7 @@ private:
 	/** @brief Eye-stagger mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool skipFrameReuseActive = false;
 	std::atomic<uint32_t> eyeReuseMask = 0, modelFrames = 0, reuseFrames = 0;
+	std::atomic<uint32_t> peripheralCompressionReason = 0;
 	/** @brief Material-strength mirrors for the status snapshot, written on the render thread. */
 	std::atomic_bool materialStrengthActive = false, materialStrengthAvailable = true;
 	std::array<std::atomic<float>, NR::MaterialStrength::kCount> materialStrengthValues{};
