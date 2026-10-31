@@ -15,6 +15,7 @@ SamplerState LinearSampler : register(s0);
 float SnowCoverAt(float2 worldPosition, float2 windowPosition, float landHeight, float normalZ)
 {
 	float amount = 0.0;
+#if defined(SNOW_COVER)
 	[branch] if (Options.x > 0.5)
 	{
 		float2 uv = worldPosition * SharedData::snowCoverSettings.mapScale + SharedData::snowCoverSettings.mapOffset;
@@ -34,6 +35,7 @@ float SnowCoverAt(float2 worldPosition, float2 windowPosition, float landHeight,
 
 		amount = max(saturate(max(environment, weather)) - waterFade, 0.0) * smoothstep(SharedData::snowCoverSettings.minAngle, SharedData::snowCoverSettings.maxAngle, normalZ);
 	}
+#endif
 
 #if defined(SKYLIGHTING)
 	[branch] if (amount > 0.0 && Options.y > 0.5)
@@ -44,6 +46,7 @@ float SnowCoverAt(float2 worldPosition, float2 windowPosition, float landHeight,
 	}
 #endif
 
+#if defined(SNOW_COVER)
 	float melt = 0.0;
 	uint fireCount = amount > 0.0 ? min(SharedData::snowCoverSettings.FireMeltCount, 8u) : 0u;
 	[loop] for (uint i = 0; i < fireCount; i++)
@@ -54,6 +57,9 @@ float SnowCoverAt(float2 worldPosition, float2 windowPosition, float landHeight,
 		melt = max(melt, 1.0 - smoothstep(radius * radius * 0.25, radius * radius, dot(delta, delta)));
 	}
 	return saturate(amount * (1.0 - melt * SharedData::snowCoverSettings.FireMeltStrength));
+#else
+	return amount;
+#endif
 }
 
 #endif

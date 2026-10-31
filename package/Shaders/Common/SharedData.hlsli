@@ -704,7 +704,7 @@ namespace SharedData
 		float2 pad1;
 	};
 
-#if defined(SNOW_COVER) && defined(PSHADER)
+#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 	struct SnowCoverSettings
 	{
 		float Month;
@@ -792,7 +792,7 @@ namespace SharedData
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
 		RainRefractionSettings rainRefractionSettings;
-#if defined(SNOW_COVER) && defined(PSHADER)
+#if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
 		SnowCoverSettings snowCoverSettings;
 #endif
 	};

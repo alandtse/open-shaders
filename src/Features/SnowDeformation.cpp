@@ -805,6 +805,8 @@ bool SnowDeformation::EnsureShaders()
 	updateSkylighting = globals::features::skylighting.loaded;
 	if (updateSkylighting)
 		updateDefines.push_back({ "SKYLIGHTING", "" });
+	if (globals::features::snowCover.loaded)
+		updateDefines.push_back({ "SNOW_COVER", "" });
 
 	if (!updateCS)
 		updateCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationUpdateCS.hlsl", updateDefines, "cs_5_0")));
