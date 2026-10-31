@@ -826,8 +826,22 @@ bool Menu::EnsureVRPanelContext()
 	}
 	ImGui::SetCurrentContext(previous);
 
-	VRSurfaceScope vrScope(*this);
-	return ThemeManager::ReloadFont(*this, cachedFontSize);
+	bool fontsReady = false;
+	{
+		VRSurfaceScope vrScope(*this);
+		fontsReady = ThemeManager::ReloadFont(*this, cachedFontSize);
+	}
+	if (!fontsReady) {
+		logger::error("Menu::EnsureVRPanelContext() - font setup failed; the VR menu keeps using the desktop surface");
+		ImGui::SetCurrentContext(vrPanelContext);
+		ImGui_ImplDX11_Shutdown();
+		ImGui::DestroyContext(vrPanelContext);
+		vrPanelContext = nullptr;
+		vrPanelContextFailed = true;
+		vrSurface = {};
+		ImGui::SetCurrentContext(previous);
+	}
+	return fontsReady;
 }
 
 void Menu::SwapSurfaceState(SurfaceState& other) noexcept

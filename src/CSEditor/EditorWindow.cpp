@@ -2360,7 +2360,8 @@ void EditorWindow::FinishGameHourSliderFrame(bool widgetsDrawn)
 	bool scrubActive = false;
 	if (widgetsDrawn && gameHourScrubId != 0) {
 		if (auto* menu = Menu::GetSingleton())
-			scrubActive = isScrubActiveInContext(menu->GetDesktopContext()) || isScrubActiveInContext(menu->GetVRPanelContext());
+			scrubActive = isScrubActiveInContext(menu->GetDesktopContext()) ||
+			              (menu->separateSurfaces && isScrubActiveInContext(menu->GetVRPanelContext()));
 		if (!scrubActive)
 			scrubActive = isScrubActiveInContext(ImGui::GetCurrentContext());
 	}
