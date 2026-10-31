@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Features/Wind/Settings/WindSettings.h"
+#include "Features/Wind/WindField.h"
 #include "Utils/LazyShader.h"
 
 #include <array>
@@ -42,10 +43,14 @@ struct alignas(16) GrassWindSpringData
 	float flutterWaveScale;
 	float transientResponseRadians;
 	float transientFlutterHalfLife;
+	WindField::FineState fineTransport;
+	WindField::FineState fineAmbientTransport;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
-static_assert(sizeof(GrassWindSpringData) == 240);
+static_assert(offsetof(GrassWindSpringData, fineTransport) == 240);
+static_assert(offsetof(GrassWindSpringData, fineAmbientTransport) == 256);
+static_assert(sizeof(GrassWindSpringData) == 272);
 static_assert(offsetof(GrassWindSpringData, transientFieldMask) == 196);
 static_assert(offsetof(GrassWindSpringData, flutterAmplitudeResponse) == 208);
 static_assert(offsetof(GrassWindSpringData, flutterGustInfluence) == 224);

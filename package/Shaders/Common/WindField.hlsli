@@ -43,22 +43,27 @@ namespace WindField
 			return gradient * rsqrt(max(dot(gradient, gradient), MinimumDivisor));
 		}
 
-		float GradientNoise(float2 position, uint seed, WindTuning tuning)
+		float GradientNoise(float2 position, uint seed, WindTuning tuning, uint latticeMask)
 		{
 			float2 latticePosition = floor(position);
 			float2 offset = position - latticePosition;
 			uint2 lattice = asuint(int2(latticePosition));
 
-			float value00 = dot(GetGradient(lattice, seed, tuning), offset);
+			float value00 = dot(GetGradient(lattice & latticeMask, seed, tuning), offset);
 			float value10 = dot(
-				GetGradient(lattice + uint2(1u, 0u), seed, tuning), offset - float2(1.0f, 0.0f));
+				GetGradient((lattice + uint2(1u, 0u)) & latticeMask, seed, tuning), offset - float2(1.0f, 0.0f));
 			float value01 = dot(
-				GetGradient(lattice + uint2(0u, 1u), seed, tuning), offset - float2(0.0f, 1.0f));
+				GetGradient((lattice + uint2(0u, 1u)) & latticeMask, seed, tuning), offset - float2(0.0f, 1.0f));
 			float value11 = dot(
-				GetGradient(lattice + uint2(1u, 1u), seed, tuning), offset - float2(1.0f, 1.0f));
+				GetGradient((lattice + uint2(1u, 1u)) & latticeMask, seed, tuning), offset - float2(1.0f, 1.0f));
 
 			float2 fade = offset * offset * offset * (offset * (offset * 6.0f - 15.0f) + 10.0f);
 			return lerp(lerp(value00, value10, fade.x), lerp(value01, value11, fade.x), fade.y) * 0.70710678f;
+		}
+
+		float GradientNoise(float2 position, uint seed, WindTuning tuning)
+		{
+			return GradientNoise(position, seed, tuning, ~0u);
 		}
 
 		float Smoothstep(float minimum, float maximum, float value)

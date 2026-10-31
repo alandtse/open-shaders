@@ -267,6 +267,10 @@ void Wind::SetupTreeWindResources()
 	treeState.hasUpdated = false;
 	treeState.springConstantBuffer = std::make_unique<ConstantBuffer>(
 		ConstantBufferDesc<TreeWindSpringData>(), "Wind::TreeWindSpringData");
+	if (!provider) {
+		treeState.springConstantBuffer->Update(TreeWindSpringData{});
+		return;
+	}
 	for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex)
 		RecreateTreeWindSpringTextures(qualityIndex);
 	D3D11_SAMPLER_DESC samplerDesc{};
@@ -281,7 +285,7 @@ void Wind::SetupTreeWindResources()
 
 void Wind::UpdateTreeWindSpring()
 {
-	if (!treeState.springConstantBuffer || !treeState.springSampler.get() || !globals::state)
+	if (!provider || !treeState.springConstantBuffer || !treeState.springSampler.get() || !globals::state)
 		return;
 	for (uint32_t qualityIndex = 0; qualityIndex < kTreeWindSpringFieldCount; ++qualityIndex) {
 		if (!treeState.springResponseTextures[qualityIndex][0] ||

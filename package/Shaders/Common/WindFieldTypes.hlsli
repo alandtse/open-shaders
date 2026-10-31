@@ -25,7 +25,22 @@ namespace WindField
 		float distortionStrength;
 		float distortionScale;
 		float distortionSpeed;
-		float _padding;
+		float microTurbulenceStrength;
+		float fineBaselineAmplitude;
+		float fineWindCoupling;
+		float fineGustCoupling;
+		float fineFrequency;
+	};
+
+	struct FineState
+	{
+		float4 travel;
+	};
+
+	struct FineSample
+	{
+		float3 slowVelocity;
+		float3 detailVelocity;
 	};
 
 	struct WindSample

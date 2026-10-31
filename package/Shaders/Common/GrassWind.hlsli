@@ -6,11 +6,13 @@
 
 namespace GrassWind
 {
-	static const float FlutterDisplacementRatio = 0.25f;
+	static const float FlutterResponseRadians = 1.5f;
+	static const float FlutterMaximumAngleRadians = Math::PI / 18.0f;
+	static const float FlutterPhaseScale = 0.4f;
 
 	float CalculateFlutterWave(float phase)
 	{
-		float windAngle = 0.4 * phase;
+		float windAngle = FlutterPhaseScale * phase;
 		float windAngleSin, windAngleCos;
 		sincos(windAngle, windAngleSin, windAngleCos);
 
@@ -48,16 +50,28 @@ namespace GrassWind
 	}
 
 	float3 CalculateFlutterDisplacement(
-		float tipWeight, float bladeReach, float3 bendAxis, float flutter)
+		float flutterWeight, float3 relativePosition, float3 bendAxis, float bendAngle,
+		float3 flutterAxis, float flutter,
+		float maximumTiltRadians, out float flutterAngle)
 	{
-		float axisLength = length(bendAxis.xy);
-		if (axisLength <= EPSILON_WIND_RESPONSE)
+		flutterAngle = 0.0f;
+		if (flutterWeight <= 0.0f || abs(flutter) <= EPSILON_WIND_RESPONSE ||
+			dot(relativePosition, relativePosition) <= EPSILON_WIND_LENGTH_SQ)
 			return 0.0f.xxx;
-		float3 flutterDirection = cross(bendAxis / axisLength, float3(0.0f, 0.0f, 1.0f));
-		float weight = saturate(tipWeight);
-		float flutterDrive = flutter * (weight * weight);
-		float windPower = bladeReach * FlutterDisplacementRatio * flutterDrive;
-		return flutterDirection * windPower;
+		float3 bentUp = RotateVector(float3(0.0f, 0.0f, 1.0f), bendAxis, bendAngle);
+		float3 bentTangent = RotateVector(cross(flutterAxis, float3(0.0f, 0.0f, 1.0f)), bendAxis, bendAngle);
+		float verticalRadius = max(length(float2(bentUp.z, bentTangent.z)), EPSILON_WIND_RESPONSE);
+		// Symmetric headroom prevents the tilt limit from biasing flutter against the spring pose.
+		float angularHeadroom = max(acos(clamp(cos(max(maximumTiltRadians, 0.0f)) / verticalRadius, -1.0f, 1.0f)) -
+										atan2(abs(bentTangent.z), bentUp.z),
+			0.0f);
+		float maximumFlutter = min(FlutterMaximumAngleRadians, angularHeadroom);
+		if (maximumFlutter <= EPSILON_WIND_RESPONSE)
+			return 0.0f.xxx;
+		flutterAngle = maximumFlutter * tanh(
+											flutter * flutterWeight * FlutterResponseRadians / maximumFlutter);
+		float3 localDisplacement = RotateVector(relativePosition, flutterAxis, flutterAngle) - relativePosition;
+		return RotateVector(localDisplacement, bendAxis, bendAngle);
 	}
 
 	/** @brief Deforms a grass vertex from an already-resolved rigid bend. */

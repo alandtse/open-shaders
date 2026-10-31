@@ -24,7 +24,11 @@ WindField::WindTuning GetDefaultWindTuning()
 	tuning.distortionStrength = 0.0f;
 	tuning.distortionScale = 1.0f;
 	tuning.distortionSpeed = 0.0f;
-	tuning._padding = 0.0f;
+	tuning.microTurbulenceStrength = 0.0f;
+	tuning.fineBaselineAmplitude = 0.0f;
+	tuning.fineWindCoupling = 0.0f;
+	tuning.fineGustCoupling = 0.0f;
+	tuning.fineFrequency = 1.0f;
 	return tuning;
 }
 

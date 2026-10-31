@@ -3,11 +3,11 @@
 
 #include "Common/DampedSpring.hlsli"
 #include "Common/Math.hlsli"
+#include "Common/WindFieldTypes.hlsli"
 
 namespace GrassWindSpring
 {
 	static const uint QualityRangeCount = 3u;
-	static const float FlutterWorldPhaseScale = -0.0078125f;
 
 	struct FieldData
 	{
@@ -44,6 +44,8 @@ namespace GrassWindSpring
 		float FlutterWaveScale;
 		float TransientResponseRadians;
 		float TransientFlutterHalfLife;
+		WindField::FineState FineTransport;
+		WindField::FineState FineAmbientTransport;
 	};
 
 	float EvaluateFlutterAmplitudeMultiplier(float windSpeed)

@@ -26,12 +26,23 @@ namespace WindField
 		float distortionStrength{};
 		float distortionScale{ 1.0f };
 		float distortionSpeed{};
-		float _padding{};
+		float microTurbulenceStrength{ 1.0f };
+		float fineBaselineAmplitude{ 0.025f };
+		float fineWindCoupling{ 0.35f };
+		float fineGustCoupling{ 0.75f };
+		float fineFrequency{ 1.0f };
 	};
-	static_assert(sizeof(WindTuning) == 80);
+	static_assert(sizeof(WindTuning) == 96);
 	static_assert(std::is_standard_layout_v<WindTuning>);
 
-	/** @brief One procedural noise-field instance with an orientation fixed for its lifetime. */
+	/** Integrated world-space transport supplied by Open Wind. */
+	struct FineState
+	{
+		float4 travel{};
+	};
+	static_assert(sizeof(FineState) == 16);
+
+	/** One procedural noise-field instance with an orientation fixed for its lifetime. */
 	struct Field
 	{
 		float3 direction{ 1.0f, 0.0f, 0.0f };
@@ -42,18 +53,4 @@ namespace WindField
 	static_assert(sizeof(Field) == 32);
 	static_assert(std::is_standard_layout_v<Field>);
 
-	struct WindSample
-	{
-		float3 velocity{};
-		float ambientGust{};
-		float transientImpulse{};
-	};
-
-	[[nodiscard]] Field CreateField(const float3& a_direction, float a_speed,
-		float a_travelDistance = 0.0f) noexcept;
-	void SetFieldSpeed(Field& a_field, float a_speed) noexcept;
-	void AdvanceField(Field& a_field, float a_distance) noexcept;
-
-	[[nodiscard]] WindSample SampleField(const float3& a_worldPosition, const Field& a_field,
-		const WindTuning& a_tuning) noexcept;
 }
