@@ -15,7 +15,6 @@
 #include "Features/LightLimitFix/ShadowCasterManager.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/Skylighting.h"
-#include "Features/SnowDeformation.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
@@ -829,8 +828,7 @@ ID3D11ComputeShader* Deferred::GetComputeMainCompositeInterior()
 
 void Deferred::Hooks::Main_RenderShadowMaps::thunk()
 {
-	if (globals::features::snowDeformation.loaded)
-		globals::features::snowDeformation.UpdateFieldOnce();
+	Feature::ApplyPreShadowMapsHooks();
 	func();
 	globals::deferred->EarlyPrepasses();
 };
