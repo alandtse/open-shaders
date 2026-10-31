@@ -31,6 +31,12 @@ namespace NR::MaterialStrength
 		uint32_t edgeSoftness = 0;
 	};
 
+	/** @brief Provider failures do not disable the independent source-resolution compositor. */
+	[[nodiscard]] constexpr bool IsAvailable(bool reducedModel, bool providerRejected, bool providerDegraded, bool compositeDegraded) noexcept
+	{
+		return reducedModel ? !compositeDegraded : !providerRejected && !providerDegraded;
+	}
+
 	/** @brief Whether sanitized strengths reduce the neural edit on any material. */
 	[[nodiscard]] constexpr bool HasEdits(const Values& values) noexcept
 	{

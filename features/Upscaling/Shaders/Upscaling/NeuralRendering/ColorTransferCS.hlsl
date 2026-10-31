@@ -281,7 +281,8 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = originalLinear + (neuralLinear - inputProxy) * mask;
 	else if (CompositeMode == NR::kCompositeRatio)
 		result = originalLinear * ratio;
-	if (MaterialSelectionEnabled != 0) {
+	[branch] if (MaterialSelectionEnabled != 0)
+	{
 		const float protection = NeuralRenderingMaterial::Protection(Masks2Texture, int2(id.xy),
 			uint2(Width, Height), EyeOffsetX, MaterialEdgeSoftness, MaterialStrengthsA, MaterialStrengthsB);
 		const float selection = NeuralRenderingMaterial::Selection(protection);

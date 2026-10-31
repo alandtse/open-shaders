@@ -49,7 +49,7 @@ struct NeuralRendering
 		std::array<uint32_t, 2> ngxResult{};
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
-		/** @brief True when the material lane is present and the graded protection has not been rejected or degraded. */
+		/** @brief True when the selected provider or compositor route has not rejected or lost material protection. */
 		bool materialStrengthAvailable = true;
 		/** @brief True when the last processed frame enabled material protection through the provider or source compositor. */
 		bool materialStrengthActive = false;
