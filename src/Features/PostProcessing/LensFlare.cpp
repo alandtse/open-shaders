@@ -121,7 +121,7 @@ void LensFlare::DrawSettings()
 
 	{
 		const char* modeNames[] = { "Fast (Procedural)", "Quality (FFT Bokeh)", "Ultra (Per-Ghost FFT)" };
-		ImGui::Combo(T("feature.post_processing.lens_flare.ghost_mode", "Ghost Mode"), &settings.GhostModeInt, modeNames, 3);
+		Util::Combo(T("feature.post_processing.lens_flare.ghost_mode", "Ghost Mode"), &settings.GhostModeInt, modeNames);
 		tooltip("Fast: procedural radial ghosts (low cost).\nQuality: FFT convolution with bokeh shape.\nUltra: per-ghost kernel sizes via multi-pass FFT (expensive).");
 	}
 

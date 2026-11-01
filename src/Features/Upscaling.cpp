@@ -758,7 +758,7 @@ void Upscaling::DrawUpscalingSettings()
 		modeLabels.push_back(upscaleModes[i].c_str());
 	if (openCompositeBlocksUpscaling)
 		ImGui::BeginDisabled();
-	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	Util::Combo(T(TKEY("method"), "Method"), currentUpscaleMode, modeLabels.data(), static_cast<int>(modeLabels.size()));
 	if (openCompositeBlocksUpscaling)
 		ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -880,7 +880,7 @@ void Upscaling::DrawUpscalingSettings()
 				T(TKEY("dlss_model_preset_l"), "Preset L"),
 				T(TKEY("dlss_model_preset_m"), "Preset M")
 			};
-			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
+			Util::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), &settings.presetDLSS, presets);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
 									  "Choose which DLSS AI model preset to use.\n"
