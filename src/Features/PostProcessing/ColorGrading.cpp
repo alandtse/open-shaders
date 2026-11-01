@@ -787,7 +787,7 @@ void ColorGrading::DrawSettings()
 		const bool wideGamutActive = linearLighting.settings.enableACEScg && linearLighting.IsLinearLightingActive();
 		const char* inputSpaceName = wideGamutActive ? spaces[5] : spaces[0];
 		ImGui::TextDisabled(T(TKEY("input_color_space"), "Input Color Space: %s (%s)"), inputSpaceName, wideGamutActive ? T(TKEY("input_color_space_auto_detected"), "auto-detected from Linear Lighting ACEScg") : T(TKEY("input_color_space_fixed"), "fixed"));
-		Util::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces.data(), static_cast<int>(spaces.size()));
+		Util::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces);
 		ImGui::TextDisabled(T(TKEY("output_color_space"), "Output Color Space: %s (auto from HDR Display)"), spaces[outputColorSpace]);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("output_color_space_tooltip"), "Output switches automatically: SDR -> sRGB, HDR -> BT2020."));
