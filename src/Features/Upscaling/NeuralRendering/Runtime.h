@@ -238,6 +238,22 @@ namespace NR
 		ID3D12Resource* backbuffer = nullptr;  ///< DLSSNR.Backbuffer: the pixels a protected region restores.
 	};
 
+	/** @brief What the NR runtime reports about itself through its NGX parameter block. */
+	struct RuntimeCapability
+	{
+		bool queried = false;              ///< True once a creation has read the block.
+		bool reportsAvailability = false;  ///< True when the block carries DLSSNR.Available.
+		bool available = false;            ///< DLSSNR.Available; meaningful only when reportsAvailability.
+		bool reportsDriver = false;        ///< True when the block carries DLSSNR.NeedsUpdatedDriver.
+		bool needsUpdatedDriver = false;   ///< DLSSNR.NeedsUpdatedDriver; meaningful only when reportsDriver.
+		uint32_t minDriverMajor = 0;       ///< DLSSNR.MinDriverVersionMajor; 0 when not reported.
+		uint32_t minDriverMinor = 0;       ///< DLSSNR.MinDriverVersionMinor; 0 when not reported.
+		bool hasMemory = false;            ///< True when the stats callback answered.
+		uint64_t memoryBytes = 0;          ///< Aggregate model allocation the runtime reports.
+		uint32_t optimizationLevel = 0;    ///< Optimization level of the runtime's snippet.
+		bool developmentBranch = false;    ///< True for a development snippet branch.
+	};
+
 	/** @brief Owns the cached NGX ABI and one persistent Feature 18 handle per eye. */
 	class Runtime
 	{
@@ -260,6 +276,8 @@ namespace NR
 		void ResetFeature(uint32_t slot);
 		/** @brief Version of the accepted nvngx_dlssnr.dll; empty until Initialize succeeds. */
 		[[nodiscard]] std::string Version() const;
+		/** @brief The runtime's self-reported capability and memory, as of the last creation. */
+		[[nodiscard]] RuntimeCapability Capability() const;
 		/**
 		 * @brief Creates or evaluates a full-resolution display-referred proxy for one OS eye.
 		 * @param protection Optional graded protection resources; a null alpha leaves DLSSNR.UIAlpha

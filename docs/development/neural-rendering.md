@@ -363,6 +363,14 @@ Unsigned, float and resource parameters are written through the public
 `NVSDK_NGX_Parameter::Set` overloads. The runtime sets only parameter names the
 `nvngx_dlssnr.dll` builds contain as strings; a name they do not contain is not written.
 
+After each creation the runtime reads `DLSSNR.Available`, `DLSSNR.NeedsUpdatedDriver`,
+`DLSSNR.MinDriverVersionMajor` and `Minor`, and calls the `DLSSNRGetStatsCallback` the
+parameter block registers, which reports the model allocation, the optimization level and
+whether the snippet is a development branch. `Available` and `NeedsUpdatedDriver` are
+recorded as present or absent, because the populated block may not carry them. The values
+appear in the settings panel and in the `capability` object of `neuralRenderingStatus`; none
+of them gates the pass.
+
 The public [DLSS5VKLayer creation code](https://github.com/bmitch87/DLSS5VKLayer/blob/main/core/ngx_snippet.cpp#L509-L523)
 and [HDR input description](https://github.com/bmitch87/DLSS5VKLayer#hdr-input)
 are reference evidence for the selector names and values. They do not establish

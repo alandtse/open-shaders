@@ -183,6 +183,9 @@ namespace
 	/** @brief Widest the settings-panel region preview is drawn, in ImGui pixels. */
 	constexpr float kRegionPreviewMaxWidth = 400.0f;
 
+	/** @brief Bytes in one MiB, for the model memory line. */
+	constexpr uint64_t kBytesPerMebibyte = 1024ull * 1024ull;
+
 	/** @brief Rectangles the preview can draw: a crop and an actor box per eye. */
 	constexpr size_t kMaxPreviewRegions = 4;
 
@@ -1614,6 +1617,7 @@ void NeuralRendering::PublishStatus(Status::State state, std::string text)
 	next.text = std::move(text);
 	next.failed = state == Status::State::kFailed;
 	next.runtimeVersion = impl->runtime.Version();
+	next.capability = impl->runtime.Capability();
 	next.width = impl->width;
 	next.height = impl->height;
 	next.eyes = impl->eyeCount;
@@ -2237,6 +2241,17 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		recreate = resetHistory = true;
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (current.capability.needsUpdatedDriver) {
+		const auto major = current.capability.minDriverMajor;
+		const auto minor = current.capability.minDriverMinor;
+		ImGui::TextWrapped("%s", std::vformat(T(TKEY("driver_update_needed"), "The runtime asks for NVIDIA driver {}.{} or newer."),
+									 std::make_format_args(major, minor))
+									 .c_str());
+	}
+	if (current.capability.hasMemory) {
+		const auto mebibytes = current.capability.memoryBytes / kBytesPerMebibyte;
+		ImGui::TextDisabled("%s", std::vformat(T(TKEY("model_memory"), "Model memory: {} MiB"), std::make_format_args(mebibytes)).c_str());
+	}
 	if (tuning.regionOverlay)
 		DrawRegionPreview();
 	ImGui::PopID();
