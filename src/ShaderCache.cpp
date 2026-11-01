@@ -3954,7 +3954,7 @@ namespace SIE
 	{
 		CSimpleIniA ini;
 		ini.SetUnicode();
-		ini.LoadFile((DiskCachePath() / L"Info.ini").c_str());
+		const bool cacheInfoLoaded = ini.LoadFile((DiskCachePath() / L"Info.ini").c_str()) >= 0;
 		{
 			std::lock_guard lock{ mismatchesMutex };
 			cacheMismatches.clear();
@@ -3976,9 +3976,13 @@ namespace SIE
 			std::optional<bool> vrFeatureEnabled;
 			if (ini.GetValue("VR", "Enabled"))
 				vrFeatureEnabled = ini.GetBoolValue("VR", "Enabled", false);
-			const auto cacheRuntime = Util::CacheInvalidation::DetectCacheRuntime(recordedRuntime, vrFeatureEnabled);
+			const auto cacheRuntime = cacheInfoLoaded ?
+			                              Util::CacheInvalidation::DetectCacheRuntime(recordedRuntime, vrFeatureEnabled) :
+			                              Util::CacheInvalidation::CacheRuntime::Unknown;
 			const bool mismatch = Util::CacheInvalidation::IsCacheRuntimeMismatch(cacheRuntime, globals::game::isVR);
 			wrongRuntimeCache = mismatch ? cacheRuntime : Util::CacheInvalidation::CacheRuntime::Unknown;
+			if (mismatch)
+				requireDigestForReuse = true;
 			if (mismatch)
 				logger::warn("Disk cache was built for {} but this is a {} install; its shaders cannot be reused and will recompile. Install the {} shader cache",
 					cacheRuntime == Util::CacheInvalidation::CacheRuntime::VR ? "VR" : "SE/AE",
