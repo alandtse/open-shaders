@@ -4029,6 +4029,8 @@
     "feature.vr.reproject_debug_off": "Off",
     "feature.vr.reproject_debug_view": "Reprojection Debug View",
     "feature.vr.reproject_debug_view_tooltip": "Back-Check/Blend Weight/Edge Detection auto-enable Stereo Blend; setting back to Off restores it.\n\nOff: Normal rendering\nCoverage: SSS/SSGI reprojection coverage (black = disoccluded, marched natively)\nBack-Check: Round-trip reprojection validation\nBlend Weight: Heatmap of bilateral blend intensity\nEdge Detection: Highlights depth discontinuities",
+    "feature.vr.separate_desktop_menu": "Separate Desktop Menu",
+    "feature.vr.separate_desktop_menu_tooltip": "Lays the menu out at the desktop window's size, with its own mouse and keyboard input, so it fills the window while the headset keeps its own layout.\nTurn off to mirror the headset menu into the window instead; it is scaled to fit and the mouse does not line up with it.",
     "feature.vr.stereo_blend_color_threshold": "Color Difference Threshold",
     "feature.vr.stereo_blend_color_threshold_tooltip": "Minimum luminance difference between eyes to trigger blending.\nSet to 0 to blend everywhere. Higher = more selective.\nDefault: 0.02",
     "feature.vr.stereo_blend_depth_sigma": "Depth Sigma",

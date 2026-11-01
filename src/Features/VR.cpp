@@ -20,6 +20,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableDepthBufferCullingExterior,
 	MinOccludeeBoxExtent,
 	mouseDeadzone,
+	SeparateDesktopMenu,
 	VROverlayOpenKeys,
 	VROverlayCloseKeys,
 	EnableStereoBlend,

@@ -1104,7 +1104,15 @@ float ThemeManager::ResolveFontSize(const Menu& menu)
 
 	// Compute dynamic size from screen resolution
 	float dynamicSize;
-	if (globals::game::isVR) {
+	const bool desktopSurface = menu.separateSurfaces && ImGui::GetCurrentContext() == menu.GetDesktopContext();
+	if (globals::game::isVR && desktopSurface) {
+		// Separate VR surfaces: the desktop canvas follows the swapchain, not the helper panel.
+		DXGI_SWAP_CHAIN_DESC swapChainDesc{};
+		const float desktopH = globals::d3d::swapChain && SUCCEEDED(globals::d3d::swapChain->GetDesc(&swapChainDesc)) ?
+		                           static_cast<float>(swapChainDesc.BufferDesc.Height) :
+		                           ImGui::GetIO().DisplaySize.y;
+		dynamicSize = desktopH * Constants::DEFAULT_FONT_RATIO;
+	} else if (globals::game::isVR) {
 		// VR: canvas is sized 1:1 to the helper panel, so size the font from
 		// the live panel height; falls back to kOverlayHeight before the panel exists.
 		uint32_t panelW = 0, panelH = 0;
