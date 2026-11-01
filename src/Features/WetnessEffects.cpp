@@ -474,21 +474,14 @@ void WetnessEffects::DrawEnvironmentWetnessSettings()
 	for (size_t i = 0; i < CLIMATE_PRESET_INFO.size(); ++i) {
 		presetNames[i] = GetClimatePresetDisplayName(i);
 	}
-	// Map preset enum to combo index (Custom=0, Legacy=1, Nordic=2, Arctic=3, Coastal=4, Monsoon=5)
-	int currentComboIndex = static_cast<int>(climatePreset);
-
-	if (ImGui::Combo(T(TKEY("climate_preset"), "Climate Preset"), &currentComboIndex, presetNames, static_cast<int>(CLIMATE_PRESET_INFO.size()))) {  // Map combo index back to preset enum
-		// Simplified: map combo index directly to enum, with bounds check
-		ClimatePreset newPreset = (currentComboIndex >= 0 && currentComboIndex < static_cast<int>(CLIMATE_PRESET_INFO.size())) ? static_cast<ClimatePreset>(currentComboIndex) : defaultPreset;
-
-		// Update the preset selection
-		climatePreset = newPreset;
-
+	// The combo index is the preset enum value (Custom=0, Legacy=1, Nordic=2, Arctic=3, Coastal=4, Monsoon=5)
+	if (Util::Combo(T(TKEY("climate_preset"), "Climate Preset"), &climatePreset, presetNames)) {
 		// Apply preset settings (but not for Custom, which just means user-modified)
-		if (newPreset != ClimatePreset::Custom) {
-			ApplyClimatePreset(newPreset);
+		if (climatePreset != ClimatePreset::Custom) {
+			ApplyClimatePreset(climatePreset);
 		}
 	}
+	const int currentComboIndex = static_cast<int>(climatePreset);
 
 	ImGui::PopStyleColor(2);  // Pop both style colors
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -866,9 +859,7 @@ void WetnessEffects::DrawCharacterRainSettings()
 		T(TKEY("character_debug_weapons"), "Held Weapon Classification")
 	};
 	static_assert(std::size(debugModes) == static_cast<std::size_t>(CharacterDebugMode::Count));
-	int debugMode = static_cast<int>(std::min<uint>(settings.CharacterSpotDebug, static_cast<uint>(std::size(debugModes) - 1)));
-	if (ImGui::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &debugMode, debugModes, static_cast<int>(std::size(debugModes))))
-		settings.CharacterSpotDebug = static_cast<uint>(debugMode);
+	Util::Combo(T(TKEY("character_spot_debug"), "Water Layer Debug"), &settings.CharacterSpotDebug, debugModes);
 	ImGui::EndDisabled();
 }
 

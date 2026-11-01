@@ -1071,10 +1071,7 @@ void Upscaling::DrawBackendDiagnostics()
 	};
 	// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
 	// not gated on this node being expanded), so the stored value is in range.
-	int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
-	if (ImGui::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
-		settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
-	}
+	Util::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &settings.streamlineLogLevel, logLevels);
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
 		T(TKEY("streamline_logging_tooltip"),
 			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "

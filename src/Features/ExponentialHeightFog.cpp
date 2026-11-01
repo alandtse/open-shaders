@@ -495,9 +495,7 @@ void ExponentialHeightFog::DrawVolumetricSettings()
 			T(TKEY("volumetric_noise_type_hash"), "Hash (Default)"),
 			T(TKEY("volumetric_noise_type_pcg"), "PCG Quintic"),
 		};
-		int noiseType = static_cast<int>(settings.volumetricFogNoiseType);
-		if (ImGui::Combo(T(TKEY("volumetric_noise_type"), "Noise Type"), &noiseType, noiseTypeLabels, IM_ARRAYSIZE(noiseTypeLabels)))
-			settings.volumetricFogNoiseType = static_cast<uint32_t>(noiseType);
+		Util::Combo(T(TKEY("volumetric_noise_type"), "Noise Type"), &settings.volumetricFogNoiseType, noiseTypeLabels);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("volumetric_noise_tooltip"),
 								  "Modulates the volumetric fog density with a 3D value noise field.\n"

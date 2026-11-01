@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace
@@ -79,4 +80,23 @@ TEST_CASE("Picking away from an out-of-range value's shown item stores the pick"
 	const int shown = Util::ComboShownIndex(stored, 3);
 	REQUIRE(Util::CommitDisplayedValue(stored, shown, 1));
 	REQUIRE(stored == 1);
+}
+
+TEST_CASE("A dropdown over a value table shows the entry holding the stored value", "[ui][control]")
+{
+	constexpr std::array<int, 4> values{ 128, 256, 512, 1024 };
+	REQUIRE(Util::ComboValueIndex(512, values, 1) == 2);
+	REQUIRE(Util::ComboValueIndex(128, values, 1) == 0);
+	REQUIRE(Util::ComboValueIndex(300, values, 1) == 1);
+}
+
+TEST_CASE("A pick from a value table stores the entry's value", "[ui][control]")
+{
+	constexpr std::array<int, 4> values{ 128, 256, 512, 1024 };
+	int stored = 256;
+	const int shown = Util::ComboValueIndex(stored, values, 0);
+	REQUIRE(Util::CommitDisplayedValue(stored, shown, 3, [&values](int index) { return values[index]; }));
+	REQUIRE(stored == 1024);
+	REQUIRE_FALSE(Util::CommitDisplayedValue(stored, 3, 3, [&values](int index) { return values[index]; }));
+	REQUIRE(stored == 1024);
 }

@@ -531,16 +531,47 @@ namespace Util
 	 * A stored value past the last item is shown as the last item and left unchanged until the user picks.
 	 * Returns true when the user picked or the control hook changed the setting itself, such as a reset.
 	 */
-	template <class Stored, size_t ItemCount>
-	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
+	template <class Stored>
+	bool Combo(const char* label, Stored* storedValue, const char* const* items, int itemCount)
 	{
 		if (!storedValue)
 			return false;
-		const int shownIndex = ComboShownIndex(*storedValue, static_cast<int>(ItemCount));
+		const int shownIndex = ComboShownIndex(*storedValue, itemCount);
 		int displayIndex = shownIndex;
-		if (!ComboAtStorage(label, storedValue, &displayIndex, items.data(), static_cast<int>(ItemCount)))
+		if (!ComboAtStorage(label, storedValue, &displayIndex, items, itemCount))
 			return false;
 		CommitDisplayedValue(*storedValue, shownIndex, displayIndex);
+		return true;
+	}
+
+	template <class Stored, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
+	{
+		return Combo(label, storedValue, items.data(), static_cast<int>(ItemCount));
+	}
+
+	template <class Stored, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const char* const (&items)[ItemCount])
+	{
+		return Combo(label, storedValue, items, static_cast<int>(ItemCount));
+	}
+
+	/**
+	 * @brief Draws a dropdown over a setting whose values are not 0, 1, 2 ...: item i stands for values[i].
+	 *
+	 * A stored value that is none of @p values is shown as item @p fallbackIndex and left unchanged
+	 * until the user picks.
+	 */
+	template <class Stored, class Value, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const char* const* items, const std::array<Value, ItemCount>& values, int fallbackIndex = 0)
+	{
+		if (!storedValue)
+			return false;
+		const int shownIndex = ComboValueIndex(*storedValue, values, fallbackIndex);
+		int displayIndex = shownIndex;
+		if (!ComboAtStorage(label, storedValue, &displayIndex, items, static_cast<int>(ItemCount)))
+			return false;
+		CommitDisplayedValue(*storedValue, shownIndex, displayIndex, [&values](int index) { return values[index]; });
 		return true;
 	}
 	const void* GetActiveControlStorageAddress();
