@@ -402,6 +402,224 @@ namespace
 			Util::AddTooltip(row.category.data());
 		return pressed;
 	}
+
+	/** @brief Per-feature facts the feature actions menu reads, shared by the page's actions flyout and the sidebar context menu. */
+	struct FeatureActionContext
+	{
+		bool isDisabled = false;
+		bool isLoaded = false;
+		bool sceneControlled = false;
+		bool canEditSceneSettings = false;
+	};
+
+	FeatureActionContext GetFeatureActionContext(Feature* feat)
+	{
+		const auto featureName = feat->GetShortName();
+		auto* sceneManager = globals::sceneSettingsManager;
+		return {
+			.isDisabled = !feat->IsAlwaysEnabled() && globals::state->IsFeatureDisabled(featureName),
+			.isLoaded = feat->loaded,
+			.sceneControlled = sceneManager->HasActiveSettingsForFeature(featureName) && !sceneManager->IsFeaturePaused(featureName),
+			.canEditSceneSettings = SceneManagerUI::CanEditFeaturePage(feat)
+		};
+	}
+
+	bool CanRestoreFeatureDefaults(Feature* feat, const FeatureActionContext& context)
+	{
+		return !context.isDisabled && context.isLoaded && feat->HasRestoreDefaults();
+	}
+
+	bool CanApplyFeatureOverrides(Feature* feat, const FeatureActionContext& context)
+	{
+		auto* overrideManager = SettingsOverrideManager::GetSingleton();
+		const bool hasOverrides = feat->UsesMainSettings() && overrideManager && overrideManager->HasFeatureOverrides(feat->GetShortName());
+		return !context.isDisabled && context.isLoaded && hasOverrides;
+	}
+
+	/** @brief Whether the feature has any action to offer, which is what decides if its actions button or context menu shows. */
+	bool HasFeatureActions(Feature* feat, const FeatureActionContext& context)
+	{
+		return !feat->IsAlwaysEnabled() || CanRestoreFeatureDefaults(feat, context) ||
+		       CanApplyFeatureOverrides(feat, context) || context.canEditSceneSettings;
+	}
+
+	/** @brief Window padding for the feature actions menu, so its rows line up with their highlight. */
+	ImVec2 FeatureActionsMenuPadding()
+	{
+		const auto& style = ImGui::GetStyle();
+		const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
+		return ImVec2(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
+	}
+
+	/**
+	 * @brief Draws the feature's actions: boot toggle, favorite, Scene Manager, restore defaults and apply override.
+	 *
+	 * Shared by the page's actions flyout and the sidebar context menu, so both offer the same items.
+	 *
+	 * @return True when the menu hosting the items should close.
+	 */
+	bool DrawFeatureActionItems(Feature* feat, const FeatureActionContext& context)
+	{
+		const auto [isDisabled, isLoaded, sceneControlled, canEditSceneSettings] = context;
+		auto& themeSettings = globals::menu->GetSettings().Theme;
+		const auto featureName = feat->GetShortName();
+		const bool canRestoreDefaults = CanRestoreFeatureDefaults(feat, context);
+		const bool canApplyOverrides = CanApplyFeatureOverrides(feat, context);
+		const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat);
+		bool bootEnabled = !isDisabled;
+		bool closeMenu = false;
+		if (!feat->IsAlwaysEnabled()) {
+			const bool failedToLoad = !feat->failedLoadedMessage.empty();
+			if (failedToLoad)
+				ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
+			const SKSE::stl::scope_exit restoreTextColor([failedToLoad]() noexcept {
+				if (failedToLoad)
+					ImGui::PopStyleColor();
+			});
+
+			const auto flipImpact = FlipImpactDisplay::Of(*feat);
+			if (flipImpact && !failedToLoad)
+				ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(flipImpact->tier));
+			const bool bootToggled = Util::FlyoutMenuItem(
+				T("menu.features.enable_at_boot", "Enable at Boot"),
+				bootEnabled,
+				true,
+				FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale());
+			if (flipImpact && !failedToLoad)
+				ImGui::PopStyleColor();
+			if (bootToggled) {
+				const bool nowDisabled = feat->ToggleAtBootSetting();
+				g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
+				bootEnabled = !nowDisabled;
+			}
+
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text(
+					T("menu.features.boot_toggle_tooltip",
+						"Toggle feature loading at boot.\n"
+						"Current state: %s\n"
+						"Restart required for changes to take effect.\n"
+						"Disabling removes performance impact."),
+					bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
+				if (flipImpact) {
+					ImGui::Separator();
+					ImGui::TextColored(FlipImpactDisplay::Color(flipImpact->tier), "%s", FlipImpactDisplay::Tooltip(*flipImpact).c_str());
+				}
+			}
+		}
+
+		const bool favorite = globals::state->IsFeatureFavorite(featureName);
+		if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
+				FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
+			g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
+
+		if (canEditSceneSettings) {
+			if (Util::FlyoutMenuItem(
+					T("feature.scene_manager.name", "Scene Manager"),
+					sceneEditing,
+					!isDisabled && isLoaded,
+					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
+				if (sceneEditing)
+					SceneManagerUI::HideFeaturePageEditing();
+				else
+					SceneManagerUI::BeginFeaturePageEditing(feat);
+				closeMenu = true;
+			}
+		}
+		if (g_featurePreferenceSaveFailed)
+			Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
+
+		if (canRestoreDefaults || canApplyOverrides) {
+			ImGui::Separator();
+			if (canRestoreDefaults) {
+				ImGui::BeginDisabled(sceneEditing);
+				if (Util::FlyoutMenuItem(
+						feat->HasScopedDefaultSettings() ?
+							T("menu.features.restore_page_defaults", "Restore Defaults (Page)") :
+							T("menu.features.restore_defaults", "Restore Defaults"))) {
+					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+					feat->RestoreCurrentPageDefaultSettings();
+					closeMenu = true;
+				}
+				ImGui::EndDisabled();
+
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text(
+						"%s",
+						feat->HasScopedDefaultSettings() ?
+							T("menu.features.restore_page_defaults_tooltip", "Restore default settings for this page") :
+							T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
+				}
+			}
+
+			if (canApplyOverrides) {
+				if (Util::FlyoutMenuItem(
+						feat->HasScopedOverrideSettings() ?
+							T("menu.features.apply_page_override", "Apply Override (Page)") :
+							T("menu.features.apply_override", "Apply Override"),
+						std::nullopt,
+						!sceneControlled && !sceneEditing)) {
+					closeMenu = true;
+					SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
+					if (feat->ReapplyCurrentPageOverrideSettings()) {
+						logger::info("Successfully reapplied override settings for {}", featureName);
+					} else {
+						logger::warn("Failed to reapply override settings for {}", featureName);
+					}
+				}
+
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					if (sceneControlled) {
+						ImGui::Text(
+							"%s",
+							T("menu.features.cannot_apply_overrides_scene",
+								"Cannot apply overrides while scene-specific settings are active.\n"
+								"Pause scene settings for this feature first."));
+					} else {
+						ImGui::Text(
+							"%s",
+							feat->HasScopedOverrideSettings() ?
+								T("menu.features.restore_page_override_tooltip",
+									"Restores override settings for this page from mod files.\n"
+									"This will discard your customizations on this page and revert to\n"
+									"the mod author's recommended settings.") :
+								T("menu.features.restore_override_tooltip",
+									"Restores original override settings from mod files.\n"
+									"This will discard your customizations and revert to\n"
+									"the mod author's recommended settings."));
+					}
+				}
+			}
+		}
+		return closeMenu;
+	}
+
+	/**
+	 * @brief Selects the sidebar row just drawn when it is right-clicked and opens its feature actions menu.
+	 *
+	 * Selecting first means page-scoped actions such as restore defaults act on the page shown. A feature
+	 * with no actions is still selected but gets no menu.
+	 */
+	void DrawSidebarFeatureContextMenu(Feature* feat, size_t listId, size_t& selectedMenu)
+	{
+		ImGui::PushID(feat->GetShortName().c_str());
+		const SKSE::stl::scope_exit restoreID([]() noexcept { ImGui::PopID(); });
+		if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+			selectedMenu = listId;
+		const auto context = GetFeatureActionContext(feat);
+		if (!HasFeatureActions(feat, context))
+			return;
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, FeatureActionsMenuPadding());
+		const bool open = ImGui::BeginPopupContextItem("##SidebarFeatureActions");
+		ImGui::PopStyleVar();
+		if (!open)
+			return;
+		if (ImGui::IsWindowAppearing())
+			g_featurePreferenceSaveFailed = false;
+		if (DrawFeatureActionItems(feat, context))
+			ImGui::CloseCurrentPopup();
+		ImGui::EndPopup();
+	}
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -760,6 +978,8 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 	};
 	if (DrawSidebarRow(row, selectedMenuRef == listId, editorLayout))
 		selectedMenuRef = listId;
+	if (!editorLayout)
+		DrawSidebarFeatureContextMenu(feat, listId, selectedMenuRef);
 }
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
@@ -885,9 +1105,6 @@ float FeatureListRenderer::DrawMenuVisitor::RenderFeatureMaterial(Feature* feat,
 FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(
 	Feature* feat, bool isDisabled, bool isLoaded, bool canEditSceneSettings)
 {
-	const auto featureName = feat->GetShortName();
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	const bool hasOverrides = feat->UsesMainSettings() && overrideManager && overrideManager->HasFeatureOverrides(featureName);
 	// Get available content width for positioning
 	float availableWidth = ImGui::GetContentRegionAvail().x;
 
@@ -902,10 +1119,7 @@ FeatureListRenderer::DrawMenuVisitor::FeatureActionsLayout FeatureListRenderer::
 	// Returns title-only height for button alignment
 	const auto stage = feat->GetReleaseStage();
 	const std::string stageTag = Feature::GetReleaseStageTag(stage);  // empty for Release; color unused when tag is empty
-	const bool canRestoreDefaults = !isDisabled && isLoaded && feat->HasRestoreDefaults();
-	const bool canApplyOverrides = !isDisabled && isLoaded && hasOverrides;
-	const bool hasFeatureActions = !feat->IsAlwaysEnabled() || canRestoreDefaults ||
-	                               canApplyOverrides || canEditSceneSettings;
+	const bool hasFeatureActions = HasFeatureActions(feat, { isDisabled, isLoaded, false, canEditSceneSettings });
 	const float actionsButtonSize = hasFeatureActions ? ImGui::GetFrameHeight() * FEATURE_ACTION_BUTTON_SCALE : 0.0f;
 	const float titleOnlyHeight = DrawFeatureHeader(
 		feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, Util::GetReleaseStageColor(stage), actionsButtonSize);
@@ -929,13 +1143,7 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	bool canEditSceneSettings,
 	const FeatureActionsLayout& layout)
 {
-	auto& themeSettings = globals::menu->GetSettings().Theme;
 	const auto featureName = feat->GetShortName();
-	auto* overrideManager = SettingsOverrideManager::GetSingleton();
-	const bool hasOverrides = feat->UsesMainSettings() && overrideManager && overrideManager->HasFeatureOverrides(featureName);
-	const bool canRestoreDefaults = !isDisabled && isLoaded && feat->HasRestoreDefaults();
-	const bool canApplyOverrides = !isDisabled && isLoaded && hasOverrides;
-	const bool sceneEditing = SceneManagerUI::IsFeaturePageEditing(feat);
 	if (layout.size <= 0.0f) {
 		if (g_featureActionsFlyoutFeature == featureName) {
 			Util::CloseFlyout(g_featureActionsFlyout);
@@ -964,7 +1172,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 		return;
 	}
 
-	bool bootEnabled = !isDisabled;
 	if (g_featureActionsFlyoutFeature != featureName) {
 		Util::CloseFlyout(g_featureActionsFlyout);
 		g_featureActionsFlyoutFeature = featureName;
@@ -980,142 +1187,15 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureActions(
 	auto* actionsButtonDrawList = ImGui::GetWindowDrawList();
 	{
 		const auto& style = ImGui::GetStyle();
-		const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
-		const ImVec2 flyoutPadding(style.WindowPadding.x, highlightGap + style.ItemSpacing.y * 0.5f);
 		Util::FlyoutScope flyout(
 			g_featureActionsFlyout, actionsButtonId, actionsButtonPressed,
-			{ .windowPadding = flyoutPadding,
+			{ .windowPadding = FeatureActionsMenuPadding(),
 				.windowRounding = style.WindowRounding,
 				.windowBackgroundAlpha = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w,
 				.contentAlpha = style.Alpha,
 				.blurBackground = true });
 		if (flyout) {
-			bool closeFlyout = false;
-			if (!feat->IsAlwaysEnabled()) {
-				const bool failedToLoad = !feat->failedLoadedMessage.empty();
-				if (failedToLoad)
-					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
-				const SKSE::stl::scope_exit restoreTextColor([failedToLoad]() noexcept {
-					if (failedToLoad)
-						ImGui::PopStyleColor();
-				});
-
-				const auto flipImpact = FlipImpactDisplay::Of(*feat);
-				if (flipImpact && !failedToLoad)
-					ImGui::PushStyleColor(ImGuiCol_Text, FlipImpactDisplay::Color(flipImpact->tier));
-				const bool bootToggled = Util::FlyoutMenuItem(
-					T("menu.features.enable_at_boot", "Enable at Boot"),
-					bootEnabled,
-					true,
-					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale());
-				if (flipImpact && !failedToLoad)
-					ImGui::PopStyleColor();
-				if (bootToggled) {
-					const bool nowDisabled = feat->ToggleAtBootSetting();
-					g_featurePreferenceSaveFailed = nowDisabled == isDisabled;
-					bootEnabled = !nowDisabled;
-				}
-
-				if (auto _tt = Util::HoverTooltipWrapper()) {
-					ImGui::Text(
-						T("menu.features.boot_toggle_tooltip",
-							"Toggle feature loading at boot.\n"
-							"Current state: %s\n"
-							"Restart required for changes to take effect.\n"
-							"Disabling removes performance impact."),
-						bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
-					if (flipImpact) {
-						ImGui::Separator();
-						ImGui::TextColored(FlipImpactDisplay::Color(flipImpact->tier), "%s", FlipImpactDisplay::Tooltip(*flipImpact).c_str());
-					}
-				}
-			}
-
-			const bool favorite = globals::state->IsFeatureFavorite(featureName);
-			if (Util::FlyoutMenuItem(T("menu.features.add_to_favorites", "Add to Favorites"), favorite, isLoaded,
-					FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale(), Util::DrawStarIcon))
-				g_featurePreferenceSaveFailed = !globals::state->SetFeatureFavorite(featureName, !favorite);
-
-			if (canEditSceneSettings) {
-				if (Util::FlyoutMenuItem(
-						T("feature.scene_manager.name", "Scene Manager"),
-						sceneEditing,
-						!isDisabled && isLoaded,
-						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
-					if (sceneEditing)
-						SceneManagerUI::HideFeaturePageEditing();
-					else
-						SceneManagerUI::BeginFeaturePageEditing(feat);
-					closeFlyout = true;
-				}
-			}
-			if (g_featurePreferenceSaveFailed)
-				Util::Text::WrappedError("%s", T("menu.features.preference_save_failed", "Could not save this preference. Please try again."));
-
-			if (canRestoreDefaults || canApplyOverrides) {
-				ImGui::Separator();
-				if (canRestoreDefaults) {
-					ImGui::BeginDisabled(sceneEditing);
-					if (Util::FlyoutMenuItem(
-							feat->HasScopedDefaultSettings() ?
-								T("menu.features.restore_page_defaults", "Restore Defaults (Page)") :
-								T("menu.features.restore_defaults", "Restore Defaults"))) {
-						SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
-						feat->RestoreCurrentPageDefaultSettings();
-						closeFlyout = true;
-					}
-					ImGui::EndDisabled();
-
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						ImGui::Text(
-							"%s",
-							feat->HasScopedDefaultSettings() ?
-								T("menu.features.restore_page_defaults_tooltip", "Restore default settings for this page") :
-								T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
-					}
-				}
-
-				if (canApplyOverrides) {
-					if (Util::FlyoutMenuItem(
-							feat->HasScopedOverrideSettings() ?
-								T("menu.features.apply_page_override", "Apply Override (Page)") :
-								T("menu.features.apply_override", "Apply Override"),
-							std::nullopt,
-							!sceneControlled && !sceneEditing)) {
-						closeFlyout = true;
-						SceneSettingsManager::SceneLayerGuard sceneLayerGuard(*SceneSettingsManager::GetSingleton());
-						if (feat->ReapplyCurrentPageOverrideSettings()) {
-							logger::info("Successfully reapplied override settings for {}", featureName);
-						} else {
-							logger::warn("Failed to reapply override settings for {}", featureName);
-						}
-					}
-
-					if (auto _tt = Util::HoverTooltipWrapper()) {
-						if (sceneControlled) {
-							ImGui::Text(
-								"%s",
-								T("menu.features.cannot_apply_overrides_scene",
-									"Cannot apply overrides while scene-specific settings are active.\n"
-									"Pause scene settings for this feature first."));
-						} else {
-							ImGui::Text(
-								"%s",
-								feat->HasScopedOverrideSettings() ?
-									T("menu.features.restore_page_override_tooltip",
-										"Restores override settings for this page from mod files.\n"
-										"This will discard your customizations on this page and revert to\n"
-										"the mod author's recommended settings.") :
-									T("menu.features.restore_override_tooltip",
-										"Restores original override settings from mod files.\n"
-										"This will discard your customizations and revert to\n"
-										"the mod author's recommended settings."));
-						}
-					}
-				}
-			}
-
-			if (closeFlyout)
+			if (DrawFeatureActionItems(feat, { isDisabled, isLoaded, sceneControlled, canEditSceneSettings }))
 				Util::RequestCloseFlyout(g_featureActionsFlyout);
 		}
 	}
