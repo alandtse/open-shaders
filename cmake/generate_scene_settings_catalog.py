@@ -491,14 +491,14 @@ def clean_type(type_name: str) -> str:
 def parse_struct_fields(body: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for raw_stmt in mask_cpp_source(body).split(";"):
-        parsed = parse_field_statement(raw_stmt)
+        declarators = split_args(raw_stmt) if "," in raw_stmt and "<" not in raw_stmt else [raw_stmt]
+        parsed = parse_field_statement(declarators[0])
         if parsed:
             fields[parsed[0]] = parsed[1]
-            if "," in raw_stmt and "<" not in raw_stmt:
-                for declarator in split_args(raw_stmt)[1:]:
-                    extra = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*(?:=.*)?", declarator, re.DOTALL)
-                    if extra:
-                        fields.setdefault(extra.group(1), parsed[1])
+            for declarator in declarators[1:]:
+                extra = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*(?:=.*)?", declarator, re.DOTALL)
+                if extra:
+                    fields.setdefault(extra.group(1), parsed[1])
     return fields
 
 
@@ -2680,7 +2680,8 @@ def resolve_combo_choices(
     if not re.fullmatch(r"[A-Za-z_]\w*", variable):
         return []
     declaration = list(re.finditer(
-        rf"\b(?:const\s+)?char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*=\s*\{{",
+        rf"\b(?:const\s+)?(?:char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*="
+        rf"|std::array\s*<[^;{{}}]*>\s*{re.escape(variable)}\s*=?)\s*\{{",
         body[:position]))
     if not declaration:
         return []

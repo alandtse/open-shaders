@@ -937,6 +937,7 @@ namespace Second::Inner
     struct Tuning
     {
         float strengthA = 1.0f, strengthB = 2.0f;
+        float plainA, plainB;
         bool enabled = false;
     };
 }
@@ -949,7 +950,19 @@ namespace Second::Inner
             GENERATOR.parse_struct_fields(bodies["First::Tuning"]), {"gain": "float"})
         self.assertEqual(
             GENERATOR.parse_struct_fields(bodies["Second::Inner::Tuning"]),
-            {"strengthA": "float", "strengthB": "float", "enabled": "bool"})
+            {"strengthA": "float", "strengthB": "float", "plainA": "float", "plainB": "float", "enabled": "bool"})
+
+    def test_std_array_label_tables_resolve_combo_choices(self):
+        body = r'''
+const std::array<const char*, kMaxStyle + 1> styleLabels{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
 
 
 if __name__ == "__main__":
