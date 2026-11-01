@@ -650,6 +650,22 @@ struct AliasFeature : Feature
              (9, "Third", "feature.synthetic.mode_third"),
              (14, "Fourth", "feature.synthetic.mode_fourth")))
 
+    def test_combo_calls_resolve_provider_aliases_and_value_tables(self):
+        providers = {"getSpaces": (("sRGB", ""), ("ACEScg", "feature.fixture.acescg"))}
+        body = 'auto& spaces = getSpaces();\nUtil::Combo("Space", &space, spaces);\n'
+        aliased = GENERATOR.resolve_combo_call_choices(
+            body, body.index("Util::Combo"), ['"Space"', "&space", "spaces"],
+            "feature.fixture.", "", {}, providers)
+        self.assertEqual(aliased, [(0, "sRGB", ""), (1, "ACEScg", "feature.fixture.acescg")])
+
+        source = (
+            'constexpr std::array<const char*, 3> labels = { "128", "256", "512" };\n'
+            "constexpr std::array<int, labels.size()> values = { 128, 256, 512 };\n")
+        table = GENERATOR.resolve_combo_call_choices(
+            "", 0, ['"Size"', "&size", "labels.data()", "values", "1"],
+            "feature.fixture.", source, {}, {})
+        self.assertEqual(table, [(128, "128", ""), (256, "256", ""), (512, "512", "")])
+
     def test_tabs_select_and_headings_only_label(self):
         entry = self.entries_by_id[("", "regular")]
         self.assertEqual(entry["selectorPath"], "Advanced")
