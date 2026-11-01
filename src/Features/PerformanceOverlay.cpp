@@ -1413,7 +1413,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 				fields.emplace_back();
 			return fields;
 		},
-		false, editable);
+		false, { .trailingFixedColumn = editable, .autoFitOnFirstShow = true });
 	if (!removed.empty())
 		abTestingManager->Unqueue(removed);
 	ImGui::TextDisabled("%s", T(TKEY("run_summary_note"), "Frame time and FPS are the headline on flat; in VR the frame rate is locked to the display, so the verdict follows GPU time. A change inside its uncertainty is no measurable change."));

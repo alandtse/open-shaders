@@ -24,6 +24,7 @@
 #include <dxgi.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <unordered_set>
 #include <wrl/client.h>
 
 #include "../Feature.h"
@@ -1521,6 +1522,13 @@ namespace Util
 				return false;
 			return ascending ? (a[column] < b[column]) : (a[column] > b[column]);
 		});
+	}
+
+	void AutoFitTableColumnsOnce()
+	{
+		static std::unordered_set<ImGuiID> fitted;
+		if (auto* table = ImGui::GetCurrentTable(); table && fitted.insert(table->ID).second)
+			ImGui::TableSetColumnWidthAutoAll(table);
 	}
 
 	bool VersionStringLess(const std::string& a, const std::string& b, bool ascending)

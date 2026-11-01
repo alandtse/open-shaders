@@ -792,6 +792,16 @@ namespace Util
 		const std::vector<TableSortFunc>& customSorts = {},
 		TableCellRenderFunc cellRender = nullptr);
 
+	/** @brief Optional column behaviour for the custom string table helpers. */
+	struct StringTableOptions
+	{
+		bool trailingFixedColumn = false;  ///< Last column is a narrow, unsortable, unlabelled column for a button, left out of the search options.
+		bool autoFitOnFirstShow = false;   ///< Sizes every column to its content the first time the table shows rows; later resizes are kept.
+	};
+
+	/** @brief Queues a content fit of the current table's columns, once per table. */
+	void AutoFitTableColumnsOnce();
+
 	/**
 	 * Renders a sortable ImGui table for custom row types (vector<T>), sorts in-place.
 	 * @tparam T The row type. Must be copyable and compatible with the provided cellRender and customSorts functions.
@@ -806,7 +816,7 @@ namespace Util
 	 * @param footerRows Optional static footer rows (not sorted, rendered after main rows).
 	 * @param outerSize Optional outer size for the table (0,0 = auto-size).
 	 * @param scrollable Enables a bounded, internally scrolling table.
-	 * @param trailingFixedColumn Makes the last column a narrow, unsortable column for a button, with no header label.
+	 * @param options Optional column behaviour; see StringTableOptions.
 	 */
 	template <typename T>
 	void ShowSortedStringTableCustom(
@@ -820,7 +830,7 @@ namespace Util
 		const std::vector<T>& footerRows = {},
 		const ImVec2& outerSize = ImVec2(0, 0),
 		bool scrollable = true,
-		bool trailingFixedColumn = false)
+		const StringTableOptions& options = {})
 	{
 		// ScrollY makes the table scroll internally when its bounded
 		// outerSize is smaller than its content. For unbounded tables
@@ -840,7 +850,7 @@ namespace Util
 		if (ImGui::BeginTable(table_id, static_cast<int>(headers.size()), flags, tableSize)) {
 			// Set up columns with content-based sizing
 			for (size_t i = 0; i < headers.size(); ++i) {
-				if (trailingFixedColumn && i + 1 == headers.size())
+				if (options.trailingFixedColumn && i + 1 == headers.size())
 					ImGui::TableSetupColumn(headers[i].c_str(), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoHeaderLabel, ImGui::GetFrameHeight());
 				else
 					ImGui::TableSetupColumn(headers[i].c_str());
@@ -879,6 +889,8 @@ namespace Util
 					}
 				}
 			}
+			if (options.autoFitOnFirstShow && !rows.empty())
+				AutoFitTableColumnsOnce();
 			ImGui::EndTable();
 		}
 	}
@@ -902,7 +914,7 @@ namespace Util
 	 * @param getFilterableFields Function that extracts filterable strings from a row for each column.
 	 *        Should return a vector of strings, one per column, used for filtering.
 	 * @param scrollOnFilterChange If true, scrolls to top when filter changes (default: true).
-	 * @param trailingFixedColumn Makes the last column a narrow button column; it is left out of the search options.
+	 * @param options Optional column behaviour; see StringTableOptions.
 	 */
 	template <typename T>
 	void ShowFilteredStringTableCustom(
@@ -917,7 +929,7 @@ namespace Util
 		int& searchColumn,
 		std::function<std::vector<std::string>(const T&)> getFilterableFields,
 		bool scrollOnFilterChange = true,
-		bool trailingFixedColumn = false)
+		const StringTableOptions& options = {})
 	{
 		// Filter controls
 		static std::string previousFilterText = "";
@@ -932,7 +944,7 @@ namespace Util
 		// Create search column options
 		std::vector<std::string> searchOptions = { "All Columns" };
 		for (size_t i = 0; i < headers.size(); ++i) {
-			if (!(trailingFixedColumn && i + 1 == headers.size()))
+			if (!(options.trailingFixedColumn && i + 1 == headers.size()))
 				searchOptions.push_back(headers[i]);
 		}
 		std::vector<const char*> searchOptionsCStr;
@@ -1002,7 +1014,7 @@ namespace Util
 					cellRender(rowIdx, colIdx, row, currentFilterText);
 				}
 			},
-			{}, ImVec2(0, 0), true, trailingFixedColumn);
+			{}, ImVec2(0, 0), true, options);
 
 		ImGui::PopStyleVar();  // CellPadding
 		ImGui::EndChild();
