@@ -547,12 +547,14 @@ namespace Util
 	template <class Stored, size_t ItemCount>
 	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
 	{
+		static_assert(ComboLabelsMatch<Stored>(ItemCount), "Util::Combo: an enum setting needs one label per enumerator, in value order");
 		return Combo(label, storedValue, items.data(), static_cast<int>(ItemCount));
 	}
 
 	template <class Stored, size_t ItemCount>
 	bool Combo(const char* label, Stored* storedValue, const char* const (&items)[ItemCount])
 	{
+		static_assert(ComboLabelsMatch<Stored>(ItemCount), "Util::Combo: an enum setting needs one label per enumerator, in value order");
 		return Combo(label, storedValue, items, static_cast<int>(ItemCount));
 	}
 

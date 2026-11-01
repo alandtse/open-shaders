@@ -16,6 +16,25 @@ namespace
 		kEverything,
 		kCharacters
 	};
+
+	enum class FromOne : int
+	{
+		kFirst = 1,
+		kSecond
+	};
+
+	enum class Gapped : int
+	{
+		kFirst = 0,
+		kThird = 2
+	};
+
+	enum class WithCount : uint32_t
+	{
+		kFirst,
+		kSecond,
+		kCount
+	};
 }
 
 TEST_CASE("A dropdown shows the item matching the stored value", "[ui][control]")
@@ -99,4 +118,34 @@ TEST_CASE("A pick from a value table stores the entry's value", "[ui][control]")
 	REQUIRE(stored == 1024);
 	REQUIRE_FALSE(Util::CommitDisplayedValue(stored, 3, 3, [&values](int index) { return values[index]; }));
 	REQUIRE(stored == 1024);
+}
+
+TEST_CASE("An enum dropdown needs one label per enumerator in value order", "[ui][control]")
+{
+	static_assert(Util::ComboLabelsMatch<Scope>(3));
+	static_assert(!Util::ComboLabelsMatch<Scope>(2));
+	static_assert(!Util::ComboLabelsMatch<Scope>(4));
+	REQUIRE(Util::ComboLabelsMatch<Scope>(3));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Scope>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Scope>(4));
+}
+
+TEST_CASE("An enum whose values are not 0, 1, 2 ... is refused", "[ui][control]")
+{
+	REQUIRE_FALSE(Util::ComboLabelsMatch<FromOne>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Gapped>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Gapped>(3));
+}
+
+TEST_CASE("A trailing count enumerator needs a label too", "[ui][control]")
+{
+	REQUIRE(Util::ComboLabelsMatch<WithCount>(3));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<WithCount>(2));
+}
+
+TEST_CASE("A setting that is not an enum has no label list to check", "[ui][control]")
+{
+	static_assert(Util::ComboLabelsMatch<uint32_t>(7));
+	REQUIRE(Util::ComboLabelsMatch<uint32_t>(0));
+	REQUIRE(Util::ComboLabelsMatch<int>(7));
 }

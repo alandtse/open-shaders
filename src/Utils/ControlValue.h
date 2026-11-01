@@ -1,8 +1,11 @@
 #pragma once
 
+#include <magic_enum/magic_enum.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <type_traits>
 
 namespace Util
 {
@@ -11,6 +14,27 @@ namespace Util
 	[[nodiscard]] int ComboShownIndex(Stored stored, int itemCount)
 	{
 		return std::clamp(static_cast<int>(stored), 0, (std::max)(itemCount - 1, 0));
+	}
+
+	/**
+	 * @brief Whether @p labelCount labels fit a dropdown over a setting of type @p Stored.
+	 *
+	 * An enum setting needs one label per enumerator, with enumerator i holding value i, because the
+	 * dropdown stores the picked index. Any other type has no list to check. Compile time only.
+	 */
+	template <class Stored>
+	[[nodiscard]] constexpr bool ComboLabelsMatch(std::size_t labelCount)
+	{
+		if constexpr (std::is_enum_v<Stored>) {
+			const auto& values = magic_enum::enum_values<Stored>();
+			if (labelCount != values.size())
+				return false;
+			for (std::size_t i = 0; i < values.size(); ++i) {
+				if (static_cast<long long>(magic_enum::enum_integer(values[i])) != static_cast<long long>(i))
+					return false;
+			}
+		}
+		return true;
 	}
 
 	/** @brief The item a dropdown shows for a stored value that is one of @p values, or @p fallbackIndex when it is none. */

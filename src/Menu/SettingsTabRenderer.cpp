@@ -1096,7 +1096,7 @@ void SettingsTabRenderer::RenderStylingTab()
 				T("menu.settings.color_button_left", "Left"),
 				T("menu.settings.color_button_right", "Right")
 			};
-			Util::Combo(T("menu.settings.color_button_position", "ColorButtonPosition"), &style.ColorButtonPosition, colorButtonPositions);
+			Util::Combo(T("menu.settings.color_button_position", "ColorButtonPosition"), &style.ColorButtonPosition, colorButtonPositions, static_cast<int>(std::size(colorButtonPositions)));
 		}
 		ImGui::SliderFloat2(T("menu.settings.button_text_align", "Button Text Align"), (float*)&style.ButtonTextAlign, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper())
