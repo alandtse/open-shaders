@@ -1844,15 +1844,11 @@ namespace
 			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
 				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
 		if (current == NR::EyeMode::kAlternate) {
-			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
 			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
 				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
 				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
 			};
-			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
-				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
-				changed = true;
-			}
+			changed |= Util::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &tuning.skipFrameGapMode, gapModeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
 					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
@@ -1959,15 +1955,11 @@ namespace
 				"Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a colour ramp of the strength the by-material selection gives that pixel, read at the pixel without Edge Softness. Needs the deferred pass; unlabelled pixels follow Everything Else."));
 		ImGui::BeginDisabled(!tuning.showMaterialMap);
 		ImGui::PushID("materialMap");
-		int materialMapMode = static_cast<int>(std::min(tuning.materialMapMode, NR::MaterialMap::kMaxMode));
 		const std::array<const char*, NR::MaterialMap::kMaxMode + 1> materialMapModeLabels{
 			T(TKEY("material_map_category"), "Category colours"),
 			T(TKEY("material_map_strength"), "Strength"),
 		};
-		if (ImGui::Combo(T(TKEY("material_map_mode"), "Map Mode"), &materialMapMode, materialMapModeLabels.data(), static_cast<int>(materialMapModeLabels.size()))) {
-			tuning.materialMapMode = static_cast<uint32_t>(materialMapMode);
-			changed = true;
-		}
+		changed |= Util::Combo(T(TKEY("material_map_mode"), "Map Mode"), &tuning.materialMapMode, materialMapModeLabels);
 		if (tuning.materialMapMode == static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength))
 			DrawStrengthLegend();
 		ImGui::TextUnformatted(T(TKEY("material_map_filter"), "Show"));
@@ -2006,28 +1998,22 @@ namespace
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
 					"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
-			int scopeItem = static_cast<int>(contexts.dialogue.scope);
 			const std::array<const char*, 4> dialogueScopeLabels{
 				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
 				T(TKEY("dialogue_scope_everything"), "Everything"),
 				T(TKEY("dialogue_scope_characters"), "Skin, hair and eyes"),
 				T(TKEY("dialogue_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
 			};
-			if (ImGui::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &scopeItem, dialogueScopeLabels.data(), static_cast<int>(dialogueScopeLabels.size())))
-				contexts.dialogue.scope = static_cast<NR::Context::ScopeOverride>(scopeItem);
+			Util::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &contexts.dialogue.scope, dialogueScopeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_scope_tooltip"),
 					"What Neural Rendering applies to while a dialogue is open. Choosing a scope keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
 			ImGui::BeginDisabled(cropDisabled);
-			int regionItem = static_cast<int>(contexts.dialogue.region);
 			const std::array<const char*, 2> dialogueRegionLabels{
 				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
 				T(TKEY("dialogue_region_full"), "Full frame"),
 			};
-			if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size()))) {
-				contexts.dialogue.region = static_cast<NR::Context::RegionOverride>(regionItem);
-				cropChanged = true;
-			}
+			cropChanged |= Util::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &contexts.dialogue.region, dialogueRegionLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_region_tooltip"),
 					"Full frame evaluates the whole view during dialogue instead of the character's crop. It needs Limit to Tracked Actor on; Same as normal follows that setting."));
@@ -2094,15 +2080,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"Which nvngx_dlssnr.dll to load: the file in the Streamline folder, or one kept in a subfolder of it. Switching unloads the running one and loads the other, and each build is checked on its own."));
 	}
 	if (availability.modelPresets) {
-		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));
 		const std::array<const char*, NR::Tuning::kMaxModelPreset + 1> presetLabels{
 			T(TKEY("model_preset_original"), "Original"),
 			T(TKEY("model_preset_newest"), "Newest (faster)"),
 		};
-		if (ImGui::Combo(T(TKEY("model_preset"), "Network"), &preset, presetLabels.data(), static_cast<int>(presetLabels.size()))) {
-			tuning.modelPreset = static_cast<uint32_t>(preset);
-			changed = true;
-		}
+		changed |= Util::Combo(T(TKEY("model_preset"), "Network"), &tuning.modelPreset, presetLabels);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_preset_tooltip"),
 				"This runtime ships two networks. Original is the network of the 310.8 runtime. Newest costs less GPU time but changes the picture, so compare faces and hair before keeping it. The change recreates the model."));
@@ -2151,17 +2133,14 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		}
 		ImGui::PopID();
 	}
-	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
 		T(TKEY("style_1"), "Style 1"),
 		T(TKEY("style_2"), "Style 2"),
 	};
-	const bool styleChanged = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
+	const bool styleChanged = Util::Combo(T(TKEY("style"), "Style"), &tuning.style, styleLabels);
 	changed |= styleChanged;
 	bool recreateTuning = styleChanged;
-	if (styleChanged)
-		tuning.style = static_cast<uint32_t>(style);
 	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	changed |= ImGui::SliderFloat(T(TKEY("local_tone"), "Local Tone Strength"), &tuning.localToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -2207,13 +2186,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"NVIDIA's built-in automatic mask. On is the normal setting; turning it off with no mask supplied is an untested configuration."));
 		ImGui::SeparatorText(T(TKEY("developer_crop"), "Crop"));
 		ImGui::BeginDisabled(cropDisabled);
-		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
 		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
 			T(TKEY("crop_fit_padded"), "Padded"),
 			T(TKEY("crop_fit_tight"), "Tight"),
 		};
-		if (ImGui::Combo(T(TKEY("crop_fit"), "Crop Fit"), &fit, fitLabels.data(), static_cast<int>(fitLabels.size()))) {
-			tuning.regionFit = static_cast<uint32_t>(fit);
+		if (Util::Combo(T(TKEY("crop_fit"), "Crop Fit"), &tuning.regionFit, fitLabels)) {
 			changed = true;
 			resetHistory = true;
 		}

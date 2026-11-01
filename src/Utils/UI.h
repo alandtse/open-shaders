@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cfloat>  // For FLT_MAX
 #include <concepts>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include "../Menu/Fonts.h"
 #include "../Menu/ThemeManager.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/ControlValue.h"
 #include "Utils/Input.h"
 #include "Utils/ShaderCacheClearScope.h"
 #include "Utils/StringUtils.h"
@@ -519,6 +521,28 @@ namespace Util
 	/** @brief Draws a checkbox whose clipped label expands on hover. */
 	bool CheckboxWithClippedText(const char* label, bool* value);
 	bool RadioButton(const char* label, unsigned int* storedValue, unsigned int buttonValue);
+	/** @brief Draws ImGui::Combo over @p displayIndex while reporting @p storageAddress as the edited setting, so scene-setting and benchmark menus find it. */
+	bool ComboAtStorage(const char* label, const void* storageAddress, int* displayIndex, const char* const* items, int itemCount);
+	/**
+	 * @brief Draws a dropdown that edits an integral or enum setting in place, one item per value starting at 0.
+	 *
+	 * ImGui::Combo needs an int, so the setting is shown through a copy; this reports the setting itself
+	 * as the control's storage, which the scene-setting and benchmark menus match controls by.
+	 * A stored value past the last item is shown as the last item and left unchanged until the user picks.
+	 * Returns true when the user picked or the control hook changed the setting itself, such as a reset.
+	 */
+	template <class Stored, size_t ItemCount>
+	bool Combo(const char* label, Stored* storedValue, const std::array<const char*, ItemCount>& items)
+	{
+		if (!storedValue)
+			return false;
+		const int shownIndex = ComboShownIndex(*storedValue, static_cast<int>(ItemCount));
+		int displayIndex = shownIndex;
+		if (!ComboAtStorage(label, storedValue, &displayIndex, items.data(), static_cast<int>(ItemCount)))
+			return false;
+		CommitDisplayedValue(*storedValue, shownIndex, displayIndex);
+		return true;
+	}
 	const void* GetActiveControlStorageAddress();
 	ImVec2 GetNativeViewportSizeScaled(float scale);
 
