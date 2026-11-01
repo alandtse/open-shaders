@@ -49,20 +49,6 @@ namespace
 		       format == DXGI_FORMAT_B8G8R8A8_UNORM || format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
 	}
 
-	void UpdateVRPanelDeltaTime()
-	{
-		static INT64 lastVrTicks = 0;
-		LARGE_INTEGER ticksPerSecond{};
-		LARGE_INTEGER currentTicks{};
-		if (QueryPerformanceFrequency(&ticksPerSecond) && QueryPerformanceCounter(&currentTicks) && ticksPerSecond.QuadPart > 0) {
-			if (lastVrTicks > 0 && currentTicks.QuadPart > lastVrTicks) {
-				ImGui::GetIO().DeltaTime = static_cast<float>(
-					static_cast<double>(currentTicks.QuadPart - lastVrTicks) / static_cast<double>(ticksPerSecond.QuadPart));
-			}
-			lastVrTicks = currentTicks.QuadPart;
-		}
-	}
-
 	void DrawShaderCompilationFailures(uint64_t failed, const Menu::ThemeSettings& themeSettings)
 	{
 		if (failed) {
@@ -106,98 +92,47 @@ void OverlayRenderer::RenderOverlay(
 {
 	BackgroundBlur::RestoreRetainedBuffers();
 
-	uint32_t panelW = 0, panelH = 0;
-	const bool separateSurfaces = globals::game::isVR && globals::features::vr.settings.SeparateDesktopMenu &&
-	                              globals::features::vr.GetHelperPanelSize(panelW, panelH) && menu.EnsureVRPanelContext();
-
-	menu.separateSurfaces = separateSurfaces;
-
 	// Apply the VR panel size before pumping input: PumpInput reads
 	// io.DisplaySize to map wand UV to pixels for this frame.
-	if (separateSurfaces) {
-		Menu::VRSurfaceScope vrScope(menu);
-		ApplyVRPanelDisplaySize();
-	} else {
-		ApplyVRPanelDisplaySize();
-	}
+	ApplyVRPanelDisplaySize();
 	processInputEventQueue();
 
+	auto& io = ImGui::GetIO();
 	const bool acceptsInput = !menu.IsPreviewFlying() &&
 	                          (menu.ShouldSwallowInput() || globals::features::vr.HelperRequestsRender());
-	const auto forEachSurface = [&](const auto& action) {
-		action(ImGui::GetIO());
-		if (separateSurfaces)
-			action(menu.GetVRPanelContext()->IO);
-	};
-	forEachSurface([acceptsInput](ImGuiIO& io) {
-		io.SetAppAcceptingEvents(acceptsInput);
-		if (!acceptsInput) {
-			io.ClearEventsQueue();
-			io.ClearInputKeys();
-			io.ClearInputMouse();
-			io.WantSetMousePos = false;
-		}
-	});
+	io.SetAppAcceptingEvents(acceptsInput);
 	if (!acceptsInput) {
+		io.ClearEventsQueue();
+		io.ClearInputKeys();
+		io.ClearInputMouse();
+		io.WantSetMousePos = false;
 		ImGui::ClearActiveID();
-		if (separateSurfaces) {
-			Menu::VRSurfaceScope vrScope(menu);
-			ImGui::ClearActiveID();
-		}
 	}
 
 	if (ShouldSkipRendering()) {
 		EditorWindow::GetSingleton()->FinishGameHourSliderFrame(false);
-		forEachSurface([](ImGuiIO& io) {
-			io.ClearInputKeys();
-			io.ClearEventsQueue();
-		});
+		io.ClearInputKeys();
+		io.ClearEventsQueue();
 		EditorWindow::GetSingleton()->UpdateOpenState();
 		return;
 	}
 
-	if (separateSurfaces) {
-		{
-			Menu::VRSurfaceScope vrScope(menu);
-			RenderSurface(menu, Surface::VRPanel, drawSettings, keyIdToString, cachedFontSize, ThemeManager::ResolveFontSize(menu));
-		}
-		RenderSurface(menu, Surface::Desktop, drawSettings, keyIdToString, cachedFontSize, currentFontSize);
-	} else {
-		RenderSurface(menu, Surface::Single, drawSettings, keyIdToString, cachedFontSize, currentFontSize);
-	}
-	EditorWindow::GetSingleton()->FinishGameHourSliderFrame(true);
-}
-
-void OverlayRenderer::RenderSurface(
-	Menu& menu,
-	Surface surface,
-	const std::function<void()>& drawSettings,
-	const std::function<const char*(std::vector<InputCombo>)>& keyIdToString,
-	float& cachedFontSize,
-	float currentFontSize)
-{
-	// Once-per-frame work runs with the first surface drawn (the HMD panel when both exist).
-	const bool firstSurface = surface != Surface::Desktop;
-	auto& io = ImGui::GetIO();
-
 	HandleFontReload(menu, cachedFontSize, currentFontSize);
-	InitializeImGuiFrame(menu, surface);
+	InitializeImGuiFrame(menu);
 
 	RenderShaderCompilationStatus(keyIdToString);
 	RenderShaderBlockingStatus();
 
 	auto* editorWindow = EditorWindow::GetSingleton();
-	if (firstSurface) {
-		if (editorWindow->open && !EditorWindow::CanBeOpen()) {
-			editorWindow->open = false;
-			if (editorWindow->IsInPreviewMode())
-				editorWindow->ExitPreviewMode();
-		}
-		editorWindow->UpdateOpenState();
+	if (editorWindow->open && !EditorWindow::CanBeOpen()) {
+		editorWindow->open = false;
+		if (editorWindow->IsInPreviewMode())
+			editorWindow->ExitPreviewMode();
 	}
+	editorWindow->UpdateOpenState();
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11Editor = Effects11Editor::GetSingleton();
-	if (firstSurface && effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
+	if (effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
 		effects11Editor.Close(false);
 #endif
 	if (editorWindow->open) {
@@ -227,10 +162,9 @@ void OverlayRenderer::RenderSurface(
 
 	RenderFeatureOverlays();
 	RenderFirstTimeSetupOverlay();
-	if (firstSurface)
-		HandleABTesting();
-	ABTestingManager::GetSingleton()->DrawOverlayUI();
-	FinalizeImGuiFrame(surface);
+	HandleABTesting();
+	editorWindow->FinishGameHourSliderFrame(true);
+	FinalizeImGuiFrame();
 }
 
 bool OverlayRenderer::ShouldSkipRendering()
@@ -285,29 +219,23 @@ bool OverlayRenderer::ApplyVRPanelDisplaySize()
 
 	// VR: canvas must equal the helper panel's pixel size 1:1, or wand
 	// clicks (mapped via the same DisplaySize-based UV) drift from the
-	// resized content. With separate surfaces off the desktop mirror is this
-	// canvas fitted into the window.
+	// resized content. The desktop mirror shares this size and can clip on
+	// a differing swapchain resolution; pre-existing, not a regression.
 	auto& io = ImGui::GetIO();
 	io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
 	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 	return true;
 }
 
-void OverlayRenderer::InitializeImGuiFrame(Menu& menu, const Surface surface)
+void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 {
 	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
-	// The HMD context has no Win32 backend: it needs its own delta time and panel-sized canvas.
-	if (surface == Surface::VRPanel) {
-		UpdateVRPanelDeltaTime();
-		ApplyVRPanelDisplaySize();
-	} else {
-		ImGui_ImplWin32_NewFrame();
-	}
+	ImGui_ImplWin32_NewFrame();
 
 	// ImGui_ImplWin32_NewFrame() above overwrites DisplaySize from the window
 	// rect, so the panel size must be re-applied here before ImGui::NewFrame.
-	const bool vrPanel = surface == Surface::VRPanel || (surface == Surface::Single && ApplyVRPanelDisplaySize());
+	const bool vrPanel = ApplyVRPanelDisplaySize();
 	if (!vrPanel) {
 		DXGI_SWAP_CHAIN_DESC desc{};
 		globals::d3d::swapChain->GetDesc(&desc);
@@ -519,9 +447,12 @@ void OverlayRenderer::HandleABTesting()
 		// Update the A/B test aggregator with current frame data
 		abTestingManager->RecordFrame(allRows);
 	}
+
+	// Draw A/B testing overlay
+	abTestingManager->DrawOverlayUI();
 }
 
-void OverlayRenderer::FinalizeImGuiFrame(const Surface surface)
+void OverlayRenderer::FinalizeImGuiFrame()
 {
 	if (auto* menu = Menu::GetSingleton();
 		menu && menu->GetSettings().Theme.UseCustomCursor && Util::CursorLoader::GetLoadedCount() > 0) {
@@ -530,17 +461,14 @@ void OverlayRenderer::FinalizeImGuiFrame(const Surface surface)
 
 	ImGui::Render();
 
-	if (surface != Surface::VRPanel) {
-		auto* drawData = ImGui::GetDrawData();
-		if (!RenderDesktopMirror(drawData) && !BackgroundBlur::RenderDrawData(drawData))
-			ImGui_ImplDX11_RenderDrawData(drawData);
-	}
+	auto* drawData = ImGui::GetDrawData();
+	if (!RenderDesktopMirror(drawData) && !BackgroundBlur::RenderDrawData(drawData))
+		ImGui_ImplDX11_RenderDrawData(drawData);
 
 	// Render the same draw data into the ImGuiVRHelper's panel RTV so the
 	// helper can composite our menu as a 3D quad in the HMD. The helper owns
 	// VR overlay compositing — Community Shaders no longer submits its own.
-	if (surface != Surface::Desktop)
-		globals::features::vr.RenderHelperToPanel();
+	globals::features::vr.RenderHelperToPanel();
 }
 
 bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
@@ -550,7 +478,7 @@ bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
 	uint32_t panelWidth = 0;
 	uint32_t panelHeight = 0;
 	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
-	if (!helperPanelActive || !drawData || !globals::d3d::swapChain)
+	if (!helperPanelActive || !drawData || !globals::d3d::swapChain || !globals::features::vr.settings.FitMenuToDesktop)
 		return false;
 	if (globals::features::upscaling.d3d12SwapChainActive ||
 		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR))
@@ -562,7 +490,18 @@ bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
 	if (!IsSupportedDesktopMirrorFormat(swapChainDesc.BufferDesc.Format))
 		return false;
 
-	if (BackgroundBlur::HasHDRSceneImageCallback(drawData))
+	const ImVec2 desktopSize(
+		static_cast<float>(swapChainDesc.BufferDesc.Width),
+		static_cast<float>(swapChainDesc.BufferDesc.Height));
+	const double sourceWidth = static_cast<double>(drawData->DisplaySize.x) * drawData->FramebufferScale.x;
+	const double sourceHeight = static_cast<double>(drawData->DisplaySize.y) * drawData->FramebufferScale.y;
+	const bool sourceCanvasValid = std::isfinite(sourceWidth) && std::isfinite(sourceHeight) && sourceWidth > 0.0 && sourceHeight > 0.0;
+	const bool dimensionsDiffer = !sourceCanvasValid || std::abs(desktopSize.x - sourceWidth) > 0.5 || std::abs(desktopSize.y - sourceHeight) > 0.5;
+	if (!dimensionsDiffer || BackgroundBlur::HasHDRSceneImageCallback(drawData))
+		return false;
+
+	// Fit the helper-sized canvas for the desktop target; keep the original for the HMD panel.
+	if (!pendingDesktopMirror.Build(*drawData, desktopSize))
 		return false;
 
 	pendingDesktopMirrorSource = drawData;
@@ -575,13 +514,13 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 		pendingDesktopMirror.Reset();
 		pendingDesktopMirrorSource = nullptr;
 	};
-	if (!pendingDesktopMirrorSource)
+	if (!pendingDesktopMirror.Get())
 		return;
 	const SKSE::stl::scope_exit consumePending([&]() noexcept {
 		pendingDesktopMirror.Reset();
 		pendingDesktopMirrorSource = nullptr;
 	});
-	if (!swapChain || hdrReady || frameGenActive || globals::features::upscaling.d3d12SwapChainActive ||
+	if (!swapChain || !pendingDesktopMirrorSource || hdrReady || frameGenActive || globals::features::upscaling.d3d12SwapChainActive ||
 		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR)) {
 		clearPending();
 		return;
@@ -612,6 +551,10 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	}
 	D3D11_TEXTURE2D_DESC backBufferDesc{};
 	backBuffer->GetDesc(&backBufferDesc);
+	auto* mirrorDrawData = pendingDesktopMirror.Get();
+	const bool fitsMirror = mirrorDrawData && IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1 &&
+	                        static_cast<float>(backBufferDesc.Width) == mirrorDrawData->DisplaySize.x &&
+	                        static_cast<float>(backBufferDesc.Height) == mirrorDrawData->DisplaySize.y;
 
 	winrt::com_ptr<ID3D11RenderTargetView> backBufferRTV;
 	if (FAILED(globals::d3d::device->CreateRenderTargetView(backBuffer.get(), nullptr, backBufferRTV.put()))) {
@@ -649,24 +592,13 @@ void OverlayRenderer::RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, co
 	const D3D11_RECT scissor{ 0, 0, static_cast<LONG>(backBufferDesc.Width), static_cast<LONG>(backBufferDesc.Height) };
 	context->RSSetScissorRects(1, &scissor);
 
-	// The ImGui DX11 backend is per context, so the desktop context must be bound to draw its data.
-	auto* const previousContext = ImGui::GetCurrentContext();
-	if (auto* menu = Menu::GetSingleton(); menu && menu->GetDesktopContext())
-		ImGui::SetCurrentContext(menu->GetDesktopContext());
-	const SKSE::stl::scope_exit restoreContext([&]() noexcept { ImGui::SetCurrentContext(previousContext); });
-
 	CS_GPU_PASS("OverlayRenderer::DesktopMirror");
-	const bool supportedBackBuffer = IsSupportedDesktopMirrorFormat(backBufferDesc.Format) && backBufferDesc.SampleDesc.Count == 1;
-	const ImVec2 backBufferSize(static_cast<float>(backBufferDesc.Width), static_cast<float>(backBufferDesc.Height));
-	const bool matchesBackBuffer = std::abs(pendingDesktopMirrorSource->DisplaySize.x * pendingDesktopMirrorSource->FramebufferScale.x - backBufferSize.x) <= 0.5f &&
-	                               std::abs(pendingDesktopMirrorSource->DisplaySize.y * pendingDesktopMirrorSource->FramebufferScale.y - backBufferSize.y) <= 0.5f;
-
-	// A canvas that matches the back buffer draws as is; a helper-panel-sized one (separate surfaces off) is fitted into it.
-	ImDrawData* drawData = pendingDesktopMirrorSource;
-	if (supportedBackBuffer && !matchesBackBuffer && pendingDesktopMirror.Build(*pendingDesktopMirrorSource, backBufferSize))
-		drawData = pendingDesktopMirror.Get();
-	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(drawData, *pendingDesktopMirrorSource))
-		ImGui_ImplDX11_RenderDrawData(drawData);
+	if (!fitsMirror) {
+		ImGui_ImplDX11_RenderDrawData(pendingDesktopMirrorSource);
+		return;
+	}
+	if (!BackgroundBlur::RenderDrawDataForDesktopMirror(mirrorDrawData, *pendingDesktopMirrorSource))
+		ImGui_ImplDX11_RenderDrawData(mirrorDrawData);
 	clearPending();
 }
 

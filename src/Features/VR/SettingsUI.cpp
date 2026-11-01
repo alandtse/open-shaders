@@ -215,11 +215,9 @@ namespace
 				ImGui::Text("%s", T(TKEY("min_occludee_box_extent_tooltip"), "Minimum bounding box dimensions for object occlusion culling. Lower values improve performance but may result in visual artifacts."));
 			}
 
-			ImGui::Checkbox(T(TKEY("separate_desktop_menu"), "Separate Desktop Menu"), &settings.SeparateDesktopMenu);
+			ImGui::Checkbox(T(TKEY("fit_menu_to_desktop"), "Fit Menu to Desktop Window"), &settings.FitMenuToDesktop);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("separate_desktop_menu_tooltip"),
-									  "Lays the menu out at the desktop window's size, with its own mouse and keyboard input, so it fills the window while the headset keeps its own layout.\n"
-									  "Turn off to mirror the headset menu into the window instead; it is scaled to fit and the mouse does not line up with it."));
+				ImGui::Text("%s", T(TKEY("fit_menu_to_desktop_tooltip"), "Scales the headset menu to fill the desktop mirror window. The mouse does not line up with the scaled menu.\nOff draws the menu at the headset panel's size, which can clip when the window differs in size or aspect."));
 			}
 		}
 	}

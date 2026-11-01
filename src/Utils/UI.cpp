@@ -109,8 +109,7 @@ namespace Util
 		if (!GetClientRect(hwnd, &rect) || rect.right <= 0 || rect.bottom <= 0)
 			return;
 
-		if (rect.right == g_lastWindowWidth && rect.bottom == g_lastWindowHeight &&
-			g_displaySize.x == bufferWidth && g_displaySize.y == bufferHeight)
+		if (rect.right == g_lastWindowWidth && rect.bottom == g_lastWindowHeight)
 			return;
 
 		g_displaySize.x = bufferWidth;
@@ -1734,9 +1733,11 @@ namespace Util
 
 		SearchableComboStorage& GetSearchableComboStorage()
 		{
-			static std::unordered_map<ImGuiContext*, SearchableComboStorage> storages;
-			auto& storage = storages[GImGui];
-			storage.context = GImGui;
+			static SearchableComboStorage storage;
+			if (storage.context != GImGui) {
+				storage = {};
+				storage.context = GImGui;
+			}
 			return storage;
 		}
 

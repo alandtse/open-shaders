@@ -57,27 +57,12 @@ public:
 	static void RenderDesktopMirrorAtPresent(IDXGISwapChain* swapChain, bool hdrReady, bool frameGenActive);
 
 private:
-	/** ImGui surface a frame is built for: the only one, or the VR HMD panel and desktop window when separate. */
-	enum class Surface
-	{
-		Single,
-		VRPanel,
-		Desktop
-	};
-
-	static void RenderSurface(
-		Menu& menu,
-		Surface surface,
-		const std::function<void()>& drawSettings,
-		const std::function<const char*(std::vector<InputCombo>)>& keyIdToString,
-		float& cachedFontSize,
-		float currentFontSize);
 	static bool ShouldSkipRendering();
 	static void HandleFontReload(Menu& menu, float& cachedFontSize, float currentFontSize);
 	static bool ApplyVRPanelDisplaySize();
-	static void InitializeImGuiFrame(Menu& menu, Surface surface);
+	static void InitializeImGuiFrame(Menu& menu);
 	static void RenderFirstTimeSetupOverlay();
 	static void HandleABTesting();
-	static void FinalizeImGuiFrame(Surface surface);
+	static void FinalizeImGuiFrame();
 	static bool RenderDesktopMirror(ImDrawData* drawData);
 };
