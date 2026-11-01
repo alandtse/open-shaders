@@ -806,6 +806,7 @@ namespace Util
 	 * @param footerRows Optional static footer rows (not sorted, rendered after main rows).
 	 * @param outerSize Optional outer size for the table (0,0 = auto-size).
 	 * @param scrollable Enables a bounded, internally scrolling table.
+	 * @param trailingFixedColumn Makes the last column a narrow, unsortable column for a button, with no header label.
 	 */
 	template <typename T>
 	void ShowSortedStringTableCustom(
@@ -818,7 +819,8 @@ namespace Util
 		std::function<void(int, int, const T&)> cellRender,
 		const std::vector<T>& footerRows = {},
 		const ImVec2& outerSize = ImVec2(0, 0),
-		bool scrollable = true)
+		bool scrollable = true,
+		bool trailingFixedColumn = false)
 	{
 		// ScrollY makes the table scroll internally when its bounded
 		// outerSize is smaller than its content. For unbounded tables
@@ -838,7 +840,10 @@ namespace Util
 		if (ImGui::BeginTable(table_id, static_cast<int>(headers.size()), flags, tableSize)) {
 			// Set up columns with content-based sizing
 			for (size_t i = 0; i < headers.size(); ++i) {
-				ImGui::TableSetupColumn(headers[i].c_str());
+				if (trailingFixedColumn && i + 1 == headers.size())
+					ImGui::TableSetupColumn(headers[i].c_str(), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize | ImGuiTableColumnFlags_NoHeaderLabel, ImGui::GetFrameHeight());
+				else
+					ImGui::TableSetupColumn(headers[i].c_str());
 			}
 			ImGui::TableHeadersRow();
 
@@ -897,6 +902,7 @@ namespace Util
 	 * @param getFilterableFields Function that extracts filterable strings from a row for each column.
 	 *        Should return a vector of strings, one per column, used for filtering.
 	 * @param scrollOnFilterChange If true, scrolls to top when filter changes (default: true).
+	 * @param trailingFixedColumn Makes the last column a narrow button column; it is left out of the search options.
 	 */
 	template <typename T>
 	void ShowFilteredStringTableCustom(
@@ -910,7 +916,8 @@ namespace Util
 		std::string& filterText,
 		int& searchColumn,
 		std::function<std::vector<std::string>(const T&)> getFilterableFields,
-		bool scrollOnFilterChange = true)
+		bool scrollOnFilterChange = true,
+		bool trailingFixedColumn = false)
 	{
 		// Filter controls
 		static std::string previousFilterText = "";
@@ -924,8 +931,9 @@ namespace Util
 
 		// Create search column options
 		std::vector<std::string> searchOptions = { "All Columns" };
-		for (const auto& col : headers) {
-			searchOptions.push_back(col);
+		for (size_t i = 0; i < headers.size(); ++i) {
+			if (!(trailingFixedColumn && i + 1 == headers.size()))
+				searchOptions.push_back(headers[i]);
 		}
 		std::vector<const char*> searchOptionsCStr;
 		for (const auto& option : searchOptions) {
@@ -993,7 +1001,8 @@ namespace Util
 				if (cellRender) {
 					cellRender(rowIdx, colIdx, row, currentFilterText);
 				}
-			});
+			},
+			{}, ImVec2(0, 0), true, trailingFixedColumn);
 
 		ImGui::PopStyleVar();  // CellPadding
 		ImGui::EndChild();

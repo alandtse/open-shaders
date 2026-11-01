@@ -352,7 +352,12 @@ void PerformanceRenderer::Render(Feature* host)
 		const std::string benchmarkTab = benchmarkQueued > 0 ?
 		                                     std::format("{} ({})###BenchmarkTab", benchmarkTabLabel, benchmarkQueued) :
 		                                     std::format("{}###BenchmarkTab", benchmarkTabLabel);
-		if (MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading)) {
+		const bool benchmarkTabOpen = MenuFonts::BeginTabItemWithFont(benchmarkTab.c_str(), Menu::FontRole::Subheading);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("tab_benchmark_tooltip"), "Measures what a change costs on your scene."));
+			ImGui::Text("%s", T(TKEY("tab_benchmark_queue_tooltip"), "A number is how many changes are queued for the next run. The queue is not saved; running it or Clear all empties it."));
+		}
+		if (benchmarkTabOpen) {
 			if (ImGui::BeginChild("##PerformanceBenchmarkContent", ImVec2(0, 0), false))
 				ABTestingManager::GetSingleton()->DrawBenchmarkTab();
 			ImGui::EndChild();
