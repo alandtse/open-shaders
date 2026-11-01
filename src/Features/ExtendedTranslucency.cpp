@@ -95,9 +95,7 @@ void ExtendedTranslucency::DrawSettings()
 			T(TKEY("alpha_mode_anisotropic_fabric"), "3 - Anisotropic Fabric"),
 		};
 
-		static constexpr int AlphaModeSize = static_cast<int>(std::size(AlphaModeNames));
-
-		ImGui::Combo(T(TKEY("default_material_model"), "Default Material Model"), (int*)&settings.AlphaMode, AlphaModeNames, AlphaModeSize);
+		Util::Combo(T(TKEY("default_material_model"), "Default Material Model"), &settings.AlphaMode, AlphaModeNames);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("default_material_model_tooltip"),
 								  "Anisotropic translucency will adjust the opacity based on your view angle to the translucent surface.\n"

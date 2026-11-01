@@ -114,7 +114,7 @@ namespace
 				T(TKEY("reproject_debug_blend_weight"), "Blend Weight"),
 				T(TKEY("reproject_debug_edge_detection"), "Edge Detection")
 			};
-			if (ImGui::Combo(T(TKEY("reproject_debug_view"), "Reprojection Debug View"), &settings.ReprojectDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
+			if (Util::Combo(T(TKEY("reproject_debug_view"), "Reprojection Debug View"), &settings.ReprojectDebugMode, debugModes)) {
 				int newMode = settings.ReprojectDebugMode;
 				bool needsBlend = (newMode >= 2 && newMode <= 4);
 

@@ -390,9 +390,7 @@ void VRStereoOptimizations::Reset()
 void VRStereoOptimizations::DrawSettings()
 {
 	const char* modeNames[] = { T("feature.vr_stereo.off", "Off"), T("feature.vr_stereo.enable", "Enable") };
-	int currentMode = static_cast<int>(settings.stereoMode);
-	if (ImGui::Combo(T("feature.vr_stereo.enable_stereo_reprojection", "Enable Stereo Reprojection"), &currentMode, modeNames, IM_ARRAYSIZE(modeNames)))
-		settings.stereoMode = static_cast<StereoMode>(currentMode);
+	Util::Combo(T("feature.vr_stereo.enable_stereo_reprojection", "Enable Stereo Reprojection"), &settings.stereoMode, modeNames);
 	Util::AddTooltip(T("feature.vr_stereo.enable_stereo_reprojection_tooltip", "Reprojects Eye 0 (left) pixels into Eye 1 (right) using depth and motion data,\nskipping redundant full shading where the views overlap.\nReduces GPU cost in VR by shading each pixel fewer times per frame."));
 
 	if (globals::game::isVR)

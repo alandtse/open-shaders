@@ -758,7 +758,7 @@ void Upscaling::DrawUpscalingSettings()
 		modeLabels.push_back(upscaleModes[i].c_str());
 	if (openCompositeBlocksUpscaling)
 		ImGui::BeginDisabled();
-	ImGui::Combo(T(TKEY("method"), "Method"), (int*)currentUpscaleMode, modeLabels.data(), (int)modeLabels.size());
+	Util::Combo(T(TKEY("method"), "Method"), currentUpscaleMode, modeLabels.data(), static_cast<int>(modeLabels.size()));
 	if (openCompositeBlocksUpscaling)
 		ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -880,7 +880,7 @@ void Upscaling::DrawUpscalingSettings()
 				T(TKEY("dlss_model_preset_l"), "Preset L"),
 				T(TKEY("dlss_model_preset_m"), "Preset M")
 			};
-			ImGui::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), (int*)&settings.presetDLSS, presets, 5);
+			Util::Combo(T(TKEY("dlss_model_preset"), "DLSS Model Preset"), &settings.presetDLSS, presets);
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("dlss_model_preset_tooltip"),
 									  "Choose which DLSS AI model preset to use.\n"
@@ -1071,10 +1071,7 @@ void Upscaling::DrawBackendDiagnostics()
 	};
 	// streamlineLogLevel is sanitized in LoadSettings (runs on every load,
 	// not gated on this node being expanded), so the stored value is in range.
-	int logLevelIdx = static_cast<int>(settings.streamlineLogLevel);
-	if (ImGui::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &logLevelIdx, logLevels, IM_ARRAYSIZE(logLevels))) {
-		settings.streamlineLogLevel = static_cast<uint>(logLevelIdx);
-	}
+	Util::Combo(T(TKEY("streamline_logging"), "Streamline Logging"), &settings.streamlineLogLevel, logLevels);
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::streamlineLogLevel,
 		T(TKEY("streamline_logging_tooltip"),
 			"Verbosity of the NVIDIA Streamline backend logs. Useful for debugging issues with DLSS / "

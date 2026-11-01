@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 
 namespace
@@ -14,6 +15,25 @@ namespace
 		kSame,
 		kEverything,
 		kCharacters
+	};
+
+	enum class FromOne : int
+	{
+		kFirst = 1,
+		kSecond
+	};
+
+	enum class Gapped : int
+	{
+		kFirst = 0,
+		kThird = 2
+	};
+
+	enum class WithCount : uint32_t
+	{
+		kFirst,
+		kSecond,
+		kCount
 	};
 }
 
@@ -79,4 +99,53 @@ TEST_CASE("Picking away from an out-of-range value's shown item stores the pick"
 	const int shown = Util::ComboShownIndex(stored, 3);
 	REQUIRE(Util::CommitDisplayedValue(stored, shown, 1));
 	REQUIRE(stored == 1);
+}
+
+TEST_CASE("A dropdown over a value table shows the entry holding the stored value", "[ui][control]")
+{
+	constexpr std::array<int, 4> values{ 128, 256, 512, 1024 };
+	REQUIRE(Util::ComboValueIndex(512, values, 1) == 2);
+	REQUIRE(Util::ComboValueIndex(128, values, 1) == 0);
+	REQUIRE(Util::ComboValueIndex(300, values, 1) == 1);
+}
+
+TEST_CASE("A pick from a value table stores the entry's value", "[ui][control]")
+{
+	constexpr std::array<int, 4> values{ 128, 256, 512, 1024 };
+	int stored = 256;
+	const int shown = Util::ComboValueIndex(stored, values, 0);
+	REQUIRE(Util::CommitDisplayedValue(stored, shown, 3, [&values](int index) { return values[index]; }));
+	REQUIRE(stored == 1024);
+	REQUIRE_FALSE(Util::CommitDisplayedValue(stored, 3, 3, [&values](int index) { return values[index]; }));
+	REQUIRE(stored == 1024);
+}
+
+TEST_CASE("An enum dropdown needs one label per enumerator in value order", "[ui][control]")
+{
+	static_assert(Util::ComboLabelsMatch<Scope>(3));
+	static_assert(!Util::ComboLabelsMatch<Scope>(2));
+	static_assert(!Util::ComboLabelsMatch<Scope>(4));
+	REQUIRE(Util::ComboLabelsMatch<Scope>(3));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Scope>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Scope>(4));
+}
+
+TEST_CASE("An enum whose values are not 0, 1, 2 ... is refused", "[ui][control]")
+{
+	REQUIRE_FALSE(Util::ComboLabelsMatch<FromOne>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Gapped>(2));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<Gapped>(3));
+}
+
+TEST_CASE("A trailing count enumerator needs a label too", "[ui][control]")
+{
+	REQUIRE(Util::ComboLabelsMatch<WithCount>(3));
+	REQUIRE_FALSE(Util::ComboLabelsMatch<WithCount>(2));
+}
+
+TEST_CASE("A setting that is not an enum has no label list to check", "[ui][control]")
+{
+	static_assert(Util::ComboLabelsMatch<uint32_t>(7));
+	REQUIRE(Util::ComboLabelsMatch<uint32_t>(0));
+	REQUIRE(Util::ComboLabelsMatch<int>(7));
 }
