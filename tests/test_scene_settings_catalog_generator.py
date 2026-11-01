@@ -922,6 +922,35 @@ void Fixture::DrawSettings() {
             self.assertIn("GetNavigationControls()", header)
             self.assertIn('"More Options", "feature.fixture.expanded"', output)
 
+    def test_same_named_structs_in_namespaces_keep_their_own_fields(self):
+        header = r'''
+namespace First
+{
+    struct Tuning
+    {
+        float gain = 1.0f;
+    };
+}
+
+namespace Second::Inner
+{
+    struct Tuning
+    {
+        float strengthA = 1.0f, strengthB = 2.0f;
+        bool enabled = false;
+    };
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Tuning.h"
+            path.write_text(header, encoding="utf-8")
+            bodies = GENERATOR.collect_struct_bodies([path])
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["First::Tuning"]), {"gain": "float"})
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["Second::Inner::Tuning"]),
+            {"strengthA": "float", "strengthB": "float", "enabled": "bool"})
+
 
 if __name__ == "__main__":
     unittest.main()

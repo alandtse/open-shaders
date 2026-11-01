@@ -431,10 +431,24 @@ def collect_nlohmann_macros(paths: list[Path]) -> dict[str, list[str]]:
     return macros
 
 
+def enclosing_namespace(text: str, position: int, spans: list[tuple[int, int, str]]) -> str:
+    return "::".join(name for start, end, name in spans if start < position < end)
+
+
+def collect_namespace_spans(text: str) -> list[tuple[int, int, str]]:
+    spans = []
+    for match in re.finditer(r"\bnamespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{", text):
+        end = find_matching_brace(text, match.end() - 1)
+        if end >= 0:
+            spans.append((match.start(), end, match.group(1)))
+    return spans
+
+
 def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
     bodies: dict[str, str] = {}
     for path in paths:
         text = read_text(path)
+        namespace_spans = collect_namespace_spans(text)
         for match in re.finditer(STRUCT_DECL_RE, text):
             name = match.group(1)
             body_start = match.end()
@@ -459,6 +473,9 @@ def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
                     depth -= 1
                     if depth == 0:
                         bodies.setdefault(name, text[body_start:i])
+                        namespace = enclosing_namespace(text, match.start(), namespace_spans)
+                        if namespace:
+                            bodies.setdefault(f"{namespace}::{name}", text[body_start:i])
                         break
                 i += 1
     return bodies
@@ -477,6 +494,11 @@ def parse_struct_fields(body: str) -> dict[str, str]:
         parsed = parse_field_statement(raw_stmt)
         if parsed:
             fields[parsed[0]] = parsed[1]
+            if "," in raw_stmt and "<" not in raw_stmt:
+                for declarator in split_args(raw_stmt)[1:]:
+                    extra = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*(?:=.*)?", declarator, re.DOTALL)
+                    if extra:
+                        fields.setdefault(extra.group(1), parsed[1])
     return fields
 
 
@@ -4705,7 +4727,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             if owner not in {context.field_class, "Settings"})
         declared_type = catalog_class_aliases.get(context.field_class, {}).get(simple_type, simple_type)
         declared_type = declared_type.split("::")[-1]
-        declared_fields = catalog_class_fields.get(context.field_class, {}).get(
+        declared_fields = struct_fields.get(full_type) or catalog_class_fields.get(context.field_class, {}).get(
             simple_type, struct_fields.get(declared_type, {}))
         for field in fields:
             field_type = declared_fields.get(field, "")
