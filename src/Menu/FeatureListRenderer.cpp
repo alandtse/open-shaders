@@ -595,19 +595,20 @@ namespace
 	}
 
 	/**
-	 * @brief Opens the feature actions menu when the sidebar row just drawn is right-clicked.
+	 * @brief Selects the sidebar row just drawn when it is right-clicked and opens its feature actions menu.
 	 *
-	 * The row is selected on the right-click, so page-scoped actions such as restore defaults act on the page shown.
+	 * Selecting first means page-scoped actions such as restore defaults act on the page shown. A feature
+	 * with no actions is still selected but gets no menu.
 	 */
 	void DrawSidebarFeatureContextMenu(Feature* feat, size_t listId, size_t& selectedMenu)
 	{
-		const auto context = GetFeatureActionContext(feat);
-		if (!HasFeatureActions(feat, context))
-			return;
 		ImGui::PushID(feat->GetShortName().c_str());
 		const SKSE::stl::scope_exit restoreID([]() noexcept { ImGui::PopID(); });
 		if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
 			selectedMenu = listId;
+		const auto context = GetFeatureActionContext(feat);
+		if (!HasFeatureActions(feat, context))
+			return;
 		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, FeatureActionsMenuPadding());
 		const bool open = ImGui::BeginPopupContextItem("##SidebarFeatureActions");
 		ImGui::PopStyleVar();
