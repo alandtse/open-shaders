@@ -964,6 +964,18 @@ Util::Combo("Style", &tuning.style, styleLabels);
             body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
         self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
 
+    def test_double_braced_std_array_label_tables_keep_every_choice(self):
+        body = r'''
+const std::array<const char*, 2> styleLabels{{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+}};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
+
 
 if __name__ == "__main__":
     unittest.main()

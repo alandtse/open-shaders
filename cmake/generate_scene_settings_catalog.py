@@ -2690,7 +2690,11 @@ def resolve_combo_choices(
     if close_brace < 0:
         return []
 
-    items = [item for item in split_args(body[open_brace + 1:close_brace]) if item.strip()]
+    initializer = body[open_brace + 1:close_brace]
+    inner = initializer.strip()
+    if inner.startswith("{") and find_matching_brace(inner, 0) == len(inner) - 1:
+        initializer = inner[1:-1]
+    items = [item for item in split_args(initializer) if item.strip()]
     choices = []
     for index, item in enumerate(items):
         translated = extract_i18n_call(item, prefix)
