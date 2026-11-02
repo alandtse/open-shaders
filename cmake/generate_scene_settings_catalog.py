@@ -2608,6 +2608,46 @@ def resolve_provider_combo_choices(
     return [(index, label, key) for index, (label, key) in enumerate(values)]
 
 
+def resolve_value_table_combo_choices(
+        source: str,
+        items_expression: str,
+        values_expression: str,
+        prefix: str,
+        constants: dict[str, float]) -> list[tuple[int, str, str]]:
+    labels = re.fullmatch(r"([A-Za-z_]\w*)(?:\.data\(\))?", items_expression.strip())
+    values = re.fullmatch(r"[A-Za-z_]\w*", values_expression.strip())
+    if not labels or not values:
+        return []
+    string_arrays, integer_arrays = collect_literal_std_arrays(source, prefix, constants)
+    names = string_arrays.get(labels.group(1))
+    numbers = integer_arrays.get(values.group(0))
+    if not names or not numbers or len(names) != len(numbers):
+        return []
+    return [(number, label, key) for number, (label, key) in zip(numbers, names)]
+
+
+def resolve_combo_call_choices(
+        body: str,
+        position: int,
+        args: list[str],
+        prefix: str,
+        source: str,
+        constants: dict[str, float],
+        providers: dict[str, tuple[tuple[str, str], ...]]) -> list[tuple[int, str, str]]:
+    """Choices of a Combo call, whether its labels are a local array, a provider's array or a label and value table."""
+    values = resolve_combo_choices(body, position, args[2], prefix, source, constants)
+    if not values and len(args) >= 4:
+        values = resolve_provider_combo_choices(
+            body, position, args[2], args[3], providers, constants)
+    if not values and len(args) == 3:
+        alias = args[2].strip()
+        values = resolve_provider_combo_choices(
+            body, position, f"{alias}.data()", f"{alias}.size()", providers, constants)
+    if not values and len(args) >= 5:
+        values = resolve_value_table_combo_choices(source, args[2], args[3], prefix, constants)
+    return values
+
+
 def resolve_choice_label_call(
         source: str,
         expression: str,
@@ -3545,14 +3585,9 @@ def _project_standard_controls(
 
     def resolve_choices(function, position, kind, args):
         if kind == "Combo" and len(args) >= 3:
-            values = resolve_combo_choices(
-                function.body, position, args[2], function.prefix,
-                text_by_path[function.source], constants_by_path[function.source])
-            if not values and len(args) >= 4:
-                values = resolve_provider_combo_choices(
-                    function.body, position, args[2], args[3], providers,
-                    constants_by_path[function.source])
-            return tuple(values)
+            return tuple(resolve_combo_call_choices(
+                function.body, position, args, function.prefix,
+                text_by_path[function.source], constants_by_path[function.source], providers))
         if kind == "RadioButton" and len(args) >= 3:
             value = resolve_numeric_expression(args[2], constants_by_path[function.source])
             label = _localized_text(args[0], function.prefix)
