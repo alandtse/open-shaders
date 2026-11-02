@@ -47,7 +47,7 @@ public:
 	/** @brief Creates GPU resources including depth textures, blended depth buffers, and stencil states. */
 	virtual void SetupResources() override;
 
-	/** @brief Returns the terrain depth-offset vertex shader, compiling on first use, or nullptr if compilation failed. */
+	/** @brief Returns the terrain depth-offset vertex shader, compiling it and publishing its offset metadata on first use, or nullptr if either step failed. */
 	ID3D11VertexShader* GetTerrainOffsetVertexShader();
 
 	Util::LazyShader<ID3D11VertexShader> terrainOffsetVertexShader;
