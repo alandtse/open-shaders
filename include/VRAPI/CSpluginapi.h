@@ -6,7 +6,7 @@
 #include "VRAPI/CSinterface001.h"
 
 // Build compatibility level reported by getBuildNumber().
-inline constexpr unsigned int CSBuildNumber = 9;
+inline constexpr unsigned int CSBuildNumber = 10;
 
 namespace CSPluginAPI
 {
@@ -58,5 +58,6 @@ namespace CSPluginAPI
 
 		virtual bool SampleWind(const WindVector* positions, WindSample* samples, uint32_t count) override;
 		virtual bool SampleWindExcludingHavokImpulses(const WindVector* positions, WindSampleWithHavokExclusion* samples, uint32_t count) override;
+		virtual bool GetTerrainDepthOffset(ID3D11VertexShader* shader, TerrainDepthOffset* offset) override;
 	};
 }  // namespace CSPluginAPI

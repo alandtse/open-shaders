@@ -7,6 +7,9 @@
 #include <SKSE/SKSE.h>
 #include <cstdint>
 #include <type_traits>
+#include "TerrainDepthOffset.h"
+
+struct ID3D11VertexShader;
 
 namespace CSPluginAPI
 {
@@ -18,7 +21,8 @@ namespace CSPluginAPI
 	inline constexpr unsigned int CSInterfaceRevision002 = 2;
 	inline constexpr unsigned int CSInterfaceRevision003 = 3;
 	inline constexpr unsigned int CSInterfaceRevision004 = 4;
-	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision004;
+	inline constexpr unsigned int CSInterfaceRevision005 = 5;
+	inline constexpr unsigned int CSInterfaceRevision = CSInterfaceRevision005;
 	inline constexpr uint32_t CSWindMaximumBatchSize = 16384;
 	// Guidance for VR transition controllers that hide render-scale relatches
 	// behind a game fade. These constants are advisory only and do not change
@@ -183,6 +187,9 @@ namespace CSPluginAPI
 
 		/** @brief Samples full visual wind and wind excluding native-force transients from one frame. */
 		virtual bool SampleWindExcludingHavokImpulses(const WindVector* positions, WindSampleWithHavokExclusion* samples, uint32_t count) = 0;
+
+		/** @brief Revision 5: queries a live shader's terrain offset; false clears output for untagged shaders. */
+		virtual bool GetTerrainDepthOffset(ID3D11VertexShader* shader, TerrainDepthOffset* offset) = 0;
 	};
 }  // namespace CSPluginAPI
 

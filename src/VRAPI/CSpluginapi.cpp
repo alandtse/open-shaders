@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "SceneSettingsManager.h"
 #include "Utils/SettingsPatch.h"
+#include "Utils/TerrainDepthOffset.h"
 
 #include <algorithm>
 #include <cmath>
@@ -176,6 +177,7 @@ namespace CSPluginAPI
 			revisionNumber != CSInterfaceRevision001 &&
 			revisionNumber != CSInterfaceRevision002 &&
 			revisionNumber != CSInterfaceRevision003 &&
+			revisionNumber != CSInterfaceRevision004 &&
 			revisionNumber != CSInterfaceRevision) {
 			return nullptr;
 		}
@@ -229,6 +231,11 @@ namespace CSPluginAPI
 	unsigned int CSInterface001::getBuildNumber()
 	{
 		return CSBuildNumber;
+	}
+
+	bool CSInterface001::GetTerrainDepthOffset(ID3D11VertexShader* shader, TerrainDepthOffset* offset)
+	{
+		return Util::TerrainDepth::Query(shader, offset);
 	}
 
 	bool CSInterface001::GetSSSEnabled()

@@ -58,6 +58,7 @@ set(screenshot_test_sources
 
 add_executable(cpp_tests
     test_main.cpp
+    test_terrain_depth_offset.cpp
     test_antilag2.cpp
     ${screenshot_test_sources}
     test_bootsnapshot.cpp
@@ -166,6 +167,7 @@ foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
 
     target_include_directories(${cpp_test_target} PRIVATE
         "${CMAKE_SOURCE_DIR}/src"
+        "${CMAKE_SOURCE_DIR}/include"
         "${CMAKE_SOURCE_DIR}/package/Shaders"
     )
 
@@ -179,6 +181,7 @@ foreach(cpp_test_target IN ITEMS cpp_tests screenshot_tests_devbench)
         xxHash::xxhash
         spdlog::spdlog
         d3dcompiler
+        d3d11
         bcrypt
         Threads::Threads
     )
