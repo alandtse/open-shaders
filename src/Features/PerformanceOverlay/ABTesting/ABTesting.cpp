@@ -817,6 +817,15 @@ std::vector<ABBenchmarkRow> ABTestingManager::GetBenchmarkRows() const
 	return rows;
 }
 
+bool ABTestingManager::RepeatRun(std::string* error)
+{
+	if (!CanRepeat())
+		return Refuse(error, "There is no benchmark to repeat.");
+	auto requests = queue;
+	const ABRunOptions options = queueOptions;
+	return StartComparisons(std::move(requests), options, error);
+}
+
 void ABTestingManager::DrawQueueButtons()
 {
 	ImGui::BeginDisabled(queueActive || abTestingEnabled || comparisonQueue.empty());
@@ -829,6 +838,17 @@ void ABTestingManager::DrawQueueButtons()
 	if (ImGui::Button(T(TKEY("queue_clear_all"), "Clear all")))
 		ClearQueue();
 	ImGui::EndDisabled();
+
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!CanRepeat() || abTestingEnabled);
+	if (ImGui::Button(T(TKEY("queue_repeat"), "Repeat benchmark"))) {
+		std::string error;
+		if (!RepeatRun(&error))
+			queueNotice = error;
+	}
+	ImGui::EndDisabled();
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T(TKEY("queue_repeat_tooltip"), "Runs the last benchmark again with the same changes and options. The new results replace the old ones."));
 }
 
 void ABTestingManager::DrawBenchmarkTab()
