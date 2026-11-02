@@ -334,7 +334,10 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif
 
 #	if defined(OFFSET_DEPTH)
-	vsout.PositionCS = FrameBuffer::OffsetClipDepth(vsout.PositionCS, 5.0);
+#		ifndef TERRAIN_DEPTH_OFFSET
+#			error TERRAIN_DEPTH_OFFSET must match the published terrain shader metadata
+#		endif
+	vsout.PositionCS = FrameBuffer::OffsetClipDepth(vsout.PositionCS, TERRAIN_DEPTH_OFFSET);
 #	endif
 
 #	ifdef VR

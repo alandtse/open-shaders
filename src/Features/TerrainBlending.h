@@ -51,6 +51,7 @@ public:
 	ID3D11VertexShader* GetTerrainOffsetVertexShader();
 
 	Util::LazyShader<ID3D11VertexShader> terrainOffsetVertexShader;
+	bool terrainOffsetMetadataFailed = false;
 
 	/** @brief Returns the depth blend compute shader, compiling on first use, or nullptr if compilation failed. */
 	ID3D11ComputeShader* GetDepthBlendShader();

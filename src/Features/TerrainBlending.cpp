@@ -1,12 +1,14 @@
 #include "TerrainBlending.h"
 
 #include "Deferred.h"
+#include "Features/ReverseZ.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Utils/D3D.h"
+#include "Utils/TerrainDepthOffset.h"
 #include "Utils/UI.h"
 #include "VR.h"
 
@@ -624,7 +626,22 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 
 ID3D11VertexShader* TerrainBlending::GetTerrainOffsetVertexShader()
 {
-	return terrainOffsetVertexShader.Get(L"Data\\Shaders\\Utility.hlsl", { { "RENDER_DEPTH", "" }, { "OFFSET_DEPTH", "" } }, "vs_5_0", "main", "TerrainBlending::TerrainOffsetVertexShader");
+	if (terrainOffsetMetadataFailed)
+		return nullptr;
+	if (auto* shader = terrainOffsetVertexShader.get())
+		return shader;
+	const auto offsetDefine = std::to_string(Util::TerrainDepth::StandardOffset);
+	auto* shader = terrainOffsetVertexShader.Get(L"Data\\Shaders\\Utility.hlsl",
+		{ { "RENDER_DEPTH", "" }, { "OFFSET_DEPTH", "" }, { "TERRAIN_DEPTH_OFFSET", offsetDefine.c_str() } },
+		"vs_5_0", "main", "TerrainBlending::TerrainOffsetVertexShader");
+	if (shader && !Util::TerrainDepth::Publish(shader,
+					  { Util::TerrainDepth::StandardOffset, globals::features::reverseZ.IsActive() ? 1u : 0u })) {
+		logger::error("[Terrain Blending] Could not publish terrain depth offset");
+		terrainOffsetMetadataFailed = true;
+		terrainOffsetVertexShader.Reset();
+		return nullptr;
+	}
+	return shader;
 }
 
 ID3D11ComputeShader* TerrainBlending::GetDepthBlendShader()
@@ -720,10 +737,14 @@ void TerrainBlending::SetupResources()
 
 void TerrainBlending::PostPostLoad()
 {
-	// NMN_DeformableTerrain tessellates terrain from clip depth and cannot undo the depth offset this feature adds, so its terrain is displaced wrongly.
 	if (GetModuleHandleW(L"NMN_DeformableTerrain.dll")) {
-		DisableForConflict("NMN_DeformableTerrain.dll");
-		return;
+		CSPluginAPI::TerrainDepthSupportMessage support;
+		const auto* messaging = SKSE::GetMessagingInterface();
+		if (!messaging || !messaging->Dispatch(CSPluginAPI::TerrainDepthSupportMessageType, &support, sizeof(support), "NMN_DeformableTerrain") || support.supported != 1) {
+			DisableForConflict("NMN_DeformableTerrain.dll");
+			return;
+		}
+		logger::info("[Terrain Blending] NMN_DeformableTerrain acknowledged the terrain depth API");
 	}
 	Hooks::Install();
 }
@@ -823,6 +844,7 @@ void TerrainBlending::BlendPrepassDepths()
 void TerrainBlending::ClearShaderCache()
 {
 	terrainOffsetVertexShader.Reset();
+	terrainOffsetMetadataFailed = false;
 	depthBlendShader.Reset();
 }
 
