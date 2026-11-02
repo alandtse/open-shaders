@@ -33,7 +33,7 @@
 
 namespace NR
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength,
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NR::Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength,
 		skinToneStrength, hairToneStrength, eyeToneStrength, foliageToneStrength, landscapeToneStrength,
 		style, useAutoMask, regionOfInterest, regionOverlay, regionFit, regionGroup, regionFollowFoveation,
 		parallelEyes, allowUnverifiedRuntime, runtimeVariant, materialStrength, strengthSkin, strengthHair, strengthEyes, strengthFoliage, strengthLandscape, strengthCloth, strengthMetal,
@@ -43,8 +43,8 @@ namespace NR
 
 namespace NR::Context
 {
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ContextProfile, run, scope, region);
-	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Profiles, normal, dialogue);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NR::Context::ContextProfile, run, scope, region);
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NR::Context::Profiles, normal, dialogue);
 }
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
