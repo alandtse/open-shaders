@@ -2,7 +2,7 @@
 
 This document explains how another SKSE plugin can talk to Open Shaders (plugin name
 `CommunityShaders`) at runtime. The interface is binary-compatible with the sibling
-Community Shaders fork's revision-3 API, extended by Open Shaders revision 4.
+Community Shaders fork's revision-3 API, extended by Open Shaders revisions 4 and 5.
 Plugins compiled against that fork's `include/VRAPI/CSinterface001.h` work unchanged
 against this one.
 
@@ -10,8 +10,8 @@ against this one.
 
 -   Target plugin name: `CommunityShaders`
 -   Message type: `0x43534150` (`"CSAP"`, `CSMessage::kMessage_GetInterface`)
--   Supported revisions: `1`, `2`, `3`, `4` (and `0` for "latest")
--   Build number: `getBuildNumber()` returns `9`
+-   Supported revisions: `1`, `2`, `3`, `4`, `5` (and `0` for "latest")
+-   Build number: `getBuildNumber()` returns `10`
 
 To acquire the API interface:
 
@@ -24,12 +24,12 @@ To acquire the API interface:
 
 The bundled convenience helper does all of this:
 
--   `include/VRAPI/CSinterface001.h` (the interface contract; the only file consumers need)
+-   `include/VRAPI/CSinterface001.h` and `include/VRAPI/TerrainDepthOffset.h` (the interface contract)
 -   `src/VRAPI/CSinterface001.cpp` (optional `GetCSInterface001()` fetch-and-cache helper)
 
 ### Consumer licensing
 
-`CSinterface001.h` and `CSinterface001.cpp` are licensed under
+`CSinterface001.h`, `TerrainDepthOffset.h`, and `CSinterface001.cpp` are licensed under
 LGPL-3.0-or-later (see `COPYING.LESSER`). All other files remain under
 the project's default license. Consult the license text for the terms
 that apply to your use.
@@ -45,7 +45,7 @@ may still return the previous value until that frame boundary passes.
 
 ### Global Features
 
--   `unsigned int getBuildNumber()`: Returns the build compatibility level (`9`).
+-   `unsigned int getBuildNumber()`: Returns the build compatibility level (`10`).
 -   `bool GetSSSEnabled()` / `void SetSSSEnabled(bool enabled)`: Screen Space Shadows
     (`SSS` means Screen Space Shadows, not Subsurface Scattering). Takes effect live.
 -   `bool GetSSGIEnabled()` / `void SetSSGIEnabled(bool enabled)`: Screen Space Global
@@ -137,6 +137,62 @@ source compatibility only; they have no meaning here.
     native. Other sources remain eligible for external physics pushes. The
     sampler does not automatically discover every Havok event. Both sampling
     methods are available in revision 4.
+
+### Terrain depth reconstruction (revision 5)
+
+`bool GetTerrainDepthOffset(ID3D11VertexShader* shader, TerrainDepthOffset* offset)`
+queries the supplied live vertex shader. It does not query the current context,
+compile a shader, or retain the pointer. The caller must keep the shader alive
+for the call. Metadata follows the shader object's lifetime, including shaders
+retained across a shader-cache clear.
+
+On success, `standardOffset` is the additive clip-space Z offset before the
+perspective divide. `reverseZ` is 1 if this shader uses the reverse-projection
+test, otherwise 0. Determine the signed offset from the same `CameraProj` buffer
+used by that vertex shader:
+
+```hlsl
+bool reversed = offset.reverseZ != 0 && CameraProj[2][2] * CameraProj[3][2] < 0;
+float signedOffset = reversed ? -offset.standardOffset : offset.standardOffset;
+clipPosition.z -= signedOffset;
+```
+
+Apply this only to the position used for world reconstruction. Preserve the
+offset in the final raster position. The offset also moves the near plane by
+the same amount. A consumer that re-emits the position should clip where the
+corrected position would be clipped, for example with an `SV_ClipDistance0`
+computed from it. Otherwise geometry just inside the near plane writes depth
+that no colour pass covers. Evaluating the sign on the GPU avoids a
+stale CPU camera snapshot when the engine updates b12 after binding the shader.
+The test uses eye 0, matching `Utility.hlsl`'s offset operation in both flat and
+VR permutations.
+
+The function returns false and clears a non-null output for null or untagged
+shaders, or invalid metadata. A null output also returns false. An untagged
+shader has no offset supplied by this API; consumers must use zero correction.
+Use legacy shader recognition only when revision 5 is unavailable. Query each
+shader transition, including late `VSSetShader` calls, and initialize the
+correction from the currently bound shader when beginning a terrain draw.
+
+Terrain Blending compiles its offset from the same C++ constant it publishes in
+the metadata. Shader compilation or metadata publication failure uses the
+existing ordinary terrain shader fallback.
+
+#### DTD capability handshake
+
+During `kPostPostLoad`, Terrain Blending sends `TerrainDepthSupportMessage` with
+type `TerrainDepthSupportMessageType` (`0x43535444`) to `NMN_DeformableTerrain`.
+The consumer must register its mod-message listener during `kPostLoad`, validate
+the sender (`CommunityShaders`), payload size, and revision, acquire revision 5
+using the existing `CSMessage` handshake, then set `supported` to 1 only if it
+will apply the correction for the session. This query works regardless of which
+plugin receives `kPostPostLoad` first because every `kPostLoad` has completed.
+
+Missing acknowledgement preserves the existing conflict disable for old DTD
+builds, disabled consumer compatibility, and unsupported runtimes. A successful
+acknowledgement permits normal Terrain Blending initialization; it does not
+override the user's disabled-at-boot or enabled settings. Settings reload keeps
+the existing conflict protections.
 
 ## Compatibility Guidance
 
