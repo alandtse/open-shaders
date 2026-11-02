@@ -751,6 +751,7 @@
                 ["OFFSET_DEPTH", ""],
                 ["RENDER_DEPTH", ""],
                 ["REVERSE_Z", ""],
+                ["TERRAIN_DEPTH_OFFSET", "5.000000"],
                 ["VSHADER", ""],
                 ["WINPC", ""]
             ],
