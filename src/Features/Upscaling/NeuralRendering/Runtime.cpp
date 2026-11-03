@@ -72,6 +72,41 @@ namespace NR
 			return value;
 		}
 
+		using GetStats = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
+
+		/** @brief Reads the runtime's capability keys and, when it registers one, its stats callback. */
+		RuntimeCapability ReadCapability(NVSDK_NGX_Parameter* parameters)
+		{
+			RuntimeCapability capability;
+			capability.queried = true;
+			int flag = 0;
+			unsigned int value = 0;
+			capability.reportsAvailability = parameters->Get("DLSSNR.Available", &flag) == NVSDK_NGX_Result_Success;
+			capability.available = capability.reportsAvailability && flag != 0;
+			capability.reportsDriver = parameters->Get("DLSSNR.NeedsUpdatedDriver", &flag) == NVSDK_NGX_Result_Success;
+			capability.needsUpdatedDriver = capability.reportsDriver && flag != 0;
+			if (parameters->Get("DLSSNR.MinDriverVersionMajor", &value) == NVSDK_NGX_Result_Success)
+				capability.minDriverMajor = value;
+			if (parameters->Get("DLSSNR.MinDriverVersionMinor", &value) == NVSDK_NGX_Result_Success)
+				capability.minDriverMinor = value;
+			void* callback = nullptr;
+			if (parameters->Get("DLSSNRGetStatsCallback", &callback) != NVSDK_NGX_Result_Success || !callback)
+				return capability;
+			const auto stats = reinterpret_cast<GetStats>(callback);
+			if (NVSDK_NGX_FAILED(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return stats(parameters); })))
+				return capability;
+			unsigned long long bytes = 0;
+			if (parameters->Get(NVSDK_NGX_Parameter_SizeInBytes, &bytes) == NVSDK_NGX_Result_Success) {
+				capability.hasMemory = true;
+				capability.memoryBytes = bytes;
+			}
+			if (parameters->Get(NVSDK_NGX_EParameter_OptLevel, &value) == NVSDK_NGX_Result_Success)
+				capability.optimizationLevel = value;
+			if (parameters->Get(NVSDK_NGX_EParameter_IsDevSnippetBranch, &value) == NVSDK_NGX_Result_Success)
+				capability.developmentBranch = value != 0;
+			return capability;
+		}
+
 		/** @brief Buffer for GetModuleFileNameW: an extended-length image path can run past MAX_PATH. */
 		constexpr DWORD kModuleImageChars = MAX_PATH * 4;
 
@@ -125,7 +160,8 @@ namespace NR
 		class ParameterWriter
 		{
 		public:
-			explicit ParameterWriter(NVSDK_NGX_Parameter* parameters) : parameters(parameters) {}
+			explicit ParameterWriter(NVSDK_NGX_Parameter* parameters) :
+				parameters(parameters) {}
 
 			void SetUInt(const char* name, unsigned int value) const { parameters->Set(name, value); }
 			void SetFloat(const char* name, float value) const { parameters->Set(name, value); }
@@ -190,7 +226,8 @@ namespace NR
 			}
 			struct Scope
 			{
-				explicit Scope(RuntimePath& path) : previous(active) { active = &path; }
+				explicit Scope(RuntimePath& path) :
+					previous(active) { active = &path; }
 				~Scope() { active = previous; }
 				Scope(const Scope&) = delete;
 				Scope& operator=(const Scope&) = delete;
@@ -234,6 +271,8 @@ namespace NR
 		Release release = nullptr;
 		std::string version;
 		bool modelPresets = false;
+		mutable std::mutex capabilityMutex;
+		RuntimeCapability capability;
 		bool initialized = false;
 		struct FeatureDeleter
 		{
@@ -299,7 +338,8 @@ namespace NR
 		}
 	};
 
-	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
+	Runtime::Runtime() :
+		impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
 	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified)
@@ -418,6 +458,12 @@ namespace NR
 		return impl->version;
 	}
 
+	RuntimeCapability Runtime::Capability() const
+	{
+		std::scoped_lock lock(impl->capabilityMutex);
+		return impl->capability;
+	}
+
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
 		const ProtectionResources& protection, uint32_t width, uint32_t height, const GuideParameters& guides,
@@ -469,6 +515,11 @@ namespace NR
 			if (NVSDK_NGX_FAILED(result) || !handle) {
 				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
 				return false;
+			}
+			const auto capability = ReadCapability(parameters);
+			{
+				std::scoped_lock lock(state.capabilityMutex);
+				state.capability = capability;
 			}
 			logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (populated parameters)", eyeIndex);
 			frame.created = true;
