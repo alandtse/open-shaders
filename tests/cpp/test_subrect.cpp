@@ -14,6 +14,7 @@ using json = nlohmann::json;
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>    // std::abs
 #include <utility>  // std::pair
 #include <vector>   // std::vector — degenerate-dimensions cases enumerate (w,h) pairs
@@ -562,4 +563,78 @@ TEST_CASE("Malformed preset right_uv falls back to auto-mirror", "[subrect][ster
 	c.LoadSettings(bad);
 	// Auto-mirror of {0.10, 0, 0.40, 1.0} = {0.50, 0, 0.40, 1.0}, NOT {0,0,1,1}.
 	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.50f, 0.0f, 0.40f, 1.0f }));
+}
+
+namespace
+{
+	Controller GazeController()
+	{
+		Controller c;
+		c.LoadSettings(json{ { "CropX", 0.20f }, { "CropY", 0.10f }, { "CropW", 0.40f }, { "CropH", 0.40f } });
+		return c;
+	}
+}
+
+TEST_CASE("Gaze override places the saved crop size at the gaze and leaves the saved crop alone", "[subrect][gaze]")
+{
+	Controller c = GazeController();
+	const UVRegion saved = c.GetSavedUV();
+
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.7f, 0.5f }, { 0.7f, 0.5f } } }, 0.2f);
+
+	REQUIRE(c.IsGazeActive());
+	REQUIRE(UVApprox(c.GetUV(), { 0.5f, 0.3f, saved.w, saved.h }));
+	REQUIRE(UVApprox(c.GetSavedUV(), saved));
+	json out;
+	c.SaveSettings(out);
+	REQUIRE(out["CropX"].get<float>() == saved.x);
+}
+
+TEST_CASE("Gaze override holds the centre until the gaze leaves the hysteresis band", "[subrect][gaze]")
+{
+	Controller c = GazeController();
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.5f, 0.5f }, { 0.5f, 0.5f } } }, 0.2f);
+	REQUIRE(c.ConsumeGazeRecentred());
+
+	// A crop is 0.4 wide, so 0.2 of it is 0.08: 0.05 stays put, 0.10 recentres.
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.55f, 0.5f }, { 0.55f, 0.5f } } }, 0.2f);
+	REQUIRE_FALSE(c.ConsumeGazeRecentred());
+	REQUIRE(UVApprox(c.GetUV(), { 0.3f, 0.3f, 0.4f, 0.4f }));
+
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.60f, 0.5f }, { 0.55f, 0.5f } } }, 0.2f);
+	REQUIRE(c.ConsumeGazeRecentred());
+	REQUIRE(UVApprox(c.GetUV(), { 0.4f, 0.3f, 0.4f, 0.4f }));
+}
+
+TEST_CASE("Gaze override reports a history reset per eye", "[subrect][gaze]")
+{
+	Controller c = GazeController();
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.5f, 0.5f }, { 0.5f, 0.5f } } }, 0.2f);
+	REQUIRE(c.ConsumeGazeEyeReset(0));
+	REQUIRE(c.ConsumeGazeEyeReset(1));
+	REQUIRE_FALSE(c.ConsumeGazeEyeReset(0));
+
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.5f, 0.5f }, { 0.7f, 0.5f } } }, 0.2f);
+	REQUIRE_FALSE(c.ConsumeGazeEyeReset(0));
+	REQUIRE(c.ConsumeGazeEyeReset(1));
+	REQUIRE_FALSE(c.ConsumeGazeEyeReset(2));
+}
+
+TEST_CASE("Clearing the gaze override restores the saved crop and flags one reset", "[subrect][gaze]")
+{
+	Controller c = GazeController();
+	c.SetGazeCentres(std::array<Util::Subrect::UVPoint, 2>{ { { 0.8f, 0.8f }, { 0.8f, 0.8f } } }, 0.2f);
+	c.ConsumeGazeRecentred();
+	c.ConsumeGazeEyeReset(0);
+	c.ConsumeGazeEyeReset(1);
+
+	c.SetGazeCentres(std::nullopt, 0.2f);
+
+	REQUIRE_FALSE(c.IsGazeActive());
+	REQUIRE(UVApprox(c.GetUV(), c.GetSavedUV()));
+	REQUIRE(c.ConsumeGazeRecentred());
+	REQUIRE(c.ConsumeGazeEyeReset(0));
+
+	c.SetGazeCentres(std::nullopt, 0.2f);
+	REQUIRE_FALSE(c.ConsumeGazeRecentred());
 }
