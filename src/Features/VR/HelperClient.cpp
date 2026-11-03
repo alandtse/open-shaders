@@ -8,6 +8,7 @@
 #include <format>
 #include <imgui.h>
 
+#include "Features/VR/HelperCombo.h"
 #include "Globals.h"
 #include "ImGuiVRHelperClientSDK.h"
 #include "Menu.h"
@@ -138,19 +139,23 @@ void VR::UpdateHelper()
 	// Automatic VR text entry: any focused ImGui text field pops the VR keyboard.
 	g_client.PumpKeyboard();
 
-	if (focused) {
-		if (g_client.Fired(g_overlayOpenCombo))
-			menu->overlayVisible = true;
-		if (g_client.Fired(g_overlayCloseCombo))
-			menu->overlayVisible = false;
-	} else if (g_overlayOpenCombo || g_overlayCloseCombo) {
-		// Drain latches while closed so they don't fire stale on reopen.
-		g_client.Fired(g_overlayOpenCombo);
-		g_client.Fired(g_overlayCloseCombo);
-	}
-
+	// PumpInput refreshes the pointer state the gate reads, and polling Fired() before gating
+	// drops an off-panel press instead of leaving it latched for a later frame.
 	float clampedDeadzone = std::clamp(settings.mouseDeadzone, 0.0f, 1.0f);
 	g_client.PumpInput(focused, clampedDeadzone);
+
+	const bool overlayOpenFired = g_overlayOpenCombo && g_client.Fired(g_overlayOpenCombo);
+	const bool overlayCloseFired = g_overlayCloseCombo && g_client.Fired(g_overlayCloseCombo);
+	switch (VRHelperCombo::DecideOverlayToggle(focused, g_client.IsPointerInPanel(), { overlayOpenFired, overlayCloseFired })) {
+	case VRHelperCombo::Action::Show:
+		menu->overlayVisible = true;
+		break;
+	case VRHelperCombo::Action::Hide:
+		menu->overlayVisible = false;
+		break;
+	case VRHelperCombo::Action::None:
+		break;
+	}
 }
 
 void VR::RenderStatusHud()
