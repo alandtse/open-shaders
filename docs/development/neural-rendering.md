@@ -367,7 +367,9 @@ After each creation the runtime reads `DLSSNR.Available`, `DLSSNR.NeedsUpdatedDr
 `DLSSNR.MinDriverVersionMajor` and `Minor`, and calls the `DLSSNRGetStatsCallback` the
 parameter block registers, which reports the model allocation, the optimization level and
 whether the snippet is a development branch. `Available` and `NeedsUpdatedDriver` are
-recorded as present or absent, because the populated block may not carry them. The values
+recorded as present or absent, because the populated block may not carry them; the driver
+version, optimization level and branch flag are reported as null when the runtime does not
+answer them. A recreation of the model refreshes the snapshot. The values
 appear in the settings panel and in the `capability` object of `neuralRenderingStatus`; none
 of them gates the pass.
 

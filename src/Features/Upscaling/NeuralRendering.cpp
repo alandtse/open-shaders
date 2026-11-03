@@ -2242,11 +2242,15 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
 	if (current.capability.needsUpdatedDriver) {
-		const auto major = current.capability.minDriverMajor;
-		const auto minor = current.capability.minDriverMinor;
-		ImGui::TextWrapped("%s", std::vformat(T(TKEY("driver_update_needed"), "The runtime asks for NVIDIA driver {}.{} or newer."),
-									 std::make_format_args(major, minor))
-									 .c_str());
+		if (current.capability.minDriverMajor && current.capability.minDriverMinor) {
+			const auto major = *current.capability.minDriverMajor;
+			const auto minor = *current.capability.minDriverMinor;
+			ImGui::TextWrapped("%s", std::vformat(T(TKEY("driver_update_needed"), "The runtime asks for NVIDIA driver {}.{} or newer."),
+										 std::make_format_args(major, minor))
+										 .c_str());
+		} else {
+			ImGui::TextWrapped("%s", T(TKEY("driver_update_needed_unknown"), "The runtime asks for a newer NVIDIA driver."));
+		}
 	}
 	if (current.capability.hasMemory) {
 		const auto mebibytes = current.capability.memoryBytes / kBytesPerMebibyte;
@@ -2587,6 +2591,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			const auto luid = work.interop.AdapterLuid();
 			PublishStatus(Status::State::kActive, FormatActiveStatus(runtime));
 			logger::info("[NeuralRendering] active: runtime {} on adapter LUID {:08X}:{:08X}", runtime, luid.HighPart, luid.LowPart);
+		} else if (diagnostic.recreated) {
+			PublishStatus(Status::State::kActive, FormatActiveStatus(work.runtime.Version()));
 		}
 		diagnostic.outcome = (diagnostic.options & NR::Diagnostics::BypassWriteback) ? Outcome::Bypassed : Outcome::Applied;
 		work.lastFrame = state->frameCount;

@@ -241,17 +241,17 @@ namespace NR
 	/** @brief What the NR runtime reports about itself through its NGX parameter block. */
 	struct RuntimeCapability
 	{
-		bool queried = false;              ///< True once a creation has read the block.
-		bool reportsAvailability = false;  ///< True when the block carries DLSSNR.Available.
-		bool available = false;            ///< DLSSNR.Available; meaningful only when reportsAvailability.
-		bool reportsDriver = false;        ///< True when the block carries DLSSNR.NeedsUpdatedDriver.
-		bool needsUpdatedDriver = false;   ///< DLSSNR.NeedsUpdatedDriver; meaningful only when reportsDriver.
-		uint32_t minDriverMajor = 0;       ///< DLSSNR.MinDriverVersionMajor; 0 when not reported.
-		uint32_t minDriverMinor = 0;       ///< DLSSNR.MinDriverVersionMinor; 0 when not reported.
-		bool hasMemory = false;            ///< True when the stats callback answered.
-		uint64_t memoryBytes = 0;          ///< Aggregate model allocation the runtime reports.
-		uint32_t optimizationLevel = 0;    ///< Optimization level of the runtime's snippet.
-		bool developmentBranch = false;    ///< True for a development snippet branch.
+		bool queried = false;                       ///< True once a creation has read the block.
+		bool reportsAvailability = false;           ///< True when the block carries DLSSNR.Available.
+		bool available = false;                     ///< DLSSNR.Available; meaningful only when reportsAvailability.
+		bool reportsDriver = false;                 ///< True when the block carries DLSSNR.NeedsUpdatedDriver.
+		bool needsUpdatedDriver = false;            ///< DLSSNR.NeedsUpdatedDriver; meaningful only when reportsDriver.
+		std::optional<uint32_t> minDriverMajor;     ///< DLSSNR.MinDriverVersionMajor; empty when not reported.
+		std::optional<uint32_t> minDriverMinor;     ///< DLSSNR.MinDriverVersionMinor; empty when not reported.
+		bool hasMemory = false;                     ///< True when the stats callback reported the model allocation.
+		uint64_t memoryBytes = 0;                   ///< Aggregate model allocation the runtime reports.
+		std::optional<uint32_t> optimizationLevel;  ///< Optimization level of the runtime's snippet; empty when not reported.
+		std::optional<bool> developmentBranch;      ///< True for a development snippet branch; empty when not reported.
 	};
 
 	/** @brief Owns the cached NGX ABI and one persistent Feature 18 handle per eye. */
