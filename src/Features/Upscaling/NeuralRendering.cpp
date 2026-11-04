@@ -183,6 +183,9 @@ namespace
 	/** @brief Widest the settings-panel region preview is drawn, in ImGui pixels. */
 	constexpr float kRegionPreviewMaxWidth = 400.0f;
 
+	/** @brief Bytes in one MiB, for the model memory line. */
+	constexpr uint64_t kBytesPerMebibyte = 1024ull * 1024ull;
+
 	/** @brief Rectangles the preview can draw: a crop and an actor box per eye. */
 	constexpr size_t kMaxPreviewRegions = 4;
 
@@ -220,7 +223,7 @@ struct NeuralRendering::Impl
 	winrt::com_ptr<ID3D11DeviceContext1> context;
 	winrt::com_ptr<ID3DDeviceContextState> isolated;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
-	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, expandRgb, expandLanczos;
+	Util::LazyShader<ID3D11ComputeShader> prepareColor, prepareToneData, compositeColor, materialAlphaShader, storeGain, reuseGain, downsampleLow, expandLow, expandRgb;
 	NR::Reconstruction::Mode reconstructionMode = NR::Reconstruction::Mode::Native;
 	bool reconstructionFallback = false;
 	/** @brief Cbuffer CategoryAlphaCS.hlsl reads: the eye extent, the stereo offset, the softness radius and the eight strengths. */
@@ -917,18 +920,12 @@ struct NeuralRendering::Impl
 	}
 
 	/** @brief Chooses one reconstruction for the stereo transaction, falling back if an optional shader is unavailable. */
-	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode, uint32_t filter)
+	ID3D11ComputeShader* SelectReconstructionShader(NR::Reconstruction::Mode& mode)
 	{
 		using enum NR::Reconstruction::Mode;
 		if (mode == RgbGuided) {
 			if (auto* shader = expandRgb.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
 					{ { "NR_RGB_GUIDED_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandRgbGain CS"))
-				return shader;
-			mode = NR::Reconstruction::BasicMode(filter);
-		}
-		if (mode == Lanczos3) {
-			if (auto* shader = expandLanczos.Get(L"Data/Shaders/Upscaling/NeuralRendering/LowResCS.hlsl",
-					{ { "NR_LANCZOS3_RECONSTRUCTION", "1" } }, "cs_5_0", "ExpandGain", "NeuralRendering::ExpandLanczosGain CS"))
 				return shader;
 			mode = Bilinear;
 		}
@@ -1127,10 +1124,10 @@ struct NeuralRendering::Impl
 			frameGenerationBlocked = frameGeneration;
 		}
 		const bool lowRes = lowWidth != 0;
-		const auto requestedReconstruction = NR::Reconstruction::Select(tuning.modelReconstructionFilter,
+		const auto requestedReconstruction = NR::Reconstruction::Select(
 			tuning.modelGuidedUpsample, tuning.modelRgbGuidedUpsample, tuning.modelScale, width, height, lowWidth, lowHeight);
 		auto selectedReconstruction = requestedReconstruction;
-		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction, tuning.modelReconstructionFilter) : nullptr;
+		auto* reconstructionShader = lowRes ? SelectReconstructionShader(selectedReconstruction) : nullptr;
 		if (selectedReconstruction != reconstructionMode)
 			reset |= NR::Diagnostics::Requested;
 		reconstructionMode = selectedReconstruction;
@@ -1644,6 +1641,7 @@ void NeuralRendering::PublishStatus(Status::State state, std::string text)
 	next.text = std::move(text);
 	next.failed = state == Status::State::kFailed;
 	next.runtimeVersion = impl->runtime.Version();
+	next.capability = impl->runtime.Capability();
 	next.width = impl->width;
 	next.height = impl->height;
 	next.eyes = impl->eyeCount;
@@ -1876,15 +1874,11 @@ namespace
 			ImGui::TextUnformatted(T(TKEY("eye_mode_tooltip"),
 				"How the two eyes are evaluated. Parallel eyes runs each eye's model at once, the second on its own queue: the same image as separate eyes and about 1 ms faster (about 2 ms with Follow Foveation). Side by side evaluates both eyes as one image on a single instance: about 3 ms faster than separate eyes, with a small difference between the halves. Alternate eyes runs one eye's model per frame and reuses its gain on the other: about 3.5 ms faster than separate eyes, but it can mismatch the eyes where the reuse fails. Separate eyes runs one after the other and is the baseline to compare against. Side by side needs Developer Mode. The Performance profile selects Alternate eyes."));
 		if (current == NR::EyeMode::kAlternate) {
-			int gapMode = static_cast<int>(std::min(tuning.skipFrameGapMode, NR::Tuning::kMaxSkipFrameGapMode));
 			const std::array<const char*, NR::Tuning::kMaxSkipFrameGapMode + 1> gapModeLabels{
 				T(TKEY("skip_frame_gap_notify"), "Notify the model"),
 				T(TKEY("skip_frame_gap_reset"), "Reset the eye's history"),
 			};
-			if (ImGui::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &gapMode, gapModeLabels.data(), static_cast<int>(gapModeLabels.size()))) {
-				tuning.skipFrameGapMode = static_cast<uint32_t>(gapMode);
-				changed = true;
-			}
+			changed |= Util::Combo(T(TKEY("skip_frame_gap_mode"), "Gap Handling"), &tuning.skipFrameGapMode, gapModeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("skip_frame_gap_mode_tooltip"),
 					"An eye the model skipped runs again two frames after its last run. Notify the model doubles the motion and the frame time it is given, so both frames are covered; Reset the eye's history drops what it accumulated instead."));
@@ -1930,17 +1924,8 @@ namespace
 		changed |= ImGui::Checkbox(T(TKEY("model_rgb_guided_upsample"), "RGB Guidance"), &tuning.modelRgbGuidedUpsample);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_rgb_guided_upsample_tooltip"),
-				"Uses colour similarity to keep the brightness change on the matching side of an edge. Experimental at Model Scale 0.5 or below; above it the basic reconstruction filter applies."));
+				"Uses colour similarity to keep the brightness change on the matching side of an edge. Applies whenever the model uses a reduced grid."));
 		ImGui::EndDisabled();
-		int filter = static_cast<int>(NR::Reconstruction::SanitizeFilter(tuning.modelReconstructionFilter));
-		const std::array<const char*, 2> filters{ "Bilinear", "Lanczos3" };
-		if (ImGui::Combo(T(TKEY("model_reconstruction_filter"), "Basic Reconstruction Filter"), &filter, filters.data(), static_cast<int>(filters.size()))) {
-			tuning.modelReconstructionFilter = static_cast<uint32_t>(filter);
-			changed = true;
-		}
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("model_reconstruction_filter_tooltip"),
-				"Used when guidance is off or RGB guidance is unavailable. Bilinear uses four samples; Lanczos3 uses 36 and can produce sharper edges with ringing. It filters only the model's brightness change."));
 		ImGui::EndDisabled();
 		ImGui::EndDisabled();
 		return changed;
@@ -2006,15 +1991,11 @@ namespace
 				"Tints each pixel by the material the deferred pass labelled it, so a character the classification mislabels is visible. The filter picks which materials show; the mode picks the category's colour or a colour ramp of the strength the by-material selection gives that pixel, read at the pixel without Edge Softness. Needs the deferred pass; unlabelled pixels follow Everything Else."));
 		ImGui::BeginDisabled(!tuning.showMaterialMap);
 		ImGui::PushID("materialMap");
-		int materialMapMode = static_cast<int>(std::min(tuning.materialMapMode, NR::MaterialMap::kMaxMode));
 		const std::array<const char*, NR::MaterialMap::kMaxMode + 1> materialMapModeLabels{
 			T(TKEY("material_map_category"), "Category colours"),
 			T(TKEY("material_map_strength"), "Strength"),
 		};
-		if (ImGui::Combo(T(TKEY("material_map_mode"), "Map Mode"), &materialMapMode, materialMapModeLabels.data(), static_cast<int>(materialMapModeLabels.size()))) {
-			tuning.materialMapMode = static_cast<uint32_t>(materialMapMode);
-			changed = true;
-		}
+		changed |= Util::Combo(T(TKEY("material_map_mode"), "Map Mode"), &tuning.materialMapMode, materialMapModeLabels);
 		if (tuning.materialMapMode == static_cast<uint32_t>(NR::MaterialMap::Mode::kStrength))
 			DrawStrengthLegend();
 		ImGui::TextUnformatted(T(TKEY("material_map_filter"), "Show"));
@@ -2053,28 +2034,22 @@ namespace
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_only_tooltip"),
 					"Evaluates Neural Rendering only while a dialogue is open, and leaves the frame's rendering untouched the rest of the time. The pass stays initialized, so opening a dialogue resumes it without a rebuild."));
-			int scopeItem = static_cast<int>(contexts.dialogue.scope);
 			const std::array<const char*, 4> dialogueScopeLabels{
 				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
 				T(TKEY("dialogue_scope_everything"), "Everything"),
 				T(TKEY("dialogue_scope_characters"), "Skin, hair and eyes"),
 				T(TKEY("dialogue_scope_characters_foliage"), "Skin, hair, eyes and foliage"),
 			};
-			if (ImGui::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &scopeItem, dialogueScopeLabels.data(), static_cast<int>(dialogueScopeLabels.size())))
-				contexts.dialogue.scope = static_cast<NR::Context::ScopeOverride>(scopeItem);
+			Util::Combo(T(TKEY("dialogue_scope"), "In dialogue, apply Neural Rendering to"), &contexts.dialogue.scope, dialogueScopeLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_scope_tooltip"),
 					"What Neural Rendering applies to while a dialogue is open. Choosing a scope keeps the by-material lane bound the whole time, at a cost of about 0.04 ms, so entering and leaving dialogue never rebuilds Neural Rendering."));
 			ImGui::BeginDisabled(cropDisabled);
-			int regionItem = static_cast<int>(contexts.dialogue.region);
 			const std::array<const char*, 2> dialogueRegionLabels{
 				T(TKEY("dialogue_same_as_normal"), "Same as normal"),
 				T(TKEY("dialogue_region_full"), "Full frame"),
 			};
-			if (ImGui::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &regionItem, dialogueRegionLabels.data(), static_cast<int>(dialogueRegionLabels.size()))) {
-				contexts.dialogue.region = static_cast<NR::Context::RegionOverride>(regionItem);
-				cropChanged = true;
-			}
+			cropChanged |= Util::Combo(T(TKEY("dialogue_region"), "In dialogue, crop"), &contexts.dialogue.region, dialogueRegionLabels);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T(TKEY("dialogue_region_tooltip"),
 					"Full frame evaluates the whole view during dialogue instead of the character's crop. It needs Limit to Tracked Actor on; Same as normal follows that setting."));
@@ -2141,15 +2116,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"Which nvngx_dlssnr.dll to load: the file in the Streamline folder, or one kept in a subfolder of it. Switching unloads the running one and loads the other, and each build is checked on its own."));
 	}
 	if (availability.modelPresets) {
-		int preset = static_cast<int>(std::min(tuning.modelPreset, NR::Tuning::kMaxModelPreset));
 		const std::array<const char*, NR::Tuning::kMaxModelPreset + 1> presetLabels{
 			T(TKEY("model_preset_original"), "Original"),
 			T(TKEY("model_preset_newest"), "Newest (faster)"),
 		};
-		if (ImGui::Combo(T(TKEY("model_preset"), "Network"), &preset, presetLabels.data(), static_cast<int>(presetLabels.size()))) {
-			tuning.modelPreset = static_cast<uint32_t>(preset);
-			changed = true;
-		}
+		changed |= Util::Combo(T(TKEY("model_preset"), "Network"), &tuning.modelPreset, presetLabels);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("model_preset_tooltip"),
 				"This runtime ships two networks. Original is the network of the 310.8 runtime. Newest costs less GPU time but changes the picture, so compare faces and hair before keeping it. The change recreates the model."));
@@ -2198,17 +2169,14 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		}
 		ImGui::PopID();
 	}
-	int style = static_cast<int>(std::min(tuning.style, NR::Tuning::kMaxStyle));
 	const std::array<const char*, NR::Tuning::kMaxStyle + 1> styleLabels{
 		T(TKEY("style_0"), "Style 0"),
 		T(TKEY("style_1"), "Style 1"),
 		T(TKEY("style_2"), "Style 2"),
 	};
-	const bool styleChanged = ImGui::Combo(T(TKEY("style"), "Style"), &style, styleLabels.data(), static_cast<int>(styleLabels.size()));
+	const bool styleChanged = Util::Combo(T(TKEY("style"), "Style"), &tuning.style, styleLabels);
 	changed |= styleChanged;
 	bool recreateTuning = styleChanged;
-	if (styleChanged)
-		tuning.style = static_cast<uint32_t>(style);
 	changed |= ImGui::SliderFloat(T(TKEY("intensity"), "Intensity"), &tuning.intensity, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	recreateTuning |= ImGui::IsItemDeactivatedAfterEdit();
 	changed |= ImGui::SliderFloat(T(TKEY("local_tone"), "Local Tone Strength"), &tuning.localToneStrength, NR::Tuning::kMinStrength, NR::Tuning::kMaxStrength, "%.2f", ImGuiSliderFlags_AlwaysClamp);
@@ -2254,13 +2222,11 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 				"NVIDIA's built-in automatic mask. On is the normal setting; turning it off with no mask supplied is an untested configuration."));
 		ImGui::SeparatorText(T(TKEY("developer_crop"), "Crop"));
 		ImGui::BeginDisabled(cropDisabled);
-		int fit = static_cast<int>(std::min(tuning.regionFit, NR::Tuning::kMaxRegionFit));
 		const std::array<const char*, NR::Tuning::kMaxRegionFit + 1> fitLabels{
 			T(TKEY("crop_fit_padded"), "Padded"),
 			T(TKEY("crop_fit_tight"), "Tight"),
 		};
-		if (ImGui::Combo(T(TKEY("crop_fit"), "Crop Fit"), &fit, fitLabels.data(), static_cast<int>(fitLabels.size()))) {
-			tuning.regionFit = static_cast<uint32_t>(fit);
+		if (Util::Combo(T(TKEY("crop_fit"), "Crop Fit"), &tuning.regionFit, fitLabels)) {
 			changed = true;
 			resetHistory = true;
 		}
@@ -2307,6 +2273,21 @@ void NeuralRendering::DrawSettings(bool& enabled, NR::Context::Profiles& context
 		recreate = resetHistory = true;
 	const auto current = GetStatus();
 	ImGui::TextWrapped("%s", current.text.c_str());
+	if (current.capability.needsUpdatedDriver) {
+		if (current.capability.minDriverMajor && current.capability.minDriverMinor) {
+			const auto major = *current.capability.minDriverMajor;
+			const auto minor = *current.capability.minDriverMinor;
+			ImGui::TextWrapped("%s", std::vformat(T(TKEY("driver_update_needed"), "The runtime asks for NVIDIA driver {}.{} or newer."),
+										 std::make_format_args(major, minor))
+										 .c_str());
+		} else {
+			ImGui::TextWrapped("%s", T(TKEY("driver_update_needed_unknown"), "The runtime asks for a newer NVIDIA driver."));
+		}
+	}
+	if (current.capability.hasMemory) {
+		const auto mebibytes = current.capability.memoryBytes / kBytesPerMebibyte;
+		ImGui::TextDisabled("%s", std::vformat(T(TKEY("model_memory"), "Model memory: {} MiB"), std::make_format_args(mebibytes)).c_str());
+	}
 	if (tuning.regionOverlay)
 		DrawRegionPreview();
 	ImGui::PopID();
@@ -2505,7 +2486,6 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			work.downsampleLow.Reset();
 			work.expandLow.Reset();
 			work.expandRgb.Reset();
-			work.expandLanczos.Reset();
 		}
 		auto& targets = globals::game::renderer->GetRuntimeData().renderTargets;
 		auto* color = Util::AsReal(targets[RE::RENDER_TARGETS::kMAIN].texture);
@@ -2648,6 +2628,8 @@ void NeuralRendering::DrawBeforeUpscaling(bool enabled, const NR::Context::Profi
 			const auto luid = work.interop.AdapterLuid();
 			PublishStatus(Status::State::kActive, FormatActiveStatus(runtime));
 			logger::info("[NeuralRendering] active: runtime {} on adapter LUID {:08X}:{:08X}", runtime, luid.HighPart, luid.LowPart);
+		} else if (diagnostic.recreated) {
+			PublishStatus(Status::State::kActive, FormatActiveStatus(work.runtime.Version()));
 		}
 		diagnostic.outcome = (diagnostic.options & NR::Diagnostics::BypassWriteback) ? Outcome::Bypassed : Outcome::Applied;
 		work.lastFrame = state->frameCount;

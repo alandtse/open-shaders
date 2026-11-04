@@ -547,7 +547,8 @@ void ColorGrading::DrawSettings()
 		if (ImGui::Checkbox(T(TKEY("convert_log_to_linear_after_hdr_color_grading"), "Convert Log to Linear After HDR Color Grading"), &invertLog))
 			settings.invertLog = invertLog;
 		ImGui::EndDisabled();
-		ImGui::Combo(T(TKEY("log_type"), "Log Type"), (int*)&settings.logType, "ACEScct\0ARRILogC4\0SonySLog3\0");
+		static constexpr const char* logTypes[] = { "ACEScct", "ARRILogC4", "SonySLog3" };
+		Util::Combo(T(TKEY("log_type"), "Log Type"), &settings.logType, logTypes);
 	}
 
 	ImGui::SeparatorText(T(TKEY("color_grading"), "Color Grading"));
@@ -786,7 +787,7 @@ void ColorGrading::DrawSettings()
 		const bool wideGamutActive = linearLighting.settings.enableACEScg && linearLighting.IsLinearLightingActive();
 		const char* inputSpaceName = wideGamutActive ? spaces[5] : spaces[0];
 		ImGui::TextDisabled(T(TKEY("input_color_space"), "Input Color Space: %s (%s)"), inputSpaceName, wideGamutActive ? T(TKEY("input_color_space_auto_detected"), "auto-detected from Linear Lighting ACEScg") : T(TKEY("input_color_space_fixed"), "fixed"));
-		ImGui::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces.data(), (int)spaces.size());
+		Util::Combo(T(TKEY("working_color_space"), "Working Color Space"), &settings.processColorSpace, spaces);
 		ImGui::TextDisabled(T(TKEY("output_color_space"), "Output Color Space: %s (auto from HDR Display)"), spaces[outputColorSpace]);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("output_color_space_tooltip"), "Output switches automatically: SDR -> sRGB, HDR -> BT2020."));

@@ -24,6 +24,7 @@
 #include <dxgi.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <unordered_set>
 #include <wrl/client.h>
 
 #include "../Feature.h"
@@ -640,9 +641,10 @@ namespace Util
 
 	bool PercentageSlider(const char* label, float* data, float lb, float ub, const char* format)
 	{
-		float percentageData = (*data) * 1e2f;
-		bool retval = ImGui::SliderFloat(label, &percentageData, lb, ub, format);
-		(*data) = percentageData * 1e-2f;
+		const float shownPercentage = (*data) * 1e2f;
+		float percentageData = shownPercentage;
+		const bool retval = ImGui::SliderFloat(label, &percentageData, lb, ub, format);
+		CommitDisplayedValue(*data, shownPercentage, percentageData, [](float percentage) { return percentage * 1e-2f; });
 		return retval;
 	}
 
@@ -652,10 +654,10 @@ namespace Util
 			return false;
 
 		ActiveControlStorageGuard storageGuard(storedValue);
-		bool displayValue = !*storedValue;
+		const bool shownValue = !*storedValue;
+		bool displayValue = shownValue;
 		const bool changed = ImGui::Checkbox(label, &displayValue);
-		if (changed)
-			*storedValue = !displayValue;
+		CommitDisplayedValue(*storedValue, shownValue, displayValue, [](bool shown) { return !shown; });
 		return changed;
 	}
 
@@ -665,11 +667,17 @@ namespace Util
 			return false;
 
 		ActiveControlStorageGuard storageGuard(storedValue);
-		int displayValue = static_cast<int>(*storedValue);
+		const int shownValue = static_cast<int>(*storedValue);
+		int displayValue = shownValue;
 		const bool changed = ImGui::RadioButton(label, &displayValue, static_cast<int>(buttonValue));
-		if (changed)
-			*storedValue = static_cast<unsigned int>(displayValue);
+		CommitDisplayedValue(*storedValue, shownValue, displayValue);
 		return changed;
+	}
+
+	bool ComboAtStorage(const char* label, const void* storageAddress, int* displayIndex, const char* const* items, int itemCount)
+	{
+		ActiveControlStorageGuard storageGuard(storageAddress);
+		return ImGui::Combo(label, displayIndex, items, itemCount);
 	}
 
 	const void* GetActiveControlStorageAddress()
@@ -1514,6 +1522,13 @@ namespace Util
 				return false;
 			return ascending ? (a[column] < b[column]) : (a[column] > b[column]);
 		});
+	}
+
+	void AutoFitTableColumnsOnce()
+	{
+		static std::unordered_set<ImGuiID> fitted;
+		if (auto* table = ImGui::GetCurrentTable(); table && fitted.insert(table->ID).second)
+			ImGui::TableSetColumnWidthAutoAll(table);
 	}
 
 	bool VersionStringLess(const std::string& a, const std::string& b, bool ascending)

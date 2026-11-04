@@ -114,7 +114,7 @@ namespace
 				T(TKEY("reproject_debug_blend_weight"), "Blend Weight"),
 				T(TKEY("reproject_debug_edge_detection"), "Edge Detection")
 			};
-			if (ImGui::Combo(T(TKEY("reproject_debug_view"), "Reprojection Debug View"), &settings.ReprojectDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
+			if (Util::Combo(T(TKEY("reproject_debug_view"), "Reprojection Debug View"), &settings.ReprojectDebugMode, debugModes)) {
 				int newMode = settings.ReprojectDebugMode;
 				bool needsBlend = (newMode >= 2 && newMode <= 4);
 
@@ -213,6 +213,11 @@ namespace
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("min_occludee_box_extent_tooltip"), "Minimum bounding box dimensions for object occlusion culling. Lower values improve performance but may result in visual artifacts."));
+			}
+
+			ImGui::Checkbox(T(TKEY("fit_menu_to_desktop"), "Fit Menu to Desktop Window"), &settings.FitMenuToDesktop);
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s", T(TKEY("fit_menu_to_desktop_tooltip"), "Scales the headset menu to fill the desktop mirror window. The mouse does not line up with the scaled menu.\nOff draws the menu at the headset panel's size, which can clip when the window differs in size or aspect."));
 			}
 		}
 	}

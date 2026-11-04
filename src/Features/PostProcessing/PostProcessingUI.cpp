@@ -164,24 +164,12 @@ namespace PostProcessingUI
 
 	bool FFTResolutionCombo(const char* label, int& resolution)
 	{
-		int currentIndex = FFTResolutionDefaultIndex;
-		bool matched = false;
-		for (int i = 0; i < static_cast<int>(FFTResolutionValues.size()); i++) {
-			if (FFTResolutionValues[i] == resolution) {
-				currentIndex = i;
-				matched = true;
-				break;
-			}
-		}
-
+		const bool matched = Util::ComboValueIndex(resolution, FFTResolutionValues, -1) >= 0;
 		if (!matched)
-			resolution = FFTResolutionValues[currentIndex];
+			resolution = FFTResolutionValues[FFTResolutionDefaultIndex];
 
-		if (!ImGui::Combo(label, &currentIndex, FFTResolutionLabels.data(), static_cast<int>(FFTResolutionLabels.size())))
-			return !matched;
-
-		resolution = FFTResolutionValues[currentIndex];
-		return true;
+		const bool picked = Util::Combo(label, &resolution, FFTResolutionLabels.data(), FFTResolutionValues, FFTResolutionDefaultIndex);
+		return picked || !matched;
 	}
 
 	bool LabeledSliderFloat3(

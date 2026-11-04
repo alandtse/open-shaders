@@ -327,7 +327,7 @@ namespace CinematicCamera
 				T("feature.post_processing.cinematic_camera.exposure_auto_iso", "Auto ISO"),
 				T("feature.post_processing.cinematic_camera.exposure_manual", "Manual"),
 			};
-			ImGui::Combo(T("feature.post_processing.cinematic_camera.exposure_mode", "Exposure Mode"), &exp.Mode, exposureModes, (int)std::size(exposureModes));
+			Util::Combo(T("feature.post_processing.cinematic_camera.exposure_mode", "Exposure Mode"), &exp.Mode, exposureModes);
 			const bool autoISO = (ExposureMode)exp.Mode == ExposureMode::AutoISO;
 			if (autoISO) {
 				ImGui::SliderFloat(T("feature.post_processing.cinematic_camera.iso_min", "Minimum ISO"), &exp.MinISO, 25.0f, exp.MaxISO, "%.0f", logSliderFlags);
@@ -372,7 +372,7 @@ namespace CinematicCamera
 				T("feature.post_processing.cinematic_camera.preset_aps_c", "APS-C"),
 				T("feature.post_processing.cinematic_camera.custom", "Custom"),
 			};
-			if (ImGui::Combo(T("feature.post_processing.cinematic_camera.preset", "Filmback Preset"), &fb.Preset, presetNames, (int)std::size(presetNames))) {
+			if (Util::Combo(T("feature.post_processing.cinematic_camera.preset", "Filmback Preset"), &fb.Preset, presetNames)) {
 				ValidateSettings();
 			}
 
@@ -387,7 +387,7 @@ namespace CinematicCamera
 				T("feature.post_processing.cinematic_camera.gate_fit_horizontal", "Horizontal"),
 				T("feature.post_processing.cinematic_camera.gate_fit_vertical", "Vertical"),
 			};
-			ImGui::Combo(T("feature.post_processing.cinematic_camera.gate_fit", "Gate Fit"), &fb.GateFit, gateFitNames, (int)std::size(gateFitNames));
+			Util::Combo(T("feature.post_processing.cinematic_camera.gate_fit", "Gate Fit"), &fb.GateFit, gateFitNames);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::TextUnformatted(T("feature.post_processing.cinematic_camera.gate_fit_desc",
 					"Which sensor dimension maps to the game FOV. Horizontal keeps the horizontal angle of view; Vertical keeps the vertical angle and derives the horizontal FOV from the viewport aspect."));
@@ -421,7 +421,7 @@ namespace CinematicCamera
 				T("feature.post_processing.cinematic_camera.focus_screen_point", "Screen Point"),
 				T("feature.post_processing.cinematic_camera.focus_target", "Target"),
 			};
-			ImGui::Combo(T("feature.post_processing.cinematic_camera.focus_mode", "Focus Mode"), &focus.Mode, modeNames, (int)std::size(modeNames));
+			Util::Combo(T("feature.post_processing.cinematic_camera.focus_mode", "Focus Mode"), &focus.Mode, modeNames);
 
 			if ((FocusMode)focus.Mode != FocusMode::ScreenPoint) {
 				const char* distanceLabel = (FocusMode)focus.Mode == FocusMode::Target ?
