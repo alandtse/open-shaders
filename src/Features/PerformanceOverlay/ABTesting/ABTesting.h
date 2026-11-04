@@ -183,6 +183,12 @@ public:
 	/** @brief Runs every queued comparison in order and empties the queue. */
 	bool RunQueue(std::string* error);
 
+	/** @brief Runs the last benchmark again with the same changes and options, replacing its results. */
+	bool RepeatRun(std::string* error);
+
+	/** @brief True when a run has been started and none is in progress, so it can be repeated. */
+	bool CanRepeat() const { return !queueActive && !queue.empty(); }
+
 	/** @brief Draws the Run benchmark and Clear all buttons, both disabled while a run is in progress or the queue is empty. */
 	void DrawQueueButtons();
 

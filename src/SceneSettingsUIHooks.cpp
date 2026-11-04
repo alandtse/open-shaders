@@ -555,6 +555,20 @@ namespace
 		return {};
 	}
 
+	/** @brief Offers to open the Benchmark tab while any comparison is queued. */
+	void DrawGoToBenchmarkMenuItem()
+	{
+		const size_t queued = ABTestingManager::GetSingleton()->GetQueue().size();
+		if (queued == 0)
+			return;
+		const auto label = fmt::format(fmt::runtime(T("menu.settings.benchmark_go", "Go to benchmark ({})")), queued);
+		if (!ImGui::MenuItem(label.c_str()))
+			return;
+		auto* menu = Menu::GetSingleton();
+		menu->SelectFeatureMenu("Performance");
+		menu->RequestTab("BenchmarkTab");
+	}
+
 	/**
 	 * @brief Offers to queue the setting's unsaved change as a benchmark comparison, turning on the settings that
 	 * disable it; a queued setting offers removal.
@@ -673,6 +687,7 @@ namespace
 				prerequisites.reset();
 		}
 		DrawBenchmarkMenuItem(*setting, *currentValue, prerequisites);
+		DrawGoToBenchmarkMenuItem();
 		ImGui::EndPopup();
 	}
 
@@ -709,8 +724,10 @@ namespace
 		                   Util::Settings::ResetSettingToDefault(*g_currentFeature, *setting);
 		if (reset)
 			g_featureSettingMutation = true;
-		else if (!ABTestingManager::GetSingleton()->IsEnabled() && currentValue)
+		else if (!ABTestingManager::GetSingleton()->IsEnabled() && currentValue) {
 			DrawBenchmarkMenuItem(*setting, *currentValue, std::vector<ABSettingPrerequisite>{});
+			DrawGoToBenchmarkMenuItem();
+		}
 		ImGui::EndPopup();
 		return reset;
 	}

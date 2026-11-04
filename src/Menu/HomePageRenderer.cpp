@@ -32,6 +32,7 @@ void HomePageRenderer::RenderHomePage()
 	RenderWelcomeSection();
 	ImGui::Spacing();
 
+	RenderWrongRuntimeCacheSection();
 	RenderCacheMismatchSection();
 
 	RenderActiveConstraintsSection();
@@ -228,6 +229,31 @@ void HomePageRenderer::RenderFAQSection()
 									 "are not covered by the GPL Licence. Any included assets may not be used without explicit "
 									 "permission."));
 	}
+}
+
+void HomePageRenderer::RenderWrongRuntimeCacheSection()
+{
+	auto shaderCache = globals::shaderCache;
+	if (!shaderCache)
+		return;
+	const auto cacheRuntime = shaderCache->GetWrongRuntimeCache();
+	if (cacheRuntime == Util::CacheInvalidation::CacheRuntime::Unknown)
+		return;
+
+	auto menu = Menu::GetSingleton();
+	ImGui::PushStyleColor(ImGuiCol_Text, menu ? menu->GetTheme().StatusPalette.Warning : ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+	const bool headerOpen = ImGui::CollapsingHeader(T("menu.home.cache_wrong_runtime", "Wrong Shader Cache Installed"), ImGuiTreeNodeFlags_DefaultOpen);
+	ImGui::PopStyleColor();
+	if (!headerOpen)
+		return;
+
+	const bool cacheIsVR = cacheRuntime == Util::CacheInvalidation::CacheRuntime::VR;
+	ImGui::TextWrapped("%s", cacheIsVR ?
+								 T("menu.home.cache_wrong_runtime_vr", "The saved shader cache was built for Skyrim VR, but this is a Skyrim SE/AE install. None of its shaders can be reused, so everything is recompiling. Install the SE/AE shader cache.") :
+								 T("menu.home.cache_wrong_runtime_flat", "The saved shader cache was built for Skyrim SE/AE, but this is a Skyrim VR install. None of its shaders can be reused, so everything is recompiling. Install the VR shader cache."));
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
 }
 
 void HomePageRenderer::RenderCacheMismatchSection()

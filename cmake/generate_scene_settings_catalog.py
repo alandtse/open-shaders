@@ -431,10 +431,24 @@ def collect_nlohmann_macros(paths: list[Path]) -> dict[str, list[str]]:
     return macros
 
 
+def enclosing_namespace(text: str, position: int, spans: list[tuple[int, int, str]]) -> str:
+    return "::".join(name for start, end, name in spans if start < position < end)
+
+
+def collect_namespace_spans(text: str) -> list[tuple[int, int, str]]:
+    spans = []
+    for match in re.finditer(r"\bnamespace\s+([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*\{", text):
+        end = find_matching_brace(text, match.end() - 1)
+        if end >= 0:
+            spans.append((match.start(), end, match.group(1)))
+    return spans
+
+
 def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
     bodies: dict[str, str] = {}
     for path in paths:
         text = read_text(path)
+        namespace_spans = collect_namespace_spans(text)
         for match in re.finditer(STRUCT_DECL_RE, text):
             name = match.group(1)
             body_start = match.end()
@@ -459,6 +473,9 @@ def collect_struct_bodies(paths: list[Path]) -> dict[str, str]:
                     depth -= 1
                     if depth == 0:
                         bodies.setdefault(name, text[body_start:i])
+                        namespace = enclosing_namespace(text, match.start(), namespace_spans)
+                        if namespace:
+                            bodies.setdefault(f"{namespace}::{name}", text[body_start:i])
                         break
                 i += 1
     return bodies
@@ -474,9 +491,14 @@ def clean_type(type_name: str) -> str:
 def parse_struct_fields(body: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for raw_stmt in mask_cpp_source(body).split(";"):
-        parsed = parse_field_statement(raw_stmt)
+        declarators = split_args(raw_stmt) if "," in raw_stmt and "<" not in raw_stmt else [raw_stmt]
+        parsed = parse_field_statement(declarators[0])
         if parsed:
             fields[parsed[0]] = parsed[1]
+            for declarator in declarators[1:]:
+                extra = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*(?:=.*)?", declarator, re.DOTALL)
+                if extra:
+                    fields.setdefault(extra.group(1), parsed[1])
     return fields
 
 
@@ -2608,6 +2630,46 @@ def resolve_provider_combo_choices(
     return [(index, label, key) for index, (label, key) in enumerate(values)]
 
 
+def resolve_value_table_combo_choices(
+        source: str,
+        items_expression: str,
+        values_expression: str,
+        prefix: str,
+        constants: dict[str, float]) -> list[tuple[int, str, str]]:
+    labels = re.fullmatch(r"([A-Za-z_]\w*)(?:\.data\(\))?", items_expression.strip())
+    values = re.fullmatch(r"[A-Za-z_]\w*", values_expression.strip())
+    if not labels or not values:
+        return []
+    string_arrays, integer_arrays = collect_literal_std_arrays(source, prefix, constants)
+    names = string_arrays.get(labels.group(1))
+    numbers = integer_arrays.get(values.group(0))
+    if not names or not numbers or len(names) != len(numbers):
+        return []
+    return [(number, label, key) for number, (label, key) in zip(numbers, names)]
+
+
+def resolve_combo_call_choices(
+        body: str,
+        position: int,
+        args: list[str],
+        prefix: str,
+        source: str,
+        constants: dict[str, float],
+        providers: dict[str, tuple[tuple[str, str], ...]]) -> list[tuple[int, str, str]]:
+    """Choices of a Combo call, whether its labels are a local array, a provider's array or a label and value table."""
+    values = resolve_combo_choices(body, position, args[2], prefix, source, constants)
+    if not values and len(args) >= 4:
+        values = resolve_provider_combo_choices(
+            body, position, args[2], args[3], providers, constants)
+    if not values and len(args) == 3:
+        alias = args[2].strip()
+        values = resolve_provider_combo_choices(
+            body, position, f"{alias}.data()", f"{alias}.size()", providers, constants)
+    if not values and len(args) >= 5:
+        values = resolve_value_table_combo_choices(source, args[2], args[3], prefix, constants)
+    return values
+
+
 def resolve_choice_label_call(
         source: str,
         expression: str,
@@ -2658,7 +2720,8 @@ def resolve_combo_choices(
     if not re.fullmatch(r"[A-Za-z_]\w*", variable):
         return []
     declaration = list(re.finditer(
-        rf"\b(?:const\s+)?char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*=\s*\{{",
+        rf"\b(?:const\s+)?(?:char\s*\*\s*(?:const\s+)?{re.escape(variable)}\s*\[[^\]]*\]\s*="
+        rf"|std::array\s*<[^;{{}}]*>\s*{re.escape(variable)}\s*=?)\s*\{{",
         body[:position]))
     if not declaration:
         return []
@@ -2667,7 +2730,11 @@ def resolve_combo_choices(
     if close_brace < 0:
         return []
 
-    items = [item for item in split_args(body[open_brace + 1:close_brace]) if item.strip()]
+    initializer = body[open_brace + 1:close_brace]
+    inner = initializer.strip()
+    if inner.startswith("{") and find_matching_brace(inner, 0) == len(inner) - 1:
+        initializer = inner[1:-1]
+    items = [item for item in split_args(initializer) if item.strip()]
     choices = []
     for index, item in enumerate(items):
         translated = extract_i18n_call(item, prefix)
@@ -3545,14 +3612,9 @@ def _project_standard_controls(
 
     def resolve_choices(function, position, kind, args):
         if kind == "Combo" and len(args) >= 3:
-            values = resolve_combo_choices(
-                function.body, position, args[2], function.prefix,
-                text_by_path[function.source], constants_by_path[function.source])
-            if not values and len(args) >= 4:
-                values = resolve_provider_combo_choices(
-                    function.body, position, args[2], args[3], providers,
-                    constants_by_path[function.source])
-            return tuple(values)
+            return tuple(resolve_combo_call_choices(
+                function.body, position, args, function.prefix,
+                text_by_path[function.source], constants_by_path[function.source], providers))
         if kind == "RadioButton" and len(args) >= 3:
             value = resolve_numeric_expression(args[2], constants_by_path[function.source])
             label = _localized_text(args[0], function.prefix)
@@ -4705,7 +4767,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             if owner not in {context.field_class, "Settings"})
         declared_type = catalog_class_aliases.get(context.field_class, {}).get(simple_type, simple_type)
         declared_type = declared_type.split("::")[-1]
-        declared_fields = catalog_class_fields.get(context.field_class, {}).get(
+        declared_fields = struct_fields.get(full_type) or catalog_class_fields.get(context.field_class, {}).get(
             simple_type, struct_fields.get(declared_type, {}))
         for field in fields:
             field_type = declared_fields.get(field, "")
