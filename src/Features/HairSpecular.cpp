@@ -30,7 +30,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 void HairSpecular::DrawSettings()
 {
 	Util::CheckboxFlag(T(TKEY("enabled"), "Enabled"), settings.Enabled);
-	ImGui::Combo(T(TKEY("hair_mode"), "Hair Mode"), (int*)&settings.HairMode, "Kajiya-Kay\0Marschner\0");
+	static constexpr const char* hairModes[] = { "Kajiya-Kay", "Marschner" };
+	Util::Combo(T(TKEY("hair_mode"), "Hair Mode"), &settings.HairMode, hairModes);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("hair_mode_tooltip"),
 							  "Select the hair shading model to use.\n"

@@ -650,6 +650,22 @@ struct AliasFeature : Feature
              (9, "Third", "feature.synthetic.mode_third"),
              (14, "Fourth", "feature.synthetic.mode_fourth")))
 
+    def test_combo_calls_resolve_provider_aliases_and_value_tables(self):
+        providers = {"getSpaces": (("sRGB", ""), ("ACEScg", "feature.fixture.acescg"))}
+        body = 'auto& spaces = getSpaces();\nUtil::Combo("Space", &space, spaces);\n'
+        aliased = GENERATOR.resolve_combo_call_choices(
+            body, body.index("Util::Combo"), ['"Space"', "&space", "spaces"],
+            "feature.fixture.", "", {}, providers)
+        self.assertEqual(aliased, [(0, "sRGB", ""), (1, "ACEScg", "feature.fixture.acescg")])
+
+        source = (
+            'constexpr std::array<const char*, 3> labels = { "128", "256", "512" };\n'
+            "constexpr std::array<int, labels.size()> values = { 128, 256, 512 };\n")
+        table = GENERATOR.resolve_combo_call_choices(
+            "", 0, ['"Size"', "&size", "labels.data()", "values", "1"],
+            "feature.fixture.", source, {}, {})
+        self.assertEqual(table, [(128, "128", ""), (256, "256", ""), (512, "512", "")])
+
     def test_tabs_select_and_headings_only_label(self):
         entry = self.entries_by_id[("", "regular")]
         self.assertEqual(entry["selectorPath"], "Advanced")
@@ -921,6 +937,60 @@ void Fixture::DrawSettings() {
             output = (Path(directory) / "SceneSettingsCatalog.generated.cpp").read_text(encoding="utf-8")
             self.assertIn("GetNavigationControls()", header)
             self.assertIn('"More Options", "feature.fixture.expanded"', output)
+
+    def test_same_named_structs_in_namespaces_keep_their_own_fields(self):
+        header = r'''
+namespace First
+{
+    struct Tuning
+    {
+        float gain = 1.0f;
+    };
+}
+
+namespace Second::Inner
+{
+    struct Tuning
+    {
+        float strengthA = 1.0f, strengthB = 2.0f;
+        float plainA, plainB;
+        bool enabled = false;
+    };
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Tuning.h"
+            path.write_text(header, encoding="utf-8")
+            bodies = GENERATOR.collect_struct_bodies([path])
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["First::Tuning"]), {"gain": "float"})
+        self.assertEqual(
+            GENERATOR.parse_struct_fields(bodies["Second::Inner::Tuning"]),
+            {"strengthA": "float", "strengthB": "float", "plainA": "float", "plainB": "float", "enabled": "bool"})
+
+    def test_std_array_label_tables_resolve_combo_choices(self):
+        body = r'''
+const std::array<const char*, kMaxStyle + 1> styleLabels{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
+
+    def test_double_braced_std_array_label_tables_keep_every_choice(self):
+        body = r'''
+const std::array<const char*, 2> styleLabels{{
+    T(TKEY("style_0"), "Style 0"),
+    T(TKEY("style_1"), "Style 1"),
+}};
+Util::Combo("Style", &tuning.style, styleLabels);
+'''
+        choices = GENERATOR.resolve_combo_choices(
+            body, body.index("Util::Combo"), "styleLabels", "feature.fixture.")
+        self.assertEqual([(index, label) for index, label, _ in choices], [(0, "Style 0"), (1, "Style 1")])
 
 
 if __name__ == "__main__":

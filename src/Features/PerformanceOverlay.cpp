@@ -1413,7 +1413,7 @@ void PerformanceOverlay::DrawABRunSummary(bool editable)
 				fields.emplace_back();
 			return fields;
 		},
-		false);
+		false, { .trailingFixedColumn = editable, .autoFitOnFirstShow = true });
 	if (!removed.empty())
 		abTestingManager->Unqueue(removed);
 	ImGui::TextDisabled("%s", T(TKEY("run_summary_note"), "Frame time and FPS are the headline on flat; in VR the frame rate is locked to the display, so the verdict follows GPU time. A change inside its uncertainty is no measurable change."));
@@ -2432,6 +2432,17 @@ void PerformanceOverlay::RegisterUxActions()
 			manager->RunOptions() = RunOptionsFromArgs(args, manager->RunOptions());
 			std::string error;
 			if (!manager->RunQueue(&error))
+				throw std::runtime_error(error);
+		});
+
+	FEATURE_COMMAND("repeatComparisonRun",
+		"Run the last benchmark again with the same changes and options (what the Repeat benchmark button does); the new results replace the old ones and the queue is left alone. Params: none.",
+		[](Feature*, const json&) {
+			auto* manager = ABTestingManager::GetSingleton();
+			if (manager->IsComparisonRunning())
+				throw std::runtime_error("A comparison is running; stop it with stopABTest first.");
+			std::string error;
+			if (!manager->RepeatRun(&error))
 				throw std::runtime_error(error);
 		});
 

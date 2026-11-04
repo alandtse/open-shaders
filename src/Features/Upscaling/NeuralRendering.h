@@ -47,6 +47,8 @@ struct NeuralRendering
 		uint32_t appliedFrames = 0;
 		/** @brief Per-eye NGX result code of the last applied frame. */
 		std::array<uint32_t, 2> ngxResult{};
+		/** @brief What the runtime reported about itself at the last creation. */
+		NR::RuntimeCapability capability;
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
 		/** @brief True when the selected provider or compositor route has not rejected or lost material protection. */

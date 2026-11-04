@@ -61,6 +61,7 @@ private:
 	static void RenderQuickLinksSection();
 	static void RenderFAQSection();
 	static void RenderCacheMismatchSection();
+	static void RenderWrongRuntimeCacheSection();
 	static void RenderActiveConstraintsSection();
 
 	static void MarkFirstTimeSetupComplete(uint32_t closingKey);

@@ -478,7 +478,7 @@ bool OverlayRenderer::RenderDesktopMirror(ImDrawData* drawData)
 	uint32_t panelWidth = 0;
 	uint32_t panelHeight = 0;
 	const bool helperPanelActive = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelWidth, panelHeight);
-	if (!helperPanelActive || !drawData || !globals::d3d::swapChain)
+	if (!helperPanelActive || !drawData || !globals::d3d::swapChain || !globals::features::vr.settings.FitMenuToDesktop)
 		return false;
 	if (globals::features::upscaling.d3d12SwapChainActive ||
 		(globals::features::hdrDisplay.loaded && globals::features::hdrDisplay.settings.enableHDR))

@@ -35,7 +35,7 @@ class ShaderCacheManifestTests(unittest.TestCase):
         (features / "Sample.ini").write_text("[Info]\nVersion = 1-0-0\n", encoding="utf-8")
         builder.write_info_ini(self.cache, self.root / "stage", "1-7-1-0", "SE")
         text = (self.cache / "Info.ini").read_bytes().decode("utf-8-sig")
-        self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\n", text)
+        self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\nRuntime = SE\r\n", text)
         self.assertIn("[Sample]\r\nEnabled = true\r\nVersion = 1-0-0", text)
 
     def test_companion_disable_retains_the_loaded_version(self):
