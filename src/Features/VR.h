@@ -162,6 +162,9 @@ public:
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;
 
+		/// Fit the headset-sized menu canvas into the desktop mirror window instead of drawing it unscaled.
+		bool FitMenuToDesktop = false;
+
 		// Overlay open/close combos forwarded to ImGuiVRHelper; the helper owns the
 		// menu open/close combos. Rebinds round-trip through the helper's bindings table.
 		std::vector<ButtonCombo> VROverlayOpenKeys = {

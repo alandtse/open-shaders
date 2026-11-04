@@ -83,7 +83,7 @@ void PhysicalGlare::DrawSettings()
 			T("feature.post_processing.physical_glare.lens_n_polygon", "Lens (N-polygon)"),
 			T("feature.post_processing.physical_glare.pupil_circle", "Pupil (Circle)")
 		};
-		ImGui::Combo(T("feature.post_processing.physical_glare.aperture_mode", "Aperture Mode"), &settings.ApertureMode, modeNames, IM_ARRAYSIZE(modeNames));
+		Util::Combo(T("feature.post_processing.physical_glare.aperture_mode", "Aperture Mode"), &settings.ApertureMode, modeNames);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T("feature.post_processing.physical_glare.lens_camera_lens_polygon_starburst_pupil_circular_human", "Lens: camera lens polygon starburst. Pupil: circular human eye aperture."));
 	}

@@ -81,43 +81,11 @@ namespace
 
 	const char* const kSurroundLabels[] = { "Dark", "Dim", "Bright" };
 
-	int ClampIndex(int value, int count)
-	{
-		if (value < 0) {
-			return 0;
-		}
-		if (value >= count) {
-			return count - 1;
-		}
-		return value;
-	}
-
-	bool ComboInt(const char* label, std::int32_t& value, const char* const* items, int count)
-	{
-		int current = ClampIndex(static_cast<int>(value), count);
-		if (ImGui::Combo(label, &current, items, count)) {
-			value = static_cast<std::int32_t>(current);
-			return true;
-		}
-		return false;
-	}
-
 	bool CheckboxInt(const char* label, std::int32_t& value)
 	{
 		bool current = value != 0;
 		if (ImGui::Checkbox(label, &current)) {
 			value = current ? 1 : 0;
-			return true;
-		}
-		return false;
-	}
-
-	template <typename Enum, int Count>
-	bool ComboEnum(const char* label, Enum& value, const char* const (&items)[Count])
-	{
-		int current = ClampIndex(static_cast<int>(value), Count);
-		if (ImGui::Combo(label, &current, items, Count)) {
-			value = static_cast<Enum>(current);
 			return true;
 		}
 		return false;
@@ -843,8 +811,8 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 	static OpenDRTPresetSelection presets{};
 
 	if (ImGui::CollapsingHeader(T("feature.post_processing.open_drt.built_in_presets", "Built-in Presets"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		ComboEnum(T("feature.post_processing.open_drt.look_preset", "Look Preset"), presets.lookPreset, kLookPresetLabels);
-		ComboEnum(T("feature.post_processing.open_drt.tonescale_preset", "Tonescale Preset"), presets.tonescalePreset, kTonescalePresetLabels);
+		Util::Combo(T("feature.post_processing.open_drt.look_preset", "Look Preset"), &presets.lookPreset, kLookPresetLabels);
+		Util::Combo(T("feature.post_processing.open_drt.tonescale_preset", "Tonescale Preset"), &presets.tonescalePreset, kTonescalePresetLabels);
 
 		if (ImGui::Button(T("feature.post_processing.open_drt.apply_preset", "Apply Preset"), { -FLT_MIN, 0 })) {
 			ApplyLookPreset(s, presets.lookPreset);
@@ -889,14 +857,14 @@ void OpenDRTDrawSettings(OpenDRTSettings& s, bool hdrActive, float hdrPaperWhite
 				T("feature.post_processing.open_drt.display_luminance_for_middle_grey_0_18_in",
 					"Display luminance for middle grey (0.18) in nits.\n"
 					"Sets the target value for middle grey within the available luminance range of the display device."));
-		ComboInt(T("feature.post_processing.open_drt.surround", "Surround"), s.tn_su, kSurroundLabels, IM_ARRAYSIZE(kSurroundLabels));
+		Util::Combo(T("feature.post_processing.open_drt.surround", "Surround"), &s.tn_su, kSurroundLabels);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(
 				T("feature.post_processing.open_drt.opendrt_includes_a_simple_surround_compensation_model_dci",
 					"OpenDRT includes a simple surround compensation model.\n"
 					"DCI cinema presets use dark surround. Rec.1886 uses dim surround. And sRGB Display uses bright surround.\n"
 					"This functionality should provide a better perceptual match between viewing environments."));
-		ComboInt(T("feature.post_processing.open_drt.creative_white", "Creative White"), s.cwp, kCreativeWhiteLabels, IM_ARRAYSIZE(kCreativeWhiteLabels));
+		Util::Combo(T("feature.post_processing.open_drt.creative_white", "Creative White"), &s.cwp, kCreativeWhiteLabels);
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(
 				T("feature.post_processing.open_drt.set_the_creative_whitepoint_of_the_display_peak",

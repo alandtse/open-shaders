@@ -1483,11 +1483,10 @@ namespace ShadowCasterManager
 		// Budget mode selector (Manual or Formula).
 
 		const char* budgetModeNames[] = { T(TKEY("budget_mode_manual"), "Manual"), T(TKEY("budget_mode_formula"), "Formula") };
-		int budgetModeIdx = (settings.BudgetMode == BudgetModeEnum::Manual) ? 0 : 1;
-		if (ImGui::Combo(T(TKEY("budget_mode"), "Budget Mode"), &budgetModeIdx, budgetModeNames, 2))
-			settings.BudgetMode = (budgetModeIdx == 0) ? BudgetModeEnum::Manual : BudgetModeEnum::Formula;
+		constexpr std::array<BudgetModeEnum, 2> budgetModes{ BudgetModeEnum::Manual, BudgetModeEnum::Formula };
+		Util::Combo(T(TKEY("budget_mode"), "Budget Mode"), &settings.BudgetMode, budgetModeNames, budgetModes);
 		if (ImGui::IsItemHovered()) {
-			if (budgetModeIdx == 0)
+			if (settings.BudgetMode == BudgetModeEnum::Manual)
 				ImGui::SetTooltip("%s", T(TKEY("budget_mode_manual_tooltip"),
 											"Manual (default): fixed per-frame GPU time budget for shadow re-renders.\n"
 											"Predictable; doesn't oscillate. Adjust the slider to trade FPS for shadow quality."));
@@ -1505,7 +1504,7 @@ namespace ShadowCasterManager
 		}
 
 		// Per-mode controls.
-		if (budgetModeIdx == 0) {
+		if (settings.BudgetMode == BudgetModeEnum::Manual) {
 			ImGui::SliderFloat(T(TKEY("redraw_budget_ms"), "Redraw Budget (ms)"), &settings.RedrawBudgetMs, 0.1f, 32.0f, "%.2f ms");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("redraw_budget_ms_tooltip"),
@@ -1660,9 +1659,7 @@ namespace ShadowCasterManager
 
 			ImGui::BeginDisabled(!settings.TolerantSplitCache);
 			const char* modeNames[3] = { T(TKEY("flicker_live"), "Live"), T(TKEY("flicker_pinned"), "Pinned"), T(TKEY("flicker_warped"), "Warped") };
-			int flickerMode = static_cast<int>(settings.FlickerShadowMode);
-			if (ImGui::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &flickerMode, modeNames, 3))
-				settings.FlickerShadowMode = static_cast<FlickerShadowModeEnum>(std::clamp(flickerMode, 0, 2));
+			Util::Combo(T(TKEY("flicker_label"), "Flicker Shadow Mode"), &settings.FlickerShadowMode, modeNames);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("flicker_tooltip"),
 											"How a cached shadow follows a flickering light:\n"

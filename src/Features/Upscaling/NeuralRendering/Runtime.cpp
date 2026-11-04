@@ -72,6 +72,41 @@ namespace NR
 			return value;
 		}
 
+		using GetStats = NVSDK_NGX_Result(NVSDK_CONV*)(NVSDK_NGX_Parameter*);
+
+		/** @brief Reads the runtime's capability keys and, when it registers one, its stats callback. */
+		RuntimeCapability ReadCapability(NVSDK_NGX_Parameter* parameters)
+		{
+			RuntimeCapability capability;
+			capability.queried = true;
+			int flag = 0;
+			unsigned int value = 0;
+			capability.reportsAvailability = parameters->Get("DLSSNR.Available", &flag) == NVSDK_NGX_Result_Success;
+			capability.available = capability.reportsAvailability && flag != 0;
+			capability.reportsDriver = parameters->Get("DLSSNR.NeedsUpdatedDriver", &flag) == NVSDK_NGX_Result_Success;
+			capability.needsUpdatedDriver = capability.reportsDriver && flag != 0;
+			if (parameters->Get("DLSSNR.MinDriverVersionMajor", &value) == NVSDK_NGX_Result_Success)
+				capability.minDriverMajor = value;
+			if (parameters->Get("DLSSNR.MinDriverVersionMinor", &value) == NVSDK_NGX_Result_Success)
+				capability.minDriverMinor = value;
+			void* callback = nullptr;
+			if (parameters->Get("DLSSNRGetStatsCallback", &callback) != NVSDK_NGX_Result_Success || !callback)
+				return capability;
+			const auto stats = reinterpret_cast<GetStats>(callback);
+			if (NVSDK_NGX_FAILED(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return stats(parameters); })))
+				return capability;
+			unsigned long long bytes = 0;
+			if (parameters->Get(NVSDK_NGX_Parameter_SizeInBytes, &bytes) == NVSDK_NGX_Result_Success) {
+				capability.hasMemory = true;
+				capability.memoryBytes = bytes;
+			}
+			if (parameters->Get(NVSDK_NGX_EParameter_OptLevel, &value) == NVSDK_NGX_Result_Success)
+				capability.optimizationLevel = value;
+			if (parameters->Get(NVSDK_NGX_EParameter_IsDevSnippetBranch, &value) == NVSDK_NGX_Result_Success)
+				capability.developmentBranch = value != 0;
+			return capability;
+		}
+
 		/** @brief Buffer for GetModuleFileNameW: an extended-length image path can run past MAX_PATH. */
 		constexpr DWORD kModuleImageChars = MAX_PATH * 4;
 
@@ -121,85 +156,19 @@ namespace NR
 			return {};
 		}
 
-		// Feature 18 uses the driver's private parameter block, whose resource and float
-		// setters need not sit in the public SDK vtable slots.
+		/** @brief Writes Feature 18 parameters through the public NGX parameter overloads. */
 		class ParameterWriter
 		{
 		public:
-			explicit ParameterWriter(NVSDK_NGX_Parameter* parameters, int& floatSlot) : parameters(parameters), floatSlot(floatSlot) {}
+			explicit ParameterWriter(NVSDK_NGX_Parameter* parameters) :
+				parameters(parameters) {}
 
-			void DiscoverFloatSlot()
-			{
-				if (floatSlot >= 0)
-					return;
-				// Excludes kResourceSlot and kUIntSlot: their real signatures take a
-				// pointer-sized and a 32-bit argument, so calling through a float-typed
-				// pointer would be undefined behavior, not just a wasted probe.
-				static constexpr int candidates[] = { 1, 2, 5, 6, 7, 4 };
-				constexpr float probeValue = 0.375f;
-				for (const auto slot : candidates) {
-					try {
-						SetFloatAt(slot, "DLSSNR.OpenShadersFloatProbe", probeValue);
-					} catch (const std::exception& error) {
-						logger::debug("[NeuralRendering] Feature 18 float probe slot {} faulted: {}", slot, error.what());
-						continue;
-					}
-					float readBack = 0.0f;
-					if (parameters->Get("DLSSNR.OpenShadersFloatProbe", &readBack) == NVSDK_NGX_Result_Success && readBack == probeValue) {
-						floatSlot = slot;
-						logger::debug("[NeuralRendering] Feature 18 float parameters use vtable slot {}", slot);
-						return;
-					}
-				}
-				logger::warn("[NeuralRendering] Feature 18 float setter slot was not discovered; tuning may be ignored");
-			}
-
-			void SetUInt(const char* name, unsigned int value) const
-			{
-				SetUIntAt(name, value);
-			}
-			void SetFloat(const char* name, float value) const
-			{
-				if (floatSlot >= 0)
-					SetFloatAt(floatSlot, name, value);
-				else
-					parameters->Set(name, value);
-			}
-			void SetResource(const char* name, ID3D12Resource* resource) const
-			{
-				void** table = *reinterpret_cast<void***>(parameters);
-				CallGuarded("resource", [&] { reinterpret_cast<SetULL>(table[kResourceSlot])(parameters, name, reinterpret_cast<unsigned long long>(resource)); });
-			}
+			void SetUInt(const char* name, unsigned int value) const { parameters->Set(name, value); }
+			void SetFloat(const char* name, float value) const { parameters->Set(name, value); }
+			void SetResource(const char* name, ID3D12Resource* resource) const { parameters->Set(name, resource); }
 
 		private:
-			/** @brief Slot of the private resource setter and of the unsigned-int setter. */
-			static constexpr size_t kResourceSlot = 0, kUIntSlot = 3;
-			using SetULL = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned long long);
-			using SetFloatFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, float);
-			using SetUIntFn = void(__thiscall*)(NVSDK_NGX_Parameter*, const char*, unsigned int);
-
-			/** @brief Runs a guessed-slot vtable call under SEH; throws with a_label on a fault. */
-			template <class F>
-			void CallGuarded(const char* a_label, F&& a_call) const
-			{
-				DWORD fault = 0;
-				if (!Util::SehGuarded(std::forward<F>(a_call), &fault))
-					throw std::runtime_error(std::format("NR private {} setter faulted (exception 0x{:08X})", a_label, fault));
-			}
-
-			void SetFloatAt(int slot, const char* name, float value) const
-			{
-				void** table = *reinterpret_cast<void***>(parameters);
-				CallGuarded("float", [&] { reinterpret_cast<SetFloatFn>(table[slot])(parameters, name, value); });
-			}
-			void SetUIntAt(const char* name, unsigned int value) const
-			{
-				void** table = *reinterpret_cast<void***>(parameters);
-				CallGuarded("uint", [&] { reinterpret_cast<SetUIntFn>(table[kUIntSlot])(parameters, name, value); });
-			}
-
 			NVSDK_NGX_Parameter* parameters;
-			int& floatSlot;
 		};
 
 		/** @brief Writes the appearance parameters Feature 18 needs at creation and evaluation. */
@@ -257,7 +226,8 @@ namespace NR
 			}
 			struct Scope
 			{
-				explicit Scope(RuntimePath& path) : previous(active) { active = &path; }
+				explicit Scope(RuntimePath& path) :
+					previous(active) { active = &path; }
 				~Scope() { active = previous; }
 				Scope(const Scope&) = delete;
 				Scope& operator=(const Scope&) = delete;
@@ -301,7 +271,8 @@ namespace NR
 		Release release = nullptr;
 		std::string version;
 		bool modelPresets = false;
-		int floatSlot = -1;
+		mutable std::mutex capabilityMutex;
+		RuntimeCapability capability;
 		bool initialized = false;
 		struct FeatureDeleter
 		{
@@ -367,7 +338,8 @@ namespace NR
 		}
 	};
 
-	Runtime::Runtime() : impl(std::make_unique<Impl>()) {}
+	Runtime::Runtime() :
+		impl(std::make_unique<Impl>()) {}
 	Runtime::~Runtime() = default;
 
 	void Runtime::Initialize(ID3D12Device* device, const std::filesystem::path& directory, bool developerMode, bool allowUnverified)
@@ -486,6 +458,12 @@ namespace NR
 		return impl->version;
 	}
 
+	RuntimeCapability Runtime::Capability() const
+	{
+		std::scoped_lock lock(impl->capabilityMutex);
+		return impl->capability;
+	}
+
 	bool Runtime::Evaluate(ID3D12GraphicsCommandList* commands, uint32_t eyeIndex,
 		ID3D12Resource* color, ID3D12Resource* depth, ID3D12Resource* motion, ID3D12Resource* output,
 		const ProtectionResources& protection, uint32_t width, uint32_t height, const GuideParameters& guides,
@@ -514,39 +492,18 @@ namespace NR
 														 guides.colorOutput :
 														 GuideRegion{ 0, 0, width, height });
 		auto* parameters = eye.parameters.get();
-		ParameterWriter writer(parameters, state.floatSlot);
+		ParameterWriter writer(parameters);
 		RuntimePath::Scope scope(state.compatibility);
 		if (!eye.feature) {
 			parameters->Reset();
 			Check(GuardNgxCall(NVSDK_NGX_Result_Fail, [&] { return state.populate(parameters); }), "NR parameter population");
-			writer.DiscoverFloatSlot();
-			for (auto key : { "DLSSNR.Width", "DLSSNR.InputWidth", "DLSSNR.OutputWidth", "DLSSNR.Output.Width" })
-				writer.SetUInt(key, width);
-			for (auto key : { "DLSSNR.Height", "DLSSNR.InputHeight", "DLSSNR.OutputHeight", "DLSSNR.Output.Height" })
-				writer.SetUInt(key, height);
-			writer.SetUInt("Width", width);
-			writer.SetUInt("Height", height);
+			writer.SetUInt("DLSSNR.Width", width);
+			writer.SetUInt("DLSSNR.Height", height);
 			writer.SetUInt("PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
 			writer.SetUInt("CreationNodeMask", 1u);
 			writer.SetUInt("VisibilityNodeMask", 1u);
-			writer.SetUInt("NVSDK_NGX_Parameter_PerfQualityValue", static_cast<unsigned int>(NVSDK_NGX_PerfQuality_Value_Balanced));
-			writer.SetUInt("NVSDK_NGX_Parameter_CreationNodeMask", 1u);
-			writer.SetUInt("NVSDK_NGX_Parameter_VisibilityNodeMask", 1u);
-			writer.SetFloat("DLSSNR.Scale", 1.0f);
 			writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
-			writer.SetUInt("DLSSNR.Upscaling", 0u);
 			writer.SetUInt("DLSSNR.Hint.Render.Preset", state.modelPresets ? kRuntimeModelPreset[std::min(tuning.modelPreset, Tuning::kMaxModelPreset)] : 0u);
-			const auto flags = static_cast<unsigned int>(
-				NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_DoSharpening | NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
-			writer.SetUInt("Feature_Flags", flags);
-			writer.SetUInt("NVSDK_NGX_Parameter_Feature_Flags", flags);
-			writer.SetFloat("InPreExposure", 1.0f);
-			writer.SetFloat("InExposureScale", 1.0f);
-			writer.SetFloat("NVSDK_NGX_Parameter_PreExposure", 1.0f);
-			writer.SetFloat("NVSDK_NGX_Parameter_ExposureScale", 1.0f);
-			writer.SetUInt("DLSSNR.AutoExposure", 1u);
-			writer.SetUInt("DLSSNR.Hdr", 1u);
-			writer.SetUInt("DLSSNR.SDR", 0u);
 			WriteTuning(writer, tuning, protection);
 			writer.SetUInt("DLSSNR.UICorrection", 1u);
 			NVSDK_NGX_Handle* handle = nullptr;
@@ -556,10 +513,15 @@ namespace NR
 			frame.result = static_cast<uint32_t>(result);
 			eye.feature.reset(handle);
 			if (NVSDK_NGX_FAILED(result) || !handle) {
-				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X} (flags=0x{:X})", eyeIndex, static_cast<uint32_t>(result), flags);
+				logger::error("[NeuralRendering] Eye {} HDR-proxy creation failed: 0x{:08X}", eyeIndex, static_cast<uint32_t>(result));
 				return false;
 			}
-			logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (flags=0x{:X}, Upscaling=0, populated parameters)", eyeIndex, flags);
+			const auto capability = ReadCapability(parameters);
+			{
+				std::scoped_lock lock(state.capabilityMutex);
+				state.capability = capability;
+			}
+			logger::debug("[NeuralRendering] Eye {} HDR-proxy Feature 18 created (populated parameters)", eyeIndex);
 			frame.created = true;
 			frame.reset = true;
 		}
@@ -600,11 +562,8 @@ namespace NR
 		writer.SetUInt("DLSSNR.DepthInverted", guides.depthInverted ? 1u : 0u);
 		writer.SetUInt("DLSSNR.Enabled", 1u);
 		writer.SetUInt("DLSSNR.Reset", frame.reset ? 1u : 0u);
-		writer.SetUInt("DLSSNR.Upscaling", 0u);
-		writer.SetFloat("DLSSNR.Scale", 1.0f);
 		writer.SetFloat("DLSSNR.ScalingRatio", 1.0f);
 		WriteTuning(writer, tuning, protection);
-		writer.SetFloat("Sharpness", 0.0f);
 		if (frame.feedCameraData) {
 			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, frame.jitterX);
 			parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, frame.jitterY);
