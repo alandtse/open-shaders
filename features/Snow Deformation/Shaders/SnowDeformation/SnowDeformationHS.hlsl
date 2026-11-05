@@ -1,6 +1,6 @@
 #include "SnowDeformation/Common.hlsli"
 
-float EdgeFactor(float3 a, float3 b)
+float EdgeFactor(float3 a, float3 b, uint eye)
 {
 	[flatten] if (a.x > b.x || (a.x == b.x && a.y > b.y))
 	{
@@ -9,8 +9,8 @@ float EdgeFactor(float3 a, float3 b)
 		b = swap;
 	}
 
-	precise float2 windowA = ToWindow(a);
-	precise float2 windowB = ToWindow(b);
+	precise float2 windowA = ToWindow(a, eye);
+	precise float2 windowB = ToWindow(b, eye);
 	precise float2 windowQuarter = lerp(windowA, windowB, 0.25);
 	precise float2 windowHalf = lerp(windowA, windowB, 0.5);
 	precise float2 windowThreeQuarter = lerp(windowA, windowB, 0.75);
@@ -21,7 +21,7 @@ float EdgeFactor(float3 a, float3 b)
 	precise float factor = 1.0;
 	[branch] if (activity > 0.0 || blanket > 0.01)
 	{
-		precise float distance = length((a + b) * 0.5 - EyePosition.xyz);
+		precise float distance = length((a + b) * 0.5 - EYE_VALUE(EyePosition, eye).xyz);
 		precise float range = max(1.0, distance * TessParams.z);
 		precise float edge = length(b - a);
 		precise float pixelsPerUnit = DetailParams.x / max(distance, 1.0);
@@ -32,10 +32,11 @@ float EdgeFactor(float3 a, float3 b)
 	return factor;
 }
 
-bool IsPatchCulled(float4 p0, float4 p1, float4 p2)
+bool IsPatchCulled(float4 p0, float4 p1, float4 p2, uint eye)
 {
-	precise float4 lower = DepthColumn * -RangeParams.x;
-	precise float4 upper = DepthColumn * RangeParams.y;
+	float4 depthColumn = EYE_VALUE(DepthColumn, eye);
+	precise float4 lower = depthColumn * -RangeParams.x;
+	precise float4 upper = depthColumn * RangeParams.y;
 	precise float4 corners[6] = { p0 + lower, p0 + upper, p1 + lower, p1 + upper, p2 + lower, p2 + upper };
 
 	float4 outside = 1.0;
@@ -57,15 +58,25 @@ PatchConstants PatchConstantFunction(InputPatch<ControlPoint, 3> patch)
 	output.Edges[2] = 0.0;
 	output.Inside = 0.0;
 
-	[branch] if (!IsPatchCulled(patch[0].Position, patch[1].Position, patch[2].Position))
-	{
-		float3 p0 = ToCameraRelative(patch[0].Position);
-		float3 p1 = ToCameraRelative(patch[1].Position);
-		float3 p2 = ToCameraRelative(patch[2].Position);
+#if defined(VR)
+	uint eye = PatchEyeOf(patch[0], patch[1], patch[2]);
+	output.Eye = eye;
+#else
+	uint eye = 0;
+#endif
+	float4 c0 = UndoVRRemap(patch[0].Position, eye);
+	float4 c1 = UndoVRRemap(patch[1].Position, eye);
+	float4 c2 = UndoVRRemap(patch[2].Position, eye);
 
-		output.Edges[0] = EdgeFactor(p1, p2);
-		output.Edges[1] = EdgeFactor(p2, p0);
-		output.Edges[2] = EdgeFactor(p0, p1);
+	[branch] if (!IsPatchCulled(c0, c1, c2, eye))
+	{
+		float3 p0 = ToCameraRelative(c0, eye);
+		float3 p1 = ToCameraRelative(c1, eye);
+		float3 p2 = ToCameraRelative(c2, eye);
+
+		output.Edges[0] = EdgeFactor(p1, p2, eye);
+		output.Edges[1] = EdgeFactor(p2, p0, eye);
+		output.Edges[2] = EdgeFactor(p0, p1, eye);
 		output.Inside = max(output.Edges[0], max(output.Edges[1], output.Edges[2]));
 	}
 	return output;

@@ -69,6 +69,7 @@ struct SnowDeformation : Feature
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;
+	virtual bool SupportsVR() override { return true; }
 	virtual void DataLoaded() override;
 	virtual void EarlyPrepass() override;
 	virtual void Prepass() override;
@@ -362,6 +363,8 @@ private:
 	{
 		std::array<float, 16> viewProj{};
 		PackedFloat4 posAdjust{};
+		std::array<float, 16> viewProjRight{};
+		PackedFloat4 posAdjustRight{};
 		uint64_t serial = 0;
 		bool clamped = false;
 		bool shadow = false;
@@ -459,6 +462,8 @@ private:
 	winrt::com_ptr<ID3D11DomainShader> lightingDS;
 	winrt::com_ptr<ID3D11HullShader> depthHS;
 	winrt::com_ptr<ID3D11DomainShader> depthDS;
+	winrt::com_ptr<ID3D11HullShader> depthHSStock;
+	winrt::com_ptr<ID3D11DomainShader> depthDSStock;
 	winrt::com_ptr<ID3D11Buffer> sharedSnapshot;
 	winrt::com_ptr<ID3D11Buffer> featureSnapshot;
 	bool shaderCompileFailed = false;

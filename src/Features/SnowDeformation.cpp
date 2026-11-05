@@ -118,6 +118,13 @@ namespace
 	constexpr int32_t kFlagFresh = 1;
 	constexpr int32_t kFlagClear = 2;
 	constexpr int32_t kFlagSeed = 4;
+	constexpr UINT kVRValuesSlot = 13;
+
+	REX::W32::D3D11_PRIMITIVE_TOPOLOGY& ShadowStateTopology()
+	{
+		auto* shadowState = globals::game::shadowState;
+		return globals::game::isVR ? shadowState->GetVRRuntimeData().topology : shadowState->GetRuntimeData().topology;
+	}
 
 	using PackedFloat4 = SnowDeformation::PackedFloat4;
 
@@ -162,9 +169,16 @@ namespace
 		int32_t SlotParams1[4];
 		PackedFloat4 BlanketWindow;
 		PackedFloat4 DetailParams;
+		PackedFloat4 InverseRow0R;
+		PackedFloat4 InverseRow1R;
+		PackedFloat4 InverseRow2R;
+		PackedFloat4 TranslationR;
+		PackedFloat4 DepthColumnR;
+		PackedFloat4 WindowOffsetR;
+		PackedFloat4 EyePositionR;
 	};
 	STATIC_ASSERT_ALIGNAS_16(DrawParams);
-	static_assert(sizeof(DrawParams) == 19 * 16);
+	static_assert(sizeof(DrawParams) == 26 * 16);
 
 	struct TileEntry
 	{
@@ -181,6 +195,7 @@ namespace
 		uint32_t index;
 		uint32_t reg;
 		uint8_t mask;
+		uint32_t type = 3;
 	};
 
 	constexpr ExpectedElement kLightingLayout[] = {
@@ -200,6 +215,37 @@ namespace
 
 	constexpr ExpectedElement kDepthLayout[] = {
 		{ "SV_POSITION", 0, 0, 0xF },
+	};
+
+	constexpr ExpectedElement kLightingLayoutVR[] = {
+		{ "SV_POSITION", 0, 0, 0xF },
+		{ "TEXCOORD", 0, 1, 0xF },
+		{ "TEXCOORD", 1, 2, 0x7 },
+		{ "TEXCOORD", 2, 3, 0x7 },
+		{ "TEXCOORD", 3, 4, 0x7 },
+		{ "TEXCOORD", 6, 5, 0xF },
+		{ "TEXCOORD", 7, 6, 0xF },
+		{ "POSITION", 1, 7, 0xF },
+		{ "POSITION", 2, 8, 0xF },
+		{ "COLOR", 0, 9, 0xF },
+		{ "COLOR", 1, 10, 0xF },
+		{ "SV_ClipDistance", 0, 11, 0x1 },
+		{ "SV_CullDistance", 0, 11, 0x2 },
+		{ "TEXCOORD", 12, 12, 0x7 },
+	};
+
+	constexpr ExpectedElement kDepthLayoutVR[] = {
+		{ "SV_POSITION", 0, 0, 0xF },
+		{ "SV_ClipDistance", 0, 1, 0x1 },
+		{ "SV_CullDistance", 0, 1, 0x2 },
+		{ "EYEIDX", 0, 2, 0x1, 1 },
+	};
+
+	constexpr ExpectedElement kDepthLayoutVRStock[] = {
+		{ "SV_POSITION", 0, 0, 0xF },
+		{ "EYEIDX", 0, 1, 0x1, 1 },
+		{ "SV_ClipDistance", 0, 2, 0x1 },
+		{ "SV_CullDistance", 0, 2, 0x2 },
 	};
 
 	template <class T>
@@ -281,13 +327,13 @@ namespace
 		for (size_t i = 0; i < elements.size(); ++i) {
 			const auto& parsed = elements[i];
 			const auto& expected = a_layout[i];
-			if (_stricmp(parsed.name.c_str(), expected.semantic) != 0 || parsed.index != expected.index || parsed.reg != expected.reg || parsed.mask != expected.mask || parsed.type != 3)
+			if (_stricmp(parsed.name.c_str(), expected.semantic) != 0 || parsed.index != expected.index || parsed.reg != expected.reg || parsed.mask != expected.mask || parsed.type != expected.type)
 				return false;
 		}
 		return true;
 	}
 
-	bool GenerateDecalLayout(const std::vector<ParsedElement>& a_elements, std::string& a_layout, std::string& a_fields, std::string& a_world)
+	bool GenerateDecalLayout(const std::vector<ParsedElement>& a_elements, std::string& a_layout, std::string& a_outLayout, std::string& a_fields, std::string& a_world, std::string& a_worldPosition, bool& a_hasDistances)
 	{
 		bool position = false;
 		for (size_t i = 0; i < a_elements.size(); ++i) {
@@ -296,9 +342,23 @@ namespace
 			if (components < 1)
 				return false;
 			const bool clip = _stricmp(element.name.c_str(), "SV_POSITION") == 0 && element.index == 0;
+			const bool clipDistance = _stricmp(element.name.c_str(), "SV_ClipDistance") == 0 && element.index == 0;
+			const bool cullDistance = _stricmp(element.name.c_str(), "SV_CullDistance") == 0 && element.index == 0;
 			const char* type = element.type == 3 ? "float" : (element.type == 1 ? "uint" : "int");
-			const std::string field = clip ? std::string("Position") : std::format("f{}", i);
-			a_layout += std::format("{}{} {} : {}{};", type, components > 1 ? std::to_string(components) : std::string(), field, element.name, element.index);
+			const std::string field = clip ? std::string("Position") : (clipDistance ? std::string("ClipDistance") : (cullDistance ? std::string("CullDistance") : std::format("f{}", i)));
+			const std::string declaration = std::format("{}{} {} : {}{};", type, components > 1 ? std::to_string(components) : std::string(), field, element.name, element.index);
+			if (clipDistance || cullDistance) {
+				if (components != 1 || element.type != 3)
+					return false;
+				a_outLayout += declaration;
+				if (clipDistance) {
+					a_layout += "float4 ClipCull : TEXCOORD31;";
+					a_hasDistances = true;
+				}
+				continue;
+			}
+			a_layout += declaration;
+			a_outLayout += declaration;
 			if (clip) {
 				position = components == 4 && element.type == 3;
 				continue;
@@ -306,6 +366,8 @@ namespace
 			a_fields += std::format("{}({});", element.type == 3 ? "SD_INTERPOLATE" : "SD_COPY", field);
 			if (element.type == 3 && components >= 3 && _stricmp(element.name.c_str(), "POSITION") == 0 && (element.index == 1 || element.index == 2))
 				a_world += std::format("output.{}.z += displacement;", field);
+			if (element.type == 3 && components >= 3 && _stricmp(element.name.c_str(), "POSITION") == 0 && element.index == 1)
+				a_worldPosition = field;
 		}
 		return position;
 	}
@@ -784,6 +846,8 @@ void SnowDeformation::ClearShaderCache()
 	lightingDS = nullptr;
 	depthHS = nullptr;
 	depthDS = nullptr;
+	depthHSStock = nullptr;
+	depthDSStock = nullptr;
 	shaderCompileFailed = false;
 	lightingLayouts.clear();
 	depthLayouts.clear();
@@ -796,11 +860,16 @@ bool SnowDeformation::EnsureShaders()
 {
 	if (shaderCompileFailed)
 		return false;
-	if (updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && probeCS && blanketCS)
+	const bool vr = globals::game::isVR;
+	if (updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && (!vr || (depthHSStock && depthDSStock)) && probeCS && blanketCS)
 		return true;
 
-	const std::vector<std::pair<const char*, const char*>> lightingDefines;
-	const std::vector<std::pair<const char*, const char*>> depthDefines{ { "DEPTH_ONLY", "" } };
+	std::vector<std::pair<const char*, const char*>> lightingDefines;
+	std::vector<std::pair<const char*, const char*>> depthDefines{ { "DEPTH_ONLY", "" } };
+	if (vr) {
+		lightingDefines.push_back({ "VR", "" });
+		depthDefines.push_back({ "VR", "" });
+	}
 	std::vector<std::pair<const char*, const char*>> updateDefines;
 	updateSkylighting = globals::features::skylighting.loaded;
 	if (updateSkylighting)
@@ -820,12 +889,20 @@ bool SnowDeformation::EnsureShaders()
 		depthHS.attach(static_cast<ID3D11HullShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationHS.hlsl", depthDefines, "hs_5_0")));
 	if (!depthDS)
 		depthDS.attach(static_cast<ID3D11DomainShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationDS.hlsl", depthDefines, "ds_5_0")));
+	if (vr) {
+		auto stockDefines = depthDefines;
+		stockDefines.push_back({ "SD_STOCK_DEPTH", "" });
+		if (!depthHSStock)
+			depthHSStock.attach(static_cast<ID3D11HullShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationHS.hlsl", stockDefines, "hs_5_0")));
+		if (!depthDSStock)
+			depthDSStock.attach(static_cast<ID3D11DomainShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationDS.hlsl", stockDefines, "ds_5_0")));
+	}
 	if (!probeCS)
 		probeCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationProbeCS.hlsl", {}, "cs_5_0")));
 	if (!blanketCS)
 		blanketCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationBlanketCS.hlsl", updateDefines, "cs_5_0")));
 
-	shaderCompileFailed = !(updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && probeCS && blanketCS);
+	shaderCompileFailed = !(updateCS && copyCS && lightingHS && lightingDS && depthHS && depthDS && (!vr || (depthHSStock && depthDSStock)) && probeCS && blanketCS);
 	if (shaderCompileFailed)
 		logger::error("[SnowDeformation] Shader compilation failed, prints are disabled until the shader cache is cleared");
 	return !shaderCompileFailed;
@@ -833,7 +910,7 @@ bool SnowDeformation::EnsureShaders()
 
 bool SnowDeformation::IsActiveContext() const
 {
-	if (!loaded || !settings.Enabled || REL::Module::IsVR() || !globals::shaderCache->IsEnabled())
+	if (!loaded || !settings.Enabled || !globals::shaderCache->IsEnabled())
 		return false;
 	auto player = globals::game::player;
 	if (!player || !player->Is3DLoaded() || Util::IsInterior())
@@ -2322,7 +2399,9 @@ SnowDeformation::Layout SnowDeformation::ValidateBoundVertexShader(DrawKind a_ki
 
 	const bool lighting = a_kind == DrawKind::Lighting;
 	auto& cache = lighting ? lightingLayouts : depthLayouts;
-	const auto layout = lighting ? std::span<const ExpectedElement>(kLightingLayout) : std::span<const ExpectedElement>(kDepthLayout);
+	const bool vr = globals::game::isVR;
+	const auto layout = lighting ? (vr ? std::span<const ExpectedElement>(kLightingLayoutVR) : std::span<const ExpectedElement>(kLightingLayout)) :
+	                               (vr ? std::span<const ExpectedElement>(kDepthLayoutVR) : std::span<const ExpectedElement>(kDepthLayout));
 	const auto& terrainBlending = globals::features::terrainBlending;
 	allowedShaderCount = 0;
 
@@ -2348,7 +2427,8 @@ SnowDeformation::Layout SnowDeformation::ValidateBoundVertexShader(DrawKind a_ki
 		if (auto found = cache.find(key); found != cache.end())
 			return found->second;
 
-		const Layout result = MatchesLayout(source->rawBytecode, source->byteCodeSize, layout) ? Layout::Valid : Layout::Invalid;
+		const bool stockDepth = vr && !lighting && MatchesLayout(source->rawBytecode, source->byteCodeSize, kDepthLayoutVRStock);
+		const Layout result = stockDepth || MatchesLayout(source->rawBytecode, source->byteCodeSize, layout) ? Layout::Valid : Layout::Invalid;
 		cache.emplace(key, result);
 		if (result == Layout::Invalid)
 			logger::info("[SnowDeformation] {} vertex shader {:X} does not have the landscape output layout; its draws are not displaced", lighting ? "Lighting" : "Depth", source->id);
@@ -2390,6 +2470,21 @@ bool SnowDeformation::PrepareCamera(DrawKind a_kind, bool a_clamped)
 	CameraKey key{};
 	std::memcpy(key.viewProj.data(), &viewProj, sizeof(key.viewProj));
 	key.posAdjust = { posAdjust.x, posAdjust.y, posAdjust.z, 0.0f };
+	if (globals::game::isVR && a_kind != DrawKind::Shadow) {
+		const auto& viewProjRight = frameBuffer.GetCameraViewProj(1);
+		const auto& posAdjustRight = frameBuffer.GetCameraPosAdjust(1);
+		std::memcpy(key.viewProjRight.data(), &viewProjRight, sizeof(key.viewProjRight));
+		key.posAdjustRight = { posAdjustRight.x, posAdjustRight.y, posAdjustRight.z, 0.0f };
+	} else {
+		key.viewProjRight = key.viewProj;
+		key.posAdjustRight = key.posAdjust;
+	}
+	const auto sameView = [](const CameraKey& a_left, const CameraKey& a_right) {
+		return std::memcmp(a_left.viewProj.data(), a_right.viewProj.data(), sizeof(a_left.viewProj)) == 0 &&
+		       std::memcmp(a_left.viewProjRight.data(), a_right.viewProjRight.data(), sizeof(a_left.viewProjRight)) == 0 &&
+		       a_left.posAdjust.x == a_right.posAdjust.x && a_left.posAdjust.y == a_right.posAdjust.y && a_left.posAdjust.z == a_right.posAdjust.z &&
+		       a_left.posAdjustRight.x == a_right.posAdjustRight.x && a_left.posAdjustRight.y == a_right.posAdjustRight.y && a_left.posAdjustRight.z == a_right.posAdjustRight.z;
+	};
 	key.serial = fieldSerial;
 	key.clamped = a_clamped;
 	key.shadow = a_kind == DrawKind::Shadow;
@@ -2408,27 +2503,13 @@ bool SnowDeformation::PrepareCamera(DrawKind a_kind, bool a_clamped)
 			mainPosAdjust = { key.posAdjust.x, key.posAdjust.y, key.posAdjust.z };
 			const float renderHeight = Util::ConvertToDynamic({ 0.0f, static_cast<float>(globals::game::graphicsState->screenHeight) }).y;
 			mainPixelScale = static_cast<float>(std::sqrt(m(1, 0) * m(1, 0) + m(1, 1) * m(1, 1) + m(1, 2) * m(1, 2))) * 0.5f * renderHeight;
-		} else if (std::memcmp(mainCamera.viewProj.data(), key.viewProj.data(), sizeof(key.viewProj)) != 0 ||
-				   mainCamera.posAdjust.x != key.posAdjust.x || mainCamera.posAdjust.y != key.posAdjust.y || mainCamera.posAdjust.z != key.posAdjust.z) {
+		} else if (!sameView(mainCamera, key)) {
 			return false;
 		}
 	}
 
-	if (boundCamera.valid && boundCamera.serial == key.serial && boundCamera.clamped == key.clamped && boundCamera.shadow == key.shadow && boundCamera.posAdjust.x == key.posAdjust.x &&
-		boundCamera.posAdjust.y == key.posAdjust.y &&
-		boundCamera.posAdjust.z == key.posAdjust.z && std::memcmp(boundCamera.viewProj.data(), key.viewProj.data(), sizeof(key.viewProj)) == 0)
+	if (boundCamera.valid && boundCamera.serial == key.serial && boundCamera.clamped == key.clamped && boundCamera.shadow == key.shadow && sameView(boundCamera, key))
 		return true;
-
-	const int thirdRow = perspective ? 3 : 2;
-	std::array<std::array<double, 4>, 3> rows{};
-	for (int column = 0; column < 4; ++column) {
-		rows[0][column] = m(0, column);
-		rows[1][column] = m(1, column);
-		rows[2][column] = m(thirdRow, column);
-	}
-	std::array<std::array<double, 3>, 3> inverse{};
-	if (!InvertRows(rows, inverse))
-		return false;
 
 	const auto& fine = levels[0];
 	const auto& coarse = levels[1];
@@ -2438,14 +2519,53 @@ bool SnowDeformation::PrepareCamera(DrawKind a_kind, bool a_clamped)
 	const double coarseOriginY = static_cast<double>(coarse.windowTileY) * coarse.tileSize;
 	const float maxBound = std::max(fine.maxBound, coarse.maxBound);
 
+	const int thirdRow = perspective ? 3 : 2;
+	struct EyeBlock
+	{
+		PackedFloat4 inverseRow0, inverseRow1, inverseRow2, translation, depthColumn, windowOffset, eyePosition;
+	};
+	const auto buildEye = [&](const std::array<float, 16>& a_viewProj, const PackedFloat4& a_posAdjust, EyeBlock& a_block) {
+		const auto e = [&](int a_row, int a_column) { return static_cast<double>(a_viewProj[a_row * 4 + a_column]); };
+		std::array<std::array<double, 4>, 3> rows{};
+		for (int column = 0; column < 4; ++column) {
+			rows[0][column] = e(0, column);
+			rows[1][column] = e(1, column);
+			rows[2][column] = e(thirdRow, column);
+		}
+		std::array<std::array<double, 3>, 3> inverse{};
+		if (!InvertRows(rows, inverse))
+			return false;
+		a_block.inverseRow0 = { static_cast<float>(inverse[0][0]), static_cast<float>(inverse[0][1]), static_cast<float>(inverse[0][2]), 0.0f };
+		a_block.inverseRow1 = { static_cast<float>(inverse[1][0]), static_cast<float>(inverse[1][1]), static_cast<float>(inverse[1][2]), 0.0f };
+		a_block.inverseRow2 = { static_cast<float>(inverse[2][0]), static_cast<float>(inverse[2][1]), static_cast<float>(inverse[2][2]), 0.0f };
+		a_block.translation = { static_cast<float>(rows[0][3]), static_cast<float>(rows[1][3]), static_cast<float>(rows[2][3]), perspective ? 1.0f : 0.0f };
+		a_block.depthColumn = { static_cast<float>(e(0, 2)), static_cast<float>(e(1, 2)), static_cast<float>(e(2, 2)), static_cast<float>(e(3, 2)) };
+		a_block.windowOffset = { static_cast<float>(static_cast<double>(a_posAdjust.x) - originX), static_cast<float>(static_cast<double>(a_posAdjust.y) - originY), fine.tileSize, 1.0f / fine.tileSize };
+		a_block.eyePosition = { mainPosAdjust.x - a_posAdjust.x, mainPosAdjust.y - a_posAdjust.y, mainPosAdjust.z - a_posAdjust.z, 0.0f };
+		return true;
+	};
+	EyeBlock leftEye{};
+	EyeBlock rightEye{};
+	if (!buildEye(key.viewProj, key.posAdjust, leftEye))
+		return false;
+	if (!buildEye(key.viewProjRight, key.posAdjustRight, rightEye))
+		return false;
+
 	DrawParams params{};
-	params.InverseRow0 = { static_cast<float>(inverse[0][0]), static_cast<float>(inverse[0][1]), static_cast<float>(inverse[0][2]), 0.0f };
-	params.InverseRow1 = { static_cast<float>(inverse[1][0]), static_cast<float>(inverse[1][1]), static_cast<float>(inverse[1][2]), 0.0f };
-	params.InverseRow2 = { static_cast<float>(inverse[2][0]), static_cast<float>(inverse[2][1]), static_cast<float>(inverse[2][2]), 0.0f };
-	params.Translation = { static_cast<float>(rows[0][3]), static_cast<float>(rows[1][3]), static_cast<float>(rows[2][3]), perspective ? 1.0f : 0.0f };
-	params.DepthColumn = { static_cast<float>(m(0, 2)), static_cast<float>(m(1, 2)), static_cast<float>(m(2, 2)), static_cast<float>(m(3, 2)) };
-	params.WindowOffset = { static_cast<float>(static_cast<double>(posAdjust.x) - originX), static_cast<float>(static_cast<double>(posAdjust.y) - originY), fine.tileSize, 1.0f / fine.tileSize };
-	params.EyePosition = { mainPosAdjust.x - posAdjust.x, mainPosAdjust.y - posAdjust.y, mainPosAdjust.z - posAdjust.z, 0.0f };
+	params.InverseRow0 = leftEye.inverseRow0;
+	params.InverseRow1 = leftEye.inverseRow1;
+	params.InverseRow2 = leftEye.inverseRow2;
+	params.Translation = leftEye.translation;
+	params.DepthColumn = leftEye.depthColumn;
+	params.WindowOffset = leftEye.windowOffset;
+	params.EyePosition = leftEye.eyePosition;
+	params.InverseRow0R = rightEye.inverseRow0;
+	params.InverseRow1R = rightEye.inverseRow1;
+	params.InverseRow2R = rightEye.inverseRow2;
+	params.TranslationR = rightEye.translation;
+	params.DepthColumnR = rightEye.depthColumn;
+	params.WindowOffsetR = rightEye.windowOffset;
+	params.EyePositionR = rightEye.eyePosition;
 	params.FieldParams = { 1.0f / fine.cellSize, static_cast<float>((static_cast<uint32_t>(fine.windowTileX) & (kSlots - 1)) * kTileTexels),
 		static_cast<float>((static_cast<uint32_t>(fine.windowTileY) & (kSlots - 1)) * kTileTexels), 1.0f / static_cast<float>(kTexels) };
 	params.FadeParams = { fine.tileSize * 0.5f, fine.fadeStart, 1.0f / (fine.fadeEnd - fine.fadeStart), 2.0f * fine.cellSize };
@@ -2631,15 +2751,22 @@ const SnowDeformation::DecalShaders* SnowDeformation::DecalShadersFor(ID3D11Vert
 
 	auto& entry = decalShaders[key];
 	std::vector<ParsedElement> elements;
-	std::string layout, fields, world;
-	if (!ParseLayout(source->rawBytecode, source->byteCodeSize, elements) || !GenerateDecalLayout(elements, layout, fields, world)) {
+	std::string layout, outLayout, fields, world, worldPosition;
+	bool hasDistances = false;
+	if (!ParseLayout(source->rawBytecode, source->byteCodeSize, elements) || !GenerateDecalLayout(elements, layout, outLayout, fields, world, worldPosition, hasDistances) || (globals::game::isVR && worldPosition.empty())) {
 		entry.failed = true;
 		logger::info("[SnowDeformation] Decal vertex shader {:X} has no usable output layout; its decals stay undisplaced", source->id);
 		return nullptr;
 	}
 	if (world.empty())
 		world = " ";
-	const std::vector<std::pair<const char*, const char*>> defines{ { "SD_LAYOUT", layout.c_str() }, { "SD_FIELDS", fields.c_str() }, { "SD_WORLD", world.c_str() } };
+	std::vector<std::pair<const char*, const char*>> defines{ { "SD_LAYOUT", layout.c_str() }, { "SD_OUT_LAYOUT", outLayout.c_str() }, { "SD_FIELDS", fields.c_str() }, { "SD_WORLD", world.c_str() } };
+	if (!worldPosition.empty())
+		defines.push_back({ "SD_WORLD_POSITION", worldPosition.c_str() });
+	if (hasDistances)
+		defines.push_back({ "SD_CLIPCULL", "1" });
+	if (globals::game::isVR)
+		defines.push_back({ "VR", "" });
 	entry.hs.attach(static_cast<ID3D11HullShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationHS.hlsl", defines, "hs_5_0")));
 	entry.ds.attach(static_cast<ID3D11DomainShader*>(Util::CompileShader(L"Data\\Shaders\\SnowDeformation\\SnowDeformationDecalDS.hlsl", defines, "ds_5_0")));
 	entry.failed = !entry.hs || !entry.ds;
@@ -2688,7 +2815,7 @@ void SnowDeformation::ApplyDrawState()
 		return;
 
 	auto context = globals::d3d::context;
-	if (globals::game::shadowState->GetRuntimeData().topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST || !IsDrawVertexShaderValid()) {
+	if (ShadowStateTopology() != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST || !IsDrawVertexShaderValid()) {
 		debug.layoutRejects++;
 		if (activeKind == DrawKind::Depth)
 			prepassRejected.insert(activeGeometry);
@@ -2700,12 +2827,33 @@ void SnowDeformation::ApplyDrawState()
 	if (activeKind == DrawKind::Depth)
 		prepassRouted.insert(activeGeometry);
 
+	if (globals::game::isVR && activeKind != DrawKind::Lighting && activeKind != DrawKind::Decal) {
+		// Terrain Blending re-draws terrain with the engine's own vertex shader, whose outputs sit in a different register order.
+		ID3D11VertexShader* bound = nullptr;
+		context->VSGetShader(&bound, nullptr, nullptr);
+		if (bound)
+			bound->Release();
+		const auto vanilla = *globals::game::currentVertexShader;
+		if (bound && vanilla && bound == reinterpret_cast<ID3D11VertexShader*>(vanilla->shader)) {
+			activeHS = depthHSStock.get();
+			activeDS = depthDSStock.get();
+		}
+	}
+
 	ID3D11Buffer* constants = drawConstants->CB();
 	ID3D11ShaderResourceView* blanket = blanketTexture ? blanketTexture->srv.get() : nullptr;
 	ID3D11ShaderResourceView* hullResources[5] = { nullptr, levels[0].activityTexture->srv.get(), blanket, nullptr, levels[1].activityTexture->srv.get() };
 	ID3D11ShaderResourceView* domainResources[5] = { levels[0].texture->srv.get(), levels[0].activityTexture->srv.get(), blanket, levels[1].texture->srv.get(), levels[1].activityTexture->srv.get() };
 	ID3D11SamplerState* sampler = fieldSampler.get();
 
+	if (globals::game::isVR) {
+		ID3D11Buffer* vrValues = nullptr;
+		context->VSGetConstantBuffers(kVRValuesSlot, 1, &vrValues);
+		context->HSSetConstantBuffers(kVRValuesSlot, 1, &vrValues);
+		context->DSSetConstantBuffers(kVRValuesSlot, 1, &vrValues);
+		if (vrValues)
+			vrValues->Release();
+	}
 	context->HSSetConstantBuffers(0, 1, &constants);
 	context->HSSetShaderResources(0, 5, hullResources);
 	context->HSSetSamplers(0, 1, &sampler);
@@ -2740,9 +2888,13 @@ void SnowDeformation::EndLandscapeDraw()
 	context->DSSetShaderResources(0, 5, nullViews);
 	context->HSSetConstantBuffers(0, 1, nullBuffers);
 	context->DSSetConstantBuffers(0, 1, nullBuffers);
+	if (globals::game::isVR) {
+		context->HSSetConstantBuffers(kVRValuesSlot, 1, nullBuffers);
+		context->DSSetConstantBuffers(kVRValuesSlot, 1, nullBuffers);
+	}
 	context->HSSetSamplers(0, 1, &nullSampler);
 	context->DSSetSamplers(0, 1, &nullSampler);
-	context->IASetPrimitiveTopology(static_cast<D3D11_PRIMITIVE_TOPOLOGY>(globals::game::shadowState->GetRuntimeData().topology));
+	context->IASetPrimitiveTopology(static_cast<D3D11_PRIMITIVE_TOPOLOGY>(ShadowStateTopology()));
 }
 
 void SnowDeformation::UpdateFieldOnce()
@@ -2943,12 +3095,17 @@ void SnowDeformation::Hooks::Install()
 	stl::write_vfunc<0x6, BSUtilityShader_SetupGeometry>(RE::VTABLE_BSUtilityShader[0]);
 	stl::write_vfunc<0x7, BSUtilityShader_RestoreGeometry>(RE::VTABLE_BSUtilityShader[0]);
 	stl::detour_thunk<Main_RenderDepth>(REL::RelocationID(100421, 107139));
-	stl::write_vfunc<0xBD, Projectile_AddImpact<RE::MissileProjectile>>(RE::VTABLE_MissileProjectile[0]);
-	stl::write_vfunc<0xBD, Projectile_AddImpact<RE::BeamProjectile>>(RE::VTABLE_BeamProjectile[0]);
-	stl::write_vfunc<0xBD, Projectile_AddImpact<RE::FlameProjectile>>(RE::VTABLE_FlameProjectile[0]);
-	stl::write_vfunc<0xBD, Projectile_AddImpact<RE::ConeProjectile>>(RE::VTABLE_ConeProjectile[0]);
-	stl::write_vfunc<0xBD, Projectile_AddImpact<RE::GrenadeProjectile>>(RE::VTABLE_GrenadeProjectile[0]);
-	stl::write_vfunc<0xA2, Explosion_Initialize>(RE::VTABLE_Explosion[0]);
+	// VR's Projectile and Explosion vtables each carry one extra slot ahead of these two.
+	const auto addImpactSlot = REL::Relocate(0xBD, 0xBD, 0xBE);
+	const auto writeSlot = [](auto& a_func, REL::Relocation<std::uintptr_t> a_vtable, std::size_t a_slot, auto a_thunk) {
+		a_func = a_vtable.write_vfunc(a_slot, a_thunk);
+	};
+	writeSlot(Projectile_AddImpact<RE::MissileProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_MissileProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::MissileProjectile>::thunk);
+	writeSlot(Projectile_AddImpact<RE::BeamProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_BeamProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::BeamProjectile>::thunk);
+	writeSlot(Projectile_AddImpact<RE::FlameProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_FlameProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::FlameProjectile>::thunk);
+	writeSlot(Projectile_AddImpact<RE::ConeProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_ConeProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::ConeProjectile>::thunk);
+	writeSlot(Projectile_AddImpact<RE::GrenadeProjectile>::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_GrenadeProjectile[0] }, addImpactSlot, Projectile_AddImpact<RE::GrenadeProjectile>::thunk);
+	writeSlot(Explosion_Initialize::func, REL::Relocation<std::uintptr_t>{ RE::VTABLE_Explosion[0] }, REL::Relocate(0xA2, 0xA2, 0xA3), Explosion_Initialize::thunk);
 	stl::write_vfunc<0x25, BSTempEffectGeometryDecal_Initialize>(RE::VTABLE_BSTempEffectGeometryDecal[0]);
 
 	constexpr std::size_t kTrampolineHeadroom = 3 * 14;
@@ -2964,17 +3121,11 @@ void SnowDeformation::Hooks::Install()
 
 void SnowDeformation::PostPostLoad()
 {
-	if (REL::Module::IsVR()) {
-		logger::info("[SnowDeformation] Not supported in VR, hooks not installed");
-		return;
-	}
 	Hooks::Install();
 }
 
 void SnowDeformation::DataLoaded()
 {
-	if (REL::Module::IsVR())
-		return;
 	if (auto source = RE::ScriptEventSourceHolder::GetSingleton()) {
 		source->AddEventSink<RE::TESSpellCastEvent>(&spellCastSink);
 		source->AddEventSink<RE::TESEquipEvent>(&equipSink);

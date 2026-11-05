@@ -2,16 +2,23 @@
 
 #define SD_INTERPOLATE(member) output.member = patch[0].member * bary.x + patch[1].member * bary.y + patch[2].member * bary.z
 
-[domain("tri")] ControlPoint main(PatchConstants constants, float3 bary : SV_DomainLocation, const OutputPatch<ControlPoint, 3> patch) {
-	ControlPoint output;
+[domain("tri")] DomainOutput main(PatchConstants constants, float3 bary : SV_DomainLocation, const OutputPatch<ControlPoint, 3> patch) {
+	DomainOutput output;
 
-	precise float4 clipPosition = patch[0].Position * bary.x + patch[1].Position * bary.y + patch[2].Position * bary.z;
-	precise float2 windowPosition = ToWindow(ToCameraRelative(clipPosition));
+	uint eye = PatchEye(constants);
+	precise float4 clipPosition = UndoVRRemap(patch[0].Position * bary.x + patch[1].Position * bary.y + patch[2].Position * bary.z, eye);
+	precise float2 windowPosition = ToWindow(ToCameraRelative(clipPosition, eye), eye);
 	precise float raise = BlanketAt(windowPosition);
 	precise float field = SampleField(windowPosition);
 	precise float displacement = SnowSurface(raise, field);
-	precise float4 displacedPosition = DisplaceClipPosition(clipPosition, displacement);
-	output.Position = displacedPosition;
+	precise float4 displacedPosition = DisplaceClipPosition(clipPosition, displacement, eye);
+	output.Position = ApplyVRRemap(displacedPosition, eye);
+#if defined(VR)
+	output.ClipDistance = output.CullDistance = DisplacedClipDistance(displacedPosition, ControlPointClip(patch[0]) * bary.x + ControlPointClip(patch[1]) * bary.y + ControlPointClip(patch[2]) * bary.z, eye);
+#	if defined(DEPTH_ONLY)
+	output.EyeIndex = patch[0].EyeIndex;
+#	endif
+#endif
 
 #if !defined(DEPTH_ONLY)
 	SD_INTERPOLATE(TexCoord0);
