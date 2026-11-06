@@ -195,12 +195,12 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	float3 position = CameraOrigin + direction * distance;
 	float3 n = normalize(material.normal), v = -direction;
 	if (NormalInfluence == 1u) {
-		TriangleSurface triangle;
-		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), triangle)) {
+		TriangleSurface receiverTriangle;
+		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), receiverTriangle)) {
 			Finish(pixel, 3, 3, 5); return;
 		}
-		float3 edge0 = mul((float3x3)query.CommittedObjectToWorld3x4(), triangle.position1 - triangle.position0);
-		float3 edge1 = mul((float3x3)query.CommittedObjectToWorld3x4(), triangle.position2 - triangle.position0);
+		float3 edge0 = mul((float3x3)query.CommittedObjectToWorld3x4(), receiverTriangle.position1 - receiverTriangle.position0);
+		float3 edge1 = mul((float3x3)query.CommittedObjectToWorld3x4(), receiverTriangle.position2 - receiverTriangle.position0);
 		float3 geometric = cross(edge0, edge1);
 		if (!all(isfinite(geometric)) || dot(geometric, geometric) <= 1e-8f) { Finish(pixel, 3, 3, 5); return; }
 		n = normalize(geometric);

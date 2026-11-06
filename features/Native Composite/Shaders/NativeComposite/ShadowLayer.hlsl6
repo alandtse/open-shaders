@@ -25,14 +25,14 @@ bool ValidMask(float4 mask)
 {
     return all(isfinite(mask)) && mask.y == 1.0f && mask.z > 0.0f && mask.w > 0.0f;
 }
-float SampleVisibility(int2 point, float4 center)
+float SampleVisibility(int2 samplePixel, float4 center)
 {
-    int2 clamped = clamp(point, int2(0,0), int2(Size) - 1);
-    float4 sample = ShadowMask[uint2(clamped)];
-    if (!ValidMask(sample) || sample.w != center.w ||
-        abs(sample.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
+    int2 clamped = clamp(samplePixel, int2(0,0), int2(Size) - 1);
+    float4 neighborMask = ShadowMask[uint2(clamped)];
+    if (!ValidMask(neighborMask) || neighborMask.w != center.w ||
+        abs(neighborMask.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
         return -1.0f;
-    return saturate(sample.x);
+    return saturate(neighborMask.x);
 }
 [numthreads(8,8,1)]
 void main(uint3 id : SV_DispatchThreadID)
