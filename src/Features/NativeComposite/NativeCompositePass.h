@@ -2,6 +2,7 @@
 
 #include "GraphicsInterop.h"
 #include "Features/NativeLighting/NativeLighting.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -79,15 +80,17 @@ private:
 		ID3D11Device* device11 = nullptr;
 		D3D11_TEXTURE2D_DESC sourceDesc{};
 		bool supportsLighting = false;
+		uint64_t frameBytes = 0;
 		bool countersRead = true;
 		bool untracked = false;
 	};
-	std::array<std::unique_ptr<Slot>, 3> slots;
+	std::array<std::unique_ptr<Slot>, 4> slots;
 	winrt::com_ptr<ID3D12RootSignature> root;
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	ID3D12Device* pipelineDevice = nullptr;
 	std::atomic<uint64_t> completedComposites{ 0 }, acceptedPixels{ 0 }, modifiedPixels{ 0 }, visualizationPixels{ 0 }, counterReadFailures{ 0 };
 	std::atomic<uint64_t> effectiveRecoveredPixels{ 0 }, finiteOnlyPixels{ 0 };
+	DX12Native::VideoMemoryBudget videoBudget;
 	bool InitializeLighting(ID3D12Device* a_device);
 	std::string status = "Not captured";
 };

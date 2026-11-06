@@ -164,7 +164,10 @@ namespace DX12Native
 	json ShadowTrace::GetDiagnostics() const
 	{
 		const auto completed = completion ? completion->GetCompletedValue() : 0;
-		return { { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions }, { "offeredFrame", current ? current->frame : 0 },
+		return { { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions },
+			{ "frameSlots", frames.size() }, { "busyDeferrals", busyDeferrals },
+			{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
+			{ "dxgiLocalBudgetBytes", videoBudget.last.localBudget }, { "dxgiLocalUsageBytes", videoBudget.last.localUsage }, { "offeredFrame", current ? current->frame : 0 },
 			{ "offered", bool(current) }, { "gpuComplete", current && completed != UINT64_MAX && completed >= current->readyValue },
 			{ "readyMaterials", current ? current->bindings->materials->readyMaterials : 0 },
 			{ "rejectedMaterials", current ? current->bindings->materials->rejectedMaterials : 0 },
@@ -366,7 +369,17 @@ namespace DX12Native
 				return completed != UINT64_MAX && completed >= consumer.second;
 			});
 		});
-		if (available == frames.end()) { status = "Shadow frames are still in use"; return; }
+		if (available == frames.end()) { ++busyDeferrals; status = "Shadow frames are still in use"; return; }
+		uint64_t trackedBytes = tables->bytes;
+		for (const auto& frame : frames) if (frame) {
+			if (trackedBytes > UINT64_MAX - frame->bytes) { status = "Shadow budget accounting overflow"; return; }
+			trackedBytes += frame->bytes;
+			if (frame->bindings && frame->bindings != tables) {
+				if (trackedBytes > UINT64_MAX - frame->bindings->bytes) { status = "Shadow binding budget accounting overflow"; return; }
+				trackedBytes += frame->bindings->bytes;
+			}
+		}
+		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes, a_budget).effectiveBytes;
 		try {
 			const auto textureDesc = CD3DX12_RESOURCE_DESC::Tex2D(DXGI_FORMAT_R32G32B32A32_FLOAT, a_size[0], a_size[1], 1, 1, 1, 0,
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
@@ -374,20 +387,20 @@ namespace DX12Native
 				D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
 			const auto textureBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &textureDesc).SizeInBytes;
 			const auto lightBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &lightDesc).SizeInBytes;
-			if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX || textureBytes > a_budget / 2 || lightBytes > a_budget - textureBytes * 2)
+			if (textureBytes == UINT64_MAX || lightBytes == UINT64_MAX || textureBytes > budget / 2 || lightBytes > budget - textureBytes * 2)
 				throw std::runtime_error("Shadow frame allocation exceeds budget");
 			const auto bytes = textureBytes * 2 + lightBytes;
 			uint64_t retained = tables->bytes;
 			for (auto it = frames.begin(); it != frames.end(); ++it) {
 				if (it == available || !*it) continue;
-				if ((*it)->bytes > a_budget || retained > a_budget - (*it)->bytes) throw std::runtime_error("Shadow frames exceed budget");
+				if ((*it)->bytes > budget || retained > budget - (*it)->bytes) throw std::runtime_error("Shadow frames exceed budget");
 				retained += (*it)->bytes;
 				if ((*it)->bindings && (*it)->bindings != tables) {
-					if ((*it)->bindings->bytes > a_budget || retained > a_budget - (*it)->bindings->bytes) throw std::runtime_error("Retired shadow bindings exceed budget");
+					if ((*it)->bindings->bytes > budget || retained > budget - (*it)->bindings->bytes) throw std::runtime_error("Retired shadow bindings exceed budget");
 					retained += (*it)->bindings->bytes;
 				}
 			}
-			if (retained > a_budget || bytes > a_budget - retained) throw std::runtime_error("Shadow frame budget exhausted");
+			if (retained > budget || bytes > budget - retained) throw std::runtime_error("Shadow frame budget exhausted");
 			auto& slot = *available;
 			if (!slot || slot->width != a_size[0] || slot->height != a_size[1]) {
 				slot.reset();

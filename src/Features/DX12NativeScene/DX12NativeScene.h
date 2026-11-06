@@ -11,7 +11,7 @@
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
 struct DX12NativeScene final : Feature
 {
-	struct Settings { bool Enabled = false; bool ShadowMask = false; uint32_t BudgetMB = 512; } settings;
+	struct Settings { bool Enabled = false; bool ShadowMask = false; uint32_t BudgetMB = 512; uint32_t FrameBudgetMB = 0; } settings;
 	struct PublishedScene
 	{
 		std::shared_ptr<const DX12Native::PreparedCell> cell;
@@ -78,6 +78,7 @@ private:
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, shadowResetRequested{ false };
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
 	std::atomic<uint32_t> requestedBudget{ 0 };
+	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
 	mutable std::mutex settingsMutex, diagnosticsMutex;
 	json diagnostics = json::object();
 	bool submitted = false;

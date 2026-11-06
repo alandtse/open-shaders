@@ -2,6 +2,7 @@
 
 #include "GraphicsBackend.h"
 #include "GraphicsInterop.h"
+#include "VideoMemoryBudget.h"
 #include "Globals.h"
 #include <array>
 #include <memory>
@@ -46,12 +47,13 @@ namespace DX12Native
 		/** @brief Reports source capture and producer completion independently of consumption. */
 		json GetDiagnostics() const;
 	private:
-		std::array<std::shared_ptr<RasterFrame>, 2> slots;
+		std::array<std::shared_ptr<RasterFrame>, 4> slots;
 		std::shared_ptr<RasterFrame> current;
 		SharedFence producer;
 		winrt::com_ptr<ID3D11ComputeShader> depthShader;
 		GraphicsBackend backend;
 		std::string status;
-		uint64_t submissions = 0, completions = 0;
+		uint64_t submissions = 0, completions = 0, busyDeferrals = 0;
+		VideoMemoryBudget videoBudget;
 	};
 }

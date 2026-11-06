@@ -21,6 +21,13 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::Checkbox("Specular", &settings.Specular);
 	ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 4.0f);
 	ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 4.0f);
+	bool autoBudget = settings.BudgetMB == 0;
+	if (ImGui::Checkbox("Automatic lighting VRAM budget (DXGI)", &autoBudget)) settings.BudgetMB = autoBudget ? 0u : 512u;
+	if (!autoBudget) {
+		int manual = int(settings.BudgetMB);
+		if (ImGui::SliderInt("Lighting frame-pool limit (MiB)", &manual, 64, 4096)) settings.BudgetMB = uint32_t(manual);
+	}
+	ImGui::TextDisabled("DXGI frame-budget telemetry is available in diagnostics; %zu lighting slots.", frames.size());
 	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull)) ++validityRevision;
 	ImGui::Checkbox("Publish validity debug texture", &settings.Debug);
 	ImGui::Checkbox("Compare culling on and off", &settings.CompareCulling);
@@ -65,7 +72,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	auto selected = a_json.get<Settings>();
 	selected.DiffuseIntensity = std::isfinite(selected.DiffuseIntensity) ? std::clamp(selected.DiffuseIntensity, 0.0f, 4.0f) : 1.0f;
 	selected.SpecularIntensity = std::isfinite(selected.SpecularIntensity) ? std::clamp(selected.SpecularIntensity, 0.0f, 4.0f) : 1.0f;
-	selected.BudgetMB = std::clamp(selected.BudgetMB, 64u, 4096u);
+	selected.BudgetMB = selected.BudgetMB ? std::clamp(selected.BudgetMB, 64u, 4096u) : 0u;
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
 	lab = selected.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<ValidityLab>() : ValidityLab{};
@@ -142,7 +149,10 @@ bool NativeLightingFeature::RetainContribution(const std::shared_ptr<const Contr
 
 void NativeLightingFeature::PublishDiagnostics()
 {
-	json snapshot{ { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions }, { "counterReadFailures", counterReadFailures },
+	json snapshot{ { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions },
+		{ "frameSlots", frames.size() }, { "busyDeferrals", busyDeferrals },
+		{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
+		{ "dxgiLocalBudgetBytes", videoBudget.last.localBudget }, { "dxgiLocalUsageBytes", videoBudget.last.localUsage }, { "counterReadFailures", counterReadFailures },
 		{ "candidatePixels", totals[0] }, { "maskCulled", totals[1] }, { "maskUnavailable", totals[2] },
 		{ "primaryQueries", totals[3] }, { "primaryHits", totals[4] }, { "primaryMisses", totals[5] },
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
@@ -176,7 +186,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("compareCulling")) feature.settings.CompareCulling = args.at("compareCulling").get<bool>();
 		if (args.contains("diffuseIntensity")) { auto v = args.at("diffuseIntensity").get<float>(); feature.settings.DiffuseIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
 		if (args.contains("specularIntensity")) { auto v = args.at("specularIntensity").get<float>(); feature.settings.SpecularIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
-		if (args.contains("budgetMB")) feature.settings.BudgetMB = std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u);
+		if (args.contains("budgetMB")) feature.settings.BudgetMB = args.at("budgetMB").get<uint32_t>() ? std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u) : 0u;
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
@@ -288,7 +298,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			return value != UINT64_MAX && value >= consumer.second;
 		});
 	});
-	if (available == frames.end()) { status = "Native lighting outputs are still in use"; return; }
+	if (available == frames.end()) { ++busyDeferrals; status = "Native lighting outputs are still in use"; return; }
 	try {
 		const auto size = Util::ConvertToDynamic(globals::state->screenSize);
 		const uint32_t width = uint32_t(size.x), height = uint32_t(size.y);
@@ -297,7 +307,13 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		constexpr std::array formats{ DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32_UINT,
 			DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT,
 			DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32B32A32_FLOAT };
-		const uint64_t budget = uint64_t(a_settings.BudgetMB) * 1024 * 1024;
+		uint64_t trackedBytes = 0;
+		for (const auto& frame : frames) if (frame) {
+			if (trackedBytes > UINT64_MAX - frame->bytes) throw std::runtime_error("Native lighting pool accounting overflow");
+			trackedBytes += frame->bytes;
+		}
+		const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes,
+			uint64_t(a_settings.BudgetMB) * 1024 * 1024).effectiveBytes;
 		uint64_t bytes = 2 * 1024 * 1024;
 		for (size_t i = 0; i < formats.size(); ++i) {
 			if (!a_settings.CompareCulling && (i == 5 || i == 6)) continue;

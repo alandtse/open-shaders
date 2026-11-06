@@ -4,6 +4,7 @@
 #include "GraphicsInterop.h"
 #include "PreparedScene.h"
 #include "ShadowBindings.h"
+#include "VideoMemoryBudget.h"
 #include <span>
 
 namespace DX12Native
@@ -63,9 +64,10 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
 		winrt::com_ptr<ID3D11ComputeShader> prepareRays;
-		std::array<std::shared_ptr<ShadowFrame>, 2> frames;
+		std::array<std::shared_ptr<ShadowFrame>, ShadowBindings::kMaximumFrameSlots> frames;
 		std::shared_ptr<ShadowFrame> current;
-		uint64_t nextFence = 0, submissions = 0, completions = 0;
+		uint64_t nextFence = 0, submissions = 0, completions = 0, busyDeferrals = 0;
+		VideoMemoryBudget videoBudget;
 		std::string status;
 		bool failed = false;
 	};

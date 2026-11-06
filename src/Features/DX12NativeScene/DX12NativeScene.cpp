@@ -7,7 +7,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB)
 
 void DX12NativeScene::DrawSettings()
 {
@@ -16,6 +16,19 @@ void DX12NativeScene::DrawSettings()
 	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) shadowResetRequested = true;
 	if (settings.ShadowMask && !shadowStatus.empty()) ImGui::TextUnformatted(shadowStatus.c_str());
 	ImGui::TextUnformatted(failure.empty() ? "Prepared static scenes" : failure.c_str());
+	const uint32_t requestedFrame = requestedFrameBudget.load();
+	uint32_t frameLimit = requestedFrame != UINT32_MAX ? requestedFrame : settings.FrameBudgetMB;
+	bool automatic = frameLimit == 0;
+	if (ImGui::Checkbox("Automatic native frame VRAM budget (DXGI)", &automatic)) {
+		frameLimit = automatic ? 0u : 512u;
+		requestedFrameBudget = frameLimit;
+	}
+	if (!automatic) {
+		int manual = int(frameLimit);
+		if (ImGui::SliderInt("Native frame-pool limit (MiB)", &manual, 64, 4096))
+			requestedFrameBudget = uint32_t(manual);
+	}
+	ImGui::TextDisabled("Pool allocations respect DXGI headroom; independent of the prepared-scene budget.");
 }
 
 void DX12NativeScene::LoadSettings(json& a_json)
@@ -24,6 +37,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	requestedEnabled = selected.Enabled ? 1 : 0;
 	requestedShadow = selected.ShadowMask ? 1 : 0;
 	requestedBudget = std::clamp(selected.BudgetMB, 64u, 4096u);
+	requestedFrameBudget = selected.FrameBudgetMB ? std::clamp(selected.FrameBudgetMB, 64u, 4096u) : 0u;
 	resetRequested = true;
 }
 void DX12NativeScene::SaveSettings(json& a_json)
@@ -33,6 +47,7 @@ void DX12NativeScene::SaveSettings(json& a_json)
 	if (const auto enabled = requestedEnabled.load(); enabled >= 0) selected.Enabled = enabled != 0;
 	if (const auto shadowEnabled = requestedShadow.load(); shadowEnabled >= 0) selected.ShadowMask = shadowEnabled != 0;
 	if (const auto budget = requestedBudget.load(); budget) selected.BudgetMB = budget;
+	if (const auto frameBudget = requestedFrameBudget.load(); frameBudget != UINT32_MAX) selected.FrameBudgetMB = frameBudget;
 	a_json = selected;
 }
 void DX12NativeScene::RestoreDefaultSettings()
@@ -40,6 +55,7 @@ void DX12NativeScene::RestoreDefaultSettings()
 	requestedEnabled = 0;
 	requestedShadow = 0;
 	requestedBudget = Settings{}.BudgetMB;
+	requestedFrameBudget = Settings{}.FrameBudgetMB;
 	resetRequested = true;
 }
 void DX12NativeScene::OnRuntimeDisabled() { resetRequested = true; }
@@ -68,6 +84,7 @@ void DX12NativeScene::EarlyPrepass()
 		if (const auto enabled = requestedEnabled.exchange(-1); enabled >= 0) settings.Enabled = enabled != 0;
 		if (const auto shadowEnabled = requestedShadow.exchange(-1); shadowEnabled >= 0) settings.ShadowMask = shadowEnabled != 0;
 		if (const auto budget = requestedBudget.exchange(0); budget) settings.BudgetMB = budget;
+		if (const auto frameBudget = requestedFrameBudget.exchange(UINT32_MAX); frameBudget != UINT32_MAX) settings.FrameBudgetMB = frameBudget;
 	}
 	auto* cell = globals::game::player ? globals::game::player->GetParentCell() : nullptr;
 	const auto currentID = cell ? cell->GetFormID() : 0;
@@ -152,7 +169,7 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	if (!scene) { shadowStatus = "Prepared scene or acceleration structure unavailable"; return; }
 	const auto dynamicSize = Util::ConvertToDynamic(globals::state->screenSize);
 	const std::array<uint32_t, 2> size{ uint32_t(dynamicSize.x), uint32_t(dynamicSize.y) };
-	shadow.Dispatch(*backend, scene->acceleration, scene->materials, scene->cell->nativeLights, camera, size, frame, uint64_t(settings.BudgetMB) * 1024 * 1024);
+	shadow.Dispatch(*backend, scene->acceleration, scene->materials, scene->cell->nativeLights, camera, size, frame, uint64_t(settings.FrameBudgetMB) * 1024 * 1024);
 	shadowStatus = shadow.Status();
 }
 
@@ -194,7 +211,7 @@ void DX12NativeScene::OnOpaqueRasterReady(const OpaqueRasterInputs& a_inputs)
 			if (std::isfinite(errorSquared) && errorSquared <= 0.25f) camera = &cached;
 		}
 	}
-	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, uint64_t(settings.BudgetMB) * 1024 * 1024);
+	raster.Capture(*backend, inputs, Util::GetCurrentSceneDepthSRV(false), camera, frame, uint64_t(settings.FrameBudgetMB) * 1024 * 1024);
 }
 
 std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScene() const

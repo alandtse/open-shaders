@@ -9,7 +9,8 @@ namespace DX12Native
 	{
 		static constexpr uint32_t kMaximumInstances = 8192;
 		static constexpr uint32_t kFrameDescriptorCount = 3;
-		static constexpr uint32_t kGeometryDescriptorBase = 2 * kFrameDescriptorCount;
+		static constexpr uint32_t kMaximumFrameSlots = 4;
+		static constexpr uint32_t kGeometryDescriptorBase = kMaximumFrameSlots * kFrameDescriptorCount;
 		static constexpr uint32_t kAttributeDescriptorBase = kGeometryDescriptorBase + kMaximumInstances;
 		static constexpr uint32_t kTextureDescriptorBase = kAttributeDescriptorBase + kMaximumInstances;
 		std::shared_ptr<const TopLevel> scene;

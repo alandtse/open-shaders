@@ -2,6 +2,7 @@
 
 #include "Feature.h"
 #include "Features/DX12NativeScene/DX12NativeScene.h"
+#include "Features/DX12NativeScene/VideoMemoryBudget.h"
 #include <atomic>
 #include <mutex>
 
@@ -12,7 +13,7 @@ struct NativeLightingFeature final : Feature
 	{
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
-		uint32_t BudgetMB = 512;
+		uint32_t BudgetMB = 0; // 0 = dynamic DXGI local-memory-aware frame pool.
 		bool PersistLab = false;
 	};
 	struct ValidityLab
@@ -88,11 +89,12 @@ private:
 	winrt::com_ptr<ID3D12Fence> completion;
 	winrt::com_ptr<ID3D12RootSignature> root;
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
-	std::array<std::shared_ptr<Contribution>, 2> frames;
+	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
 	std::array<uint64_t, 27> totals{};
 	std::string status;
-	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0;
+	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0, busyDeferrals = 0;
+	DX12Native::VideoMemoryBudget videoBudget;
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, transitionOpen{ false }, active{ false };
 	bool failed = false;
 };

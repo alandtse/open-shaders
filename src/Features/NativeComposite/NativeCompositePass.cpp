@@ -112,7 +112,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		}
 	}
 	if (!slot) {
-		status = "Waiting for available frame resources";
+		status = "Waiting for available frame resources (four fenced composite slots in flight)";
 		return {};
 	}
 
@@ -122,7 +122,26 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		const bool recreate = !slot->frame || slot->device != a_device12 || slot->device11 != a_device11 ||
 			slot->sourceDesc.Width != desc.Width || slot->sourceDesc.Height != desc.Height || slot->sourceDesc.Format != desc.Format || slot->supportsLighting != supportsLighting;
 		if (recreate) {
+			// Reserve two full-size images: one DX11/DX12 shared input and
+			// one DX12-owned composited output. Guard incremental slot growth
+			// with the same adapter-local DXGI headroom policy as native tracing.
+			const auto allocationDesc = CD3DX12_RESOURCE_DESC::Tex2D(desc.Format, desc.Width, desc.Height, 1, 1, 1, 0,
+				supportsLighting ? D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS : D3D12_RESOURCE_FLAG_NONE);
+			const auto allocation = a_device12->GetResourceAllocationInfo(0, 1, &allocationDesc).SizeInBytes;
+			if (allocation == UINT64_MAX || allocation > (UINT64_MAX - 2ull * 1024 * 1024) / 2)
+				throw std::runtime_error("Composite allocation size unsupported");
+			const uint64_t required = allocation * 2 + 2ull * 1024 * 1024;
+			uint64_t retained = 0;
+			for (const auto& candidate : slots) if (candidate && candidate.get() != slot) {
+				if (retained > UINT64_MAX - candidate->frameBytes) throw std::runtime_error("Composite retained size overflow");
+				retained += candidate->frameBytes;
+			}
+			const uint64_t tracked = retained > UINT64_MAX - slot->frameBytes ? UINT64_MAX : retained + slot->frameBytes;
+			const uint64_t allowance = videoBudget.Query(a_device12, tracked).effectiveBytes;
+			if (required > allowance || retained > allowance - required)
+				throw std::runtime_error("Composite frame allocation deferred by DXGI memory budget");
 			auto replacement = std::make_unique<Slot>();
+			replacement->frameBytes = required;
 			replacement->frame = std::make_shared<Frame>();
 			replacement->device = a_device12;
 			replacement->device11 = a_device11;

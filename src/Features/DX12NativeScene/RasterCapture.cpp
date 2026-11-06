@@ -45,7 +45,13 @@ namespace DX12Native
 					return done != UINT64_MAX && done >= consumer.second;
 				});
 			});
-			if (available == slots.end()) throw std::runtime_error("Raster snapshots are still in use");
+			if (available == slots.end()) { ++busyDeferrals; throw std::runtime_error("Raster snapshots are still in use"); }
+			uint64_t trackedBytes = 0;
+			for (const auto& frame : slots) if (frame) {
+				if (trackedBytes > UINT64_MAX - frame->allocationBytes) throw std::runtime_error("Raster frame pool byte count overflow");
+				trackedBytes += frame->allocationBytes;
+			}
+			const uint64_t budget = videoBudget.Query(backend.d3d12Device.get(), trackedBytes, a_budget).effectiveBytes;
 			std::array<D3D11_TEXTURE2D_DESC, static_cast<size_t>(RasterFrame::Input::Count)> descriptions{};
 			uint32_t width = 0, height = 0;
 			for (size_t i = 0; i < a_inputs.size(); ++i) {
@@ -90,7 +96,7 @@ namespace DX12Native
 					desc.Format = source.Format;
 					desc.SampleDesc.Count = 1;
 					const auto allocation = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc);
-					if (allocation.SizeInBytes == UINT64_MAX || allocation.SizeInBytes > a_budget || slotBytes > a_budget - allocation.SizeInBytes)
+					if (allocation.SizeInBytes == UINT64_MAX || allocation.SizeInBytes > budget || slotBytes > budget - allocation.SizeInBytes)
 						throw std::runtime_error("Raster snapshot exceeds memory budget or format is unsupported");
 					slotBytes += allocation.SizeInBytes;
 				}
@@ -103,14 +109,14 @@ namespace DX12Native
 				depthAllocation.SampleDesc.Count = 1;
 				depthAllocation.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 				const auto depthBytes = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &depthAllocation).SizeInBytes;
-				if (depthBytes == UINT64_MAX || depthBytes > a_budget || slotBytes > a_budget - depthBytes)
+				if (depthBytes == UINT64_MAX || depthBytes > budget || slotBytes > budget - depthBytes)
 					throw std::runtime_error("Raster depth exceeds memory budget");
 				slotBytes += depthBytes;
 			}
 			uint64_t otherBytes = 0;
 			for (auto it = slots.begin(); it != slots.end(); ++it)
 				if (it != available && *it) otherBytes += (*it)->allocationBytes;
-			if (otherBytes > a_budget || slotBytes > a_budget - otherBytes) throw std::runtime_error("Raster snapshot exceeds memory budget");
+			if (otherBytes > budget || slotBytes > budget - otherBytes) throw std::runtime_error("Raster snapshot exceeds memory budget");
 			if (recreate) {
 				slot.reset();
 				auto replacement = std::make_shared<RasterFrame>();
@@ -177,7 +183,9 @@ namespace DX12Native
 		const auto completed = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
 		return { { "status", status }, { "submissions", submissions }, { "gpuCompletions", completions }, { "offered", bool(current) },
 			{ "frame", current ? current->frame : 0 }, { "width", current ? current->width : 0 }, { "height", current ? current->height : 0 },
-			{ "cameraValid", current && current->cameraValid },
+			{ "cameraValid", current && current->cameraValid }, { "frameSlots", slots.size() }, { "busyDeferrals", busyDeferrals },
+			{ "dxgiAvailable", videoBudget.last.dxgiAvailable }, { "effectiveFrameBudgetBytes", videoBudget.last.effectiveBytes },
+			{ "dxgiLocalBudgetBytes", videoBudget.last.localBudget }, { "dxgiLocalUsageBytes", videoBudget.last.localUsage },
 			{ "gpuComplete", current && completed != UINT64_MAX && completed >= current->readyValue } };
 	}
 
