@@ -501,13 +501,16 @@ namespace ShadowCasterManager
 		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
 	}
 
-	void SnapshotConvertedLights(std::vector<RE::BSShadowLight*>& out)
+	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out)
 	{
 		std::shared_lock lock(s_normalConvertMutex);
 		out.clear();
 		out.reserve(s_normalConvert.size());
-		for (const auto& c : s_normalConvert)
-			out.push_back(c.light);
+		for (const auto& c : s_normalConvert) {
+			// A freed and zeroed light must not be ref-counted: the write would land in freed memory.
+			if (c.light && *reinterpret_cast<const uintptr_t*>(c.light) != 0)
+				out.emplace_back(c.light);
+		}
 	}
 
 	std::size_t ConvertedLightCount()
@@ -518,20 +521,12 @@ namespace ShadowCasterManager
 
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)
 	{
-		std::vector<RE::BSShadowLight*> lights;
+		// The snapshot's vtable check catches lights freed and zeroed by tbbmalloc / EngineFixes
+		// between per-frame reconciliation and the cluster builder; its references keep the rest alive.
+		std::vector<RE::NiPointer<RE::BSShadowLight>> lights;
 		SnapshotConvertedLights(lights);
-		for (auto* light : lights) {
-			if (!light)
-				continue;
-			// Defensive vtable check: catches lights freed and zeroed by
-			// tbbmalloc / EngineFixes between our per-frame reconciliation
-			// in ScheduleShadowCasters and the cluster builder running. The
-			// reconciliation prunes stale pointers up-front, but a bulk
-			// engine teardown could still happen mid-frame.
-			if (*reinterpret_cast<const uintptr_t*>(light) == 0)
-				continue;
-			visitor(light);
-		}
+		for (auto& light : lights)
+			visitor(light.get());
 	}
 
 	// =========================================================================

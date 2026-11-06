@@ -201,8 +201,9 @@ namespace ShadowCasterManager
 	// s_normalConvert access takes this; engine calls stay outside it.
 	extern std::shared_mutex s_normalConvertMutex;
 
-	/// Copies the converted lights under the lock so callers can call into the engine while iterating.
-	void SnapshotConvertedLights(std::vector<RE::BSShadowLight*>& out);
+	/// Copies the converted lights under the lock, holding a reference to each so a concurrent
+	/// RemoveLight cannot free one while the caller iterates and calls into the engine.
+	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out);
 
 	std::size_t ConvertedLightCount();
 	extern std::set<RE::NiLight*> s_shadowConvert;

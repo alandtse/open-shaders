@@ -820,12 +820,12 @@ namespace ShadowCasterManager
 		// strict-light loop (which consumes lights[] passed to this function) also
 		// sees them so non-LLF code paths and shaders without LIGHT_LIMIT_FIX still
 		// receive the diffuse contribution.
-		static thread_local std::vector<RE::BSShadowLight*> converted;
+		static thread_local std::vector<RE::NiPointer<RE::BSShadowLight>> converted;
 		SnapshotConvertedLights(converted);
-		for (auto* convertedLight : converted) {
+		for (auto& convertedLight : converted) {
 			if (added >= maxCount)
 				break;
-			auto* l = reinterpret_cast<RE::BSLight*>(convertedLight);
+			auto* l = reinterpret_cast<RE::BSLight*>(convertedLight.get());
 			if (!l || l == sunLight)
 				continue;
 			const auto state = ReadSurfaceLight(l);
@@ -848,6 +848,7 @@ namespace ShadowCasterManager
 				lights[added++] = l;
 			// Note: do NOT increment *shadowCount; this is a non-shadow contribution.
 		}
+		converted.clear();
 
 		ctx.Rax = static_cast<uint64_t>(added);
 	}
