@@ -5,6 +5,7 @@
 #include <winrt/base.h>
 #include <optional>
 #include <string>
+#include <dxgi1_2.h>
 
 /** @brief Retains a DX12 queue on the adapter used by the engine's DX11 device. */
 struct GraphicsBackend
@@ -16,4 +17,6 @@ struct GraphicsBackend
 
 	/** @brief Creates an independent backend or reports the failed operation. */
 	static std::optional<GraphicsBackend> Create(ID3D11Device* a_device, ID3D11DeviceContext* a_context, std::string& a_failure);
+	/** @brief Returns the shared DX12 device for the renderer adapter. */
+	static HRESULT GetSharedDevice(IDXGIAdapter* a_adapter, ID3D12Device** a_device);
 };
