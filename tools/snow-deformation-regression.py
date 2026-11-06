@@ -33,6 +33,8 @@ MIN_GAME_HOURS_ADVANCED = 6.0
 MIN_BLANKET_CHANGED_FRACTION = 0.01
 MAX_ACCUMULATION_LUMA_LOSS = -3.0
 EYE_LUMA_RATIO = (0.85, 1.15)
+VR_LANDSCAPE_OFFSETS = ((0, 400), (0, -400), (400, 0))
+VR_DROP_Z = -8800
 
 
 class Devbench:
@@ -187,8 +189,14 @@ def scenario_sink(bench, report):
     bench.set_feature("SnowDeformation", {"Enabled": True, "BlanketHeight": 0.0, "SinkActors": True})
     walks = [("w", 3.0), ("d", 1.5), ("w", 2.0)]
     best = {"SunkActors": 0, "DeepestSink": 0.0}
-    for key, seconds in walks:
-        bench.call("input", {"action": "sequence", "device": "keyboard", "events": [{"action": "down", "key": key}, {"action": "wait", "durationMs": int(seconds * 1000)}, {"action": "up", "key": key}]})
+    for index, (key, seconds) in enumerate(walks):
+        if bench.vr:
+            # Keyboard input does not move the VR player, so teleport onto landscape instead.
+            dx, dy = VR_LANDSCAPE_OFFSETS[index]
+            for axis, value in (("x", SPOT[0] + dx), ("y", SPOT[1] + dy), ("z", VR_DROP_Z)):
+                bench.console(f"player.setpos {axis} {value}")
+        else:
+            bench.call("input", {"action": "sequence", "device": "keyboard", "events": [{"action": "down", "key": key}, {"action": "wait", "durationMs": int(seconds * 1000)}, {"action": "up", "key": key}]})
         clear_modals(bench)
         for _ in range(3):
             time.sleep(1.5)
@@ -275,6 +283,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     port, state = find_port(args.port)
     bench = Devbench(port)
+    bench.vr = bool(state.get("vr"))
     runtime = "VR" if state.get("vr") else "SE/AE"
     report = Report(out)
     print(f"devbench port {port}, runtime {runtime}", flush=True)
