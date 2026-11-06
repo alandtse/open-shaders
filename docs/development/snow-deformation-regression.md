@@ -60,6 +60,7 @@ accumulation time jumps and reloads to Whiterun. Output in `<dir>`:
 -   Accumulation needs several game hours; the script calls `game advanceTime` in 3 hour steps with
     the weather forced to snowstorm (`fw c8221`) at hour 12, and leaves the weather that way. The
     Winterhold ground is already white, so the luma check only flags a darker frame; judge buildup by eye.
+-   Keyboard input does not move the VR player, so on VR the `sink` scenario teleports onto landscape instead of walking.
 -   The tutorial message box pauses the game; the script accepts it before shots and after walks.
 -   `freecam` is not a toggle: the script turns it off with `{"action":"freecam","on":false}` before walking.
 -   The pixel metrics are coarse guards, not image comparisons. Prints and veils are judged by eye.
