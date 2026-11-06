@@ -43,7 +43,8 @@ cbuffer Trace : register(b0)
 	uint MaskAvailable;
 	uint MaskExperimental;
 	uint ReferenceVisibility;
-	uint3 LabPadding;
+	uint ReferencePrimaryTraversal;
+	uint2 LabPadding;
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -134,6 +135,7 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	RayDesc ray;
 	ray.Origin = CameraOrigin; ray.Direction = direction; ray.TMin = MinimumDistance; ray.TMax = 60000.0f;
 	bool valid = true;
+	bool rejectedPrimaryCandidate = false;
 	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
 	Count(3);
 	query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
@@ -141,13 +143,16 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	while (query.Proceed()) {
 		if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
 			primaryGeometry = true;
-			if (AdmitReceiverCandidate(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid))
-				query.CommitNonOpaqueTriangleHit();
+			bool candidateValid = true;
+			const bool admitted = AdmitReceiverCandidate(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), candidateValid);
+			rejectedPrimaryCandidate |= !candidateValid;
+			if (InvalidatePrimaryOnRejectedCandidate(candidateValid, ReferencePrimaryTraversal != 0u)) valid = false;
+			if (admitted) query.CommitNonOpaqueTriangleHit();
 		}
 	}
 	LabGuide[pixel].x = primaryGeometry ? 1 : 0;
 	if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, 3, 3, 4); return; }
-	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); Finish(pixel, 0, 0, 2); return; }
+	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); Finish(pixel, rejectedPrimaryCandidate ? 3 : 0, 0, rejectedPrimaryCandidate ? 4 : 2); return; }
 	Count(4);
 	LabGuide[pixel].x = 1;
 	const uint instance = query.CommittedInstanceID(), primitive = query.CommittedPrimitiveIndex();
@@ -159,7 +164,9 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	bool selectedDepth = DepthMatches(rasterValid, depthError, distance, AbsoluteTolerance, RelativeTolerance);
 	bool rejectSelectedDepth = !selectedDepth && DepthMode == 0;
 	if (rejectSelectedDepth && !originalDepth) { Finish(pixel, 0, 0, 3); return; }
-	uint originalReason = originalDepth ? 0 : 3;
+	// A rejected primary candidate would have invalidated the old strict traversal.
+	// Preserve that original verdict while the reference traversal can continue.
+	uint originalReason = rejectedPrimaryCandidate ? 4 : (originalDepth ? 0 : 3);
 	const MaterialRecord materialRecord = Materials[Surfaces[instance].material.x];
 	bool supportedMaterial = (materialRecord.flags.x & 3u) == 3u && materialRecord.flags.w == 0u;
 	EvaluatedSourceMaterial material;

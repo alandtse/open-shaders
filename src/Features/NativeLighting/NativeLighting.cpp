@@ -11,7 +11,7 @@
 #include <cmath>
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, MaskThreshold, MaskDistanceTolerance)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
 {
@@ -38,6 +38,8 @@ void NativeLightingFeature::DrawSettings()
 		changed |= ImGui::Checkbox("Experimental: assume current mask authoritative", &lab.AssumeMaskAuthoritative);
 		changed |= ImGui::Checkbox("Sample mask for diagnostics", &lab.ObserveMask);
 		changed |= ImGui::Checkbox("Run diagnostics without lights or lobes", &lab.RunWithoutLighting);
+		changed |= ImGui::Checkbox("Reference-like primary candidate traversal", &lab.ReferencePrimaryTraversal);
+		ImGui::TextDisabled("Skip unsupported primary candidates; keep strict original validity for A/B.");
 		changed |= ImGui::Checkbox("Reference-like permissive visibility", &lab.ReferenceVisibility);
 		ImGui::TextDisabled("Skips unsupported shadow candidates; may cause light leaks.");
 		changed |= ImGui::SliderFloat("Experimental mask visibility threshold", &lab.MaskThreshold, 0.0f, 1.0f);
@@ -67,7 +69,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
 	lab = selected.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<ValidityLab>() : ValidityLab{};
-	lab.AbsoluteTolerance = std::isfinite(lab.AbsoluteTolerance) ? std::clamp(lab.AbsoluteTolerance, 0.0f, 10000.0f) : 2.0f;
+	lab.AbsoluteTolerance = std::isfinite(lab.AbsoluteTolerance) ? std::clamp(lab.AbsoluteTolerance, 0.0f, 10000.0f) : 5.0f;
 	lab.RelativeTolerance = std::isfinite(lab.RelativeTolerance) ? std::clamp(lab.RelativeTolerance, 0.0f, 1.0f) : 0.00001f;
 	lab.MaterialPolicy = std::min(lab.MaterialPolicy, 2u);
 	lab.MaskThreshold = std::isfinite(lab.MaskThreshold) ? std::clamp(lab.MaskThreshold, 0.0f, 1.0f) : 0.0f;
@@ -176,7 +178,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("specularIntensity")) { auto v = args.at("specularIntensity").get<float>(); feature.settings.SpecularIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
 		if (args.contains("budgetMB")) feature.settings.BudgetMB = std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u);
 	});
-	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		auto& lab = feature.lab;
@@ -191,6 +193,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("observeMask")) lab.ObserveMask = args.at("observeMask").get<bool>();
 		if (args.contains("runWithoutLighting")) lab.RunWithoutLighting = args.at("runWithoutLighting").get<bool>();
 		if (args.contains("referenceVisibility")) lab.ReferenceVisibility = args.at("referenceVisibility").get<bool>();
+		if (args.contains("referencePrimaryTraversal")) lab.ReferencePrimaryTraversal = args.at("referencePrimaryTraversal").get<bool>();
 		if (args.contains("maskThreshold")) { const auto v = args.at("maskThreshold").get<float>(); if (std::isfinite(v)) lab.MaskThreshold = std::clamp(v, 0.0f, 1.0f); }
 		if (args.contains("maskDistanceTolerance")) { const auto v = args.at("maskDistanceTolerance").get<float>(); if (std::isfinite(v)) lab.MaskDistanceTolerance = std::clamp(v, 0.0f, 10000.0f); }
 		++feature.validityRevision;
@@ -383,7 +386,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 			float absoluteTolerance, relativeTolerance, maskThreshold, maskDistanceTolerance;
 			uint32_t depthMode, materialPolicy, maskAvailable, maskExperimental;
-			uint32_t referenceVisibility, padding[3];
+			uint32_t referenceVisibility, referencePrimaryTraversal, padding[2];
 		};
 		static_assert(sizeof(Constants) == 240);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), uint32_t(scene.cell->nativeLights.size()),
@@ -393,7 +396,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			a_lab.AbsoluteTolerance, a_lab.RelativeTolerance, a_lab.MaskThreshold, a_lab.MaskDistanceTolerance,
 			a_lab.DepthAgreement ? (a_lab.DiagnosticDepth ? 1u : 0u) : 2u, a_lab.MaterialPolicy,
 			slot->scene.shadow ? 1u : 0u, !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative ? 1u : 0u,
-			a_lab.ReferenceVisibility ? 1u : 0u, { 0, 0, 0 } };
+			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, { 0, 0 } };
 		const D3D12_RANGE noRead{ 0, 0 };
 		void* mapped = nullptr;
 		DX::ThrowIfFailed(slot->lights->Map(0, &noRead, &mapped)); std::memcpy(mapped, lights.data(), sizeof(lights)); slot->lights->Unmap(0, nullptr);

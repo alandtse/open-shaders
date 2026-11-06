@@ -16,8 +16,8 @@ public:
 	enum class Gamut { Unknown };
 	struct Policy
 	{
-		uint32_t diffuse = 0;
-		uint32_t specular = 0;
+		uint32_t diffuse = 1; // Effective validity: display reference-compatible recovered contributions.
+		uint32_t specular = 1;
 		uint32_t visual = 0;
 	};
 	struct Frame

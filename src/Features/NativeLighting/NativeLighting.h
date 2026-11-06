@@ -19,14 +19,15 @@ struct NativeLightingFeature final : Feature
 	{
 		bool DepthAgreement = true;
 		bool DiagnosticDepth = false;
-		float AbsoluteTolerance = 2.0f;
+		float AbsoluteTolerance = 5.0f;
 		float RelativeTolerance = 0.00001f;
 		uint32_t MaterialPolicy = 0;
 		bool RequireMaskAuthority = true;
 		bool AssumeMaskAuthoritative = false;
 		bool ObserveMask = false;
 		bool RunWithoutLighting = false;
-		bool ReferenceVisibility = false;
+		bool ReferenceVisibility = true;
+		bool ReferencePrimaryTraversal = true;
 		float MaskThreshold = 0.0f;
 		float MaskDistanceTolerance = 2.0f;
 	};

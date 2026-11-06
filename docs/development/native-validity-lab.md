@@ -16,7 +16,18 @@ in strict mode. Experimental culls retain the original reason and use bit 30.
 The mask is sampled only when requested for diagnostics or experimental use and
 only when its frame, scene, device, dimensions, fence and resource are valid.
 
-Depth defaults are the original absolute 2.0 and relative 0.00001 tolerance.
+Reference-compatibility defaults are enabled for hands-on coverage testing: the
+selected absolute receiver-depth tolerance is 5.0 (the old RT-Direct threshold),
+secondary visibility uses reference-like candidate skipping, and primary traversal
+skips rejected unsupported candidates rather than invalidating the entire pixel.
+Native Composite defaults to Effective acceptance for both direct lobes so
+recovered finite radiance is visible. OriginalValidity still uses the current strict
+2.0-unit depth test and records rejected primary candidates as unsupported, allowing
+strict vs effective comparisons without changing resource or geometry safety. The
+reference-like policies may expose surfaces behind unsupported geometry or cause
+light leaks; switch them off for strict behavior. Only the compatibility policy
+is changed here: no temporal reconstruction, RR, raster replacement or lighting
+BRDF changes are introduced.
 Selected depth tolerance, diagnostic continuation, or disabling agreement can
 recover an otherwise safely evaluated receiver. Diagnostic material fallback uses
 a neutral material only after triangle and normal data are validated. Geometry-only
@@ -49,7 +60,7 @@ acceleration or lighting resources remain unavailable. VR remains on its existin
 path. Runtime visual behavior, recovery counts and strict-versus-forced comparisons
 require the owner's in-game verification.
 
-The opt-in reference-like visibility experiment skips unsupported shadow-candidate
+The reference-like visibility policy (enabled by default for testing) skips unsupported shadow-candidate
 materials after checking the instance and geometry buffers, matching the reference's
 candidate handling. It also skips lights whose shadow segment is too short to trace.
 The original visibility rejection remains recorded; these approximations can cause

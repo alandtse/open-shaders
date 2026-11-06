@@ -12,6 +12,10 @@ namespace NativeLighting {
 #define LAB_MAX(a, b) max(a, b)
 #define LAB_INLINE
 #endif
+LAB_INLINE bool InvalidatePrimaryOnRejectedCandidate(bool candidateValid, bool referencePrimaryTraversal)
+{
+	return !candidateValid && !referencePrimaryTraversal;
+}
 LAB_INLINE bool DepthMatches(bool rasterValid, float error, float distance, float absoluteTolerance, float relativeTolerance)
 {
 	return rasterValid && LAB_FINITE(error) && LAB_FINITE(distance) && distance > 0.0f &&
