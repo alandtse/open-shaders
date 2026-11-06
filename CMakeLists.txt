@@ -1103,7 +1103,11 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 # branch; this command handles the per-build incremental.
                 COMMAND
                     ${ROBOCOPY_WRAPPER} "${AIO_DIR}" "${DEPLOY_TARGET}" "/E"
-                    "/XD" "${AIO_DIR}/Shaders" "/COPY:DAT" "/R:1" "/W:1" "/NFL"
+                    "/XD" "${AIO_DIR}/Shaders"
+                    # The main PDB is optional while Skyrim/VS holds it open.
+                    # Copy it separately with a non-fatal, explicit warning.
+                    "/XF" "$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+                    "/COPY:DAT" "/R:1" "/W:1" "/NFL"
                     "/NDL" "/NJH" "/NJS"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_deploy.stamp
@@ -1134,10 +1138,14 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                     ${CMAKE_COMMAND} -E copy_if_different
                     $<TARGET_FILE:${PROJECT_NAME}>
                     "${DEPLOY_TARGET}/SKSE/Plugins/$<TARGET_FILE_NAME:${PROJECT_NAME}>"
+                # PDB is useful for debugging but its destination can be
+                # locked by a live debugger. Deploy the DLL strictly, then
+                # warn and continue if only the PDB cannot be overwritten.
                 COMMAND
-                    ${CMAKE_COMMAND} -E copy_if_different
-                    $<TARGET_PDB_FILE:${PROJECT_NAME}>
-                    "${DEPLOY_TARGET}/SKSE/Plugins/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+                    ${CMAKE_COMMAND}
+                    "-DSRC=$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+                    "-DDST=${DEPLOY_TARGET}/SKSE/Plugins/$<TARGET_PDB_FILE_NAME:${PROJECT_NAME}>"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/CopyOptionalPDB.cmake"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch ${DEPLOY_TARGET_HASH}_plugin.stamp
                 # See PREPARE_AIO target-name rationale above; the target-only
