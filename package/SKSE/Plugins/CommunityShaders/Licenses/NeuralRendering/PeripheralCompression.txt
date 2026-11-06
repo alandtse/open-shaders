@@ -1,0 +1,37 @@
+MIT License
+
+Copyright (c) 2026 Yuri Grib (BeliyG3)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+CSX adaptation provenance:
+https://github.com/BeliyG3/optimizer-fps-dlss5
+Commit: fe67a80cf462bad1409968bda2eb6fd4ea265342
+Reference: sdk/shaders/ofps_common.hlsli (symmetric analytic mapping).
+Adapted files: src/Features/Upscaling/NeuralRendering/PeripheralMapping.h
+and features/Neural Rendering/Shaders/Upscaling/NeuralRendering/PeripheralCompression.hlsli.
+CSX uses normalized coordinates, its existing integer dimension rules,
+area-filtered colour, nearest-surface guides and matched residuals.
+
+Open Shaders adaptation from CSX commit d7d640ac48553310db01d0a8af6d56e70ffe24c6.
+The rectangular mapping is retained in
+src/Features/Upscaling/NeuralRendering/PeripheralMapping.h and
+package/Shaders/Common/NeuralRenderingPeripheral.hlsli.
+The existing rectangular NR crop, source-space feather and final foveated
+upscaling composition retain ownership; no CSX visibility mask is used.

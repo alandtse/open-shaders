@@ -3870,6 +3870,8 @@
     "feature.upscaling.neural_rendering.model_verify": "Compare Against Full Size",
     "feature.upscaling.neural_rendering.model_verify_tooltip": "With Side by side or a Model Scale below 1, also evaluates each eye alone at full size every frame so a verify capture can compare the two. Roughly doubles the model's GPU time.",
     "feature.upscaling.neural_rendering.performance": "Performance",
+    "feature.upscaling.neural_rendering.peripheral_compression": "Peripheral Compression",
+    "feature.upscaling.neural_rendering.peripheral_compression_tooltip": "Compresses model sampling from the eye rectangle inward, preserving the centre and the existing rectangular Neural Rendering coverage. The existing upscaler fills and blends the complete view. Independent of Model Scale; requires Developer Mode. Actor crops and material selection retain ordinary Neural Rendering.",
     "feature.upscaling.neural_rendering.region_follow_foveation": "Follow Foveation",
     "feature.upscaling.neural_rendering.region_follow_foveation_tooltip": "With Foveation on, evaluates only the foveated region, narrowed to the tracked character's crop when that is set, so the periphery keeps its pre-Neural-Rendering content. The upscaler already replaces that periphery with the cheap stretched view.",
     "feature.upscaling.neural_rendering.region_of_interest": "Limit to Tracked Actor",
