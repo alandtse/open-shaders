@@ -509,6 +509,7 @@ private:
 	float deepestSink = 0.0f;
 	uint64_t gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
+	std::atomic<bool> commandClearField = false;
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;
 	bool gatherOnUpdate = false;

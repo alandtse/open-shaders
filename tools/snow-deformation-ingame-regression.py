@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Snow Deformation in-game regression pass driven through devbench.
 
-Runs against an already launched game (SE/AE or VR) that holds your game lock, with
+Runs against an already launched game (SE/AE or VR) that you have exclusive use of, with
 Snow Deformation and Snow Cover loaded at boot. Writes screenshots, results.json and
 report.md to --out. FAIL means a hard check broke; REVIEW means a screenshot metric is
 outside the expected range and an agent or person must look at the listed images.
 
-See docs/development/snow-deformation-regression.md for the full procedure.
+See docs/development/snow-deformation-ingame-regression.md for the full procedure.
 """
 import argparse
 import json
@@ -72,7 +72,7 @@ def find_port(requested):
             return port, state
         except Exception:
             continue
-    sys.exit("No devbench endpoint answered; launch the game under your lock first.")
+    sys.exit("No devbench endpoint answered; launch the game first.")
 
 
 class Report:
@@ -128,6 +128,7 @@ def go_to_spot(bench):
         bench.console(f"set {survival} to 0")
     bench.console("player.forceav health 100000")
     bench.console(f"coc {CELL}")
+    time.sleep(3)
     wait_for_cell(bench, "Winterhold", CELL_LOAD_SECONDS)
     for axis, value in zip("xyz", SPOT):
         bench.console(f"player.setpos {axis} {value}")

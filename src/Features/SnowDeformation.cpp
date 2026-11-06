@@ -2030,6 +2030,8 @@ void SnowDeformation::UpdateField()
 
 	const bool active = IsActiveContext();
 	gatherEnabled.store(active, std::memory_order_relaxed);
+	if (commandClearField.exchange(false, std::memory_order_relaxed))
+		ClearField();
 	if (loadClearField.exchange(false, std::memory_order_relaxed)) {
 		ClearField();
 		lightingRejected.clear();
@@ -3195,7 +3197,7 @@ void SnowDeformation::DrawSettings()
 void SnowDeformation::RegisterUxActions()
 {
 	FEATURE_COMMAND("ClearPrints", "Clear every footprint and trail from the Snow Deformation field.", [](Feature* self, const json&) {
-		static_cast<SnowDeformation*>(self)->ClearField();
+		static_cast<SnowDeformation*>(self)->commandClearField.store(true, std::memory_order_relaxed);
 	});
 }
 

@@ -1,6 +1,6 @@
-# Snow Deformation in-game regression
+# Snow Deformation in-game regression test
 
-`tools/snow-deformation-regression.py` drives a running game through devbench and records
+`tools/snow-deformation-ingame-regression.py` drives a running game through devbench and records
 what the snow features do at a fixed spot. It exists because the important failures here are
 visual (one-eye veil, tint, missing prints) and one-off manual runs do not catch regressions.
 An agent or a person runs it, then looks at the listed screenshots.
@@ -19,8 +19,9 @@ images named in `report.md` and judge them; do not call the run green until each
 
 ## Setup
 
-1. Take the game lock (`~/.claude/skyrim-game-coordination.md`), exclusive, one game only. Do not
-   run during another agent's perf test.
+1. Use the game exclusively: nobody else may be running or testing the same Skyrim install (SE and
+   VR are separate installs), and no timing or perf test may be in progress. If several people or
+   agents share the machine, agree on who holds it before launching and hand it back when done.
 2. Deploy the DLL under test and hash-check it against the build output.
 3. Back up the game's `CommunityShaders/SettingsUser.json`, then set `Disable at Boot.SnowDeformation`
    to `false` and make sure `SnowCover` is not disabled at boot (Snow Deformation is disabled at boot by
@@ -32,7 +33,7 @@ images named in `report.md` and judge them; do not call the run green until each
 ## Run
 
 ```
-python tools/snow-deformation-regression.py --out <dir> [--port 8920|8921] [--save <name>] [--only blanket sink accumulation eyes]
+python tools/snow-deformation-ingame-regression.py --out <dir> [--port 8920|8921] [--save <name>] [--only blanket sink accumulation eyes]
 ```
 
 The port is probed (SE 8920, VR 8921) and `inspect state.vr` picks the runtime. The script moves the
@@ -49,8 +50,7 @@ accumulation time jumps and reloads to Whiterun. Output in `<dir>`:
    agent changed the scene, game crashed: check `OpenShaders.log` and the newest CrashLogger file).
 2. Open every image under "Screenshots to review" and compare against its expectation line.
 3. For VR also compare `blanket_on.png` left and right halves by eye.
-4. Quit the game with `qqq`, restore `SettingsUser.json` and the previous DLL, clear the running flag
-   and release the lock.
+4. Quit the game with `qqq`, restore `SettingsUser.json` and the previous DLL, hand the game back.
 5. Say in the PR which runtimes ran, and attach or describe the report.
 
 ## Known limits
