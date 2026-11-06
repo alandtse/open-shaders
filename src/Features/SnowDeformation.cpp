@@ -1618,7 +1618,10 @@ bool SnowDeformation::IsSinkBlocked(RE::Actor* a_actor) const
 	if (!controller)
 		return true;
 	const auto support = controller->supportBody.get();
-	return support && support->collidable.GetCollisionLayer() != RE::COL_LAYER::kTerrain;
+	if (!support)
+		return false;
+	const auto layer = support->collidable.GetCollisionLayer();
+	return layer != RE::COL_LAYER::kTerrain && layer != RE::COL_LAYER::kGround;
 }
 
 void SnowDeformation::ApplySink(RE::TESObjectREFR* a_ref, ActorSink& a_state, float a_sink)
