@@ -1,5 +1,6 @@
 #include "Common/Color.hlsli"
 #include "Common/NeuralRenderingCategory.hlsli"
+#include "Common/NeuralRenderingMaterial.hlsli"
 #include "Common/RegionFeather.hlsli"
 #include "Common/RegionOverlay.hlsli"
 #include "Common/SceneExposure.hlsli"
@@ -280,6 +281,17 @@ float ToneLowAt(int2 pixel, float centerDelta)
 		result = originalLinear + (neuralLinear - inputProxy) * mask;
 	else if (CompositeMode == NR::kCompositeRatio)
 		result = originalLinear * ratio;
+	[branch] if (MaterialSelectionEnabled != 0)
+	{
+		const float protection = NeuralRenderingMaterial::Protection(Masks2Texture, int2(id.xy),
+			uint2(Width, Height), EyeOffsetX, MaterialEdgeSoftness, MaterialStrengthsA, MaterialStrengthsB);
+		const float selection = NeuralRenderingMaterial::Selection(protection);
+		const float3 source = boundedGain ? original.rgb : originalLinear;
+		if (selection <= 0.0)
+			result = source;
+		else if (selection < 1.0)
+			result = lerp(source, result, selection);
+	}
 	if (VisualMode == NR::kVisualInput)
 		result = inputProxy;
 	else if (VisualMode == NR::kVisualOutput)

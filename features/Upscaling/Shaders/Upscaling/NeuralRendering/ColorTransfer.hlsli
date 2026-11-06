@@ -38,6 +38,8 @@ cbuffer ColorTransfer : register(b0)
 	uint RegionActorBaseY;
 	uint RegionActorWidth;
 	uint RegionActorHeight;
+	uint MaterialSelectionEnabled;
+	uint MaterialEdgeSoftness;
 	// Tone multiplier per category, Skin..Landscape in .x; 16-byte rows mirror the C++ struct.
 	float4 CategoryStrength[5];
 	uint MaterialMapEnabled;

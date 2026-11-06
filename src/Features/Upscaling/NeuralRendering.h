@@ -51,13 +51,13 @@ struct NeuralRendering
 		NR::RuntimeCapability capability;
 		/** @brief True while a failure is latched; the next successful frame clears it. */
 		bool failed = false;
-		/** @brief True when the material lane is present and the graded protection has not been rejected or degraded. */
+		/** @brief True when the selected provider or compositor route has not rejected or lost material protection. */
 		bool materialStrengthAvailable = true;
-		/** @brief True when the last evaluate bound the graded material protection. */
+		/** @brief True when the last processed frame enabled material protection through the provider or source compositor. */
 		bool materialStrengthActive = false;
-		/** @brief Strengths bound by the last evaluate, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
+		/** @brief Last processed frame's provider or compositor strengths, indexed by NeuralRenderingCategory id: None, Skin, Hair, Eyes, Foliage, Landscape, Cloth, Metal. */
 		std::array<float, NR::MaterialStrength::kCount> materialStrength{};
-		/** @brief Edge-softness radius bound by the last evaluate, in pixels. */
+		/** @brief Last processed frame's provider or compositor edge-softness radius, in pixels. */
 		uint32_t materialEdgeSoftness = 0;
 		/** @brief True while the eye-stagger is running: both eyes render and frame generation is idle. */
 		bool skipFrameReuseActive = false;
