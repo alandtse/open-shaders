@@ -832,10 +832,10 @@ namespace ShadowCasterManager
 		if (shadowUnshadowedLightCount > 0)
 			ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1),
 				T(TKEY("shadow_lights_dropped"), "Shadow lights  : %u / %u  (%u wanted, %u dropped, %zu converted)"),
-				slotUsage, slots, requested, shadowUnshadowedLightCount, s_normalConvert.size());
+				slotUsage, slots, requested, shadowUnshadowedLightCount, ConvertedLightCount());
 		else
 			ImGui::Text(T(TKEY("shadow_lights"), "Shadow lights  : %u / %u  (%u wanted, 0 dropped, %zu converted)"),
-				slotUsage, slots, requested, s_normalConvert.size());
+				slotUsage, slots, requested, ConvertedLightCount());
 
 		if (s_highImportanceLightCount > 0 && ImGui::IsItemHovered())
 			ImGui::SetTooltip(T(TKEY("high_importance_tooltip"), "%u high-importance (near camera/player)."),

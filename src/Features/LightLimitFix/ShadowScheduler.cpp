@@ -274,7 +274,10 @@ namespace ShadowCasterManager
 				continue;
 			seen = accum.frame;
 			const bool promoted = IsPromotedLight(accum.niLight);
-			const bool demoted = std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
+			const bool demoted = [&] {
+				std::shared_lock lock(s_normalConvertMutex);
+				return std::any_of(s_normalConvert.begin(), s_normalConvert.end(), [&](const ConvertedLight& c) { return c.light == light; });
+			}();
 			if (promoted)
 				s_stalePromotedTotal.fetch_add(1, std::memory_order_relaxed);
 			const bool afterSkippedRender = accum.frame == s_lastRenderSkipFrame.load(std::memory_order_relaxed);
@@ -873,13 +876,18 @@ namespace ShadowCasterManager
 
 	static void EraseFromConvertList(RE::BSShadowLight* light)
 	{
-		for (auto it = s_normalConvert.begin(); it != s_normalConvert.end(); ++it) {
-			if (it->light == light) {
-				GameClearGeometryList(light);
+		bool erased = false;
+		{
+			std::unique_lock lock(s_normalConvertMutex);
+			const auto it = std::find_if(s_normalConvert.begin(), s_normalConvert.end(),
+				[&](const ConvertedLight& c) { return c.light == light; });
+			if (it != s_normalConvert.end()) {
 				s_normalConvert.erase(it);
-				return;
+				erased = true;
 			}
 		}
+		if (erased)
+			GameClearGeometryList(light);
 	}
 
 	void DisableLight(RE::BSShadowLight* light)
@@ -897,29 +905,45 @@ namespace ShadowCasterManager
 	void ConvertLight(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn, bool isNS)
 	{
 		// Already converted: re-enable only when an input of the engine walk changed.
-		for (auto& c : s_normalConvert) {
-			if (c.light == light) {
-				const EnableInputs now = CaptureEnableInputs(light, ssn);
-				if (c.enableValid && c.lastEnable == now) {
-					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
-					return;
-				}
-				const std::uint32_t enableFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-				// Staggered per light so the periodic refreshes do not land on one frame.
-				const std::uint32_t refreshInterval = kConvertReEnableRefreshFrames + static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(light) >> 4) % kConvertReEnableRefreshFrames);
-				if (c.enableValid && enableFrame - c.lastEnableFrame < refreshInterval && EnableInputsEquivalent(c.lastEnable, now)) {
-					s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
-					s_convertReEnableToleranceSkipped.fetch_add(1, std::memory_order_relaxed);
-					return;
-				}
-				ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
-				GameEnableLight(ssn, light);
-				c.lastEnable = now;
-				c.enableValid = true;
-				c.lastEnableFrame = enableFrame;
-				s_convertReEnableRun.fetch_add(1, std::memory_order_relaxed);
+		ConvertedLight known{};
+		bool isKnown = false;
+		{
+			std::shared_lock lock(s_normalConvertMutex);
+			const auto it = std::find_if(s_normalConvert.begin(), s_normalConvert.end(),
+				[&](const ConvertedLight& c) { return c.light == light; });
+			if (it != s_normalConvert.end()) {
+				known = *it;
+				isKnown = true;
+			}
+		}
+		if (isKnown) {
+			const EnableInputs now = CaptureEnableInputs(light, ssn);
+			if (known.enableValid && known.lastEnable == now) {
+				s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
+			const std::uint32_t enableFrame = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+			// Staggered per light so the periodic refreshes do not land on one frame.
+			const std::uint32_t refreshInterval = kConvertReEnableRefreshFrames + static_cast<std::uint32_t>((reinterpret_cast<std::uintptr_t>(light) >> 4) % kConvertReEnableRefreshFrames);
+			if (known.enableValid && enableFrame - known.lastEnableFrame < refreshInterval && EnableInputsEquivalent(known.lastEnable, now)) {
+				s_convertReEnableSkipped.fetch_add(1, std::memory_order_relaxed);
+				s_convertReEnableToleranceSkipped.fetch_add(1, std::memory_order_relaxed);
+				return;
+			}
+			ZoneNamedN(zReEnable, "SCM::Engine::ConvertLight::ReEnable", true);
+			GameEnableLight(ssn, light);
+			{
+				std::unique_lock lock(s_normalConvertMutex);
+				const auto it = std::find_if(s_normalConvert.begin(), s_normalConvert.end(),
+					[&](const ConvertedLight& c) { return c.light == light; });
+				if (it != s_normalConvert.end()) {
+					it->lastEnable = now;
+					it->enableValid = true;
+					it->lastEnableFrame = enableFrame;
+				}
+			}
+			s_convertReEnableRun.fetch_add(1, std::memory_order_relaxed);
+			return;
 		}
 
 		// First conversion this session: release shadow resources, register.
@@ -929,10 +953,21 @@ namespace ShadowCasterManager
 			GameClearPortalVisibility(reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry));
 		light->ReturnShadowmaps();
 
-		s_normalConvert.push_back({ light, isNS });
+		ConvertedLight entry{ light, isNS };
+		entry.niLight = light->light.get();
+		{
+			std::unique_lock lock(s_normalConvertMutex);
+			s_normalConvert.push_back(entry);
+		}
 		GameEnableLight(ssn, light);
-		s_normalConvert.back().lastEnable = CaptureEnableInputs(light, ssn);
-		s_normalConvert.back().enableValid = true;
+		const EnableInputs inputs = CaptureEnableInputs(light, ssn);
+		std::unique_lock lock(s_normalConvertMutex);
+		const auto it = std::find_if(s_normalConvert.begin(), s_normalConvert.end(),
+			[&](const ConvertedLight& c) { return c.light == light; });
+		if (it != s_normalConvert.end()) {
+			it->lastEnable = inputs;
+			it->enableValid = true;
+		}
 	}
 
 	// Reset a promoted light's descriptor pool-slot indices to kNONE. BSShadowParabolicLight is
@@ -2021,7 +2056,7 @@ namespace ShadowCasterManager
 			// Sync s_normalConvert: drop entries the engine removed from both active
 			// lists (bulk cell-teardown bypasses Hook_ConvertLights_Remove), plus
 			// functionally-dead ones (fade=0/lodDimmer=0/null) GameEnableLight never deactivates.
-			if (!s_normalConvert.empty()) {
+			if (ConvertedLightCount() > 0) {
 				static std::vector<RE::BSLight*> normalAlive;
 				normalAlive.clear();
 				normalAlive.reserve(aliveSet.size() + ssn->GetRuntimeData().activeLights.size());
@@ -2032,6 +2067,7 @@ namespace ShadowCasterManager
 						normalAlive.push_back(l);
 				std::sort(normalAlive.begin(), normalAlive.end());
 
+				std::unique_lock convertLock(s_normalConvertMutex);
 				const std::size_t before = s_normalConvert.size();
 				std::erase_if(s_normalConvert, [&](const ConvertedLight& c) {
 					// Tier 1: dangling / engine-removed.
@@ -3506,9 +3542,12 @@ namespace ShadowCasterManager
 				snap.convertReEnableRun = s_convertReEnableRun.load(std::memory_order_relaxed);
 				snap.convertReEnableSkipped = s_convertReEnableSkipped.load(std::memory_order_relaxed);
 				snap.convertReEnableToleranceSkipped = s_convertReEnableToleranceSkipped.load(std::memory_order_relaxed);
-				snap.convertedLights = static_cast<uint32_t>(s_normalConvert.size());
-				for (const auto& converted : s_normalConvert)
-					snap.convertedStrictLights += (converted.light && converted.light->portalStrict) ? 1u : 0u;
+				{
+					std::shared_lock convertLock(s_normalConvertMutex);
+					snap.convertedLights = static_cast<uint32_t>(s_normalConvert.size());
+					for (const auto& converted : s_normalConvert)
+						snap.convertedStrictLights += (converted.light && converted.light->portalStrict) ? 1u : 0u;
+				}
 				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
