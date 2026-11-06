@@ -1,0 +1,31 @@
+Texture2D<float4> Diffuse : register(t0);
+Texture2D<float4> Specular : register(t1);
+Texture2D<uint> Validity : register(t2);
+RWTexture2D<float4> Scene : register(u0);
+
+cbuffer CompositeConstants : register(b0)
+{
+	uint2 Size;
+	float Strength;
+	uint LegacyTransfer;
+};
+
+float3 SignedPower(float3 value, float exponent)
+{
+	return sign(value) * pow(abs(value), exponent);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+	if (any(id.xy >= Size) || Validity[id.xy] != 1)
+		return;
+	float3 lighting = Diffuse[id.xy].rgb + Specular[id.xy].rgb;
+	if (!all(isfinite(lighting)) || !any(lighting != 0))
+		return;
+	float4 color = Scene[id.xy];
+	float3 linearColor = LegacyTransfer != 0 ? SignedPower(color.rgb, 1.6) : color.rgb;
+	linearColor += lighting * Strength;
+	color.rgb = LegacyTransfer != 0 ? SignedPower(linearColor, 1.0 / 1.6) : linearColor;
+	Scene[id.xy] = color;
+}

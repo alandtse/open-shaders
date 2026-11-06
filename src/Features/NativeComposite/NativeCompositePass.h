@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GraphicsInterop.h"
+#include "Features/NativeLighting/NativeLighting.h"
 #include <array>
 #include <memory>
 #include <vector>
@@ -23,12 +24,23 @@ public:
 		Transfer transfer = Transfer::Unknown;
 		Gamut gamut = Gamut::Unknown;
 		D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
+		bool valid = false;
+		bool lightingSubmitted = false;
+		/** @brief Reports whether the producer fence completed without device removal. */
+		bool IsComplete() const
+		{
+			if (!valid || !producerFence || !producerValue)
+				return false;
+			const auto completed = producerFence->GetCompletedValue();
+			return completed != UINT64_MAX && completed >= producerValue;
+		}
 	};
 
 	/** @brief Captures one frame without waiting for the GPU on the CPU. */
 	std::shared_ptr<const Frame> Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
 		ID3D12Device* a_device12, ID3D12CommandQueue* a_queue, ID3D11Texture2D* a_source,
-		uint32_t a_frame, uint32_t a_width, uint32_t a_height, Transfer a_transfer);
+		uint32_t a_frame, uint32_t a_width, uint32_t a_height, Transfer a_transfer,
+		const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting, float a_strength);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
@@ -42,13 +54,21 @@ private:
 		std::unique_ptr<WrappedResource> shared;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
+		winrt::com_ptr<ID3D12DescriptorHeap> lightingDescriptors;
+		winrt::com_ptr<ID3D12RootSignature> root;
+		winrt::com_ptr<ID3D12PipelineState> pipeline;
 		SharedFence fence;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		ID3D12Device* device = nullptr;
 		ID3D11Device* device11 = nullptr;
 		D3D11_TEXTURE2D_DESC sourceDesc{};
+		bool supportsLighting = false;
 		bool untracked = false;
 	};
 	std::array<std::unique_ptr<Slot>, 3> slots;
+	winrt::com_ptr<ID3D12RootSignature> root;
+	winrt::com_ptr<ID3D12PipelineState> pipeline;
+	ID3D12Device* pipelineDevice = nullptr;
+	bool InitializeLighting(ID3D12Device* a_device);
 	std::string status = "Not captured";
 };

@@ -16,6 +16,7 @@ struct DX12NativeScene final : Feature
 	{
 		std::shared_ptr<const DX12Native::PreparedCell> cell;
 		std::shared_ptr<const DX12Native::TopLevel> acceleration;
+		std::shared_ptr<const DX12Native::ShadowBindings> materials;
 		uint32_t cellID = 0;
 		uint64_t revision = 0;
 	};
@@ -45,6 +46,8 @@ struct DX12NativeScene final : Feature
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
+	/** @brief Retains the scene graphics session for DX12-only consumers. */
+	std::optional<GraphicsBackend> GetGraphicsBackend() const { return loaded && settings.Enabled && !transitionOpen ? backend : std::nullopt; }
 	/** @brief Retains a completed scene matching the current cell and revision. */
 	std::optional<PublishedScene> GetPublishedScene() const;
 	/** @brief Returns the available current-frame outputs without substituting stale resources. */
@@ -67,10 +70,12 @@ private:
 	DX12Native::RasterCapture raster;
 	DX12Native::ShadowTrace shadow;
 	DX12Native::AccelerationWorker acceleration;
+	DX12Native::ShadowBindingWorker materialBindings;
+	std::weak_ptr<const DX12Native::ShadowBindings> retiredMaterials;
 	std::string failure, shadowStatus, shadowStage;
 	uint64_t revision = 0;
 	uint32_t cellID = 0;
-	std::atomic<bool> resetRequested{ false }, reloadRequested{ false };
+	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, shadowResetRequested{ false };
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
 	std::atomic<uint32_t> requestedBudget{ 0 };
 	mutable std::mutex settingsMutex, diagnosticsMutex;

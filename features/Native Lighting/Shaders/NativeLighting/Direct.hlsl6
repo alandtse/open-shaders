@@ -1,0 +1,180 @@
+RaytracingAccelerationStructure Scene : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+StructuredBuffer<uint> ValidationOffsets : register(t2);
+struct PointLight { float4 positionRadius; float4 radianceSourceRadius; uint4 flags; };
+StructuredBuffer<PointLight> Lights : register(t3);
+Texture2D<float4> EarlyShadowMask : register(t6);
+ByteAddressBuffer GeometryBuffers[8192] : register(t0, space1);
+RWTexture2D<float4> RawDirectDiffuse : register(u0);
+RWTexture2D<float4> RawDirectSpecular : register(u1);
+RWTexture2D<uint> DirectValidity : register(u2);
+RWTexture2D<float4> ReceiverGuide : register(u3);
+RWStructuredBuffer<uint> Counters : register(u4);
+RWTexture2D<float4> DebugVisualization : register(u5);
+RWTexture2D<float4> ComparisonDiffuse : register(u6);
+RWTexture2D<float4> ComparisonSpecular : register(u7);
+
+cbuffer Trace : register(b0)
+{
+	uint2 Size;
+	uint InstanceCount;
+	uint LightCount;
+	float3 CameraOrigin;
+	float MinimumDistance;
+	float DiffuseIntensity;
+	float SpecularIntensity;
+	uint EnabledLobes;
+	uint MaskAuthoritative;
+	uint MaskRequested;
+	uint DebugEnabled;
+	uint ComparisonEnabled;
+	uint Reserved;
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
+};
+
+#include "Common/ReverseZ.hlsli"
+#include "DX12NativeScene/materials.hlsli"
+#include "ShadowCull.hlsli"
+
+bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, inout bool valid)
+{
+	if (instance >= InstanceCount || GeometryBuffers[NonUniformResourceIndex(instance)].Load(ValidationOffsets[instance]) != 0) {
+		valid = false;
+		return false;
+	}
+	const SurfaceRecord binding = Surfaces[instance];
+	if (binding.material.z != 0) return true;
+	const MaterialRecord material = Materials[binding.material.x];
+	TriangleSurface surface;
+	if ((material.flags.x & 256u) == 0 || material.flags.w != 0 || (material.flags.x & 16u) == 0 ||
+		!LoadTriangle(instance, primitive, barycentric, surface)) {
+		valid = false;
+		return false;
+	}
+	return AdmitCandidate(instance, primitive, barycentric);
+}
+
+void Count(uint index) { InterlockedAdd(Counters[index], 1); }
+
+[numthreads(8, 8, 1)]
+void main(uint2 pixel : SV_DispatchThreadID)
+{
+	if (any(pixel >= Size)) return;
+	RawDirectDiffuse[pixel] = 0;
+	RawDirectSpecular[pixel] = 0;
+	DirectValidity[pixel] = 0;
+	ReceiverGuide[pixel] = 0;
+	DebugVisualization[pixel] = 0;
+	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = 0; ComparisonSpecular[pixel] = 0; }
+	Count(0);
+	float2 clip = (float2(pixel) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
+	clip.y = -clip.y;
+	float4 view = mul(InverseProjection, float4(clip, 0.5f, 1));
+	float3 direction = mul((float3x3)InverseView, view.xyz / view.w);
+	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f || !all(isfinite(direction)) || dot(direction, direction) <= 1e-8f) return;
+	direction = normalize(direction);
+	float depth = RasterDepth[pixel];
+	float4 rasterView = mul(InverseProjection, float4(clip, depth, 1));
+	float3 rasterOffset = mul((float3x3)InverseView, rasterView.xyz / rasterView.w);
+	float rasterDistance = length(rasterOffset);
+	bool culled = false;
+	if (MaskRequested != 0 && MaskAuthoritative == 0) Count(2);
+	if (MaskAuthoritative != 0) {
+		float4 mask = EarlyShadowMask[pixel];
+		bool receiverMatches = isfinite(depth) && depth != FrameBuffer::FarPlaneDepth() && all(isfinite(rasterView)) && abs(rasterView.w) > 1e-8f && isfinite(rasterDistance) &&
+			abs(rasterDistance - mask.b) <= max(2.0f, mask.b * 1e-5f);
+		if (CanCullShadow(true, receiverMatches, mask.r, mask.g, mask.b, mask.a)) {
+			culled = true;
+			DirectValidity[pixel] = 2;
+			if (DebugEnabled != 0) DebugVisualization[pixel] = float4(0, 1, 1, 1);
+			Count(1);
+			if (ComparisonEnabled == 0) return;
+		} else {
+			Count(2);
+		}
+	}
+	RayDesc ray;
+	ray.Origin = CameraOrigin; ray.Direction = direction; ray.TMin = MinimumDistance; ray.TMax = 60000.0f;
+	bool valid = true;
+	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
+	Count(3);
+	query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
+	while (query.Proceed()) {
+		if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
+			AdmitReceiverCandidate(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid))
+			query.CommitNonOpaqueTriangleHit();
+	}
+	if (!valid) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); return; }
+	Count(4);
+	const uint instance = query.CommittedInstanceID(), primitive = query.CommittedPrimitiveIndex();
+	float distance = query.CommittedRayT();
+	if (!isfinite(distance) || distance <= 0 || !isfinite(depth) || depth == FrameBuffer::FarPlaneDepth() || !all(isfinite(rasterView)) || abs(rasterView.w) <= 1e-8f || !isfinite(rasterDistance) ||
+		abs(rasterDistance - distance) > max(2.0f, distance * 1e-5f)) return;
+	const MaterialRecord materialRecord = Materials[Surfaces[instance].material.x];
+	if ((materialRecord.flags.x & 3u) != 3u || materialRecord.flags.w != 0u) {
+		if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return;
+	}
+	EvaluatedSourceMaterial material;
+	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
+	if (!LoadSourceMaterial(instance, primitive, query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material)) {
+		if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return;
+	}
+	Count(6);
+	float3 position = CameraOrigin + direction * distance;
+	float3 n = normalize(material.normal), v = -direction;
+	float3 diffuse = 0, specular = 0;
+	uint eligibleLights = 0;
+	for (uint i = 0; i < LightCount; ++i) {
+		const PointLight light = Lights[i];
+		if (light.flags.x == 0) continue;
+		++eligibleLights;
+		float3 delta = light.positionRadius.xyz - position;
+		float d = length(delta), radius = light.positionRadius.w;
+		if (!isfinite(d) || d <= MinimumDistance || d >= radius) continue;
+		float3 l = delta / d;
+		float ndotl = saturate(dot(n, l));
+		if (ndotl <= 0) continue;
+		Count(8);
+		float sourceRadius = max(light.radianceSourceRadius.w, MinimumDistance);
+		float fade = saturate((radius - d) / max(radius * 0.1f, MinimumDistance));
+		float attenuation = fade * fade * (3 - 2 * fade) / max(d * d + sourceRadius * sourceRadius, 1e-4f);
+		RayDesc visibility;
+		visibility.Origin = position + l * MinimumDistance; visibility.Direction = l;
+		visibility.TMin = MinimumDistance; visibility.TMax = d - 2 * MinimumDistance;
+		if (visibility.TMax <= visibility.TMin) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+		RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> shadow;
+		Count(7);
+		shadow.TraceRayInline(Scene, RAY_FLAG_NONE, 3, visibility);
+		while (shadow.Proceed()) {
+			if (shadow.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
+				AdmitReceiverCandidate(shadow.CandidateInstanceID(), shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics(), valid))
+				shadow.CommitNonOpaqueTriangleHit();
+		}
+		if (!valid) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+		if (shadow.CommittedStatus() != COMMITTED_NOTHING) continue;
+		float3 halfVector = l + v;
+		float3 h = dot(halfVector, halfVector) > 1e-8f ? normalize(halfVector) : n;
+		float3 fresnel;
+		float3 microfacet = PBR::SpecularMicrofacet(material.roughness, material.f0, max(ndotl, 1e-5f),
+			saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)), saturate(dot(v, h)), fresnel);
+		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl;
+		if (EnabledLobes & 1u) diffuse += (1 - material.metallic) * material.baseColor * (1 - fresnel) * BRDF::Diffuse_Lambert() * irradiance;
+		if (EnabledLobes & 2u) specular += microfacet * irradiance;
+	}
+	if (eligibleLights == 0) return;
+	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity, 1);
+	const float4 specularOutput = float4(specular * SpecularIntensity, 1);
+	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = diffuseOutput; ComparisonSpecular[pixel] = specularOutput; }
+	if (!culled) {
+		RawDirectDiffuse[pixel] = diffuseOutput;
+		RawDirectSpecular[pixel] = specularOutput;
+		DirectValidity[pixel] = 1;
+		if (DebugEnabled != 0) DebugVisualization[pixel] = float4(0, 1, 0, 1);
+	}
+	ReceiverGuide[pixel] = float4(n, float(instance + 1));
+	if (!culled && (EnabledLobes & 1u)) Count(9);
+	if (!culled && (EnabledLobes & 2u)) Count(11);
+}

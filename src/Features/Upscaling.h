@@ -5,6 +5,8 @@
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
 #include "Upscaling/NeuralRendering.h"
+#include "Features/NativeComposite/NativeComposite.h"
+#include "Upscaling/NativeUpscaling.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/RainLayer.h"
@@ -14,6 +16,7 @@
 #include "VR/OpenVRDetection.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -120,6 +123,7 @@ public:
 		float vrRenderScale = 0.0f;
 
 		bool fsr4RuntimeEnable = true;
+		bool nativeUpscaleEnable = false;
 		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
 	};
 
@@ -290,7 +294,7 @@ public:
 	/** @brief NR reads the Masks2 material-category lane whenever it is on. */
 	bool WantsForwardMaterialCategory() const override { return settings.neuralRenderingEnabled; }
 	/** @brief Resets NR history across loading transitions. */
-	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
+	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); ++nativeHistoryGeneration; }
 	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
 	PostProcessingInput GetPostProcessingInput() const override;
 
@@ -432,6 +436,19 @@ public:
 	static inline Streamline streamlineDX12;  ///< DX12 instance: DLSS-G frame generation
 	static inline FidelityFX fidelityFX;      ///< AMD FSR frame generation
 	static inline DX12SwapChain dx12SwapChain;
+	std::shared_ptr<const NativeComposite::Frame> nativeCompositeFrame;
+	NativeUpscaleOutput nativeUpscaleOutput;
+	bool nativeUpscaleGuidesReady = false;
+	bool nativeUpscaleSubmittedThisFrame = false;
+	std::atomic<uint64_t> nativeHistoryGeneration{ 1 };
+	uint64_t nativeHistoryGenerationUsed = 0;
+	bool nativeLastCompositeHadLighting = false;
+	std::atomic<uint32_t> nativeUpscaleLastFrame{ 0 };
+	std::atomic<uint64_t> nativeCompositeCaptures{ 0 }, nativeUpscaleSubmissions{ 0 }, nativeReturnCopies{ 0 };
+	std::atomic<uint64_t> nativeLightingCompositeReturns{ 0 };
+	std::atomic<uint32_t> nativeUpscaleRoute{ 0 };
+	std::atomic<uint32_t> nativeUpscaleFallback{ 0 };
+	std::atomic<uint32_t> nativeCompositeFrameId{ 0 }, nativeCompositeWidth{ 0 }, nativeCompositeHeight{ 0 }, nativeCompositeFormat{ 0 };
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS

@@ -64,6 +64,7 @@ add_executable(cpp_tests
     test_dynamicnearclip.cpp
     test_camera_reprojection.cpp
     test_dx12_native_shadow.cpp
+    test_native_lighting_cull.cpp
     test_subrect.cpp
     test_gaze_math.cpp
     test_perfutils.cpp

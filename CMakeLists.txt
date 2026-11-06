@@ -811,6 +811,8 @@ include(FeaturePackaging)
 include(FidelityFX-Runtime)
 include(Streamline-Runtime)
 include(src/Features/DX12NativeScene/Shaders.cmake)
+include(src/Features/NativeLighting/Shaders.cmake)
+include(src/Features/NativeComposite/Shaders.cmake)
 # A package install fails on a payload file a skipped download left absent, so the only
 # path left to guard is the AIO archive, which is staged from the tree rather than installed.
 if(SKIP_RUNTIME_DOWNLOADS)
@@ -1496,7 +1498,7 @@ file(
 )
 # Add SKSE plugin dll as dependency (use target-file generator expression so CMake
 # knows the actual output path of the target at build time)
-list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>" ${DX12_NATIVE_SCENE_DXIL})
+list(APPEND CORE_SOURCES "$<TARGET_FILE:${PROJECT_NAME}>" ${DX12_NATIVE_SCENE_DXIL} ${NATIVE_LIGHTING_DXIL} ${NATIVE_COMPOSITE_DXIL})
 
 set(CORE_FEATURE_PATHS "${CMAKE_SOURCE_DIR}/package/")
 

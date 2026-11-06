@@ -126,9 +126,26 @@ namespace DX12Native
 	void ShadowTrace::Reset()
 	{
 		current.reset();
-		bindings.Reset();
 		status.clear();
 		failed = false;
+	}
+
+	bool ShadowTrace::RetireScenesExcept(const std::shared_ptr<const TopLevel>& a_scene)
+	{
+		const auto done = completion ? completion->GetCompletedValue() : 0;
+		const auto produced = producer.fence12 ? producer.fence12->GetCompletedValue() : 0;
+		if (done == UINT64_MAX || produced == UINT64_MAX) return false;
+		for (auto& old : frames) {
+			if (!old || !old->scene || old->scene == a_scene) continue;
+			const bool busy = old.use_count() != 1 || old->readyValue == UINT64_MAX || old->producerValue == UINT64_MAX ||
+				old->readyValue > done || old->producerValue > produced || std::ranges::any_of(old->consumers, [](const auto& consumer) {
+					const auto value = consumer.first->GetCompletedValue();
+					return value == UINT64_MAX || value < consumer.second;
+				});
+			if (busy) return false;
+			old.reset();
+		}
+		return true;
 	}
 
 	void ShadowTrace::ReloadShaders()
@@ -309,7 +326,7 @@ namespace DX12Native
 		DX::ThrowIfFailed(backend.commandQueue->Signal(completion.get(), signal));
 		a_frame.readyValue = signal;
 	}
-	void ShadowTrace::Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::span<const PreparedPointLight> a_lights,
+	void ShadowTrace::Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
 		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget)
 	{
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
@@ -334,21 +351,10 @@ namespace DX12Native
 				++completions;
 			}
 		}
-		for (auto& old : frames) {
-			if (!old || !old->scene || old->scene == a_scene) continue;
-			const bool busy = old.use_count() != 1 || old->readyValue == UINT64_MAX || old->producerValue == UINT64_MAX ||
-				old->readyValue > done || old->producerValue > produced || std::ranges::any_of(old->consumers, [](const auto& consumer) {
-					const auto value = consumer.first->GetCompletedValue();
-					return value == UINT64_MAX || value < consumer.second;
-				});
-			if (busy) { status = "Previous shadow scene is still in use"; return; }
-			old.reset();
-		}
-		bindings.Request(backend, a_scene, a_budget);
-		bindings.Advance();
-		auto tables = bindings.Get();
+		if (!RetireScenesExcept(a_scene)) { status = "Previous shadow scene is still in use"; return; }
+		auto tables = std::move(a_bindings);
 		if (!tables || tables->scene != a_scene) {
-			status = bindings.Failure().empty() ? "Preparing shadow material bindings" : bindings.Failure();
+			status = "Prepared scene material bindings unavailable";
 			return;
 		}
 		auto available = std::find_if(frames.begin(), frames.end(), [&](const auto& frame) {

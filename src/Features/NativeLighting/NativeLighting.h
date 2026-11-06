@@ -1,0 +1,78 @@
+#pragma once
+
+#include "Feature.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
+#include <atomic>
+#include <mutex>
+
+/** @brief Produces independent DX12 direct diffuse and specular contributions. */
+struct NativeLightingFeature final : Feature
+{
+	struct Settings
+	{
+		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
+		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
+		uint32_t BudgetMB = 512;
+	};
+	struct Contribution
+	{
+		enum class Output : size_t { Diffuse, Specular, Validity, ReceiverGuide, Debug, ComparisonDiffuse, ComparisonSpecular };
+		std::array<winrt::com_ptr<ID3D12Resource>, 7> textures;
+		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, lights, constants;
+		winrt::com_ptr<ID3D12DescriptorHeap> heap;
+		winrt::com_ptr<ID3D12CommandAllocator> allocator;
+		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
+		winrt::com_ptr<ID3D12RootSignature> root;
+		winrt::com_ptr<ID3D12PipelineState> pipeline;
+		winrt::com_ptr<ID3D12Fence> readyFence;
+		GraphicsBackend backend;
+		DX12NativeScene::SceneFrame scene;
+		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
+		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
+		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
+		uint32_t frame = 0, width = 0, height = 0, enabledLobes = 0;
+		float diffuseIntensity = 0, specularIntensity = 0;
+		bool countersRead = false, comparisonEnabled = false;
+	};
+	std::string GetName() override { return "Native Lighting"; }
+	std::string GetShortName() override { return "NativeLighting"; }
+	std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
+	bool IsCore() const override { return true; }
+	void DrawSettings() override;
+	void LoadSettings(json& a_json) override;
+	void SaveSettings(json& a_json) override;
+	void RestoreDefaultSettings() override;
+	void OnOpaqueRasterReady(const OpaqueRasterInputs&) override;
+	void OnRuntimeDisabled() override { resetRequested = true; }
+	void OnSceneTransitionReset(bool a_open) override;
+	void GameLoaded() override { resetRequested = true; }
+	void ClearShaderCache() override { reloadRequested = true; }
+	json GetDiagnostics() override;
+	void RegisterUxActions() override;
+	/** @brief Borrows current-frame DX12 outputs until consumer completion. */
+	std::shared_ptr<const Contribution> GetContribution(uint32_t a_frame) const;
+	/** @brief Retains a contribution through a downstream GPU completion fence. */
+	bool RetainContribution(const std::shared_ptr<const Contribution>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
+	~NativeLightingFeature();
+
+private:
+	bool Initialize(const GraphicsBackend& a_backend);
+	void Dispatch(DX12NativeScene::SceneFrame a_scene, const Settings& a_settings);
+	void Retire();
+	void Reset();
+	void PublishDiagnostics();
+	Settings settings;
+	std::mutex settingsMutex, diagnosticsMutex;
+	json diagnostics = json::object();
+	GraphicsBackend backend;
+	winrt::com_ptr<ID3D12Fence> completion;
+	winrt::com_ptr<ID3D12RootSignature> root;
+	winrt::com_ptr<ID3D12PipelineState> pipeline;
+	std::array<std::shared_ptr<Contribution>, 2> frames;
+	std::shared_ptr<Contribution> current;
+	std::array<uint64_t, 12> totals{};
+	std::string status;
+	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0;
+	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, transitionOpen{ false }, active{ false };
+	bool failed = false;
+};

@@ -139,6 +139,8 @@ public:
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
 		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness, bool a_forceHostPath = false);
+	/** @brief Makes the existing D3D11/D3D12 runtime backend available without frame generation. */
+	bool EnsureRuntimeUpscalerInterop();
 
 private:
 	// Bounded poll for GPU idle before destroying the host FSR3 context; see
@@ -175,6 +177,7 @@ private:
 	{
 		winrt::com_ptr<ID3D12CommandAllocator> commandAllocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList4> commandList;
+		winrt::com_ptr<ID3D12Resource> nativeOutput;
 		uint64_t fenceValue = 0;
 	};
 	std::array<RuntimeCommandContext, kRuntimeCommandContextCount> runtimeCommandContexts;
@@ -231,7 +234,6 @@ private:
 	void QuarantineRuntimeUpscalerForSession(const char* a_reason);
 	RuntimeUpscalerFramePath GetRuntimeUpscalerProviderFramePath(uint32_t a_requestedVersion) const;
 	void RecordRuntimeUpscalerFramePath(RuntimeUpscalerFramePath a_path);
-	bool EnsureRuntimeUpscalerInterop();
 	bool EnsureRuntimeCommandContexts();
 	RuntimeCommandContext* AcquireRuntimeCommandContext();
 	void ResetRuntimeCommandContexts();

@@ -13,7 +13,7 @@ void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Checkbox("Load prepared scene", &settings.Enabled)) resetRequested = true;
-	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) resetRequested = true;
+	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) shadowResetRequested = true;
 	if (settings.ShadowMask && !shadowStatus.empty()) ImGui::TextUnformatted(shadowStatus.c_str());
 	ImGui::TextUnformatted(failure.empty() ? "Prepared static scenes" : failure.c_str());
 }
@@ -53,6 +53,8 @@ void DX12NativeScene::ResetScene()
 	submitted = false;
 	raster.Reset();
 	shadow.Reset();
+	if (auto old = materialBindings.Get()) retiredMaterials = old;
+	materialBindings.Reset();
 	prepared.Reset();
 	acceleration.Reset();
 }
@@ -75,6 +77,7 @@ void DX12NativeScene::EarlyPrepass()
 		shadow.ReloadShaders();
 	}
 	if (resetRequested.exchange(false)) ResetScene();
+	if (shadowResetRequested.exchange(false)) shadow.Reset();
 	if (!settings.Enabled || transitionOpen) {
 		if (cellID) ResetScene();
 		return;
@@ -108,6 +111,9 @@ void DX12NativeScene::EarlyPrepass()
 		}
 	}
 	acceleration.Advance();
+	if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired())
+		materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024);
+	materialBindings.Advance();
 	DispatchShadow("early-prepass");
 }
 
@@ -146,7 +152,7 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	if (!scene) { shadowStatus = "Prepared scene or acceleration structure unavailable"; return; }
 	const auto dynamicSize = Util::ConvertToDynamic(globals::state->screenSize);
 	const std::array<uint32_t, 2> size{ uint32_t(dynamicSize.x), uint32_t(dynamicSize.y) };
-	shadow.Dispatch(*backend, scene->acceleration, scene->cell->nativeLights, camera, size, frame, uint64_t(settings.BudgetMB) * 1024 * 1024);
+	shadow.Dispatch(*backend, scene->acceleration, scene->materials, scene->cell->nativeLights, camera, size, frame, uint64_t(settings.BudgetMB) * 1024 * 1024);
 	shadowStatus = shadow.Status();
 }
 
@@ -199,14 +205,16 @@ std::optional<DX12NativeScene::PublishedScene> DX12NativeScene::GetPublishedScen
 	auto data = prepared.GetCell();
 	auto scene = acceleration.GetScene();
 	if (!data || !scene || scene->scope.scene != revision) return std::nullopt;
-	return PublishedScene{ std::move(data), std::move(scene), cellID, revision };
+	auto materials = materialBindings.Get();
+	if (materials && materials->scene != scene) materials.reset();
+	return PublishedScene{ std::move(data), std::move(scene), std::move(materials), cellID, revision };
 }
 
 void DX12NativeScene::PublishDiagnostics()
 {
 	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
-		{ "prepared", prepared.GetDiagnostics() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() } };
+		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() } };
 	std::scoped_lock lock(diagnosticsMutex);
 	diagnostics = std::move(snapshot);
 }
@@ -224,7 +232,7 @@ void DX12NativeScene::RegisterUxActions()
 		const bool enabled = args.at("enabled").get<bool>();
 		scene.requestedShadow = enabled ? 1 : 0;
 		if (enabled) scene.requestedEnabled = 1;
-		scene.resetRequested = true;
+		scene.shadowResetRequested = true;
 	});
 	FEATURE_COMMAND("setPreparedScene", "Queue the prepared static-scene loading settings. Params: enabled (boolean), budgetMB (optional integer, 64..4096).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);

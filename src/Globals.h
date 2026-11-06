@@ -24,6 +24,8 @@ struct LightLimitFix;
 struct LinearLighting;
 struct LODBlending;
 struct DX12NativeScene;
+struct NativeLightingFeature;
+struct NativeCompositeFeature;
 struct InteriorSun;
 struct FurShells;
 struct RainRefraction;
@@ -131,6 +133,8 @@ namespace globals
 		extern LinearLighting linearLighting;
 		extern LODBlending lodBlending;
 		extern DX12NativeScene dx12NativeScene;
+		extern NativeLightingFeature nativeLighting;
+		extern NativeCompositeFeature nativeComposite;
 		extern InteriorSun interiorSun;
 		extern FurShells furShells;
 		extern RainRefraction rainRefraction;

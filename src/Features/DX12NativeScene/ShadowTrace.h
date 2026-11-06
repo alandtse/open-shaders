@@ -36,7 +36,7 @@ namespace DX12Native
 	public:
 		~ShadowTrace();
 		/** @brief Attempts current-frame shadow tracing without waiting for bindings or GPU work. */
-		void Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::span<const PreparedPointLight> a_lights,
+		void Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
 			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget);
 		/** @brief Returns a matching mask; consumers must wait on its completion fence. */
 		std::shared_ptr<const ShadowFrame> Get(uint32_t a_frame) const;
@@ -44,6 +44,8 @@ namespace DX12Native
 		bool RetainThrough(const std::shared_ptr<const ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 		/** @brief Invalidates publication while preserving in-flight resources. */
 		void Reset();
+		/** @brief Retires completed frames from older scenes without waiting. */
+		bool RetireScenesExcept(const std::shared_ptr<const TopLevel>& a_scene);
 		/** @brief Retries shadow shader and pipeline creation after a cache reload. */
 		void ReloadShaders();
 		/** @brief Returns the latest availability or failure reason. */
@@ -61,7 +63,6 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
 		winrt::com_ptr<ID3D11ComputeShader> prepareRays;
-		ShadowBindingWorker bindings;
 		std::array<std::shared_ptr<ShadowFrame>, 2> frames;
 		std::shared_ptr<ShadowFrame> current;
 		uint64_t nextFence = 0, submissions = 0, completions = 0;
