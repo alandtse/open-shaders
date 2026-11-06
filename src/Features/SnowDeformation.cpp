@@ -6,8 +6,10 @@
 #include "Globals.h"
 #include "GpuPass.h"
 #include "ShaderCache.h"
+#include "SnowDeformationMath.h"
 #include "State.h"
 #include "Utils/ActorUtils.h"
+#include "Utils/BodyCapsules.h"
 #include "Utils/D3D.h"
 #include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
@@ -25,6 +27,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Enabled,
 	IncludeNPCs,
 	IncludeObjects,
+	IncludeHands,
 	UseSnowCover,
 	DisplaceShadows,
 	SinkActors,
@@ -57,6 +60,10 @@ namespace
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
 	constexpr float kObjectContact = 48.0f;
+	constexpr float kHandRange = 800.0f;
+	constexpr float kHandMinRadius = 2.0f;
+	constexpr size_t kMaxHandStamps = 8;
+	constexpr size_t kMaxCapsuleSamples = 4;
 	constexpr float kHeatMelt = 0.85f;
 	constexpr float kHeatDepthScale = 0.8f;
 	constexpr float kTorchRadius = 40.0f;
@@ -1323,6 +1330,8 @@ void SnowDeformation::GatherStamps()
 		}
 		if (settings.IncludeObjects)
 			AppendObjectStamps(gatherStamps);
+		if (settings.IncludeHands && globals::game::isVR)
+			AppendHandStamps(gatherStamps);
 		AppendHeatStamps(gatherStamps);
 	}
 	UpdateActorSinks(actors);
@@ -1459,6 +1468,60 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			a_stamps.push_back(stamp);
 		}
 	}
+}
+
+SnowDeformation::Stamp SnowDeformation::MakePressStamp(RE::TES* a_tes, const RE::NiPoint3& a_position, float a_radius, float a_landZ, float a_motionX, float a_motionY) const
+{
+	const float depth = std::clamp(settings.Depth, 1.0f, 20.0f);
+	Stamp stamp{};
+	stamp.x = a_position.x;
+	stamp.y = a_position.y;
+	stamp.radius = a_radius;
+	stamp.depth = depth;
+	stamp.rim = depth * kRimHeight;
+	stamp.motionX = a_motionX;
+	stamp.motionY = a_motionY;
+	stamp.vanillaSnow = IsVanillaSnow(a_tes->GetLandMaterialType(a_position)) ? 1.0f : 0.0f;
+	stamp.landZ = a_landZ;
+	stamp.normalZ = LandNormalZ(a_tes, a_position, a_landZ);
+	return stamp;
+}
+
+void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
+{
+	handStamps.store(0, std::memory_order_relaxed);
+	auto tes = globals::game::tes;
+	auto player = globals::game::player;
+	if (!tes || !player || a_stamps.size() >= kMaxStamps)
+		return;
+
+	auto& tracker = Util::BodyCapsules::GetTracker();
+	tracker.Update(kHandRange);
+
+	const float reach = std::max(kGroundClearance, std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight));
+	const RE::FormID playerID = player->GetFormID();
+	size_t placed = 0;
+	for (const auto& capsule : tracker.GetCapsules()) {
+		if (!capsule.appendage || capsule.owner != playerID || capsule.remembered)
+			continue;
+
+		const float radius = std::max(capsule.radius, kHandMinRadius);
+		const float3 axis = capsule.pointB - capsule.pointA;
+		const size_t samples = SnowDeformationMath::CapsuleSampleCount(axis.Length(), radius, kMaxCapsuleSamples);
+		for (size_t i = 0; i < samples; ++i) {
+			if (placed >= kMaxHandStamps || a_stamps.size() >= kMaxStamps)
+				break;
+			const float3 point = capsule.pointA + axis * SnowDeformationMath::CapsuleSampleParameter(i, samples);
+			const RE::NiPoint3 position(point.x, point.y, point.z);
+			float landZ = 0.0f;
+			if (!tes->GetLandHeight(position, landZ) || !SnowDeformationMath::TouchesSnow(position.z, radius, landZ, reach, kBelowGroundLimit))
+				continue;
+			a_stamps.push_back(MakePressStamp(tes, position, radius, landZ, std::clamp(capsule.move.x, -kMaxContactMotion, kMaxContactMotion),
+				std::clamp(capsule.move.y, -kMaxContactMotion, kMaxContactMotion)));
+			++placed;
+		}
+	}
+	handStamps.store(static_cast<uint32_t>(placed), std::memory_order_relaxed);
 }
 
 void SnowDeformation::AppendHeatStamps(std::vector<Stamp>& a_stamps)
@@ -3144,6 +3207,11 @@ void SnowDeformation::DrawSettings()
 	ImGui::Checkbox(T(TKEY("include_objects"), "Include Dropped Items"), &settings.IncludeObjects);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("include_objects_tooltip"), "Weapons, armour, loot, arrows and other items resting on the snow press into it too, and dig themselves out of the snow blanket."));
+	if (globals::game::isVR) {
+		ImGui::Checkbox(T(TKEY("include_hands"), "Include VR Hands and Weapons"), &settings.IncludeHands);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextWrapped("%s", T(TKEY("include_hands_tooltip"), "Your hands and the weapon or item in them press into the snow when they reach it."));
+	}
 
 	{
 		Util::DisableGuard disable(!globals::features::snowCover.loaded);
@@ -3206,6 +3274,7 @@ json SnowDeformation::GetDiagnostics()
 	return {
 		{ "Active", IsActiveContext() },
 		{ "Stamps", debugShown.stamps },
+		{ "HandStamps", handStamps.load(std::memory_order_relaxed) },
 		{ "ActiveTiles", debugShown.activeTiles },
 		{ "DispatchedTiles", debugShown.dispatchedTiles },
 		{ "DepthDraws", debugShown.depthDraws },

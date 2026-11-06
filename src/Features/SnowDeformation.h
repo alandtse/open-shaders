@@ -55,6 +55,7 @@ struct SnowDeformation : Feature
 		bool Enabled = true;
 		bool IncludeNPCs = true;
 		bool IncludeObjects = true;
+		bool IncludeHands = true;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -399,6 +400,8 @@ private:
 	void AppendActorStamps(RE::Actor* a_actor, const RE::NiPoint3& a_anchor, std::vector<Stamp>& a_stamps);
 	const std::vector<CachedShape>& ActorCollisions(RE::Actor* a_actor, RE::NiAVObject* a_root);
 	void AppendObjectStamps(std::vector<Stamp>& a_stamps);
+	void AppendHandStamps(std::vector<Stamp>& a_stamps);
+	[[nodiscard]] Stamp MakePressStamp(RE::TES* a_tes, const RE::NiPoint3& a_position, float a_radius, float a_landZ, float a_motionX, float a_motionY) const;
 	void AppendHeatStamps(std::vector<Stamp>& a_stamps);
 	void AppendImpactStamps(std::vector<Stamp>& a_stamps);
 	void BuildImpact(const ImpactEvent& a_event, std::vector<Stamp>& a_stamps);
@@ -509,6 +512,7 @@ private:
 	float deepestSink = 0.0f;
 	uint64_t gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
+	std::atomic<uint32_t> handStamps = 0;
 	std::atomic<bool> commandClearField = false;
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;

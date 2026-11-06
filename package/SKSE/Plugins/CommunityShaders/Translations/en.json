@@ -4054,6 +4054,8 @@
     "feature.snow_deformation.displace_shadows": "Displace Shadows",
     "feature.snow_deformation.displace_shadows_tooltip": "Also press prints into the sun shadow map, so prints are not shadowed by the flat snow surface above them.",
     "feature.snow_deformation.enabled": "Enabled",
+    "feature.snow_deformation.include_hands": "Include VR Hands and Weapons",
+    "feature.snow_deformation.include_hands_tooltip": "Your hands and the weapon or item in them press into the snow when they reach it.",
     "feature.snow_deformation.include_npcs": "Include NPCs and Creatures",
     "feature.snow_deformation.include_objects": "Include Dropped Items",
     "feature.snow_deformation.include_objects_tooltip": "Weapons, armour, loot, arrows and other items resting on the snow press into it too, and dig themselves out of the snow blanket.",

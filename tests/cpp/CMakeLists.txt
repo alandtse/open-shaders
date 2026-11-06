@@ -78,6 +78,7 @@ add_executable(
     test_atlas_allocator.cpp
     test_mathutils.cpp
     test_snowcover_math.cpp
+    test_snowdeformation_math.cpp
     test_rain_texture_footprint.cpp
     test_llf_sanitize.cpp
     test_litregion.cpp
