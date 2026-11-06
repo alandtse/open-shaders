@@ -15,6 +15,12 @@ public:
 	/** @brief Interpretation of the source values; the pass performs no conversion. */
 	enum class Transfer { Unknown, Linear, LegacyScene };
 	enum class Gamut { Unknown };
+	struct ShadowSettings
+	{
+		float contribution = 1.0f, blend = 1.0f, radiusPixels = 0.0f, receiverTolerance = 2.0f;
+		bool preview = false, afterLighting = false;
+		uint64_t revision = 1;
+	};
 	struct Policy
 	{
 		uint32_t diffuse = 1; // Effective validity: display reference-compatible recovered contributions.
@@ -53,7 +59,7 @@ public:
 		const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
 		const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 		const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
-		const DX12NativeScene::ShadowLayerSettings& a_shadowSettings,
+		const ShadowSettings& a_shadowSettings,
 		float a_strength, const Policy& a_policy, uint64_t a_revision);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);

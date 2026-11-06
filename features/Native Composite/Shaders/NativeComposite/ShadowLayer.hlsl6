@@ -69,7 +69,10 @@ void main(uint3 id : SV_DispatchThreadID)
         Scene[id.xy] = float4(visibility.xxx, color.a);
         return;
     }
-    const float layerVisibility = lerp(1.0f, visibility, saturate(Strength * Blend));
+    // Shadow contribution is independent of direct-light intensity. A gain above 1
+    // amplifies partial occlusion, while never producing negative radiance.
+    const float amplifiedOcclusion = saturate((1.0f - visibility) * clamp(Strength, 0.0f, 4.0f));
+    const float layerVisibility = 1.0f - amplifiedOcclusion * saturate(Blend);
     if (layerVisibility >= 1.0f || !all(isfinite(color.rgb))) return;
     float3 linearColor = LegacyTransfer != 0u ? SignedPower(color.rgb, 1.6f) : color.rgb;
     linearColor *= layerVisibility;

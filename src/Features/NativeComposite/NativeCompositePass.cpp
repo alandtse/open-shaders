@@ -82,7 +82,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
 	const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 	const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
-	const DX12NativeScene::ShadowLayerSettings& a_shadowSettings,
+	const ShadowSettings& a_shadowSettings,
 	float a_strength, const Policy& a_policy, uint64_t a_revision)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
@@ -109,7 +109,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	}
 	const bool supportsLighting = (support.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
 		(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) && (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
-	const bool shadowRequested = (a_shadowSettings.strength * a_shadowSettings.blend > 0.0f) || a_shadowSettings.preview;
+	const bool shadowRequested = (a_shadowSettings.contribution * a_shadowSettings.blend > 0.0f) || a_shadowSettings.preview;
 	const bool applyShadow = supportsLighting && shadowRequested && a_shadow && a_raster &&
 		a_shadow->mask && a_shadow->mask->resource && a_shadow->readyFence &&
 		a_shadow->readyValue && a_shadow->readyValue != UINT64_MAX &&
@@ -261,10 +261,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		const std::array endBarriers{
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->shared->resource.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COPY_DEST,
-				(blend && !applyShadow) ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
+				(blend && !(applyShadow && !a_shadowSettings.afterLighting)) ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
 		};
 		slot->commands->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
-		if (applyShadow) {
+		auto recordShadow = [&]() {
 			slot->shadowRoot = shadowRoot;
 			slot->shadowPipeline = shadowPipeline;
 			const auto step = a_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -306,7 +306,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			const auto& camera = a_raster->camera;
 			const Constants constants{ a_width, a_height, a_shadowSettings.receiverTolerance, a_shadowSettings.radiusPixels,
 				a_transfer == Transfer::LegacyScene ? 1u : 0u, a_shadowSettings.preview ? 1u : 0u,
-				a_shadowSettings.strength, a_shadowSettings.blend,
+				a_shadowSettings.contribution, a_shadowSettings.blend,
 				camera.CameraProjInverse, camera.CameraViewInverse };
 			slot->commands->SetComputeRoot32BitConstants(2, 40, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
@@ -316,9 +316,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				CD3DX12_RESOURCE_BARRIER::Transition(a_raster->depth->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
 			};
 			slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
-		}
+		};
+		if (applyShadow && !a_shadowSettings.afterLighting) recordShadow();
 		if (blend) {
-			if (applyShadow) {
+			if (applyShadow && !a_shadowSettings.afterLighting) {
 				// Shadow pass resolved the raster back to COMMON before native direct lighting.
 				const auto startDirect = CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(),
 					D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -377,6 +378,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			const auto outputBarrier = CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
 			slot->commands->ResourceBarrier(1, &outputBarrier);
 		}
+		if (applyShadow && a_shadowSettings.afterLighting) recordShadow();
 		DX::ThrowIfFailed(slot->commands->Close());
 		if (applyShadow) {
 			DX::ThrowIfFailed(a_queue->Wait(a_shadow->readyFence.get(), a_shadow->readyValue));

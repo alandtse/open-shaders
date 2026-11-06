@@ -14,6 +14,13 @@ struct NativeCompositeFeature final : Feature
 		bool AddLighting = true;
 		float LightingStrength = 1.0f;
 		bool PersistLab = false;
+		// Independent DX12 shadow layer. Does not require Native Lighting.
+		bool ShadowLayerEnabled = false;
+		float ShadowContribution = 1.0f; // 0..4, boosts weighted occlusion beyond 1x.
+		float ShadowBlend = 1.0f;        // 0..1, mixes shadow effect with unshadowed scene.
+		float ShadowRadiusPixels = 0.0f, ShadowReceiverTolerance = 2.0f;
+		bool ShadowPreview = false;
+		bool ShadowAfterLighting = false; // false: raster only; true: combined raster + native direct.
 	};
 	std::string GetName() override { return "Native Composite"; }
 	std::string GetShortName() override { return "NativeComposite"; }
@@ -24,6 +31,8 @@ struct NativeCompositeFeature final : Feature
 	void SaveSettings(json& a_json) override;
 	void RestoreDefaultSettings() override;
 	void RegisterUxActions() override;
+	/** @brief Legacy command bridge for scene-owned shadow layer settings. */
+	void ConfigureShadowLayer(const json& args);
 	json GetDiagnostics() override;
 	/** @brief Produces a frame on the provided shared graphics backend. */
 	std::shared_ptr<const NativeComposite::Frame> Capture(ID3D11Device5*, ID3D11DeviceContext4*, ID3D12Device*, ID3D12CommandQueue*,

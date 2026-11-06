@@ -16,9 +16,6 @@ struct DX12NativeScene final : Feature
 		bool Enabled = false, ShadowMask = false;
 		uint32_t BudgetMB = 512, FrameBudgetMB = 0;
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
-		float ShadowStrength = 0.0f, ShadowBlend = 1.0f;
-		float ShadowRadius = 0.0f, ShadowReceiverTolerance = 2.0f;
-		bool ShadowPreview = false;
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = false;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
 		float ShadowEmitterRadius = 1.0f;
@@ -58,6 +55,13 @@ struct DX12NativeScene final : Feature
 	void ClearShaderCache() override { reloadRequested = true; }
 	json GetDiagnostics() override;
 	void RegisterUxActions() override;
+	/** @brief Requests only prepared geometry and the independent early shadow producer.
+	 *  Does not enable Native Lighting or alter its settings. */
+	void RequestShadowProducerForComposite() {
+		requestedEnabled = 1;
+		requestedShadow = 1;
+		shadowResetRequested = true;
+	}
 	/** @brief Retains the scene graphics session for DX12-only consumers. */
 	std::optional<GraphicsBackend> GetGraphicsBackend() const { return loaded && settings.Enabled && !transitionOpen ? backend : std::nullopt; }
 	/** @brief Retains a completed scene matching the current cell and revision. */
@@ -68,12 +72,6 @@ struct DX12NativeScene final : Feature
 	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return loaded && settings.Enabled && !transitionOpen ? raster.Get(a_frame) : nullptr; }
 	/** @brief Returns a matching prepared-scene shadow mask and its completion fence. */
 	std::shared_ptr<const DX12Native::ShadowFrame> GetShadowMask(uint32_t a_frame) const;
-	struct ShadowLayerSettings { float strength, blend, radiusPixels, receiverTolerance; bool preview; uint64_t revision; };
-	ShadowLayerSettings GetShadowLayerSettings() const {
-		std::scoped_lock lock(settingsMutex);
-		return { settings.ShadowStrength, settings.ShadowBlend, settings.ShadowRadius,
-			settings.ShadowReceiverTolerance, settings.ShadowPreview, shadowControlsRevision };
-	}
 	/** @brief Retains a borrowed shadow mask until the consumer GPU fence completes. */
 	bool RetainShadowMask(const std::shared_ptr<const DX12Native::ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value) { return shadow.RetainThrough(a_frame, a_fence, a_value); }
 	/** @brief Retains the borrowed raster frame until the consumer GPU fence completes. */

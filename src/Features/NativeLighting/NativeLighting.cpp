@@ -39,8 +39,9 @@ void NativeLightingFeature::DrawSettings()
 		settings.PointLightRadiusMultiplier = 1.0f; settings.PointLightFalloffFraction = 0.1f;
 		settings.PointLightFalloffExponent = 1.0f; tuned = true;
 	}
-	ImGui::SeparatorText("Direct shadow visibility");
-	tuned |= ImGui::SliderFloat("Direct shadow strength", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+	ImGui::SeparatorText("Occlusion within native direct lighting");
+	tuned |= ImGui::SliderFloat("Direct ray-occlusion weight", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+	ImGui::TextDisabled("Affects the native direct BRDF only; the independent shadow layer is in Native Composite.");
 	tuned |= ImGui::Checkbox("Stochastic emitter sampling", &settings.StochasticShadows);
 	ImGui::BeginDisabled(!settings.StochasticShadows);
 	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");

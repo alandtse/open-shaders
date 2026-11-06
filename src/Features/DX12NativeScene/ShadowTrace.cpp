@@ -305,7 +305,7 @@ namespace DX12Native
 			a_frame.cameraOrigin, 0.5f, 0.0f, { 1u, 0u, uint32_t(a_frame.lightSnapshot.size()) }, { 1, 1, 1, 1 }, 0u, { 4u, 0u, 0u },
 			{ 0u, a_frame.bindings->materials->roomCount, a_frame.bindings->materials->roomsKnown ? 1u : 0u, a_frame.controls.normalInfluence },
 			{ a_frame.controls.reachMultiplier, a_frame.controls.falloffFraction, a_frame.controls.falloffExponent, a_frame.controls.distanceFade ? 1.0f : 0.0f },
-			{ a_frame.controls.stochastic ? 1.0f : 0.0f, a_frame.controls.emitterRadius, a_frame.controls.strength, a_frame.controls.blend } };
+			{ a_frame.controls.stochastic ? 1.0f : 0.0f, a_frame.controls.emitterRadius, 0.0f, 0.0f } };
 		static_assert(sizeof(Constants) == 36 * sizeof(uint32_t));
 		commands->SetComputeRoot32BitConstants(5, 36, &constants, 0);
 		std::array begin{

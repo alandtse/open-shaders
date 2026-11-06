@@ -11,7 +11,6 @@ namespace DX12Native
 {
 	struct ShadowTraceControls
 	{
-		float strength = 1.0f, blend = 1.0f;
 		float reachMultiplier = 1.0f, falloffFraction = 0.1f, falloffExponent = 1.0f, emitterRadius = 1.0f;
 		bool stochastic = true, distanceFade = false;
 		uint32_t normalInfluence = 2;

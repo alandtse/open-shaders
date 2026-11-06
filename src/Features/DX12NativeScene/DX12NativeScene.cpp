@@ -1,5 +1,6 @@
 #include "DX12NativeScene.h"
 #include "Globals.h"
+#include "Features/NativeComposite/NativeComposite.h"
 #include "GpuPass.h"
 #include "State.h"
 #include "ShaderCache.h"
@@ -7,7 +8,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, ShadowStrength, ShadowBlend, ShadowRadius, ShadowReceiverTolerance, ShadowPreview, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent)
 
 void DX12NativeScene::DrawSettings()
 {
@@ -16,13 +17,8 @@ void DX12NativeScene::DrawSettings()
 	if (ImGui::Checkbox("Produce RT shadow mask", &settings.ShadowMask)) shadowResetRequested = true;
 	if (settings.ShadowMask && !shadowStatus.empty()) ImGui::TextUnformatted(shadowStatus.c_str());
 	if (ImGui::CollapsingHeader("Early DX12 shadow-mask controls")) {
-		ImGui::TextDisabled("DX12 shadow layer uses current-frame depth matching; temporal history is not yet ported.");
+		ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
 		bool changed = false;
-		changed |= ImGui::SliderFloat("Shadow layer strength", &settings.ShadowStrength, 0.0f, 1.0f);
-		changed |= ImGui::SliderFloat("Shadow layer blend", &settings.ShadowBlend, 0.0f, 1.0f);
-		changed |= ImGui::SliderFloat("Shadow softening radius (pixels)", &settings.ShadowRadius, 0.0f, 32.0f);
-		changed |= ImGui::SliderFloat("Shadow receiver tolerance (world units)", &settings.ShadowReceiverTolerance, 0.1f, 64.0f);
-		changed |= ImGui::Checkbox("Preview shadow mask in composite", &settings.ShadowPreview);
 		changed |= ImGui::Checkbox("Shadow all prepared point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
 			const auto scene = GetPublishedScene();
@@ -69,18 +65,15 @@ void DX12NativeScene::DrawSettings()
 void DX12NativeScene::LoadSettings(json& a_json)
 {
 	const Settings selected = a_json;
-	requestedEnabled = selected.Enabled ? 1 : 0;
-	requestedShadow = selected.ShadowMask ? 1 : 0;
+	// A compositor requesting the independent layer takes precedence over the
+	// scene configuration's possibly older disabled producer state.
+	if (requestedEnabled.load() != 1) requestedEnabled = selected.Enabled ? 1 : 0;
+	if (requestedShadow.load() != 1) requestedShadow = selected.ShadowMask ? 1 : 0;
 	requestedBudget = std::clamp(selected.BudgetMB, 64u, 4096u);
 	requestedFrameBudget = selected.FrameBudgetMB ? std::clamp(selected.FrameBudgetMB, 64u, 4096u) : 0u;
 	std::scoped_lock lock(settingsMutex);
 	const auto clamp = [](float value, float fallback, float low, float high) { return std::isfinite(value) ? std::clamp(value, low, high) : fallback; };
-	settings.ShadowStrength = clamp(selected.ShadowStrength, 0.0f, 0.0f, 1.0f);
-	settings.ShadowRadius = clamp(selected.ShadowRadius, 0.0f, 0.0f, 32.0f);
-	settings.ShadowReceiverTolerance = clamp(selected.ShadowReceiverTolerance, 2.0f, 0.1f, 64.0f);
-	settings.ShadowPreview = selected.ShadowPreview;
 	++shadowControlsRevision;
-	settings.ShadowBlend = clamp(selected.ShadowBlend, 1.0f, 0.0f, 1.0f);
 	settings.ShadowAllLights = selected.ShadowAllLights;
 	settings.ShadowStochastic = selected.ShadowStochastic;
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
@@ -234,7 +227,6 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 		std::span<const DX12Native::PreparedPointLight>(lights) :
 		std::span<const DX12Native::PreparedPointLight>(lights).subspan(shadowSettings.ShadowLightIndex, 1);
 	const DX12Native::ShadowTraceControls controls{
-		shadowSettings.ShadowStrength, shadowSettings.ShadowBlend,
 		shadowSettings.ShadowReachMultiplier, shadowSettings.ShadowFalloffFraction,
 		shadowSettings.ShadowFalloffExponent, shadowSettings.ShadowEmitterRadius,
 		shadowSettings.ShadowStochastic, shadowSettings.ShadowDistanceFade, shadowSettings.ShadowNormalInfluence
@@ -302,9 +294,7 @@ void DX12NativeScene::PublishDiagnostics()
 {
 	json snapshot{ { "enabled", settings.Enabled }, { "cellID", cellID }, { "revision", revision }, { "backendFailure", failure },
 		{ "raster", raster.GetDiagnostics() }, { "shadowStage", shadowStage }, { "shadowStatus", shadowStatus }, { "shadow", shadow.GetDiagnostics() },
-		{ "shadowControls", { { "strength", settings.ShadowStrength }, { "blend", settings.ShadowBlend },
-			{ "radiusPixels", settings.ShadowRadius }, { "receiverTolerance", settings.ShadowReceiverTolerance },
-			{ "preview", settings.ShadowPreview }, { "revision", shadowControlsRevision },
+		{ "shadowTraceControls", { { "revision", shadowControlsRevision },
 			{ "allLights", settings.ShadowAllLights }, { "lightIndex", settings.ShadowLightIndex },
 			{ "stochastic", settings.ShadowStochastic }, { "emitterRadius", settings.ShadowEmitterRadius },
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
@@ -330,7 +320,7 @@ void DX12NativeScene::RegisterUxActions()
 		if (enabled) scene.requestedEnabled = 1;
 		scene.shadowResetRequested = true;
 	});
-	FEATURE_COMMAND("setShadowLayer", "Configure independent early shadow mask. Optional strength/blend, radiusPixels, receiverTolerance, preview, allLights, lightIndex, stochastic, emitterRadius, reachMultiplier, falloffFraction, falloffExponent, distanceFade, normalInfluence. Full-resolution mask remains independent from direct lighting.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("setShadowLayer", "Legacy compatibility: layer enabled/contribution/strength/blend/radiusPixels/receiverTolerance/preview/afterLighting forward to Native Composite; allLights/lightIndex/stochastic/emitterRadius/reachMultiplier/falloffFraction/falloffExponent/distanceFade/normalInfluence configure raw DX12 shadow-mask tracing.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<DX12NativeScene*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		auto& s = feature.settings;
@@ -339,12 +329,7 @@ void DX12NativeScene::RegisterUxActions()
 			const float v = args.at(key).get<float>();
 			if (std::isfinite(v)) target = std::clamp(v, low, high);
 		};
-		tune("strength", s.ShadowStrength, 0.0f, 1.0f);
-		tune("blend", s.ShadowBlend, 0.0f, 1.0f);
-		tune("radiusPixels", s.ShadowRadius, 0.0f, 32.0f);
-		tune("receiverTolerance", s.ShadowReceiverTolerance, 0.1f, 64.0f);
-		if (args.contains("preview")) s.ShadowPreview = args.at("preview").get<bool>();
-		tune("emitterRadius", s.ShadowEmitterRadius, 0.0f, 8.0f);
+				tune("emitterRadius", s.ShadowEmitterRadius, 0.0f, 8.0f);
 		tune("reachMultiplier", s.ShadowReachMultiplier, 0.1f, 64.0f);
 		tune("falloffFraction", s.ShadowFalloffFraction, 0.02f, 1.0f);
 		tune("falloffExponent", s.ShadowFalloffExponent, 0.25f, 4.0f);
@@ -354,6 +339,7 @@ void DX12NativeScene::RegisterUxActions()
 		if (args.contains("distanceFade")) s.ShadowDistanceFade = args.at("distanceFade").get<bool>();
 		if (args.contains("normalInfluence")) s.ShadowNormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u);
 		++feature.shadowControlsRevision;
+		globals::features::nativeComposite.ConfigureShadowLayer(args);
 	});
 	FEATURE_COMMAND("setPreparedScene", "Queue the prepared static-scene loading settings. Params: enabled (boolean), budgetMB (optional integer, 64..4096).", [](Feature* self, const json& args) {
 		auto& scene = *static_cast<DX12NativeScene*>(self);
