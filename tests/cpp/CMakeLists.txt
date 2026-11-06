@@ -107,6 +107,7 @@ add_executable(cpp_tests
 	test_sehguard.cpp
 	test_nr_decisions.cpp
 	test_nr_cadence.cpp
+	test_nr_combat_pause.cpp
 	test_nr_material_strength.cpp
 	test_nr_model_scale.cpp
 	test_nr_eye_mode.cpp

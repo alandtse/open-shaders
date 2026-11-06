@@ -88,6 +88,8 @@ namespace NR
 		 *        queue by itself if the second queue cannot be created or an evaluate fails on it.
 		 */
 		bool parallelEyes = true;
+		/** @brief Suspend NR during player combat and resume after three peaceful, unpaused seconds. */
+		bool pauseInCombat = false;
 		/** @brief Loads a 310.8.x or 310.9.x runtime outside the pinned digests, without developer mode; its output is unverified. */
 		bool allowUnverifiedRuntime = false;
 		/**
