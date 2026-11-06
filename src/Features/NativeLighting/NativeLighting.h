@@ -13,11 +13,27 @@ struct NativeLightingFeature final : Feature
 		bool Enabled = false, Diffuse = true, Specular = true, EarlyShadowCull = true, Debug = false, CompareCulling = false;
 		float DiffuseIntensity = 1.0f, SpecularIntensity = 1.0f;
 		uint32_t BudgetMB = 512;
+		bool PersistLab = false;
+	};
+	struct ValidityLab
+	{
+		bool DepthAgreement = true;
+		bool DiagnosticDepth = false;
+		float AbsoluteTolerance = 2.0f;
+		float RelativeTolerance = 0.00001f;
+		uint32_t MaterialPolicy = 0;
+		bool RequireMaskAuthority = true;
+		bool AssumeMaskAuthoritative = false;
+		bool ObserveMask = false;
+		bool RunWithoutLighting = false;
+		bool ReferenceVisibility = false;
+		float MaskThreshold = 0.0f;
+		float MaskDistanceTolerance = 2.0f;
 	};
 	struct Contribution
 	{
-		enum class Output : size_t { Diffuse, Specular, Validity, ReceiverGuide, Debug, ComparisonDiffuse, ComparisonSpecular };
-		std::array<winrt::com_ptr<ID3D12Resource>, 7> textures;
+		enum class Output : size_t { Diffuse, Specular, Validity, ReceiverGuide, Debug, ComparisonDiffuse, ComparisonSpecular, EffectiveValidity, RejectionReason, LabGuide };
+		std::array<winrt::com_ptr<ID3D12Resource>, 10> textures;
 		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback, lights, constants;
 		winrt::com_ptr<ID3D12DescriptorHeap> heap;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
@@ -30,9 +46,10 @@ struct NativeLightingFeature final : Feature
 		std::weak_ptr<const DX12Native::ShadowBindings> descriptorBindings;
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
+		uint64_t validityRevision = 0;
 		uint32_t frame = 0, width = 0, height = 0, enabledLobes = 0;
 		float diffuseIntensity = 0, specularIntensity = 0;
-		bool countersRead = false, comparisonEnabled = false;
+		bool countersRead = false, comparisonEnabled = false, geometryOnly = false, maskAvailable = false, maskExperimental = false;
 	};
 	std::string GetName() override { return "Native Lighting"; }
 	std::string GetShortName() override { return "NativeLighting"; }
@@ -57,11 +74,13 @@ struct NativeLightingFeature final : Feature
 
 private:
 	bool Initialize(const GraphicsBackend& a_backend);
-	void Dispatch(DX12NativeScene::SceneFrame a_scene, const Settings& a_settings);
+	void Dispatch(DX12NativeScene::SceneFrame a_scene, const Settings& a_settings, const ValidityLab& a_lab, uint64_t a_revision);
 	void Retire();
 	void Reset();
 	void PublishDiagnostics();
 	Settings settings;
+	ValidityLab lab;
+	uint64_t validityRevision = 1;
 	std::mutex settingsMutex, diagnosticsMutex;
 	json diagnostics = json::object();
 	GraphicsBackend backend;
@@ -70,7 +89,7 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 2> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 12> totals{};
+	std::array<uint64_t, 27> totals{};
 	std::string status;
 	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0;
 	std::atomic<bool> resetRequested{ false }, reloadRequested{ false }, transitionOpen{ false }, active{ false };

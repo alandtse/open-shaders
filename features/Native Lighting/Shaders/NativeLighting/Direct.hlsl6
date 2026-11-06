@@ -13,6 +13,9 @@ RWStructuredBuffer<uint> Counters : register(u4);
 RWTexture2D<float4> DebugVisualization : register(u5);
 RWTexture2D<float4> ComparisonDiffuse : register(u6);
 RWTexture2D<float4> ComparisonSpecular : register(u7);
+RWTexture2D<uint> EffectiveValidity : register(u8);
+RWTexture2D<uint> RejectionReason : register(u9);
+RWTexture2D<float4> LabGuide : register(u10);
 
 cbuffer Trace : register(b0)
 {
@@ -31,15 +34,30 @@ cbuffer Trace : register(b0)
 	uint Reserved;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
+	float AbsoluteTolerance;
+	float RelativeTolerance;
+	float MaskThreshold;
+	float MaskDistanceTolerance;
+	uint DepthMode;
+	uint MaterialPolicy;
+	uint MaskAvailable;
+	uint MaskExperimental;
+	uint ReferenceVisibility;
+	uint3 LabPadding;
 };
 
 #include "Common/ReverseZ.hlsli"
 #include "DX12NativeScene/materials.hlsli"
 #include "ShadowCull.hlsli"
+#include "ValidityLab.hlsli"
 
 bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, inout bool valid)
 {
-	if (instance >= InstanceCount || GeometryBuffers[NonUniformResourceIndex(instance)].Load(ValidationOffsets[instance]) != 0) {
+	if (instance >= InstanceCount) {
+		valid = false;
+		return false;
+	}
+	if (GeometryBuffers[NonUniformResourceIndex(instance)].Load(ValidationOffsets[instance]) != 0) {
 		valid = false;
 		return false;
 	}
@@ -57,6 +75,20 @@ bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, i
 
 void Count(uint index) { InterlockedAdd(Counters[index], 1); }
 
+void Finish(uint2 pixel, uint original, uint effective, uint reason)
+{
+	DirectValidity[pixel] = original;
+	EffectiveValidity[pixel] = effective;
+	const bool forced = effective == 1 && original != 1;
+	RejectionReason[pixel] = reason | (forced ? 0x80000000u : 0u) | (effective == 2 && original != 2 ? 0x40000000u : 0u);
+	if (reason >= 1 && reason <= 10) Count(11 + reason);
+	if (forced) Count(22);
+	if (effective == 2 && original != 2) Count(23);
+	if (forced && reason == 3) Count(24);
+	if (forced && (reason == 4 || reason == 5)) Count(25);
+	if (forced && reason == 7) Count(26);
+}
+
 [numthreads(8, 8, 1)]
 void main(uint2 pixel : SV_DispatchThreadID)
 {
@@ -64,6 +96,9 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	RawDirectDiffuse[pixel] = 0;
 	RawDirectSpecular[pixel] = 0;
 	DirectValidity[pixel] = 0;
+	EffectiveValidity[pixel] = 0;
+	RejectionReason[pixel] = 0;
+	LabGuide[pixel] = 0;
 	ReceiverGuide[pixel] = 0;
 	DebugVisualization[pixel] = 0;
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = 0; ComparisonSpecular[pixel] = 0; }
@@ -71,26 +106,28 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	float2 clip = (float2(pixel) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
 	float4 view = mul(InverseProjection, float4(clip, 0.5f, 1));
+	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f) { Finish(pixel, 0, 0, 1); return; }
 	float3 direction = mul((float3x3)InverseView, view.xyz / view.w);
-	if (!all(isfinite(view)) || abs(view.w) <= 1e-8f || !all(isfinite(direction)) || dot(direction, direction) <= 1e-8f) return;
+	if (!all(isfinite(direction)) || dot(direction, direction) <= 1e-8f) { Finish(pixel, 0, 0, 1); return; }
 	direction = normalize(direction);
 	float depth = RasterDepth[pixel];
 	float4 rasterView = mul(InverseProjection, float4(clip, depth, 1));
-	float3 rasterOffset = mul((float3x3)InverseView, rasterView.xyz / rasterView.w);
-	float rasterDistance = length(rasterOffset);
+	bool rasterValid = isfinite(depth) && depth != FrameBuffer::FarPlaneDepth() && all(isfinite(rasterView)) && abs(rasterView.w) > 1e-8f;
+	float rasterDistance = rasterValid ? length(mul((float3x3)InverseView, rasterView.xyz / rasterView.w)) : 0;
+	rasterValid = rasterValid && isfinite(rasterDistance);
 	bool culled = false;
-	if (MaskRequested != 0 && MaskAuthoritative == 0) Count(2);
-	if (MaskAuthoritative != 0) {
+	if (MaskRequested != 0 && MaskAuthoritative == 0 && MaskExperimental == 0) Count(2);
+	if (MaskAvailable != 0) {
 		float4 mask = EarlyShadowMask[pixel];
-		bool receiverMatches = isfinite(depth) && depth != FrameBuffer::FarPlaneDepth() && all(isfinite(rasterView)) && abs(rasterView.w) > 1e-8f && isfinite(rasterDistance) &&
-			abs(rasterDistance - mask.b) <= max(2.0f, mask.b * 1e-5f);
-		if (CanCullShadow(true, receiverMatches, mask.r, mask.g, mask.b, mask.a)) {
+		bool maskValid = mask.g == 1 && isfinite(mask.r) && isfinite(mask.b) && mask.b > 0 && isfinite(mask.a) && mask.a > 0;
+		LabGuide[pixel] = float4(0, 0, maskValid ? mask.r : 0, maskValid ? (MaskExperimental != 0 ? 4 : 1) : 3);
+		bool receiverMatches = rasterValid && maskValid && abs(rasterDistance - mask.b) <= max(MaskDistanceTolerance, mask.b * 1e-5f);
+		if (CanCullExperimentalMask(MaskAvailable != 0, MaskRequested != 0 && MaskExperimental != 0, receiverMatches, mask.r, mask.g, mask.b, mask.a, MaskThreshold)) {
 			culled = true;
-			DirectValidity[pixel] = 2;
+			LabGuide[pixel].w = 2;
 			if (DebugEnabled != 0) DebugVisualization[pixel] = float4(0, 1, 1, 1);
 			Count(1);
-			if (ComparisonEnabled == 0) return;
-		} else {
+		} else if (MaskRequested != 0 && MaskExperimental != 0) {
 			Count(2);
 		}
 	}
@@ -100,32 +137,50 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
 	Count(3);
 	query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
+	bool primaryGeometry = false;
 	while (query.Proceed()) {
-		if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
-			AdmitReceiverCandidate(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid))
-			query.CommitNonOpaqueTriangleHit();
+		if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+			primaryGeometry = true;
+			if (AdmitReceiverCandidate(query.CandidateInstanceID(), query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid))
+				query.CommitNonOpaqueTriangleHit();
+		}
 	}
-	if (!valid) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
-	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); return; }
+	LabGuide[pixel].x = primaryGeometry ? 1 : 0;
+	if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, 3, 3, 4); return; }
+	if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT) { Count(5); Finish(pixel, 0, 0, 2); return; }
 	Count(4);
+	LabGuide[pixel].x = 1;
 	const uint instance = query.CommittedInstanceID(), primitive = query.CommittedPrimitiveIndex();
 	float distance = query.CommittedRayT();
-	if (!isfinite(distance) || distance <= 0 || !isfinite(depth) || depth == FrameBuffer::FarPlaneDepth() || !all(isfinite(rasterView)) || abs(rasterView.w) <= 1e-8f || !isfinite(rasterDistance) ||
-		abs(rasterDistance - distance) > max(2.0f, distance * 1e-5f)) return;
+	if (!isfinite(distance) || distance <= 0) { Finish(pixel, 0, 0, 1); return; }
+	float depthError = rasterValid ? abs(rasterDistance - distance) : 3.402823e38f;
+	LabGuide[pixel].y = depthError;
+	bool originalDepth = DepthMatches(rasterValid, depthError, distance, 2.0f, 1e-5f);
+	bool selectedDepth = DepthMatches(rasterValid, depthError, distance, AbsoluteTolerance, RelativeTolerance);
+	bool rejectSelectedDepth = !selectedDepth && DepthMode == 0;
+	if (rejectSelectedDepth && !originalDepth) { Finish(pixel, 0, 0, 3); return; }
+	uint originalReason = originalDepth ? 0 : 3;
 	const MaterialRecord materialRecord = Materials[Surfaces[instance].material.x];
-	if ((materialRecord.flags.x & 3u) != 3u || materialRecord.flags.w != 0u) {
-		if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return;
-	}
+	bool supportedMaterial = (materialRecord.flags.x & 3u) == 3u && materialRecord.flags.w == 0u;
 	EvaluatedSourceMaterial material;
 	float footprint = max(distance * 2.0f / max(float(Size.x), 1.0f), 1e-6f);
-	if (!LoadSourceMaterial(instance, primitive, query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material)) {
-		if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return;
+	bool materialValid = supportedMaterial && LoadSourceMaterial(instance, primitive, query.CommittedTriangleBarycentrics(), query.CommittedObjectToWorld3x4(), query.CommittedWorldToObject3x4(), footprint, material);
+	if (!materialValid) {
+		if (originalReason == 0) originalReason = supportedMaterial ? 5 : 4;
+		if (MaterialPolicy != 1) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
+		TriangleSurface surface;
+		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), surface)) { Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
+		float3 fallbackNormal = mul(surface.normal, (float3x3)query.CommittedWorldToObject3x4());
+		if (!all(isfinite(fallbackNormal)) || dot(fallbackNormal, fallbackNormal) <= 1e-8f) { Count(10); Finish(pixel, originalReason == 3 ? 0 : 3, 3, originalReason); return; }
+		material = (EvaluatedSourceMaterial)0;
+		material.baseColor = 0.5; material.normal = normalize(fallbackNormal); material.f0 = 0.04; material.roughness = 0.7; material.ao = 1; material.opacity = 1;
 	}
 	Count(6);
 	float3 position = CameraOrigin + direction * distance;
 	float3 n = normalize(material.normal), v = -direction;
 	float3 diffuse = 0, specular = 0;
 	uint eligibleLights = 0;
+	bool strictVisibilityRejected = false;
 	for (uint i = 0; i < LightCount; ++i) {
 		const PointLight light = Lights[i];
 		if (light.flags.x == 0) continue;
@@ -143,16 +198,28 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		RayDesc visibility;
 		visibility.Origin = position + l * MinimumDistance; visibility.Direction = l;
 		visibility.TMin = MinimumDistance; visibility.TMax = d - 2 * MinimumDistance;
-		if (visibility.TMax <= visibility.TMin) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+		if (visibility.TMax <= visibility.TMin) {
+			if (ReferenceVisibility != 0) { strictVisibilityRejected = true; continue; }
+			if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return;
+		}
 		RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> shadow;
 		Count(7);
 		shadow.TraceRayInline(Scene, RAY_FLAG_NONE, 3, visibility);
 		while (shadow.Proceed()) {
-			if (shadow.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
-				AdmitReceiverCandidate(shadow.CandidateInstanceID(), shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics(), valid))
-				shadow.CommitNonOpaqueTriangleHit();
+			if (shadow.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
+			uint candidateInstance = shadow.CandidateInstanceID();
+			if (candidateInstance >= InstanceCount) { valid = false; continue; }
+			if (GeometryBuffers[NonUniformResourceIndex(candidateInstance)].Load(ValidationOffsets[candidateInstance]) != 0) { valid = false; continue; }
+			bool strictCandidateValid = true;
+			bool admitted = AdmitReceiverCandidate(candidateInstance, shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics(), strictCandidateValid);
+			if (!strictCandidateValid) {
+				if (ReferenceVisibility == 0) { valid = false; continue; }
+				strictVisibilityRejected = true;
+				admitted = AdmitCandidate(candidateInstance, shadow.CandidatePrimitiveIndex(), shadow.CandidateTriangleBarycentrics());
+			}
+			if (admitted) shadow.CommitNonOpaqueTriangleHit();
 		}
-		if (!valid) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+		if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
 		if (shadow.CommittedStatus() != COMMITTED_NOTHING) continue;
 		float3 halfVector = l + v;
 		float3 h = dot(halfVector, halfVector) > 1e-8f ? normalize(halfVector) : n;
@@ -163,18 +230,23 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		if (EnabledLobes & 1u) diffuse += (1 - material.metallic) * material.baseColor * (1 - fresnel) * BRDF::Diffuse_Lambert() * irradiance;
 		if (EnabledLobes & 2u) specular += microfacet * irradiance;
 	}
-	if (eligibleLights == 0) return;
-	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (!culled) { DirectValidity[pixel] = 3; if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); } Count(10); return; }
+	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
+	if (eligibleLights == 0) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
+	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity, 1);
 	const float4 specularOutput = float4(specular * SpecularIntensity, 1);
+	if (!all(isfinite(diffuseOutput)) || !all(isfinite(specularOutput))) { Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = diffuseOutput; ComparisonSpecular[pixel] = specularOutput; }
-	if (!culled) {
-		RawDirectDiffuse[pixel] = diffuseOutput;
-		RawDirectSpecular[pixel] = specularOutput;
-		DirectValidity[pixel] = 1;
+	RawDirectDiffuse[pixel] = diffuseOutput;
+	RawDirectSpecular[pixel] = specularOutput;
+	if (!culled && !rejectSelectedDepth) {
 		if (DebugEnabled != 0) DebugVisualization[pixel] = float4(0, 1, 0, 1);
 	}
 	ReceiverGuide[pixel] = float4(n, float(instance + 1));
-	if (!culled && (EnabledLobes & 1u)) Count(9);
-	if (!culled && (EnabledLobes & 2u)) Count(11);
+	uint original = originalReason == 0 ? 1 : (originalReason == 3 ? 0 : 3);
+	uint effective = rejectSelectedDepth ? 0 : (culled ? 2 : 1);
+	Finish(pixel, original, effective, originalReason == 0 ? 10 : originalReason);
+	RejectionReason[pixel] |= 0x20000000u;
+	if (effective == 1 && (EnabledLobes & 1u)) Count(9);
+	if (effective == 1 && (EnabledLobes & 2u)) Count(11);
 }

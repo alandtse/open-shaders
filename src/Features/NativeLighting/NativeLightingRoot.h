@@ -20,7 +20,7 @@ namespace NativeLighting
 		ranges[2] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumInstances, 0, 2, 0 };
 		ranges[3] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, kMaximumTexturePools, 0, 3, 0 };
 		ranges[4] = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6, 0, 0 };
-		ranges[5] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 8, 0, 0, 0 };
+		ranges[5] = { D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 11, 0, 0, 0 };
 		D3D12_ROOT_PARAMETER params[12]{};
 		constexpr std::array rootSrvRegisters{ 0u, 2u, 3u, 4u, 5u };
 		constexpr std::array rootSrvIndices{ 0u, 2u, 3u, 5u, 6u };

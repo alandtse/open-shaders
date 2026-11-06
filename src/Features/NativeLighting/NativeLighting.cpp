@@ -10,7 +10,8 @@
 #include <fstream>
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
 {
@@ -20,9 +21,41 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::Checkbox("Specular", &settings.Specular);
 	ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 4.0f);
 	ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 4.0f);
-	ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull);
+	if (ImGui::Checkbox("Early shadow-mask culling", &settings.EarlyShadowCull)) ++validityRevision;
 	ImGui::Checkbox("Publish validity debug texture", &settings.Debug);
 	ImGui::Checkbox("Compare culling on and off", &settings.CompareCulling);
+	if (ImGui::CollapsingHeader("Validity Lab")) {
+		bool changed = false;
+		ImGui::Checkbox("Persist experimental validity settings", &settings.PersistLab);
+		changed |= ImGui::Checkbox("Require raster-depth agreement", &lab.DepthAgreement);
+		changed |= ImGui::Checkbox("Depth mismatch: diagnose and continue", &lab.DiagnosticDepth);
+		changed |= ImGui::DragFloat("Absolute depth tolerance", &lab.AbsoluteTolerance, 0.1f, 0.0f, 10000.0f);
+		changed |= ImGui::DragFloat("Relative depth tolerance", &lab.RelativeTolerance, 0.000001f, 0.0f, 1.0f, "%.6f");
+		const char* materialPolicies[]{ "Strict", "Diagnostic fallback", "Geometry only" };
+		int materialPolicy = static_cast<int>(lab.MaterialPolicy);
+		if (ImGui::Combo("Material policy", &materialPolicy, materialPolicies, 3)) { lab.MaterialPolicy = static_cast<uint32_t>(materialPolicy); changed = true; }
+		changed |= ImGui::Checkbox("Require authoritative shadow mask", &lab.RequireMaskAuthority);
+		changed |= ImGui::Checkbox("Experimental: assume current mask authoritative", &lab.AssumeMaskAuthoritative);
+		changed |= ImGui::Checkbox("Sample mask for diagnostics", &lab.ObserveMask);
+		changed |= ImGui::Checkbox("Run diagnostics without lights or lobes", &lab.RunWithoutLighting);
+		changed |= ImGui::Checkbox("Reference-like permissive visibility", &lab.ReferenceVisibility);
+		ImGui::TextDisabled("Skips unsupported shadow candidates; may cause light leaks.");
+		changed |= ImGui::SliderFloat("Experimental mask visibility threshold", &lab.MaskThreshold, 0.0f, 1.0f);
+		changed |= ImGui::DragFloat("Mask receiver distance tolerance", &lab.MaskDistanceTolerance, 0.1f, 0.0f, 10000.0f);
+		ImGui::TextDisabled("Prepared receiver identity is not available in the raster inputs.");
+		if (!settings.PersistLab) ImGui::TextDisabled("Experimental settings reset to strict on restart.");
+		if (changed) ++validityRevision;
+		std::scoped_lock diagnosticsLock(diagnosticsMutex);
+		ImGui::TextDisabled("Submitted: %llu  GPU completed: %llu  Recovered: %llu",
+			static_cast<unsigned long long>(diagnostics.value("submissions", uint64_t{})),
+			static_cast<unsigned long long>(diagnostics.value("gpuCompletions", uint64_t{})),
+			static_cast<unsigned long long>(diagnostics.value("recoveredPixels", uint64_t{})));
+		if (diagnostics.contains("originalRejections")) {
+			const auto& reasons = diagnostics["originalRejections"];
+			for (auto it = reasons.begin(); it != reasons.end(); ++it)
+				ImGui::TextDisabled("%s: %llu", it.key().c_str(), static_cast<unsigned long long>(it.value().get<uint64_t>()));
+		}
+	}
 }
 
 void NativeLightingFeature::LoadSettings(json& a_json)
@@ -33,9 +66,16 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.BudgetMB = std::clamp(selected.BudgetMB, 64u, 4096u);
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
+	lab = selected.PersistLab && a_json.contains("ValidityLab") ? a_json.at("ValidityLab").get<ValidityLab>() : ValidityLab{};
+	lab.AbsoluteTolerance = std::isfinite(lab.AbsoluteTolerance) ? std::clamp(lab.AbsoluteTolerance, 0.0f, 10000.0f) : 2.0f;
+	lab.RelativeTolerance = std::isfinite(lab.RelativeTolerance) ? std::clamp(lab.RelativeTolerance, 0.0f, 1.0f) : 0.00001f;
+	lab.MaterialPolicy = std::min(lab.MaterialPolicy, 2u);
+	lab.MaskThreshold = std::isfinite(lab.MaskThreshold) ? std::clamp(lab.MaskThreshold, 0.0f, 1.0f) : 0.0f;
+	lab.MaskDistanceTolerance = std::isfinite(lab.MaskDistanceTolerance) ? std::clamp(lab.MaskDistanceTolerance, 0.0f, 10000.0f) : 2.0f;
+	++validityRevision;
 }
-void NativeLightingFeature::SaveSettings(json& a_json) { std::scoped_lock lock(settingsMutex); a_json = settings; }
-void NativeLightingFeature::RestoreDefaultSettings() { std::scoped_lock lock(settingsMutex); settings = {}; }
+void NativeLightingFeature::SaveSettings(json& a_json) { std::scoped_lock lock(settingsMutex); a_json = settings; if (settings.PersistLab) a_json["ValidityLab"] = lab; }
+void NativeLightingFeature::RestoreDefaultSettings() { std::scoped_lock lock(settingsMutex); settings = {}; lab = {}; ++validityRevision; }
 void NativeLightingFeature::OnSceneTransitionReset(bool a_open) { transitionOpen = a_open; resetRequested = true; }
 
 NativeLightingFeature::~NativeLightingFeature()
@@ -106,6 +146,16 @@ void NativeLightingFeature::PublishDiagnostics()
 		{ "materials", totals[6] }, { "shadowQueries", totals[7] }, { "lights", totals[8] },
 		{ "validDiffuse", totals[9] }, { "unsupported", totals[10] }, { "validSpecular", totals[11] },
 		{ "currentMaskAuthoritative", false }, { "comparisonFrames", comparisonFrames }, { "visualConsumptionVerified", false } };
+	constexpr std::array reasonNames{ "invalidCamera", "noPrimaryHit", "depthMismatch", "unsupportedMaterial", "materialEvaluationFailure", "noEligibleLights", "invalidVisibility", "nonfiniteLighting", "authoritativeMaskCull", "successfulEvaluation" };
+	for (size_t i = 0; i < reasonNames.size(); ++i) snapshot["originalRejections"][reasonNames[i]] = totals[12 + i];
+	snapshot["recoveredPixels"] = totals[22];
+	snapshot["experimentalMaskCulls"] = totals[23];
+	snapshot["recoveredDepthMismatch"] = totals[24];
+	snapshot["recoveredMaterialFailure"] = totals[25];
+	snapshot["recoveredVisibility"] = totals[26];
+	snapshot["receiverIdentityAvailable"] = false;
+	snapshot["maskAvailable"] = current && current->maskAvailable;
+	snapshot["maskExperimental"] = current && current->maskExperimental;
 	std::scoped_lock lock(diagnosticsMutex);
 	diagnostics = std::move(snapshot);
 }
@@ -119,13 +169,37 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("enabled")) feature.settings.Enabled = args.at("enabled").get<bool>();
 		if (args.contains("diffuse")) feature.settings.Diffuse = args.at("diffuse").get<bool>();
 		if (args.contains("specular")) feature.settings.Specular = args.at("specular").get<bool>();
-		if (args.contains("earlyShadowCull")) feature.settings.EarlyShadowCull = args.at("earlyShadowCull").get<bool>();
+		if (args.contains("earlyShadowCull")) { feature.settings.EarlyShadowCull = args.at("earlyShadowCull").get<bool>(); ++feature.validityRevision; }
 		if (args.contains("debug")) feature.settings.Debug = args.at("debug").get<bool>();
 		if (args.contains("compareCulling")) feature.settings.CompareCulling = args.at("compareCulling").get<bool>();
 		if (args.contains("diffuseIntensity")) { auto v = args.at("diffuseIntensity").get<float>(); feature.settings.DiffuseIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
 		if (args.contains("specularIntensity")) { auto v = args.at("specularIntensity").get<float>(); feature.settings.SpecularIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
 		if (args.contains("budgetMB")) feature.settings.BudgetMB = std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u);
 	});
+	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
+		auto& feature = *static_cast<NativeLightingFeature*>(self);
+		std::scoped_lock lock(feature.settingsMutex);
+		auto& lab = feature.lab;
+		if (args.contains("depthAgreement")) lab.DepthAgreement = args.at("depthAgreement").get<bool>();
+		if (args.contains("persistLab")) feature.settings.PersistLab = args.at("persistLab").get<bool>();
+		if (args.contains("diagnosticDepth")) lab.DiagnosticDepth = args.at("diagnosticDepth").get<bool>();
+		if (args.contains("absoluteTolerance")) { const auto v = args.at("absoluteTolerance").get<float>(); if (std::isfinite(v)) lab.AbsoluteTolerance = std::clamp(v, 0.0f, 10000.0f); }
+		if (args.contains("relativeTolerance")) { const auto v = args.at("relativeTolerance").get<float>(); if (std::isfinite(v)) lab.RelativeTolerance = std::clamp(v, 0.0f, 1.0f); }
+		if (args.contains("materialPolicy")) lab.MaterialPolicy = std::min(args.at("materialPolicy").get<uint32_t>(), 2u);
+		if (args.contains("requireMaskAuthority")) lab.RequireMaskAuthority = args.at("requireMaskAuthority").get<bool>();
+		if (args.contains("assumeMaskAuthoritative")) lab.AssumeMaskAuthoritative = args.at("assumeMaskAuthoritative").get<bool>();
+		if (args.contains("observeMask")) lab.ObserveMask = args.at("observeMask").get<bool>();
+		if (args.contains("runWithoutLighting")) lab.RunWithoutLighting = args.at("runWithoutLighting").get<bool>();
+		if (args.contains("referenceVisibility")) lab.ReferenceVisibility = args.at("referenceVisibility").get<bool>();
+		if (args.contains("maskThreshold")) { const auto v = args.at("maskThreshold").get<float>(); if (std::isfinite(v)) lab.MaskThreshold = std::clamp(v, 0.0f, 1.0f); }
+		if (args.contains("maskDistanceTolerance")) { const auto v = args.at("maskDistanceTolerance").get<float>(); if (std::isfinite(v)) lab.MaskDistanceTolerance = std::clamp(v, 0.0f, 10000.0f); }
+		++feature.validityRevision;
+	});
+	FEATURE_QUERY("validityLabStatus", "Read runtime validity settings, persistence choice and policy revision.", ([](const Feature* self, const json&) -> json {
+		auto& feature = *const_cast<NativeLightingFeature*>(static_cast<const NativeLightingFeature*>(self));
+		std::scoped_lock lock(feature.settingsMutex);
+		return { { "settings", feature.lab }, { "persistLab", feature.settings.PersistLab }, { "revision", feature.validityRevision }, { "receiverIdentityAvailable", false } };
+	}));
 }
 
 bool NativeLightingFeature::Initialize(const GraphicsBackend& a_backend)
@@ -169,8 +243,10 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 	if (reloadRequested.exchange(false)) { Reset(); pipeline = nullptr; root = nullptr; }
 	if (resetRequested.exchange(false)) Reset();
 	Settings selected;
-	{ std::scoped_lock lock(settingsMutex); selected = settings; }
-	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular) || transitionOpen || globals::game::isVR) {
+	ValidityLab selectedLab;
+	uint64_t revision;
+	{ std::scoped_lock lock(settingsMutex); selected = settings; selectedLab = lab; revision = validityRevision; }
+	if (!selected.Enabled || (!selected.Diffuse && !selected.Specular && selectedLab.MaterialPolicy != 2 && !selectedLab.RunWithoutLighting) || transitionOpen || globals::game::isVR) {
 		current.reset(); active = false;
 		status = "Native direct lighting disabled or unavailable";
 		return;
@@ -188,16 +264,16 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		status = "Waiting for current scene, raster depth, camera or material bindings";
 		return;
 	}
-	if (scene->prepared->cell->nativeLights.empty() || scene->prepared->cell->nativeLights.size() > 32) {
+	if (scene->prepared->cell->nativeLights.size() > 32 ||
+		(scene->prepared->cell->nativeLights.empty() && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
 		status = "Prepared point-light count outside 1..32";
 		return;
 	}
 	if (!Initialize(*graphics)) return;
-	scene->shadow.reset();
-	Dispatch(std::move(*scene), selected);
+	Dispatch(std::move(*scene), selected, selectedLab, revision);
 }
 
-void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const Settings& a_settings)
+void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const Settings& a_settings, const ValidityLab& a_lab, uint64_t a_revision)
 {
 	const auto completed = completion->GetCompletedValue();
 	if (completed == UINT64_MAX) { status = "Native lighting device removed"; failed = true; return; }
@@ -216,11 +292,12 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		if (!width || !height || width > a_scene.raster->width || height > a_scene.raster->height || width > 16384 || height > 16384)
 			throw std::runtime_error("Native lighting dimensions unavailable");
 		constexpr std::array formats{ DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R32_UINT,
-			DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT };
+			DXGI_FORMAT_R32G32B32A32_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R16G16B16A16_FLOAT,
+			DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32_UINT, DXGI_FORMAT_R32G32B32A32_FLOAT };
 		const uint64_t budget = uint64_t(a_settings.BudgetMB) * 1024 * 1024;
 		uint64_t bytes = 2 * 1024 * 1024;
-		const size_t textureCount = a_settings.CompareCulling ? formats.size() : 5;
-		for (size_t i = 0; i < textureCount; ++i) {
+		for (size_t i = 0; i < formats.size(); ++i) {
+			if (!a_settings.CompareCulling && (i == 5 || i == 6)) continue;
 			const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(formats[i], width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 			const auto allocation = backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
 			if (allocation == UINT64_MAX || allocation > budget || bytes > budget - allocation) throw std::runtime_error("Native lighting output budget exceeded");
@@ -245,13 +322,14 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 				resource->SetName(name);
 				return resource;
 			};
-			constexpr std::array names{ L"NativeLighting::RawDiffuse", L"NativeLighting::RawSpecular", L"NativeLighting::Validity", L"NativeLighting::ReceiverGuide", L"NativeLighting::Debug", L"NativeLighting::ComparisonDiffuse", L"NativeLighting::ComparisonSpecular" };
-			for (size_t i = 0; i < textureCount; ++i) {
+			constexpr std::array names{ L"NativeLighting::RawDiffuse", L"NativeLighting::RawSpecular", L"NativeLighting::Validity", L"NativeLighting::ReceiverGuide", L"NativeLighting::Debug", L"NativeLighting::ComparisonDiffuse", L"NativeLighting::ComparisonSpecular", L"NativeLighting::EffectiveValidity", L"NativeLighting::RejectionReason", L"NativeLighting::LabGuide" };
+			for (size_t i = 0; i < formats.size(); ++i) {
+				if (!a_settings.CompareCulling && (i == 5 || i == 6)) continue;
 				const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(formats[i], width, height, 1, 1, 1, 0, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 				created->textures[i] = make(desc, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON, names[i]);
 			}
-			const auto counters = CD3DX12_RESOURCE_DESC::Buffer(12 * sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-			const auto plain = CD3DX12_RESOURCE_DESC::Buffer(12 * sizeof(uint32_t));
+			const auto counters = CD3DX12_RESOURCE_DESC::Buffer(totals.size() * sizeof(uint32_t), D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+			const auto plain = CD3DX12_RESOURCE_DESC::Buffer(totals.size() * sizeof(uint32_t));
 			created->counters = make(counters, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::Counters");
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
@@ -260,9 +338,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
 			DX::ThrowIfFailed(created->counterReset->Map(0, &noRead, &zeros));
-			std::memset(zeros, 0, 12 * sizeof(uint32_t));
+			std::memset(zeros, 0, totals.size() * sizeof(uint32_t));
 			created->counterReset->Unmap(0, nullptr);
-			constexpr uint32_t kDescriptors = 10 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools;
+			constexpr uint32_t kDescriptors = 13 + 2 * DX12Native::ShadowBindings::kMaximumInstances + DX12Native::kMaximumTexturePools;
 			const D3D12_DESCRIPTOR_HEAP_DESC heapDesc{ D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, kDescriptors, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0 };
 			DX::ThrowIfFailed(backend.d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(created->heap.put())));
 			created->heap->SetName(L"NativeLighting::Descriptors");
@@ -270,7 +348,17 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			slot = std::move(created);
 		}
 		slot->scene = std::move(a_scene);
+		if (!a_lab.ObserveMask && !a_lab.AssumeMaskAuthoritative) slot->scene.shadow.reset();
+		if (slot->scene.shadow && (!slot->scene.shadow->mask || !slot->scene.shadow->mask->resource ||
+			!slot->scene.shadow->readyFence || !slot->scene.shadow->readyValue || slot->scene.shadow->readyValue == UINT64_MAX ||
+			slot->scene.shadow->frame != slot->scene.frame || slot->scene.shadow->width != width || slot->scene.shadow->height != height ||
+			slot->scene.shadow->retainedBackend.d3d12Device.get() != backend.d3d12Device.get() ||
+			slot->scene.shadow->scene != slot->scene.prepared->acceleration)) slot->scene.shadow.reset();
 		slot->sceneRevision = slot->scene.prepared->revision;
+		slot->validityRevision = a_revision;
+		slot->geometryOnly = a_lab.MaterialPolicy == 2;
+		slot->maskAvailable = static_cast<bool>(slot->scene.shadow);
+		slot->maskExperimental = slot->maskAvailable && a_settings.EarlyShadowCull && !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative;
 		slot->frame = slot->scene.frame;
 		slot->enabledLobes = (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u);
 		slot->diffuseIntensity = a_settings.DiffuseIntensity; slot->specularIntensity = a_settings.SpecularIntensity;
@@ -293,18 +381,25 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			float diffuse, specular; uint32_t lobes, maskAuthoritative;
 			uint32_t maskRequested, debug, comparison, reserved;
 			DirectX::SimpleMath::Matrix inverseProjection, inverseView;
+			float absoluteTolerance, relativeTolerance, maskThreshold, maskDistanceTolerance;
+			uint32_t depthMode, materialPolicy, maskAvailable, maskExperimental;
+			uint32_t referenceVisibility, padding[3];
 		};
-		static_assert(sizeof(Constants) == 192);
+		static_assert(sizeof(Constants) == 240);
 		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), uint32_t(scene.cell->nativeLights.size()),
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
-			0u, a_settings.EarlyShadowCull ? 1u : 0u, a_settings.Debug ? 1u : 0u, a_settings.CompareCulling ? 1u : 0u, 0u, camera.CameraProjInverse, camera.CameraViewInverse };
+			0u, a_settings.EarlyShadowCull ? 1u : 0u, a_settings.Debug ? 1u : 0u, a_settings.CompareCulling ? 1u : 0u, 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+			a_lab.AbsoluteTolerance, a_lab.RelativeTolerance, a_lab.MaskThreshold, a_lab.MaskDistanceTolerance,
+			a_lab.DepthAgreement ? (a_lab.DiagnosticDepth ? 1u : 0u) : 2u, a_lab.MaterialPolicy,
+			slot->scene.shadow ? 1u : 0u, !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative ? 1u : 0u,
+			a_lab.ReferenceVisibility ? 1u : 0u, { 0, 0, 0 } };
 		const D3D12_RANGE noRead{ 0, 0 };
 		void* mapped = nullptr;
 		DX::ThrowIfFailed(slot->lights->Map(0, &noRead, &mapped)); std::memcpy(mapped, lights.data(), sizeof(lights)); slot->lights->Unmap(0, nullptr);
 		DX::ThrowIfFailed(slot->constants->Map(0, &noRead, &mapped)); std::memcpy(mapped, &constants, sizeof(constants)); slot->constants->Unmap(0, nullptr);
 		const auto step = backend.d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-		constexpr uint32_t kGeometry = 10;
+		constexpr uint32_t kGeometry = 13;
 		constexpr uint32_t kAttributes = kGeometry + DX12Native::ShadowBindings::kMaximumInstances;
 		constexpr uint32_t kTextures = kAttributes + DX12Native::ShadowBindings::kMaximumInstances;
 		auto cpu = slot->heap->GetCPUDescriptorHandleForHeapStart();
@@ -316,9 +411,9 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		backend.d3d12Device->CreateShaderResourceView(slot->scene.raster->depth->resource.get(), &textureSrv, cpu);
 		cpu.ptr += step;
 		textureSrv.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-		backend.d3d12Device->CreateShaderResourceView(nullptr, &textureSrv, cpu);
+		backend.d3d12Device->CreateShaderResourceView(slot->scene.shadow ? slot->scene.shadow->mask->resource.get() : nullptr, &textureSrv, cpu);
 		cpu.ptr += step;
-		for (size_t i = 0; i < 8; ++i) {
+		for (size_t i = 0; i < 11; ++i) {
 			D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
 			if (i == 4) {
 				uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
@@ -380,6 +475,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		std::vector<D3D12_RESOURCE_BARRIER> begin;
 		begin.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 		begin.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->scene.raster->depth->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
+		if (slot->scene.shadow) begin.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->scene.shadow->mask->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE));
 		for (const auto& texture : slot->textures) if (texture) begin.push_back(CD3DX12_RESOURCE_BARRIER::Transition(texture.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 		commands->ResourceBarrier(uint32_t(begin.size()), begin.data());
 		ID3D12DescriptorHeap* heaps[]{ slot->heap.get() };
@@ -405,6 +501,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		std::vector<D3D12_RESOURCE_BARRIER> end;
 		end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->counters.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE));
 		end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->scene.raster->depth->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
+		if (slot->scene.shadow) end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(slot->scene.shadow->mask->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
 		for (const auto& texture : slot->textures) if (texture) end.push_back(CD3DX12_RESOURCE_BARRIER::Transition(texture.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON));
 		commands->ResourceBarrier(uint32_t(end.size()), end.data());
 		commands->CopyBufferRegion(slot->counterReadback.get(), 0, slot->counters.get(), 0, totals.size() * sizeof(uint32_t));
@@ -412,6 +509,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		commands->ResourceBarrier(1, &reset);
 		DX::ThrowIfFailed(commands->Close());
 		DX::ThrowIfFailed(backend.commandQueue->Wait(slot->scene.raster->readyFence.get(), slot->scene.raster->readyValue));
+		if (slot->scene.shadow) DX::ThrowIfFailed(backend.commandQueue->Wait(slot->scene.shadow->readyFence.get(), slot->scene.shadow->readyValue));
 		ID3D12CommandList* lists[]{ commands };
 		slot->readyValue = UINT64_MAX;
 		slot->countersRead = false;
@@ -420,6 +518,7 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		DX::ThrowIfFailed(backend.commandQueue->Signal(completion.get(), ready));
 		slot->readyValue = ready;
 		globals::features::dx12NativeScene.RetainRasterFrame(slot->scene.raster, completion.get(), ready);
+		if (slot->scene.shadow) globals::features::dx12NativeScene.RetainShadowMask(slot->scene.shadow, completion.get(), ready);
 		current = slot; active = true; ++submissions; if (a_settings.CompareCulling) ++comparisonFrames; status.clear();
 	} catch (const std::exception& error) { status = error.what(); }
 }

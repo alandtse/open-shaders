@@ -13,6 +13,7 @@ struct NativeCompositeFeature final : Feature
 		bool Enabled = true;
 		bool AddLighting = true;
 		float LightingStrength = 1.0f;
+		bool PersistLab = false;
 	};
 	std::string GetName() override { return "Native Composite"; }
 	std::string GetShortName() override { return "NativeComposite"; }
@@ -35,6 +36,8 @@ struct NativeCompositeFeature final : Feature
 private:
 	NativeComposite pass;
 	Settings settings;
+	NativeComposite::Policy policy;
+	uint64_t validityRevision = 1;
 	std::mutex settingsMutex;
 	std::atomic<bool> enabled{ true };
 	std::atomic<uint64_t> captures{ 0 };

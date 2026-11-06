@@ -443,6 +443,7 @@ public:
 	std::atomic<uint64_t> nativeHistoryGeneration{ 1 };
 	uint64_t nativeHistoryGenerationUsed = 0;
 	bool nativeLastCompositeHadLighting = false;
+	uint64_t nativeLastValidityRevision = 0;
 	std::atomic<uint32_t> nativeUpscaleLastFrame{ 0 };
 	std::atomic<uint64_t> nativeCompositeCaptures{ 0 }, nativeUpscaleSubmissions{ 0 }, nativeReturnCopies{ 0 };
 	std::atomic<uint64_t> nativeLightingCompositeReturns{ 0 };

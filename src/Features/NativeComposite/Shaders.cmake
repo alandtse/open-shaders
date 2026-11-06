@@ -8,6 +8,7 @@ if(DX12_NATIVE_SCENE_DXC)
             -Fo "${NATIVE_COMPOSITE_DXIL}"
             "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Composite/Shaders/NativeComposite/AddLighting.hlsl6"
         DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Composite/Shaders/NativeComposite/AddLighting.hlsl6"
+                "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Composite/Shaders/NativeComposite/ValidityPolicy.hlsli"
         VERBATIM
     )
     add_custom_target(NativeCompositeDXIL DEPENDS "${NATIVE_COMPOSITE_DXIL}")

@@ -18,6 +18,7 @@ if(DX12_NATIVE_SCENE_DXC)
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Lighting/Shaders/NativeLighting/Direct.hlsl6"
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Lighting/Shaders/NativeLighting/ShadowCull.hlsli"
+                "${CMAKE_CURRENT_SOURCE_DIR}/features/Native Lighting/Shaders/NativeLighting/ValidityLab.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/features/DX12 Native Scene/Shaders/DX12NativeScene/materials.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/PBRMath.hlsli"
                 "${CMAKE_CURRENT_SOURCE_DIR}/package/Shaders/Common/LightingCommon.hlsli"

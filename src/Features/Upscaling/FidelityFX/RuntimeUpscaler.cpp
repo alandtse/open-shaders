@@ -1234,7 +1234,8 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 	if (nativeColor)
 		inputs.resetHistory = inputs.resetHistory || historyGeneration != upscaling.nativeHistoryGenerationUsed ||
 			upscaling.nativeUpscaleLastFrame.load() + 1u != inputs.frame ||
-			composite->lightingSubmitted != upscaling.nativeLastCompositeHadLighting;
+			composite->lightingSubmitted != upscaling.nativeLastCompositeHadLighting ||
+			composite->validityRevision != upscaling.nativeLastValidityRevision;
 
 	auto* commandContext = AcquireRuntimeCommandContext();
 	if (!commandContext)
@@ -1416,6 +1417,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			if (nativeColor && dispatchOk) {
 				upscaling.nativeHistoryGenerationUsed = historyGeneration;
 				upscaling.nativeLastCompositeHadLighting = composite->lightingSubmitted;
+				upscaling.nativeLastValidityRevision = composite->validityRevision;
 				upscaling.nativeUpscaleLastFrame = inputs.frame;
 				auto& result = upscaling.nativeUpscaleOutput;
 				result.color.copy_from(inputs.output);
