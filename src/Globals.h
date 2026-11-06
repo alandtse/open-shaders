@@ -23,6 +23,7 @@ struct IBL;
 struct LightLimitFix;
 struct LinearLighting;
 struct LODBlending;
+struct DX12NativeScene;
 struct InteriorSun;
 struct FurShells;
 struct RainRefraction;
@@ -129,6 +130,7 @@ namespace globals
 		extern LightLimitFix lightLimitFix;
 		extern LinearLighting linearLighting;
 		extern LODBlending lodBlending;
+		extern DX12NativeScene dx12NativeScene;
 		extern InteriorSun interiorSun;
 		extern FurShells furShells;
 		extern RainRefraction rainRefraction;
@@ -324,6 +326,8 @@ namespace globals
 
 		extern D3D11_MAPPED_SUBRESOURCE* mappedFrameBuffer;
 		extern FrameBufferCache frameBufferCached;
+		extern uint32_t frameBufferCachedFrame;
+		extern bool frameBufferCachedValid;
 
 		extern int32_t* frameCounter;
 		extern int* viewWidth;

@@ -324,6 +324,9 @@ public:
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
 
+	/** @brief Called immediately before the engine renders raster shadow maps. */
+	virtual void OnBeforeShadowMapRendering() {}
+
 	/** @brief Runs immediately before the engine polls physical input devices. */
 	virtual void OnBeforeInputPoll() {}
 
@@ -332,6 +335,22 @@ public:
 
 	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
 	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Opaque raster textures after geometry and decals, before deferred composition. */
+	struct OpaqueRasterInputs
+	{
+		ID3D11Texture2D* litColor = nullptr;
+		ID3D11Texture2D* litSpecular = nullptr;
+		ID3D11Texture2D* albedo = nullptr;
+		ID3D11Texture2D* normalRoughness = nullptr;
+		ID3D11Texture2D* masks = nullptr;
+		ID3D11Texture2D* masks2 = nullptr;
+		ID3D11Texture2D* reflectance = nullptr;
+		ID3D11Texture2D* motion = nullptr;
+	};
+
+	/** @brief Offers current opaque inputs to features before deferred composition. */
+	virtual void OnOpaqueRasterReady(const OpaqueRasterInputs& /*a_inputs*/) {}
 
 	/** @brief Called before a post-processing implementation consumes the scene target. */
 	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}

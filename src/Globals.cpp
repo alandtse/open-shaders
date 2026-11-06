@@ -24,6 +24,7 @@
 #include "Features/HorizonFix.h"
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/LODBlending.h"
 #include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
@@ -94,6 +95,7 @@ namespace globals
 		LODBlending lodBlending{};
 		HairSpecular hairSpecular{};
 		HorizonFix horizonFix{};
+		DX12NativeScene dx12NativeScene{};
 		InteriorSun interiorSun{};
 		FurShells furShells{};
 		RainRefraction rainRefraction{};
@@ -181,6 +183,8 @@ namespace globals
 
 		D3D11_MAPPED_SUBRESOURCE* mappedFrameBuffer = nullptr;
 		FrameBufferCache frameBufferCached{};
+		uint32_t frameBufferCachedFrame = 0;
+		bool frameBufferCachedValid = false;
 
 		int32_t* frameCounter = nullptr;
 		int* viewWidth = nullptr;
@@ -328,6 +332,8 @@ namespace globals
 				feature->FixupMappedFrameBuffer(frameBuffer);
 			frameBufferCached.nonVR = frameBuffer;
 		}
+		frameBufferCachedValid = graphicsState && globals::state && !(globals::state->permutationData.ExtraShaderDescriptor & static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections));
+		if (frameBufferCachedValid) frameBufferCachedFrame = graphicsState->GetFrameCount();
 		mappedFrameBuffer = nullptr;
 	}
 

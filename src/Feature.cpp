@@ -7,6 +7,7 @@
 #include "Features/CloudRelight.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
+#include "Features/DX12NativeScene/DX12NativeScene.h"
 #include "Features/ProceduralSun.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
@@ -277,6 +278,7 @@ namespace
 			&globals::features::volumetricLighting,
 			&globals::features::lodBlending,
 			&globals::features::hairSpecular,
+			&globals::features::dx12NativeScene,
 			&globals::features::interiorSun,
 			&globals::features::furShells,
 			&globals::features::terrainVariation,

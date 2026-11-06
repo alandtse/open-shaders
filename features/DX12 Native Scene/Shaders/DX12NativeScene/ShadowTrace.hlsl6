@@ -1,0 +1,130 @@
+RaytracingAccelerationStructure Scene : register(t0);
+Texture2D<float4> Receivers : register(t1);
+StructuredBuffer<uint> ValidationOffsets : register(t2);
+Texture2D<float4> LightSnapshot : register(t3);
+ByteAddressBuffer GeometryBuffers[8192] : register(t0, space1);
+RWTexture2D<float4> Shadow : register(u0);
+RWTexture2D<float4> DirectDiffuse : register(u1);
+RWTexture2D<float4> DirectSpecular : register(u2);
+RWTexture2D<float4> DirectNormalRoughness : register(u3);
+RWTexture2D<float4> DirectSpecularAlbedo : register(u4);
+RWTexture2D<float4> DirectDiffuseAlbedo : register(u5);
+RWTexture2D<float4> IndirectDiffuse : register(u6);
+RWTexture2D<float4> IndirectSpecular : register(u7);
+struct RoomVolume { float4 inverse0; float4 inverse1; float4 inverse2; float4 halfExtents; };
+StructuredBuffer<RoomVolume> RoomVolumes : register(t6);
+static const uint OpaqueInstanceMask = 1;
+
+cbuffer Trace : register(b0)
+{
+	uint2 Size;
+	uint FrameIndex;
+	uint InstanceCount;
+	float3 LightDirection;
+	float MaximumDistance;
+	float3 CameraOrigin;
+	float MinimumDistance;
+	float AngularRadius;
+	uint3 Padding;
+	float4 LightingStrengths;
+	uint ExportDirectSignals;
+	uint TracePass;  // 0: direct, 1: RT-exclusive indirect
+	uint DirectTraceMode;
+	uint IndirectTraceMode;
+	uint IndirectRayCount;
+	uint BakedRoomCount;
+	uint BakedRoomsKnown;
+	uint DirectNormalMode;
+	float4 PointLightFalloff;  // effective-radius scale, transition fraction, cutoff curve exponent, reserved
+	float4 DirectStochastic;  // enabled, emitter radius multiplier, reserved, reserved
+};
+
+#include "materials.hlsli"
+#include "directContract.hlsli"
+
+static const float ReceiverRelativeTolerance = 1e-5;
+static const float MaximumHalfRadiance = 65504;
+
+// Independent integer hash streams for visibility sampling (no noise texture).
+uint DirectVisibilityHash(uint value)
+{
+	value ^= value >> 16u;
+	value *= 0x7feb352du;
+	value ^= value >> 15u;
+	value *= 0x846ca68bu;
+	return value ^ (value >> 16u);
+}
+int LightRoomAdmission(float receiverCode, uint lightIndex)
+{
+	uint snapshotBase = lightIndex * LightSnapshotTexels;
+	uint flags = asuint(LightSnapshot.Load(int3(snapshotBase + 5, 0, 0)).x);
+	return (flags & POINT_LIGHT_FLAG_PORTAL_STRICT) == 0 ? 1 : ReceiverRoom::Admission(receiverCode, asuint(LightSnapshot.Load(int3(snapshotBase + 4, 0, 0))));
+}
+
+bool AdmitShadowCandidate(uint instance, uint primitive, float2 barycentric, inout bool valid);
+
+bool TraceDirectVisibility(float3 origin, float3 direction, float distance, out bool visible)
+{
+	visible = false;
+	RayDesc ray;
+	ray.Origin = origin;
+	ray.Direction = direction;
+	ray.TMin = MinimumDistance;
+	ray.TMax = distance - MinimumDistance;
+	if (ray.TMax <= ray.TMin) return false;
+	RayQuery<RAY_FLAG_FORCE_NON_OPAQUE | RAY_FLAG_CULL_BACK_FACING_TRIANGLES> query;
+	query.TraceRayInline(Scene, RAY_FLAG_NONE, 3, ray);
+	bool valid = true;
+	while (query.Proceed()) {
+		if (query.CandidateType() != CANDIDATE_NON_OPAQUE_TRIANGLE) continue;
+		uint instance = query.CandidateInstanceID();
+		if (instance >= InstanceCount) { valid = false; continue; }
+		if (GeometryBuffers[NonUniformResourceIndex(instance)].Load(ValidationOffsets[instance]) != 0) { valid = false; continue; }
+		if (AdmitShadowCandidate(instance, query.CandidatePrimitiveIndex(), query.CandidateTriangleBarycentrics(), valid)) query.CommitNonOpaqueTriangleHit();
+	}
+	visible = query.CommittedStatus() == COMMITTED_NOTHING;
+	return valid;
+}
+
+bool TracePreparedPointVisibility(uint lightIndex, float3 position, float3 lightPosition,
+    float sourceRadius, float3 l, float lightDistance, uint2 pixel, uint sampleIndex, bool shadowMotion, out bool visible)
+{
+    float3 target = lightPosition;
+    if (DirectStochastic.x >= 0.5f && DirectStochastic.y > 0.0f) {
+        const float emitterRadius = min(sourceRadius * DirectStochastic.y, lightDistance * 0.5f);
+        if (emitterRadius > 0.0f) {
+            const uint seed = DirectVisibilityHash(pixel.x * 0x9e3779b9u ^
+                pixel.y * 0x85ebca6bu ^ FrameIndex * 0xc2b2ae35u ^
+                lightIndex * 0x27d4eb2fu ^ sampleIndex * 0x165667b1u);
+            const uint r0 = DirectVisibilityHash(seed ^ 0x68bc21ebu);
+            const uint r1 = DirectVisibilityHash(seed ^ 0x02e5be93u);
+            const float2 u = (float2(r0 >> 8u, r1 >> 8u) + 0.5f) / 16777216.0f;
+            const float angle = u.y * 6.28318530718f;
+            const float spread = emitterRadius * sqrt(u.x);
+            const float3 tangent = normalize(cross(abs(l.z) < 0.9f ?
+                float3(0, 0, 1) : float3(0, 1, 0), l));
+            const float3 bitangent = cross(l, tangent);
+            target += spread * (cos(angle) * tangent + sin(angle) * bitangent);
+        }
+        if (shadowMotion) {
+            const float amplitude = min(sourceRadius * 0.0075f, lightDistance * 0.0005f);
+            const float3 tangent = normalize(cross(abs(l.z) < 0.9f ? float3(0,0,1) : float3(0,1,0),l));
+            const float phase = float(FrameIndex) * 0.025f + float(lightIndex) * 2.39996323f;
+            target += amplitude * (sin(phase) * tangent + cos(phase * 0.733f) * cross(l,tangent));
+        }
+    }
+    float3 origin = position + l * MinimumDistance;
+    float3 shadowVector = target - origin;
+    return TraceDirectVisibility(origin,normalize(shadowVector),length(shadowVector),visible);
+}
+
+
+#include "NativeTraceSampling.hlsli"
+#include "nativeShadowTrace.hlsli"
+
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+	if (any(id.xy >= Size)) return;
+	TraceNativeShadow(id.xy);
+}

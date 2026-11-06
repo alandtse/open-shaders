@@ -88,6 +88,9 @@ list(
 )
 
 append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
+if(DX12_NATIVE_SCENE_DXIL)
+    append_copy_if_different(_shader_copy_cmds DX12_NATIVE_SCENE_DXIL "${DX12_NATIVE_SCENE_DXIL_DIR}" "${AIO_DIR}/Shaders/DX12NativeScene")
+endif()
 append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
 # the glob below never discovers it -- wire it in explicitly, same as FFX above.
@@ -118,6 +121,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E touch copy_shaders.stamp
     DEPENDS
         ${HLSL_FILES}
+        ${DX12_NATIVE_SCENE_DXIL}
         ${FFX_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_FILES}
         ${STREAMLINE_RUNTIME_DX12_FILES}
