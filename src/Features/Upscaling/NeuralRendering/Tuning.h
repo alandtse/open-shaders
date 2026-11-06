@@ -138,6 +138,8 @@ namespace NR
 		uint32_t modelPreset = 0;
 		/** @brief Weights the model-size gain by how close each sample's brightness is to the full-resolution pixel, instead of a plain bilinear blend. */
 		bool modelGuidedUpsample = true;
+		/** @brief Uses normalized RGB similarity when reconstructing a reduced model grid. */
+		bool modelRgbGuidedUpsample = false;
 		/**
 		 * @brief Evaluates both eyes as one side-by-side image on a single Feature 18 instance, which saves
 		 *        the per-instance cost of the second eye but changes the model's result by position.
