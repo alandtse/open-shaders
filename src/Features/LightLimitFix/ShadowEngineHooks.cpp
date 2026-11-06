@@ -953,8 +953,8 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Detours TestPortalGraphOcclusionShapes (99787/106434): it derefs ssn->portalGraph unguarded,
-	// so ResetScene nulling the graph mid-frame crashes the culling render thread.
+	// Detours TestPortalGraphOcclusionShapes (99787/106434): it derefs ssn->portalGraph with no null
+	// check, so a null graph faults on the culling render thread.
 	struct Hook_TestPortalGraphOcclusionShapes
 	{
 		static bool thunk(RE::NiPoint3* a_viewerPos, RE::BSCullingProcess* a_process, void* a_visitor)
