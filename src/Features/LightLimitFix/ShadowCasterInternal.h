@@ -205,6 +205,7 @@ namespace ShadowCasterManager
 	/// RemoveLight cannot free one while the caller iterates and calls into the engine.
 	void SnapshotConvertedLights(std::vector<RE::NiPointer<RE::BSShadowLight>>& out);
 
+	/// Number of converted lights, read under the lock.
 	std::size_t ConvertedLightCount();
 	extern std::set<RE::NiLight*> s_shadowConvert;
 	extern std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
