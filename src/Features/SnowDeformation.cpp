@@ -28,6 +28,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	IncludeNPCs,
 	IncludeObjects,
 	IncludeHands,
+	WeightResponse,
 	UseSnowCover,
 	DisplaceShadows,
 	SinkActors,
@@ -60,6 +61,10 @@ namespace
 	constexpr size_t kMaxObjectRefs = 256;
 	constexpr size_t kMaxObjectShapes = 3;
 	constexpr float kObjectContact = 48.0f;
+	constexpr float kLightPressure = 0.0005f;
+	constexpr float kHeavyPressure = 0.02f;
+	constexpr float kMinWeightScale = 0.05f;
+	constexpr size_t kMaxObjectSamples = 16;
 	constexpr float kHandRange = 800.0f;
 	constexpr float kHandBrushMotion = 0.25f;
 	constexpr float kHandMinRadius = 4.0f;
@@ -1301,6 +1306,7 @@ void SnowDeformation::GatherStamps()
 	}
 
 	gatherStamps.clear();
+	gatherObjectSamples.clear();
 	std::vector<RE::ActorPtr> actors;
 	auto player = globals::game::player;
 	if (player && player->Is3DLoaded()) {
@@ -1345,6 +1351,7 @@ void SnowDeformation::GatherStamps()
 
 	std::scoped_lock lock(stampLock);
 	pendingStamps.swap(gatherStamps);
+	objectSamples.swap(gatherObjectSamples);
 }
 
 void SnowDeformation::MeasureBlanket()
@@ -1424,19 +1431,20 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		if (!root)
 			continue;
 
+		const float weight = ref->GetWeight();
 		contactScratch.clear();
 		RE::BSVisit::TraverseScenegraphCollision(root, [&](RE::bhkNiCollisionObject* a_object) -> RE::BSVisit::BSVisitControl {
 			RE::NiPoint3 centre;
 			float radius = 0.0f;
 			if (Util::GetShapeBound(a_object, centre, radius) && radius > 0.1f && radius <= 128.0f)
-				contactScratch.push_back({ a_object, centre, radius });
+				contactScratch.push_back({ a_object, centre, radius, nullptr, weight });
 			return RE::BSVisit::BSVisitControl::kContinue;
 		});
 		if (contactScratch.empty()) {
 			const auto& bound = root->worldBound;
 			if (!(bound.radius > 0.1f) || bound.radius > 128.0f)
 				continue;
-			contactScratch.push_back({ root, bound.center, bound.radius });
+			contactScratch.push_back({ root, bound.center, bound.radius, nullptr, weight });
 		}
 		std::sort(contactScratch.begin(), contactScratch.end(), [](const Contact& a_lhs, const Contact& a_rhs) { return a_lhs.radius > a_rhs.radius; });
 		if (contactScratch.size() > kMaxObjectShapes)
@@ -1458,12 +1466,18 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		for (const auto& contact : contactScratch) {
 			if (a_stamps.size() >= kMaxStamps)
 				break;
+			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, contact.radius);
+			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
+			if (gatherObjectSamples.size() < kMaxObjectSamples)
+				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, pressure, weightScale });
+			if (weightScale < kMinWeightScale)
+				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
 			stamp.y = contact.centre.y;
 			stamp.radius = contact.radius;
-			stamp.depth = depth;
-			stamp.rim = rim;
+			stamp.depth = depth * weightScale;
+			stamp.rim = rim * weightScale;
 			TrackShapeMotion(contact.key, contact.centre, false, stamp.motionX, stamp.motionY);
 			stamp.vanillaSnow = vanillaSnow;
 			stamp.landZ = landZ;
@@ -3304,6 +3318,9 @@ void SnowDeformation::DrawSettings()
 	ImGui::Checkbox(T(TKEY("include_objects"), "Include Dropped Items"), &settings.IncludeObjects);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextWrapped("%s", T(TKEY("include_objects_tooltip"), "Weapons, armour, loot, arrows and other items resting on the snow press into it too, and dig themselves out of the snow blanket."));
+	ImGui::Checkbox(T(TKEY("weight_response"), "Light Items Press Less"), &settings.WeightResponse);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextWrapped("%s", T(TKEY("weight_response_tooltip"), "Heavier items press deeper into the snow and very light ones, such as feathers, leave no print."));
 	if (globals::game::isVR) {
 		ImGui::Checkbox(T(TKEY("include_hands"), "Include VR Hands and Weapons"), &settings.IncludeHands);
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -3368,7 +3385,14 @@ void SnowDeformation::RegisterUxActions()
 
 json SnowDeformation::GetDiagnostics()
 {
+	json objects = json::array();
+	{
+		std::scoped_lock lock(stampLock);
+		for (const auto& sample : objectSamples)
+			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Pressure", sample.pressure }, { "Scale", sample.scale } });
+	}
 	return {
+		{ "Objects", objects },
 		{ "Active", IsActiveContext() },
 		{ "Stamps", debugShown.stamps },
 		{ "HandStamps", handStamps.load(std::memory_order_relaxed) },
