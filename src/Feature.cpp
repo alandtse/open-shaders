@@ -44,6 +44,7 @@
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
 #include "Features/SnowCover.h"
+#include "Features/SnowDeformation.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -302,6 +303,7 @@ namespace
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
 			&globals::features::snowCover,
+			&globals::features::snowDeformation,
 			&globals::features::skin,
 			&globals::features::reverseZ,
 			&globals::features::postProcessing
@@ -374,6 +376,15 @@ void Feature::ApplyDrawHooks()
 	for (auto* feature : features) {
 		if (feature->loaded)
 			feature->OnDraw();
+	}
+}
+
+void Feature::ApplyPreShadowMapsHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPreShadowMapsHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->PreShadowMaps();
 	}
 }
 

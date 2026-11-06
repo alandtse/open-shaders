@@ -424,6 +424,15 @@ public:
 	virtual void OnDraw() {}
 
 	/**
+	 * @brief Opt-in flag checked once, when the hook's feature list is built: return true to have
+	 * PreShadowMaps() called once per frame, before the engine renders its shadow maps.
+	 */
+	virtual bool WantsPreShadowMapsHook() const { return false; }
+
+	/** @brief Called on the render thread once per frame before the shadow maps render, for every loaded feature that opted in via WantsPreShadowMapsHook(). */
+	virtual void PreShadowMaps() {}
+
+	/**
 	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
 	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
 	 */
@@ -637,6 +646,9 @@ public:
 
 	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
 	static void ApplyDrawHooks();
+
+	/** @brief Visits PreShadowMaps() on every loaded feature that opted in via WantsPreShadowMapsHook(); the list is cached once. */
+	static void ApplyPreShadowMapsHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
