@@ -953,6 +953,21 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// Detours TestPortalGraphOcclusionShapes (99787/106434): it derefs ssn->portalGraph with no null
+	// check, so a null graph faults on the culling render thread.
+	struct Hook_TestPortalGraphOcclusionShapes
+	{
+		static bool thunk(RE::NiPoint3* a_viewerPos, RE::BSCullingProcess* a_process, void* a_visitor)
+		{
+			std::shared_lock lock(s_portalGraphMutex, std::try_to_lock);
+			const auto* ssn = GetShadowSceneNode();
+			if (!lock.owns_lock() || !ssn || !ssn->GetRuntimeData().portalGraph)
+				return true;
+			return func(a_viewerPos, a_process, a_visitor);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Fires at start of BSShadowLight::ctor (ID 100810/107594). No ctor writes
 	// BSLight::cullingProcess: recycled dirty pages leave dangling garbage that
 	// CTDs room culling or silently skips AccumulateLight rewiring. Zero it here
@@ -1438,6 +1453,9 @@ namespace ShadowCasterManager
 			if (long rc = stl::detour_thunk<Hook_AccumulateLight>(REL::RelocationID(99753, 106401)))
 				logger::error("[SCM] Hook_AccumulateLight detour FAILED (DetourTransactionCommit={})", rc);
 		}
+
+		if (long rc = stl::detour_thunk<Hook_TestPortalGraphOcclusionShapes>(REL::RelocationID(99787, 106434)))
+			logger::error("[SCM] Hook_TestPortalGraphOcclusionShapes detour FAILED (DetourTransactionCommit={})", rc);
 
 		{
 			// BSShadowLight::ctor -- at function start (5 bytes). Zeroes the
