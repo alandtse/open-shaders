@@ -6,6 +6,27 @@
 
 namespace SnowDeformationMath
 {
+	constexpr float Pi = 3.14159265f;
+
+	/** @brief Mass per footprint area for a body of a_mass resting on a circle of a_radius; 0 when either is unknown. */
+	inline float ContactPressure(float a_mass, float a_radius)
+	{
+		return a_mass > 0.0f && a_radius > 1e-3f ? a_mass / (Pi * a_radius * a_radius) : 0.0f;
+	}
+
+	/**
+	 * @brief How much of a full print a body leaves, from 0 for something that settles on top of the snow to 1 for something that sinks fully.
+	 * @details Smoothly interpolated on a log scale between a_light and a_heavy pressure. A pressure of 0 means the weight is unknown and leaves a full print.
+	 */
+	inline float WeightScale(float a_pressure, float a_light, float a_heavy)
+	{
+		if (!(a_pressure > 0.0f))
+			return 1.0f;
+		const float span = std::log(std::max(a_heavy, a_light * 1.001f) / std::max(a_light, 1e-9f));
+		const float t = std::clamp(std::log(a_pressure / std::max(a_light, 1e-9f)) / span, 0.0f, 1.0f);
+		return t * t * (3.0f - 2.0f * t);
+	}
+
 	/** @brief Sample points along a capsule axis: one per capsule diameter of length, at least 1 and at most a_max. */
 	inline size_t CapsuleSampleCount(float a_length, float a_radius, size_t a_max)
 	{

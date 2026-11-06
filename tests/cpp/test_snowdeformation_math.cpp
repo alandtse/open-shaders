@@ -57,4 +57,24 @@ TEST_CASE("A hand brushes the snow only when it moves across the ground", "[snow
 	REQUIRE_FALSE(Math::IsBrushing(0.1f, 0.1f, 0.25f));
 	REQUIRE(Math::IsBrushing(0.25f, 0.0f, 0.25f));
 	REQUIRE(Math::IsBrushing(-0.2f, 0.2f, 0.25f));
+
+TEST_CASE("Contact pressure is mass over footprint area and 0 when unknown", "[snow-deformation]")
+{
+	REQUIRE(Math::ContactPressure(10.0f, 1.0f) == Approx(10.0f / Math::Pi));
+	REQUIRE(Math::ContactPressure(10.0f, 2.0f) == Approx(10.0f / (4.0f * Math::Pi)));
+	REQUIRE(Math::ContactPressure(0.0f, 2.0f) == 0.0f);
+	REQUIRE(Math::ContactPressure(10.0f, 0.0f) == 0.0f);
+}
+
+TEST_CASE("Weight scale runs from nothing for light bodies to a full print for heavy ones", "[snow-deformation]")
+{
+	constexpr float light = 0.01f;
+	constexpr float heavy = 1.0f;
+	REQUIRE(Math::WeightScale(0.0f, light, heavy) == Approx(1.0f));
+	REQUIRE(Math::WeightScale(light * 0.1f, light, heavy) == Approx(0.0f));
+	REQUIRE(Math::WeightScale(light, light, heavy) == Approx(0.0f));
+	REQUIRE(Math::WeightScale(heavy, light, heavy) == Approx(1.0f));
+	REQUIRE(Math::WeightScale(heavy * 10.0f, light, heavy) == Approx(1.0f));
+	REQUIRE(Math::WeightScale(0.1f, light, heavy) == Approx(0.5f));
+	REQUIRE(Math::WeightScale(0.05f, light, heavy) < Math::WeightScale(0.2f, light, heavy));
 }
