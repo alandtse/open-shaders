@@ -1,0 +1,78 @@
+// Independent current-frame prepared RT shadow-mask composition, without
+// coupling the native direct BRDF or its RR-ready raw signals to shadow history.
+Texture2D<float4> ShadowMask : register(t0);
+Texture2D<float> RasterDepth : register(t1);
+RWTexture2D<float4> Scene : register(u0);
+
+cbuffer ShadowConstants : register(b0)
+{
+    uint2 Size;
+    float ReceiverTolerance;
+    float RadiusPixels;
+    uint LegacyTransfer;
+    uint Preview;
+    float Strength;
+    float Blend;
+    row_major float4x4 InverseProjection;
+    row_major float4x4 InverseView;
+};
+
+float3 SignedPower(float3 value, float exponent)
+{
+    return sign(value) * pow(abs(value), exponent);
+}
+bool ValidMask(float4 mask)
+{
+    return all(isfinite(mask)) && mask.y == 1.0f && mask.z > 0.0f && mask.w > 0.0f;
+}
+float SampleVisibility(int2 point, float4 center)
+{
+    int2 clamped = clamp(point, int2(0,0), int2(Size) - 1);
+    float4 sample = ShadowMask[uint2(clamped)];
+    if (!ValidMask(sample) || sample.w != center.w ||
+        abs(sample.z - center.z) > max(ReceiverTolerance, center.z * 1e-5f))
+        return -1.0f;
+    return saturate(sample.x);
+}
+[numthreads(8,8,1)]
+void main(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id.xy >= Size)) return;
+    const float4 center = ShadowMask[id.xy];
+    if (!ValidMask(center)) return;
+    const float depth = RasterDepth[id.xy];
+    if (!isfinite(depth)) return;
+    float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
+    clip.y = -clip.y;
+    float4 cameraView = mul(InverseProjection, float4(clip, depth, 1.0f));
+    if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f) return;
+    const float3 position = mul((float3x3)InverseView, cameraView.xyz / cameraView.w);
+    const float receiverDistance = length(position);
+    if (!isfinite(receiverDistance) || receiverDistance <= 0.0f ||
+        abs(receiverDistance - center.z) > max(ReceiverTolerance, center.z * 1e-5f)) return;
+
+    float visibility = saturate(center.x);
+    if (RadiusPixels > 0.5f) {
+        int radius = clamp(int(round(RadiusPixels)), 1, 32);
+        const int2 pixel = int2(id.xy);
+        const int2 directions[4] = { int2(radius,0), int2(-radius,0), int2(0,radius), int2(0,-radius) };
+        float sum = visibility;
+        float weight = 1.0f;
+        [unroll] for (uint i = 0; i < 4; ++i) {
+            const float neighborVisibility = SampleVisibility(pixel + directions[i], center);
+            if (neighborVisibility >= 0.0f) { sum += neighborVisibility; weight += 1.0f; }
+        }
+        visibility = sum / weight;
+    }
+    float4 color = Scene[id.xy];
+    if (Preview != 0u) {
+        Scene[id.xy] = float4(visibility.xxx, color.a);
+        return;
+    }
+    const float layerVisibility = lerp(1.0f, visibility, saturate(Strength * Blend));
+    if (layerVisibility >= 1.0f || !all(isfinite(color.rgb))) return;
+    float3 linearColor = LegacyTransfer != 0u ? SignedPower(color.rgb, 1.6f) : color.rgb;
+    linearColor *= layerVisibility;
+    color.rgb = LegacyTransfer != 0u ? SignedPower(linearColor, 1.0f / 1.6f) : linearColor;
+    Scene[id.xy] = color;
+}

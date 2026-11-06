@@ -10,7 +10,7 @@
 #include <fstream>
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::Settings, Enabled, Diffuse, Specular, EarlyShadowCull, Debug, CompareCulling, DiffuseIntensity, SpecularIntensity, BudgetMB, PersistLab, DirectStrength, EmissionStrength, PointLightRadiusMultiplier, PointLightFalloffFraction, PointLightFalloffExponent, ShadowStrength, EmitterRadiusMultiplier, NormalInfluence, SelectedDirectLight, StochasticShadows, UseAllPreparedLights)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeLightingFeature::ValidityLab, DepthAgreement, DiagnosticDepth, AbsoluteTolerance, RelativeTolerance, MaterialPolicy, RequireMaskAuthority, AssumeMaskAuthoritative, ObserveMask, RunWithoutLighting, ReferenceVisibility, ReferencePrimaryTraversal, MaskThreshold, MaskDistanceTolerance)
 
 void NativeLightingFeature::DrawSettings()
@@ -19,8 +19,47 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::Checkbox("Enable native lighting", &settings.Enabled);
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
 	ImGui::Checkbox("Specular", &settings.Specular);
-	ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 4.0f);
-	ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 4.0f);
+	bool tuned = false;
+	ImGui::SeparatorText("Direct lighting (reference controls)");
+	tuned |= ImGui::SliderFloat("Direct strength", &settings.DirectStrength, 0.0f, 8.0f, "%.2fx");
+	tuned |= ImGui::SliderFloat("Diffuse intensity", &settings.DiffuseIntensity, 0.0f, 8.0f, "%.2fx");
+	tuned |= ImGui::SliderFloat("Specular intensity", &settings.SpecularIntensity, 0.0f, 8.0f, "%.2fx");
+	tuned |= ImGui::SliderFloat("Prepared emission strength", &settings.EmissionStrength, 0.0f, 8.0f, "%.2fx");
+	ImGui::TextDisabled("Emission defaults off: the raster scene may already include emissive lighting.");
+	int normalMode = int(settings.NormalInfluence);
+	if (ImGui::Combo("Normal influence", &normalMode, "Legacy flat (no specular)\0Geometry normals\0Full material normals (True PBR)\0")) {
+		settings.NormalInfluence = uint32_t(normalMode); tuned = true;
+	}
+	ImGui::SeparatorText("Point-light reach / inverse-square falloff");
+	tuned |= ImGui::SliderFloat("Radius multiplier", &settings.PointLightRadiusMultiplier, 0.1f, 64.0f, "%.2fx", ImGuiSliderFlags_Logarithmic);
+	tuned |= ImGui::SliderFloat("Falloff transition width", &settings.PointLightFalloffFraction, 0.02f, 1.0f, "%.2f of radius");
+	tuned |= ImGui::SliderFloat("Falloff curve exponent", &settings.PointLightFalloffExponent, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+	ImGui::TextDisabled("Radius affects cutoff only; inverse-square energy is unchanged.");
+	if (ImGui::Button("Reset light reach / falloff")) {
+		settings.PointLightRadiusMultiplier = 1.0f; settings.PointLightFalloffFraction = 0.1f;
+		settings.PointLightFalloffExponent = 1.0f; tuned = true;
+	}
+	ImGui::SeparatorText("Direct shadow visibility");
+	tuned |= ImGui::SliderFloat("Direct shadow strength", &settings.ShadowStrength, 0.0f, 1.0f, "%.2f");
+	tuned |= ImGui::Checkbox("Stochastic emitter sampling", &settings.StochasticShadows);
+	ImGui::BeginDisabled(!settings.StochasticShadows);
+	tuned |= ImGui::SliderFloat("Emitter radius scale", &settings.EmitterRadiusMultiplier, 0.0f, 8.0f, "%.2fx");
+	ImGui::EndDisabled();
+	ImGui::TextDisabled("One disk-distributed visibility ray per light; not temporal grid undersampling.");
+	tuned |= ImGui::Checkbox("All prepared cell lights", &settings.UseAllPreparedLights);
+	if (!settings.UseAllPreparedLights) {
+		const auto published = globals::features::dx12NativeScene.GetPublishedScene();
+		const auto count = published ? published->cell->nativeLights.size() : 0u;
+		int lightIndex = int(settings.SelectedDirectLight);
+		if (ImGui::SliderInt("Prepared baseline light", &lightIndex, 0, int(count ? count - 1 : 0))) {
+			settings.SelectedDirectLight = uint32_t(lightIndex); tuned = true;
+		}
+	}
+	if (ImGui::Button("Reset direct strengths")) {
+		settings.DirectStrength = settings.DiffuseIntensity = settings.SpecularIntensity = 1.0f;
+		settings.EmissionStrength = 0.0f; tuned = true;
+	}
+	if (tuned) ++validityRevision;
 	bool autoBudget = settings.BudgetMB == 0;
 	if (ImGui::Checkbox("Automatic lighting VRAM budget (DXGI)", &autoBudget)) settings.BudgetMB = autoBudget ? 0u : 512u;
 	if (!autoBudget) {
@@ -70,8 +109,17 @@ void NativeLightingFeature::DrawSettings()
 void NativeLightingFeature::LoadSettings(json& a_json)
 {
 	auto selected = a_json.get<Settings>();
-	selected.DiffuseIntensity = std::isfinite(selected.DiffuseIntensity) ? std::clamp(selected.DiffuseIntensity, 0.0f, 4.0f) : 1.0f;
-	selected.SpecularIntensity = std::isfinite(selected.SpecularIntensity) ? std::clamp(selected.SpecularIntensity, 0.0f, 4.0f) : 1.0f;
+	selected.DiffuseIntensity = std::isfinite(selected.DiffuseIntensity) ? std::clamp(selected.DiffuseIntensity, 0.0f, 8.0f) : 1.0f;
+	selected.SpecularIntensity = std::isfinite(selected.SpecularIntensity) ? std::clamp(selected.SpecularIntensity, 0.0f, 8.0f) : 1.0f;
+	const auto sanitize = [](float v, float fallback, float low, float high) { return std::isfinite(v) ? std::clamp(v, low, high) : fallback; };
+	selected.DirectStrength = sanitize(selected.DirectStrength, 1.0f, 0.0f, 8.0f);
+	selected.EmissionStrength = sanitize(selected.EmissionStrength, 0.0f, 0.0f, 8.0f);
+	selected.PointLightRadiusMultiplier = sanitize(selected.PointLightRadiusMultiplier, 1.0f, 0.1f, 64.0f);
+	selected.PointLightFalloffFraction = sanitize(selected.PointLightFalloffFraction, 0.1f, 0.02f, 1.0f);
+	selected.PointLightFalloffExponent = sanitize(selected.PointLightFalloffExponent, 1.0f, 0.25f, 4.0f);
+	selected.ShadowStrength = sanitize(selected.ShadowStrength, 1.0f, 0.0f, 1.0f);
+	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
+	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
 	selected.BudgetMB = selected.BudgetMB ? std::clamp(selected.BudgetMB, 64u, 4096u) : 0u;
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -175,7 +223,7 @@ json NativeLightingFeature::GetDiagnostics() { std::scoped_lock lock(diagnostics
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled, diffuse, specular, earlyShadowCull, debug, compareCulling, diffuseIntensity, specularIntensity, budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, budgetMB.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled")) feature.settings.Enabled = args.at("enabled").get<bool>();
@@ -184,8 +232,25 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("earlyShadowCull")) { feature.settings.EarlyShadowCull = args.at("earlyShadowCull").get<bool>(); ++feature.validityRevision; }
 		if (args.contains("debug")) feature.settings.Debug = args.at("debug").get<bool>();
 		if (args.contains("compareCulling")) feature.settings.CompareCulling = args.at("compareCulling").get<bool>();
-		if (args.contains("diffuseIntensity")) { auto v = args.at("diffuseIntensity").get<float>(); feature.settings.DiffuseIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
-		if (args.contains("specularIntensity")) { auto v = args.at("specularIntensity").get<float>(); feature.settings.SpecularIntensity = std::isfinite(v) ? std::clamp(v, 0.0f, 4.0f) : 1.0f; }
+		const auto tune = [&](const char* key, float& value, float fallback, float low, float high) {
+			if (!args.contains(key)) return;
+			const auto v = args.at(key).get<float>();
+			value = std::isfinite(v) ? std::clamp(v, low, high) : fallback;
+			++feature.validityRevision;
+		};
+		tune("diffuseIntensity", feature.settings.DiffuseIntensity, 1.0f, 0.0f, 8.0f);
+		tune("specularIntensity", feature.settings.SpecularIntensity, 1.0f, 0.0f, 8.0f);
+		tune("directStrength", feature.settings.DirectStrength, 1.0f, 0.0f, 8.0f);
+		tune("emissionStrength", feature.settings.EmissionStrength, 0.0f, 0.0f, 8.0f);
+		tune("radiusMultiplier", feature.settings.PointLightRadiusMultiplier, 1.0f, 0.1f, 64.0f);
+		tune("falloffFraction", feature.settings.PointLightFalloffFraction, 0.1f, 0.02f, 1.0f);
+		tune("falloffExponent", feature.settings.PointLightFalloffExponent, 1.0f, 0.25f, 4.0f);
+		tune("shadowStrength", feature.settings.ShadowStrength, 1.0f, 0.0f, 1.0f);
+		tune("emitterRadiusMultiplier", feature.settings.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
+		if (args.contains("stochasticShadows")) { feature.settings.StochasticShadows = args.at("stochasticShadows").get<bool>(); ++feature.validityRevision; }
+		if (args.contains("allLights")) { feature.settings.UseAllPreparedLights = args.at("allLights").get<bool>(); ++feature.validityRevision; }
+		if (args.contains("selectedLight")) { feature.settings.SelectedDirectLight = args.at("selectedLight").get<uint32_t>(); ++feature.validityRevision; }
+		if (args.contains("normalInfluence")) { feature.settings.NormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u); ++feature.validityRevision; }
 		if (args.contains("budgetMB")) feature.settings.BudgetMB = args.at("budgetMB").get<uint32_t>() ? std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u) : 0u;
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {
@@ -277,9 +342,10 @@ void NativeLightingFeature::OnOpaqueRasterReady(const OpaqueRasterInputs&)
 		status = "Waiting for current scene, raster depth, camera or material bindings";
 		return;
 	}
-	if (scene->prepared->cell->nativeLights.size() > 32 ||
+	if ((selected.UseAllPreparedLights && scene->prepared->cell->nativeLights.size() > 32) ||
+		(!selected.UseAllPreparedLights && selected.SelectedDirectLight >= scene->prepared->cell->nativeLights.size()) ||
 		(scene->prepared->cell->nativeLights.empty() && !selectedLab.RunWithoutLighting && selectedLab.MaterialPolicy != 2)) {
-		status = "Prepared point-light count outside 1..32";
+		status = "Prepared point-light selection unavailable or exceeds 32";
 		return;
 	}
 	if (!Initialize(*graphics)) return;
@@ -353,7 +419,8 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			created->counterReset = make(plain, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::CounterReset");
 			created->counterReadback = make(plain, D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_STATE_COPY_DEST, L"NativeLighting::CounterReadback");
 			created->lights = make(CD3DX12_RESOURCE_DESC::Buffer(32 * 48), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Lights");
-			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(256), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
+			// 272-byte Trace ABI rounds to 512 for the D3D12 CBV 256-byte alignment.
+			created->constants = make(CD3DX12_RESOURCE_DESC::Buffer(512), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ, L"NativeLighting::Constants");
 			void* zeros = nullptr;
 			const D3D12_RANGE noRead{ 0, 0 };
 			DX::ThrowIfFailed(created->counterReset->Map(0, &noRead, &zeros));
@@ -388,8 +455,10 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 		struct Light { float4 positionRadius, radianceSourceRadius; std::array<uint32_t, 4> flags; };
 		static_assert(sizeof(Light) == 48);
 		std::array<Light, 32> lights{};
-		for (size_t i = 0; i < scene.cell->nativeLights.size(); ++i) {
-			const auto& light = scene.cell->nativeLights[i];
+		const uint32_t selectedCount = a_settings.UseAllPreparedLights ? uint32_t(scene.cell->nativeLights.size()) :
+			(scene.cell->nativeLights.empty() ? 0u : 1u);
+		for (uint32_t i = 0; i < selectedCount; ++i) {
+			const auto& light = scene.cell->nativeLights[a_settings.UseAllPreparedLights ? i : a_settings.SelectedDirectLight];
 			lights[i] = { { light.position.x, light.position.y, light.position.z, light.radius },
 				{ light.radiance.x, light.radiance.y, light.radiance.z, light.sourceRadius }, { light.supported ? 1u : 0u, 0, 0, 0 } };
 		}
@@ -402,17 +471,21 @@ void NativeLightingFeature::Dispatch(DX12NativeScene::SceneFrame a_scene, const 
 			DirectX::SimpleMath::Matrix inverseProjection, inverseView;
 			float absoluteTolerance, relativeTolerance, maskThreshold, maskDistanceTolerance;
 			uint32_t depthMode, materialPolicy, maskAvailable, maskExperimental;
-			uint32_t referenceVisibility, referencePrimaryTraversal, padding[2];
+			uint32_t referenceVisibility, referencePrimaryTraversal, frameIndex, padding;
+			float4 lightTuning; // reach, cutoff width, exponent, common direct strength
+			float4 shadowTuning; // shadow strength, emitter scale, stochastic enabled, emission
 		};
-		static_assert(sizeof(Constants) == 240);
-		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), uint32_t(scene.cell->nativeLights.size()),
+		static_assert(sizeof(Constants) == 272);
+		const Constants constants{ width, height, uint32_t(scene.acceleration->instances.size()), selectedCount,
 			{ camera.CameraPosAdjust.x + camera.CameraViewInverse._14, camera.CameraPosAdjust.y + camera.CameraViewInverse._24, camera.CameraPosAdjust.z + camera.CameraViewInverse._34 },
 			0.5f, a_settings.DiffuseIntensity, a_settings.SpecularIntensity, (a_settings.Diffuse ? 1u : 0u) | (a_settings.Specular ? 2u : 0u),
-			0u, a_settings.EarlyShadowCull ? 1u : 0u, a_settings.Debug ? 1u : 0u, a_settings.CompareCulling ? 1u : 0u, 0u, camera.CameraProjInverse, camera.CameraViewInverse,
+			0u, a_settings.EarlyShadowCull ? 1u : 0u, a_settings.Debug ? 1u : 0u, a_settings.CompareCulling ? 1u : 0u, a_settings.NormalInfluence, camera.CameraProjInverse, camera.CameraViewInverse,
 			a_lab.AbsoluteTolerance, a_lab.RelativeTolerance, a_lab.MaskThreshold, a_lab.MaskDistanceTolerance,
 			a_lab.DepthAgreement ? (a_lab.DiagnosticDepth ? 1u : 0u) : 2u, a_lab.MaterialPolicy,
 			slot->scene.shadow ? 1u : 0u, !a_lab.RequireMaskAuthority && a_lab.AssumeMaskAuthoritative ? 1u : 0u,
-			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, { 0, 0 } };
+			a_lab.ReferenceVisibility ? 1u : 0u, a_lab.ReferencePrimaryTraversal ? 1u : 0u, slot->scene.frame, 0u,
+			{ a_settings.PointLightRadiusMultiplier, a_settings.PointLightFalloffFraction, a_settings.PointLightFalloffExponent, a_settings.DirectStrength },
+			{ a_settings.ShadowStrength, a_settings.EmitterRadiusMultiplier, a_settings.StochasticShadows ? 1.0f : 0.0f, a_settings.EmissionStrength } };
 		const D3D12_RANGE noRead{ 0, 0 };
 		void* mapped = nullptr;
 		DX::ThrowIfFailed(slot->lights->Map(0, &noRead, &mapped)); std::memcpy(mapped, lights.data(), sizeof(lights)); slot->lights->Unmap(0, nullptr);

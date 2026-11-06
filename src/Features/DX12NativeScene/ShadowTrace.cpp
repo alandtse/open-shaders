@@ -303,8 +303,9 @@ namespace DX12Native
 		};
 		const Constants constants{ a_frame.width, a_frame.height, a_frame.frame, uint32_t(a_frame.scene->bottoms.size()), {}, 60000.0f,
 			a_frame.cameraOrigin, 0.5f, 0.0f, { 1u, 0u, uint32_t(a_frame.lightSnapshot.size()) }, { 1, 1, 1, 1 }, 0u, { 4u, 0u, 0u },
-			{ 0u, a_frame.bindings->materials->roomCount, a_frame.bindings->materials->roomsKnown ? 1u : 0u, 2u },
-			{ 1.0f, 0.1f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f, 0.0f } };
+			{ 0u, a_frame.bindings->materials->roomCount, a_frame.bindings->materials->roomsKnown ? 1u : 0u, a_frame.controls.normalInfluence },
+			{ a_frame.controls.reachMultiplier, a_frame.controls.falloffFraction, a_frame.controls.falloffExponent, a_frame.controls.distanceFade ? 1.0f : 0.0f },
+			{ a_frame.controls.stochastic ? 1.0f : 0.0f, a_frame.controls.emitterRadius, a_frame.controls.strength, a_frame.controls.blend } };
 		static_assert(sizeof(Constants) == 36 * sizeof(uint32_t));
 		commands->SetComputeRoot32BitConstants(5, 36, &constants, 0);
 		std::array begin{
@@ -330,7 +331,7 @@ namespace DX12Native
 		a_frame.readyValue = signal;
 	}
 	void ShadowTrace::Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
-		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget)
+		const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls)
 	{
 		CS_GPU_PASS("DX12NativeScene::ShadowMaskDispatch");
 		if (current && current->frame == a_frame) return;
@@ -422,6 +423,7 @@ namespace DX12Native
 			slot->bindings = std::move(tables);
 			slot->frame = a_frame;
 			slot->lightSnapshot.assign(a_lights.begin(), a_lights.end());
+			slot->controls = a_controls;
 			slot->cameraOrigin = { a_camera.CameraPosAdjust.x + a_camera.CameraViewInverse._14,
 				a_camera.CameraPosAdjust.y + a_camera.CameraViewInverse._24, a_camera.CameraPosAdjust.z + a_camera.CameraViewInverse._34 };
 			slot->retainedBackend = backend;

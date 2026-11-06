@@ -11,7 +11,19 @@
 /** @brief Loads prepared geometry and publishes its completed DX12 acceleration scene. */
 struct DX12NativeScene final : Feature
 {
-	struct Settings { bool Enabled = false; bool ShadowMask = false; uint32_t BudgetMB = 512; uint32_t FrameBudgetMB = 0; } settings;
+	struct Settings
+	{
+		bool Enabled = false, ShadowMask = false;
+		uint32_t BudgetMB = 512, FrameBudgetMB = 0;
+		// Independent early DX12 shadow-mask parameters from reference PR #9.
+		float ShadowStrength = 0.0f, ShadowBlend = 1.0f;
+		float ShadowRadius = 0.0f, ShadowReceiverTolerance = 2.0f;
+		bool ShadowPreview = false;
+		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = false;
+		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
+		float ShadowEmitterRadius = 1.0f;
+		float ShadowReachMultiplier = 1.0f, ShadowFalloffFraction = 0.1f, ShadowFalloffExponent = 1.0f;
+	} settings;
 	struct PublishedScene
 	{
 		std::shared_ptr<const DX12Native::PreparedCell> cell;
@@ -56,6 +68,12 @@ struct DX12NativeScene final : Feature
 	std::shared_ptr<const DX12Native::RasterFrame> GetRasterFrame(uint32_t a_frame) const { return loaded && settings.Enabled && !transitionOpen ? raster.Get(a_frame) : nullptr; }
 	/** @brief Returns a matching prepared-scene shadow mask and its completion fence. */
 	std::shared_ptr<const DX12Native::ShadowFrame> GetShadowMask(uint32_t a_frame) const;
+	struct ShadowLayerSettings { float strength, blend, radiusPixels, receiverTolerance; bool preview; uint64_t revision; };
+	ShadowLayerSettings GetShadowLayerSettings() const {
+		std::scoped_lock lock(settingsMutex);
+		return { settings.ShadowStrength, settings.ShadowBlend, settings.ShadowRadius,
+			settings.ShadowReceiverTolerance, settings.ShadowPreview, shadowControlsRevision };
+	}
 	/** @brief Retains a borrowed shadow mask until the consumer GPU fence completes. */
 	bool RetainShadowMask(const std::shared_ptr<const DX12Native::ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value) { return shadow.RetainThrough(a_frame, a_fence, a_value); }
 	/** @brief Retains the borrowed raster frame until the consumer GPU fence completes. */
@@ -79,6 +97,7 @@ private:
 	std::atomic<int> requestedEnabled{ -1 }, requestedShadow{ -1 };
 	std::atomic<uint32_t> requestedBudget{ 0 };
 	std::atomic<uint32_t> requestedFrameBudget{ UINT32_MAX };
+	uint64_t shadowControlsRevision = 1;
 	mutable std::mutex settingsMutex, diagnosticsMutex;
 	json diagnostics = json::object();
 	bool submitted = false;

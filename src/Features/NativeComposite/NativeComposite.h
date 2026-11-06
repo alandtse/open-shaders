@@ -42,5 +42,6 @@ private:
 	std::atomic<bool> enabled{ true };
 	std::atomic<uint64_t> captures{ 0 };
 	std::atomic<uint64_t> lightingSubmissions{ 0 };
+	std::atomic<uint64_t> shadowSubmissions{ 0 };
 	std::atomic<uint32_t> lightingStatus{ 0 };
 };

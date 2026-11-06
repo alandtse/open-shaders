@@ -16,6 +16,7 @@ namespace
 		case 2: return "Raster pass-through: color space unavailable";
 		case 3: return "Additive lighting submitted";
 		case 4: return "Raster pass-through: lighting pipeline or format unavailable";
+		case 5: return "Independent DX12 shadow layer submitted";
 		default: return "Additive lighting disabled";
 		}
 	}
@@ -49,7 +50,8 @@ void NativeCompositeFeature::DrawSettings()
 	enabled = settings.Enabled;
 	ImGui::TextDisabled("%s", pass.Status().c_str());
 	ImGui::TextDisabled("%s", LightingStatus(lightingStatus.load()));
-	ImGui::TextDisabled("Lighting submissions: %llu", static_cast<unsigned long long>(lightingSubmissions.load()));
+	ImGui::TextDisabled("Lighting submissions: %llu | shadow-layer submissions: %llu",
+		static_cast<unsigned long long>(lightingSubmissions.load()), static_cast<unsigned long long>(shadowSubmissions.load()));
 }
 
 void NativeCompositeFeature::LoadSettings(json& a_json)
@@ -113,7 +115,7 @@ void NativeCompositeFeature::RegisterUxActions()
 json NativeCompositeFeature::GetDiagnostics()
 {
 	const auto state = lightingStatus.load();
-	return { { "enabled", enabled.load() }, { "captures", captures.load() }, { "lightingSubmissions", lightingSubmissions.load() },
+	return { { "enabled", enabled.load() }, { "captures", captures.load() }, { "lightingSubmissions", lightingSubmissions.load() }, { "shadowSubmissions", shadowSubmissions.load() },
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },
@@ -139,9 +141,18 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	lightingStatus = (!selected.AddLighting || selected.LightingStrength <= 0) && selectedPolicy.visual == 0 ? 0 : unsupportedGamut && selectedPolicy.visual == 0 ? 2 : 1;
 	if ((selected.AddLighting && selected.LightingStrength > 0 && !unsupportedGamut) || selectedPolicy.visual != 0)
 		lighting = candidate;
-	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height, a_transfer, lighting, selected.LightingStrength, selectedPolicy, revision);
+	const auto shadowSettings = globals::features::dx12NativeScene.GetShadowLayerSettings();
+	const bool wantShadow = shadowSettings.preview || shadowSettings.strength * shadowSettings.blend > 0.0f;
+	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
+	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
+	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
+		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selectedPolicy, revision);
 	if (frame) ++captures;
 	if (frame && frame->lightingSubmitted) { ++lightingSubmissions; lightingStatus = 3; }
 	else if (lighting) lightingStatus = 4;
+	if (frame && frame->shadowSubmitted) {
+		++shadowSubmissions;
+		if (!frame->lightingSubmitted) lightingStatus = 5;
+	}
 	return frame;
 }

@@ -6,6 +6,38 @@
 #include <fstream>
 #include <limits>
 
+bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
+{
+	if (shadowPipeline && shadowPipelineDevice == a_device) return true;
+	try {
+		std::ifstream file("Data/Shaders/NativeComposite/ShadowLayer.dxil", std::ios::binary | std::ios::ate);
+		if (!file) return false;
+		const auto size = file.tellg();
+		if (size <= 0 || size > 16 * 1024 * 1024) return false;
+		std::vector<char> shader(static_cast<size_t>(size));
+		file.seekg(0);
+		if (!file.read(shader.data(), size)) return false;
+		CD3DX12_DESCRIPTOR_RANGE ranges[2];
+		ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2, 0);
+		ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+		CD3DX12_ROOT_PARAMETER parameters[3];
+		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
+		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
+		parameters[2].InitAsConstants(40, 0);
+		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
+		winrt::com_ptr<ID3DBlob> serialized, errors;
+		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
+		winrt::com_ptr<ID3D12RootSignature> newRoot;
+		DX::ThrowIfFailed(a_device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(newRoot.put())));
+		D3D12_COMPUTE_PIPELINE_STATE_DESC pso{};
+		pso.pRootSignature = newRoot.get(); pso.CS = { shader.data(), shader.size() };
+		winrt::com_ptr<ID3D12PipelineState> newPipeline;
+		DX::ThrowIfFailed(a_device->CreateComputePipelineState(&pso, IID_PPV_ARGS(newPipeline.put())));
+		shadowRoot = std::move(newRoot); shadowPipeline = std::move(newPipeline); shadowPipelineDevice = a_device;
+		return true;
+	} catch (...) { return false; }
+}
+
 bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 {
 	if (pipeline && pipelineDevice == a_device)
@@ -47,7 +79,11 @@ bool NativeComposite::InitializeLighting(ID3D12Device* a_device)
 std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
 	ID3D12Device* a_device12, ID3D12CommandQueue* a_queue, ID3D11Texture2D* a_source,
 	uint32_t a_frame, uint32_t a_width, uint32_t a_height, Transfer a_transfer,
-	const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting, float a_strength, const Policy& a_policy, uint64_t a_revision)
+	const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
+	const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
+	const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
+	const DX12NativeScene::ShadowLayerSettings& a_shadowSettings,
+	float a_strength, const Policy& a_policy, uint64_t a_revision)
 {
 	CS_GPU_PASS("NativeComposite::RasterPassThrough");
 	status = "Invalid capture input";
@@ -73,6 +109,17 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 	}
 	const bool supportsLighting = (support.Support1 & D3D12_FORMAT_SUPPORT1_TYPED_UNORDERED_ACCESS_VIEW) &&
 		(support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD) && (support.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE);
+	const bool shadowRequested = (a_shadowSettings.strength * a_shadowSettings.blend > 0.0f) || a_shadowSettings.preview;
+	const bool applyShadow = supportsLighting && shadowRequested && a_shadow && a_raster &&
+		a_shadow->mask && a_shadow->mask->resource && a_shadow->readyFence &&
+		a_shadow->readyValue && a_shadow->readyValue != UINT64_MAX &&
+		a_shadow->frame == a_frame && a_shadow->width == a_width && a_shadow->height == a_height &&
+		a_shadow->retainedBackend.d3d12Device.get() == a_device12 &&
+		a_raster->depth && a_raster->depth->resource && a_raster->cameraValid &&
+		a_raster->readyFence && a_raster->readyValue && a_raster->readyValue != UINT64_MAX &&
+		a_raster->frame == a_frame && a_raster->width == a_width && a_raster->height == a_height &&
+		a_raster->sourceDepthFormat != DXGI_FORMAT_UNKNOWN && a_transfer != Transfer::Unknown &&
+		InitializeShadow(a_device12);
 	const bool blend = supportsLighting && a_lighting && a_lighting->readyFence && a_lighting->readyValue &&
 		a_lighting->readyValue != UINT64_MAX && a_lighting->backend.d3d12Device.get() == a_device12 &&
 		a_lighting->textures[0] && a_lighting->textures[1] && a_lighting->textures[2] && a_lighting->textures[7] && a_lighting->textures[8] && a_lighting->textures[9] &&
@@ -175,6 +222,8 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			srv.Texture2D.MipLevels = 1;
 			a_device12->CreateShaderResourceView(replacement->frame->color.get(), &srv, replacement->frame->descriptors->GetCPUDescriptorHandleForHeapStart());
 			if (supportsLighting) {
+				heapDesc.NumDescriptors = 3;
+				DX::ThrowIfFailed(a_device12->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(replacement->shadowDescriptors.put())));
 				heapDesc.NumDescriptors = 8;
 				DX::ThrowIfFailed(a_device12->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(replacement->lightingDescriptors.put())));
 				const auto buffer = CD3DX12_RESOURCE_DESC::Buffer(5 * sizeof(uint32_t));
@@ -212,10 +261,69 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		const std::array endBarriers{
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->shared->resource.get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON),
 			CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COPY_DEST,
-				blend ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
+				(blend && !applyShadow) ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_COMMON)
 		};
 		slot->commands->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
+		if (applyShadow) {
+			slot->shadowRoot = shadowRoot;
+			slot->shadowPipeline = shadowPipeline;
+			const auto step = a_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			auto cpu = slot->shadowDescriptors->GetCPUDescriptorHandleForHeapStart();
+			D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+			srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srv.Texture2D.MipLevels = 1;
+			srv.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+			a_device12->CreateShaderResourceView(a_shadow->mask->resource.get(), &srv, cpu);
+			cpu.ptr += step;
+			srv.Format = DXGI_FORMAT_R32_FLOAT;
+			a_device12->CreateShaderResourceView(a_raster->depth->resource.get(), &srv, cpu);
+			cpu.ptr += step;
+			D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+			uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+			uav.Format = desc.Format;
+			a_device12->CreateUnorderedAccessView(slot->frame->color.get(), nullptr, &uav, cpu);
+			const std::array start{
+				CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
+				CD3DX12_RESOURCE_BARRIER::Transition(a_shadow->mask->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+				CD3DX12_RESOURCE_BARRIER::Transition(a_raster->depth->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+			};
+			slot->commands->ResourceBarrier(static_cast<UINT>(start.size()), start.data());
+			ID3D12DescriptorHeap* heaps[]{ slot->shadowDescriptors.get() };
+			slot->commands->SetDescriptorHeaps(1, heaps);
+			slot->commands->SetPipelineState(slot->shadowPipeline.get());
+			slot->commands->SetComputeRootSignature(slot->shadowRoot.get());
+			auto gpu = slot->shadowDescriptors->GetGPUDescriptorHandleForHeapStart();
+			slot->commands->SetComputeRootDescriptorTable(0, gpu);
+			gpu.ptr += 2ull * step;
+			slot->commands->SetComputeRootDescriptorTable(1, gpu);
+			struct Constants {
+				uint32_t width, height; float receiverTolerance, radiusPixels;
+				uint32_t legacyTransfer, preview; float strength, blend;
+				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
+			};
+			static_assert(sizeof(Constants) == 40 * sizeof(uint32_t));
+			const auto& camera = a_raster->camera;
+			const Constants constants{ a_width, a_height, a_shadowSettings.receiverTolerance, a_shadowSettings.radiusPixels,
+				a_transfer == Transfer::LegacyScene ? 1u : 0u, a_shadowSettings.preview ? 1u : 0u,
+				a_shadowSettings.strength, a_shadowSettings.blend,
+				camera.CameraProjInverse, camera.CameraViewInverse };
+			slot->commands->SetComputeRoot32BitConstants(2, 40, &constants, 0);
+			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
+			const std::array end{
+				CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(a_shadow->mask->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON),
+				CD3DX12_RESOURCE_BARRIER::Transition(a_raster->depth->resource.get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON)
+			};
+			slot->commands->ResourceBarrier(static_cast<UINT>(end.size()), end.data());
+		}
 		if (blend) {
+			if (applyShadow) {
+				// Shadow pass resolved the raster back to COMMON before native direct lighting.
+				const auto startDirect = CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(),
+					D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+				slot->commands->ResourceBarrier(1, &startDirect);
+			}
 			slot->root = root;
 			slot->pipeline = pipeline;
 			const auto step = a_device12->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -270,11 +378,17 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 			slot->commands->ResourceBarrier(1, &outputBarrier);
 		}
 		DX::ThrowIfFailed(slot->commands->Close());
+		if (applyShadow) {
+			DX::ThrowIfFailed(a_queue->Wait(a_shadow->readyFence.get(), a_shadow->readyValue));
+			DX::ThrowIfFailed(a_queue->Wait(a_raster->readyFence.get(), a_raster->readyValue));
+		}
 		if (blend)
 			DX::ThrowIfFailed(a_queue->Wait(a_lighting->readyFence.get(), a_lighting->readyValue));
 		ID3D12CommandList* lists[]{ slot->commands.get() };
 		const uint64_t done = slot->fence.Next();
-		if (blend && !globals::features::nativeLighting.RetainContribution(a_lighting, slot->fence.fence12.get(), done)) {
+		if ((blend && !globals::features::nativeLighting.RetainContribution(a_lighting, slot->fence.fence12.get(), done)) ||
+			(applyShadow && (!globals::features::dx12NativeScene.RetainShadowMask(a_shadow, slot->fence.fence12.get(), done) ||
+				!globals::features::dx12NativeScene.RetainRasterFrame(a_raster, slot->fence.fence12.get(), done)))) {
 			slot->untracked = true;
 			return {};
 		}
@@ -291,8 +405,10 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 		frame.transfer = a_transfer;
 		frame.valid = true;
 		frame.lightingSubmitted = blend;
+		frame.shadowSubmitted = applyShadow;
 		slot->countersRead = !blend;
-		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0);
+		frame.validityRevision = a_revision ^ (blend ? (a_lighting->validityRevision * 0x9e3779b97f4a7c15ull) : 0) ^
+			(applyShadow ? (a_shadowSettings.revision * 0xbf58476d1ce4e5b9ull) : 0);
 		status = "Submitted";
 		return slot->frame;
 	} catch (const std::exception& error) {

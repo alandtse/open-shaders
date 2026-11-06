@@ -9,6 +9,13 @@
 
 namespace DX12Native
 {
+	struct ShadowTraceControls
+	{
+		float strength = 1.0f, blend = 1.0f;
+		float reachMultiplier = 1.0f, falloffFraction = 0.1f, falloffExponent = 1.0f, emitterRadius = 1.0f;
+		bool stochastic = true, distanceFade = false;
+		uint32_t normalInfluence = 2;
+	};
 	/** @brief Retains one independently fenced prepared-scene shadow result. */
 	struct ShadowFrame
 	{
@@ -29,6 +36,7 @@ namespace DX12Native
 		uint64_t readyValue = 0, producerValue = 0, bytes = 0;
 		uint32_t frame = 0, width = 0, height = 0;
 		bool completionCounted = false;
+		ShadowTraceControls controls;
 	};
 
 	/** @brief Produces a separate early point-light visibility mask from prepared geometry. */
@@ -38,7 +46,7 @@ namespace DX12Native
 		~ShadowTrace();
 		/** @brief Attempts current-frame shadow tracing without waiting for bindings or GPU work. */
 		void Dispatch(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, std::shared_ptr<const ShadowBindings> a_bindings, std::span<const PreparedPointLight> a_lights,
-			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget);
+			const globals::FrameBuffer& a_camera, std::array<uint32_t, 2> a_size, uint32_t a_frame, uint64_t a_budget, const ShadowTraceControls& a_controls);
 		/** @brief Returns a matching mask; consumers must wait on its completion fence. */
 		std::shared_ptr<const ShadowFrame> Get(uint32_t a_frame) const;
 		/** @brief Retains an offered mask until the registered consumer fence completes. */

@@ -31,7 +31,7 @@ cbuffer Trace : register(b0)
 	uint MaskRequested;
 	uint DebugEnabled;
 	uint ComparisonEnabled;
-	uint Reserved;
+	uint NormalInfluence;
 	row_major float4x4 InverseProjection;
 	row_major float4x4 InverseView;
 	float AbsoluteTolerance;
@@ -44,7 +44,10 @@ cbuffer Trace : register(b0)
 	uint MaskExperimental;
 	uint ReferenceVisibility;
 	uint ReferencePrimaryTraversal;
-	uint2 LabPadding;
+	uint FrameIndex;
+	uint LabPadding;
+	float4 LightTuning; // radius multiplier, cutoff fraction, cutoff exponent, direct strength
+	float4 ShadowTuning; // shadow strength, emitter radius scale, stochastic visibility, emission strength
 };
 
 #include "Common/ReverseZ.hlsli"
@@ -74,6 +77,12 @@ bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, i
 	return AdmitCandidate(instance, primitive, barycentric);
 }
 
+uint NativeShadowHash(uint value)
+{
+	value ^= value >> 16u; value *= 0x7feb352du;
+	value ^= value >> 15u; value *= 0x846ca68bu;
+	return value ^ (value >> 16u);
+}
 void Count(uint index) { InterlockedAdd(Counters[index], 1); }
 
 void Finish(uint2 pixel, uint original, uint effective, uint reason)
@@ -185,6 +194,17 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	Count(6);
 	float3 position = CameraOrigin + direction * distance;
 	float3 n = normalize(material.normal), v = -direction;
+	if (NormalInfluence == 1u) {
+		TriangleSurface triangle;
+		if (!LoadTriangle(instance, primitive, query.CommittedTriangleBarycentrics(), triangle)) {
+			Finish(pixel, 3, 3, 5); return;
+		}
+		float3 edge0 = mul((float3x3)query.CommittedObjectToWorld3x4(), triangle.position1 - triangle.position0);
+		float3 edge1 = mul((float3x3)query.CommittedObjectToWorld3x4(), triangle.position2 - triangle.position0);
+		float3 geometric = cross(edge0, edge1);
+		if (!all(isfinite(geometric)) || dot(geometric, geometric) <= 1e-8f) { Finish(pixel, 3, 3, 5); return; }
+		n = normalize(geometric);
+	}
 	float3 diffuse = 0, specular = 0;
 	uint eligibleLights = 0;
 	bool strictVisibilityRejected = false;
@@ -193,18 +213,37 @@ void main(uint2 pixel : SV_DispatchThreadID)
 		if (light.flags.x == 0) continue;
 		++eligibleLights;
 		float3 delta = light.positionRadius.xyz - position;
-		float d = length(delta), radius = light.positionRadius.w;
+		float d = length(delta);
+		float radius = min(max(light.positionRadius.w * LightTuning.x, MinimumDistance), 60000.0f);
 		if (!isfinite(d) || d <= MinimumDistance || d >= radius) continue;
 		float3 l = delta / d;
-		float ndotl = saturate(dot(n, l));
+		float ndotl = NormalInfluence == 0u ? 1.0f : saturate(dot(n, l));
 		if (ndotl <= 0) continue;
 		Count(8);
 		float sourceRadius = max(light.radianceSourceRadius.w, MinimumDistance);
-		float fade = saturate((radius - d) / max(radius * 0.1f, MinimumDistance));
-		float attenuation = fade * fade * (3 - 2 * fade) / max(d * d + sourceRadius * sourceRadius, 1e-4f);
+		float fade = saturate((radius - d) / max(radius * LightTuning.y, MinimumDistance));
+		float smoothCutoff = fade * fade * (3 - 2 * fade);
+		float attenuation = pow(smoothCutoff, LightTuning.z) / max(d * d + sourceRadius * sourceRadius, 1e-4f);
+		float3 visibilityTarget = light.positionRadius.xyz;
+		if (ShadowTuning.z >= 0.5f && ShadowTuning.y > 0.0f) {
+			const float emitterRadius = min(sourceRadius * ShadowTuning.y, d * 0.5f);
+			if (emitterRadius > 0.0f) {
+				uint seed = NativeShadowHash(pixel.x * 0x9e3779b9u ^ pixel.y * 0x85ebca6bu ^
+					FrameIndex * 0xc2b2ae35u ^ i * 0x27d4eb2fu);
+				float2 u = (float2(NativeShadowHash(seed ^ 0x68bc21ebu) >> 8u,
+					NativeShadowHash(seed ^ 0x02e5be93u) >> 8u) + 0.5f) / 16777216.0f;
+				float angle = u.y * 6.28318530718f;
+				float spread = emitterRadius * sqrt(u.x);
+				float3 tangent = normalize(cross(abs(l.z) < 0.9f ? float3(0,0,1) : float3(0,1,0), l));
+				visibilityTarget += spread * (cos(angle) * tangent + sin(angle) * cross(l, tangent));
+			}
+		}
 		RayDesc visibility;
-		visibility.Origin = position + l * MinimumDistance; visibility.Direction = l;
-		visibility.TMin = MinimumDistance; visibility.TMax = d - 2 * MinimumDistance;
+		visibility.Origin = position + l * MinimumDistance;
+		float3 shadowDelta = visibilityTarget - visibility.Origin;
+		float shadowLength = length(shadowDelta);
+		visibility.Direction = shadowLength > MinimumDistance ? shadowDelta / shadowLength : l;
+		visibility.TMin = MinimumDistance; visibility.TMax = shadowLength - MinimumDistance;
 		if (visibility.TMax <= visibility.TMin) {
 			if (ReferenceVisibility != 0) { strictVisibilityRejected = true; continue; }
 			if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return;
@@ -227,21 +266,28 @@ void main(uint2 pixel : SV_DispatchThreadID)
 			if (admitted) shadow.CommitNonOpaqueTriangleHit();
 		}
 		if (!valid) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 7 : originalReason); return; }
-		if (shadow.CommittedStatus() != COMMITTED_NOTHING) continue;
+		float shadowVisibility = shadow.CommittedStatus() == COMMITTED_NOTHING ? 1.0f : 1.0f - saturate(ShadowTuning.x);
+		if (shadowVisibility <= 0.0f) continue;
 		float3 halfVector = l + v;
 		float3 h = dot(halfVector, halfVector) > 1e-8f ? normalize(halfVector) : n;
 		float3 fresnel;
 		float3 microfacet = PBR::SpecularMicrofacet(material.roughness, material.f0, max(ndotl, 1e-5f),
 			saturate(abs(dot(n, v)) + 1e-5f), saturate(dot(n, h)), saturate(dot(v, h)), fresnel);
-		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl;
-		if (EnabledLobes & 1u) diffuse += (1 - material.metallic) * material.baseColor * (1 - fresnel) * BRDF::Diffuse_Lambert() * irradiance;
-		if (EnabledLobes & 2u) specular += microfacet * irradiance;
+		float3 irradiance = light.radianceSourceRadius.rgb * attenuation * ndotl * shadowVisibility;
+		if (EnabledLobes & 1u) diffuse += (1 - material.metallic) * material.baseColor *
+			(NormalInfluence == 0u ? 1.0f : (1 - fresnel)) * BRDF::Diffuse_Lambert() * irradiance;
+		if ((EnabledLobes & 2u) && NormalInfluence != 0u) specular += microfacet * irradiance;
 	}
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
 	if (eligibleLights == 0) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
 	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
-	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity, 1);
-	const float4 specularOutput = float4(specular * SpecularIntensity, 1);
+	// Emission is independent of direct intensity, as in the reference; default
+	// 0 prevents double-counting emission already present in the raster scene.
+	const float3 emission = ShadowTuning.w > 0.0f && all(isfinite(material.emission)) ?
+		max(material.emission, 0.0f) * ShadowTuning.w : 0.0f;
+	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity * LightTuning.w +
+		((EnabledLobes & 1u) != 0u ? emission : 0.0f), 1);
+	const float4 specularOutput = float4(specular * SpecularIntensity * LightTuning.w, 1);
 	if (!all(isfinite(diffuseOutput)) || !all(isfinite(specularOutput))) { Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = diffuseOutput; ComparisonSpecular[pixel] = specularOutput; }
 	RawDirectDiffuse[pixel] = diffuseOutput;

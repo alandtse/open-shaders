@@ -35,6 +35,7 @@ public:
 		D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
 		bool valid = false;
 		bool lightingSubmitted = false;
+		bool shadowSubmitted = false;
 		/** @brief Reports whether the producer fence completed without device removal. */
 		bool IsComplete() const
 		{
@@ -49,7 +50,11 @@ public:
 	std::shared_ptr<const Frame> Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
 		ID3D12Device* a_device12, ID3D12CommandQueue* a_queue, ID3D11Texture2D* a_source,
 		uint32_t a_frame, uint32_t a_width, uint32_t a_height, Transfer a_transfer,
-		const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting, float a_strength, const Policy& a_policy, uint64_t a_revision);
+		const std::shared_ptr<const NativeLightingFeature::Contribution>& a_lighting,
+		const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
+		const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
+		const DX12NativeScene::ShadowLayerSettings& a_shadowSettings,
+		float a_strength, const Policy& a_policy, uint64_t a_revision);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
@@ -70,7 +75,9 @@ private:
 		std::unique_ptr<WrappedResource> shared;
 		winrt::com_ptr<ID3D12CommandAllocator> allocator;
 		winrt::com_ptr<ID3D12GraphicsCommandList> commands;
-		winrt::com_ptr<ID3D12DescriptorHeap> lightingDescriptors;
+		winrt::com_ptr<ID3D12DescriptorHeap> lightingDescriptors, shadowDescriptors;
+		winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+		winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 		winrt::com_ptr<ID3D12RootSignature> root;
 		winrt::com_ptr<ID3D12PipelineState> pipeline;
 		winrt::com_ptr<ID3D12Resource> counters, counterReset, counterReadback;
@@ -87,10 +94,13 @@ private:
 	std::array<std::unique_ptr<Slot>, 4> slots;
 	winrt::com_ptr<ID3D12RootSignature> root;
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
-	ID3D12Device* pipelineDevice = nullptr;
+	ID3D12Device* pipelineDevice = nullptr, *shadowPipelineDevice = nullptr;
+	winrt::com_ptr<ID3D12RootSignature> shadowRoot;
+	winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 	std::atomic<uint64_t> completedComposites{ 0 }, acceptedPixels{ 0 }, modifiedPixels{ 0 }, visualizationPixels{ 0 }, counterReadFailures{ 0 };
 	std::atomic<uint64_t> effectiveRecoveredPixels{ 0 }, finiteOnlyPixels{ 0 };
 	DX12Native::VideoMemoryBudget videoBudget;
 	bool InitializeLighting(ID3D12Device* a_device);
+	bool InitializeShadow(ID3D12Device* a_device);
 	std::string status = "Not captured";
 };
