@@ -4,6 +4,7 @@
 #include "TruePBR/NativePBRCompiler.h"
 #include "TruePBR/InstanceCoverage.h"
 #include "TruePBR/VerifiedBridge.h"
+#include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VerifiedTextureSources.h"
@@ -1027,4 +1028,34 @@ TEST_CASE("Live emission overrides require finite nonnegative instance propertie
     properties.emissiveColor[0] = 0.5f;
     properties.emissiveMultiplier = std::numeric_limits<float>::infinity();
     REQUIRE_FALSE(NativePBR::ValidLiveEmission(properties));
+}
+
+TEST_CASE("Loose PBR texture planner is bounded, deduplicated and excludes prepared sources", "[native_pbr]")
+{
+    NativePBR::Recipe recipe;
+    recipe.identity = recipe.revision = 1;
+    recipe.textures[0].canonicalPath = "textures/base.dds";
+    recipe.textures[1].canonicalPath = "textures/normal.dds";
+    recipe.textures[2].canonicalPath = "textures/rmaos.dds";
+    recipe.textures[3].canonicalPath = "textures/glow.dds";
+    const std::shared_ptr<const NativePBR::Recipe> owned = std::make_shared<const NativePBR::Recipe>(recipe);
+    NativePBR::LiveMatchResult matches;
+    matches.matches.emplace_back(NativePBR::VerifiedLiveMatch{ owned, {} });
+    matches.matches.emplace_back(NativePBR::VerifiedLiveMatch{ owned, {} });
+    auto plan = DX12Native::PlanLiveLooseTextures(matches, { "textures/base.dds" }, 2);
+    REQUIRE(plan.paths.size() == 2);
+    REQUIRE(plan.paths[0] == "textures/normal.dds");
+    REQUIRE(plan.paths[1] == "textures/rmaos.dds");
+    REQUIRE(plan.alreadyPresent == 1);
+    REQUIRE(plan.deferred == 1);
+    plan = DX12Native::PlanLiveLooseTextures(matches, {}, 8);
+    REQUIRE(plan.paths.size() == 4);
+    REQUIRE(plan.deferred == 0);
+    recipe.textures[3].canonicalPath = "textures/glow.png";
+    matches.matches.clear();
+    matches.matches.emplace_back(NativePBR::VerifiedLiveMatch{
+        std::make_shared<const NativePBR::Recipe>(recipe), {} });
+    plan = DX12Native::PlanLiveLooseTextures(matches, {}, 8);
+    REQUIRE(plan.paths.size() == 3);
+    REQUIRE(plan.invalid == 1);
 }
