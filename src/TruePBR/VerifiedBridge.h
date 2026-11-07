@@ -48,6 +48,15 @@ namespace NativePBR
         LiveMatchReport report;
     };
 
+    /** @brief Only apply observed per-instance emission when each component is finite and physically nonnegative. */
+    inline bool ValidLiveEmission(const InstanceProperties& a_properties)
+    {
+        return a_properties.emissionKnown && std::isfinite(a_properties.emissiveMultiplier) &&
+            a_properties.emissiveMultiplier >= 0 &&
+            std::all_of(a_properties.emissiveColor.begin(), a_properties.emissiveColor.end(),
+                [](float value) { return std::isfinite(value) && value >= 0; });
+    }
+
     /** @brief Rejects advanced PBR that the current native BRDF cannot represent. */
     inline bool NativeMeshRecipeSupported(const Recipe& a_recipe)
     {

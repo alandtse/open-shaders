@@ -10,11 +10,19 @@ observation is unique, the surface is static and opaque, the material is an ordi
 mesh recipe without unsupported PBR features, and alpha, clamp mode, UV transform and
 base/normal/RMAOS/emission texture paths match exactly.
 
-On an accepted match the worker applies only **roughness scale** and **specular level**
-to the existing 128-byte native material record. Texture descriptors, resident DDS
+On an accepted match the worker applies **roughness scale** and **specular level**
+to the existing 128-byte native material record. If the same instance has verified
+finite nonnegative emission metadata, its observed emissive color and multiplier
+are applied separately. Texture descriptors, resident DDS
 pages, emitter settings, geometry and shader paths remain as prepared by the offline
 scene. The material table stays immutable after upload. Different live identities or
 revisions cannot share deduplicated records.
+
+A live source match additionally requires corresponding SHA-256-verified DDS
+sources to have been successfully published in the native material page registry.
+The source index catches normalized-path conflicts and rejects incompatible
+observed texture dimensions/mip counts. This verifies **atlas provenance**, not
+byte-for-byte identity with the currently bound DX11 GPU texture.
 
 Unsupported, ambiguous, dirty, missing, animated, alpha-tested, landscape, or otherwise
 incompatible candidates continue through the existing offline atlas material route.
@@ -30,7 +38,8 @@ this bridge deliberately does **not** import live textures, change opacity or al
 advanced PBR features.
 
 Diagnostics under `materialBudget` expose `livePbrMatched`, `livePbrAmbiguous`,
-`livePbrIncompatible`, `livePbrMissing`, and `livePbrApplied`. A matched candidate may still be
+`livePbrIncompatible`, `livePbrMissing`, `livePbrApplied`, `livePbrEmissiveApplied`,
+and `livePbrSourcesMissing/Ambiguous/Incompatible`. A matched candidate may still be
 rejected by the ordinary native material compiler; the existing material readiness
 and failure counters remain authoritative.
 

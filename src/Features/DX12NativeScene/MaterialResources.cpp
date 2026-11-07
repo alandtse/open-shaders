@@ -112,7 +112,9 @@ namespace DX12Native
 			catch (const std::bad_alloc&) { throw; }
 			catch (const std::exception& error) {
 				result->failure = error.what();
-				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear(); result->bytes = result->textures = 0;
+				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear();
+                result->verifiedTextureSources = {};
+                result->bytes = result->textures = 0;
 				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
 				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
 			}
@@ -159,18 +161,33 @@ namespace DX12Native
 			const auto& instance = a_scene.instances[index];
 			const auto attributes = instance.material.attributes;
 			const auto live = a_livePbr && index < liveMatch.matches.size() ? liveMatch.matches[index] : std::nullopt;
-            const auto liveKey = live ? ":live:" + std::to_string(live->recipe->identity) + ":" + std::to_string(live->recipe->revision) : ":offline";
+            // Per-instance material properties (including emission) must never alias another instance's record.
+            const auto liveKey = live ? ":live:" + std::to_string(live->recipe->identity) + ":" +
+                std::to_string(live->recipe->revision) + ":instance:" + std::to_string(index) : ":offline";
             const auto key = (instance.material.offlineDescription ? instance.material.offlineDescription->dump() + ":" + std::to_string(attributes ? attributes->stride : 0) + ":" + std::to_string(uint32_t(instance.material.offlineMaterialFlags)) : "unavailable") + liveKey;
 			const auto [found, inserted] = unique.try_emplace(key, uint32_t(materials.size()));
 			if (inserted) {
 				MaterialRecord record;
 				try {
                     record = Compile(*result, instance.material);
-                    if (live && (record.flags[0] & (kReady | kPbr)) == (kReady | kPbr) && record.flags[3] == 0) {
-                        // Reuse verified resident atlas textures; only native PBR scalars change.
-                        record.scalar.w = live->recipe->parameters.roughnessScale;
-                        record.scalar.z = live->recipe->parameters.specularLevel;
-                        ++result->livePbrApplied;
+                    if (live) {
+                        const auto sourceStatus = result->verifiedTextureSources.Assess(*live->recipe);
+                        if (sourceStatus == LiveTextureSourceStatus::Missing) ++result->livePbrSourcesMissing;
+                        if (sourceStatus == LiveTextureSourceStatus::Ambiguous) ++result->livePbrSourcesAmbiguous;
+                        if (sourceStatus == LiveTextureSourceStatus::Incompatible) ++result->livePbrSourcesIncompatible;
+                        if (sourceStatus == LiveTextureSourceStatus::Available &&
+                            (record.flags[0] & (kReady | kPbr)) == (kReady | kPbr) && record.flags[3] == 0) {
+                            // Atlas source digests are SHA-verified; no unverified live GPU resource is imported.
+                            record.scalar.w = live->recipe->parameters.roughnessScale;
+                            record.scalar.z = live->recipe->parameters.specularLevel;
+                            ++result->livePbrApplied;
+                            if (NativePBR::ValidLiveEmission(live->properties)) {
+                                record.emission = { live->properties.emissiveColor[0],
+                                    live->properties.emissiveColor[1], live->properties.emissiveColor[2],
+                                    live->properties.emissiveMultiplier };
+                                ++result->livePbrEmissiveApplied;
+                            }
+                        }
                     }
                 }
 				catch (const std::exception&) { record.flags[3] = 16; }

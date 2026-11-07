@@ -1013,3 +1013,18 @@ TEST_CASE("Verified resident DDS sources reject path collisions and incompatible
     REQUIRE_FALSE(distinct.Observe("../outside.dds", a, 256, 256, 8));
     REQUIRE_FALSE(distinct.Observe("textures/e.dds", "bad-digest", 256, 256, 8));
 }
+
+TEST_CASE("Live emission overrides require finite nonnegative instance properties", "[native_pbr]")
+{
+    NativePBR::InstanceProperties properties;
+    REQUIRE_FALSE(NativePBR::ValidLiveEmission(properties));
+    properties.emissionKnown = true;
+    properties.emissiveColor = { 0.5f, 1.0f, 0.1f };
+    properties.emissiveMultiplier = 2.0f;
+    REQUIRE(NativePBR::ValidLiveEmission(properties));
+    properties.emissiveColor[0] = -0.1f;
+    REQUIRE_FALSE(NativePBR::ValidLiveEmission(properties));
+    properties.emissiveColor[0] = 0.5f;
+    properties.emissiveMultiplier = std::numeric_limits<float>::infinity();
+    REQUIRE_FALSE(NativePBR::ValidLiveEmission(properties));
+}
