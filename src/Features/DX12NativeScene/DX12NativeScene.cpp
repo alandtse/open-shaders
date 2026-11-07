@@ -20,6 +20,7 @@ void DX12NativeScene::DrawSettings()
 		static_cast<unsigned long long>(shadowOpaqueRetryRecovered),
 		static_cast<unsigned long long>(shadowOpaqueRetryAttempts));
 	if (ImGui::CollapsingHeader("Early DX12 shadow-mask controls")) {
+		bool changed = false;
 		ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
 		int traceDensity = int(settings.ShadowTraceDensityMode);
 		if (ImGui::Combo("Independent shadow trace density", &traceDensity, "Full\0Two-thirds\0Half\0")) {
@@ -27,7 +28,6 @@ void DX12NativeScene::DrawSettings()
 			changed = true;
 		}
 		ImGui::TextDisabled("Full-resolution raw masks; skipped samples have validity -1 and are not reconstructed.");
-		bool changed = false;
 		changed |= ImGui::Checkbox("Shadow all prepared point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
 			const auto scene = GetPublishedScene();
