@@ -56,4 +56,6 @@ namespace DX12Native
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result);
+	/** @brief Releases a completed or device-removed failed upload without waiting. */
+	void RetireMaterialUploads();
 }

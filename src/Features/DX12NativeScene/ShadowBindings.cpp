@@ -118,6 +118,7 @@ namespace DX12Native
 
 	void ShadowBindingWorker::Advance()
 	{
+		RetireMaterialUploads();
 		if (pending) {
 			if (!pending->done.load(std::memory_order_acquire)) return;
 			if (pending->revision == revision) {

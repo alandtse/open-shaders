@@ -52,13 +52,30 @@ namespace DX12Native
 			winrt::com_ptr<ID3D12Fence> fence;
 			winrt::handle event;
 			bool submitted = false;
-			Upload() = default;
-			Upload(Upload&&) = default;
-			~Upload()
-			{
-				if (submitted && fence && fence->GetCompletedValue() < 1) (void)new Upload(std::move(*this));
-			}
 		};
+
+		struct UploadRetirement
+		{
+			std::mutex mutex;
+			std::optional<Upload> pending;
+			winrt::com_ptr<ID3D12Device> device;
+		};
+
+		UploadRetirement& RetiredUpload()
+		{
+			// Process-lifetime ownership prevents shutdown from releasing an in-flight upload.
+			static auto* retirement = new UploadRetirement;
+			return *retirement;
+		}
+
+		void RetireCompletedUpload(UploadRetirement& a_retirement)
+		{
+			if (!a_retirement.pending) return;
+			const auto done = a_retirement.pending->fence->GetCompletedValue();
+			if (done < 1 && SUCCEEDED(a_retirement.device->GetDeviceRemovedReason())) return;
+			a_retirement.pending.reset();
+			a_retirement.device = nullptr;
+		}
 
 		void ValidateMetadata(const DirectX::TexMetadata& a_meta, uint64_t a_budget)
 		{
@@ -77,6 +94,10 @@ namespace DX12Native
 
 		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget)
 		{
+			auto& retirement = RetiredUpload();
+			std::scoped_lock retirementLock(retirement.mutex);
+			RetireCompletedUpload(retirement);
+			if (retirement.pending) throw MaterialUploadError("Previous material upload is still in flight");
 			const auto& meta = a_textures.front()->image.GetMetadata();
 			const auto format = DirectX::MakeLinear(meta.format);
 			const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DirectX::MakeTypeless(format), meta.width, uint32_t(meta.height), uint16_t(a_textures.size()), uint16_t(meta.mipLevels));
@@ -95,6 +116,12 @@ namespace DX12Native
 			if (allocation == UINT64_MAX || stagingAllocation == UINT64_MAX || allocation > a_budget || stagingAllocation > a_budget - allocation ||
 				a_result.bytes > a_budget - allocation - stagingAllocation) throw std::runtime_error("Material texture/staging budget exceeded");
 			Upload upload;
+			const SKSE::stl::scope_exit retainSubmitted([&]() noexcept {
+				if (upload.submitted && upload.fence && upload.fence->GetCompletedValue() < 1) {
+					retirement.device = a_backend.d3d12Device;
+					retirement.pending.emplace(std::move(upload));
+				}
+			});
 			const auto deviceHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 			const auto stagingHeap = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
 			DX::ThrowIfFailed(a_backend.d3d12Device->CreateCommittedResource(&deviceHeap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(upload.target.put())));
@@ -157,6 +184,13 @@ namespace DX12Native
 			a_result.bytes += allocation;
 			a_result.textures += uint32_t(a_textures.size());
 		}
+	}
+
+	void RetireMaterialUploads()
+	{
+		auto& retirement = RetiredUpload();
+		std::unique_lock lock(retirement.mutex, std::try_to_lock);
+		if (lock.owns_lock()) RetireCompletedUpload(retirement);
 	}
 
 	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result)
