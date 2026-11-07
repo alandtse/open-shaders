@@ -23,6 +23,7 @@ static void DiscardMislinkedTextureSet(RE::NiPointer<RE::BSTextureSet>& textureS
 
 BSLightingShaderMaterialPBR::~BSLightingShaderMaterialPBR()
 {
+	globals::features::truePBR.nativeRegistry.Forget(this);
 	All.erase(this);
 }
 
@@ -75,6 +76,7 @@ void BSLightingShaderMaterialPBR::CopyMembers(RE::BSShaderMaterial* that)
 	featuresTexture1 = pbrThat->featuresTexture1;
 
 	All[this] = All[pbrThat];
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 std::uint32_t BSLightingShaderMaterialPBR::ComputeCRC32(uint32_t srcHash)
@@ -169,6 +171,7 @@ void BSLightingShaderMaterialPBR::ApplyTextureSetData(const TruePBR::PBRTextureS
 	}
 
 	glintParameters = textureSetData.glintParameters;
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ApplyMaterialObjectData(const TruePBR::PBRMaterialObjectData& materialObjectData)
@@ -177,6 +180,7 @@ void BSLightingShaderMaterialPBR::ApplyMaterialObjectData(const TruePBR::PBRMate
 	projectedMaterialRoughness = materialObjectData.roughness;
 	projectedMaterialSpecularLevel = materialObjectData.specularLevel;
 	projectedMaterialGlintParameters = materialObjectData.glintParameters;
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ClearMaterialObjectData()
@@ -185,6 +189,7 @@ void BSLightingShaderMaterialPBR::ClearMaterialObjectData()
 	projectedMaterialRoughness = 1.f;
 	projectedMaterialSpecularLevel = 0.04f;
 	projectedMaterialGlintParameters = GlintParameters{};
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTextureSet* inTextureSet)
@@ -231,6 +236,7 @@ void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTex
 			_mm_mfence();
 		}
 	}
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ClearTextures()
@@ -241,6 +247,7 @@ void BSLightingShaderMaterialPBR::ClearTextures()
 	displacementTexture.reset();
 	featuresTexture0.reset();
 	featuresTexture1.reset();
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBR::ReceiveValuesFromRootMaterial(bool skinned, bool rimLighting, bool softLighting, bool backLighting, bool MSN)

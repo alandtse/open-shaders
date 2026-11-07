@@ -58,6 +58,78 @@ static bool PBRMaterialHasRequiredTextures(RE::BSLightingShaderMaterialBase cons
 	return pbrMaterial->diffuseTexture && pbrMaterial->normalTexture && pbrMaterial->rmaosTexture;
 }
 
+
+static NativePBR::Glint SnapshotGlint(const GlintParameters& a_glint)
+{
+	return { a_glint.enabled, a_glint.screenSpaceScale, a_glint.logMicrofacetDensity,
+		a_glint.microfacetRoughness, a_glint.densityRandomization };
+}
+
+static NativePBR::MaterialData SnapshotPBRMesh(const BSLightingShaderMaterialPBR& a_material)
+{
+	NativePBR::MaterialData result;
+	result.kind = NativePBR::MaterialKind::Mesh;
+	result.pbrFlags = a_material.pbrFlags.underlying();
+	result.clampMode = static_cast<uint32_t>(a_material.textureClampMode);
+	result.roughnessScale = a_material.GetRoughnessScale();
+	result.displacementScale = a_material.GetDisplacementScale();
+	result.specularLevel = a_material.GetSpecularLevel();
+	if (a_material.pbrFlags.any(PBRFlags::TwoLayer)) {
+		const auto& color = a_material.GetCoatColor();
+		result.coatColor = { color.red, color.green, color.blue };
+		result.coatStrength = a_material.GetCoatStrength();
+		result.coatRoughness = a_material.GetCoatRoughness();
+		result.coatSpecularLevel = a_material.GetCoatSpecularLevel();
+	} else {
+		if (a_material.pbrFlags.any(PBRFlags::Subsurface)) {
+			const auto& color = a_material.GetSubsurfaceColor();
+			result.subsurfaceColor = { color.red, color.green, color.blue };
+			result.subsurfaceOpacity = a_material.GetSubsurfaceOpacity();
+		}
+		if (a_material.pbrFlags.any(PBRFlags::Fuzz)) {
+			const auto& color = a_material.GetFuzzColor();
+			result.fuzzColor = { color.red, color.green, color.blue };
+			result.fuzzWeight = a_material.GetFuzzWeight();
+		}
+	}
+	result.projectedColor = a_material.GetProjectedMaterialBaseColorScale();
+	result.projectedRoughness = a_material.GetProjectedMaterialRoughness();
+	result.projectedSpecularLevel = a_material.GetProjectedMaterialSpecularLevel();
+	result.glint = SnapshotGlint(a_material.GetGlintParameters());
+	result.projectedGlint = SnapshotGlint(a_material.GetProjectedMaterialGlintParameters());
+
+	auto* textureSet = a_material.textureSet.get();
+	if (!textureSet) return result;
+	static const auto* textureSetRTTI = REL::Relocation<const RE::NiRTTI*>{ RE::BSTextureSet::Ni_RTTI }.get();
+	const auto* rtti = textureSet->GetRTTI();
+	if (!rtti || !rtti->IsKindOf(textureSetRTTI)) return result;
+	constexpr std::array<uint32_t, 7> textureSlots{ 0, 1, 5, 2, 3, 7, 6 };
+	for (size_t index = 0; index < textureSlots.size(); ++index) {
+		const auto* path = textureSet->GetTexturePath(static_cast<RE::BSTextureSet::Texture>(textureSlots[index]));
+		if (path) result.texturePaths[index] = path;
+	}
+	result.texturePathsComplete = !result.texturePaths[0].empty() &&
+		!result.texturePaths[1].empty() && !result.texturePaths[2].empty();
+	return result;
+}
+
+static NativePBR::MaterialData SnapshotPBRLandscape(const BSLightingShaderMaterialPBRLandscape& a_material)
+{
+	NativePBR::MaterialData result;
+	result.kind = NativePBR::MaterialKind::Landscape;
+	result.landscapeTileCount = std::min(uint32_t(a_material.numLandscapeTextures),
+		uint32_t(BSLightingShaderMaterialPBRLandscape::NumTiles));
+	for (uint32_t tile = 0; tile < result.landscapeTileCount; ++tile) {
+		auto& output = result.landscapeTiles[tile];
+		output.isPbr = a_material.isPbr[tile];
+		output.roughnessScale = a_material.roughnessScales[tile];
+		output.displacementScale = a_material.displacementScales[tile];
+		output.specularLevel = a_material.specularLevels[tile];
+		output.glint = SnapshotGlint(a_material.glintParameters[tile]);
+	}
+	return result;
+}
+
 // SetupMaterial runs every draw of every visible instance; without this, a
 // persistently-visible mislinked material would log every frame.
 static void WarnMissingPBRTexturesOnce(const std::string& inputFilePath)
@@ -151,6 +223,9 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 
 void TruePBR::DrawSettings()
 {
+	const auto nativePbr = nativeRegistry.GetStatistics();
+	ImGui::TextDisabled("Native PBR metadata: %zu mesh, %zu landscape | dirty: %zu | revision: %llu",
+		nativePbr.mesh, nativePbr.landscape, nativePbr.dirty, static_cast<unsigned long long>(nativePbr.revision));
 	if (ImGui::TreeNodeEx(T(TKEY("global_settings"), "Global Settings"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::SliderFloat(T(TKEY("vertex_ao_strength"), "Vertex AO Strength"), &settings.VertexAOStrength, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 
@@ -389,6 +464,7 @@ void TruePBR::RestoreDefaultSettings()
 
 void TruePBR::SetupResources()
 {
+	nativeRegistry.MarkAllDirty();
 	SetupTextureSetData();
 	SetupMaterialObjectData();
 }
@@ -893,6 +969,11 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 		auto graphicsState = globals::game::graphicsState;
 		auto smState = globals::game::smState;
 
+		if ((lightingType == MTLand || lightingType == MTLandLODBlend) && nativeRegistry.NeedsCapture(material))
+			nativeRegistry.Publish(material, SnapshotPBRLandscape(*static_cast<const BSLightingShaderMaterialPBRLandscape*>(material)));
+		else if (isObjectTechnique && PBRMaterialHasRequiredTextures(material) && nativeRegistry.NeedsCapture(material))
+			nativeRegistry.Publish(material, SnapshotPBRMesh(*static_cast<const BSLightingShaderMaterialPBR*>(material)));
+
 		RE::BSGraphics::Renderer::PrepareVSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);
 		RE::BSGraphics::Renderer::PreparePSConstantGroup(RE::BSGraphics::ConstantGroupLevel::PerMaterial);
 
@@ -1230,6 +1311,7 @@ void SetupPBRLandscapeTextureParameters(BSLightingShaderMaterialPBRLandscape& ma
 	material.roughnessScales[textureIndex] = textureSetData.roughnessScale;
 	material.specularLevels[textureIndex] = textureSetData.specularLevel;
 	material.glintParameters[textureIndex] = textureSetData.glintParameters;
+	globals::features::truePBR.nativeRegistry.MarkDirty(&material);
 }
 
 void SetupLandscapeTexture(BSLightingShaderMaterialPBRLandscape& material, RE::TESLandTexture& landTexture, uint32_t textureIndex, std::array<TruePBR::PBRTextureSetData*, BSLightingShaderMaterialPBRLandscape::NumTiles>& textureSets)

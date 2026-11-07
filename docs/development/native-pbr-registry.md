@@ -21,3 +21,18 @@ Packed RMAOS and optional layers remain metadata, not DX12 shader inputs.
 The existing raster material shaders, native light/shadow producers, composite,
 FSR and scene atlas remain unchanged. A later bridge stage may map these
 snapshots to material tables and texture residency under a GPU budget.
+
+## Live integration
+
+The True PBR SetupMaterial hook publishes a mesh snapshot the first time a
+valid object material is seen, and a landscape-scalar snapshot the first time a
+PBR landscape material is seen. Subsequent draws only check the dirty bit.
+Known material mutation methods invalidate that entry, and material destructors
+remove it. The feature UI shows registration counters.
+
+Standard object paths are read from validated BSTextureSet slots in this order:
+base color (0), normal (1), RMAOS (5), emission (2), displacement (3),
+features0 (7), features1 (6). `texturePathsComplete` is true only
+when the base color, normal and RMAOS paths are all present. Landscape snapshots
+currently expose six per-layer scalar/feature records, but not the layer
+texture paths. Neither raw DX11 resources nor SDK handles cross this boundary.

@@ -10,6 +10,7 @@ BSLightingShaderMaterialPBRLandscape::BSLightingShaderMaterialPBRLandscape()
 
 BSLightingShaderMaterialPBRLandscape::~BSLightingShaderMaterialPBRLandscape()
 {
+	globals::features::truePBR.nativeRegistry.Forget(this);
 	All.erase(this);
 }
 
@@ -64,6 +65,7 @@ void BSLightingShaderMaterialPBRLandscape::CopyMembers(RE::BSShaderMaterial* tha
 	pbrThat->glintParameters = glintParameters;
 
 	All[this] = All[pbrThat];
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 RE::BSShaderMaterial::Feature BSLightingShaderMaterialPBRLandscape::GetFeature() const
@@ -89,6 +91,7 @@ void BSLightingShaderMaterialPBRLandscape::ClearTextures()
 	}
 	terrainOverlayTexture.reset();
 	terrainNoiseTexture.reset();
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool skinned, bool rimLighting, bool softLighting, bool backLighting, bool MSN)
@@ -115,6 +118,7 @@ void BSLightingShaderMaterialPBRLandscape::ReceiveValuesFromRootMaterial(bool sk
 			landscapeRMAOSTextures[textureIndex] = stateData.defaultTextureWhite;
 		}
 	}
+	globals::features::truePBR.nativeRegistry.MarkDirty(this);
 }
 
 uint32_t BSLightingShaderMaterialPBRLandscape::GetTextures(RE::NiSourceTexture** textures)

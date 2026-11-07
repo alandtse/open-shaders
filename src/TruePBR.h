@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Feature.h"
+#include "TruePBR/NativePBRRegistry.h"
 
 struct GlintParameters
 {
@@ -88,6 +89,9 @@ public:
 	static_assert(sizeof(Settings) == 16);
 
 	Settings settings;
+
+	/** @brief Current live PBR metadata, exposed to native workers as value snapshots. */
+	NativePBR::Registry nativeRegistry;
 
 	/** @brief When true, logs each PBR JSON file path during load. Off by default. */
 	bool enableVerboseJsonLogging = false;
