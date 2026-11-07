@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
+#include "Features/DX12NativeScene/RuntimeGeometryCacheWorker.h"
 #include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
@@ -26,6 +27,7 @@ struct DX12NativeScene final : Feature
         bool ImportArchivePBR = false; // Further opt-in: archive resource manager fallback.
         bool RuntimeOnlyMaterials = false; // Optional manifest-free runtime texture acquisition.
         bool CaptureRuntimeGeometry = false; // Static CPU-backed meshes only; no GPU readbacks.
+        bool CacheRuntimeGeometry = false; // Optional background persistence and menu CPU prewarm.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
@@ -99,6 +101,7 @@ private:
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    DX12Native::RuntimeGeometryCacheWorker runtimeGeometryCache;
     DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
     DX12Native::AccelerationWorker runtimeAccelerationPreview;
     uint64_t runtimePreviewGeneration = 0;

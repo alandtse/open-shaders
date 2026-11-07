@@ -11,7 +11,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, RuntimeOnlyMaterials, CaptureRuntimeGeometry, CacheRuntimeGeometry, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 
 namespace
@@ -179,6 +179,19 @@ void DX12NativeScene::DrawSettings()
     if (ImGui::Checkbox("Experimental: capture runtime static geometry", &settings.CaptureRuntimeGeometry))
         runtimeGeometryCaptureActive.store(settings.CaptureRuntimeGeometry, std::memory_order_release);
     ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
+    ImGui::BeginDisabled(!settings.CaptureRuntimeGeometry);
+    ImGui::Checkbox("Experimental: persist and menu-prewarm runtime geometry",
+        &settings.CacheRuntimeGeometry);
+    ImGui::EndDisabled();
+    ImGui::TextDisabled("CPU-only prewarm; reuse requires identical live geometry after scene entry.");
+    ImGui::Text("Geometry cache: saved %u  failed %u  prewarmed %u / %u (%.2f MiB)%s",
+        runtimeGeometryCache.Stored(), runtimeGeometryCache.Rejected(),
+        runtimeGeometryCache.MenuAccepted(), runtimeGeometryCache.MenuChecked(),
+        double(runtimeGeometryCache.MenuBytes()) / (1024.0 * 1024.0),
+        runtimeGeometryCache.Busy() ? "  [working]" : "");
+    if (!runtimeGeometryCache.Failure().empty())
+        ImGui::TextWrapped("Geometry cache: %s", runtimeGeometryCache.Failure().c_str());
+    ImGui::Text("Cache-assisted geometry encodes: %u", runtimeGeometryPrepare.CacheHits());
     ImGui::Text("Runtime mesh captures: %zu  bytes: %.2f MiB",
         runtimeGeometry.Count(), double(runtimeGeometry.Bytes()) / (1024.0 * 1024.0));
     ImGui::Text("Prepared native meshes: %zu  GPU bytes: %.2f MiB",
@@ -402,6 +415,7 @@ void DX12NativeScene::ResetScene()
 	materialBindings.Reset();
     livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
     runtimeGeometryPrepare.Reset();
+    runtimeGeometryCache.ResetScene();
     runtimeAccelerationPreview.Reset();
     runtimePreviewGeneration = 0;
 	prepared.Reset();
@@ -474,6 +488,13 @@ void DX12NativeScene::EarlyPrepass()
 	runtimeGeometryCaptureActive.store(settings.Enabled && settings.CaptureRuntimeGeometry,
         std::memory_order_release);
     if (resetRequested.exchange(false)) ResetScene();
+    // This CPU-only cache scheduler operates before the native scene/cell
+    // early returns, so the menu can prewarm cached meshes without a TLAS.
+    // All disk I/O and decoding remain on its background worker.
+    if (settings.CacheRuntimeGeometry)
+        runtimeGeometryCache.Advance(!cell && !transitionOpen,
+            settings.CaptureRuntimeGeometry && cell && !transitionOpen ?
+                &runtimeGeometry : nullptr);
 	if (shadowResetRequested.exchange(false)) shadow.Reset();
 	if (!settings.Enabled || transitionOpen) {
 		if (cellID) ResetScene();
@@ -499,7 +520,8 @@ void DX12NativeScene::EarlyPrepass()
         // so the atlas-backed production scene retains VRAM headroom.
         const auto geometryBudget = std::min<uint64_t>(
             uint64_t(settings.BudgetMB) * 1024 * 1024 / 4, 64ull * 1024 * 1024);
-        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget);
+        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget,
+            settings.CacheRuntimeGeometry ? runtimeGeometryCache.GetPrewarmed() : nullptr);
         if (auto ready = runtimeGeometryPrepare.GetCell(); ready && ready->snapshot &&
             !ready->snapshot->instances.empty() &&
             runtimeAccelerationPreview.Finished() &&
@@ -696,6 +718,17 @@ void DX12NativeScene::PublishDiagnostics()
             { "batches", runtimeGeometryPrepare.Batches() },
             { "attempted", runtimeGeometryPrepare.Attempted() },
             { "failures", runtimeGeometryPrepare.Failures() },
+            { "cacheHits", runtimeGeometryPrepare.CacheHits() },
+            { "diskCache", {
+                { "enabled", settings.CacheRuntimeGeometry },
+                { "workerBusy", runtimeGeometryCache.Busy() },
+                { "menuComplete", runtimeGeometryCache.MenuReady() },
+                { "menuChecked", runtimeGeometryCache.MenuChecked() },
+                { "menuAccepted", runtimeGeometryCache.MenuAccepted() },
+                { "menuPreparedBytes", runtimeGeometryCache.MenuBytes() },
+                { "stored", runtimeGeometryCache.Stored() },
+                { "rejected", runtimeGeometryCache.Rejected() },
+                { "failure", runtimeGeometryCache.Failure() } } },
             { "preparedInstances", runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ?
                 runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0 },
             { "preparedBytes", runtimeGeometryPrepare.GetCell() ?
