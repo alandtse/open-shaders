@@ -86,4 +86,28 @@ namespace SnowDeformationMath
 	{
 		return a_moveX * a_moveX + a_moveY * a_moveY >= a_minMotion * a_minMotion;
 	}
+
+	/** @brief Fraction of an object of a_height whose bottom at a_bottom sits under the snow surface at a_surface, from 0 (clear) to 1 (buried). */
+	inline float SubmergedFraction(float a_bottom, float a_surface, float a_height)
+	{
+		return std::clamp((a_surface - a_bottom) / std::max(a_height, 1e-3f), 0.0f, 1.0f);
+	}
+
+	/** @brief Velocity multiplier over a_dt seconds for drag of a_strength per second at full burial, scaled by the buried fraction. */
+	inline float DragFactor(float a_strength, float a_submerged, float a_dt)
+	{
+		return std::exp(-std::max(a_strength, 0.0f) * std::clamp(a_submerged, 0.0f, 1.0f) * std::max(a_dt, 0.0f));
+	}
+
+	/** @brief Height above the land where an object with a_weightScale (0 light, 1 heavy) comes to rest in a blanket of a_blanket: light objects float near the top, heavy ones reach the ground. */
+	inline float FloorHeight(float a_blanket, float a_weightScale)
+	{
+		return std::max(a_blanket, 0.0f) * (1.0f - std::clamp(a_weightScale, 0.0f, 1.0f));
+	}
+
+	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */
+	inline float FloorRiseSpeed(float a_depth, float a_spring, float a_maxRise)
+	{
+		return std::clamp(a_depth * a_spring, 0.0f, a_maxRise);
+	}
 }

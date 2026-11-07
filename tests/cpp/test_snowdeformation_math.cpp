@@ -3,6 +3,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
+
 using Catch::Approx;
 namespace Math = SnowDeformationMath;
 
@@ -87,4 +89,25 @@ TEST_CASE("Weight scale runs from nothing for light bodies to a full print for h
 	REQUIRE(Math::WeightScale(heavy * 10.0f, light, heavy) == Approx(1.0f));
 	REQUIRE(Math::WeightScale(0.1f, light, heavy) == Approx(0.5f));
 	REQUIRE(Math::WeightScale(0.05f, light, heavy) < Math::WeightScale(0.2f, light, heavy));
+}
+
+TEST_CASE("Drag grows with burial and never speeds an object up", "[snow-deformation]")
+{
+	REQUIRE(Math::SubmergedFraction(10.0f, 10.0f, 8.0f) == Approx(0.0f));
+	REQUIRE(Math::SubmergedFraction(6.0f, 10.0f, 8.0f) == Approx(0.5f));
+	REQUIRE(Math::SubmergedFraction(-5.0f, 10.0f, 8.0f) == Approx(1.0f));
+	REQUIRE(Math::DragFactor(3.0f, 0.0f, 0.1f) == Approx(1.0f));
+	REQUIRE(Math::DragFactor(3.0f, 1.0f, 0.1f) == Approx(std::exp(-0.3f)));
+	REQUIRE(Math::DragFactor(3.0f, 1.0f, 0.1f) < Math::DragFactor(3.0f, 0.5f, 0.1f));
+	REQUIRE(Math::DragFactor(-1.0f, 1.0f, 0.1f) == Approx(1.0f));
+}
+
+TEST_CASE("Light objects rest near the snow top and heavy ones at the ground", "[snow-deformation]")
+{
+	REQUIRE(Math::FloorHeight(20.0f, 0.0f) == Approx(20.0f));
+	REQUIRE(Math::FloorHeight(20.0f, 1.0f) == Approx(0.0f));
+	REQUIRE(Math::FloorHeight(20.0f, 0.25f) == Approx(15.0f));
+	REQUIRE(Math::FloorRiseSpeed(-2.0f, 6.0f, 60.0f) == Approx(0.0f));
+	REQUIRE(Math::FloorRiseSpeed(5.0f, 6.0f, 60.0f) == Approx(30.0f));
+	REQUIRE(Math::FloorRiseSpeed(50.0f, 6.0f, 60.0f) == Approx(60.0f));
 }
