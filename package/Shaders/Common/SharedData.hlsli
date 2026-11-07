@@ -708,6 +708,9 @@ namespace SharedData
 		float2 TextureRadiusScale;
 		float FallSpeed;
 		float pad0;
+		float CurtainStrength;
+		float CurtainScale;
+		float2 pad1;
 	};
 
 #if defined(SNOW_COVER) && (defined(PSHADER) || defined(COMPUTESHADER))
