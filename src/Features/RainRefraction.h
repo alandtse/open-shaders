@@ -35,6 +35,7 @@ public:
 	static constexpr float kMaxMotionStretch = 3.0f;
 	static constexpr float kMaxWindInfluence = 2.0f;
 	static constexpr float kFallbackRainFallSpeed = 675.0f;
+	static constexpr float kMinRainFallSpeed = 100.0f;
 
 	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. WindInfluence is always user-owned. */
 	struct Settings
