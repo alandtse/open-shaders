@@ -159,7 +159,7 @@ void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
-    if (ImGui::Checkbox("Experimental: verified live PBR scalars", &settings.UseLivePBR)) resetRequested = true;
+    if (ImGui::Checkbox("Experimental: runtime True PBR materials", &settings.UseLivePBR)) resetRequested = true;
     ImGui::TextDisabled("Opaque static matches only; unverified sources keep offline fallback.");
     ImGui::BeginDisabled(!settings.UseLivePBR);
     if (ImGui::Checkbox("Experimental: import missing loose PBR DDS", &settings.ImportLoosePBR)) resetRequested = true;

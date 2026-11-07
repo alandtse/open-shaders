@@ -2,7 +2,7 @@
 
 ## Authority and identity
 
-The DX12 Native Scene opt-in control named "Experimental: verified live PBR scalars"
+The DX12 Native Scene opt-in control named "Experimental: runtime True PBR materials"
 now uses runtime True PBR recipes to compile complete 128-byte shader records.
 Its existing setting name and default OFF state remain unchanged.
 
@@ -90,3 +90,56 @@ records unusable. We must first establish full source residency, native
 feature coverage and renderer fallback behavior, then switch the default
 and delete obsolete offline material generation. BLAS/TLAS geometry
 preparation is independent of this material deprecation.
+
+## Progressive streaming and manifest-free mode
+
+The native material worker can now make repeated, bounded progress within a
+single prepared DXR scene:
+
+1. `RuntimeTextureProgress` persists previously attempted canonical source
+   paths per scene and live recipe revision. Rejected or unavailable DDS
+   requests are not retried indefinitely within the same revision.
+2. The initial worker pass may load the legacy atlas as usual; later passes
+   inherit the completed resident DX12 pages, logical texture identities
+   and SHA-256 provenance of the previous published material generation.
+3. Subsequent passes skip `cell-textures.json`, request up to eight further
+   missing runtime DDS paths, and create fresh material tables and descriptors
+   using the still-valid geometry/TLAS. A completed worker generation replaces
+   the previously published binding set only after its upload fence reports
+   completion. Previous bindings remain accessible to in-flight consumers.
+4. A minimum 500-ms interval separates successful automatic batches.
+   No shader calls the archive reader and no synchronous GPU readback was added.
+
+A separate **Experimental: runtime-only material sources (no atlas manifest)**
+setting starts this process without loading the offline **texture manifest**.
+It remains OFF by default. This mode requires the live True PBR and loose DDS
+switches; the archive fallback remains independently optional. Materials
+whose native feature implementation or source texture is missing will
+remain unsupported by the native shading pass. Existing prepared static
+geometry and vertex attributes are still needed to construct TLAS/BLAS;
+the project does not yet support runtime-only scene geometry acquisition.
+
+The diagnostics report cumulative `streamBatches`, `streamAttempted`,
+`streamSuccessful`, `streamFailed` and per-batch
+`looseDdsPreviouslyAttempted`. Other loose/archive counters reflect the
+most recently published binding generation, not the whole streaming lifetime.
+
+### Known acquisition and coverage blockers
+
+The Skyrim runtime screenshot from 2026-11-07 showed eight attempted
+archive-backed DDS requests with zero imports and
+`Archive DDS resource unavailable`. The streaming scheduler prevents
+these failed paths from permanently blocking the other requests; it does
+**not** fix the archive-reader failure. The next separate task is to verify
+the engine's archive stream acquisition API and/or implement a safely
+synchronized live DX11 texture copy path.
+
+The 293 active unsupported True PBR recipes (especially displacement,
+glint and projection) also still require actual native shader coverage.
+Texture residency alone cannot make these recipes natively renderable.
+
+This stage is source-committed but **not** Windows-compiled or Skyrim-runtime
+verified. For testing, first leave runtime-only mode disabled and observe
+successive stream batches. Then test it separately and verify that no
+new frame-time spikes, device failures, missing geometry, or unexpected
+native shading artifacts occur. Restore the previous settings if necessary.
