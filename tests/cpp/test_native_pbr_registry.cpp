@@ -3,6 +3,7 @@
 #include "TruePBR/NativePBRRegistry.h"
 #include "TruePBR/NativePBRCompiler.h"
 #include "TruePBR/InstanceCoverage.h"
+#include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 
 TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]")
 {
@@ -601,4 +602,29 @@ TEST_CASE("Clearing scene observations preserves published materials", "[native_
     const auto cleared = registry.GetStatistics().revision;
     registry.ClearInstanceHints();
     REQUIRE(registry.GetStatistics().revision == cleared);
+}
+
+TEST_CASE("Logical texture identities remain stable while retained", "[native_pbr]")
+{
+    DX12Native::LogicalTextureRegistry registry(2);
+    DX12Native::TextureIdentity first{ "digest-a", 1024, 1024, 7, 11 };
+    DX12Native::TextureIdentity second{ "digest-b", 1024, 1024, 7, 11 };
+    DX12Native::TextureIdentity third{ "digest-c", 1024, 1024, 7, 11 };
+    auto a = registry.Acquire(first);
+    auto same = registry.Acquire(first);
+    auto b = registry.Acquire(second);
+    REQUIRE(a->handle == same->handle);
+    REQUIRE(a->handle != b->handle);
+    REQUIRE_FALSE(registry.Acquire(third));
+    const auto old = a->handle;
+    a.reset();
+    same.reset();
+    auto c = registry.Acquire(third);
+    REQUIRE(c);
+    auto recreated = registry.Acquire(first);
+    REQUIRE_FALSE(recreated);
+    b.reset();
+    recreated = registry.Acquire(first);
+    REQUIRE(recreated);
+    REQUIRE(recreated->handle != old);
 }

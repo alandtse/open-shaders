@@ -25,7 +25,9 @@ namespace DX12Native
 			const auto& paths = a_material.at("textures");
 			if (!paths.is_array() || a_slot >= paths.size() || !paths[a_slot].is_string()) return { kMissingTexture, 0 };
 			const auto found = a_resources.locations.find(Normalize(paths[a_slot].get<std::string>()));
-			return found == a_resources.locations.end() ? std::array<uint32_t, 2>{ kMissingTexture, 0 } : found->second;
+			if (found == a_resources.locations.end()) return { kMissingTexture, 0 };
+			const auto location = a_resources.logicalLocations.find(found->second);
+			return location == a_resources.logicalLocations.end() ? std::array<uint32_t, 2>{ kMissingTexture, 0 } : location->second;
 		}
 
 		float4 Color(const json& a_material, const char* a_key, float a_multiplier)
@@ -108,7 +110,7 @@ namespace DX12Native
 			catch (const MaterialUploadError&) { throw; }
 			catch (const std::exception& error) {
 				result->failure = error.what();
-				result->pools.clear(); result->locations.clear(); result->bytes = result->textures = 0;
+				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear(); result->bytes = result->textures = 0;
 			}
 		}
 		std::vector<MaterialRecord> materials;

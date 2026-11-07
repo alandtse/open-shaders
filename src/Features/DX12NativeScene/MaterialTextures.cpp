@@ -132,8 +132,16 @@ namespace DX12Native
 			if (WaitForSingleObject(upload.event.get(), kUploadTimeoutMS) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
 				throw MaterialUploadError("Background material upload did not complete");
 			const auto pool = uint32_t(a_result.pools.size());
-			for (uint32_t slice = 0; slice < a_textures.size(); ++slice)
-				for (const auto& path : a_textures[slice]->paths) a_result.locations.emplace(path, std::array<uint32_t, 2>{ pool, slice });
+			static LogicalTextureRegistry identities;
+			for (uint32_t slice = 0; slice < a_textures.size(); ++slice) {
+				auto digest = a_textures[slice]->hash;
+				std::ranges::transform(digest, digest.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+				auto ticket = identities.Acquire({ std::move(digest), meta.width, meta.height, uint32_t(format), uint32_t(meta.mipLevels) });
+				if (!ticket) throw std::runtime_error("Material logical texture identity limit reached");
+				a_result.logicalLocations.emplace(ticket->handle, std::array<uint32_t, 2>{ pool, slice });
+				for (const auto& path : a_textures[slice]->paths) a_result.locations.emplace(path, ticket->handle);
+				a_result.textureTickets.push_back(std::move(ticket));
+			}
 			a_result.pools.push_back({ upload.target, format, uint32_t(meta.mipLevels), uint32_t(a_textures.size()) });
 			a_result.bytes += allocation;
 			a_result.textures += uint32_t(a_textures.size());

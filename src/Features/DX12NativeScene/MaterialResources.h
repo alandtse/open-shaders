@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AccelerationScene.h"
+#include "LogicalTextureRegistry.h"
 #include <array>
 #include <stdexcept>
 
@@ -39,7 +40,9 @@ namespace DX12Native
 	struct MaterialResources
 	{
 		std::vector<MaterialTexturePool> pools;
-		std::unordered_map<std::string, std::array<uint32_t, 2>> locations;
+		std::unordered_map<std::string, uint64_t> locations;
+		std::unordered_map<uint64_t, std::array<uint32_t, 2>> logicalLocations;
+		std::vector<std::shared_ptr<const LogicalTextureRegistry::Ticket>> textureTickets;
 		winrt::com_ptr<ID3D12Resource> materials, surfaces;
 		winrt::com_ptr<ID3D12Resource> roomVolumes;
 		uint32_t roomCount = 0;
