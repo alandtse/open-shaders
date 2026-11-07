@@ -513,6 +513,13 @@ private:
 	uint64_t gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
 	std::atomic<uint32_t> handStamps = 0;
+	std::atomic<uint32_t> handCapsules = 0;
+	std::atomic<uint32_t> handNodes = 0;
+	std::atomic<uint32_t> handNoLand = 0;
+	std::atomic<uint32_t> handOutOfReach = 0;
+	std::atomic<float> handProbeZ = 0.0f;
+	std::atomic<float> handProbeLandZ = 0.0f;
+	std::atomic<float> handProbeRadius = 0.0f;
 	std::atomic<bool> commandClearField = false;
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;

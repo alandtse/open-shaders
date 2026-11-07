@@ -1501,9 +1501,12 @@ void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 	const float reach = std::max(kGroundClearance, std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight));
 	const RE::FormID playerID = player->GetFormID();
 	size_t placed = 0;
+	uint32_t seen = 0, noLand = 0, outOfReach = 0;
+	handNodes.store(static_cast<uint32_t>(tracker.GetHandNodeCount()), std::memory_order_relaxed);
 	for (const auto& capsule : tracker.GetCapsules()) {
 		if (!capsule.appendage || capsule.owner != playerID || capsule.remembered)
 			continue;
+		++seen;
 
 		const float radius = std::max(capsule.radius, kHandMinRadius);
 		const float3 axis = capsule.pointB - capsule.pointA;
@@ -1514,14 +1517,29 @@ void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 			const float3 point = capsule.pointA + axis * SnowDeformationMath::CapsuleSampleParameter(i, samples);
 			const RE::NiPoint3 position(point.x, point.y, point.z);
 			float landZ = 0.0f;
-			if (!tes->GetLandHeight(position, landZ) || !SnowDeformationMath::TouchesSnow(position.z, radius, landZ, reach, kBelowGroundLimit))
+			const bool landed = tes->GetLandHeight(position, landZ);
+			if (seen == 1 && i == 0) {
+				handProbeZ.store(position.z, std::memory_order_relaxed);
+				handProbeLandZ.store(landed ? landZ : -99999.0f, std::memory_order_relaxed);
+				handProbeRadius.store(radius, std::memory_order_relaxed);
+			}
+			if (!landed) {
+				++noLand;
 				continue;
+			}
+			if (!SnowDeformationMath::TouchesSnow(position.z, radius, landZ, reach, kBelowGroundLimit)) {
+				++outOfReach;
+				continue;
+			}
 			a_stamps.push_back(MakePressStamp(tes, position, radius, landZ, std::clamp(capsule.move.x, -kMaxContactMotion, kMaxContactMotion),
 				std::clamp(capsule.move.y, -kMaxContactMotion, kMaxContactMotion)));
 			++placed;
 		}
 	}
 	handStamps.store(static_cast<uint32_t>(placed), std::memory_order_relaxed);
+	handCapsules.store(seen, std::memory_order_relaxed);
+	handNoLand.store(noLand, std::memory_order_relaxed);
+	handOutOfReach.store(outOfReach, std::memory_order_relaxed);
 }
 
 void SnowDeformation::AppendHeatStamps(std::vector<Stamp>& a_stamps)
@@ -3275,6 +3293,11 @@ json SnowDeformation::GetDiagnostics()
 		{ "Active", IsActiveContext() },
 		{ "Stamps", debugShown.stamps },
 		{ "HandStamps", handStamps.load(std::memory_order_relaxed) },
+		{ "HandCapsules", handCapsules.load(std::memory_order_relaxed) },
+		{ "HandNodes", handNodes.load(std::memory_order_relaxed) },
+		{ "HandNoLand", handNoLand.load(std::memory_order_relaxed) },
+		{ "HandOutOfReach", handOutOfReach.load(std::memory_order_relaxed) },
+		{ "HandProbe", { handProbeZ.load(std::memory_order_relaxed), handProbeLandZ.load(std::memory_order_relaxed), handProbeRadius.load(std::memory_order_relaxed) } },
 		{ "ActiveTiles", debugShown.activeTiles },
 		{ "DispatchedTiles", debugShown.dispatchedTiles },
 		{ "DepthDraws", debugShown.depthDraws },
