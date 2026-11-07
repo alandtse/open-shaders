@@ -1213,3 +1213,25 @@ TEST_CASE("Runtime PBR material compiler takes texture bindings and parameters f
     REQUIRE(DX12Native::CompileRuntimeMaterial(resources, source, match).status ==
         DX12Native::RuntimeMaterialStatus::UnsafeOpacity);
 }
+
+TEST_CASE("Runtime PBR issue instrumentation counts overlapping causes without baseline unknowns", "[native_pbr]")
+{
+    NativePBR::Snapshot snapshot{ 10, 11, {} };
+    snapshot.material.texturePaths = { "textures/base.dds", "textures/n.dds", "textures/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    snapshot.material.pbrFlags = (1u << 0) | (1u << 5); // subsurface and fuzz
+    snapshot.material.glint.enabled = true;
+    const auto recipe = NativePBR::CompileRecipe(snapshot);
+    NativePBR::RecipeIssueTally counts;
+    counts.Observe(recipe);
+    REQUIRE(counts.affected == 1);
+    REQUIRE(counts.issues[2] == 1);
+    REQUIRE(counts.issues[3] == 1);
+    REQUIRE(counts.issues[4] == 0); // UnknownOpacity is a baseline hint
+    REQUIRE(counts.issues[9] == 0);
+    REQUIRE(counts.pbrFlags[0] == 1);
+    REQUIRE(counts.pbrFlags[5] == 1);
+    counts.Observe(recipe);
+    REQUIRE(counts.affected == 2);
+    REQUIRE(counts.issues[2] == 2);
+}

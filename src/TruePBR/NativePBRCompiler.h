@@ -47,6 +47,30 @@ namespace NativePBR
         std::array<TextureRequest, static_cast<size_t>(TextureRole::Count)> textures{};
     };
 
+    /** @brief Per-bit nonexclusive reasons for runtime PBR incompatibility.
+     * Recipe bits 4, 9, 10 and 11 are baseline unknowns resolved by
+     * static instance inspection and are intentionally not tallied here.
+     */
+    struct RecipeIssueTally
+    {
+        std::array<uint32_t, 13> issues{};
+        std::array<uint32_t, 7> pbrFlags{};
+        uint32_t affected = 0;
+
+        void Observe(const Recipe& recipe)
+        {
+            constexpr uint32_t resolved = UnknownOpacity | UnknownNormalMode |
+                UnknownUvAnimation | UnmatchedSceneInstance;
+            const auto mask = recipe.issues & ~resolved;
+            if (mask == 0 && recipe.parameters.pbrFlags == 0) return;
+            ++affected;
+            for (size_t i = 0; i < issues.size(); ++i)
+                if ((mask & (1u << i)) != 0) ++issues[i];
+            for (size_t i = 0; i < pbrFlags.size(); ++i)
+                if ((recipe.parameters.pbrFlags & (1u << i)) != 0) ++pbrFlags[i];
+        }
+    };
+
     /** @brief Normalizes a relative texture asset path without permitting parent or drive traversal. */
     inline std::optional<std::string> CanonicalTexturePath(const std::string& a_path)
     {

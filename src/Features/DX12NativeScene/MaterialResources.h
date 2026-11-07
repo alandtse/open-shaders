@@ -79,6 +79,7 @@ namespace DX12Native
         uint64_t looseDdsBytes = 0, archiveDdsBytes = 0;
         uint32_t archiveDdsPlanned = 0, archiveDdsImported = 0, archiveDdsRejected = 0;
         LiveGpuTextureRoutes liveGpuRoutes;
+        NativePBR::RecipeIssueTally liveRecipeIssues;
 		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,

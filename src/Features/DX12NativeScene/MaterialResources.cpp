@@ -119,6 +119,12 @@ namespace DX12Native
             result->livePbrAmbiguous = uint32_t(liveMatch.report.ambiguous);
             result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
             result->livePbrMissing = uint32_t(liveMatch.report.missing);
+            // Record overlapping recipe issues for every matched instance, including
+            // those later blocked by texture residency. This diagnoses exclusions
+            // without changing existing fallback decisions.
+            for (const auto& match : liveMatch.matches)
+                if (match && match->recipe && !NativePBR::NativeMeshRecipeSupported(*match->recipe))
+                    result->liveRecipeIssues.Observe(*match->recipe);
             // Once per live material identity: report candidate transfer strategies only.
             // Resource handles are never opened or copied by this classification.
             std::unordered_set<uint64_t> reported;

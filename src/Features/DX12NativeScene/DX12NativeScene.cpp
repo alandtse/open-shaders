@@ -67,6 +67,21 @@ namespace
         ImGui::Text("Missing basis: %llu  missing bindings: %llu",
             static_cast<unsigned long long>(count("livePbrMissingBasis")),
             static_cast<unsigned long long>(count("livePbrMissingBindings")));
+        if (ImGui::TreeNode("Unsupported recipe reasons (overlapping)")) {
+            const auto issues = budget.value("livePbrRecipeIssues", std::vector<uint32_t>{});
+            const auto flags = budget.value("livePbrFeatureFlags", std::vector<uint32_t>{});
+            const auto issue = [&](size_t i) { return i < issues.size() ? issues[i] : 0u; };
+            const auto flag = [&](size_t i) { return i < flags.size() ? flags[i] : 0u; };
+            ImGui::Text("Recipes with limitations: %llu", static_cast<unsigned long long>(count("livePbrRecipeIssueCount")));
+            ImGui::Text("Required maps missing: %u  invalid paths: %u  invalid snapshot: %u", issue(0), issue(12), issue(5));
+            ImGui::Text("PBR feature flags: %u  glint: %u  projection: %u", issue(2), issue(3), issue(8));
+            ImGui::Text("Displacement: %u  feature textures: %u  landscape: %u", issue(6), issue(7), issue(1));
+            ImGui::Text("Subsurface: %u  two-layer: %u  colored coat: %u  parallax: %u",
+                flag(0), flag(1), flag(2), flag(3));
+            ImGui::Text("Coat normal: %u  fuzz: %u  hair: %u", flag(4), flag(5), flag(6));
+            ImGui::TextDisabled("Counts overlap; a recipe may trigger multiple reasons.");
+            ImGui::TreePop();
+        }
         ImGui::Text("Ready native records: %llu  Rejected: %llu",
             static_cast<unsigned long long>(count("readyMaterials")),
             static_cast<unsigned long long>(count("rejectedMaterials")));
@@ -574,6 +589,9 @@ void DX12NativeScene::PublishDiagnostics()
             { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 },
             { "livePbrEmissiveApplied", bindings ? bindings->materials->livePbrEmissiveApplied : 0 },
             { "livePbrUnsupported", bindings ? bindings->materials->livePbrUnsupported : 0 },
+            { "livePbrRecipeIssueCount", bindings ? bindings->materials->liveRecipeIssues.affected : 0 },
+            { "livePbrRecipeIssues", bindings ? json(bindings->materials->liveRecipeIssues.issues) : json(std::array<uint32_t, 13>{}) },
+            { "livePbrFeatureFlags", bindings ? json(bindings->materials->liveRecipeIssues.pbrFlags) : json(std::array<uint32_t, 7>{}) },
             { "livePbrUnsafeOpacity", bindings ? bindings->materials->livePbrUnsafeOpacity : 0 },
             { "livePbrMissingBasis", bindings ? bindings->materials->livePbrMissingBasis : 0 },
             { "livePbrMissingBindings", bindings ? bindings->materials->livePbrMissingBindings : 0 },
