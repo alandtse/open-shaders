@@ -28,6 +28,22 @@ TEST_CASE("Material page cache transfers ownership and enforces its byte limit",
     REQUIRE(*second == 2);
 }
 
+TEST_CASE("Material page cache finds and transfers pages by individual slice", "[native_pbr]")
+{
+    DX12Native::MaterialPageCache<std::shared_ptr<int>> cache;
+    auto page = std::make_shared<int>(7);
+    REQUIRE(cache.Retain("page", page, 40, 100, { "albedo", "normal", "rmaos" }));
+    auto found = cache.TakeContaining("normal");
+    REQUIRE(found);
+    REQUIRE(found->key == "page");
+    REQUIRE(found->page == page);
+    REQUIRE(found->slices == std::vector<std::string>{ "albedo", "normal", "rmaos" });
+    REQUIRE(cache.Bytes() == 0);
+    REQUIRE_FALSE(cache.TakeContaining("albedo"));
+    REQUIRE_FALSE(cache.TakeContaining("normal"));
+    REQUIRE_FALSE(cache.TakeContaining("rmaos"));
+}
+
 TEST_CASE("Native PBR invalidation and recreation are observable", "[native_pbr]")
 {
     NativePBR::Registry registry;

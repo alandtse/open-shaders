@@ -399,6 +399,7 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "peakStagingBytes", bindings ? bindings->materials->peakStagingBytes : 0 },
 			{ "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 },
 			{ "reusedPages", bindings ? bindings->materials->reusedPages : 0 },
+			{ "reusedTextures", bindings ? bindings->materials->reusedTextures : 0 },
 			{ "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);
