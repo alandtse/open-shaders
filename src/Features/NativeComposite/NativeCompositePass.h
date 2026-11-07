@@ -60,7 +60,7 @@ public:
 		const std::shared_ptr<const DX12Native::ShadowFrame>& a_shadow,
 		const std::shared_ptr<const DX12Native::RasterFrame>& a_raster,
 		const ShadowSettings& a_shadowSettings,
-		float a_strength, const Policy& a_policy, uint64_t a_revision);
+		float a_strength, bool a_directSpatialReconstruction, const Policy& a_policy, uint64_t a_revision);
 	/** @brief Retains a frame until a downstream consumer's GPU fence completes. */
 	bool Retain(const std::shared_ptr<const Frame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value);
 	/** @brief Returns a short explanation of the latest capture result. */
@@ -74,6 +74,7 @@ public:
 	uint64_t EffectiveRecoveredPixels() const { return effectiveRecoveredPixels.load(); }
 	uint64_t FiniteOnlyPixels() const { return finiteOnlyPixels.load(); }
 	uint64_t CounterReadFailures() const { return counterReadFailures.load(); }
+	uint64_t ReconstructedPixels() const { return reconstructedPixels.load(); }
 	~NativeComposite();
 
 private:
@@ -106,7 +107,7 @@ private:
 	winrt::com_ptr<ID3D12RootSignature> shadowRoot;
 	winrt::com_ptr<ID3D12PipelineState> shadowPipeline;
 	std::atomic<uint64_t> completedComposites{ 0 }, acceptedPixels{ 0 }, modifiedPixels{ 0 }, visualizationPixels{ 0 }, counterReadFailures{ 0 };
-	std::atomic<uint64_t> effectiveRecoveredPixels{ 0 }, finiteOnlyPixels{ 0 };
+	std::atomic<uint64_t> effectiveRecoveredPixels{ 0 }, finiteOnlyPixels{ 0 }, reconstructedPixels{ 0 };
 	DX12Native::VideoMemoryBudget videoBudget;
 	bool InitializeLighting(ID3D12Device* a_device);
 	bool InitializeShadow(ID3D12Device* a_device);

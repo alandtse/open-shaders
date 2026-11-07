@@ -4,7 +4,7 @@
 #include "Globals.h"
 #include "Features/LinearLighting.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, DirectSpatialReconstruction, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeComposite::Policy, diffuse, specular, visual)
 
 namespace
@@ -28,6 +28,8 @@ void NativeCompositeFeature::DrawSettings()
 	ImGui::Checkbox(T("feature.nativecomposite.enabled", "Enable Native Composite"), &settings.Enabled);
 	ImGui::Checkbox(T("feature.nativecomposite.add_lighting", "Add native direct lighting"), &settings.AddLighting);
 	ImGui::SliderFloat(T("feature.nativecomposite.lighting_strength", "Lighting strength"), &settings.LightingStrength, 0.0f, 2.0f);
+	if (ImGui::Checkbox("Spatially reconstruct missing native direct pixels", &settings.DirectSpatialReconstruction)) ++validityRevision;
+	ImGui::TextDisabled("Full-resolution diffuse/specular fill; raw RT signals remain untouched.");
 	ImGui::SeparatorText("Independent RT shadows");
 	bool shadowChanged = false;
 	if (ImGui::Checkbox("Enable independent shadow layer", &settings.ShadowLayerEnabled)) {
@@ -62,6 +64,7 @@ void NativeCompositeFeature::DrawSettings()
 		ImGui::TextDisabled("GPU completed: %llu  Accepted: %llu  Modified: %llu  Debug: %llu",
 			static_cast<unsigned long long>(pass.CompletedComposites()), static_cast<unsigned long long>(pass.AcceptedPixels()),
 			static_cast<unsigned long long>(pass.ModifiedPixels()), static_cast<unsigned long long>(pass.VisualizationPixels()));
+		ImGui::TextDisabled("Direct spatially reconstructed pixels (GPU-completed): %llu", static_cast<unsigned long long>(pass.ReconstructedPixels()));
 		ImGui::TextDisabled("Displayed-pixel consumption is not measured.");
 	}
 	enabled = settings.Enabled;
@@ -148,11 +151,12 @@ void NativeCompositeFeature::ConfigureShadowLayer(const json& args)
 
 void NativeCompositeFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting and lightingStrength.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set Native Composite enabled, addLighting, lightingStrength and directSpatialReconstruction.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeCompositeFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled")) feature.settings.Enabled = args.at("enabled").get<bool>();
 		if (args.contains("addLighting")) feature.settings.AddLighting = args.at("addLighting").get<bool>();
+		if (args.contains("directSpatialReconstruction")) { feature.settings.DirectSpatialReconstruction = args.at("directSpatialReconstruction").get<bool>(); ++feature.validityRevision; }
 		if (args.contains("lightingStrength")) {
 			const float value = args.at("lightingStrength").get<float>();
 			feature.settings.LightingStrength = std::isfinite(value) ? std::clamp(value, 0.0f, 2.0f) : 1.0f;
@@ -188,7 +192,7 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "completedComposites", pass.CompletedComposites() }, { "acceptedPixels", pass.AcceptedPixels() },
 		{ "modifiedPixels", pass.ModifiedPixels() }, { "visualizationPixels", pass.VisualizationPixels() },
 		{ "effectiveRecoveredPixels", pass.EffectiveRecoveredPixels() }, { "finiteOnlyPixels", pass.FiniteOnlyPixels() },
-		{ "counterReadFailures", pass.CounterReadFailures() }, { "visuallyConsumedPixels", nullptr },
+		{ "counterReadFailures", pass.CounterReadFailures() }, { "directReconstructedPixels", pass.ReconstructedPixels() }, { "visuallyConsumedPixels", nullptr },
 		{ "lightingStatus", LightingStatus(state) },
 		{ "shadowAdmissionStatus", pass.ShadowStatus() },
 		{ "shadowProducerStatus", sceneDiagnostics.value("shadowStatus", std::string{}) },
@@ -228,7 +232,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;
 	const auto raster = shadow ? globals::features::dx12NativeScene.GetRasterFrame(a_frame) : nullptr;
 	auto frame = pass.Capture(a_device11, a_context11, a_device12, a_queue, a_source, a_frame, a_width, a_height,
-		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selectedPolicy, revision);
+		a_transfer, lighting, shadow, raster, shadowSettings, selected.LightingStrength, selected.DirectSpatialReconstruction, selectedPolicy, revision);
 	if (frame) ++captures;
 	if (frame && frame->lightingSubmitted) { ++lightingSubmissions; lightingStatus = 3; }
 	else if (lighting) lightingStatus = 4;

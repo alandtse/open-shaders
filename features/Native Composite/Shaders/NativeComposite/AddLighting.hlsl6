@@ -4,6 +4,8 @@ Texture2D<uint> Validity : register(t2);
 Texture2D<uint> EffectiveValidity : register(t3);
 Texture2D<uint> RejectionReason : register(t4);
 Texture2D<float4> LabGuide : register(t5);
+Texture2D<float4> ReceiverGuide : register(t6);
+Texture2D<float> RasterDepth : register(t7);
 RWTexture2D<float4> Scene : register(u0);
 RWStructuredBuffer<uint> CompositeCounts : register(u1);
 #include "ValidityPolicy.hlsli"
@@ -16,12 +18,93 @@ cbuffer CompositeConstants : register(b0)
 	uint DiffusePolicy;
 	uint SpecularPolicy;
 	uint VisualMode;
-	uint Reserved;
+	uint SpatialReconstruction;
+	row_major float4x4 InverseProjection;
+	row_major float4x4 InverseView;
 };
 
 float3 SignedPower(float3 value, float exponent)
 {
 	return sign(value) * pow(abs(value), exponent);
+}
+
+
+float ReceiverDistance(uint2 pixel)
+{
+    float depth = RasterDepth[pixel];
+    if (!isfinite(depth)) return -1.0f;
+    float2 clip = (float2(pixel) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
+    clip.y = -clip.y;
+    float4 view = mul(InverseProjection, float4(clip, depth, 1.0f));
+    if (!all(isfinite(view)) || abs(view.w) <= 1e-8f) return -1.0f;
+    float3 direction = mul((float3x3)InverseView, view.xyz / view.w);
+    float distance = length(direction);
+    return isfinite(distance) && distance > 0.0f ? distance : -1.0f;
+}
+bool ValidDirectNeighbor(uint2 pixel, float targetDistance, out float4 guide)
+{
+    guide = ReceiverGuide[pixel];
+    if (!all(isfinite(guide)) || guide.w <= 0.0f || dot(guide.xyz, guide.xyz) <= 1e-8f) return false;
+    uint reason = RejectionReason[pixel];
+    if ((reason & 0x10000000u) != 0u) return false;
+    uint original = Validity[pixel], effective = EffectiveValidity[pixel];
+    if (!AcceptContribution(DiffusePolicy, original, effective, reason) &&
+        !AcceptContribution(SpecularPolicy, original, effective, reason)) return false;
+    float distance = ReceiverDistance(pixel);
+    return distance > 0.0f && abs(distance - targetDistance) <= max(5.0f, targetDistance * 1e-5f);
+}
+bool ReconstructDirect(uint2 pixel, out float3 diffuse, out float3 specular,
+    out bool diffuseAccepted, out bool specularAccepted)
+{
+    diffuse = 0.0f; specular = 0.0f;
+    diffuseAccepted = false; specularAccepted = false;
+    float targetDistance = ReceiverDistance(pixel);
+    if (targetDistance <= 0.0f) return false;
+    float4 reference = 0.0f;
+    int radiusUsed = 0;
+    float nearestScore = 1e30f;
+    [loop] for (int radius = 1; radius <= 2 && reference.w == 0.0f; ++radius) {
+        [loop] for (int dy = -radius; dy <= radius; ++dy) {
+            [loop] for (int dx = -radius; dx <= radius; ++dx) {
+                int2 p = int2(pixel) + int2(dx, dy);
+                if (any(p < 0) || any(p >= int2(Size))) continue;
+                float4 guide;
+                if (!ValidDirectNeighbor(uint2(p), targetDistance, guide)) continue;
+                float distance = ReceiverDistance(uint2(p));
+                float score = float(dx * dx + dy * dy) + 0.1f * abs(distance - targetDistance);
+                if (score < nearestScore) {
+                    nearestScore = score;
+                    reference = guide;
+                    radiusUsed = radius;
+                }
+            }
+        }
+    }
+    if (reference.w <= 0.0f) return false;
+    float diffuseWeight = 0.0f, specularWeight = 0.0f;
+    [loop] for (int dy = -radiusUsed; dy <= radiusUsed; ++dy) {
+        [loop] for (int dx = -radiusUsed; dx <= radiusUsed; ++dx) {
+            int2 p = int2(pixel) + int2(dx, dy);
+            if (any(p < 0) || any(p >= int2(Size))) continue;
+            float4 guide;
+            if (!ValidDirectNeighbor(uint2(p), targetDistance, guide) ||
+                guide.w != reference.w || dot(normalize(guide.xyz), normalize(reference.xyz)) < 0.85f) continue;
+            uint original = Validity[uint2(p)], effective = EffectiveValidity[uint2(p)], reason = RejectionReason[uint2(p)];
+            float weight = rcp(1.0f + float(dx * dx + dy * dy));
+            float3 d = Diffuse[uint2(p)].rgb, sp = Specular[uint2(p)].rgb;
+            if (AcceptContribution(DiffusePolicy, original, effective, reason) && all(isfinite(d))) {
+                diffuse += d * weight; diffuseWeight += weight;
+            }
+            if (AcceptContribution(SpecularPolicy, original, effective, reason) && all(isfinite(sp))) {
+                specular += sp * weight; specularWeight += weight;
+            }
+        }
+    }
+    diffuseAccepted = diffuseWeight > 0.0f;
+    specularAccepted = specularWeight > 0.0f;
+    if (diffuseAccepted) diffuse /= diffuseWeight;
+    if (specularAccepted) specular /= specularWeight;
+    return diffuseAccepted || specularAccepted;
 }
 
 [numthreads(8, 8, 1)]
@@ -59,6 +142,14 @@ void main(uint3 id : SV_DispatchThreadID)
 	}
 	bool acceptDiffuse = AcceptContribution(DiffusePolicy, original, effective, reason) && all(isfinite(diffuse));
 	bool acceptSpecular = AcceptContribution(SpecularPolicy, original, effective, reason) && all(isfinite(specular));
+	if (SpatialReconstruction != 0u && (reason & 0x10000000u) != 0u) {
+		bool reconstructedDiffuse, reconstructedSpecular;
+		if (ReconstructDirect(id.xy, diffuse, specular, reconstructedDiffuse, reconstructedSpecular)) {
+			acceptDiffuse = reconstructedDiffuse;
+			acceptSpecular = reconstructedSpecular;
+			InterlockedAdd(CompositeCounts[5], 1);
+		}
+	}
 	if (acceptDiffuse || acceptSpecular) InterlockedAdd(CompositeCounts[0], 1);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective == 1) InterlockedAdd(CompositeCounts[3], 1);
 	if ((acceptDiffuse || acceptSpecular) && original != 1 && effective != 1) InterlockedAdd(CompositeCounts[4], 1);

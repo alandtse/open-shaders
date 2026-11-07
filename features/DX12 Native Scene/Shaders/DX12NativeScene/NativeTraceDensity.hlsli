@@ -3,7 +3,7 @@
 
 // Trace density is not texture resolution. Each feature keeps native-size
 // raw output textures and marks omitted pixels explicitly. Independent
-// shadow modes 3..7 rotate deterministic native-pixel tile phases.
+// modes 3..7 rotate deterministic native-pixel tile phases for both features.
 #ifdef __cplusplus
 #include <cstdint>
 namespace DX12Native
@@ -37,7 +37,7 @@ NATIVE_DENSITY_INLINE bool NativeTraceDensityPixel(uint x, uint y, uint mode, ui
         // One checkerboard parity per frame, alternating A/B every frame.
         return ((x ^ y ^ frame ^ featureSalt) & 1u) == 0u;
     }
-    // Shadow-only extensions: legacy native-lighting mode IDs stay unchanged.
+    // Extended modes preserve the existing direct and shadow density IDs.
     // Tile phase is fixed per tile and visits each residue before repeating.
     if (mode >= 3u && mode <= 7u) {
         uint columns = (mode == 4u) ? 2u : 3u;

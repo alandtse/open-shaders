@@ -20,11 +20,11 @@ void NativeLightingFeature::DrawSettings()
 	ImGui::Checkbox("Diffuse", &settings.Diffuse);
 	ImGui::Checkbox("Specular", &settings.Specular);
 	int traceDensity = int(settings.TraceDensityMode);
-	if (ImGui::Combo("Native lighting trace density", &traceDensity, "Full\0Two-thirds\0Half\0")) {
+	if (ImGui::Combo("Native lighting trace density", &traceDensity, "Full\0Two-thirds\0Half\0One-third\0Quarter\0One-sixth\0One-ninth\0Four-ninths\0")) {
 		settings.TraceDensityMode = uint32_t(traceDensity);
 		++validityRevision;
 	}
-	ImGui::TextDisabled("Full-size raw signals; skipped pixels are not reconstructed.");
+	ImGui::TextDisabled("Full-size raw signals. Spatial reconstruction is independent in Native Composite.");
 	bool tuned = false;
 	ImGui::SeparatorText("Direct lighting (reference controls)");
 	tuned |= ImGui::SliderFloat("Direct strength", &settings.DirectStrength, 0.0f, 8.0f, "%.2fx");
@@ -138,7 +138,7 @@ void NativeLightingFeature::LoadSettings(json& a_json)
 	selected.ShadowStrength = sanitize(selected.ShadowStrength, 1.0f, 0.0f, 1.0f);
 	selected.EmitterRadiusMultiplier = sanitize(selected.EmitterRadiusMultiplier, 1.0f, 0.0f, 8.0f);
 	selected.NormalInfluence = std::min(selected.NormalInfluence, 2u);
-	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 2u);
+	selected.TraceDensityMode = std::min(selected.TraceDensityMode, 7u);
 	selected.BudgetMB = selected.BudgetMB ? std::clamp(selected.BudgetMB, 64u, 4096u) : 0u;
 	std::scoped_lock lock(settingsMutex);
 	settings = selected;
@@ -249,7 +249,7 @@ json NativeLightingFeature::GetDiagnostics() { std::scoped_lock lock(diagnostics
 
 void NativeLightingFeature::RegisterUxActions()
 {
-	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half), budgetMB.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("configure", "Set native direct lighting; optional enabled/diffuse/specular, directStrength, diffuseIntensity, specularIntensity, emissionStrength, normalInfluence (0 flat, 1 geometry, 2 material), allLights, selectedLight, radiusMultiplier, falloffFraction, falloffExponent, shadowStrength, stochasticShadows, emitterRadiusMultiplier, earlyShadowCull, debug, compareCulling, traceDensityMode (0 Full, 1 Two-thirds, 2 Half, 3 One-third, 4 Quarter, 5 One-sixth, 6 One-ninth, 7 Four-ninths), budgetMB.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeLightingFeature*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		if (args.contains("enabled")) feature.settings.Enabled = args.at("enabled").get<bool>();
@@ -277,7 +277,7 @@ void NativeLightingFeature::RegisterUxActions()
 		if (args.contains("allLights")) { feature.settings.UseAllPreparedLights = args.at("allLights").get<bool>(); ++feature.validityRevision; }
 		if (args.contains("selectedLight")) { feature.settings.SelectedDirectLight = args.at("selectedLight").get<uint32_t>(); ++feature.validityRevision; }
 		if (args.contains("normalInfluence")) { feature.settings.NormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u); ++feature.validityRevision; }
-		if (args.contains("traceDensityMode")) { feature.settings.TraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 2u); ++feature.validityRevision; }
+		if (args.contains("traceDensityMode")) { feature.settings.TraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 7u); ++feature.validityRevision; }
 		if (args.contains("budgetMB")) feature.settings.BudgetMB = args.at("budgetMB").get<uint32_t>() ? std::clamp(args.at("budgetMB").get<uint32_t>(), 64u, 4096u) : 0u;
 	});
 	FEATURE_COMMAND("validityLab", "Set runtime validity controls: depthAgreement, diagnosticDepth, absoluteTolerance, relativeTolerance, materialPolicy (0 strict, 1 neutral, 2 geometry), requireMaskAuthority, assumeMaskAuthoritative, observeMask, runWithoutLighting, referenceVisibility, referencePrimaryTraversal, maskThreshold, maskDistanceTolerance, persistLab.", [](Feature* self, const json& args) {

@@ -132,3 +132,21 @@ blending to one material instance identity; invalid (0) and non-finite
 samples never become evidence. No extra reduced-resolution buffers, RT rays,
 FSR Ray Regeneration or temporal history are involved in this extension.
 The original raw mask remains immutable and available for debugging.
+
+## Matching independent Native Lighting densities
+
+Native Lighting supports native-size trace density IDs 3..7: One-third,
+Quarter, One-sixth, One-ninth and Four-ninths. The shared scheduler retains
+the previous Full/Two-thirds/Half IDs and independent feature salts. Diffuse
+and specular trace coverage is identical within each native-lighting dispatch.
+
+Native Composite persists `DirectSpatialReconstruction` (default true) and
+supports `configure.directSpatialReconstruction`. Only pixels explicitly
+omitted by the density predicate (RejectionReason bit 0x10000000) are filled
+from current-frame accepted raw neighbors. Reconstruction uses raster-derived
+receiver distance, prepared receiver instance ID, and receiver normals;
+diffuse/specular are gathered separately. Pixels lacking consistent neighbors
+remain unresolved. Debug views remain raw. The full-resolution raw signals,
+validity, and guides are never rewritten, and a separate GPU completion counter
+reports reconstructed pixels. Full density bypasses spatial fill. No temporal
+history or FSR Ray Regeneration is introduced.

@@ -18,7 +18,7 @@ struct NativeLightingFeature final : Feature
 		float PointLightRadiusMultiplier = 4.0f, PointLightFalloffFraction = 0.1f, PointLightFalloffExponent = 1.0f;
 		float ShadowStrength = 1.0f, EmitterRadiusMultiplier = 1.0f;
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
-		uint32_t TraceDensityMode = 0; // 0 full, 1 two-thirds, 2 alternating half.
+		uint32_t TraceDensityMode = 0; // 0..7, native-resolution sparse ray eligibility.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
 		uint32_t BudgetMB = 0; // 0 = dynamic DXGI local-memory-aware frame pool.
 		bool PersistLab = false;

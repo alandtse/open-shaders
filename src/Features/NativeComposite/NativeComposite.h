@@ -13,6 +13,7 @@ struct NativeCompositeFeature final : Feature
 		bool Enabled = true;
 		bool AddLighting = true;
 		float LightingStrength = 1.0f;
+		bool DirectSpatialReconstruction = true;
 		bool PersistLab = false;
 		// Independent DX12 shadow layer. Does not require Native Lighting.
 		bool ShadowLayerEnabled = true;
