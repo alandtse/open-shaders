@@ -96,6 +96,14 @@ namespace
             static_cast<unsigned long long>(count("looseDdsReadyRecipes")),
             static_cast<unsigned long long>(count("looseDdsFeatureLimitedRecipes")),
             static_cast<unsigned long long>(count("looseDdsSkippedRecipes")));
+        ImGui::Text("Streaming batches: %llu  tried: %llu  resident: %llu  failed: %llu",
+            static_cast<unsigned long long>(count("streamBatches")),
+            static_cast<unsigned long long>(count("streamAttempted")),
+            static_cast<unsigned long long>(count("streamSuccessful")),
+            static_cast<unsigned long long>(count("streamFailed")));
+        ImGui::Text("Skipped prior attempts: %llu  next batch pending: %s",
+            static_cast<unsigned long long>(count("looseDdsPreviouslyAttempted")),
+            count("streamNextBatchPending") ? "Yes" : "No");
         ImGui::Text("Already prepared paths: %llu  invalid requests: %llu",
             static_cast<unsigned long long>(count("looseDdsPrepared")),
             static_cast<unsigned long long>(count("looseDdsInvalid")));
@@ -610,6 +618,12 @@ void DX12NativeScene::PublishDiagnostics()
             { "looseDdsImported", bindings ? bindings->materials->looseDdsImported : 0 },
             { "looseDdsRejected", bindings ? bindings->materials->looseDdsRejected : 0 },
             { "looseDdsDeferred", bindings ? bindings->materials->looseDdsDeferred : 0 },
+            { "looseDdsPreviouslyAttempted", bindings ? bindings->materials->looseDdsPreviouslyAttempted : 0 },
+            { "streamBatches", materialBindings.StreamBatches() },
+            { "streamAttempted", materialBindings.StreamAttempted() },
+            { "streamSuccessful", materialBindings.StreamSuccessful() },
+            { "streamFailed", materialBindings.StreamFailed() },
+            { "streamNextBatchPending", materialBindings.StreamWaitingForNextBatch() ? 1u : 0u },
             { "looseDdsReadyRecipes", bindings ? bindings->materials->looseDdsReadyRecipes : 0 },
             { "looseDdsFeatureLimitedRecipes", bindings ? bindings->materials->looseDdsFeatureLimitedRecipes : 0 },
             { "looseDdsSkippedRecipes", bindings ? bindings->materials->looseDdsSkippedRecipes : 0 },

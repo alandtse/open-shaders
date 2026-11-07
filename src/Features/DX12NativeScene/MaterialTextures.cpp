@@ -494,7 +494,15 @@ namespace DX12Native
                 for (const auto& textureAlias : texture->paths)
                     if (const auto canonical = NativePBR::CanonicalTexturePath(textureAlias))
                         present.insert(*canonical);
-            const auto planned = PlanLiveLooseTextures(*a_matches, present);
+            // A previously published material generation owns its immutable
+            // pages. Those paths must not be reacquired in this batch.
+            for (const auto& [residentPath, ticket] : a_result.locations)
+                if (const auto canonical = NativePBR::CanonicalTexturePath(residentPath))
+                    present.insert(*canonical);
+            const auto planned = PlanLiveLooseTextures(*a_matches, present, 8,
+                a_source.attemptedRuntimePaths);
+            a_result.looseDdsAttemptedPaths = planned.paths;
+            a_result.looseDdsPreviouslyAttempted = uint32_t(planned.alreadyAttempted);
             a_result.looseDdsPlanned = uint32_t(planned.paths.size());
             a_result.looseDdsDeferred = uint32_t(planned.deferred);
             a_result.looseDdsReadyRecipes = uint32_t(planned.supportedRecipes);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_set>
+
 #include "GraphicsBackend.h"
 #include <d3d11.h>
 #include <d3d12.h>
@@ -31,6 +33,7 @@ namespace DX12Native
         bool importLoosePbr = false; // Worker-owned loose DDS supplement, explicitly opt-in.
         bool importArchivePbr = false; // Optional archive fallback when the loose file is absent.
         bool usePreparedTextureManifest = true; // Legacy atlas compatibility. Runtime-source mode may omit it.
+        std::unordered_set<std::string> attemptedRuntimePaths; // Worker-owned stream history.
 	};
 	/** @brief Preserves offline material work classes without rediscovering them during traversal. */
 	enum class OfflineMaterialFlags : uint32_t

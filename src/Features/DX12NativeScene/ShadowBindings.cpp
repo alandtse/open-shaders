@@ -3,6 +3,7 @@
 #include <BS_thread_pool.hpp>
 #include <atomic>
 #include <chrono>
+#include "MaterialTextureLookup.h"
 
 namespace DX12Native
 {
@@ -12,7 +13,8 @@ namespace DX12Native
 	}
 	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
         uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr,
-        bool a_importLoose, bool a_importArchive, std::shared_ptr<const ShadowBindings> a_previous)
+        bool a_importLoose, bool a_importArchive, std::shared_ptr<const ShadowBindings> a_previous,
+        std::unordered_set<std::string> a_attemptedPaths)
     {
 		auto result = std::make_shared<ShadowBindings>();
 		result->uploadBatchBudget = a_uploadBatchBudget;
@@ -44,6 +46,7 @@ namespace DX12Native
 			source->uploadBatchBytes = a_uploadBatchBudget;
             source->importLoosePbr = a_importLoose && a_livePbr != nullptr;
             source->importArchivePbr = source->importLoosePbr && a_importArchive;
+            source->attemptedRuntimePaths = std::move(a_attemptedPaths);
             // Skip the legacy manifest on later batches; previously published
             // atlas and runtime pages are inherited through a_previous.
             if (canInherit) source->usePreparedTextureManifest = false;
@@ -135,6 +138,9 @@ namespace DX12Native
         desired = std::move(a_scene);
         livePbr = std::move(a_livePbr);
         liveRevision = incomingRevision;
+        textureProgress.Reset();
+        incrementalBase.reset();
+        streamNextBatchAtMs = 0;
         importLoose = a_importLoose;
         importArchive = a_importArchive;
         backend = a_backend;
@@ -160,7 +166,25 @@ namespace DX12Native
 				}
 			}
 			if (pending->revision == revision) {
-                if (pending->bindings) published = pending->bindings;
+                if (pending->bindings) {
+                    const auto& material = *pending->bindings->materials;
+                    // A batch contributes only after all its upload fences have
+                    // completed. Old bindings stay published until this point.
+                    std::unordered_set<std::string> resident;
+                    for (const auto& path : material.looseDdsAttemptedPaths)
+                        if (material.locations.contains(MaterialTextureLookupKey(path)))
+                            resident.insert(path);
+                    textureProgress.Record(material.looseDdsAttemptedPaths, resident);
+                    published = pending->bindings;
+                    incrementalBase = published;
+                    if (importLoose && livePbr && material.looseDdsDeferred &&
+                        !material.looseDdsAttemptedPaths.empty()) {
+                        attempted = false;
+                        streamNextBatchAtMs = MaterialClockMs() + 500;
+                    } else {
+                        streamNextBatchAtMs = 0;
+                    }
+                }
                 failure = pending->failure;
 				if (pending->deferred) uploadRetry.Start(MaterialClockMs());
 			}
@@ -174,12 +198,16 @@ namespace DX12Native
 			failure.clear();
 		}
 		if (!desired || attempted) return;
+        if (streamNextBatchAtMs && MaterialClockMs() < streamNextBatchAtMs) return;
+        streamNextBatchAtMs = 0;
 		auto task = std::make_shared<State>();
 		task->revision = revision;
 		try {
 			static BS::thread_pool<> pool{ 1 };
-			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr, import = importLoose, archives = importArchive] {
-                try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget, live, import, archives); }
+			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr, import = importLoose, archives = importArchive,
+                previous = incrementalBase, priorAttempts = textureProgress.Attempted()] {
+                try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget,
+                    live, import, archives, previous, priorAttempts); }
 				catch (const MaterialUploadBusy& error) { task->failure = error.what(); task->deferred = true; }
 				catch (const std::exception& error) { task->failure = error.what(); }
 				catch (...) { task->failure = "Unknown shadow binding failure"; }
@@ -198,6 +226,7 @@ namespace DX12Native
 		++revision;
         desired.reset();
         livePbr.reset(); liveRevision = 0; importLoose = false; importArchive = false;
+        textureProgress.Reset(); incrementalBase.reset(); streamNextBatchAtMs = 0;
 		published.reset();
 		failure.clear();
 		attempted = false;
