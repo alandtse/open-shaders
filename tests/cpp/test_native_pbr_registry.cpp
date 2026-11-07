@@ -1130,11 +1130,8 @@ TEST_CASE("Runtime-authoritative matching ignores inaccurate offline material pr
     data.texturePathsComplete = true;
     auto token = registry.BeginCapture(&runtimeMaterial);
     REQUIRE(registry.Publish(&runtimeMaterial, token, data));
-    const auto generation = registry.Export();
-    NativePBR::RecipeCache cache;
-    cache.Update(generation);
     auto published = std::make_shared<NativePBR::RecipeGeneration>();
-    published->revision = generation.revision;
+    published->revision = registry.Revision();
     published->batchesComplete = true;
     published->recipes.emplace(token.identity, std::make_shared<const NativePBR::Recipe>(
         NativePBR::CompileRecipe({ token.identity, 1, data })));
