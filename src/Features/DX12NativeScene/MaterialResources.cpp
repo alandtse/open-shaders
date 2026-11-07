@@ -106,19 +106,6 @@ namespace DX12Native
 	{
 		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
 		auto result = std::make_shared<MaterialResources>();
-		if (a_scene.materialSource) {
-			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result); }
-			catch (const MaterialUploadError&) { throw; }
-			catch (const std::bad_alloc&) { throw; }
-			catch (const std::exception& error) {
-				result->failure = error.what();
-				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear();
-                result->verifiedTextureSources = {};
-                result->bytes = result->textures = 0;
-				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
-				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
-			}
-		}
         NativePBR::LiveMatchResult liveMatch;
         if (a_livePbr) {
             std::vector<NativePBR::PreparedMatchInput> inputs;
@@ -154,6 +141,20 @@ namespace DX12Native
             result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
             result->livePbrMissing = uint32_t(liveMatch.report.missing);
         }
+		if (a_scene.materialSource) {
+			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result,
+                    a_scene.materialSource->importLoosePbr && a_livePbr ? &liveMatch : nullptr); }
+			catch (const MaterialUploadError&) { throw; }
+			catch (const std::bad_alloc&) { throw; }
+			catch (const std::exception& error) {
+				result->failure = error.what();
+				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear();
+                result->verifiedTextureSources = {};
+                result->bytes = result->textures = 0;
+				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
+				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
+			}
+		}
 		std::vector<MaterialRecord> materials;
 		std::vector<SurfaceRecord> surfaces;
 		std::unordered_map<std::string, uint32_t> unique;

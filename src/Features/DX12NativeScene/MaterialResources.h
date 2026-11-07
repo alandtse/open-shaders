@@ -3,6 +3,7 @@
 #include "AccelerationScene.h"
 #include "LogicalTextureRegistry.h"
 #include "VerifiedTextureSources.h"
+#include "LiveLooseTexturePlan.h"
 #include "MaterialUploadStatus.h"
 #include "TruePBR/VerifiedBridge.h"
 #include <array>
@@ -71,6 +72,8 @@ namespace DX12Native
 		uint32_t diskCacheHits = 0, diskCacheWrites = 0;
         uint32_t livePbrMatched = 0, livePbrApplied = 0, livePbrEmissiveApplied = 0, livePbrAmbiguous = 0, livePbrIncompatible = 0, livePbrMissing = 0;
         uint32_t livePbrSourcesMissing = 0, livePbrSourcesAmbiguous = 0, livePbrSourcesIncompatible = 0;
+        uint32_t looseDdsPlanned = 0, looseDdsImported = 0, looseDdsRejected = 0, looseDdsDeferred = 0;
+        uint64_t looseDdsBytes = 0;
 		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
 		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
@@ -78,7 +81,8 @@ namespace DX12Native
 	};
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */
-	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result);
+	void LoadMaterialTextures(const GraphicsBackend& a_backend, const MaterialSource& a_source, MaterialResources& a_result,
+        const NativePBR::LiveMatchResult* a_matches = nullptr);
 	/** @brief Releases a completed or device-removed failed upload without waiting. */
 	void RetireMaterialUploads();
 	/** @brief Checks the single upload slot without waiting. */

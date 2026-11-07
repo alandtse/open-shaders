@@ -52,3 +52,32 @@ and failure counters remain authoritative.
 - Native shader support for all material types and in-game quality/performance validation.
 
 No Windows/Skyrim compilation or live runtime test has been performed by this commit.
+
+### Experimental loose DDS supplement (separate opt-in)
+
+The `Experimental: import missing loose PBR DDS` checkbox is **off by default**.
+Enable verified live PBR scalars first; the loose import option only applies to that
+already-matched opaque static scene. On a background material worker it selects
+up to **8 unique missing DDS paths per scene/revision**, reads at most **32 MiB**
+of additional source data, rejects reparse-point files, hashes their bytes with
+SHA-256 and validates DDS metadata and DX12 shader-sampling support.
+
+Only **loose files** under `Data/textures` are accepted. BSA/archive resources,
+non-DDS sources, complex PBR features and renderer-owned GPU textures are
+deliberately not captured. Import uses the **same material upload page cache,
+DXGI budget, staging limit, single in-flight upload slot and completion fences**
+as the prepared atlas. A file is reopened and digest-checked before GPU upload;
+a changed or unavailable file does not become a resident texture.
+
+The per-instance source request must still pass the strict live-material matcher.
+Sources missing at a particular load remain on the existing prepared/fallback
+path. The planner defers requests past its eight-file cap; it does not loop on
+the main render thread trying to fill them. Toggling the option triggers a
+fresh asynchronously prepared binding set.
+
+Diagnostics: `looseDdsPlanned`, `looseDdsImported`, `looseDdsRejected`,
+`looseDdsDeferred` and `looseDdsBytes`. These are worker load counters;
+they are **not** evidence of correct in-game lighting until user validation.
+
+If repeated load attempts exhaust GPU memory, turn off the loose import toggle.
+The known-good baseline is the prepared atlas plus the existing native fallback.

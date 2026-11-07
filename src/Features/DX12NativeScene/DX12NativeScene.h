@@ -18,6 +18,7 @@ struct DX12NativeScene final : Feature
 		bool Enabled = true, ShadowMask = true;
 		uint32_t BudgetMB = 512, FrameBudgetMB = 0, MaterialBatchMB = 16;
 		bool UseLivePBR = false; // Experimental opt-in; do not enable before runtime validation.
+        bool ImportLoosePBR = false; // Separate opt-in for bounded loose-file DDS residency.
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
