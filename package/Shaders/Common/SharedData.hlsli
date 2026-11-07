@@ -698,9 +698,13 @@ namespace SharedData
 		uint Enable;
 		float MotionStretch;
 		float MotionTransparency;
-		float pad0;
+		float WindInfluence;
 		float4 TextureBounds;
 		float2 TextureRadiusScale;
+		float FallSpeed;
+		float pad0;
+		float CurtainStrength;
+		float CurtainScale;
 		float2 pad1;
 	};
 
