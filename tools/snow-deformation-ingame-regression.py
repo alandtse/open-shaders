@@ -35,6 +35,8 @@ MAX_ACCUMULATION_LUMA_LOSS = -3.0
 EYE_LUMA_RATIO = (0.85, 1.15)
 VR_LANDSCAPE_OFFSETS = ((0, 400), (0, -400), (400, 0))
 VR_DROP_Z = -8800
+HAND_SPOT = (110900, 104400, -8800)
+HAND_REACH_SECONDS = 70
 
 
 class Devbench:
@@ -139,7 +141,9 @@ def go_to_spot(bench):
 def verify_spot(bench, report):
     cell = wait_for_cell(bench, "Winterhold", 20)
     report.check("setup.cell", "PASS" if cell.startswith("Winterhold") else "FAIL", f"cell={cell!r} (expected {CELL} area)")
-    return cell.startswith("Winterhold")
+    loaded = "Active" in bench.diagnostics()
+    report.check("setup.feature", "PASS" if loaded else "FAIL", "Snow Deformation diagnostics answer" if loaded else "no Snow Deformation diagnostics: the feature is not loaded (missing Shaders/Features/SnowDeformation.ini, or disabled at boot)")
+    return cell.startswith("Winterhold") and loaded
 
 
 def freecam_pose(bench, x, y, z, yaw, pitch):
@@ -230,6 +234,47 @@ def scenario_sink(bench, report):
     report.check("sink.disable", "PASS" if after.get("SunkActors", 1) == 0 else "FAIL", f"SunkActors={after.get('SunkActors')} after Sink Into Prints off")
 
 
+def scenario_hands(bench, report):
+    """VR only: crouch the body and reach both hands to the feet so the hand capsules press into landscape snow."""
+    freecam_off(bench)
+    bench.set_feature("SnowDeformation", {"Enabled": True, "IncludeHands": True, "BlanketHeight": 20.0, "SinkActors": False})
+    for axis, value in zip("xyz", HAND_SPOT):
+        bench.console(f"player.setpos {axis} {value}")
+    time.sleep(6)
+    clear_modals(bench)
+    rest = bench.diagnostics()
+    probe = rest.get("HandProbe", [0.0, 0.0, 0.0])
+    on_landscape = probe[0] - probe[1] < 100
+    report.check("hands.spot", "PASS" if on_landscape else "FAIL", f"HandProbe={probe} (hand minus land over 100 means static ground, not landscape)")
+    foot = {"front": 25, "offset": [0, 0, 3]}
+    run = bench.call("input", {"action": "reach", "device": "vrTrackedSet", "owner": "snowreg", "holdMs": 12000, "toleranceUnits": 3,
+                              "hands": {"left": {"node": "NPC L Foot [Lft ]", **foot}, "right": {"node": "NPC R Foot [Rft ]", **foot}},
+                              "head": {"lookAt": "hands", "eyeHeight": 0.6}}).get("runId")
+    if run is None:
+        report.check("hands.reach", "FAIL", "devbench refused the reach (another injection may still be running)")
+        return
+    best = 0
+    image = None
+    deadline = time.time() + HAND_REACH_SECONDS
+    while time.time() < deadline:
+        status = bench.call("input", {"action": "reachStatus", "device": "vrTrackedSet", "runId": run})
+        phase = status.get("phase")
+        if phase == "holding":
+            best = max(best, bench.diagnostics().get("HandStamps", 0))
+            if image is None:
+                image = shot(bench, report, "hands_pressed")
+        if phase in ("done", "failed", "stopped"):
+            break
+        time.sleep(2)
+    report.check("hands.reach", "PASS" if status.get("worstErrorDistance", 99) <= 3 else "FAIL", f"reach phase={phase} worstErrorDistance={status.get('worstErrorDistance')}")
+    report.check("hands.press", "PASS" if best > 0 else "FAIL", f"HandStamps peaked at {best} while the hands were held at the snow")
+    time.sleep(3)
+    after = bench.diagnostics().get("HandStamps", 1)
+    report.check("hands.release", "PASS" if after == 0 else "FAIL", f"HandStamps={after} after the hands lifted")
+    if image is not None:
+        report.look(image, "crouched view of the snow in front of the feet with dents under both hands; note any sawtooth edges")
+
+
 def hold_storm(bench):
     """Force the snowstorm at a fixed hour so before and after shots share lighting."""
     bench.console(f"fw {SNOWSTORM_WEATHER}")
@@ -287,7 +332,7 @@ def main():
     parser.add_argument("--out", required=True, help="output directory (screenshots, results.json, report.md)")
     parser.add_argument("--port", type=int, help="devbench port; default probes 8920-8923")
     parser.add_argument("--save", help="load this save first (default: the game's latest save)")
-    parser.add_argument("--only", nargs="*", choices=["blanket", "sink", "accumulation", "eyes"], help="run a subset")
+    parser.add_argument("--only", nargs="*", choices=["blanket", "sink", "accumulation", "eyes", "hands"], help="run a subset")
     args = parser.parse_args()
 
     out = Path(args.out).resolve()
@@ -316,6 +361,7 @@ def main():
     scenarios = {"blanket": scenario_blanket, "sink": scenario_sink, "accumulation": scenario_accumulation}
     if state.get("vr"):
         scenarios["eyes"] = scenario_eyes
+        scenarios["hands"] = scenario_hands
     for name, run in scenarios.items():
         if args.only and name not in args.only:
             continue
