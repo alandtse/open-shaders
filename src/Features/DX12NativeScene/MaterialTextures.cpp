@@ -475,8 +475,8 @@ namespace DX12Native
         if (a_source.importLoosePbr && a_matches) {
             std::unordered_set<std::string> present;
             for (const auto& [hash, texture] : textures)
-                for (const auto& path : texture->paths)
-                    if (const auto canonical = NativePBR::CanonicalTexturePath(path))
+                for (const auto& textureAlias : texture->paths)
+                    if (const auto canonical = NativePBR::CanonicalTexturePath(textureAlias))
                         present.insert(*canonical);
             const auto planned = PlanLiveLooseTextures(*a_matches, present);
             a_result.looseDdsPlanned = uint32_t(planned.paths.size());
@@ -485,10 +485,10 @@ namespace DX12Native
                 bool triedArchive = false;
                 try {
                     // Only canonical relative paths from uniquely matched PBR materials enter here.
-                    const auto path = std::filesystem::path("Data") / std::filesystem::path(canonical);
+                    const auto looseDdsPath = std::filesystem::path("Data") / std::filesystem::path(canonical);
                     std::vector<uint8_t> bytes;
                     std::string digest;
-                    const auto attributes = GetFileAttributesW(path.c_str());
+                    const auto attributes = GetFileAttributesW(looseDdsPath.c_str());
                     const DWORD lookupError = attributes == INVALID_FILE_ATTRIBUTES ? GetLastError() : ERROR_SUCCESS;
                     const bool missingLoose = attributes == INVALID_FILE_ATTRIBUTES &&
                         (lookupError == ERROR_FILE_NOT_FOUND || lookupError == ERROR_PATH_NOT_FOUND);
@@ -499,7 +499,7 @@ namespace DX12Native
                         bytes = std::move(archived.bytes);
                         digest = std::move(archived.digest);
                     } else {
-                        auto loose = ReadLooseDds(path);
+                        auto loose = ReadLooseDds(looseDdsPath);
                         bytes = std::move(loose.first);
                         digest = std::move(loose.second);
                     }
@@ -512,7 +512,7 @@ namespace DX12Native
                         auto image = std::make_unique<Texture>();
                         image->hash = digest;
                         if (triedArchive) image->archiveSource = canonical;
-                        else image->looseSource = path;
+                        else image->looseSource = looseDdsPath;
                         DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(),
                             DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, image->metadata));
                         ValidateMetadata(image->metadata, a_source.budget);
