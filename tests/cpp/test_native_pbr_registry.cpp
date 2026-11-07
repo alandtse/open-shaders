@@ -16,6 +16,9 @@ TEST_CASE("Material upload publication follows fence and timeout", "[native_pbr]
     REQUIRE(DX12Native::EvaluateMaterialUpload(0, 5000, 5000) == Failed);
     REQUIRE(DX12Native::EvaluateMaterialUpload(1, 5000, 5000) == Ready);
     REQUIRE(DX12Native::EvaluateMaterialUpload(UINT64_MAX, 0, 5000) == Failed);
+    REQUIRE(DX12Native::MaterialUploadFitsBatch(8, 8, 16));
+    REQUIRE_FALSE(DX12Native::MaterialUploadFitsBatch(8, 9, 16));
+    REQUIRE_FALSE(DX12Native::MaterialUploadFitsBatch(UINT64_MAX, 1, 16));
 }
 
 TEST_CASE("Texture source batches preserve valid entries after failures", "[native_pbr]")

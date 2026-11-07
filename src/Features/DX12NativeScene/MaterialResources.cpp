@@ -113,6 +113,7 @@ namespace DX12Native
 				result->failure = error.what();
 				result->pools.clear(); result->locations.clear(); result->logicalLocations.clear(); result->textureTickets.clear(); result->bytes = result->textures = 0;
 				result->peakStagingBytes = result->uploadedBytes = result->uploadWaitMicroseconds = result->uploadedPages = result->reusedPages = result->reusedTextures = 0;
+				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
 			}
 		}
 		std::vector<MaterialRecord> materials;

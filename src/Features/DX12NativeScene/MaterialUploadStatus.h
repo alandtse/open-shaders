@@ -13,4 +13,10 @@ namespace DX12Native
 		if (a_completed >= 1) return MaterialUploadStatus::Ready;
 		return a_elapsedMs >= a_timeoutMs ? MaterialUploadStatus::Failed : MaterialUploadStatus::Pending;
 	}
+
+	/** @brief Checks whether another staging allocation fits without overflowing the batch limit. */
+	inline bool MaterialUploadFitsBatch(uint64_t a_current, uint64_t a_next, uint64_t a_limit)
+	{
+		return a_current <= a_limit && a_next <= a_limit - a_current;
+	}
 }
