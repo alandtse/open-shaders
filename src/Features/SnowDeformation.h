@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "Utils/BodyCapsules.h"
 
 struct SnowDeformation : Feature
 {
@@ -55,6 +56,7 @@ struct SnowDeformation : Feature
 		bool Enabled = true;
 		bool IncludeNPCs = true;
 		bool IncludeObjects = true;
+		bool IncludeHands = true;
 		bool UseSnowCover = true;
 		bool DisplaceShadows = true;
 		bool SinkActors = true;
@@ -283,6 +285,19 @@ private:
 		RE::bhkNiCollisionObject* object = nullptr;
 	};
 
+	struct HandBlob
+	{
+		float3 sum;
+		float3 move;
+		float2 lowXY;
+		float2 highXY;
+		float lowest = 0.0f;
+		uint32_t count = 0;
+
+		void Add(const Util::BodyCapsules::Capsule& a_capsule);
+		void Resolve(float a_minRadius, float3& a_centre, float& a_radius) const;
+	};
+
 	struct CachedShape
 	{
 		RE::NiPointer<RE::bhkNiCollisionObject> object;
@@ -399,6 +414,8 @@ private:
 	void AppendActorStamps(RE::Actor* a_actor, const RE::NiPoint3& a_anchor, std::vector<Stamp>& a_stamps);
 	const std::vector<CachedShape>& ActorCollisions(RE::Actor* a_actor, RE::NiAVObject* a_root);
 	void AppendObjectStamps(std::vector<Stamp>& a_stamps);
+	void AppendHandStamps(std::vector<Stamp>& a_stamps);
+	[[nodiscard]] Stamp MakePressStamp(RE::TES* a_tes, const RE::NiPoint3& a_position, float a_radius, float a_landZ, float a_motionX, float a_motionY) const;
 	void AppendHeatStamps(std::vector<Stamp>& a_stamps);
 	void AppendImpactStamps(std::vector<Stamp>& a_stamps);
 	void BuildImpact(const ImpactEvent& a_event, std::vector<Stamp>& a_stamps);
@@ -509,6 +526,14 @@ private:
 	float deepestSink = 0.0f;
 	uint64_t gatherFrame = 0;
 	std::atomic<bool> gatherEnabled = false;
+	std::atomic<uint32_t> handStamps = 0;
+	std::atomic<uint32_t> handCapsules = 0;
+	std::atomic<uint32_t> handNodes = 0;
+	std::atomic<uint32_t> handNoLand = 0;
+	std::atomic<uint32_t> handOutOfReach = 0;
+	std::atomic<float> handProbeZ = 0.0f;
+	std::atomic<float> handProbeLandZ = 0.0f;
+	std::atomic<float> handProbeRadius = 0.0f;
 	std::atomic<bool> commandClearField = false;
 	std::atomic<bool> loadClearField = false;
 	std::atomic<bool> loadClearMotion = false;
