@@ -1410,6 +1410,8 @@ void LightLimitFix::UpdateLights()
 				if (auto niLight = shadowLight->light.get()) {
 					auto light = ProcessLight(shadowLight, niLight);
 
+					Feature::ApplyPointLightColorOverrides(light.color);
+
 					SetPointLightTypeFlags(light, shadowLight);
 					light.fade *= shadowLight->lodDimmer;
 
