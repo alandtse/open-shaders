@@ -2887,6 +2887,8 @@
     "feature.rain_refraction.motion_transparency": "Motion Transparency",
     "feature.rain_refraction.motion_transparency_tooltip": "Fades the drops; higher values make rain more transparent.",
     "feature.rain_refraction.name": "Rain Refraction",
+    "feature.rain_refraction.wind_influence": "Wind Influence",
+    "feature.rain_refraction.wind_influence_tooltip": "How strongly gusts and transient wind from the Wind feature push and slant the rain.\n0 keeps the vanilla uniform wind; applies to vanilla and refractive rain alike.",
     "feature.remote_control.bridge_disabled": "This build was compiled without the devbench bridge (DEVBENCH_BRIDGE=OFF). No tools are registered.",
     "feature.remote_control.console_note": "Note: the console tool is provided by devbench itself, not this plugin.",
     "feature.remote_control.description": "Registers graphics-feature, inspect, capture, shader-cache, and settings tools into the external devbench host so AI assistants (Claude Code, Cursor, etc.) can toggle features, inspect engine state, trigger captures, and save/load settings over MCP and REST. There is no in-game server — install the devbench SKSE plugin to enable the integration.",

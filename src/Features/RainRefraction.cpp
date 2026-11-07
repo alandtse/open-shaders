@@ -12,7 +12,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	RainRefraction::Settings,
 	Enable,
 	MotionStretch,
-	MotionTransparency)
+	MotionTransparency,
+	WindInfluence)
 
 namespace
 {
@@ -89,8 +90,16 @@ namespace
 
 void RainRefraction::DrawSettings()
 {
+	const auto drawWindInfluence = [&]() {
+		ImGui::SliderFloat(T(TKEY("wind_influence"), "Wind Influence"), &settings.WindInfluence, 0.0f, kMaxWindInfluence, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("wind_influence_tooltip"), "How strongly gusts and transient wind from the Wind feature push and slant the rain.\n0 keeps the vanilla uniform wind; applies to vanilla and refractive rain alike."));
+		}
+	};
+
 	if (IsManagedByENB()) {
 		ImGui::TextColored(globals::menu->GetSettings().Theme.StatusPalette.Warning, "%s", T("common.settings_managed_by_enb", "Settings are currently managed by ENB."));
+		drawWindInfluence();
 		return;
 	}
 
@@ -109,6 +118,7 @@ void RainRefraction::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("motion_transparency_tooltip"), "Fades the drops; higher values make rain more transparent."));
 	}
+	drawWindInfluence();
 }
 
 #undef I18N_KEY_PREFIX
@@ -118,6 +128,7 @@ void RainRefraction::LoadSettings(json& o_json)
 	settings = o_json;
 	settings.MotionStretch = std::clamp(settings.MotionStretch, kMinMotionStretch, kMaxMotionStretch);
 	settings.MotionTransparency = std::clamp(settings.MotionTransparency, 0.0f, 1.0f);
+	settings.WindInfluence = std::clamp(settings.WindInfluence, 0.0f, kMaxWindInfluence);
 }
 
 void RainRefraction::SaveSettings(json& o_json)
@@ -188,12 +199,24 @@ RainRefraction::PerFrame RainRefraction::GetCommonBufferData()
 	if (preset)
 		data = *preset;
 	data.Enable = data.Enable && GetRaindropSRV() && alphaBlendState;
+	data.WindInfluence = settings.WindInfluence;
+	data.FallSpeed = GetWeatherFallSpeed();
 	const auto& footprint = IsManagedByENB() && presetRaindrops.srv ? presetRaindrops.footprint : defaultRaindrops.footprint;
 	data.TextureBounds = float4{ footprint.uvBounds[0], footprint.uvBounds[1], footprint.uvBounds[2], footprint.uvBounds[3] };
 	data.TextureRadiusScale = float2{ footprint.radiusScale[0], footprint.radiusScale[1] };
 
 	perFrameCache = data;
 	return data;
+}
+
+float RainRefraction::GetWeatherFallSpeed() const
+{
+	const auto* sky = globals::game::sky;
+	const auto* weather = sky ? sky->currentWeather : nullptr;
+	if (!weather || !weather->precipitationData)
+		return kFallbackRainFallSpeed;
+	const float gravity = weather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity).f;
+	return std::isfinite(gravity) && gravity > 0.0f ? gravity : kFallbackRainFallSpeed;
 }
 
 bool RainRefraction::IsRefractiveRainPass()
