@@ -82,7 +82,7 @@ namespace
 		// Colors
 		{ Ids::kColors, "menu.settings.color_background", "Background" },
 		{ Ids::kColors, "menu.settings.color_text", "Text" },
-		{ Ids::kColors, "menu.settings.borders_and_separators", "Borders & Separators" },
+		{ Ids::kColors, "menu.settings.palette_group_lists", "Headers, Lists & Separators" },
 		{ Ids::kColors, "menu.settings.feature_headings", "Feature Headings" },
 		{ Ids::kColors, "menu.settings.status", "Status" },
 		{ Ids::kColors, "menu.settings.full_palette", "Full Palette" },
@@ -92,9 +92,9 @@ namespace
 		{ Ids::kStyling, "menu.settings.window_padding", "Window Padding" },
 		{ Ids::kStyling, "menu.settings.frame_padding", "Frame Padding" },
 		{ Ids::kStyling, "menu.settings.item_spacing", "Item Spacing" },
-		{ Ids::kStyling, "menu.settings.section_borders", "Borders" },
+		{ Ids::kStyling, "menu.settings.styling_tab_borders", "Borders" },
 		{ Ids::kStyling, "menu.settings.widget_border_size", "OS Editor Widget Border Size" },
-		{ Ids::kStyling, "menu.settings.section_rounding", "Rounding" },
+		{ Ids::kStyling, "menu.settings.styling_tab_rounding", "Rounding" },
 		{ Ids::kStyling, "menu.settings.section_tables", "Tables" },
 		{ Ids::kStyling, "menu.settings.section_docking", "Docking" },
 		// Surfaces
