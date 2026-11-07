@@ -45,7 +45,7 @@ cbuffer Trace : register(b0)
 	uint ReferenceVisibility;
 	uint ReferencePrimaryTraversal;
 	uint FrameIndex;
-	uint LabPadding;
+	uint TraceDensityMode;
 	float4 LightTuning; // radius multiplier, cutoff fraction, cutoff exponent, direct strength
 	float4 ShadowTuning; // shadow strength, emitter radius scale, stochastic visibility, emission strength
 };
@@ -53,6 +53,7 @@ cbuffer Trace : register(b0)
 #include "Common/ReverseZ.hlsli"
 #include "DX12NativeScene/materials.hlsli"
 #include "ShadowCull.hlsli"
+#include "DX12NativeScene/NativeTraceDensity.hlsli"
 #include "ValidityLab.hlsli"
 
 bool AdmitReceiverCandidate(uint instance, uint primitive, float2 barycentric, inout bool valid)
@@ -112,6 +113,13 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	ReceiverGuide[pixel] = 0;
 	DebugVisualization[pixel] = 0;
 	if (ComparisonEnabled != 0) { ComparisonDiffuse[pixel] = 0; ComparisonSpecular[pixel] = 0; }
+	if (!NativeTraceDensityPixel(pixel.x, pixel.y, TraceDensityMode, FrameIndex, 0x51a3f62bu)) {
+		// Zero radiance with a distinct untraced validity state, never a dark
+		// physically evaluated sample. All outputs stay full-resolution.
+		RejectionReason[pixel] = 0x10000000u;
+		Count(27);
+		return;
+	}
 	Count(0);
 	float2 clip = (float2(pixel) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
 	clip.y = -clip.y;
@@ -281,8 +289,8 @@ void main(uint2 pixel : SV_DispatchThreadID)
 	if (strictVisibilityRejected && originalReason == 0) originalReason = 7;
 	if (eligibleLights == 0) { Finish(pixel, 0, 0, originalReason == 0 ? 6 : originalReason); return; }
 	if (!all(isfinite(diffuse)) || !all(isfinite(specular))) { if (DebugEnabled != 0) DebugVisualization[pixel] = float4(1, 0, 1, 1); Count(10); Finish(pixel, originalReason == 0 ? 3 : (originalReason == 3 ? 0 : 3), 3, originalReason == 0 ? 8 : originalReason); return; }
-	// Emission is independent of direct intensity, as in the reference; default
-	// 0 prevents double-counting emission already present in the raster scene.
+	// Emission is independent of direct intensity, as in the reference.
+	// The owner-selected 1x default may double-count existing raster emission.
 	const float3 emission = ShadowTuning.w > 0.0f && all(isfinite(material.emission)) ?
 		max(material.emission, 0.0f) * ShadowTuning.w : 0.0f;
 	const float4 diffuseOutput = float4(diffuse * DiffuseIntensity * LightTuning.w +

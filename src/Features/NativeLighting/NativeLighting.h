@@ -18,6 +18,7 @@ struct NativeLightingFeature final : Feature
 		float PointLightRadiusMultiplier = 4.0f, PointLightFalloffFraction = 0.1f, PointLightFalloffExponent = 1.0f;
 		float ShadowStrength = 1.0f, EmitterRadiusMultiplier = 1.0f;
 		uint32_t NormalInfluence = 2, SelectedDirectLight = 0;
+		uint32_t TraceDensityMode = 0; // 0 full, 1 two-thirds, 2 alternating half.
 		bool StochasticShadows = false, UseAllPreparedLights = true;
 		uint32_t BudgetMB = 0; // 0 = dynamic DXGI local-memory-aware frame pool.
 		bool PersistLab = false;
@@ -55,7 +56,7 @@ struct NativeLightingFeature final : Feature
 		std::vector<std::pair<winrt::com_ptr<ID3D12Fence>, uint64_t>> consumers;
 		uint64_t readyValue = 0, bytes = 0, sceneRevision = 0;
 		uint64_t validityRevision = 0;
-		uint32_t frame = 0, width = 0, height = 0, enabledLobes = 0;
+		uint32_t frame = 0, width = 0, height = 0, enabledLobes = 0, traceDensityMode = 0;
 		float diffuseIntensity = 0, specularIntensity = 0;
 		bool countersRead = false, comparisonEnabled = false, geometryOnly = false, maskAvailable = false, maskExperimental = false;
 	};
@@ -97,7 +98,7 @@ private:
 	winrt::com_ptr<ID3D12PipelineState> pipeline;
 	std::array<std::shared_ptr<Contribution>, 4> frames;
 	std::shared_ptr<Contribution> current;
-	std::array<uint64_t, 27> totals{};
+	std::array<uint64_t, 28> totals{}; // Slot 27: samples intentionally omitted by trace-density policy.
 	std::string status;
 	uint64_t nextFence = 0, submissions = 0, completions = 0, counterReadFailures = 0, comparisonFrames = 0, busyDeferrals = 0;
 	DX12Native::VideoMemoryBudget videoBudget;
