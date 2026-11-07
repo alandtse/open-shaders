@@ -8,7 +8,7 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 void DX12NativeScene::DrawSettings()
 {
@@ -21,6 +21,12 @@ void DX12NativeScene::DrawSettings()
 		static_cast<unsigned long long>(shadowOpaqueRetryAttempts));
 	if (ImGui::CollapsingHeader("Early DX12 shadow-mask controls")) {
 		ImGui::TextDisabled("This panel owns raw shadow visibility; its final-image contribution is independent in Native Composite.");
+		int traceDensity = int(settings.ShadowTraceDensityMode);
+		if (ImGui::Combo("Independent shadow trace density", &traceDensity, "Full\0Two-thirds\0Half\0")) {
+			settings.ShadowTraceDensityMode = uint32_t(traceDensity);
+			changed = true;
+		}
+		ImGui::TextDisabled("Full-resolution raw masks; skipped samples have validity -1 and are not reconstructed.");
 		bool changed = false;
 		changed |= ImGui::Checkbox("Shadow all prepared point lights", &settings.ShadowAllLights);
 		if (!settings.ShadowAllLights) {
@@ -83,6 +89,7 @@ void DX12NativeScene::LoadSettings(json& a_json)
 	settings.ShadowDistanceFade = selected.ShadowDistanceFade;
 	settings.ShadowLightIndex = selected.ShadowLightIndex;
 	settings.ShadowNormalInfluence = std::min(selected.ShadowNormalInfluence, 2u);
+	settings.ShadowTraceDensityMode = std::min(selected.ShadowTraceDensityMode, 2u);
 	settings.ShadowEmitterRadius = clamp(selected.ShadowEmitterRadius, Settings{}.ShadowEmitterRadius, 0.0f, 8.0f);
 	settings.ShadowReachMultiplier = clamp(selected.ShadowReachMultiplier, Settings{}.ShadowReachMultiplier, 0.1f, 64.0f);
 	settings.ShadowFalloffFraction = clamp(selected.ShadowFalloffFraction, Settings{}.ShadowFalloffFraction, 0.02f, 1.0f);
@@ -233,7 +240,8 @@ void DX12NativeScene::DispatchShadow(const char* a_stage)
 	const DX12Native::ShadowTraceControls controls{
 		shadowSettings.ShadowReachMultiplier, shadowSettings.ShadowFalloffFraction,
 		shadowSettings.ShadowFalloffExponent, shadowSettings.ShadowEmitterRadius,
-		shadowSettings.ShadowStochastic, shadowSettings.ShadowDistanceFade, shadowSettings.ShadowNormalInfluence
+		shadowSettings.ShadowStochastic, shadowSettings.ShadowDistanceFade, shadowSettings.ShadowNormalInfluence,
+		shadowSettings.ShadowTraceDensityMode
 	};
 	shadow.Dispatch(*backend, scene->acceleration, scene->materials, selectedLights, camera, size, frame,
 		uint64_t(shadowSettings.FrameBudgetMB) * 1024 * 1024, controls);
@@ -312,7 +320,7 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "stochastic", settings.ShadowStochastic }, { "emitterRadius", settings.ShadowEmitterRadius },
 			{ "reachMultiplier", settings.ShadowReachMultiplier }, { "falloffFraction", settings.ShadowFalloffFraction },
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
-			{ "normalInfluence", settings.ShadowNormalInfluence } } },
+			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
 		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() } };
 	std::scoped_lock lock(diagnosticsMutex);
 	diagnostics = std::move(snapshot);
@@ -333,7 +341,7 @@ void DX12NativeScene::RegisterUxActions()
 		if (enabled) scene.requestedEnabled = 1;
 		scene.shadowResetRequested = true;
 	});
-	FEATURE_COMMAND("setShadowLayer", "Legacy compatibility: layer enabled/contribution/strength/blend/radiusPixels/receiverTolerance/preview/afterLighting forward to Native Composite; allLights/lightIndex/stochastic/emitterRadius/reachMultiplier/falloffFraction/falloffExponent/distanceFade/normalInfluence configure raw DX12 shadow-mask tracing.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("setShadowLayer", "Legacy compatibility: layer enabled/contribution/strength/blend/radiusPixels/receiverTolerance/preview/afterLighting forward to Native Composite; allLights/lightIndex/stochastic/emitterRadius/reachMultiplier/falloffFraction/falloffExponent/distanceFade/normalInfluence/traceDensityMode (0 Full, 1 Two-thirds, 2 Half) configure raw DX12 shadow-mask tracing.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<DX12NativeScene*>(self);
 		std::scoped_lock lock(feature.settingsMutex);
 		auto& s = feature.settings;
@@ -351,6 +359,7 @@ void DX12NativeScene::RegisterUxActions()
 		if (args.contains("stochastic")) s.ShadowStochastic = args.at("stochastic").get<bool>();
 		if (args.contains("distanceFade")) s.ShadowDistanceFade = args.at("distanceFade").get<bool>();
 		if (args.contains("normalInfluence")) s.ShadowNormalInfluence = std::min(args.at("normalInfluence").get<uint32_t>(), 2u);
+		if (args.contains("traceDensityMode")) s.ShadowTraceDensityMode = std::min(args.at("traceDensityMode").get<uint32_t>(), 2u);
 		++feature.shadowControlsRevision;
 		globals::features::nativeComposite.ConfigureShadowLayer(args);
 	});

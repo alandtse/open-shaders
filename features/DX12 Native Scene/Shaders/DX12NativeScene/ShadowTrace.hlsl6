@@ -119,7 +119,7 @@ bool TracePreparedPointVisibility(uint lightIndex, float3 position, float3 light
 }
 
 
-#include "NativeTraceSampling.hlsli"
+#include "NativeTraceDensity.hlsli"
 #include "nativeShadowTrace.hlsli"
 
 [numthreads(8, 8, 1)]

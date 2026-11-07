@@ -171,7 +171,9 @@ namespace DX12Native
 			{ "offered", bool(current) }, { "gpuComplete", current && completed != UINT64_MAX && completed >= current->readyValue },
 			{ "readyMaterials", current ? current->bindings->materials->readyMaterials : 0 },
 			{ "rejectedMaterials", current ? current->bindings->materials->rejectedMaterials : 0 },
-			{ "lightCount", current ? current->lightSnapshot.size() : 0 } };
+			{ "lightCount", current ? current->lightSnapshot.size() : 0 },
+			{ "traceDensityMode", current ? current->controls.traceDensityMode : 0u },
+			{ "fullWidth", current ? current->width : 0u }, { "fullHeight", current ? current->height : 0u } };
 	}
 
 	bool ShadowTrace::RetainThrough(const std::shared_ptr<const ShadowFrame>& a_frame, ID3D12Fence* a_fence, uint64_t a_value)
@@ -302,7 +304,7 @@ namespace DX12Native
 			float4 falloff, stochastic;
 		};
 		const Constants constants{ a_frame.width, a_frame.height, a_frame.frame, uint32_t(a_frame.scene->bottoms.size()), {}, 60000.0f,
-			a_frame.cameraOrigin, 0.5f, 0.0f, { 1u, 0u, uint32_t(a_frame.lightSnapshot.size()) }, { 1, 1, 1, 1 }, 0u, { 4u, 0u, 0u },
+			a_frame.cameraOrigin, 0.5f, 0.0f, { 1u, 0u, uint32_t(a_frame.lightSnapshot.size()) }, { 1, 1, 1, 1 }, 0u, { 4u, a_frame.controls.traceDensityMode, 0u },
 			{ 0u, a_frame.bindings->materials->roomCount, a_frame.bindings->materials->roomsKnown ? 1u : 0u, a_frame.controls.normalInfluence },
 			{ a_frame.controls.reachMultiplier, a_frame.controls.falloffFraction, a_frame.controls.falloffExponent, a_frame.controls.distanceFade ? 1.0f : 0.0f },
 			{ a_frame.controls.stochastic ? 1.0f : 0.0f, a_frame.controls.emitterRadius, 0.0f, 0.0f } };

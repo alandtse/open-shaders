@@ -14,6 +14,7 @@ namespace DX12Native
 		float reachMultiplier = 1.0f, falloffFraction = 0.1f, falloffExponent = 1.0f, emitterRadius = 1.0f;
 		bool stochastic = true, distanceFade = false;
 		uint32_t normalInfluence = 2;
+		uint32_t traceDensityMode = 0;
 	};
 	/** @brief Retains one independently fenced prepared-scene shadow result. */
 	struct ShadowFrame

@@ -15,6 +15,12 @@ bool AdmitShadowCandidate(uint instance,uint primitive,float2 barycentric,inout 
 void TraceNativeShadow(uint2 pixel)
 {
     Shadow[pixel]=float4(1,0,0,0);
+    if (!NativeTraceDensityPixel(pixel.x,pixel.y,DirectTraceMode,FrameIndex,0x62c01dafu)) {
+        // Explicitly omitted raw sample. -1 differs from invalid (0) and
+        // successfully evaluated (1). No current-frame reconstruction.
+        Shadow[pixel]=float4(0,-1,0,0);
+        return;
+    }
     float4 cameraRay=Receivers[pixel];
     if (cameraRay.w!=1 || !all(isfinite(cameraRay))) return;
     RayDesc primary;
@@ -50,7 +56,7 @@ void TraceNativeShadow(uint2 pixel)
     uint count = Padding.z != 0u ? Padding.z : 1u;
     if (count > MaximumDirectLights) return;
     float totalWeight = 0, visibleWeight = 0;
-    const bool traced = NativeTraceSample(pixel.x,pixel.y,DirectTraceMode,DirectStochastic.x >= 0.5,FrameIndex,0u);
+    // The density gate above is independent of stochastic emitter sampling.
     bool valid = true;
     [loop] for (uint lightIndex=0;lightIndex<count;++lightIndex) {
         uint base = lightIndex * LightSnapshotTexels;
@@ -76,12 +82,11 @@ void TraceNativeShadow(uint2 pixel)
         float weight = NativeShadowLightWeight(dot(max(radiance.rgb,0),float3(0.2126,0.7152,0.0722)),attenuation,facing);
         if (!isfinite(weight)) { valid=false; continue; }
         if (weight <= 0) continue;
-        if (!traced) { totalWeight += weight; continue; }
         bool visible;
         if (!TracePreparedPointVisibility(lightIndex,position,lightPosition,sourceRadius,direction,dist,pixel,0u,true,visible)) { valid=false; continue; }
         totalWeight += weight;
         visibleWeight += weight * NativeShadowLightVisibility(visible,cutoff,PointLightFalloff.w >= 0.5);
     }
     if (valid && isfinite(totalWeight) && totalWeight > 1e-6)
-        Shadow[pixel]=float4(traced ? saturate(NativeShadowWeightedVisibility(visibleWeight,totalWeight)) : 1,NativeShadowSampleState(traced),distance,float(instance+1u));
+        Shadow[pixel]=float4(saturate(NativeShadowWeightedVisibility(visibleWeight,totalWeight)),1,distance,float(instance+1u));
 }
