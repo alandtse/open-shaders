@@ -94,6 +94,10 @@ private:
 	DX12Native::AccelerationWorker acceleration;
 	DX12Native::ShadowBindingWorker materialBindings;
 	std::weak_ptr<const DX12Native::ShadowBindings> retiredMaterials;
+	// Immutable recipe/hint snapshot retained through the asynchronous binding worker.
+	std::shared_ptr<const NativePBR::LiveBindingSource> livePbrSource;
+	uint64_t livePbrRevision = 0;
+	uint32_t livePbrLastCaptureFrame = 0;
 	std::shared_ptr<CoverageTask> coverageTask;
 	std::optional<NativePBR::InstanceCoverage> coverageResult;
 	std::atomic<bool> coverageRequested{ false };
