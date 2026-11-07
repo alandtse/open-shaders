@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 SCENE_DIR = ROOT / "src" / "CSEditor" / "SceneManager"
 POLICY_PATH = ROOT / "src" / "SceneSettingsPolicy.h"
+MANAGER_PATH = ROOT / "src" / "SceneSettingsManager.cpp"
 GENERATOR_PATH = ROOT / "cmake" / "generate_scene_settings_catalog.py"
 
 SPEC = importlib.util.spec_from_file_location("scene_catalog_generator", GENERATOR_PATH)
@@ -22,6 +23,18 @@ def scene_sources(pattern: str) -> list[Path]:
 
 def extract_initializer(source: str, name: str) -> str:
     declaration = re.search(rf"\b{re.escape(name)}\s*=", source)
+    if not declaration:
+        raise AssertionError(f"Could not find {name}")
+    start = source.find("{", declaration.end())
+    end = GENERATOR.find_matching_brace(source, start)
+    if start < 0 or end < 0:
+        raise AssertionError(f"Could not parse {name}")
+    return source[start + 1:end]
+
+
+def extract_function(source: str, name: str) -> str:
+    declaration = re.search(
+        rf"SceneSettingsManager::{re.escape(name)}\s*\(", source)
     if not declaration:
         raise AssertionError(f"Could not find {name}")
     start = source.find("{", declaration.end())
