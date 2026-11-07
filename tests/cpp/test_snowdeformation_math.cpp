@@ -36,3 +36,25 @@ TEST_CASE("A hand touches snow only between the underground limit and the snow s
 	REQUIRE(Math::TouchesSnow(land + radius - below, radius, land, reach, below));
 	REQUIRE_FALSE(Math::TouchesSnow(land + radius - below - 0.5f, radius, land, reach, below));
 }
+
+TEST_CASE("A held item is told from a hand by capsule length", "[snow-deformation]")
+{
+	REQUIRE_FALSE(Math::IsHeldItemCapsule(8.0f, 24.0f));
+	REQUIRE_FALSE(Math::IsHeldItemCapsule(24.0f, 24.0f));
+	REQUIRE(Math::IsHeldItemCapsule(70.0f, 24.0f));
+}
+
+TEST_CASE("A hand print covers the hand's wider ground extent and never shrinks below the minimum", "[snow-deformation]")
+{
+	REQUIRE(Math::BlobRadius(16.0f, 10.0f, 4.0f) == Approx(8.0f));
+	REQUIRE(Math::BlobRadius(10.0f, 16.0f, 4.0f) == Approx(8.0f));
+	REQUIRE(Math::BlobRadius(2.0f, 3.0f, 4.0f) == Approx(4.0f));
+}
+
+TEST_CASE("A hand brushes the snow only when it moves across the ground", "[snow-deformation]")
+{
+	REQUIRE_FALSE(Math::IsBrushing(0.0f, 0.0f, 0.25f));
+	REQUIRE_FALSE(Math::IsBrushing(0.1f, 0.1f, 0.25f));
+	REQUIRE(Math::IsBrushing(0.25f, 0.0f, 0.25f));
+	REQUIRE(Math::IsBrushing(-0.2f, 0.2f, 0.25f));
+}

@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Feature.h"
+#include "Utils/BodyCapsules.h"
 
 struct SnowDeformation : Feature
 {
@@ -284,6 +285,19 @@ private:
 		RE::bhkNiCollisionObject* object = nullptr;
 	};
 
+	struct HandBlob
+	{
+		float3 sum;
+		float3 move;
+		float2 lowXY;
+		float2 highXY;
+		float lowest = 0.0f;
+		uint32_t count = 0;
+
+		void Add(const Util::BodyCapsules::Capsule& a_capsule);
+		void Resolve(float a_minRadius, float3& a_centre, float& a_radius) const;
+	};
+
 	struct CachedShape
 	{
 		RE::NiPointer<RE::bhkNiCollisionObject> object;
@@ -517,6 +531,7 @@ private:
 	std::atomic<uint32_t> handNodes = 0;
 	std::atomic<uint32_t> handNoLand = 0;
 	std::atomic<uint32_t> handOutOfReach = 0;
+	std::atomic<uint32_t> handResting = 0;
 	std::atomic<float> handProbeZ = 0.0f;
 	std::atomic<float> handProbeLandZ = 0.0f;
 	std::atomic<float> handProbeRadius = 0.0f;

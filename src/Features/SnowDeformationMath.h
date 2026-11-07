@@ -19,6 +19,18 @@ namespace SnowDeformationMath
 		return a_count <= 1 ? 0.5f : static_cast<float>(a_index) / static_cast<float>(a_count - 1);
 	}
 
+	/** @brief Whether a capsule is a held item rather than a hand or finger: its axis is longer than a_handLength. */
+	inline bool IsHeldItemCapsule(float a_length, float a_handLength)
+	{
+		return a_length > a_handLength;
+	}
+
+	/** @brief Radius of one round print covering a hand whose capsules span a_extentX by a_extentY on the ground, never below a_minRadius. */
+	inline float BlobRadius(float a_extentX, float a_extentY, float a_minRadius)
+	{
+		return std::max(0.5f * std::max(a_extentX, a_extentY), a_minRadius);
+	}
+
 	/**
 	 * @brief Whether a sphere of a_radius at a_centreZ reaches the snow over land at a_landZ.
 	 * @param a_reach How far above the land the snow surface is, never below the ground contact tolerance.
@@ -28,5 +40,11 @@ namespace SnowDeformationMath
 	{
 		const float clearance = a_centreZ - a_radius - a_landZ;
 		return clearance <= a_reach && clearance >= -a_belowLimit;
+	}
+
+	/** @brief Whether a hand moved at least a_minMotion across the ground this frame, so it brushes the snow instead of resting in it. */
+	inline bool IsBrushing(float a_moveX, float a_moveY, float a_minMotion)
+	{
+		return a_moveX * a_moveX + a_moveY * a_moveY >= a_minMotion * a_minMotion;
 	}
 }

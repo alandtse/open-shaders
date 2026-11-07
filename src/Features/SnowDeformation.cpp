@@ -61,7 +61,10 @@ namespace
 	constexpr size_t kMaxObjectShapes = 3;
 	constexpr float kObjectContact = 48.0f;
 	constexpr float kHandRange = 800.0f;
-	constexpr float kHandMinRadius = 2.0f;
+	constexpr float kHandBrushMotion = 0.25f;
+	constexpr float kHandMinRadius = 4.0f;
+	constexpr float kHeldItemMinRadius = 3.0f;
+	constexpr float kHandCapsuleLength = 24.0f;
 	constexpr size_t kMaxHandStamps = 8;
 	constexpr size_t kMaxCapsuleSamples = 4;
 	constexpr float kHeatMelt = 0.85f;
@@ -1487,9 +1490,37 @@ SnowDeformation::Stamp SnowDeformation::MakePressStamp(RE::TES* a_tes, const RE:
 	return stamp;
 }
 
+void SnowDeformation::HandBlob::Add(const Util::BodyCapsules::Capsule& a_capsule)
+{
+	const float3 centre = (a_capsule.pointA + a_capsule.pointB) * 0.5f;
+	const float bottom = std::min(a_capsule.pointA.z, a_capsule.pointB.z) - a_capsule.radius;
+	const float2 low(std::min(a_capsule.pointA.x, a_capsule.pointB.x) - a_capsule.radius, std::min(a_capsule.pointA.y, a_capsule.pointB.y) - a_capsule.radius);
+	const float2 high(std::max(a_capsule.pointA.x, a_capsule.pointB.x) + a_capsule.radius, std::max(a_capsule.pointA.y, a_capsule.pointB.y) + a_capsule.radius);
+	if (count == 0) {
+		lowest = bottom;
+		lowXY = low;
+		highXY = high;
+	} else {
+		lowest = std::min(lowest, bottom);
+		lowXY = float2(std::min(lowXY.x, low.x), std::min(lowXY.y, low.y));
+		highXY = float2(std::max(highXY.x, high.x), std::max(highXY.y, high.y));
+	}
+	sum = sum + centre;
+	move = move + a_capsule.move;
+	++count;
+}
+
+void SnowDeformation::HandBlob::Resolve(float a_minRadius, float3& a_centre, float& a_radius) const
+{
+	const float3 mean = sum / static_cast<float>(count);
+	a_radius = SnowDeformationMath::BlobRadius(highXY.x - lowXY.x, highXY.y - lowXY.y, a_minRadius);
+	a_centre = float3(mean.x, mean.y, lowest + a_radius);
+}
+
 void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 {
 	handStamps.store(0, std::memory_order_relaxed);
+	handProbeRadius.store(0.0f, std::memory_order_relaxed);
 	auto tes = globals::game::tes;
 	auto player = globals::game::player;
 	if (!tes || !player || a_stamps.size() >= kMaxStamps)
@@ -1501,15 +1532,38 @@ void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 	const float reach = std::max(kGroundClearance, std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight));
 	const RE::FormID playerID = player->GetFormID();
 	size_t placed = 0;
-	uint32_t seen = 0, noLand = 0, outOfReach = 0;
+	uint32_t seen = 0, noLand = 0, outOfReach = 0, resting = 0;
+	const float wadeHeight = std::clamp(settings.BlanketHeight, 0.0f, kMaxBlanketHeight);
+	auto place = [&](const RE::NiPoint3& a_position, float a_radius, float a_bottom, float a_landZ, float a_moveX, float a_moveY) {
+		Stamp stamp = MakePressStamp(tes, a_position, a_radius, a_landZ, a_moveX, a_moveY);
+		const float clearance = a_bottom - a_landZ;
+		if (clearance > kGroundClearance && wadeHeight > 0.0f) {
+			if (!SnowDeformationMath::IsBrushing(a_moveX, a_moveY, kHandBrushMotion)) {
+				++resting;
+				return;
+			}
+			stamp.kind = kKindWade;
+			stamp.depth = 0.0f;
+			stamp.clearance = clearance;
+			stamp.rim *= std::clamp(1.0f - clearance / wadeHeight, 0.0f, 1.0f);
+		}
+		a_stamps.push_back(stamp);
+		++placed;
+	};
 	handNodes.store(static_cast<uint32_t>(tracker.GetHandNodeCount()), std::memory_order_relaxed);
+	std::array<HandBlob, 2> blobs{};
 	for (const auto& capsule : tracker.GetCapsules()) {
 		if (!capsule.appendage || capsule.owner != playerID || capsule.remembered)
 			continue;
 		++seen;
 
-		const float radius = std::max(capsule.radius, kHandMinRadius);
 		const float3 axis = capsule.pointB - capsule.pointA;
+		if (!SnowDeformationMath::IsHeldItemCapsule(axis.Length(), kHandCapsuleLength)) {
+			if (capsule.side == 0 || capsule.side == 1)
+				blobs[capsule.side].Add(capsule);
+			continue;
+		}
+		const float radius = std::max(capsule.radius, kHeldItemMinRadius);
 		const size_t samples = SnowDeformationMath::CapsuleSampleCount(axis.Length(), radius, kMaxCapsuleSamples);
 		for (size_t i = 0; i < samples; ++i) {
 			if (placed >= kMaxHandStamps || a_stamps.size() >= kMaxStamps)
@@ -1518,7 +1572,7 @@ void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 			const RE::NiPoint3 position(point.x, point.y, point.z);
 			float landZ = 0.0f;
 			const bool landed = tes->GetLandHeight(position, landZ);
-			if (seen == 1 && i == 0) {
+			if (handProbeRadius.load(std::memory_order_relaxed) == 0.0f) {
 				handProbeZ.store(position.z, std::memory_order_relaxed);
 				handProbeLandZ.store(landed ? landZ : -99999.0f, std::memory_order_relaxed);
 				handProbeRadius.store(radius, std::memory_order_relaxed);
@@ -1531,15 +1585,40 @@ void SnowDeformation::AppendHandStamps(std::vector<Stamp>& a_stamps)
 				++outOfReach;
 				continue;
 			}
-			a_stamps.push_back(MakePressStamp(tes, position, radius, landZ, std::clamp(capsule.move.x, -kMaxContactMotion, kMaxContactMotion),
-				std::clamp(capsule.move.y, -kMaxContactMotion, kMaxContactMotion)));
-			++placed;
+			place(position, radius, point.z - radius, landZ, std::clamp(capsule.move.x, -kMaxContactMotion, kMaxContactMotion),
+				std::clamp(capsule.move.y, -kMaxContactMotion, kMaxContactMotion));
 		}
+	}
+	for (const auto& blob : blobs) {
+		if (blob.count == 0 || placed >= kMaxHandStamps || a_stamps.size() >= kMaxStamps)
+			continue;
+		float3 centre;
+		float radius = 0.0f;
+		blob.Resolve(kHandMinRadius, centre, radius);
+		const RE::NiPoint3 position(centre.x, centre.y, centre.z);
+		float landZ = 0.0f;
+		const bool landed = tes->GetLandHeight(position, landZ);
+		if (seen > 0 && handProbeRadius.load(std::memory_order_relaxed) == 0.0f) {
+			handProbeZ.store(position.z, std::memory_order_relaxed);
+			handProbeLandZ.store(landed ? landZ : -99999.0f, std::memory_order_relaxed);
+			handProbeRadius.store(radius, std::memory_order_relaxed);
+		}
+		if (!landed) {
+			++noLand;
+			continue;
+		}
+		if (!SnowDeformationMath::TouchesSnow(position.z, radius, landZ, reach, kBelowGroundLimit)) {
+			++outOfReach;
+			continue;
+		}
+		place(position, radius, centre.z - radius, landZ, std::clamp(blob.move.x / static_cast<float>(blob.count), -kMaxContactMotion, kMaxContactMotion),
+			std::clamp(blob.move.y / static_cast<float>(blob.count), -kMaxContactMotion, kMaxContactMotion));
 	}
 	handStamps.store(static_cast<uint32_t>(placed), std::memory_order_relaxed);
 	handCapsules.store(seen, std::memory_order_relaxed);
 	handNoLand.store(noLand, std::memory_order_relaxed);
 	handOutOfReach.store(outOfReach, std::memory_order_relaxed);
+	handResting.store(resting, std::memory_order_relaxed);
 }
 
 void SnowDeformation::AppendHeatStamps(std::vector<Stamp>& a_stamps)
@@ -3297,6 +3376,7 @@ json SnowDeformation::GetDiagnostics()
 		{ "HandNodes", handNodes.load(std::memory_order_relaxed) },
 		{ "HandNoLand", handNoLand.load(std::memory_order_relaxed) },
 		{ "HandOutOfReach", handOutOfReach.load(std::memory_order_relaxed) },
+		{ "HandResting", handResting.load(std::memory_order_relaxed) },
 		{ "HandProbe", { handProbeZ.load(std::memory_order_relaxed), handProbeLandZ.load(std::memory_order_relaxed), handProbeRadius.load(std::memory_order_relaxed) } },
 		{ "ActiveTiles", debugShown.activeTiles },
 		{ "DispatchedTiles", debugShown.dispatchedTiles },
