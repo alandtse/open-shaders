@@ -3,6 +3,7 @@
 #include "Feature.h"
 #include "Features/DX12NativeScene/PreparedScene.h"
 #include "Features/DX12NativeScene/RuntimeGeometryCapture.h"
+#include "Features/DX12NativeScene/RuntimeGeometryPreparation.h"
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
 #include "TruePBR/InstanceCoverage.h"
@@ -98,6 +99,9 @@ private:
 	std::optional<GraphicsBackend> backend;
 	DX12Native::PreparedScene prepared;
     DX12Native::RuntimeGeometryMailbox runtimeGeometry;
+    DX12Native::RuntimeGeometryPreparation runtimeGeometryPrepare;
+    DX12Native::AccelerationWorker runtimeAccelerationPreview;
+    uint64_t runtimePreviewGeneration = 0;
     std::atomic<bool> runtimeGeometryCaptureActive{ false };
     std::mutex runtimeGeometryBudgetMutex;
     uint32_t runtimeGeometryBudgetFrame = UINT32_MAX, runtimeGeometryFrameBytes = 0;

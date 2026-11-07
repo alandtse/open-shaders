@@ -181,6 +181,16 @@ void DX12NativeScene::DrawSettings()
     ImGui::TextDisabled("Copies CPU-backed static mesh bytes only; GPU-only/skinned/dynamic meshes are excluded.");
     ImGui::Text("Runtime mesh captures: %zu  bytes: %.2f MiB",
         runtimeGeometry.Count(), double(runtimeGeometry.Bytes()) / (1024.0 * 1024.0));
+    ImGui::Text("Prepared native meshes: %zu  GPU bytes: %.2f MiB",
+        runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ?
+            runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0,
+        runtimeGeometryPrepare.GetCell() ? double(runtimeGeometryPrepare.GetCell()->bytes) / (1024.0 * 1024.0) : 0.0);
+    ImGui::Text("Runtime geometry batches: %u  attempts: %zu  failures: %u",
+        runtimeGeometryPrepare.Batches(), runtimeGeometryPrepare.Attempted(),
+        runtimeGeometryPrepare.Failures());
+    ImGui::Text("Runtime BLAS/TLAS preview ready: %s",
+        runtimeAccelerationPreview.GetScene() ? "Yes" : "No");
+    ImGui::TextDisabled("Preview is independent of the active prepared scene and native lighting.");
     if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
         DrawNativePBRDiagnostics(GetDiagnostics());
 	{
@@ -391,6 +401,9 @@ void DX12NativeScene::ResetScene()
 	if (auto old = materialBindings.Get()) retiredMaterials = old;
 	materialBindings.Reset();
     livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
+    runtimeGeometryPrepare.Reset();
+    runtimeAccelerationPreview.Reset();
+    runtimePreviewGeneration = 0;
 	prepared.Reset();
 	acceleration.Reset();
 }
@@ -479,6 +492,21 @@ void DX12NativeScene::EarlyPrepass()
 		cellID = currentID;
 		failure.clear();
 	}
+	// Background runtime mesh preparation is entirely independent of the
+    // active atlas-backed geometry and material binding generations.
+    if (settings.CaptureRuntimeGeometry && runtimeGeometry.Count() != 0) {
+        const auto geometryBudget = uint64_t(settings.BudgetMB) * 1024 * 1024;
+        runtimeGeometryPrepare.Advance(*backend, runtimeGeometry, revision, geometryBudget);
+        if (auto ready = runtimeGeometryPrepare.GetCell(); ready && ready->snapshot &&
+            !ready->snapshot->instances.empty() &&
+            runtimeAccelerationPreview.Finished() &&
+            runtimePreviewGeneration != ready->snapshot->generation) {
+            runtimeAccelerationPreview.Start(*backend, ready->snapshot, ready->geometries,
+                geometryBudget);
+            runtimePreviewGeneration = ready->snapshot->generation;
+        }
+        runtimeAccelerationPreview.Advance();
+    }
 	if (!prepared.Requested()) {
 		const auto* source = cell->GetFile(0);
 		if (!source) { failure = "Cell source unavailable"; return; }
@@ -660,7 +688,16 @@ void DX12NativeScene::PublishDiagnostics()
 		{ "runtimeGeometry", { { "capturedMeshes", runtimeGeometry.Count() },
             { "capturedBytes", runtimeGeometry.Bytes() },
             { "captureRevision", runtimeGeometry.Revision() },
-            { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) } } },
+            { "enabled", runtimeGeometryCaptureActive.load(std::memory_order_acquire) },
+            { "preparing", runtimeGeometryPrepare.Busy() },
+            { "batches", runtimeGeometryPrepare.Batches() },
+            { "attempted", runtimeGeometryPrepare.Attempted() },
+            { "failures", runtimeGeometryPrepare.Failures() },
+            { "preparedInstances", runtimeGeometryPrepare.GetCell() && runtimeGeometryPrepare.GetCell()->snapshot ?
+                runtimeGeometryPrepare.GetCell()->snapshot->instances.size() : 0 },
+            { "preparedBytes", runtimeGeometryPrepare.GetCell() ?
+                runtimeGeometryPrepare.GetCell()->bytes : 0 },
+            { "accelerationPreview", runtimeAccelerationPreview.GetDiagnostics() } } },
         { "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
         { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
