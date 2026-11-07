@@ -24,6 +24,7 @@ namespace DX12Native
 		{
 			std::string hash;
 			std::vector<std::string> paths;
+			DirectX::TexMetadata metadata{};
 			DirectX::ScratchImage image;
 		};
 
@@ -43,7 +44,7 @@ namespace DX12Native
 
 		std::string TextureKey(const Texture& a_texture)
 		{
-			const auto& meta = a_texture.image.GetMetadata();
+			const auto& meta = a_texture.metadata;
 			auto key = std::format("{}:{}:{}:{}:", meta.width, meta.height, meta.mipLevels, uint32_t(DirectX::MakeLinear(meta.format)));
 			auto hash = a_texture.hash;
 			std::ranges::transform(hash, hash.begin(), [](unsigned char c) { return char(std::tolower(c)); });
@@ -111,7 +112,7 @@ namespace DX12Native
 			a_retirement.device = nullptr;
 		}
 
-		void ValidateMetadata(const DirectX::TexMetadata& a_meta, uint64_t a_budget)
+		uint64_t ValidateMetadata(const DirectX::TexMetadata& a_meta, uint64_t a_budget)
 		{
 			if (a_meta.dimension != DirectX::TEX_DIMENSION_TEXTURE2D || a_meta.arraySize != 1 || a_meta.IsCubemap() || !a_meta.width || !a_meta.height ||
 				a_meta.width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || a_meta.height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || !a_meta.mipLevels || a_meta.mipLevels > 15)
@@ -124,6 +125,7 @@ namespace DX12Native
 				bytes += slicePitch;
 			}
 			if (bytes > a_budget) throw std::runtime_error("Decoded material DDS exceeds budget");
+			return bytes;
 		}
 
 		void PublishPage(const std::vector<std::pair<Texture*, uint32_t>>& a_textures, MaterialResources& a_result, MaterialTexturePool a_page)
@@ -131,7 +133,7 @@ namespace DX12Native
 			const auto pool = uint32_t(a_result.pools.size());
 			static LogicalTextureRegistry identities;
 			for (const auto& [texture, slice] : a_textures) {
-				const auto& meta = texture->image.GetMetadata();
+				const auto& meta = texture->metadata;
 				auto digest = texture->hash;
 				std::ranges::transform(digest, digest.begin(), [](unsigned char c) { return char(std::tolower(c)); });
 				auto ticket = identities.Acquire({ std::move(digest), meta.width, meta.height, uint32_t(a_page.format), uint32_t(meta.mipLevels) });
@@ -151,7 +153,7 @@ namespace DX12Native
 			std::scoped_lock retirementLock(retirement.mutex);
 			RetireCompletedUpload(retirement);
 			if (retirement.pending) throw MaterialUploadError("Previous material upload is still in flight");
-			const auto& meta = a_textures.front()->image.GetMetadata();
+			const auto& meta = a_textures.front()->metadata;
 			const auto format = DirectX::MakeLinear(meta.format);
 			const auto desc = CD3DX12_RESOURCE_DESC::Tex2D(DirectX::MakeTypeless(format), meta.width, uint32_t(meta.height), uint16_t(a_textures.size()), uint16_t(meta.mipLevels));
 			const auto allocation = a_backend.d3d12Device->GetResourceAllocationInfo(0, 1, &desc).SizeInBytes;
@@ -287,11 +289,8 @@ namespace DX12Native
 					texture->hash = hash;
 					const auto bytes = ReadTexture(a_source.directory, hash);
 					if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
-					DirectX::TexMetadata metadata{};
-					DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NONE, metadata));
-					ValidateMetadata(metadata, a_source.budget);
-					DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
-					const auto& meta = texture->image.GetMetadata();
+					DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, texture->metadata));
+					const auto& meta = texture->metadata;
 					ValidateMetadata(meta, a_source.budget);
 					D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ DirectX::MakeLinear(meta.format) };
 					DX::ThrowIfFailed(a_backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
@@ -314,7 +313,7 @@ namespace DX12Native
 		});
 		using Key = std::tuple<size_t, size_t, size_t, DXGI_FORMAT>;
 		auto groupKey = [](const Texture& texture) -> Key {
-			const auto& meta = texture.image.GetMetadata();
+			const auto& meta = texture.metadata;
 			return { meta.width, meta.height, meta.mipLevels, DirectX::MakeLinear(meta.format) };
 		};
 		std::map<Key, size_t> remainingGroups;
@@ -383,11 +382,36 @@ namespace DX12Native
 		for (const auto& [key, group] : groups)
 			for (size_t first = 0; first < group.size(); first += kPageSlices) {
 				if (a_result.pools.size() >= kMaximumTexturePools) throw std::runtime_error("Texture pool count exceeded");
-				std::vector<Texture*> page(group.begin() + first, group.begin() + std::min(first + kPageSlices, group.size()));
+				const std::vector<Texture*> candidates(group.begin() + first, group.begin() + std::min(first + kPageSlices, group.size()));
+				std::vector<Texture*> page;
+				Texture* current = nullptr;
+				uint64_t decodedBytes = 0;
+				ProcessTextureSources(candidates, [&](Texture* texture) {
+					current = texture;
+					const auto predicted = ValidateMetadata(texture->metadata, a_source.budget);
+					if (decodedBytes > a_source.budget - predicted) throw std::runtime_error("Decoded material page exceeds budget");
+					const auto bytes = ReadTexture(a_source.directory, texture->hash);
+					DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
+					const auto& decoded = texture->image.GetMetadata();
+					ValidateMetadata(decoded, a_source.budget);
+					const auto& expected = texture->metadata;
+					if (decoded.width != expected.width || decoded.height != expected.height || decoded.mipLevels != expected.mipLevels || decoded.format != expected.format)
+						throw std::runtime_error("Material DDS metadata changed during preparation");
+					const auto size = texture->image.GetPixelsSize();
+					if (size > a_source.budget || decodedBytes > a_source.budget - size) throw std::runtime_error("Decoded material page exceeds budget");
+					decodedBytes += size;
+					page.push_back(texture);
+				}, [&](const std::exception& error) {
+					if (FAILED(a_backend.d3d12Device->GetDeviceRemovedReason())) throw MaterialUploadError("Material texture device removed");
+					if (current) { a_result.rejectedTextureSources += uint32_t(current->paths.size()); current->image.Release(); }
+					if (a_result.firstTextureSourceFailure.empty()) a_result.firstTextureSourceFailure = std::string(error.what()).substr(0, 256);
+				});
+				if (page.empty()) continue;
 				std::vector<std::string> slices;
 				for (const auto* texture : page) slices.push_back(TextureKey(*texture));
 				completed.push_back({ PageKey(slices), std::move(slices), uint32_t(a_result.pools.size()) });
 				UploadPage(a_backend, page, a_result, a_source.budget);
+				for (auto* texture : page) texture->image.Release();
 			}
 		const auto retainLimit = std::min(kMaximumRetainedPageBytes, a_source.budget / 4);
 		for (auto& entry : completed) {
