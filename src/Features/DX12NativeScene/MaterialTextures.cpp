@@ -112,6 +112,21 @@ namespace DX12Native
 			a_retirement.device = nullptr;
 		}
 
+		struct AsyncUpload final : MaterialUploadCompletion
+		{
+			winrt::com_ptr<ID3D12Fence> fence;
+			std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+			explicit AsyncUpload(winrt::com_ptr<ID3D12Fence> a_fence) : fence(std::move(a_fence)) {}
+			MaterialUploadStatus Poll() override
+			{
+				if (!fence) return MaterialUploadStatus::Ready;
+				const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+				const auto status = EvaluateMaterialUpload(fence->GetCompletedValue(), uint64_t(elapsed), kUploadTimeoutMS);
+				if (status == MaterialUploadStatus::Ready) fence = nullptr;
+				return status;
+			}
+		};
+
 		uint64_t ValidateMetadata(const DirectX::TexMetadata& a_meta, uint64_t a_budget)
 		{
 			if (a_meta.dimension != DirectX::TEX_DIMENSION_TEXTURE2D || a_meta.arraySize != 1 || a_meta.IsCubemap() || !a_meta.width || !a_meta.height ||
@@ -147,7 +162,7 @@ namespace DX12Native
 			a_result.pools.push_back(std::move(a_page));
 		}
 
-		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget)
+		void UploadPage(const GraphicsBackend& a_backend, const std::vector<Texture*>& a_textures, MaterialResources& a_result, uint64_t a_budget, bool a_async)
 		{
 			auto& retirement = RetiredUpload();
 			std::scoped_lock retirementLock(retirement.mutex);
@@ -216,17 +231,25 @@ namespace DX12Native
 			a_backend.commandQueue->ExecuteCommandLists(1, lists);
 			upload.submitted = true;
 			if (FAILED(a_backend.commandQueue->Signal(upload.fence.get(), 1))) throw MaterialUploadError("Material upload queue signal failed");
-			const auto waitStart = std::chrono::steady_clock::now();
-			if (WaitForSingleObject(upload.event.get(), kUploadTimeoutMS) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
-				throw MaterialUploadError("Background material upload did not complete");
-			const auto waitDuration = std::chrono::steady_clock::now() - waitStart;
-			a_result.uploadWaitMicroseconds += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waitDuration).count());
+			if (!a_async) {
+				const auto waitStart = std::chrono::steady_clock::now();
+				if (WaitForSingleObject(upload.event.get(), kUploadTimeoutMS) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
+					throw MaterialUploadError("Background material upload did not complete");
+				const auto waitDuration = std::chrono::steady_clock::now() - waitStart;
+				a_result.uploadWaitMicroseconds += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waitDuration).count());
+			}
 			a_result.peakStagingBytes = std::max(a_result.peakStagingBytes, stagingAllocation);
 			a_result.uploadedBytes += uploadBytes;
 			++a_result.uploadedPages;
 			std::vector<std::pair<Texture*, uint32_t>> slices;
 			for (uint32_t slice = 0; slice < a_textures.size(); ++slice) slices.emplace_back(a_textures[slice], slice);
 			PublishPage(slices, a_result, { upload.target, format, uint32_t(meta.mipLevels), uint32_t(a_textures.size()), allocation });
+			if (a_async) {
+				a_result.pools.back().readyFence = upload.fence;
+				a_result.pendingUpload = std::make_shared<AsyncUpload>(upload.fence);
+				retirement.device = a_backend.d3d12Device;
+				retirement.pending.emplace(std::move(upload));
+			}
 		}
 	}
 
@@ -334,6 +357,11 @@ namespace DX12Native
 			if (!remaining.contains(textureKey)) continue;
 			auto page = cache.pages.TakeContaining(textureKey);
 			if (!page || page->page.bytes > a_source.budget || a_result.bytes > a_source.budget - page->page.bytes) continue;
+			if (page->page.readyFence) {
+				const auto ready = page->page.readyFence->GetCompletedValue();
+				if (ready == UINT64_MAX || ready < 1) continue;
+				page->page.readyFence = nullptr;
+			}
 			std::vector<std::pair<Texture*, uint32_t>> selected;
 			for (uint32_t slice = 0; slice < page->slices.size(); ++slice) {
 				const auto found = remaining.find(page->slices[slice]);
@@ -379,7 +407,8 @@ namespace DX12Native
 		std::map<Key, std::vector<Texture*>> groups;
 		for (const auto& [hash, texture] : textures)
 			if (remaining.contains(TextureKey(*texture))) groups[groupKey(*texture)].push_back(texture.get());
-		for (const auto& [key, group] : groups)
+		for (auto groupIt = groups.begin(); groupIt != groups.end(); ++groupIt) {
+			const auto& group = groupIt->second;
 			for (size_t first = 0; first < group.size(); first += kPageSlices) {
 				if (a_result.pools.size() >= kMaximumTexturePools) throw std::runtime_error("Texture pool count exceeded");
 				const std::vector<Texture*> candidates(group.begin() + first, group.begin() + std::min(first + kPageSlices, group.size()));
@@ -410,9 +439,11 @@ namespace DX12Native
 				std::vector<std::string> slices;
 				for (const auto* texture : page) slices.push_back(TextureKey(*texture));
 				completed.push_back({ PageKey(slices), std::move(slices), uint32_t(a_result.pools.size()) });
-				UploadPage(a_backend, page, a_result, a_source.budget);
+				const bool lastPage = std::next(groupIt) == groups.end() && first + kPageSlices >= group.size();
+				UploadPage(a_backend, page, a_result, a_source.budget, lastPage);
 				for (auto* texture : page) texture->image.Release();
 			}
+		}
 		const auto retainLimit = std::min(kMaximumRetainedPageBytes, a_source.budget / 4);
 		for (auto& entry : completed) {
 			const auto& page = a_result.pools[entry.index];

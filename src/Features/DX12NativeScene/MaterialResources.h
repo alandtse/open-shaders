@@ -2,6 +2,7 @@
 
 #include "AccelerationScene.h"
 #include "LogicalTextureRegistry.h"
+#include "MaterialUploadStatus.h"
 #include <array>
 #include <stdexcept>
 
@@ -36,14 +37,22 @@ namespace DX12Native
 		DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
 		uint32_t mips = 0, slices = 0;
 		uint64_t bytes = 0;
+		winrt::com_ptr<ID3D12Fence> readyFence;
 	};
-	/** @brief Owns completed native texture uploads and shared material/instance tables. */
+	/** @brief Polls a submitted material upload without waiting on the CPU. */
+	struct MaterialUploadCompletion
+	{
+		virtual ~MaterialUploadCompletion() = default;
+		virtual MaterialUploadStatus Poll() = 0;
+	};
+	/** @brief Owns material tables and texture pages, including any pending final upload. */
 	struct MaterialResources
 	{
 		std::vector<MaterialTexturePool> pools;
 		std::unordered_map<std::string, uint64_t> locations;
 		std::unordered_map<uint64_t, std::array<uint32_t, 2>> logicalLocations;
 		std::vector<std::shared_ptr<const LogicalTextureRegistry::Ticket>> textureTickets;
+		std::shared_ptr<MaterialUploadCompletion> pendingUpload;
 		winrt::com_ptr<ID3D12Resource> materials, surfaces;
 		winrt::com_ptr<ID3D12Resource> roomVolumes;
 		uint32_t roomCount = 0;

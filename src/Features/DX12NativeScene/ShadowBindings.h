@@ -20,7 +20,7 @@ namespace DX12Native
 		winrt::com_ptr<ID3D12DescriptorHeap> heap;
 		uint64_t bytes = 0;
 		VideoMemoryBudget::Snapshot materialBudget;
-		/** @brief Creates the owned binding tables on a worker using a completed scene. */
+		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
 		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget);
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
@@ -37,6 +37,8 @@ namespace DX12Native
 		std::shared_ptr<const ShadowBindings> Get() const { return published; }
 		/** @brief Returns the most recent selected-scene load failure. */
 		const std::string& Failure() const { return failure; }
+		/** @brief Reports a completed worker awaiting its final GPU upload. */
+		bool UploadPending() const;
 	private:
 		struct State;
 		std::shared_ptr<State> pending;

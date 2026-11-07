@@ -6,7 +6,17 @@
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/TextureSourceBatch.h"
+#include "Features/DX12NativeScene/MaterialUploadStatus.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+
+TEST_CASE("Material upload publication follows fence and timeout", "[native_pbr]")
+{
+    using enum DX12Native::MaterialUploadStatus;
+    REQUIRE(DX12Native::EvaluateMaterialUpload(0, 4999, 5000) == Pending);
+    REQUIRE(DX12Native::EvaluateMaterialUpload(0, 5000, 5000) == Failed);
+    REQUIRE(DX12Native::EvaluateMaterialUpload(1, 5000, 5000) == Ready);
+    REQUIRE(DX12Native::EvaluateMaterialUpload(UINT64_MAX, 0, 5000) == Failed);
+}
 
 TEST_CASE("Texture source batches preserve valid entries after failures", "[native_pbr]")
 {

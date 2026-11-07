@@ -121,6 +121,14 @@ namespace DX12Native
 		RetireMaterialUploads();
 		if (pending) {
 			if (!pending->done.load(std::memory_order_acquire)) return;
+			if (pending->bindings && pending->bindings->materials->pendingUpload) {
+				const auto status = pending->bindings->materials->pendingUpload->Poll();
+				if (status == MaterialUploadStatus::Pending) return;
+				if (status == MaterialUploadStatus::Failed) {
+					pending->bindings.reset();
+					pending->failure = "Final material upload did not complete";
+				}
+			}
 			if (pending->revision == revision) {
 				published = pending->bindings;
 				failure = pending->failure;
@@ -153,6 +161,11 @@ namespace DX12Native
 		published.reset();
 		failure.clear();
 		attempted = false;
+	}
+
+	bool ShadowBindingWorker::UploadPending() const
+	{
+		return pending && pending->done.load(std::memory_order_acquire) && pending->bindings && pending->bindings->materials->pendingUpload;
 	}
 
 }
