@@ -37,6 +37,7 @@ public:
 	static constexpr float kFallbackRainFallSpeed = 675.0f;
 	static constexpr float kMinCurtainScale = 512.0f;
 	static constexpr float kMaxCurtainScale = 16384.0f;
+	static constexpr float kMinRainFallSpeed = 100.0f;
 
 	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. WindInfluence is always user-owned. */
 	struct Settings

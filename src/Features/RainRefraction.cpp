@@ -232,7 +232,7 @@ float RainRefraction::GetWeatherFallSpeed() const
 	if (!weather || !weather->precipitationData)
 		return kFallbackRainFallSpeed;
 	const float gravity = weather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kGravityVelocity).f;
-	return std::isfinite(gravity) && gravity > 0.0f ? gravity : kFallbackRainFallSpeed;
+	return std::isfinite(gravity) && gravity >= kMinRainFallSpeed ? gravity : kFallbackRainFallSpeed;
 }
 
 bool RainRefraction::IsRefractiveRainPass()
