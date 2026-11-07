@@ -96,7 +96,7 @@ namespace
 			catalog.SetAutomaticPresets(automatic);
 	}
 
-	void RenderPerformanceSummary()
+	void RenderPerformanceSummary(float cardHeight)
 	{
 		const auto& io = ImGui::GetIO();
 		if (ImGui::BeginTable("##FrameMetrics", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoPadOuterX)) {
@@ -122,7 +122,7 @@ namespace
 		const float buttonsWidth = Icons::MeasureLabeledButton(Icons::TI(MenuIcons::kProfiling), profiling) + style.ItemSpacing.x + presetWidth;
 		const float footerHeight = ImGui::GetFrameHeightWithSpacing() * (buttonsWidth > ImGui::GetContentRegionAvail().x ? 2.0f : 1.0f);
 		const float graphHeight = std::max(ImGui::GetTextLineHeightWithSpacing() * ThemeManager::Constants::HOME_GRAPH_LINES,
-			ImGui::GetContentRegionAvail().y - footerHeight);
+			cardHeight - ImGui::GetCursorPosY() - ImGui::GetCurrentWindow()->WindowPadding.y - footerHeight);
 		const float footerY = ImGui::GetCursorPosY() + graphHeight + style.ItemSpacing.y;
 		ProfilingRenderer::RenderCompactGraph(graphHeight);
 		if (ImGui::IsItemHovered()) {
@@ -331,7 +331,7 @@ void HomePageRenderer::RenderHomePage()
 			nextCard();
 			{
 				Util::SectionCard card("##HomePerformance", MenuIcons::kProfiling, T("menu.features.performance", "Performance"));
-				RenderPerformanceSummary();
+				RenderPerformanceSummary(cardHeight);
 			}
 			nextCard();
 			{
