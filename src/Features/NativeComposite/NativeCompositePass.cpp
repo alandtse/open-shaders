@@ -33,7 +33,7 @@ bool NativeComposite::InitializeShadow(ID3D12Device* a_device)
 		CD3DX12_ROOT_PARAMETER parameters[3];
 		parameters[0].InitAsDescriptorTable(1, &ranges[0]);
 		parameters[1].InitAsDescriptorTable(1, &ranges[1]);
-		parameters[2].InitAsConstants(40, 0);
+		parameters[2].InitAsConstants(41, 0);
 		const CD3DX12_ROOT_SIGNATURE_DESC desc(3, parameters);
 		winrt::com_ptr<ID3DBlob> serialized, errors;
 		DX::ThrowIfFailed(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, serialized.put(), errors.put()));
@@ -353,14 +353,16 @@ std::shared_ptr<const NativeComposite::Frame> NativeComposite::Capture(ID3D11Dev
 				uint32_t width, height; float receiverTolerance, radiusPixels;
 				uint32_t legacyTransfer, preview; float strength, blend;
 				DirectX::SimpleMath::Matrix inverseProjection, inverseView;
+				uint32_t spatialReconstruction;
 			};
-			static_assert(sizeof(Constants) == 40 * sizeof(uint32_t));
+			static_assert(sizeof(Constants) == 41 * sizeof(uint32_t));
 			const auto& camera = a_raster->camera;
 			const Constants constants{ a_width, a_height, a_shadowSettings.receiverTolerance, a_shadowSettings.radiusPixels,
 				a_transfer == Transfer::LegacyScene ? 1u : 0u, a_shadowSettings.preview ? 1u : 0u,
 				a_shadowSettings.contribution, a_shadowSettings.blend,
-				camera.CameraProjInverse, camera.CameraViewInverse };
-			slot->commands->SetComputeRoot32BitConstants(2, 40, &constants, 0);
+				camera.CameraProjInverse, camera.CameraViewInverse,
+				a_shadowSettings.spatialReconstruction ? 1u : 0u };
+			slot->commands->SetComputeRoot32BitConstants(2, 41, &constants, 0);
 			slot->commands->Dispatch((a_width + 7) / 8, (a_height + 7) / 8, 1);
 			const std::array end{
 				CD3DX12_RESOURCE_BARRIER::Transition(slot->frame->color.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),

@@ -18,7 +18,7 @@ public:
 	struct ShadowSettings
 	{
 		float contribution = 1.0f, blend = 1.0f, radiusPixels = 0.0f, receiverTolerance = 2.0f;
-		bool preview = false, afterLighting = false;
+		bool preview = false, afterLighting = false, spatialReconstruction = true;
 		uint64_t revision = 1;
 	};
 	struct Policy

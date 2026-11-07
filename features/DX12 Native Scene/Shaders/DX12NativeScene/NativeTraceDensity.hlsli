@@ -2,8 +2,8 @@
 #define NATIVE_TRACE_DENSITY_HLSLI
 
 // Trace density is not texture resolution. Each feature keeps native-size
-// raw output textures and marks omitted pixels explicitly; there is no
-// spatial or temporal reconstruction here. Full=0, TwoThirds=1, Half=2.
+// raw output textures and marks omitted pixels explicitly. Independent
+// shadow modes 3..7 rotate deterministic native-pixel tile phases.
 #ifdef __cplusplus
 #include <cstdint>
 namespace DX12Native
@@ -36,6 +36,24 @@ NATIVE_DENSITY_INLINE bool NativeTraceDensityPixel(uint x, uint y, uint mode, ui
     if (mode == 2u) {
         // One checkerboard parity per frame, alternating A/B every frame.
         return ((x ^ y ^ frame ^ featureSalt) & 1u) == 0u;
+    }
+    // Shadow-only extensions: legacy native-lighting mode IDs stay unchanged.
+    // Tile phase is fixed per tile and visits each residue before repeating.
+    if (mode >= 3u && mode <= 7u) {
+        uint columns = (mode == 4u) ? 2u : 3u;
+        uint rows = (mode == 5u) ? 2u : (mode == 4u) ? 2u : 3u;
+        uint count = columns * rows;
+        uint groupX = x / columns;
+        uint groupY = y / rows;
+        uint offset = NativeDensityHash(groupX * 0x9e3779b9u ^
+            groupY * 0x85ebca6bu ^ featureSalt) % count;
+        uint rank = (x % columns) + (y % rows) * columns;
+        if (mode == 3u)
+            return ((x + y + frame + offset) % 3u) == 0u;
+        uint phase = (frame + offset) % count;
+        if (mode == 7u)
+            return (rank + ((frame * 4u + offset) % 9u)) % 9u < 4u;
+        return rank == phase;
     }
     // Full: preserve the original per-pixel trace path.
     return true;

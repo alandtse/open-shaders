@@ -15,6 +15,7 @@ cbuffer ShadowConstants : register(b0)
     float Blend;
     row_major float4x4 InverseProjection;
     row_major float4x4 InverseView;
+    uint SpatialReconstruction;
 };
 
 float3 SignedPower(float3 value, float exponent)
@@ -39,7 +40,8 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     if (any(id.xy >= Size)) return;
     const float4 center = ShadowMask[id.xy];
-    if (!ValidMask(center)) return;
+    const bool traced = ValidMask(center);
+    if (!traced && !(SpatialReconstruction != 0u && center.y == -1.0f)) return;
     const float depth = RasterDepth[id.xy];
     if (!isfinite(depth)) return;
     float2 clip = (float2(id.xy) + 0.5f) * (2.0f / float2(Size)) - 1.0f;
@@ -48,10 +50,43 @@ void main(uint3 id : SV_DispatchThreadID)
     if (!all(isfinite(cameraView)) || abs(cameraView.w) <= 1e-8f) return;
     const float3 position = mul((float3x3)InverseView, cameraView.xyz / cameraView.w);
     const float receiverDistance = length(position);
-    if (!isfinite(receiverDistance) || receiverDistance <= 0.0f ||
-        abs(receiverDistance - center.z) > max(ReceiverTolerance, center.z * 1e-5f)) return;
+    if (!isfinite(receiverDistance) || receiverDistance <= 0.0f) return;
+    const float tolerance = max(ReceiverTolerance, receiverDistance * 1e-5f);
+    if (traced && abs(receiverDistance - center.z) > tolerance) return;
 
+    float4 reference = center;
     float visibility = saturate(center.x);
+    if (!traced) {
+        float nearest = 1e30f;
+        const int2 pixel = int2(id.xy);
+        [loop] for (int dy = -3; dy <= 3; ++dy) {
+            [loop] for (int dx = -3; dx <= 3; ++dx) {
+                int2 neighbor = pixel + int2(dx, dy);
+                if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
+                float4 sample = ShadowMask[uint2(neighbor)];
+                float delta = abs(sample.z - receiverDistance);
+                if (!ValidMask(sample) || delta > tolerance) continue;
+                float score = delta + (float(dx * dx + dy * dy) * tolerance * 0.002f);
+                if (score < nearest) { nearest = score; reference = sample; }
+            }
+        }
+        if (!ValidMask(reference)) return;
+        float weighted = 0.0f, total = 0.0f;
+        [loop] for (int dy = -3; dy <= 3; ++dy) {
+            [loop] for (int dx = -3; dx <= 3; ++dx) {
+                int2 neighbor = pixel + int2(dx, dy);
+                if (any(neighbor < 0) || any(neighbor >= int2(Size))) continue;
+                float4 sample = ShadowMask[uint2(neighbor)];
+                if (!ValidMask(sample) || sample.w != reference.w ||
+                    abs(sample.z - receiverDistance) > tolerance) continue;
+                float weight = rcp(1.0f + float(dx * dx + dy * dy));
+                weighted += saturate(sample.x) * weight;
+                total += weight;
+            }
+        }
+        if (total <= 0.0f) return;
+        visibility = weighted / total;
+    }
     if (RadiusPixels > 0.5f) {
         int radius = clamp(int(round(RadiusPixels)), 1, 32);
         const int2 pixel = int2(id.xy);
@@ -59,7 +94,7 @@ void main(uint3 id : SV_DispatchThreadID)
         float sum = visibility;
         float weight = 1.0f;
         [unroll] for (uint i = 0; i < 4; ++i) {
-            const float neighborVisibility = SampleVisibility(pixel + directions[i], center);
+            const float neighborVisibility = SampleVisibility(pixel + directions[i], reference);
             if (neighborVisibility >= 0.0f) { sum += neighborVisibility; weight += 1.0f; }
         }
         visibility = sum / weight;

@@ -4,7 +4,7 @@
 #include "Globals.h"
 #include "Features/LinearLighting.h"
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeCompositeFeature::Settings, Enabled, AddLighting, LightingStrength, PersistLab, ShadowLayerEnabled, ShadowContribution, ShadowBlend, ShadowRadiusPixels, ShadowReceiverTolerance, ShadowPreview, ShadowAfterLighting, ShadowSpatialReconstruction)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(NativeComposite::Policy, diffuse, specular, visual)
 
 namespace
@@ -40,6 +40,7 @@ void NativeCompositeFeature::DrawSettings()
 	shadowChanged |= ImGui::SliderFloat("Shadow softness (pixels)", &settings.ShadowRadiusPixels, 0.0f, 32.0f, "%.1f");
 	shadowChanged |= ImGui::SliderFloat("Shadow receiver tolerance", &settings.ShadowReceiverTolerance, 0.1f, 64.0f, "%.2f");
 	shadowChanged |= ImGui::Checkbox("Preview independent shadow mask", &settings.ShadowPreview);
+	shadowChanged |= ImGui::Checkbox("Spatially reconstruct missing shadow pixels", &settings.ShadowSpatialReconstruction);
 	shadowChanged |= ImGui::Checkbox("Apply shadows to final combined lighting", &settings.ShadowAfterLighting);
 	ImGui::TextDisabled("Off: shadow raster first. On: shadow raster + native direct.");
 	ImGui::TextDisabled("Boost >1 deepens partial shadows. Native Lighting may be disabled.");
@@ -138,6 +139,7 @@ void NativeCompositeFeature::ConfigureShadowLayer(const json& args)
 	if (args.contains("enabled")) settings.ShadowLayerEnabled = args.at("enabled").get<bool>();
 	else if (args.contains("strength") || args.contains("contribution")) settings.ShadowLayerEnabled = true;
 	if (args.contains("preview")) settings.ShadowPreview = args.at("preview").get<bool>();
+	if (args.contains("spatialReconstruction")) settings.ShadowSpatialReconstruction = args.at("spatialReconstruction").get<bool>();
 	if (args.contains("afterLighting")) settings.ShadowAfterLighting = args.at("afterLighting").get<bool>();
 	if (settings.ShadowLayerEnabled)
 		globals::features::dx12NativeScene.RequestShadowProducerForComposite();
@@ -157,7 +159,7 @@ void NativeCompositeFeature::RegisterUxActions()
 		}
 		feature.enabled = feature.settings.Enabled;
 	});
-	FEATURE_COMMAND("shadowLayer", "Configure independent shadow composition, unrelated to Native Lighting: enabled, contribution (0..4), blend (0..1), radiusPixels, receiverTolerance, preview, afterLighting.", [](Feature* self, const json& args) {
+	FEATURE_COMMAND("shadowLayer", "Configure independent shadow composition, unrelated to Native Lighting: enabled, contribution (0..4), blend (0..1), radiusPixels, receiverTolerance, preview, afterLighting, spatialReconstruction.", [](Feature* self, const json& args) {
 		auto& feature = *static_cast<NativeCompositeFeature*>(self);
 		feature.ConfigureShadowLayer(args);
 	});
@@ -196,7 +198,7 @@ json NativeCompositeFeature::GetDiagnostics()
 		{ "shadowOpaqueRetryRecovered", sceneDiagnostics.value("shadowOpaqueRetryRecovered", uint64_t{ 0 }) },
 		{ "shadowLayerEnabled", settings.ShadowLayerEnabled },
 		{ "shadowContribution", settings.ShadowContribution },
-		{ "shadowAfterLighting", settings.ShadowAfterLighting } };
+		{ "shadowAfterLighting", settings.ShadowAfterLighting }, { "shadowSpatialReconstruction", settings.ShadowSpatialReconstruction } };
 }
 
 std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID3D11Device5* a_device11, ID3D11DeviceContext4* a_context11,
@@ -220,7 +222,7 @@ std::shared_ptr<const NativeComposite::Frame> NativeCompositeFeature::Capture(ID
 	const NativeComposite::ShadowSettings shadowSettings{
 		selected.ShadowLayerEnabled ? selected.ShadowContribution : 0.0f,
 		selected.ShadowBlend, selected.ShadowRadiusPixels, selected.ShadowReceiverTolerance,
-		selected.ShadowLayerEnabled && selected.ShadowPreview, selected.ShadowAfterLighting, revision
+		selected.ShadowLayerEnabled && selected.ShadowPreview, selected.ShadowAfterLighting, selected.ShadowSpatialReconstruction, revision
 	};
 	const bool wantShadow = shadowSettings.preview || shadowSettings.contribution * shadowSettings.blend > 0.0f;
 	const auto shadow = wantShadow && !unsupportedGamut ? globals::features::dx12NativeScene.GetShadowMask(a_frame) : nullptr;

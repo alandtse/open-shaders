@@ -21,6 +21,7 @@ struct NativeCompositeFeature final : Feature
 		float ShadowRadiusPixels = 2.0f, ShadowReceiverTolerance = 16.0f;
 		bool ShadowPreview = false;
 		bool ShadowAfterLighting = true;  // false: raster only; true: combined raster + native direct.
+		bool ShadowSpatialReconstruction = true;
 	};
 	std::string GetName() override { return "Native Composite"; }
 	std::string GetShortName() override { return "NativeComposite"; }

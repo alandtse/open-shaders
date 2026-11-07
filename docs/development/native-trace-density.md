@@ -111,3 +111,24 @@ spatial reconstruction or extra checkerboarding toggle is introduced.
 Source consistency checks and deterministic JavaScript sampling simulations
 passed. Actual Windows DXC, Visual Studio Release build and Skyrim runtime
 checks remain **unverified** and are reserved for the owner.
+
+
+## Independent native shadow reconstruction extension
+
+The shadow selector additionally offers native-pixel One-third (3), Quarter
+(4), One-sixth (5), One-ninth (6) and Four-ninths (7). The prior Full (0),
+Two-thirds (1) and Half (2) values are unchanged for persisted settings and
+Native Lighting. The new modes rotate a per-tile phase without changing any
+resource dimensions. The 1/N modes visit every tile residue in N frames;
+Four-ninths traces four of nine tile pixels each frame and covers all nine
+within three successive phases. Sampling counts differ only at partial
+viewport tiles.
+
+Native Composite has an independent persisted `spatialReconstruction` boolean
+(default true). When enabled, it fills only explicitly omitted raw mask pixels
+(validity -1) using full-render-size neighboring samples whose ray distances
+agree with the current raster-derived receiver distance. It also restricts
+blending to one material instance identity; invalid (0) and non-finite
+samples never become evidence. No extra reduced-resolution buffers, RT rays,
+FSR Ray Regeneration or temporal history are involved in this extension.
+The original raw mask remains immutable and available for debugging.

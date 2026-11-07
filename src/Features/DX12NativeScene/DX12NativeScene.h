@@ -18,7 +18,7 @@ struct DX12NativeScene final : Feature
 		// Independent early DX12 shadow-mask parameters from reference PR #9.
 		bool ShadowAllLights = true, ShadowStochastic = true, ShadowDistanceFade = true;
 		uint32_t ShadowLightIndex = 0, ShadowNormalInfluence = 2;
-		uint32_t ShadowTraceDensityMode = 0; // Full / Two-thirds / Half, full-size raw mask.
+		uint32_t ShadowTraceDensityMode = 0; // 0..7; all trace densities retain full-size raw masks.
 		float ShadowEmitterRadius = 0.2f;
 		float ShadowReachMultiplier = 2.0f, ShadowFalloffFraction = 1.0f, ShadowFalloffExponent = 0.6f;
 	} settings;
