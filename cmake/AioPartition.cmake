@@ -13,19 +13,27 @@ function(feature_in_aio feature_path out_var)
     endif()
     file(GLOB _ini_candidates "${feature_path}/Shaders/Features/*.ini")
     foreach(_ini IN LISTS _ini_candidates)
-        file(STRINGS "${_ini}" _ini_lines REGEX "^[ \t]*(autoupload|aio)[ \t]*=")
+        file(
+            STRINGS "${_ini}"
+            _ini_lines
+            REGEX "^[ \t]*(autoupload|aio)[ \t]*="
+        )
         foreach(_line IN LISTS _ini_lines)
             # Strip "key =" to extract the value, lowercase it.
             string(
-                REGEX REPLACE "^[ \t]*(autoupload|aio)[ \t]*=[ \t]*" "" _val "${_line}"
+                REGEX REPLACE "^[ \t]*(autoupload|aio)[ \t]*=[ \t]*"
+                ""
+                _val
+                "${_line}"
             )
             string(STRIP "${_val}" _val)
             string(TOLOWER "${_val}" _val)
             # Treat unset / falsey values as off; only explicit truthy values count.
-            if(_val STREQUAL "true"
-               OR _val STREQUAL "1"
-               OR _val STREQUAL "yes"
-               OR _val STREQUAL "on"
+            if(
+                _val STREQUAL "true"
+                OR _val STREQUAL "1"
+                OR _val STREQUAL "yes"
+                OR _val STREQUAL "on"
             )
                 set(${out_var} TRUE PARENT_SCOPE)
                 return()

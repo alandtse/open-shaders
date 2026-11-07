@@ -1,5 +1,7 @@
 #include "PhysicalGlare.h"
 
+#include "Utils/SettingsControl.h"
+
 #include "Features/LinearLighting.h"
 #include "Features/PostProcessing.h"
 #include "Globals.h"
@@ -92,18 +94,23 @@ void PhysicalGlare::DrawSettings()
 	const bool cameraLens = camera && settings.ApertureMode == 0;
 	float apertureRotation = cameraLens ? camera->ApertureBladeRotationDeg : settings.ApertureRotation;
 	ImGui::BeginDisabled(cameraLens);
-	ImGui::SliderFloat(T("feature.post_processing.physical_glare.aperture_rotation", "Aperture Rotation"), &apertureRotation, -180.f, 180.f, "%.1f deg");
+	{
+		const SettingsControl::ProxyScope proxy(&settings.ApertureRotation, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.physical_glare.aperture_rotation", "Aperture Rotation"), &apertureRotation, -180.f, 180.f, "%.1f deg");
+	}
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.physical_glare.rotation_angle_of_the_aperture", "Rotation angle of the aperture."));
 	ImGui::EndDisabled();
-	if (!cameraLens)
+	if (!cameraLens && !SettingsControl::IsReplicating())
 		settings.ApertureRotation = apertureRotation;
 
 	ImGui::SliderFloat(T("feature.post_processing.physical_glare.adapt_speed", "Adapt Speed"), &settings.AdaptSpeed, 0.5f, 10.f, "%.1f");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.physical_glare.how_fast_the_glare_adapts_to_brightness_changes", "How fast the glare adapts to brightness changes."));
 
+	ImGui::BeginDisabled(SettingsControl::IsReplicating());
 	PostProcessingUI::FFTResolutionCombo(T("feature.post_processing.physical_glare.fft_resolution", "FFT Resolution"), settings.FFTResolution);
+	ImGui::EndDisabled();
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.physical_glare.resolution_of_the_fft_convolution_higher_sharper_starburst", "Resolution of the FFT convolution. Higher = sharper starburst but more expensive."));
 
@@ -139,15 +146,21 @@ void PhysicalGlare::DrawSettings()
 		int apertureBlades = camera ? camera->ApertureBladeCount : settings.ApertureBlades;
 		float fStop = camera ? camera->FNumber : settings.FStop;
 		ImGui::BeginDisabled(camera != nullptr);
-		ImGui::SliderInt(T("feature.post_processing.physical_glare.aperture_blades", "Aperture Blades"), &apertureBlades, 3, 10);
+		{
+			const SettingsControl::ProxyScope proxy(&settings.ApertureBlades, 1.0f);
+			ImGui::SliderInt(T("feature.post_processing.physical_glare.aperture_blades", "Aperture Blades"), &apertureBlades, 3, 10);
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T("feature.post_processing.physical_glare.number_of_aperture_blades_controls_starburst_pattern", "Number of aperture blades. Controls starburst pattern."));
 
-		ImGui::SliderFloat(T("feature.post_processing.physical_glare.f_stop", "F-Stop"), &fStop, 1.0f, 22.0f, "F%.1f");
+		{
+			const SettingsControl::ProxyScope proxy(&settings.FStop, 1.0f);
+			ImGui::SliderFloat(T("feature.post_processing.physical_glare.f_stop", "F-Stop"), &fStop, 1.0f, 22.0f, "F%.1f");
+		}
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T("feature.post_processing.physical_glare.aperture_f_number_e_g_f2_8_smaller", "Aperture f-number (e.g. F2.8). Smaller = larger aperture = wider diffraction spikes.\nPhysically: aperture radius = 1 / f-number."));
 		ImGui::EndDisabled();
-		if (!camera) {
+		if (!camera && !SettingsControl::IsReplicating()) {
 			settings.ApertureBlades = apertureBlades;
 			settings.FStop = fStop;
 		}
@@ -316,7 +329,7 @@ void PhysicalGlare::DrawSettings()
 				"Threshold to remove low-level FFT noise from the PSF.\n"
 				"Paper default: 0.001. Higher = cleaner glare wings."));
 
-	if (ImGui::CollapsingHeader(T("feature.post_processing.physical_glare.debug", "Debug"))) {
+	if (Util::ShowDebugSections() && ImGui::CollapsingHeader(T("feature.post_processing.physical_glare.debug", "Debug"))) {
 		if (texGlarePacked) {
 			constexpr float debugPreviewSize = 256.f;
 			const float scaledPreviewSize = debugPreviewSize * Util::GetUIScale();
@@ -523,11 +536,11 @@ void PhysicalGlare::CompileComputeShaders()
 PhysicalGlare::Settings PhysicalGlare::GetEffectiveSettings() const
 {
 	Settings effective = settings;
-	if (const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr) {
+	if (const auto* camera = owner ? owner->GetActivePhysicalCameraState() : nullptr) {
 		if (effective.ApertureMode == 0) {
-			effective.FStop = cam->FNumber;
-			effective.ApertureBlades = cam->ApertureBladeCount;
-			effective.ApertureRotation = cam->ApertureBladeRotationDeg;
+			effective.FStop = camera->FNumber;
+			effective.ApertureBlades = camera->ApertureBladeCount;
+			effective.ApertureRotation = camera->ApertureBladeRotationDeg;
 		}
 	}
 	return effective;

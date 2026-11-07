@@ -46,6 +46,8 @@ public:
 	 * @param showModeToggle If true, renders the GPU/CPU timing mode toggle.
 	 */
 	static void RenderStatistics(bool showTable = true, bool showModeToggle = true);
+	/** @brief Draws the current profiling graph without its legend or controls, respecting the profiling switch. */
+	static void RenderCompactGraph(float height);
 
 	/**
 	 * @brief Renders per-feature profiling through a bottom-aligned disclosure.
@@ -159,7 +161,7 @@ private:
 	static void TextHeat(const char* fmt, float value, float maxValue);
 	static void RenderTimingModeToggle();
 	static void SetupTimingTableColumns(float passColumnWidth, bool includePercentColumn);
-	static void RenderGraph();
+	static bool RenderGraph(float height, bool showLegend);
 	static void UpdateStatistics(bool cpuMode);
 	static std::string GetFeatureTimerPrefix(const std::string& featurePrefix);
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);

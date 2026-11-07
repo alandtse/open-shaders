@@ -155,8 +155,7 @@ struct CSUtility : Feature
 		Water,                ///< Water rendering controls.
 		Materials,            ///< Material color controls.
 		VanillaDepthOfField,  ///< Vanilla depth-of-field controls.
-		VanillaBloom,         ///< Vanilla bloom controls.
-		VolumetricLighting
+		VanillaBloom          ///< Vanilla bloom controls.
 	};
 	/** The visible utility tab whose settings Restore Defaults changes. */
 	SettingsPage activeSettingsPage = SettingsPage::Atmosphere;
@@ -252,6 +251,7 @@ struct CSUtility : Feature
 	virtual bool HasScopedOverrideSettings() const override { return true; }
 	/** Reapplies override-controlled settings for the active OS Utility tab. */
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const override;
 	virtual void SetupResources() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;

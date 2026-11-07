@@ -47,39 +47,39 @@ weather snow and fire counts.
 
 ## Integration and cost
 
--   Lighting applies snow after skylighting/water-height evaluation and
-    before wetness. Grass and distant trees apply snow before lighting.
-    Existing PBR and legacy color paths remain separate.
--   Snow uses PS resources `t38` through `t44`. Its 336-byte feature data is
-    appended to `b6`, preserving existing fields' offsets. Permutations built
-    without the feature omit the new declarations.
--   No additional draw, dispatch, render target or full-screen pass is added.
-    Snow runs at the affected geometry's render resolution: one altitude-map
-    sample per environmental evaluation, then three material samples for
-    covered surfaces. Foliage uses an albedo sample and optionally one extra
-    alpha sample. Tree tint and surface snow each evaluate the snow map.
--   PBR snow uses the existing glint precomputation and adds one noise-map
-    fetch per direct-light BRDF evaluation where glints are active.
--   Fire melting scans nearby references every 0.25 seconds, classifies at
-    most 512 new base forms per scan, and uploads at most eight fire regions.
-    Covered pixels evaluate up to eight distance falloffs. Disabling fire
-    melting skips the scan and uploads zero regions.
--   Base-form classification is cached until a world change, scene reset or
-    config reload. It stores form IDs and booleans, not scene-node pointers.
-    Each scan reads the current visible geometry of known fire references.
--   Geometry exclusions use the existing render-pass contract. They update
-    CPU flags for the normal draw path's existing buffer upload and restore
-    them after the pass. No extra per-pass buffer upload or engine hook is added.
--   R8 and BC4 altitude maps get a CPU maximum hierarchy once per world config load.
-    Object bounds query at most four hierarchy texels; unknown map regions retain
-    the full shader path. Positive weather accumulation also retains that path.
-    Foliage samples its edge alpha only when seasonal or weather snow can appear.
--   Snow-only HSV helpers opt into `Common/Color.hlsli`. Snow constants are pixel-only,
-    so vertex permutations retain the same preprocessed content and can reuse
-    Content Store blobs without changing shader flags or output.
--   CPU scopes expose frame updates and fire scans to the built-in profiler.
-    Survival's condition global is written from the existing game-thread weather
-    callback and cleared on runtime disable. No plugin or save file is written.
+- Lighting applies snow after skylighting/water-height evaluation and
+  before wetness. Grass and distant trees apply snow before lighting.
+  Existing PBR and legacy color paths remain separate.
+- Snow uses PS resources `t38` through `t44`. Its 336-byte feature data is
+  appended to `b6`, preserving existing fields' offsets. Permutations built
+  without the feature omit the new declarations.
+- No additional draw, dispatch, render target or full-screen pass is added.
+  Snow runs at the affected geometry's render resolution: one altitude-map
+  sample per environmental evaluation, then three material samples for
+  covered surfaces. Foliage uses an albedo sample and optionally one extra
+  alpha sample. Tree tint and surface snow each evaluate the snow map.
+- PBR snow uses the existing glint precomputation and adds one noise-map
+  fetch per direct-light BRDF evaluation where glints are active.
+- Fire melting scans nearby references every 0.25 seconds, classifies at
+  most 512 new base forms per scan, and uploads at most eight fire regions.
+  Covered pixels evaluate up to eight distance falloffs. Disabling fire
+  melting skips the scan and uploads zero regions.
+- Base-form classification is cached until a world change, scene reset or
+  config reload. It stores form IDs and booleans, not scene-node pointers.
+  Each scan reads the current visible geometry of known fire references.
+- Geometry exclusions use the existing render-pass contract. They update
+  CPU flags for the normal draw path's existing buffer upload and restore
+  them after the pass. No extra per-pass buffer upload or engine hook is added.
+- R8 and BC4 altitude maps get a CPU maximum hierarchy once per world config load.
+  Object bounds query at most four hierarchy texels; unknown map regions retain
+  the full shader path. Positive weather accumulation also retains that path.
+  Foliage samples its edge alpha only when seasonal or weather snow can appear.
+- Snow-only HSV helpers opt into `Common/Color.hlsli`. Snow constants are pixel-only,
+  so vertex permutations retain the same preprocessed content and can reuse
+  Content Store blobs without changing shader flags or output.
+- CPU scopes expose frame updates and fire scans to the built-in profiler.
+  Survival's condition global is written from the existing game-thread weather
+  callback and cleared on runtime disable. No plugin or save file is written.
 
 Season interpolation wraps across the year and supports either ordering
 of the summer/winter peaks. Weather accumulation uses elapsed game days

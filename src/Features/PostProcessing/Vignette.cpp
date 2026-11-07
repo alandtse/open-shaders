@@ -1,5 +1,7 @@
 #include "Vignette.h"
 
+#include "Utils/SettingsControl.h"
+
 #include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -26,9 +28,12 @@ void Vignette::DrawSettings()
 	}
 
 	ImGui::BeginDisabled(cam != nullptr);
-	ImGui::SliderFloat(T("feature.post_processing.vignette.focal_length", "Focal Length"), &focalLength, 0.1f, 2.f, "%.2f");
+	{
+		const SettingsControl::ProxyScope proxy(&settings.FocalLength, 1.0f);
+		ImGui::SliderFloat(T("feature.post_processing.vignette.focal_length", "Focal Length"), &focalLength, 0.1f, 2.f, "%.2f");
+	}
 	ImGui::EndDisabled();
-	if (!cam)
+	if (!cam && !SettingsControl::IsReplicating())
 		settings.FocalLength = focalLength;
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.vignette.the_focal_length_of_the_lens_relative_to", "The focal length of the lens, relative to image width."));

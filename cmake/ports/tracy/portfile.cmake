@@ -43,7 +43,10 @@ vcpkg_cmake_config_fixup(PACKAGE_NAME Tracy CONFIG_PATH lib/cmake/Tracy)
 # <Tracy/*.hpp> wrappers instead of copying so those relative includes keep resolving.
 file(MAKE_DIRECTORY "${CURRENT_PACKAGES_DIR}/include/Tracy")
 foreach(header IN ITEMS Tracy.hpp TracyC.h TracyD3D11.hpp)
-    file(WRITE "${CURRENT_PACKAGES_DIR}/include/Tracy/${header}" "#pragma once\n#include \"../tracy/tracy/${header}\"\n")
+    file(
+        WRITE "${CURRENT_PACKAGES_DIR}/include/Tracy/${header}"
+        "#pragma once\n#include \"../tracy/tracy/${header}\"\n"
+    )
 endforeach()
 
 function(tracy_copy_tool tool_name tool_dir)

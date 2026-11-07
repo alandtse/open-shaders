@@ -10,6 +10,7 @@
 #include "State.h"
 #include "Util.h"
 #include "Utils/Game.h"
+#include "Utils/SettingsControl.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -175,11 +176,11 @@ void ScreenSpaceGI::DrawSettings()
 	{
 		auto qualityGuard = Util::DisableGuard(!settings.Enabled);
 
-		if (ImGui::BeginTable("Presets", 5)) {
+		if (!SettingsControl::IsReplicating() && ImGui::BeginTable("Presets", 5)) {
 			auto select = [](auto flatVal, auto vrVal) { return globals::game::isVR ? vrVal : flatVal; };
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T(TKEY("ao_only"), "AO only"), { -1, 0 })) {
+			if (Util::Button(T(TKEY("ao_only"), "AO only"), { -1, 0 })) {
 				settings.NumSlices = select(1, 3);
 				settings.NumSteps = select(6, 8);
 				settings.EnableBlur = true;
@@ -193,7 +194,7 @@ void ScreenSpaceGI::DrawSettings()
 			}
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T(TKEY("low"), "Low"), { -1, 0 })) {
+			if (Util::Button(T(TKEY("low"), "Low"), { -1, 0 })) {
 				settings.NumSlices = 10;
 				settings.NumSteps = 12;
 				settings.ResolutionMode = 2;
@@ -206,7 +207,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("low_tooltip"), "Quarter res and blurry."));
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T(TKEY("standard"), "Standard"), { -1, 0 })) {
+			if (Util::Button(T(TKEY("standard"), "Standard"), { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 1;
@@ -219,7 +220,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("standard_tooltip"), "Half res and somewhat stable."));
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T(TKEY("extreme"), "Extreme"), { -1, 0 })) {
+			if (Util::Button(T(TKEY("extreme"), "Extreme"), { -1, 0 })) {
 				settings.NumSlices = 4;
 				settings.NumSteps = 8;
 				settings.ResolutionMode = 0;
@@ -232,7 +233,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("extreme_tooltip"), "Full res and clean."));
 
 			ImGui::TableNextColumn();
-			if (ImGui::Button(T(TKEY("reference"), "Reference"), { -1, 0 })) {
+			if (Util::Button(T(TKEY("reference"), "Reference"), { -1, 0 })) {
 				settings.NumSlices = 8;
 				settings.NumSteps = 10;
 				settings.ResolutionMode = 0;
@@ -265,7 +266,7 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("adaptive_sampling_tooltip"), "Reduces steps on distant or flat surfaces. Adds a depth/normal variance pass; net cost depends on scene."));
 		}
 
-		if (ImGui::BeginTable("Less Work", 3)) {
+		if (ImGui::BeginTable("Less Work", 3, ImGuiTableFlags_SizingStretchSame)) {
 			ImGui::TableNextColumn();
 			recompileFlag |= ImGui::RadioButton(T(TKEY("full_res"), "Full Res"), &settings.ResolutionMode, 0);
 			ImGui::TableNextColumn();
@@ -415,6 +416,11 @@ void ScreenSpaceGI::DrawSettings()
 			}
 		}
 	}
+
+	// The buffer viewer has no scene-context meaning, so hide it while a Scene Manager replica
+	// is borrowing this panel to author overrides.
+	if (SettingsControl::IsReplicating())
+		return;
 
 	///////////////////////////////
 	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
@@ -734,6 +740,7 @@ void ScreenSpaceGI::SetupResources()
 
 void ScreenSpaceGI::ClearShaderCache()
 {
+	queuedResetHistory = true;
 	Util::ClearShaders<ID3D11ComputeShader>({ prefilterDepthsCompute, prefilterRadianceCompute, prefilterNormalCompute, radianceDisoccCompute, giCompute, giEye0OnlyCompute, blurCompute, stereoSyncCompute, reprojectCompute, reprojectDebugCompute, upsampleCompute });
 
 	CompileComputeShaders();

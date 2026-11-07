@@ -175,6 +175,8 @@ struct Wind : Feature
 	virtual void RestoreCurrentPageDefaultSettings() override;
 	virtual bool HasScopedOverrideSettings() const override { return true; }
 	virtual bool ReapplyCurrentPageOverrideSettings() override;
+	virtual std::vector<std::string> GetCurrentPageSettingKeys() const override;
+	virtual bool RestoreCurrentPageSavedSettings() override;
 	virtual void SetupResources() override;
 	virtual void ClearShaderCache() override;
 	virtual void PostPostLoad() override;

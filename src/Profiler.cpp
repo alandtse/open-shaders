@@ -51,10 +51,6 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	device = a_device;
 	context = a_context;
 
-	LARGE_INTEGER freq;
-	QueryPerformanceFrequency(&freq);
-	cpuTicksToMs = 1000.0 / static_cast<double>(freq.QuadPart);
-
 	for (auto& frame : frames) {
 		frame.batch.Configure(kMaxTimers, "Profiler::Frame");
 		frame.batch.Preallocate(a_device);
@@ -297,6 +293,12 @@ void Profiler::EndPass(bool fireCallbacks)
 
 void Profiler::EndFrame(uint32_t a_frameCount)
 {
+	LARGE_INTEGER now;
+	QueryPerformanceCounter(&now);
+	if (lastFrameTicks != 0)
+		frameHistory.PushSample(static_cast<float>(static_cast<double>(now.QuadPart - lastFrameTicks) * cpuTicksToMs));
+	lastFrameTicks = now.QuadPart;
+
 	const bool refused = std::exchange(frameRefused, false);
 	if (!initialized || !context) {
 		LatchCaptureRequest();
@@ -576,6 +578,24 @@ void Profiler::RebuildResults()
 		result.cpuHistoryCount = known.cpu.count;
 		results.push_back(std::move(result));
 	}
+}
+
+double Profiler::QpcTicksToMs()
+{
+	LARGE_INTEGER freq;
+	QueryPerformanceFrequency(&freq);
+	return 1000.0 / static_cast<double>(freq.QuadPart);
+}
+
+Profiler::FrameStats Profiler::GetFrameStats() const
+{
+	return {
+		.lastMs = frameHistory.lastMs,
+		.avgMs = frameHistory.GetAverage(),
+		.p95Ms = frameHistory.GetPercentile(95.0f),
+		.p99Ms = frameHistory.GetPercentile(99.0f),
+		.count = frameHistory.count
+	};
 }
 
 std::vector<Profiler::TimerResult> Profiler::GetStatistics(std::string_view timerPrefix) const

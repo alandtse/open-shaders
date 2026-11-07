@@ -2,7 +2,11 @@
 cmake_minimum_required(VERSION 4.2)
 
 # Option to enable/disable shader tests
-option(BUILD_SHADER_TESTS "Build shader unit tests (runs automatically before packaging)" ON)
+option(
+    BUILD_SHADER_TESTS
+    "Build shader unit tests (runs automatically before packaging)"
+    ON
+)
 
 if(NOT BUILD_SHADER_TESTS)
     message(STATUS "Shader tests disabled")
@@ -19,7 +23,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/KStocky/ShaderTestFramework.git
     # Pinned to specific commit for build reproducibility (Dec 14, 2025)
     GIT_TAG dcbe56c46d474948c27134f570c50ff7110648f6
-    GIT_CONFIG core.longpaths=true  # Enable long path support for Windows
+    GIT_CONFIG core.longpaths=true # Enable long path support for Windows
 )
 
 FetchContent_MakeAvailable(ShaderTestFramework)
@@ -52,14 +56,14 @@ set(FEATURES_DIR ${CMAKE_SOURCE_DIR}/features)
 # No build-time generation, no external tools, just pure C++ reflection.
 
 # Create shader test executable
-add_executable(shader_tests
-    minimal_test.cpp                   # Provides main()
-    runtime_discovered_tests.cpp       # Single test that discovers & runs all HLSL tests
-
+add_executable(
+    shader_tests
+    minimal_test.cpp # Provides main()
+    runtime_discovered_tests.cpp # Single test that discovers & runs all HLSL tests
     # Headers (listed for IDE integration and dependency tracking)
-    test_common.h                      # Common test utilities
-    test_helpers_unified.h             # Unified test helper macros
-    runtime_test_discovery.h           # Runtime HLSL test discovery
+    test_common.h # Common test utilities
+    test_helpers_unified.h # Unified test helper macros
+    runtime_test_discovery.h # Runtime HLSL test discovery
 )
 
 # Set C++23 standard (required by ShaderTestFramework)
@@ -78,8 +82,9 @@ if(MSVC)
 endif()
 
 # Set VS debugger working directory
-set_target_properties(shader_tests PROPERTIES
-    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:shader_tests>"
+set_target_properties(
+    shader_tests
+    PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:shader_tests>"
 )
 
 # Initialize asset dependency management for shader files
@@ -90,10 +95,7 @@ target_add_asset_directory(shader_tests ${SHADER_SOURCE_DIR} "/${SHADER_SOURCE_R
 
 # Add feature shader directories (Hair Specular, etc.) to virtual shader paths
 # These are mapped so that #include "/Shaders/Hair/Hair.hlsli" works in tests
-file(GLOB FEATURE_SHADER_DIRS
-    LIST_DIRECTORIES true
-    "${FEATURES_DIR}/*/Shaders"
-)
+file(GLOB FEATURE_SHADER_DIRS LIST_DIRECTORIES true "${FEATURES_DIR}/*/Shaders")
 foreach(FEATURE_SHADER_DIR ${FEATURE_SHADER_DIRS})
     if(IS_DIRECTORY ${FEATURE_SHADER_DIR})
         target_add_asset_directory(shader_tests ${FEATURE_SHADER_DIR} "/${SHADER_SOURCE_REL_DIR}")
@@ -156,9 +158,11 @@ add_test(
 )
 
 # Set test properties for better CI output
-set_tests_properties(ShaderTests PROPERTIES
-    TIMEOUT 300  # 5 minute timeout for all shader tests
-    LABELS "Shaders;UnitTests"
+set_tests_properties(
+    ShaderTests
+    PROPERTIES
+        TIMEOUT 300 # 5 minute timeout for all shader tests
+        LABELS "Shaders;UnitTests"
 )
 
 message(STATUS "Shader tests configured successfully")
