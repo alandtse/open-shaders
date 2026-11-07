@@ -134,6 +134,12 @@ namespace DX12Native
             result->livePbrAmbiguous = uint32_t(liveMatch.report.ambiguous);
             result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
             result->livePbrMissing = uint32_t(liveMatch.report.missing);
+            // Once per live material identity: report candidate transfer strategies only.
+            // Resource handles are never opened or copied by this classification.
+            std::unordered_set<uint64_t> reported;
+            for (const auto& match : liveMatch.matches)
+                if (match && match->recipe && reported.insert(match->recipe->identity).second)
+                    result->liveGpuRoutes += AssessLiveGpuRecipe(*match->recipe);
         }
 		if (a_scene.materialSource) {
 			try { LoadMaterialTextures(a_backend, *a_scene.materialSource, *result,

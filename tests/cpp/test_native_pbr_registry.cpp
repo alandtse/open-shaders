@@ -7,6 +7,7 @@
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
 #include "Features/DX12NativeScene/ArchiveDdsSource.h"
+#include "Features/DX12NativeScene/LiveGpuTextureEligibility.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VerifiedTextureSources.h"
@@ -1084,4 +1085,36 @@ TEST_CASE("Archive DDS requests accept only canonical bounded texture paths", "[
     REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/mymod/a.png"));
     REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/mymod//a.dds"));
     REQUIRE(DX12Native::kMaximumArchiveDdsBytes == 32ull * 1024 * 1024);
+}
+
+
+TEST_CASE("Live DX11 texture route assessment never treats descriptor hints as transferable handles", "[native_pbr]")
+{
+    NativePBR::TextureResourceInfo info{};
+    REQUIRE(DX12Native::ClassifyLiveGpuTexture(info) == DX12Native::LiveGpuTextureRoute::Unobserved);
+    info = { 1024, 512, 10, 1, uint32_t(DXGI_FORMAT_R8G8B8A8_UNORM),
+        0, D3D11_BIND_SHADER_RESOURCE, D3D11_USAGE_DEFAULT, 1, true };
+    REQUIRE(DX12Native::ClassifyLiveGpuTexture(info) == DX12Native::LiveGpuTextureRoute::CopyCandidate);
+    info.miscFlags = D3D11_RESOURCE_MISC_SHARED_NTHANDLE;
+    REQUIRE(DX12Native::ClassifyLiveGpuTexture(info) == DX12Native::LiveGpuTextureRoute::PotentialSharedHandle);
+    info.sampleCount = 4;
+    REQUIRE(DX12Native::ClassifyLiveGpuTexture(info) == DX12Native::LiveGpuTextureRoute::UnsupportedShape);
+    info.sampleCount = 1;
+    info.arraySize = 6;
+    REQUIRE(DX12Native::ClassifyLiveGpuTexture(info) == DX12Native::LiveGpuTextureRoute::UnsupportedShape);
+
+    NativePBR::Snapshot snapshot{ 1, 1, {} };
+    snapshot.material.texturePaths = { "textures/a.dds", "textures/n.dds", "textures/r.dds", "", "", "", "" };
+    snapshot.material.texturePathsComplete = true;
+    auto recipe = NativePBR::CompileRecipe(snapshot);
+    auto report = DX12Native::AssessLiveGpuRecipe(recipe);
+    REQUIRE(report.unobserved == 3);
+    REQUIRE(report.copyCandidates == 0);
+    info.arraySize = 1;
+    info.miscFlags = 0;
+    recipe.textures[0].resource = info;
+    report = DX12Native::AssessLiveGpuRecipe(recipe);
+    REQUIRE(report.unobserved == 2);
+    REQUIRE(report.copyCandidates == 1);
+    REQUIRE(report.unsupported == 0);
 }

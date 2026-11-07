@@ -99,3 +99,18 @@ Diagnostics: archiveDdsPlanned, archiveDdsImported, archiveDdsRejected,
 archiveDdsBytes. This is initial archive-backed source support; it has not
 been compiled or runtime-validated. Archive stream availability, performance
 and exact texture parity must be checked in Skyrim before enabling by default.
+
+### Live DX11 texture transfer preparation (diagnostics only)
+
+The native material worker now classifies copied D3D11 texture descriptors for
+uniquely matched PBR recipes into **unobserved**, **unsupported shape**,
+**copy candidate**, and **potential NT shared-handle candidate**. It reports
+liveGpuUnobserved, liveGpuUnsupported, liveGpuCopyCandidates and
+liveGpuSharedCandidates in the native material budget diagnostics.
+
+The classification never opens a handle, maps a D3D11 texture, reads GPU bytes,
+or transfers it to DX12. A shared misc flag **does not prove** an existing
+shareable handle, correct adapter ownership, proper resource states, or an
+engine-to-DX12 fence protocol. Non-shared resources would require a separately
+paced D3D11 copy with explicit lifetime and cross-API synchronization. Neither
+path is enabled by this commit; zero additional gameplay GPU work is introduced.
