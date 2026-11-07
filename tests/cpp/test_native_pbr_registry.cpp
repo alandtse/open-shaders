@@ -136,6 +136,9 @@ TEST_CASE("Native recipes retain raw values and expose unsupported data", "[nati
     REQUIRE(recipe.parameters.roughnessScale == 0.35f);
     REQUIRE(recipe.issues & NativePBR::MissingRequiredTextures);
     REQUIRE(recipe.issues & NativePBR::UnknownOpacity);
+    REQUIRE(recipe.issues & NativePBR::UnknownNormalMode);
+    REQUIRE(recipe.issues & NativePBR::UnknownUvAnimation);
+    REQUIRE(recipe.issues & NativePBR::UnmatchedSceneInstance);
     snapshot.material.texturePathsComplete = true;
     snapshot.material.texturePaths[0] = "base";
     snapshot.material.texturePaths[1] = "normal";

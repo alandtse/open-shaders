@@ -15,7 +15,10 @@ namespace NativePBR
         InvalidSnapshot = 1u << 5,
         UnsupportedDisplacement = 1u << 6,
         UnsupportedFeatureTextures = 1u << 7,
-        UnsupportedProjection = 1u << 8
+        UnsupportedProjection = 1u << 8,
+        UnknownNormalMode = 1u << 9,
+        UnknownUvAnimation = 1u << 10,
+        UnmatchedSceneInstance = 1u << 11
     };
 
     enum class TextureInterpretation : uint8_t { ColorSrgb, DataLinear };
@@ -43,7 +46,8 @@ namespace NativePBR
     /** @brief Compiles an owned snapshot without accessing game objects or GPU resources. */
     inline Recipe CompileRecipe(const Snapshot& a_snapshot)
     {
-        Recipe result{ a_snapshot.identity, a_snapshot.revision, a_snapshot.material, UnknownOpacity };
+        Recipe result{ a_snapshot.identity, a_snapshot.revision, a_snapshot.material,
+            UnknownOpacity | UnknownNormalMode | UnknownUvAnimation | UnmatchedSceneInstance };
         const auto& material = result.parameters;
         for (size_t index = 0; index < result.textures.size(); ++index) {
             auto& texture = result.textures[index];
