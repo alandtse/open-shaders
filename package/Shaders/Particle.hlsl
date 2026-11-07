@@ -24,6 +24,7 @@ float2 GetRainProjectionJitter(uint eyeIndex)
 }
 
 #	if defined(VSHADER)
+#		include "Common/RainCurtain.hlsli"
 #		include "Common/WindField.hlsli"
 namespace RainWind
 {
@@ -151,9 +152,12 @@ VS_OUTPUT main(VS_INPUT input)
 
 #		if defined(RAIN)
 	float3 rainVelocity = Velocity.xyz;
+	float dropWeight = 1.0;
 #			if defined(RAIN_REFRACTION)
+	float3 worldPosition = mul(FrameBuffer::CameraViewInverse[eyeIndex], mul(WorldView[eyeIndex], msPosition)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	if (SharedData::rainRefractionSettings.CurtainStrength > 0.0)
+		dropWeight = RainCurtain::Weight(worldPosition, RainCurtain::Drift(), RainCurtain::DropHash(input.Position.xyz), SharedData::rainRefractionSettings.CurtainScale, SharedData::rainRefractionSettings.CurtainStrength);
 	if (SharedData::rainRefractionSettings.WindInfluence > 0.0) {
-		float3 worldPosition = mul(FrameBuffer::CameraViewInverse[eyeIndex], mul(WorldView[eyeIndex], msPosition)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		WindField::Components wind = WindField::SampleCurrentComponents(worldPosition);
 		WindField::TransientImpulseSample impulse = WindField::SampleCurrentTransientImpulses(worldPosition);
 		float3 gust = (wind.gustVelocity + impulse.velocity) * (RainWind::UnitsPerSecondPerFieldSpeed * SharedData::rainRefractionSettings.WindInfluence);
@@ -185,7 +189,7 @@ VS_OUTPUT main(VS_INPUT input)
 		float motionLength = length(motionPixels);
 		float dropArea = Math::PI * radius * radius + 2.0 * radius * motionLength;
 		float rasterArea = Math::PI * rasterRadius * rasterRadius + 2.0 * rasterRadius * motionLength;
-		vsout.RaindropData.z = saturate(dropArea / max(rasterArea, EPSILON_DIVISION));
+		vsout.RaindropData.z = saturate(dropArea / max(rasterArea, EPSILON_DIVISION)) * dropWeight;
 		vsout.Position = dropPosition;
 		vsout.Position.xy += corner * radiusClip * rasterScale;
 	} else
@@ -205,6 +209,9 @@ VS_OUTPUT main(VS_INPUT input)
 	}
 	vsout.Color.xyz = 1.0.xxx;
 	vsout.Color.w = fVars1.w;
+#		if defined(RAIN)
+	vsout.Color.w *= dropWeight;
+#		endif
 
 	vsout.TexCoord0.xy = input.TexCoord0.xy;
 

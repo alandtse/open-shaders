@@ -35,6 +35,8 @@ public:
 	static constexpr float kMaxMotionStretch = 3.0f;
 	static constexpr float kMaxWindInfluence = 2.0f;
 	static constexpr float kFallbackRainFallSpeed = 675.0f;
+	static constexpr float kMinCurtainScale = 512.0f;
+	static constexpr float kMaxCurtainScale = 16384.0f;
 
 	/** @brief User settings, used while Effects 11 is not active; mirrors the preset's [RAIN] Enable, MotionStretch and MotionTransparency. WindInfluence is always user-owned. */
 	struct Settings
@@ -43,6 +45,8 @@ public:
 		float MotionStretch = 2.0f;
 		float MotionTransparency = 0.91f;
 		float WindInfluence = 1.0f;
+		float CurtainStrength = 0.35f;
+		float CurtainScale = 4096.0f;
 	} settings;
 
 	/** @brief Feature buffer data, matching RainRefractionSettings in SharedData.hlsli; Enable is cleared when the raindrop texture or blend state is missing. */
@@ -56,6 +60,9 @@ public:
 		float2 TextureRadiusScale{ 1, 1 };
 		float FallSpeed = kFallbackRainFallSpeed;  ///< Weather gravity velocity in game units per second
 		float pad0{};
+		float CurtainStrength;
+		float CurtainScale;
+		float2 pad1{};
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrame);
 
