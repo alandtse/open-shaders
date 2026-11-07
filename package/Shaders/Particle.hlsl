@@ -156,7 +156,7 @@ VS_OUTPUT main(VS_INPUT input)
 	float3 rainVelocity = Velocity.xyz;
 #			if defined(RAIN_REFRACTION)
 	if (SharedData::rainRefractionSettings.WindInfluence > 0.0) {
-		float3 worldPosition = mul(FrameBuffer::CameraViewInverse[eyeIndex], mul(WorldView[eyeIndex], msPosition)).xyz;
+		float3 worldPosition = mul(FrameBuffer::CameraViewInverse[eyeIndex], mul(WorldView[eyeIndex], msPosition)).xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		WindField::Components wind = WindField::SampleCurrentComponents(worldPosition);
 		WindField::TransientImpulseSample impulse = WindField::SampleCurrentTransientImpulses(worldPosition);
 		float3 gust = (wind.gustVelocity + impulse.velocity) * (RainWind::UnitsPerSecondPerFieldSpeed * SharedData::rainRefractionSettings.WindInfluence);
