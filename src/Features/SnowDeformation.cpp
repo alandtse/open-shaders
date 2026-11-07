@@ -73,6 +73,7 @@ namespace
 	constexpr float kFloorMaxRise = 60.0f;
 	constexpr float kFloorMinHeight = 1.0f;
 	constexpr float kFloorTolerance = 0.5f;
+	constexpr float kFloorDropMargin = 2.0f;
 	constexpr float kRestSpeedSquared = 1e-4f;
 	constexpr float kMaxDragStrength = 10.0f;
 	constexpr float kHandRange = 800.0f;
@@ -101,6 +102,8 @@ namespace
 	constexpr uint8_t kKindPress = 0;
 	constexpr uint8_t kKindMelt = 1;
 	constexpr uint8_t kKindWade = 2;
+	constexpr uint8_t kKindProbe = 3;
+	constexpr float kProbeMaxRadius = 12.0f;
 	constexpr float kWadeSpread = 1.6f;
 	constexpr float kWadeMinDepth = 0.5f;
 	constexpr float kWadeReachMargin = 8.0f;
@@ -1353,6 +1356,7 @@ void SnowDeformation::GatherStamps()
 		std::scoped_lock lock(stampLock);
 		pendingStamps.clear();
 		measuredSinks.clear();
+		measuredDepth.clear();
 		return;
 	}
 
@@ -1456,7 +1460,13 @@ void SnowDeformation::MeasureBlanket()
 		blanketResults.insert(blanketResults.end(), results.begin(), results.end());
 }
 
-uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bottom, float a_landZ, float a_blanket)
+float SnowDeformation::FloatRestHeight(const Contact& a_contact, float a_blanket, float a_depression) const
+{
+	const float pressure = SnowDeformationMath::ContactPressure(a_contact.weight, a_contact.area > 0.0f ? a_contact.area : SnowDeformationMath::CircleFootprint(a_contact.radius));
+	return SnowDeformationMath::RestHeight(a_blanket, a_depression, SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure));
+}
+
+uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bottom, float a_landZ, float a_blanket, float a_depression, RE::FormID a_ref)
 {
 	auto rigid = a_contact.object && a_contact.object->body ? a_contact.object->body->AsBhkRigidBody() : nullptr;
 	auto body = rigid ? skyrim_cast<RE::hkpRigidBody*>(rigid->referencedObject.get()) : nullptr;
@@ -1488,12 +1498,15 @@ uint8_t SnowDeformation::ApplySnowPhysics(const Contact& a_contact, float a_bott
 		}
 	}
 	if (settings.DensityFloor) {
-		const float pressure = SnowDeformationMath::ContactPressure(a_contact.weight, a_contact.area > 0.0f ? a_contact.area : SnowDeformationMath::CircleFootprint(a_contact.radius));
-		const float floorHeight = SnowDeformationMath::FloorHeight(a_blanket, SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure));
+		const float floorHeight = FloatRestHeight(a_contact, a_blanket, a_depression);
+		const float rest = a_landZ + floorHeight;
 		const float scale = RE::bhkWorld::GetWorldScaleInverse();
-		const float rise = SnowDeformationMath::FloorRiseSpeed(a_landZ + floorHeight - a_bottom, kFloorSpring, kFloorMaxRise);
-		if (floorHeight > kFloorMinHeight && a_landZ + floorHeight - a_bottom > kFloorTolerance && linear[2] * scale < rise) {
+		const float rise = SnowDeformationMath::FloorRiseSpeed(rest - a_bottom, kFloorSpring, kFloorMaxRise);
+		if (floorHeight > kFloorMinHeight && rest - a_bottom > kFloorTolerance && linear[2] * scale < rise) {
 			linear[2] = rise / scale;
+			floatedObjects.insert(a_ref);
+			changed = true;
+		} else if (a_bottom - rest > kFloorDropMargin && floatedObjects.erase(a_ref) > 0) {
 			changed = true;
 		}
 	}
@@ -1574,12 +1587,37 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 		if (drop > kObjectContact || drop < -(carve + kBelowGroundLimit))
 			continue;
 
+		const RE::FormID refID = ref->GetFormID();
+		const bool physicsActive = gatherOnUpdate && carve > 0.0f;
+		float depression = 0.0f;
+		bool floating = false;
+		if (physicsActive && settings.DensityFloor) {
+			{
+				std::scoped_lock lock(stampLock);
+				if (const auto found = measuredDepth.find(refID); found != measuredDepth.end())
+					depression = std::clamp(found->second, 0.0f, carve);
+			}
+			floating = FloatRestHeight(contactScratch.front(), carve, depression) > kFloorMinHeight;
+		}
 		uint8_t physicsState = 0;
-		if (gatherOnUpdate && (settings.SnowDrag || settings.DensityFloor) && carve > 0.0f)
-			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, carve);
+		if (physicsActive && (settings.SnowDrag || settings.DensityFloor))
+			physicsState = ApplySnowPhysics(contactScratch.front(), bottom, landZ, carve, depression, refID);
 
 		const float normalZ = LandNormalZ(tes, probe, landZ);
 		const float vanillaSnow = IsVanillaSnow(tes->GetLandMaterialType(probe)) ? 1.0f : 0.0f;
+		if (floating && a_stamps.size() < kMaxStamps) {
+			const auto& front = contactScratch.front();
+			Stamp stamp{};
+			stamp.x = front.centre.x;
+			stamp.y = front.centre.y;
+			stamp.radius = std::min(front.radius, kProbeMaxRadius);
+			stamp.kind = kKindProbe;
+			stamp.owner = refID;
+			stamp.vanillaSnow = vanillaSnow;
+			stamp.landZ = landZ;
+			stamp.normalZ = normalZ;
+			a_stamps.push_back(stamp);
+		}
 		for (const auto& contact : contactScratch) {
 			if (a_stamps.size() >= kMaxStamps)
 				break;
@@ -1587,8 +1625,8 @@ void SnowDeformation::AppendObjectStamps(std::vector<Stamp>& a_stamps)
 			const float pressure = SnowDeformationMath::ContactPressure(contact.weight, area);
 			const float weightScale = settings.WeightResponse ? SnowDeformationMath::WeightScale(pressure, kLightPressure, kHeavyPressure) : 1.0f;
 			if (gatherObjectSamples.size() < kMaxObjectSamples)
-				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState });
-			if (weightScale < kMinWeightScale)
+				gatherObjectSamples.push_back({ ref->GetDisplayFullName(), contact.weight, contact.radius, area, pressure, weightScale, drop, physicsState, depression });
+			if (floating || weightScale < kMinWeightScale)
 				continue;
 			Stamp stamp{};
 			stamp.x = contact.centre.x;
@@ -2177,12 +2215,13 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 		const float highY = localY + std::max(0.0f, -stamp.motionY) + reach;
 		const bool wade = stamp.kind == kKindWade;
 		const float stampCarve = wade ? std::max(carve - stamp.clearance, 0.0f) : carve;
-		const float stampBound = stamp.kind == kKindMelt ? std::max(-stamp.rim, 2.0f * kActiveEpsilon) :
-		                                                   std::max(stamp.depth * (1.0f + kChurn) * snow + stampCarve, stamp.rim * (1.0f + kRimNoise) * snow);
+		const float stampBound = stamp.kind == kKindMelt  ? std::max(-stamp.rim, 2.0f * kActiveEpsilon) :
+		                         stamp.kind == kKindProbe ? 2.0f * kActiveEpsilon :
+		                                                    std::max(stamp.depth * (1.0f + kChurn) * snow + stampCarve, stamp.rim * (1.0f + kRimNoise) * snow);
 
 		updateParams.Stamps[i] = { localX, localY, stamp.radius, stamp.depth };
 		updateParams.StampShape[i] = { stamp.forwardX, stamp.forwardY, stamp.halfWidth, stamp.rim };
-		updateParams.StampMotion[i] = { stamp.motionX, stamp.motionY, stamp.vanillaSnow, carve };
+		updateParams.StampMotion[i] = { stamp.motionX, stamp.motionY, stamp.vanillaSnow, stamp.kind == kKindProbe ? 0.0f : carve };
 		updateParams.StampSurface[i] = { stamp.landZ, stamp.normalZ, stamp.kind == kKindMelt ? 1.0f : 0.0f, wade ? 1.0f + stamp.clearance : 0.0f };
 		updateParams.StampBounds[i] = { lowX, lowY, highX, highY };
 
@@ -2267,9 +2306,12 @@ void SnowDeformation::UpdateLevel(uint32_t a_index, const RE::NiPoint3& a_positi
 			context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 			context->CSSetShader(updateCS.get(), nullptr, 0);
 			context->Dispatch((kTileTexels / 8) * (kTileTexels / 8), entryCount, 1);
-			if (fine && a_sinking)
+			if (fine && (a_sinking || probeStampsPresent))
 				DispatchProbes(frameStampCount);
 		}
+
+		if (entryCount == 0 && fine && probeStampsPresent)
+			DispatchProbes(frameStampCount);
 
 		if (runBlanket) {
 			ID3D11ShaderResourceView* resources[5] = { nullptr, snowMap, probes, nullptr, blanketLandTexture->srv.get() };
@@ -2330,6 +2372,7 @@ void SnowDeformation::UpdateField()
 		std::scoped_lock lock(stampLock);
 		pendingStamps.clear();
 		measuredSinks.clear();
+		measuredDepth.clear();
 	}
 	if (!gatherOnUpdate)
 		GatherStamps();
@@ -2377,22 +2420,24 @@ void SnowDeformation::UpdateField()
 
 	const bool snowCover = IsSnowCoverActive();
 	probeOwners.clear();
+	probeStampsPresent = false;
 	stampSnow.clear();
 	stampReach.clear();
 	std::vector<std::pair<RE::FormID, float>> offSnow;
 	uint32_t kept = 0;
 	for (size_t s = 0; s < frameStamps.size() && kept < kMaxStamps; ++s) {
 		const auto& stamp = frameStamps[s];
-		if (stamp.kind == kKindWade && !blanketActive)
+		if ((stamp.kind == kKindWade || stamp.kind == kKindProbe) && !blanketActive)
 			continue;
 		const float reach = std::max(stamp.radius, stamp.halfWidth) * (1.0f + 2.0f * kRimWidth) + 2.0f * kCellSize * kCoarseScale;
 		const float snow = std::max(stamp.vanillaSnow, snowCover ? SnowCoverUpperBound(stamp, reach) : 0.0f);
 		const float wade = stamp.kind == kKindWade ? blanketHeight - stamp.clearance : 0.0f;
-		if (snow * std::max({ stamp.depth, stamp.rim, wade }) < kActiveEpsilon) {
+		if (stamp.kind != kKindProbe && snow * std::max({ stamp.depth, stamp.rim, wade }) < kActiveEpsilon) {
 			offSnow.emplace_back(stamp.owner, 0.0f);
 			continue;
 		}
 		frameStamps[kept++] = stamp;
+		probeStampsPresent = probeStampsPresent || stamp.kind == kKindProbe;
 		stampSnow.push_back(snow);
 		stampReach.push_back(reach);
 		probeOwners.push_back(stamp.owner);
@@ -2647,8 +2692,10 @@ void SnowDeformation::PublishMeasurements(const std::vector<std::pair<RE::FormID
 	if (a_measurements.empty())
 		return;
 	std::scoped_lock lock(stampLock);
-	for (const auto& [owner, depth] : a_measurements)
+	for (const auto& [owner, depth] : a_measurements) {
 		measuredSinks[owner] = depth;
+		measuredDepth[owner] = depth;
+	}
 }
 
 float SnowDeformation::SnowCoverUpperBound(const Stamp& a_stamp, float a_reach) const
@@ -3515,7 +3562,7 @@ json SnowDeformation::GetDiagnostics()
 	{
 		std::scoped_lock lock(stampLock);
 		for (const auto& sample : objectSamples)
-			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale }, { "Clearance", sample.clearance }, { "Physics", sample.physics } });
+			objects.push_back({ { "Name", sample.name }, { "Weight", sample.weight }, { "Radius", sample.radius }, { "Area", sample.area }, { "Pressure", sample.pressure }, { "Scale", sample.scale }, { "Clearance", sample.clearance }, { "Physics", sample.physics }, { "Depression", sample.depression } });
 	}
 	return {
 		{ "Objects", objects },

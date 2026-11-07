@@ -99,10 +99,15 @@ namespace SnowDeformationMath
 		return std::exp(-std::max(a_strength, 0.0f) * std::clamp(a_submerged, 0.0f, 1.0f) * std::max(a_dt, 0.0f));
 	}
 
-	/** @brief Height above the land where an object with a_weightScale (0 light, 1 heavy) comes to rest in a blanket of a_blanket: light objects float near the top, heavy ones reach the ground. */
-	inline float FloorHeight(float a_blanket, float a_weightScale)
+	/**
+	 * @brief Height above the land where an object with a_weightScale (0 light, 1 heavy) comes to rest in a blanket of a_blanket
+	 *        whose surface a_depression has been dug down: light objects float near the surface, heavy ones sink by their weight share of the blanket.
+	 */
+	inline float RestHeight(float a_blanket, float a_depression, float a_weightScale)
 	{
-		return std::max(a_blanket, 0.0f) * (1.0f - std::clamp(a_weightScale, 0.0f, 1.0f));
+		const float blanket = std::max(a_blanket, 0.0f);
+		const float surface = blanket - std::clamp(a_depression, 0.0f, blanket);
+		return std::max(surface - blanket * std::clamp(a_weightScale, 0.0f, 1.0f), 0.0f);
 	}
 
 	/** @brief Upward speed that lifts an object whose bottom is a_depth under its floor, growing by a_spring per second and capped at a_maxRise. */

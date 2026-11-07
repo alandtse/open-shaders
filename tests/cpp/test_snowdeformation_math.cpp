@@ -104,9 +104,12 @@ TEST_CASE("Drag grows with burial and never speeds an object up", "[snow-deforma
 
 TEST_CASE("Light objects rest near the snow top and heavy ones at the ground", "[snow-deformation]")
 {
-	REQUIRE(Math::FloorHeight(20.0f, 0.0f) == Approx(20.0f));
-	REQUIRE(Math::FloorHeight(20.0f, 1.0f) == Approx(0.0f));
-	REQUIRE(Math::FloorHeight(20.0f, 0.25f) == Approx(15.0f));
+	REQUIRE(Math::RestHeight(20.0f, 0.0f, 0.0f) == Approx(20.0f));
+	REQUIRE(Math::RestHeight(20.0f, 0.0f, 1.0f) == Approx(0.0f));
+	REQUIRE(Math::RestHeight(20.0f, 0.0f, 0.25f) == Approx(15.0f));
+	REQUIRE(Math::RestHeight(20.0f, 12.0f, 0.0f) == Approx(8.0f));
+	REQUIRE(Math::RestHeight(20.0f, 12.0f, 0.5f) == Approx(0.0f));
+	REQUIRE(Math::RestHeight(20.0f, 50.0f, 0.0f) == Approx(0.0f));
 	REQUIRE(Math::FloorRiseSpeed(-2.0f, 6.0f, 60.0f) == Approx(0.0f));
 	REQUIRE(Math::FloorRiseSpeed(5.0f, 6.0f, 60.0f) == Approx(30.0f));
 	REQUIRE(Math::FloorRiseSpeed(50.0f, 6.0f, 60.0f) == Approx(60.0f));
