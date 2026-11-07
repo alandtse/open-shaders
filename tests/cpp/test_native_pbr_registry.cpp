@@ -626,6 +626,25 @@ TEST_CASE("Prepared instance coverage keeps ambiguous candidates separate", "[na
     REQUIRE(coverage.missingIdentity == 1);
 }
 
+TEST_CASE("Prepared candidate analysis counts only published recipes for unique candidates", "[native_pbr]")
+{
+    std::vector<NativePBR::PreparedInstanceKey> prepared{ { "a", "shape" }, { "b", "shape" }, { "c", "shape" } };
+    std::vector<NativePBR::InstanceHint> hints{ { 1, "a", "shape" }, { 2, "b", "shape" },
+        { 3, "c", "shape" }, { 4, "c", "shape" } };
+    NativePBR::RecipeGeneration recipes;
+    recipes.revision = 42;
+    recipes.recipes.emplace(1, std::make_shared<const NativePBR::Recipe>());
+    recipes.recipes.emplace(3, std::make_shared<const NativePBR::Recipe>());
+    const auto coverage = NativePBR::AnalyzeInstanceCoverage(prepared, hints, &recipes);
+    REQUIRE(coverage.uniqueCandidates == 2);
+    REQUIRE(coverage.ambiguous == 1);
+    REQUIRE(coverage.recipeGenerationAvailable);
+    REQUIRE(coverage.recipeRevision == 42);
+    REQUIRE(coverage.candidateRecipes == 1);
+    REQUIRE(coverage.candidateRecipesMissing == 1);
+    REQUIRE_FALSE(NativePBR::AnalyzeInstanceCoverage(prepared, hints).recipeGenerationAvailable);
+}
+
 TEST_CASE("Clearing scene observations preserves published materials", "[native_pbr]")
 {
     NativePBR::Registry registry;

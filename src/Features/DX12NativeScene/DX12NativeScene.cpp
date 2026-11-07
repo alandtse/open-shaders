@@ -25,6 +25,9 @@ void DX12NativeScene::DrawSettings()
 			ImGui::TextDisabled("Unverified snapshot candidates%s: %zu unique, %zu ambiguous, %zu unobserved, %zu without source identity",
 				!scene || scene->revision != coverageRevision ? " (previous scene)" : "", coverageResult->uniqueCandidates,
 				coverageResult->ambiguous, coverageResult->noObservation, coverageResult->missingIdentity);
+			if (coverageResult->recipeGenerationAvailable)
+				ImGui::TextDisabled("Candidate recipes at revision %llu: %zu available, %zu pending or unavailable",
+					static_cast<unsigned long long>(coverageResult->recipeRevision), coverageResult->candidateRecipes, coverageResult->candidateRecipesMissing);
 		}
 	}
 	if (ImGui::Checkbox("Load prepared scene", &settings.Enabled)) resetRequested = true;
@@ -173,15 +176,18 @@ void DX12NativeScene::AdvanceCoverage()
 	try {
 		auto task = std::make_shared<CoverageTask>();
 		task->sceneRevision = scene->revision;
-		auto hints = globals::features::truePBR.nativeRegistry.ExportInstanceHints();
+		auto& pbr = globals::features::truePBR;
+		auto recipes = pbr.GetNativeRecipes();
+		auto hints = pbr.nativeRegistry.ExportInstanceHints();
+		if (recipes && recipes->revision != pbr.nativeRegistry.Revision()) recipes.reset();
 		static BS::thread_pool<> pool{ 1 };
-		pool.detach_task([task, acceleration = scene->acceleration, hints = std::move(hints)] {
+		pool.detach_task([task, acceleration = scene->acceleration, hints = std::move(hints), recipes = std::move(recipes)] {
 			try {
 				std::vector<NativePBR::PreparedInstanceKey> keys;
 				keys.reserve(acceleration->instances.size());
 				for (const auto& instance : acceleration->instances)
 					keys.push_back({ instance.preparedIdentity.referenceKey, instance.preparedIdentity.shapeName });
-				task->coverage = NativePBR::AnalyzeInstanceCoverage(keys, hints);
+				task->coverage = NativePBR::AnalyzeInstanceCoverage(keys, hints, recipes.get());
 			} catch (...) { task->failed = true; }
 			task->done.store(true, std::memory_order_release);
 		});
@@ -395,6 +401,10 @@ void DX12NativeScene::PublishDiagnostics()
 		snapshot["pbrCandidates"] = { { "pending", bool(coverageTask) }, { "failed", coverageFailed },
 			{ "sceneRevision", coverageRevision }, { "currentScene", coverageResult && coverageRevision == revision },
 			{ "unique", coverageResult ? coverageResult->uniqueCandidates : 0 }, { "ambiguous", coverageResult ? coverageResult->ambiguous : 0 },
+			{ "recipeGenerationAvailable", coverageResult && coverageResult->recipeGenerationAvailable },
+			{ "recipeRevision", coverageResult ? coverageResult->recipeRevision : 0 },
+			{ "candidateRecipes", coverageResult ? coverageResult->candidateRecipes : 0 },
+			{ "candidateRecipesMissing", coverageResult ? coverageResult->candidateRecipesMissing : 0 },
 			{ "unobserved", coverageResult ? coverageResult->noObservation : 0 }, { "missingIdentity", coverageResult ? coverageResult->missingIdentity : 0 } };
 	}
 	std::scoped_lock lock(diagnosticsMutex);
@@ -409,7 +419,7 @@ json DX12NativeScene::GetDiagnostics()
 
 void DX12NativeScene::RegisterUxActions()
 {
-	FEATURE_COMMAND("analyzePBRCandidates", "Queue a snapshot analysis of unverified reference and shape candidates; read pbrCandidates in diagnostics.", [](Feature* self, const json&) {
+	FEATURE_COMMAND("analyzePBRCandidates", "Queue an analysis of unverified reference and shape candidates and available recipes; read pbrCandidates in diagnostics.", [](Feature* self, const json&) {
 		static_cast<DX12NativeScene*>(self)->coverageRequested = true;
 	});
 	FEATURE_COMMAND("setShadowMask", "Queue the separate early prepared-scene RT shadow mask setting. Params: enabled (boolean).", [](Feature* self, const json& args) {
