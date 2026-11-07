@@ -1,5 +1,6 @@
 #include "MaterialResources.h"
 #include "MaterialPageCache.h"
+#include "MaterialDiskCache.h"
 #include "TextureSourceBatch.h"
 #include "VideoMemoryBudget.h"
 
@@ -19,6 +20,8 @@ namespace DX12Native
 	{
 		constexpr uint64_t kMaximumDdsBytes = 128ull * 1024 * 1024;
 		constexpr uint64_t kMaximumRetainedPageBytes = 64ull * 1024 * 1024;
+		constexpr uint64_t kMaximumCacheWritesPerLoad = 8ull * 1024 * 1024;
+		constexpr uint32_t kMaximumCacheEntriesPerLoad = 8;
 		constexpr uint32_t kPageSlices = 8;
 		struct Texture
 		{
@@ -59,23 +62,42 @@ namespace DX12Native
 			return key;
 		}
 
-		std::vector<uint8_t> ReadTexture(const std::filesystem::path& a_directory, const std::string& a_hash)
+		MaterialDiskCache& DiskCache()
 		{
+			// A loading worker may still access the cache during static destruction.
+			static auto* cache = new MaterialDiskCache{ "Data/SKSE/Plugins/CommunityShaders/NativePBRCache/textures" };
+			return *cache;
+		}
+
+		std::vector<uint8_t> ReadTexture(const std::filesystem::path& a_directory, const std::string& a_hash, MaterialResources& a_result, bool* a_fromCache = nullptr)
+		{
+			if (a_fromCache) *a_fromCache = false;
 			if (a_hash.size() != 64 || !std::ranges::all_of(a_hash, [](unsigned char c) { return std::isxdigit(c) != 0; }))
 				throw std::runtime_error("Invalid material texture digest");
 			const auto path = a_directory / "textures" / (a_hash + ".dds");
 			const auto file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-			if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Material texture unavailable");
+			if (file == INVALID_HANDLE_VALUE) {
+				if (auto cached = DiskCache().Read(a_hash, kMaximumDdsBytes)) { if (a_fromCache) *a_fromCache = true; ++a_result.diskCacheHits; return std::move(*cached); }
+				throw std::runtime_error("Material texture unavailable");
+			}
 			const SKSE::stl::scope_exit close([&]() noexcept { CloseHandle(file); });
 			LARGE_INTEGER size{};
-			if (!GetFileSizeEx(file, &size) || size.QuadPart < 128 || uint64_t(size.QuadPart) > kMaximumDdsBytes)
+			if (!GetFileSizeEx(file, &size) || size.QuadPart < 128 || uint64_t(size.QuadPart) > kMaximumDdsBytes) {
+				if (auto cached = DiskCache().Read(a_hash, kMaximumDdsBytes)) { if (a_fromCache) *a_fromCache = true; ++a_result.diskCacheHits; return std::move(*cached); }
 				throw std::runtime_error("Material DDS byte limit exceeded");
+			}
 			const auto hash = Util::FileDigest::Sha256HandleHex(file);
-			if (!hash || _stricmp(hash->c_str(), a_hash.c_str()) != 0) throw std::runtime_error("Material DDS digest mismatch");
+			if (!hash || _stricmp(hash->c_str(), a_hash.c_str()) != 0) {
+				if (auto cached = DiskCache().Read(a_hash, kMaximumDdsBytes)) { if (a_fromCache) *a_fromCache = true; ++a_result.diskCacheHits; return std::move(*cached); }
+				throw std::runtime_error("Material DDS digest mismatch");
+			}
 			if (!SetFilePointerEx(file, {}, nullptr, FILE_BEGIN)) throw std::runtime_error("Material DDS seek failed");
 			std::vector<uint8_t> bytes(size_t(size.QuadPart));
 			DWORD read = 0;
-			if (!ReadFile(file, bytes.data(), DWORD(bytes.size()), &read, nullptr) || read != bytes.size()) throw std::runtime_error("Material DDS read failed");
+			if (!ReadFile(file, bytes.data(), DWORD(bytes.size()), &read, nullptr) || read != bytes.size()) {
+				if (auto cached = DiskCache().Read(a_hash, kMaximumDdsBytes)) { if (a_fromCache) *a_fromCache = true; ++a_result.diskCacheHits; return std::move(*cached); }
+				throw std::runtime_error("Material DDS read failed");
+			}
 			return bytes;
 		}
 
@@ -350,6 +372,8 @@ namespace DX12Native
 		std::map<std::string, std::unique_ptr<Texture>> textures;
 		std::unordered_map<std::string, std::string> rejected;
 		uint64_t sourceBytes = 0;
+		uint64_t cacheWriteBytes = 0;
+		uint32_t cacheWrites = 0;
 		ProcessTextureSources(entries, [&](const auto& entry) {
 			std::string hash;
 			bool rejectHash = false;
@@ -366,7 +390,8 @@ namespace DX12Native
 					rejectHash = true;
 					auto texture = std::make_unique<Texture>();
 					texture->hash = hash;
-					const auto bytes = ReadTexture(a_source.directory, hash);
+					bool fromCache = false;
+					const auto bytes = ReadTexture(a_source.directory, hash, a_result, &fromCache);
 					if (sourceBytes > a_source.budget || bytes.size() > a_source.budget - sourceBytes) throw std::runtime_error("DDS source budget exceeded");
 					DX::ThrowIfFailed(DirectX::GetMetadataFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, texture->metadata));
 					const auto& meta = texture->metadata;
@@ -375,6 +400,15 @@ namespace DX12Native
 					DX::ThrowIfFailed(a_backend.d3d12Device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
 					constexpr auto required = D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_TEXTURE2D;
 					if ((support.Support1 & required) != required) throw std::runtime_error("Material texture sampling unsupported");
+					if (!fromCache && cacheWrites < kMaximumCacheEntriesPerLoad && bytes.size() <= kMaximumCacheWritesPerLoad - cacheWriteBytes) {
+						try {
+							if (!DiskCache().Known(hash)) {
+								cacheWriteBytes += bytes.size(); ++cacheWrites;
+								if (DiskCache().Store(hash, bytes) == MaterialDiskCache::StoreResult::Stored) ++a_result.diskCacheWrites;
+							}
+						} catch (const std::bad_alloc&) { throw; }
+						catch (const std::exception&) {}
+					}
 					sourceBytes += bytes.size();
 					found = textures.emplace(hash, std::move(texture)).first;
 					rejectHash = false;
@@ -503,7 +537,7 @@ namespace DX12Native
 					current = texture;
 					const auto predicted = ValidateMetadata(texture->metadata, a_source.budget);
 					if (decodedBytes > a_source.budget - predicted) throw std::runtime_error("Decoded material page exceeds budget");
-					const auto bytes = ReadTexture(a_source.directory, texture->hash);
+					const auto bytes = ReadTexture(a_source.directory, texture->hash, a_result);
 					DX::ThrowIfFailed(DirectX::LoadFromDDSMemory(bytes.data(), bytes.size(), DirectX::DDS_FLAGS_NO_LEGACY_EXPANSION, nullptr, texture->image));
 					const auto& decoded = texture->image.GetMetadata();
 					ValidateMetadata(decoded, a_source.budget);

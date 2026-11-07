@@ -411,6 +411,8 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 },
 			{ "reusedPages", bindings ? bindings->materials->reusedPages : 0 },
 			{ "reusedTextures", bindings ? bindings->materials->reusedTextures : 0 },
+			{ "diskCacheHits", bindings ? bindings->materials->diskCacheHits : 0 },
+			{ "diskCacheWrites", bindings ? bindings->materials->diskCacheWrites : 0 },
 			{ "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 },
 			{ "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 },
 			{ "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 },

@@ -5,9 +5,46 @@
 #include "TruePBR/InstanceCoverage.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
+#include "Features/DX12NativeScene/MaterialDiskCache.h"
 #include "Features/DX12NativeScene/TextureSourceBatch.h"
 #include "Features/DX12NativeScene/MaterialUploadStatus.h"
 #include "Features/DX12NativeScene/VideoMemoryBudget.h"
+#include <fstream>
+
+TEST_CASE("Persistent material cache verifies content and bounds storage", "[native_pbr]")
+{
+    const auto root = std::filesystem::current_path() / ("native-pbr-cache-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64()));
+    const std::string first = "e1b03360f3a3c6bd52b4511bc0279f07b38a1b1bb7ab209d31833f7617e2762f";
+    const std::string second = "0b6def3dcedfcb01eddc4ff76236225c8f66912ac8346c84e2e1fc1a00e61550";
+    struct Cleanup {
+        std::filesystem::path root;
+        std::string first, second;
+        ~Cleanup() { std::error_code error; std::filesystem::remove(root / (first + ".dds"), error); std::filesystem::remove(root / (second + ".dds"), error); std::filesystem::remove(root / (first + ".tmp.1.1"), error); std::filesystem::remove(root / ".lock", error); std::filesystem::remove(root, error); }
+    } cleanup{ root, first, second };
+    DX12Native::MaterialDiskCache cache(root, 128);
+    const std::vector<uint8_t> a(128, 42), b(128, 43);
+    REQUIRE(cache.Store(first, a) == DX12Native::MaterialDiskCache::StoreResult::Stored);
+    REQUIRE(cache.Known(first));
+    REQUIRE(cache.Read(first, 128) == a);
+    REQUIRE(cache.Store(second, a) == DX12Native::MaterialDiskCache::StoreResult::Unavailable);
+    REQUIRE(cache.Read(first, 128) == a);
+    REQUIRE(cache.Store(second, b) == DX12Native::MaterialDiskCache::StoreResult::Stored);
+    REQUIRE_FALSE(cache.Known(first));
+    REQUIRE_FALSE(cache.Read(first, 128));
+    REQUIRE(cache.Read(second, 128) == b);
+    { std::ofstream corrupt(root / (second + ".dds"), std::ios::binary | std::ios::trunc); corrupt << "corrupt"; }
+    REQUIRE_FALSE(cache.Read(second, 128));
+    REQUIRE_FALSE(cache.Known(second));
+    REQUIRE(cache.Store(second, b) == DX12Native::MaterialDiskCache::StoreResult::Stored);
+    REQUIRE(cache.Read(second, 128) == b);
+    REQUIRE_FALSE(cache.Read("../invalid", 128));
+    const auto stale = root / (first + ".tmp.1.1");
+    { std::ofstream temp(stale, std::ios::binary); temp.write(reinterpret_cast<const char*>(a.data()), a.size()); }
+    std::filesystem::last_write_time(stale, std::filesystem::file_time_type::clock::now() - std::chrono::hours(25));
+    REQUIRE(cache.Store(first, a) == DX12Native::MaterialDiskCache::StoreResult::Stored);
+    REQUIRE_FALSE(std::filesystem::exists(stale));
+    REQUIRE(cache.Read(first, 128) == a);
+}
 
 TEST_CASE("Material upload publication follows fence and timeout", "[native_pbr]")
 {

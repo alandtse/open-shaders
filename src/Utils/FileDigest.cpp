@@ -9,6 +9,8 @@
 #include <fstream>
 #include <memory>
 #include <vector>
+#include <cstring>
+#include <algorithm>
 
 namespace Util::FileDigest
 {
@@ -85,6 +87,17 @@ namespace Util::FileDigest
 			DWORD count = 0;
 			if (!ReadFile(handle, buffer, static_cast<DWORD>(size), &count, nullptr))
 				return std::nullopt;
+			return count;
+		});
+	}
+
+	std::optional<std::string> Sha256BytesHex(std::span<const uint8_t> bytes)
+	{
+		size_t position = 0;
+		return Sha256Hex([&](char* buffer, size_t size) -> std::optional<size_t> {
+			const auto count = std::min(size, bytes.size() - position);
+			if (count) std::memcpy(buffer, bytes.data() + position, count);
+			position += count;
 			return count;
 		});
 	}
