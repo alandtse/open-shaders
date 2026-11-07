@@ -12,6 +12,110 @@
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ImportLoosePBR, ImportArchivePBR, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
+
+namespace
+{
+    // Displays only the most recently published JSON snapshot; no GPU queries or
+    // file/archive operations are performed by the ImGui thread.
+    void DrawNativePBRDiagnostics(const json& a_snapshot)
+    {
+        const auto it = a_snapshot.find("materialBudget");
+        if (it == a_snapshot.end() || !it->is_object()) {
+            ImGui::TextDisabled("Native material diagnostics not yet published.");
+            return;
+        }
+        const auto& budget = *it;
+        const auto count = [&](const char* a_key) -> uint64_t {
+            return budget.value(a_key, uint64_t{ 0 });
+        };
+        const auto mib = [&](const char* a_key) {
+            return double(count(a_key)) / (1024.0 * 1024.0);
+        };
+        const bool ready = a_snapshot.value("materialBindingsReady", false);
+        const bool pending = a_snapshot.value("materialUploadPending", false);
+        ImGui::Text("Material bindings: %s", ready ? "Ready" : pending ? "Upload pending" : "Not ready");
+        ImGui::TextDisabled("Counters describe the last published material binding set, not individual draw calls.");
+        if (!ready) {
+            ImGui::TextDisabled("No current binding set; import counters may be zero until the worker completes.");
+        }
+        const auto failure = a_snapshot.value("materialFailure", std::string{});
+        if (!failure.empty()) {
+            ImGui::TextWrapped("Material worker failure: %s", failure.c_str());
+        }
+        const auto textureFailure = budget.value("firstTextureSourceFailure", std::string{});
+        if (!textureFailure.empty()) {
+            ImGui::TextWrapped("First texture source failure: %s", textureFailure.c_str());
+        }
+
+        ImGui::SeparatorText("Live material matching");
+        ImGui::Text("Matched: %llu  Applied: %llu  Emission applied: %llu",
+            static_cast<unsigned long long>(count("livePbrMatched")),
+            static_cast<unsigned long long>(count("livePbrApplied")),
+            static_cast<unsigned long long>(count("livePbrEmissiveApplied")));
+        ImGui::Text("Missing: %llu  Ambiguous: %llu  Incompatible: %llu",
+            static_cast<unsigned long long>(count("livePbrMissing")),
+            static_cast<unsigned long long>(count("livePbrAmbiguous")),
+            static_cast<unsigned long long>(count("livePbrIncompatible")));
+        ImGui::Text("Texture sources - missing: %llu  ambiguous: %llu  incompatible: %llu",
+            static_cast<unsigned long long>(count("livePbrSourcesMissing")),
+            static_cast<unsigned long long>(count("livePbrSourcesAmbiguous")),
+            static_cast<unsigned long long>(count("livePbrSourcesIncompatible")));
+        ImGui::Text("Ready native records: %llu  Rejected: %llu",
+            static_cast<unsigned long long>(count("readyMaterials")),
+            static_cast<unsigned long long>(count("rejectedMaterials")));
+
+        ImGui::SeparatorText("Texture residency");
+        ImGui::Text("Loose DDS - planned: %llu  imported: %llu  rejected: %llu  deferred: %llu",
+            static_cast<unsigned long long>(count("looseDdsPlanned")),
+            static_cast<unsigned long long>(count("looseDdsImported")),
+            static_cast<unsigned long long>(count("looseDdsRejected")),
+            static_cast<unsigned long long>(count("looseDdsDeferred")));
+        ImGui::Text("Archive DDS - planned: %llu  imported: %llu  rejected: %llu",
+            static_cast<unsigned long long>(count("archiveDdsPlanned")),
+            static_cast<unsigned long long>(count("archiveDdsImported")),
+            static_cast<unsigned long long>(count("archiveDdsRejected")));
+        ImGui::Text("Source bytes - loose: %.2f MiB  archive: %.2f MiB",
+            mib("looseDdsBytes"), mib("archiveDdsBytes"));
+        ImGui::Text("Resident textures: %llu  rejected sources: %llu",
+            static_cast<unsigned long long>(count("textures")),
+            static_cast<unsigned long long>(count("rejectedTextureSources")));
+        ImGui::Text("Uploaded pages: %llu  reused pages: %llu  reused slices: %llu",
+            static_cast<unsigned long long>(count("uploadedPages")),
+            static_cast<unsigned long long>(count("reusedPages")),
+            static_cast<unsigned long long>(count("reusedTextures")));
+        ImGui::Text("Disk cache - hits: %llu  writes: %llu",
+            static_cast<unsigned long long>(count("diskCacheHits")),
+            static_cast<unsigned long long>(count("diskCacheWrites")));
+
+        ImGui::SeparatorText("DX11 texture transfer eligibility");
+        ImGui::Text("Unobserved: %llu  unsupported: %llu",
+            static_cast<unsigned long long>(count("liveGpuUnobserved")),
+            static_cast<unsigned long long>(count("liveGpuUnsupported")));
+        ImGui::Text("Copy candidates: %llu  shared-handle candidates: %llu",
+            static_cast<unsigned long long>(count("liveGpuCopyCandidates")),
+            static_cast<unsigned long long>(count("liveGpuSharedCandidates")));
+        ImGui::TextDisabled("These counts are descriptor classifications; no DX11 GPU texture transfer occurs.");
+
+        ImGui::SeparatorText("DX12 memory and uploads");
+        ImGui::Text("DXGI budget available: %s", budget.value("dxgiAvailable", false) ? "Yes" : "No");
+        ImGui::Text("Local budget: %.1f MiB  usage: %.1f MiB  effective material limit: %.1f MiB",
+            mib("localBudgetBytes"), mib("localUsageBytes"), mib("effectiveBytes"));
+        ImGui::Text("Textures: %.2f MiB  tables: %.2f MiB  peak staging: %.2f MiB",
+            mib("textureBytes"), mib("tableBytes"), mib("peakStagingBytes"));
+        const auto retained = budget.find("retainedPageBytes");
+        if (retained != budget.end() && retained->is_number_unsigned()) {
+            ImGui::Text("Retained pages: %.2f MiB", double(retained->get<uint64_t>()) / (1024.0 * 1024.0));
+        } else {
+            ImGui::TextDisabled("Retained pages: unavailable");
+        }
+        ImGui::Text("Uploaded: %.2f MiB  async batch pages: %llu  batch staging: %.2f MiB",
+            mib("uploadedBytes"),
+            static_cast<unsigned long long>(count("asyncBatchPages")),
+            mib("asyncBatchStagingBytes"));
+        ImGui::Text("Material upload wait: %.3f ms", double(count("uploadWaitMicroseconds")) / 1000.0);
+    }
+}
+
 void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
@@ -27,6 +131,8 @@ void DX12NativeScene::DrawSettings()
     ImGui::EndDisabled();
     ImGui::TextDisabled("Worker-only; maximum 8 sources / 32 MiB combined per load.");
     ImGui::TextDisabled("Archive fallback runs only when the loose DDS is absent.");
+    if (ImGui::CollapsingHeader("Native PBR Diagnostics"))
+        DrawNativePBRDiagnostics(GetDiagnostics());
 	{
 		std::scoped_lock coverageLock(coverageMutex);
 		if (coverageFailed) ImGui::TextDisabled("Candidate analysis unavailable or failed.");
@@ -436,6 +542,7 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "falloffExponent", settings.ShadowFalloffExponent }, { "distanceFade", settings.ShadowDistanceFade },
 			{ "normalInfluence", settings.ShadowNormalInfluence }, { "traceDensityMode", settings.ShadowTraceDensityMode } } },
 		{ "prepared", prepared.GetDiagnostics() }, { "materialFailure", materialBindings.Failure() }, { "materialUploadPending", materialBindings.UploadPending() },
+        { "materialBindingsReady", bindings && bindings->scene == acceleration.GetScene() },
 		{ "acceleration", acceleration.GetDiagnostics() }, { "published", GetPublishedScene().has_value() },
 		{ "materialBudget", { { "dxgiAvailable", bindings ? bindings->materialBudget.dxgiAvailable : false },
 			{ "selectedBatchLimitBytes", uint64_t(settings.MaterialBatchMB) * 1024 * 1024 },
@@ -453,7 +560,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "diskCacheWrites", bindings ? bindings->materials->diskCacheWrites : 0 },
 			{ "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 },
 			{ "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 },
-			{ "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 },
+			{ "readyMaterials", bindings ? bindings->materials->readyMaterials : 0 },
+            { "rejectedMaterials", bindings ? bindings->materials->rejectedMaterials : 0 },
+            { "textures", bindings ? bindings->materials->textures : 0 },
+            { "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 },
             { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 },
             { "livePbrEmissiveApplied", bindings ? bindings->materials->livePbrEmissiveApplied : 0 },
             { "livePbrSourcesMissing", bindings ? bindings->materials->livePbrSourcesMissing : 0 },
