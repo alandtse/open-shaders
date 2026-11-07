@@ -1494,6 +1494,14 @@ TEST_CASE("Content addressed native geometry cache roundtrips only verified stat
     REQUIRE(restored->vertices == packet.vertices);
     REQUIRE(restored->indices == packet.indices);
     REQUIRE(DX12Native::RuntimeGeometryContentId(*restored) == digest);
+    // A cached reference alone is insufficient: a changed world transform
+    // must produce a different digest even if shape and vertex bytes match.
+    auto moved = *restored;
+    moved.transform[3] += 10.0f;
+    REQUIRE(DX12Native::RuntimeGeometryContentId(moved) != digest);
+    auto retopologized = *restored;
+    retopologized.indices = { 0, 2, 1 };
+    REQUIRE(DX12Native::RuntimeGeometryContentId(retopologized) != digest);
     auto corrupt = *encoded;
     corrupt[0] ^= 0x1;
     REQUIRE_FALSE(DX12Native::DeserializeRuntimeGeometryCache(corrupt));

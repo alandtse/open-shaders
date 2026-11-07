@@ -32,3 +32,64 @@ The existing transition policy still interrupts scene publication during loading
 These commits have no Windows Release compilation, CI or Skyrim runtime verification. Build first; if successful, enable capture in a static interior and inspect the preview counters while checking that the existing active renderer is unchanged.
 
 Next work: engine geometry model/NIF block identity, raw CPU buffer fidelity, safe GPU-only source copy, persistent runtime cache, main-menu prewarm, loading-screen handoff, dynamic/skinned support, runtime light acquisition, and atomic cutover away from offline prepared geometry.
+
+
+## Persistent runtime geometry cache and main-menu prewarm
+
+A second, separately opt-in setting, **Experimental: persist and menu-prewarm
+runtime geometry**, is now available below the static capture toggle.
+It is **off by default** and requires live static geometry capture.
+It has no effect on the existing production TLAS or runtime material source
+configuration.
+
+When enabled, the CPU-only geometry cache worker saves up to four validated
+runtime-observed mesh packets per 250 ms while gameplay continues. Files use
+the versioned **RGCP v1** byte format and a content-addressed SHA-256 name
+with a distinct ".rgc" extension in:
+
+\`Data/SKSE/Plugins/CommunityShaders/NativePBRCache/geometry\`
+
+The 256-MiB disk limit uses the existing hardened native cache writer:
+temporary files, hash checks, atomic publication, conservative eviction,
+and rejection of file reparse points. No disk access occurs inside
+the geometry render hook.
+
+At a main-menu state with no current cell, if EarlyPrepass is being
+called, the background worker scans at most 256 cached files, verifies
+each SHA-256 digest, decodes the packet and pre-encodes the CPU geometry
+buffer. Prewarmed data is capped at 64 MiB and is **not** promoted to
+an active scene or BLAS/TLAS at the menu. Cache writes from the last
+gameplay session can be picked up on a subsequent menu visit.
+
+After entering a scene, the normal render hook must **recapture the live
+geometry first**. A prewarmed payload is reused by the async geometry
+preparation worker **only if its whole saved packet** (reference,
+shape, transform, bounds, vertex/index layout and exact bytes) hashes
+to the same SHA-256 digest as the newly observed packet. Thus no
+reference/shape alias or stale geometry file grants publication rights.
+A matching prewarm can avoid the CPU geometry conversion work; it does
+not bypass the existing DX12 upload, BLAS/TLAS build, fence or scene
+identity requirements.
+
+The UI exposes cache save/rejection counts, main-menu verified/accepted
+files and bytes, worker activity and cache-assisted geometry encodes.
+The \`runtimeGeometry.diskCache\` diagnostics section exposes these
+same counters.
+
+### Boundaries
+
+This is a **CPU geometry cache**, not full main-menu GPU prebuilding of a
+destination scene. The actual cell is unknown at a cold main menu, and
+unverified saved instance geometry cannot safely populate a TLAS.
+GPU-only geometry, animated/skinned objects, materials requiring
+unsupported native features, and source NIF model/block identity are
+still unresolved. The legacy prepared geometry path remains the
+production fallback.
+
+The code is committed but a fresh Windows Release build and Skyrim
+runtime test are still required. First test the existing geometry
+capture, then enable the cache option, verify its saved count,
+return to the main menu and load the same cell. A nonzero verified
+prewarm count and subsequent cache-assisted encode count demonstrate
+reuse. The BLAS/TLAS preview remains independent and should
+still eventually report Ready, as observed before this cache work.
