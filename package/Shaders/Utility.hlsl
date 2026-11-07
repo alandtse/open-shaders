@@ -100,6 +100,8 @@ cbuffer PerTechnique : register(b0)
 #	endif  // VR
 };
 
+static const float ParaboloidCasterNearDistance = 12.0;
+
 cbuffer PerMaterial : register(b1)
 {
 	float4 TexcoordOffset : packoffset(c0);
@@ -298,7 +300,7 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.TexCoord1.x = ParabolaParam.x * length(positionCSPerspective);
 	vsout.TexCoord1.y = positionCS.w;
 	precise float parabolaParam = ParabolaParam.y * positionCS.z;
-	vsout.TexCoord1.z = parabolaParam * 0.5 + 0.5;
+	vsout.TexCoord1.z = min(parabolaParam * 0.5 + 0.5, length(positionCSPerspective) - ParaboloidCasterNearDistance);
 #		elif defined(ALPHA_TEST) && (defined(RENDER_DEPTH) || defined(RENDER_SHADOWMAP))
 	float4 texCoord1 = float4(0, 0, 0, 0);
 	texCoord1.xy = positionCS.zw;
