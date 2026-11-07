@@ -1,0 +1,14 @@
+test_editor_startup
+test_effects11_hdr
+test_environment_controls
+test_feature_flip_impact
+test_force_weather
+test_gpu_pass
+test_nr_interop
+test_profiler
+test_release_plan
+test_scene_settings_audit
+test_scene_settings_persistence
+test_scene_settings_policy
+test_skylighting_cadence
+test_skylighting_scheduling
