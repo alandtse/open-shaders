@@ -25,7 +25,7 @@ namespace DX12Native
         constexpr std::array roles{ NativePBR::TextureRole::BaseColor, NativePBR::TextureRole::Normal,
             NativePBR::TextureRole::Rmaos, NativePBR::TextureRole::Emission };
         for (const auto& match : a_matches.matches) {
-            if (!match || !match->recipe) continue;
+            if (!match || !match->recipe || !NativePBR::NativeMeshRecipeSupported(*match->recipe)) continue;
             for (const auto role : roles) {
                 const auto& request = match->recipe->textures[static_cast<size_t>(role)];
                 if (request.canonicalPath.empty()) {

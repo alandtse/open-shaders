@@ -1,5 +1,6 @@
 #include "MaterialResources.h"
 #include "MaterialTextureLookup.h"
+#include "RuntimeMaterialCompiler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -108,28 +109,12 @@ namespace DX12Native
                 NativePBR::PreparedMatchInput candidate;
                 candidate.referenceKey = instance.preparedIdentity.referenceKey;
                 candidate.shapeName = instance.preparedIdentity.shapeName;
+                // Prepared geometry controls traversal; runtime controls shading.
                 candidate.opaque = instance.material.opaqueCandidate &&
                     instance.material.offlineMaterialFlags == OfflineMaterialFlags::None;
-                if (instance.material.offlineDescription) {
-                    try {
-                        const auto& desc = *instance.material.offlineDescription;
-                        const auto paths = desc.at("textures").get<std::vector<std::string>>();
-                        const auto uv = desc.at("uvOffsetScale").get<std::vector<float>>();
-                        const auto alpha = desc.at("alphaFlags");
-                        if (paths.size() >= 6 && uv.size() == 4 && desc.at("shaderType") == "Default" &&
-                            (desc.at("shaderFlags2").get<uint32_t>() & kPbrSourceFlag) != 0 &&
-                            (alpha.is_null() || alpha.get<uint32_t>() == 0)) {
-                            candidate.texturePaths = { paths[0], paths[1], paths[5], paths[2] };
-                            std::copy_n(uv.begin(), 4, candidate.uvOffsetScale.begin());
-                            candidate.alpha = desc.at("alpha").get<float>();
-                            candidate.clampMode = desc.at("textureClampMode").get<uint32_t>();
-                            candidate.valid = candidate.pbr = true;
-                        }
-                    } catch (const std::exception&) {}
-                }
                 inputs.push_back(std::move(candidate));
             }
-            liveMatch = NativePBR::ResolveLiveMatches(inputs, *a_livePbr);
+            liveMatch = NativePBR::ResolveRuntimeMatches(inputs, *a_livePbr);
             result->livePbrMatched = uint32_t(liveMatch.report.matched);
             result->livePbrAmbiguous = uint32_t(liveMatch.report.ambiguous);
             result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
@@ -171,26 +156,38 @@ namespace DX12Native
 			if (inserted) {
 				MaterialRecord record;
 				try {
-                    record = Compile(*result, instance.material);
+                    bool usedRuntime = false;
                     if (live) {
                         const auto sourceStatus = result->verifiedTextureSources.Assess(*live->recipe);
                         if (sourceStatus == LiveTextureSourceStatus::Missing) ++result->livePbrSourcesMissing;
                         if (sourceStatus == LiveTextureSourceStatus::Ambiguous) ++result->livePbrSourcesAmbiguous;
                         if (sourceStatus == LiveTextureSourceStatus::Incompatible) ++result->livePbrSourcesIncompatible;
-                        if (sourceStatus == LiveTextureSourceStatus::Available &&
-                            (record.flags[0] & (kReady | kPbr)) == (kReady | kPbr) && record.flags[3] == 0) {
-                            // Atlas source digests are SHA-verified; no unverified live GPU resource is imported.
-                            record.scalar.w = live->recipe->parameters.roughnessScale;
-                            record.scalar.z = live->recipe->parameters.specularLevel;
-                            ++result->livePbrApplied;
-                            if (NativePBR::ValidLiveEmission(live->properties)) {
-                                record.emission = { live->properties.emissiveColor[0],
-                                    live->properties.emissiveColor[1], live->properties.emissiveColor[2],
-                                    live->properties.emissiveMultiplier };
-                                ++result->livePbrEmissiveApplied;
+                        if (sourceStatus == LiveTextureSourceStatus::Available) {
+                            const auto compiled = CompileRuntimeMaterial(*result, instance.material, *live);
+                            switch (compiled.status) {
+                            case RuntimeMaterialStatus::Ready:
+                                record = compiled.record;
+                                ++result->livePbrApplied;
+                                if (compiled.emissionApplied) ++result->livePbrEmissiveApplied;
+                                usedRuntime = true;
+                                break;
+                            case RuntimeMaterialStatus::UnsupportedRecipe:
+                                ++result->livePbrUnsupported;
+                                break;
+                            case RuntimeMaterialStatus::UnsafeOpacity:
+                                ++result->livePbrUnsafeOpacity;
+                                break;
+                            case RuntimeMaterialStatus::MissingBasis:
+                                ++result->livePbrMissingBasis;
+                                break;
+                            case RuntimeMaterialStatus::MissingTextures:
+                                ++result->livePbrMissingBindings;
+                                break;
                             }
                         }
+                        if (!usedRuntime) ++result->livePbrOfflineFallback;
                     }
+                    if (!usedRuntime) record = Compile(*result, instance.material);
                 }
 				catch (const std::exception&) { record.flags[3] = 16; }
 				if ((record.flags[0] & kReady) && record.flags[3] == 0) ++result->readyMaterials; else ++result->rejectedMaterials;

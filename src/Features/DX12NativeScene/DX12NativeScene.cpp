@@ -60,6 +60,13 @@ namespace
             static_cast<unsigned long long>(count("livePbrSourcesMissing")),
             static_cast<unsigned long long>(count("livePbrSourcesAmbiguous")),
             static_cast<unsigned long long>(count("livePbrSourcesIncompatible")));
+        ImGui::Text("Runtime fallbacks: %llu  unsupported: %llu  unsafe alpha: %llu",
+            static_cast<unsigned long long>(count("livePbrOfflineFallback")),
+            static_cast<unsigned long long>(count("livePbrUnsupported")),
+            static_cast<unsigned long long>(count("livePbrUnsafeOpacity")));
+        ImGui::Text("Missing basis: %llu  missing bindings: %llu",
+            static_cast<unsigned long long>(count("livePbrMissingBasis")),
+            static_cast<unsigned long long>(count("livePbrMissingBindings")));
         ImGui::Text("Ready native records: %llu  Rejected: %llu",
             static_cast<unsigned long long>(count("readyMaterials")),
             static_cast<unsigned long long>(count("rejectedMaterials")));
@@ -566,6 +573,11 @@ void DX12NativeScene::PublishDiagnostics()
             { "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 },
             { "livePbrApplied", bindings ? bindings->materials->livePbrApplied : 0 },
             { "livePbrEmissiveApplied", bindings ? bindings->materials->livePbrEmissiveApplied : 0 },
+            { "livePbrUnsupported", bindings ? bindings->materials->livePbrUnsupported : 0 },
+            { "livePbrUnsafeOpacity", bindings ? bindings->materials->livePbrUnsafeOpacity : 0 },
+            { "livePbrMissingBasis", bindings ? bindings->materials->livePbrMissingBasis : 0 },
+            { "livePbrMissingBindings", bindings ? bindings->materials->livePbrMissingBindings : 0 },
+            { "livePbrOfflineFallback", bindings ? bindings->materials->livePbrOfflineFallback : 0 },
             { "livePbrSourcesMissing", bindings ? bindings->materials->livePbrSourcesMissing : 0 },
             { "livePbrSourcesAmbiguous", bindings ? bindings->materials->livePbrSourcesAmbiguous : 0 },
             { "livePbrSourcesIncompatible", bindings ? bindings->materials->livePbrSourcesIncompatible : 0 },

@@ -1194,7 +1194,8 @@ TEST_CASE("Runtime PBR material compiler takes texture bindings and parameters f
     // Inaccurate / missing offline metadata cannot influence the runtime compiler.
     const auto result = DX12Native::CompileRuntimeMaterial(resources, source, match);
     REQUIRE(result.status == DX12Native::RuntimeMaterialStatus::Ready);
-    REQUIRE(result.record.colorNormal == std::array<uint32_t, 4>{ 0, 0, 0, 1 });
+    const std::array<uint32_t, 4> expectedColorNormal{ 0, 0, 0, 1 };
+    REQUIRE(result.record.colorNormal == expectedColorNormal);
     REQUIRE(result.record.packedEmission[0] == 0);
     REQUIRE(result.record.packedEmission[1] == 2);
     REQUIRE(result.record.scalar.z == 0.12f);
