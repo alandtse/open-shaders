@@ -386,7 +386,10 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "effectiveBytes", bindings ? bindings->materialBudget.effectiveBytes : 0 },
 			{ "localBudgetBytes", bindings ? bindings->materialBudget.localBudget : 0 },
 			{ "localUsageBytes", bindings ? bindings->materialBudget.localUsage : 0 },
-			{ "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 } } } };
+			{ "textureBytes", bindings ? bindings->materials->bytes : 0 }, { "tableBytes", bindings ? bindings->materials->tableBytes : 0 },
+			{ "peakStagingBytes", bindings ? bindings->materials->peakStagingBytes : 0 },
+			{ "uploadedBytes", bindings ? bindings->materials->uploadedBytes : 0 }, { "uploadedPages", bindings ? bindings->materials->uploadedPages : 0 },
+			{ "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{
 		std::scoped_lock lock(coverageMutex);
 		snapshot["pbrCandidates"] = { { "pending", bool(coverageTask) }, { "failed", coverageFailed },

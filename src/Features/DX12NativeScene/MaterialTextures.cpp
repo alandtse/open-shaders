@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <chrono>
 
 namespace DX12Native
 {
@@ -129,8 +130,14 @@ namespace DX12Native
 			a_backend.commandQueue->ExecuteCommandLists(1, lists);
 			upload.submitted = true;
 			if (FAILED(a_backend.commandQueue->Signal(upload.fence.get(), 1))) throw MaterialUploadError("Material upload queue signal failed");
+			const auto waitStart = std::chrono::steady_clock::now();
 			if (WaitForSingleObject(upload.event.get(), kUploadTimeoutMS) != WAIT_OBJECT_0 || upload.fence->GetCompletedValue() == UINT64_MAX)
 				throw MaterialUploadError("Background material upload did not complete");
+			const auto waitDuration = std::chrono::steady_clock::now() - waitStart;
+			a_result.uploadWaitMicroseconds += uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(waitDuration).count());
+			a_result.peakStagingBytes = std::max(a_result.peakStagingBytes, stagingAllocation);
+			a_result.uploadedBytes += uploadBytes;
+			++a_result.uploadedPages;
 			const auto pool = uint32_t(a_result.pools.size());
 			static LogicalTextureRegistry identities;
 			for (uint32_t slice = 0; slice < a_textures.size(); ++slice) {
