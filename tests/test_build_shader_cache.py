@@ -36,6 +36,7 @@ class ShaderCacheManifestTests(unittest.TestCase):
         builder.write_info_ini(self.cache, self.root / "stage", "1-7-1-0", "SE")
         text = (self.cache / "Info.ini").read_bytes().decode("utf-8-sig")
         self.assertIn("PluginVersion = 1-7-1-0\r\nCompileFlags = pp=0;afc=0\r\nRuntime = SE\r\n", text)
+        self.assertIn("RequireDigestForReuse = false\r\n", text)
         self.assertIn("[Sample]\r\nEnabled = true\r\nVersion = 1-0-0", text)
 
     def test_companion_disable_retains_the_loaded_version(self):
@@ -290,6 +291,20 @@ class ShaderCacheManifestTests(unittest.TestCase):
         request = builder.extra_shader_requests(self.root, "VR")["LensFlareVisibility/68.pso"]
         self.assertEqual(request["key"], "LensFlareVisibility:Pixel:REVERSE_Z ")
         self.assertIn(("VR", None), request["defines"])
+
+    def test_sss_cache_covers_both_prepasses_and_all_blur_directions(self):
+        self.write_extra_capture([])
+        shaders = self.root / "features/SSS/Shaders/SubsurfaceScattering"
+        shaders.mkdir(parents=True)
+        for source in ("DiffuseExtractionCS.hlsl", "SeparableSSSCS.hlsl"):
+            (shaders / source).write_text("", encoding="utf-8")
+        for runtime in ("SE", "VR"):
+            requests = list(builder.extra_shader_requests(self.root, runtime).values())
+            prepasses = [dict(r["defines"]) for r in requests if "DiffuseExtractionCS" in r["source"]]
+            blurs = [dict(r["defines"]) for r in requests if "SeparableSSSCS" in r["source"]]
+            self.assertEqual(sorted("BURLEY" in d for d in prepasses), [False, True])
+            self.assertEqual(sorted(("BURLEY" in d, "HORIZONTAL" in d) for d in blurs),
+                             [(False, False), (False, True), (True, False)])
 
     def test_captured_reverse_z_variants_follow_disabled_boot_default(self):
         self.write_extra_capture([{"kind": "engine", "runtime": "SE", "source": "Lighting.hlsl",

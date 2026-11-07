@@ -530,7 +530,8 @@ def write_info_ini(cache_dir: Path, stage: Path, plugin_version: str, runtime: s
     disabled_stems (default-disabled stages plus required external dependencies) marks
     which of those sections a default install actually loads with Enabled=false."""
     disabled_stems = (disabled_stems or set()) | unsupported_runtime_features(REPO, runtime)
-    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}", f"Runtime = {runtime}", "", ""]
+    lines = ["[Cache]", f"PluginVersion = {plugin_version}", f"CompileFlags = {DEFAULT_COMPILE_FLAGS_TAG}",
+             f"Runtime = {runtime}", "RequireDigestForReuse = false", "", ""]
     count = 0
     for ini_path in sorted((stage / "Features").glob("*.ini")):
         if ini_path.stem in RUNTIME_EXCLUDED_FEATURES[runtime]:
@@ -701,20 +702,25 @@ def default_standalone_requests(requests: list, runtime: str, source_root: Path)
                 if right:
                     defines["RIGHT"] = ""
                 result.append({**request, "defines": sorted(defines.items())})
-    additional = {"Upscaling/CameraMotionVectorsPS.hlsl": ("ps_5_0", {})}
+    additional = {
+        "Upscaling/CameraMotionVectorsPS.hlsl": ("ps_5_0", [{}]),
+        "SubsurfaceScattering/DiffuseExtractionCS.hlsl": ("cs_5_0", [{}, {"BURLEY": ""}]),
+        "SubsurfaceScattering/SeparableSSSCS.hlsl": ("cs_5_0", [{}, {"HORIZONTAL": ""}, {"BURLEY": ""}]),
+    }
     if runtime == "VR":
         additional.update({
-            "ScreenSpaceShadows/StereoSyncCS.hlsl": ("cs_5_0", {"FRAMEBUFFER": "", "TERRAIN_BLENDING": ""}),
-            "Upscaling/ClearHMDMaskCS.hlsl": ("cs_5_0", {}),
+            "ScreenSpaceShadows/StereoSyncCS.hlsl": ("cs_5_0", [{"FRAMEBUFFER": "", "TERRAIN_BLENDING": ""}]),
+            "Upscaling/ClearHMDMaskCS.hlsl": ("cs_5_0", [{}]),
         })
-    for source, (profile, defines) in additional.items():
+    for source, (profile, variants) in additional.items():
         if not (source_root / "package/Shaders" / source).is_file() and not any(
                 (directory / "Shaders" / source).is_file() for directory in (source_root / "features").iterdir()):
             continue
         stage = "PSHADER" if profile.startswith("ps_") else "COMPUTESHADER"
-        defines.update({stage: "", "WINPC": "", "DX11": ""})
-        result.append({"kind": "standalone", "runtime": runtime, "source": source, "profile": profile,
-                       "entryPoint": "main", "flags": DEFAULT_STANDALONE_FLAGS, "defines": sorted(defines.items())})
+        for defines in variants:
+            defines.update({stage: "", "WINPC": "", "DX11": ""})
+            result.append({"kind": "standalone", "runtime": runtime, "source": source, "profile": profile,
+                           "entryPoint": "main", "flags": DEFAULT_STANDALONE_FLAGS, "defines": sorted(defines.items())})
     return result
 
 
