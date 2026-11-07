@@ -6,6 +6,7 @@
 #include "TruePBR/VerifiedBridge.h"
 #include "Features/DX12NativeScene/LiveLooseTexturePlan.h"
 #include "Features/DX12NativeScene/MaterialTextureLookup.h"
+#include "Features/DX12NativeScene/ArchiveDdsSource.h"
 #include "Features/DX12NativeScene/LogicalTextureRegistry.h"
 #include "Features/DX12NativeScene/MaterialPageCache.h"
 #include "Features/DX12NativeScene/VerifiedTextureSources.h"
@@ -1070,4 +1071,17 @@ TEST_CASE("Native material path lookup resolves slash- and case-normalized loose
     REQUIRE(DX12Native::MaterialTextureLookupKey("MyMod/RMAOS.dds") ==
         "textures\\mymod\\rmaos.dds");
     REQUIRE(DX12Native::MaterialTextureLookupKey("") == "");
+}
+
+
+TEST_CASE("Archive DDS requests accept only canonical bounded texture paths", "[native_pbr]")
+{
+    REQUIRE(DX12Native::ValidArchiveDdsPath("textures/mymod/color.dds"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/mymod/color.DDS"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/../outside.dds"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("../outside.dds"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("C:/Data/textures/a.dds"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/mymod/a.png"));
+    REQUIRE_FALSE(DX12Native::ValidArchiveDdsPath("textures/mymod//a.dds"));
+    REQUIRE(DX12Native::kMaximumArchiveDdsBytes == 32ull * 1024 * 1024);
 }
