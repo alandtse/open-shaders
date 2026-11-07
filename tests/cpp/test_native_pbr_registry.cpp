@@ -950,12 +950,12 @@ TEST_CASE("Strict native bridge rejects ambiguous and incompatible live source m
     offline.valid = offline.pbr = offline.opaque = true;
     offline.texturePaths = { "textures/a.dds", "textures/n.dds", "textures/r.dds", "" };
     offline.uvOffsetScale = { 0, 0, 1, 1 };
-    offline.shaderFlags = 0x1234;
+    offline.alphaFlags = 0;
     NativePBR::InstanceHint hint;
     hint.materialIdentity = token.identity;
     hint.referenceKey = offline.referenceKey;
     hint.shapeName = offline.shapeName;
-    hint.properties.shaderFlags = offline.shaderFlags;
+    hint.properties.alphaFlags = offline.alphaFlags;
     NativePBR::LiveBindingSource source{ generation, { hint } };
     auto selection = NativePBR::ResolveLiveMatches({ offline }, source);
     REQUIRE(selection.report.matched == 1);

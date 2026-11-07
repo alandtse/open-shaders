@@ -26,8 +26,7 @@ namespace NativePBR
         std::string referenceKey, shapeName;
         std::array<std::string, 4> texturePaths{}; // diffuse, normal, RMAOS, emission
         std::array<float, 4> uvOffsetScale{};
-        uint64_t shaderFlags = 0;
-        uint32_t clampMode = 0;
+        uint32_t alphaFlags = 0, clampMode = 0;
         float alpha = 1.0f;
         bool pbr = false, opaque = false, valid = false;
     };
@@ -72,12 +71,12 @@ namespace NativePBR
     {
         if (!a_prepared.valid || !a_prepared.pbr || !a_prepared.opaque ||
             a_hint.propertiesConflict || a_hint.properties.skinned || a_hint.properties.alphaProperty ||
-            a_hint.properties.shaderFlags != a_prepared.shaderFlags ||
+            a_hint.properties.alphaFlags != a_prepared.alphaFlags ||
             !NativeMeshRecipeSupported(a_recipe) || a_hint.materialIdentity != a_recipe.identity ||
             a_prepared.clampMode != a_recipe.parameters.clampMode ||
-            std::abs(a_prepared.alpha - a_recipe.parameters.materialAlpha) > 0.0001f) return false;
+            (!std::isfinite(a_prepared.alpha) || std::abs(a_prepared.alpha - a_recipe.parameters.materialAlpha) > 0.0001f)) return false;
         for (size_t i = 0; i < a_prepared.uvOffsetScale.size(); ++i)
-            if (std::abs(a_prepared.uvOffsetScale[i] - a_recipe.parameters.uvOffsetScale[0][i]) > 0.0001f)
+            if (!std::isfinite(a_prepared.uvOffsetScale[i]) || std::abs(a_prepared.uvOffsetScale[i] - a_recipe.parameters.uvOffsetScale[0][i]) > 0.0001f)
                 return false;
         constexpr std::array<TextureRole, 4> roles{
             TextureRole::BaseColor, TextureRole::Normal, TextureRole::Rmaos, TextureRole::Emission };

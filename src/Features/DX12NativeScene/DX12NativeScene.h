@@ -5,6 +5,7 @@
 #include "Features/DX12NativeScene/RasterCapture.h"
 #include "Features/DX12NativeScene/ShadowTrace.h"
 #include "TruePBR/InstanceCoverage.h"
+#include "TruePBR/VerifiedBridge.h"
 #include <atomic>
 #include <optional>
 #include <mutex>

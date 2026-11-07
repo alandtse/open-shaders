@@ -10,12 +10,14 @@
 #include "Utils/D3D.h"
 #include <cmath>
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(DX12NativeScene::Settings, Enabled, ShadowMask, BudgetMB, FrameBudgetMB, MaterialBatchMB, UseLivePBR, ShadowAllLights, ShadowStochastic, ShadowDistanceFade, ShadowLightIndex, ShadowNormalInfluence, ShadowEmitterRadius, ShadowReachMultiplier, ShadowFalloffFraction, ShadowFalloffExponent, ShadowTraceDensityMode)
 
 void DX12NativeScene::DrawSettings()
 {
 	std::scoped_lock lock(settingsMutex);
 	if (ImGui::Button("Analyze live PBR candidates")) coverageRequested = true;
+    if (ImGui::Checkbox("Experimental: verified live PBR scalars", &settings.UseLivePBR)) resetRequested = true;
+    ImGui::TextDisabled("Opaque static matches only; texture pages remain from verified offline atlas.");
 	{
 		std::scoped_lock coverageLock(coverageMutex);
 		if (coverageFailed) ImGui::TextDisabled("Candidate analysis unavailable or failed.");
@@ -157,6 +159,7 @@ void DX12NativeScene::ResetScene()
 	shadow.Reset();
 	if (auto old = materialBindings.Get()) retiredMaterials = old;
 	materialBindings.Reset();
+    livePbrSource.reset(); livePbrRevision = 0; livePbrLastCaptureFrame = 0;
 	prepared.Reset();
 	acceleration.Reset();
 }
@@ -259,8 +262,29 @@ void DX12NativeScene::EarlyPrepass()
 		}
 	}
 	acceleration.Advance();
-	if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired())
-		materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024, uint64_t(settings.MaterialBatchMB) * 1024 * 1024);
+    if (auto scene = acceleration.GetScene(); scene && shadow.RetireScenesExcept(scene) && retiredMaterials.expired()) {
+        if (settings.UseLivePBR && globals::game::graphicsState) {
+            auto& pbr = globals::features::truePBR;
+            const uint64_t currentRevision = pbr.nativeRegistry.Revision();
+            const uint32_t currentFrame = globals::game::graphicsState->GetFrameCount();
+            if ((currentRevision != livePbrRevision || !livePbrSource) &&
+                (!livePbrLastCaptureFrame || uint32_t(currentFrame - livePbrLastCaptureFrame) >= 120)) {
+                livePbrLastCaptureFrame = currentFrame;
+                auto recipes = pbr.GetNativeRecipes();
+                if (recipes && recipes->batchesComplete) {
+                    auto source = std::make_shared<NativePBR::LiveBindingSource>();
+                    source->generation = std::move(recipes);
+                    source->hints = pbr.nativeRegistry.ExportInstanceHints();
+                    if (pbr.nativeRegistry.Revision() == currentRevision) {
+                        livePbrSource = std::move(source);
+                        livePbrRevision = currentRevision;
+                    }
+                }
+            }
+        } else { livePbrSource.reset(); livePbrRevision = 0; }
+        materialBindings.Request(*backend, scene, uint64_t(settings.BudgetMB) * 1024 * 1024,
+            uint64_t(settings.MaterialBatchMB) * 1024 * 1024, livePbrSource);
+    }
 	materialBindings.Advance();
 	DispatchShadow("early-prepass");
 }
@@ -415,7 +439,11 @@ void DX12NativeScene::PublishDiagnostics()
 			{ "diskCacheWrites", bindings ? bindings->materials->diskCacheWrites : 0 },
 			{ "asyncBatchPages", bindings ? bindings->materials->asyncBatchPages : 0 },
 			{ "asyncBatchStagingBytes", bindings ? bindings->materials->asyncBatchStagingBytes : 0 },
-			{ "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 },
+			{ "livePbrMatched", bindings ? bindings->materials->livePbrMatched : 0 },
+            { "livePbrAmbiguous", bindings ? bindings->materials->livePbrAmbiguous : 0 },
+            { "livePbrIncompatible", bindings ? bindings->materials->livePbrIncompatible : 0 },
+            { "livePbrMissing", bindings ? bindings->materials->livePbrMissing : 0 },
+            { "rejectedTextureSources", bindings ? bindings->materials->rejectedTextureSources : 0 },
 			{ "firstTextureSourceFailure", bindings ? bindings->materials->firstTextureSourceFailure : std::string{} },
 			{ "uploadWaitMicroseconds", bindings ? bindings->materials->uploadWaitMicroseconds : 0 } } } };
 	{

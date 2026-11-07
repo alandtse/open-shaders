@@ -2,6 +2,7 @@
 
 #include "MaterialResources.h"
 #include "VideoMemoryBudget.h"
+#include "TruePBR/VerifiedBridge.h"
 
 namespace DX12Native
 {
@@ -21,14 +22,16 @@ namespace DX12Native
 		uint64_t bytes = 0, uploadBatchBudget = 0;
 		VideoMemoryBudget::Snapshot materialBudget;
 		/** @brief Creates binding tables on a worker; material upload completion must be polled before use. */
-		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget);
+		static std::shared_ptr<const ShadowBindings> Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
+            uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr);
 	};
 	/** @brief Loads shadow material bindings asynchronously with revision-safe publication. */
 	class ShadowBindingWorker
 	{
 	public:
 		/** @brief Selects one scene, deferring a new load until an earlier worker retires. */
-		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget);
+		void Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
+            uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr = {});
 		/** @brief Polls an owned worker without waiting and publishes only the selected revision. */
 		void Advance();
 		/** @brief Invalidates current bindings without waiting for the worker. */
@@ -43,6 +46,8 @@ namespace DX12Native
 		struct State;
 		std::shared_ptr<State> pending;
 		std::shared_ptr<const TopLevel> desired;
+        std::shared_ptr<const NativePBR::LiveBindingSource> livePbr;
+        uint64_t liveRevision = 0;
 		std::shared_ptr<const ShadowBindings> published;
 		GraphicsBackend backend;
 		uint64_t revision = 0, budget = 0, uploadBatchBudget = 0;

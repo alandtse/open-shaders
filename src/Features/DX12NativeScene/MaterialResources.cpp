@@ -101,7 +101,8 @@ namespace DX12Native
 		}
 	}
 
-	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene)
+	std::shared_ptr<const MaterialResources> MaterialResources::Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
+        const NativePBR::LiveBindingSource* a_livePbr)
 	{
 		static_assert(sizeof(MaterialRecord) == 128 && sizeof(SurfaceRecord) == 32);
 		auto result = std::make_shared<MaterialResources>();
@@ -116,17 +117,61 @@ namespace DX12Native
 				result->asyncBatchPages = 0; result->asyncBatchStagingBytes = 0;
 			}
 		}
+        NativePBR::LiveMatchResult liveMatch;
+        if (a_livePbr) {
+            std::vector<NativePBR::PreparedMatchInput> inputs;
+            inputs.reserve(a_scene.instances.size());
+            for (const auto& instance : a_scene.instances) {
+                NativePBR::PreparedMatchInput candidate;
+                candidate.referenceKey = instance.preparedIdentity.referenceKey;
+                candidate.shapeName = instance.preparedIdentity.shapeName;
+                candidate.opaque = instance.material.opaqueCandidate &&
+                    instance.material.offlineMaterialFlags == OfflineMaterialFlags::None;
+                if (instance.material.offlineDescription) {
+                    try {
+                        const auto& desc = *instance.material.offlineDescription;
+                        const auto paths = desc.at("textures").get<std::vector<std::string>>();
+                        const auto uv = desc.at("uvOffsetScale").get<std::vector<float>>();
+                        const auto alpha = desc.at("alphaFlags");
+                        if (paths.size() >= 6 && uv.size() == 4 && desc.at("shaderType") == "Default" &&
+                            (desc.at("shaderFlags2").get<uint32_t>() & kPbrSourceFlag) != 0 &&
+                            (alpha.is_null() || alpha.get<uint32_t>() == 0)) {
+                            candidate.texturePaths = { paths[0], paths[1], paths[5], paths[2] };
+                            std::copy_n(uv.begin(), 4, candidate.uvOffsetScale.begin());
+                            candidate.alpha = desc.at("alpha").get<float>();
+                            candidate.clampMode = desc.at("textureClampMode").get<uint32_t>();
+                            candidate.valid = candidate.pbr = true;
+                        }
+                    } catch (const std::exception&) {}
+                }
+                inputs.push_back(std::move(candidate));
+            }
+            liveMatch = NativePBR::ResolveLiveMatches(inputs, *a_livePbr);
+            result->livePbrMatched = uint32_t(liveMatch.report.matched);
+            result->livePbrAmbiguous = uint32_t(liveMatch.report.ambiguous);
+            result->livePbrIncompatible = uint32_t(liveMatch.report.incompatible);
+            result->livePbrMissing = uint32_t(liveMatch.report.missing);
+        }
 		std::vector<MaterialRecord> materials;
 		std::vector<SurfaceRecord> surfaces;
 		std::unordered_map<std::string, uint32_t> unique;
 		for (uint32_t index = 0; index < a_scene.instances.size(); ++index) {
 			const auto& instance = a_scene.instances[index];
 			const auto attributes = instance.material.attributes;
-			const auto key = instance.material.offlineDescription ? instance.material.offlineDescription->dump() + ":" + std::to_string(attributes ? attributes->stride : 0) + ":" + std::to_string(uint32_t(instance.material.offlineMaterialFlags)) : "unavailable";
+			const auto live = a_livePbr && index < liveMatch.matches.size() ? liveMatch.matches[index] : std::nullopt;
+            const auto liveKey = live ? ":live:" + std::to_string(live->recipe->identity) + ":" + std::to_string(live->recipe->revision) : ":offline";
+            const auto key = (instance.material.offlineDescription ? instance.material.offlineDescription->dump() + ":" + std::to_string(attributes ? attributes->stride : 0) + ":" + std::to_string(uint32_t(instance.material.offlineMaterialFlags)) : "unavailable") + liveKey;
 			const auto [found, inserted] = unique.try_emplace(key, uint32_t(materials.size()));
 			if (inserted) {
 				MaterialRecord record;
-				try { record = Compile(*result, instance.material); }
+				try {
+                    record = Compile(*result, instance.material);
+                    if (live && (record.flags[0] & (kReady | kPbr)) == (kReady | kPbr) && record.flags[3] == 0) {
+                        // Reuse verified resident atlas textures; only native PBR scalars change.
+                        record.scalar.w = live->recipe->parameters.roughnessScale;
+                        record.scalar.z = live->recipe->parameters.specularLevel;
+                    }
+                }
 				catch (const std::exception&) { record.flags[3] = 16; }
 				if ((record.flags[0] & kReady) && record.flags[3] == 0) ++result->readyMaterials; else ++result->rejectedMaterials;
 				materials.push_back(record);

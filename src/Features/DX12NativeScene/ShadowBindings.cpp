@@ -10,7 +10,8 @@ namespace DX12Native
 	{
 		return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 	}
-	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
+	std::shared_ptr<const ShadowBindings> ShadowBindings::Create(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
+        uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr)
 	{
 		auto result = std::make_shared<ShadowBindings>();
 		result->uploadBatchBudget = a_uploadBatchBudget;
@@ -41,7 +42,7 @@ namespace DX12Native
 			boundedScene.materialSource = std::move(source);
 		}
 		result->bytes = offsetsBytes + kDescriptorAndRoomReserve;
-		result->materials = MaterialResources::Load(a_backend, boundedScene);
+		result->materials = MaterialResources::Load(a_backend, boundedScene, a_livePbr.get());
 		if (result->materials->bytes > a_budget - result->bytes || result->materials->tableBytes > a_budget - result->bytes - result->materials->bytes)
 			throw std::runtime_error("Shadow materials exceed budget");
 		result->bytes += result->materials->bytes + result->materials->tableBytes;
@@ -112,15 +113,22 @@ namespace DX12Native
 		bool deferred = false;
 	};
 
-	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene, uint64_t a_budget, uint64_t a_uploadBatchBudget)
-	{
-		if (desired == a_scene && budget == a_budget && backend.d3d12Device.get() == a_backend.d3d12Device.get() && backend.commandQueue.get() == a_backend.commandQueue.get()) return;
-		++revision;
-		desired = std::move(a_scene);
-		backend = a_backend;
-		budget = a_budget;
-		uploadBatchBudget = a_uploadBatchBudget;
-		published.reset();
+	void ShadowBindingWorker::Request(const GraphicsBackend& a_backend, std::shared_ptr<const TopLevel> a_scene,
+        uint64_t a_budget, uint64_t a_uploadBatchBudget, std::shared_ptr<const NativePBR::LiveBindingSource> a_livePbr)
+    {
+        const uint64_t incomingRevision = a_livePbr && a_livePbr->generation ? a_livePbr->generation->revision : 0;
+        if (desired == a_scene && budget == a_budget && uploadBatchBudget == a_uploadBatchBudget &&
+            liveRevision == incomingRevision && backend.d3d12Device.get() == a_backend.d3d12Device.get() &&
+            backend.commandQueue.get() == a_backend.commandQueue.get()) return;
+        const bool sameScene = desired == a_scene && backend.d3d12Device.get() == a_backend.d3d12Device.get();
+        ++revision;
+        desired = std::move(a_scene);
+        livePbr = std::move(a_livePbr);
+        liveRevision = incomingRevision;
+        backend = a_backend;
+        budget = a_budget;
+        uploadBatchBudget = a_uploadBatchBudget;
+        if (!sameScene) published.reset();
 		attempted = false;
 		uploadRetry.Reset();
 		failure.clear();
@@ -140,8 +148,8 @@ namespace DX12Native
 				}
 			}
 			if (pending->revision == revision) {
-				published = pending->bindings;
-				failure = pending->failure;
+                if (pending->bindings) published = pending->bindings;
+                failure = pending->failure;
 				if (pending->deferred) uploadRetry.Start(MaterialClockMs());
 			}
 			pending.reset();
@@ -158,8 +166,8 @@ namespace DX12Native
 		task->revision = revision;
 		try {
 			static BS::thread_pool<> pool{ 1 };
-			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget] {
-				try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget); }
+			pool.detach_task([task, backend = backend, scene = desired, budget = budget, uploadBudget = uploadBatchBudget, live = livePbr] {
+                try { task->bindings = ShadowBindings::Create(backend, scene, budget, uploadBudget, live); }
 				catch (const MaterialUploadBusy& error) { task->failure = error.what(); task->deferred = true; }
 				catch (const std::exception& error) { task->failure = error.what(); }
 				catch (...) { task->failure = "Unknown shadow binding failure"; }
@@ -176,7 +184,8 @@ namespace DX12Native
 	void ShadowBindingWorker::Reset()
 	{
 		++revision;
-		desired.reset();
+        desired.reset();
+        livePbr.reset(); liveRevision = 0;
 		published.reset();
 		failure.clear();
 		attempted = false;

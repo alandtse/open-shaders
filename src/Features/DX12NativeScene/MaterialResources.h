@@ -3,6 +3,7 @@
 #include "AccelerationScene.h"
 #include "LogicalTextureRegistry.h"
 #include "MaterialUploadStatus.h"
+#include "TruePBR/VerifiedBridge.h"
 #include <array>
 #include <stdexcept>
 
@@ -66,9 +67,11 @@ namespace DX12Native
 		uint64_t asyncBatchStagingBytes = 0;
 		uint32_t readyMaterials = 0, rejectedMaterials = 0, textures = 0, uploadedPages = 0, reusedPages = 0, reusedTextures = 0, rejectedTextureSources = 0, asyncBatchPages = 0;
 		uint32_t diskCacheHits = 0, diskCacheWrites = 0;
+        uint32_t livePbrMatched = 0, livePbrAmbiguous = 0, livePbrIncompatible = 0, livePbrMissing = 0;
 		std::string failure, firstTextureSourceFailure;
 		/** @brief Loads one owned package on the binding worker; never accesses engine objects. */
-		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene);
+		static std::shared_ptr<const MaterialResources> Load(const GraphicsBackend& a_backend, const TopLevel& a_scene,
+            const NativePBR::LiveBindingSource* a_livePbr = nullptr);
 	};
 
 	/** @brief Validates and uploads original DDS mip chains into bounded compatible array pages. */
